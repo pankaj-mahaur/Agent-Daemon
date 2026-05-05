@@ -12,6 +12,7 @@ import { runSessionStart } from "./session-start.mjs";
 import { runDigest } from "./digest/digest.mjs";
 import { runInteractiveReview } from "./review.mjs";
 import { evolveSkill } from "./digest/gepa/evolve.mjs";
+import { runWatcher } from "./daemon/watch.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
@@ -243,10 +244,12 @@ async function cmdCheckpoint({ transcript, sessionId }) {
   return 0;
 }
 
-async function cmdWatch() {
-  console.log("agent-daemon: watch mode lands in v0.2 (chokidar over transcript dirs).");
-  console.log("For v0.1, hook-based triggering covers Claude Code. Other agents need manual `agent-daemon digest --transcript <path>` for now.");
-  return 0;
+async function cmdWatch(opts) {
+  return runWatcher({
+    projectRoot: opts.projectRoot,
+    verbose: opts.verbose,
+    onceOnExisting: false
+  });
 }
 
 /* ------------------------------------------------------------------ */
