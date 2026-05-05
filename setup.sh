@@ -48,6 +48,7 @@ Usage:
   ./setup.sh --tools name1,name2                Install standalone CLI tools (when content lands)
   ./setup.sh --runtime                          Install the agent-daemon CLI to ~/.local/bin/
   ./setup.sh --hooks                            Print hook snippets to merge into ~/.claude/settings.json
+  ./setup.sh --service                          Register watch daemon as launchd / systemd unit (start at login)
   ./setup.sh --list                             List everything available
   ./setup.sh --dry-run --all                    Show what would be installed
 
@@ -59,6 +60,7 @@ Options:
   --tools NAME      Comma-separated list of tool names
   --runtime         Install the agent-daemon CLI to ~/.local/bin/ (the self-improving runtime)
   --hooks           Print hook configs for SessionStart / SessionEnd / PreCompact
+  --service         Register agent-daemon watch as a system service (launchd on macOS, systemd on Linux)
   --project-local   Install skills/plugins to .claude/<kind>/ instead of ~/.claude/<kind>/
   --dry-run         Show what would happen without making changes
   --list            List available items in every category
@@ -106,6 +108,40 @@ install_runtime() {
 
   echo "  INSTALLED: agent-daemon CLI -> $bin_target"
   echo "             (ensure $bin_dir is on your PATH)"
+  return 0
+}
+
+install_service() {
+  local dry_run="$1"
+  local scripts_dir="$TOOLKIT_DIR/runtime/scripts"
+
+  case "$(uname -s)" in
+    Darwin)
+      local installer="$scripts_dir/install-service-darwin.sh"
+      ;;
+    Linux)
+      local installer="$scripts_dir/install-service-linux.sh"
+      ;;
+    *)
+      echo "  SKIP: --service (unsupported platform $(uname -s); use setup.ps1 -Service on Windows)"
+      return 1
+      ;;
+  esac
+
+  if [ ! -f "$installer" ]; then
+    echo "  SKIP: --service (installer script missing: $installer)"
+    return 1
+  fi
+
+  if [ "$dry_run" = "true" ]; then
+    echo "  WOULD RUN: $installer"
+    return 0
+  fi
+
+  echo ""
+  echo "═══ Registering agent-daemon watch as a system service ═══"
+  echo ""
+  bash "$installer"
   return 0
 }
 
@@ -264,6 +300,7 @@ print_tool_install_hint() {
 # Parse arguments
 INSTALL_ALL=false
 INSTALL_RUNTIME=false
+INSTALL_SERVICE=false
 SHOW_HOOKS=false
 SELECTED_SKILLS=()
 SELECTED_MCP=()
@@ -302,6 +339,10 @@ while [[ $# -gt 0 ]]; do
       SHOW_HOOKS=true
       shift
       ;;
+    --service)
+      INSTALL_SERVICE=true
+      shift
+      ;;
     --project-local)
       PROJECT_LOCAL=true
       shift
@@ -328,6 +369,7 @@ done
 
 if [ "$INSTALL_ALL" = false ] \
   && [ "$INSTALL_RUNTIME" = false ] \
+  && [ "$INSTALL_SERVICE" = false ] \
   && [ "$SHOW_HOOKS" = false ] \
   && [ ${#SELECTED_SKILLS[@]} -eq 0 ] \
   && [ ${#SELECTED_MCP[@]} -eq 0 ] \
@@ -440,6 +482,15 @@ fi
 # Hooks (always informational — we never auto-merge settings.json in v0.1)
 if [ "$SHOW_HOOKS" = true ] || [ "$INSTALL_ALL" = true ]; then
   print_hook_snippets
+fi
+
+# Service (registers watch daemon at login)
+if [ "$INSTALL_SERVICE" = true ]; then
+  if install_service "$DRY_RUN"; then
+    SUCCESS=$((SUCCESS + 1))
+  else
+    FAILED=$((FAILED + 1))
+  fi
 fi
 
 echo ""

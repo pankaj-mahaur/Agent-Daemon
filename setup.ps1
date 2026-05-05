@@ -6,6 +6,7 @@ param(
     [string]$Tools,
     [switch]$Runtime,
     [switch]$Hooks,
+    [switch]$Service,
     [switch]$ProjectLocal,
     [switch]$DryRun,
     [switch]$List,
@@ -123,6 +124,27 @@ function Install-Runtime {
 
     Write-Host "  INSTALLED: agent-daemon CLI -> $binCmd"
     Write-Host "             (ensure $binDir is on your PATH; user PATH not auto-modified)"
+    return $true
+}
+
+function Install-Service {
+    param([bool]$IsDryRun)
+
+    $installer = Join-Path $ToolkitDir "runtime" "scripts" "install-service-windows.ps1"
+    if (-not (Test-Path $installer)) {
+        Write-Host "  SKIP: --service (installer not found: $installer)"
+        return $false
+    }
+
+    if ($IsDryRun) {
+        Write-Host "  WOULD RUN: $installer"
+        return $true
+    }
+
+    Write-Host ""
+    Write-Host "==== Registering agent-daemon watch as a Windows scheduled task ===="
+    Write-Host ""
+    & powershell -ExecutionPolicy Bypass -File $installer
     return $true
 }
 
@@ -250,7 +272,7 @@ if ($Help) { Show-Usage; exit 0 }
 if ($List) { List-All; exit 0 }
 
 # Validate arguments
-if (-not $All -and -not $Runtime -and -not $Hooks -and `
+if (-not $All -and -not $Runtime -and -not $Hooks -and -not $Service -and `
     [string]::IsNullOrEmpty($Skills) -and `
     [string]::IsNullOrEmpty($Mcp) -and `
     [string]::IsNullOrEmpty($Plugins) -and `
@@ -338,6 +360,11 @@ if ($Runtime -or $All) {
 # Hooks (always informational - never auto-merge settings.json in v0.1)
 if ($Hooks -or $All) {
     Show-HookSnippets
+}
+
+# Service registration
+if ($Service) {
+    if (Install-Service -IsDryRun $DryRun) { $success++ } else { $failed++ }
 }
 
 Write-Host ""
