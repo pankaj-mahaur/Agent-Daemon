@@ -1,0 +1,28 @@
+{
+  "// GLOBAL SETTINGS (~/.claude/settings.json)": "",
+  "// This file configures Claude Code globally across all projects.": "",
+
+  "// Model selection: opus (most capable), sonnet (fast + capable), haiku (fastest)": "",
+  "// Append [1m] for 1M context window: \"opus[1m]\"": "",
+  "model": "opus",
+
+  "// Plugins from the marketplace or custom sources": "",
+  "enabledPlugins": {
+    "repomix-mcp@repomix": true,
+    "repomix-commands@repomix": true,
+    "repomix-explorer@repomix": true
+  },
+
+  "// Add custom plugin marketplaces beyond the default Anthropic one": "",
+  "extraKnownMarketplaces": {
+    "repomix": {
+      "source": {
+        "source": "github",
+        "repo": "yamadashy/repomix"
+      }
+    }
+  },
+
+  "// Effort level for responses: low, medium, high": "",
+  "effortLevel": "medium"
+}

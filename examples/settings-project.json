@@ -1,0 +1,41 @@
+{
+  "// PROJECT SETTINGS (.claude/settings.json)": "",
+  "// Place in your project root. Applies only to this project.": "",
+
+  "hooks": {
+    "// PreToolUse hooks run before specific tools execute": "",
+    "PreToolUse": [
+      {
+        "// This hook fires before Glob or Grep, reminding Claude to check": "",
+        "// the knowledge graph first if one exists": "",
+        "matcher": "Glob|Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f graphify-out/graph.json ] && echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"additionalContext\":\"Knowledge graph exists. Read graphify-out/GRAPH_REPORT.md for architecture overview before searching raw files.\"}}' || true"
+          }
+        ]
+      }
+    ]
+  },
+
+  "permissions": {
+    "allow": [
+      "// Read access to project files": "",
+      "Read(/path/to/your/project/**)",
+
+      "// Common safe bash commands": "",
+      "Bash(npm run lint)",
+      "Bash(npm run build)",
+      "Bash(npx tsc --noEmit)",
+      "Bash(git status)",
+      "Bash(git log *)",
+      "Bash(git diff *)",
+
+      "// Python commands": "",
+      "Bash(python manage.py check)",
+      "Bash(ruff check .)",
+      "Bash(ruff format .)"
+    ]
+  }
+}

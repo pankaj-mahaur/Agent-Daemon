@@ -1,0 +1,61 @@
+# Multi-Repo Workspace
+
+<!-- Use this when your project has multiple repositories in one workspace. -->
+<!-- Place at the parent directory that contains all repos. -->
+
+## Repository Layout
+
+```
+workspace/
+├── frontend/     # Frontend repository (separate git repo)
+├── backend/      # Backend repository (separate git repo)
+└── AGENTS.md     # This file (parent directory, NOT a git repo)
+```
+
+## Frontend Context
+
+- **Stack:** [e.g., Next.js 15 + TypeScript + Tailwind]
+- **Entry:** `frontend/src/app/`
+- **API Client:** `frontend/src/lib/api/client.ts`
+- **Auth:** [e.g., Google OAuth → JWT → httpOnly cookies via proxy]
+- **Key Docs:** `frontend/CLAUDE.md`, `frontend/README.md`
+
+## Backend Context
+
+- **Stack:** [e.g., Django 6 + DRF + PostgreSQL + Redis + Celery]
+- **Entry:** `backend/manage.py`, startup script
+- **Apps:** [e.g., accounts, projects, timesheets]
+- **Settings:** `backend/settings/` (base, development, production)
+- **Key Docs:** `backend/CLAUDE.md`, `backend/README.md`
+
+## Auth Flow
+
+```
+Browser → Frontend proxy (/api/proxy/*) → Backend API → Database
+           │ Adds auth headers              │ Validates JWT
+           │ Refreshes expired tokens       │ Checks permissions
+           └────────────────────────────────┘
+```
+
+## Role Model
+
+<!-- Document your role/permission model -->
+| Role | Frontend Access | Backend Group |
+|------|----------------|---------------|
+| Admin | Full admin panel | `Admins` |
+| Manager | Team dashboards | `Managers` |
+| Employee | Own data only | `Employees` |
+
+## Development Notes
+
+- Parent directory is NOT a git repo — commit in each repo separately
+- Frontend runs on port 3000, Backend on port 8000
+- Always run type-check (`npx tsc --noEmit`) before committing frontend
+- Always run format (`ruff format .`) before committing backend
+
+## Audit Program
+
+<!-- Link to audit docs if you maintain them -->
+- [Security Audit Playbook](docs/SECURITY_AUDIT_PLAYBOOK.md)
+- [Production Readiness Checklist](docs/PRODUCTION_READINESS_CHECKLIST.md)
+- [Review Slice Registry](docs/REVIEW_SLICE_REGISTRY.md)

@@ -1,0 +1,64 @@
+# Project Name
+
+<!-- This file teaches Claude Code about your project. Place it at your project root. -->
+
+## Stack
+
+<!-- List your tech stack -->
+- Frontend: React / Next.js / Vue / Angular + TypeScript
+- Backend: Django / FastAPI / Express / Rails
+- Database: PostgreSQL / MySQL / MongoDB
+- Cache: Redis / Memcached
+- Background jobs: Celery / Bull / Sidekiq
+
+## Commands
+
+```bash
+# Development
+npm run dev              # Start frontend dev server
+python manage.py runserver  # Start backend
+
+# Quality checks (run before committing)
+npx tsc --noEmit         # Type check
+npm run lint             # Lint
+ruff format .            # Format Python
+
+# Testing
+npm run test             # Frontend tests
+pytest                   # Backend tests
+
+# Database
+python manage.py migrate # Apply migrations
+```
+
+## Architecture
+
+<!-- Describe key architectural decisions -->
+- Auth: Google OAuth → JWT → httpOnly cookies
+- API: Frontend proxies all API calls through `/api/proxy/` (no direct backend calls from browser)
+- Roles: Admin, Manager, Employee (defined in backend, checked on both sides)
+
+## Key Directories
+
+```
+src/
+├── app/           # Pages and routes
+├── components/    # Reusable UI components
+├── hooks/         # Custom React hooks
+├── lib/           # Utilities, API client, helpers
+└── types/         # TypeScript type definitions
+```
+
+## Conventions
+
+- Use Tailwind utilities over custom CSS
+- Use existing shared components before creating new ones
+- API calls go through the centralized API client, not direct fetch
+- Commit style: `type(scope): message` (fix, feat, refactor, perf, test, docs)
+
+## Tool Preferences
+
+<!-- Tell Claude Code which tools to prefer -->
+- Use `qmd` for searching markdown docs (if indexed)
+- Use `Grep`/`Glob` for searching code files directly
+- Check `graphify-out/GRAPH_REPORT.md` for architecture overview (if graph exists)
