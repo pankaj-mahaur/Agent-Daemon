@@ -1,6 +1,11 @@
 ---
 name: seed-data
 description: Generate idempotent database seed scripts with realistic test data. Use only when user explicitly requests seed/test data generation for specified schema/models.
+license: MIT
+metadata:
+  author: agent-daemon
+  spec: agentskills.io
+  version: "1.0"
 allowed-tools: Bash, Read, Write, Edit, Grep, Glob
 argument-hint: [entity names] [count]
 ---

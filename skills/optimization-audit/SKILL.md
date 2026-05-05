@@ -1,6 +1,11 @@
 ---
 name: optimization-audit
 description: Audit web application performance and scalability. Use for performance audit, optimization, slow pages, API waterfall, render churn, bundle review, N+1 queries, pagination, cache review, background job performance, database indexes, or high-volume endpoint concerns.
+license: MIT
+metadata:
+  author: agent-daemon
+  spec: agentskills.io
+  version: "1.0"
 ---
 
 # Optimization Audit

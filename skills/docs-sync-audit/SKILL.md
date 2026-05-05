@@ -1,6 +1,11 @@
 ---
 name: docs-sync-audit
 description: Audit and update project documentation to match current code. Use for docs audit, documentation drift, README updates, API docs sync, configuration docs, keeping project docs aligned with current code, or stale documentation cleanup.
+license: MIT
+metadata:
+  author: agent-daemon
+  spec: agentskills.io
+  version: "1.0"
 ---
 
 # Docs Sync Audit

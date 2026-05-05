@@ -1,6 +1,11 @@
 ---
 name: diagnose-fetch-failure
 description: Diagnose browser-reported "CORS blocked" / "ERR_FAILED" / "network error" on a frontend fetch to a local backend. The surface message is almost always misleading — the real cause is usually a backend 5xx with stripped CORS headers, a backend not running, a stale DB schema post-merge, or an unhandled exception inside middleware. Verify with curl first, then walk the layers top-down.
+license: MIT
+metadata:
+  author: agent-daemon
+  spec: agentskills.io
+  version: "1.0"
 ---
 
 # Diagnose fetch failures from frontend → backend

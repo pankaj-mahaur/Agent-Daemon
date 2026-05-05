@@ -1,6 +1,11 @@
 ---
 name: security-audit
 description: Audit web application security across frontend and backend. Use for security audit, auth review, RBAC review, permissions audit, JWT/session security, cookie/CSRF/origin review, CORS, throttling, secrets, CSV/export safety, admin endpoints, or access control review.
+license: MIT
+metadata:
+  author: agent-daemon
+  spec: agentskills.io
+  version: "1.0"
 ---
 
 # Security Audit

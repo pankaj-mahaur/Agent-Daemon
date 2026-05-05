@@ -1,6 +1,11 @@
 ---
 name: production-readiness
 description: Audit any web application for production launch and runtime readiness. Use when asked for production readiness, deployment hardening, launch audit, runtime health, environment checks, build readiness, logging, monitoring, rollback, backups, database operations, or background job review.
+license: MIT
+metadata:
+  author: agent-daemon
+  spec: agentskills.io
+  version: "1.0"
 ---
 
 # Production Readiness Audit

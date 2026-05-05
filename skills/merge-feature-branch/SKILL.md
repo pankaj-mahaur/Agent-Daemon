@@ -1,6 +1,11 @@
 ---
 name: merge-feature-branch
 description: Pull a shared branch (dev/main/staging) into a long-lived feature branch. Handles known conflict surfaces, dev-base + graft reconstruction for heavily-modified files, WIP preservation, and merge regression baseline comparison.
+license: MIT
+metadata:
+  author: agent-daemon
+  spec: agentskills.io
+  version: "1.0"
 ---
 
 # Merge Feature Branch

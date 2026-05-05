@@ -1,6 +1,11 @@
 ---
 name: dead-code-review
 description: Review and safely remove unused or disconnected code. Use for dead code cleanup, unused files, stale shims, unused CSS, unused dependencies, unconnected routes, orphan views/URLs, stale documentation, or runtime artifacts checked into repos.
+license: MIT
+metadata:
+  author: agent-daemon
+  spec: agentskills.io
+  version: "1.0"
 ---
 
 # Dead Code Review
