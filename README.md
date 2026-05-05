@@ -6,7 +6,7 @@ Skills evolve too: [GEPA](runtime/src/digest/gepa/README.md) (Genetic-Pareto Pro
 
 Plus the static side: 20 stack-agnostic skills (all [agentskills.io](https://agentskills.io/specification)-compliant), 5 playbooks, MCP / plugin / tool / adapter scaffolding for any AI coding agent.
 
-> **v0.1 status (current):** constitution + memory templates + meta-skill + hook configs + Node CLI runtime (`agent-daemon`) with triage gate, transcript adapter, session-start context loader, SQLite + FTS5 schema, GEPA algorithm skeleton (Pareto selection working), Hermes interop documented. Headless `claude` extraction + LLM-driven GEPA stages + SQLite read/write land in v0.2.
+> **v0.3 status (current — production candidate):** Full self-improving loop end-to-end. SQLite + FTS5 episodic memory (better-sqlite3). LLM-driven GEPA self-evolution (sample → reflect → generate → evaluate → Pareto select). Interactive review CLI. Cross-agent transcript adapters (Claude Code / Cline / Cursor / Codex) with auto-detection. Chokidar-based watch daemon for non-hook agents. OS service registration (launchd / systemd / schtasks) so the daemon starts at login.
 
 ### Compatibility & interop
 
@@ -204,13 +204,20 @@ Copy any `skills/<name>/` folder to `~/.claude/skills/<name>/` (global) or `.cla
 
 This repo grows over time.
 
-**Runtime (v0.2):**
-- Headless `claude` extraction step in the digest pipeline (replaces v0.1 stub)
-- SQLite read/write wired to `better-sqlite3` (schema is already designed in [runtime/src/memory/sqlite.mjs](runtime/src/memory/sqlite.mjs))
-- GEPA stages 1–4 wired to actual LLM calls (currently scaffolded; algorithm + Pareto selection work)
-- Interactive `agent-daemon review` (accept / reject / edit each proposal)
-- `agent-daemon watch` (chokidar fswatch — works for any agent that writes JSONL)
-- Cline `TaskComplete` adapter, Cursor `stop` adapter, Codex `Stop` adapter
+**v0.3 — production candidate (just shipped):**
+- ✅ Full self-improving loop wired end-to-end
+- ✅ SQLite + FTS5 episodic memory (better-sqlite3)
+- ✅ LLM-driven GEPA self-evolution (`agent-daemon evolve <skill>`)
+- ✅ Interactive review (`agent-daemon review`)
+- ✅ Cross-agent transcript adapters (Claude Code / Cline / Cursor / Codex)
+- ✅ Chokidar-based watch daemon for non-hook agents
+- ✅ OS service registration (launchd / systemd / schtasks)
+
+**Beyond v0.3:**
+- Auto-trigger evolve on 3+ skill failures (currently manual)
+- True trace replay for GEPA evaluate (currently LLM-as-judge)
+- Cross-machine memory sync
+- UserPromptSubmit hook for query-aware retrieval (currently retrieval is recency-based)
 
 **Content categories being filled in:**
 - **MCP servers** ([mcp/](mcp/)) — repomix, qmd, filesystem, postgres, github
