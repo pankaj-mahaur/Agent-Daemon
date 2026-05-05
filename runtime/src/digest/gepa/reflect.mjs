@@ -1,15 +1,19 @@
-// GEPA Stage 2 — reflect on success/failure traces.
-//
-// Calls headless `claude` with the parent skill body + sampled traces and
-// asks: which failure modes are recurring? what made successes succeed?
-// Returns a structured reflection used to guide variant generation.
+// GEPA Stage 2 — reflect on success/failure traces via headless claude.
+
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { callHeadlessClaude } from "../../claude.mjs";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname  = path.dirname(__filename);
+const REFLECT_PROMPT_PATH = path.join(__dirname, "prompts", "reflect.md");
 
 /**
  * @typedef {Object} FailureMode
- * @property {string} title         - short label
- * @property {string} description   - what went wrong
- * @property {string[]} evidence    - trace IDs supporting this mode
- * @property {string} fix_direction - the proposed direction (high level)
+ * @property {string} title
+ * @property {string} description
+ * @property {string[]} evidence
+ * @property {string} fix_direction
  *
  * @typedef {Object} SuccessPattern
  * @property {string} pattern
@@ -18,68 +22,103 @@
  * @typedef {Object} Reflections
  * @property {FailureMode[]} failureModes
  * @property {SuccessPattern[]} successPatterns
- * @property {string} summary       - one paragraph synthesis
+ * @property {string} summary
  */
 
-/**
- * The prompt template used for reflection. Inlined here so it ships with the
- * runtime; can be overridden via env var AGENT_DAEMON_REFLECT_PROMPT_PATH.
- */
-const REFLECT_PROMPT = `You are reviewing how an AI coding agent used the skill "{{skillName}}" across a set of past sessions.
-
-Your task is REFLECTIVE — identify why some uses succeeded and others failed, then produce structured feedback that will guide an evolutionary improvement of the skill.
-
-Output strict JSON of shape:
-{
-  "failureModes": [
-    {
-      "title": "short label",
-      "description": "what went wrong, in 1-2 sentences",
-      "evidence": ["trace-id-1", "trace-id-2"],
-      "fix_direction": "what the skill should do differently — high level, not exact wording"
-    }
-  ],
-  "successPatterns": [
-    { "pattern": "...", "evidence": ["trace-id-3"] }
-  ],
-  "summary": "one paragraph summarizing the chief drivers of variance in outcomes"
-}
-
-Be ruthless about category collapse: if two traces failed for the same reason, write ONE failure mode with both as evidence.
-
-Be specific: avoid generic advice ("be more careful"). Name the missing instruction or the misleading phrasing.
-
-Do NOT propose new skill text — that's the next stage's job. You produce the diagnosis only.`;
+const REFLECT_SCHEMA = {
+  type: "object",
+  properties: {
+    failureModes: {
+      type: "array",
+      maxItems: 8,
+      items: {
+        type: "object",
+        properties: {
+          title:         { type: "string", maxLength: 80 },
+          description:   { type: "string", maxLength: 500 },
+          evidence:      { type: "array", items: { type: "string" }, maxItems: 20 },
+          fix_direction: { type: "string", maxLength: 400 }
+        },
+        required: ["title", "description", "fix_direction"]
+      }
+    },
+    successPatterns: {
+      type: "array",
+      maxItems: 5,
+      items: {
+        type: "object",
+        properties: {
+          pattern:  { type: "string", maxLength: 300 },
+          evidence: { type: "array", items: { type: "string" }, maxItems: 20 }
+        },
+        required: ["pattern"]
+      }
+    },
+    summary: { type: "string", maxLength: 500 }
+  },
+  required: ["failureModes", "successPatterns", "summary"]
+};
 
 /**
  * @param {{
  *   skillName: string,
  *   parentBody: string,
  *   traces: import("./sample.mjs").SkillTrace[],
+ *   model?: string,
+ *   maxBudgetUsd?: number,
  *   verbose?: boolean
  * }} opts
- * @returns {Promise<Reflections>}
+ * @returns {Promise<{ok: boolean, reflections?: Reflections, error?: string, costUsd?: number}>}
  */
 export async function reflectOnTraces(opts) {
-  // v0.1 stub: returns an empty reflection. The prompt + invocation are wired
-  // in v0.2 (shells out to `claude --print --output-format json`).
-  //
-  // v0.2 implementation:
-  //
-  //   const prompt = REFLECT_PROMPT.replace("{{skillName}}", opts.skillName);
-  //   const userMessage = renderTracesForReflection(opts.parentBody, opts.traces);
-  //   const json = await callClaudeHeadless({
-  //     systemPromptAddition: prompt,
-  //     userMessage,
-  //     outputFormat: "json"
-  //   });
-  //   return JSON.parse(json.result);
+  if (!opts.traces || opts.traces.length === 0) {
+    return { ok: true, reflections: { failureModes: [], successPatterns: [], summary: "No traces to reflect on." } };
+  }
 
-  return {
-    failureModes: [],
-    successPatterns: [],
-    summary: "v0.1 stub — reflection LLM call lands in v0.2"
-  };
+  const userMessage = renderUserMessage(opts.parentBody, opts.traces);
+
+  const result = await callHeadlessClaude({
+    systemPromptFile: REFLECT_PROMPT_PATH,
+    userMessage,
+    model: opts.model || "haiku",
+    fallbackModel: "sonnet",
+    jsonSchema: REFLECT_SCHEMA,
+    maxBudgetUsd: opts.maxBudgetUsd ?? 0.10,
+    timeoutMs: 60_000,
+    verbose: opts.verbose
+  });
+
+  if (!result.ok || !result.parsedJson) {
+    return { ok: false, error: result.error || "no parsed reflection JSON" };
+  }
+
+  // Replace {{SKILL_NAME}} substitution — we did it at userMessage level since
+  // append-system-prompt doesn't get template-substituted.
+  return { ok: true, reflections: result.parsedJson, costUsd: result.costUsd };
 }
 
-export { REFLECT_PROMPT };
+function renderUserMessage(parentBody, traces) {
+  const lines = [
+    "# Parent skill body",
+    "",
+    "```markdown",
+    parentBody,
+    "```",
+    "",
+    "# Trace set",
+    ""
+  ];
+  for (const t of traces) {
+    const status = t.succeeded === true ? "✓ succeeded" : t.succeeded === false ? "✗ failed" : "? unknown";
+    lines.push(`## Trace ${t.id} (${status}) — ${t.createdAt}`);
+    if (t.triggerText) lines.push(`Trigger: ${truncate(t.triggerText, 300)}`);
+    if (t.failureReason) lines.push(`Failure reason: ${truncate(t.failureReason, 300)}`);
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
+function truncate(s, n) {
+  if (!s) return "";
+  return s.length > n ? s.slice(0, n) + "…" : s;
+}

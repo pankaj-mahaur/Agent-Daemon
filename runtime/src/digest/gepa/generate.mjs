@@ -1,92 +1,132 @@
-// GEPA Stage 3 — generate candidate variants of the skill body.
-//
-// Each variant addresses one or more of the reflected failure modes. We
-// generate K variants in a single multi-call to amortize the prompt overhead.
+// GEPA Stage 3 — generate K candidate variants of the skill body via headless claude.
 
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import crypto from "node:crypto";
+import { callHeadlessClaude } from "../../claude.mjs";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname  = path.dirname(__filename);
+const GENERATE_PROMPT_PATH = path.join(__dirname, "prompts", "generate.md");
 
 /**
  * @typedef {Object} Variant
- * @property {string} variantId      - hash-derived id
- * @property {string} body           - candidate skill body
- * @property {string[]} addresses    - failure mode titles this variant targets
- * @property {string} rationale      - the model's stated reasoning for the change
+ * @property {string} variantId
+ * @property {string} body
+ * @property {string[]} addresses
+ * @property {string} rationale
  */
 
-const GENERATE_PROMPT = `You are evolving the skill "{{skillName}}" based on a reflection report.
-
-You will produce K candidate variants of the skill body. Each variant targets one or more of the failure modes listed in the reflection.
-
-Constraints:
-- Preserve the YAML frontmatter EXACTLY. Only the body (after the closing ---) may change.
-- Stay under {{maxBodyChars}} chars per variant body.
-- Don't introduce new external dependencies in the variant.
-- Each variant should be RECOGNIZABLY the same skill — same purpose, same triggers, same general procedure. The variant is a sharpening, not a rewrite.
-
-Output JSON of shape:
-{
-  "variants": [
-    {
-      "variantId": "auto",  // we'll compute the hash
-      "body": "...",         // full body markdown (after the closing ---)
-      "addresses": ["failure-mode-title-1", "failure-mode-title-2"],
-      "rationale": "1-2 sentence reasoning"
-    }
-  ]
+function buildSchema(maxCount, maxBodyChars) {
+  return {
+    type: "object",
+    properties: {
+      variants: {
+        type: "array",
+        minItems: 1,
+        maxItems: maxCount,
+        items: {
+          type: "object",
+          properties: {
+            body:      { type: "string", minLength: 100, maxLength: maxBodyChars },
+            addresses: { type: "array", items: { type: "string" }, maxItems: 10 },
+            rationale: { type: "string", maxLength: 400 }
+          },
+          required: ["body", "addresses", "rationale"]
+        }
+      }
+    },
+    required: ["variants"]
+  };
 }
-
-Diversity is valuable — the K variants should NOT all address the same failure mode. Spread coverage.`;
 
 /**
  * @param {{
  *   skillName: string,
  *   parentBody: string,
  *   reflections: import("./reflect.mjs").Reflections,
- *   count: number,
+ *   count?: number,
+ *   model?: string,
+ *   maxBudgetUsd?: number,
  *   verbose?: boolean
  * }} opts
- * @returns {Promise<Variant[]>}
+ * @returns {Promise<{ok: boolean, variants?: Variant[], error?: string, costUsd?: number}>}
  */
 export async function generateVariants(opts) {
-  // v0.1 stub: returns an empty list. v0.2 wires headless `claude`.
-  //
-  // v0.2 implementation:
-  //
-  //   const maxBodyChars = Math.max(opts.parentBody.length * 1.2, 4000);
-  //   const prompt = GENERATE_PROMPT
-  //     .replace("{{skillName}}", opts.skillName)
-  //     .replace("{{maxBodyChars}}", String(Math.floor(maxBodyChars)));
-  //
-  //   const userMessage = JSON.stringify({
-  //     parent: opts.parentBody,
-  //     reflections: opts.reflections,
-  //     count: opts.count
-  //   }, null, 2);
-  //
-  //   const json = await callClaudeHeadless({
-  //     systemPromptAddition: prompt,
-  //     userMessage,
-  //     outputFormat: "json"
-  //   });
-  //
-  //   const parsed = JSON.parse(json.result);
-  //   return parsed.variants.map(v => ({
-  //     ...v,
-  //     variantId: hashOf(v.body)
-  //   }));
+  const count = opts.count ?? 4;
+  const maxBodyChars = Math.floor(Math.max(opts.parentBody.length * 1.2, 4000));
 
-  return [];
+  const userMessage = renderUserMessage({
+    skillName: opts.skillName,
+    parentBody: opts.parentBody,
+    reflections: opts.reflections,
+    count,
+    maxBodyChars
+  });
+
+  const result = await callHeadlessClaude({
+    systemPromptFile: GENERATE_PROMPT_PATH,
+    userMessage,
+    model: opts.model || "haiku",
+    fallbackModel: "sonnet",
+    jsonSchema: buildSchema(count, maxBodyChars),
+    maxBudgetUsd: opts.maxBudgetUsd ?? 0.20,
+    timeoutMs: 120_000,
+    verbose: opts.verbose
+  });
+
+  if (!result.ok || !result.parsedJson?.variants) {
+    return { ok: false, error: result.error || "no variants parsed" };
+  }
+
+  const variants = result.parsedJson.variants.map(v => ({
+    variantId: hashOf(v.body),
+    body: v.body,
+    addresses: Array.isArray(v.addresses) ? v.addresses : [],
+    rationale: v.rationale || ""
+  }));
+
+  return { ok: true, variants, costUsd: result.costUsd };
 }
 
-/**
- * sha256 hash of a body string, hex-encoded, first 12 chars (collision-safe enough
- * within a single evolution run).
- *
- * @param {string} body
- * @returns {string}
- */
+function renderUserMessage({ skillName, parentBody, reflections, count, maxBodyChars }) {
+  const failureModesBlock = reflections.failureModes.length === 0
+    ? "_(no failure modes identified — your variants should focus on clarity / size reductions)_"
+    : reflections.failureModes.map((fm, i) =>
+        `### Failure mode ${i + 1}: ${fm.title}\n${fm.description}\n**Fix direction:** ${fm.fix_direction}`
+      ).join("\n\n");
+
+  const successBlock = reflections.successPatterns.length === 0
+    ? ""
+    : "## Success patterns to preserve\n\n" +
+      reflections.successPatterns.map(p => `- ${p.pattern}`).join("\n") + "\n\n";
+
+  return [
+    `# Skill name`,
+    skillName,
+    "",
+    `# Generation parameters`,
+    `- Variants to produce (K): ${count}`,
+    `- Max body chars per variant: ${maxBodyChars}`,
+    "",
+    "# Parent skill body",
+    "",
+    "```markdown",
+    parentBody,
+    "```",
+    "",
+    "# Reflection summary",
+    "",
+    reflections.summary,
+    "",
+    successBlock,
+    "## Failure modes the variants should address",
+    "",
+    failureModesBlock,
+    ""
+  ].join("\n");
+}
+
 export function hashOf(body) {
   return crypto.createHash("sha256").update(body, "utf8").digest("hex").slice(0, 12);
 }
-
-export { GENERATE_PROMPT };

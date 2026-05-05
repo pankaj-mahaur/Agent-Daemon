@@ -11,6 +11,7 @@ import fs from "node:fs/promises";
 import { runSessionStart } from "./session-start.mjs";
 import { runDigest } from "./digest/digest.mjs";
 import { runInteractiveReview } from "./review.mjs";
+import { evolveSkill } from "./digest/gepa/evolve.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
@@ -28,7 +29,8 @@ Usage:
 
 Commands:
   session-start          Inject constitution + project memory into session start hook output (JSON to stdout)
-  digest                 Run digest pipeline against a transcript (extract → classify → dedupe → apply)
+  digest                 Run digest pipeline against a transcript (extract → classify → apply)
+  evolve <skill>         GEPA self-improvement run for a skill (sample → reflect → generate → evaluate → select)
   checkpoint             Save a memory checkpoint before /compact
   init                   Scaffold .agent-daemon/ in current project
   status                 Show queued proposals (skill diffs, constitution rule additions)
@@ -298,6 +300,7 @@ async function main(argv) {
   switch (command) {
     case "session-start":  return runSessionStart(opts);
     case "digest":         return runDigest(opts);
+    case "evolve":         return cmdEvolve({ ...opts, skillName: parsed.positionals?.[0] });
     case "checkpoint":     return cmdCheckpoint(opts);
     case "init":           return cmdInit(opts);
     case "status":         return cmdStatus(opts);
@@ -309,6 +312,36 @@ async function main(argv) {
       console.error(HELP);
       return 2;
   }
+}
+
+async function cmdEvolve(opts) {
+  if (!opts.skillName) {
+    console.error("agent-daemon evolve: requires a skill name. Usage: agent-daemon evolve <skill-name>");
+    return 1;
+  }
+  const skillPath = path.join(opts.projectRoot, "skills", opts.skillName, "SKILL.md");
+  try {
+    await fs.access(skillPath);
+  } catch {
+    console.error(`agent-daemon evolve: no such skill at ${skillPath}`);
+    return 1;
+  }
+
+  const result = await evolveSkill({
+    skillPath,
+    skillName: opts.skillName,
+    dryRun: opts.dryRun,
+    verbose: opts.verbose,
+    proposedDir: path.join(opts.cwd, ".agent-daemon", "proposed")
+  });
+
+  console.error(`\nagent-daemon evolve: ${result.status} — ${result.reason}`);
+  console.error(`  cost: $${result.totalCostUsd.toFixed(4)}`);
+  if (result.proposalPath) {
+    console.error(`  proposal: ${result.proposalPath}`);
+    console.error(`  review with: agent-daemon review`);
+  }
+  return result.status === "error" ? 1 : 0;
 }
 
 main(process.argv.slice(2)).then(code => process.exit(code || 0)).catch(err => {

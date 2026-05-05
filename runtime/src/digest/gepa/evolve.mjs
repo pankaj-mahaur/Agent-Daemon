@@ -1,28 +1,19 @@
 // GEPA — Genetic-Pareto Prompt Evolution.
 // Self-improvement loop for SKILL.md files.
 //
-// Algorithm (per Agrawal et al., ICLR 2026 "Reflective Prompt Evolution Can Outperform RL"):
+// Algorithm (Agrawal et al., ICLR 2026 "Reflective Prompt Evolution Can Outperform RL"):
 //
-//   1. SAMPLE   — pull execution traces for this skill from the episodic store.
-//                 Mix successes + failures; recent + diverse.
-//   2. REFLECT  — LLM reads traces, identifies what made successes succeed and
-//                 failures fail. Output: structured failure modes + improvement directions.
-//   3. GENERATE — produce K candidate variants of the skill body, each addressing
-//                 one or more failure modes.
-//   4. EVALUATE — for each variant, simulate (or replay) on a held-out trace set,
-//                 score against multiple objectives.
-//   5. SELECT   — Pareto frontier across (quality, size, compat, tests).
-//                 Pick the non-dominated set; from those, pick the highest-quality
-//                 with size below the parent's.
-//   6. PROPOSE  — write the winner as a proposal (diff against current SKILL.md)
-//                 to the proposals queue. User accepts via `agent-daemon review`.
+//   1. SAMPLE   — pull execution traces from the SQLite store (stratified failures + successes)
+//   2. REFLECT  — LLM reads traces; outputs structured failure modes + success patterns
+//   3. GENERATE — LLM produces K candidate variants of the body, each addressing failure modes
+//   4. EVALUATE — LLM-as-judge scores each candidate (addresses_failures + preserves_purpose + clarity)
+//   5. SELECT   — Pareto frontier across (quality, size, compat, tests)
+//   6. PROPOSE  — write the winner as a markdown proposal in .agent-daemon/proposed/
 //
-// v0.1 status: orchestrator skeleton + module stubs. The five sub-modules
-// (sample, reflect, generate, evaluate, select) are present as stubs that
-// document their I/O contracts. Wiring to headless `claude` and the SQLite
-// store lands in v0.2.
+// v0.3: real LLM calls in stages 2-4 via headless `claude --bare`. Stage 5 was
+// already real in v0.2.
 //
-// Inspired by Hermes Agent's self-evolution (https://github.com/NousResearch/hermes-agent-self-evolution).
+// Inspired by Hermes Agent's self-evolution.
 
 import path from "node:path";
 import fs from "node:fs/promises";
@@ -34,35 +25,38 @@ import { paretoSelect } from "./select.mjs";
 
 /**
  * @typedef {Object} EvolveOptions
- * @property {string} skillPath        - absolute path to the SKILL.md file
- * @property {string} skillName        - logical name (matches frontmatter and dir)
- * @property {number} [variantCount=8] - K candidates to generate
+ * @property {string} skillPath
+ * @property {string} skillName
+ * @property {number} [variantCount=4]
  * @property {number} [traceSampleSize=20]
  * @property {number} [evalHoldoutSize=10]
- * @property {string} [evalSource='sessiondb']  - 'sessiondb' | 'synthetic'
+ * @property {string} [evalSource='sessiondb']
  * @property {boolean} [dryRun=false]
  * @property {boolean} [verbose=false]
- * @property {string} [proposedDir]    - where to drop the winning-variant proposal
+ * @property {string} [proposedDir]
+ * @property {string} [model]
+ * @property {number} [maxBudgetUsd=0.50]
  *
  * @typedef {Object} EvolveResult
  * @property {string} runId
  * @property {string} skillName
- * @property {Object[]} variants
+ * @property {Object[]} scored
  * @property {Object[]} winners
  * @property {string|null} proposalPath
- * @property {string} status           - 'no-traces' | 'no-improvement' | 'proposed' | 'error'
+ * @property {string} status      - 'no-traces' | 'no-improvement' | 'proposed' | 'error'
  * @property {string} reason
+ * @property {number} totalCostUsd
  */
 
 /**
- * Run one full GEPA evolution pass on a single skill.
- *
  * @param {EvolveOptions} opts
  * @returns {Promise<EvolveResult>}
  */
 export async function evolveSkill(opts) {
   const runId = `evolve-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   const log = opts.verbose ? (msg) => console.error(`[${runId}] ${msg}`) : () => {};
+  let totalCost = 0;
+  const empty = (status, reason) => ({ runId, skillName: opts.skillName, scored: [], winners: [], proposalPath: null, status, reason, totalCostUsd: totalCost });
 
   log(`evolving skill: ${opts.skillName}`);
 
@@ -71,10 +65,10 @@ export async function evolveSkill(opts) {
   try {
     parentBody = await fs.readFile(opts.skillPath, "utf8");
   } catch (err) {
-    return { runId, skillName: opts.skillName, variants: [], winners: [], proposalPath: null, status: "error", reason: `cannot read skill: ${err.message}` };
+    return empty("error", `cannot read skill file: ${err.message}`);
   }
 
-  // Stage 1 — sample execution traces
+  // Stage 1 — sample
   log("stage 1/5 — sampling traces");
   const traces = await sampleTraces({
     skillName: opts.skillName,
@@ -83,53 +77,78 @@ export async function evolveSkill(opts) {
     source: opts.evalSource ?? "sessiondb"
   });
   if (traces.training.length === 0) {
-    log("no training traces — skipping evolution");
-    return { runId, skillName: opts.skillName, variants: [], winners: [], proposalPath: null, status: "no-traces", reason: "no execution traces found for this skill" };
+    return empty("no-traces", `no execution traces for skill "${opts.skillName}" in episodic store (run a few sessions first, or seed via recordSkillExecution)`);
   }
+  log(`  sampled training=${traces.training.length} holdout=${traces.holdout.length} (successes=${traces.stats.successes}, failures=${traces.stats.failures})`);
 
-  // Stage 2 — reflect on successes vs failures
-  log(`stage 2/5 — reflecting on ${traces.training.length} traces (${traces.training.filter(t => t.succeeded).length} ✓, ${traces.training.filter(t => !t.succeeded).length} ✗)`);
-  const reflections = await reflectOnTraces({
+  // Stage 2 — reflect
+  log("stage 2/5 — reflecting on traces (headless claude)");
+  const reflectResult = await reflectOnTraces({
     skillName: opts.skillName,
     parentBody,
     traces: traces.training,
+    model: opts.model,
+    maxBudgetUsd: opts.maxBudgetUsd ? opts.maxBudgetUsd * 0.2 : 0.10,
     verbose: opts.verbose
   });
+  if (!reflectResult.ok) {
+    return empty("error", `reflect failed: ${reflectResult.error}`);
+  }
+  totalCost += reflectResult.costUsd || 0;
+  const reflections = reflectResult.reflections;
+  log(`  identified ${reflections.failureModes.length} failure mode(s), ${reflections.successPatterns.length} success pattern(s)`);
 
-  // Stage 3 — generate candidate variants
-  log(`stage 3/5 — generating ${opts.variantCount ?? 8} candidate variants`);
-  const variants = await generateVariants({
+  if (reflections.failureModes.length === 0 && traces.training.filter(t => t.succeeded === false).length === 0) {
+    return empty("no-improvement", "no failures observed in training set — nothing to improve");
+  }
+
+  // Stage 3 — generate
+  log(`stage 3/5 — generating ${opts.variantCount ?? 4} variants (headless claude)`);
+  const generateResult = await generateVariants({
     skillName: opts.skillName,
     parentBody,
     reflections,
-    count: opts.variantCount ?? 8,
+    count: opts.variantCount ?? 4,
+    model: opts.model,
+    maxBudgetUsd: opts.maxBudgetUsd ? opts.maxBudgetUsd * 0.4 : 0.20,
     verbose: opts.verbose
   });
+  if (!generateResult.ok || !generateResult.variants || generateResult.variants.length === 0) {
+    return empty("error", `generate failed: ${generateResult.error || "no variants produced"}`);
+  }
+  totalCost += generateResult.costUsd || 0;
+  log(`  generated ${generateResult.variants.length} variant(s)`);
 
-  // Stage 4 — evaluate each variant against held-out traces
-  log(`stage 4/5 — evaluating ${variants.length} variants against ${traces.holdout.length} held-out traces`);
-  const scored = await evaluateVariants({
-    variants,
-    holdoutTraces: traces.holdout,
+  // Stage 4 — evaluate (LLM-as-judge)
+  log(`stage 4/5 — evaluating variants (LLM-as-judge)`);
+  const evalResult = await evaluateVariants({
+    variants: generateResult.variants,
     parentBody,
+    skillName: opts.skillName,
+    reflections,
+    model: opts.model,
+    maxBudgetUsd: opts.maxBudgetUsd ? opts.maxBudgetUsd * 0.4 : 0.20,
     verbose: opts.verbose
   });
+  if (!evalResult.ok) {
+    return empty("error", `evaluate failed: ${evalResult.error}`);
+  }
+  totalCost += evalResult.totalCostUsd || 0;
+  const scored = evalResult.scored;
+  log(`  parent baseline = ${evalResult.parentBaseline.toFixed(2)}, candidate range: ${Math.min(...scored.map(s => s.scores.quality)).toFixed(2)} → ${Math.max(...scored.map(s => s.scores.quality)).toFixed(2)}`);
 
-  // Stage 5 — Pareto select winners
+  // Stage 5 — Pareto select
   log("stage 5/5 — Pareto selection");
   const winners = paretoSelect(scored, parentBody);
   if (winners.length === 0) {
-    log("no winning variants on the Pareto frontier — parent dominates");
-    return { runId, skillName: opts.skillName, variants: scored, winners: [], proposalPath: null, status: "no-improvement", reason: "no candidate variants improved on the parent across the Pareto objectives" };
+    return { ...empty("no-improvement", "no candidate variants beat the parent on the Pareto frontier"), scored };
   }
-
-  // Pick the highest-quality winner that's not larger than the parent
   const best = winners[0];
+  log(`  ${winners.length} winner(s); best: ${best.variantId} (quality=${best.scores.quality.toFixed(2)}, size=${best.scores.size})`);
 
   // Write proposal
   if (opts.dryRun) {
-    log(`[dry-run] would propose: ${best.variantId} (quality=${best.scores.quality}, size=${best.scores.size})`);
-    return { runId, skillName: opts.skillName, variants: scored, winners, proposalPath: null, status: "proposed", reason: "dry-run; no proposal written" };
+    return { runId, skillName: opts.skillName, scored, winners, proposalPath: null, status: "proposed", reason: "[dry-run] no proposal written", totalCostUsd: totalCost };
   }
 
   const proposedDir = opts.proposedDir || path.join(process.cwd(), ".agent-daemon", "proposed");
@@ -143,7 +162,8 @@ export async function evolveSkill(opts) {
     parentBody,
     winner: best,
     allWinners: winners,
-    reflections
+    reflections,
+    totalCostUsd: totalCost
   });
 
   await fs.writeFile(proposalPath, proposalContent, "utf8");
@@ -152,48 +172,54 @@ export async function evolveSkill(opts) {
   return {
     runId,
     skillName: opts.skillName,
-    variants: scored,
+    scored,
     winners,
     proposalPath,
     status: "proposed",
-    reason: `${winners.length} winner(s); best variant gained quality=${best.scores.quality.toFixed(2)} (parent baseline=${best.parentBaseline.toFixed(2)})`
+    reason: `${winners.length} winner(s); best variant quality=${best.scores.quality.toFixed(2)} vs parent baseline=${best.parentBaseline.toFixed(2)}`,
+    totalCostUsd: totalCost
   };
 }
 
-function renderProposal({ runId, skillName, skillPath, parentBody, winner, allWinners, reflections }) {
+function renderProposal({ runId, skillName, skillPath, parentBody, winner, allWinners, reflections, totalCostUsd }) {
   const lines = [
     `# Proposed skill update — ${skillName}`,
     "",
-    `_Run id: ${runId}_  ·  _Generated: ${new Date().toISOString()}_`,
+    `_Run id: ${runId}_  ·  _Generated: ${new Date().toISOString()}_  ·  _Cost: $${(totalCostUsd || 0).toFixed(4)}_`,
     "",
     "## Why this change",
     "",
     "GEPA evolution found this variant improves on the parent across the Pareto frontier of",
     "(task quality, size, compatibility, tests).",
     "",
-    "**Reflection summary** (failure modes the variant addresses):",
+    "**Failure modes the variant addresses:**",
     "",
-    ...reflections.failureModes.map(fm => `- **${fm.title}** — ${fm.description}`),
+    ...(reflections.failureModes.length > 0
+      ? reflections.failureModes.map(fm => `- **${fm.title}** — ${fm.description}`)
+      : ["_(none — refinement based on success patterns)_"]),
+    "",
+    "**Reflection summary:** " + reflections.summary,
     "",
     "## Scores",
     "",
-    `| Metric         | Parent | Winner | Δ |`,
-    `|---------------|--------|--------|---|`,
-    `| Quality        | ${winner.parentBaseline.toFixed(2)} | ${winner.scores.quality.toFixed(2)} | ${(winner.scores.quality - winner.parentBaseline).toFixed(2)} |`,
-    `| Size (chars)   | ${parentBody.length} | ${winner.scores.size} | ${winner.scores.size - parentBody.length} |`,
-    `| Compat         | 1 | ${winner.scores.compat} | — |`,
-    `| Tests passed   | 1 | ${winner.scores.testPass} | — |`,
+    `| Metric          | Parent | Winner | Δ |`,
+    `|-----------------|--------|--------|---|`,
+    `| Quality (LLM-as-judge) | ${winner.parentBaseline.toFixed(2)} | ${winner.scores.quality.toFixed(2)} | ${(winner.scores.quality - winner.parentBaseline).toFixed(2)} |`,
+    `| Size (chars)    | ${parentBody.length} | ${winner.scores.size} | ${winner.scores.size - parentBody.length} |`,
+    `| Compat          | 1 | ${winner.scores.compat} | — |`,
+    `| Tests passed    | 1 | ${winner.scores.testPass} | — |`,
     "",
-    `**Total winners on frontier:** ${allWinners.length}`,
+    `**Judge rationale:** ${winner.judgeRationale || "(none)"}`,
+    "",
+    `**Total winners on Pareto frontier:** ${allWinners.length}`,
     "",
     "## To accept",
     "",
-    "```bash",
-    `# review the diff (proposal includes the winner body inline below)`,
-    `agent-daemon review`,
+    "Run `agent-daemon review` and choose **(a)ccept** when prompted. Or apply manually:",
     "",
-    `# accept (manual for v0.1)`,
-    `cp '${proposalPath_relForDoc(skillPath)}' '${skillPath}'`,
+    "```bash",
+    `# Replace the body of ${displayPath(skillPath)} with the winner body below`,
+    `# (preserve the YAML frontmatter at the top — variants do NOT include it)`,
     "```",
     "",
     "## Winner body",
@@ -201,15 +227,29 @@ function renderProposal({ runId, skillName, skillPath, parentBody, winner, allWi
     "```markdown",
     winner.body,
     "```",
-    "",
-    "## Other Pareto winners (alternatives)",
-    "",
-    ...allWinners.slice(1, 4).map((w, i) => `### Alternative ${i + 1}\n\nQuality=${w.scores.quality.toFixed(2)} Size=${w.scores.size}\n\n<details><summary>Body</summary>\n\n\`\`\`markdown\n${w.body}\n\`\`\`\n\n</details>`)
+    ""
   ];
+
+  if (allWinners.length > 1) {
+    lines.push("## Other Pareto winners (alternatives)");
+    lines.push("");
+    for (const [i, w] of allWinners.slice(1, 4).entries()) {
+      lines.push(`### Alternative ${i + 1} — quality=${w.scores.quality.toFixed(2)}, size=${w.scores.size}`);
+      lines.push("");
+      lines.push("<details><summary>Show body</summary>");
+      lines.push("");
+      lines.push("```markdown");
+      lines.push(w.body);
+      lines.push("```");
+      lines.push("");
+      lines.push("</details>");
+      lines.push("");
+    }
+  }
+
   return lines.join("\n");
 }
 
-function proposalPath_relForDoc(skillPath) {
-  // Just for display in the proposal markdown
-  return skillPath.replace(/.*[\\/]skills[\\/]/, "skills/");
+function displayPath(absPath) {
+  return absPath.replace(/.*[\\/]skills[\\/]/, "skills/");
 }

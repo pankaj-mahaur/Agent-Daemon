@@ -1,67 +1,79 @@
 // GEPA Stage 1 — sample execution traces for a skill.
 //
-// Pulls past skill_executions rows from the episodic SQLite store, splits them
+// Pulls past skill_executions rows from the SQLite store and splits them
 // into training (used by reflect+generate) and holdout (used by evaluate).
-//
-// Sampling strategy:
-//   - Stratified by success/failure (~50/50 mix when both available).
-//   - Recency-weighted: prefer the last ~30 days.
-//   - Diversity: avoid duplicate trigger_text patterns.
+
+import { sampleSkillExecutions } from "../../memory/episodic.mjs";
 
 /**
  * @typedef {Object} SkillTrace
  * @property {number} id
  * @property {string} sessionId
  * @property {string} skillName
- * @property {string} skillVersion
- * @property {string} triggerText
- * @property {boolean} succeeded
+ * @property {string|null} skillVersion
+ * @property {string|null} triggerText
+ * @property {boolean|null} succeeded
  * @property {string|null} failureReason
- * @property {Object[]} events             // ordered tool_calls + assistant turns from this skill's activation
  * @property {string} createdAt
  *
  * @typedef {Object} SampledTraces
  * @property {SkillTrace[]} training
  * @property {SkillTrace[]} holdout
+ * @property {Object} stats         - { total, successes, failures }
  */
 
 /**
- * @param {{skillName: string, sampleSize: number, holdoutSize: number, source: string}} opts
+ * @param {{
+ *   skillName: string,
+ *   sampleSize?: number,        - target training size (default 20)
+ *   holdoutSize?: number,       - target holdout size (default 10)
+ *   source?: 'sessiondb' | 'synthetic'
+ * }} opts
  * @returns {Promise<SampledTraces>}
  */
 export async function sampleTraces(opts) {
-  // v0.1 stub: returns empty arrays since SQLite read isn't wired.
-  // v0.2 implementation:
-  //
-  //   const db = openDb();
-  //   const total = opts.sampleSize + opts.holdoutSize;
-  //   const rows = db.prepare(`
-  //     SELECT * FROM skill_executions
-  //     WHERE skill_name = ?
-  //       AND created_at >= date('now', '-90 days')
-  //     ORDER BY succeeded ASC, created_at DESC
-  //     LIMIT ?
-  //   `).all(opts.skillName, total);
-  //
-  //   // For each row, fetch the associated events from messages + tool_calls
-  //   const traces = await Promise.all(rows.map(async row => ({
-  //     ...row,
-  //     events: await fetchSkillEvents(row.session_id, row.created_at)
-  //   })));
-  //
-  //   // Stratified split — failures over-represented in training so we learn from them
-  //   const failures = traces.filter(t => !t.succeeded);
-  //   const successes = traces.filter(t => t.succeeded);
-  //   const trainingTarget = Math.min(opts.sampleSize, traces.length);
-  //   const training = stratifiedSample([failures, successes], trainingTarget, [0.6, 0.4]);
-  //   const holdout = traces.filter(t => !training.includes(t)).slice(0, opts.holdoutSize);
-  //
-  //   return { training, holdout };
+  const sampleSize  = opts.sampleSize ?? 20;
+  const holdoutSize = opts.holdoutSize ?? 10;
 
   if (opts.source === "synthetic") {
-    // Future: synthesize traces from a description for cold-start.
-    return { training: [], holdout: [] };
+    return { training: [], holdout: [], stats: { total: 0, successes: 0, failures: 0 } };
   }
 
-  return { training: [], holdout: [] };
+  const total = sampleSize + holdoutSize;
+  const rows = await sampleSkillExecutions({ skillName: opts.skillName, total });
+
+  // Normalize to SkillTrace shape
+  const traces = rows.map(r => ({
+    id: r.id,
+    sessionId: r.session_id,
+    skillName: r.skill_name,
+    skillVersion: null,
+    triggerText: r.trigger_text,
+    succeeded: r.succeeded === null ? null : r.succeeded === 1,
+    failureReason: r.failure_reason,
+    createdAt: r.created_at
+  }));
+
+  const failures  = traces.filter(t => t.succeeded === false);
+  const successes = traces.filter(t => t.succeeded === true);
+  const unknowns  = traces.filter(t => t.succeeded === null);
+
+  // Stratified split — failures over-represented in training (60%)
+  // because we want the reflect step to focus on what went wrong.
+  const trainFailureTarget = Math.ceil(sampleSize * 0.6);
+  const trainSuccessTarget = sampleSize - trainFailureTarget;
+
+  const trainFailures  = failures.slice(0, trainFailureTarget);
+  const trainSuccesses = successes.slice(0, trainSuccessTarget);
+  const training = [...trainFailures, ...trainSuccesses, ...unknowns].slice(0, sampleSize);
+
+  // Holdout = remaining traces (those not in training)
+  const trainingIds = new Set(training.map(t => t.id));
+  const holdout = traces.filter(t => !trainingIds.has(t.id)).slice(0, holdoutSize);
+
+  return {
+    training,
+    holdout,
+    stats: { total: traces.length, successes: successes.length, failures: failures.length }
+  };
 }
