@@ -3,55 +3,177 @@ set -euo pipefail
 
 TOOLKIT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SKILLS_DIR="$TOOLKIT_DIR/skills"
-GLOBAL_TARGET="$HOME/.claude/skills"
-LOCAL_TARGET=".agents/skills"
+MCP_DIR="$TOOLKIT_DIR/mcp"
+PLUGINS_DIR="$TOOLKIT_DIR/plugins"
+TOOLS_DIR="$TOOLKIT_DIR/tools"
+ADAPTERS_DIR="$TOOLKIT_DIR/adapters"
+
+GLOBAL_SKILLS="$HOME/.claude/skills"
+GLOBAL_PLUGINS="$HOME/.claude/plugins"
+LOCAL_SKILLS=".claude/skills"
+LOCAL_PLUGINS=".claude/plugins"
 
 ALL_SKILLS=(
   diagnose-fetch-failure
+  diagnose-intermittent-failure
   graphify
   qmd
   seed-data
   review-slice
+  audit-runner
   merge-feature-branch
   security-audit
   production-readiness
   optimization-audit
   dead-code-review
   docs-sync-audit
+  implement-feature
+  debug-triage
+  db-migrations
+  llm-app-safety
+  multiplatform-parity
+  deploy-ops
 )
 
 usage() {
   cat <<EOF
-Claude Code Toolkit — Skill Installer
+agent-daemon — Universal Installer
 
 Usage:
-  ./setup.sh --all                              Install all skills globally
-  ./setup.sh --skills name1,name2               Install specific skills globally
-  ./setup.sh --skills name1 --project-local     Install to current project (.agents/skills/)
-  ./setup.sh --list                             List available skills
+  ./setup.sh --all                              Install everything (skills + runtime + hooks)
+  ./setup.sh --skills name1,name2               Install specific skills (global)
+  ./setup.sh --skills name1 --project-local     Install skills to current project (.claude/skills/)
+  ./setup.sh --mcp name1,name2                  Install MCP server configs (when content lands)
+  ./setup.sh --plugins name1,name2              Install Claude Code plugins (when content lands)
+  ./setup.sh --tools name1,name2                Install standalone CLI tools (when content lands)
+  ./setup.sh --runtime                          Install the agent-daemon CLI to ~/.local/bin/
+  ./setup.sh --hooks                            Print hook snippets to merge into ~/.claude/settings.json
+  ./setup.sh --list                             List everything available
   ./setup.sh --dry-run --all                    Show what would be installed
 
 Options:
-  --all             Install all skills
+  --all             Install everything across all categories + runtime + hook prompt
   --skills NAME     Comma-separated list of skill names
-  --project-local   Install to .agents/skills/ instead of ~/.claude/skills/
+  --mcp NAME        Comma-separated list of MCP server names
+  --plugins NAME    Comma-separated list of plugin names
+  --tools NAME      Comma-separated list of tool names
+  --runtime         Install the agent-daemon CLI to ~/.local/bin/ (the self-improving runtime)
+  --hooks           Print hook configs for SessionStart / SessionEnd / PreCompact
+  --project-local   Install skills/plugins to .claude/<kind>/ instead of ~/.claude/<kind>/
   --dry-run         Show what would happen without making changes
-  --list            List available skills and exit
+  --list            List available items in every category
   --help            Show this help
+
+Categories:
+  skills    — Claude Code skills (SKILL.md). Active and well-populated (19 skills).
+  mcp       — Model Context Protocol server configs. Scaffolded.
+  plugins   — Claude Code plugins (commands + agents + hooks + skills bundles). Scaffolded.
+  tools     — Standalone CLI tools agents can invoke. Scaffolded.
+  adapters  — Format converters: SKILL.md -> Cursor/AGENTS.md/Copilot. Scaffolded.
+  runtime   — The agent-daemon Node CLI that drives the self-improving loop.
+  hooks     — Pre-baked Claude Code hook configs that wire the runtime into your sessions.
+
+Quick start (full install):
+  ./setup.sh --all      # then follow the printed instructions to merge the hook snippets
 EOF
 }
 
-list_skills() {
-  echo "Available skills:"
+install_runtime() {
+  local dry_run="$1"
+  local runtime_dir="$TOOLKIT_DIR/runtime"
+  local cli_src="$runtime_dir/src/cli.mjs"
+  local bin_dir="$HOME/.local/bin"
+  local bin_target="$bin_dir/agent-daemon"
+
+  if [ ! -f "$cli_src" ]; then
+    echo "  SKIP: runtime (cli.mjs not found at $cli_src)"
+    return 1
+  fi
+
+  if ! command -v node >/dev/null 2>&1; then
+    echo "  SKIP: runtime (node not on PATH — install Node.js >= 22 first)"
+    return 1
+  fi
+
+  if [ "$dry_run" = "true" ]; then
+    echo "  WOULD INSTALL: agent-daemon CLI -> $bin_target (symlink to $cli_src)"
+    return 0
+  fi
+
+  mkdir -p "$bin_dir"
+  ln -sf "$cli_src" "$bin_target"
+  chmod +x "$cli_src" "$bin_target"
+
+  echo "  INSTALLED: agent-daemon CLI -> $bin_target"
+  echo "             (ensure $bin_dir is on your PATH)"
+  return 0
+}
+
+print_hook_snippets() {
+  local hooks_dir="$TOOLKIT_DIR/hooks"
   echo ""
-  for skill in "${ALL_SKILLS[@]}"; do
-    if [ -f "$SKILLS_DIR/$skill/SKILL.md" ]; then
-      desc=$(grep "^description:" "$SKILLS_DIR/$skill/SKILL.md" | head -1 | sed 's/^description: //')
-      printf "  %-25s %s\n" "$skill" "$desc"
+  echo "═══ Hook configs for ~/.claude/settings.json ═══"
+  echo ""
+  echo "Merge each block below into the corresponding section of your settings.json."
+  echo "If settings.json doesn't exist, create one with: { \"hooks\": { ... } }"
+  echo ""
+
+  for snippet in session-start-load.json session-end-digest.json pre-compact-checkpoint.json; do
+    local f="$hooks_dir/$snippet"
+    if [ -f "$f" ]; then
+      echo "─── $snippet ───"
+      cat "$f"
+      echo ""
     fi
   done
+
+  echo "After merging, verify with:  agent-daemon doctor"
+}
+
+# List items in a category by reading directories with a marker file
+list_category() {
+  local title="$1"
+  local dir="$2"
+  local marker="$3"
+
+  echo "$title"
   echo ""
-  echo "Install with: ./setup.sh --skills name1,name2"
+
+  if [ ! -d "$dir" ]; then
+    echo "  (directory missing — nothing to list)"
+    echo ""
+    return
+  fi
+
+  local found=0
+  for entry in "$dir"/*/; do
+    [ -d "$entry" ] || continue
+    local name
+    name=$(basename "$entry")
+    if [ -f "$entry/$marker" ]; then
+      local desc
+      desc=$(grep -m1 "^description:" "$entry/$marker" 2>/dev/null | sed 's/^description: //' || echo "")
+      if [ -z "$desc" ]; then
+        desc="(no description)"
+      fi
+      printf "  %-30s %s\n" "$name" "$desc"
+      found=$((found + 1))
+    fi
+  done
+
+  if [ "$found" -eq 0 ]; then
+    echo "  (scaffolded — no items yet)"
+  fi
+  echo ""
+}
+
+list_all() {
+  list_category "Skills (skills/):" "$SKILLS_DIR" "SKILL.md"
+  list_category "MCP servers (mcp/):" "$MCP_DIR" "README.md"
+  list_category "Plugins (plugins/):" "$PLUGINS_DIR" "plugin.json"
+  list_category "Tools (tools/):" "$TOOLS_DIR" "README.md"
+  list_category "Adapters (adapters/):" "$ADAPTERS_DIR" "README.md"
+  echo "Install with: ./setup.sh --skills name1,name2  (or --mcp / --plugins / --tools / --all)"
 }
 
 install_skill() {
@@ -73,18 +195,80 @@ install_skill() {
   fi
 
   if [ "$dry_run" = "true" ]; then
-    echo "  WOULD INSTALL: $name -> $dst"
+    echo "  WOULD INSTALL: skill $name -> $dst"
     return 0
   fi
 
   mkdir -p "$dst"
   cp -r "$src"/* "$dst/"
-  echo "  INSTALLED: $name -> $dst"
+  echo "  INSTALLED: skill $name -> $dst"
+}
+
+install_plugin() {
+  local name="$1"
+  local target="$2"
+  local dry_run="$3"
+
+  local src="$PLUGINS_DIR/$name"
+  local dst="$target/$name"
+
+  if [ ! -d "$src" ]; then
+    echo "  SKIP: $name (plugin not found)"
+    return 1
+  fi
+  if [ ! -f "$src/plugin.json" ]; then
+    echo "  SKIP: $name (no plugin.json)"
+    return 1
+  fi
+
+  if [ "$dry_run" = "true" ]; then
+    echo "  WOULD INSTALL: plugin $name -> $dst"
+    return 0
+  fi
+
+  mkdir -p "$dst"
+  cp -r "$src"/* "$dst/"
+  echo "  INSTALLED: plugin $name -> $dst"
+}
+
+# MCP and tools install paths are user-decision; we print snippets.
+print_mcp_install_hint() {
+  local name="$1"
+  local src="$MCP_DIR/$name"
+
+  if [ ! -d "$src" ]; then
+    echo "  SKIP: mcp $name (not found)"
+    return 1
+  fi
+
+  echo "  MCP $name:"
+  echo "    See $src/README.md for install steps."
+  if [ -f "$src/claude-code.json" ]; then
+    echo "    Claude Code snippet: $src/claude-code.json"
+  fi
+}
+
+print_tool_install_hint() {
+  local name="$1"
+  local src="$TOOLS_DIR/$name"
+
+  if [ ! -d "$src" ]; then
+    echo "  SKIP: tool $name (not found)"
+    return 1
+  fi
+
+  echo "  TOOL $name:"
+  echo "    See $src/README.md for install steps."
 }
 
 # Parse arguments
 INSTALL_ALL=false
+INSTALL_RUNTIME=false
+SHOW_HOOKS=false
 SELECTED_SKILLS=()
+SELECTED_MCP=()
+SELECTED_PLUGINS=()
+SELECTED_TOOLS=()
 PROJECT_LOCAL=false
 DRY_RUN=false
 
@@ -98,6 +282,26 @@ while [[ $# -gt 0 ]]; do
       IFS=',' read -ra SELECTED_SKILLS <<< "$2"
       shift 2
       ;;
+    --mcp)
+      IFS=',' read -ra SELECTED_MCP <<< "$2"
+      shift 2
+      ;;
+    --plugins)
+      IFS=',' read -ra SELECTED_PLUGINS <<< "$2"
+      shift 2
+      ;;
+    --tools)
+      IFS=',' read -ra SELECTED_TOOLS <<< "$2"
+      shift 2
+      ;;
+    --runtime)
+      INSTALL_RUNTIME=true
+      shift
+      ;;
+    --hooks)
+      SHOW_HOOKS=true
+      shift
+      ;;
     --project-local)
       PROJECT_LOCAL=true
       shift
@@ -107,7 +311,7 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --list)
-      list_skills
+      list_all
       exit 0
       ;;
     --help|-h)
@@ -122,49 +326,129 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [ "$INSTALL_ALL" = false ] && [ ${#SELECTED_SKILLS[@]} -eq 0 ]; then
+if [ "$INSTALL_ALL" = false ] \
+  && [ "$INSTALL_RUNTIME" = false ] \
+  && [ "$SHOW_HOOKS" = false ] \
+  && [ ${#SELECTED_SKILLS[@]} -eq 0 ] \
+  && [ ${#SELECTED_MCP[@]} -eq 0 ] \
+  && [ ${#SELECTED_PLUGINS[@]} -eq 0 ] \
+  && [ ${#SELECTED_TOOLS[@]} -eq 0 ]; then
   usage
   exit 1
 fi
 
-# Determine target directory
+# Determine target directories
 if [ "$PROJECT_LOCAL" = true ]; then
-  TARGET="$LOCAL_TARGET"
-  echo "Installing to project-local: $TARGET/"
+  SKILLS_TARGET="$LOCAL_SKILLS"
+  PLUGINS_TARGET="$LOCAL_PLUGINS"
+  echo "Installing to project-local: ./.claude/"
 else
-  TARGET="$GLOBAL_TARGET"
-  echo "Installing to global: $TARGET/"
+  SKILLS_TARGET="$GLOBAL_SKILLS"
+  PLUGINS_TARGET="$GLOBAL_PLUGINS"
+  echo "Installing to global: $HOME/.claude/"
 fi
 
-# Create target directory
-if [ "$DRY_RUN" = false ]; then
-  mkdir -p "$TARGET"
-fi
-
-# Install skills
+# Expand --all to populate every category that has content
 if [ "$INSTALL_ALL" = true ]; then
-  SELECTED_SKILLS=("${ALL_SKILLS[@]}")
+  if [ ${#SELECTED_SKILLS[@]} -eq 0 ]; then
+    SELECTED_SKILLS=("${ALL_SKILLS[@]}")
+  fi
+  # mcp/plugins/tools auto-discover from filesystem (every dir with the marker)
+  if [ ${#SELECTED_MCP[@]} -eq 0 ] && [ -d "$MCP_DIR" ]; then
+    for entry in "$MCP_DIR"/*/; do
+      [ -d "$entry" ] || continue
+      [ -f "$entry/README.md" ] || continue
+      # Skip the top-level mcp/README.md (the directory README, not a server)
+      SELECTED_MCP+=("$(basename "$entry")")
+    done
+  fi
+  if [ ${#SELECTED_PLUGINS[@]} -eq 0 ] && [ -d "$PLUGINS_DIR" ]; then
+    for entry in "$PLUGINS_DIR"/*/; do
+      [ -d "$entry" ] || continue
+      [ -f "$entry/plugin.json" ] || continue
+      SELECTED_PLUGINS+=("$(basename "$entry")")
+    done
+  fi
+  if [ ${#SELECTED_TOOLS[@]} -eq 0 ] && [ -d "$TOOLS_DIR" ]; then
+    for entry in "$TOOLS_DIR"/*/; do
+      [ -d "$entry" ] || continue
+      [ -f "$entry/README.md" ] || continue
+      SELECTED_TOOLS+=("$(basename "$entry")")
+    done
+  fi
+fi
+
+# Create target directories
+if [ "$DRY_RUN" = false ]; then
+  [ ${#SELECTED_SKILLS[@]} -gt 0 ] && mkdir -p "$SKILLS_TARGET"
+  [ ${#SELECTED_PLUGINS[@]} -gt 0 ] && mkdir -p "$PLUGINS_TARGET"
 fi
 
 echo ""
 SUCCESS=0
 FAILED=0
 
+# Skills
 for skill in "${SELECTED_SKILLS[@]}"; do
-  if install_skill "$skill" "$TARGET" "$DRY_RUN"; then
+  [ -z "$skill" ] && continue
+  if install_skill "$skill" "$SKILLS_TARGET" "$DRY_RUN"; then
     SUCCESS=$((SUCCESS + 1))
   else
     FAILED=$((FAILED + 1))
   fi
 done
 
+# Plugins
+for plugin in "${SELECTED_PLUGINS[@]}"; do
+  [ -z "$plugin" ] && continue
+  if install_plugin "$plugin" "$PLUGINS_TARGET" "$DRY_RUN"; then
+    SUCCESS=$((SUCCESS + 1))
+  else
+    FAILED=$((FAILED + 1))
+  fi
+done
+
+# MCP servers (print hints, since install paths are user-decision)
+for mcp in "${SELECTED_MCP[@]}"; do
+  [ -z "$mcp" ] && continue
+  if print_mcp_install_hint "$mcp"; then
+    SUCCESS=$((SUCCESS + 1))
+  else
+    FAILED=$((FAILED + 1))
+  fi
+done
+
+# Tools (print hints)
+for tool in "${SELECTED_TOOLS[@]}"; do
+  [ -z "$tool" ] && continue
+  if print_tool_install_hint "$tool"; then
+    SUCCESS=$((SUCCESS + 1))
+  else
+    FAILED=$((FAILED + 1))
+  fi
+done
+
+# Runtime
+if [ "$INSTALL_RUNTIME" = true ] || [ "$INSTALL_ALL" = true ]; then
+  if install_runtime "$DRY_RUN"; then
+    SUCCESS=$((SUCCESS + 1))
+  else
+    FAILED=$((FAILED + 1))
+  fi
+fi
+
+# Hooks (always informational — we never auto-merge settings.json in v0.1)
+if [ "$SHOW_HOOKS" = true ] || [ "$INSTALL_ALL" = true ]; then
+  print_hook_snippets
+fi
+
 echo ""
 if [ "$DRY_RUN" = true ]; then
-  echo "Dry run complete. $SUCCESS skill(s) would be installed."
+  echo "Dry run complete. $SUCCESS item(s) would be installed."
 else
-  echo "Done. $SUCCESS skill(s) installed."
+  echo "Done. $SUCCESS item(s) installed."
 fi
 
 if [ $FAILED -gt 0 ]; then
-  echo "$FAILED skill(s) skipped."
+  echo "$FAILED item(s) skipped."
 fi
