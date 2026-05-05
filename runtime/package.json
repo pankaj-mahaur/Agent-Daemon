@@ -1,0 +1,31 @@
+{
+  "name": "agent-daemon",
+  "version": "0.1.0",
+  "description": "Self-improving memory + skills runtime for AI coding agents",
+  "type": "module",
+  "bin": {
+    "agent-daemon": "./src/cli.mjs"
+  },
+  "main": "./src/cli.mjs",
+  "exports": {
+    ".": "./src/cli.mjs",
+    "./adapters/claude-code": "./src/adapters/claude-code.mjs",
+    "./digest/triage": "./src/digest/triage.mjs"
+  },
+  "scripts": {
+    "test": "node --test test/",
+    "lint": "node --check src/**/*.mjs"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "dependencies": {},
+  "license": "MIT",
+  "keywords": [
+    "claude-code",
+    "ai-agent",
+    "memory",
+    "self-improving",
+    "skills"
+  ]
+}
