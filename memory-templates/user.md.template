@@ -1,0 +1,68 @@
+# User profile — {{USER_NAME}}
+
+<!-- Cross-project user-facts track. Lives at ~/.agent-daemon/user.md, NOT inside any single project. -->
+<!-- Loaded into every session, every project — captures things about YOU that apply everywhere. -->
+<!-- Honcho-style: separate from project memory, dialectic — refined over time. -->
+
+## Identity
+
+<!-- Role, where you work, what you build. The 30-second "who is this user". -->
+
+- **Name / handle:** ...
+- **Role:** ...
+- **Stack you mostly work in:** ...
+- **Years of experience:** ...
+
+## Working style
+
+<!-- How you prefer to work with an agent. The agent reads this on every session. -->
+
+- **Response register:** e.g. "Hindi-English mix is fine"; "be terse"; "always show diffs before writing"
+- **Confirmation threshold:** e.g. "ask before destructive ops, but auto-apply lint fixes"
+- **Plan-mode preference:** e.g. "prefer plan mode for anything > 3 files"
+- **Commit style:** e.g. "Conventional Commits, sign with my Co-Authored-By trailer"
+- **Testing expectation:** e.g. "always run `npm test` before reporting done unless I say otherwise"
+
+## Tools you have on this machine
+
+<!-- The "what's installed" list. Helps the agent suggest commands that will actually work. -->
+
+- **OS:** Windows 11 / macOS 15 / Linux (Ubuntu 24.04)
+- **Shell:** bash via Git Bash / zsh / fish / pwsh
+- **Editor:** VS Code / Cursor / JetBrains
+- **Package managers:** npm, pnpm, uv, cargo, brew, ...
+- **CLI tools:** `gh`, `jq`, `rg`, `fd`, `docker`, ...
+- **Languages installed:** Node 22, Python 3.13, Go 1.23, Rust 1.84, ...
+
+## Preferences (the "do this" list)
+
+<!-- Things you've corrected the agent on enough times that they should be defaults. -->
+
+- ...
+- ...
+
+## Anti-preferences (the "don't do this" list)
+
+<!-- Things you've explicitly said you don't want — repeating these is annoying. -->
+
+- ...
+- ...
+
+## Active projects (cross-project context)
+
+<!-- Brief one-liner per active project so the agent can recognize references. -->
+
+- **Project A** at `/path/to/A` — what it is, what stage
+- **Project B** at `/path/to/B` — what it is, what stage
+
+## Things you're learning / curious about
+
+<!-- The agent can volunteer relevant info when these topics come up. -->
+
+- ...
+
+---
+
+<!-- Updated rarely — only when your role / setup / strong preferences change.
+     Distinct from project memory: project files (activeContext, progress) change often;
+     this file is more stable. Edit by hand or let `agent-daemon digest` propose updates. -->

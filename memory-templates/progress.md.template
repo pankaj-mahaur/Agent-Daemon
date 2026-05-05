@@ -1,0 +1,50 @@
+# Progress — {{PROJECT_NAME}}
+
+<!-- What works, what doesn't, what's planned, what's blocked. Operational status of the project. -->
+
+## What works
+
+<!-- Features that are shipped and verified. Newer first. -->
+
+- ✅ {{FEATURE_X}} — shipped {{DATE}}, see `commit:{{HASH}}`
+- ✅ {{FEATURE_Y}} — shipped {{DATE}}
+
+## In progress
+
+<!-- Active work. Branch + status. -->
+
+- 🚧 **{{FEATURE_NAME}}** — `feature/X` branch, {{PERCENT}}% done. {{NOTE}}.
+
+## Planned
+
+<!-- What's queued. -->
+
+- 📋 {{FEATURE}} — priority: high/med/low, blocked on: ...
+
+## Recently fixed
+
+<!-- Bugs squashed in the last ~30 days. Helps the agent recognize when an "old bug" report is something already fixed. -->
+
+- 🐛 **{{BUG_TITLE}}** — fixed {{DATE}} in commit {{HASH}}. Symptom was: {{...}}
+
+## Known issues (not yet fixed)
+
+<!-- Bugs we know about but haven't fixed. Useful to flag when a report matches one. -->
+
+- ⚠️ **{{BUG_TITLE}}** — symptom: {{...}}. Workaround: {{...}}. Tracked in {{ISSUE_LINK}}.
+
+## Tech debt backlog
+
+<!-- The "we know it's wrong but not blocking" list. Sourced by audit-runner / review-slice. -->
+
+- {{ITEM}} — severity, why deferred
+
+## Recent incidents / postmortems
+
+<!-- One-liner per incident. Detailed postmortems live in INCIDENTS.md or similar. -->
+
+- {{DATE}}: {{INCIDENT}} — root cause: {{...}}, prevention: {{...}}
+
+---
+
+<!-- Updated frequently — every session that ships a fix or feature. Should be under 5KB; archive completed items quarterly to KEEP_archive.md. -->

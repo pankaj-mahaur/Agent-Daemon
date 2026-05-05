@@ -1,0 +1,21 @@
+{
+  "_comment": "Paste the entries inside the hooks.SessionStart array of your ~/.claude/settings.json. The wrapping object is for documentation only; do not include the outer braces when merging.",
+
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agent-daemon session-start --output-json",
+            "timeout": 5,
+            "async": false,
+            "shell": "auto",
+            "if": "test -d \"$CLAUDE_PROJECT_DIR/.agent-daemon\" || test -f \"$HOME/.agent-daemon/global.toml\""
+          }
+        ]
+      }
+    ]
+  }
+}

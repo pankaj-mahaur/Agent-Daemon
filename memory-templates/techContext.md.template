@@ -1,0 +1,81 @@
+# Tech context — {{PROJECT_NAME}}
+
+<!-- Stack, dependencies, dev setup, gotchas. Concrete. -->
+
+## Stack
+
+| Layer | Tech | Version |
+|---|---|---|
+| Frontend | React + Next.js | 14.2 |
+| Styling | Tailwind | 3.4 |
+| Backend | Django + DRF | 5.0 |
+| DB | Postgres | 16 |
+| Cache | Redis (django-redis) | 5.0 |
+| Background jobs | Celery | 5.3 |
+| Hosting | Docker Compose (dev) / VPS (prod) | — |
+
+<!-- Replace with your actual stack. -->
+
+## Dev setup
+
+<!-- The minimal commands to get a fresh clone running. -->
+
+```bash
+git clone ...
+cd ...
+docker compose up -d
+docker compose exec server python manage.py migrate
+docker compose exec server python manage.py seed_data --days 30
+npm install
+npm run dev
+```
+
+Open http://localhost:3000.
+
+## Required env vars
+
+<!-- Every var the app reads, with a comment. New devs shouldn't have to ask. -->
+
+- `DATABASE_URL` — Postgres connection string
+- `REDIS_URL` — Redis connection
+- `JWT_SECRET` — sign session tokens (rotate on any leak)
+- `OPENAI_API_KEY` — used by `/api/chat`
+- `STRIPE_KEY` — payment, prod only
+
+See `.env.example` for the full list with example values.
+
+## Verification commands
+
+<!-- The commands the agent runs to confirm a change is OK before reporting done. -->
+
+```bash
+# Frontend
+npx tsc --noEmit
+npm run lint
+npm run build
+npm test
+
+# Backend
+docker compose exec -T server python manage.py check
+docker compose exec -T server ruff check .
+docker compose exec -T server pytest
+```
+
+## Gotchas (learned the hard way)
+
+<!-- The "this bit us" list. Loaded into every session so the lesson sticks. -->
+
+- **{{GOTCHA_NAME}}** — symptom, root cause, fix. One short paragraph.
+
+## External services / dashboards
+
+<!-- Where does observability / alerting live? -->
+
+- Errors: Sentry @ {{URL}}
+- Logs: {{LOG_PROVIDER}}
+- Metrics: {{METRICS_PROVIDER}}
+- Status page: {{STATUS_PAGE}}
+
+---
+
+<!-- Update when stack changes. Should be under 4KB. Detailed setup docs go in CONTRIBUTING.md, not here. -->

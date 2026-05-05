@@ -1,0 +1,57 @@
+# System patterns — {{PROJECT_NAME}}
+
+<!-- Architecture and recurring patterns. The "how this codebase works" doc. -->
+
+## High-level architecture
+
+<!-- A diagram or numbered list. What are the major components and how do they talk to each other? -->
+
+```
+[Client] -> [API] -> [Domain logic] -> [DB]
+                  -> [Cache]
+                  -> [External: payment, email, ...]
+```
+
+## Key directories
+
+<!-- What lives where. The agent uses this to navigate without grep-walking the tree. -->
+
+- `src/lib/` — shared utilities (date, format, API client)
+- `src/components/` — UI components, organized by domain
+- `src/hooks/` — custom React hooks
+- `apiserver/` — Django backend
+- `db/migrations/` — schema changes (numbered, never edit shipped)
+
+## Reusable utilities (DON'T re-invent)
+
+<!-- The agent's primary defense against drift. List the helpers that already exist. See implement-feature skill for why this matters. -->
+
+| Concern | Helper | Lives in |
+|---|---|---|
+| Permission check | `hasAccess(user, role)` | `@/lib/auth` |
+| Debounced input | `useDebounce(value, ms)` | `@/hooks/useDebounce` |
+| Date math | `parseDate`, `formatDate` | `@/lib/date` |
+| API client | `apiClient` (handles auth + base URL + error mapping) | `@/lib/api` |
+| Toast / banner | `useToast()` | `@/hooks/useToast` |
+
+## Patterns that recur
+
+<!-- Conventions the codebase follows that the agent should match. -->
+
+### {{PATTERN_NAME}}
+**Where:** …
+**Why:** …
+**Example:** `src/components/X.tsx:42`
+
+## Architectural decisions of record
+
+<!-- The big calls. Newer decisions can override older ones — note when. -->
+
+### ADR-001: {{TITLE}} ({{DATE}})
+- **Context:** …
+- **Decision:** …
+- **Consequences:** …
+
+---
+
+<!-- Update when patterns are deliberately changed. Stable; should be under 5KB. -->

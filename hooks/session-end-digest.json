@@ -1,0 +1,21 @@
+{
+  "_comment": "Paste the entries inside the hooks.SessionEnd array of your ~/.claude/settings.json. The wrapping object is for documentation only; do not include the outer braces when merging.",
+
+  "hooks": {
+    "SessionEnd": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agent-daemon digest --transcript \"$CLAUDE_TRANSCRIPT_PATH\" --session-id \"$CLAUDE_SESSION_ID\" --cwd \"$CLAUDE_PROJECT_DIR\"",
+            "timeout": 600,
+            "async": true,
+            "shell": "auto",
+            "statusMessage": "agent-daemon: digesting session..."
+          }
+        ]
+      }
+    ]
+  }
+}

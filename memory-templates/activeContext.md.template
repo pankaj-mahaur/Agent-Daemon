@@ -1,0 +1,46 @@
+# Active context — {{PROJECT_NAME}}
+
+<!-- What's happening right now. The first thing future-you reads to get up to speed. -->
+
+<!-- This file is updated frequently — every session that does meaningful work. The digest pipeline appends here automatically. -->
+
+## Current focus
+
+<!-- What's the active piece of work? One paragraph. -->
+
+## Recent decisions (last 14 days)
+
+<!-- Decisions made in the last two weeks that aren't in code yet. Newest first. -->
+
+### {{DATE}} — {{DECISION_TITLE}}
+- **Context:** …
+- **Decision:** …
+- **Tradeoffs accepted:** …
+- **Open questions:** …
+
+### {{OLDER_DATE}} — {{OLDER_DECISION}}
+…
+
+## In-flight branches / PRs
+
+<!-- What's currently open. Helps the agent not duplicate work. -->
+
+- **`feature/X`** — description, who's working on it, what's blocking
+- **PR #123** — description, status
+
+## Active blockers
+
+<!-- What can't move forward and why. -->
+
+- ...
+
+## Known temporary state
+
+<!-- Things that are deliberately wrong-but-OK right now. Flag them so they don't get "fixed" by accident. -->
+
+- *X is hardcoded to Y until Z lands — see PR #...*
+- *Migration N is partially applied on staging — won't be fully applied until next deploy*
+
+---
+
+<!-- Update every session that does meaningful work. Should be under 5KB. Older entries decay to systemPatterns.md or progress.md. -->

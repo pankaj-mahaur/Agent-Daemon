@@ -1,0 +1,37 @@
+# Project brief — {{PROJECT_NAME}}
+
+<!-- The 30-second pitch. Update only on a major pivot. -->
+
+## What this project is
+
+<!-- One paragraph. What does this codebase do, in one sentence the user would say to a stranger? -->
+
+E.g. *"A Next.js + Django timesheet app for a 50-person consultancy — employees log hours, managers review, leadership pulls reports."*
+
+## Who uses it
+
+<!-- The primary user roles. -->
+
+- **Role A** — what they do with the app
+- **Role B** — what they do with the app
+
+## The core problem it solves
+
+<!-- One paragraph. What was the world like before this existed? What's the pain it removes? -->
+
+## The non-goals
+
+<!-- What this project is explicitly NOT. Helps the agent push back when scope creep is suggested. -->
+
+- Not a CRM
+- Not a project management tool
+- Not multi-tenant
+- ...
+
+## Stage
+
+<!-- early-prototype | beta | shipped | maintenance | sunsetting -->
+
+---
+
+<!-- This file is loaded into every session's context. Keep it under 1KB. -->

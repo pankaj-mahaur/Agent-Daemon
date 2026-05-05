@@ -1,0 +1,47 @@
+# Product context — {{PROJECT_NAME}}
+
+<!-- Why this exists. Who decides whether it's working. -->
+
+## The user's day before vs after
+
+<!-- Concrete: walk through the user's workflow before this product, then after. The contrast is the value. -->
+
+**Before:** ...
+
+**After:** ...
+
+## Success metrics
+
+<!-- The measurable signs this is working. Not vanity metrics — real outcomes. -->
+
+- ...
+- ...
+
+## Key product decisions (and why)
+
+<!-- The 3-5 product calls that shaped the architecture. Future-you will forget the why. -->
+
+- **Decision X.** Reason: …
+- **Decision Y.** Reason: …
+
+## Constraints
+
+<!-- Hard constraints the agent should respect when proposing changes. -->
+
+- **Compliance / legal:** …
+- **Performance:** …
+- **Cost:** …
+- **Platform:** …
+
+## Stakeholders
+
+<!-- Who owns what decision. Helps the agent know when to flag a "stop and ask". -->
+
+- **Product:** …
+- **Engineering:** …
+- **Design:** …
+- **Compliance / legal:** …
+
+---
+
+<!-- Update when scope or core decisions change. Should be under 2KB. -->

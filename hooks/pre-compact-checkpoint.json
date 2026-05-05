@@ -1,0 +1,20 @@
+{
+  "_comment": "Paste the entries inside the hooks.PreCompact array of your ~/.claude/settings.json. The wrapping object is for documentation only; do not include the outer braces when merging.",
+
+  "hooks": {
+    "PreCompact": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agent-daemon checkpoint --transcript \"$CLAUDE_TRANSCRIPT_PATH\" --session-id \"$CLAUDE_SESSION_ID\"",
+            "timeout": 30,
+            "async": false,
+            "shell": "auto"
+          }
+        ]
+      }
+    ]
+  }
+}
