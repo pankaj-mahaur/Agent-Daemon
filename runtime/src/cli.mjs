@@ -10,6 +10,7 @@ import fs from "node:fs/promises";
 
 import { runSessionStart } from "./session-start.mjs";
 import { runDigest } from "./digest/digest.mjs";
+import { runInteractiveReview } from "./review.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
@@ -112,34 +113,8 @@ async function cmdStatus({ cwd = process.cwd() }) {
   }
 }
 
-async function cmdReview({ cwd = process.cwd() }) {
-  // v0.1: list proposals + show how to review manually. Interactive accept/reject lands in v0.2.
-  const proposed = path.join(cwd, ".agent-daemon", "proposed");
-  try {
-    const entries = await fs.readdir(proposed);
-    const diffs = entries.filter(e => e.endsWith(".diff") || e.endsWith(".md"));
-    if (diffs.length === 0) {
-      console.log("No queued proposals.");
-      return 0;
-    }
-    console.log(`${diffs.length} queued proposal(s) at: ${proposed}\n`);
-    for (const d of diffs) {
-      const content = await fs.readFile(path.join(proposed, d), "utf8");
-      console.log(`─── ${d} ───`);
-      console.log(content);
-      console.log("");
-    }
-    console.log("To accept a proposal, apply the diff and delete the file:");
-    console.log(`  git apply '${proposed}/<name>.diff' && rm '${proposed}/<name>.diff'`);
-    console.log("To reject, just delete the file. Interactive accept/reject lands in v0.2.");
-    return 0;
-  } catch (err) {
-    if (err.code === "ENOENT") {
-      console.log("No queued proposals.");
-      return 0;
-    }
-    throw err;
-  }
+async function cmdReview(opts) {
+  return runInteractiveReview(opts);
 }
 
 async function cmdDoctor() {
