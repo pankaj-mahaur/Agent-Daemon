@@ -152,9 +152,9 @@ FAILED=0
 
 for skill in "${SELECTED_SKILLS[@]}"; do
   if install_skill "$skill" "$TARGET" "$DRY_RUN"; then
-    ((SUCCESS++))
+    SUCCESS=$((SUCCESS + 1))
   else
-    ((FAILED++))
+    FAILED=$((FAILED + 1))
   fi
 done
 
