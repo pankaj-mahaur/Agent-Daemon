@@ -45,16 +45,22 @@ export async function callHeadlessClaude(opts) {
   }
 
   // --bare mode (which we always use to prevent hook recursion) requires
-  // ANTHROPIC_API_KEY. The user's interactive Claude Code login (OAuth /
-  // keychain) is deliberately ignored by --bare.
+  // ANTHROPIC_API_KEY. As of v0.4 the digest pipeline no longer requires this —
+  // the agent emits its own digest block (see constitution/ending-protocol.md).
+  // This wrapper is now ONLY used by:
+  //   - GEPA self-evolution (`agent-daemon evolve <skill>`)
+  //   - Optional digest fallback (AGENT_DAEMON_FALLBACK_LLM=1)
+  // Both are opt-in / power-user flows. We still require the key here.
   if (!process.env.ANTHROPIC_API_KEY && !process.env.AGENT_DAEMON_NO_BARE) {
     return {
       ok: false,
-      error: "ANTHROPIC_API_KEY env var is required. Set it via:\n" +
+      error: "ANTHROPIC_API_KEY env var is required for this feature.\n" +
+             "(GEPA evolution and the optional digest LLM fallback are the only paths that use it;\n" +
+             "default session digesting works without any API key — the agent emits its own digest\n" +
+             "block per constitution/ending-protocol.md.)\n\n" +
+             "If you want to use this feature, get a key at https://console.anthropic.com/settings/keys and:\n" +
              "  export ANTHROPIC_API_KEY=sk-ant-...   (Linux/macOS)\n" +
-             "  setx ANTHROPIC_API_KEY \"sk-ant-...\"  (Windows, then reopen terminal)\n" +
-             "Get a key at https://console.anthropic.com/settings/keys\n" +
-             "(--bare mode used by agent-daemon to prevent hook recursion does not read OAuth/keychain.)"
+             "  setx ANTHROPIC_API_KEY \"sk-ant-...\"  (Windows, then reopen terminal)"
     };
   }
 

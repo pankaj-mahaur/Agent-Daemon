@@ -53,32 +53,36 @@ When you discover a useful command or tool the user didn't already know — flag
 
 ---
 
-## What to write before the session ends
+## What to emit before the session ends — the digest block
 
-If the session did real work (per the triage threshold: ≥1 file edit + ≥2 user turns, OR ≥8 tool calls, OR ≥5 minutes), end the session with a short structured close.
+If the session did real work (≥1 file edit, OR ≥5 tool calls, OR ≥5 minutes, OR explicit "done/thanks/perfect" from the user), append a structured JSON block to your final response. The full schema and rules are in [constitution/ending-protocol.md](../../constitution/ending-protocol.md) — that file is loaded into your context every session, treat it as authoritative.
 
-Format:
+**Quick format reference:**
 
-```markdown
-**Session close summary**
-
-**What changed:**
-- One bullet per concrete change. File path : behavior.
-
-**What I learned:**
-- Any correction the user made.
-- Any pattern that surfaced (especially if recurring).
-
-**Open threads:**
-- Decisions deferred, blockers, things the user wanted to revisit.
-
-**For activeContext.md:**
-- One or two lines I'd add to the project's activeContext memory if I were writing it now.
+```
+<agent-daemon-digest>
+{
+  "learnings": [
+    {
+      "type": "correction" | "confirmation" | "pattern" | "tool",
+      "text": "...",
+      "evidence_quote": "...",
+      "evidence_speaker": "user" | "agent",
+      "scope": "project" | "global",
+      "confidence": 0.0,
+      "tags": ["..."]
+    }
+  ],
+  "session_summary": "..."
+}
+</agent-daemon-digest>
 ```
 
-The "For activeContext.md" line is read directly by the digest pipeline as a candidate memory entry. Make it a complete thought, not a sentence fragment.
+The `<agent-daemon-digest>` tags render as nothing in markdown — invisible to the user, parsed by the daemon's `SessionEnd` hook.
 
-You can skip the close summary for trivial sessions (single bug fix, one-line tweak). The pipeline's triage gate will skip those anyway.
+**Why this matters:** the daemon's digest pipeline reads this block from the transcript. No separate LLM call, no separate API key — the extraction work happens inside YOUR session, paid for by the user's existing subscription. If you don't emit the block, that session leaves no durable memory.
+
+You may skip the block for trivial sessions; the daemon's triage gate would also skip them. But emitting an empty block (`"learnings": []`) is preferred — it confirms you saw the protocol.
 
 ---
 
@@ -132,7 +136,8 @@ The agent doesn't accept its own proposals. Skill edits are always human-gated (
 
 ## See also
 
-- [constitution/core.md](../../constitution/core.md) — the rules every session loads
+- [constitution/ending-protocol.md](../../constitution/ending-protocol.md) — the authoritative format spec for the digest block
+- [constitution/core.md](../../constitution/core.md) — the cardinal rules every session loads
 - [memory-templates/](../../memory-templates/) — the 6-file scaffold the pipeline writes into
 - [audit-runner](../audit-runner/SKILL.md) — when the user wants to systematically improve a backlog of findings
 - [implement-feature](../implement-feature/SKILL.md) — Phase 0's "search before you write" loop is what feeds the recurring-pattern detector

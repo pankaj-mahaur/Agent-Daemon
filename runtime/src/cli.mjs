@@ -131,11 +131,11 @@ async function cmdDoctor() {
   // Check 2: claude CLI on PATH
   checks.push(await checkBinary("claude", "headless engine for digest pipeline"));
 
-  // Check 2b: ANTHROPIC_API_KEY (required by --bare mode used in digest)
+  // Check 2b: ANTHROPIC_API_KEY (optional as of v0.4 — only needed for GEPA evolve + LLM fallback)
   if (process.env.ANTHROPIC_API_KEY) {
-    checks.push({ name: "ANTHROPIC_API_KEY", ok: true, note: "set (length=" + process.env.ANTHROPIC_API_KEY.length + ")" });
+    checks.push({ name: "ANTHROPIC_API_KEY", ok: true, note: "set (used for GEPA evolve + optional digest fallback)" });
   } else {
-    checks.push({ name: "ANTHROPIC_API_KEY", ok: false, note: "missing — required for digest pipeline (--bare mode). Get a key at https://console.anthropic.com/settings/keys" });
+    checks.push({ name: "ANTHROPIC_API_KEY", ok: true, note: "not set — OK; digest works via agent-emitted blocks. Required only for `agent-daemon evolve <skill>`." });
   }
 
   // Check 2c: better-sqlite3 native binding (episodic memory)

@@ -26,7 +26,7 @@ export async function runSessionStart(opts) {
 
   // 1. Constitution (always loaded)
   const constitutionDir = path.join(opts.projectRoot, "constitution");
-  const constitutionFiles = ["core.md", "safety.md", "verification.md", "communication.md"];
+  const constitutionFiles = ["core.md", "safety.md", "verification.md", "communication.md", "ending-protocol.md"];
   for (const f of constitutionFiles) {
     const text = await tryRead(path.join(constitutionDir, f));
     if (text) {

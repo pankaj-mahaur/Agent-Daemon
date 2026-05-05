@@ -76,36 +76,33 @@ export async function runDigest(opts) {
     }
   }
 
-  // Step 3 — extract candidate learnings via headless `claude`
-  if (opts.verbose) {
-    console.error(`agent-daemon: invoking headless claude for extraction...`);
-  }
+  // Step 3 — extract candidate learnings from agent-emitted digest block
+  // (zero-LLM by default; agent already did the extraction in-context per ending-protocol)
   const extractResult = await extractLearnings({
     summary,
-    model: opts.model,
-    maxBudgetUsd: opts.maxBudgetUsd,
-    verbose: opts.verbose
+    verbose: opts.verbose,
+    fallbackToLlm: opts.fallbackToLlm
   });
 
   if (!extractResult.ok) {
     console.error(`agent-daemon: extraction failed — ${extractResult.error}`);
-    // Write a failure report so the user can investigate.
     await writeFailureReport(opts, summary, t, extractResult);
     return 1;
   }
 
   if (extractResult.skipReason) {
-    console.error(`agent-daemon: extractor returned skip — ${extractResult.skipReason}`);
+    if (opts.verbose) console.error(`agent-daemon: ${extractResult.skipReason}`);
     return 0;
   }
 
   if (extractResult.learnings.length === 0) {
-    console.error(`agent-daemon: extracted 0 learnings (cost: $${extractResult.costUsd?.toFixed(4) || "?"}, ${extractResult.durationMs || "?"}ms)`);
+    if (opts.verbose) console.error(`agent-daemon: 0 learnings extracted (source: ${extractResult.source || "none"})`);
     return 0;
   }
 
   if (opts.verbose) {
-    console.error(`agent-daemon: extracted ${extractResult.learnings.length} learning(s) — cost: $${extractResult.costUsd?.toFixed(4) || "?"}, ${extractResult.durationMs}ms`);
+    const costPart = extractResult.costUsd ? ` (cost: $${extractResult.costUsd.toFixed(4)})` : "";
+    console.error(`agent-daemon: extracted ${extractResult.learnings.length} learning(s) [source=${extractResult.source}]${costPart}`);
   }
 
   // Step 4 — classify each learning to a target store

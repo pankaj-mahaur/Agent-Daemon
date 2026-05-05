@@ -1,0 +1,151 @@
+# Constitution — Ending protocol (the digest block)
+
+`agent-daemon` learns from each session by reading a structured JSON block YOU (the agent) emit before the session ends. **No separate API key, no subprocess** — the digest happens inside your own session, using the user's existing subscription.
+
+This is the contract between you and the daemon.
+
+---
+
+## When to emit
+
+Emit a digest block in your final response of any session that did **meaningful work**:
+
+- ≥ 1 file edit (Edit / Write / NotebookEdit / MultiEdit), OR
+- ≥ 5 tool calls of any kind, OR
+- ≥ 5 minutes of session time, OR
+- The user explicitly says *done / finished / shipped / merged / nice / perfect / thanks*
+
+For trivial sessions (a single typo fix, a one-line answer), skip the block. The daemon's triage gate also skips trivial sessions, so an extra block on a small session is harmless but wasted.
+
+Also emit a block before `/compact` if you've been asked to wrap up a long session — see "Pre-compact emission" below.
+
+---
+
+## What to emit — exact format
+
+Append this near the end of your final assistant message (after your normal user-facing response):
+
+```
+<agent-daemon-digest>
+{
+  "learnings": [
+    {
+      "type": "correction" | "confirmation" | "pattern" | "tool",
+      "text": "1-3 sentences written for a FUTURE session that doesn't have this transcript",
+      "evidence_quote": "exact quote from the user supporting this lesson (≤200 chars)",
+      "evidence_speaker": "user" | "agent",
+      "scope": "project" | "global",
+      "confidence": 0.0,
+      "tags": ["filepath/component/keyword", ...]
+    }
+  ],
+  "session_summary": "≤2 sentences: what the session accomplished + the most important lesson"
+}
+</agent-daemon-digest>
+```
+
+The JSON must be valid (no trailing commas, double-quoted keys/strings). Use plain ASCII for safety. The `<agent-daemon-digest>` tags are HTML-style and render as nothing in markdown — invisible to the user.
+
+---
+
+## What counts as a learning (the four signal types)
+
+### `type: "correction"` (highest value)
+The user explicitly corrected your approach. *"no, do X instead"*, *"don't do Y"*, *"actually we use Z here"*. Capture WHAT was wrong and WHAT the corrected approach is.
+
+### `type: "confirmation"`
+You made a non-obvious judgment call AND the user accepted without pushback or explicitly endorsed it. Records which calls land well.
+
+### `type: "pattern"`
+A trap, surprise, or recurring gotcha — especially if it surfaced more than once. If the user named it as recurring (*"this keeps happening"*), bonus signal.
+
+### `type: "tool"`
+A useful command, library, or tool worth remembering. Quote the exact command in `evidence_quote`.
+
+---
+
+## Confidence calibration
+
+- **0.9–1.0** — User explicitly stated this (corrections, "use X", "never Y")
+- **0.6–0.8** — Strong inference (user accepted a choice they could have rejected)
+- **0.3–0.5** — Mild inference (single occurrence, no explicit signal)
+- **Below 0.3** — Don't include it. Noise.
+
+---
+
+## What NOT to extract
+
+- Project-trivial details ("the file is at `src/foo.ts`")
+- Restating the user's original request
+- Self-praise ("the implementation is clean")
+- Anything that depends on this specific session's transient state
+
+Be ruthless: if two corrections share a root cause, write ONE learning capturing both.
+
+Cap at **8 learnings** per block. Quality > quantity. The daemon will dedupe across sessions.
+
+---
+
+## Scope: project vs global
+
+- **`scope: "project"`** — applies to the current codebase only ("In this repo, role checks use `hasAdminAccess(user)`")
+- **`scope: "global"`** — applies anywhere ("Always stage files by name; never `git add -A`")
+
+When in doubt, prefer `project`. Global lessons get promoted to the constitution if they recur — that's a higher bar.
+
+---
+
+## Pre-compact emission
+
+If you're about to be `/compact`-ed (the user asked, or context is full and auto-compact is imminent), emit a digest block FIRST so the learnings survive compaction. The PreCompact hook also nudges this; when it fires you should treat it as a signal to wrap up + emit.
+
+---
+
+## What if there's nothing to emit?
+
+If the session genuinely produced no durable learnings, emit:
+
+```
+<agent-daemon-digest>
+{
+  "learnings": [],
+  "session_summary": "Brief description of what was done — no learnings worth persisting."
+}
+</agent-daemon-digest>
+```
+
+The daemon sees the empty array and skips silently. Better an empty block than nothing — it confirms you saw the protocol and concluded there's nothing to extract.
+
+---
+
+## Why this works (no API key needed)
+
+The daemon's `digest` pipeline:
+1. Reads the session transcript JSONL.
+2. Finds the last `<agent-daemon-digest>` block.
+3. Parses the JSON.
+4. Classifies each learning (rules-based, no LLM).
+5. Writes to memory (markdown + SQLite).
+
+No subprocess. No separate Claude call. No API key. The extraction work happens **inside your own session**, paid for by the user's existing Claude Code / Cursor / Cline / Codex subscription. The daemon is just glue + classifier + memory writer.
+
+GEPA skill self-evolution (the optional `agent-daemon evolve <skill>` command) is a separate batch operation that DOES use a separate LLM call — that's a power-user feature, opt-in, runs offline. Normal session-time digesting needs nothing extra.
+
+---
+
+## Format compliance is the contract
+
+This is a hard rule (constitution). The daemon's tolerance for malformed blocks is low:
+- Invalid JSON → parsed as zero learnings, session digest skipped
+- Block in a user message or tool result → ignored
+- Multiple blocks → last one wins
+- Block format violated by added prose inside the tags → may parse partially or fail
+
+Stick to the schema. The agent-self-improve skill has examples and the `agent-daemon` runtime tests its parser against this exact format.
+
+---
+
+## See also
+
+- [skills/agent-self-improve/SKILL.md](../skills/agent-self-improve/SKILL.md) — the discipline of leaving good signal
+- [constitution/core.md](core.md) — the 12 cardinal rules (this file is the 13th, themed expansion)

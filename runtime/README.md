@@ -35,25 +35,26 @@ npm link      # exposes `agent-daemon` on PATH (or use the parent setup.sh --run
 agent-daemon doctor
 ```
 
-### ⚠️ ANTHROPIC_API_KEY is required for the digest pipeline
+### ✅ No API key required for normal digest
 
-The digest pipeline calls `claude --bare` to extract learnings from transcripts. `--bare` mode is required to prevent hook recursion (a normal `claude` session would re-fire our SessionStart hook and infinite-loop). But `--bare` deliberately ignores OAuth login + keychain credentials — it only reads `ANTHROPIC_API_KEY`.
+As of v0.4, the digest pipeline does **not** require `ANTHROPIC_API_KEY` for ordinary session digesting. The agent itself emits an `<agent-daemon-digest>` JSON block in its final response (per [constitution/ending-protocol.md](../constitution/ending-protocol.md)), and the daemon parses that block — no subprocess, no separate LLM call, no separate billing. The user's existing Claude Code / Cursor / Cline / Codex subscription is the only thing in play.
 
-Set it once:
+**API key is required ONLY for:**
+- `agent-daemon evolve <skill>` — GEPA skill self-evolution (batch op, opt-in)
+- `AGENT_DAEMON_FALLBACK_LLM=1 agent-daemon digest ...` — opt-in LLM fallback when an agent didn't emit a digest block
+
+If you want either of those:
 
 ```bash
 # Linux / macOS
 export ANTHROPIC_API_KEY=sk-ant-...
-echo 'export ANTHROPIC_API_KEY=sk-ant-...' >> ~/.zshrc   # or ~/.bashrc
+echo 'export ANTHROPIC_API_KEY=sk-ant-...' >> ~/.zshrc
 
 # Windows (PowerShell)
 setx ANTHROPIC_API_KEY "sk-ant-..."
-# then reopen the terminal
 ```
 
-Get a key at https://console.anthropic.com/settings/keys — billing is independent of your interactive Claude Code login. Cost per session digest is approximately **$0.001–0.01** (Haiku is the default extractor model).
-
-`agent-daemon doctor` will tell you if the key is set.
+Get a key at https://console.anthropic.com/settings/keys.
 
 ## Architecture
 

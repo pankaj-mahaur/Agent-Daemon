@@ -1,112 +1,16 @@
-// Digest pipeline — Stage 2: extract candidate learnings from a transcript.
+// Digest pipeline — Stage 2: extract learnings from the agent's own digest block.
 //
-// Calls headless `claude` (--bare --print --output-format json) with:
-//   - the extract.md prompt as appended system prompt
-//   - a compact transcript rendering as the user message
-//   - JSON Schema validation for structured output
+// v0.4 architecture: the AGENT itself emits a <agent-daemon-digest> JSON block
+// near the end of its final assistant message. We parse that block directly
+// from the transcript — no separate LLM call, no API key required.
 //
-// Returns the parsed `{ learnings: [...] }` object plus metadata (cost, duration).
-
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { callHeadlessClaude } from "../claude.mjs";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const EXTRACT_PROMPT_PATH = path.join(__dirname, "prompts", "extract.md");
-
-/**
- * JSON schema the extractor must produce. Used to enforce structured output
- * via the `--json-schema` flag.
- */
-const EXTRACT_SCHEMA = {
-  type: "object",
-  properties: {
-    learnings: {
-      type: "array",
-      maxItems: 8,
-      items: {
-        type: "object",
-        properties: {
-          type:             { type: "string", enum: ["correction", "confirmation", "pattern", "tool"] },
-          text:             { type: "string", minLength: 10, maxLength: 800 },
-          evidence_quote:   { type: "string", maxLength: 240 },
-          evidence_speaker: { type: "string", enum: ["user", "agent"] },
-          scope:            { type: "string", enum: ["project", "global"] },
-          confidence:       { type: "number", minimum: 0, maximum: 1 },
-          tags:             { type: "array", items: { type: "string" }, maxItems: 8 }
-        },
-        required: ["type", "text", "evidence_quote", "evidence_speaker", "scope", "confidence"]
-      }
-    },
-    session_summary: { type: "string", maxLength: 400 },
-    skip_reason:     { type: ["string", "null"] }
-  },
-  required: ["learnings", "session_summary"]
-};
-
-/**
- * Render a transcript summary into the user message we feed the extractor.
- * Trims aggressively to fit the context budget — long transcripts get
- * truncated by keeping the structure but dropping mid-message bodies.
- *
- * @param {import("../adapters/claude-code.mjs").TranscriptSummary} summary
- * @param {{maxBytes?: number}} [opts]
- * @returns {string}
- */
-export function renderTranscriptForExtraction(summary, opts = {}) {
-  const maxBytes = opts.maxBytes ?? 200_000;  // ~50K tokens — well under any model's limit
-  const lines = [];
-
-  lines.push("# Session metadata");
-  lines.push("");
-  lines.push(`- Session id: ${summary.sessionId || "unknown"}`);
-  lines.push(`- Started: ${summary.startTime?.toISOString() || "unknown"}`);
-  lines.push(`- Duration: ${(summary.durationMs / 60000).toFixed(1)} minutes`);
-  lines.push(`- User turns: ${summary.userTurns}`);
-  lines.push(`- Assistant turns: ${summary.assistantTurns}`);
-  lines.push(`- Tool calls: ${summary.toolCalls} (edits: ${summary.edits})`);
-  lines.push("");
-  lines.push("# Transcript");
-  lines.push("");
-
-  // Walk events in order, render compact entries
-  let bytesUsed = lines.join("\n").length;
-  for (const e of summary.events) {
-    const block = renderEvent(e);
-    if (!block) continue;
-    if (bytesUsed + block.length > maxBytes) {
-      lines.push("");
-      lines.push(`(transcript truncated — ${summary.events.length - lines.filter(l => l.startsWith("##")).length} more events omitted)`);
-      break;
-    }
-    lines.push(block);
-    bytesUsed += block.length + 1;
-  }
-
-  return lines.join("\n");
-}
-
-function renderEvent(e) {
-  const text = (e.text || "").trim();
-  if (!text) return null;
-
-  // Trim long bodies — keep structure visible without dumping huge tool outputs
-  const trimmed = text.length > 1500 ? text.slice(0, 750) + " […trimmed…] " + text.slice(-300) : text;
-
-  switch (e.type) {
-    case "user":
-      return `## USER\n\n${trimmed}\n`;
-    case "assistant":
-      return `## ASSISTANT\n\n${trimmed}\n`;
-    case "tool_use":
-      return `### TOOL_USE [${e.tool || "?"}]\n\n${trimmed.slice(0, 400)}\n`;
-    case "tool_result":
-      return `### TOOL_RESULT\n\n${trimmed.slice(0, 400)}\n`;
-    default:
-      return null;
-  }
-}
+// The agent learns the format from constitution/ending-protocol.md (loaded
+// into every session by the SessionStart hook). The agent-self-improve skill
+// reinforces it.
+//
+// Fallback: if no block is found AND ANTHROPIC_API_KEY is set AND
+// AGENT_DAEMON_FALLBACK_LLM=1, we can call headless claude as before. By
+// default we just return empty learnings and skip silently.
 
 /**
  * @typedef {Object} Learning
@@ -123,65 +27,208 @@ function renderEvent(e) {
  * @property {Learning[]} learnings
  * @property {string} sessionSummary
  * @property {string|null} skipReason
+ * @property {string} [source]       - 'agent-emitted' | 'llm-fallback' | 'none'
  * @property {number} [costUsd]
  * @property {number} [durationMs]
  * @property {string} [error]
  */
 
 /**
- * Run the extraction step against a transcript summary.
+ * Tag pattern matches the agent-emitted digest block. Tolerant of whitespace
+ * inside tags. Must contain valid JSON between the tags.
+ */
+const DIGEST_BLOCK_RE = /<agent-daemon-digest>\s*([\s\S]*?)\s*<\/agent-daemon-digest>/i;
+
+const VALID_TYPES   = new Set(["correction", "confirmation", "pattern", "tool"]);
+const VALID_SPEAKERS = new Set(["user", "agent"]);
+const VALID_SCOPES   = new Set(["project", "global"]);
+
+/**
+ * Run the extraction step. New default: parse the agent's own digest block.
  *
  * @param {{
  *   summary: import("../adapters/claude-code.mjs").TranscriptSummary,
- *   model?: string,
- *   maxBudgetUsd?: number,
- *   verbose?: boolean
+ *   verbose?: boolean,
+ *   fallbackToLlm?: boolean
  * }} opts
  * @returns {Promise<ExtractResult>}
  */
 export async function extractLearnings(opts) {
-  const userMessage = renderTranscriptForExtraction(opts.summary);
-
-  const callResult = await callHeadlessClaude({
-    systemPromptFile: EXTRACT_PROMPT_PATH,
-    userMessage,
-    model: opts.model || "haiku",  // cheap model is fine for this; can override
-    fallbackModel: "sonnet",
-    jsonSchema: EXTRACT_SCHEMA,
-    maxBudgetUsd: opts.maxBudgetUsd ?? 0.20,
-    timeoutMs: 90_000,
-    verbose: opts.verbose
-  });
-
-  if (!callResult.ok) {
+  const fromAgent = extractFromAgentBlock(opts.summary);
+  if (fromAgent.found) {
+    if (opts.verbose) console.error(`agent-daemon: extracted ${fromAgent.learnings.length} learning(s) from agent-emitted digest block`);
     return {
-      ok: false,
-      learnings: [],
-      sessionSummary: "",
+      ok: true,
+      learnings: fromAgent.learnings,
+      sessionSummary: fromAgent.sessionSummary,
       skipReason: null,
-      error: callResult.error
+      source: "agent-emitted"
     };
   }
 
-  const parsed = callResult.parsedJson;
-  if (!parsed) {
-    return {
-      ok: false,
-      learnings: [],
-      sessionSummary: "",
-      skipReason: null,
-      error: callResult.error || "extractor produced no parsed JSON"
-    };
+  if (opts.verbose) console.error(`agent-daemon: no <agent-daemon-digest> block found in transcript`);
+
+  // Optional LLM fallback (off by default — preserves zero-API-key promise)
+  if (opts.fallbackToLlm || process.env.AGENT_DAEMON_FALLBACK_LLM === "1") {
+    if (opts.verbose) console.error(`agent-daemon: falling back to LLM extraction (AGENT_DAEMON_FALLBACK_LLM=1)`);
+    return await extractWithLlm(opts);
   }
 
   return {
     ok: true,
-    learnings: Array.isArray(parsed.learnings) ? parsed.learnings : [],
-    sessionSummary: parsed.session_summary || "",
-    skipReason: parsed.skip_reason || null,
-    costUsd: callResult.costUsd,
-    durationMs: callResult.durationMs
+    learnings: [],
+    sessionSummary: "",
+    skipReason: "no agent-emitted digest block found in transcript (agent did not follow ending-protocol)",
+    source: "none"
   };
 }
 
-export { EXTRACT_SCHEMA };
+/**
+ * Walk the transcript's assistant messages in reverse order; the most-recent
+ * digest block wins. Search inside `text` content of each event.
+ *
+ * @param {import("../adapters/claude-code.mjs").TranscriptSummary} summary
+ * @returns {{found: boolean, learnings: Learning[], sessionSummary: string, parseError?: string}}
+ */
+export function extractFromAgentBlock(summary) {
+  const empty = { found: false, learnings: [], sessionSummary: "" };
+  if (!summary?.events) return empty;
+
+  // Walk assistant messages in reverse
+  for (let i = summary.events.length - 1; i >= 0; i--) {
+    const ev = summary.events[i];
+    if (ev.type !== "assistant") continue;
+    const text = ev.text || "";
+    const m = text.match(DIGEST_BLOCK_RE);
+    if (!m) continue;
+
+    let parsed;
+    try {
+      parsed = JSON.parse(m[1]);
+    } catch (err) {
+      // malformed — log and continue searching for an earlier valid block
+      return { ...empty, found: false, parseError: `last digest block failed to parse: ${err.message}` };
+    }
+
+    const learnings = sanitizeLearnings(parsed.learnings);
+    return {
+      found: true,
+      learnings,
+      sessionSummary: typeof parsed.session_summary === "string" ? parsed.session_summary : ""
+    };
+  }
+  return empty;
+}
+
+/**
+ * Validate + coerce raw learnings array. Drops invalid entries silently.
+ *
+ * @param {unknown} raw
+ * @returns {Learning[]}
+ */
+function sanitizeLearnings(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const item of raw.slice(0, 16)) {  // hard cap to avoid pathological blocks
+    if (!item || typeof item !== "object") continue;
+    const type = String(item.type || "").trim();
+    if (!VALID_TYPES.has(type)) continue;
+    const text = String(item.text || "").trim();
+    if (text.length < 5 || text.length > 1500) continue;
+    const evidence_quote = String(item.evidence_quote || "").slice(0, 400);
+    const evidence_speaker = VALID_SPEAKERS.has(item.evidence_speaker) ? item.evidence_speaker : "user";
+    const scope = VALID_SCOPES.has(item.scope) ? item.scope : "project";
+    const confidence = clampNum(item.confidence, 0, 1, 0.5);
+    const tags = Array.isArray(item.tags) ? item.tags.filter(t => typeof t === "string").slice(0, 12) : [];
+    out.push({ type, text, evidence_quote, evidence_speaker, scope, confidence, tags });
+  }
+  return out;
+}
+
+function clampNum(v, min, max, fallback) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
+/**
+ * Optional LLM fallback path. Only fires if AGENT_DAEMON_FALLBACK_LLM=1
+ * (or opts.fallbackToLlm=true). Requires ANTHROPIC_API_KEY.
+ *
+ * Loaded lazily so the module doesn't pull claude.mjs into every digest.
+ *
+ * @returns {Promise<ExtractResult>}
+ */
+async function extractWithLlm(opts) {
+  try {
+    const [{ callHeadlessClaude }, path, fileURLToPath] = await Promise.all([
+      import("../claude.mjs"),
+      import("node:path").then(m => m.default || m),
+      import("node:url").then(m => m.fileURLToPath || m.default?.fileURLToPath)
+    ]);
+    const { dirname } = path;
+    const __filename = fileURLToPath(import.meta.url);
+    const promptPath = dirname(__filename) + "/prompts/extract.md";
+
+    // Render compact transcript
+    const userMessage = renderTranscriptForExtraction(opts.summary);
+    const result = await callHeadlessClaude({
+      systemPromptFile: promptPath,
+      userMessage,
+      model: "haiku",
+      fallbackModel: "sonnet",
+      maxBudgetUsd: 0.20,
+      timeoutMs: 90_000,
+      verbose: opts.verbose
+    });
+    if (!result.ok || !result.parsedJson) {
+      return { ok: false, learnings: [], sessionSummary: "", skipReason: null, source: "llm-fallback", error: result.error };
+    }
+    return {
+      ok: true,
+      learnings: sanitizeLearnings(result.parsedJson.learnings),
+      sessionSummary: result.parsedJson.session_summary || "",
+      skipReason: result.parsedJson.skip_reason || null,
+      source: "llm-fallback",
+      costUsd: result.costUsd,
+      durationMs: result.durationMs
+    };
+  } catch (err) {
+    return { ok: false, learnings: [], sessionSummary: "", skipReason: null, source: "llm-fallback", error: err.message };
+  }
+}
+
+function renderTranscriptForExtraction(summary, maxBytes = 200_000) {
+  const lines = [
+    "# Session", "",
+    `- Turns: ${summary.userTurns}/${summary.assistantTurns}`,
+    `- Tool calls: ${summary.toolCalls} (edits: ${summary.edits})`,
+    `- Duration: ${(summary.durationMs / 60000).toFixed(1)}min`,
+    "", "# Transcript", ""
+  ];
+  let bytes = lines.join("\n").length;
+  for (const e of summary.events) {
+    const block = renderEvent(e);
+    if (!block) continue;
+    if (bytes + block.length > maxBytes) {
+      lines.push("(transcript truncated)");
+      break;
+    }
+    lines.push(block);
+    bytes += block.length + 1;
+  }
+  return lines.join("\n");
+}
+
+function renderEvent(e) {
+  const text = (e.text || "").trim();
+  if (!text) return null;
+  const trimmed = text.length > 1500 ? text.slice(0, 750) + " […trimmed…] " + text.slice(-300) : text;
+  switch (e.type) {
+    case "user":         return `## USER\n\n${trimmed}\n`;
+    case "assistant":    return `## ASSISTANT\n\n${trimmed}\n`;
+    case "tool_use":     return `### TOOL_USE [${e.tool || "?"}]\n\n${trimmed.slice(0, 400)}\n`;
+    case "tool_result":  return `### TOOL_RESULT\n\n${trimmed.slice(0, 400)}\n`;
+    default:             return null;
+  }
+}

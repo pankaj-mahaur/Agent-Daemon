@@ -6,7 +6,7 @@ Skills evolve too: [GEPA](runtime/src/digest/gepa/README.md) (Genetic-Pareto Pro
 
 Plus the static side: 20 stack-agnostic skills (all [agentskills.io](https://agentskills.io/specification)-compliant), 5 playbooks, MCP / plugin / tool / adapter scaffolding for any AI coding agent.
 
-> **v0.3 status (current — production candidate):** Full self-improving loop end-to-end. SQLite + FTS5 episodic memory (better-sqlite3). LLM-driven GEPA self-evolution (sample → reflect → generate → evaluate → Pareto select). Interactive review CLI. Cross-agent transcript adapters (Claude Code / Cline / Cursor / Codex) with auto-detection. Chokidar-based watch daemon for non-hook agents. OS service registration (launchd / systemd / schtasks) so the daemon starts at login.
+> **v0.4 status (current):** Full self-improving loop **with zero API-key requirement.** The digest pipeline parses an `<agent-daemon-digest>` JSON block emitted by the agent itself in-session — uses your existing Claude Code / Cursor / Cline / Codex subscription, no separate `ANTHROPIC_API_KEY` needed. SQLite + FTS5 episodic memory, interactive review CLI, cross-agent transcript adapters with auto-detection, chokidar-based watch daemon for non-hook agents, OS service registration (launchd / systemd / schtasks). GEPA self-evolution (`agent-daemon evolve`) is the only path that still uses an API key — it's a power-user batch op.
 
 ### Compatibility & interop
 
@@ -18,8 +18,8 @@ Plus the static side: 20 stack-agnostic skills (all [agentskills.io](https://age
 
 ```bash
 # 1. Clone
-git clone https://github.com/YOUR_USERNAME/agent-daemon.git
-cd agent-daemon
+git clone https://github.com/Pankaj-mobiux/Agent-Daemon.git
+cd Agent-Daemon
 
 # 2. Install everything (skills + runtime + hook prompts)
 ./setup.sh --all                # Linux/macOS
@@ -27,11 +27,14 @@ cd agent-daemon
 
 # 3. Merge the printed hook snippets into ~/.claude/settings.json
 
-# 4. Verify
+# 4. Verify (no API key required — digest reads the agent's own digest block)
 agent-daemon doctor
 
-# 5. Open a fresh Claude Code session — the constitution + project memory now load automatically
+# 5. Open a fresh Claude Code session — the constitution (incl. ending-protocol) + project memory load automatically.
+#    The agent emits a digest block before ending, the daemon parses it on SessionEnd, memory accumulates.
 ```
+
+**Optional:** set `ANTHROPIC_API_KEY` only if you want to run `agent-daemon evolve <skill>` (the GEPA self-evolution batch). Normal session digesting needs nothing extra.
 
 Skills are auto-triggered or invoked as `/skill-name`. The runtime fires automatically at SessionEnd to digest learnings.
 
