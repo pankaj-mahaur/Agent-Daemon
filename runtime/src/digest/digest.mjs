@@ -11,6 +11,7 @@ import { triage } from "./triage.mjs";
 import { extractLearnings } from "./extract.mjs";
 import { classify } from "./classify.mjs";
 import { applyLearnings } from "./apply.mjs";
+import { upsertSession } from "../memory/episodic.mjs";
 
 /**
  * @param {{
@@ -51,6 +52,26 @@ export async function runDigest(opts) {
   }
   if (opts.verbose) {
     console.error(`agent-daemon: triage passed — ${t.reason}`);
+  }
+
+  // Persist the session row to SQLite (audit trail; survives even if extraction fails)
+  if (!opts.dryRun) {
+    try {
+      await upsertSession({
+        id: opts.sessionId || summary.sessionId || "unknown",
+        projectPath: opts.cwd,
+        startedAt: summary.startTime?.toISOString() || new Date().toISOString(),
+        endedAt: summary.endTime?.toISOString(),
+        userTurns: summary.userTurns,
+        assistantTurns: summary.assistantTurns,
+        toolCalls: summary.toolCalls,
+        edits: summary.edits,
+        transcriptPath: opts.transcript,
+        digestStatus: "in-progress"
+      });
+    } catch (err) {
+      if (opts.verbose) console.error(`agent-daemon: SQLite session upsert skipped (${err.message})`);
+    }
   }
 
   // Step 3 — extract candidate learnings via headless `claude`
@@ -109,8 +130,28 @@ export async function runDigest(opts) {
     verbose: opts.verbose
   });
 
+  // Mark the session digested in SQLite
+  if (!opts.dryRun) {
+    try {
+      await upsertSession({
+        id: opts.sessionId || summary.sessionId || "unknown",
+        projectPath: opts.cwd,
+        startedAt: summary.startTime?.toISOString() || new Date().toISOString(),
+        endedAt: summary.endTime?.toISOString(),
+        userTurns: summary.userTurns,
+        assistantTurns: summary.assistantTurns,
+        toolCalls: summary.toolCalls,
+        edits: summary.edits,
+        transcriptPath: opts.transcript,
+        digestStatus: "digested",
+        digestReason: t.reason
+      });
+    } catch { /* best-effort */ }
+  }
+
   // Step 6 — final summary
   const summaryParts = [];
+  if (applyResult.sqliteInserted)        summaryParts.push(`${applyResult.sqliteInserted} SQLite`);
   if (applyResult.memoryProjectAppended) summaryParts.push(`${applyResult.memoryProjectAppended} project memory`);
   if (applyResult.memoryGlobalAppended)  summaryParts.push(`${applyResult.memoryGlobalAppended} global memory`);
   if (applyResult.proposalsQueued)        summaryParts.push(`${applyResult.proposalsQueued} proposal${applyResult.proposalsQueued === 1 ? "" : "s"} queued`);

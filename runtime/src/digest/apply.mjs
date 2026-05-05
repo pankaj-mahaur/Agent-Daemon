@@ -1,15 +1,19 @@
 // Digest pipeline — Stage 4: apply (or queue) each classified learning.
 //
 // Targets behavior:
-//   - episodic-only       → noop in v0.2 (SQLite write lands when better-sqlite3 is plumbed)
-//   - memory:project      → append to <cwd>/.agent-daemon/memory/activeContext.md
-//                           or to ~/.claude/projects/<encoded>/memory/MEMORY.md if that's the location in use
-//   - memory:global       → append to ~/.agent-daemon/user.md
-//   - skill-edit          → write a proposal markdown to .agent-daemon/proposed/
-//   - constitution-add    → write a proposal markdown to .agent-daemon/proposed/
+//   - episodic-only       → SQLite-only insert (low-risk audit trail)
+//   - memory:project      → SQLite + append to <cwd>/.agent-daemon/memory/activeContext.md
+//   - memory:global       → SQLite + append to ~/.agent-daemon/user.md
+//   - skill-edit          → SQLite + write a proposal markdown to .agent-daemon/proposed/
+//   - constitution-add    → SQLite + write a proposal markdown to .agent-daemon/proposed/
+//
+// Every learning lands in SQLite (the durable audit trail), regardless of which
+// markdown surface it also writes to. SQLite reads are used by session-start
+// for retrieval-augmented context loading.
 
 import fs from "node:fs/promises";
 import path from "node:path";
+import { insertLearnings, projectSlug } from "../memory/episodic.mjs";
 
 /**
  * @typedef {import("./classify.mjs").ClassifiedLearning} ClassifiedLearning
@@ -18,6 +22,7 @@ import path from "node:path";
  * @property {number} memoryProjectAppended
  * @property {number} memoryGlobalAppended
  * @property {number} episodicOnly
+ * @property {number} sqliteInserted
  * @property {number} proposalsQueued
  * @property {string[]} proposalPaths
  * @property {string[]} memoryFilesTouched
@@ -41,6 +46,7 @@ export async function applyLearnings(opts) {
     memoryProjectAppended: 0,
     memoryGlobalAppended:  0,
     episodicOnly: 0,
+    sqliteInserted: 0,
     proposalsQueued: 0,
     proposalPaths: [],
     memoryFilesTouched: []
@@ -49,6 +55,7 @@ export async function applyLearnings(opts) {
   const home = process.env.HOME || process.env.USERPROFILE || ".";
   const stamp = new Date().toISOString();
   const dateOnly = stamp.slice(0, 10);
+  const slug = projectSlug(opts.cwd);
 
   // Resolve memory locations
   const projectMemoryPath = await resolveProjectMemoryPath(opts.cwd);
@@ -58,6 +65,7 @@ export async function applyLearnings(opts) {
   // Group learnings by target file so we batch one append per file
   const projectAppends = [];
   const globalAppends  = [];
+  const sqliteRows     = [];
 
   for (const item of opts.classified) {
     if (item.targets.includes("episodic-only")) result.episodicOnly++;
@@ -78,6 +86,31 @@ export async function applyLearnings(opts) {
       });
       result.proposalPaths.push(proposalPath);
       result.proposalsQueued++;
+    }
+
+    // Build SQLite row — every learning lands in the audit trail
+    const l = item.learning;
+    const isProjectScoped = item.targets.includes("memory:project") || (l.scope === "project");
+    sqliteRows.push({
+      sessionId: opts.sessionId || null,
+      projectSlug: isProjectScoped ? slug : null,
+      category: l.type,
+      text: l.text,
+      evidence: l.evidence_quote,
+      confidence: l.confidence,
+      tags: l.tags,
+      appliedTo: item.targets.filter(t => t !== "episodic-only").join(",") || "episodic"
+    });
+  }
+
+  // SQLite insert (transactional). Skipped if dry-run or driver missing.
+  if (sqliteRows.length > 0 && !opts.dryRun) {
+    try {
+      const ids = await insertLearnings(sqliteRows);
+      result.sqliteInserted = ids.length;
+      if (opts.verbose) console.error(`agent-daemon: wrote ${ids.length} rows to SQLite learnings table`);
+    } catch (err) {
+      if (opts.verbose) console.error(`agent-daemon: SQLite insert skipped (${err.message}) — markdown layer still working`);
     }
   }
 

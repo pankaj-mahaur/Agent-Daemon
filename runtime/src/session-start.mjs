@@ -9,6 +9,7 @@
 
 import fs from "node:fs/promises";
 import path from "node:path";
+import { listRecentLearnings, projectSlug } from "./memory/episodic.mjs";
 
 const MAX_OUTPUT_BYTES = 9000;
 
@@ -61,6 +62,22 @@ export async function runSessionStart(opts) {
     if (text) {
       sections.push(`<!-- ${fname} -->\n${text}`);
     }
+  }
+
+  // 5. Recent SQLite-backed learnings — top-K most-recent project-scoped + a few global
+  // Skipped silently if better-sqlite3 isn't installed (graceful degradation).
+  try {
+    const slug = projectSlug(opts.cwd);
+    const recent = await listRecentLearnings({ projectSlug: slug, limit: 8 });
+    if (recent && recent.length > 0) {
+      const block = recent.map(r => {
+        const tagPart = r.evidence ? `\n  > ${String(r.evidence).slice(0, 200)}` : "";
+        return `- **${r.category}** (conf ${r.confidence.toFixed(2)}, ${r.created_at}): ${r.text}${tagPart}`;
+      }).join("\n");
+      sections.push(`<!-- recent learnings (SQLite) -->\n## Recent learnings\n\n${block}`);
+    }
+  } catch {
+    // SQLite optional — silent skip
   }
 
   // Concatenate, truncate if needed

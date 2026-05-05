@@ -160,6 +160,28 @@ async function cmdDoctor() {
     checks.push({ name: "ANTHROPIC_API_KEY", ok: false, note: "missing — required for digest pipeline (--bare mode). Get a key at https://console.anthropic.com/settings/keys" });
   }
 
+  // Check 2c: better-sqlite3 native binding (episodic memory)
+  try {
+    const sqliteMod = await import("./memory/sqlite.mjs");
+    const driver = await sqliteMod.checkDriver();
+    if (driver.installed) {
+      checks.push({ name: "better-sqlite3 (episodic memory)", ok: true, note: "installed" });
+      // Quick stats if DB exists
+      try {
+        const ep = await import("./memory/episodic.mjs");
+        const stats = await ep.stats();
+        if (stats.driver) {
+          const total = Object.values(stats.counts).reduce((a, b) => a + b, 0);
+          checks.push({ name: "episodic DB", ok: true, note: `${stats.dbPath} — ${total} rows total` });
+        }
+      } catch { /* DB not yet created — fine */ }
+    } else {
+      checks.push({ name: "better-sqlite3 (episodic memory)", ok: false, note: driver.error || "not installed (cd runtime && npm install)" });
+    }
+  } catch (err) {
+    checks.push({ name: "better-sqlite3 (episodic memory)", ok: false, note: `error: ${err.message}` });
+  }
+
   // Check 3: settings.json exists and parses
   try {
     const txt = await fs.readFile(settingsPath, "utf8");

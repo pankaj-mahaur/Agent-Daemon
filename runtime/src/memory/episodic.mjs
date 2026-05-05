@@ -1,0 +1,322 @@
+// Episodic memory CRUD over the SQLite schema.
+//
+// Higher-level layer over runtime/src/memory/sqlite.mjs. The digest pipeline
+// writes here; session-start reads here for retrieval-augmented context loading.
+//
+// Two retrieval paths:
+//   - searchLearnings(query, opts)  →  BM25 over learnings.text via FTS5
+//   - listRecentLearnings(opts)     →  most-recent N by created_at
+//
+// All writes use prepared statements + transactions for safety.
+
+import path from "node:path";
+import { open } from "./sqlite.mjs";
+
+/* ------------------------------------------------------------------ */
+/* Lifecycle                                                           */
+/* ------------------------------------------------------------------ */
+
+let _db = null;
+let _attempted = false;
+
+/**
+ * Get-or-open the singleton database. Returns null if better-sqlite3 isn't
+ * installed (callers handle gracefully — the markdown side of digest still works).
+ *
+ * @returns {Promise<import("./sqlite.mjs").Db | null>}
+ */
+export async function db() {
+  if (_db) return _db;
+  if (_attempted) return null;
+  _attempted = true;
+  _db = await open();
+  return _db;
+}
+
+/** Close the singleton (for tests). */
+export function closeDb() {
+  if (_db) { _db.close(); _db = null; _attempted = false; }
+}
+
+/* ------------------------------------------------------------------ */
+/* Sessions                                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Upsert a session row. Idempotent on `id`.
+ *
+ * @param {{
+ *   id: string,
+ *   projectPath: string,
+ *   agentType?: string,
+ *   startedAt: string,
+ *   endedAt?: string,
+ *   userTurns?: number,
+ *   assistantTurns?: number,
+ *   toolCalls?: number,
+ *   edits?: number,
+ *   transcriptPath?: string,
+ *   digestStatus?: string,
+ *   digestReason?: string
+ * }} row
+ */
+export async function upsertSession(row) {
+  const handle = await db();
+  if (!handle) return;
+  const slug = projectSlug(row.projectPath);
+  const durationMs = (row.startedAt && row.endedAt)
+    ? Math.max(0, new Date(row.endedAt) - new Date(row.startedAt))
+    : null;
+
+  handle.run(
+    `INSERT INTO sessions
+       (id, project_path, project_slug, agent_type, started_at, ended_at, duration_ms,
+        user_turns, assistant_turns, tool_calls, edits, transcript_path, digest_status, digest_reason, digested_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       ended_at        = COALESCE(excluded.ended_at, sessions.ended_at),
+       duration_ms     = COALESCE(excluded.duration_ms, sessions.duration_ms),
+       user_turns      = excluded.user_turns,
+       assistant_turns = excluded.assistant_turns,
+       tool_calls      = excluded.tool_calls,
+       edits           = excluded.edits,
+       digest_status   = excluded.digest_status,
+       digest_reason   = excluded.digest_reason,
+       digested_at     = excluded.digested_at`,
+    [
+      row.id, row.projectPath, slug, row.agentType || "claude-code",
+      row.startedAt, row.endedAt || null, durationMs,
+      row.userTurns ?? 0, row.assistantTurns ?? 0, row.toolCalls ?? 0, row.edits ?? 0,
+      row.transcriptPath || null,
+      row.digestStatus || "digested",
+      row.digestReason || null,
+      new Date().toISOString()
+    ]
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Learnings                                                           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Insert one learning row. Returns the new id, or null if the driver isn't loaded.
+ *
+ * @param {{
+ *   sessionId?: string,
+ *   projectSlug?: string,
+ *   category: string,                 // 'correction' | 'pattern' | 'gotcha' | 'tool' | 'preference' | 'fact' | 'confirmation'
+ *   text: string,
+ *   evidence?: string,
+ *   confidence?: number,
+ *   tags?: string[],
+ *   appliedTo?: string                // 'memory.md' | 'skill:debug-triage' | etc.
+ * }} learning
+ * @returns {Promise<number | null>}
+ */
+export async function insertLearning(learning) {
+  const handle = await db();
+  if (!handle) return null;
+  const tagsJson = learning.tags ? JSON.stringify(learning.tags) : null;
+  const result = handle.run(
+    `INSERT INTO learnings (session_id, project_slug, category, text, evidence, confidence, tags, applied_to)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      learning.sessionId || null,
+      learning.projectSlug || null,
+      learning.category,
+      learning.text,
+      learning.evidence || null,
+      learning.confidence ?? 0.5,
+      tagsJson,
+      learning.appliedTo || null
+    ]
+  );
+  return result.lastInsertRowid;
+}
+
+/**
+ * Insert many learnings inside a single transaction.
+ *
+ * @param {Parameters<typeof insertLearning>[0][]} learnings
+ * @returns {Promise<number[]>}
+ */
+export async function insertLearnings(learnings) {
+  const handle = await db();
+  if (!handle) return [];
+  const ids = [];
+  handle.transaction(() => {
+    for (const l of learnings) {
+      const tagsJson = l.tags ? JSON.stringify(l.tags) : null;
+      const r = handle.run(
+        `INSERT INTO learnings (session_id, project_slug, category, text, evidence, confidence, tags, applied_to)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [l.sessionId || null, l.projectSlug || null, l.category, l.text, l.evidence || null, l.confidence ?? 0.5, tagsJson, l.appliedTo || null]
+      );
+      ids.push(r.lastInsertRowid);
+    }
+  });
+  return ids;
+}
+
+/**
+ * BM25 search over learnings via FTS5.
+ *
+ * @param {string} query                                     - free text
+ * @param {{projectSlug?: string, scope?: 'project'|'global'|'any', limit?: number, status?: string}} [opts]
+ * @returns {Promise<Array<{id: number, text: string, evidence: string|null, category: string, confidence: number, project_slug: string|null, created_at: string, score: number}>>}
+ */
+export async function searchLearnings(query, opts = {}) {
+  const handle = await db();
+  if (!handle) return [];
+
+  const limit = opts.limit ?? 5;
+  const status = opts.status ?? "active";
+
+  // FTS5 "MATCH" syntax — escape special chars by quoting tokens
+  const safeQuery = sanitizeFtsQuery(query);
+  if (!safeQuery) return [];
+
+  let where = "learnings_fts MATCH ? AND l.status = ?";
+  const params = [safeQuery, status];
+
+  if (opts.projectSlug && opts.scope !== "global") {
+    if (opts.scope === "project") {
+      where += " AND l.project_slug = ?";
+      params.push(opts.projectSlug);
+    } else {
+      // 'any' (default) — prefer project, fall back to global
+      where += " AND (l.project_slug = ? OR l.project_slug IS NULL)";
+      params.push(opts.projectSlug);
+    }
+  }
+
+  const rows = handle.all(
+    `SELECT l.id, l.text, l.evidence, l.category, l.confidence, l.project_slug, l.created_at,
+            -bm25(learnings_fts) AS score
+       FROM learnings_fts
+       JOIN learnings l ON l.id = learnings_fts.rowid
+      WHERE ${where}
+      ORDER BY score DESC, l.confidence DESC
+      LIMIT ?`,
+    [...params, limit]
+  );
+  return rows;
+}
+
+/**
+ * List the most-recent N learnings for a project.
+ *
+ * @param {{projectSlug?: string, limit?: number, category?: string}} [opts]
+ */
+export async function listRecentLearnings(opts = {}) {
+  const handle = await db();
+  if (!handle) return [];
+  const limit = opts.limit ?? 10;
+  let where = "status = 'active'";
+  const params = [];
+  if (opts.projectSlug) {
+    where += " AND (project_slug = ? OR project_slug IS NULL)";
+    params.push(opts.projectSlug);
+  }
+  if (opts.category) {
+    where += " AND category = ?";
+    params.push(opts.category);
+  }
+  return handle.all(
+    `SELECT id, category, text, evidence, confidence, project_slug, created_at
+       FROM learnings
+      WHERE ${where}
+      ORDER BY created_at DESC
+      LIMIT ?`,
+    [...params, limit]
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Skill executions (used by GEPA Stream B)                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Record a skill execution. The GEPA sampler reads from this table.
+ *
+ * @param {{
+ *   sessionId: string,
+ *   skillName: string,
+ *   skillVersion?: string,
+ *   triggerText?: string,
+ *   succeeded?: boolean,
+ *   failureReason?: string,
+ *   tracePath?: string
+ * }} row
+ */
+export async function recordSkillExecution(row) {
+  const handle = await db();
+  if (!handle) return null;
+  const succeeded = row.succeeded === undefined ? null : (row.succeeded ? 1 : 0);
+  const r = handle.run(
+    `INSERT INTO skill_executions (session_id, skill_name, skill_version, trigger_text, succeeded, failure_reason, trace_path)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [row.sessionId, row.skillName, row.skillVersion || null, row.triggerText || null, succeeded, row.failureReason || null, row.tracePath || null]
+  );
+  return r.lastInsertRowid;
+}
+
+/**
+ * Sample skill executions for GEPA — stratified by success/failure, recency-weighted.
+ *
+ * @param {{skillName: string, total: number}} opts
+ * @returns {Promise<Array<{id: number, session_id: string, skill_name: string, succeeded: number|null, failure_reason: string|null, trigger_text: string|null, created_at: string}>>}
+ */
+export async function sampleSkillExecutions(opts) {
+  const handle = await db();
+  if (!handle) return [];
+  return handle.all(
+    `SELECT id, session_id, skill_name, succeeded, failure_reason, trigger_text, created_at
+       FROM skill_executions
+      WHERE skill_name = ?
+        AND created_at >= datetime('now', '-90 days')
+      ORDER BY succeeded ASC, created_at DESC
+      LIMIT ?`,
+    [opts.skillName, opts.total]
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Stats (for doctor / analytics)                                      */
+/* ------------------------------------------------------------------ */
+
+export async function stats() {
+  const handle = await db();
+  if (!handle) return { driver: false };
+  const counts = {};
+  for (const t of ["sessions", "learnings", "skill_executions", "tool_calls", "user_facts", "skill_variants", "proposals"]) {
+    counts[t] = handle.get(`SELECT COUNT(*) AS n FROM ${t}`).n;
+  }
+  return { driver: true, dbPath: handle.path, counts };
+}
+
+/* ------------------------------------------------------------------ */
+/* Helpers                                                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Normalize a project path into the slug we use as project_slug.
+ * Same scheme Claude Code uses for ~/.claude/projects/<encoded>.
+ */
+export function projectSlug(absPath) {
+  return path.normalize(absPath).replace(/[\\/:]/g, "-");
+}
+
+/**
+ * FTS5 MATCH queries reject quotes/specials. Sanitize by extracting word-ish
+ * tokens and OR-ing them. Returns null if nothing usable.
+ *
+ * @param {string} q
+ */
+function sanitizeFtsQuery(q) {
+  if (!q) return null;
+  const tokens = (q.match(/[\p{L}\p{N}_]{2,}/gu) || []).map(t => `"${t.replace(/"/g, '""')}"`);
+  if (tokens.length === 0) return null;
+  return tokens.join(" OR ");
+}

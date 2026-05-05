@@ -281,8 +281,8 @@ export function defaultDbPath() {
 }
 
 /**
- * Write the schema to a file for review (v0.1).
- * v0.2 will use better-sqlite3 to apply directly.
+ * Write the schema to a file (handy for `sqlite3 < schema.sql` manual apply
+ * or for review).
  *
  * @param {string} outPath
  */
@@ -293,15 +293,74 @@ export async function dumpSchema(outPath) {
 }
 
 /**
- * Stub: in v0.2 this will open a connection via better-sqlite3 and apply SCHEMA.
- * For v0.1, callers can use `dumpSchema()` to write the SQL to a file and
- * apply it manually with `sqlite3 < schema.sql`.
+ * Lazy-load better-sqlite3. Returns null if the module isn't installed —
+ * callers handle gracefully so the runtime keeps working without the
+ * native binding (digest still writes markdown; only SQLite features fail).
  *
- * @returns {never}
+ * @returns {Promise<any | null>}
  */
-export function open() {
-  throw new Error(
-    "agent-daemon: SQLite open() lands in v0.2 (requires better-sqlite3 install). " +
-    "For v0.1, use dumpSchema(outPath) to write the schema and apply manually with `sqlite3`."
-  );
+async function loadDriver() {
+  try {
+    const mod = await import("better-sqlite3");
+    return mod.default || mod;
+  } catch (err) {
+    return null;
+  }
+}
+
+/**
+ * @typedef {Object} Db
+ * @property {any} raw                                  - the underlying better-sqlite3 Database
+ * @property {string} path                              - the absolute file path
+ * @property {(sql: string, params?: any[]) => any} run - exec a write
+ * @property {(sql: string, params?: any[]) => any[]} all - exec a read returning rows
+ * @property {(sql: string, params?: any[]) => any} get - exec a read returning the first row
+ * @property {(fn: () => any) => any} transaction       - run fn inside a transaction
+ * @property {() => void} close
+ */
+
+/**
+ * Open (or create) the episodic SQLite database. Applies the schema idempotently.
+ * Returns null if better-sqlite3 isn't installed; caller decides what to do.
+ *
+ * @param {{dbPath?: string}} [opts]
+ * @returns {Promise<Db | null>}
+ */
+export async function open(opts = {}) {
+  const Database = await loadDriver();
+  if (!Database) return null;
+
+  const dbPath = opts.dbPath || defaultDbPath();
+  await fs.mkdir(path.dirname(dbPath), { recursive: true });
+
+  const raw = new Database(dbPath);
+  raw.exec(SCHEMA);
+
+  return {
+    raw,
+    path: dbPath,
+    run: (sql, params = []) => raw.prepare(sql).run(...params),
+    all: (sql, params = []) => raw.prepare(sql).all(...params),
+    get: (sql, params = []) => raw.prepare(sql).get(...params),
+    transaction: (fn) => raw.transaction(fn)(),
+    close: () => raw.close()
+  };
+}
+
+/**
+ * @returns {Promise<{installed: boolean, version?: string, error?: string}>}
+ */
+export async function checkDriver() {
+  try {
+    const Database = await loadDriver();
+    if (!Database) {
+      return { installed: false, error: "better-sqlite3 not installed (run: cd runtime && npm install)" };
+    }
+    // Probe by opening an in-memory db
+    const db = new Database(":memory:");
+    db.close();
+    return { installed: true };
+  } catch (err) {
+    return { installed: false, error: err.message };
+  }
 }

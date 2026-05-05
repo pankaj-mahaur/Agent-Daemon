@@ -19,7 +19,9 @@
   "engines": {
     "node": ">=22.0.0"
   },
-  "dependencies": {},
+  "dependencies": {
+    "better-sqlite3": "^11.5.0"
+  },
   "license": "MIT",
   "keywords": [
     "claude-code",
