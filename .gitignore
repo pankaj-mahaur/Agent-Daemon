@@ -1,0 +1,9 @@
+node_modules/
+__pycache__/
+.venv/
+*.pyc
+.DS_Store
+Thumbs.db
+.graphify_*
+graphify-out/
+*.log
