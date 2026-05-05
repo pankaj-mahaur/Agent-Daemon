@@ -7,3 +7,16 @@ Thumbs.db
 .graphify_*
 graphify-out/
 *.log
+
+# Claude Code session artifacts (worktrees, logs)
+.claude/
+
+# agent-daemon runtime state (per-machine)
+.agent-daemon/
+
+# Local temp / IDE state
+.vscode/
+.idea/
+*.swp
+.env
+.env.local
