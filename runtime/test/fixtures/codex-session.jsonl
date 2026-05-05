@@ -1,0 +1,10 @@
+{"type":"session.created","id":"codex-abc123","timestamp":"2026-05-05T12:00:00.000Z"}
+{"type":"user.message","content":"set up a new Express server with health check","timestamp":"2026-05-05T12:00:05.000Z"}
+{"type":"assistant.message","content":"Creating server.js","timestamp":"2026-05-05T12:00:30.000Z"}
+{"type":"tool.call","tool_name":"create_file","arguments":{"path":"server.js"},"timestamp":"2026-05-05T12:00:31.000Z"}
+{"type":"tool.result","content":"created","timestamp":"2026-05-05T12:00:32.000Z"}
+{"type":"user.message","content":"also add a /metrics endpoint","timestamp":"2026-05-05T12:01:00.000Z"}
+{"type":"assistant.message","content":"Adding /metrics","timestamp":"2026-05-05T12:01:15.000Z"}
+{"type":"tool.call","tool_name":"str_replace_editor","arguments":{"path":"server.js"},"timestamp":"2026-05-05T12:01:30.000Z"}
+{"type":"tool.result","content":"applied","timestamp":"2026-05-05T12:01:31.000Z"}
+{"type":"session.ended","timestamp":"2026-05-05T12:02:00.000Z"}

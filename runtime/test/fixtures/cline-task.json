@@ -1,0 +1,7 @@
+[
+  {"role": "user", "content": "fix the failing test in auth.test.ts", "timestamp": "2026-05-05T10:00:00.000Z"},
+  {"role": "assistant", "content": [{"type": "text", "text": "I'll read the test file first."}, {"type": "tool_use", "name": "read_file", "input": {"path": "auth.test.ts"}}], "timestamp": "2026-05-05T10:00:30.000Z"},
+  {"role": "user", "content": "the issue is the JWT secret isn't being mocked", "timestamp": "2026-05-05T10:01:00.000Z"},
+  {"role": "assistant", "content": [{"type": "text", "text": "Got it — adding the mock."}, {"type": "tool_use", "name": "replace_in_file", "input": {"path": "auth.test.ts"}}], "timestamp": "2026-05-05T10:02:00.000Z"},
+  {"role": "user", "content": "tests pass now, thanks", "timestamp": "2026-05-05T10:03:00.000Z"}
+]

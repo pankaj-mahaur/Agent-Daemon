@@ -6,7 +6,7 @@
 
 import path from "node:path";
 import fs from "node:fs/promises";
-import { summarize } from "../adapters/claude-code.mjs";
+import { summarize } from "../adapters/index.mjs";
 import { triage } from "./triage.mjs";
 import { extractLearnings } from "./extract.mjs";
 import { classify } from "./classify.mjs";
@@ -31,17 +31,19 @@ export async function runDigest(opts) {
     return 1;
   }
 
-  // Step 1 — read & normalize the transcript
-  let summary;
+  // Step 1 — read & normalize the transcript (auto-detect adapter)
+  let summary, adapter;
   try {
-    summary = await summarize(opts.transcript, { sessionId: opts.sessionId });
+    const result = await summarize(opts.transcript, { sessionId: opts.sessionId, adapter: opts.adapter, verbose: opts.verbose });
+    summary = result.summary;
+    adapter = result.adapter;
   } catch (err) {
     console.error(`agent-daemon digest: cannot read transcript: ${err.message}`);
     return 1;
   }
 
   if (opts.verbose) {
-    console.error(`agent-daemon: transcript summary — turns=${summary.userTurns}/${summary.assistantTurns} tools=${summary.toolCalls} edits=${summary.edits} duration=${(summary.durationMs / 60000).toFixed(1)}min`);
+    console.error(`agent-daemon: transcript [${adapter}] — turns=${summary.userTurns}/${summary.assistantTurns} tools=${summary.toolCalls} edits=${summary.edits} duration=${(summary.durationMs / 60000).toFixed(1)}min`);
   }
 
   // Step 2 — triage
