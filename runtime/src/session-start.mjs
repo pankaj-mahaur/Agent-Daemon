@@ -68,8 +68,10 @@ export async function runSessionStart(opts) {
     }
   }
 
-  // 4. Project CLAUDE.md / AGENTS.md (per-project rules supersede constitution)
-  for (const fname of ["CLAUDE.md", "AGENTS.md", "CONVENTIONS.md"]) {
+  // 4. Project CLAUDE.md / CONVENTIONS.md (per-project rules supersede constitution)
+  //    Note: AGENTS.md is NOT loaded here — Claude Code reads it natively with
+  //    a much larger budget. Loading it here would double-count against the 9KB cap.
+  for (const fname of ["CLAUDE.md", "CONVENTIONS.md"]) {
     const text = await tryRead(path.join(opts.cwd, fname));
     if (text) {
       sections.push(`<!-- ${fname} -->\n${text}`);

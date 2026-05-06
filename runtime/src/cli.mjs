@@ -41,14 +41,14 @@ Commands:
   doctor                 Diagnose the install — settings.json, PATH, dirs
   doctor --tokens        Show token usage + cache stats from recent sessions
 
-  team create            Create a new multi-agent team
-  team status            Show team kanban board
-  team list              List all teams
-  team list-templates    List available team templates
-  team inbox             Read messages from an agent's inbox
-  team cleanup           Prune stale worktrees and dangling team data
-  team delete            Delete a team and its data
-  spawn                  Spawn a worker agent in a team
+  team create     (tc)   Create a new multi-agent team
+  team status     (ts)   Show team kanban board
+  team list       (tl)   List all teams
+  team list-templates (tt)  List available team templates
+  team inbox      (ti)   Read messages from an agent's inbox
+  team cleanup    (tu)   Prune stale worktrees and dangling team data
+  team delete     (td)   Delete a team and its data
+  spawn           (sp)   Spawn a worker agent in a team
 
 Options:
   --version              Print version and exit
@@ -118,6 +118,17 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
     actions.push(`+ .agent-daemon/memory/       (new — ${await countTemplates(templatesDir)} memory templates)`);
   }
 
+  // Check if AGENTS.md needs to be created
+  const agentsMdPath = path.join(cwd, "AGENTS.md");
+  let agentsMdExists = false;
+  try {
+    await fs.access(agentsMdPath);
+    agentsMdExists = true;
+  } catch { /* not present */ }
+  if (!agentsMdExists) {
+    actions.push("+ AGENTS.md (multi-agent orchestration guide for Claude)");
+  }
+
   // Check if CLAUDE.md exists and needs our managed section
   const claudeMdPath = path.join(cwd, "CLAUDE.md");
   const MANAGED_START = "<!-- agent-daemon:start -->";
@@ -166,6 +177,17 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
     }
   }
   if (copied > 0) console.log(`  ✓ Created .agent-daemon/memory/ (${copied} templates)`);
+
+  // Copy AGENTS.md if not present
+  if (!agentsMdExists) {
+    const agentsTmpl = path.join(PROJECT_ROOT, "templates", "AGENTS.md.template");
+    try {
+      await fs.copyFile(agentsTmpl, agentsMdPath);
+      console.log("  ✓ Created AGENTS.md (multi-agent guide for Claude)");
+    } catch {
+      // template missing — skip silently
+    }
+  }
 
   // Add managed section to CLAUDE.md (idempotent)
   if (claudeMdExists && !claudeMdHasSection) {
@@ -635,7 +657,24 @@ async function main(argv) {
     return 0;
   }
 
-  const [command, ...rest] = argv;
+  // Expand short aliases → full commands
+  const ALIASES = {
+    tc: ["team", "create"],
+    ts: ["team", "status"],
+    tl: ["team", "list"],
+    tt: ["team", "list-templates"],
+    ti: ["team", "inbox"],
+    td: ["team", "delete"],
+    tu: ["team", "cleanup"],
+    sp: ["spawn"]
+  };
+
+  let expanded = argv;
+  if (ALIASES[argv[0]]) {
+    expanded = [...ALIASES[argv[0]], ...argv.slice(1)];
+  }
+
+  const [command, ...rest] = expanded;
 
   // Parse remaining args generically (each command interprets what it needs)
   let parsed;

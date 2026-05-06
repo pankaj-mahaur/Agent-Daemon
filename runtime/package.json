@@ -4,7 +4,8 @@
   "description": "Self-improving memory + skills runtime for AI coding agents",
   "type": "module",
   "bin": {
-    "agent-daemon": "./src/cli.mjs"
+    "agent-daemon": "./src/cli.mjs",
+    "ad": "./src/cli.mjs"
   },
   "main": "./src/cli.mjs",
   "exports": {
