@@ -1,18 +1,12 @@
 # agent-daemon
 
-A **self-improving runtime** for AI coding agents. Wraps Claude Code (and any agent that writes a session transcript) with a constitution of universal guardrails, a six-file project memory, a [Honcho-style cross-project user profile](memory-templates/user.md.template), and a digest pipeline that distills lessons from each session and persists them — so the next session is automatically smarter than the last.
+A **self-improving runtime** for AI coding agents — with **multi-agent orchestration** built in. Wraps Claude Code (and any agent that writes a session transcript) with universal guardrails, persistent memory, and a digest pipeline that distills lessons from every session so the next one is automatically smarter.
 
-Skills evolve too: [GEPA](runtime/src/digest/gepa/README.md) (Genetic-Pareto Prompt Evolution, ICLR 2026) reads execution traces and proposes Pareto-optimal skill refinements that you accept or reject via `agent-daemon review`.
+Now ships with a full **team coordination layer**: spawn multiple Claude Code agents in isolated git worktrees, coordinate them through filesystem-based inboxes, and manage task dependencies with auto-unblocking — all without a central server, database, or API key.
 
-Plus the static side: 20 stack-agnostic skills (all [agentskills.io](https://agentskills.io/specification)-compliant), 5 playbooks, MCP / plugin / tool / adapter scaffolding for any AI coding agent.
+Skills evolve too: [GEPA](runtime/src/digest/gepa/README.md) (Genetic-Pareto Prompt Evolution) reads execution traces and proposes Pareto-optimal skill refinements that you accept or reject via `agent-daemon review`.
 
-> **v0.4 status (current):** Full self-improving loop **with zero API-key requirement.** The digest pipeline parses an `<agent-daemon-digest>` JSON block emitted by the agent itself in-session — uses your existing Claude Code / Cursor / Cline / Codex subscription, no separate `ANTHROPIC_API_KEY` needed. SQLite + FTS5 episodic memory, interactive review CLI, cross-agent transcript adapters with auto-detection, chokidar-based watch daemon for non-hook agents, OS service registration (launchd / systemd / schtasks). GEPA self-evolution (`agent-daemon evolve`) is the only path that still uses an API key — it's a power-user batch op.
-
-### Compatibility & interop
-
-- ✅ **agentskills.io standard** — all 20 SKILL.md files have compliant frontmatter. Works in [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Hermes Agent](https://github.com/nousresearch/hermes-agent), [OpenClaw](https://www.agensi.io/learn/openclaw-skills-guide-install-use), VS Code Copilot agent skills, OpenCode, Microsoft Agent Framework.
-- ✅ **Hermes-compatible memory schema** — same SQLite + FTS5 shape so skills + traces travel. See [docs/hermes-interop.md](docs/hermes-interop.md) for full comparison.
-- ✅ **GEPA self-evolution** — same algorithm Hermes uses; ours runs in Node, theirs in Python.
+> **v0.6 status (current):** Production-hardened multi-agent orchestration. Filesystem inboxes, git worktree isolation per agent, team templates, task dependency graphs with auto-unblocking, spawn timeout + kill escalation, atomic writes, concurrent agent limits. Plus the full self-improving loop from prior versions — zero API-key digest, SQLite episodic memory, cross-agent adapters, watch daemon, OS service registration.
 
 ## Quick start
 
@@ -21,99 +15,191 @@ Plus the static side: 20 stack-agnostic skills (all [agentskills.io](https://age
 git clone https://github.com/Pankaj-mobiux/Agent-Daemon.git
 cd Agent-Daemon
 
-# 2. Install everything (skills + runtime + hook prompts)
+# 2. Install (skills + runtime + hooks)
 ./setup.sh --all                # Linux/macOS
 ./setup.ps1 -All                # Windows
 
-# 3. Merge the printed hook snippets into ~/.claude/settings.json
-
-# 4. Verify (no API key required — digest reads the agent's own digest block)
+# 3. Verify
 agent-daemon doctor
 
-# 5. Open a fresh Claude Code session — the constitution (incl. ending-protocol) + project memory load automatically.
-#    The agent emits a digest block before ending, the daemon parses it on SessionEnd, memory accumulates.
+# 4. Open Claude Code — constitution + memory load automatically.
+#    The agent emits a digest block before ending, the daemon parses it,
+#    memory accumulates across sessions.
 ```
 
-**Optional:** set `ANTHROPIC_API_KEY` only if you want to run `agent-daemon evolve <skill>` (the GEPA self-evolution batch). Normal session digesting needs nothing extra.
+No API key required for normal operation. Set `ANTHROPIC_API_KEY` only for `agent-daemon evolve` (GEPA batch evolution).
 
-Skills are auto-triggered or invoked as `/skill-name`. The runtime fires automatically at SessionEnd to digest learnings.
+## Multi-agent orchestration
 
-For other agents (Cursor, Aider, Cline) see [Multi-agent usage](#multi-agent-usage).
+Spawn a team of specialized Claude Code agents that work in parallel on isolated branches, coordinate through filesystem inboxes, and auto-unblock dependent tasks on completion.
 
-## What's in here
+```bash
+# List available team templates
+agent-daemon team list-templates
+
+# Create a team from a template
+agent-daemon team create --template full-stack-feature --task "Add user authentication with JWT"
+
+# Spawn workers
+agent-daemon spawn --team <team-id> --role backend --task "Implement JWT auth endpoints"
+agent-daemon spawn --team <team-id> --role frontend --task "Build login/signup UI"
+
+# Monitor progress
+agent-daemon team status --team <team-id>
+agent-daemon team inbox --team <team-id> --agent lead
+
+# Cleanup when done
+agent-daemon team cleanup
+agent-daemon team delete --team <team-id>
+```
+
+### How it works
 
 ```
-agent-daemon/
-├── constitution/     # Universal guardrails — 12 cardinal rules every session loads
-├── memory-templates/ # 6-file Cline-style scaffold for project memory
-├── runtime/          # Node CLI (`agent-daemon`) — the self-improving loop
-├── hooks/            # Pre-baked Claude Code hook configs (SessionStart / SessionEnd / PreCompact)
-├── skills/           # 19 Claude Code skills (SKILL.md), stack-agnostic
-├── playbooks/        # Plain markdown — any agent or human can ingest
-├── mcp/              # MCP server configs (scaffolded)
-├── plugins/          # Claude Code plugins (scaffolded)
-├── tools/            # Standalone CLI tools agents can invoke (scaffolded)
-├── adapters/         # SKILL.md → Cursor / AGENTS.md / Copilot (scaffolded)
-├── examples/         # Settings + config templates
-└── docs/             # Anatomy guides, install, customization
+User gives complex task
+        |
+[Orchestrator Skill] analyzes task, selects template
+        |
+[agent-daemon team create] creates team dir + tasks.json + dependency graph
+        |
+[agent-daemon spawn] for each role:
+  - Creates isolated git worktree at ~/.agent-daemon/worktrees/
+  - Spawns headless `claude` CLI with role-specific system prompt
+  - Agent works independently on its branch
+        |
+[Filesystem Inboxes] coordination:
+  - Agent writes completion message to leader's inbox
+  - Watch daemon polls inboxes, auto-unblocks dependent tasks
+  - Leader can read status, trigger next phase
+        |
+[Merge & Report]
+  - Each agent's work is on a separate branch
+  - Leader merges worktree branches
+  - Team status shows full kanban board
 ```
+
+### Team templates
+
+| Template | Roles | Use case |
+|---|---|---|
+| `full-stack-feature` | lead, backend, frontend, qa | New features with parallel frontend/backend work |
+| `bug-triage-team` | lead, investigator, fixer, reviewer | Complex bug diagnosis with handoff chain |
+| `code-review-team` | lead-reviewer, security, performance | Multi-perspective code review in parallel |
+| `solo-with-qa` | dev, qa | Simplest team — one worker + one verifier |
+
+Templates live in `teams/templates/`. Add your own as JSON files in `~/.agent-daemon/teams/templates/`.
+
+### Production safety
+
+The orchestration layer is hardened for real use:
+
+- **Spawn timeout** (15 min default) with SIGTERM → SIGKILL escalation
+- **Concurrent agent limit** (max 8) prevents runaway process spawning
+- **Stdout/stderr buffer caps** (512KB) prevent OOM on verbose agents
+- **Atomic JSON writes** (tmp + rename) across all state files
+- **Input validation** on team/role names — path traversal prevention
+- **Message size cap** (64KB) and inbox limit (500 messages)
+- **Race-safe file reads** with retry (3 attempts)
+- **Git worktree isolation** — agents can't interfere with each other
 
 ## The self-improving loop
 
 ```
 SessionStart hook
-    │
-    ▼
-Load constitution + project memory + relevant past lessons
-    │
-    ▼
+    |
+Load constitution + project memory + recent learnings + active team context
+    |
 Session runs — agent uses skills, recalls past corrections
-    │
-    ▼
+    |
 SessionEnd hook
-    │
-    ▼
+    |
 agent-daemon digest pipeline:
-    triage → extract → classify → dedupe → apply (or queue)
-    │
-    ▼
+    triage -> extract -> classify -> dedupe -> apply (or queue)
+    |
 Memory written, skill diffs queued for review
-    │
-    ▼
+    |
 Next session starts smarter
 ```
 
-See [docs on the runtime](runtime/README.md) and the [meta-skill](skills/agent-self-improve/SKILL.md) that teaches agents the discipline.
+## What's in here
 
-## Skill catalog (19 skills, all stack-agnostic)
+```
+agent-daemon/
+├── constitution/        # Universal guardrails — 12 cardinal rules every session loads
+├── memory-templates/    # 6-file scaffold for project memory
+├── runtime/             # Node CLI (agent-daemon) — digest, orchestration, self-improvement
+│   └── src/
+│       ├── orchestration/   # Multi-agent: inbox, spawn, team, templates
+│       ├── daemon/          # Watch daemon with inbox polling
+│       ├── digest/          # Extract → classify → apply pipeline + GEPA
+│       └── memory/          # SQLite + FTS5 episodic store
+├── teams/templates/     # Team blueprints (JSON) — 4 built-in
+├── skills/              # 35 Claude Code skills (SKILL.md), stack-agnostic
+├── playbooks/           # 5 reference docs — any agent or human can use
+├── hooks/               # Pre-baked Claude Code hook configs
+├── mcp/                 # MCP server configs (scaffolded)
+├── plugins/             # Claude Code plugins (scaffolded)
+├── tools/               # Standalone CLI tools (scaffolded)
+├── adapters/            # SKILL.md → Cursor / AGENTS.md / Copilot (scaffolded)
+├── examples/            # Settings + config templates
+└── docs/                # Anatomy guides, install, customization
+```
+
+## CLI reference
+
+```bash
+# Core
+agent-daemon doctor                    # Diagnose install — hooks, PATH, dirs
+agent-daemon doctor --tokens           # Token usage + cache stats from recent sessions
+agent-daemon session-start             # Inject context (called by SessionStart hook)
+agent-daemon digest                    # Run digest pipeline (called by SessionEnd hook)
+agent-daemon watch                     # Watch transcript dirs, fire digest on new sessions
+agent-daemon evolve <skill>            # GEPA self-evolution run for a skill
+agent-daemon review                    # Accept/reject queued skill proposals
+agent-daemon init                      # Scaffold .agent-daemon/ in current project
+agent-daemon status                    # Show queued proposals
+agent-daemon query-retrieve            # Keyword extraction + learning injection
+
+# Multi-agent orchestration
+agent-daemon team create --template <name> --task "..."
+agent-daemon team status [--team <id>]
+agent-daemon team list
+agent-daemon team list-templates
+agent-daemon team inbox --team <id> [--agent <name>]
+agent-daemon team cleanup              # Prune stale worktrees
+agent-daemon team delete --team <id>
+agent-daemon spawn --team <id> --role <name> --task "..."
+```
+
+## Skill catalog (35 skills)
 
 ### Build & implement
 
 | Skill | Description | Trigger |
 |---|---|---|
-| [implement-feature](skills/implement-feature/) | "Search-for-existing-utility" discipline + frontend/backend correctness checklist before writing | Auto: "add", "implement", "build", "wire up" |
-| [seed-data](skills/seed-data/) | Generate idempotent database seed scripts with realistic data | Auto: "generate seed data" |
-| [db-migrations](skills/db-migrations/) | Numbered migrations, never-edit-shipped, forward-compatible, payload preservation | Auto: schema/migration changes |
-| [merge-feature-branch](skills/merge-feature-branch/) | Pull a shared branch into a long-lived feature branch safely | Auto: merge/rebase requests |
-| [multiplatform-parity](skills/multiplatform-parity/) | Keep web + mobile (or any client pair) in lockstep on shared backend changes | Auto: change to a feature shared across clients |
+| [implement-feature](skills/implement-feature/) | Search-for-existing-utility discipline + correctness checklist | Auto: "add", "implement", "build" |
+| [seed-data](skills/seed-data/) | Idempotent database seed scripts with realistic data | Auto: "generate seed data" |
+| [db-migrations](skills/db-migrations/) | Numbered migrations, never-edit-shipped, forward-compatible | Auto: schema changes |
+| [merge-feature-branch](skills/merge-feature-branch/) | Pull a shared branch into a feature branch safely | Auto: merge/rebase requests |
+| [multiplatform-parity](skills/multiplatform-parity/) | Keep web + mobile in lockstep on shared backend changes | Auto: cross-client changes |
 
 ### Diagnose & debug
 
 | Skill | Description | Trigger |
 |---|---|---|
-| [debug-triage](skills/debug-triage/) | Triage ladder — services → data → cache → request → code | Auto: "X is broken", "showing zero", "blank screen" |
-| [diagnose-fetch-failure](skills/diagnose-fetch-failure/) | Diagnose CORS / network errors in frontend-backend setups | Auto: "CORS blocked", "API not working" |
-| [diagnose-intermittent-failure](skills/diagnose-intermittent-failure/) | "Sometimes works, sometimes doesn't" — zombie reload watchers, env not re-read, port collisions | Auto: flag-gated 503s that flap, intermittent local-backend errors |
+| [debug-triage](skills/debug-triage/) | Triage ladder: services → data → cache → request → code | Auto: "broken", "blank screen" |
+| [diagnose-fetch-failure](skills/diagnose-fetch-failure/) | CORS / network errors in frontend-backend setups | Auto: "CORS blocked" |
+| [diagnose-intermittent-failure](skills/diagnose-intermittent-failure/) | Zombie watchers, env not re-read, port collisions | Auto: intermittent errors |
 
 ### Audit & review
 
 | Skill | Description | Trigger |
 |---|---|---|
-| [review-slice](skills/review-slice/) | Deep-review any page/feature using a 9-class bug checklist | `/review-slice` or auto |
-| [audit-runner](skills/audit-runner/) | Execute an audit / review punch-list chunk-by-chunk with severity sequencing and progress trail | Auto: "work through findings", "address the audit list" |
-| [security-audit](skills/security-audit/) | Security review with trust boundary mapping | `/security-audit` |
-| [production-readiness](skills/production-readiness/) | Launch readiness checklist across all layers | `/production-readiness` |
-| [optimization-audit](skills/optimization-audit/) | Frontend + backend performance review workflow | `/optimization-audit` |
+| [review-slice](skills/review-slice/) | Deep-review any page using a 9-class bug checklist | `/review-slice` |
+| [audit-runner](skills/audit-runner/) | Execute audit punch-list with severity sequencing | Auto: "work through findings" |
+| [security-audit](skills/security-audit/) | Trust boundary mapping + security review | `/security-audit` |
+| [production-readiness](skills/production-readiness/) | Launch readiness across all layers | `/production-readiness` |
+| [optimization-audit](skills/optimization-audit/) | Frontend + backend performance review | `/optimization-audit` |
 | [dead-code-review](skills/dead-code-review/) | Proof-based dead code cleanup | `/dead-code-review` |
 | [docs-sync-audit](skills/docs-sync-audit/) | Detect and fix documentation drift | `/docs-sync-audit` |
 
@@ -121,115 +207,150 @@ See [docs on the runtime](runtime/README.md) and the [meta-skill](skills/agent-s
 
 | Skill | Description | Trigger |
 |---|---|---|
-| [deploy-ops](skills/deploy-ops/) | Deploy contract, CI gates, rollout cache invalidation, rollback playbook | Auto: "deploy", "prod", "CI", "rollout", env vars |
-| [llm-app-safety](skills/llm-app-safety/) | Standards for LLM-powered features — model fallback, agent veto, deterministic safety, parallel guardian | Auto: changes to AI client, prompts, agents, safety layer |
+| [deploy-ops](skills/deploy-ops/) | Deploy contract, CI gates, rollback playbook | Auto: "deploy", "prod" |
+| [llm-app-safety](skills/llm-app-safety/) | Model fallback, agent veto, deterministic safety | Auto: AI/prompt changes |
+
+### Orchestration
+
+| Skill | Description | Trigger |
+|---|---|---|
+| [orchestrate-team](skills/orchestrate-team/) | Multi-agent task decomposition + team spawning | Auto: complex multi-domain tasks |
+| [agent-self-improve](skills/agent-self-improve/) | Teaches agents the self-improvement discipline | Auto: session reflection |
+
+### Methodology (14 skills)
+
+| Skill | Trigger |
+|---|---|
+| [methodology-tdd](skills/methodology-tdd/) | Auto: test-related work |
+| [methodology-code-review](skills/methodology-code-review/) | `/code-review` |
+| [methodology-systematic-debugging](skills/methodology-systematic-debugging/) | Auto: debugging |
+| [methodology-refactoring](skills/methodology-refactoring/) | Auto: refactor requests |
+| [methodology-api-design](skills/methodology-api-design/) | Auto: API work |
+| [methodology-incremental-delivery](skills/methodology-incremental-delivery/) | Auto: large features |
+| [methodology-error-handling](skills/methodology-error-handling/) | Auto: error handling |
+| [methodology-performance-profiling](skills/methodology-performance-profiling/) | Auto: perf issues |
+| [methodology-architectural-decision](skills/methodology-architectural-decision/) | Auto: architecture |
+| [methodology-dependency-management](skills/methodology-dependency-management/) | Auto: deps |
+| [methodology-documentation](skills/methodology-documentation/) | Auto: docs |
+| [methodology-brainstorm](skills/methodology-brainstorm/) | `/brainstorm` |
+| [methodology-pair-programming](skills/methodology-pair-programming/) | Auto: pair work |
+| [methodology-writing-plan](skills/methodology-writing-plan/) | `/plan` |
 
 ### Tools
 
-| Skill | Description | Dependencies | Trigger |
-|---|---|---|---|
-| [graphify](skills/graphify/) | Any input (code, docs, papers, images) to knowledge graph | Python 3.9+, `pip install graphifyy` | `/graphify` |
-| [qmd](skills/qmd/) | Search markdown knowledge bases with hybrid BM25 + vector search | Node.js 18+, `npm install -g @tobilu/qmd` | `/qmd` |
+| Skill | Dependencies | Trigger |
+|---|---|---|
+| [graphify](skills/graphify/) | Python 3.9+, `pip install graphifyy` | `/graphify` |
+| [qmd](skills/qmd/) | Node 18+, `npm install -g @tobilu/qmd` | `/qmd` |
 
 ## Playbooks
 
-Standalone reference docs — useful with **any** agent, or for humans reading on a coffee break:
+Standalone reference docs for any agent or human:
 
-- [Bug Class Checklist](playbooks/bug-class-checklist.md) — 9 universal bug patterns with detection and fix strategies
-- [Security Checklist](playbooks/security-checklist.md) — Trust boundary + auth checklist for web apps
-- [Production Readiness](playbooks/production-readiness.md) — Full launch checklist with checkboxes
-- [CI/CD Practices](playbooks/ci-cd-practices.md) — Lint, format, type-check, multi-repo commit patterns
-- [CSV Export Safety](playbooks/csv-export-safety.md) — Formula injection, BOM, CRLF, URL lifecycle
+- [Bug Class Checklist](playbooks/bug-class-checklist.md) — 9 universal bug patterns
+- [Security Checklist](playbooks/security-checklist.md) — Trust boundary + auth checklist
+- [Production Readiness](playbooks/production-readiness.md) — Full launch checklist
+- [CI/CD Practices](playbooks/ci-cd-practices.md) — Lint, format, type-check patterns
+- [CSV Export Safety](playbooks/csv-export-safety.md) — Formula injection, BOM, CRLF
+
+## Compatibility
+
+- **agentskills.io standard** — all 35 SKILL.md files have compliant frontmatter. Works in Claude Code, Hermes Agent, OpenClaw, VS Code Copilot, OpenCode, Microsoft Agent Framework.
+- **Hermes-compatible memory** — same SQLite + FTS5 shape so skills + traces travel.
+- **Cross-agent awareness** — session-start reads rules from Cursor (`.cursor/rules/`), Cline (`.cline/rules/`), and Claude Code auto-memory.
+- **Transcript adapters** — digests transcripts from Claude Code, Cursor, Cline, and Codex.
 
 ## Multi-agent usage
 
-The skill content is portable — only the wrapper format differs.
-
 ### Claude Code (native)
 
-Skills auto-trigger from frontmatter or via `/skill-name`. Use the installer:
+Skills auto-trigger from frontmatter or via `/skill-name`. The runtime fires hooks automatically.
 
 ```bash
-./setup.sh --all                                  # global (~/.claude/skills/)
-./setup.sh --skills review-slice --project-local  # .claude/skills/ in current project
+./setup.sh --all                                  # global install
+./setup.sh --skills review-slice --project-local  # project-local install
 ```
 
-### Other agents (via adapters — coming)
+### Other agents
 
-Once `adapters/` is filled in, you'll be able to convert skills into the format your agent expects:
-
-```bash
-# Cursor
-./adapters/cursor-rules/adapt.sh skills/debug-triage > .cursor/rules/debug-triage.mdc
-
-# AGENTS.md (multi-agent emerging spec)
-./adapters/agents-md/adapt.sh skills/implement-feature skills/debug-triage > AGENTS.md
-
-# GitHub Copilot
-./adapters/copilot-instructions/adapt.sh skills/* > .github/copilot-instructions.md
-
-# Generic system-prompt paste (ChatGPT, Claude.ai, custom GPT)
-./adapters/system-prompt/adapt.sh skills/audit-runner | pbcopy
-```
-
-### Right now (without adapters)
-
-Open `skills/<name>/SKILL.md` directly — paste the content into your agent's system prompt or rules file. The frontmatter is informational; the body is plain markdown.
+Open `skills/<name>/SKILL.md` directly — paste the content into your agent's system prompt or rules file. The frontmatter is informational; the body is plain markdown. Adapter scripts for Cursor/Copilot/AGENTS.md format are in development.
 
 ## Installation options
 
-### Install all skills globally
-
 ```bash
+# All skills globally
 ./setup.sh --all                          # Linux/macOS
 ./setup.ps1 -All                          # Windows
-```
 
-### Install specific skills
-
-```bash
+# Specific skills
 ./setup.sh --skills diagnose-fetch-failure,review-slice,seed-data
-./setup.ps1 -Skills "diagnose-fetch-failure,review-slice,seed-data"
-```
 
-### Install as project-local skills
-
-```bash
+# Project-local
 cd /path/to/your/project
 /path/to/setup.sh --skills review-slice --project-local
+
+# Manual
+# Copy any skills/<name>/ folder to ~/.claude/skills/<name>/
 ```
 
-### Manual install
+## Architecture
 
-Copy any `skills/<name>/` folder to `~/.claude/skills/<name>/` (global) or `.claude/skills/<name>/` (project-local).
+```
+                        +-----------------------+
+                        |     User Session      |
+                        |   (Claude Code CLI)   |
+                        +-----------+-----------+
+                                    |
+                    SessionStart    |    SessionEnd
+                    hook fires      |    hook fires
+                        |           |        |
+                        v           |        v
+                +--------------+    |  +----------------+
+                | session-start|    |  |    digest       |
+                |  .mjs        |    |  |   pipeline      |
+                +--------------+    |  +----------------+
+                        |           |        |
+          +-------------+           |        +----------+
+          |             |           |        |          |
+          v             v           |        v          v
+    +-----------+ +-----------+     |  +---------+ +--------+
+    |constitution| | memory   |     |  | extract | | GEPA   |
+    | core.md   | | episodic |     |  | classify| | evolve |
+    +-----------+ | SQLite   |     |  | apply   | +--------+
+                  +-----------+     |  +---------+
+                                    |
+              +---------------------+---------------------+
+              |           Multi-Agent Orchestration        |
+              |                                            |
+    +---------+---------+  +----------+  +----------------+
+    |   team create     |  |  spawn   |  |  watch daemon  |
+    | templates, tasks, |  | worktree |  | inbox polling, |
+    | dependency graph  |  | + claude |  | auto-unblock   |
+    +-------------------+  +----------+  +----------------+
+              |                  |               |
+              v                  v               v
+    +-------------------+  +-----------+  +-----------+
+    | ~/.agent-daemon/  |  | worktrees |  | inboxes   |
+    | teams/{id}/       |  | per agent |  | msg-*.json|
+    | tasks.json        |  | branches  |  | atomic    |
+    +-------------------+  +-----------+  +-----------+
+```
 
 ## Roadmap
 
-This repo grows over time.
+**Shipped:**
+- v0.3 — Full self-improving loop, SQLite episodic memory, GEPA, watch daemon, OS service registration
+- v0.4 — Zero API-key digest via agent-emitted blocks
+- v0.5 — Token efficiency, ecosystem interop, cross-agent coexistence
+- v0.6 — Multi-agent orchestration with production hardening
 
-**v0.3 — production candidate (just shipped):**
-- ✅ Full self-improving loop wired end-to-end
-- ✅ SQLite + FTS5 episodic memory (better-sqlite3)
-- ✅ LLM-driven GEPA self-evolution (`agent-daemon evolve <skill>`)
-- ✅ Interactive review (`agent-daemon review`)
-- ✅ Cross-agent transcript adapters (Claude Code / Cline / Cursor / Codex)
-- ✅ Chokidar-based watch daemon for non-hook agents
-- ✅ OS service registration (launchd / systemd / schtasks)
-
-**Beyond v0.3:**
-- Auto-trigger evolve on 3+ skill failures (currently manual)
-- True trace replay for GEPA evaluate (currently LLM-as-judge)
+**Next:**
+- Semantic task router — LLM-based auto template selection + role assignment
+- Cross-agent conflict detection — warn on file modification overlap
+- Auto-trigger evolve on repeated skill failures
+- True trace replay for GEPA evaluate
 - Cross-machine memory sync
-- UserPromptSubmit hook for query-aware retrieval (currently retrieval is recency-based)
-
-**Content categories being filled in:**
-- **MCP servers** ([mcp/](mcp/)) — repomix, qmd, filesystem, postgres, github
-- **Plugins** ([plugins/](plugins/)) — pre-commit-guard, audit-trail, claude-md-bootstrap
-- **Tools** ([tools/](tools/)) — repo-summary, find-utility, migration-head, cache-keys, dead-export
-- **Adapters** ([adapters/](adapters/)) — cursor-rules, agents-md, copilot-instructions, system-prompt
-- **More skills** — every recurring discipline from real engineering work, generalized
-
-If a category README starts with "Scaffolded — content coming", that's the active edge.
+- Web dashboard — kanban board for team tasks and agent status
 
 ## Examples
 
@@ -244,15 +365,17 @@ Copy-paste configuration templates:
 ## Docs
 
 - [Skill Anatomy](docs/skill-anatomy.md) — How SKILL.md works, frontmatter fields, trigger system
-- [Installation Guide](docs/installation-guide.md) — All 3 install methods with OS-specific instructions
+- [Installation Guide](docs/installation-guide.md) — All install methods with OS-specific instructions
 - [Customization Guide](docs/customization-guide.md) — Fork and adapt skills for your project
+- [Ecosystem](docs/ecosystem.md) — Hermes interop, cross-agent awareness
 
 ## Design principles
 
-- **Stack-agnostic.** Examples rotate across React/Vue/Svelte, Django/FastAPI/Express/Rails, SQLite/Postgres/MySQL. No assumed stack.
-- **Zero project-name leaks.** Skills are extracted from real codebases but every project-specific name is removed before publication.
-- **Discipline over tooling.** Skills encode "what to check / what NOT to do / triage order" — not just "run this command".
-- **Improve over time.** Every recurring trap from real engineering becomes a skill or playbook.
+- **Stack-agnostic.** No assumed stack — examples rotate across frameworks and databases.
+- **Zero-dependency coordination.** No Redis, no HTTP server. Just JSON files + atomic renames.
+- **Git-native isolation.** Each spawned agent gets its own worktree and branch.
+- **Discipline over tooling.** Skills encode what to check and what to avoid, not just commands.
+- **Improve over time.** Every recurring trap becomes a skill, playbook, or persisted learning.
 
 ## License
 
