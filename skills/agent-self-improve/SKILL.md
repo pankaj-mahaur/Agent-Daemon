@@ -2,6 +2,7 @@
 name: agent-self-improve
 description: Meta-skill — the discipline an agent follows so that each session produces clean, distill-able signal for the agent-daemon digest pipeline. Use whenever the user mentions "memory", "improve over time", "learn from this session", or when ending a session that did meaningful work and you want to leave behind durable lessons. Encodes how to leave breadcrumbs, when to surface uncertainty, and what to write into activeContext / progress before the session closes.
 license: MIT
+allowed-tools: mcp__qmd__*, Bash
 metadata:
   author: agent-daemon
   spec: agentskills.io

@@ -37,7 +37,9 @@ Commands:
   status                 Show queued proposals (skill diffs, constitution rule additions)
   review                 Interactively accept/reject queued proposals
   watch                  Watch transcript directories and fire digest on new sessions (v0.2)
+  query-retrieve         Extract keywords from user prompt and inject relevant past learnings (UserPromptSubmit hook)
   doctor                 Diagnose the install — settings.json, PATH, dirs
+  doctor --tokens        Show token usage + cache stats from recent sessions
 
 Options:
   --version              Print version and exit
@@ -62,15 +64,76 @@ Environment:
 /* Subcommand implementations                                          */
 /* ------------------------------------------------------------------ */
 
-async function cmdInit({ cwd = process.cwd(), dryRun = false }) {
+async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, yes = false }) {
   const target = path.join(cwd, ".agent-daemon", "memory");
   const templatesDir = path.join(PROJECT_ROOT, "memory-templates");
 
-  if (dryRun) {
-    console.log(`[dry-run] would scaffold: ${target}`);
+  // Phase 1: Audit existing agent files
+  const AGENT_FILES = [
+    { path: ".claude/",               label: "Claude Code project config" },
+    { path: "CLAUDE.md",              label: "Claude Code project memory" },
+    { path: ".cursor/rules/",         label: "Cursor rules" },
+    { path: ".cline/rules/",          label: "Cline rules" },
+    { path: "AGENTS.md",             label: "Multi-agent instructions" },
+    { path: "CONVENTIONS.md",        label: "Aider conventions" },
+    { path: ".agent-daemon/",        label: "agent-daemon (already initialized)" }
+  ];
+
+  console.log("agent-daemon init — project audit\n");
+  console.log("  Detected:");
+  const detected = [];
+  for (const af of AGENT_FILES) {
+    const full = path.join(cwd, af.path);
+    let exists = false;
+    try {
+      const stat = await fs.stat(full);
+      exists = stat.isFile() || stat.isDirectory();
+    } catch { /* not found */ }
+    const symbol = exists ? "✓" : "✗";
+    console.log(`    ${symbol} ${af.path.padEnd(24)} ${af.label}${exists ? "" : " (not present)"}`);
+    if (exists) detected.push(af);
+  }
+
+  // Phase 2: Plan what we'll create
+  const actions = [];
+  try {
+    await fs.access(target);
+  } catch {
+    actions.push(`+ .agent-daemon/memory/       (new — ${await countTemplates(templatesDir)} memory templates)`);
+  }
+
+  // Check if CLAUDE.md exists and needs our managed section
+  const claudeMdPath = path.join(cwd, "CLAUDE.md");
+  const MANAGED_START = "<!-- agent-daemon:start -->";
+  const MANAGED_END = "<!-- agent-daemon:end -->";
+  let claudeMdExists = false;
+  let claudeMdHasSection = false;
+  try {
+    const content = await fs.readFile(claudeMdPath, "utf8");
+    claudeMdExists = true;
+    claudeMdHasSection = content.includes(MANAGED_START);
+    if (!claudeMdHasSection) {
+      actions.push("+ Section in CLAUDE.md pointing to .agent-daemon/ (additive — existing content preserved)");
+    }
+  } catch { /* no CLAUDE.md */ }
+
+  if (actions.length === 0) {
+    console.log("\n  Nothing to do — agent-daemon is already initialized in this project.");
     return 0;
   }
 
+  console.log("\n  Will create:");
+  for (const a of actions) console.log(`    ${a}`);
+
+  if (dryRun) {
+    console.log("\n  [dry-run] No changes made.");
+    return 0;
+  }
+
+  // Phase 3: Apply
+  console.log("");
+
+  // Create memory dir + copy templates
   await fs.mkdir(target, { recursive: true });
   const entries = await fs.readdir(templatesDir);
   let copied = 0;
@@ -81,14 +144,39 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false }) {
     const dst = path.join(target, dstName);
     try {
       await fs.access(dst);
-      // Skip — already exists. Don't overwrite the user's existing memory.
     } catch {
       await fs.copyFile(src, dst);
       copied++;
     }
   }
-  console.log(`agent-daemon: initialized ${target} (${copied} templates copied)`);
+  if (copied > 0) console.log(`  ✓ Created .agent-daemon/memory/ (${copied} templates)`);
+
+  // Add managed section to CLAUDE.md (idempotent)
+  if (claudeMdExists && !claudeMdHasSection) {
+    const section = [
+      "",
+      MANAGED_START,
+      "## agent-daemon",
+      "",
+      "This project uses [agent-daemon](https://github.com/anthropics/agent-daemon) for self-improving memory and skills.",
+      "Project memory lives in `.agent-daemon/memory/`. The digest pipeline extracts learnings from each session.",
+      "For past learnings, use `mcp__qmd__search <query>`. For skill evolution, use `/evolve <skill>`.",
+      MANAGED_END,
+      ""
+    ].join("\n");
+    await fs.appendFile(claudeMdPath, section, "utf8");
+    console.log("  ✓ Added agent-daemon section to CLAUDE.md");
+  }
+
+  console.log("\nagent-daemon: initialized. Run `agent-daemon doctor` to verify the install.");
   return 0;
+}
+
+async function countTemplates(dir) {
+  try {
+    const entries = await fs.readdir(dir);
+    return entries.filter(e => e.endsWith(".md.template")).length;
+  } catch { return 0; }
 }
 
 async function cmdStatus({ cwd = process.cwd() }) {
@@ -120,7 +208,17 @@ async function cmdReview(opts) {
   return runInteractiveReview(opts);
 }
 
-async function cmdDoctor() {
+async function cmdDoctor({ tokens, limit, model } = {}) {
+  if (tokens) {
+    const { aggregateTokenStats, formatTokenReport } = await import("./instrument.mjs");
+    const stats = await aggregateTokenStats({
+      limit: limit ? parseInt(limit, 10) : 10,
+      model: model || "opus"
+    });
+    console.log(formatTokenReport(stats));
+    return stats.error ? 1 : 0;
+  }
+
   const checks = [];
   const home = process.env.HOME || process.env.USERPROFILE;
   const settingsPath = path.join(home, ".claude", "settings.json");
@@ -131,11 +229,23 @@ async function cmdDoctor() {
   // Check 2: claude CLI on PATH
   checks.push(await checkBinary("claude", "headless engine for digest pipeline"));
 
-  // Check 2b: ANTHROPIC_API_KEY (optional as of v0.4 — only needed for GEPA evolve + LLM fallback)
+  // Check 2b: Auth — ANTHROPIC_API_KEY or OAuth/keychain
+  // As of v0.5, --bare is no longer used. OAuth/keychain auth works for GEPA.
   if (process.env.ANTHROPIC_API_KEY) {
-    checks.push({ name: "ANTHROPIC_API_KEY", ok: true, note: "set (used for GEPA evolve + optional digest fallback)" });
+    checks.push({ name: "Auth (API key)", ok: true, note: "ANTHROPIC_API_KEY set — used for all headless calls" });
   } else {
-    checks.push({ name: "ANTHROPIC_API_KEY", ok: true, note: "not set — OK; digest works via agent-emitted blocks. Required only for `agent-daemon evolve <skill>`." });
+    // Check for OAuth login
+    const authFile = path.join(home, ".claude", "auth.json");
+    let hasOAuth = false;
+    try {
+      await fs.access(authFile);
+      hasOAuth = true;
+    } catch { /* no auth.json */ }
+    if (hasOAuth) {
+      checks.push({ name: "Auth (OAuth)", ok: true, note: "~/.claude/auth.json found — OAuth/keychain login active" });
+    } else {
+      checks.push({ name: "Auth", ok: true, note: "no API key or OAuth — digest works via agent-emitted blocks; GEPA requires `claude auth login` or ANTHROPIC_API_KEY" });
+    }
   }
 
   // Check 2c: better-sqlite3 native binding (episodic memory)
@@ -244,6 +354,11 @@ async function cmdCheckpoint({ transcript, sessionId }) {
   return 0;
 }
 
+async function cmdQueryRetrieve(opts) {
+  const { runQueryRetrieve } = await import("./query-retrieve.mjs");
+  return runQueryRetrieve(opts);
+}
+
 async function cmdWatch(opts) {
   return runWatcher({
     projectRoot: opts.projectRoot,
@@ -280,7 +395,10 @@ async function main(argv) {
         cwd:          { type: "string" },
         "output-json":{ type: "boolean" },
         "dry-run":    { type: "boolean" },
-        verbose:      { type: "boolean" }
+        verbose:      { type: "boolean" },
+        tokens:       { type: "boolean" },
+        limit:        { type: "string" },
+        model:        { type: "string" }
       },
       allowPositionals: true,
       strict: false
@@ -309,7 +427,8 @@ async function main(argv) {
     case "status":         return cmdStatus(opts);
     case "review":         return cmdReview(opts);
     case "watch":          return cmdWatch(opts);
-    case "doctor":         return cmdDoctor(opts);
+    case "query-retrieve": return cmdQueryRetrieve(opts);
+    case "doctor":         return cmdDoctor({ ...opts, tokens: parsed.values.tokens, limit: parsed.values.limit, model: parsed.values.model });
     default:
       console.error(`agent-daemon: unknown command "${command}"`);
       console.error(HELP);

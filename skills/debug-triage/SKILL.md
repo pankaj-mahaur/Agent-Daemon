@@ -1,6 +1,6 @@
 ---
 name: debug-triage
-description: Investigating a bug, unexpected behavior, empty data, blank screen, weird console error, or any "X is broken / not working / showing zero" report. Provides a strict triage order (services -> data -> cache -> request -> code, in that sequence), a recurring bug-class catalog with greppable patterns and one-line fixes, and pointers to deeper diagnostic skills for specific failure modes.
+description: Use when investigating a bug, unexpected behavior, empty data, blank screen, weird console error, or any "X is broken / not working / showing zero" report. Provides a strict triage order (services -> data -> cache -> request -> code) and a recurring bug-class catalog with greppable patterns.
 license: MIT
 metadata:
   author: agent-daemon

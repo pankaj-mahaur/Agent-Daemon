@@ -1,0 +1,21 @@
+{
+  "_comment": "Paste the entries inside the hooks.PreToolUse array of your ~/.claude/settings.json. Redirects direct Read/Grep on memory directories to use QMD instead, saving ~10x tokens.",
+
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read|Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'TOOL_INPUT=\"$CLAUDE_TOOL_INPUT\"; if echo \"$TOOL_INPUT\" | grep -qE \"(\\.agent-daemon/memory|/\\.claude/projects/.*/memory)\"; then echo \"{\\\"decision\\\": \\\"block\\\", \\\"reason\\\": \\\"Direct read of memory files is bypassed. Use mcp__qmd__search for retrieval — same content, ranked by relevance, ~10x cheaper on tokens.\\\"}\"; else echo \"{\\\"decision\\\": \\\"approve\\\"}\"; fi'",
+            "timeout": 3,
+            "async": false,
+            "shell": "auto",
+            "if": "test -d \"$CLAUDE_PROJECT_DIR/.agent-daemon\""
+          }
+        ]
+      }
+    ]
+  }
+}

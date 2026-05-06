@@ -1,6 +1,6 @@
 ---
 name: diagnose-intermittent-failure
-description: Diagnose "sometimes works, sometimes doesn't" reports against a local backend or service — flag-gated 503s that flap, requests that succeed in one tab and fail in another, services that respond intermittently. The surface error usually names a config flag or feature toggle, but the real cause is almost always a zombie reload-watcher process, env not getting re-read, dev/prod backend confusion, or two processes fighting for the same port.
+description: Use when the user reports "sometimes works, sometimes doesn't" against a local backend — flag-gated 503s that flap, requests succeeding in one tab but failing in another, or intermittent service responses. Root causes are typically zombie watchers, stale env, or port conflicts.
 license: MIT
 metadata:
   author: agent-daemon

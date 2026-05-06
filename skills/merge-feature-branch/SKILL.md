@@ -1,6 +1,6 @@
 ---
 name: merge-feature-branch
-description: Pull a shared branch (dev/main/staging) into a long-lived feature branch. Handles known conflict surfaces, dev-base + graft reconstruction for heavily-modified files, WIP preservation, and merge regression baseline comparison.
+description: Use when pulling a shared branch (dev/main/staging) into a long-lived feature branch. Handles known conflict surfaces, dev-base + graft reconstruction, WIP preservation, and merge regression baselines.
 license: MIT
 metadata:
   author: agent-daemon

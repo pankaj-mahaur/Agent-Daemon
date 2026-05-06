@@ -1,0 +1,21 @@
+{
+  "_comment": "Paste the entries inside the hooks.UserPromptSubmit array of your ~/.claude/settings.json. Injects relevant past learnings when the user sends a message containing technical keywords.",
+
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agent-daemon query-retrieve --output-json",
+            "timeout": 3,
+            "async": false,
+            "shell": "auto",
+            "if": "test -d \"$CLAUDE_PROJECT_DIR/.agent-daemon\" || test -f \"$HOME/.agent-daemon/episodic.db\""
+          }
+        ]
+      }
+    ]
+  }
+}

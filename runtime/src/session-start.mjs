@@ -24,57 +24,86 @@ const MAX_OUTPUT_BYTES = 9000;
 export async function runSessionStart(opts) {
   const sections = [];
 
-  // 1. Constitution (always loaded)
+  // 1. Constitution — only core.md is always-loaded (~1.5KB).
+  //    safety.md, verification.md, communication.md, ending-protocol.md are
+  //    on-demand: the agent loads them via skill triggers or QMD search.
   const constitutionDir = path.join(opts.projectRoot, "constitution");
-  const constitutionFiles = ["core.md", "safety.md", "verification.md", "communication.md", "ending-protocol.md"];
-  for (const f of constitutionFiles) {
-    const text = await tryRead(path.join(constitutionDir, f));
-    if (text) {
-      sections.push(`<!-- constitution/${f} -->\n${text}`);
+  const coreText = await tryRead(path.join(constitutionDir, "core.md"));
+  if (coreText) {
+    sections.push(`<!-- constitution/core.md -->\n${coreText}`);
+  }
+
+  // 2. Memory retrieval — prefer QMD pointer over bulk-loading files.
+  //    If QMD (mcp__qmd__search) is available, inject a one-line pointer instead
+  //    of loading all memory files. Falls back to bulk-load if QMD isn't installed.
+  const qmdAvailable = await detectQmd();
+  if (qmdAvailable) {
+    sections.push([
+      `<!-- memory retrieval (QMD) -->`,
+      `## Memory`,
+      ``,
+      `Memory and past learnings are indexed by QMD. Use \`mcp__qmd__search <query>\` to retrieve relevant context.`,
+      `Do not read memory files directly — QMD provides ranked, compressed results at ~10x lower token cost.`
+    ].join("\n"));
+  } else {
+    // Fallback: bulk-load memory files (pre-QMD behavior)
+    const userMd = await tryRead(path.join(homeDir(), ".agent-daemon", "user.md"));
+    if (userMd) {
+      sections.push(`<!-- ~/.agent-daemon/user.md (cross-project user profile) -->\n${userMd}`);
     }
-  }
 
-  // 2. Cross-project user profile (Honcho-style — applies everywhere)
-  const userMd = await tryRead(path.join(homeDir(), ".agent-daemon", "user.md"));
-  if (userMd) {
-    sections.push(`<!-- ~/.agent-daemon/user.md (cross-project user profile) -->\n${userMd}`);
-  }
+    const memoryLocations = [
+      path.join(opts.cwd, ".agent-daemon", "memory"),
+      path.join(opts.cwd, ".claude", "memory"),
+      path.join(homeDir(), ".claude", "projects", encodeProjectPath(opts.cwd), "memory"),
+      path.join(homeDir(), ".agent-daemon", "memory")
+    ];
 
-  // 3. Project memory — try several conventional locations
-  const memoryLocations = [
-    path.join(opts.cwd, ".agent-daemon", "memory"),
-    path.join(opts.cwd, ".claude", "memory"),
-    path.join(homeDir(), ".claude", "projects", encodeProjectPath(opts.cwd), "memory"),
-    path.join(homeDir(), ".agent-daemon", "memory")
-  ];
-
-  for (const memDir of memoryLocations) {
-    const block = await readMemoryDir(memDir);
-    if (block) {
-      sections.push(`<!-- memory: ${memDir} -->\n${block}`);
-      break;  // first one wins; later locations are fallbacks
+    for (const memDir of memoryLocations) {
+      const block = await readMemoryDir(memDir);
+      if (block) {
+        sections.push(`<!-- memory: ${memDir} -->\n${block}`);
+        break;
+      }
     }
   }
 
   // 4. Project CLAUDE.md / AGENTS.md (per-project rules supersede constitution)
-  for (const fname of ["CLAUDE.md", "AGENTS.md"]) {
+  for (const fname of ["CLAUDE.md", "AGENTS.md", "CONVENTIONS.md"]) {
     const text = await tryRead(path.join(opts.cwd, fname));
     if (text) {
       sections.push(`<!-- ${fname} -->\n${text}`);
     }
   }
 
-  // 5. Recent SQLite-backed learnings — top-K most-recent project-scoped + a few global
+  // 4b. Cross-agent rules — read from other agents' config dirs if present.
+  //     This makes agent-daemon aware of rules set for Cursor, Cline, etc.
+  const crossAgentSources = [
+    { dir: path.join(opts.cwd, ".cursor", "rules"), label: "Cursor rules", ext: ".mdc" },
+    { dir: path.join(opts.cwd, ".cline", "rules"),  label: "Cline rules",  ext: ".md" },
+    { dir: path.join(homeDir(), ".claude", "projects", encodeProjectPath(opts.cwd), "memory"), label: "Claude Code auto-memory", ext: ".md" },
+    { dir: path.join(homeDir(), ".cursor", "rules"), label: "Global Cursor rules", ext: ".mdc" }
+  ];
+  for (const source of crossAgentSources) {
+    const block = await readCrossAgentDir(source.dir, source.ext);
+    if (block) {
+      sections.push(`<!-- ${source.label}: ${source.dir} -->\n${block}`);
+    }
+  }
+
+  // 5. Recent SQLite-backed learnings — top-K most-recent project-scoped + a few global.
+  // Timestamps are omitted from output to keep the injected blob byte-stable across
+  // sessions (cache-friendly). Learnings are sorted by text for deterministic ordering.
   // Skipped silently if better-sqlite3 isn't installed (graceful degradation).
   try {
     const slug = projectSlug(opts.cwd);
     const recent = await listRecentLearnings({ projectSlug: slug, limit: 8 });
     if (recent && recent.length > 0) {
-      const block = recent.map(r => {
-        const tagPart = r.evidence ? `\n  > ${String(r.evidence).slice(0, 200)}` : "";
-        return `- **${r.category}** (conf ${r.confidence.toFixed(2)}, ${r.created_at}): ${r.text}${tagPart}`;
+      const sorted = [...recent].sort((a, b) => a.text.localeCompare(b.text));
+      const block = sorted.map(r => {
+        return `- **${r.category}** (conf ${r.confidence.toFixed(2)}): ${r.text}`;
       }).join("\n");
-      sections.push(`<!-- recent learnings (SQLite) -->\n## Recent learnings\n\n${block}`);
+      sections.push(`<!-- recent learnings -->\n## Recent learnings\n\n${block}`);
     }
   } catch {
     // SQLite optional — silent skip
@@ -115,10 +144,10 @@ async function readMemoryDir(memDir) {
     const mdFiles = entries.filter(e => e.endsWith(".md") && !e.endsWith(".template"));
     if (mdFiles.length === 0) return null;
 
-    // Prefer index file first if it exists, then the rest
+    // MEMORY.md first, then the rest sorted alphabetically for byte-stable output
     const ordered = [
       ...mdFiles.filter(f => /^MEMORY\.md$/i.test(f)),
-      ...mdFiles.filter(f => !/^MEMORY\.md$/i.test(f))
+      ...mdFiles.filter(f => !/^MEMORY\.md$/i.test(f)).sort()
     ];
     const blocks = [];
     for (const f of ordered) {
@@ -126,6 +155,24 @@ async function readMemoryDir(memDir) {
       if (text) blocks.push(`### ${f}\n\n${text}`);
     }
     return blocks.join("\n\n");
+  } catch {
+    return null;
+  }
+}
+
+async function readCrossAgentDir(dir, ext) {
+  try {
+    const entries = await fs.readdir(dir);
+    const files = entries.filter(e => e.endsWith(ext)).sort();
+    if (files.length === 0) return null;
+    const blocks = [];
+    for (const f of files.slice(0, 5)) {
+      const text = await tryRead(path.join(dir, f));
+      if (text && text.trim().length > 0) {
+        blocks.push(`### ${f}\n\n${text.trim()}`);
+      }
+    }
+    return blocks.length > 0 ? blocks.join("\n\n") : null;
   } catch {
     return null;
   }
@@ -139,6 +186,29 @@ function encodeProjectPath(p) {
   // Claude Code's encoding: replace `/` and `\` and `:` with `-`.
   // Approximate; real algorithm may differ slightly.
   return p.replace(/[\\/:]/g, "-");
+}
+
+async function detectQmd() {
+  // Check if QMD MCP server is likely available:
+  // 1. Look for qmd in Claude Code settings (MCP config)
+  // 2. Or check if `qmd` binary is on PATH
+  const home = homeDir();
+  try {
+    const settingsPath = path.join(home, ".claude", "settings.json");
+    const settings = JSON.parse(await fs.readFile(settingsPath, "utf8"));
+    const mcpServers = settings.mcpServers || {};
+    if (mcpServers.qmd || mcpServers["qmd-search"]) return true;
+  } catch { /* no settings or no qmd config */ }
+
+  // Check project-level settings too
+  try {
+    const projSettings = path.join(process.cwd(), ".claude", "settings.json");
+    const settings = JSON.parse(await fs.readFile(projSettings, "utf8"));
+    const mcpServers = settings.mcpServers || {};
+    if (mcpServers.qmd || mcpServers["qmd-search"]) return true;
+  } catch { /* no project settings */ }
+
+  return false;
 }
 
 function truncateToBytes(s, maxBytes) {

@@ -54,8 +54,12 @@ export async function summarize(transcriptPath, opts = {}) {
   /** @type {NormalizedEvent[]} */
   const events = [];
   for (const msg of messages) {
-    const e = parseClineMessage(msg);
-    if (e) events.push(e);
+    const parsed = parseClineMessage(msg);
+    if (Array.isArray(parsed)) {
+      events.push(...parsed);
+    } else if (parsed) {
+      events.push(parsed);
+    }
   }
 
   const userEvents      = events.filter(e => e.type === "user");
@@ -96,12 +100,23 @@ function parseClineMessage(msg) {
     return { type: "user", text: stringifyContent(content), timestamp, raw: msg };
   }
   if (role === "assistant") {
-    // Cline assistant messages may contain tool_use blocks within content
+    // Cline assistant messages may contain tool_use blocks within content arrays.
+    // Emit multiple events: one assistant text event + one tool_use event per tool.
     if (Array.isArray(content)) {
-      // Could be multiple events; emit the assistant text + tool uses separately
-      // For simplicity, return the most-informative one (text)
-      const textBlock = content.find(c => c?.type === "text");
-      return { type: "assistant", text: textBlock?.text || stringifyContent(content), timestamp, raw: msg };
+      const results = [];
+      const textParts = content.filter(c => c?.type === "text").map(c => c.text || "");
+      if (textParts.length > 0) {
+        results.push({ type: "assistant", text: textParts.join("\n"), timestamp, raw: msg });
+      }
+      for (const block of content) {
+        if (block?.type === "tool_use") {
+          results.push({ type: "tool_use", tool: block.name || "unknown", text: safeStringify(block.input), timestamp, raw: block });
+        }
+        if (block?.type === "tool_result") {
+          results.push({ type: "tool_result", text: stringifyContent(block.content), timestamp, raw: block });
+        }
+      }
+      return results.length > 0 ? results : { type: "assistant", text: stringifyContent(content), timestamp, raw: msg };
     }
     return { type: "assistant", text: stringifyContent(content), timestamp, raw: msg };
   }

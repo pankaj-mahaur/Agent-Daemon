@@ -56,16 +56,31 @@ If the project uses `@/lib/userHelpers` for permission checks, don't write a par
 
 ---
 
+## On-demand expansions
+
+These companion files provide deeper guidance for specific domains. They are NOT loaded at session start — load them when their domain applies:
+
+- **`safety.md`** — Load before any destructive operation, security decision, or when touching auth/CORS/CSP.
+- **`verification.md`** — Load when reviewing test strategy, verifying a deployment, or validating outputs.
+- **`communication.md`** — Load when drafting user-facing messages, PR descriptions, or documentation.
+- **`ending-protocol.md`** — Load at end of session to emit the `<agent-daemon-digest>` block.
+
+To load an expansion: `Read constitution/safety.md` (or whichever applies).
+
+## Memory retrieval
+
+For past learnings, project context, and cross-project user profile: use `mcp__qmd__search <query>` to search the memory index. Memory paths are intentionally not listed here — QMD provides ranked, compressed results at ~10x lower token cost than raw file reads.
+
+For codebase exploration, prefer `mcp__repomix__pack` (compresses ~70%) over bulk Read.
+
 ## How this file is loaded
 
-`SessionStart` hook reads this file and injects it into the agent's system context every session, in every project. The agent treats these as immutable rules — same priority as Anthropic-provided system instructions.
+`SessionStart` hook reads ONLY this file and injects it into the agent's system context every session. The agent treats these as immutable rules — same priority as Anthropic-provided system instructions.
 
 Project-specific overrides go in `CLAUDE.md` / `AGENTS.md` at the repo root. Per-project rules supersede this file when they conflict, with one exception: rules 5, 6, 7, 8 (the "never X without OK" set) cannot be overridden — they're cardinal.
-
----
 
 ## How rules get added
 
 New constitution rules are proposed by the digest pipeline when the same correction surfaces in 3+ unrelated sessions. They land in `proposed/constitution-<date>.md` and require explicit user review (`agent-daemon review`) before being added here.
 
-The constitution is intentionally small. If it grows past ~20 rules, fold the older ones into themed expansions ([safety.md](safety.md), [verification.md](verification.md), [communication.md](communication.md)) rather than padding the core.
+The constitution is intentionally small. If it grows past ~20 rules, fold the older ones into themed expansions (safety.md, verification.md, communication.md) rather than padding the core.

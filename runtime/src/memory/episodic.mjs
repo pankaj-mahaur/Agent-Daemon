@@ -283,6 +283,36 @@ export async function sampleSkillExecutions(opts) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Auto-evolve detection                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Find skills with N+ recent failures that haven't been evolved yet.
+ * Used by digest pipeline to auto-trigger GEPA evolution.
+ *
+ * @param {{ minFailures?: number, dayWindow?: number }} opts
+ * @returns {Promise<Array<{skill_name: string, failure_count: number}>>}
+ */
+export async function findSkillsNeedingEvolution({ minFailures = 3, dayWindow = 30 } = {}) {
+  const handle = await db();
+  if (!handle) return [];
+  return handle.all(
+    `SELECT skill_name, COUNT(*) AS failure_count
+       FROM skill_executions
+      WHERE succeeded = 0
+        AND created_at >= datetime('now', '-${dayWindow} days')
+        AND skill_name NOT IN (
+          SELECT DISTINCT skill_name FROM skill_variants
+          WHERE created_at >= datetime('now', '-7 days')
+        )
+      GROUP BY skill_name
+      HAVING COUNT(*) >= ?
+      ORDER BY failure_count DESC`,
+    [minFailures]
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Stats (for doctor / analytics)                                      */
 /* ------------------------------------------------------------------ */
 

@@ -1,6 +1,6 @@
 ---
 name: review-slice
-description: Deep-review a page, feature, or section of any web application. Identifies bugs grouped by root cause using a 9-class bug checklist, presents findings by severity, implements approved fixes with per-unit commits.
+description: Use for deep-reviewing a page, feature, or section of any web application. Identifies bugs grouped by root cause using a 9-class bug checklist, presents findings by severity, and implements approved fixes.
 license: MIT
 metadata:
   author: agent-daemon

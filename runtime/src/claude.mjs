@@ -2,9 +2,10 @@
 // Used by the digest pipeline (extract / GEPA reflect / generate) to call
 // the user's existing Claude Code installation as a non-interactive worker.
 //
-// We always pass --bare so the sub-invocation skips hooks (no recursion),
-// auto-memory (we manage memory ourselves), and CLAUDE.md discovery (we
-// inject context explicitly via --append-system-prompt).
+// We use individual hardening flags instead of --bare so that OAuth/keychain
+// auth works (subscription users get GEPA without a separate API key).
+// --bare is avoided because it ignores OAuth and requires ANTHROPIC_API_KEY.
+// The hardening flags prevent hook recursion, auto-memory, and plugin loading.
 
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
@@ -44,40 +45,30 @@ export async function callHeadlessClaude(opts) {
     return { ok: false, error: "userMessage is required" };
   }
 
-  // --bare mode (which we always use to prevent hook recursion) requires
-  // ANTHROPIC_API_KEY. As of v0.4 the digest pipeline no longer requires this —
-  // the agent emits its own digest block (see constitution/ending-protocol.md).
-  // This wrapper is now ONLY used by:
-  //   - GEPA self-evolution (`agent-daemon evolve <skill>`)
-  //   - Optional digest fallback (AGENT_DAEMON_FALLBACK_LLM=1)
-  // Both are opt-in / power-user flows. We still require the key here.
-  if (!process.env.ANTHROPIC_API_KEY && !process.env.AGENT_DAEMON_NO_BARE) {
-    return {
-      ok: false,
-      error: "ANTHROPIC_API_KEY env var is required for this feature.\n" +
-             "(GEPA evolution and the optional digest LLM fallback are the only paths that use it;\n" +
-             "default session digesting works without any API key — the agent emits its own digest\n" +
-             "block per constitution/ending-protocol.md.)\n\n" +
-             "If you want to use this feature, get a key at https://console.anthropic.com/settings/keys and:\n" +
-             "  export ANTHROPIC_API_KEY=sk-ant-...   (Linux/macOS)\n" +
-             "  setx ANTHROPIC_API_KEY \"sk-ant-...\"  (Windows, then reopen terminal)"
-    };
-  }
+  // Auth: ANTHROPIC_API_KEY takes precedence if set. Otherwise we rely on
+  // the user's existing OAuth/keychain login (`claude auth login`). Subscription
+  // users get GEPA for free without a separate API key.
+  //
+  // We no longer use --bare (which forces ANTHROPIC_API_KEY-only auth).
+  // Instead, individual hardening flags prevent hook recursion and plugin loading.
 
   const args = [
-    "--bare",
     "--print",
     "--output-format", "json",
+    "--disable-slash-commands",
+    "--setting-sources", "",
+    "--strict-mcp-config", "--mcp-config", "{}",
+    "--tools", "",
     "--no-session-persistence",
     "--max-budget-usd", String(opts.maxBudgetUsd ?? 0.50),
     "--input-format", "text"
   ];
 
-  // Tool restriction — by default, no tools (text-in/text-out)
+  // Tool restriction — default is no tools (already set in base args).
+  // Override if caller explicitly provides tools.
   if (opts.tools && opts.tools.length > 0) {
-    args.push("--tools", opts.tools.join(","));
-  } else {
-    args.push("--tools", "");  // disable all tools
+    const toolsIdx = args.indexOf("--tools");
+    if (toolsIdx !== -1) args[toolsIdx + 1] = opts.tools.join(",");
   }
 
   if (opts.model) {

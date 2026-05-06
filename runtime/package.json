@@ -14,7 +14,8 @@
   },
   "scripts": {
     "test": "node --test test/",
-    "lint": "node --check src/**/*.mjs"
+    "lint": "node --check src/**/*.mjs",
+    "lint:skills": "node scripts/lint-skills.mjs"
   },
   "engines": {
     "node": ">=22.0.0"

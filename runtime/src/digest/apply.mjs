@@ -104,14 +104,21 @@ export async function applyLearnings(opts) {
   }
 
   // SQLite insert (transactional). Skipped if dry-run or driver missing.
+  // On failure (DB locked, etc.), queue to pending_messages for retry on next digest.
   if (sqliteRows.length > 0 && !opts.dryRun) {
     try {
       const ids = await insertLearnings(sqliteRows);
       result.sqliteInserted = ids.length;
       if (opts.verbose) console.error(`agent-daemon: wrote ${ids.length} rows to SQLite learnings table`);
     } catch (err) {
-      if (opts.verbose) console.error(`agent-daemon: SQLite insert skipped (${err.message}) — markdown layer still working`);
+      if (opts.verbose) console.error(`agent-daemon: SQLite insert failed (${err.message}) — queuing to pending_messages`);
+      await queuePendingMessages(sqliteRows, opts.sessionId, err.message);
     }
+  }
+
+  // Drain any previously queued pending_messages (best-effort)
+  if (!opts.dryRun) {
+    await drainPendingMessages(opts.verbose);
   }
 
   // Project memory append
@@ -134,7 +141,129 @@ export async function applyLearnings(opts) {
     if (opts.verbose) console.error(`agent-daemon: appended ${globalAppends.length} global-memory entries → ${globalMemoryPath}`);
   }
 
+  // Optional: mirror learnings to CLAUDE.md managed section
+  if (!opts.dryRun && (projectAppends.length > 0 || globalAppends.length > 0)) {
+    try {
+      const config = await loadConfig();
+      if (config.mirror_to_claude_md) {
+        const claudeMdPath = path.join(opts.cwd, "CLAUDE.md");
+        const allAppends = [...projectAppends, ...globalAppends];
+        await mirrorToClaudeMd(claudeMdPath, allAppends, dateOnly);
+        if (opts.verbose) console.error(`agent-daemon: mirrored ${allAppends.length} learning(s) to CLAUDE.md`);
+      }
+    } catch {
+      // mirror is best-effort
+    }
+  }
+
   return result;
+}
+
+async function loadConfig() {
+  const home = process.env.HOME || process.env.USERPROFILE || ".";
+  const configPath = path.join(home, ".agent-daemon", "config.json");
+  try {
+    return JSON.parse(await fs.readFile(configPath, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+const MANAGED_START = "<!-- agent-daemon:learnings:start -->";
+const MANAGED_END = "<!-- agent-daemon:learnings:end -->";
+
+async function mirrorToClaudeMd(claudeMdPath, items, dateOnly) {
+  let content;
+  try {
+    content = await fs.readFile(claudeMdPath, "utf8");
+  } catch {
+    return;
+  }
+
+  const summaries = items.map(it => {
+    const l = it.learning;
+    return `- **${l.type}**: ${l.text.replace(/\s+/g, " ").trim()}`;
+  });
+
+  const newSection = [
+    MANAGED_START,
+    `## Recent learnings (agent-daemon, ${dateOnly})`,
+    "",
+    ...summaries,
+    MANAGED_END
+  ].join("\n");
+
+  if (content.includes(MANAGED_START)) {
+    // Replace existing managed section (idempotent)
+    const re = new RegExp(`${escapeRegExp(MANAGED_START)}[\\s\\S]*?${escapeRegExp(MANAGED_END)}`);
+    content = content.replace(re, newSection);
+  } else {
+    content += "\n" + newSection + "\n";
+  }
+
+  await fs.writeFile(claudeMdPath, content, "utf8");
+}
+
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+async function queuePendingMessages(rows, sessionId, errorMsg) {
+  const home = process.env.HOME || process.env.USERPROFILE || ".";
+  const queueDir = path.join(home, ".agent-daemon");
+  const queueFile = path.join(queueDir, "pending_messages.json");
+  await fs.mkdir(queueDir, { recursive: true });
+
+  let pending = [];
+  try {
+    pending = JSON.parse(await fs.readFile(queueFile, "utf8"));
+  } catch { /* no existing queue */ }
+
+  pending.push({
+    queued_at: new Date().toISOString(),
+    session_id: sessionId,
+    error: errorMsg,
+    rows
+  });
+
+  // Cap at 100 pending entries to prevent unbounded growth
+  if (pending.length > 100) pending = pending.slice(-100);
+  await fs.writeFile(queueFile, JSON.stringify(pending, null, 2), "utf8");
+}
+
+async function drainPendingMessages(verbose) {
+  const home = process.env.HOME || process.env.USERPROFILE || ".";
+  const queueFile = path.join(home, ".agent-daemon", "pending_messages.json");
+
+  let pending;
+  try {
+    pending = JSON.parse(await fs.readFile(queueFile, "utf8"));
+  } catch {
+    return;
+  }
+
+  if (!pending || pending.length === 0) return;
+
+  const remaining = [];
+  let drained = 0;
+  for (const entry of pending) {
+    try {
+      await insertLearnings(entry.rows);
+      drained++;
+    } catch {
+      remaining.push(entry);
+    }
+  }
+
+  if (remaining.length > 0) {
+    await fs.writeFile(queueFile, JSON.stringify(remaining, null, 2), "utf8");
+  } else {
+    await fs.unlink(queueFile).catch(() => {});
+  }
+
+  if (verbose && drained > 0) {
+    console.error(`agent-daemon: drained ${drained} pending message(s) from queue`);
+  }
 }
 
 /**

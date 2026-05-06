@@ -1,6 +1,6 @@
 ---
 name: graphify
-description: any input (code, docs, papers, images) → knowledge graph → clustered communities → HTML + JSON + audit report
+description: Use when the user wants to transform any input (code, docs, papers, images) into a knowledge graph with clustered communities, producing HTML + JSON + audit report outputs.
 trigger: /graphify
 license: MIT
 metadata:

@@ -11,7 +11,7 @@ import { triage } from "./triage.mjs";
 import { extractLearnings } from "./extract.mjs";
 import { classify } from "./classify.mjs";
 import { applyLearnings } from "./apply.mjs";
-import { upsertSession } from "../memory/episodic.mjs";
+import { upsertSession, findSkillsNeedingEvolution } from "../memory/episodic.mjs";
 
 /**
  * @param {{
@@ -148,7 +148,27 @@ export async function runDigest(opts) {
     } catch { /* best-effort */ }
   }
 
-  // Step 6 — final summary
+  // Step 6 — auto-trigger evolve for skills with 3+ recent failures
+  if (!opts.dryRun) {
+    try {
+      const evolveConfig = await loadEvolveConfig();
+      const needsEvolve = await findSkillsNeedingEvolution({
+        minFailures: evolveConfig.evolve_on_failure_count || 3,
+        dayWindow: evolveConfig.evolve_window_days || 30
+      });
+      for (const { skill_name, failure_count } of needsEvolve) {
+        const skillPath = path.join(opts.projectRoot, "skills", skill_name, "SKILL.md");
+        try {
+          await fs.access(skillPath);
+          console.error(`agent-daemon: auto-evolve triggered for "${skill_name}" (${failure_count} failures) — run: agent-daemon evolve ${skill_name}`);
+        } catch { /* skill not found locally — skip */ }
+      }
+    } catch {
+      // auto-evolve detection is best-effort
+    }
+  }
+
+  // Step 7 — final summary
   const summaryParts = [];
   if (applyResult.sqliteInserted)        summaryParts.push(`${applyResult.sqliteInserted} SQLite`);
   if (applyResult.memoryProjectAppended) summaryParts.push(`${applyResult.memoryProjectAppended} project memory`);
@@ -166,6 +186,16 @@ export async function runDigest(opts) {
   }
 
   return 0;
+}
+
+async function loadEvolveConfig() {
+  const home = process.env.HOME || process.env.USERPROFILE || "";
+  const configPath = path.join(home, ".agent-daemon", "watch.json");
+  try {
+    return JSON.parse(await fs.readFile(configPath, "utf8"));
+  } catch {
+    return {};
+  }
 }
 
 async function writeFailureReport(opts, summary, t, extractResult) {

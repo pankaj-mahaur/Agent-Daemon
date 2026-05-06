@@ -1,4 +1,4 @@
-# Hermes Agent interop
+# Ecosystem interop
 
 `agent-daemon` and [Hermes Agent](https://github.com/nousresearch/hermes-agent) (Nous Research) share much of the same vision: a self-improving AI agent with persistent memory, evolving skills, and a digest pipeline. They're built independently — different stacks, different ergonomics — but **the skill format is identical**, and we deliberately mirror Hermes's data model so skills + memory travel between the two.
 
@@ -122,10 +122,66 @@ If you want our constitution active in Hermes too, copy the `constitution/` cont
 
 ---
 
+---
+
+## obra/superpowers interop
+
+[obra/superpowers](https://github.com/obra/superpowers) is a markdown-only agentic skills framework with 179K+ stars. Pure harness piggyback — no API key, no DB.
+
+**What we borrow:**
+- SKILL.md format spec (kebab-case name, "Use when..." description ≤500 chars, frontmatter ≤1024 chars). Our lint script (`npm run lint:skills`) validates against this.
+- 14 methodology skills shipped as our default seeds (TDD, brainstorming, code review, etc.) — MIT-licensed, attributed in each file.
+- Multi-host distribution pattern: thin manifests per platform (`.claude-plugin/`, `.cursor-plugin/`, etc.) all pointing at the same markdown.
+
+**Our wedge:** superpowers skills are frozen. Ours evolve via GEPA + Pareto selection from real execution data.
+
+---
+
+## claude-mem interop
+
+[claude-mem](https://github.com/thedotmack/claude-mem) is a memory layer with 72K+ stars. SQLite + ChromaDB, worker daemon on port 37777, 5 lifecycle hooks.
+
+**What we borrow:**
+- `pending_messages` queue pattern: when SQLite writes fail (DB locked, etc.), queue to a JSON file for retry on next digest run. Adopted in our `apply.mjs`.
+- Token-cost visibility: our `doctor --tokens` command mirrors their cost-per-session reporting.
+
+**Path conventions:** claude-mem uses `~/.claude-mem/`. We use `~/.agent-daemon/`. Parallel but separate — no conflicts.
+
+**What we skip:** ChromaDB (sqlite-vec/FTS5 is sufficient for our retrieval needs), their Agent SDK dependency (risks surprise billing per issue #733).
+
+---
+
+## QMD integration
+
+[QMD](https://github.com/tobilu/qmd) is a local BM25 + vector + LLM rerank search engine for markdown. Available as both CLI and MCP server.
+
+**How we use it:**
+- As of v0.5, QMD is the preferred retrieval path for agent memory. When QMD is detected (via MCP config), `session-start` injects a one-line pointer (`mcp__qmd__search`) instead of bulk-loading memory files (~10x token reduction).
+- The `PreToolUse` hook in `hooks/pre-tool-use-qmd-redirect.json` intercepts direct Read/Grep on memory directories and redirects to QMD.
+- Constitution `core.md` instructs the agent: "For memory recall, call `mcp__qmd__search <query>`."
+
+**Install:** `npm install -g @tobilu/qmd`, then add to Claude Code MCP config.
+
+---
+
+## Repomix integration
+
+[Repomix](https://github.com/yamadashy/repomix) compresses entire codebases into a single context-friendly output (~70% token reduction).
+
+**How we use it:**
+- Constitution `core.md` instructs: "For codebase exploration, use `mcp__repomix__pack` (compresses ~70%)."
+- The agent uses Repomix instead of bulk Read/Grep when it needs broad codebase context.
+
+**Install:** available as a Claude Code plugin (`repomix-explorer`, `repomix-commands`).
+
+---
+
 ## Sources
 
 - [Hermes Agent — Nous Research](https://github.com/nousresearch/hermes-agent)
 - [Hermes self-evolution (GEPA + DSPy)](https://github.com/NousResearch/hermes-agent-self-evolution)
 - [agentskills.io specification](https://agentskills.io/specification)
-- [GEPA paper (ICLR 2026 oral)](https://www.agensi.io/learn/how-to-use-skill-md-with-hermes-agent)
-- [Inside Hermes Agent — architecture deep dive](https://mranand.substack.com/p/inside-hermes-agent-how-a-self-improving)
+- [obra/superpowers](https://github.com/obra/superpowers) — agentic skills framework
+- [claude-mem](https://github.com/thedotmack/claude-mem) — AI memory layer
+- [QMD](https://github.com/tobilu/qmd) — markdown search engine
+- [Repomix](https://github.com/yamadashy/repomix) — codebase compression
