@@ -196,9 +196,13 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
       MANAGED_START,
       "## agent-daemon",
       "",
-      "This project uses [agent-daemon](https://github.com/anthropics/agent-daemon) for self-improving memory and skills.",
-      "Project memory lives in `.agent-daemon/memory/`. The digest pipeline extracts learnings from each session.",
-      "For past learnings, use `mcp__qmd__search <query>`. For skill evolution, use `/evolve <skill>`.",
+      "This project uses [agent-daemon](https://github.com/Pankaj-mobiux/Agent-Daemon) — a self-improving runtime for AI coding agents with multi-agent orchestration.",
+      "",
+      "- **Memory:** `.agent-daemon/memory/` — project learnings extracted from each session by the digest pipeline",
+      "- **Multi-agent:** `ad tc` to create teams, `ad sp` to spawn workers in isolated git worktrees, `ad ts` for status",
+      "- **CLI:** All commands use the `ad` shorthand (e.g. `ad doctor`, `ad init`, `ad tt` for templates)",
+      "- **Skills:** 35 auto-triggering skills in `~/.claude/skills/` — code review, debugging, orchestration, etc.",
+      "- **Self-improvement:** Session digests extract learnings → SQLite episodic memory → next session starts smarter",
       MANAGED_END,
       ""
     ].join("\n");
