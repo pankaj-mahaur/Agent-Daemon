@@ -210,7 +210,15 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
     console.log("  ✓ Added agent-daemon section to CLAUDE.md");
   }
 
-  console.log("\nagent-daemon: initialized. Run `agent-daemon doctor` to verify the install.");
+  console.log(`
+agent-daemon: initialized.
+
+Next steps:
+  ad doctor                              Verify the install
+  "bootstrap the daemon memory"          Tell Claude to populate memory with real project context
+
+Memory files contain template placeholders until bootstrapped.
+The digest pipeline keeps memory updated automatically after bootstrapping.`);
   return 0;
 }
 

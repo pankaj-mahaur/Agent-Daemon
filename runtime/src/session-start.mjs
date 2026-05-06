@@ -60,9 +60,13 @@ export async function runSessionStart(opts) {
     ];
 
     for (const memDir of memoryLocations) {
-      const block = await readMemoryDir(memDir);
-      if (block) {
-        sections.push(`<!-- memory: ${memDir} -->\n${block}`);
+      const result = await readMemoryDir(memDir);
+      if (result) {
+        if (result.hasPlaceholders) {
+          // Push warning BEFORE memory content so it survives 9KB truncation
+          sections.push(`<!-- memory-bootstrap-hint -->\n**⚠ Memory not yet bootstrapped.** Memory files contain unfilled template placeholders (\`{{...}}\`). Say "bootstrap the daemon memory" to populate them with real project context.`);
+        }
+        sections.push(`<!-- memory: ${memDir} -->\n${result.content}`);
         break;
       }
     }
@@ -163,11 +167,15 @@ async function readMemoryDir(memDir) {
       ...mdFiles.filter(f => !/^MEMORY\.md$/i.test(f)).sort()
     ];
     const blocks = [];
+    let hasPlaceholders = false;
     for (const f of ordered) {
       const text = await tryRead(path.join(memDir, f));
-      if (text) blocks.push(`### ${f}\n\n${text}`);
+      if (text) {
+        blocks.push(`### ${f}\n\n${text}`);
+        if (text.includes("{{")) hasPlaceholders = true;
+      }
     }
-    return blocks.join("\n\n");
+    return { content: blocks.join("\n\n"), hasPlaceholders };
   } catch {
     return null;
   }

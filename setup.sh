@@ -14,6 +14,7 @@ LOCAL_SKILLS=".claude/skills"
 LOCAL_PLUGINS=".claude/plugins"
 
 ALL_SKILLS=(
+  bootstrap-daemon
   diagnose-fetch-failure
   diagnose-intermittent-failure
   graphify

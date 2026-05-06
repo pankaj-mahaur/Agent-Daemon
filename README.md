@@ -138,7 +138,7 @@ agent-daemon/
 │       ├── digest/          # Extract → classify → apply pipeline + GEPA
 │       └── memory/          # SQLite + FTS5 episodic store
 ├── teams/templates/     # Team blueprints (JSON) — 4 built-in
-├── skills/              # 35 Claude Code skills (SKILL.md), stack-agnostic
+├── skills/              # 36 Claude Code skills (SKILL.md), stack-agnostic
 ├── playbooks/           # 5 reference docs — any agent or human can use
 ├── hooks/               # Pre-baked Claude Code hook configs
 ├── mcp/                 # MCP server configs (scaffolded)
@@ -177,7 +177,7 @@ ad team delete   (td)  --team <id>
 ad spawn         (sp)  --team <id> --role <name> --task "..."
 ```
 
-## Skill catalog (35 skills)
+## Skill catalog (36 skills)
 
 ### Build & implement
 
@@ -220,6 +220,7 @@ ad spawn         (sp)  --team <id> --role <name> --task "..."
 
 | Skill | Description | Trigger |
 |---|---|---|
+| [bootstrap-daemon](skills/bootstrap-daemon/) | Full end-to-end daemon initialization + memory population | Auto: "initialize daemon", "bootstrap daemon" |
 | [orchestrate-team](skills/orchestrate-team/) | Multi-agent task decomposition + team spawning | Auto: complex multi-domain tasks |
 | [agent-self-improve](skills/agent-self-improve/) | Teaches agents the self-improvement discipline | Auto: session reflection |
 
