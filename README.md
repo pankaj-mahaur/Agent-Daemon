@@ -11,23 +11,27 @@ Skills evolve too: [GEPA](runtime/src/digest/gepa/README.md) (Genetic-Pareto Pro
 ## Quick start
 
 ```bash
-# 1. Clone
+# 1. Clone & install
 git clone https://github.com/Pankaj-mobiux/Agent-Daemon.git
-cd Agent-Daemon
+cd Agent-Daemon/runtime
+npm install
 
-# 2. Install (skills + runtime + hooks)
-./setup.sh --all                # Linux/macOS
-./setup.ps1 -All                # Windows
+# 2. Register the `ad` command globally
+npm link              # now `ad` works from anywhere
 
 # 3. Verify
-agent-daemon doctor
+ad doctor
 
-# 4. Open Claude Code — constitution + memory load automatically.
+# 4. Init in your project
+cd /path/to/your/project
+ad init               # scaffolds .agent-daemon/ + AGENTS.md
+
+# 5. Open Claude Code — constitution + memory load automatically.
 #    The agent emits a digest block before ending, the daemon parses it,
 #    memory accumulates across sessions.
 ```
 
-No API key required for normal operation. Set `ANTHROPIC_API_KEY` only for `agent-daemon evolve` (GEPA batch evolution).
+The `ad` command is the short alias for `agent-daemon` — both work interchangeably. No API key required for normal operation. Set `ANTHROPIC_API_KEY` only for `ad evolve` (GEPA batch evolution).
 
 ## Multi-agent orchestration
 
@@ -35,22 +39,22 @@ Spawn a team of specialized Claude Code agents that work in parallel on isolated
 
 ```bash
 # List available team templates
-agent-daemon team list-templates
+ad tt                    # (team list-templates)
 
 # Create a team from a template
-agent-daemon team create --template full-stack-feature --task "Add user authentication with JWT"
+ad tc --template full-stack-feature --task "Add user authentication with JWT"
 
 # Spawn workers
-agent-daemon spawn --team <team-id> --role backend --task "Implement JWT auth endpoints"
-agent-daemon spawn --team <team-id> --role frontend --task "Build login/signup UI"
+ad sp --team <team-id> --role backend --task "Implement JWT auth endpoints"
+ad sp --team <team-id> --role frontend --task "Build login/signup UI"
 
 # Monitor progress
-agent-daemon team status --team <team-id>
-agent-daemon team inbox --team <team-id> --agent lead
+ad ts --team <team-id>   # (team status)
+ad ti --team <team-id> --agent lead   # (team inbox)
 
 # Cleanup when done
-agent-daemon team cleanup
-agent-daemon team delete --team <team-id>
+ad tu                    # (team cleanup)
+ad td --team <team-id>   # (team delete)
 ```
 
 ### How it works
@@ -60,9 +64,9 @@ User gives complex task
         |
 [Orchestrator Skill] analyzes task, selects template
         |
-[agent-daemon team create] creates team dir + tasks.json + dependency graph
+[ad tc] creates team dir + tasks.json + dependency graph
         |
-[agent-daemon spawn] for each role:
+[ad sp] for each role:
   - Creates isolated git worktree at ~/.agent-daemon/worktrees/
   - Spawns headless `claude` CLI with role-specific system prompt
   - Agent works independently on its branch
@@ -70,12 +74,12 @@ User gives complex task
 [Filesystem Inboxes] coordination:
   - Agent writes completion message to leader's inbox
   - Watch daemon polls inboxes, auto-unblocks dependent tasks
-  - Leader can read status, trigger next phase
+  - Leader reads status via [ad ts] and inbox via [ad ti]
         |
 [Merge & Report]
   - Each agent's work is on a separate branch
   - Leader merges worktree branches
-  - Team status shows full kanban board
+  - Cleanup via [ad td]
 ```
 
 ### Team templates
@@ -147,28 +151,30 @@ agent-daemon/
 
 ## CLI reference
 
+All commands work with both `ad` (short) and `agent-daemon` (full). Short aliases are shown in parentheses.
+
 ```bash
 # Core
-agent-daemon doctor                    # Diagnose install — hooks, PATH, dirs
-agent-daemon doctor --tokens           # Token usage + cache stats from recent sessions
-agent-daemon session-start             # Inject context (called by SessionStart hook)
-agent-daemon digest                    # Run digest pipeline (called by SessionEnd hook)
-agent-daemon watch                     # Watch transcript dirs, fire digest on new sessions
-agent-daemon evolve <skill>            # GEPA self-evolution run for a skill
-agent-daemon review                    # Accept/reject queued skill proposals
-agent-daemon init                      # Scaffold .agent-daemon/ in current project
-agent-daemon status                    # Show queued proposals
-agent-daemon query-retrieve            # Keyword extraction + learning injection
+ad doctor                              # Diagnose install — hooks, PATH, dirs
+ad doctor --tokens                     # Token usage + cache stats from recent sessions
+ad session-start                       # Inject context (called by SessionStart hook)
+ad digest                              # Run digest pipeline (called by SessionEnd hook)
+ad watch                               # Watch transcript dirs, fire digest on new sessions
+ad evolve <skill>                      # GEPA self-evolution run for a skill
+ad review                              # Accept/reject queued skill proposals
+ad init                                # Scaffold .agent-daemon/ + AGENTS.md in project
+ad status                              # Show queued proposals
+ad query-retrieve                      # Keyword extraction + learning injection
 
 # Multi-agent orchestration
-agent-daemon team create --template <name> --task "..."
-agent-daemon team status [--team <id>]
-agent-daemon team list
-agent-daemon team list-templates
-agent-daemon team inbox --team <id> [--agent <name>]
-agent-daemon team cleanup              # Prune stale worktrees
-agent-daemon team delete --team <id>
-agent-daemon spawn --team <id> --role <name> --task "..."
+ad team create   (tc)  --template <name> --task "..."
+ad team status   (ts)  [--team <id>]
+ad team list     (tl)
+ad team list-templates (tt)
+ad team inbox    (ti)  --team <id> [--agent <name>]
+ad team cleanup  (tu)                  # Prune stale worktrees
+ad team delete   (td)  --team <id>
+ad spawn         (sp)  --team <id> --role <name> --task "..."
 ```
 
 ## Skill catalog (35 skills)
@@ -267,8 +273,8 @@ Standalone reference docs for any agent or human:
 Skills auto-trigger from frontmatter or via `/skill-name`. The runtime fires hooks automatically.
 
 ```bash
-./setup.sh --all                                  # global install
-./setup.sh --skills review-slice --project-local  # project-local install
+cd Agent-Daemon/runtime && npm install && npm link   # global install — `ad` works everywhere
+ad init                                              # in your project — scaffolds config + AGENTS.md
 ```
 
 ### Other agents
@@ -278,7 +284,12 @@ Open `skills/<name>/SKILL.md` directly — paste the content into your agent's s
 ## Installation options
 
 ```bash
-# All skills globally
+# Recommended: npm link (registers `ad` globally)
+cd Agent-Daemon/runtime
+npm install
+npm link                     # now `ad` works from any directory
+
+# Legacy: setup scripts (skills + hooks only, no `ad` command)
 ./setup.sh --all                          # Linux/macOS
 ./setup.ps1 -All                          # Windows
 
@@ -342,7 +353,7 @@ cd /path/to/your/project
 - v0.3 — Full self-improving loop, SQLite episodic memory, GEPA, watch daemon, OS service registration
 - v0.4 — Zero API-key digest via agent-emitted blocks
 - v0.5 — Token efficiency, ecosystem interop, cross-agent coexistence
-- v0.6 — Multi-agent orchestration with production hardening
+- v0.6 — Multi-agent orchestration with production hardening, `ad` short commands, AGENTS.md auto-generation
 
 **Next:**
 - Semantic task router — LLM-based auto template selection + role assignment
