@@ -136,11 +136,16 @@ export async function runWatcher(opts) {
     }
   }, INBOX_POLL_MS);
 
-  // Block until Ctrl+C
+  // Block until Ctrl+C (guard against double-fire)
   return new Promise((resolve) => {
+    let shuttingDown = false;
     const cleanup = async () => {
+      if (shuttingDown) return;
+      shuttingDown = true;
       console.error("\nagent-daemon: stopping watch...");
       clearInterval(inboxPollHandle);
+      for (const h of pendingDigests.values()) clearTimeout(h);
+      pendingDigests.clear();
       for (const w of watchers) await w.close().catch(() => {});
       resolve(0);
     };
@@ -150,41 +155,67 @@ export async function runWatcher(opts) {
 }
 
 async function pollTeamInboxes(verbose) {
-  const teams = await listTeams();
-  for (const team of teams) {
-    // Find leader agents to check their inboxes
-    const leaders = (team.roles || []).filter(r => r.is_leader).map(r => r.name);
-    if (leaders.length === 0) continue;
+  let teams;
+  try {
+    teams = await listTeams();
+  } catch (err) {
+    if (verbose) console.error(`agent-daemon: failed to list teams: ${err.message}`);
+    return;
+  }
 
-    for (const leader of leaders) {
-      const messages = await readInbox(team.id, leader);
-      for (const msg of messages) {
-        if (msg.type === "task-complete") {
+  for (const team of teams) {
+    try {
+      const leaders = (team.roles || []).filter(r => r.is_leader).map(r => r.name);
+      if (leaders.length === 0) continue;
+
+      for (const leader of leaders) {
+        let messages;
+        try {
+          messages = await readInbox(team.id, leader);
+        } catch (err) {
+          if (verbose) console.error(`agent-daemon: [team ${team.id}] inbox read error for ${leader}: ${err.message}`);
+          continue;
+        }
+
+        for (const msg of messages) {
+          if (msg.type !== "task-complete") continue;
+
           if (verbose) {
             console.error(`agent-daemon: [team ${team.id}] ${msg.from} completed (${msg.payload?.status || "unknown"})`);
           }
 
-          // Find and complete the matching task
-          const tasks = await listTasks(team.id);
-          const ownerTask = tasks.find(t =>
-            t.owner === msg.payload?.role && t.status === "in_progress"
-          );
-          if (ownerTask && msg.payload?.status === "completed") {
-            const { unblocked } = await updateTaskStatus(team.id, ownerTask.id, "completed");
-            if (unblocked.length > 0 && verbose) {
-              console.error(`agent-daemon: [team ${team.id}] unblocked: ${unblocked.map(t => t.title).join(", ")}`);
+          try {
+            const tasks = await listTasks(team.id);
+            // Match by role OR by agent name (from field) for robustness
+            const ownerTask = tasks.find(t =>
+              (t.owner === msg.payload?.role || t.owner === msg.from) &&
+              (t.status === "in_progress" || t.status === "pending")
+            );
+            if (ownerTask && msg.payload?.status === "completed") {
+              const { unblocked } = await updateTaskStatus(team.id, ownerTask.id, "completed");
+              if (unblocked.length > 0 && verbose) {
+                console.error(`agent-daemon: [team ${team.id}] unblocked: ${unblocked.map(t => t.title).join(", ")}`);
+              }
             }
+          } catch (err) {
+            if (verbose) console.error(`agent-daemon: [team ${team.id}] task update error: ${err.message}`);
           }
 
-          // Acknowledge the message
-          await ackMessage(team.id, leader, msg.id);
-
-          // Check if team is done
-          if (await isTeamComplete(team.id)) {
-            console.error(`agent-daemon: [team ${team.id}] ALL TASKS COMPLETE`);
+          try {
+            await ackMessage(team.id, leader, msg.id);
+          } catch (err) {
+            if (verbose) console.error(`agent-daemon: [team ${team.id}] ack error: ${err.message}`);
           }
+
+          try {
+            if (await isTeamComplete(team.id)) {
+              console.error(`agent-daemon: [team ${team.id}] ALL TASKS COMPLETE`);
+            }
+          } catch { /* non-critical */ }
         }
       }
+    } catch (err) {
+      if (verbose) console.error(`agent-daemon: [team ${team.id}] poll error: ${err.message}`);
     }
   }
 }

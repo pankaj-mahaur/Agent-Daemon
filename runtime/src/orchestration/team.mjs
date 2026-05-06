@@ -10,6 +10,9 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
 
+const MAX_TASKS_PER_TEAM = 100;
+const MAX_RETRY = 3;
+
 /**
  * @typedef {Object} TeamTask
  * @property {string} id
@@ -39,6 +42,32 @@ function teamDir(teamId) {
   return path.join(teamsRoot(), teamId);
 }
 
+async function atomicWriteJson(filepath, data) {
+  const serialized = JSON.stringify(data, null, 2);
+  const tmp = filepath + `.${crypto.randomBytes(4).toString("hex")}.tmp`;
+  try {
+    await fs.writeFile(tmp, serialized, "utf8");
+    await fs.rename(tmp, filepath);
+  } catch (err) {
+    await fs.unlink(tmp).catch(() => {});
+    throw err;
+  }
+}
+
+async function readJsonSafe(filepath, fallback) {
+  for (let attempt = 0; attempt < MAX_RETRY; attempt++) {
+    try {
+      const raw = await fs.readFile(filepath, "utf8");
+      return JSON.parse(raw);
+    } catch (err) {
+      if (err.code === "ENOENT") return fallback;
+      if (attempt === MAX_RETRY - 1) throw err;
+      await new Promise(r => setTimeout(r, 50 * (attempt + 1)));
+    }
+  }
+  return fallback;
+}
+
 /**
  * Create a new team from a template or ad-hoc config.
  *
@@ -50,6 +79,8 @@ function teamDir(teamId) {
  * @returns {Promise<TeamInfo>}
  */
 export async function createTeam(opts) {
+  if (!opts.description) throw new Error("createTeam: description is required");
+
   const id = `team-${Date.now()}-${crypto.randomBytes(3).toString("hex")}`;
   const dir = teamDir(id);
   await fs.mkdir(dir, { recursive: true });
@@ -64,9 +95,9 @@ export async function createTeam(opts) {
     flows: opts.flows || []
   };
 
-  await fs.writeFile(path.join(dir, "team.json"), JSON.stringify(team, null, 2), "utf8");
-  await fs.writeFile(path.join(dir, "tasks.json"), "[]", "utf8");
-  await fs.writeFile(path.join(dir, "agents.json"), "[]", "utf8");
+  await atomicWriteJson(path.join(dir, "team.json"), team);
+  await atomicWriteJson(path.join(dir, "tasks.json"), []);
+  await atomicWriteJson(path.join(dir, "agents.json"), []);
 
   return team;
 }
@@ -75,8 +106,11 @@ export async function createTeam(opts) {
  * Load team info.
  */
 export async function loadTeam(teamId) {
+  if (!teamId) throw new Error("loadTeam: teamId is required");
   const p = path.join(teamDir(teamId), "team.json");
-  return JSON.parse(await fs.readFile(p, "utf8"));
+  const team = await readJsonSafe(p, null);
+  if (!team) throw new Error(`team ${teamId} not found`);
+  return team;
 }
 
 /**
@@ -117,14 +151,17 @@ export async function listTeams() {
  * @returns {Promise<TeamTask>}
  */
 export async function addTask(teamId, task) {
+  if (!task.title) throw new Error("addTask: title is required");
+
   const p = path.join(teamDir(teamId), "tasks.json");
-  let tasks = [];
-  try {
-    tasks = JSON.parse(await fs.readFile(p, "utf8"));
-  } catch { /* new */ }
+  const tasks = await readJsonSafe(p, []);
+
+  if (tasks.length >= MAX_TASKS_PER_TEAM) {
+    throw new Error(`team ${teamId} has reached the maximum of ${MAX_TASKS_PER_TEAM} tasks`);
+  }
 
   const newTask = {
-    id: `task-${tasks.length + 1}`,
+    id: `task-${crypto.randomBytes(4).toString("hex")}`,
     title: task.title,
     description: task.description || null,
     owner: task.owner || null,
@@ -135,7 +172,7 @@ export async function addTask(teamId, task) {
   };
 
   tasks.push(newTask);
-  await fs.writeFile(p, JSON.stringify(tasks, null, 2), "utf8");
+  await atomicWriteJson(p, tasks);
   return newTask;
 }
 
@@ -148,8 +185,13 @@ export async function addTask(teamId, task) {
  * @returns {Promise<{task: TeamTask, unblocked: TeamTask[]}>}
  */
 export async function updateTaskStatus(teamId, taskId, status) {
+  const validStatuses = ["pending", "in_progress", "completed", "blocked"];
+  if (!validStatuses.includes(status)) {
+    throw new Error(`invalid status "${status}" — must be one of: ${validStatuses.join(", ")}`);
+  }
+
   const p = path.join(teamDir(teamId), "tasks.json");
-  const tasks = JSON.parse(await fs.readFile(p, "utf8"));
+  const tasks = await readJsonSafe(p, []);
 
   const task = tasks.find(t => t.id === taskId);
   if (!task) throw new Error(`task ${taskId} not found in team ${teamId}`);
@@ -159,14 +201,12 @@ export async function updateTaskStatus(teamId, taskId, status) {
     task.completedAt = new Date().toISOString();
   }
 
-  // Auto-unblock: tasks that were blocked by this task may become unblockable
   const unblocked = [];
   if (status === "completed") {
     for (const t of tasks) {
       if (t.status !== "blocked") continue;
       if (!t.blockedBy || !t.blockedBy.includes(taskId)) continue;
 
-      // Check if ALL blockers are now completed
       const allDone = t.blockedBy.every(bid => {
         const blocker = tasks.find(bt => bt.id === bid);
         return blocker && blocker.status === "completed";
@@ -178,7 +218,7 @@ export async function updateTaskStatus(teamId, taskId, status) {
     }
   }
 
-  await fs.writeFile(p, JSON.stringify(tasks, null, 2), "utf8");
+  await atomicWriteJson(p, tasks);
   return { task, unblocked };
 }
 
@@ -186,31 +226,23 @@ export async function updateTaskStatus(teamId, taskId, status) {
  * Get all tasks for a team.
  */
 export async function listTasks(teamId) {
-  const p = path.join(teamDir(teamId), "tasks.json");
-  try {
-    return JSON.parse(await fs.readFile(p, "utf8"));
-  } catch {
-    return [];
-  }
+  return readJsonSafe(path.join(teamDir(teamId), "tasks.json"), []);
 }
 
-/**
- * Get all agents registered in a team.
- */
 export async function listAgents(teamId) {
-  const p = path.join(teamDir(teamId), "agents.json");
-  try {
-    return JSON.parse(await fs.readFile(p, "utf8"));
-  } catch {
-    return [];
-  }
+  return readJsonSafe(path.join(teamDir(teamId), "agents.json"), []);
 }
 
 /**
  * Print a kanban-style status board for a team.
  */
 export async function formatTeamStatus(teamId) {
-  const team = await loadTeam(teamId);
+  let team;
+  try {
+    team = await loadTeam(teamId);
+  } catch {
+    return `Team ${teamId} not found.`;
+  }
   const tasks = await listTasks(teamId);
   const agents = await listAgents(teamId);
 

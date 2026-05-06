@@ -15,6 +15,11 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { sendMessage, createInbox } from "./inbox.mjs";
 
+const MAX_CONCURRENT_AGENTS = 8;
+const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
+const MAX_STDOUT_BYTES = 512 * 1024; // 512KB cap on buffered output
+const activeAgents = new Set();
+
 /**
  * @typedef {Object} SpawnOptions
  * @property {string} teamId
@@ -28,6 +33,7 @@ import { sendMessage, createInbox } from "./inbox.mjs";
  * @property {boolean} [worktree=true] - use git worktree isolation
  * @property {string} [leader]      - leader agent name (for completion reporting)
  * @property {boolean} [verbose=false]
+ * @property {number} [timeoutMs]    - kill agent after this many ms (default: 15 min)
  *
  * @typedef {Object} SpawnResult
  * @property {boolean} ok
@@ -45,16 +51,27 @@ import { sendMessage, createInbox } from "./inbox.mjs";
  * @returns {Promise<SpawnResult>}
  */
 export async function spawnAgent(opts) {
+  if (!opts.teamId) throw new Error("spawnAgent: teamId is required");
+  if (!opts.role) throw new Error("spawnAgent: role is required");
+  if (!opts.task) throw new Error("spawnAgent: task is required");
+  if (!opts.cwd) throw new Error("spawnAgent: cwd is required");
+
+  validateName(opts.teamId, "teamId");
+  validateName(opts.role, "role");
+
+  if (activeAgents.size >= MAX_CONCURRENT_AGENTS) {
+    return { ok: false, agentName: opts.role, error: `concurrent agent limit reached (${MAX_CONCURRENT_AGENTS}). Wait for running agents to finish.` };
+  }
+
   const agentName = opts.agentName || `${opts.role}-${crypto.randomBytes(3).toString("hex")}`;
   const branch = `team/${opts.teamId}/${agentName}`;
+  const timeoutMs = opts.timeoutMs || DEFAULT_TIMEOUT_MS;
 
-  // Ensure inboxes exist
   await createInbox(opts.teamId, agentName);
   if (opts.leader) {
     await createInbox(opts.teamId, opts.leader);
   }
 
-  // Register agent in team manifest
   await registerAgent(opts.teamId, {
     name: agentName,
     role: opts.role,
@@ -89,6 +106,7 @@ export async function spawnAgent(opts) {
     "--print",
     "--output-format", "json",
     "--no-session-persistence",
+    "--dangerously-skip-permissions",
     "--append-system-prompt", systemPrompt,
     "--input-format", "text"
   ];
@@ -98,7 +116,7 @@ export async function spawnAgent(opts) {
   }
 
   if (opts.verbose) {
-    process.stderr.write(`[spawn] ${agentName} (${opts.role}) in ${worktreePath}\n`);
+    process.stderr.write(`[spawn] ${agentName} (${opts.role}) in ${worktreePath} [timeout=${Math.round(timeoutMs/1000)}s]\n`);
   }
 
   const userMessage = [
@@ -117,7 +135,18 @@ export async function spawnAgent(opts) {
     ``
   ].join("\n");
 
+  activeAgents.add(agentName);
+
   return new Promise((resolve) => {
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      activeAgents.delete(agentName);
+      clearTimeout(timer);
+      resolve(result);
+    };
+
     const child = spawn("claude", args, {
       cwd: worktreePath,
       stdio: ["pipe", "pipe", "pipe"],
@@ -126,15 +155,39 @@ export async function spawnAgent(opts) {
 
     let stdout = "";
     let stderr = "";
-    child.stdout.on("data", c => { stdout += c.toString(); });
-    child.stderr.on("data", c => { stderr += c.toString(); });
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
+
+    child.stdout.on("data", c => {
+      stdoutBytes += c.length;
+      if (stdoutBytes <= MAX_STDOUT_BYTES) stdout += c.toString();
+    });
+    child.stderr.on("data", c => {
+      stderrBytes += c.length;
+      if (stderrBytes <= MAX_STDOUT_BYTES) stderr += c.toString();
+    });
 
     const pid = child.pid;
     updateAgentStatus(opts.teamId, agentName, "running", null, pid).catch(() => {});
 
+    const timer = setTimeout(async () => {
+      if (settled) return;
+      try { child.kill("SIGTERM"); } catch {}
+      setTimeout(() => { try { child.kill("SIGKILL"); } catch {} }, 5000);
+      await updateAgentStatus(opts.teamId, agentName, "error", `killed: timeout after ${Math.round(timeoutMs/1000)}s`);
+      if (opts.leader) {
+        await sendMessage({
+          teamId: opts.teamId, from: agentName, to: opts.leader,
+          type: "task-complete",
+          payload: { role: opts.role, task: opts.task, status: "error", exitCode: null, branch, worktreePath, summary: `Agent timed out after ${Math.round(timeoutMs/1000)}s` }
+        }).catch(() => {});
+      }
+      finish({ ok: false, agentName, worktreePath, branch, pid, error: `timeout after ${Math.round(timeoutMs/1000)}s` });
+    }, timeoutMs);
+
     child.on("error", async (err) => {
       await updateAgentStatus(opts.teamId, agentName, "error", err.message);
-      resolve({ ok: false, agentName, error: `spawn failed: ${err.message}` });
+      finish({ ok: false, agentName, error: `spawn failed: ${err.message}` });
     });
 
     child.on("close", async (code) => {
@@ -150,7 +203,6 @@ export async function spawnAgent(opts) {
       const status = ok ? "completed" : "error";
       await updateAgentStatus(opts.teamId, agentName, status, ok ? null : `exit code ${code}`);
 
-      // Report completion to leader's inbox
       if (opts.leader) {
         await sendMessage({
           teamId: opts.teamId,
@@ -169,7 +221,7 @@ export async function spawnAgent(opts) {
         }).catch(() => {});
       }
 
-      resolve({
+      finish({
         ok,
         agentName,
         worktreePath,
@@ -182,6 +234,12 @@ export async function spawnAgent(opts) {
     child.stdin.write(userMessage);
     child.stdin.end();
   });
+}
+
+function validateName(value, label) {
+  if (typeof value !== "string" || value.length === 0) throw new Error(`${label} must be a non-empty string`);
+  if (value.length > 128) throw new Error(`${label} too long (max 128 chars)`);
+  if (/[\/\\:*?"<>|]/.test(value) && label !== "teamId") throw new Error(`${label} contains invalid path characters`);
 }
 
 function buildSystemPrompt({ teamId, agentName, role, task, instructions, leader, skills }) {
@@ -217,14 +275,21 @@ function buildSystemPrompt({ teamId, agentName, role, task, instructions, leader
 }
 
 async function createWorktree(cwd, branch) {
-  return new Promise((resolve, reject) => {
-    const worktreeName = branch.replace(/[/\\:]/g, "-");
-    const worktreePath = path.join(cwd, ".git", "agent-worktrees", worktreeName);
+  const home = process.env.HOME || process.env.USERPROFILE || ".";
+  const worktreeName = branch.replace(/[/\\:]/g, "-");
+  const worktreePath = path.join(home, ".agent-daemon", "worktrees", worktreeName);
 
-    const child = spawn("git", ["worktree", "add", "-b", branch, worktreePath], {
+  await fs.mkdir(path.dirname(worktreePath), { recursive: true });
+
+  return new Promise((resolve, reject) => {
+    const isWin = process.platform === "win32";
+    const wtArg = isWin ? `"${worktreePath}"` : worktreePath;
+    const args = ["worktree", "add", "-b", branch, wtArg];
+
+    const child = spawn("git", args, {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
-      shell: process.platform === "win32"
+      shell: isWin
     });
 
     let stderr = "";
@@ -249,6 +314,17 @@ function agentsManifestPath(teamId) {
   return path.join(home, ".agent-daemon", "teams", teamId, "agents.json");
 }
 
+async function atomicWriteJson(filepath, data) {
+  const tmp = filepath + `.${crypto.randomBytes(4).toString("hex")}.tmp`;
+  try {
+    await fs.writeFile(tmp, JSON.stringify(data, null, 2), "utf8");
+    await fs.rename(tmp, filepath);
+  } catch (err) {
+    await fs.unlink(tmp).catch(() => {});
+    throw err;
+  }
+}
+
 async function registerAgent(teamId, agent) {
   const p = agentsManifestPath(teamId);
   await fs.mkdir(path.dirname(p), { recursive: true });
@@ -260,7 +336,7 @@ async function registerAgent(teamId, agent) {
 
   agents = agents.filter(a => a.name !== agent.name);
   agents.push(agent);
-  await fs.writeFile(p, JSON.stringify(agents, null, 2), "utf8");
+  await atomicWriteJson(p, agents);
 }
 
 async function updateAgentStatus(teamId, agentName, status, error, pid) {
@@ -279,15 +355,52 @@ async function updateAgentStatus(teamId, agentName, status, error, pid) {
       agent.finishedAt = new Date().toISOString();
     }
   }
-  await fs.writeFile(p, JSON.stringify(agents, null, 2), "utf8");
+  await atomicWriteJson(p, agents);
 }
 
-/**
- * Clean up a git worktree after agent completes.
- */
+export function getActiveAgentCount() {
+  return activeAgents.size;
+}
+
 export async function removeWorktree(cwd, branch) {
   return new Promise((resolve) => {
+    const isWin = process.platform === "win32";
     const child = spawn("git", ["worktree", "remove", "--force", branch], {
+      cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+      shell: isWin
+    });
+    child.on("close", () => resolve());
+    child.on("error", () => resolve());
+  });
+}
+
+export async function cleanupWorktrees(cwd) {
+  const home = process.env.HOME || process.env.USERPROFILE || ".";
+  const worktreesDir = path.join(home, ".agent-daemon", "worktrees");
+  let entries;
+  try {
+    entries = await fs.readdir(worktreesDir);
+  } catch { return { removed: 0 }; }
+
+  let removed = 0;
+  for (const entry of entries) {
+    const fullPath = path.join(worktreesDir, entry);
+    const stat = await fs.stat(fullPath).catch(() => null);
+    if (!stat?.isDirectory()) continue;
+
+    const gitHead = path.join(fullPath, ".git");
+    const exists = await fs.stat(gitHead).catch(() => null);
+    if (!exists) {
+      await fs.rm(fullPath, { recursive: true, force: true }).catch(() => {});
+      removed++;
+      continue;
+    }
+  }
+
+  // Also run git worktree prune on the main repo
+  await new Promise((resolve) => {
+    const child = spawn("git", ["worktree", "prune"], {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
       shell: process.platform === "win32"
@@ -295,4 +408,6 @@ export async function removeWorktree(cwd, branch) {
     child.on("close", () => resolve());
     child.on("error", () => resolve());
   });
+
+  return { removed };
 }

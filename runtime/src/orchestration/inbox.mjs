@@ -13,6 +13,9 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
 
+const MAX_MESSAGE_BYTES = 64 * 1024; // 64KB per message
+const MAX_INBOX_MESSAGES = 500;
+
 /**
  * @typedef {Object} InboxMessage
  * @property {string} id         - unique message id
@@ -59,6 +62,10 @@ export async function createInbox(teamId, agentName) {
  * @returns {Promise<InboxMessage>}
  */
 export async function sendMessage({ teamId, from, to, type, payload }) {
+  if (!teamId || !from || !to || !type) {
+    throw new Error("sendMessage: teamId, from, to, and type are all required");
+  }
+
   const dir = inboxDir(teamId, to);
   await fs.mkdir(dir, { recursive: true });
 
@@ -70,10 +77,21 @@ export async function sendMessage({ teamId, from, to, type, payload }) {
   /** @type {InboxMessage} */
   const msg = { id, from, to, type, payload, timestamp, teamId };
 
+  const serialized = JSON.stringify(msg, null, 2);
+  if (Buffer.byteLength(serialized, "utf8") > MAX_MESSAGE_BYTES) {
+    throw new Error(`message exceeds ${MAX_MESSAGE_BYTES} byte limit`);
+  }
+
   const tmpPath = path.join(dir, `.${filename}.tmp`);
   const finalPath = path.join(dir, filename);
-  await fs.writeFile(tmpPath, JSON.stringify(msg, null, 2), "utf8");
-  await fs.rename(tmpPath, finalPath);
+  try {
+    await fs.writeFile(tmpPath, serialized, "utf8");
+    await fs.rename(tmpPath, finalPath);
+  } catch (err) {
+    // Clean up orphan tmp file on failure
+    await fs.unlink(tmpPath).catch(() => {});
+    throw err;
+  }
 
   return msg;
 }
@@ -90,7 +108,7 @@ export async function readInbox(teamId, agentName) {
   const dir = inboxDir(teamId, agentName);
   let entries;
   try {
-    entries = await fs.readdir(dir);
+    entries = await fs.readdir(dir, { withFileTypes: true });
   } catch (err) {
     if (err.code === "ENOENT") return [];
     throw err;
@@ -98,9 +116,11 @@ export async function readInbox(teamId, agentName) {
 
   const messages = [];
   for (const entry of entries) {
-    if (!entry.endsWith(".json") || entry.startsWith(".")) continue;
+    if (!entry.isFile()) continue;
+    if (!entry.name.endsWith(".json") || entry.name.startsWith(".")) continue;
+    if (messages.length >= MAX_INBOX_MESSAGES) break;
     try {
-      const raw = await fs.readFile(path.join(dir, entry), "utf8");
+      const raw = await fs.readFile(path.join(dir, entry.name), "utf8");
       messages.push(JSON.parse(raw));
     } catch {
       // skip corrupt messages

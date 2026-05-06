@@ -46,6 +46,8 @@ Commands:
   team list              List all teams
   team list-templates    List available team templates
   team inbox             Read messages from an agent's inbox
+  team cleanup           Prune stale worktrees and dangling team data
+  team delete            Delete a team and its data
   spawn                  Spawn a worker agent in a team
 
 Options:
@@ -297,8 +299,9 @@ async function cmdDoctor({ tokens, limit, model } = {}) {
   try {
     const settings = JSON.parse(await fs.readFile(settingsPath, "utf8"));
     const hooks = settings.hooks || {};
-    const sessionStart = (hooks.SessionStart || []).some(h => JSON.stringify(h).includes("agent-daemon"));
-    const sessionEnd   = (hooks.SessionEnd   || []).some(h => JSON.stringify(h).includes("agent-daemon"));
+    const matchesHook = (h) => { const s = JSON.stringify(h).toLowerCase(); return s.includes("agent-daemon") || s.includes("agent daemon"); };
+    const sessionStart = (hooks.SessionStart || []).some(matchesHook);
+    const sessionEnd   = (hooks.SessionEnd   || []).some(matchesHook);
     checks.push({ name: "SessionStart hook → agent-daemon", ok: sessionStart, note: sessionStart ? "wired" : "missing — run setup.sh --hooks" });
     checks.push({ name: "SessionEnd hook → agent-daemon",   ok: sessionEnd,   note: sessionEnd   ? "wired" : "missing — run setup.sh --hooks" });
   } catch {
@@ -504,8 +507,54 @@ async function cmdTeam(subcommand, opts) {
       return 0;
     }
 
+    case "cleanup": {
+      const { cleanupWorktrees } = await import("./orchestration/spawn.mjs");
+      console.log("Cleaning up stale worktrees...");
+      const { removed } = await cleanupWorktrees(opts.cwd);
+      console.log(`  Pruned ${removed} stale worktree(s).`);
+
+      // Also report old completed teams
+      const teams = await listTeams();
+      const oldTeams = [];
+      const now = Date.now();
+      for (const t of teams) {
+        const tasks = await listTasks(t.id);
+        const allDone = tasks.length > 0 && tasks.every(tk => tk.status === "completed");
+        const created = new Date(t.createdAt).getTime();
+        if (allDone || (now - created > 7 * 24 * 60 * 60 * 1000)) {
+          oldTeams.push(t);
+        }
+      }
+      if (oldTeams.length > 0) {
+        console.log(`\n  ${oldTeams.length} team(s) eligible for deletion:`);
+        for (const t of oldTeams) {
+          console.log(`    ${t.id}  ${t.description.slice(0, 50)}`);
+        }
+        console.log(`\n  Delete with: agent-daemon team delete --team <id>`);
+      }
+      return 0;
+    }
+
+    case "delete": {
+      if (!opts.team) {
+        console.error("agent-daemon team delete: --team is required");
+        return 1;
+      }
+      const home = process.env.HOME || process.env.USERPROFILE;
+      const teamPath = path.join(home, ".agent-daemon", "teams", opts.team);
+      try {
+        await fs.stat(teamPath);
+      } catch {
+        console.error(`Team ${opts.team} not found.`);
+        return 1;
+      }
+      await fs.rm(teamPath, { recursive: true, force: true });
+      console.log(`Deleted team: ${opts.team}`);
+      return 0;
+    }
+
     default:
-      console.error(`agent-daemon team: unknown subcommand "${subcommand}". Use: create, status, list, list-templates, inbox`);
+      console.error(`agent-daemon team: unknown subcommand "${subcommand}". Use: create, status, list, list-templates, inbox, cleanup, delete`);
       return 1;
   }
 }
@@ -523,9 +572,13 @@ async function cmdSpawn(opts) {
     console.error("agent-daemon spawn: --task is required");
     return 1;
   }
+  if (opts.role.length > 64 || /[\/\\:*?"<>|]/.test(opts.role)) {
+    console.error("agent-daemon spawn: --role contains invalid characters or is too long");
+    return 1;
+  }
 
   const { loadTeam } = await import("./orchestration/team.mjs");
-  const { spawnAgent } = await import("./orchestration/spawn.mjs");
+  const { spawnAgent, getActiveAgentCount } = await import("./orchestration/spawn.mjs");
 
   let team;
   try {
