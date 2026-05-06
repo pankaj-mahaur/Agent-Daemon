@@ -321,7 +321,7 @@ async function cmdDoctor({ tokens, limit, model } = {}) {
   try {
     const settings = JSON.parse(await fs.readFile(settingsPath, "utf8"));
     const hooks = settings.hooks || {};
-    const matchesHook = (h) => { const s = JSON.stringify(h).toLowerCase(); return s.includes("agent-daemon") || s.includes("agent daemon"); };
+    const matchesHook = (h) => { const s = JSON.stringify(h).toLowerCase(); return s.includes("agent-daemon") || s.includes("agent daemon") || s.includes("ad session-start") || s.includes("ad digest"); };
     const sessionStart = (hooks.SessionStart || []).some(matchesHook);
     const sessionEnd   = (hooks.SessionEnd   || []).some(matchesHook);
     checks.push({ name: "SessionStart hook → agent-daemon", ok: sessionStart, note: sessionStart ? "wired" : "missing — run setup.sh --hooks" });
