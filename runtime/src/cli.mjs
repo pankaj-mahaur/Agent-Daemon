@@ -144,12 +144,34 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
     }
   } catch { /* no CLAUDE.md */ }
 
+  // Check if hooks need installing in ~/.claude/settings.json
+  const home = process.env.HOME || process.env.USERPROFILE || "";
+  const globalSettingsPath = path.join(home, ".claude", "settings.json");
+  let needsHooks = false;
+  let existingSettings = {};
+  try {
+    existingSettings = JSON.parse(await fs.readFile(globalSettingsPath, "utf8"));
+    const hooks = existingSettings.hooks || {};
+    const hasSessionStart = (hooks.SessionStart || []).some(h =>
+      (h.hooks || []).some(hh => hh.command && hh.command.includes("ad session-start"))
+    );
+    const hasSessionEnd = (hooks.SessionEnd || []).some(h =>
+      (h.hooks || []).some(hh => hh.command && hh.command.includes("ad digest"))
+    );
+    if (!hasSessionStart || !hasSessionEnd) needsHooks = true;
+  } catch {
+    // No settings.json yet — need to create with hooks
+    needsHooks = true;
+  }
+  if (needsHooks) {
+    actions.push("+ SessionStart & SessionEnd hooks in ~/.claude/settings.json");
+  }
+
   // Check if core skills need installing
   const CORE_SKILLS = [
     "bootstrap-daemon", "orchestrate-team", "agent-self-improve",
     "implement-feature", "debug-triage", "review-slice", "audit-runner"
   ];
-  const home = process.env.HOME || process.env.USERPROFILE || "";
   const skillsDst = path.join(home, ".claude", "skills");
   const skillsSrc = path.join(PROJECT_ROOT, "skills");
   let missingSkills = 0;
@@ -225,6 +247,55 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
   } catch { /* skills dir creation failed — skip */ }
   if (skillsInstalled > 0) {
     console.log(`  ✓ Installed ${skillsInstalled} core skill(s) to ~/.claude/skills/`);
+  }
+
+  // Install hooks in ~/.claude/settings.json (merge — preserve existing settings)
+  if (needsHooks) {
+    try {
+      const hooks = existingSettings.hooks || {};
+
+      // SessionStart hook
+      const ssHooks = hooks.SessionStart || [];
+      const hasSessionStart = ssHooks.some(h =>
+        (h.hooks || []).some(hh => hh.command && hh.command.includes("ad session-start"))
+      );
+      if (!hasSessionStart) {
+        ssHooks.push({
+          matcher: "",
+          hooks: [{
+            type: "command",
+            command: "ad session-start --output-json",
+            timeout: 5
+          }]
+        });
+      }
+
+      // SessionEnd hook
+      const seHooks = hooks.SessionEnd || [];
+      const hasSessionEnd = seHooks.some(h =>
+        (h.hooks || []).some(hh => hh.command && hh.command.includes("ad digest"))
+      );
+      if (!hasSessionEnd) {
+        seHooks.push({
+          matcher: "",
+          hooks: [{
+            type: "command",
+            command: 'ad digest --transcript "$CLAUDE_TRANSCRIPT_PATH" --session-id "$CLAUDE_SESSION_ID" --cwd "$CLAUDE_PROJECT_DIR" --verbose',
+            timeout: 30
+          }]
+        });
+      }
+
+      hooks.SessionStart = ssHooks;
+      hooks.SessionEnd = seHooks;
+      existingSettings.hooks = hooks;
+
+      await fs.mkdir(path.join(home, ".claude"), { recursive: true });
+      await fs.writeFile(globalSettingsPath, JSON.stringify(existingSettings, null, 2), "utf8");
+      console.log("  ✓ Added SessionStart & SessionEnd hooks to ~/.claude/settings.json");
+    } catch (err) {
+      console.error(`  ⚠ Could not install hooks: ${err.message}`);
+    }
   }
 
   // Add managed section to CLAUDE.md (idempotent)
