@@ -144,8 +144,24 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
     }
   } catch { /* no CLAUDE.md */ }
 
+  // Check if core skills need installing
+  const CORE_SKILLS = [
+    "bootstrap-daemon", "orchestrate-team", "agent-self-improve",
+    "implement-feature", "debug-triage", "review-slice", "audit-runner"
+  ];
+  const home = process.env.HOME || process.env.USERPROFILE || "";
+  const skillsDst = path.join(home, ".claude", "skills");
+  const skillsSrc = path.join(PROJECT_ROOT, "skills");
+  let missingSkills = 0;
+  for (const skill of CORE_SKILLS) {
+    try { await fs.access(path.join(skillsDst, skill)); } catch { missingSkills++; }
+  }
+  if (missingSkills > 0) {
+    actions.push(`+ ${missingSkills} core skill(s) to ~/.claude/skills/`);
+  }
+
   if (actions.length === 0) {
-    console.log("\n  Nothing to do — agent-daemon is already initialized in this project.");
+    console.log("\n  Nothing to do — agent-daemon is fully initialized in this project.");
     return 0;
   }
 
@@ -187,6 +203,28 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
     } catch {
       // template missing — skip silently
     }
+  }
+
+  // Install core skills to ~/.claude/skills/ (idempotent — skip existing)
+  let skillsInstalled = 0;
+  try {
+    await fs.mkdir(skillsDst, { recursive: true });
+    for (const skill of CORE_SKILLS) {
+      const dst = path.join(skillsDst, skill);
+      const src = path.join(skillsSrc, skill);
+      try {
+        await fs.access(dst);
+        // already installed — skip
+      } catch {
+        try {
+          await fs.cp(src, dst, { recursive: true });
+          skillsInstalled++;
+        } catch { /* source missing — skip */ }
+      }
+    }
+  } catch { /* skills dir creation failed — skip */ }
+  if (skillsInstalled > 0) {
+    console.log(`  ✓ Installed ${skillsInstalled} core skill(s) to ~/.claude/skills/`);
   }
 
   // Add managed section to CLAUDE.md (idempotent)
