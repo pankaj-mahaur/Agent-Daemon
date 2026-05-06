@@ -41,6 +41,13 @@ Commands:
   doctor                 Diagnose the install — settings.json, PATH, dirs
   doctor --tokens        Show token usage + cache stats from recent sessions
 
+  team create            Create a new multi-agent team
+  team status            Show team kanban board
+  team list              List all teams
+  team list-templates    List available team templates
+  team inbox             Read messages from an agent's inbox
+  spawn                  Spawn a worker agent in a team
+
 Options:
   --version              Print version and exit
   --help                 Print this help and exit
@@ -52,6 +59,13 @@ Common command flags:
   --output-json          Output JSON to stdout (for hook integration)
   --dry-run              Show what would happen without making changes
   --verbose              Verbose logging to stderr
+
+Team/spawn flags:
+  --template <name>      Team template name (full-stack-feature, bug-triage-team, etc.)
+  --task <description>   Task description for team or spawned agent
+  --team <id>            Team id
+  --role <name>          Role name for spawn
+  --agent <name>         Agent name for inbox
 
 Environment:
   CLAUDE_PROJECT_DIR     Project root (set by Claude Code hook)
@@ -367,6 +381,192 @@ async function cmdWatch(opts) {
   });
 }
 
+async function cmdTeam(subcommand, opts) {
+  const { createTeam, loadTeam, listTeams, addTask, formatTeamStatus, listTasks } = await import("./orchestration/team.mjs");
+  const { loadTemplate, listTemplates, findLeader } = await import("./orchestration/templates.mjs");
+  const { readInbox } = await import("./orchestration/inbox.mjs");
+
+  switch (subcommand) {
+    case "create": {
+      if (!opts.task) {
+        console.error("agent-daemon team create: --task is required");
+        return 1;
+      }
+      let roles = [];
+      let flows = [];
+      let templateTasks = [];
+      let templateName = null;
+
+      if (opts.template) {
+        const tmpl = await loadTemplate(opts.template);
+        roles = tmpl.roles;
+        flows = tmpl.flows;
+        templateTasks = tmpl.tasks || [];
+        templateName = tmpl.name;
+      }
+
+      const team = await createTeam({
+        description: opts.task,
+        template: templateName,
+        roles,
+        flows
+      });
+
+      // Create default tasks from template
+      const taskIdMap = {};
+      for (const tt of templateTasks) {
+        const blockedBy = (tt.blocked_by || []).map(title => taskIdMap[title]).filter(Boolean);
+        const task = await addTask(team.id, {
+          title: tt.title,
+          owner: tt.owner || null,
+          blockedBy
+        });
+        taskIdMap[tt.title] = task.id;
+      }
+
+      console.log(`Team created: ${team.id}`);
+      if (templateName) console.log(`  Template: ${templateName}`);
+      console.log(`  Description: ${team.description}`);
+      console.log(`  Roles: ${roles.map(r => r.name).join(", ") || "(none — ad-hoc)"}`);
+      if (templateTasks.length > 0) {
+        console.log(`  Tasks: ${templateTasks.length} created from template`);
+      }
+      console.log(`\nNext steps:`);
+      console.log(`  agent-daemon spawn --team ${team.id} --role <role> --task "<task>"`);
+      console.log(`  agent-daemon team status --team ${team.id}`);
+      return 0;
+    }
+
+    case "status": {
+      if (!opts.team) {
+        // Show all teams
+        const teams = await listTeams();
+        if (teams.length === 0) {
+          console.log("No teams created yet. Create one with: agent-daemon team create --task \"...\"");
+          return 0;
+        }
+        for (const t of teams) {
+          console.log(`${t.id}  ${t.template || "(ad-hoc)"}  ${t.description.slice(0, 60)}`);
+        }
+        return 0;
+      }
+      const board = await formatTeamStatus(opts.team);
+      console.log(board);
+      return 0;
+    }
+
+    case "list": {
+      const teams = await listTeams();
+      if (teams.length === 0) {
+        console.log("No teams.");
+        return 0;
+      }
+      for (const t of teams) {
+        console.log(`  ${t.id}  template=${t.template || "ad-hoc"}  ${t.description.slice(0, 50)}`);
+      }
+      return 0;
+    }
+
+    case "list-templates": {
+      const templates = await listTemplates();
+      if (templates.length === 0) {
+        console.log("No templates found.");
+        return 0;
+      }
+      console.log("Available team templates:\n");
+      for (const t of templates) {
+        console.log(`  ${t.name.padEnd(24)} ${t.description}  (${t.source})`);
+      }
+      return 0;
+    }
+
+    case "inbox": {
+      if (!opts.team) {
+        console.error("agent-daemon team inbox: --team is required");
+        return 1;
+      }
+      const agentName = opts.agent || "leader";
+      const messages = await readInbox(opts.team, agentName);
+      if (messages.length === 0) {
+        console.log(`No messages in ${agentName}'s inbox.`);
+        return 0;
+      }
+      console.log(`${messages.length} message(s) in ${agentName}'s inbox:\n`);
+      for (const m of messages) {
+        console.log(`  [${m.type}] from=${m.from} at=${m.timestamp}`);
+        if (m.payload?.summary) {
+          console.log(`    ${m.payload.summary.slice(0, 100)}`);
+        }
+        if (m.payload?.status) {
+          console.log(`    status: ${m.payload.status}`);
+        }
+      }
+      return 0;
+    }
+
+    default:
+      console.error(`agent-daemon team: unknown subcommand "${subcommand}". Use: create, status, list, list-templates, inbox`);
+      return 1;
+  }
+}
+
+async function cmdSpawn(opts) {
+  if (!opts.team) {
+    console.error("agent-daemon spawn: --team is required");
+    return 1;
+  }
+  if (!opts.role) {
+    console.error("agent-daemon spawn: --role is required");
+    return 1;
+  }
+  if (!opts.task) {
+    console.error("agent-daemon spawn: --task is required");
+    return 1;
+  }
+
+  const { loadTeam } = await import("./orchestration/team.mjs");
+  const { spawnAgent } = await import("./orchestration/spawn.mjs");
+
+  let team;
+  try {
+    team = await loadTeam(opts.team);
+  } catch (err) {
+    console.error(`agent-daemon spawn: cannot load team ${opts.team}: ${err.message}`);
+    return 1;
+  }
+
+  const roleDef = team.roles.find(r => r.name === opts.role);
+  const leader = team.roles.find(r => r.is_leader);
+
+  console.log(`Spawning agent: role=${opts.role} team=${opts.team}`);
+  console.log(`  Task: ${opts.task}`);
+
+  const result = await spawnAgent({
+    teamId: opts.team,
+    role: opts.role,
+    task: opts.task,
+    instructions: roleDef?.instructions,
+    skills: roleDef?.skills,
+    model: opts.model,
+    cwd: opts.cwd,
+    worktree: true,
+    leader: leader?.name || null,
+    verbose: opts.verbose
+  });
+
+  if (result.ok) {
+    console.log(`\nAgent spawned successfully:`);
+    console.log(`  Name: ${result.agentName}`);
+    console.log(`  Branch: ${result.branch}`);
+    console.log(`  Worktree: ${result.worktreePath}`);
+    console.log(`  PID: ${result.pid}`);
+  } else {
+    console.error(`\nSpawn failed: ${result.error}`);
+  }
+
+  return result.ok ? 0 : 1;
+}
+
 /* ------------------------------------------------------------------ */
 /* Dispatcher                                                          */
 /* ------------------------------------------------------------------ */
@@ -398,7 +598,12 @@ async function main(argv) {
         verbose:      { type: "boolean" },
         tokens:       { type: "boolean" },
         limit:        { type: "string" },
-        model:        { type: "string" }
+        model:        { type: "string" },
+        template:     { type: "string" },
+        task:         { type: "string" },
+        team:         { type: "string" },
+        role:         { type: "string" },
+        agent:        { type: "string" }
       },
       allowPositionals: true,
       strict: false
@@ -429,6 +634,8 @@ async function main(argv) {
     case "watch":          return cmdWatch(opts);
     case "query-retrieve": return cmdQueryRetrieve(opts);
     case "doctor":         return cmdDoctor({ ...opts, tokens: parsed.values.tokens, limit: parsed.values.limit, model: parsed.values.model });
+    case "team":           return cmdTeam(parsed.positionals?.[0], { ...opts, template: parsed.values.template, task: parsed.values.task, team: parsed.values.team, agent: parsed.values.agent, model: parsed.values.model });
+    case "spawn":          return cmdSpawn({ ...opts, team: parsed.values.team, role: parsed.values.role, task: parsed.values.task, model: parsed.values.model });
     default:
       console.error(`agent-daemon: unknown command "${command}"`);
       console.error(HELP);

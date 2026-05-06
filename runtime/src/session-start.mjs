@@ -91,6 +91,17 @@ export async function runSessionStart(opts) {
     }
   }
 
+  // 4c. Active team context — if this session is part of a multi-agent team,
+  //      inject team info, task assignments, and inbox messages.
+  try {
+    const teamContext = await loadActiveTeamContext();
+    if (teamContext) {
+      sections.push(`<!-- active team context -->\n${teamContext}`);
+    }
+  } catch {
+    // team context is optional
+  }
+
   // 5. Recent SQLite-backed learnings — top-K most-recent project-scoped + a few global.
   // Timestamps are omitted from output to keep the injected blob byte-stable across
   // sessions (cache-friendly). Learnings are sorted by text for deterministic ordering.
@@ -209,6 +220,65 @@ async function detectQmd() {
   } catch { /* no project settings */ }
 
   return false;
+}
+
+async function loadActiveTeamContext() {
+  const home = homeDir();
+  const teamsDir = path.join(home, ".agent-daemon", "teams");
+
+  let entries;
+  try {
+    entries = await fs.readdir(teamsDir);
+  } catch {
+    return null;
+  }
+
+  // Find teams that are still active (have non-completed tasks)
+  const activeTeams = [];
+  for (const e of entries) {
+    if (e === "templates") continue;
+    const teamJsonPath = path.join(teamsDir, e, "team.json");
+    const tasksJsonPath = path.join(teamsDir, e, "tasks.json");
+    try {
+      const team = JSON.parse(await fs.readFile(teamJsonPath, "utf8"));
+      const tasks = JSON.parse(await fs.readFile(tasksJsonPath, "utf8"));
+      const hasIncomplete = tasks.some(t => t.status !== "completed");
+      if (hasIncomplete || tasks.length === 0) {
+        activeTeams.push({ team, tasks });
+      }
+    } catch {
+      // skip
+    }
+  }
+
+  if (activeTeams.length === 0) return null;
+
+  const lines = [`## Active Teams`, ``];
+  for (const { team, tasks } of activeTeams.slice(0, 3)) {
+    lines.push(`### ${team.id}${team.template ? ` (${team.template})` : ""}`);
+    lines.push(`${team.description}`);
+    lines.push(``);
+
+    if (tasks.length > 0) {
+      const pending = tasks.filter(t => t.status === "pending").length;
+      const running = tasks.filter(t => t.status === "in_progress").length;
+      const done = tasks.filter(t => t.status === "completed").length;
+      const blocked = tasks.filter(t => t.status === "blocked").length;
+      lines.push(`Tasks: ${done} done, ${running} running, ${pending} pending, ${blocked} blocked`);
+
+      for (const t of tasks.filter(t => t.status !== "completed").slice(0, 5)) {
+        const owner = t.owner ? ` @${t.owner}` : "";
+        lines.push(`- [${t.status}] ${t.title}${owner}`);
+      }
+    }
+
+    lines.push(``);
+    lines.push(`Use \`agent-daemon team status --team ${team.id}\` for full details.`);
+    lines.push(`Use \`agent-daemon team inbox --team ${team.id}\` to check messages.`);
+    lines.push(``);
+  }
+
+  return lines.join("\n");
 }
 
 function truncateToBytes(s, maxBytes) {

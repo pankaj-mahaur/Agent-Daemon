@@ -13,6 +13,8 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import { runDigest } from "../digest/digest.mjs";
 import { loadConfig } from "./config.mjs";
+import { readInbox, ackMessage } from "../orchestration/inbox.mjs";
+import { updateTaskStatus, listTasks, listTeams, isTeamComplete } from "../orchestration/team.mjs";
 
 /**
  * @param {{
@@ -124,14 +126,65 @@ export async function runWatcher(opts) {
     watchers.push(watcher);
   }
 
+  // Team inbox monitoring — poll for task-complete messages and auto-unblock
+  const INBOX_POLL_MS = 10000;
+  const inboxPollHandle = setInterval(async () => {
+    try {
+      await pollTeamInboxes(opts.verbose);
+    } catch (err) {
+      if (opts.verbose) console.error(`agent-daemon: inbox poll error: ${err.message}`);
+    }
+  }, INBOX_POLL_MS);
+
   // Block until Ctrl+C
   return new Promise((resolve) => {
     const cleanup = async () => {
       console.error("\nagent-daemon: stopping watch...");
+      clearInterval(inboxPollHandle);
       for (const w of watchers) await w.close().catch(() => {});
       resolve(0);
     };
     process.on("SIGINT", cleanup);
     process.on("SIGTERM", cleanup);
   });
+}
+
+async function pollTeamInboxes(verbose) {
+  const teams = await listTeams();
+  for (const team of teams) {
+    // Find leader agents to check their inboxes
+    const leaders = (team.roles || []).filter(r => r.is_leader).map(r => r.name);
+    if (leaders.length === 0) continue;
+
+    for (const leader of leaders) {
+      const messages = await readInbox(team.id, leader);
+      for (const msg of messages) {
+        if (msg.type === "task-complete") {
+          if (verbose) {
+            console.error(`agent-daemon: [team ${team.id}] ${msg.from} completed (${msg.payload?.status || "unknown"})`);
+          }
+
+          // Find and complete the matching task
+          const tasks = await listTasks(team.id);
+          const ownerTask = tasks.find(t =>
+            t.owner === msg.payload?.role && t.status === "in_progress"
+          );
+          if (ownerTask && msg.payload?.status === "completed") {
+            const { unblocked } = await updateTaskStatus(team.id, ownerTask.id, "completed");
+            if (unblocked.length > 0 && verbose) {
+              console.error(`agent-daemon: [team ${team.id}] unblocked: ${unblocked.map(t => t.title).join(", ")}`);
+            }
+          }
+
+          // Acknowledge the message
+          await ackMessage(team.id, leader, msg.id);
+
+          // Check if team is done
+          if (await isTeamComplete(team.id)) {
+            console.error(`agent-daemon: [team ${team.id}] ALL TASKS COMPLETE`);
+          }
+        }
+      }
+    }
+  }
 }

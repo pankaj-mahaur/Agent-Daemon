@@ -1,0 +1,62 @@
+{
+  "name": "full-stack-feature",
+  "description": "Lead + backend + frontend + QA — for building new features with parallel frontend/backend work",
+  "roles": [
+    {
+      "name": "lead",
+      "is_leader": true,
+      "instructions": "You are the tech lead. Decompose the feature into backend API work and frontend UI work. Create tasks, assign them to backend and frontend agents, then monitor progress. Once both are done, assign integration testing to QA. Merge all branches when QA passes.",
+      "skills": ["implement-feature"]
+    },
+    {
+      "name": "backend",
+      "is_leader": false,
+      "instructions": "You handle the backend: API endpoints, database schema, migrations, server-side logic. Write tests for your endpoints. Commit to your branch when done.",
+      "skills": ["api-design", "db-migrations", "methodology-tdd"]
+    },
+    {
+      "name": "frontend",
+      "is_leader": false,
+      "instructions": "You handle the frontend: UI components, state management, API integration. Ensure responsive design and accessibility. Commit to your branch when done.",
+      "skills": ["review-slice", "methodology-incremental-delivery"]
+    },
+    {
+      "name": "qa",
+      "is_leader": false,
+      "instructions": "You handle quality assurance: integration tests, edge case testing, regression checks. Test the combined backend + frontend work. Report any issues found back to the lead.",
+      "skills": ["methodology-tdd", "methodology-systematic-debugging"]
+    }
+  ],
+  "flows": [
+    "lead > backend",
+    "lead > frontend",
+    "lead > qa",
+    "backend > lead",
+    "frontend > lead",
+    "qa > lead"
+  ],
+  "tasks": [
+    {
+      "title": "Design API contract and data model",
+      "owner": "lead"
+    },
+    {
+      "title": "Implement backend API endpoints + tests",
+      "owner": "backend",
+      "blocked_by": ["Design API contract and data model"]
+    },
+    {
+      "title": "Build frontend UI components + integration",
+      "owner": "frontend",
+      "blocked_by": ["Design API contract and data model"]
+    },
+    {
+      "title": "Integration testing + QA verification",
+      "owner": "qa",
+      "blocked_by": [
+        "Implement backend API endpoints + tests",
+        "Build frontend UI components + integration"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "name": "solo-with-qa",
+  "description": "Single dev + automated QA agent — simplest useful team, one worker + one verifier",
+  "roles": [
+    {
+      "name": "dev",
+      "is_leader": true,
+      "instructions": "You are the developer. Implement the feature or fix. Once your code is committed, the QA agent will verify it. If QA finds issues, fix them and re-trigger verification.",
+      "skills": ["implement-feature", "methodology-tdd"]
+    },
+    {
+      "name": "qa",
+      "is_leader": false,
+      "instructions": "You verify the developer's work. Run existing tests. Write new tests for the changes. Check edge cases. Test the happy path end-to-end. Report pass/fail with details back to the dev.",
+      "skills": ["methodology-tdd", "methodology-systematic-debugging"]
+    }
+  ],
+  "flows": [
+    "dev > qa",
+    "qa > dev"
+  ],
+  "tasks": [
+    {
+      "title": "Implement the change",
+      "owner": "dev"
+    },
+    {
+      "title": "Verify and test the change",
+      "owner": "qa",
+      "blocked_by": ["Implement the change"]
+    }
+  ]
+}

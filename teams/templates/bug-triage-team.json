@@ -1,0 +1,54 @@
+{
+  "name": "bug-triage-team",
+  "description": "Lead + investigator + fixer + reviewer — for complex bug diagnosis and fix",
+  "roles": [
+    {
+      "name": "lead",
+      "is_leader": true,
+      "instructions": "You are the triage lead. Analyze the bug report, create investigation tasks, coordinate between investigator and fixer. Once the fix is ready, assign review. Merge when approved.",
+      "skills": ["debug-triage"]
+    },
+    {
+      "name": "investigator",
+      "is_leader": false,
+      "instructions": "You investigate the root cause. Read logs, trace code paths, reproduce the issue, identify the exact failure point. Document your findings with file paths and line numbers. Report back to lead with a diagnosis.",
+      "skills": ["debug-triage", "methodology-systematic-debugging", "diagnose-intermittent-failure"]
+    },
+    {
+      "name": "fixer",
+      "is_leader": false,
+      "instructions": "You implement the fix based on the investigator's diagnosis. Write the minimal change that fixes the root cause. Add a regression test. Commit to your branch.",
+      "skills": ["methodology-tdd", "methodology-error-handling"]
+    },
+    {
+      "name": "reviewer",
+      "is_leader": false,
+      "instructions": "You review the fix for correctness, side effects, and completeness. Check that the regression test actually covers the bug. Verify no security implications. Report approval or issues to lead.",
+      "skills": ["methodology-code-review", "security-audit"]
+    }
+  ],
+  "flows": [
+    "lead > investigator",
+    "lead > fixer",
+    "lead > reviewer",
+    "investigator > lead",
+    "fixer > lead",
+    "reviewer > lead"
+  ],
+  "tasks": [
+    {
+      "title": "Reproduce and investigate root cause",
+      "owner": "investigator"
+    },
+    {
+      "title": "Implement fix + regression test",
+      "owner": "fixer",
+      "blocked_by": ["Reproduce and investigate root cause"]
+    },
+    {
+      "title": "Code review + verification",
+      "owner": "reviewer",
+      "blocked_by": ["Implement fix + regression test"]
+    }
+  ]
+}

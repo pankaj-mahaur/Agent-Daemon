@@ -1,0 +1,48 @@
+{
+  "name": "code-review-team",
+  "description": "Lead reviewer + security reviewer + performance reviewer — multi-perspective code review",
+  "roles": [
+    {
+      "name": "lead-reviewer",
+      "is_leader": true,
+      "instructions": "You coordinate the review. Assign security and performance review in parallel. Collect findings from both reviewers. Synthesize a final review report with prioritized issues. If changes are needed, create follow-up tasks.",
+      "skills": ["methodology-code-review"]
+    },
+    {
+      "name": "security-reviewer",
+      "is_leader": false,
+      "instructions": "You review for security vulnerabilities: injection attacks, auth bypasses, data exposure, OWASP top 10. Check dependency versions for known CVEs. Report findings with severity ratings (critical/high/medium/low) and specific file:line references.",
+      "skills": ["security-audit", "llm-app-safety"]
+    },
+    {
+      "name": "performance-reviewer",
+      "is_leader": false,
+      "instructions": "You review for performance issues: N+1 queries, unnecessary re-renders, missing indexes, memory leaks, bundle size impact, algorithmic complexity. Report findings with estimated impact and specific file:line references.",
+      "skills": ["methodology-performance-profiling", "optimization-audit"]
+    }
+  ],
+  "flows": [
+    "lead-reviewer > security-reviewer",
+    "lead-reviewer > performance-reviewer",
+    "security-reviewer > lead-reviewer",
+    "performance-reviewer > lead-reviewer"
+  ],
+  "tasks": [
+    {
+      "title": "Security review — vulnerabilities and auth",
+      "owner": "security-reviewer"
+    },
+    {
+      "title": "Performance review — queries, rendering, complexity",
+      "owner": "performance-reviewer"
+    },
+    {
+      "title": "Synthesize final review report",
+      "owner": "lead-reviewer",
+      "blocked_by": [
+        "Security review — vulnerabilities and auth",
+        "Performance review — queries, rendering, complexity"
+      ]
+    }
+  ]
+}
