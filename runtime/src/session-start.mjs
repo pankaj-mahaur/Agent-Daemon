@@ -59,6 +59,7 @@ export async function runSessionStart(opts) {
       path.join(homeDir(), ".agent-daemon", "memory")
     ];
 
+    let foundProjectMemory = false;
     for (const memDir of memoryLocations) {
       const result = await readMemoryDir(memDir);
       if (result) {
@@ -67,8 +68,21 @@ export async function runSessionStart(opts) {
           sections.push(`<!-- memory-bootstrap-hint -->\n**⚠ Memory not yet bootstrapped.** Memory files contain unfilled template placeholders (\`{{...}}\`). Say "bootstrap the daemon memory" to populate them with real project context.`);
         }
         sections.push(`<!-- memory: ${memDir} -->\n${result.content}`);
+        foundProjectMemory = true;
         break;
       }
+    }
+
+  }
+
+  // If .agent-daemon/ doesn't exist in this project, suggest initialization.
+  // Inserted early (index 1, right after constitution) so it survives 9KB truncation.
+  {
+    const projectDaemonDir = path.join(opts.cwd, ".agent-daemon");
+    let projectHasDaemon = false;
+    try { await fs.access(projectDaemonDir); projectHasDaemon = true; } catch {}
+    if (!projectHasDaemon) {
+      sections.splice(1, 0, `<!-- agent-daemon-init-hint -->\n**ℹ agent-daemon is installed** but not initialized in this project. Say "initialize the daemon" to set up persistent memory, multi-agent orchestration, and self-improving skills for this codebase.`);
     }
   }
 
