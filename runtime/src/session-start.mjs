@@ -105,6 +105,9 @@ export async function runSessionStart(opts) {
     { dir: path.join(homeDir(), ".cursor", "rules"), label: "Global Cursor rules", ext: ".mdc" }
   ];
   for (const source of crossAgentSources) {
+    // Skip the readdir/file open work entirely when the directory does not
+    // exist. Most projects only set up one or two of these locations.
+    try { await fs.access(source.dir); } catch { continue; }
     const block = await readCrossAgentDir(source.dir, source.ext);
     if (block) {
       sections.push(`<!-- ${source.label}: ${source.dir} -->\n${block}`);
@@ -128,7 +131,7 @@ export async function runSessionStart(opts) {
   // Skipped silently if better-sqlite3 isn't installed (graceful degradation).
   try {
     const slug = projectSlug(opts.cwd);
-    const recent = await listRecentLearnings({ projectSlug: slug, limit: 8 });
+    const recent = await listRecentLearnings({ projectSlug: slug, limit: 5 });
     if (recent && recent.length > 0) {
       const sorted = [...recent].sort((a, b) => a.text.localeCompare(b.text));
       const block = sorted.map(r => {
@@ -224,24 +227,31 @@ function encodeProjectPath(p) {
 }
 
 async function detectQmd() {
-  // Check if QMD MCP server is likely available:
-  // 1. Look for qmd in Claude Code settings (MCP config)
-  // 2. Or check if `qmd` binary is on PATH
+  // Claude Code stores MCP server config in ~/.claude.json (top-level mcpServers
+  // for user scope, and projects[<cwd>].mcpServers for local scope). It does NOT
+  // live in ~/.claude/settings.json — that file's schema rejects mcpServers.
+  // Project-scope .mcp.json is also a valid location.
   const home = homeDir();
-  try {
-    const settingsPath = path.join(home, ".claude", "settings.json");
-    const settings = JSON.parse(await fs.readFile(settingsPath, "utf8"));
-    const mcpServers = settings.mcpServers || {};
-    if (mcpServers.qmd || mcpServers["qmd-search"]) return true;
-  } catch { /* no settings or no qmd config */ }
+  const cwd = process.cwd();
 
-  // Check project-level settings too
   try {
-    const projSettings = path.join(process.cwd(), ".claude", "settings.json");
-    const settings = JSON.parse(await fs.readFile(projSettings, "utf8"));
-    const mcpServers = settings.mcpServers || {};
-    if (mcpServers.qmd || mcpServers["qmd-search"]) return true;
-  } catch { /* no project settings */ }
+    const claudeJsonPath = path.join(home, ".claude.json");
+    const cfg = JSON.parse(await fs.readFile(claudeJsonPath, "utf8"));
+    const userServers = cfg.mcpServers || {};
+    if (userServers.qmd || userServers["qmd-search"]) return true;
+    const projects = cfg.projects || {};
+    const projectEntry = projects[cwd] || {};
+    const projServers = projectEntry.mcpServers || {};
+    if (projServers.qmd || projServers["qmd-search"]) return true;
+  } catch { /* no ~/.claude.json or unparseable */ }
+
+  // .mcp.json (committed project-level MCP config)
+  try {
+    const projMcp = path.join(cwd, ".mcp.json");
+    const cfg = JSON.parse(await fs.readFile(projMcp, "utf8"));
+    const servers = cfg.mcpServers || {};
+    if (servers.qmd || servers["qmd-search"]) return true;
+  } catch { /* no .mcp.json */ }
 
   return false;
 }
@@ -290,9 +300,14 @@ async function loadActiveTeamContext() {
       const blocked = tasks.filter(t => t.status === "blocked").length;
       lines.push(`Tasks: ${done} done, ${running} running, ${pending} pending, ${blocked} blocked`);
 
-      for (const t of tasks.filter(t => t.status !== "completed").slice(0, 5)) {
-        const owner = t.owner ? ` @${t.owner}` : "";
-        lines.push(`- [${t.status}] ${t.title}${owner}`);
+      // Only expand individual tasks when the incomplete set is small. For
+      // bigger teams the summary line + the `team status` hint below are enough.
+      const incomplete = pending + running + blocked;
+      if (incomplete > 0 && incomplete <= 3) {
+        for (const t of tasks.filter(t => t.status !== "completed")) {
+          const owner = t.owner ? ` @${t.owner}` : "";
+          lines.push(`- [${t.status}] ${t.title}${owner}`);
+        }
       }
     }
 

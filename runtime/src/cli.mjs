@@ -5,6 +5,7 @@
 
 import { parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
+import { exec } from "node:child_process";
 import path from "node:path";
 import fs from "node:fs/promises";
 
@@ -147,6 +148,33 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
   // Check if hooks need installing in ~/.claude/settings.json
   const home = process.env.HOME || process.env.USERPROFILE || "";
   const globalSettingsPath = path.join(home, ".claude", "settings.json");
+  const claudeJsonPath = path.join(home, ".claude.json");
+
+  // Detect QMD on PATH so we can offer to register it as an MCP server
+  // and create a project collection. Best-effort — failure is non-fatal.
+  const qmdOnPath = await new Promise(resolve => {
+    exec("qmd --version", (err) => resolve(!err));
+  });
+  let qmdNeedsMcpRegister = false;
+  let qmdCollectionMissing = false;
+  let qmdProjName = "";
+  if (qmdOnPath) {
+    qmdProjName = path.basename(cwd).toLowerCase().replace(/[^a-z0-9-]/g, "-") || "project";
+    try {
+      const cfg = JSON.parse(await fs.readFile(claudeJsonPath, "utf8"));
+      const userServers = (cfg.mcpServers || {});
+      const projServers = ((cfg.projects || {})[cwd] || {}).mcpServers || {};
+      qmdNeedsMcpRegister = !userServers.qmd && !projServers.qmd;
+    } catch {
+      qmdNeedsMcpRegister = true;
+    }
+    qmdCollectionMissing = await new Promise(resolve => {
+      exec("qmd collection list", (err, stdout) => {
+        if (err) return resolve(false);
+        resolve(!stdout.includes(`${qmdProjName} (qmd://`));
+      });
+    });
+  }
   let needsHooks = false;
   let existingSettings = {};
   try {
@@ -180,6 +208,11 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
   }
   if (missingSkills > 0) {
     actions.push(`+ ${missingSkills} core skill(s) to ~/.claude/skills/`);
+  }
+
+  if (qmdOnPath) {
+    if (qmdNeedsMcpRegister) actions.push("+ QMD MCP server registration (~/.claude.json, user scope)");
+    if (qmdCollectionMissing) actions.push(`+ QMD collection '${qmdProjName}' for this project + initial embed (background)`);
   }
 
   if (actions.length === 0) {
@@ -295,6 +328,38 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
       console.log("  ✓ Added SessionStart & SessionEnd hooks to ~/.claude/settings.json");
     } catch (err) {
       console.error(`  ⚠ Could not install hooks: ${err.message}`);
+    }
+  }
+
+  // QMD auto-setup (idempotent): register MCP server in user scope of
+  // ~/.claude.json and create a per-project collection. Failures are non-fatal.
+  if (qmdOnPath) {
+    if (qmdNeedsMcpRegister) {
+      try {
+        let cfg = {};
+        try { cfg = JSON.parse(await fs.readFile(claudeJsonPath, "utf8")); } catch {}
+        cfg.mcpServers = cfg.mcpServers || {};
+        if (!cfg.mcpServers.qmd) {
+          cfg.mcpServers.qmd = { type: "stdio", command: "qmd", args: ["mcp"], env: {} };
+          await fs.writeFile(claudeJsonPath, JSON.stringify(cfg, null, 2), "utf8");
+          console.log("  ✓ Registered QMD MCP server in ~/.claude.json (user scope)");
+        }
+      } catch (err) {
+        console.error(`  ⚠ Could not register QMD MCP: ${err.message}`);
+      }
+    }
+    if (qmdCollectionMissing) {
+      try {
+        await new Promise(resolve => {
+          exec(`qmd collection add "${cwd}" --name ${qmdProjName}`, () => resolve());
+        });
+        console.log(`  ✓ Created QMD collection '${qmdProjName}' for this project`);
+        // Background embed — don't block init. User can also run `qmd embed` later.
+        exec("qmd embed", () => {});
+        console.log("  ✓ Triggered background embed (qmd embed)");
+      } catch (err) {
+        console.error(`  ⚠ Could not set up QMD collection: ${err.message}`);
+      }
     }
   }
 
