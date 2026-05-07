@@ -1,6 +1,6 @@
 ---
 name: qmd
-description: Search markdown knowledge bases, notes, and documentation using QMD. Use when users ask to search notes, find documents, or look up information.
+description: Hybrid search engine for code AND documentation. Indexes any text-based source (TypeScript, JavaScript, Python, Go, Rust, JSON, plus markdown/notes) when collection patterns include those extensions. Combines BM25 keyword + vector semantic + HyDE search with LLM reranking. Use whenever you need to find a function, type, config, doc, or past learning across an indexed project — not just markdown.
 license: MIT
 compatibility: Requires qmd CLI or MCP server. Install via `npm install -g @tobilu/qmd`.
 metadata:
@@ -9,9 +9,9 @@ metadata:
 allowed-tools: Bash(qmd:*), mcp__qmd__*
 ---
 
-# QMD - Quick Markdown Search
+# QMD - Hybrid Code & Docs Search
 
-Local search engine for markdown content.
+Local hybrid search engine for code and markdown. Pattern-driven — collections can index any text source (code + docs) by setting `pattern` in `~/.config/qmd/index.yml`.
 
 ## Status
 
