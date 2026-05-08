@@ -75,6 +75,24 @@ export async function runSessionStart(opts) {
 
   }
 
+  // 3. Graphify knowledge graph pointer — if a graphify-out/graph.json exists
+  //    in the project, inject a lightweight pointer so Claude queries the graph
+  //    for architecture/relationship questions instead of re-reading the codebase.
+  {
+    const graphJsonPath = path.join(opts.cwd, "graphify-out", "graph.json");
+    try {
+      await fs.access(graphJsonPath);
+      sections.push([
+        `<!-- graphify knowledge graph -->`,
+        `## Architecture Graph`,
+        ``,
+        `A knowledge graph is available at \`graphify-out/graph.json\`. Use \`/graphify query "<question>"\` to traverse it.`,
+        `For architecture overview: \`/graphify query "main components" --budget 500\``,
+        `God nodes give one-shot architecture understanding without re-reading the codebase.`
+      ].join("\n"));
+    } catch { /* no graph — skip */ }
+  }
+
   // If .agent-daemon/ doesn't exist in this project, suggest initialization.
   // Inserted early (index 1, right after constitution) so it survives 9KB truncation.
   {
