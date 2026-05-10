@@ -1,0 +1,20 @@
+{
+  "_comment": "Paste the entries inside the hooks.PostToolUse array of your ~/.claude/settings.json. Warns about console.log left in JS/TS files just after edits. Stderr-only, never blocks.",
+
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agent-daemon hook edit-post",
+            "timeout": 3,
+            "async": false,
+            "shell": "auto"
+          }
+        ]
+      }
+    ]
+  }
+}

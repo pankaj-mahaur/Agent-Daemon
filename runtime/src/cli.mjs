@@ -14,6 +14,7 @@ import { runDigest } from "./digest/digest.mjs";
 import { runInteractiveReview } from "./review.mjs";
 import { evolveSkill } from "./digest/gepa/evolve.mjs";
 import { runWatcher } from "./daemon/watch.mjs";
+import { resolveProfile, listProfiles } from "./profiles.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
@@ -35,6 +36,8 @@ Commands:
   evolve <skill>         GEPA self-improvement run for a skill (sample → reflect → generate → evaluate → select)
   checkpoint             Save a memory checkpoint before /compact
   init                   Scaffold .agent-daemon/ in current project
+                         --profile <name>  install profile: minimal | developer (default) | security
+                         --plan            print actions without applying
   status                 Show queued proposals (skill diffs, constitution rule additions)
   review                 Interactively accept/reject queued proposals
   watch                  Watch transcript directories and fire digest on new sessions (v0.2)
@@ -81,9 +84,23 @@ Environment:
 /* Subcommand implementations                                          */
 /* ------------------------------------------------------------------ */
 
-async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, yes = false }) {
+async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, yes = false, profile, plan = false }) {
   const target = path.join(cwd, ".agent-daemon", "memory");
   const templatesDir = path.join(PROJECT_ROOT, "memory-templates");
+
+  // Resolve the install profile. `--plan` implies dry-run-with-plan-output.
+  let resolved;
+  try {
+    resolved = await resolveProfile(profile);
+  } catch (err) {
+    const { names, default: def } = await listProfiles();
+    console.error(`agent-daemon init: ${err.message}`);
+    console.error(`Available profiles: ${names.join(", ")} (default: ${def})`);
+    return 1;
+  }
+  if (plan) dryRun = true;
+  console.log(`agent-daemon init — profile: ${resolved.name}`);
+  console.log(`  ${resolved.description}\n`);
 
   // Phase 1: Audit existing agent files
   const AGENT_FILES = [
@@ -152,7 +169,8 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
 
   // Detect QMD on PATH so we can offer to register it as an MCP server
   // and create a project collection. Best-effort — failure is non-fatal.
-  const qmdOnPath = await new Promise(resolve => {
+  // Skip the detection entirely if the profile disables the QMD feature.
+  const qmdOnPath = resolved.features.qmd === false ? false : await new Promise(resolve => {
     exec("qmd --version", (err) => resolve(!err));
   });
   let qmdNeedsMcpRegister = false;
@@ -175,31 +193,26 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
       });
     });
   }
-  let needsHooks = false;
   let existingSettings = {};
   try {
     existingSettings = JSON.parse(await fs.readFile(globalSettingsPath, "utf8"));
-    const hooks = existingSettings.hooks || {};
-    const hasSessionStart = (hooks.SessionStart || []).some(h =>
-      (h.hooks || []).some(hh => hh.command && hh.command.includes("ad session-start"))
+  } catch { /* no settings.json yet */ }
+  const existingHooksMap = existingSettings.hooks || {};
+
+  // Determine which profile-specified hooks are missing from the user's settings.
+  function hookAlreadyPresent(event, command) {
+    return (existingHooksMap[event] || []).some(h =>
+      (h.hooks || []).some(hh => hh.command === command),
     );
-    const hasSessionEnd = (hooks.SessionEnd || []).some(h =>
-      (h.hooks || []).some(hh => hh.command && hh.command.includes("ad digest"))
-    );
-    if (!hasSessionStart || !hasSessionEnd) needsHooks = true;
-  } catch {
-    // No settings.json yet — need to create with hooks
-    needsHooks = true;
   }
-  if (needsHooks) {
-    actions.push("+ SessionStart & SessionEnd hooks in ~/.claude/settings.json");
+  const hooksToAdd = resolved.hooks.filter(h => !hookAlreadyPresent(h.event, h.command));
+  if (hooksToAdd.length > 0) {
+    const summary = hooksToAdd.map(h => `${h.event}/${h.id}`).join(", ");
+    actions.push(`+ ${hooksToAdd.length} hook(s) in ~/.claude/settings.json (${summary})`);
   }
 
-  // Check if core skills need installing
-  const CORE_SKILLS = [
-    "bootstrap-daemon", "orchestrate-team", "agent-self-improve",
-    "implement-feature", "debug-triage", "review-slice", "audit-runner"
-  ];
+  // Skill set comes from the profile manifest.
+  const CORE_SKILLS = resolved.skills;
   const skillsDst = path.join(home, ".claude", "skills");
   const skillsSrc = path.join(PROJECT_ROOT, "skills");
   let missingSkills = 0;
@@ -282,50 +295,24 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
     console.log(`  ✓ Installed ${skillsInstalled} core skill(s) to ~/.claude/skills/`);
   }
 
-  // Install hooks in ~/.claude/settings.json (merge — preserve existing settings)
-  if (needsHooks) {
+  // Install profile-specified hooks in ~/.claude/settings.json (merge — preserve existing settings)
+  if (hooksToAdd.length > 0) {
     try {
       const hooks = existingSettings.hooks || {};
-
-      // SessionStart hook
-      const ssHooks = hooks.SessionStart || [];
-      const hasSessionStart = ssHooks.some(h =>
-        (h.hooks || []).some(hh => hh.command && hh.command.includes("ad session-start"))
-      );
-      if (!hasSessionStart) {
-        ssHooks.push({
-          matcher: "",
-          hooks: [{
-            type: "command",
-            command: "ad session-start --output-json",
-            timeout: 5
-          }]
+      for (const h of hooksToAdd) {
+        const arr = hooks[h.event] || [];
+        arr.push({
+          matcher: h.matcher,
+          hooks: [{ type: "command", command: h.command, timeout: h.timeout }],
         });
+        hooks[h.event] = arr;
       }
-
-      // SessionEnd hook
-      const seHooks = hooks.SessionEnd || [];
-      const hasSessionEnd = seHooks.some(h =>
-        (h.hooks || []).some(hh => hh.command && hh.command.includes("ad digest"))
-      );
-      if (!hasSessionEnd) {
-        seHooks.push({
-          matcher: "",
-          hooks: [{
-            type: "command",
-            command: 'ad digest --transcript "$CLAUDE_TRANSCRIPT_PATH" --session-id "$CLAUDE_SESSION_ID" --cwd "$CLAUDE_PROJECT_DIR" --verbose',
-            timeout: 30
-          }]
-        });
-      }
-
-      hooks.SessionStart = ssHooks;
-      hooks.SessionEnd = seHooks;
       existingSettings.hooks = hooks;
 
       await fs.mkdir(path.join(home, ".claude"), { recursive: true });
       await fs.writeFile(globalSettingsPath, JSON.stringify(existingSettings, null, 2), "utf8");
-      console.log("  ✓ Added SessionStart & SessionEnd hooks to ~/.claude/settings.json");
+      console.log(`  ✓ Added ${hooksToAdd.length} hook(s) to ~/.claude/settings.json`);
+      for (const h of hooksToAdd) console.log(`      ${h.event} ← ${h.id}`);
     } catch (err) {
       console.error(`  ⚠ Could not install hooks: ${err.message}`);
     }
@@ -881,7 +868,9 @@ async function main(argv) {
         task:         { type: "string" },
         team:         { type: "string" },
         role:         { type: "string" },
-        agent:        { type: "string" }
+        agent:        { type: "string" },
+        profile:      { type: "string" },
+        plan:         { type: "boolean" }
       },
       allowPositionals: true,
       strict: false
@@ -906,7 +895,7 @@ async function main(argv) {
     case "digest":         return runDigest(opts);
     case "evolve":         return cmdEvolve({ ...opts, skillName: parsed.positionals?.[0] });
     case "checkpoint":     return cmdCheckpoint(opts);
-    case "init":           return cmdInit(opts);
+    case "init":           return cmdInit({ ...opts, profile: parsed.values.profile, plan: parsed.values.plan });
     case "status":         return cmdStatus(opts);
     case "review":         return cmdReview(opts);
     case "watch":          return cmdWatch(opts);
@@ -914,6 +903,7 @@ async function main(argv) {
     case "doctor":         return cmdDoctor({ ...opts, tokens: parsed.values.tokens, limit: parsed.values.limit, model: parsed.values.model });
     case "team":           return cmdTeam(parsed.positionals?.[0], { ...opts, template: parsed.values.template, task: parsed.values.task, team: parsed.values.team, agent: parsed.values.agent, model: parsed.values.model });
     case "spawn":          return cmdSpawn({ ...opts, team: parsed.values.team, role: parsed.values.role, task: parsed.values.task, model: parsed.values.model });
+    case "hook":           return cmdHook(parsed.positionals?.[0]);
     default:
       console.error(`agent-daemon: unknown command "${command}"`);
       console.error(HELP);
@@ -949,6 +939,18 @@ async function cmdEvolve(opts) {
     console.error(`  review with: agent-daemon review`);
   }
   return result.status === "error" ? 1 : 0;
+}
+
+async function cmdHook(name) {
+  switch (name) {
+    case "bash-pre":  return (await import("./hooks/bash-pre.mjs")).bashPre();
+    case "bash-post": return (await import("./hooks/bash-post.mjs")).bashPost();
+    case "edit-post": return (await import("./hooks/edit-post.mjs")).editPost();
+    case "mcp-pre":   return (await import("./hooks/mcp-audit.mjs")).mcpAudit();
+    default:
+      console.error(`agent-daemon hook: unknown handler "${name}". Known: bash-pre, bash-post, edit-post, mcp-pre`);
+      return 2;
+  }
 }
 
 main(process.argv.slice(2)).then(code => process.exit(code || 0)).catch(err => {

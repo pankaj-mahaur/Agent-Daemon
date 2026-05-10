@@ -24,7 +24,10 @@ ad doctor
 
 # 4. Init in your project
 cd /path/to/your/project
-ad init               # scaffolds .agent-daemon/ + AGENTS.md
+ad init                       # default: developer profile
+ad init --profile minimal     # memory + lifecycle hooks only
+ad init --profile security    # default + intrusive guards (block --no-verify, MCP audit)
+ad init --plan                # preview without applying
 
 # 5. Open Claude Code — constitution + memory load automatically.
 #    The agent emits a digest block before ending, the daemon parses it,
@@ -32,6 +35,16 @@ ad init               # scaffolds .agent-daemon/ + AGENTS.md
 ```
 
 The `ad` command is the short alias for `agent-daemon` — both work interchangeably. No API key required for normal operation. Set `ANTHROPIC_API_KEY` only for `ad evolve` (GEPA batch evolution).
+
+### Install profiles
+
+| Profile | Hooks | Skills auto-installed | Best for |
+|---|---|---|---|
+| `minimal` | SessionStart + SessionEnd | none | Users who want explicit control |
+| `developer` (default) | minimal + `console.log` warn on Edit, build/PR-URL log on Bash | 7 core (bootstrap-daemon, orchestrate-team, debug-triage, …) | Day-to-day coding |
+| `security` | developer + blocks `git --no-verify`, blocks dev-server-without-tmux, audits every MCP call, warns on untrusted MCP servers | developer + 3 (security-audit, production-readiness, llm-app-safety) | High-stakes work, regulated repos |
+
+Profile manifest: [runtime/profiles/profiles.json](runtime/profiles/profiles.json). Hook handlers under [runtime/src/hooks/](runtime/src/hooks/) are invoked via `ad hook <name>` and consume Claude Code's tool-use JSON on stdin. Profile shape adapted from [`everything-claude-code`](https://github.com/affaan-m/everything-claude-code) — see [ATTRIBUTION.md](ATTRIBUTION.md).
 
 ## Multi-agent orchestration
 

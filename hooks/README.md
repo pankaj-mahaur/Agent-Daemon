@@ -9,6 +9,22 @@ Pre-baked Claude Code hook configurations that wire `agent-daemon` into the sess
 | [session-start-load.json](session-start-load.json) | Inject constitution + project memory at session start | `SessionStart` |
 | [session-end-digest.json](session-end-digest.json) | Run digest pipeline at session end | `SessionEnd` |
 | [pre-compact-checkpoint.json](pre-compact-checkpoint.json) | Save a memory checkpoint before `/compact` so context isn't lost | `PreCompact` |
+| [pre-tool-use-shell-guard.json](pre-tool-use-shell-guard.json) | Block `git --no-verify`, dev-server-not-in-tmux; warn on `git push` | `PreToolUse` (Bash) |
+| [post-tool-use-shell-log.json](post-tool-use-shell-log.json) | Tag `gh pr create` URLs and `npm run build` completions | `PostToolUse` (Bash) |
+| [post-tool-use-file-edit-lint.json](post-tool-use-file-edit-lint.json) | Warn about `console.log` left in JS/TS files | `PostToolUse` (Edit/Write/MultiEdit) |
+| [pre-tool-use-mcp-audit.json](pre-tool-use-mcp-audit.json) | Append every MCP call to `~/.agent-daemon/audit/mcp.jsonl`, warn on untrusted servers | `PreToolUse` (`mcp__.*`) |
+| [pre-tool-use-qmd-redirect.json](pre-tool-use-qmd-redirect.json) | Redirect raw memory reads to QMD search | `PreToolUse` (Read/Grep) |
+| [user-prompt-submit-retrieve.json](user-prompt-submit-retrieve.json) | Inject relevant past learnings into UserPromptSubmit | `UserPromptSubmit` |
+
+The shell-guard, shell-log, edit-lint, and mcp-audit hooks were ported from [`everything-claude-code`](https://github.com/affaan-m/everything-claude-code) (MIT) into our `ad hook <name>` Node helpers — see [ATTRIBUTION.md](../ATTRIBUTION.md).
+
+## Hook authoring conventions
+
+If you write a new hook handler under [`runtime/src/hooks/`](../runtime/src/hooks/):
+
+- `exit 0` (or `passthrough()` from [`io.mjs`](../runtime/src/hooks/io.mjs)) on any non-critical error. Hooks must never block tool execution because of their own bugs.
+- `PreToolUse` and `Stop` handlers should finish in under 200ms — no network calls, no slow filesystem walks.
+- Log to stderr with the `[agent-daemon]` prefix (use `warn()` from `io.mjs`). Never write to stdout outside the JSON decision.
 
 ## What each hook does
 

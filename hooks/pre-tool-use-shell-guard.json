@@ -1,0 +1,20 @@
+{
+  "_comment": "Paste the entries inside the hooks.PreToolUse array of your ~/.claude/settings.json. Blocks `git --no-verify`, dev-server-without-tmux, and prints a review reminder for `git push`.",
+
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agent-daemon hook bash-pre",
+            "timeout": 3,
+            "async": false,
+            "shell": "auto"
+          }
+        ]
+      }
+    ]
+  }
+}

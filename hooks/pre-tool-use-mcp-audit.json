@@ -1,0 +1,20 @@
+{
+  "_comment": "Paste the entries inside the hooks.PreToolUse array of your ~/.claude/settings.json. Logs every MCP call to ~/.agent-daemon/audit/mcp.jsonl and warns when an untrusted MCP server is invoked. Configure trusted servers via AGENT_DAEMON_TRUSTED_MCP=server1,server2.",
+
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agent-daemon hook mcp-pre",
+            "timeout": 3,
+            "async": false,
+            "shell": "auto"
+          }
+        ]
+      }
+    ]
+  }
+}

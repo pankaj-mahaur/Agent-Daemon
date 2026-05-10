@@ -1,0 +1,106 @@
+#:schema https://developers.openai.com/codex/config-schema.json
+
+# agent-daemon — Codex reference configuration.
+# Adapted from everything-claude-code/.codex/config.toml (MIT) — see
+# ATTRIBUTION.md at repo root. Tightened to our daemon's MCP set and
+# profile matrix.
+#
+# Copy to ~/.codex/config.toml (global) or .codex/config.toml (per-project).
+# Docs: https://developers.openai.com/codex/config-reference
+
+# Leave `model` / `model_provider` unset — let Codex CLI use its built-in
+# defaults. Pin only when intentional.
+
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+web_search = "live"
+
+# Persistent instructions are appended to every prompt (additive). AGENTS.md
+# at the project root is consumed automatically by Codex — don't replace it.
+persistent_instructions = "Follow project AGENTS.md and constitution/. Use `qmd` MCP for memory retrieval before reading files directly."
+
+# ---------------------------------------------------------------------------
+# MCP servers — keep the project default lean. Uncomment optional ones as needed.
+# ---------------------------------------------------------------------------
+
+# Daemon-native servers (memory + knowledge graph).
+[mcp_servers.qmd]
+command = "qmd"
+args = ["mcp"]
+startup_timeout_sec = 15
+
+[mcp_servers.graphify]
+command = "graphify"
+args = ["mcp"]
+startup_timeout_sec = 15
+
+# Standard set — useful nearly everywhere.
+[mcp_servers.github]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-github"]
+startup_timeout_sec = 30
+
+[mcp_servers.context7]
+command = "npx"
+args = ["-y", "@upstash/context7-mcp@latest"]
+startup_timeout_sec = 30
+
+[mcp_servers.playwright]
+command = "npx"
+args = ["-y", "@playwright/mcp@latest", "--extension"]
+startup_timeout_sec = 30
+
+# Optional (uncomment when needed):
+# [mcp_servers.exa]
+# url = "https://mcp.exa.ai/mcp"
+#
+# [mcp_servers.memory]
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-memory"]
+# startup_timeout_sec = 30
+#
+# [mcp_servers.sequential-thinking]
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-sequential-thinking"]
+# startup_timeout_sec = 30
+
+[features]
+multi_agent = true
+
+# ---------------------------------------------------------------------------
+# Profiles — `codex -p <name>` to switch. Mirrors `ad init --profile` matrix.
+# ---------------------------------------------------------------------------
+
+# minimal: read-only, cached web. Match `ad init --profile minimal`.
+[profiles.minimal]
+approval_policy = "on-request"
+sandbox_mode = "read-only"
+web_search = "cached"
+
+# developer: default working profile. Match `ad init --profile developer`.
+[profiles.developer]
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+web_search = "live"
+
+# security: blocks anything network-mutating, requires approval per change.
+[profiles.security]
+approval_policy = "always"
+sandbox_mode = "workspace-write"
+web_search = "cached"
+
+# ---------------------------------------------------------------------------
+# Multi-agent — explorer / reviewer / docs roles backed by ad's team templates.
+# ---------------------------------------------------------------------------
+
+[agents]
+max_threads = 6
+max_depth = 1
+
+[agents.explorer]
+description = "Read-only codebase explorer that gathers evidence before changes are proposed. Backs ad's investigator role."
+config_file = "agents/explorer.toml"
+
+[agents.reviewer]
+description = "PR reviewer focused on correctness, security, and missing tests. Backs ad's reviewer role."
+config_file = "agents/reviewer.toml"

@@ -20,3 +20,9 @@ graphify-out/
 *.swp
 .env
 .env.local
+
+# Vendored upstream repos: keep MANIFEST + fetch script, ignore the clone itself
+vendored/*
+!vendored/MANIFEST.md
+!vendored/fetch.mjs
+!vendored/.gitkeep

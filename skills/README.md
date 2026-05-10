@@ -23,6 +23,18 @@ Each folder contains a `SKILL.md` that Claude Code can use. Install globally to 
 | [dead-code-review](dead-code-review/) | Proof-based dead code cleanup |
 | [docs-sync-audit](docs-sync-audit/) | Detect and fix documentation drift |
 
+## Vendored from `everything-claude-code`
+
+181 additional skills were imported from [affaan-m/everything-claude-code](https://github.com/affaan-m/everything-claude-code) (MIT, pinned commit in [vendored/MANIFEST.md](../vendored/MANIFEST.md)). These cover language stacks (python, golang, rust, kotlin, swift, dart/flutter, springboot, django, laravel, nestjs, etc.), domain ops (healthcare, finance, customs, energy, logistics), agent harness construction, eval harnesses, and many more.
+
+Each vendored skill carries a `source:` frontmatter line pointing back to its upstream path. They are exempt from our [lint-skills.mjs](../runtime/scripts/lint-skills.mjs) rules and follow upstream conventions. List them with:
+
+```bash
+grep -l "^source:" skills/*/SKILL.md | sort
+```
+
+To re-sync from upstream: edit the pin in [vendored/fetch.mjs](../vendored/fetch.mjs), run `node vendored/fetch.mjs --force`, then `node runtime/scripts/skills-diff.mjs --apply`.
+
 ## Installation
 
 See the [Installation Guide](../docs/installation-guide.md) for all methods.

@@ -1,0 +1,20 @@
+{
+  "_comment": "Paste the entries inside the hooks.PostToolUse array of your ~/.claude/settings.json. Pulls PR URLs out of `gh pr create` and tags build completions. Stderr-only, never blocks.",
+
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agent-daemon hook bash-post",
+            "timeout": 3,
+            "async": false,
+            "shell": "auto"
+          }
+        ]
+      }
+    ]
+  }
+}

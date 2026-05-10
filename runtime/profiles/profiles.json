@@ -1,0 +1,94 @@
+{
+  "$schema": "./profiles.schema.json",
+  "$comment": "Install profiles for `ad init --profile <name>`. Shape adapted from everything-claude-code/.manifests/install-profiles.json (MIT). Each profile composes: hooks injected into ~/.claude/settings.json, skills copied to ~/.claude/skills/, optional features.",
+
+  "default": "developer",
+
+  "profiles": {
+    "minimal": {
+      "description": "Memory + lifecycle hooks only. No tool guards, no auto-installed skills. For users who want explicit control.",
+      "hooks": ["session-start", "session-end"],
+      "skills": [],
+      "features": {
+        "qmd": false,
+        "graphify": false
+      }
+    },
+
+    "developer": {
+      "description": "Default. Memory + lifecycle hooks + dev-quality guards (console.log warn, build/PR logs). Installs core skills.",
+      "hooks": [
+        "session-start",
+        "session-end",
+        "edit-post-lint",
+        "bash-post-log"
+      ],
+      "skills": [
+        "bootstrap-daemon",
+        "orchestrate-team",
+        "agent-self-improve",
+        "implement-feature",
+        "debug-triage",
+        "review-slice",
+        "audit-runner"
+      ],
+      "features": {
+        "qmd": true,
+        "graphify": true
+      }
+    },
+
+    "security": {
+      "description": "Developer profile + intrusive guards: blocks `git --no-verify` and dev-server-not-in-tmux, audits every MCP call, warns on untrusted MCP servers.",
+      "extends": "developer",
+      "hooks_add": [
+        "bash-pre-guard",
+        "mcp-pre-audit"
+      ],
+      "skills_add": [
+        "security-audit",
+        "production-readiness",
+        "llm-app-safety"
+      ]
+    }
+  },
+
+  "hookDefinitions": {
+    "session-start": {
+      "event": "SessionStart",
+      "matcher": "",
+      "command": "ad session-start --output-json",
+      "timeout": 5
+    },
+    "session-end": {
+      "event": "SessionEnd",
+      "matcher": "",
+      "command": "ad digest --transcript \"$CLAUDE_TRANSCRIPT_PATH\" --session-id \"$CLAUDE_SESSION_ID\" --cwd \"$CLAUDE_PROJECT_DIR\" --verbose",
+      "timeout": 30
+    },
+    "edit-post-lint": {
+      "event": "PostToolUse",
+      "matcher": "Edit|Write|MultiEdit",
+      "command": "ad hook edit-post",
+      "timeout": 3
+    },
+    "bash-post-log": {
+      "event": "PostToolUse",
+      "matcher": "Bash",
+      "command": "ad hook bash-post",
+      "timeout": 3
+    },
+    "bash-pre-guard": {
+      "event": "PreToolUse",
+      "matcher": "Bash",
+      "command": "ad hook bash-pre",
+      "timeout": 3
+    },
+    "mcp-pre-audit": {
+      "event": "PreToolUse",
+      "matcher": "mcp__.*",
+      "command": "ad hook mcp-pre",
+      "timeout": 3
+    }
+  }
+}

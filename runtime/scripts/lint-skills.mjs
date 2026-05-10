@@ -39,6 +39,11 @@ async function lintSkills(skillsDir) {
     } catch {
       continue;
     }
+    // Skip vendored upstream skills — they follow their own conventions, traceable via `source:` frontmatter.
+    if (/^source:\s*\S/m.test(content)) {
+      console.log(`  -  ${entry} (vendored, skipped)`);
+      continue;
+    }
     checked++;
 
     const issues = validateSkill(entry, content);
