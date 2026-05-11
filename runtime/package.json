@@ -14,7 +14,7 @@
     "./digest/triage": "./src/digest/triage.mjs"
   },
   "scripts": {
-    "test": "node --test test/",
+    "test": "node --test",
     "lint": "node --check src/**/*.mjs",
     "lint:skills": "node scripts/lint-skills.mjs"
   },
