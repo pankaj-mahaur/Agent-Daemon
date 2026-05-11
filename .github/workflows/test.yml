@@ -1,0 +1,71 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: ["22"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: runtime/package-lock.json
+
+      - name: Install runtime deps
+        working-directory: runtime
+        run: npm ci
+
+      - name: Run test suite
+        working-directory: runtime
+        run: npm test
+
+      - name: Lint skills
+        run: node runtime/scripts/lint-skills.mjs
+
+      - name: Smoke `ad doctor`
+        run: node runtime/src/cli.mjs doctor || true
+        # Doctor reports missing optional things (e.g. claude CLI on CI) — that's
+        # expected. We just want to confirm the CLI parses and runs.
+
+      - name: Smoke `ad init --profile security --plan` (scratch dir)
+        shell: bash
+        run: |
+          set -e
+          SCRATCH=$(mktemp -d)
+          node runtime/src/cli.mjs init --profile security --plan --cwd "$SCRATCH"
+          rm -rf "$SCRATCH"
+
+      - name: Smoke skills-diff JSON shape
+        shell: bash
+        run: |
+          set -e
+          OUTPUT=$(node runtime/scripts/skills-diff.mjs --json)
+          echo "$OUTPUT" | node -e "
+            let d=''; process.stdin.on('data',c=>d+=c).on('end',()=>{
+              const j = JSON.parse(d);
+              if (typeof j.ours !== 'number') { console.error('missing ours'); process.exit(1); }
+              if (!Array.isArray(j['net-new'])) { console.error('missing net-new'); process.exit(1); }
+              console.log('shape OK', { ours: j.ours, ecc: j.ecc, netNew: j['net-new'].length });
+            });
+          "

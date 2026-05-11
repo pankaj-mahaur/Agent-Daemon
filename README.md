@@ -1,5 +1,10 @@
 # agent-daemon
 
+[![test](https://github.com/Pankaj-mobiux/Agent-Daemon/actions/workflows/test.yml/badge.svg)](https://github.com/Pankaj-mobiux/Agent-Daemon/actions/workflows/test.yml)
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![version](https://img.shields.io/badge/version-0.2.0-green.svg)](CHANGELOG.md)
+[![harnesses](https://img.shields.io/badge/harnesses-Claude%20Code%20%7C%20Codex%20%7C%20Cursor-purple.svg)](#cross-harness-support)
+
 A **self-improving runtime** for AI coding agents — with **multi-agent orchestration** built in. Wraps Claude Code (and any agent that writes a session transcript) with universal guardrails, persistent memory, and a digest pipeline that distills lessons from every session so the next one is automatically smarter.
 
 Now ships with a full **team coordination layer**: spawn multiple Claude Code agents in isolated git worktrees, coordinate them through filesystem-based inboxes, and manage task dependencies with auto-unblocking — all without a central server, database, or API key.
@@ -275,10 +280,22 @@ Standalone reference docs for any agent or human:
 
 ## Compatibility
 
-- **agentskills.io standard** — all 35 SKILL.md files have compliant frontmatter. Works in Claude Code, Hermes Agent, OpenClaw, VS Code Copilot, OpenCode, Microsoft Agent Framework.
+- **agentskills.io standard** — all 36 of our curated SKILL.md files have compliant frontmatter. 181 additional skills imported from upstream follow their own conventions and are exempt from our strict linter.
 - **Hermes-compatible memory** — same SQLite + FTS5 shape so skills + traces travel.
 - **Cross-agent awareness** — session-start reads rules from Cursor (`.cursor/rules/`), Cline (`.cline/rules/`), and Claude Code auto-memory.
 - **Transcript adapters** — digests transcripts from Claude Code, Cursor, Cline, and Codex.
+
+## Cross-harness support
+
+Three first-class harnesses. Adapters live under [adapters/](adapters/).
+
+| Harness | Coverage | Install |
+|---|---|---|
+| **Claude Code** (primary) | Native — `ad init` writes to `~/.claude/`, hooks fire directly. | `ad init --profile <minimal\|developer\|security>` |
+| **Codex** | Reference config + 2 sub-agent TOML files (explorer, reviewer). | `cp adapters/codex/config.example.toml ~/.codex/config.toml && cp adapters/codex/agents/*.toml ~/.codex/agents/` |
+| **Cursor** | Hooks JSON wiring the same `ad hook` handlers + skill→`.mdc` converter. | `cp adapters/cursor/hooks.json .cursor/ && node adapters/cursor/adapt.mjs --core --out .cursor/rules` |
+
+Other harnesses (Kiro / Trae / CodeBuddy / OpenCode / Gemini) are vendored-only for now — see [docs/future-harnesses.md](docs/future-harnesses.md).
 
 ## Multi-agent usage
 

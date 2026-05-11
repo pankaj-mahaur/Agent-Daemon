@@ -1,6 +1,6 @@
 {
   "name": "agent-daemon",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Self-improving memory + skills runtime for AI coding agents",
   "type": "module",
   "bin": {

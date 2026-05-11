@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "_comment": "Cursor hook bindings for agent-daemon. Copy to .cursor/hooks.json (per-project) or merge into Cursor's global hook config. Requires `ad` on PATH (npm link from agent-daemon/runtime). Shape adapted from everything-claude-code/.cursor/hooks.json (MIT).",
+
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "ad session-start --output-json",
+        "event": "sessionStart",
+        "description": "Inject agent-daemon constitution + project memory at session start"
+      }
+    ],
+
+    "sessionEnd": [
+      {
+        "command": "ad digest --transcript \"$CURSOR_TRANSCRIPT_PATH\" --session-id \"$CURSOR_SESSION_ID\" --cwd \"$CURSOR_PROJECT_DIR\" --verbose",
+        "event": "sessionEnd",
+        "description": "Run digest pipeline to extract learnings from the session"
+      }
+    ],
+
+    "beforeShellExecution": [
+      {
+        "command": "ad hook bash-pre",
+        "event": "beforeShellExecution",
+        "description": "Block `git --no-verify` and dev-server-without-tmux; warn on `git push` (developer/security profiles)"
+      }
+    ],
+
+    "afterShellExecution": [
+      {
+        "command": "ad hook bash-post",
+        "event": "afterShellExecution",
+        "description": "Surface `gh pr create` URLs and `npm run build` completions on stderr"
+      }
+    ],
+
+    "afterFileEdit": [
+      {
+        "command": "ad hook edit-post",
+        "event": "afterFileEdit",
+        "description": "Warn when `console.log` is left in JS/TS files just edited"
+      }
+    ],
+
+    "beforeMCPExecution": [
+      {
+        "command": "ad hook mcp-pre",
+        "event": "beforeMCPExecution",
+        "description": "Append every MCP call to ~/.agent-daemon/audit/mcp.jsonl and warn on untrusted servers (security profile)"
+      }
+    ],
+
+    "preCompact": [
+      {
+        "command": "ad checkpoint",
+        "event": "preCompact",
+        "description": "Snapshot activeContext.md before Cursor compacts context"
+      }
+    ]
+  }
+}

@@ -200,6 +200,39 @@ Before declaring a TDD cycle complete:
 
 ---
 
+## Git checkpoints per TDD stage
+
+When the repo is under Git, commit at each stage of the loop so reviewers can replay your work. Sourced from [`tdd-workflow`](https://github.com/affaan-m/everything-claude-code/blob/main/skills/tdd-workflow/SKILL.md) (MIT) — see [Sources](#sources).
+
+Compact form (3 commits per cycle, fewer if obvious):
+
+| Commit | Stage | Message form |
+|---|---|---|
+| 1 | RED — failing test added | `test: add failing test for <behavior>` |
+| 2 | GREEN — minimal fix lands | `fix: <behavior> (passes test from prev commit)` |
+| 3 | (optional) REFACTOR | `refactor: <small change>, still green` |
+
+Rules:
+
+- Don't squash or rewrite these until the cycle is complete and reviewed.
+- Only commits on the **current branch reachable from `HEAD`** count as checkpoints. Don't claim a checkpoint from an older branch.
+- A test commit clearly corresponding to RED + a fix commit clearly corresponding to GREEN is enough — you don't need a separate evidence-only commit.
+
+## Coverage targets
+
+80% minimum across the three test layers is a useful floor — not a ceiling, not a target to game:
+
+- **Unit** — pure functions, helpers, isolated component logic.
+- **Integration** — API endpoints, DB operations, service-to-service, external API mocks at the boundary.
+- **E2E** — critical user flows via Playwright (or equivalent). One per major journey, not per page.
+
+Lines covered ≠ behavior covered. A test that runs a line but doesn't assert anything is dead weight — see "Chasing coverage numbers" above.
+
+## Sources
+
+- Methodology framing (red-green-refactor cadence, test pyramid, anti-patterns): obra/superpowers methodology skills, MIT.
+- Git-checkpoint discipline + 80% three-layer coverage target: [affaan-m/everything-claude-code skills/tdd-workflow](https://github.com/affaan-m/everything-claude-code/blob/main/skills/tdd-workflow/SKILL.md), MIT.
+
 ## Related
 
 - [implement-feature](../implement-feature/SKILL.md) — uses TDD during the build phase

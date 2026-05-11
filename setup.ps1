@@ -1,4 +1,6 @@
 param(
+    [string]$Profile,
+    [switch]$Plan,
     [switch]$All,
     [string]$Skills,
     [string]$Mcp,
@@ -53,7 +55,9 @@ function Show-Usage {
 agent-daemon - Universal Installer
 
 Usage:
-  .\setup.ps1 -All                              Install everything (skills + runtime + hooks)
+  .\setup.ps1 -Profile <name>                   Install via a named profile (recommended)
+  .\setup.ps1 -Profile security -Plan           Preview a profile install without applying
+  .\setup.ps1 -All                              Install everything (skills + runtime + hooks) - manual mode
   .\setup.ps1 -Skills "name1,name2"             Install specific skills (global)
   .\setup.ps1 -Skills "name1" -ProjectLocal     Install skills to current project
   .\setup.ps1 -Mcp "name1,name2"                Install MCP server configs (when content lands)
@@ -64,7 +68,14 @@ Usage:
   .\setup.ps1 -List                             List everything available
   .\setup.ps1 -DryRun -All                      Show what would be installed
 
+Profiles (see runtime/profiles/profiles.json):
+  minimal      Memory + lifecycle hooks only. No tool guards, no auto-installed skills.
+  developer    (default) Adds console.log warning + build/PR-URL log. Installs 7 core skills.
+  security     Developer + blocks --no-verify / dev-server-not-tmux, audits every MCP call.
+
 Options:
+  -Profile NAME    Install profile by name (delegates to: ad init --profile NAME)
+  -Plan            With -Profile, print the install plan without applying
   -All             Install everything across all categories + runtime + hook prompt
   -Skills          Comma-separated list of skill names
   -Mcp             Comma-separated list of MCP server names
@@ -270,6 +281,27 @@ function Print-ToolHint {
 # Handle help and list
 if ($Help) { Show-Usage; exit 0 }
 if ($List) { List-All; exit 0 }
+
+# Profile mode short-circuits the rest of the script — delegate to the CLI
+# which knows the canonical install logic from runtime/profiles/profiles.json.
+if (-not [string]::IsNullOrEmpty($Profile)) {
+    $cli = Join-Path $ToolkitDir "runtime" "src" "cli.mjs"
+    if (-not (Test-Path $cli)) {
+        Write-Error "--Profile requires the runtime CLI at $cli"
+        exit 1
+    }
+    $node = Get-Command node -ErrorAction SilentlyContinue
+    if (-not $node) {
+        Write-Error "--Profile requires Node.js (>=22) on PATH"
+        exit 1
+    }
+    $cliArgs = @("init", "--profile", $Profile)
+    if ($Plan)    { $cliArgs += "--plan" }
+    if ($DryRun)  { $cliArgs += "--dry-run" }
+    Write-Host "Delegating to: node $cli $($cliArgs -join ' ')"
+    & node $cli @cliArgs
+    exit $LASTEXITCODE
+}
 
 # Validate arguments
 if (-not $All -and -not $Runtime -and -not $Hooks -and -not $Service -and `

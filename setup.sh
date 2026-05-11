@@ -41,8 +41,10 @@ usage() {
 agent-daemon — Universal Installer
 
 Usage:
-  ./setup.sh --all                              Install everything (skills + runtime + hooks)
-  ./setup.sh --skills name1,name2               Install specific skills (global)
+  ./setup.sh --profile <name>                   Install via a named profile (recommended)
+  ./setup.sh --profile security --plan          Preview a profile install without applying
+  ./setup.sh --all                              Install everything (skills + runtime + hooks) — manual mode
+  ./setup.sh --skills name1,name2               Install specific skills (global) — manual mode
   ./setup.sh --skills name1 --project-local     Install skills to current project (.claude/skills/)
   ./setup.sh --mcp name1,name2                  Install MCP server configs (when content lands)
   ./setup.sh --plugins name1,name2              Install Claude Code plugins (when content lands)
@@ -53,7 +55,14 @@ Usage:
   ./setup.sh --list                             List everything available
   ./setup.sh --dry-run --all                    Show what would be installed
 
+Profiles (see runtime/profiles/profiles.json):
+  minimal      Memory + lifecycle hooks only. No tool guards, no auto-installed skills.
+  developer    (default) Adds console.log warning + build/PR-URL log. Installs 7 core skills.
+  security     Developer + blocks --no-verify / dev-server-not-tmux, audits every MCP call.
+
 Options:
+  --profile NAME    Install profile by name (delegates to: ad init --profile NAME)
+  --plan            With --profile, print the install plan without applying
   --all             Install everything across all categories + runtime + hook prompt
   --skills NAME     Comma-separated list of skill names
   --mcp NAME        Comma-separated list of MCP server names
@@ -309,9 +318,19 @@ SELECTED_PLUGINS=()
 SELECTED_TOOLS=()
 PROJECT_LOCAL=false
 DRY_RUN=false
+PROFILE=""
+PROFILE_PLAN=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --profile)
+      PROFILE="$2"
+      shift 2
+      ;;
+    --plan)
+      PROFILE_PLAN=true
+      shift
+      ;;
     --all)
       INSTALL_ALL=true
       shift
@@ -372,12 +391,32 @@ if [ "$INSTALL_ALL" = false ] \
   && [ "$INSTALL_RUNTIME" = false ] \
   && [ "$INSTALL_SERVICE" = false ] \
   && [ "$SHOW_HOOKS" = false ] \
+  && [ -z "$PROFILE" ] \
   && [ ${#SELECTED_SKILLS[@]} -eq 0 ] \
   && [ ${#SELECTED_MCP[@]} -eq 0 ] \
   && [ ${#SELECTED_PLUGINS[@]} -eq 0 ] \
   && [ ${#SELECTED_TOOLS[@]} -eq 0 ]; then
   usage
   exit 1
+fi
+
+# Profile mode short-circuits the rest of the script — delegate to the CLI
+# which knows the canonical install logic from runtime/profiles/profiles.json.
+if [ -n "$PROFILE" ]; then
+  cli="$TOOLKIT_DIR/runtime/src/cli.mjs"
+  if [ ! -f "$cli" ]; then
+    echo "ERROR: --profile requires the runtime CLI at $cli"
+    exit 1
+  fi
+  if ! command -v node >/dev/null 2>&1; then
+    echo "ERROR: --profile requires Node.js (>=22) on PATH"
+    exit 1
+  fi
+  args=(init --profile "$PROFILE")
+  [ "$PROFILE_PLAN" = true ] && args+=(--plan)
+  [ "$DRY_RUN" = true ] && args+=(--dry-run)
+  echo "Delegating to: node $cli ${args[*]}"
+  exec node "$cli" "${args[@]}"
 fi
 
 # Determine target directories

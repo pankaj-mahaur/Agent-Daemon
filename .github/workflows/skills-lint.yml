@@ -1,0 +1,32 @@
+name: skills-lint
+
+# Fast feedback for PRs that touch only skill content. Runs lint and
+# the skills-diff smoke check on a single Linux runner.
+
+on:
+  pull_request:
+    paths:
+      - "skills/**"
+      - "runtime/scripts/lint-skills.mjs"
+      - "runtime/scripts/skills-diff.mjs"
+      - ".github/workflows/skills-lint.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Lint our skills (vendored skipped via `source:` frontmatter)
+        run: node runtime/scripts/lint-skills.mjs
+
+      - name: Skills-diff smoke (no broken references)
+        run: node runtime/scripts/skills-diff.mjs --json | head -50

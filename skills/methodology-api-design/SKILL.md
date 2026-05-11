@@ -290,6 +290,75 @@ Before merging any API change:
 
 ---
 
+## REST Patterns Quick Reference
+
+The discipline above is framework-agnostic. The lookup tables below codify the concrete REST conventions our discipline assumes. Sourced from [`api-design`](https://github.com/affaan-m/everything-claude-code/blob/main/skills/api-design/SKILL.md) (MIT) — see [Sources](#sources).
+
+### URL shape (REST)
+
+```
+GET    /api/v1/users              # collection (plural, kebab-case)
+GET    /api/v1/users/:id          # single resource
+POST   /api/v1/users              # create
+PUT    /api/v1/users/:id          # full replace
+PATCH  /api/v1/users/:id          # partial update
+DELETE /api/v1/users/:id          # remove
+GET    /api/v1/users/:id/orders   # sub-resource for ownership
+POST   /api/v1/orders/:id/cancel  # verb only when CRUD can't express it
+```
+
+Bad: `/api/v1/getUsers` (verb), `/api/v1/user` (singular), `/api/v1/team_members` (snake_case).
+
+### Status codes
+
+| Code | When |
+|---|---|
+| 200 | GET / PUT / PATCH success with body |
+| 201 | POST success — include `Location` header pointing at the new resource |
+| 204 | DELETE / PUT success with no body |
+| 400 | Malformed JSON or syntactic validation failure |
+| 401 | Missing / invalid auth |
+| 403 | Authenticated but not authorized |
+| 404 | Resource doesn't exist |
+| 409 | State conflict (duplicate, concurrent modify) |
+| 422 | Semantically invalid (parses fine, business rule violated) |
+| 429 | Rate-limited — include `Retry-After` |
+| 500 | Unexpected server error — never expose details |
+| 502 / 503 | Upstream / temporary unavailable — `503` should set `Retry-After` |
+
+Cardinal sin: `{"status": 200, "success": false, "error": "..."}`. Use HTTP status codes for what they are.
+
+### Pagination
+
+| Use case | Pick |
+|---|---|
+| Admin dashboards, datasets under ~10K rows, "jump to page N" UX | Offset |
+| Infinite scroll, feeds, large or unbounded datasets, public APIs | Cursor |
+| Search results where users expect page numbers | Offset |
+
+Offset shape: `?page=2&per_page=20`. Cursor shape: `?cursor=<opaque>&limit=20`, response carries `meta.next_cursor` and `meta.has_next`.
+
+### Error envelope
+
+```json
+{
+  "error": {
+    "code": "validation_error",
+    "message": "Request validation failed",
+    "details": [
+      { "field": "email", "code": "invalid_format", "message": "Must be a valid email" }
+    ]
+  }
+}
+```
+
+`code` is machine-readable and stable across versions. `message` is for humans. `details` is field-level when applicable.
+
+## Sources
+
+- Discipline framework (decision forks, anti-patterns): obra/superpowers methodology skills, MIT.
+- REST patterns reference (URL shape, status codes, pagination matrix, error envelope): [affaan-m/everything-claude-code skills/api-design](https://github.com/affaan-m/everything-claude-code/blob/main/skills/api-design/SKILL.md), MIT.
+
 ## Related
 
 - [methodology-brainstorm](../methodology-brainstorm/SKILL.md) — brainstorming API shapes before committing
