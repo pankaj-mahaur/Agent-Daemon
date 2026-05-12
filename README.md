@@ -339,6 +339,25 @@ cd /path/to/your/project
 # Copy any skills/<name>/ folder to ~/.claude/skills/<name>/
 ```
 
+## Per-session audit (`sessions.jsonl`)
+
+Every time the digest pipeline runs, it appends one line to `<project>/.agent-daemon/sessions.jsonl`. This is your **"is the daemon actually doing anything?"** ledger.
+
+Each line captures: timestamp, session id, adapter, duration, turns/tool-calls/edits, triage decision, learnings extracted/applied/queued, and extract source.
+
+```sh
+# Last 5 sessions:
+tail -n 5 .agent-daemon/sessions.jsonl | jq .
+
+# Anything land in memory this week?
+git log --since="7 days ago" --oneline -- .agent-daemon/memory/
+
+# Anything queued for your review?
+ad status
+```
+
+Rotated at 5 MB (keeps `.1` + `.2`, discards older). Fully local — never shipped anywhere.
+
 ## Uninstall
 
 agent-daemon has three install surfaces (global CLI, per-project files, user-level Claude settings). Remove them top-down for a clean wipe — no residue left behind.

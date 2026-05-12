@@ -12,6 +12,7 @@ import { extractLearnings } from "./extract.mjs";
 import { classify } from "./classify.mjs";
 import { applyLearnings } from "./apply.mjs";
 import { upsertSession, findSkillsNeedingEvolution } from "../memory/episodic.mjs";
+import { appendSessionLog, buildEntry as buildSessionLogEntry } from "./session-log.mjs";
 
 /**
  * @param {{
@@ -50,6 +51,10 @@ export async function runDigest(opts) {
   const t = triage(summary);
   if (!t.shouldDigest) {
     console.error(`agent-daemon: skipped (${t.reason})`);
+    if (!opts.dryRun) {
+      const entry = buildSessionLogEntry({ summary, adapter, sessionId: opts.sessionId, triage: t });
+      await appendSessionLog({ cwd: opts.cwd, entry });
+    }
     return 0;
   }
   if (opts.verbose) {
@@ -183,6 +188,15 @@ export async function runDigest(opts) {
     if (applyResult.proposalsQueued > 0) {
       console.error(`           review: agent-daemon review --cwd "${opts.cwd}"`);
     }
+    // Append the per-session audit line.
+    const entry = buildSessionLogEntry({
+      summary, adapter,
+      sessionId: opts.sessionId,
+      triage: t,
+      extractResult,
+      applyResult
+    });
+    await appendSessionLog({ cwd: opts.cwd, entry });
   }
 
   return 0;
