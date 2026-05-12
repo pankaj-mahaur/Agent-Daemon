@@ -339,6 +339,122 @@ cd /path/to/your/project
 # Copy any skills/<name>/ folder to ~/.claude/skills/<name>/
 ```
 
+## Uninstall
+
+agent-daemon has three install surfaces (global CLI, per-project files, user-level Claude settings). Remove them top-down for a clean wipe — no residue left behind.
+
+### 1. Unlink the global `ad` command
+
+```sh
+npm unlink -g agent-daemon
+```
+
+After this, `ad --version` should say `command not found`.
+
+### 2. (Optional) Delete the cloned repo
+
+If you no longer want the source on disk, just delete the directory:
+
+```sh
+# Linux / macOS / Git Bash
+rm -rf /path/to/Agent-Daemon
+
+# PowerShell
+Remove-Item -Recurse -Force "D:\path\to\Agent-Daemon"
+```
+
+This also drops every skill, hook config, constitution file, and the vendored snapshot. The CLI is already unlinked in step 1, so nothing references this directory anymore.
+
+### 3. Remove agent-daemon from a specific project
+
+If you ran `ad init` in a project and want to undo it without touching others:
+
+```sh
+cd /path/to/your-project
+
+# Delete the per-project memory + agents guide
+rm -rf .agent-daemon
+rm -f AGENTS.md
+```
+
+Then open `CLAUDE.md` and remove the block between (and including) these two markers:
+
+```
+<!-- agent-daemon:start -->
+... agent-daemon section ...
+<!-- agent-daemon:end -->
+```
+
+Everything in `CLAUDE.md` outside those markers is your original content — leave it alone.
+
+### 4. Clean `~/.claude/settings.json`
+
+The hooks `ad init` injects look like this (commands all start with `ad`):
+
+```json
+{
+  "hooks": {
+    "SessionStart":  [ { "hooks": [{ "command": "ad session-start --output-json" }] } ],
+    "SessionEnd":    [ { "hooks": [{ "command": "ad digest ..." }] } ],
+    "PostToolUse":   [
+      { "matcher": "Edit|Write|MultiEdit", "hooks": [{ "command": "ad hook edit-post" }] },
+      { "matcher": "Bash",                 "hooks": [{ "command": "ad hook bash-post" }] }
+    ],
+    "PreToolUse":    [
+      { "matcher": "Bash",     "hooks": [{ "command": "ad hook bash-pre" }] },
+      { "matcher": "mcp__.*",  "hooks": [{ "command": "ad hook mcp-pre" }] }
+    ]
+  }
+}
+```
+
+To remove them by hand: open `~/.claude/settings.json`, drop any hook entry whose `command` starts with `ad `. Keep any other entries (those belong to other tools).
+
+Or do it programmatically:
+
+```sh
+node -e "
+const fs = require('node:fs');
+const path = require('node:path');
+const p = path.join(process.env.HOME || process.env.USERPROFILE, '.claude/settings.json');
+const s = JSON.parse(fs.readFileSync(p, 'utf8'));
+for (const ev of Object.keys(s.hooks || {})) {
+  s.hooks[ev] = (s.hooks[ev] || [])
+    .map(e => ({ ...e, hooks: (e.hooks || []).filter(h => !/^ad(\\s|\$)/.test(h.command || '')) }))
+    .filter(e => (e.hooks || []).length > 0);
+  if (s.hooks[ev].length === 0) delete s.hooks[ev];
+}
+fs.writeFileSync(p, JSON.stringify(s, null, 2));
+console.log('cleaned');
+"
+```
+
+### 5. Wipe daemon state
+
+The daemon's local state (audit log, episodic memory DB) lives under `~/.agent-daemon/`:
+
+```sh
+# Linux / macOS / Git Bash
+rm -rf ~/.agent-daemon
+
+# PowerShell
+Remove-Item -Recurse -Force "$env:USERPROFILE\.agent-daemon"
+```
+
+This deletes:
+- `audit/mcp.jsonl` and its rotations — MCP audit trail
+- `episodic.db` — SQLite episodic memory across all projects
+- Any future state files
+
+### 6. Verify
+
+```sh
+ad --version            # should say "command not found"
+ls ~/.agent-daemon      # should say "no such file or directory"
+```
+
+Done. agent-daemon is fully removed.
+
 ## Architecture
 
 ```
