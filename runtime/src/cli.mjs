@@ -878,7 +878,8 @@ async function main(argv) {
         agent:        { type: "string" },
         profile:      { type: "string" },
         plan:         { type: "boolean" },
-        "fallback-to-llm": { type: "boolean" }
+        "fallback-to-llm": { type: "boolean" },
+        force:        { type: "boolean" }
       },
       allowPositionals: true,
       strict: false
@@ -896,6 +897,7 @@ async function main(argv) {
     dryRun:      parsed.values["dry-run"]    || false,
     verbose:     parsed.values.verbose       || false,
     fallbackToLlm: parsed.values["fallback-to-llm"] || process.env.AGENT_DAEMON_FALLBACK_LLM === "1",
+    force:       parsed.values.force          || false,
     projectRoot: PROJECT_ROOT
   };
 

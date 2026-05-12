@@ -49,13 +49,18 @@ export async function runDigest(opts) {
 
   // Step 2 — triage
   const t = triage(summary);
-  if (!t.shouldDigest) {
-    console.error(`agent-daemon: skipped (${t.reason})`);
+  if (!t.shouldDigest && !opts.force) {
+    console.error(`agent-daemon: skipped (${t.reason})${opts.verbose ? " — pass --force to bypass" : ""}`);
     if (!opts.dryRun) {
       const entry = buildSessionLogEntry({ summary, adapter, sessionId: opts.sessionId, triage: t });
       await appendSessionLog({ cwd: opts.cwd, entry });
     }
     return 0;
+  }
+  if (opts.force && !t.shouldDigest) {
+    console.error(`agent-daemon: triage said skip (${t.reason}) — forced via --force`);
+    t.shouldDigest = true;
+    t.reason = `forced (was: ${t.reason})`;
   }
   if (opts.verbose) {
     console.error(`agent-daemon: triage passed — ${t.reason}`);
