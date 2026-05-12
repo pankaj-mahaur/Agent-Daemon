@@ -147,6 +147,7 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
     await fs.access(target);
   } catch {
     actions.push(`+ .agent-daemon/memory/       (new — ${await countTemplates(templatesDir)} memory templates)`);
+    actions.push(`+ session-logs/                (new — gitignored local journal directory)`);
   }
 
   // Check if AGENTS.md needs to be created
@@ -377,6 +378,32 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
       "- **CLI:** All commands use the `ad` shorthand (e.g. `ad doctor`, `ad init`, `ad tt` for templates)",
       "- **Skills:** 35 auto-triggering skills in `~/.claude/skills/` — code review, debugging, orchestration, etc.",
       "- **Self-improvement:** Session digests extract learnings → SQLite episodic memory → next session starts smarter",
+      "",
+      "### Bootstrap (run once after `ad init`)",
+      "",
+      "Tell Claude: **\"bootstrap the daemon memory using the bootstrap-daemon skill\"**.",
+      "",
+      "Claude will scan `package.json`, key folders, recent commits, and populate `.agent-daemon/memory/*.md` with real project context (stack, conventions, gotchas). Future sessions then start with rich context loaded automatically.",
+      "",
+      "### Session logs (`session-logs/`)",
+      "",
+      "Local-only (gitignored). Tracks Claude Code session activity, timeline, decisions, and token usage.",
+      "",
+      "- One file per session: `YYYY-MM-DD_session-NN.md`",
+      "- See `session-logs/README.md` for format",
+      "- **Update triggers:**",
+      "  - User says \"log tokens\" + pastes `/cost` output → append timestamped entry",
+      "  - User says \"close session\" → fill End-of-session block with summary",
+      "  - User says \"new session\" → create next file, link previous one",
+      "- Claude cannot read token counts directly — only record what user provides",
+      "- Each entry: timestamp + action/event, plus optional token figures",
+      "",
+      "**Session-close workflow (mandatory):** When the user signals end of session (\"end session\", \"close session\", \"session khatam\", \"ending this session\", etc. — English or Hinglish), do BOTH in the same response, no confirmation needed:",
+      "",
+      "1. **Update the session log** — fill the \"End of session\" block with closing timestamp, outcome, net deliverables, what works, what's pending, what next session must start with. Rename duplicate headings to satisfy MD024.",
+      "2. **Emit the agent-daemon digest block** — wrapped in `<agent-daemon-digest>...</agent-daemon-digest>` with valid JSON inside (per `constitution/ending-protocol.md`). Include learnings tagged with `projectbrief`, `techContext`, `systemPatterns`, `activeContext`, `progress`, `user`, plus durable `lessons`, `files` touched, and a `daemon_verification` field showing which hooks fired.",
+      "",
+      "Short / prep-only sessions still emit both — they produce signal too.",
       MANAGED_END,
       ""
     ].join("\n");
@@ -384,16 +411,119 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
     console.log("  ✓ Added agent-daemon section to CLAUDE.md");
   }
 
+  // Scaffold session-logs/ directory with README + .gitignore entry
+  const sessionLogsDir = path.join(cwd, "session-logs");
+  try {
+    await fs.access(sessionLogsDir);
+  } catch {
+    await fs.mkdir(sessionLogsDir, { recursive: true });
+    const readme = renderSessionLogsReadme();
+    await fs.writeFile(path.join(sessionLogsDir, "README.md"), readme, "utf8");
+    // Also drop a .gitkeep so the empty dir is preserved if the user wants to track it
+    await fs.writeFile(path.join(sessionLogsDir, ".gitignore"), "# Local-only session logs — not committed.\n*.md\n!README.md\n", "utf8");
+    console.log("  ✓ Scaffolded session-logs/ (gitignored — local-only)");
+  }
+
   console.log(`
 agent-daemon: initialized.
 
 Next steps:
   ad doctor                              Verify the install
-  "bootstrap the daemon memory"          Tell Claude to populate memory with real project context
+  "bootstrap the daemon memory using the bootstrap-daemon skill"
+                                         Tell Claude in your first session — populates the 7 memory
+                                         files with real project context (~$0.05–0.10, one-time)
+
+Daily workflow:
+  ad watch --verbose --force             Background autopilot (run in a dedicated terminal)
+  ad digest-latest --verbose             One-shot manual digest after a session ends
+
+Session logs:
+  session-logs/                          Local-only journal (gitignored). Claude updates it on
+                                         "log tokens" / "close session" / "new session" triggers.
 
 Memory files contain template placeholders until bootstrapped.
 The digest pipeline keeps memory updated automatically after bootstrapping.`);
   return 0;
+}
+
+/**
+ * Markdown template for session-logs/README.md.
+ * Documents the file-naming convention, entry format, and close-workflow.
+ */
+function renderSessionLogsReadme() {
+  return [
+    "# Session logs",
+    "",
+    "Local-only working journal of Claude Code sessions for this project.",
+    "Tracks timeline, decisions, token usage, deliverables. **Gitignored** — never committed.",
+    "",
+    "## File naming",
+    "",
+    "One file per session: `YYYY-MM-DD_session-NN.md` (e.g. `2026-05-12_session-01.md`).",
+    "Incrementing `NN` within a day. Number resets per day.",
+    "",
+    "## Entry format (example)",
+    "",
+    "```markdown",
+    "# 2026-05-12 — Session 03",
+    "",
+    "**Started:** 2026-05-12 14:32 IST",
+    "**Goal:** Wire SSE streaming for /api/chat",
+    "",
+    "## Timeline",
+    "",
+    "- 14:32 — Started by reading `src/app/api/chat/route.ts`",
+    "- 14:48 — User said \"log tokens\" → cumulative: 12K input / 4K output (cost $0.18)",
+    "- 15:10 — Implemented streaming with `ReadableStream`; lint passes",
+    "- 15:24 — Wrote 3 tests, all green",
+    "",
+    "## Decisions",
+    "",
+    "- Chose `ReadableStream` over `eventsource-parser` (one less dep)",
+    "- Kept JSON fallback for clients without SSE support",
+    "",
+    "## Files touched",
+    "",
+    "- `src/app/api/chat/route.ts` (modified)",
+    "- `src/app/api/chat/route.test.ts` (new)",
+    "",
+    "## End of session",
+    "",
+    "**Closed:** 2026-05-12 15:35 IST",
+    "**Outcome:** SSE streaming shipped end-to-end on `feat/chat-page`",
+    "**Net deliverables:** 1 feature, 3 tests, 0 reverts",
+    "**What works:** SSE flushes incrementally, tests cover happy + error paths",
+    "**Pending:** Wire frontend consumer in next session",
+    "**Next session must start with:** Read `src/components/chat/ChatWindow.tsx` and switch from JSON fetch to SSE consumer",
+    "",
+    "## Tokens (final)",
+    "",
+    "- Input: 18,420",
+    "- Output: 6,210",
+    "- Cost: $0.27",
+    "",
+    "<!-- Linked digest block (also emitted by Claude at session close) -->",
+    "",
+    "```",
+    "<agent-daemon-digest>",
+    "  ...",
+    "</agent-daemon-digest>",
+    "```",
+    "```",
+    "",
+    "## Update triggers (what Claude listens for)",
+    "",
+    "- **\"log tokens\"** + `/cost` output paste → append a timestamped entry to **Tokens** section",
+    "- **\"close session\" / \"end session\" / \"session khatam\"** → fill the **End of session** block + emit agent-daemon digest block (mandatory, in the same response)",
+    "- **\"new session\"** → create the next-numbered file; link previous one at the top",
+    "",
+    "Claude cannot read token counts directly — only records what the user pastes.",
+    "",
+    "## Why local-only",
+    "",
+    "Session logs contain in-progress thinking, half-formed ideas, and raw token numbers — useful for *you* but noisy in shared git history. Durable learnings get distilled into `.agent-daemon/memory/*.md` (which IS committed) via the digest pipeline.",
+    ""
+  ].join("\n");
 }
 
 async function countTemplates(dir) {

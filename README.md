@@ -57,6 +57,24 @@ Profile manifest: [runtime/profiles/profiles.json](runtime/profiles/profiles.jso
 
 Two commands cover 99% of daily use. See [docs/workflow.md](docs/workflow.md) for the full guide.
 
+### Bootstrap once (after `ad init`)
+
+In your first Claude Code session, tell Claude:
+
+> *"bootstrap the daemon memory using the bootstrap-daemon skill"*
+
+Claude scans `package.json`, key folders, recent commits and populates `.agent-daemon/memory/*.md` with real project context (stack, conventions, gotchas). One-time, ~$0.05–0.10 in tokens. Without this, memory files stay as `{{PLACEHOLDER}}` templates until enough sessions accumulate to fill them organically.
+
+### Session logs (`session-logs/`)
+
+`ad init` also scaffolds a local-only (`.gitignored`) `session-logs/` directory. Claude updates this journal automatically when you say:
+
+- *"log tokens"* (paste `/cost` output) — appends a token entry
+- *"close session" / "end session" / "session khatam"* — fills the End-of-session block **and** emits the agent-daemon digest block in the same response
+- *"new session"* — creates the next-numbered file
+
+See `session-logs/README.md` (scaffolded into your project) for format details.
+
 ### Option A — `ad watch` (autopilot)
 
 Leave it running in a background terminal:

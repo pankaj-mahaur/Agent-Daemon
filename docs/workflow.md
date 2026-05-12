@@ -26,7 +26,40 @@ cd /path/to/your/project
 ad init --profile developer
 ```
 
-That scaffolds `.agent-daemon/memory/`, drops an `AGENTS.md`, and merges hook entries into `~/.claude/settings.json`. Idempotent — safe to re-run.
+That scaffolds:
+- `.agent-daemon/memory/` — 7 markdown templates ready for the digest pipeline to fill
+- `AGENTS.md` — multi-agent orchestration guide (loaded into every session)
+- `session-logs/` — local-only (gitignored) journal directory with a README
+- Adds an `## agent-daemon` managed section to `CLAUDE.md`
+- Merges hook entries into `~/.claude/settings.json`
+
+All idempotent — safe to re-run.
+
+## Bootstrap (once, after init)
+
+In your first Claude Code session in the project, tell Claude:
+
+> *"bootstrap the daemon memory using the bootstrap-daemon skill"*
+
+Claude reads `package.json`, key folders, recent commits, and populates all 7 memory files with real project context (stack, conventions, in-flight work, gotchas). Cost ~$0.05–0.10 in tokens. One-time.
+
+You can also skip bootstrap and let the digest pipeline fill memory organically across the next 3–5 sessions. Bootstrap just gives future sessions a rich starting point on day one.
+
+## Session logs (`session-logs/`)
+
+A local-only journal of each Claude Code session. Gitignored — never committed. Sits alongside `.agent-daemon/memory/` (which IS committed and contains durable distilled learnings).
+
+Format: one file per session, named `YYYY-MM-DD_session-NN.md`. See `session-logs/README.md` (scaffolded by `ad init`) for the full template.
+
+**Update triggers** — Claude responds to these phrases without any extra prompting:
+
+- *"log tokens"* + paste `/cost` output → appends a timestamped token entry
+- *"close session" / "end session" / "session khatam"* → fills the **End of session** block (closing time, outcome, deliverables, pending work, what next session must start with) **and** emits the agent-daemon digest block in the same response. Both happen automatically — no confirmation asked.
+- *"new session"* → creates the next-numbered file and links the previous one
+
+Why two log systems?
+- `session-logs/*.md` — your **personal working journal**. Verbose. Token usage. Half-formed ideas.
+- `.agent-daemon/memory/*.md` — **shared, distilled knowledge**. Committed. Lessons that survive across sessions.
 
 ---
 
