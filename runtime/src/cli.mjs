@@ -19,7 +19,14 @@ import { resolveProfile, listProfiles } from "./profiles.mjs";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
 const PROJECT_ROOT = path.resolve(__dirname, "..", "..");  // .../agent-daemon/
-const VERSION = "0.1.0";
+// VERSION is sourced from runtime/package.json so it can never drift from the
+// shipped version. Fall back to "0.0.0-dev" if the file is unreachable (e.g.
+// running the CLI from a partial checkout).
+let VERSION = "0.0.0-dev";
+try {
+  const pkgPath = path.resolve(__dirname, "..", "package.json");
+  VERSION = JSON.parse(await fs.readFile(pkgPath, "utf8")).version || VERSION;
+} catch { /* keep fallback */ }
 
 /* ------------------------------------------------------------------ */
 /* Help                                                                */
