@@ -11,7 +11,7 @@ Now ships with a full **team coordination layer**: spawn multiple Claude Code ag
 
 Skills evolve too: [GEPA](runtime/src/digest/gepa/README.md) (Genetic-Pareto Prompt Evolution) reads execution traces and proposes Pareto-optimal skill refinements that you accept or reject via `agent-daemon review`.
 
-> **v0.6 status (current):** Production-hardened multi-agent orchestration. Filesystem inboxes, git worktree isolation per agent, team templates, task dependency graphs with auto-unblocking, spawn timeout + kill escalation, atomic writes, concurrent agent limits. Plus the full self-improving loop from prior versions — zero API-key digest, SQLite episodic memory, cross-agent adapters, watch daemon, OS service registration.
+> **v0.2.0 (current):** Cross-harness support for **Claude Code** (native), **Codex** (reference config + sub-agent TOML), and **Cursor** (hook bindings + skill→`.mdc` converter). 3 install profiles (`minimal` / `developer` / `security`), 217 skills (36 curated + 181 vendored from [`everything-claude-code`](https://github.com/affaan-m/everything-claude-code)), 4 ported production hooks, audit-log rotation, GitHub Actions CI on Linux/macOS/Windows. See [CHANGELOG.md](CHANGELOG.md) for the full v0.2.0 story and [docs/manual-test-v0.2.0.md](docs/manual-test-v0.2.0.md) for a step-by-step end-user verification checklist.
 
 ## Quick start
 
@@ -40,6 +40,8 @@ ad init --plan                # preview without applying
 ```
 
 The `ad` command is the short alias for `agent-daemon` — both work interchangeably. No API key required for normal operation. Set `ANTHROPIC_API_KEY` only for `ad evolve` (GEPA batch evolution).
+
+> **Verifying your install end-to-end?** Follow [docs/manual-test-v0.2.0.md](docs/manual-test-v0.2.0.md) — six sections, ~30 steps, each with expected output and the fix when it fails.
 
 ### Install profiles
 
@@ -195,7 +197,9 @@ ad team delete   (td)  --team <id>
 ad spawn         (sp)  --team <id> --role <name> --task "..."
 ```
 
-## Skill catalog (36 skills)
+## Skill catalog (36 curated + 181 vendored = 217 total)
+
+> The 36 curated skills below are documented; an additional 181 skills were imported from [`everything-claude-code`](https://github.com/affaan-m/everything-claude-code) (MIT) — each tagged with a `source:` frontmatter line. See [skills/README.md](skills/README.md) for the full vendored catalog and re-sync instructions.
 
 ### Build & implement
 
