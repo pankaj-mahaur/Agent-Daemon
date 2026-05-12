@@ -2,6 +2,38 @@
 
 All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepachangelog.com), [SemVer](https://semver.org).
 
+## [Unreleased]
+
+### Added
+
+**Per-project session audit ledger.** Every digest run appends one JSONL line to `<project>/.agent-daemon/sessions.jsonl` capturing duration, turns, tool calls, edits, triage decision, learnings extracted/applied/queued, and extract source. Rotated at 5 MB. Module: `runtime/src/digest/session-log.mjs`. 5 new tests.
+
+**`ad digest-latest` command.** One-shot manual digest for the VS Code Claude Code extension (where `SessionEnd` hooks don't fire reliably). Encodes the current `--cwd` to find the matching transcript folder under `~/.claude/projects/`, picks the newest `.jsonl`, and force-digests. Idempotent — SQLite dedupes already-processed sessions.
+
+**`--force` flag for `ad digest`.** Bypass the triage threshold for short verification sessions or known-valuable transcripts.
+
+**`--fallback-to-llm` flag for `ad digest` and `ad watch`.** Wire the LLM extraction path (was previously env-var-only). Now propagated through the SessionEnd hook command in profiles.
+
+**`--once-on-existing` flag for `ad watch`.** Also digest transcripts that exist when the watcher starts.
+
+### Changed
+
+**Watcher reliability on Windows.** `ad watch` now:
+- Forces `chokidar` polling mode on Windows by default (native `fs.watch` misses events deep in directory trees). Tunable via `AGENT_DAEMON_WATCH_POLL=1` elsewhere.
+- Reads each transcript's actual `cwd` from inside the JSONL (Claude Code embeds it) instead of using `dirname(transcript)` — memory now lands in the correct project root.
+- Logs every `+ add` / `~ change` event when `--verbose` is on.
+- Propagates `--force` and `--fallback-to-llm` to each digest run.
+
+**SessionEnd hook** (`hooks/session-end-digest.json` + `runtime/profiles/profiles.json`) now passes `--fallback-to-llm` so sessions without an agent-emitted digest block still get learnings extracted via LLM.
+
+### Documentation
+
+- New `docs/workflow.md` — daily workflow (`watch` vs `digest-latest`), the ending protocol, decision matrix, verification commands.
+- New `docs/troubleshooting.md` — 13 documented failure modes with diagnosis + fix steps (Windows watch quirks, LLM fallback EOF, hook misses on VS Code extension, `{{PLACEHOLDER}}` confusion, encoded-path mismatches, etc.).
+- New `docs/architecture.md` — three-loops model, components, full data-flow diagram, complete file-system layout, design-decision rationale.
+- New `docs/contributing.md` — onboarding for new devs: layout, conventions, how to add commands/hooks/skills/tests, commit + branching rules.
+- README reshuffled to surface daily workflow + reorganized Docs section.
+
 ## [0.2.0] — 2026-05-11
 
 ### Added

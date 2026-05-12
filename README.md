@@ -53,6 +53,45 @@ The `ad` command is the short alias for `agent-daemon` — both work interchange
 
 Profile manifest: [runtime/profiles/profiles.json](runtime/profiles/profiles.json). Hook handlers under [runtime/src/hooks/](runtime/src/hooks/) are invoked via `ad hook <name>` and consume Claude Code's tool-use JSON on stdin. Profile shape adapted from [`everything-claude-code`](https://github.com/affaan-m/everything-claude-code) — see [ATTRIBUTION.md](ATTRIBUTION.md).
 
+## Daily workflow
+
+Two commands cover 99% of daily use. See [docs/workflow.md](docs/workflow.md) for the full guide.
+
+### Option A — `ad watch` (autopilot)
+
+Leave it running in a background terminal:
+
+```bash
+ad watch --verbose --force
+```
+
+It monitors `~/.claude/projects/**/*.jsonl` and `~/.codex/sessions/**/*.jsonl`. When a transcript settles (no writes for 30s, size stable), it auto-fires `ad digest` with the right `cwd` (read from inside the transcript). Set-and-forget.
+
+### Option B — `ad digest-latest` (one-shot)
+
+Run after a session ends:
+
+```bash
+cd /path/to/your/project
+ad digest-latest --verbose
+```
+
+Auto-finds the newest transcript for the current directory, force-digests it. Idempotent — safe to run twice.
+
+### Use both
+
+`ad watch` and `ad digest-latest` are composable — SQLite dedupes already-digested sessions. Run watch as your default, fall back to `digest-latest` when you want immediate confirmation or when the watcher misses a session (Windows quirk — see [docs/troubleshooting.md](docs/troubleshooting.md)).
+
+### The agent must emit a digest block
+
+Both commands need Claude to emit a `<agent-daemon-digest>` block in its final response. The block format lives in [constitution/ending-protocol.md](constitution/ending-protocol.md) and is loaded into every session via SessionStart.
+
+The agent doesn't always remember. To guarantee capture, ask Claude before ending:
+
+> *"emit the agent-daemon digest block before ending"*
+
+Alternative: pass `--fallback-to-llm` to either command to run an LLM extraction pass when no block is found (requires `claude` CLI on PATH, ~$0.005 per session).
+
 ## Multi-agent orchestration
 
 Spawn a team of specialized Claude Code agents that work in parallel on isolated branches, coordinate through filesystem inboxes, and auto-unblock dependent tasks on completion.
@@ -179,7 +218,13 @@ ad doctor                              # Diagnose install — hooks, PATH, dirs
 ad doctor --tokens                     # Token usage + cache stats from recent sessions
 ad session-start                       # Inject context (called by SessionStart hook)
 ad digest                              # Run digest pipeline (called by SessionEnd hook)
+                                       #   --force            bypass triage threshold
+                                       #   --fallback-to-llm  LLM extraction if no digest block
+ad digest-latest                       # One-shot: find newest transcript for --cwd, force-digest
 ad watch                               # Watch transcript dirs, fire digest on new sessions
+                                       #   --verbose          log every file event
+                                       #   --force            pass --force to each digest run
+                                       #   --once-on-existing also digest existing transcripts
 ad evolve <skill>                      # GEPA self-evolution run for a skill
 ad review                              # Accept/reject queued skill proposals
 ad init                                # Scaffold .agent-daemon/ + AGENTS.md in project
@@ -545,10 +590,25 @@ Copy-paste configuration templates:
 
 ## Docs
 
-- [Skill Anatomy](docs/skill-anatomy.md) — How SKILL.md works, frontmatter fields, trigger system
+**Start here:**
+- [Workflow](docs/workflow.md) — `ad watch` vs `ad digest-latest`, the ending protocol, decision matrix
+- [Troubleshooting](docs/troubleshooting.md) — 13 common failure modes with fixes (Windows watch, LLM fallback, hook misses, etc.)
+- [Architecture](docs/architecture.md) — Three loops, components, data flow, file-system layout
+- [Contributing](docs/contributing.md) — For new devs joining the project
+
+**Reference:**
 - [Installation Guide](docs/installation-guide.md) — All install methods with OS-specific instructions
 - [Customization Guide](docs/customization-guide.md) — Fork and adapt skills for your project
+- [Skill Anatomy](docs/skill-anatomy.md) — How SKILL.md works, frontmatter fields, trigger system
+- [Manual test v0.2.0](docs/manual-test-v0.2.0.md) — End-to-end verification checklist
 - [Ecosystem](docs/ecosystem.md) — Hermes interop, cross-agent awareness
+- [Future harnesses](docs/future-harnesses.md) — Kiro/Trae/CodeBuddy/OpenCode/Gemini (vendored only)
+
+**Top-level:**
+- [SECURITY.md](SECURITY.md) — Threat model + responsible disclosure
+- [CHANGELOG.md](CHANGELOG.md) — Release history
+- [ATTRIBUTION.md](ATTRIBUTION.md) — Upstream credits
+- [DEPENDENCIES.md](DEPENDENCIES.md) — Third-party deps and licenses
 
 ## Design principles
 
