@@ -92,21 +92,47 @@ export async function runWatcher(opts) {
     // Run the digest
     inFlight.add(filepath);
     const t0 = Date.now();
-    if (opts.verbose) console.error(`agent-daemon: digesting ${path.basename(filepath)}`);
+    // Extract project cwd from the transcript itself (Claude Code records the
+    // working directory; fall back to the transcript's parent dir).
+    const projectCwd = (await readCwdFromTranscript(filepath)) || path.dirname(filepath);
+    if (opts.verbose) console.error(`agent-daemon: digesting ${path.basename(filepath)} (cwd=${projectCwd})`);
     try {
       await runDigest({
         transcript: filepath,
-        cwd: path.dirname(filepath),
+        cwd: projectCwd,
         projectRoot: opts.projectRoot,
         adapter: entry.adapter,
-        verbose: false  // keep watch output less noisy
+        verbose: false,  // keep watch output less noisy
+        fallbackToLlm: opts.fallbackToLlm,
+        force: opts.force
       });
-      console.error(`agent-daemon: digested ${path.basename(filepath)} (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+      console.error(`agent-daemon: digested ${path.basename(filepath)} → ${projectCwd} (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
     } catch (err) {
       console.error(`agent-daemon: digest failed for ${path.basename(filepath)}: ${err.message}`);
     } finally {
       inFlight.delete(filepath);
     }
+  }
+
+  /**
+   * Scan the first N events of a Claude Code transcript JSONL for the cwd
+   * field. Claude Code records the working directory in every assistant/user
+   * event. Returns null if not found.
+   */
+  async function readCwdFromTranscript(filepath, scanBytes = 64 * 1024) {
+    try {
+      const fh = await fs.open(filepath, "r");
+      try {
+        const buf = Buffer.alloc(scanBytes);
+        const { bytesRead } = await fh.read(buf, 0, scanBytes, 0);
+        const text = buf.slice(0, bytesRead).toString("utf8");
+        // Match "cwd":"<value>" with JSON-escaped backslashes.
+        const m = text.match(/"cwd":"((?:[^"\\]|\\.)*)"/);
+        if (!m) return null;
+        // Unescape JSON string escapes.
+        return JSON.parse('"' + m[1] + '"');
+      } finally { await fh.close(); }
+    } catch { return null; }
   }
 
   // Start a watcher per configured entry (chokidar can take an array but
@@ -117,11 +143,16 @@ export async function runWatcher(opts) {
     const watcher = chokidar.watch(globPattern, {
       ignoreInitial: !opts.onceOnExisting,
       persistent: true,
-      awaitWriteFinish: false  // we do our own stability check
+      awaitWriteFinish: false,  // we do our own stability check
+      // Windows: native fs.watch misses changes inside deep directory trees.
+      // Polling is slower but reliable. Tunable via AGENT_DAEMON_WATCH_POLL.
+      usePolling: process.platform === "win32" || process.env.AGENT_DAEMON_WATCH_POLL === "1",
+      interval: 2000,
+      binaryInterval: 5000
     });
     watcher
-      .on("add",    p => scheduleDigest(p, entry))
-      .on("change", p => scheduleDigest(p, entry))
+      .on("add",    p => { if (opts.verbose) console.error(`  + add ${path.basename(p)}`); scheduleDigest(p, entry); })
+      .on("change", p => { if (opts.verbose) console.error(`  ~ change ${path.basename(p)}`); scheduleDigest(p, entry); })
       .on("error",  e => console.error(`agent-daemon: watch error: ${e.message}`));
     watchers.push(watcher);
   }

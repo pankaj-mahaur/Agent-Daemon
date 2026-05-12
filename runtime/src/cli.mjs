@@ -40,6 +40,13 @@ Usage:
 Commands:
   session-start          Inject constitution + project memory into session start hook output (JSON to stdout)
   digest                 Run digest pipeline against a transcript (extract → classify → apply)
+                         --force              bypass triage threshold
+                         --fallback-to-llm    LLM-extract if agent didn't emit a digest block
+  digest-latest          Find the newest transcript for --cwd and digest it (--force on by default)
+  watch                  Watch transcript directories and fire digest on new sessions
+                         --once-on-existing   also digest existing transcripts at startup
+                         --force              pass --force to each digest run
+                         --fallback-to-llm    enable LLM extraction in watcher
   evolve <skill>         GEPA self-improvement run for a skill (sample → reflect → generate → evaluate → select)
   checkpoint             Save a memory checkpoint before /compact
   init                   Scaffold .agent-daemon/ in current project
@@ -47,7 +54,6 @@ Commands:
                          --plan            print actions without applying
   status                 Show queued proposals (skill diffs, constitution rule additions)
   review                 Interactively accept/reject queued proposals
-  watch                  Watch transcript directories and fire digest on new sessions (v0.2)
   query-retrieve         Extract keywords from user prompt and inject relevant past learnings (UserPromptSubmit hook)
   doctor                 Diagnose the install — settings.json, PATH, dirs
   doctor --tokens        Show token usage + cache stats from recent sessions
@@ -578,11 +584,90 @@ async function cmdQueryRetrieve(opts) {
   return runQueryRetrieve(opts);
 }
 
+/**
+ * `ad digest-latest` — find the most recent transcript for the current project
+ * (or any project via --cwd) under ~/.claude/projects and digest it.
+ *
+ * The Claude Code VS Code extension doesn't fire SessionEnd hooks reliably, so
+ * this gives users a one-shot manual digest without typing the transcript path.
+ */
+async function cmdDigestLatest(opts) {
+  const home = process.env.HOME || process.env.USERPROFILE || "";
+  const projectsDir = path.join(home, ".claude", "projects");
+  const targetCwd = path.resolve(opts.cwd || process.cwd());
+
+  // Encoded folder name: drive letter lowercased, ":" and "\" and " " all become "-".
+  // (Lossy — multiple originals can map to the same encoded form. We pick the
+  // newest matching folder.)
+  const encoded = encodePath(targetCwd);
+
+  let entries;
+  try {
+    entries = await fs.readdir(projectsDir);
+  } catch (err) {
+    console.error(`agent-daemon: cannot read ${projectsDir}: ${err.message}`);
+    return 1;
+  }
+
+  const matches = entries.filter(name => name.toLowerCase() === encoded.toLowerCase());
+  if (matches.length === 0) {
+    console.error(`agent-daemon: no transcripts found for ${targetCwd}`);
+    console.error(`  searched: ${path.join(projectsDir, encoded)}`);
+    return 1;
+  }
+
+  // Find the newest .jsonl under all matched folders.
+  let newest = null;
+  for (const m of matches) {
+    const folder = path.join(projectsDir, m);
+    let files;
+    try { files = await fs.readdir(folder); } catch { continue; }
+    for (const f of files) {
+      if (!f.endsWith(".jsonl")) continue;
+      const fp = path.join(folder, f);
+      let stat;
+      try { stat = await fs.stat(fp); } catch { continue; }
+      if (!newest || stat.mtimeMs > newest.mtimeMs) {
+        newest = { path: fp, mtimeMs: stat.mtimeMs };
+      }
+    }
+  }
+
+  if (!newest) {
+    console.error(`agent-daemon: no .jsonl files found under ${path.join(projectsDir, encoded)}`);
+    return 1;
+  }
+
+  const ageMin = ((Date.now() - newest.mtimeMs) / 60000).toFixed(1);
+  console.error(`agent-daemon: digesting ${path.basename(newest.path)} (modified ${ageMin}min ago)`);
+
+  return runDigest({
+    ...opts,
+    transcript: newest.path,
+    cwd: targetCwd,
+    force: true  // digest-latest implies user wants it; pass --dry-run to preview
+  });
+}
+
+/**
+ * Encode a project path the way Claude Code names transcript folders.
+ * Drive letter is lowercased, ":" / "\" / "/" / " " all become "-".
+ */
+function encodePath(p) {
+  // Drive letter lowercased, drop the colon — "D:" becomes "d-" (the colon's
+  // slot also collapses to "-" via the next pass).
+  return p
+    .replace(/^([A-Za-z]):/, (_, d) => d.toLowerCase() + "-")
+    .replace(/[\s\\/]/g, "-");  // each separator becomes its own "-", do not collapse
+}
+
 async function cmdWatch(opts) {
   return runWatcher({
     projectRoot: opts.projectRoot,
     verbose: opts.verbose,
-    onceOnExisting: false
+    onceOnExisting: opts.onceOnExisting || false,
+    force: opts.force || false,
+    fallbackToLlm: opts.fallbackToLlm || false
   });
 }
 
@@ -879,7 +964,8 @@ async function main(argv) {
         profile:      { type: "string" },
         plan:         { type: "boolean" },
         "fallback-to-llm": { type: "boolean" },
-        force:        { type: "boolean" }
+        force:        { type: "boolean" },
+        "once-on-existing": { type: "boolean" }
       },
       allowPositionals: true,
       strict: false
@@ -898,12 +984,14 @@ async function main(argv) {
     verbose:     parsed.values.verbose       || false,
     fallbackToLlm: parsed.values["fallback-to-llm"] || process.env.AGENT_DAEMON_FALLBACK_LLM === "1",
     force:       parsed.values.force          || false,
+    onceOnExisting: parsed.values["once-on-existing"] || false,
     projectRoot: PROJECT_ROOT
   };
 
   switch (command) {
     case "session-start":  return runSessionStart(opts);
     case "digest":         return runDigest(opts);
+    case "digest-latest":  return cmdDigestLatest(opts);
     case "evolve":         return cmdEvolve({ ...opts, skillName: parsed.positionals?.[0] });
     case "checkpoint":     return cmdCheckpoint(opts);
     case "init":           return cmdInit({ ...opts, profile: parsed.values.profile, plan: parsed.values.plan });
