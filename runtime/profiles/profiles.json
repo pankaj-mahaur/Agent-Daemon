@@ -63,7 +63,7 @@
     "session-end": {
       "event": "SessionEnd",
       "matcher": "",
-      "command": "ad digest --transcript \"$CLAUDE_TRANSCRIPT_PATH\" --session-id \"$CLAUDE_SESSION_ID\" --cwd \"$CLAUDE_PROJECT_DIR\" --verbose",
+      "command": "ad digest --transcript \"$CLAUDE_TRANSCRIPT_PATH\" --session-id \"$CLAUDE_SESSION_ID\" --cwd \"$CLAUDE_PROJECT_DIR\" --fallback-to-llm --verbose",
       "timeout": 30
     },
     "edit-post-lint": {

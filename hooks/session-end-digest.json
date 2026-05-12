@@ -8,7 +8,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "agent-daemon digest --transcript \"$CLAUDE_TRANSCRIPT_PATH\" --session-id \"$CLAUDE_SESSION_ID\" --cwd \"$CLAUDE_PROJECT_DIR\"",
+            "command": "agent-daemon digest --transcript \"$CLAUDE_TRANSCRIPT_PATH\" --session-id \"$CLAUDE_SESSION_ID\" --cwd \"$CLAUDE_PROJECT_DIR\" --fallback-to-llm",
             "timeout": 600,
             "async": true,
             "shell": "auto",
