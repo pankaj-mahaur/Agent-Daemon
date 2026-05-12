@@ -133,6 +133,43 @@ test("edit-post is quiet when the JS file has no console.log", async () => {
   }
 });
 
+// -- mcp-audit rotation ------------------------------------------------------
+
+test("mcp-audit rotates the log when it exceeds ROTATE_BYTES", async () => {
+  const { mkdtempSync, writeFileSync, statSync, existsSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+
+  // Point the hook at a scratch AGENT_DAEMON_HOME and pre-fill the log past
+  // the rotation threshold (10 MB).
+  const home = mkdtempSync(join(tmpdir(), "ad-mcp-rotate-"));
+  const auditDir = join(home, "audit");
+  const { mkdirSync } = await import("node:fs");
+  mkdirSync(auditDir, { recursive: true });
+  const log = join(auditDir, "mcp.jsonl");
+  // Write 10.5 MB of placeholder JSONL lines so the rotation trips.
+  writeFileSync(log, "x".repeat(11 * 1024 * 1024));
+  assert.equal(statSync(log).size >= 10 * 1024 * 1024, true);
+
+  try {
+    // Spawn the handler with AGENT_DAEMON_HOME pointing at our scratch.
+    await new Promise((res) => {
+      const child = spawn(process.execPath, [CLI, "hook", "mcp-pre"], {
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, AGENT_DAEMON_HOME: home },
+      });
+      child.on("close", () => res());
+      child.stdin.end(JSON.stringify({ tool_name: "mcp__qmd__search" }));
+    });
+
+    // Old log should have been rotated to .1, new log should be small (~1 line).
+    assert.ok(existsSync(`${log}.1`), "expected log.1 after rotation");
+    assert.ok(statSync(log).size < 1024, "expected new log to be tiny after rotation");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 // -- unknown handler ---------------------------------------------------------
 
 test("unknown hook handler exits non-zero with help text", async () => {

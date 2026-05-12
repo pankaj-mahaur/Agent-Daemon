@@ -22,9 +22,10 @@ The shell-guard, shell-log, edit-lint, and mcp-audit hooks were ported from [`ev
 
 If you write a new hook handler under [`runtime/src/hooks/`](../runtime/src/hooks/):
 
-- `exit 0` (or `passthrough()` from [`io.mjs`](../runtime/src/hooks/io.mjs)) on any non-critical error. Hooks must never block tool execution because of their own bugs.
-- `PreToolUse` and `Stop` handlers should finish in under 200ms — no network calls, no slow filesystem walks.
-- Log to stderr with the `[agent-daemon]` prefix (use `warn()` from `io.mjs`). Never write to stdout outside the JSON decision.
+- **Fail-safe to approve** on any non-critical error. Hooks must never block tool execution because of their own bugs — use `approve()` / `passthrough()` from [`io.mjs`](../runtime/src/hooks/io.mjs), not a non-zero exit, on parse failures / missing files / unexpected throws. See [SECURITY.md](../SECURITY.md#the-fail-safe-to-approve-decision) for the threat-model reasoning.
+- **PreToolUse and Stop handlers must finish in under 200ms** — no network calls, no slow filesystem walks, no synchronous shell-outs.
+- **Stderr-only for warnings.** Log to stderr with the `[agent-daemon]` prefix (use `warn()` from `io.mjs`). Never write to stdout outside the JSON decision — Claude Code parses stdout strictly.
+- **Persistence is best-effort.** Audit logging, episodic-db writes, etc. should be wrapped in `try {} catch {}` so a disk-full or permission error never blocks a tool call.
 
 ## What each hook does
 
