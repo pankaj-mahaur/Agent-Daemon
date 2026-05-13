@@ -18,10 +18,15 @@ test("resolveProfile() with no argument uses the default", async () => {
   assert.ok(r.hooks.length > 0);
 });
 
-test("minimal profile installs only lifecycle hooks, no skills", async () => {
+test("minimal profile installs only lifecycle hooks + continuous extraction, no skills", async () => {
   const r = await resolveProfile("minimal");
   assert.equal(r.name, "minimal");
-  assert.deepEqual(r.hooks.map(h => h.id), ["session-start", "session-end"]);
+  // v0.3: user-prompt-extract is part of minimal too — it's the harness-enforced
+  // continuous learning capture, and has zero dependencies.
+  assert.deepEqual(
+    r.hooks.map(h => h.id).sort(),
+    ["session-end", "session-start", "user-prompt-extract"]
+  );
   assert.deepEqual(r.skills, []);
   assert.equal(r.features.qmd, false);
 });

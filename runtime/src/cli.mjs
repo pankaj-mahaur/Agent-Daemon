@@ -1172,12 +1172,13 @@ async function cmdEvolve(opts) {
 
 async function cmdHook(name) {
   switch (name) {
-    case "bash-pre":  return (await import("./hooks/bash-pre.mjs")).bashPre();
-    case "bash-post": return (await import("./hooks/bash-post.mjs")).bashPost();
-    case "edit-post": return (await import("./hooks/edit-post.mjs")).editPost();
-    case "mcp-pre":   return (await import("./hooks/mcp-audit.mjs")).mcpAudit();
+    case "bash-pre":            return (await import("./hooks/bash-pre.mjs")).bashPre();
+    case "bash-post":           return (await import("./hooks/bash-post.mjs")).bashPost();
+    case "edit-post":           return (await import("./hooks/edit-post.mjs")).editPost();
+    case "mcp-pre":             return (await import("./hooks/mcp-audit.mjs")).mcpAudit();
+    case "user-prompt-extract": return (await import("./hooks/user-prompt-extract.mjs")).userPromptExtract();
     default:
-      console.error(`agent-daemon hook: unknown handler "${name}". Known: bash-pre, bash-post, edit-post, mcp-pre`);
+      console.error(`agent-daemon hook: unknown handler "${name}". Known: bash-pre, bash-post, edit-post, mcp-pre, user-prompt-extract`);
       return 2;
   }
 }

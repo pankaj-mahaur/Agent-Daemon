@@ -34,12 +34,19 @@
  */
 
 /**
- * Tag pattern matches the agent-emitted digest block. Tolerant of whitespace
- * inside tags. Must contain valid JSON between the tags.
+ * Tag pattern matches the agent-emitted digest block. Tolerant of:
+ *   - hyphen OR colon between "agent-daemon" and "digest" (Claude drifts)
+ *   - whitespace inside the tags
+ *   - JSON OR YAML payload inside the tags
+ *
+ * Real-world transcripts show ~50% of emitted blocks use the colon form
+ * (<agent-daemon:digest>) and YAML payloads. The lenient parser recovers
+ * both.
  */
-const DIGEST_BLOCK_RE = /<agent-daemon-digest>\s*([\s\S]*?)\s*<\/agent-daemon-digest>/i;
+const DIGEST_BLOCK_RE = /<agent-daemon[-:]digest>\s*([\s\S]*?)\s*<\/agent-daemon[-:]digest>/i;
+const DIGEST_BLOCK_RE_GLOBAL = /<agent-daemon[-:]digest>\s*([\s\S]*?)\s*<\/agent-daemon[-:]digest>/gi;
 
-const VALID_TYPES   = new Set(["correction", "confirmation", "pattern", "tool"]);
+const VALID_TYPES   = new Set(["correction", "confirmation", "pattern", "tool", "gotcha", "decision"]);
 const VALID_SPEAKERS = new Set(["user", "agent"]);
 const VALID_SCOPES   = new Set(["project", "global"]);
 
@@ -94,27 +101,27 @@ export function extractFromAgentBlock(summary) {
   const empty = { found: false, learnings: [], sessionSummary: "" };
   if (!summary?.events) return empty;
 
-  // Walk assistant messages in reverse
+  // Walk assistant messages in reverse; within each turn, take the LAST block
+  // (the agent may have iterated on the digest mid-message).
   for (let i = summary.events.length - 1; i >= 0; i--) {
     const ev = summary.events[i];
     if (ev.type !== "assistant") continue;
     const text = ev.text || "";
-    const m = text.match(DIGEST_BLOCK_RE);
-    if (!m) continue;
+    const allMatches = [...text.matchAll(DIGEST_BLOCK_RE_GLOBAL)];
+    if (allMatches.length === 0) continue;
+    const m = allMatches[allMatches.length - 1];
 
-    let parsed;
-    try {
-      parsed = JSON.parse(m[1]);
-    } catch (err) {
+    const parsed = parseDigestPayload(m[1]);
+    if (!parsed.ok) {
       // malformed — log and continue searching for an earlier valid block
-      return { ...empty, found: false, parseError: `last digest block failed to parse: ${err.message}` };
+      return { ...empty, found: false, parseError: `last digest block failed to parse: ${parsed.error}` };
     }
 
-    const learnings = sanitizeLearnings(parsed.learnings);
+    const learnings = sanitizeLearnings(parsed.value.learnings);
     return {
       found: true,
       learnings,
-      sessionSummary: typeof parsed.session_summary === "string" ? parsed.session_summary : ""
+      sessionSummary: typeof parsed.value.session_summary === "string" ? parsed.value.session_summary : ""
     };
   }
   return empty;
@@ -149,6 +156,191 @@ function clampNum(v, min, max, fallback) {
   const n = Number(v);
   if (!Number.isFinite(n)) return fallback;
   return Math.min(max, Math.max(min, n));
+}
+
+/**
+ * Parse the inside of a digest block. Try JSON first, then a tolerant YAML
+ * parse for the shape Claude commonly emits when it drifts from the spec.
+ *
+ * Public-ish — exported so tests can pin behavior on both forms.
+ *
+ * @param {string} raw
+ * @returns {{ok: true, value: object} | {ok: false, error: string}}
+ */
+export function parseDigestPayload(raw) {
+  const trimmed = String(raw || "").trim();
+  if (!trimmed) return { ok: false, error: "empty payload" };
+
+  // Strip Markdown code fences if Claude wrapped the payload in ```json / ```yaml
+  const unfenced = trimmed.replace(/^```(?:json|yaml|yml)?\s*\n([\s\S]*?)\n```\s*$/i, "$1").trim();
+
+  // Looks like JSON?
+  if (unfenced.startsWith("{") || unfenced.startsWith("[")) {
+    try {
+      const v = JSON.parse(unfenced);
+      return { ok: true, value: v };
+    } catch (err) {
+      // Fall through to YAML — sometimes Claude emits unquoted keys / single quotes
+    }
+  }
+
+  const yamlParsed = tryParseSimpleYaml(unfenced);
+  if (yamlParsed.ok) return yamlParsed;
+
+  // Last-resort: try JSON again on the raw payload (after fence strip)
+  try {
+    return { ok: true, value: JSON.parse(unfenced) };
+  } catch (err) {
+    return { ok: false, error: yamlParsed.error || err.message };
+  }
+}
+
+/**
+ * Minimal YAML parser for the digest block schema. Handles the predictable
+ * shape Claude emits:
+ *
+ *   learnings:
+ *     - type: pattern
+ *       text: "..."
+ *       evidence_quote: "..."
+ *       evidence_speaker: user
+ *       scope: project
+ *       confidence: 0.7
+ *       tags: [a, b]
+ *   session_summary: "..."
+ *
+ * Not a general YAML parser — only enough to recover real-world digest blocks
+ * without adding a dependency.
+ *
+ * @param {string} raw
+ * @returns {{ok: true, value: object} | {ok: false, error: string}}
+ */
+function tryParseSimpleYaml(raw) {
+  const lines = raw.split(/\r?\n/);
+
+  /** @type {object} */
+  const result = { learnings: [], session_summary: "" };
+  let mode = "top"; // top | learnings | item
+  /** @type {object|null} */
+  let currentItem = null;
+
+  const closeItem = () => {
+    if (currentItem) {
+      result.learnings.push(currentItem);
+      currentItem = null;
+    }
+  };
+
+  try {
+    for (let raw of lines) {
+      // Strip comments
+      const commentIdx = indexOfYamlComment(raw);
+      let line = commentIdx >= 0 ? raw.slice(0, commentIdx) : raw;
+      if (!line.trim()) continue;
+
+      const indent = line.length - line.trimStart().length;
+      const stripped = line.trim();
+
+      if (mode === "top" || mode === "learnings" || mode === "item") {
+        // List-item start under learnings
+        if (stripped.startsWith("- ")) {
+          closeItem();
+          currentItem = {};
+          mode = "item";
+          // The same line may carry the first key, e.g. "- type: pattern"
+          const rest = stripped.slice(2).trim();
+          if (rest.includes(":")) {
+            assignKv(currentItem, rest);
+          }
+          continue;
+        }
+      }
+
+      // `learnings:` start
+      if (/^learnings\s*:\s*(?:\[\s*\])?\s*$/i.test(stripped)) {
+        closeItem();
+        mode = "learnings";
+        continue;
+      }
+
+      // `session_summary: ...`
+      const sumMatch = stripped.match(/^session_summary\s*:\s*(.*)$/i);
+      if (sumMatch && indent === 0) {
+        closeItem();
+        result.session_summary = unquoteScalar(sumMatch[1]);
+        mode = "top";
+        continue;
+      }
+
+      // Generic `key: value` inside the current item
+      if (mode === "item" && currentItem && /^[a-z_][a-z0-9_]*\s*:/i.test(stripped)) {
+        assignKv(currentItem, stripped);
+        continue;
+      }
+
+      // Top-level `key: value` (e.g. session_summary on its own line + indented body)
+      if (mode === "top" && /^[a-z_][a-z0-9_]*\s*:/i.test(stripped)) {
+        // ignore unrecognized top-level keys — be lenient
+        continue;
+      }
+    }
+    closeItem();
+
+    if (!Array.isArray(result.learnings) || result.learnings.length === 0) {
+      return { ok: false, error: "no learnings found in YAML payload" };
+    }
+    return { ok: true, value: result };
+  } catch (err) {
+    return { ok: false, error: `YAML parse failed: ${err.message}` };
+  }
+}
+
+function indexOfYamlComment(line) {
+  // Find a `#` that isn't inside quotes. Naive but adequate for digest blocks.
+  let inSingle = false, inDouble = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === "'" && !inDouble) inSingle = !inSingle;
+    else if (c === '"' && !inSingle) inDouble = !inDouble;
+    else if (c === "#" && !inSingle && !inDouble && (i === 0 || /\s/.test(line[i - 1]))) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function assignKv(obj, kvLine) {
+  const m = kvLine.match(/^([a-z_][a-z0-9_]*)\s*:\s*(.*)$/i);
+  if (!m) return;
+  const key = m[1];
+  const valRaw = m[2].trim();
+  obj[key] = coerceScalar(valRaw);
+}
+
+function coerceScalar(raw) {
+  if (raw === "" || raw === "~" || raw.toLowerCase() === "null") return null;
+  // Inline list: [a, b, c]
+  if (raw.startsWith("[") && raw.endsWith("]")) {
+    const inner = raw.slice(1, -1).trim();
+    if (!inner) return [];
+    return inner.split(",").map(s => unquoteScalar(s.trim())).filter(s => s !== "");
+  }
+  // Numbers
+  if (/^-?\d+(\.\d+)?$/.test(raw)) {
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : raw;
+  }
+  // Booleans
+  if (/^(true|false)$/i.test(raw)) return /^true$/i.test(raw);
+  return unquoteScalar(raw);
+}
+
+function unquoteScalar(s) {
+  if (!s) return "";
+  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+    return s.slice(1, -1);
+  }
+  return s;
 }
 
 /**

@@ -6,8 +6,8 @@
 
   "profiles": {
     "minimal": {
-      "description": "Memory + lifecycle hooks only. No tool guards, no auto-installed skills. For users who want explicit control.",
-      "hooks": ["session-start", "session-end"],
+      "description": "Memory + lifecycle hooks + continuous learning extraction. No tool guards, no auto-installed skills.",
+      "hooks": ["session-start", "session-end", "user-prompt-extract"],
       "skills": [],
       "features": {
         "qmd": false,
@@ -16,10 +16,11 @@
     },
 
     "developer": {
-      "description": "Default. Memory + lifecycle hooks + dev-quality guards (console.log warn, build/PR logs). Installs core skills.",
+      "description": "Default. Memory + lifecycle hooks + continuous learning extraction + dev-quality guards. Installs core skills.",
       "hooks": [
         "session-start",
         "session-end",
+        "user-prompt-extract",
         "edit-post-lint",
         "bash-post-log"
       ],
@@ -88,6 +89,12 @@
       "event": "PreToolUse",
       "matcher": "mcp__.*",
       "command": "ad hook mcp-pre",
+      "timeout": 3
+    },
+    "user-prompt-extract": {
+      "event": "UserPromptSubmit",
+      "matcher": "",
+      "command": "ad hook user-prompt-extract",
       "timeout": 3
     }
   }

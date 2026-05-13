@@ -4,6 +4,26 @@ Common failure modes and how to diagnose them. Each entry: **symptom → root ca
 
 ---
 
+## 0. Daemon ran for days, captured zero learnings (v0.2.x → v0.3 migration)
+
+**Symptom:** Two days of real Claude work, `.agent-daemon/sessions.jsonl` doesn't exist (or only has `digested: false, learnings_extracted: 0` lines), `activeContext.md` is unchanged.
+
+**Root cause (any one of these stacks):**
+- You're using the **VS Code Claude Code extension**, which misses ~30% of `SessionEnd` hook fires. Terminal `claude` CLI is more reliable.
+- Claude emitted the digest block with the **wrong tag** (`<agent-daemon:digest>` with a colon instead of `<agent-daemon-digest>` with a hyphen) — v0.2 parser silently rejected.
+- Claude emitted **YAML** inside the block instead of JSON — v0.2 parser silently rejected.
+- Claude **forgot to emit any block** at session end. Most common.
+
+**Fix (v0.3+):**
+1. Upgrade: `git pull && npm install && npm link` in the agent-daemon repo.
+2. Re-run `ad init` in each project. This wires the new `UserPromptSubmit` hook (`ad hook user-prompt-extract`) — fires before every user turn, extracts learnings from corrections / decisions / gotchas / explicit `"remember: X"` notes via regex. **Works in VS Code extension.**
+3. Verify: `cat ~/.claude/settings.json | grep user-prompt-extract` → should match. Then talk to Claude normally and check `.agent-daemon/learning-journal.jsonl` grows.
+4. The v0.3 parser also accepts both tag forms + JSON or YAML if Claude does emit a block.
+
+The historical sessions before this upgrade can't be retroactively recovered without a working LLM fallback (see entry #6) — the digest blocks weren't there to parse.
+
+---
+
 ## 1. `ad: command not found` after `npm link`
 
 **Symptom:** Newly linked, but the shell can't find `ad`.

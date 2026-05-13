@@ -1,0 +1,20 @@
+{
+  "_comment": "Paste the entries inside the hooks.UserPromptSubmit array of your ~/.claude/settings.json. Fires before every user turn — extracts durable learnings from the user's prompt + the previous assistant turn using rules-based regex. Appends matches to <cwd>/.agent-daemon/learning-journal.jsonl. The SessionStart hook drains the journal into memory at the next session. No LLM call, no Claude cooperation required. Latency <50ms.",
+
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agent-daemon hook user-prompt-extract",
+            "timeout": 3,
+            "async": false,
+            "shell": "auto"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,21 +1,37 @@
 # Daily workflow
 
-Two commands cover 99% of daily use: **`ad watch`** for autopilot, **`ad digest-latest`** for manual one-shot. Use either, or both — they're idempotent.
+**As of v0.3 the daemon captures continuously — no end-of-session ritual required.** A `UserPromptSubmit` hook fires before every user turn, runs regex extractors over the user prompt + previous assistant turn, and appends matches to `.agent-daemon/learning-journal.jsonl`. The next session's `SessionStart` hook drains the journal into `activeContext.md` automatically. **Works in the VS Code Claude Code extension** (where `SessionEnd` hooks are unreliable).
+
+You do nothing. Just talk to Claude normally. Corrections, conventions, decisions, gotchas, and explicit `"remember: X"` notes get captured.
 
 ---
 
 ## TL;DR
 
+After `ad init --profile developer`, the continuous extractor is wired automatically. Verify it's working:
+
 ```sh
-# Set-and-forget: leave running in a background terminal
+# After a session where you said something like "actually we use pnpm not npm",
+# check the journal:
+cat .agent-daemon/learning-journal.jsonl   # one JSON line per captured learning
+
+# After the NEXT session start, drained entries land in:
+cat .agent-daemon/memory/activeContext.md
+cat .agent-daemon/sessions.jsonl           # audit ledger — one line per drain run
+```
+
+The on-demand commands still exist for edge cases:
+
+```sh
+# Set-and-forget transcript watcher (now mostly redundant — continuous hook does the work)
 ad watch --verbose --force
 
-# Or manual: run after a session ends, in the project directory
+# Manual one-shot digest of the most recent session (rescues end-of-session digest blocks)
 cd /path/to/your/project
 ad digest-latest --verbose
 ```
 
-The agent must emit an `<agent-daemon-digest>` block during the session for either to capture learnings. See [the ending protocol](#the-ending-protocol) below.
+The end-of-session `<agent-daemon-digest>` block is still parsed when present (with a lenient parser as of v0.3 — accepts both `<agent-daemon-digest>` and `<agent-daemon:digest>`, JSON or YAML), but it is no longer the primary path.
 
 ---
 

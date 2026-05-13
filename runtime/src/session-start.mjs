@@ -10,6 +10,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { listRecentLearnings, projectSlug } from "./memory/episodic.mjs";
+import { drainJournal } from "./hooks/journal-drain.mjs";
 
 const MAX_OUTPUT_BYTES = 9000;
 
@@ -23,6 +24,34 @@ const MAX_OUTPUT_BYTES = 9000;
  */
 export async function runSessionStart(opts) {
   const sections = [];
+
+  // 0. Drain the learning-journal (continuous-extraction buffer from
+  //    UserPromptSubmit hooks in prior sessions) into memory + episodic
+  //    SQLite. Idempotent + fail-safe — never blocks session start.
+  //    Surface a brief note when learnings were drained so the next session
+  //    knows what landed.
+  try {
+    const drain = await drainJournal({
+      cwd: opts.cwd,
+      projectRoot: opts.projectRoot,
+      verbose: opts.verbose
+    });
+    if (drain.ok && drain.drained > 0 && drain.applied) {
+      const a = drain.applied;
+      const parts = [];
+      if (a.memoryProjectAppended) parts.push(`${a.memoryProjectAppended} → activeContext.md`);
+      if (a.memoryGlobalAppended)  parts.push(`${a.memoryGlobalAppended} → ~/.agent-daemon/user.md`);
+      if (a.proposalsQueued)       parts.push(`${a.proposalsQueued} queued for review`);
+      const detail = parts.length > 0 ? parts.join(", ") : "episodic only";
+      sections.push([
+        `<!-- continuous-extraction drain -->`,
+        `## Carried over from prior session(s)`,
+        ``,
+        `${drain.drained} learning(s) captured by UserPromptSubmit hooks were applied: ${detail}.`,
+        `Run \`ad status\` to review anything queued.`
+      ].join("\n"));
+    }
+  } catch { /* fail-safe — never block session-start */ }
 
   // 1. Constitution — only core.md is always-loaded (~1.5KB).
   //    safety.md, verification.md, communication.md, ending-protocol.md are

@@ -4,7 +4,46 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
-### Added
+### Added — Continuous learning capture (Phase 3 — kills the digest-block dependency)
+
+Production use surfaced a hard architectural problem: the v0.2.x daemon relied on Claude emitting a `<agent-daemon-digest>` JSON block at session end + the harness firing `SessionEnd` to trigger the digest pipeline. Both legs broke — the VS Code Claude Code extension misses ~30% of `SessionEnd` events, and Claude drifts the block format (colon for hyphen, YAML for JSON) so even when the hook fires, the parser rejects the payload. Two real multi-hour sessions in `redseer-frontend` produced zero captured learnings.
+
+Phase 3 rebuilds capture on **`UserPromptSubmit`** (95% harness-enforced, works in VS Code extension) + **`SessionStart`** (100% enforced) so Claude doesn't have to remember or format anything correctly.
+
+**`UserPromptSubmit` hook — `ad hook user-prompt-extract`.** Fires before every user turn. Reads the user's prompt + the previous assistant turn (tailing the transcript JSONL), runs ~12 rules-based regex extractors, and appends matches to `<cwd>/.agent-daemon/learning-journal.jsonl`. Zero LLM calls. Zero Claude cooperation. <50 ms typical latency.
+
+Patterns detected:
+- Corrections — `"actually we use X"`, `"no it's X"`, `"not X but Y"`
+- Notes — `"remember: X"`, `"important: X"`, `"we always X"`, `"never X"`
+- Conventions — `"the convention is X"`, `"we standardize on X"`
+- Decisions — `"decided X"`, `"we'll go with X"`, `"let's use X"`
+- Gotchas — `"the bug was X"`, `"root cause was X"`, `"TIL: X"`, `"X fails because Y"`
+- Tools — `"the right command is X"`
+
+Each match carries `evidence_quote` (≤200 chars), `evidence_speaker` (user/agent), `confidence` (0.5–0.75), and auto-tags. Modules: `runtime/src/hooks/user-prompt-extract.mjs`, pure rule registry in `runtime/src/hooks/extractors.mjs`, journal writer in `runtime/src/hooks/journal.mjs`. Smoke replay against an 8.8-hour real session: **14 learnings captured** (12 patterns, 1 gotcha, 1 decision).
+
+**`SessionStart` drain.** Extended `runtime/src/session-start.mjs` to drain the journal at every session open, dedupe + classify + apply via the existing digest pipeline, then archive to `learning-journal.archive.jsonl`. Project-scoped `pattern`/`decision`/`tool` with confidence ≥ 0.5 append to `activeContext.md`. `correction`/`gotcha` go to `.agent-daemon/proposals/` for `ad status` review. Surfaces a one-line note in the session injection telling Claude what was carried over. Module: `runtime/src/hooks/journal-drain.mjs`.
+
+**Profile wiring.** `user-prompt-extract` added to all three profiles (`minimal`/`developer`/`security`) in `runtime/profiles/profiles.json`. Standalone snippet at `hooks/user-prompt-submit-extract.json` for manual installs.
+
+### Changed — Lenient digest-block parser
+
+`runtime/src/digest/extract.mjs` now accepts both tag forms (`<agent-daemon[-:]digest>`) and both payload formats (JSON + a small hand-written YAML parser tuned to the digest schema — no new npm dep). Strips `` ```json `` and `` ```yaml `` Markdown fences. The tag regex is now global so the *last* block in a multi-block assistant turn wins (the intent was always "most-recent block wins" — the previous code took the first match in the turn). `VALID_TYPES` widened to accept the new `gotcha` and `decision` types.
+
+### Changed — Audit ledger writes on every digest attempt
+
+`runtime/src/digest/digest.mjs` now appends to `sessions.jsonl` on **all** exit paths: triage-skip, no-block-found, extract-error, success. Previously only success + triage-skip wrote a line, leaving "the daemon never ran" indistinguishable from "the daemon ran and found nothing." New `extract_source` values: `"no-block-found"`, `"extract-error"`, `"user-prompt-hook"`.
+
+### Tests
+
+Total runs from 33 → 74 (`pass 74 / fail 0`). New files:
+- `runtime/test/extractors.test.mjs` — 15 cases over the regex rule registry
+- `runtime/test/journal.test.mjs` — 7 cases (append/read/archive/rotation/fail-safe)
+- `runtime/test/journal-drain.test.mjs` — 6 cases (routing, dedup, dry-run, audit-ledger write)
+- `runtime/test/digest-lenient.test.mjs` — 10 cases (hyphen+JSON, colon+JSON, hyphen+YAML, colon+YAML, fences, no-block, multi-block, new types)
+- `runtime/test/user-prompt-extract.test.mjs` — 3 subprocess cases (stdin → journal lands, empty prompt, malformed stdin)
+
+### Earlier in this release
 
 **`ad init` now scaffolds `session-logs/`.** A local-only (gitignored) per-project journal directory with a README documenting the format and the close-session workflow. The managed CLAUDE.md section now instructs Claude to update the log on three triggers — `"log tokens"`, `"close session" / "end session" / "session khatam"`, and `"new session"` — and mandates that closing a session emits BOTH the End-of-session block and the agent-daemon digest block in the same response.
 

@@ -97,16 +97,43 @@ export async function runDigest(opts) {
   if (!extractResult.ok) {
     console.error(`agent-daemon: extraction failed — ${extractResult.error}`);
     await writeFailureReport(opts, summary, t, extractResult);
+    if (!opts.dryRun) {
+      const entry = buildSessionLogEntry({
+        summary, adapter,
+        sessionId: opts.sessionId,
+        triage: t,
+        extractResult: { ...extractResult, source: extractResult.source || "extract-error" }
+      });
+      await appendSessionLog({ cwd: opts.cwd, entry });
+    }
     return 1;
   }
 
   if (extractResult.skipReason) {
     if (opts.verbose) console.error(`agent-daemon: ${extractResult.skipReason}`);
+    if (!opts.dryRun) {
+      const entry = buildSessionLogEntry({
+        summary, adapter,
+        sessionId: opts.sessionId,
+        triage: t,
+        extractResult: { ...extractResult, source: extractResult.source || "no-block-found" }
+      });
+      await appendSessionLog({ cwd: opts.cwd, entry });
+    }
     return 0;
   }
 
   if (extractResult.learnings.length === 0) {
     if (opts.verbose) console.error(`agent-daemon: 0 learnings extracted (source: ${extractResult.source || "none"})`);
+    if (!opts.dryRun) {
+      const entry = buildSessionLogEntry({
+        summary, adapter,
+        sessionId: opts.sessionId,
+        triage: t,
+        extractResult
+      });
+      await appendSessionLog({ cwd: opts.cwd, entry });
+    }
     return 0;
   }
 

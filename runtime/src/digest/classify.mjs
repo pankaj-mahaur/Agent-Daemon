@@ -90,6 +90,13 @@ function classifyOne(learning, skills) {
     reasons.push(`${learning.type} (project scope) → activeContext.md`);
   }
 
+  // Gotchas behave like corrections — durable lesson about what went wrong.
+  // Decisions behave like patterns — durable choice the team made.
+  if (learning.scope === "project" && (learning.type === "gotcha" || learning.type === "decision")) {
+    targets.push("memory:project");
+    reasons.push(`${learning.type} (project scope) → activeContext.md`);
+  }
+
   // Tools
   if (learning.type === "tool") {
     if (learning.scope === "global") {
