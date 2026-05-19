@@ -19,20 +19,55 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DEFAULT_SKILLS_DIR = path.resolve(__dirname, "..", "..", "skills");
 
+// Bucket names recognised as containers — directories under skills/ matching
+// these are recursed one level deep instead of treated as a skill themselves.
+// Keep in sync with runtime/src/skills-source.mjs:BUCKETS.
+const BUCKETS = new Set(["engineering", "productivity", "daemon", "domain", "deprecated", "in-progress"]);
+
 const KEBAB_RE = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
 const TRIGGER_START_RE = /^Use\s+(when|for|whenever|only when|if|to)\b/i;
 const TRIGGER_CONTAINS_RE = /\bUse\s+(when|for|whenever|only when|if|to)\b/i;
 const MAX_DESCRIPTION_CHARS = 500;
 const MAX_FRONTMATTER_CHARS = 1024;
 
+async function collectSkillEntries(skillsDir) {
+  // Returns [{ name, dir, label }] where:
+  //   name  = skill directory name (kebab-case, used for `name:` match)
+  //   dir   = absolute path to the skill directory
+  //   label = display label (bucket/name or bare name)
+  // Walks both flat (skills/<name>/) and bucketed (skills/<bucket>/<name>/).
+  const out = [];
+  let topEntries;
+  try {
+    topEntries = await fs.readdir(skillsDir, { withFileTypes: true });
+  } catch { return out; }
+
+  for (const e of topEntries.sort((a, b) => a.name.localeCompare(b.name))) {
+    if (!e.isDirectory()) continue;
+    if (BUCKETS.has(e.name)) {
+      const bucketPath = path.join(skillsDir, e.name);
+      let inner;
+      try { inner = await fs.readdir(bucketPath, { withFileTypes: true }); }
+      catch { continue; }
+      for (const skill of inner.sort((a, b) => a.name.localeCompare(b.name))) {
+        if (!skill.isDirectory()) continue;
+        out.push({ name: skill.name, dir: path.join(bucketPath, skill.name), label: `${e.name}/${skill.name}` });
+      }
+    } else {
+      out.push({ name: e.name, dir: path.join(skillsDir, e.name), label: e.name });
+    }
+  }
+  return out;
+}
+
 async function lintSkills(skillsDir) {
-  const entries = await fs.readdir(skillsDir);
+  const entries = await collectSkillEntries(skillsDir);
   let errors = 0;
   let warnings = 0;
   let checked = 0;
 
-  for (const entry of entries.sort()) {
-    const skillMd = path.join(skillsDir, entry, "SKILL.md");
+  for (const entry of entries) {
+    const skillMd = path.join(entry.dir, "SKILL.md");
     let content;
     try {
       content = await fs.readFile(skillMd, "utf8");
@@ -41,20 +76,20 @@ async function lintSkills(skillsDir) {
     }
     // Skip vendored upstream skills — they follow their own conventions, traceable via `source:` frontmatter.
     if (/^source:\s*\S/m.test(content)) {
-      console.log(`  -  ${entry} (vendored, skipped)`);
+      console.log(`  -  ${entry.label} (vendored, skipped)`);
       continue;
     }
     checked++;
 
-    const issues = validateSkill(entry, content);
+    const issues = validateSkill(entry.name, content);
     for (const issue of issues) {
       const prefix = issue.severity === "error" ? "  ✗" : "  ⚠";
-      console.log(`${prefix}  ${entry}: ${issue.message}`);
+      console.log(`${prefix}  ${entry.label}: ${issue.message}`);
       if (issue.severity === "error") errors++;
       else warnings++;
     }
     if (issues.length === 0) {
-      console.log(`  ✓  ${entry}`);
+      console.log(`  ✓  ${entry.label}`);
     }
   }
 

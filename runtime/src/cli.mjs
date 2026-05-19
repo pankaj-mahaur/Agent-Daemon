@@ -15,6 +15,7 @@ import { runInteractiveReview } from "./review.mjs";
 import { evolveSkill } from "./digest/gepa/evolve.mjs";
 import { runWatcher } from "./daemon/watch.mjs";
 import { resolveProfile, listProfiles } from "./profiles.mjs";
+import { buildSkillIndex, resolveSkillSource } from "./skills-source.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
@@ -287,13 +288,18 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
     }
   }
 
-  // Install core skills to ~/.claude/skills/ (idempotent — skip existing)
+  // Install core skills to ~/.claude/skills/ (idempotent — skip existing).
+  // Source paths are bucket-aware via buildSkillIndex; destination is always
+  // flat (Claude Code reads ~/.claude/skills/<name>/SKILL.md regardless of how
+  // we organise the repo source).
   let skillsInstalled = 0;
   try {
     await fs.mkdir(skillsDst, { recursive: true });
+    const skillIndex = await buildSkillIndex(skillsSrc);
     for (const skill of CORE_SKILLS) {
       const dst = path.join(skillsDst, skill);
-      const src = path.join(skillsSrc, skill);
+      const src = skillIndex.get(skill);
+      if (!src) continue;  // source missing — skip
       try {
         await fs.access(dst);
         // already installed — skip
@@ -301,7 +307,7 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
         try {
           await fs.cp(src, dst, { recursive: true });
           skillsInstalled++;
-        } catch { /* source missing — skip */ }
+        } catch { /* copy failed — skip */ }
       }
     }
   } catch { /* skills dir creation failed — skip */ }
@@ -1194,13 +1200,13 @@ async function cmdEvolve(opts) {
     console.error("agent-daemon evolve: requires a skill name. Usage: agent-daemon evolve <skill-name>");
     return 1;
   }
-  const skillPath = path.join(opts.projectRoot, "skills", opts.skillName, "SKILL.md");
-  try {
-    await fs.access(skillPath);
-  } catch {
-    console.error(`agent-daemon evolve: no such skill at ${skillPath}`);
+  const skillsSrc = path.join(opts.projectRoot, "skills");
+  const skillDir = await resolveSkillSource(skillsSrc, opts.skillName);
+  if (!skillDir) {
+    console.error(`agent-daemon evolve: no such skill "${opts.skillName}" under ${skillsSrc}`);
     return 1;
   }
+  const skillPath = path.join(skillDir, "SKILL.md");
 
   const result = await evolveSkill({
     skillPath,

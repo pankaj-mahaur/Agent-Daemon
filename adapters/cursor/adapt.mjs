@@ -71,16 +71,34 @@ export function skillToMdc(skillMdPath) {
   return { name, mdc: out };
 }
 
+// Bucket names recognised as containers. Skills under these are recursed one
+// level deep. Keep in sync with runtime/src/skills-source.mjs:BUCKETS.
+const BUCKETS = new Set(["engineering", "productivity", "daemon", "domain", "deprecated", "in-progress"]);
+
 function listSkillDirs() {
+  // Returns [{name, dir}] for every skill found under SKILLS_DIR — both flat
+  // (legacy/vendored) and bucketed (post-C1 non-vendored).
   if (!existsSync(SKILLS_DIR)) return [];
-  return readdirSync(SKILLS_DIR).filter((entry) => {
+  const out = [];
+  for (const entry of readdirSync(SKILLS_DIR)) {
     const p = join(SKILLS_DIR, entry);
-    try {
-      return statSync(p).isDirectory() && existsSync(join(p, "SKILL.md"));
-    } catch {
-      return false;
+    let isDir;
+    try { isDir = statSync(p).isDirectory(); } catch { continue; }
+    if (!isDir) continue;
+    if (BUCKETS.has(entry)) {
+      for (const skill of readdirSync(p)) {
+        const sp = join(p, skill);
+        try {
+          if (statSync(sp).isDirectory() && existsSync(join(sp, "SKILL.md"))) {
+            out.push({ name: skill, dir: sp });
+          }
+        } catch { /* skip */ }
+      }
+    } else if (existsSync(join(p, "SKILL.md"))) {
+      out.push({ name: entry, dir: p });
     }
-  });
+  }
+  return out;
 }
 
 function isVendored(skillMdPath) {
@@ -105,9 +123,9 @@ function main(argv) {
   }
 
   if (all || coreOnly) {
-    const names = listSkillDirs().filter((n) => {
+    const entries = listSkillDirs().filter((e) => {
       if (!coreOnly) return true;
-      return !isVendored(join(SKILLS_DIR, n, "SKILL.md"));
+      return !isVendored(join(e.dir, "SKILL.md"));
     });
     if (!outDir) {
       console.error("--all / --core require --out <dir>");
@@ -115,14 +133,14 @@ function main(argv) {
     }
     mkdirSync(outDir, { recursive: true });
     let count = 0;
-    for (const n of names) {
-      const path = join(SKILLS_DIR, n, "SKILL.md");
+    for (const e of entries) {
+      const path = join(e.dir, "SKILL.md");
       try {
         const { mdc } = skillToMdc(path);
-        writeFileSync(join(outDir, `${n}.mdc`), mdc);
+        writeFileSync(join(outDir, `${e.name}.mdc`), mdc);
         count++;
       } catch (err) {
-        console.error(`[skip] ${n}: ${err.message}`);
+        console.error(`[skip] ${e.name}: ${err.message}`);
       }
     }
     console.error(`wrote ${count} .mdc rules to ${outDir}`);
