@@ -184,6 +184,85 @@ Document the trap once, move on. Future sessions read the gotchas list during Ph
 
 ---
 
+## Phase 4 — When triage doesn't explain it: disciplined diagnosis loop
+
+If rungs 1–4 came up clean and the bug-class catalog didn't match, the bug is genuinely in the code path — don't start grepping wildly. Run the diagnosis loop. Methodology adapted from [`mattpocock/diagnose`](https://github.com/mattpocock/skills/blob/main/skills/engineering/diagnose/SKILL.md) (MIT). Skip phases only when explicitly justified.
+
+### Step 1 — Build a feedback loop (this *is* the skill)
+
+Everything else is mechanical. A fast, deterministic, agent-runnable pass/fail signal turns the bug into a search problem. No loop = staring at code = wasted hours. **Be aggressive. Be creative. Refuse to give up.**
+
+Try, roughly in order:
+
+1. **Failing test** at whatever seam reaches the bug (unit / integration / e2e).
+2. **`curl` against a running dev server** with the exact request payload.
+3. **CLI invocation** with a fixture input, diffed against a known-good snapshot.
+4. **Headless browser script** (Playwright / Puppeteer) — drives the UI, asserts on DOM / console / network.
+5. **Replay a captured trace** — save the real network request / payload / event log, replay through the code path in isolation.
+6. **Throwaway harness** — minimal subset of the system (one service, mocked deps) that exercises the bug code path with one function call.
+7. **Property / fuzz loop** — 1000 random inputs if the bug is "sometimes wrong output".
+8. **Bisection harness** — automate "boot at state X, check, repeat" so `git bisect run` works.
+9. **Differential loop** — same input through old-version vs new-version, diff outputs.
+10. **HITL bash script** — last resort. If a human must click, drive *them* with a structured loop so captured output feeds back.
+
+Iterate on the loop itself: can I make it faster? sharper? more deterministic? A 30-second flaky loop is barely better than no loop; a 2-second deterministic loop is a debugging superpower.
+
+**Non-deterministic bugs:** the goal isn't a clean repro — it's a *higher reproduction rate*. Loop the trigger 100×, parallelise, add stress, narrow timing windows, inject sleeps. 50%-flake is debuggable; 1% is not.
+
+**When you genuinely cannot build a loop:** stop and say so explicitly. List what you tried. Ask the user for (a) access to a reproducing environment, (b) a captured artifact (HAR / log dump / screen recording with timestamps), or (c) permission to add temporary production instrumentation. Do *not* hypothesise without a loop.
+
+### Step 2 — Reproduce
+
+Run the loop. Watch the bug appear. Confirm:
+
+- The loop produces the failure mode the **user** described — not a different failure that happens to be nearby. Wrong bug = wrong fix.
+- Reproducible across runs (or, for non-det bugs, at high-enough rate to debug against).
+- You've captured the exact symptom (error message / wrong output / slow timing) so later phases can verify the fix.
+
+### Step 3 — Hypothesise (3–5 ranked, falsifiable)
+
+Generate **3–5 ranked hypotheses before testing any.** Single-hypothesis generation anchors on the first plausible idea.
+
+Each hypothesis must be **falsifiable**:
+
+> "If `<X>` is the cause, then `<changing Y>` will make the bug disappear / `<changing Z>` will make it worse."
+
+If you can't state the prediction, it's a vibe — discard or sharpen. **Show the ranked list to the user before testing** — they often re-rank instantly ("we just deployed a change to #3") or have ruled some out. Cheap checkpoint, big time saver. Proceed with your ranking if user is AFK.
+
+### Step 4 — Instrument (one variable at a time)
+
+Each probe maps to a specific Phase-3 prediction. Tool preference:
+
+1. **Debugger / REPL inspection** if env supports it. One breakpoint beats ten logs.
+2. **Targeted logs** at the boundaries that distinguish hypotheses.
+3. Never "log everything and grep".
+
+**Tag every debug log** with a unique prefix, e.g. `[DEBUG-a4f2]`. Cleanup becomes a single grep. Untagged logs survive; tagged logs die.
+
+**Perf branch.** For performance regressions, logs are usually wrong. Establish baseline measurement (timing harness, `performance.now()`, profiler, query plan), then bisect. Measure first, fix second.
+
+### Step 5 — Fix + regression test
+
+Write the regression test **before the fix** — but only if there is a **correct seam** for it. A correct seam exercises the *real bug pattern* as it occurs at the call site. A shallow seam (single-caller test when the bug needs multiple callers) gives false confidence.
+
+**If no correct seam exists, that is itself the finding.** Note it — the architecture is preventing the bug from being locked down. Flag for the cleanup phase.
+
+If a seam exists: turn the minimised repro into a failing test → watch it fail → apply the fix → watch it pass → re-run the original (un-minimised) Phase 1 loop.
+
+### Step 6 — Cleanup + post-mortem
+
+Required before declaring done:
+
+- [ ] Original repro no longer reproduces (re-run the Phase 1 loop)
+- [ ] Regression test passes (or absence of seam is documented)
+- [ ] All `[DEBUG-...]` instrumentation removed (`grep` the prefix)
+- [ ] Throwaway prototypes deleted or moved to a clearly-marked debug location
+- [ ] The hypothesis that turned out correct is stated in the commit / PR message — so the next debugger learns
+
+Then ask: **what would have prevented this bug?** If the answer involves architectural change (no good test seam, tangled callers, hidden coupling), capture it as a follow-up. Make the recommendation **after** the fix is in — you have more information now than when you started.
+
+---
+
 ## Verification before declaring fixed
 
 1. **Re-run the failing flow** end-to-end — the original repro the user reported, not a synthetic test.
