@@ -52,12 +52,20 @@ export async function callHeadlessClaude(opts) {
   // We no longer use --bare (which forces ANTHROPIC_API_KEY-only auth).
   // Instead, individual hardening flags prevent hook recursion and plugin loading.
 
+  // `--mcp-config` requires a valid {mcpServers:{...}} shape — empty "{}" is
+  // rejected by current claude CLI as "expected record, received undefined".
+  // Combined with `--strict-mcp-config` this loads zero MCP servers.
+  //
+  // `--setting-sources ""` (empty string) is intentional — disables loading
+  // user/project/local settings.json so the headless spawn doesn't pick up
+  // hooks that would recurse into the daemon's own SessionStart/SessionEnd
+  // handlers. Empty arg DOES survive when `shell: false` (see spawn below).
   const args = [
     "--print",
     "--output-format", "json",
     "--disable-slash-commands",
     "--setting-sources", "",
-    "--strict-mcp-config", "--mcp-config", "{}",
+    "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
     "--tools", "",
     "--no-session-persistence",
     "--max-budget-usd", String(opts.maxBudgetUsd ?? 0.50),
@@ -97,9 +105,14 @@ export async function callHeadlessClaude(opts) {
   }
 
   return await new Promise((resolve) => {
+    // `shell: true` previously used on Windows to find claude.cmd, but the
+    // shell-quote layer eats empty-string args ("" for --setting-sources and
+    // --tools) so claude's argparse consumes the next flag as the value and
+    // dies with "Invalid setting source: --strict-mcp-config". With modern
+    // installs (`claude.exe` on PATH) we can spawn directly without shell and
+    // empty args survive intact.
     const child = spawn("claude", args, {
       stdio: ["pipe", "pipe", "pipe"],
-      shell: process.platform === "win32"  // Windows needs shell to find claude.cmd
     });
 
     let stdout = "";
