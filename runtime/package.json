@@ -16,7 +16,8 @@
   "scripts": {
     "test": "node --test",
     "lint": "node --check src/**/*.mjs",
-    "lint:skills": "node scripts/lint-skills.mjs"
+    "lint:skills": "node scripts/lint-skills.mjs",
+    "sync:constitution": "node scripts/sync-constitution-to-cursor.mjs"
   },
   "engines": {
     "node": ">=22.0.0"
