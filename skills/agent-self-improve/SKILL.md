@@ -135,6 +135,122 @@ The agent doesn't accept its own proposals. Skill edits are always human-gated (
 
 ---
 
+## Writing a new skill (when the digest proposes one — or you spot the need)
+
+When you decide a recurring pattern deserves its own skill (instead of, or in addition to, a memory entry), follow this template. Adapted from [`mattpocock/write-a-skill`](https://github.com/mattpocock/skills/blob/main/skills/productivity/write-a-skill/SKILL.md) (MIT).
+
+### 3-step authoring process
+
+1. **Gather requirements** — ask the user (or yourself, if auto-promoting):
+   - What task/domain does the skill cover?
+   - What specific use cases should it handle?
+   - Does it need executable scripts or just instructions?
+   - Any reference materials to include?
+
+2. **Draft the skill** — create:
+   - `SKILL.md` with concise instructions (under ~100 lines if possible)
+   - `REFERENCE.md` / `EXAMPLES.md` / sub-docs if SKILL.md would exceed ~100 lines or has distinct sub-domains
+   - `scripts/` directory only if deterministic helpers are warranted
+
+3. **Review with user** before merging — present the draft and ask:
+   - Does this cover your use cases?
+   - Anything missing or unclear?
+   - Should any section be more/less detailed?
+
+The agent does NOT accept its own proposals (constitution rule 8).
+
+### Directory layout
+
+```
+skill-name/
+├── SKILL.md           # Main instructions (required)
+├── REFERENCE.md       # Detailed docs (only if needed)
+├── EXAMPLES.md        # ❌/✅ before-after pairs (recommended for top-N skills)
+└── scripts/           # Utility scripts (only if deterministic ops save tokens)
+    └── helper.js
+```
+
+### SKILL.md frontmatter + body template
+
+```md
+---
+name: skill-name
+description: Brief description of capability. Use when [specific triggers].
+license: MIT
+metadata:
+  author: agent-daemon
+  spec: agentskills.io
+  version: "1.0"
+---
+
+# Skill Name (imperative, not gerund)
+
+## Quick start
+
+[Minimal working example — the one canonical use case]
+
+## Workflows
+
+[Step-by-step processes with checklists for non-trivial tasks]
+
+## What NOT to do
+
+[Failure modes — the anti-patterns this skill replaces]
+
+## See also
+
+[Cross-links to related skills]
+```
+
+### The description field — the only thing your agent sees at trigger time
+
+`description` is loaded into the agent's system prompt next to every other skill's description. The agent reads them and picks based on the user's request. **If your description doesn't disambiguate from neighbors, the skill will never fire.**
+
+Rules:
+
+- Max 1024 chars
+- Write in third person
+- First sentence: what it does
+- Second sentence: `Use when [specific triggers]` — keywords, file types, error phrases, contexts
+- Include concrete trigger phrases the user would actually type (English + Hinglish if relevant)
+
+**Good:** *"Extract text and tables from PDF files, fill forms, merge documents. Use when working with PDF files or when user mentions PDFs, forms, or document extraction."*
+
+**Bad:** *"Helps with documents."* — gives the agent no way to distinguish this from other document skills.
+
+### When to add scripts
+
+Add `scripts/` only when:
+
+- Operation is deterministic (validation, formatting, codemod)
+- Same code would otherwise be generated repeatedly
+- Errors need explicit, predictable handling
+
+Scripts save tokens AND improve reliability vs. LLM-generated code each turn.
+
+### When to split files
+
+Split SKILL.md into sub-files when:
+
+- SKILL.md exceeds ~100 lines
+- Content has distinct domains (e.g. `interface-design.md` vs `mocking.md` vs `refactoring.md`)
+- Advanced features are rarely needed and would dilute the quick-start
+
+Keep references **one level deep** — `SKILL.md → REFERENCE.md` is fine; `SKILL.md → REFERENCE.md → DETAILED.md` is too far.
+
+### Review checklist (run before declaring the skill done)
+
+- [ ] Description starts with what + has `Use when [triggers]`
+- [ ] SKILL.md under ~100 lines (or split justified)
+- [ ] No time-sensitive info (dates, version numbers that will rot)
+- [ ] Consistent terminology with the rest of the catalog
+- [ ] Concrete examples included (at least one ❌/✅ pair in `EXAMPLES.md` for top-N skills)
+- [ ] References one level deep
+- [ ] Frontmatter matches the [skills/README.md](../README.md) lint rules
+- [ ] `node runtime/scripts/lint-skills.mjs` clean
+
+---
+
 ## See also
 
 - [constitution/ending-protocol.md](../../constitution/ending-protocol.md) — the authoritative format spec for the digest block
