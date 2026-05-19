@@ -116,6 +116,24 @@ function validateSkill(dirName, content) {
     issues.push({ severity: "warning", message: `frontmatter is ${fmBytes} chars (recommended max ${MAX_FRONTMATTER_CHARS})` });
   }
 
+  // argument-hint: optional, must be a non-empty string ≤200 chars (Claude Code surfaces it on /skill <name>)
+  if ("argument-hint" in fields) {
+    const hint = fields["argument-hint"].replace(/^["']|["']$/g, "");
+    if (!hint) {
+      issues.push({ severity: "error", message: "`argument-hint` is empty (omit the field if no args)" });
+    } else if (hint.length > 200) {
+      issues.push({ severity: "warning", message: `argument-hint is ${hint.length} chars (recommended max 200)` });
+    }
+  }
+
+  // disable-model-invocation: optional, must be a literal `true` or `false` (Claude Code reads it to gate auto-routing)
+  if ("disable-model-invocation" in fields) {
+    const v = fields["disable-model-invocation"];
+    if (v !== "true" && v !== "false") {
+      issues.push({ severity: "error", message: `disable-model-invocation must be "true" or "false" (found: "${v}")` });
+    }
+  }
+
   return issues;
 }
 

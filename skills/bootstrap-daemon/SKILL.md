@@ -7,6 +7,7 @@ metadata:
   spec: agentskills.io
   version: "1.0"
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep
+disable-model-invocation: true
 ---
 
 # Bootstrap agent-daemon in a project
