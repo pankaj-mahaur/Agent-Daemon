@@ -31,10 +31,11 @@
  * Single rule definition.
  * @typedef {Object} Rule
  * @property {string} id
- * @property {RegExp} pattern          must define one capturing group for `text`
+ * @property {RegExp} pattern          must define one capturing group for `text` (or use composer)
  * @property {"correction"|"pattern"|"gotcha"|"decision"|"tool"|"confirmation"} type
  * @property {number} confidence       0..1
  * @property {"user"|"agent"} [speakerHint]  default speaker if caller doesn't provide one
+ * @property {(match: RegExpExecArray) => string} [composer]  custom text builder
  * @property {(text: string) => string[]} [tagger]
  */
 
@@ -74,9 +75,13 @@ export const RULES = [
   },
   {
     id: "note-always-never",
-    pattern: /\b(?:we always|always|never|we never)\s+([^.\n!?]{6,250})/i,
+    // v0.3.1 — clause-anchored. Require "we" subject (was firing on mid-sentence
+    // "...never on typing", "...always at the start" garbage). Bare "always" /
+    // "never" no longer match — too noisy. See skills/regex-clause-anchored-extractors/.
+    pattern: /(?:^|[.!?]\s+|\n\s*)(we\s+(?:always|never))\s+([a-z][^.\n!?]{4,200}?)(?=[.!?]|\n|$)/i,
     type: "pattern",
-    confidence: 0.55
+    confidence: 0.65,
+    composer: (m) => `${m[1].toLowerCase()} ${m[2].trim()}`
   },
 
   // --- Conventions
@@ -96,9 +101,11 @@ export const RULES = [
   },
   {
     id: "decision-lets-use",
-    pattern: /\blet'?s\s+(?:use|go with|stick with|adopt)\s+([a-z][^.\n!?]{2,200})/i,
+    // v0.3.1 — clause-anchored. "Let's use X" mid-narrative ("...maybe let's use a trie")
+    // produced fragment captures. Require clause boundary.
+    pattern: /(?:^|[.!?]\s+|\n\s*)let'?s\s+(?:use|go with|stick with|adopt)\s+([a-z][^.\n!?]{2,200}?)(?=[.!?]|\n|$)/i,
     type: "decision",
-    confidence: 0.5,
+    confidence: 0.55,
     speakerHint: "user"
   },
 
@@ -192,7 +199,36 @@ function sanitize(s) {
   t = t.replace(/[.,;:!?]+$/, "").trim();
   if (t.length < 4) return "";
   if (t.length > 300) t = t.slice(0, 297) + "...";
+  if (!looksMeaningful(t)) return "";
   return t;
+}
+
+// Reject fragment captures that start with a preposition / conjunction or are
+// a single word. These produced the "for sidebar history" / "on typing" /
+// "appears" garbage we saw in real-world v0.3 runs.
+//
+// NOTE: do NOT include articles (the/a/an) or pronouns (it/this/these/their/
+// there/here) — those are legitimate sentence starts ("the build script lives
+// in scripts/build.sh", "a missing await caused the bug"). The filter targets
+// the specific class of FRAGMENT-led captures from mid-sentence regex matches.
+const FRAGMENT_LEADERS = new Set([
+  // prepositions
+  "for", "in", "on", "at", "to", "of", "from", "with", "by", "as", "into",
+  "onto", "out", "off", "over", "under",
+  // conjunctions
+  "than", "then", "but", "and", "or",
+  // subordinators
+  "because", "since", "though", "when", "while", "where", "if", "else"
+]);
+
+function looksMeaningful(text) {
+  const words = text.toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return false;
+  // Single-word captures (e.g. "appears") are almost always fragments.
+  if (words.length === 1) return false;
+  // Capture begins with a preposition / conjunction → almost always a fragment.
+  if (FRAGMENT_LEADERS.has(words[0])) return false;
+  return true;
 }
 
 function extractContext(text, idx, matchLen, before = 60, after = 100) {

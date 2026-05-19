@@ -30,10 +30,69 @@ test("note: 'remember: X'", () => {
   assert.match(note.text, /build script/);
 });
 
-test("convention: 'we always X'", () => {
-  const out = extractFromText("We always rebase, never merge.");
-  const conv = out.find(l => l.type === "pattern");
-  assert.ok(conv, "expected at least one pattern");
+test("convention: 'we always X' at clause start", () => {
+  const out = extractFromText("We always rebase before pushing.");
+  const conv = out.find(l => l.rule_id === "note-always-never");
+  assert.ok(conv, "expected note-always-never to fire");
+  assert.match(conv.text.toLowerCase(), /we always.*rebase before pushing/);
+});
+
+// --- v0.3.1 regression tests for the mid-sentence "never X" / "always Y"
+//     fragments that produced 6/10 noise in the user's real 7-hour session.
+//     These STRINGS MUST NOT produce any pattern captures.
+
+test("regression: 'never on typing' does NOT match (mid-sentence fragment)", () => {
+  const text = "conversation list updates (after send, edit, delete, etc.), never on typing.";
+  const out = extractFromText(text);
+  assert.equal(
+    out.filter(l => l.rule_id === "note-always-never").length,
+    0,
+    `expected zero matches, got: ${JSON.stringify(out.map(l => l.text))}`
+  );
+});
+
+test("regression: '...never appears' does NOT match (single-word fragment)", () => {
+  const text = `finds chats about "shipping speed" even if the word "delivery" never appears. Cost: needs a backend.`;
+  const out = extractFromText(text);
+  assert.equal(out.filter(l => l.rule_id === "note-always-never").length, 0);
+});
+
+test("regression: 'never enter the comparison' does NOT match (preposition-led)", () => {
+  const text = "an accent-stripping step before comparing, so the diacritics never enter the comparison.";
+  const out = extractFromText(text);
+  assert.equal(out.filter(l => l.rule_id === "note-always-never").length, 0);
+});
+
+test("regression: 'never for sidebar history' does NOT match (preposition-led)", () => {
+  const text = "When to switch: probably never for sidebar history. People searching their own chats remember rough wording.";
+  const out = extractFromText(text);
+  assert.equal(out.filter(l => l.rule_id === "note-always-never").length, 0);
+});
+
+test("regression: 'always being a query' does NOT match (mid-sentence with -ing)", () => {
+  const text = "because the prompt is explicit about substantive content always being a query.";
+  const out = extractFromText(text);
+  assert.equal(out.filter(l => l.rule_id === "note-always-never").length, 0);
+});
+
+test("regression: bare 'always rebase' alone does NOT match (no 'we' subject)", () => {
+  const text = "I'm just thinking out loud — always rebase before merging makes sense to me.";
+  const out = extractFromText(text);
+  // The bare "always rebase" mid-sentence is no longer a match. Future rule
+  // candidate: capture "I always" / "you always" too, but that's not v0.3.1.
+  assert.equal(out.filter(l => l.rule_id === "note-always-never").length, 0);
+});
+
+test("positive: 'We always rebase before pushing.' (clause start, has 'we') matches", () => {
+  const out = extractFromText("We always rebase before pushing.");
+  assert.equal(out.filter(l => l.rule_id === "note-always-never").length, 1);
+});
+
+test("positive: 'We never use force-push.' (clause start, has 'we') matches", () => {
+  const out = extractFromText("We never use force-push on shared branches.");
+  const match = out.find(l => l.rule_id === "note-always-never");
+  assert.ok(match);
+  assert.match(match.text.toLowerCase(), /we never.*force-push/);
 });
 
 test("decision: 'we'll go with X'", () => {
