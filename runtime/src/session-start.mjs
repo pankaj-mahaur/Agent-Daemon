@@ -53,13 +53,20 @@ export async function runSessionStart(opts) {
     }
   } catch { /* fail-safe — never block session-start */ }
 
-  // 1. Constitution — only core.md is always-loaded (~1.5KB).
+  // 1. Constitution — always-loaded files (~3KB total).
+  //    core.md = our universal rules. karpathy-guidelines.md = behavioral
+  //    guardrails distilled from Andrej Karpathy's LLM-coding observations
+  //    (vendored from forrestchang/andrej-karpathy-skills, MIT).
   //    safety.md, verification.md, communication.md, ending-protocol.md are
   //    on-demand: the agent loads them via skill triggers or QMD search.
   const constitutionDir = path.join(opts.projectRoot, "constitution");
   const coreText = await tryRead(path.join(constitutionDir, "core.md"));
   if (coreText) {
     sections.push(`<!-- constitution/core.md -->\n${coreText}`);
+  }
+  const karpathyText = await tryRead(path.join(constitutionDir, "karpathy-guidelines.md"));
+  if (karpathyText) {
+    sections.push(`<!-- constitution/karpathy-guidelines.md -->\n${karpathyText}`);
   }
 
   // 2. Memory retrieval — prefer QMD pointer over bulk-loading files.

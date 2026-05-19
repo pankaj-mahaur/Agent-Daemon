@@ -424,6 +424,21 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
     console.log("  ✓ Scaffolded session-logs/ (gitignored — local-only)");
   }
 
+  // Scaffold .agent-daemon/handoffs/ — destination for the handoff skill.
+  // Idempotent: skips silently if already present.
+  const handoffsDir = path.join(cwd, ".agent-daemon", "handoffs");
+  try {
+    await fs.access(handoffsDir);
+  } catch {
+    await fs.mkdir(handoffsDir, { recursive: true });
+    await fs.writeFile(
+      path.join(handoffsDir, "README.md"),
+      "# Handoffs\n\nThe `handoff` skill writes session-end briefs here for the next agent to pick up.\nFilename pattern: `handoff-<ISO-timestamp>.md`.\n\nThese are per-project and committable — keep them in git so the next dev sees the state.\n",
+      "utf8"
+    );
+    console.log("  ✓ Scaffolded .agent-daemon/handoffs/ (for the handoff skill)");
+  }
+
   console.log(`
 agent-daemon: initialized.
 

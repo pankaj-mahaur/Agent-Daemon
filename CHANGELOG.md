@@ -4,6 +4,32 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Added — Phase 4 Group A: Karpathy guidelines + 5 productivity skills
+
+After deep-researching `forrestchang/andrej-karpathy-skills` (~110K stars) and `mattpocock/skills` (MIT, 21 active skills), imported Group A — the high-leverage subset that improves baseline session quality without disrupting existing flow. All additive, zero regression risk.
+
+**`constitution/karpathy-guidelines.md`** — distilled from Andrej Karpathy's 2026-01-26 observations on LLM coding pitfalls. Four behavioral guardrails injected into every SessionStart alongside `core.md`:
+1. **Think Before Coding** — state assumptions, present alternatives, push back, stop when confused
+2. **Simplicity First** — minimum code, no speculative features, "would a senior engineer call this overcomplicated?"
+3. **Surgical Changes** — touch only what you must, match existing style, mention dead code don't delete
+4. **Goal-Driven Execution** — verifiable success criteria, "Add validation → write tests for invalid inputs, then make them pass"
+
+Wired in `runtime/src/session-start.mjs` — always-loaded with `core.md`, ~3KB total system-prompt cost.
+
+**5 new skills (vendored from `mattpocock/skills` MIT, all with `source:` frontmatter):**
+
+- **`skills/caveman/`** — Ultra-compressed output mode. ~75% token reduction by dropping filler / articles / pleasantries while keeping technical accuracy. Persistent once triggered. Triggers: *"caveman mode"*, *"be brief"*, *"less tokens"*.
+- **`skills/handoff/`** — Compact current conversation into a durable handoff doc at `<cwd>/.agent-daemon/handoffs/handoff-<ts>.md` for the next agent. Adapted from upstream (`mktemp -t handoff-XXX.md`) to land inside the daemon's audit trail. Solves /compact persistence problem.
+- **`skills/grill-me/`** — Pre-implementation interview that walks every branch of the design tree. One question at a time. Stops the "Claude built the wrong thing" failure mode.
+- **`skills/grill-with-docs/`** — Same as grill-me, but cross-references `constitution/` + `.agent-daemon/memory/activeContext.md` and **updates them inline** as decisions crystallise. Adapted from upstream `CONTEXT.md` + `docs/adr/` pattern to use our memory layout.
+- **`skills/zoom-out/`** — One-line skill to ask for the higher-level architectural picture (callers, dependencies, seam location) instead of line-by-line code.
+
+**`ad init` scaffolds `.agent-daemon/handoffs/`** with a README explaining the directory's purpose. Idempotent — skips if already present.
+
+`skills/README.md` updated with new "Productivity (Phase 4)" section.
+
+Tests: still 74/74 pass — no new code paths required testing.
+
 ### Added — Continuous learning capture (Phase 3 — kills the digest-block dependency)
 
 Production use surfaced a hard architectural problem: the v0.2.x daemon relied on Claude emitting a `<agent-daemon-digest>` JSON block at session end + the harness firing `SessionEnd` to trigger the digest pipeline. Both legs broke — the VS Code Claude Code extension misses ~30% of `SessionEnd` events, and Claude drifts the block format (colon for hyphen, YAML for JSON) so even when the hook fires, the parser rejects the payload. Two real multi-hour sessions in `redseer-frontend` produced zero captured learnings.

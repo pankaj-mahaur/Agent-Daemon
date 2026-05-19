@@ -23,6 +23,18 @@ Each folder contains a `SKILL.md` that Claude Code can use. Install globally to 
 | [dead-code-review](dead-code-review/) | Proof-based dead code cleanup |
 | [docs-sync-audit](docs-sync-audit/) | Detect and fix documentation drift |
 
+### Productivity (Phase 4 — vendored from `mattpocock/skills`, MIT)
+
+Workflow tools that pair with the daemon's continuous capture loop.
+
+| Skill | What it does |
+|-------|-------------|
+| [caveman](caveman/) | Ultra-compressed output mode (~75% token reduction). Trigger: *"caveman mode"*, *"be brief"*, *"less tokens"*. |
+| [handoff](handoff/) | Compact the current conversation into a handoff doc at `.agent-daemon/handoffs/handoff-<ts>.md` for the next agent. Solves /compact. |
+| [grill-me](grill-me/) | Pre-implementation interview that walks every branch of the design tree. Trigger: *"grill me"*, *"stress-test this"*. |
+| [grill-with-docs](grill-with-docs/) | Same as grill-me, but cross-references constitution + `.agent-daemon/memory/` and updates them inline. |
+| [zoom-out](zoom-out/) | One-line skill to ask for the higher-level architectural picture. |
+
 ## Vendored from `everything-claude-code`
 
 181 additional skills were imported from [affaan-m/everything-claude-code](https://github.com/affaan-m/everything-claude-code) (MIT, pinned commit in [vendored/MANIFEST.md](../vendored/MANIFEST.md)). These cover language stacks (python, golang, rust, kotlin, swift, dart/flutter, springboot, django, laravel, nestjs, etc.), domain ops (healthcare, finance, customs, energy, logistics), agent harness construction, eval harnesses, and many more.
