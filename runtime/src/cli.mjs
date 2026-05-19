@@ -398,12 +398,17 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
       "- Claude cannot read token counts directly — only record what user provides",
       "- Each entry: timestamp + action/event, plus optional token figures",
       "",
-      "**Session-close workflow (mandatory):** When the user signals end of session (\"end session\", \"close session\", \"session khatam\", \"ending this session\", etc. — English or Hinglish), do BOTH in the same response, no confirmation needed:",
+      "**Session-close workflow (mandatory):** When the user signals end of session (\"end session\", \"close session\", \"session khatam\", \"ending this session\", \"wrapping up\", \"I'm done\", etc. — English or Hinglish), do ALL THREE in the same response, no confirmation needed:",
       "",
       "1. **Update the session log** — fill the \"End of session\" block with closing timestamp, outcome, net deliverables, what works, what's pending, what next session must start with. Rename duplicate headings to satisfy MD024.",
       "2. **Emit the agent-daemon digest block** — wrapped in `<agent-daemon-digest>...</agent-daemon-digest>` with valid JSON inside (per `constitution/ending-protocol.md`). Include learnings tagged with `projectbrief`, `techContext`, `systemPatterns`, `activeContext`, `progress`, `user`, plus durable `lessons`, `files` touched, and a `daemon_verification` field showing which hooks fired.",
+      "3. **Create handoff docs** — invoke the `handoff` skill. Write the SAME content to BOTH locations:",
+      "   - **Per-project:** `<cwd>/.agent-daemon/handoffs/handoff-<ISO-timestamp>.md` (committable, lives with the code)",
+      "   - **Global:** `~/.agent-daemon/handoffs/<project-slug>/handoff-<ISO-timestamp>.md` (your personal cross-project trail — `<project-slug>` is the cwd path with `/`, `\\`, `:`, and spaces replaced by `-`, lowercased)",
       "",
-      "Short / prep-only sessions still emit both — they produce signal too.",
+      "   Filename: `handoff-<ISO-timestamp>.md` with colons replaced by hyphens (Windows-safe). Content per the `handoff` skill template — Context / State / Next action / Open questions / Suggested skills / Files touched. References to existing artifacts, not duplicates.",
+      "",
+      "Short / prep-only sessions still emit all three — they produce signal too.",
       MANAGED_END,
       ""
     ].join("\n");
@@ -424,7 +429,7 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
     console.log("  ✓ Scaffolded session-logs/ (gitignored — local-only)");
   }
 
-  // Scaffold .agent-daemon/handoffs/ — destination for the handoff skill.
+  // Scaffold .agent-daemon/handoffs/ — destination for the handoff skill (per-project).
   // Idempotent: skips silently if already present.
   const handoffsDir = path.join(cwd, ".agent-daemon", "handoffs");
   try {
@@ -433,10 +438,39 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
     await fs.mkdir(handoffsDir, { recursive: true });
     await fs.writeFile(
       path.join(handoffsDir, "README.md"),
-      "# Handoffs\n\nThe `handoff` skill writes session-end briefs here for the next agent to pick up.\nFilename pattern: `handoff-<ISO-timestamp>.md`.\n\nThese are per-project and committable — keep them in git so the next dev sees the state.\n",
+      "# Handoffs (per-project)\n\nThe `handoff` skill writes session-end briefs here for the next agent to pick up.\nFilename pattern: `handoff-<ISO-timestamp>.md`.\n\nThese are per-project and committable — keep them in git so the next dev sees the state.\n\nAn identical copy is also written to `~/.agent-daemon/handoffs/<project-slug>/` for your cross-project personal trail.\n",
       "utf8"
     );
-    console.log("  ✓ Scaffolded .agent-daemon/handoffs/ (for the handoff skill)");
+    console.log("  ✓ Scaffolded .agent-daemon/handoffs/ (per-project handoff trail)");
+  }
+
+  // Scaffold ~/.agent-daemon/handoffs/<project-slug>/ — global handoff trail.
+  // Cross-project, your personal record. Indexed by project slug.
+  const homeDir = process.env.HOME || process.env.USERPROFILE || "";
+  const projectSlug = cwd.replace(/[\\/:\s]+/g, "-").toLowerCase().replace(/^-+|-+$/g, "");
+  const globalHandoffsDir = path.join(homeDir, ".agent-daemon", "handoffs", projectSlug);
+  try {
+    await fs.access(globalHandoffsDir);
+  } catch {
+    try {
+      await fs.mkdir(globalHandoffsDir, { recursive: true });
+      // Drop a README at the parent (~/.agent-daemon/handoffs/) only — per-project subdirs are clean
+      const globalHandoffsRoot = path.join(homeDir, ".agent-daemon", "handoffs");
+      const rootReadme = path.join(globalHandoffsRoot, "README.md");
+      try {
+        await fs.access(rootReadme);
+      } catch {
+        await fs.writeFile(
+          rootReadme,
+          "# Global Handoffs\n\nCross-project handoff trail. Subdirectories are one-per-project, named by lowercased path slug.\nEach handoff is a Markdown file. Same content as the per-project copy at `<project>/.agent-daemon/handoffs/`.\n\nUse this to grep \"what was I doing last week\" across every project at once:\n\n```sh\ngrep -r \"next action\" ~/.agent-daemon/handoffs/ | sort -r | head -10\n```\n",
+          "utf8"
+        );
+      }
+      console.log(`  ✓ Scaffolded ~/.agent-daemon/handoffs/${projectSlug}/ (global handoff trail)`);
+    } catch (err) {
+      // Non-fatal — global is optional. Per-project still works.
+      console.error(`  ⚠ Could not create global handoffs dir (${err.message}) — per-project handoffs still work`);
+    }
   }
 
   console.log(`

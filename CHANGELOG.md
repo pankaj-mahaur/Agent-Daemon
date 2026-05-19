@@ -4,6 +4,42 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Added — Phase 4 Group A++: 4 generic global skills + dual-write handoff + auto-handoff via CLAUDE.md
+
+Extracted this development session's most reusable lessons as **project-agnostic global skills** — every project that installs agent-daemon gets these, no daemon-specific dependencies. Plus wired the session-close protocol to automatically create handoff docs at both per-project AND global paths.
+
+**4 new generic skills** (any-language, any-project):
+
+- **`skills/llm-output-lenient-parsing/`** — Pattern for parsing LLM-emitted structured blocks when Claude drifts the format (colon for hyphen, YAML for JSON, fenced for bare). Fallback chain: strip fences → strict JSON → tolerant YAML → coerce-then-retry. Hand-rolled YAML parser pattern for fixed schemas. Test fixtures from real transcripts. Distilled from the agent-daemon v0.3 lenient parser fix.
+- **`skills/regex-clause-anchored-extractors/`** — Anchor natural-language regex to clause boundaries (`(?:^|[.!?]\s+|\n)`) to stop mid-sentence fragment matches. Concrete before/after for the `we always|never` rule that produced 75% noise. Confidence calibration tiers (auto-apply / queue-for-review / episodic-only / delete) based on real precision data.
+- **`skills/audit-every-attempt/`** — Engineering principle: write a one-line audit on every code path — success, failure, skip, no-op. Distinguishes "didn't run" from "ran, did nothing." Schema recommendation, where-to-write tiers by volume, anti-patterns. Cites the agent-daemon v0.2 → v0.3 audit-ledger gap.
+- **`skills/repomix-deep-research/`** — Workflow for evaluating remote GitHub repos via repomix pack → grep → read. Beats WebFetch by 60x for multi-file analysis. Pattern guide with real call examples. Adoption-decision template.
+
+**Handoff skill upgraded — now dual-writes:**
+
+`skills/handoff/SKILL.md` now writes to **both** locations on a single invocation:
+- **Per-project:** `<cwd>/.agent-daemon/handoffs/handoff-<ISO-ts>.md` (committable, lives with the code)
+- **Global:** `~/.agent-daemon/handoffs/<project-slug>/handoff-<ISO-ts>.md` (cross-project personal trail; project-slug is lowercased path)
+
+Identical content, two destinations. Lets you `grep` "what was I doing last week" across every project at once.
+
+**`ad init` scaffolding extended:**
+
+`runtime/src/cli.mjs` now creates **both** handoff directories:
+- `<cwd>/.agent-daemon/handoffs/` (per-project, was already there from Phase 4 Group A)
+- `~/.agent-daemon/handoffs/<project-slug>/` (NEW — global trail per project)
+- `~/.agent-daemon/handoffs/README.md` — top-level README with cross-project grep example
+
+Non-fatal if the global dir can't be created (e.g. permission issue) — per-project still works.
+
+**CLAUDE.md managed section: session-close protocol upgraded from 2 actions to 3:**
+
+Previously the daemon's managed CLAUDE.md section instructed Claude on a 2-action protocol when the user said "end session" / "session khatam" / etc — update session log + emit digest block. Now it's **3 actions** — adds automatic handoff doc creation at both per-project and global paths.
+
+Trigger phrases widened: also fires on `"wrapping up"`, `"I'm done"`. All three actions happen in the same response, no confirmation asked.
+
+Existing projects with the v0.3 managed section will get the upgraded 3-action protocol on next `ad init` (idempotent — replaces the section).
+
 ### Added — Phase 4 Group A: Karpathy guidelines + 5 productivity skills
 
 After deep-researching `forrestchang/andrej-karpathy-skills` (~110K stars) and `mattpocock/skills` (MIT, 21 active skills), imported Group A — the high-leverage subset that improves baseline session quality without disrupting existing flow. All additive, zero regression risk.

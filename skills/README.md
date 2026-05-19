@@ -30,10 +30,21 @@ Workflow tools that pair with the daemon's continuous capture loop.
 | Skill | What it does |
 |-------|-------------|
 | [caveman](caveman/) | Ultra-compressed output mode (~75% token reduction). Trigger: *"caveman mode"*, *"be brief"*, *"less tokens"*. |
-| [handoff](handoff/) | Compact the current conversation into a handoff doc at `.agent-daemon/handoffs/handoff-<ts>.md` for the next agent. Solves /compact. |
+| [handoff](handoff/) | Compact the current conversation into a handoff doc at BOTH `.agent-daemon/handoffs/` (per-project) AND `~/.agent-daemon/handoffs/<slug>/` (global). Auto-fires on session close. |
 | [grill-me](grill-me/) | Pre-implementation interview that walks every branch of the design tree. Trigger: *"grill me"*, *"stress-test this"*. |
 | [grill-with-docs](grill-with-docs/) | Same as grill-me, but cross-references constitution + `.agent-daemon/memory/` and updates them inline. |
 | [zoom-out](zoom-out/) | One-line skill to ask for the higher-level architectural picture. |
+
+### Generic engineering patterns (extracted from real production failures)
+
+Project-agnostic patterns. Usable in any codebase, any language.
+
+| Skill | What it does |
+|-------|-------------|
+| [llm-output-lenient-parsing](llm-output-lenient-parsing/) | Pattern for parsing LLM output where Claude drifts the strict format you specified (colon for hyphen, YAML for JSON, code-fenced vs bare). Strict-first then fallback chain. Use when any tool consumes structured blocks from an LLM. |
+| [regex-clause-anchored-extractors](regex-clause-anchored-extractors/) | Anchor natural-language regex to clause boundaries (`^\|[.!?]\s+`) to stop mid-sentence fragment matches. Use when mining transcripts/logs/prose for phrases. |
+| [audit-every-attempt](audit-every-attempt/) | Write an audit ledger entry on every code path — success, failure, skip, error. Future-you needs to distinguish "didn't run" from "ran, did nothing". Use when designing any pipeline / batch / hook. |
+| [repomix-deep-research](repomix-deep-research/) | Workflow for deep-researching remote GitHub repos via repomix pack → grep → read. Use when evaluating any repo for vendoring/import. |
 
 ## Vendored from `everything-claude-code`
 
