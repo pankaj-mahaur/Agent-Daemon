@@ -228,10 +228,114 @@ Rules:
 
 Lines covered ≠ behavior covered. A test that runs a line but doesn't assert anything is dead weight — see "Chasing coverage numbers" above.
 
+## Designing for testability — deep modules, dependency injection, mockability
+
+The TDD loop is mechanical. What makes it *easy* or *painful* is the shape of the code under test. Adapted from [`mattpocock/tdd`](https://github.com/mattpocock/skills/tree/main/skills/engineering/tdd) sub-docs (MIT) — `deep-modules.md`, `interface-design.md`, `mocking.md`.
+
+### Deep modules: small interface, deep implementation
+
+From *A Philosophy of Software Design* (Ousterhout): the cost of a module is its interface (what callers must learn); the value is its implementation (what callers don't have to write themselves). Best ratio: small interface hiding large implementation.
+
+```
+DEEP (good)                    SHALLOW (avoid)
+┌────────────────────┐         ┌──────────────────────────────┐
+│  Small Interface   │         │     Large Interface          │
+├────────────────────┤         ├──────────────────────────────┤
+│                    │         │  Thin Implementation         │
+│  Lots of           │         │  (mostly pass-through)       │
+│  implementation    │         └──────────────────────────────┘
+│  hidden            │
+│                    │
+└────────────────────┘
+```
+
+When designing an interface, ask:
+
+- Can I reduce the number of methods?
+- Can I simplify the parameters?
+- Can I hide more complexity inside?
+
+Shallow modules force tests to know internal structure. Deep modules let tests describe behavior at the boundary and ignore everything beneath.
+
+### Interface design — testability heuristics
+
+**1. Accept dependencies, don't create them.** Constructor / parameter injection is what makes a unit test possible without monkey-patching globals.
+
+```ts
+// Testable
+function processOrder(order, paymentGateway) { /* ... */ }
+
+// Hard to test — gateway is fixed inside the function
+function processOrder(order) {
+  const gateway = new StripeGateway();
+}
+```
+
+**2. Return results, don't produce side effects** (when the choice exists).
+
+```ts
+// Testable — pure
+function calculateDiscount(cart): Discount { /* ... */ }
+
+// Hard to test — mutates input, no return value to assert on
+function applyDiscount(cart): void {
+  cart.total -= discount;
+}
+```
+
+**3. Small surface area** — fewer methods means fewer tests; fewer params mean simpler test setup.
+
+### Mocking — only at system boundaries
+
+**Mock:**
+
+- External APIs (payment, email, third-party SDKs)
+- Databases (sometimes — prefer a real test DB for ORM behavior)
+- Time / randomness (`Date.now`, `Math.random`)
+- File system (sometimes — `memfs` is often better than mocks)
+
+**Don't mock:**
+
+- Your own classes / modules / functions
+- Internal collaborators
+- Anything you control and can refactor
+
+If a test mocks the DB *and* the HTTP client *and* the FS *and* the logger, it tests the glue between mocks. Use integration tests with real (test) dependencies for data-layer code. See also anti-pattern "Testing through mocks all the way down" above.
+
+### Designing for mockability — at the boundary you DO mock
+
+**Use dependency injection** (same as above — pass the external client in rather than constructing it inside).
+
+**Prefer SDK-style interfaces over generic fetchers.** Specific functions per operation are independently mockable; one generic `fetch(endpoint, options)` forces conditional logic inside the mock.
+
+```ts
+// GOOD — each call is independently mockable, one return shape each
+const api = {
+  getUser:     (id)     => fetch(`/users/${id}`),
+  getOrders:   (userId) => fetch(`/users/${userId}/orders`),
+  createOrder: (data)   => fetch("/orders", { method: "POST", body: data }),
+};
+
+// BAD — mocking requires conditional logic on `endpoint`
+const api = {
+  fetch: (endpoint, options) => fetch(endpoint, options),
+};
+```
+
+Wins of the SDK shape:
+
+- Each mock returns one specific shape — no `switch` inside the mock
+- No conditional logic in test setup
+- The list of external dependencies a test exercises is visible at a glance
+- Per-endpoint type safety
+
+---
+
 ## Sources
 
 - Methodology framing (red-green-refactor cadence, test pyramid, anti-patterns): obra/superpowers methodology skills, MIT.
 - Git-checkpoint discipline + 80% three-layer coverage target: [affaan-m/everything-claude-code skills/tdd-workflow](https://github.com/affaan-m/everything-claude-code/blob/main/skills/tdd-workflow/SKILL.md), MIT.
+- Deep modules, interface-for-testability, SDK-style mocking: [mattpocock/skills tdd sub-docs](https://github.com/mattpocock/skills/tree/main/skills/engineering/tdd), MIT.
 
 ## Related
 
