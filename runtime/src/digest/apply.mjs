@@ -302,16 +302,69 @@ function encodeProjectPath(p) {
 async function appendToMemory(memPath, items, sessionId, dateOnly) {
   await fs.mkdir(path.dirname(memPath), { recursive: true });
 
-  // If the file doesn't exist yet, seed it with a header.
-  let initial = "";
+  // Read existing content (if any) — used both to seed a fresh file AND to
+  // dedup against entries already present from previous sessions. Without
+  // this, real-world dogfood runs accumulate the same "pattern: X" /
+  // "decision: Y" line 4-5 times across a week's sessions because SQLite's
+  // content-hash uniqueness only gates the episodic store, not this markdown.
+  let existing = "";
   try {
-    await fs.access(memPath);
-  } catch {
-    initial = `# Memory\n\n_Auto-managed by agent-daemon. Hand-edits welcome._\n\n`;
-  }
+    existing = await fs.readFile(memPath, "utf8");
+  } catch { /* file doesn't exist yet */ }
 
-  const block = renderMemoryBlock(items, sessionId, dateOnly);
+  const initial = existing
+    ? ""
+    : `# Memory\n\n_Auto-managed by agent-daemon. Hand-edits welcome._\n\n`;
+
+  // Build the set of (type, text-prefix) tuples already in the file. The
+  // markdown shape we append is `- **<type>** (conf X.XX): <text>` so we
+  // match on that prefix to extract previously-written learnings. Match by
+  // first ~80 chars of text (case-insensitive, whitespace-collapsed) so
+  // near-identical drift ("X is the cause" vs "X is the cause.") still
+  // dedupes.
+  const seen = collectSeenLearnings(existing);
+  const fresh = items.filter((it) => {
+    const key = makeDedupKey(it.learning.type, it.learning.text);
+    if (seen.has(key)) return false;
+    seen.add(key);  // also dedup within the batch in case classify produced near-dupes
+    return true;
+  });
+
+  if (fresh.length === 0 && !initial) return;  // nothing new, nothing to seed
+
+  const block = fresh.length > 0
+    ? renderMemoryBlock(fresh, sessionId, dateOnly)
+    : "";
   await fs.appendFile(memPath, initial + block, "utf8");
+}
+
+/**
+ * Walk an existing memory markdown file and return the set of dedup keys
+ * for learnings already recorded. Format we recognise:
+ *   - **<type>** (conf 0.NN): <text...>
+ *
+ * @param {string} content
+ * @returns {Set<string>}
+ */
+function collectSeenLearnings(content) {
+  const seen = new Set();
+  if (!content) return seen;
+  const re = /^-\s+\*\*([a-z]+)\*\*\s+\(conf\s+\d+\.\d+\)\s*:\s*(.+)$/gim;
+  let m;
+  while ((m = re.exec(content)) !== null) {
+    seen.add(makeDedupKey(m[1], m[2]));
+  }
+  return seen;
+}
+
+function makeDedupKey(type, text) {
+  const normText = String(text || "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/[.,;:!?]+$/, "")
+    .trim()
+    .slice(0, 80);
+  return `${type}|${normText}`;
 }
 
 function renderMemoryBlock(items, sessionId, dateOnly) {
