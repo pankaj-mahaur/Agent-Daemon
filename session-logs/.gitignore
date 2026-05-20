@@ -1,0 +1,3 @@
+# Local-only session logs — not committed.
+*.md
+!README.md
