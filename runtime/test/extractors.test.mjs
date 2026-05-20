@@ -179,3 +179,78 @@ test("uses agent speakerHint via tagger? no — falls back to caller's meta", ()
   assert.ok(n);
   assert.equal(n.evidence_speaker, "agent");
 });
+
+// --- v0.4.1 regression tests for the 4 rules clause-anchored in the
+//     second noise pass. Each input is a mid-sentence fragment harvested
+//     from the user's real dogfood data — these MUST NOT produce captures.
+
+test("regression: mid-sentence 'going with' does NOT match", () => {
+  const text = "We discussed several options before going with the more conservative path here.";
+  const out = extractFromText(text);
+  assert.equal(
+    out.filter(l => l.rule_id === "decision-decided").length,
+    0,
+    `expected zero decision-decided matches, got: ${JSON.stringify(out.map(l => l.text))}`
+  );
+});
+
+test("regression: mid-sentence 'fixed by' inside relative clause does NOT match", () => {
+  const text = "the symptom was mostly fixed by then but it kept resurfacing every Friday afternoon";
+  const out = extractFromText(text);
+  assert.equal(
+    out.filter(l => l.rule_id === "gotcha-the-bug-was").length,
+    0,
+    `expected zero gotcha matches, got: ${JSON.stringify(out.map(l => l.text))}`
+  );
+});
+
+test("regression: mid-sentence 'by convention' deep in a clause does NOT match", () => {
+  const text = "but as it turns out by convention things drift over time anyway here";
+  const out = extractFromText(text);
+  assert.equal(
+    out.filter(l => l.rule_id === "convention-the-convention-is").length,
+    0,
+    `expected zero convention matches, got: ${JSON.stringify(out.map(l => l.text))}`
+  );
+});
+
+test("regression: mid-sentence 'run it with' inside relative clause does NOT match", () => {
+  const text = "anyone can run it with care if they pay attention to the side effects";
+  const out = extractFromText(text);
+  assert.equal(
+    out.filter(l => l.rule_id === "tool-the-command-is").length,
+    0,
+    `expected zero tool matches, got: ${JSON.stringify(out.map(l => l.text))}`
+  );
+});
+
+// --- Positive regression: clause-anchored rules MUST still fire on the
+//     legitimate sentence shapes they were designed for.
+
+test("clause-start 'decided' (sentence start) still matches", () => {
+  const out = extractFromText("Decided to drop the polling timer in favor of SSE.");
+  const dec = out.find(l => l.rule_id === "decision-decided");
+  assert.ok(dec, "decision rule should fire on sentence-start trigger");
+  assert.match(dec.text.toLowerCase(), /polling timer.*sse/);
+});
+
+test("comma-introduced 'we'll go with' still matches", () => {
+  const out = extractFromText("OK, we'll go with PostgreSQL for the audit log.");
+  const dec = out.find(l => l.rule_id === "decision-decided");
+  assert.ok(dec, "decision rule should fire after comma boundary");
+  assert.match(dec.text.toLowerCase(), /postgresql/);
+});
+
+test("em-dash 'the bug was' still matches", () => {
+  const out = extractFromText("Finally figured it out — the bug was a missing await in the cleanup handler.");
+  const g = out.find(l => l.rule_id === "gotcha-the-bug-was");
+  assert.ok(g, "gotcha rule should fire after em-dash boundary");
+  assert.match(g.text, /missing await/i);
+});
+
+test("backticked 'right command is' still captures the inline command", () => {
+  const out = extractFromText("The right command is `npm run lint:fix` not `eslint --fix`.");
+  const t = out.find(l => l.rule_id === "tool-the-command-is");
+  assert.ok(t, "tool rule should fire on backticked command");
+  assert.match(t.text, /npm run lint/);
+});

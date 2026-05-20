@@ -78,7 +78,7 @@ export const RULES = [
     // v0.3.1 — clause-anchored. Require "we" subject (was firing on mid-sentence
     // "...never on typing", "...always at the start" garbage). Bare "always" /
     // "never" no longer match — too noisy. See skills/regex-clause-anchored-extractors/.
-    pattern: /(?:^|[.!?]\s+|\n\s*)(we\s+(?:always|never))\s+([a-z][^.\n!?]{4,200}?)(?=[.!?]|\n|$)/i,
+    pattern: /(?:^|[.!?,;:—–-]\s+|\n\s*)(we\s+(?:always|never))\s+([a-z][^.\n!?]{4,200}?)(?=[.!?]|\n|$)/i,
     type: "pattern",
     confidence: 0.65,
     composer: (m) => `${m[1].toLowerCase()} ${m[2].trim()}`
@@ -87,7 +87,11 @@ export const RULES = [
   // --- Conventions
   {
     id: "convention-the-convention-is",
-    pattern: /\b(?:the convention is|by convention|we (?:standardize|standardise) on)\s+([^.\n!?]{4,250})/i,
+    // v0.4.1 — clause-anchored. Bare `\b(the convention is|...)` was firing on
+    // mid-sentence "...so the convention is..." sub-clauses and capturing
+    // garbage tails. Require a clause boundary on the left so the rule only
+    // matches statement-shaped sentences.
+    pattern: /(?:^|[.!?,;:—–-]\s+|\n\s*)(?:the convention is|by convention|we (?:standardize|standardise) on)\s+([a-z][^.\n!?]{4,250}?)(?=[.!?]|\n|$)/i,
     type: "pattern",
     confidence: 0.7
   },
@@ -95,7 +99,10 @@ export const RULES = [
   // --- Decisions
   {
     id: "decision-decided",
-    pattern: /\b(?:decided|we'?ll go with|we chose|chose to|going with)\s+([^.\n!?]{4,250})/i,
+    // v0.4.1 — clause-anchored. "decided" / "going with" / "we chose" mid-
+    // narrative ("...having decided X earlier, we then...") produced fragment
+    // captures of trailing prose. Require clause boundary.
+    pattern: /(?:^|[.!?,;:—–-]\s+|\n\s*)(?:decided|we'?ll go with|we chose|chose to|going with)\s+([a-z][^.\n!?]{4,250}?)(?=[.!?]|\n|$)/i,
     type: "decision",
     confidence: 0.65
   },
@@ -103,7 +110,7 @@ export const RULES = [
     id: "decision-lets-use",
     // v0.3.1 — clause-anchored. "Let's use X" mid-narrative ("...maybe let's use a trie")
     // produced fragment captures. Require clause boundary.
-    pattern: /(?:^|[.!?]\s+|\n\s*)let'?s\s+(?:use|go with|stick with|adopt)\s+([a-z][^.\n!?]{2,200}?)(?=[.!?]|\n|$)/i,
+    pattern: /(?:^|[.!?,;:—–-]\s+|\n\s*)let'?s\s+(?:use|go with|stick with|adopt)\s+([a-z][^.\n!?]{2,200}?)(?=[.!?]|\n|$)/i,
     type: "decision",
     confidence: 0.55,
     speakerHint: "user"
@@ -112,7 +119,10 @@ export const RULES = [
   // --- Gotchas / postmortems
   {
     id: "gotcha-the-bug-was",
-    pattern: /\b(?:the bug was|root cause was|turned out to be|the issue was|fixed by)\s+([^.\n!?]{6,300})/i,
+    // v0.4.1 — clause-anchored. "fixed by" mid-sentence ("...issue mostly fixed
+    // by then, but we still saw...") captured "then, but we still saw..." as
+    // a fake gotcha. Require clause boundary on the left.
+    pattern: /(?:^|[.!?,;:—–-]\s+|\n\s*)(?:the bug was|root cause was|turned out to be|the issue was|fixed by)\s+([a-z][^.\n!?]{6,300}?)(?=[.!?]|\n|$)/i,
     type: "gotcha",
     confidence: 0.7
   },
@@ -133,7 +143,10 @@ export const RULES = [
   // --- Tools / commands
   {
     id: "tool-the-command-is",
-    pattern: /\b(?:the (?:right|correct) command is|run it with|invoke (?:it )?with)\s+`?([^`.\n]{4,200})`?/i,
+    // v0.4.1 — clause-anchored. "run it with" mid-sentence ("...you'd run it
+    // with care here...") captured "care here..." as a fake command. Require
+    // clause boundary; capture up to backtick OR clause end.
+    pattern: /(?:^|[.!?,;:—–-]\s+|\n\s*)(?:the (?:right|correct) command is|run it with|invoke (?:it )?with)\s+`?([^`.\n]{4,200}?)(?:`|(?=[.!?\n]|$))/i,
     type: "tool",
     confidence: 0.55
   }
@@ -213,7 +226,11 @@ function sanitize(s) {
 // the specific class of FRAGMENT-led captures from mid-sentence regex matches.
 const FRAGMENT_LEADERS = new Set([
   // prepositions
-  "for", "in", "on", "at", "to", "of", "from", "with", "by", "as", "into",
+  // NOTE: "to" is intentionally NOT in this list — "decided to drop X",
+  // "chose to use Y", "we'll go with to-foo" are legitimate clause-shapes
+  // where the captured tail naturally starts with "to". Filtering "to" here
+  // breaks real captures from clause-anchored rules.
+  "for", "in", "on", "at", "of", "from", "with", "by", "as", "into",
   "onto", "out", "off", "over", "under",
   // conjunctions
   "than", "then", "but", "and", "or",
