@@ -11,7 +11,7 @@ Now ships with a full **team coordination layer**: spawn multiple Claude Code ag
 
 Skills evolve too: [GEPA](runtime/src/digest/gepa/README.md) (Genetic-Pareto Prompt Evolution) reads execution traces and proposes Pareto-optimal skill refinements that you accept or reject via `agent-daemon review`.
 
-> **v0.2.0 (current):** Cross-harness support for **Claude Code** (native), **Codex** (reference config + sub-agent TOML), and **Cursor** (hook bindings + skill→`.mdc` converter). 3 install profiles (`minimal` / `developer` / `security`), 217 skills (36 curated + 181 vendored from [`everything-claude-code`](https://github.com/affaan-m/everything-claude-code)), 4 ported production hooks, audit-log rotation, GitHub Actions CI on Linux/macOS/Windows. See [CHANGELOG.md](CHANGELOG.md) for the full v0.2.0 story and [docs/manual-test-v0.2.0.md](docs/manual-test-v0.2.0.md) for a step-by-step end-user verification checklist.
+> **v0.2.0 + Phase 5 (unreleased on `main`):** Cross-harness support for **Claude Code** (native), **Codex** (reference config + sub-agent TOML), and **Cursor** (hook bindings + skill→`.mdc` converter). 3 install profiles (`minimal` / `developer` / `security`) + 4 skill-install modes (`smart` / `all` / `minimal` / `manual`). 220 skills (39 curated + 181 vendored from [`everything-claude-code`](https://github.com/affaan-m/everything-claude-code)), 4 ported production hooks, audit-log rotation, GitHub Actions CI on Linux/macOS/Windows. **Phase 5** (see [CHANGELOG.md](CHANGELOG.md)) adds stack-detection-driven smart install, three new daemon skills (`skill-author`, `session-close`, `gepa-evolve-inline`), no-API-key GEPA via active session, 7 Hinglish extractor rules, multi-agent orchestration improvements, and weekly `activeContext.md` rotation. 141/141 tests pass.
 
 ## Quick start
 
@@ -29,10 +29,12 @@ ad doctor
 
 # 4. Init in your project
 cd /path/to/your/project
-ad init                       # default: developer profile
-ad init --profile minimal     # memory + lifecycle hooks only
-ad init --profile security    # default + intrusive guards (block --no-verify, MCP audit)
-ad init --plan                # preview without applying
+ad init                              # default: developer profile + smart skill install
+ad init --profile minimal            # memory + lifecycle hooks only
+ad init --profile security           # default + intrusive guards (block --no-verify, MCP audit)
+ad init --skills-mode all            # install ALL 220 skills (vs stack-detect-driven default)
+ad init --skills-mode manual         # install only profile-listed skills (legacy behaviour)
+ad init --plan                       # preview without applying
 
 # 5. Open Claude Code — constitution + memory load automatically.
 #    The agent emits a digest block before ending, the daemon parses it,
@@ -243,9 +245,14 @@ ad watch                               # Watch transcript dirs, fire digest on n
                                        #   --verbose          log every file event
                                        #   --force            pass --force to each digest run
                                        #   --once-on-existing also digest existing transcripts
-ad evolve <skill>                      # GEPA self-evolution run for a skill
+ad evolve <skill>                      # GEPA self-evolution run for a skill (needs auth)
+                                       #   --list-candidates [--json]  list skills with ≥3 failures in 30d (no auth)
+                                       #   --export-traces             export JSONL traces for inline GEPA (no auth)
 ad review                              # Accept/reject queued skill proposals
 ad init                                # Scaffold .agent-daemon/ + AGENTS.md in project
+                                       #   --profile <name>     minimal | developer (default) | security
+                                       #   --skills-mode <m>    smart (default — stack-detect) | all | minimal | manual
+                                       #   --plan               print actions without applying
 ad status                              # Show queued proposals
 ad query-retrieve                      # Keyword extraction + learning injection
 
@@ -257,12 +264,13 @@ ad team list-templates (tt)
 ad team inbox    (ti)  --team <id> [--agent <name>]
 ad team cleanup  (tu)                  # Prune stale worktrees
 ad team delete   (td)  --team <id>
+ad team retry    (tr)  --team <id> --task <task-id>   # Reset a failed task
 ad spawn         (sp)  --team <id> --role <name> --task "..."
 ```
 
-## Skill catalog (36 curated + 181 vendored = 217 total)
+## Skill catalog (39 curated + 181 vendored = 220 total)
 
-> The 36 curated skills below are documented; an additional 181 skills were imported from [`everything-claude-code`](https://github.com/affaan-m/everything-claude-code) (MIT) — each tagged with a `source:` frontmatter line. See [skills/README.md](skills/README.md) for the full vendored catalog and re-sync instructions.
+> The 39 curated skills below are documented; an additional 181 skills were imported from [`everything-claude-code`](https://github.com/affaan-m/everything-claude-code) (MIT) — each tagged with a `source:` frontmatter line. See [skills/README.md](skills/README.md) for the full vendored catalog and re-sync instructions.
 
 ### Build & implement
 
@@ -305,9 +313,12 @@ ad spawn         (sp)  --team <id> --role <name> --task "..."
 
 | Skill | Description | Trigger |
 |---|---|---|
-| [bootstrap-daemon](skills/bootstrap-daemon/) | Full end-to-end daemon initialization + memory population | Auto: "initialize daemon", "bootstrap daemon" |
-| [orchestrate-team](skills/orchestrate-team/) | Multi-agent task decomposition + team spawning | Auto: complex multi-domain tasks |
-| [agent-self-improve](skills/agent-self-improve/) | Teaches agents the self-improvement discipline | Auto: session reflection |
+| [bootstrap-daemon](skills/daemon/bootstrap-daemon/) | Full end-to-end daemon initialization + memory population | Auto: "initialize daemon", "bootstrap daemon" |
+| [orchestrate-team](skills/daemon/orchestrate-team/) | Multi-agent task decomposition + team spawning | Auto: complex multi-domain tasks |
+| [agent-self-improve](skills/productivity/agent-self-improve/) | Teaches agents the self-improvement discipline | Auto: session reflection |
+| [skill-author](skills/daemon/skill-author/) | Dedup-first skill authoring (global vs project, ≥70% overlap → append) | Auto: "create a skill", "is se skill banao", "har baar yaad rakhna" / `/skill-author` |
+| [session-close](skills/daemon/session-close/) | No-API session-end macro — session-log + digest + handoff + GEPA queue | Auto: "bye", "session khatam", "aaj ka kaam ho gaya", "done for today" |
+| [gepa-evolve-inline](skills/daemon/gepa-evolve-inline/) | No-API-key GEPA — active Claude session does the reflection itself | Auto: "evolve skill", "skill ko better banao" |
 
 ### Methodology (14 skills)
 
