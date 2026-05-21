@@ -1264,8 +1264,9 @@ async function cmdSpawn(opts) {
     return 1;
   }
 
-  const { loadTeam } = await import("./orchestration/team.mjs");
+  const { loadTeam, listTasks } = await import("./orchestration/team.mjs");
   const { spawnAgent, getActiveAgentCount } = await import("./orchestration/spawn.mjs");
+  const { detectConflicts, formatConflicts } = await import("./orchestration/conflict-detect.mjs");
 
   let team;
   try {
@@ -1277,6 +1278,43 @@ async function cmdSpawn(opts) {
 
   const roleDef = team.roles.find(r => r.name === opts.role);
   const leader = team.roles.find(r => r.is_leader);
+
+  // WS-7c — File-conflict pre-detection. Compare the new task's file paths
+  // against active tasks (pending / in_progress / retrying). TTY → prompt,
+  // non-TTY → stderr warn and proceed.
+  try {
+    const existingTasks = await listTasks(opts.team);
+    const activeTasks = existingTasks.filter(t =>
+      ["pending", "in_progress", "retrying"].includes(t.status)
+    );
+    const newTaskShim = {
+      id: `new:${opts.role}`,
+      title: opts.task,
+      description: opts.task,
+      instructions: roleDef?.instructions || ""
+    };
+    const reports = detectConflicts([...activeTasks, newTaskShim]);
+    const involvingNew = reports.filter(r => r.taskA === newTaskShim.id || r.taskB === newTaskShim.id);
+    if (involvingNew.length > 0) {
+      console.error("\n" + formatConflicts(involvingNew));
+      if (process.stdout.isTTY) {
+        // Hard prompt only on TTY. Default = abort.
+        process.stderr.write("\nProceed anyway? (y/N): ");
+        const answer = await new Promise(resolve => {
+          process.stdin.once("data", buf => resolve(String(buf).trim().toLowerCase()));
+        });
+        if (answer !== "y" && answer !== "yes") {
+          console.error("Aborted by user (file-conflict pre-detection).");
+          return 1;
+        }
+      } else {
+        console.error("(Non-TTY — proceeding with warning. Set ad team retry or re-task to fix.)");
+      }
+    }
+  } catch (err) {
+    // Best-effort — conflict detection failure must not block spawning
+    if (opts.verbose) console.error(`[conflict-detect] skipped: ${err.message}`);
+  }
 
   console.log(`Spawning agent: role=${opts.role} team=${opts.team}`);
   console.log(`  Task: ${opts.task}`);
