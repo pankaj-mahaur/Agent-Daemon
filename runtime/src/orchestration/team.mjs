@@ -12,17 +12,22 @@ import crypto from "node:crypto";
 
 const MAX_TASKS_PER_TEAM = 100;
 const MAX_RETRY = 3;
+const DEFAULT_TASK_MAX_RETRIES = 2;       // each task gets 2 retry attempts by default
 
 /**
  * @typedef {Object} TeamTask
  * @property {string} id
  * @property {string} title
  * @property {string} [description]
- * @property {string} [owner]        - agent name assigned to this task
- * @property {string} status         - pending | in_progress | completed | blocked
- * @property {string[]} [blockedBy]  - task ids that must complete first
+ * @property {string} [owner]            - agent name assigned to this task
+ * @property {string} status             - pending | in_progress | retrying | completed | blocked | error
+ * @property {string[]} [blockedBy]      - task ids that must complete first
  * @property {string} [createdAt]
  * @property {string} [completedAt]
+ * @property {number} [attempts]         - how many times this task has been attempted
+ * @property {number} [max_retries]      - per-task retry limit (default 2)
+ * @property {string} [last_error]       - error from the most recent failed attempt
+ * @property {string} [next_retry_at]    - ISO timestamp when retry becomes eligible
  *
  * @typedef {Object} TeamInfo
  * @property {string} id
@@ -168,7 +173,11 @@ export async function addTask(teamId, task) {
     status: (task.blockedBy && task.blockedBy.length > 0) ? "blocked" : "pending",
     blockedBy: task.blockedBy || [],
     createdAt: new Date().toISOString(),
-    completedAt: null
+    completedAt: null,
+    attempts: 0,
+    max_retries: task.max_retries ?? DEFAULT_TASK_MAX_RETRIES,
+    last_error: null,
+    next_retry_at: null
   };
 
   tasks.push(newTask);
@@ -185,7 +194,7 @@ export async function addTask(teamId, task) {
  * @returns {Promise<{task: TeamTask, unblocked: TeamTask[]}>}
  */
 export async function updateTaskStatus(teamId, taskId, status) {
-  const validStatuses = ["pending", "in_progress", "completed", "blocked"];
+  const validStatuses = ["pending", "in_progress", "retrying", "completed", "blocked", "error"];
   if (!validStatuses.includes(status)) {
     throw new Error(`invalid status "${status}" — must be one of: ${validStatuses.join(", ")}`);
   }
@@ -291,6 +300,81 @@ export async function formatTeamStatus(teamId) {
   }
 
   return lines.join("\n");
+}
+
+/**
+ * Mark a task as failed. Increments `attempts`, records `last_error`, and
+ * either schedules a retry (exponential backoff) or moves to terminal `error`.
+ *
+ * @param {string} teamId
+ * @param {string} taskId
+ * @param {string} error - human-readable failure reason
+ * @returns {Promise<{ task: TeamTask, willRetry: boolean }>}
+ */
+export async function markTaskFailed(teamId, taskId, error) {
+  const p = path.join(teamDir(teamId), "tasks.json");
+  const tasks = await readJsonSafe(p, []);
+  const task = tasks.find(t => t.id === taskId);
+  if (!task) throw new Error(`task ${taskId} not found in team ${teamId}`);
+
+  task.attempts     = (task.attempts || 0) + 1;
+  task.last_error   = String(error || "unknown error").slice(0, 1000);
+  const maxRetries  = task.max_retries ?? DEFAULT_TASK_MAX_RETRIES;
+
+  let willRetry = false;
+  if (task.attempts <= maxRetries) {
+    // Exponential backoff: 2^attempts * 30s (30s, 60s, 120s, 240s, ...)
+    const backoffSeconds = Math.pow(2, task.attempts) * 30;
+    task.next_retry_at = new Date(Date.now() + backoffSeconds * 1000).toISOString();
+    task.status        = "retrying";
+    willRetry          = true;
+  } else {
+    task.status        = "error";
+    task.next_retry_at = null;
+  }
+
+  await atomicWriteJson(p, tasks);
+  return { task, willRetry };
+}
+
+/**
+ * Retry a failed task — resets status to `pending` (or `blocked` if it had
+ * unmet dependencies) if attempts < max_retries. Manual override.
+ *
+ * @param {string} teamId
+ * @param {string} taskId
+ * @returns {Promise<{ task: TeamTask, reset: boolean, reason?: string }>}
+ */
+export async function retryTask(teamId, taskId) {
+  const p = path.join(teamDir(teamId), "tasks.json");
+  const tasks = await readJsonSafe(p, []);
+  const task = tasks.find(t => t.id === taskId);
+  if (!task) throw new Error(`task ${taskId} not found in team ${teamId}`);
+
+  const maxRetries = task.max_retries ?? DEFAULT_TASK_MAX_RETRIES;
+  if ((task.attempts || 0) > maxRetries && task.status === "error") {
+    return { task, reset: false, reason: `task exhausted retries (${task.attempts}/${maxRetries})` };
+  }
+  if (task.status === "completed") {
+    return { task, reset: false, reason: "task is already completed" };
+  }
+
+  // Determine whether to reset to pending or blocked based on dependencies
+  let newStatus = "pending";
+  if (task.blockedBy && task.blockedBy.length > 0) {
+    const allDone = task.blockedBy.every(bid => {
+      const blocker = tasks.find(bt => bt.id === bid);
+      return blocker && blocker.status === "completed";
+    });
+    newStatus = allDone ? "pending" : "blocked";
+  }
+
+  task.status        = newStatus;
+  task.next_retry_at = null;
+  // last_error stays as a record of the most recent failure
+
+  await atomicWriteJson(p, tasks);
+  return { task, reset: true };
 }
 
 /**

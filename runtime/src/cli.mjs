@@ -71,6 +71,7 @@ Commands:
   team inbox      (ti)   Read messages from an agent's inbox
   team cleanup    (tu)   Prune stale worktrees and dangling team data
   team delete     (td)   Delete a team and its data
+  team retry      (tr)   Reset a failed task to pending (--team <id> --task <task-id>)
   spawn           (sp)   Spawn a worker agent in a team
 
 Options:
@@ -1044,7 +1045,7 @@ async function cmdWatch(opts) {
 }
 
 async function cmdTeam(subcommand, opts) {
-  const { createTeam, loadTeam, listTeams, addTask, formatTeamStatus, listTasks } = await import("./orchestration/team.mjs");
+  const { createTeam, loadTeam, listTeams, addTask, formatTeamStatus, listTasks, retryTask } = await import("./orchestration/team.mjs");
   const { loadTemplate, listTemplates, findLeader } = await import("./orchestration/templates.mjs");
   const { readInbox } = await import("./orchestration/inbox.mjs");
 
@@ -1212,8 +1213,35 @@ async function cmdTeam(subcommand, opts) {
       return 0;
     }
 
+    case "retry": {
+      if (!opts.team) {
+        console.error("agent-daemon team retry: --team is required");
+        return 1;
+      }
+      if (!opts.task) {
+        console.error("agent-daemon team retry: --task is required (the task ID, e.g. task-abc12345)");
+        return 1;
+      }
+      try {
+        const result = await retryTask(opts.team, opts.task);
+        if (result.reset) {
+          console.log(`Task ${opts.task} reset to "${result.task.status}" (attempt ${result.task.attempts + 1}/${result.task.max_retries + 1})`);
+          if (result.task.last_error) {
+            console.log(`  Previous error: ${result.task.last_error}`);
+          }
+        } else {
+          console.error(`Cannot retry task ${opts.task}: ${result.reason}`);
+          return 1;
+        }
+      } catch (err) {
+        console.error(`agent-daemon team retry: ${err.message}`);
+        return 1;
+      }
+      return 0;
+    }
+
     default:
-      console.error(`agent-daemon team: unknown subcommand "${subcommand}". Use: create, status, list, list-templates, inbox, cleanup, delete`);
+      console.error(`agent-daemon team: unknown subcommand "${subcommand}". Use: create, status, list, list-templates, inbox, cleanup, delete, retry`);
       return 1;
   }
 }
@@ -1303,6 +1331,7 @@ async function main(argv) {
     ti: ["team", "inbox"],
     td: ["team", "delete"],
     tu: ["team", "cleanup"],
+    tr: ["team", "retry"],
     sp: ["spawn"]
   };
 
