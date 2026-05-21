@@ -1,4 +1,5 @@
 {
+  "schema_version": 2,
   "name": "bug-triage-team",
   "description": "Lead + investigator + fixer + reviewer — for complex bug diagnosis and fix",
   "roles": [
