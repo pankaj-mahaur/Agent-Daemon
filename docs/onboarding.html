@@ -558,7 +558,7 @@
     <div class="card">
       <span class="icon">🎯</span>
       <h4>229 skills auto-triggered</h4>
-      <p>Type <code>"kuch toot gaya"</code> → <code>debug-triage</code> skill fires with a 9-class bug checklist. English + Hinglish.</p>
+      <p>Type <code>"something is broken"</code> → <code>debug-triage</code> skill fires with a 9-class bug checklist. Auto-matches on natural phrasing.</p>
     </div>
     <div class="card">
       <span class="icon">🚀</span>
@@ -724,7 +724,7 @@ ad init                              <span class="cmt"># apply</span></code></pr
         ├─ Skills auto-trigger from what you say
         └─ Learnings buffered as you go
         ↓
-   👋 You say "bye, aaj ka kaam ho gaya"
+   👋 You say "bye, that's it for today"
         ↓
    📝 session-close skill runs (no API key)
         ├─ Update session-logs/
@@ -737,15 +737,15 @@ ad init                              <span class="cmt"># apply</span></code></pr
 </pre>
   </div>
 
-  <h3>🗣️ Hinglish + English triggers</h3>
+  <h3>🗣️ Natural-language triggers</h3>
   <table>
     <tr><th>You say</th><th>Skill fires</th><th>What it does</th></tr>
-    <tr><td><em>"kuch toot gaya"</em></td><td><code>debug-triage</code></td><td>9-class bug checklist + triage ladder</td></tr>
-    <tr><td><em>"contact form banao"</em></td><td><code>implement-feature</code></td><td>Search-existing + correctness checklist</td></tr>
-    <tr><td><em>"ye review karo"</em></td><td><code>review-slice</code></td><td>Severity-grouped findings</td></tr>
-    <tr><td><em>"har baar yaad rakhna pnpm use karna"</em></td><td><code>skill-author</code></td><td>Dedup-first skill creation</td></tr>
+    <tr><td><em>"something is broken on the homepage"</em></td><td><code>debug-triage</code></td><td>9-class bug checklist + triage ladder</td></tr>
+    <tr><td><em>"build a contact form"</em></td><td><code>implement-feature</code></td><td>Search-existing + correctness checklist</td></tr>
+    <tr><td><em>"review this page properly"</em></td><td><code>review-slice</code></td><td>Severity-grouped findings</td></tr>
+    <tr><td><em>"remember we use pnpm in this project"</em></td><td><code>skill-author</code></td><td>Dedup-first skill creation</td></tr>
     <tr><td><em>"evolve skill debug-triage"</em></td><td><code>gepa-evolve-inline</code></td><td>No-API skill evolution</td></tr>
-    <tr><td><em>"bye, aaj ka kaam ho gaya"</em></td><td><code>session-close</code></td><td>7-phase session-end protocol</td></tr>
+    <tr><td><em>"bye, ending this session"</em></td><td><code>session-close</code></td><td>7-phase session-end protocol</td></tr>
   </table>
 
   <h3>📈 Self-improving in 7 days</h3>
