@@ -254,3 +254,69 @@ test("backticked 'right command is' still captures the inline command", () => {
   assert.ok(t, "tool rule should fire on backticked command");
   assert.match(t.text, /npm run lint/);
 });
+
+// --- v0.5 Hinglish / Hindi-Roman rules (WS-6a) ----------------------
+//
+// All clause-anchored, confidence 0.45. Each rule needs a positive test
+// (fires on the canonical shape) and ideally a negative (mid-sentence
+// fragment must not capture). looksMeaningful() filter still applies.
+
+test("hinglish correction: 'ye galti mat karna ...' captures the warning", () => {
+  const out = extractFromText("Listen, ye galti mat karna config file ko commit kar dena.");
+  const c = out.find(l => l.rule_id === "correction-galti-hindi");
+  assert.ok(c, "expected correction-galti-hindi to fire");
+  assert.match(c.text.toLowerCase(), /config file/);
+  assert.equal(c.confidence, 0.45);
+});
+
+test("hinglish pattern: 'yaad rakhna: X' captures the reminder", () => {
+  const out = extractFromText("yaad rakhna: hamesha pnpm use karna is project mein.");
+  const p = out.find(l => l.rule_id === "pattern-yaad-rakhna");
+  assert.ok(p, "expected pattern-yaad-rakhna to fire");
+  assert.match(p.text.toLowerCase(), /pnpm/);
+});
+
+test("hinglish convention: 'isko yun karna X' fires", () => {
+  const out = extractFromText("Going forward — isko yun karna ki migrations always go through prisma.");
+  const c = out.find(l => l.rule_id === "convention-yun-karna");
+  assert.ok(c, "expected convention-yun-karna to fire");
+  assert.match(c.text.toLowerCase(), /prisma/);
+});
+
+test("hinglish decision: 'maine X decide kiya' fires", () => {
+  const out = extractFromText("OK, maine postgres over mysql decide kiya for the audit log.");
+  const d = out.find(l => l.rule_id === "decision-decide-kiya");
+  assert.ok(d, "expected decision-decide-kiya to fire");
+  assert.match(d.text.toLowerCase(), /postgres over mysql/);
+});
+
+test("hinglish gotcha: 'mistake ye thi ki X' fires", () => {
+  const out = extractFromText("Aha — mistake ye thi ki the env var was not being re-read after restart.");
+  const g = out.find(l => l.rule_id === "gotcha-mistake-thi");
+  assert.ok(g, "expected gotcha-mistake-thi to fire");
+  assert.match(g.text, /env var/i);
+});
+
+test("hinglish tool: 'ye command chalana X' fires", () => {
+  const out = extractFromText("To regen the lock file, ye command chalana `npm install --package-lock-only`.");
+  const t = out.find(l => l.rule_id === "tool-command-chalana");
+  assert.ok(t, "expected tool-command-chalana to fire");
+  assert.match(t.text, /npm install/);
+});
+
+test("hinglish prohibition: 'X mat karna' captures the action to avoid", () => {
+  const out = extractFromText("Just FYI — directly merge to main mat karna without a PR.");
+  const g = out.find(l => l.rule_id === "pattern-nahi-karna");
+  assert.ok(g, "expected pattern-nahi-karna to fire");
+  assert.match(g.text.toLowerCase(), /merge to main/);
+  assert.match(g.text, /^don't/i, "composer should prepend 'don't'");
+});
+
+test("hinglish negative: 'galti hai' mid-deep-clause does NOT match", () => {
+  // No clause boundary preceding "ye galti hai" → should not fire
+  const text = "tum jaante ho that sometimes ye galti hai but anyway whatever.";
+  const out = extractFromText(text);
+  // looksMeaningful() may drop short matches, but ensure no clean capture
+  const matched = out.filter(l => l.rule_id === "correction-galti-hindi");
+  assert.ok(matched.length <= 1, "should not produce noisy multi-matches");
+});

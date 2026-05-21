@@ -1,6 +1,6 @@
 ---
 name: security-audit
-description: Audit web application security across frontend and backend. Use for security audit, auth review, RBAC review, permissions audit, JWT/session security, cookie/CSRF/origin review, CORS, throttling, secrets, CSV/export safety, admin endpoints, or access control review.
+description: Audit web application security across frontend and backend. Use for security audit, auth review, RBAC review, permissions audit, JWT/session security, cookie/CSRF/origin review, CORS, throttling, secrets, CSV/export safety, admin endpoints, or access control review. Hinglish triggers — "security check karo", "vulnerability hai kya", "audit karo", "is endpoint mein dikkat hai kya", "auth review karna hai".
 license: MIT
 metadata:
   author: agent-daemon

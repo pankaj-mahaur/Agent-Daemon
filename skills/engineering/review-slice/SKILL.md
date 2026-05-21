@@ -1,6 +1,6 @@
 ---
 name: review-slice
-description: Use for deep-reviewing a page, feature, or section of any web application. Identifies bugs grouped by root cause using a 9-class bug checklist, presents findings by severity, and implements approved fixes.
+description: Use for deep-reviewing a page, feature, or section of any web application. Also fires on Hinglish — "ye review karo", "iska review karna hai", "check karo properly", "is page ko deeply dekho", "is feature ko audit karo". Identifies bugs grouped by root cause using a 9-class bug checklist, presents findings by severity, and implements approved fixes.
 license: MIT
 metadata:
   author: agent-daemon

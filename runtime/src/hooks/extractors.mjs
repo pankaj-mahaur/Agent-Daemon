@@ -149,6 +149,65 @@ export const RULES = [
     pattern: /(?:^|[.!?,;:—–-]\s+|\n\s*)(?:the (?:right|correct) command is|run it with|invoke (?:it )?with)\s+`?([^`.\n]{4,200}?)(?:`|(?=[.!?\n]|$))/i,
     type: "tool",
     confidence: 0.55
+  },
+
+  // --- Hinglish / Hindi-Roman rules (v0.5 — WS-6a)
+  //
+  // All clause-anchored with confidence 0.45 — lower than English because
+  // vernacular has higher false-positive risk. Drain step boosts on duplicates.
+  // The looksMeaningful() filter still applies, so single-word captures drop.
+  //
+  {
+    id: "correction-galti-hindi",
+    // "ye galti mat karna X" / "yeh galti hai X" — user calling out a mistake
+    pattern: /(?:^|[.!?,;:—–-]\s+|\n\s*)(?:ye|yeh)\s+galti\s+(?:mat\s+karna|hai)\s+([^.\n!?]{4,200})/i,
+    type: "correction",
+    confidence: 0.45,
+    speakerHint: "user"
+  },
+  {
+    id: "pattern-yaad-rakhna",
+    // "yaad rakhna: X" / "yaad rakhiye X" — explicit "remember this"
+    pattern: /(?:^|[.!?,;:—–-]\s+|\n\s*)yaad\s+(?:rakhna|rakhiye|rakho)\s*[:,-]?\s*([^.\n!?]{4,250})/i,
+    type: "pattern",
+    confidence: 0.45
+  },
+  {
+    id: "convention-yun-karna",
+    // "isko yun karna X" / "ise aise karte hain X" — convention statement
+    pattern: /(?:^|[.!?,;:—–-]\s+|\n\s*)(?:isko|ise|yeh|ye)\s+(?:yun|aise|aisa)\s+(?:karna|karte\s+hain|karte)\s+([^.\n!?]{4,250})/i,
+    type: "pattern",
+    confidence: 0.45
+  },
+  {
+    id: "decision-decide-kiya",
+    // "maine X decide kiya" / "humne X tay kiya" — decision statement
+    pattern: /(?:^|[.!?,;:—–-]\s+|\n\s*)(?:maine|humne|hum)\s+([^.\n!?]{4,200})\s+(?:decide|tay)\s+kiya/i,
+    type: "decision",
+    confidence: 0.45
+  },
+  {
+    id: "gotcha-mistake-thi",
+    // "mistake ye thi ki X" / "galti ye thi ki X" — post-mortem gotcha
+    pattern: /(?:^|[.!?,;:—–-]\s+|\n\s*)(?:mistake|galti|problem|issue)\s+(?:ye|yeh|yh)\s+(?:thi|tha|hai)\s+(?:ki|that)\s+([^.\n!?]{4,300})/i,
+    type: "gotcha",
+    confidence: 0.45
+  },
+  {
+    id: "tool-command-chalana",
+    // "ye command chalana X" / "yeh command chalao X" — command pointer
+    pattern: /(?:^|[.!?,;:—–-]\s+|\n\s*)(?:ye|yeh)\s+command\s+(?:chalana|chalao|run\s+karna)\s+`?([^`.\n]{4,200}?)(?:`|(?=[.!?\n]|$))/i,
+    type: "tool",
+    confidence: 0.45
+  },
+  {
+    id: "pattern-nahi-karna",
+    // "X mat karna" / "X nahi karna" — prohibition pattern (anti-pattern)
+    // Captures what came BEFORE the prohibition (the action not to do).
+    pattern: /(?:^|[.!?,;:—–-]\s+|\n\s*)([^.\n!?]{4,200})\s+(?:mat|nahi)\s+karna/i,
+    type: "gotcha",
+    confidence: 0.45,
+    composer: (match) => `don't ${match[1].trim()}`
   }
 ];
 
