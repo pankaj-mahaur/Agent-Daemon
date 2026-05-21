@@ -26,3 +26,9 @@ vendored/*
 !vendored/MANIFEST.md
 !vendored/fetch.mjs
 !vendored/.gitkeep
+
+# Onboarding deck exports — regenerable from docs/onboarding-deck.md via Marp
+docs/onboarding/exports/*.pptx
+docs/onboarding/exports/*.pdf
+docs/onboarding/exports/*.html
+!docs/onboarding/exports/.gitkeep

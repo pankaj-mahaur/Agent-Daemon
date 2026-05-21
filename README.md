@@ -11,7 +11,7 @@ Now ships with a full **team coordination layer**: spawn multiple Claude Code ag
 
 Skills evolve too: [GEPA](runtime/src/digest/gepa/README.md) (Genetic-Pareto Prompt Evolution) reads execution traces and proposes Pareto-optimal skill refinements that you accept or reject via `agent-daemon review`.
 
-> **v0.2.0 + Phase 5 (unreleased on `main`):** Cross-harness support for **Claude Code** (native), **Codex** (reference config + sub-agent TOML), and **Cursor** (hook bindings + skill→`.mdc` converter). 3 install profiles (`minimal` / `developer` / `security`) + 4 skill-install modes (`smart` / `all` / `minimal` / `manual`). 220 skills (39 curated + 181 vendored from [`everything-claude-code`](https://github.com/affaan-m/everything-claude-code)), 4 ported production hooks, audit-log rotation, GitHub Actions CI on Linux/macOS/Windows. **Phase 5** (see [CHANGELOG.md](CHANGELOG.md)) adds stack-detection-driven smart install, three new daemon skills (`skill-author`, `session-close`, `gepa-evolve-inline`), no-API-key GEPA via active session, 7 Hinglish extractor rules, multi-agent orchestration improvements, and weekly `activeContext.md` rotation. 141/141 tests pass.
+> **v0.2.0 + Phase 5 (unreleased on `main`):** Cross-harness support for **Claude Code** (native), **Codex** (reference config + sub-agent TOML), and **Cursor** (hook bindings + skill→`.mdc` converter). 3 install profiles (`minimal` / `developer` / `security`) + 4 skill-install modes (`smart` / `all` / `minimal` / `manual`). 229 skills (43 curated + 186 vendored from [`everything-claude-code`](https://github.com/affaan-m/everything-claude-code)), 4 ported production hooks, audit-log rotation, GitHub Actions CI on Linux/macOS/Windows. **Phase 5** (see [CHANGELOG.md](CHANGELOG.md)) adds stack-detection-driven smart install, three new daemon skills (`skill-author`, `session-close`, `gepa-evolve-inline`), no-API-key GEPA via active session, 7 Hinglish extractor rules, multi-agent orchestration improvements, and weekly `activeContext.md` rotation. 141/141 tests pass.
 
 ## Quick start
 
@@ -32,7 +32,7 @@ cd /path/to/your/project
 ad init                              # default: developer profile + smart skill install
 ad init --profile minimal            # memory + lifecycle hooks only
 ad init --profile security           # default + intrusive guards (block --no-verify, MCP audit)
-ad init --skills-mode all            # install ALL 220 skills (vs stack-detect-driven default)
+ad init --skills-mode all            # install ALL 229 skills (vs stack-detect-driven default)
 ad init --skills-mode manual         # install only profile-listed skills (legacy behaviour)
 ad init --plan                       # preview without applying
 
@@ -268,9 +268,9 @@ ad team retry    (tr)  --team <id> --task <task-id>   # Reset a failed task
 ad spawn         (sp)  --team <id> --role <name> --task "..."
 ```
 
-## Skill catalog (39 curated + 181 vendored = 220 total)
+## Skill catalog (43 curated + 186 vendored = 229 total)
 
-> The 39 curated skills below are documented; an additional 181 skills were imported from [`everything-claude-code`](https://github.com/affaan-m/everything-claude-code) (MIT) — each tagged with a `source:` frontmatter line. See [skills/README.md](skills/README.md) for the full vendored catalog and re-sync instructions.
+> The 43 curated skills below are documented; an additional 186 skills were imported from [`everything-claude-code`](https://github.com/affaan-m/everything-claude-code) (MIT) — each tagged with a `source:` frontmatter line. See [skills/README.md](skills/README.md) for the full vendored catalog and re-sync instructions.
 
 ### Build & implement
 
@@ -620,6 +620,7 @@ Copy-paste configuration templates:
 ## Docs
 
 **Start here:**
+- [Onboarding deck](docs/onboarding-deck.md) — 28-slide zero-to-one walkthrough (Marp source — export PDF/PPTX/HTML via [docs/onboarding/README.md](docs/onboarding/README.md))
 - [Workflow](docs/workflow.md) — `ad watch` vs `ad digest-latest`, the ending protocol, decision matrix
 - [Troubleshooting](docs/troubleshooting.md) — 13 common failure modes with fixes (Windows watch, LLM fallback, hook misses, etc.)
 - [Architecture](docs/architecture.md) — Three loops, components, data flow, file-system layout
