@@ -50,6 +50,9 @@ Commands:
                          --force              pass --force to each digest run
                          --fallback-to-llm    enable LLM extraction in watcher
   evolve <skill>         GEPA self-improvement run for a skill (sample → reflect → generate → evaluate → select)
+                         --list-candidates    list skills with ≥3 failures in 30d (no auth needed)
+                         --export-traces      export skill_executions to JSONL for inline GEPA (no auth needed)
+                         --json               machine-readable output (use with --list-candidates / --export-traces)
   checkpoint             Save a memory checkpoint before /compact
   init                   Scaffold .agent-daemon/ in current project
                          --profile <name>     install profile: minimal | developer (default) | security
@@ -1335,7 +1338,10 @@ async function main(argv) {
         "skills-mode": { type: "string" },
         "fallback-to-llm": { type: "boolean" },
         force:        { type: "boolean" },
-        "once-on-existing": { type: "boolean" }
+        "once-on-existing": { type: "boolean" },
+        "list-candidates": { type: "boolean" },
+        "export-traces": { type: "boolean" },
+        json:         { type: "boolean" }
       },
       allowPositionals: true,
       strict: false
@@ -1362,7 +1368,13 @@ async function main(argv) {
     case "session-start":  return runSessionStart(opts);
     case "digest":         return runDigest(opts);
     case "digest-latest":  return cmdDigestLatest(opts);
-    case "evolve":         return cmdEvolve({ ...opts, skillName: parsed.positionals?.[0] });
+    case "evolve":         return cmdEvolve({
+      ...opts,
+      skillName:       parsed.positionals?.[0],
+      listCandidates:  parsed.values["list-candidates"] || false,
+      exportTraces:    parsed.values["export-traces"]   || false,
+      json:            parsed.values.json               || false
+    });
     case "checkpoint":     return cmdCheckpoint(opts);
     case "init":           return cmdInit({ ...opts, profile: parsed.values.profile, plan: parsed.values.plan, skillsMode: parsed.values["skills-mode"] });
     case "status":         return cmdStatus(opts);
@@ -1381,8 +1393,61 @@ async function main(argv) {
 }
 
 async function cmdEvolve(opts) {
+  // Mode 1: --list-candidates — emit skills needing evolution. No LLM, no auth needed.
+  // Used by the gepa-evolve-inline skill to pick a target.
+  if (opts.listCandidates) {
+    const { findSkillsNeedingEvolution } = await import("./memory/episodic.mjs");
+    const candidates = await findSkillsNeedingEvolution({ minFailures: 3, dayWindow: 30 });
+    if (opts.json) {
+      console.log(JSON.stringify({ candidates }, null, 2));
+    } else {
+      if (candidates.length === 0) {
+        console.log("agent-daemon evolve: no candidates (no skills with ≥3 failures in the last 30 days)");
+      } else {
+        console.log(`agent-daemon evolve: ${candidates.length} candidate(s) needing evolution:`);
+        for (const c of candidates) {
+          console.log(`  - ${c.skill_name}  (${c.failure_count} failure(s) in 30d)`);
+        }
+        console.log("\nTo evolve one inline (no API key needed), say in any Claude Code session:");
+        console.log("  evolve skill <name>");
+      }
+    }
+    return 0;
+  }
+
+  // Mode 2: --export-traces — write JSONL of executions for one skill.
+  // The active Claude session reads this and does reflection inline.
+  if (opts.exportTraces) {
+    if (!opts.skillName) {
+      console.error("agent-daemon evolve --export-traces: requires a skill name. Usage: agent-daemon evolve <skill-name> --export-traces");
+      return 1;
+    }
+    const { exportSkillTraces } = await import("./digest/gepa/export-traces.mjs");
+    const result = await exportSkillTraces({
+      skillName: opts.skillName,
+      cwd: opts.cwd,
+      total: 50,
+      verbose: true
+    });
+    if (!result.ok) {
+      console.error(`agent-daemon evolve --export-traces: ${result.error}`);
+      return 1;
+    }
+    if (opts.json) {
+      console.log(JSON.stringify({ ok: true, path: result.path, count: result.count }));
+    } else {
+      console.log(`agent-daemon evolve: exported ${result.count} traces → ${result.path}`);
+      console.log("\nNow in any Claude Code session, say 'evolve skill <name>' and the");
+      console.log("`gepa-evolve-inline` skill will read these traces and propose changes.");
+    }
+    return 0;
+  }
+
+  // Mode 3 (default): run the full GEPA pipeline (requires headless claude auth or ANTHROPIC_API_KEY).
   if (!opts.skillName) {
     console.error("agent-daemon evolve: requires a skill name. Usage: agent-daemon evolve <skill-name>");
+    console.error("  --list-candidates    show which skills need evolution (no auth needed)");
+    console.error("  --export-traces      export skill traces for inline evolution (no auth needed)");
     return 1;
   }
   const skillsSrc = path.join(opts.projectRoot, "skills");
@@ -1400,6 +1465,20 @@ async function cmdEvolve(opts) {
     verbose: opts.verbose,
     proposedDir: path.join(opts.cwd, ".agent-daemon", "proposed")
   });
+
+  // Auth-fallback messaging: if GEPA failed because of missing auth, surface
+  // the no-API path so the user isn't stuck.
+  if (result.status === "error" && /auth|api[-_ ]?key|anthropic|claude.*not.*logged|spawn.*EOF|ENOENT/i.test(result.reason || "")) {
+    console.error(`\nagent-daemon evolve: GEPA stage failed — likely missing auth.`);
+    console.error(`  ${result.reason}`);
+    console.error(`\nOptions:`);
+    console.error(`  1. Run \`claude auth login\` (preferred — uses Claude Code's existing OAuth)`);
+    console.error(`  2. Set ANTHROPIC_API_KEY environment variable`);
+    console.error(`  3. **No-API path** — in your active Claude Code session, say:`);
+    console.error(`        "evolve skill ${opts.skillName}"`);
+    console.error(`     The \`gepa-evolve-inline\` skill will export traces and reflect inline.`);
+    return 0;  // not a hard error — guidance given
+  }
 
   console.error(`\nagent-daemon evolve: ${result.status} — ${result.reason}`);
   console.error(`  cost: $${result.totalCostUsd.toFixed(4)}`);
