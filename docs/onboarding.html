@@ -1,0 +1,868 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>agent-daemon · onboarding for Mobiux 🤖</title>
+<style>
+  /* ------------------------------------------------------------------ */
+  /* Reset + base                                                        */
+  /* ------------------------------------------------------------------ */
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; scroll-padding-top: 70px; }
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    background: #0d1117;
+    color: #e6edf3;
+    line-height: 1.65;
+    font-size: 16px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  :root {
+    --bg:       #0d1117;
+    --bg-2:     #161b22;
+    --bg-card:  #1c2128;
+    --border:   #30363d;
+    --fg:       #e6edf3;
+    --fg-mute:  #8b949e;
+    --cyan:     #58a6ff;
+    --green:    #7ee787;
+    --orange:   #ffa657;
+    --purple:   #d2a8ff;
+    --pink:     #ff7b72;
+    --grad:     linear-gradient(135deg, #58a6ff 0%, #d2a8ff 100%);
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Sticky top nav                                                      */
+  /* ------------------------------------------------------------------ */
+  nav {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: rgba(13, 17, 23, 0.85);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  nav .brand {
+    font-weight: 700;
+    font-size: 17px;
+    background: var(--grad);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  nav .brand span { color: var(--fg-mute); font-weight: 400; font-size: 13px; margin-left: 6px; }
+  nav ul { list-style: none; display: flex; gap: 22px; flex-wrap: wrap; }
+  nav a {
+    color: var(--fg-mute);
+    text-decoration: none;
+    font-size: 14px;
+    transition: color 0.15s;
+  }
+  nav a:hover { color: var(--cyan); }
+
+  /* ------------------------------------------------------------------ */
+  /* Layout                                                              */
+  /* ------------------------------------------------------------------ */
+  main {
+    max-width: 920px;
+    margin: 0 auto;
+    padding: 0 32px;
+  }
+  section {
+    padding: 80px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  section:last-of-type { border-bottom: none; }
+
+  /* ------------------------------------------------------------------ */
+  /* Hero                                                                */
+  /* ------------------------------------------------------------------ */
+  .hero {
+    text-align: center;
+    padding: 100px 0 80px;
+    position: relative;
+  }
+  .hero::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse at center top, rgba(88, 166, 255, 0.15), transparent 70%);
+    pointer-events: none;
+    z-index: -1;
+  }
+  .hero h1 {
+    font-size: 56px;
+    font-weight: 800;
+    letter-spacing: -0.025em;
+    line-height: 1.1;
+    margin-bottom: 20px;
+    background: var(--grad);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .hero .tagline {
+    font-size: 22px;
+    color: var(--fg-mute);
+    max-width: 640px;
+    margin: 0 auto 32px;
+  }
+  .hero .meta {
+    display: inline-flex;
+    gap: 8px;
+    align-items: center;
+    padding: 6px 14px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-size: 13px;
+    color: var(--fg-mute);
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .hero .meta .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 8px var(--green);
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Typography                                                          */
+  /* ------------------------------------------------------------------ */
+  h2 {
+    font-size: 36px;
+    font-weight: 700;
+    margin-bottom: 14px;
+    letter-spacing: -0.02em;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  h2 .emoji {
+    font-size: 36px;
+    display: inline-block;
+    transform: translateY(-2px);
+  }
+  h2 .num {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    color: var(--fg-mute);
+    background: var(--bg-card);
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-weight: 500;
+    margin-right: 4px;
+  }
+  h3 {
+    font-size: 20px;
+    font-weight: 600;
+    margin: 24px 0 10px;
+    color: var(--green);
+  }
+  h4 {
+    font-size: 14px;
+    font-weight: 600;
+    margin: 20px 0 8px;
+    color: var(--fg-mute);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  p { margin-bottom: 14px; color: #c9d1d9; }
+  .lead {
+    font-size: 18px;
+    color: var(--fg-mute);
+    margin-bottom: 28px;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Code blocks                                                         */
+  /* ------------------------------------------------------------------ */
+  code {
+    font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+    background: var(--bg-2);
+    color: var(--purple);
+    padding: 0.15em 0.4em;
+    border-radius: 4px;
+    font-size: 0.9em;
+  }
+  pre {
+    background: #010409;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 18px 22px;
+    overflow-x: auto;
+    margin: 14px 0;
+    line-height: 1.5;
+    font-size: 14px;
+    position: relative;
+  }
+  pre code {
+    background: transparent;
+    color: #e6edf3;
+    padding: 0;
+    font-size: inherit;
+  }
+  pre::before {
+    content: '$';
+    color: var(--green);
+    margin-right: 12px;
+  }
+  pre.no-prompt::before { content: ''; margin: 0; }
+  pre.terminal {
+    border-top: 28px solid var(--bg-card);
+  }
+  pre.terminal::after {
+    content: '● ● ●';
+    position: absolute;
+    top: 4px;
+    left: 14px;
+    color: #ff7b72;
+    font-size: 12px;
+    letter-spacing: 2px;
+    line-height: 1;
+  }
+  .kw  { color: var(--pink); }
+  .fn  { color: var(--purple); }
+  .str { color: var(--green); }
+  .cmt { color: var(--fg-mute); font-style: italic; }
+  .num { color: var(--orange); }
+  .ok  { color: var(--green); font-weight: 600; }
+  .warn { color: var(--orange); font-weight: 600; }
+
+  /* ------------------------------------------------------------------ */
+  /* Lists                                                               */
+  /* ------------------------------------------------------------------ */
+  ul, ol { padding-left: 0; margin: 12px 0; }
+  ul li, ol li {
+    list-style: none;
+    padding: 6px 0 6px 28px;
+    position: relative;
+    color: #c9d1d9;
+  }
+  ul li::before {
+    content: '→';
+    position: absolute;
+    left: 0;
+    color: var(--cyan);
+    font-weight: 700;
+  }
+  ol { counter-reset: list; }
+  ol li {
+    counter-increment: list;
+  }
+  ol li::before {
+    content: counter(list);
+    position: absolute;
+    left: 0;
+    top: 6px;
+    color: var(--green);
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 700;
+    font-size: 13px;
+    background: var(--bg-card);
+    border-radius: 50%;
+    width: 22px;
+    height: 22px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Cards / grids                                                       */
+  /* ------------------------------------------------------------------ */
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 16px;
+    margin: 24px 0;
+  }
+  .card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 20px;
+    transition: border-color 0.15s, transform 0.15s;
+  }
+  .card:hover {
+    border-color: var(--cyan);
+    transform: translateY(-2px);
+  }
+  .card .icon {
+    font-size: 28px;
+    margin-bottom: 10px;
+    display: block;
+  }
+  .card h4 {
+    color: var(--fg);
+    font-size: 15px;
+    text-transform: none;
+    letter-spacing: 0;
+    margin: 0 0 6px;
+  }
+  .card p {
+    color: var(--fg-mute);
+    font-size: 14px;
+    margin: 0;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Stats                                                               */
+  /* ------------------------------------------------------------------ */
+  .stat-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 24px;
+    margin: 28px 0;
+    text-align: center;
+  }
+  .stat .big {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 56px;
+    font-weight: 800;
+    background: var(--grad);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    line-height: 1;
+    font-feature-settings: "tnum";
+    text-shadow: 0 0 30px rgba(88, 166, 255, 0.2);
+  }
+  .stat .label {
+    font-size: 13px;
+    color: var(--fg-mute);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-top: 8px;
+  }
+  @media (max-width: 640px) {
+    .stat-row { grid-template-columns: 1fr; gap: 16px; }
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Compare table                                                       */
+  /* ------------------------------------------------------------------ */
+  .compare {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin: 20px 0;
+  }
+  .compare > div {
+    background: var(--bg-card);
+    border-radius: 10px;
+    padding: 20px;
+    border: 1px solid var(--border);
+  }
+  .compare .bad { border-left: 3px solid var(--orange); }
+  .compare .good { border-left: 3px solid var(--green); }
+  .compare h4 {
+    color: var(--fg);
+    margin: 0 0 12px;
+    font-size: 15px;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  .compare ul { margin: 0; }
+  .compare ul li { font-size: 14px; padding: 4px 0 4px 22px; }
+  @media (max-width: 640px) {
+    .compare { grid-template-columns: 1fr; }
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Tables                                                              */
+  /* ------------------------------------------------------------------ */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 14px;
+  }
+  th, td {
+    border: 1px solid var(--border);
+    padding: 10px 14px;
+    text-align: left;
+  }
+  th {
+    background: var(--bg-card);
+    color: var(--green);
+    font-weight: 600;
+  }
+  td code { font-size: 12px; }
+
+  /* ------------------------------------------------------------------ */
+  /* Callouts                                                            */
+  /* ------------------------------------------------------------------ */
+  .callout {
+    background: var(--bg-card);
+    border-left: 3px solid var(--cyan);
+    padding: 14px 20px;
+    margin: 16px 0;
+    border-radius: 6px;
+    font-size: 14px;
+    color: #c9d1d9;
+  }
+  .callout.warn { border-left-color: var(--orange); background: rgba(255, 166, 87, 0.06); }
+  .callout.success { border-left-color: var(--green); background: rgba(126, 231, 135, 0.06); }
+  .callout .emoji {
+    font-size: 18px;
+    margin-right: 8px;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Flow diagram                                                        */
+  /* ------------------------------------------------------------------ */
+  .flow {
+    background: var(--bg-card);
+    border-radius: 10px;
+    padding: 24px;
+    margin: 16px 0;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    overflow-x: auto;
+  }
+  .flow pre {
+    background: transparent;
+    border: none;
+    padding: 0;
+    margin: 0;
+    color: #c9d1d9;
+    line-height: 1.5;
+  }
+  .flow pre::before { content: ''; margin: 0; }
+
+  /* ------------------------------------------------------------------ */
+  /* CTA footer                                                          */
+  /* ------------------------------------------------------------------ */
+  .cta {
+    text-align: center;
+    background: linear-gradient(180deg, transparent 0%, rgba(88, 166, 255, 0.06) 100%);
+    border-radius: 14px;
+    padding: 50px 30px;
+    margin-top: 30px;
+  }
+  .cta h2 {
+    justify-content: center;
+    margin-bottom: 20px;
+  }
+  .cta pre {
+    text-align: left;
+    display: inline-block;
+    max-width: 100%;
+  }
+
+  footer {
+    padding: 30px 32px;
+    text-align: center;
+    color: var(--fg-mute);
+    font-size: 13px;
+    border-top: 1px solid var(--border);
+  }
+  footer a { color: var(--cyan); text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<!-- ============================================================== -->
+<!-- TOP NAV                                                          -->
+<!-- ============================================================== -->
+<nav>
+  <div class="brand">🤖 agent-daemon <span>· onboarding</span></div>
+  <ul>
+    <li><a href="#why">Why</a></li>
+    <li><a href="#what">What</a></li>
+    <li><a href="#install">Install</a></li>
+    <li><a href="#use">Use it</a></li>
+    <li><a href="#magic">The magic</a></li>
+    <li><a href="#safe">Safe?</a></li>
+    <li><a href="#try">Try it</a></li>
+  </ul>
+</nav>
+
+<main>
+
+<!-- ============================================================== -->
+<!-- HERO                                                             -->
+<!-- ============================================================== -->
+<section class="hero">
+  <h1>agent-daemon 🤖</h1>
+  <p class="tagline">
+    Give Claude Code <strong>memory across sessions</strong>, 229 ready-made skills,
+    and the ability to <strong>get smarter every time you use it</strong>.
+  </p>
+  <span class="meta">
+    <span class="dot"></span>
+    v0.2.0 + Phase 5 &nbsp;·&nbsp; Mobiux internal &nbsp;·&nbsp; 2026-05
+  </span>
+</section>
+
+<!-- ============================================================== -->
+<!-- WHY                                                              -->
+<!-- ============================================================== -->
+<section id="why">
+  <h2><span class="num">01</span><span class="emoji">😩</span>The problem</h2>
+  <p class="lead">Every Claude Code session starts from <strong>zero memory</strong>. Same explanations. Same mistakes. Same context-setting. Every. Single. Day.</p>
+
+  <div class="callout warn">
+    <span class="emoji">💬</span><em>"Hey Claude, we use pnpm not npm in this project."</em><br>
+    <span class="emoji">💬</span><em>"Hey Claude, migrations live in <code>prisma/</code>, not <code>src/db/</code>."</em><br>
+    <span class="emoji">💬</span><em>"Hey Claude, we never use <code>console.log</code> in production."</em>
+  </div>
+
+  <p>Same words. Different session. Same mistakes tomorrow.</p>
+
+  <h3>The cost 💸</h3>
+  <div class="stat-row">
+    <div class="stat">
+      <div class="big">5–10</div>
+      <div class="label">min / session re-explaining</div>
+    </div>
+    <div class="stat">
+      <div class="big">10×</div>
+      <div class="label">sessions per dev / week</div>
+    </div>
+    <div class="stat">
+      <div class="big">4h+</div>
+      <div class="label">lost weekly per dev</div>
+    </div>
+  </div>
+  <p style="text-align:center; color: var(--fg-mute); margin-top: 12px;">
+    Plus the harder-to-measure cost of Claude repeating the same wrong choice from last Tuesday. 😤
+  </p>
+</section>
+
+<!-- ============================================================== -->
+<!-- WHAT                                                             -->
+<!-- ============================================================== -->
+<section id="what">
+  <h2><span class="num">02</span><span class="emoji">✨</span>What agent-daemon does</h2>
+  <p class="lead">Three superpowers, no API key required for daily use.</p>
+
+  <div class="cards">
+    <div class="card">
+      <span class="icon">🧠</span>
+      <h4>Persistent memory</h4>
+      <p>Corrections, conventions, decisions captured automatically. Next session loads with this context already in place.</p>
+    </div>
+    <div class="card">
+      <span class="icon">🎯</span>
+      <h4>229 skills auto-triggered</h4>
+      <p>Type <code>"kuch toot gaya"</code> → <code>debug-triage</code> skill fires with a 9-class bug checklist. English + Hinglish.</p>
+    </div>
+    <div class="card">
+      <span class="icon">🚀</span>
+      <h4>Self-improves</h4>
+      <p>Skills evolve based on real failure traces. Memory grows. Claude gets better at <em>your</em> codebase.</p>
+    </div>
+  </div>
+
+  <h3>Before vs After 🔁</h3>
+  <div class="compare">
+    <div class="bad">
+      <h4>😴 Vanilla Claude Code</h4>
+      <ul>
+        <li>Empty memory every session</li>
+        <li>Same explanations every day</li>
+        <li>Same mistakes repeated</li>
+        <li>No learning loop</li>
+        <li>No multi-agent coordination</li>
+      </ul>
+    </div>
+    <div class="good">
+      <h4>⚡ With agent-daemon</h4>
+      <ul>
+        <li>Memory pre-loaded on startup</li>
+        <li>Conventions remembered</li>
+        <li>Past corrections surface</li>
+        <li>Skills improve from failures</li>
+        <li>Multi-agent teams on big tasks</li>
+      </ul>
+    </div>
+  </div>
+  <p style="color: var(--fg-mute); text-align: center; margin-top: 16px;">Same Claude. Same model. Different starting position.</p>
+</section>
+
+<!-- ============================================================== -->
+<!-- INSTALL                                                          -->
+<!-- ============================================================== -->
+<section id="install">
+  <h2><span class="num">03</span><span class="emoji">🛠️</span>Install — fresh laptop to daemon-ready</h2>
+  <p class="lead">Five steps. ~10 minutes. Zero API keys.</p>
+
+  <h3>📋 Prerequisites checklist</h3>
+  <table>
+    <tr><th>Tool</th><th>Required?</th><th>Install command</th></tr>
+    <tr><td>✅ Node.js 22+</td><td><span class="ok">Required</span></td><td><code>winget install OpenJS.NodeJS.LTS</code> · <code>brew install node</code></td></tr>
+    <tr><td>✅ git</td><td><span class="ok">Required</span></td><td><code>winget install Git.Git</code> · <code>brew install git</code></td></tr>
+    <tr><td>✅ Claude Code CLI</td><td><span class="ok">Required</span></td><td><a href="https://docs.anthropic.com/claude-code" style="color: var(--cyan);">docs.anthropic.com/claude-code</a></td></tr>
+    <tr><td>🟡 qmd</td><td>Recommended</td><td><code>npm install -g @tobilu/qmd</code></td></tr>
+    <tr><td>⚪ graphify</td><td>Optional</td><td><code>pip install graphifyy</code></td></tr>
+  </table>
+
+  <h3>🚀 Step 1 — Install Claude Code</h3>
+  <pre><code><span class="cmt"># Mac</span>
+brew install --cask claude
+
+<span class="cmt"># Windows</span>
+winget install Anthropic.Claude
+
+<span class="cmt"># Verify</span>
+claude --version</code></pre>
+
+  <h3>📦 Step 2 — Clone agent-daemon repo</h3>
+  <pre><code>git clone https://github.com/Pankaj-mobiux/Agent-Daemon.git
+cd Agent-Daemon</code></pre>
+  <p style="color: var(--fg-mute); font-size: 14px;">📍 Pick any path you like. Just remember where it lives — <code>npm link</code> next will connect <code>ad</code> to it.</p>
+
+  <h3>🔗 Step 3 — Register <code>ad</code> globally</h3>
+  <pre><code>cd runtime
+npm install
+npm link
+
+<span class="cmt"># Now `ad` works from anywhere</span>
+ad --version</code></pre>
+
+  <h3>✅ Step 4 — Verify with <code>ad doctor</code></h3>
+  <pre class="terminal no-prompt"><code>$ ad doctor
+
+<span class="ok">  ✓</span>  agent-daemon CLI                  running from .../Agent-Daemon/runtime
+<span class="ok">  ✓</span>  claude on PATH                    .../claude.exe
+<span class="ok">  ✓</span>  Auth                              no API key needed
+<span class="ok">  ✓</span>  better-sqlite3 (episodic memory)  installed
+<span class="ok">  ✓</span>  Claude Code settings.json         hooks wired
+<span class="ok">  ✓</span>  constitution/, memory-templates/, skills/, hooks/
+
+agent-daemon: <span class="ok">all checks passed.</span></code></pre>
+
+  <h3>🎁 Step 5 — Optional add-ons</h3>
+  <pre><code><span class="cmt"># qmd — 10x faster skill retrieval (recommended)</span>
+npm install -g @tobilu/qmd
+
+<span class="cmt"># graphify — codebase knowledge graph (optional)</span>
+pip install graphifyy</code></pre>
+  <div class="callout success"><span class="emoji">💡</span>Both are auto-detected by <code>ad init</code> in the next step.</div>
+</section>
+
+<!-- ============================================================== -->
+<!-- USE                                                              -->
+<!-- ============================================================== -->
+<section id="use">
+  <h2><span class="num">04</span><span class="emoji">🎬</span>Use it in your project</h2>
+  <p class="lead">Two commands and one bootstrap. Done.</p>
+
+  <h3>1️⃣ Initialize in your project</h3>
+  <pre><code>cd /path/to/your-project
+
+ad init --plan --skills-mode smart   <span class="cmt"># preview first</span>
+ad init                              <span class="cmt"># apply</span></code></pre>
+
+  <h4>4 install modes</h4>
+  <table>
+    <tr><th>Mode</th><th>What it installs</th></tr>
+    <tr><td><code>smart</code> <em>(default)</em></td><td>🧠 Detects stack (React, FastAPI, Eleventy…) → only relevant skills</td></tr>
+    <tr><td><code>all</code></td><td>📦 Every skill (229) — heavy but everything available</td></tr>
+    <tr><td><code>minimal</code></td><td>🪶 Just the <em>always</em> block (bootstrap, orchestrate, skill-author…)</td></tr>
+    <tr><td><code>manual</code></td><td>📋 Profile-listed skills only (legacy)</td></tr>
+  </table>
+
+  <h3>2️⃣ What gets created</h3>
+  <div class="flow">
+<pre>your-project/
+├── 📂 .agent-daemon/
+│   ├── 📂 memory/                  ← 7 markdown files (the brain)
+│   │   ├── projectbrief.md
+│   │   ├── productContext.md
+│   │   ├── activeContext.md        ← most updates land here
+│   │   ├── systemPatterns.md
+│   │   ├── techContext.md
+│   │   ├── progress.md
+│   │   └── user.md
+│   ├── 📂 handoffs/                ← per-session brief
+│   └── 📄 sessions.jsonl           ← audit ledger
+├── 📂 .claude/skills/              ← project-local skills
+├── 📄 AGENTS.md                    ← multi-agent guide
+├── 📂 session-logs/                ← journal (gitignored)
+└── 📄 CLAUDE.md                    ← managed block appended
+</pre>
+  </div>
+
+  <h3>3️⃣ Bootstrap memory (one time, ~$0.05)</h3>
+  <p>In your <strong>first</strong> Claude Code session for the project, type:</p>
+  <pre class="no-prompt"><code><span class="str">"bootstrap the daemon memory using the bootstrap-daemon skill"</span></code></pre>
+  <p>Claude scans <code>package.json</code>, <code>README.md</code>, key folders, recent git log → fills 7 memory files with <strong>real project context</strong>. After this, future sessions are essentially free. 🎉</p>
+</section>
+
+<!-- ============================================================== -->
+<!-- DAILY MAGIC                                                      -->
+<!-- ============================================================== -->
+<section id="magic">
+  <h2><span class="num">05</span><span class="emoji">🪄</span>Daily magic — what happens during a session</h2>
+
+  <h3>🔄 The session lifecycle</h3>
+  <div class="flow">
+<pre>
+   📱 You launch Claude Code
+        ↓
+   ⚡ SessionStart hook fires
+        ├─ Load constitution (12 cardinal rules)
+        ├─ Load memory/*.md (your project context)
+        └─ Load recent learnings (cross-session)
+        ↓
+   🧑‍💻 You work normally — Claude has context
+        ├─ Hooks capture file edits, bash runs (silent)
+        ├─ Skills auto-trigger from what you say
+        └─ Learnings buffered as you go
+        ↓
+   👋 You say "bye, aaj ka kaam ho gaya"
+        ↓
+   📝 session-close skill runs (no API key)
+        ├─ Update session-logs/
+        ├─ Emit digest block
+        └─ Write handoff doc
+        ↓
+   💾 SessionEnd hook → memory updated
+        ↓
+   🚀 Next session starts smarter
+</pre>
+  </div>
+
+  <h3>🗣️ Hinglish + English triggers</h3>
+  <table>
+    <tr><th>You say</th><th>Skill fires</th><th>What it does</th></tr>
+    <tr><td><em>"kuch toot gaya"</em></td><td><code>debug-triage</code></td><td>9-class bug checklist + triage ladder</td></tr>
+    <tr><td><em>"contact form banao"</em></td><td><code>implement-feature</code></td><td>Search-existing + correctness checklist</td></tr>
+    <tr><td><em>"ye review karo"</em></td><td><code>review-slice</code></td><td>Severity-grouped findings</td></tr>
+    <tr><td><em>"har baar yaad rakhna pnpm use karna"</em></td><td><code>skill-author</code></td><td>Dedup-first skill creation</td></tr>
+    <tr><td><em>"evolve skill debug-triage"</em></td><td><code>gepa-evolve-inline</code></td><td>No-API skill evolution</td></tr>
+    <tr><td><em>"bye, aaj ka kaam ho gaya"</em></td><td><code>session-close</code></td><td>7-phase session-end protocol</td></tr>
+  </table>
+
+  <h3>📈 Self-improving in 7 days</h3>
+  <div class="compare">
+    <div class="bad">
+      <h4>📅 Day 1 — fresh</h4>
+      <pre style="margin: 8px 0; font-size: 12px;"><code>activeContext.md
+
+{{PLACEHOLDER — bootstrap pending}}</code></pre>
+      <p style="font-size: 13px; color: var(--fg-mute);">sessions.jsonl: empty<br>episodic.db: 0 rows</p>
+    </div>
+    <div class="good">
+      <h4>📅 Day 7 — smart</h4>
+      <pre style="margin: 8px 0; font-size: 12px;"><code><span class="cmt">- correction (0.85): use pnpm, not npm
+- gotcha (0.7): Eleventy _includes resolution
+- convention (0.7): images by page-name
+... 12 more</span></code></pre>
+      <p style="font-size: 13px; color: var(--fg-mute);">sessions.jsonl: 12 lines<br>episodic.db: 47 rows</p>
+    </div>
+  </div>
+
+  <h3>🔮 Advanced features (when you're ready)</h3>
+  <div class="cards">
+    <div class="card">
+      <span class="icon">✍️</span>
+      <h4>skill-author</h4>
+      <p>Dedup-first skill creation. ≥70% overlap → append, not new file. Prevents 5-near-duplicates problem.</p>
+    </div>
+    <div class="card">
+      <span class="icon">🔬</span>
+      <h4>GEPA inline</h4>
+      <p>Skills improve themselves. <code>ad evolve --list-candidates</code> → active session reflects → proposal written. Zero API.</p>
+    </div>
+    <div class="card">
+      <span class="icon">🤝</span>
+      <h4>Multi-agent</h4>
+      <p><code>ad tc --template full-stack-feature</code>. Lead + backend + frontend + QA in parallel git worktrees.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<!-- SAFE                                                             -->
+<!-- ============================================================== -->
+<section id="safe">
+  <h2><span class="num">06</span><span class="emoji">🛡️</span>Is this Anthropic-ban-safe?</h2>
+  <p class="lead">Short answer: <span class="ok">yes — per-developer install on own laptop = 100% safe.</span></p>
+
+  <p>Anthropic banned third-party tools like <strong>OpenClaw</strong> in Feb–Apr 2026 for token arbitrage. agent-daemon does NOT do that.</p>
+
+  <div class="compare">
+    <div class="bad">
+      <h4>❌ What Anthropic banned</h4>
+      <ul>
+        <li>Extracting OAuth tokens from Claude.ai</li>
+        <li>Spoofing the Claude Code harness</li>
+        <li>Subscription auth on VPS / shared server</li>
+        <li>Token arbitrage (sub-priced sub → API workload)</li>
+      </ul>
+    </div>
+    <div class="good">
+      <h4>✅ What agent-daemon does</h4>
+      <ul>
+        <li>Uses Claude Code's <em>documented</em> hooks</li>
+        <li>Uses native Skills convention (<code>~/.claude/skills/</code>)</li>
+        <li>Shells out to the <em>official</em> claude CLI</li>
+        <li>Uses ANTHROPIC_API_KEY (Commercial Terms, optional)</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="callout success">
+    <span class="emoji">🔒</span><strong>Bottom line:</strong> Each Mobiux dev installs on their own laptop with their own Claude Code subscription. Zero TOS issues. <em>Verified 2026-05-21.</em>
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<!-- TRY                                                              -->
+<!-- ============================================================== -->
+<section id="try">
+  <div class="cta">
+    <h2><span class="emoji">🚀</span>Try it today</h2>
+    <p style="color: var(--fg-mute); margin-bottom: 24px;">Four lines. Ten minutes. Smarter Claude forever.</p>
+    <pre class="terminal" style="max-width: 600px; margin: 0 auto;"><code>git clone https://github.com/Pankaj-mobiux/Agent-Daemon.git
+cd Agent-Daemon/runtime
+npm install && npm link
+ad doctor</code></pre>
+
+    <div class="cards" style="margin-top: 36px;">
+      <div class="card">
+        <span class="icon">📖</span>
+        <h4>Docs</h4>
+        <p>README.md · CHANGELOG.md · docs/workflow.md · docs/troubleshooting.md</p>
+      </div>
+      <div class="card">
+        <span class="icon">💬</span>
+        <h4>Channels</h4>
+        <p>Slack <code>#agent-daemon</code> · Weekly dogfood sync · GitHub issues for bugs</p>
+      </div>
+      <div class="card">
+        <span class="icon">🐙</span>
+        <h4>Repo</h4>
+        <p><a href="https://github.com/Pankaj-mobiux/Agent-Daemon" style="color: var(--cyan);">github.com/Pankaj-mobiux/Agent-Daemon</a></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<!-- ============================================================== -->
+<!-- FOOTER                                                           -->
+<!-- ============================================================== -->
+<footer>
+  <p>🤖 agent-daemon · v0.2.0 + Phase 5 · MIT · Built at Mobiux</p>
+  <p style="margin-top: 6px;">Questions? Ping <a href="#try">#agent-daemon</a> on Slack.</p>
+</footer>
+
+</body>
+</html>

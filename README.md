@@ -620,7 +620,7 @@ Copy-paste configuration templates:
 ## Docs
 
 **Start here:**
-- [Onboarding deck](docs/onboarding-deck.md) — 28-slide zero-to-one walkthrough (Marp source — export PDF/PPTX/HTML via [docs/onboarding/README.md](docs/onboarding/README.md))
+- [Onboarding page](docs/onboarding.html) — single self-contained HTML page (open in any browser) — zero-to-one walkthrough with prerequisites, install, daily flow, advanced features, TOS safety
 - [Workflow](docs/workflow.md) — `ad watch` vs `ad digest-latest`, the ending protocol, decision matrix
 - [Troubleshooting](docs/troubleshooting.md) — 13 common failure modes with fixes (Windows watch, LLM fallback, hook misses, etc.)
 - [Architecture](docs/architecture.md) — Three loops, components, data flow, file-system layout
