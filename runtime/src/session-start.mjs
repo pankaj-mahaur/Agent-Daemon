@@ -25,6 +25,14 @@ const MAX_OUTPUT_BYTES = 9000;
 export async function runSessionStart(opts) {
   const sections = [];
 
+  // -1. Rotate activeContext.md if it has grown too large AND is older than
+  //     a week. activeContext.md gets read raw into the 9KB SessionStart
+  //     injection; unbounded growth crowds out constitution + learnings.
+  //     See rotateActiveContextIfNeeded for thresholds. Best-effort.
+  try {
+    await rotateActiveContextIfNeeded(opts.cwd, opts.verbose);
+  } catch { /* fail-safe — never block session-start */ }
+
   // 0. Drain the learning-journal (continuous-extraction buffer from
   //    UserPromptSubmit hooks in prior sessions) into memory + episodic
   //    SQLite. Idempotent + fail-safe — never blocks session start.
@@ -381,4 +389,89 @@ function truncateToBytes(s, maxBytes) {
   let end = maxBytes;
   while (end > 0 && (buf[end] & 0xc0) === 0x80) end--;
   return buf.subarray(0, end).toString("utf8");
+}
+
+/* ------------------------------------------------------------------ */
+/* WS-8 — activeContext.md rotation                                    */
+/* ------------------------------------------------------------------ */
+
+const ROTATE_SIZE_THRESHOLD = 32 * 1024;             // 32KB
+const ROTATE_AGE_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+/**
+ * Rotate `<cwd>/.agent-daemon/memory/activeContext.md` if it has both grown
+ * past 32KB AND its oldest content is older than 7 days. Both thresholds
+ * must trigger together — size alone preserves "high-touch project last
+ * week", age alone preserves "low-traffic project with one important note".
+ *
+ * On trigger: move oldest 50% (by line count) to
+ *   `<cwd>/.agent-daemon/archive/activeContext-<ISO-date>.md`
+ * Keep newest 50% in place. Idempotent and best-effort — failure to rotate
+ * never blocks session-start.
+ *
+ * @param {string} cwd
+ * @param {boolean} [verbose]
+ * @returns {Promise<{ rotated: boolean, reason?: string, archive?: string }>}
+ */
+export async function rotateActiveContextIfNeeded(cwd, verbose = false) {
+  if (!cwd) return { rotated: false, reason: "no cwd" };
+
+  const memDir   = path.join(cwd, ".agent-daemon", "memory");
+  const filePath = path.join(memDir, "activeContext.md");
+
+  let stat;
+  try { stat = await fs.stat(filePath); }
+  catch { return { rotated: false, reason: "no activeContext.md" }; }
+
+  if (!stat.isFile()) return { rotated: false, reason: "not a file" };
+
+  const sizeOk = stat.size > ROTATE_SIZE_THRESHOLD;
+  const ageOk  = (Date.now() - stat.mtimeMs) > ROTATE_AGE_THRESHOLD_MS;
+
+  if (!sizeOk || !ageOk) {
+    return {
+      rotated: false,
+      reason: `thresholds not met (size=${stat.size}B / ${ROTATE_SIZE_THRESHOLD}B; age=${Math.round((Date.now() - stat.mtimeMs)/86400000)}d / 7d)`
+    };
+  }
+
+  // Both thresholds hit — split file at midpoint by line count
+  let content;
+  try { content = await fs.readFile(filePath, "utf8"); }
+  catch { return { rotated: false, reason: "read failed" }; }
+
+  const lines = content.split(/\r?\n/);
+  if (lines.length < 10) return { rotated: false, reason: "too few lines to split" };
+
+  const mid    = Math.floor(lines.length / 2);
+  const oldest = lines.slice(0, mid).join("\n");
+  const newest = lines.slice(mid).join("\n");
+
+  const archiveDir  = path.join(cwd, ".agent-daemon", "archive");
+  const dateStamp   = new Date().toISOString().slice(0, 10);  // YYYY-MM-DD
+  const archivePath = path.join(archiveDir, `activeContext-${dateStamp}.md`);
+
+  try {
+    await fs.mkdir(archiveDir, { recursive: true });
+
+    // If archive already exists for today (rotation ran earlier today), append
+    let existingArchive = "";
+    try { existingArchive = await fs.readFile(archivePath, "utf8"); } catch { /* new */ }
+    const merged = existingArchive
+      ? existingArchive + "\n\n---\n\n" + oldest
+      : `# Archived from activeContext.md on ${new Date().toISOString()}\n\n${oldest}`;
+    await fs.writeFile(archivePath, merged, "utf8");
+
+    // Truncate activeContext.md to newest half + a breadcrumb pointing to archive
+    const breadcrumb = `<!-- agent-daemon: ${mid} earlier line(s) rotated to ${path.relative(cwd, archivePath)} on ${dateStamp} -->\n\n`;
+    await fs.writeFile(filePath, breadcrumb + newest, "utf8");
+
+    if (verbose) {
+      process.stderr.write(`agent-daemon: rotated ${mid} lines of activeContext.md → ${path.relative(cwd, archivePath)}\n`);
+    }
+
+    return { rotated: true, archive: archivePath };
+  } catch (err) {
+    return { rotated: false, reason: `archive failed: ${err.message}` };
+  }
 }
