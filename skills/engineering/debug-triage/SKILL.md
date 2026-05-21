@@ -1,6 +1,6 @@
 ---
 name: debug-triage
-description: Use when investigating a bug, unexpected behavior, empty data, blank screen, weird console error, or any "X is broken / not working / showing zero" report. Provides a strict triage order (services -> data -> cache -> request -> code) and a recurring bug-class catalog with greppable patterns.
+description: Use when investigating a bug, unexpected behavior, empty data, blank screen, weird console error, or any "X is broken / not working / showing zero" report. Also fires on Hinglish — "kuch toot gaya", "kaam nahi kar raha", "broken hai", "error aa raha hai", "crash ho raha", "kuch galat hai", "issue aa rahi hai". Provides a strict triage order (services -> data -> cache -> request -> code) and a recurring bug-class catalog with greppable patterns.
 license: MIT
 metadata:
   author: agent-daemon

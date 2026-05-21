@@ -1,6 +1,6 @@
 ---
 name: implement-feature
-description: Implementing a new feature, page, hook, component, or backend endpoint. Use when the user asks to "add", "implement", "build", "create", or "wire up" something. Enforces a "search before you write" pass over existing utilities, matches existing file/layout patterns, applies a frontend/backend correctness checklist, and produces one-commit-per-root-cause output.
+description: Implementing a new feature, page, hook, component, or backend endpoint. Use when the user asks to "add", "implement", "build", "create", "wire up", or in Hinglish "ye banao", "feature add karo", "iska page banao", "wire up karo", "naya banao", "is feature ko implement karo". Enforces a "search before you write" pass over existing utilities, matches existing file/layout patterns, applies a frontend/backend correctness checklist, and produces one-commit-per-root-cause output.
 license: MIT
 metadata:
   author: agent-daemon
