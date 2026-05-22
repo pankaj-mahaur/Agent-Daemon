@@ -46,7 +46,13 @@
 const DIGEST_BLOCK_RE = /<agent-daemon[-:]digest>\s*([\s\S]*?)\s*<\/agent-daemon[-:]digest>/i;
 const DIGEST_BLOCK_RE_GLOBAL = /<agent-daemon[-:]digest>\s*([\s\S]*?)\s*<\/agent-daemon[-:]digest>/gi;
 
-const VALID_TYPES   = new Set(["correction", "confirmation", "pattern", "tool", "gotcha", "decision"]);
+// VALID_TYPES is intentionally aligned with — but slightly narrower than — the
+// `category` column enum in runtime/src/memory/sqlite.mjs (which also accepts
+// 'preference'). 'fact' was added with Bug B2 salvage because the redseer-style
+// category-keyed YAML emits "additions" entries that are most naturally typed
+// as facts. Adding new types here is safe; SQLite has no enforcement on
+// `category` content.
+const VALID_TYPES   = new Set(["correction", "confirmation", "pattern", "tool", "gotcha", "decision", "fact"]);
 const VALID_SPEAKERS = new Set(["user", "agent"]);
 const VALID_SCOPES   = new Set(["project", "global"]);
 
@@ -129,7 +135,21 @@ export function extractFromAgentBlock(summary) {
       continue;
     }
 
-    const learnings = sanitizeLearnings(parsed.value.learnings);
+    let learnings = sanitizeLearnings(parsed.value.learnings);
+
+    // Schema-drift salvage: some agents emit a category-keyed YAML shape
+    // (techContext.additions[], systemPatterns.patterns[], …) instead of a
+    // flat learnings[] array. parseDigestPayload's simple-YAML parser
+    // doesn't recover that shape, so we run a dedicated category-keyed
+    // parser on the raw payload as a fallback. Only kicks in when the
+    // canonical path produced nothing — never overrides good extractions.
+    if (learnings.length === 0) {
+      const flattened = parseCategoryKeyedYaml(m[1]);
+      if (flattened && flattened.length > 0) {
+        learnings = sanitizeLearnings(flattened);
+      }
+    }
+
     return {
       found: true,
       learnings,
@@ -394,6 +414,161 @@ function unquoteScalar(s) {
     return s.slice(1, -1);
   }
   return s;
+}
+
+/* ------------------------------------------------------------------ */
+/* Category-keyed YAML salvage                                          */
+/*                                                                      */
+/* Some agents emit a digest payload organized by memory-file category */
+/* with `additions` / `patterns` (and friends) sub-arrays, instead of   */
+/* a flat `learnings:` list. Real-world example from a redseer session: */
+/*                                                                      */
+/*   techContext:                                                       */
+/*     additions:                                                       */
+/*       - "minisearch@7.2.0 added to deps…"                            */
+/*       - "Next 15 dynamic route handlers receive params as a Promise" */
+/*     patterns:                                                        */
+/*       - "Path-param ids that flow into Typesense filter_by clauses…" */
+/*   systemPatterns:                                                    */
+/*     patterns:                                                        */
+/*       - "React 19's `inert` boolean prop is the right primitive…"    */
+/*                                                                      */
+/* This parser flattens that shape into a learnings[] array compatible  */
+/* with sanitizeLearnings. Sub-key → learning type mapping:             */
+/*   additions     → fact                                               */
+/*   patterns      → pattern                                            */
+/*   corrections   → correction                                         */
+/*   gotchas       → gotcha                                             */
+/*   decisions     → decision                                           */
+/*   tools         → tool                                               */
+/*   confirmations → confirmation                                       */
+/* The category name itself (e.g. "techContext") becomes the entry's    */
+/* first tag, so downstream search can filter by memory area.           */
+/*                                                                      */
+/* Scope inference: `user` is the only `global`-scoped category; all    */
+/* others default to `project`.                                         */
+/* ------------------------------------------------------------------ */
+
+const MEMORY_CATEGORIES = new Set([
+  "projectbrief", "techContext", "systemPatterns",
+  "activeContext", "progress", "productContext", "user"
+]);
+
+const CATEGORY_SUBKEY_TO_TYPE = {
+  additions:     "fact",
+  patterns:      "pattern",
+  corrections:   "correction",
+  gotchas:       "gotcha",
+  decisions:     "decision",
+  tools:         "tool",
+  confirmations: "confirmation"
+};
+
+/**
+ * Detect + flatten the category-keyed YAML shape.
+ *
+ * Returns `null` when the input doesn't match the shape (no recognized
+ * memory-category headers OR no list items recovered). Returns a
+ * `learnings[]` array shaped like sanitizeLearnings expects when it does.
+ *
+ * Public (exported) so tests can pin behavior directly. This is a
+ * single-pass line walker — no general YAML parsing.
+ *
+ * @param {string} raw       The digest-block payload text.
+ * @returns {object[] | null}
+ */
+export function parseCategoryKeyedYaml(raw) {
+  if (!raw || typeof raw !== "string") return null;
+
+  // Strip ```yaml / ```yml code fences if present (mirrors parseDigestPayload).
+  // Some agents wrap the YAML in fences inside the digest block.
+  const trimmed = raw.trim().replace(
+    /^```(?:yaml|yml|json)?\s*\n([\s\S]*?)\n```\s*$/i, "$1"
+  ).trim();
+
+  // Cheap pre-check: bail unless at least one memory-category header at
+  // column 0 is present. Saves walking a payload that clearly isn't this shape.
+  const lines = trimmed.split(/\r?\n/);
+  let sawCategoryHeader = false;
+  for (const line of lines) {
+    const m = line.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s*:/);
+    if (m && MEMORY_CATEGORIES.has(m[1])) { sawCategoryHeader = true; break; }
+  }
+  if (!sawCategoryHeader) return null;
+
+  const learnings = [];
+  let currentCategory = null;
+  let currentSubkey = null;
+
+  for (const rawLine of lines) {
+    // Strip trailing comments + skip blank lines
+    const commentIdx = indexOfYamlComment(rawLine);
+    const clean = commentIdx >= 0 ? rawLine.slice(0, commentIdx) : rawLine;
+    if (!clean.trim()) continue;
+
+    const indent = clean.length - clean.trimStart().length;
+    const stripped = clean.trim();
+
+    // Column 0 key — must be a memory-category to "open" a scope, otherwise close
+    if (indent === 0) {
+      const m = stripped.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*(.*)$/);
+      if (m && MEMORY_CATEGORIES.has(m[1])) {
+        currentCategory = m[1];
+        currentSubkey = null;
+      } else {
+        // Some other top-level key (session_id, branch, session_summary, …).
+        // Close any open category scope so stray list items don't attach.
+        currentCategory = null;
+        currentSubkey = null;
+      }
+      continue;
+    }
+
+    // List item under an open category. Two shapes supported, disambiguated
+    // by the item's indent:
+    //   (a) Direct under category — indent === 2, no subkey involved.
+    //       Default type = "fact" (additions-like). Seen in older redseer
+    //       sessions:  projectbrief:\n  - "fact 1"
+    //   (b) Under a recognized subkey — indent >= 4, requires currentSubkey
+    //       to be set to one of CATEGORY_SUBKEY_TO_TYPE keys. Standard
+    //       variant:  techContext:\n  additions:\n    - "fact 1"
+    // Items at indent >= 4 with NO open subkey (e.g. under an unknown
+    // subkey like `notes:`) are skipped — captures user intent that
+    // unrecognized sub-scopes shouldn't pollute.
+    if (currentCategory && stripped.startsWith("- ")) {
+      const captureType = indent === 2
+        ? "fact"
+        : (indent >= 4 && currentSubkey ? CATEGORY_SUBKEY_TO_TYPE[currentSubkey] : null);
+      if (!captureType) continue;
+      let text = stripped.slice(2).trim();
+      if (text.startsWith('"') && text.endsWith('"')) text = text.slice(1, -1);
+      else if (text.startsWith("'") && text.endsWith("'")) text = text.slice(1, -1);
+      if (text.length < 5) continue;
+      learnings.push({
+        type:       captureType,
+        text,
+        scope:      currentCategory === "user" ? "global" : "project",
+        confidence: 0.7,
+        tags:       [currentCategory]
+      });
+      continue;
+    }
+
+    // Subkey under an open category, at indent 2 (standard 2-space YAML)
+    if (indent === 2 && currentCategory) {
+      const m = stripped.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*(.*)$/);
+      if (m && CATEGORY_SUBKEY_TO_TYPE[m[1]]) {
+        currentSubkey = m[1];
+        continue;
+      }
+      // Unknown subkey — leave subkey unset so future list items at this
+      // category use the default "fact" type instead of stale subkey
+      currentSubkey = null;
+      continue;
+    }
+  }
+
+  return learnings.length > 0 ? learnings : null;
 }
 
 /**
