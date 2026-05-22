@@ -183,12 +183,27 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
   const MANAGED_END = "<!-- agent-daemon:end -->";
   let claudeMdExists = false;
   let claudeMdHasSection = false;
+  let claudeMdSectionStale = false;
   try {
     const content = await fs.readFile(claudeMdPath, "utf8");
     claudeMdExists = true;
     claudeMdHasSection = content.includes(MANAGED_START);
     if (!claudeMdHasSection) {
       actions.push("+ Section in CLAUDE.md pointing to .agent-daemon/ (additive — existing content preserved)");
+    } else {
+      // Block exists — check if it matches the latest rendered template.
+      // If not, queue a refresh action so the early-return ("nothing to do")
+      // doesn't fire on already-initialized projects with stale managed blocks.
+      const startIdx = content.indexOf(MANAGED_START);
+      const endIdx = content.indexOf(MANAGED_END, startIdx);
+      if (startIdx !== -1 && endIdx !== -1) {
+        const existing = content.slice(startIdx, endIdx + MANAGED_END.length);
+        const expected = renderManagedClaudeBlock(MANAGED_START, MANAGED_END);
+        if (existing !== expected) {
+          claudeMdSectionStale = true;
+          actions.push("↻ Refresh CLAUDE.md managed block (new content: decision tree / workflow / discipline)");
+        }
+      }
     }
   } catch { /* no CLAUDE.md */ }
 
@@ -562,7 +577,7 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
   // Add/refresh managed section in CLAUDE.md. On re-run of `ad init` the
   // block between MANAGED_START / MANAGED_END is replaced in-place so existing
   // projects pick up content updates (decision tree, workflow diagram, etc.).
-  if (claudeMdExists) {
+  if (claudeMdExists && (!claudeMdHasSection || claudeMdSectionStale)) {
     const section = renderManagedClaudeBlock(MANAGED_START, MANAGED_END);
     if (!claudeMdHasSection) {
       await fs.appendFile(claudeMdPath, "\n" + section + "\n", "utf8");
