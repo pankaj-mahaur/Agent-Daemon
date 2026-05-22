@@ -10,7 +10,7 @@
 // All writes use prepared statements + transactions for safety.
 
 import path from "node:path";
-import { open } from "./sqlite.mjs";
+import { open, learningContentHash } from "./sqlite.mjs";
 
 /* ------------------------------------------------------------------ */
 /* Lifecycle                                                           */
@@ -118,9 +118,15 @@ export async function insertLearning(learning) {
   const handle = await db();
   if (!handle) return null;
   const tagsJson = learning.tags ? JSON.stringify(learning.tags) : null;
+  const contentHash = learningContentHash(learning.text);
+  // INSERT OR IGNORE: same text from a different session collides on the
+  // partial unique index `idx_learnings_content_hash` and is skipped
+  // silently. (We use OR IGNORE instead of ON CONFLICT(col) because SQLite's
+  // UPSERT requires a FULL unique constraint as the conflict target —
+  // partial indexes don't qualify. OR IGNORE works with either.)
   const result = handle.run(
-    `INSERT INTO learnings (session_id, project_slug, category, text, evidence, confidence, tags, applied_to)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR IGNORE INTO learnings (session_id, project_slug, category, text, evidence, confidence, tags, applied_to, content_hash)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       learning.sessionId || null,
       learning.projectSlug || null,
@@ -129,9 +135,12 @@ export async function insertLearning(learning) {
       learning.evidence || null,
       learning.confidence ?? 0.5,
       tagsJson,
-      learning.appliedTo || null
+      learning.appliedTo || null,
+      contentHash
     ]
   );
+  // result.changes is 0 when ON CONFLICT skipped — return null to signal dedup.
+  if (!result.changes) return null;
   return result.lastInsertRowid;
 }
 
@@ -148,12 +157,14 @@ export async function insertLearnings(learnings) {
   handle.transaction(() => {
     for (const l of learnings) {
       const tagsJson = l.tags ? JSON.stringify(l.tags) : null;
+      const contentHash = learningContentHash(l.text);
       const r = handle.run(
-        `INSERT INTO learnings (session_id, project_slug, category, text, evidence, confidence, tags, applied_to)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [l.sessionId || null, l.projectSlug || null, l.category, l.text, l.evidence || null, l.confidence ?? 0.5, tagsJson, l.appliedTo || null]
+        `INSERT OR IGNORE INTO learnings (session_id, project_slug, category, text, evidence, confidence, tags, applied_to, content_hash)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [l.sessionId || null, l.projectSlug || null, l.category, l.text, l.evidence || null, l.confidence ?? 0.5, tagsJson, l.appliedTo || null, contentHash]
       );
-      ids.push(r.lastInsertRowid);
+      // Push null for deduped (skipped) inserts so caller knows the count.
+      ids.push(r.changes ? r.lastInsertRowid : null);
     }
   });
   return ids;

@@ -17,6 +17,7 @@
 
 import fs from "node:fs/promises";
 import path from "node:path";
+import { createHash } from "node:crypto";
 
 /**
  * Full schema (idempotent — uses IF NOT EXISTS everywhere).
@@ -151,6 +152,7 @@ CREATE TABLE IF NOT EXISTS learnings (
   superseded_by   INTEGER,                                     -- denormalized reverse pointer
   tags            TEXT,                                        -- JSON array of strings (file paths, tech names)
   applied_to      TEXT,                                        -- 'memory.md' | 'skill:debug-triage' | 'constitution' | etc.
+  content_hash    TEXT,                                        -- 16-hex sha256 of trimmed text — dedup key
   created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   last_verified_at TEXT,
   valid_until     TEXT,                                        -- when this learning expires / is invalidated
@@ -160,6 +162,10 @@ CREATE TABLE IF NOT EXISTS learnings (
 CREATE INDEX IF NOT EXISTS idx_learnings_project  ON learnings(project_slug, status, confidence DESC);
 CREATE INDEX IF NOT EXISTS idx_learnings_category ON learnings(category, status, confidence DESC);
 CREATE INDEX IF NOT EXISTS idx_learnings_session  ON learnings(session_id);
+-- NOTE: the unique partial index on content_hash is created by the migration
+-- runner in open() (migrateLearningsContentHash), NOT here in SCHEMA. Doing
+-- it here would fail on legacy DBs whose learnings table predates the
+-- content_hash column — SCHEMA runs before the migration adds the column.
 
 -- FTS5 virtual table over learnings.text
 CREATE VIRTUAL TABLE IF NOT EXISTS learnings_fts USING fts5(
@@ -336,6 +342,10 @@ export async function open(opts = {}) {
   const raw = new Database(dbPath);
   raw.exec(SCHEMA);
 
+  // Run migrations AFTER SCHEMA exec. Each migration is idempotent + safe to
+  // re-run on already-migrated DBs.
+  migrateLearningsContentHash(raw);
+
   return {
     raw,
     path: dbPath,
@@ -345,6 +355,102 @@ export async function open(opts = {}) {
     transaction: (fn) => raw.transaction(fn)(),
     close: () => raw.close()
   };
+}
+
+/**
+ * Compute the 16-char hex SHA-256 fingerprint of a learning's text.
+ * 64 bits of entropy — collision-resistant enough for dedup; cheap.
+ *
+ * Trims surrounding whitespace so cosmetic drift ("foo " vs "foo")
+ * collapses to the same hash. Case-sensitive — "Use pnpm" and "use pnpm"
+ * intentionally hash differently because they may carry different intent
+ * (a quote vs a statement).
+ *
+ * @param {string} text
+ * @returns {string}
+ */
+export function learningContentHash(text) {
+  return createHash("sha256").update(String(text || "").trim()).digest("hex").slice(0, 16);
+}
+
+/**
+ * Idempotent migration: ensures `learnings.content_hash` column exists,
+ * backfills NULLs for legacy rows, dedupes by hash (keeping the oldest row
+ * per duplicate cluster), and creates the unique partial index. Safe to run
+ * on every `open()` — does nothing when already migrated.
+ *
+ * Originally introduced because `searchLearnings` was returning the same
+ * text 3× ("`git status` shows 4 changed files") — three sessions each
+ * extracted the same line, inserts went through unguarded, FTS returned
+ * all three.
+ *
+ * @param {any} raw — the better-sqlite3 Database
+ */
+function migrateLearningsContentHash(raw) {
+  // 1. Add column if missing
+  const cols = raw.prepare("PRAGMA table_info(learnings)").all();
+  const hasContentHash = cols.some(c => c.name === "content_hash");
+  if (!hasContentHash) {
+    raw.exec("ALTER TABLE learnings ADD COLUMN content_hash TEXT");
+  }
+
+  // 2. Backfill + dedupe in a single transaction.
+  //    The order matters: if we set hashes first and then dedupe, the UPDATE
+  //    can hit the unique index (already created on fresh DBs by SCHEMA).
+  //    Instead: compute hashes in JS, group by hash, keep the oldest id per
+  //    group, DELETE the rest, then UPDATE only the survivors. Avoids any
+  //    UNIQUE collision during migration.
+  const nullRows = raw.prepare(
+    "SELECT id, text FROM learnings WHERE content_hash IS NULL ORDER BY id ASC"
+  ).all();
+
+  if (nullRows.length > 0) {
+    const keepersByHash = new Map();  // hash → id of oldest row carrying this text
+    const dropIds = [];
+    for (const row of nullRows) {
+      const h = learningContentHash(row.text);
+      if (keepersByHash.has(h)) {
+        dropIds.push(row.id);
+      } else {
+        keepersByHash.set(h, row.id);
+      }
+    }
+
+    // Also check for collisions against ROWS THAT ALREADY HAVE A HASH (could
+    // happen if a partial migration ran before — defensive).
+    const existingHashes = raw.prepare(
+      "SELECT content_hash FROM learnings WHERE content_hash IS NOT NULL"
+    ).all().map(r => r.content_hash);
+    const existingSet = new Set(existingHashes);
+
+    raw.transaction(() => {
+      // Delete legacy duplicates first
+      if (dropIds.length > 0) {
+        const placeholders = dropIds.map(() => "?").join(",");
+        raw.prepare(`DELETE FROM learnings WHERE id IN (${placeholders})`).run(...dropIds);
+      }
+
+      // Update survivors. Skip any whose hash already exists (collision with
+      // an already-migrated row); delete those instead.
+      const update = raw.prepare("UPDATE learnings SET content_hash = ? WHERE id = ?");
+      const del    = raw.prepare("DELETE FROM learnings WHERE id = ?");
+      for (const [hash, id] of keepersByHash) {
+        if (existingSet.has(hash)) {
+          del.run(id);
+        } else {
+          update.run(hash, id);
+        }
+      }
+    })();
+  }
+
+  // 3. Ensure the unique partial index exists. Idempotent — the SCHEMA block
+  //    creates it on fresh DBs; this is the safety net for legacy DBs where
+  //    the column didn't exist when SCHEMA first ran.
+  raw.exec(
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_learnings_content_hash " +
+    "ON learnings(content_hash) WHERE content_hash IS NOT NULL"
+  );
 }
 
 /**
