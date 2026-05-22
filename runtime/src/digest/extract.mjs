@@ -193,16 +193,17 @@ function sanitizeLearnings(raw) {
   for (const item of raw.slice(0, 16)) {  // hard cap to avoid pathological blocks
     if (!item || typeof item !== "object") continue;
 
-    // Accept text from `text` or `lessons` (Claude's prose-takeaway drift)
-    const text = String(item.text || item.lessons || "").trim();
+    // Accept text from `text`, `lessons` (plural), or `lesson` (singular) —
+    // all three are forms Claude has emitted as prose-takeaway drift.
+    const text = String(item.text || item.lessons || item.lesson || "").trim();
     if (text.length < 5 || text.length > 1500) continue;
 
     // Accept type as-is; fall back to "pattern" when the entry carries a
-    // `tag`/`lessons` hint (clearly intentional, just off-schema). If the
-    // entry has neither a valid type nor a tag/lessons hint, it's noise.
+    // `tag`/`lessons`/`lesson` hint (clearly intentional, just off-schema).
+    // If the entry has neither a valid type nor any of these hints, it's noise.
     let type = String(item.type || "").trim();
     if (!VALID_TYPES.has(type)) {
-      if (item.tag || item.lessons) {
+      if (item.tag || item.lessons || item.lesson) {
         type = "pattern";
       } else {
         continue;

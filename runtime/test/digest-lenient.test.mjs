@@ -303,6 +303,66 @@ test("schema drift: too-short text after fallback to `lessons` still rejected (m
 });
 
 /* ------------------------------------------------------------------ */
+/* Bug B3 regression: sanitizeLearnings accepts `lesson` (singular).    */
+/* Mobiux session 2026-05-22 emitted entries like                       */
+/*   {"lesson":"...","tag":"..."} — singular, not the plural `lessons`. */
+/* Pre-fix: all such entries silently dropped.                          */
+/* ------------------------------------------------------------------ */
+
+test("schema drift: {lesson} (singular, no type) entries land as type=pattern", () => {
+  const text = `<agent-daemon-digest>
+{"learnings":[
+  {"lesson":"When ad digest-latest picks the wrong transcript, specify --transcript explicitly."}
+],"session_summary":""}
+</agent-daemon-digest>`;
+  const res = extractFromAgentBlock(makeSummary(text));
+  assert.equal(res.found, true);
+  assert.equal(res.learnings.length, 1, "singular lesson recovered");
+  assert.equal(res.learnings[0].type, "pattern");
+  assert.match(res.learnings[0].text, /ad digest-latest/);
+});
+
+test("schema drift: {lesson + tag} populates tags too", () => {
+  const text = `<agent-daemon-digest>
+{"learnings":[
+  {"lesson":"Bug B3 needed both lesson and lessons drift support.","tag":"digest-pipeline"}
+],"session_summary":""}
+</agent-daemon-digest>`;
+  const res = extractFromAgentBlock(makeSummary(text));
+  assert.equal(res.found, true);
+  assert.equal(res.learnings.length, 1);
+  assert.equal(res.learnings[0].type, "pattern");
+  assert.deepEqual(res.learnings[0].tags, ["digest-pipeline"]);
+});
+
+test("schema drift: mixed {lesson} singular + {lessons} plural + canonical all coexist", () => {
+  const text = `<agent-daemon-digest>
+{"learnings":[
+  {"type":"pattern","text":"canonical entry one"},
+  {"lesson":"singular drift entry"},
+  {"lessons":"plural drift entry"}
+],"session_summary":""}
+</agent-daemon-digest>`;
+  const res = extractFromAgentBlock(makeSummary(text));
+  assert.equal(res.found, true);
+  assert.equal(res.learnings.length, 3, "all three shapes coexist");
+  const texts = res.learnings.map(l => l.text).sort();
+  assert.deepEqual(texts, ["canonical entry one", "plural drift entry", "singular drift entry"]);
+});
+
+test("schema drift: too-short `lesson` still rejected (min 5 chars)", () => {
+  const text = `<agent-daemon-digest>
+{"learnings":[
+  {"lesson":"no"},
+  {"lesson":"properly sized singular lesson worth keeping"}
+],"session_summary":""}
+</agent-daemon-digest>`;
+  const res = extractFromAgentBlock(makeSummary(text));
+  assert.equal(res.found, true);
+  assert.equal(res.learnings.length, 1, "short lesson rejected, long one kept");
+});
+
+/* ------------------------------------------------------------------ */
 /* Bug B2 regression: category-keyed YAML salvage. Some agents emit a   */
 /* schema organized by memory-file category (techContext, systemPatterns, */
 /* etc.) with `additions[]` / `patterns[]` (and friends) sub-arrays      */
