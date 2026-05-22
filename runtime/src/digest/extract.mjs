@@ -147,6 +147,23 @@ export function extractFromAgentBlock(summary) {
 /**
  * Validate + coerce raw learnings array. Drops invalid entries silently.
  *
+ * Schema drift handling (Claude doesn't always follow the ending-protocol):
+ *
+ *   1. `text` may be missing; accept `lessons` as a synonym. Seen in the
+ *      wild as `{"lessons": "..."}` entries for prose-form takeaways with
+ *      no other fields.
+ *
+ *   2. `type` may be missing or set to a categorical label (e.g.
+ *      "projectbrief", "systemPatterns", "techContext"). When the schema
+ *      uses `tag` (singular) instead of one of our canonical VALID_TYPES,
+ *      treat it as a hint, default `type` to "pattern", and push the
+ *      tag value into `tags[]` so the categorical signal is preserved
+ *      for downstream search.
+ *
+ * Real-world failure that motivated this: mobiux-website session
+ * 2026-05-21 emitted 8 entries with `tag`/`text` shape and 4 with just
+ * `lessons` — all 12 got dropped silently before this change.
+ *
  * @param {unknown} raw
  * @returns {Learning[]}
  */
@@ -155,15 +172,34 @@ function sanitizeLearnings(raw) {
   const out = [];
   for (const item of raw.slice(0, 16)) {  // hard cap to avoid pathological blocks
     if (!item || typeof item !== "object") continue;
-    const type = String(item.type || "").trim();
-    if (!VALID_TYPES.has(type)) continue;
-    const text = String(item.text || "").trim();
+
+    // Accept text from `text` or `lessons` (Claude's prose-takeaway drift)
+    const text = String(item.text || item.lessons || "").trim();
     if (text.length < 5 || text.length > 1500) continue;
+
+    // Accept type as-is; fall back to "pattern" when the entry carries a
+    // `tag`/`lessons` hint (clearly intentional, just off-schema). If the
+    // entry has neither a valid type nor a tag/lessons hint, it's noise.
+    let type = String(item.type || "").trim();
+    if (!VALID_TYPES.has(type)) {
+      if (item.tag || item.lessons) {
+        type = "pattern";
+      } else {
+        continue;
+      }
+    }
+
     const evidence_quote = String(item.evidence_quote || "").slice(0, 400);
     const evidence_speaker = VALID_SPEAKERS.has(item.evidence_speaker) ? item.evidence_speaker : "user";
     const scope = VALID_SCOPES.has(item.scope) ? item.scope : "project";
     const confidence = clampNum(item.confidence, 0, 1, 0.5);
-    const tags = Array.isArray(item.tags) ? item.tags.filter(t => typeof t === "string").slice(0, 12) : [];
+
+    // Merge the `tag` (singular string) and `tags` (array) drift forms into
+    // one deduped array. Order: singular tag first (more specific), then tags array.
+    const tagsFromArray  = Array.isArray(item.tags) ? item.tags.filter(t => typeof t === "string") : [];
+    const tagsFromString = (typeof item.tag === "string" && item.tag.trim()) ? [item.tag.trim()] : [];
+    const tags = [...new Set([...tagsFromString, ...tagsFromArray])].slice(0, 12);
+
     out.push({ type, text, evidence_quote, evidence_speaker, scope, confidence, tags });
   }
   return out;

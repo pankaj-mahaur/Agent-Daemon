@@ -207,3 +207,97 @@ test("fallback: still respects most-recent-PARSEABLE-wins ordering", () => {
   assert.equal(res.learnings[0].text, "NEWEST lesson", "newest parseable block wins, not oldest");
   assert.equal(res.sessionSummary, "C");
 });
+
+/* ------------------------------------------------------------------ */
+/* Bug B regression: sanitizeLearnings accepts `tag`/`lessons` drift   */
+/* that Claude commonly emits instead of canonical `type`/`text`.      */
+/* Real-world failure: mobiux-website session 2026-05-21 had 8 with   */
+/* {tag,text} shape and 4 with {lessons} — all 12 dropped before fix.  */
+/* ------------------------------------------------------------------ */
+
+test("schema drift: {tag, text} entries land as type=pattern with tag preserved in tags[]", () => {
+  const text = `<agent-daemon-digest>
+{"learnings":[
+  {"tag":"projectbrief","text":"mobiux-website is an Eleventy + Nunjucks marketing site"},
+  {"tag":"systemPatterns","text":"design tokens: --bg #f4eedd, --accent #8a2430 (oxblood), --accent-on-accent #d9b865"}
+],"session_summary":"shipped 3 trello cards"}
+</agent-daemon-digest>`;
+  const res = extractFromAgentBlock(makeSummary(text));
+  assert.equal(res.found, true);
+  assert.equal(res.learnings.length, 2, "both tag-drift entries must land");
+  assert.equal(res.learnings[0].type, "pattern", "missing type defaults to pattern when tag is present");
+  assert.equal(res.learnings[1].type, "pattern");
+  assert.deepEqual(res.learnings[0].tags, ["projectbrief"], "tag value preserved in tags[]");
+  assert.deepEqual(res.learnings[1].tags, ["systemPatterns"]);
+  assert.equal(res.learnings[0].text, "mobiux-website is an Eleventy + Nunjucks marketing site");
+});
+
+test("schema drift: {lessons} (no type, no text) entries land as type=pattern", () => {
+  const text = `<agent-daemon-digest>
+{"learnings":[
+  {"lessons":"Disabling pinch-zoom via user-scalable=no is a WCAG 1.4.4 failure. Always flag the trade-off."}
+],"session_summary":""}
+</agent-daemon-digest>`;
+  const res = extractFromAgentBlock(makeSummary(text));
+  assert.equal(res.found, true);
+  assert.equal(res.learnings.length, 1);
+  assert.equal(res.learnings[0].type, "pattern", "missing type defaults to pattern when lessons is present");
+  assert.match(res.learnings[0].text, /pinch-zoom/);
+  assert.match(res.learnings[0].text, /WCAG 1\.4\.4/);
+});
+
+test("schema drift: mixed batch (canonical + tag-drift + lessons-drift) all land", () => {
+  const text = `<agent-daemon-digest>
+{"learnings":[
+  {"type":"tool","text":"use npm not yarn","confidence":0.9,"tags":["tooling"]},
+  {"tag":"techContext","text":"node 22.14, no test runner, no linter"},
+  {"lessons":"branch from main, not from another feature branch"}
+],"session_summary":"mixed"}
+</agent-daemon-digest>`;
+  const res = extractFromAgentBlock(makeSummary(text));
+  assert.equal(res.found, true);
+  assert.equal(res.learnings.length, 3, "no entry should be dropped");
+  const types = res.learnings.map(l => l.type);
+  assert.deepEqual(types, ["tool", "pattern", "pattern"]);
+  assert.deepEqual(res.learnings[0].tags, ["tooling"]);
+  assert.deepEqual(res.learnings[1].tags, ["techContext"], "tag value pushed into tags[]");
+  assert.deepEqual(res.learnings[2].tags, [], "no tag, no tags[] entries");
+});
+
+test("schema drift: {tag, tags} both present → merged + deduped, singular tag wins ordering", () => {
+  const text = `<agent-daemon-digest>
+{"learnings":[
+  {"tag":"systemPatterns","text":"oxblood theme conventions","tags":["css","theme","systemPatterns"]}
+],"session_summary":""}
+</agent-daemon-digest>`;
+  const res = extractFromAgentBlock(makeSummary(text));
+  assert.equal(res.found, true);
+  assert.equal(res.learnings[0].tags[0], "systemPatterns", "singular tag is first");
+  assert.equal(res.learnings[0].tags.length, 3, "duplicate 'systemPatterns' deduped");
+  assert.ok(res.learnings[0].tags.includes("css"));
+});
+
+test("schema drift: entries with NEITHER type NOR tag/lessons are still dropped (no regression)", () => {
+  const text = `<agent-daemon-digest>
+{"learnings":[
+  {"text":"this entry has no type and no drift-hint — it's noise"},
+  {"type":"pattern","text":"this one is valid"}
+],"session_summary":""}
+</agent-daemon-digest>`;
+  const res = extractFromAgentBlock(makeSummary(text));
+  assert.equal(res.found, true);
+  assert.equal(res.learnings.length, 1, "noise entry dropped, valid entry kept");
+  assert.equal(res.learnings[0].text, "this one is valid");
+});
+
+test("schema drift: too-short text after fallback to `lessons` still rejected (min 5 chars)", () => {
+  const text = `<agent-daemon-digest>
+{"learnings":[
+  {"lessons":"hi"},
+  {"lessons":"this is a properly sized lesson worth keeping"}
+],"session_summary":""}
+</agent-daemon-digest>`;
+  const res = extractFromAgentBlock(makeSummary(text));
+  assert.equal(res.found, true);
+  assert.equal(res.learnings.length, 1, "short lessons rejected, long one kept");
+});
