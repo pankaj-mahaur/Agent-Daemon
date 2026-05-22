@@ -92,7 +92,15 @@ export async function extractLearnings(opts) {
 
 /**
  * Walk the transcript's assistant messages in reverse order; the most-recent
- * digest block wins. Search inside `text` content of each event.
+ * PARSEABLE digest block wins. If the most-recent block fails to parse
+ * (common when the agent references the tag in dialogue afterward — e.g.
+ * `<agent-daemon-digest>...</agent-daemon-digest>` with literal three dots
+ * as a placeholder), keep walking earlier turns instead of giving up.
+ *
+ * Real-world transcripts contain this failure mode regularly: the agent
+ * emits the real block in turn N, then in turn N+1 talks ABOUT the digest
+ * and quotes the tag with a placeholder. The reverse walk hits the
+ * placeholder first; before this change, that aborted extraction entirely.
  *
  * @param {import("../adapters/claude-code.mjs").TranscriptSummary} summary
  * @returns {{found: boolean, learnings: Learning[], sessionSummary: string, parseError?: string}}
@@ -103,6 +111,7 @@ export function extractFromAgentBlock(summary) {
 
   // Walk assistant messages in reverse; within each turn, take the LAST block
   // (the agent may have iterated on the digest mid-message).
+  let lastParseError = null;
   for (let i = summary.events.length - 1; i >= 0; i--) {
     const ev = summary.events[i];
     if (ev.type !== "assistant") continue;
@@ -113,8 +122,11 @@ export function extractFromAgentBlock(summary) {
 
     const parsed = parseDigestPayload(m[1]);
     if (!parsed.ok) {
-      // malformed — log and continue searching for an earlier valid block
-      return { ...empty, found: false, parseError: `last digest block failed to parse: ${parsed.error}` };
+      // Malformed — remember the error for diagnostics, but keep walking
+      // earlier turns. Yesterday's failure mode: turn N+1 contains the
+      // tag in a placeholder/illustration; turn N has the real block.
+      lastParseError = parsed.error;
+      continue;
     }
 
     const learnings = sanitizeLearnings(parsed.value.learnings);
@@ -123,6 +135,11 @@ export function extractFromAgentBlock(summary) {
       learnings,
       sessionSummary: typeof parsed.value.session_summary === "string" ? parsed.value.session_summary : ""
     };
+  }
+  // No turn yielded a parseable block. Surface the last failure (if any)
+  // so the caller can include it in verbose logs.
+  if (lastParseError) {
+    return { ...empty, found: false, parseError: `no parseable digest block found; last attempt: ${lastParseError}` };
   }
   return empty;
 }

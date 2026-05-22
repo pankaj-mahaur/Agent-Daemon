@@ -134,3 +134,76 @@ test("new types (gotcha, decision) survive sanitization", () => {
   const types = res.learnings.map(l => l.type).sort();
   assert.deepEqual(types, ["decision", "gotcha"]);
 });
+
+/* ------------------------------------------------------------------ */
+/* Bug A regression: parser must fall through to earlier turns when    */
+/* the most recent block is a placeholder/illustration, not the real   */
+/* digest. Real-world failure seen in mobiux-website session 2026-05-21*/
+/* ------------------------------------------------------------------ */
+
+test("fallback: malformed LAST turn skips to earlier valid block (placeholder dialogue)", () => {
+  // Turn N (earlier): the real digest block
+  const realBlock = `Here is the session digest:
+
+<agent-daemon-digest>
+{"learnings":[{"type":"pattern","text":"oxblood + mustard tokens for new pages","evidence_quote":"q","evidence_speaker":"user","scope":"project","confidence":0.8}],"session_summary":"shipped 3 trello cards"}
+</agent-daemon-digest>
+
+Session band.`;
+
+  // Turn N+1 (later, post-emit follow-up): assistant TALKS about the
+  // digest and quotes the tag with a literal placeholder. Common real
+  // pattern; this used to abort extraction entirely.
+  const followup = `Bas, session close ke last step mein bas yeh kiya: emit kiya \`<agent-daemon-digest>...</agent-daemon-digest>\` JSON block — daemon usse extract karta hai. Skills banayi? Nahi.`;
+
+  const summary = {
+    events: [
+      { type: "user",      text: "bye, aaj ka kaam ho gaya" },
+      { type: "assistant", text: realBlock },
+      { type: "user",      text: "thoda explain karo kya kiya" },
+      { type: "assistant", text: followup }
+    ]
+  };
+
+  const res = extractFromAgentBlock(summary);
+  assert.equal(res.found, true, "real block must be found despite later placeholder");
+  assert.equal(res.learnings.length, 1);
+  assert.equal(res.learnings[0].text, "oxblood + mustard tokens for new pages");
+  assert.equal(res.sessionSummary, "shipped 3 trello cards");
+});
+
+test("fallback: all malformed → found:false with lastParseError surfaced", () => {
+  const summary = {
+    events: [
+      { type: "assistant", text: `early: <agent-daemon-digest>...</agent-daemon-digest>` },
+      { type: "assistant", text: `late:  <agent-daemon-digest>{ broken json </agent-daemon-digest>` }
+    ]
+  };
+  const res = extractFromAgentBlock(summary);
+  assert.equal(res.found, false);
+  assert.ok(res.parseError, "parseError should be surfaced for diagnostics");
+  assert.match(res.parseError, /last attempt:/);
+});
+
+test("fallback: still respects most-recent-PARSEABLE-wins ordering", () => {
+  // Three turns, oldest to newest:
+  //   turn 0 — valid block A
+  //   turn 1 — placeholder (unparseable)
+  //   turn 2 — valid block C (newest)
+  // The fall-through should NOT walk past turn 2's valid block to turn 0.
+  const blockA = `<agent-daemon-digest>{"learnings":[{"type":"pattern","text":"OLDEST lesson","evidence_quote":"q","evidence_speaker":"user","scope":"project","confidence":0.7}],"session_summary":"A"}</agent-daemon-digest>`;
+  const placeholderB = `Quote the tag: <agent-daemon-digest>...</agent-daemon-digest>`;
+  const blockC = `<agent-daemon-digest>{"learnings":[{"type":"pattern","text":"NEWEST lesson","evidence_quote":"q","evidence_speaker":"user","scope":"project","confidence":0.7}],"session_summary":"C"}</agent-daemon-digest>`;
+
+  const summary = {
+    events: [
+      { type: "assistant", text: blockA },
+      { type: "assistant", text: placeholderB },
+      { type: "assistant", text: blockC }
+    ]
+  };
+  const res = extractFromAgentBlock(summary);
+  assert.equal(res.found, true);
+  assert.equal(res.learnings[0].text, "NEWEST lesson", "newest parseable block wins, not oldest");
+  assert.equal(res.sessionSummary, "C");
+});
