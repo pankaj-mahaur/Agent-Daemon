@@ -1,0 +1,104 @@
+/**
+ * Render the managed CLAUDE.md section that `ad init` writes between the
+ * <!-- agent-daemon:start --> / <!-- agent-daemon:end --> markers.
+ *
+ * Goal: give Claude (or any AI coding agent) the decision context it needs
+ * to actually USE agent-daemon — not just see it exists. The skill list
+ * alone gets ignored; this block tells Claude when/why/how to reach for
+ * each skill, what the daemon injects at session start, and what it must
+ * emit at session end.
+ *
+ * Idempotent — re-running `ad init` replaces the block in-place so existing
+ * projects pick up content updates.
+ *
+ * Exported (via module-internal use) for tests.
+ */
+export function renderManagedClaudeBlock(startMarker, endMarker) {
+  return [
+    startMarker,
+    "## agent-daemon",
+    "",
+    "This project uses [agent-daemon](https://github.com/Pankaj-mobiux/Agent-Daemon) — a self-improving runtime for AI coding agents with multi-agent orchestration. **This section is managed by `ad init` — re-running refreshes it.**",
+    "",
+    "- **Memory:** `.agent-daemon/memory/` — project learnings extracted from each session by the digest pipeline",
+    "- **Multi-agent:** `ad tc` to create teams, `ad sp` to spawn workers in isolated git worktrees, `ad ts` for status",
+    "- **CLI:** All commands use the `ad` shorthand (`ad doctor`, `ad init`, `ad tt`, `ad memory`, `ad review`)",
+    "- **Skills:** Auto-triggering skills in `~/.claude/skills/` — code review, debugging, orchestration, etc.",
+    "- **Self-improvement:** Session digests extract learnings → SQLite episodic memory → next session starts smarter",
+    "",
+    "### Skill decision tree (BEFORE writing code)",
+    "",
+    "When the user's request matches any row below, **invoke the skill first**, then act. Do not freestyle when a matching skill exists — skills encode dedup, ordering, and severity logic that one-shot prompting misses.",
+    "",
+    "| User says (English / Hinglish) | Invoke skill | Why |",
+    "|---|---|---|",
+    "| \"bug\", \"broken\", \"error\", \"toot gaya\", \"kaam nahi kar raha\", \"crash\" | `debug-triage` | Strict triage order: services → data → cache → request → code. Avoids guessing. |",
+    "| \"implement\", \"build\", \"add feature\", \"banao\", \"wire up\" | `implement-feature` | Searches existing utilities before writing new code; matches project patterns. |",
+    "| \"review\", \"audit\", \"check karo properly\", \"deeply dekho\" | `review-slice` | 9-class bug checklist, findings grouped by root cause + severity. |",
+    "| \"create a skill\", \"is se skill banao\", \"har baar yaad rakhna\", \"remember this pattern\" | `skill-author` | **Mandatory** — dedup-check existing skills (≥70% overlap → extend, don't create). Never write `SKILL.md` directly. |",
+    "| \"evolve <skill>\", \"improve this skill\" | `evolve` | In-session GEPA reflection — no API key needed. |",
+    "| \"bye\", \"session khatam\", \"done for today\", \"wrapping up\" | `session-close` / `session-close-dual` | 7-phase protocol: session log + digest block + handoff. Lose this and the daemon learns nothing. |",
+    "| \"hand off this work\", \"save context for next agent\" | `handoff` | Dual-writes to per-project + global locations. |",
+    "| Pasted Anthropic Design URL (`api.anthropic.com/v1/design/h/...`) | `anthropic-design-bundle` | Only reliable gzipped-tar extraction pipeline. |",
+    "| \"tests fail\", \"verify this works\", \"run the app\" | `verify` / `run` | Drives the actual app instead of pattern-matching tests. |",
+    "",
+    "**Rule of thumb:** if Claude's first instinct is `Write` or `Edit`, pause and check if a skill matches. The skill almost always knows something Claude doesn't.",
+    "",
+    "### Daemon workflow (what fires automatically)",
+    "",
+    "```",
+    "SessionStart hook  →  `ad session-start` injects into context:",
+    "                      - .agent-daemon/memory/activeContext.md (recent decisions)",
+    "                      - Top-5 relevant learnings from SQLite (BM25 over the user's first message)",
+    "                      - Previous session's handoff (if .agent-daemon/handoffs/ has one)",
+    "",
+    "UserPromptSubmit   →  `ad hook user-prompt-extract` watches for corrections",
+    "                      (\"actually we use X\", \"no, the convention is Y\") → SQLite",
+    "",
+    "PostToolUse        →  `ad hook bash-post` / `edit-post` capture command exit codes",
+    "                      + file diffs for later digest extraction",
+    "",
+    "SessionEnd hook    →  `ad digest` parses your `<agent-daemon-digest>` block",
+    "                      → SQLite learnings table + appends to memory/*.md",
+    "```",
+    "",
+    "**Critical:** if you don't emit the `<agent-daemon-digest>` block at session-close, NOTHING lands in SQLite. The hooks capture raw tool activity but only the digest extracts durable lessons.",
+    "",
+    "### Mid-session memory discipline",
+    "",
+    "After ANY significant decision (architecture choice, gotcha discovered, convention agreed, dependency pinned), append one line to `.agent-daemon/memory/activeContext.md` immediately — don't wait for session-close. Sessions can terminate abruptly (crash, context-limit, network) and unwritten learnings are lost.",
+    "",
+    "Format: `- YYYY-MM-DD: <one-line decision or gotcha>`",
+    "",
+    "### Bootstrap (run once after `ad init`)",
+    "",
+    "Tell Claude: **\"bootstrap the daemon memory using the bootstrap-daemon skill\"**.",
+    "",
+    "Claude will scan `package.json`, key folders, recent commits, and populate `.agent-daemon/memory/*.md` with real project context (stack, conventions, gotchas). Future sessions then start with rich context loaded automatically.",
+    "",
+    "### Session logs (`session-logs/`)",
+    "",
+    "Local-only (gitignored). Tracks Claude Code session activity, timeline, decisions, and token usage.",
+    "",
+    "- One file per session: `YYYY-MM-DD_session-NN.md`",
+    "- See `session-logs/README.md` for format",
+    "- **Update triggers:**",
+    "  - User says \"log tokens\" + pastes `/cost` output → append timestamped entry",
+    "  - User says \"close session\" → fill End-of-session block with summary",
+    "  - User says \"new session\" → create next file, link previous one",
+    "- Claude cannot read token counts directly — only record what user provides",
+    "",
+    "**Session-close workflow (mandatory):** When the user signals end of session (\"end session\", \"close session\", \"session khatam\", \"ending this session\", \"wrapping up\", \"I'm done\", \"bye\" — English or Hinglish), do ALL THREE in the same response, no confirmation needed:",
+    "",
+    "1. **Update the session log** — fill the \"End of session\" block with closing timestamp, outcome, net deliverables, what works, what's pending, what next session must start with. Rename duplicate headings to satisfy MD024.",
+    "2. **Emit the agent-daemon digest block** — wrapped in `<agent-daemon-digest>...</agent-daemon-digest>` with valid JSON inside (per `constitution/ending-protocol.md`). Include learnings tagged with `projectbrief`, `techContext`, `systemPatterns`, `activeContext`, `progress`, `user`, plus durable `lessons`, `files` touched, and a `daemon_verification` field showing which hooks fired.",
+    "3. **Create handoff docs** — invoke the `handoff` skill. Write the SAME content to BOTH locations:",
+    "   - **Per-project:** `<cwd>/.agent-daemon/handoffs/handoff-<ISO-timestamp>.md` (committable, lives with the code)",
+    "   - **Global:** `~/.agent-daemon/handoffs/<project-slug>/handoff-<ISO-timestamp>.md` (your personal cross-project trail — `<project-slug>` is the cwd path with `/`, `\\`, `:`, and spaces replaced by `-`, lowercased)",
+    "",
+    "   Filename: `handoff-<ISO-timestamp>.md` with colons replaced by hyphens (Windows-safe). Content per the `handoff` skill template — Context / State / Next action / Open questions / Suggested skills / Files touched. References to existing artifacts, not duplicates.",
+    "",
+    "Short / prep-only sessions still emit all three — they produce signal too.",
+    endMarker
+  ].join("\n");
+}

@@ -17,6 +17,7 @@ import { runWatcher } from "./daemon/watch.mjs";
 import { resolveProfile, listProfiles } from "./profiles.mjs";
 import { buildSkillIndex, resolveSkillSource } from "./skills-source.mjs";
 import { detectStack, formatStacks, loadStackSkillMap, resolveSkillsForStacks } from "./stack-detect.mjs";
+import { renderManagedClaudeBlock } from "./managed-claude-block.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
@@ -558,56 +559,30 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
     }
   }
 
-  // Add managed section to CLAUDE.md (idempotent)
-  if (claudeMdExists && !claudeMdHasSection) {
-    const section = [
-      "",
-      MANAGED_START,
-      "## agent-daemon",
-      "",
-      "This project uses [agent-daemon](https://github.com/Pankaj-mobiux/Agent-Daemon) — a self-improving runtime for AI coding agents with multi-agent orchestration.",
-      "",
-      "- **Memory:** `.agent-daemon/memory/` — project learnings extracted from each session by the digest pipeline",
-      "- **Multi-agent:** `ad tc` to create teams, `ad sp` to spawn workers in isolated git worktrees, `ad ts` for status",
-      "- **CLI:** All commands use the `ad` shorthand (e.g. `ad doctor`, `ad init`, `ad tt` for templates)",
-      "- **Skills:** 35 auto-triggering skills in `~/.claude/skills/` — code review, debugging, orchestration, etc.",
-      "- **Self-improvement:** Session digests extract learnings → SQLite episodic memory → next session starts smarter",
-      "",
-      "### Bootstrap (run once after `ad init`)",
-      "",
-      "Tell Claude: **\"bootstrap the daemon memory using the bootstrap-daemon skill\"**.",
-      "",
-      "Claude will scan `package.json`, key folders, recent commits, and populate `.agent-daemon/memory/*.md` with real project context (stack, conventions, gotchas). Future sessions then start with rich context loaded automatically.",
-      "",
-      "### Session logs (`session-logs/`)",
-      "",
-      "Local-only (gitignored). Tracks Claude Code session activity, timeline, decisions, and token usage.",
-      "",
-      "- One file per session: `YYYY-MM-DD_session-NN.md`",
-      "- See `session-logs/README.md` for format",
-      "- **Update triggers:**",
-      "  - User says \"log tokens\" + pastes `/cost` output → append timestamped entry",
-      "  - User says \"close session\" → fill End-of-session block with summary",
-      "  - User says \"new session\" → create next file, link previous one",
-      "- Claude cannot read token counts directly — only record what user provides",
-      "- Each entry: timestamp + action/event, plus optional token figures",
-      "",
-      "**Session-close workflow (mandatory):** When the user signals end of session (\"end session\", \"close session\", \"session khatam\", \"ending this session\", \"wrapping up\", \"I'm done\", etc. — English or Hinglish), do ALL THREE in the same response, no confirmation needed:",
-      "",
-      "1. **Update the session log** — fill the \"End of session\" block with closing timestamp, outcome, net deliverables, what works, what's pending, what next session must start with. Rename duplicate headings to satisfy MD024.",
-      "2. **Emit the agent-daemon digest block** — wrapped in `<agent-daemon-digest>...</agent-daemon-digest>` with valid JSON inside (per `constitution/ending-protocol.md`). Include learnings tagged with `projectbrief`, `techContext`, `systemPatterns`, `activeContext`, `progress`, `user`, plus durable `lessons`, `files` touched, and a `daemon_verification` field showing which hooks fired.",
-      "3. **Create handoff docs** — invoke the `handoff` skill. Write the SAME content to BOTH locations:",
-      "   - **Per-project:** `<cwd>/.agent-daemon/handoffs/handoff-<ISO-timestamp>.md` (committable, lives with the code)",
-      "   - **Global:** `~/.agent-daemon/handoffs/<project-slug>/handoff-<ISO-timestamp>.md` (your personal cross-project trail — `<project-slug>` is the cwd path with `/`, `\\`, `:`, and spaces replaced by `-`, lowercased)",
-      "",
-      "   Filename: `handoff-<ISO-timestamp>.md` with colons replaced by hyphens (Windows-safe). Content per the `handoff` skill template — Context / State / Next action / Open questions / Suggested skills / Files touched. References to existing artifacts, not duplicates.",
-      "",
-      "Short / prep-only sessions still emit all three — they produce signal too.",
-      MANAGED_END,
-      ""
-    ].join("\n");
-    await fs.appendFile(claudeMdPath, section, "utf8");
-    console.log("  ✓ Added agent-daemon section to CLAUDE.md");
+  // Add/refresh managed section in CLAUDE.md. On re-run of `ad init` the
+  // block between MANAGED_START / MANAGED_END is replaced in-place so existing
+  // projects pick up content updates (decision tree, workflow diagram, etc.).
+  if (claudeMdExists) {
+    const section = renderManagedClaudeBlock(MANAGED_START, MANAGED_END);
+    if (!claudeMdHasSection) {
+      await fs.appendFile(claudeMdPath, "\n" + section + "\n", "utf8");
+      console.log("  ✓ Added agent-daemon section to CLAUDE.md");
+    } else {
+      // Replace in-place between markers (preserve everything outside).
+      // String slicing — avoids regex-escape fragility around the markers.
+      const current = await fs.readFile(claudeMdPath, "utf8");
+      const startIdx = current.indexOf(MANAGED_START);
+      const endIdx = current.indexOf(MANAGED_END, startIdx);
+      if (startIdx !== -1 && endIdx !== -1) {
+        const before = current.slice(0, startIdx);
+        const after = current.slice(endIdx + MANAGED_END.length);
+        const next = before + section + after;
+        if (next !== current) {
+          await fs.writeFile(claudeMdPath, next, "utf8");
+          console.log("  ✓ Refreshed agent-daemon section in CLAUDE.md");
+        }
+      }
+    }
   }
 
   // Scaffold session-logs/ directory with README + .gitignore entry
