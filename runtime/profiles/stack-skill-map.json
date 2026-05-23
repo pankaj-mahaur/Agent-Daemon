@@ -8,7 +8,12 @@
     "orchestrate-team",
     "handoff",
     "skill-author",
-    "session-close"
+    "session-close",
+    "tdd",
+    "prototype",
+    "improve-codebase-architecture",
+    "mattpocock-diagnose",
+    "git-guardrails-claude-code"
   ],
 
   "stacks": {
