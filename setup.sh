@@ -164,7 +164,7 @@ print_hook_snippets() {
   echo "If settings.json doesn't exist, create one with: { \"hooks\": { ... } }"
   echo ""
 
-  for snippet in session-start-load.json session-end-digest.json pre-compact-checkpoint.json; do
+  for snippet in session-start-load.json session-end-digest.json pre-compact-checkpoint.json user-prompt-submit-extract.json user-prompt-submit-retrieve.json skill-use-telemetry.json; do
     local f="$hooks_dir/$snippet"
     if [ -f "$f" ]; then
       echo "─── $snippet ───"

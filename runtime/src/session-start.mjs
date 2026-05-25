@@ -3,7 +3,7 @@
 // SessionStart hook injects as additional context.
 //
 // Output schema (when --output-json):
-//   { "additionalContext": "<markdown string>" }
+//   { "hookSpecificOutput": { "hookEventName": "SessionStart", "additionalContext": "<markdown string>" } }
 //
 // Total length is capped at 9KB to stay under Claude Code's 10K hook output cap.
 
@@ -80,8 +80,12 @@ export async function runSessionStart(opts) {
   // 2. Memory retrieval — prefer QMD pointer over bulk-loading files.
   //    If QMD (mcp__qmd__search) is available, inject a one-line pointer instead
   //    of loading all memory files. Falls back to bulk-load if QMD isn't installed.
-  const qmdAvailable = await detectQmd();
+  const qmdAvailable = await detectQmd(opts.cwd);
   if (qmdAvailable) {
+    const activeContext = await tryRead(path.join(opts.cwd, ".agent-daemon", "memory", "activeContext.md"));
+    if (activeContext) {
+      sections.push(`<!-- memory: activeContext.md -->\n### activeContext.md\n\n${activeContext}`);
+    }
     sections.push([
       `<!-- memory retrieval (QMD) -->`,
       `## Memory`,
@@ -205,15 +209,35 @@ export async function runSessionStart(opts) {
     // SQLite optional — silent skip
   }
 
-  // Concatenate, truncate if needed
-  let combined = sections.join("\n\n---\n\n");
-  if (Buffer.byteLength(combined, "utf8") > MAX_OUTPUT_BYTES) {
-    combined = truncateToBytes(combined, MAX_OUTPUT_BYTES);
-    combined += "\n\n<!-- (agent-daemon: context truncated to fit 9KB hook cap) -->";
-  }
+  // Preserve dynamic project context ahead of static guidance under the hook
+  // cap. A large constitution must not hide active context or learnings.
+  const warningSections = sections.filter(s =>
+    s.includes("memory-bootstrap-hint") ||
+    s.includes("agent-daemon-init-hint") ||
+    s.includes("continuous-extraction drain")
+  );
+  const memorySections = sections.filter(s =>
+    s.startsWith("<!-- memory:") ||
+    s.startsWith("<!-- memory retrieval (QMD)") ||
+    s.startsWith("<!-- ~/.agent-daemon/user.md (cross-project user profile)")
+  );
+  const recentSections = sections.filter(s => s.includes("<!-- recent learnings -->"));
+  const dynamic = new Set([...warningSections, ...memorySections, ...recentSections]);
+  const staticSections = sections.filter(s => !dynamic.has(s));
+  const combined = renderPrioritizedContext([
+    { sections: warningSections, cap: 1100 },
+    { sections: memorySections, cap: 4100 },
+    { sections: recentSections, cap: 1700 },
+    { sections: staticSections, cap: MAX_OUTPUT_BYTES }
+  ]);
 
   if (opts.outputJson) {
-    process.stdout.write(JSON.stringify({ additionalContext: combined }));
+    process.stdout.write(JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: "SessionStart",
+        additionalContext: combined
+      }
+    }));
   } else {
     process.stdout.write(combined);
     process.stdout.write("\n");
@@ -242,8 +266,9 @@ async function readMemoryDir(memDir) {
 
     // MEMORY.md first, then the rest sorted alphabetically for byte-stable output
     const ordered = [
+      ...mdFiles.filter(f => /^activeContext\.md$/i.test(f)),
       ...mdFiles.filter(f => /^MEMORY\.md$/i.test(f)),
-      ...mdFiles.filter(f => !/^MEMORY\.md$/i.test(f)).sort()
+      ...mdFiles.filter(f => !/^(activeContext|MEMORY)\.md$/i.test(f)).sort()
     ];
     const blocks = [];
     let hasPlaceholders = false;
@@ -288,13 +313,13 @@ function encodeProjectPath(p) {
   return p.replace(/[\\/:]/g, "-");
 }
 
-async function detectQmd() {
+async function detectQmd(cwd) {
   // Claude Code stores MCP server config in ~/.claude.json (top-level mcpServers
   // for user scope, and projects[<cwd>].mcpServers for local scope). It does NOT
   // live in ~/.claude/settings.json — that file's schema rejects mcpServers.
   // Project-scope .mcp.json is also a valid location.
   const home = homeDir();
-  const cwd = process.cwd();
+  cwd = cwd || process.cwd();
 
   try {
     const claudeJsonPath = path.join(home, ".claude.json");
@@ -389,6 +414,30 @@ function truncateToBytes(s, maxBytes) {
   let end = maxBytes;
   while (end > 0 && (buf[end] & 0xc0) === 0x80) end--;
   return buf.subarray(0, end).toString("utf8");
+}
+
+function renderPrioritizedContext(groups) {
+  const marker = "\n\n<!-- (agent-daemon: context truncated to fit 9KB hook cap) -->";
+  const markerBytes = Buffer.byteLength(marker, "utf8");
+  let output = "";
+  let truncated = false;
+
+  for (const group of groups) {
+    const text = group.sections.join("\n\n---\n\n");
+    if (!text) continue;
+    const separator = output ? "\n\n---\n\n" : "";
+    const remaining = MAX_OUTPUT_BYTES - markerBytes - Buffer.byteLength(output + separator, "utf8");
+    if (remaining <= 0) {
+      truncated = true;
+      break;
+    }
+    const groupBudget = Math.min(group.cap, remaining);
+    const chunk = truncateToBytes(text, groupBudget);
+    output += separator + chunk;
+    if (Buffer.byteLength(text, "utf8") > groupBudget) truncated = true;
+  }
+
+  return truncated ? output + marker : output;
 }
 
 /* ------------------------------------------------------------------ */

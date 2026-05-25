@@ -62,7 +62,12 @@ ${verify}
 ${comm}
 `;
 
-console.log(JSON.stringify({ additionalContext: systemPromptAddendum }));
+console.log(JSON.stringify({
+  hookSpecificOutput: {
+    hookEventName: "SessionStart",
+    additionalContext: systemPromptAddendum
+  }
+}));
 ```
 
 Total length is ~6KB — well within Claude Code's 10K hook output cap.

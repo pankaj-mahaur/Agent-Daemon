@@ -175,7 +175,7 @@ Don't ask the user "is there anything else?" — they said bye. Honor it.
 
 ## Anti-patterns
 
-- **Skipping the digest block** — the single most important artifact. Without it the daemon's pipeline silently runs `--fallback-to-llm` and burns ~$0.005. Always emit, even if empty learnings.
+- **Skipping the digest block** — continuous local correction capture still runs, but the richer session summary and handoff are lost. `--fallback-to-llm` is opt-in only; never assume it will repair a missed digest.
 - **Asking for confirmation before each step** — the trigger phrases imply the user already decided. Just execute.
 - **Duplicating handoff content into the session-log** — they have different purposes. Session-log is the journal (what happened, when); handoff is the next-session brief (do this first). Keep separate.
 - **Forgetting the idempotency flag** — without it, a casual second "bye" 30 seconds later re-writes the same files (timestamps shift, content stays same).

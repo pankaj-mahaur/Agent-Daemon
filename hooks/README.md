@@ -15,6 +15,8 @@ Pre-baked Claude Code hook configurations that wire `agent-daemon` into the sess
 | [pre-tool-use-mcp-audit.json](pre-tool-use-mcp-audit.json) | Append every MCP call to `~/.agent-daemon/audit/mcp.jsonl`, warn on untrusted servers | `PreToolUse` (`mcp__.*`) |
 | [pre-tool-use-qmd-redirect.json](pre-tool-use-qmd-redirect.json) | Redirect raw memory reads to QMD search | `PreToolUse` (Read/Grep) |
 | [user-prompt-submit-retrieve.json](user-prompt-submit-retrieve.json) | Inject relevant past learnings into UserPromptSubmit | `UserPromptSubmit` |
+| [user-prompt-submit-extract.json](user-prompt-submit-extract.json) | Deterministically capture explicit corrections and gotchas | `UserPromptSubmit` |
+| [skill-use-telemetry.json](skill-use-telemetry.json) | Record Claude skill invocation traces locally | `PreToolUse` (`Skill`) / `UserPromptExpansion` |
 
 The shell-guard, shell-log, edit-lint, and mcp-audit hooks were ported from [`everything-claude-code`](https://github.com/affaan-m/everything-claude-code) (MIT) into our `ad hook <name>` Node helpers — see [ATTRIBUTION.md](../ATTRIBUTION.md).
 
@@ -30,18 +32,18 @@ If you write a new hook handler under [`runtime/src/hooks/`](../runtime/src/hook
 ## What each hook does
 
 ### `SessionStart` — load
-Reads `constitution/core.md` + `safety.md` + `verification.md` + `communication.md` + the project's `memory/*.md` files, plus the top-N relevant episodic memories (when SQLite backend ships in v0.2). Outputs them as `additionalContext` JSON, which Claude Code injects as a system prompt addendum.
+Injects prioritized project memory and recent SQLite learnings ahead of compact static guidance. It emits Claude Code's `hookSpecificOutput.additionalContext` response and stays within the 9 KB budget.
 
 ### `SessionEnd` — digest
-When the session ends (any reason: `clear`, `resume`, `logout`, `prompt_input_exit`, `bypass_permissions_disabled`, `other`), runs the `agent-daemon digest` CLI against the transcript at `transcript_path`. The digest pipeline:
+When the session ends (any reason: `clear`, `resume`, `logout`, `prompt_input_exit`, `bypass_permissions_disabled`, `other`), `agent-daemon hook session-end-digest` reads Claude's stdin payload and runs the deterministic digest against its `transcript_path`:
 1. Triages the session (skip if below threshold).
-2. Extracts learnings via headless `claude` CLI.
+2. Parses an agent-emitted digest block when present.
 3. Classifies each learning by target store.
 4. Dedupes against existing memory.
 5. Auto-applies low-risk additions; queues high-risk diffs to `proposed/`.
 6. Prints a one-line summary to stderr.
 
-Runs `async: true` so it doesn't block the user closing their session — fires off and runs in the background.
+Prompt-time extraction also captures explicit corrections without an API key. `--fallback-to-llm` remains an explicit opt-in mode and is not installed by default.
 
 ### `PreCompact` — checkpoint
 Before Claude Code compacts context (manual `/compact` or auto-compact at context limit), checkpoints the current `activeContext.md` so post-compact retrieval can recover what was in flight. Lightweight; only writes if there's been meaningful change since the last checkpoint.
@@ -51,7 +53,7 @@ Before Claude Code compacts context (manual `/compact` or auto-compact at contex
 ### Option A — installer (recommended)
 
 ```bash
-./setup.sh --hooks                # adds all three to ~/.claude/settings.json
+./setup.sh --hooks                # prints Claude hook snippets for settings.json
 ./setup.ps1 -Hooks                # Windows
 ```
 
@@ -71,7 +73,8 @@ Example merged settings.json:
   "hooks": {
     "SessionStart": [ ... agent-daemon entry ... ],
     "SessionEnd":   [ ... agent-daemon entry ... ],
-    "PreCompact":   [ ... agent-daemon entry ... ]
+    "PreCompact":   [ ... agent-daemon entry ... ],
+    "UserPromptSubmit": [ ... extraction and retrieval entries ... ]
   }
 }
 ```
@@ -86,7 +89,9 @@ agent-daemon doctor
 
 This checks:
 - `~/.claude/settings.json` exists and parses
-- Each agent-daemon hook entry is present
+- Project `CLAUDE.md`, retrieval, extraction, and skill-telemetry hooks are current
+- SessionEnd uses the no-API deterministic default
+- Placeholder memory and context-budget risks
 - The `agent-daemon` CLI is on `PATH`
 - The constitution + memory-templates + skills directories exist
 - The `claude` CLI (used as digest engine) is on `PATH`
