@@ -11,7 +11,7 @@ Now ships with a full **team coordination layer**: spawn multiple Claude Code ag
 
 Skills evolve too: [GEPA](runtime/src/digest/gepa/README.md) (Genetic-Pareto Prompt Evolution) reads execution traces and proposes Pareto-optimal skill refinements that you accept or reject via `agent-daemon review`.
 
-> **v0.2.0 + Phase 5 (unreleased on `main`):** Cross-harness support for **Claude Code** (native), **Codex** (reference config + sub-agent TOML), and **Cursor** (hook bindings + skill→`.mdc` converter). 3 install profiles (`minimal` / `developer` / `security`) + 4 skill-install modes (`smart` / `all` / `minimal` / `manual`). 229 skills (43 curated + 186 vendored from [`everything-claude-code`](https://github.com/affaan-m/everything-claude-code)), 4 ported production hooks, audit-log rotation, GitHub Actions CI on Linux/macOS/Windows. **Phase 5** (see [CHANGELOG.md](CHANGELOG.md)) adds stack-detection-driven smart install, three new daemon skills (`skill-author`, `session-close`, `gepa-evolve-inline`), no-API-key GEPA via active session, 7 Hinglish extractor rules, multi-agent orchestration improvements, and weekly `activeContext.md` rotation. 141/141 tests pass.
+> **v0.2.0 + Phase 5:** Cross-harness support for **Claude Code** (native), **Codex** (reference config + sub-agent TOML), and **Cursor** (hook bindings + skill-to-`.mdc` converter). 3 install profiles (`minimal` / `developer` / `security`) + 4 skill-install modes (`smart` / `all` / `minimal` / `manual`). 229 skills (43 curated + 186 vendored from [`everything-claude-code`](https://github.com/affaan-m/everything-claude-code)), production hooks, audit-log rotation, and GitHub Actions CI on Linux/macOS/Windows. **Phase 5** (see [CHANGELOG.md](CHANGELOG.md)) adds stack-detection-driven smart install, three new daemon skills (`skill-author`, `session-close`, `gepa-evolve-inline`), no-API-key inline GEPA proposals via an active Claude session, Hinglish extractor rules, multi-agent orchestration improvements, and weekly `activeContext.md` rotation.
 
 ## Quick start
 
@@ -40,9 +40,41 @@ ad init --plan                       # preview without applying
 #    Explicit corrections are captured locally; session-close digest blocks add richer memory.
 ```
 
-The `ad` command is the short alias for `agent-daemon` — both work interchangeably. No API key required for normal operation. Set `ANTHROPIC_API_KEY` only for `ad evolve` (GEPA batch evolution).
+The `ad` command is the short alias for `agent-daemon` — both work interchangeably. No API key is required for local capture, retrieval, deterministic SessionEnd digest parsing, or inline skill evolution proposals. Claude Code itself must be authenticated for interactive sessions; authenticated batch/LLM fallback remains explicit opt-in behavior.
 
 > **Verifying your install end-to-end?** Follow [docs/manual-test-v0.2.0.md](docs/manual-test-v0.2.0.md) — six sections, ~30 steps, each with expected output and the fix when it fails.
+
+### Windows team setup (Claude Code)
+
+Use a clean clone or a clean pull of `main`; do not distribute another developer's linked runtime directory.
+
+```powershell
+# Install the CLI once per machine.
+git clone https://github.com/Pankaj-mobiux/Agent-Daemon.git 'D:\Program Files\Agent-Daemon'
+Set-Location 'D:\Program Files\Agent-Daemon\runtime'
+npm install
+npm link
+
+# Initialize each repository once.
+$project = 'D:\path\to\your-project'
+Set-Location $project
+ad init --profile developer --skills-mode manual
+ad doctor
+```
+
+If `ad doctor` reports memory placeholders or an oversized `activeContext.md`, open `claude` from the project root and ask it to bootstrap the daemon memory using verified repository facts and compact `activeContext.md` below the reported budget. Then run `ad doctor` again.
+
+For a final no-API-key smoke test:
+
+```powershell
+Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
+claude -p "Reply with exactly CLAUDE_DAEMON_OK if you can see agent-daemon instructions and grounded project memory. Do not use tools or write files." `
+  --output-format text `
+  --tools '' `
+  --permission-mode plan
+```
+
+Expected result: `CLAUDE_DAEMON_OK`, with no `SessionEnd hook failed` message after the response.
 
 ### Install profiles
 
@@ -382,7 +414,7 @@ Skills auto-trigger from frontmatter or via `/skill-name`. The runtime fires hoo
 
 ```bash
 cd Agent-Daemon/runtime && npm install && npm link   # global install — `ad` works everywhere
-ad init                                              # in your project — scaffolds config + AGENTS.md
+ad init                                              # in your project — scaffolds memory + managed CLAUDE.md instructions
 ```
 
 ### Other agents
