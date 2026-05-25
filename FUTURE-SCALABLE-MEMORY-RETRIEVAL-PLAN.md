@@ -217,4 +217,3 @@ When this work is approved, begin with Phase 1 only:
 3. Inspect existing memory schema, retrieval queries, QMD behavior, and hook budgets.
 4. Add measurement and diagnostic tests before changing ranking behavior.
 5. Validate in a temporary Claude project before applying to a real repository.
-
