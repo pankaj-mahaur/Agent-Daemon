@@ -201,6 +201,9 @@ CREATE TABLE IF NOT EXISTS skill_executions (
   succeeded       INTEGER,                                     -- 0 = no, 1 = yes, NULL = unknown
   failure_reason  TEXT,                                        -- structured failure category if succeeded=0
   trace_path      TEXT,                                        -- pointer to detailed trace blob
+  invocation_source TEXT,                                      -- 'slash-command' | 'skill-tool'
+  outcome_source TEXT,                                         -- how outcome was determined
+  completed_at    TEXT,                                        -- when a known outcome was observed
   created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 );
@@ -345,6 +348,7 @@ export async function open(opts = {}) {
   // Run migrations AFTER SCHEMA exec. Each migration is idempotent + safe to
   // re-run on already-migrated DBs.
   migrateLearningsContentHash(raw);
+  migrateSkillExecutionTelemetry(raw);
 
   return {
     raw,
@@ -451,6 +455,25 @@ function migrateLearningsContentHash(raw) {
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_learnings_content_hash " +
     "ON learnings(content_hash) WHERE content_hash IS NOT NULL"
   );
+}
+
+/**
+ * Idempotent migration for Claude skill telemetry audit metadata.
+ *
+ * @param {any} raw - the better-sqlite3 Database
+ */
+function migrateSkillExecutionTelemetry(raw) {
+  const cols = new Set(raw.prepare("PRAGMA table_info(skill_executions)").all().map(c => c.name));
+  const missing = [
+    ["invocation_source", "TEXT"],
+    ["outcome_source", "TEXT"],
+    ["completed_at", "TEXT"]
+  ];
+  for (const [name, type] of missing) {
+    if (!cols.has(name)) {
+      raw.exec(`ALTER TABLE skill_executions ADD COLUMN ${name} ${type}`);
+    }
+  }
 }
 
 /**

@@ -258,7 +258,10 @@ export async function listRecentLearnings(opts = {}) {
  *   triggerText?: string,
  *   succeeded?: boolean,
  *   failureReason?: string,
- *   tracePath?: string
+ *   tracePath?: string,
+ *   invocationSource?: string,
+ *   outcomeSource?: string,
+ *   completedAt?: string
  * }} row
  */
 export async function recordSkillExecution(row) {
@@ -266,11 +269,37 @@ export async function recordSkillExecution(row) {
   if (!handle) return null;
   const succeeded = row.succeeded === undefined ? null : (row.succeeded ? 1 : 0);
   const r = handle.run(
-    `INSERT INTO skill_executions (session_id, skill_name, skill_version, trigger_text, succeeded, failure_reason, trace_path)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [row.sessionId, row.skillName, row.skillVersion || null, row.triggerText || null, succeeded, row.failureReason || null, row.tracePath || null]
+    `INSERT INTO skill_executions
+       (session_id, skill_name, skill_version, trigger_text, succeeded, failure_reason, trace_path, invocation_source, outcome_source, completed_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      row.sessionId, row.skillName, row.skillVersion || null, row.triggerText || null,
+      succeeded, row.failureReason || null, row.tracePath || null,
+      row.invocationSource || null, row.outcomeSource || null, row.completedAt || null
+    ]
   );
   return r.lastInsertRowid;
+}
+
+/**
+ * Mark the latest unresolved skill invocation in a session as failed after a
+ * high-confidence user correction. Unknown invocations remain NULL.
+ */
+export async function markRecentSkillFailure({ sessionId, failureReason, outcomeSource = "user-correction" }) {
+  const handle = await db();
+  if (!handle || !sessionId || !failureReason) return false;
+  const r = handle.run(
+    `UPDATE skill_executions
+        SET succeeded = 0, failure_reason = ?, outcome_source = ?, completed_at = ?
+      WHERE id = (
+        SELECT id FROM skill_executions
+         WHERE session_id = ? AND succeeded IS NULL
+           AND created_at >= datetime('now', '-10 minutes')
+         ORDER BY id DESC LIMIT 1
+      )`,
+    [failureReason, outcomeSource, new Date().toISOString(), sessionId]
+  );
+  return r.changes > 0;
 }
 
 /**
@@ -283,7 +312,8 @@ export async function sampleSkillExecutions(opts) {
   const handle = await db();
   if (!handle) return [];
   return handle.all(
-    `SELECT id, session_id, skill_name, succeeded, failure_reason, trigger_text, created_at
+    `SELECT id, session_id, skill_name, succeeded, failure_reason, trigger_text,
+            invocation_source, outcome_source, completed_at, created_at
        FROM skill_executions
       WHERE skill_name = ?
         AND created_at >= datetime('now', '-90 days')

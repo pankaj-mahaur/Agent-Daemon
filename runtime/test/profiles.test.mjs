@@ -25,7 +25,7 @@ test("minimal profile installs only lifecycle hooks + continuous extraction, no 
   // continuous learning capture, and has zero dependencies.
   assert.deepEqual(
     r.hooks.map(h => h.id).sort(),
-    ["session-end", "session-start", "user-prompt-extract"]
+    ["query-retrieve", "session-end", "session-start", "skill-use", "slash-command-use", "user-prompt-extract"]
   );
   assert.deepEqual(r.skills, []);
   assert.equal(r.features.qmd, false);
@@ -36,10 +36,21 @@ test("developer profile adds dev-quality hooks and core skills", async () => {
   assert.equal(r.name, "developer");
   const ids = r.hooks.map(h => h.id);
   assert.ok(ids.includes("session-start"));
+  assert.ok(ids.includes("query-retrieve"));
+  assert.ok(ids.includes("skill-use"));
+  assert.ok(ids.includes("slash-command-use"));
   assert.ok(ids.includes("edit-post-lint"));
   assert.ok(ids.includes("bash-post-log"));
   assert.ok(r.skills.includes("bootstrap-daemon"));
   assert.equal(r.features.qmd, true);
+});
+
+test("installed SessionEnd remains deterministic unless fallback is explicitly requested", async () => {
+  const r = await resolveProfile("developer");
+  const sessionEnd = r.hooks.find(h => h.id === "session-end");
+  assert.ok(sessionEnd);
+  assert.doesNotMatch(sessionEnd.command, /--fallback-to-llm/);
+  assert.equal(sessionEnd.command, "ad hook session-end-digest");
 });
 
 test("security profile extends developer and adds guards + security skills", async () => {

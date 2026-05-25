@@ -36,9 +36,8 @@ ad init --skills-mode all            # install ALL 229 skills (vs stack-detect-d
 ad init --skills-mode manual         # install only profile-listed skills (legacy behaviour)
 ad init --plan                       # preview without applying
 
-# 5. Open Claude Code — constitution + memory load automatically.
-#    The agent emits a digest block before ending, the daemon parses it,
-#    memory accumulates across sessions.
+# 5. Open Claude Code — prioritized context and prompt-time retrieval load automatically.
+#    Explicit corrections are captured locally; session-close digest blocks add richer memory.
 ```
 
 The `ad` command is the short alias for `agent-daemon` — both work interchangeably. No API key required for normal operation. Set `ANTHROPIC_API_KEY` only for `ad evolve` (GEPA batch evolution).
@@ -49,7 +48,7 @@ The `ad` command is the short alias for `agent-daemon` — both work interchange
 
 | Profile | Hooks | Skills auto-installed | Best for |
 |---|---|---|---|
-| `minimal` | SessionStart + SessionEnd | none | Users who want explicit control |
+| `minimal` | SessionStart + SessionEnd + prompt retrieval/extraction + skill telemetry | none | Users who want explicit control |
 | `developer` (default) | minimal + `console.log` warn on Edit, build/PR-URL log on Bash | 7 core (bootstrap-daemon, orchestrate-team, debug-triage, …) | Day-to-day coding |
 | `security` | developer + blocks `git --no-verify`, blocks dev-server-without-tmux, audits every MCP call, warns on untrusted MCP servers | developer + 3 (security-audit, production-readiness, llm-app-safety) | High-stakes work, regulated repos |
 
@@ -102,15 +101,15 @@ Auto-finds the newest transcript for the current directory, force-digests it. Id
 
 `ad watch` and `ad digest-latest` are composable — SQLite dedupes already-digested sessions. Run watch as your default, fall back to `digest-latest` when you want immediate confirmation or when the watcher misses a session (Windows quirk — see [docs/troubleshooting.md](docs/troubleshooting.md)).
 
-### The agent must emit a digest block
+### Digest blocks improve memory quality
 
-Both commands need Claude to emit a `<agent-daemon-digest>` block in its final response. The block format lives in [constitution/ending-protocol.md](constitution/ending-protocol.md) and is loaded into every session via SessionStart.
+Prompt hooks capture explicit corrections and retrieve local SQLite learnings without an API key. A `<agent-daemon-digest>` block in Claude's final response adds a richer session summary for `ad digest` or `ad digest-latest`. The block format lives in [constitution/ending-protocol.md](constitution/ending-protocol.md).
 
-The agent doesn't always remember. To guarantee capture, ask Claude before ending:
+To guarantee a full end-of-session summary, ask Claude before ending:
 
 > *"emit the agent-daemon digest block before ending"*
 
-Alternative: pass `--fallback-to-llm` to either command to run an LLM extraction pass when no block is found (requires `claude` CLI on PATH, ~$0.005 per session).
+Alternative: explicitly pass `--fallback-to-llm` to run an authenticated LLM extraction pass when no block is found. This is never installed as the default SessionEnd behavior.
 
 ## Multi-agent orchestration
 

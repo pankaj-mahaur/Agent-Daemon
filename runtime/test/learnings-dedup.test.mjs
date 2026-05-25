@@ -82,6 +82,25 @@ test("migration: ALTER TABLE adds content_hash column when missing", async () =>
   } finally { await t.cleanup(db); }
 });
 
+test("migration: skill execution audit columns exist and are idempotent", async () => {
+  const t = await mkTmpDb();
+  const db = await open({ dbPath: t.dbPath });
+  try {
+    const cols = new Set(db.all("PRAGMA table_info(skill_executions)").map(c => c.name));
+    assert.ok(cols.has("invocation_source"));
+    assert.ok(cols.has("outcome_source"));
+    assert.ok(cols.has("completed_at"));
+    db.close();
+    const db2 = await open({ dbPath: t.dbPath });
+    const reopened = new Set(db2.all("PRAGMA table_info(skill_executions)").map(c => c.name));
+    assert.ok(reopened.has("invocation_source"));
+    await t.cleanup(db2);
+  } catch (e) {
+    await t.cleanup(db);
+    throw e;
+  }
+});
+
 test("migration: backfills NULL content_hash on legacy rows + dedupes", async () => {
   const t = await mkTmpDb();
   const db = await open({ dbPath: t.dbPath });

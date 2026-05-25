@@ -68,9 +68,16 @@ test("renderManagedClaudeBlock: preserves the legacy session-close 3-step protoc
   assert.match(out, /Update the session log/);
   assert.match(out, /Emit the agent-daemon digest block/);
   assert.match(out, /Create handoff docs/);
-  // Both dual-write locations still documented
+  // Both handoff locations still documented
   assert.match(out, /\.agent-daemon\/handoffs\/handoff-/);
   assert.match(out, /~\/\.agent-daemon\/handoffs\/<project-slug>/);
+});
+
+test("renderManagedClaudeBlock: describes deterministic continuous capture accurately", () => {
+  const out = renderManagedClaudeBlock(START, END);
+  assert.match(out, /continuous extraction still runs/i);
+  assert.match(out, /without an API key/i);
+  assert.doesNotMatch(out, /NOTHING lands in SQLite/);
 });
 
 test("renderManagedClaudeBlock: idempotent — same input produces same output", () => {

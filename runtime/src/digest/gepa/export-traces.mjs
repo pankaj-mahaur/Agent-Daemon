@@ -49,6 +49,9 @@ export async function exportSkillTraces(opts) {
       succeeded:      t.succeeded === 1 ? true : (t.succeeded === 0 ? false : null),
       failure_reason: t.failure_reason,
       trigger_text:   t.trigger_text,
+      invocation_source: t.invocation_source,
+      outcome_source: t.outcome_source,
+      completed_at:   t.completed_at,
       created_at:     t.created_at
     }));
     await fs.writeFile(outPath, lines.join("\n") + "\n", "utf8");

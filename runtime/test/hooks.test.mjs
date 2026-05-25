@@ -133,6 +133,35 @@ test("edit-post is quiet when the JS file has no console.log", async () => {
   }
 });
 
+test("session-end-digest consumes official stdin payload instead of shell environment variables", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ad-session-end-"));
+  const fixture = resolve(HERE, "fixtures", "sample-transcript-with-digest.jsonl");
+  try {
+    const result = await new Promise((res) => {
+      const child = spawn(process.execPath, [CLI, "hook", "session-end-digest"], {
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, HOME: dir, USERPROFILE: dir }
+      });
+      let out = "", err = "";
+      child.stdout.on("data", d => out += d.toString());
+      child.stderr.on("data", d => err += d.toString());
+      child.on("close", code => res({ code, out, err }));
+      child.stdin.end(JSON.stringify({
+        hook_event_name: "SessionEnd",
+        session_id: "session-end-payload",
+        cwd: dir,
+        transcript_path: fixture
+      }));
+    });
+    assert.equal(result.code, 0);
+    assert.equal(result.out.trim(), "{}");
+    assert.doesNotMatch(result.err, /--transcript is required/);
+    assert.match(result.err, /digested session/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // -- mcp-audit rotation ------------------------------------------------------
 
 test("mcp-audit rotates the log when it exceeds ROTATE_BYTES", async () => {

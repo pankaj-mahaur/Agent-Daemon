@@ -168,7 +168,7 @@ function Show-HookSnippets {
     Write-Host "If settings.json doesn't exist, create one with: { ""hooks"": { ... } }"
     Write-Host ""
 
-    foreach ($snippet in @("session-start-load.json", "session-end-digest.json", "pre-compact-checkpoint.json")) {
+    foreach ($snippet in @("session-start-load.json", "session-end-digest.json", "pre-compact-checkpoint.json", "user-prompt-submit-extract.json", "user-prompt-submit-retrieve.json", "skill-use-telemetry.json")) {
         $f = Join-Path $hooksDir $snippet
         if (Test-Path $f) {
             Write-Host "--- $snippet ---"

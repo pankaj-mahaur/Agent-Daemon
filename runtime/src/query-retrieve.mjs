@@ -4,12 +4,13 @@
 //
 // Usage (from hook):
 //   agent-daemon query-retrieve --output-json
-//   stdin: user prompt text (via CLAUDE_USER_PROMPT env var or stdin)
+//   stdin: Claude Code UserPromptSubmit hook JSON payload
 //
 // Output (--output-json):
-//   { "additionalContext": "<markdown string>" }
+//   { "hookSpecificOutput": { "hookEventName": "UserPromptSubmit", "additionalContext": "<markdown string>" } }
 
 import { searchLearnings, projectSlug } from "./memory/episodic.mjs";
+import { readStdinJson } from "./hooks/io.mjs";
 
 const MAX_RESULTS = 3;
 const MAX_OUTPUT_BYTES = 2000;
@@ -18,7 +19,9 @@ const MAX_OUTPUT_BYTES = 2000;
  * @param {{ cwd?: string, outputJson?: boolean, verbose?: boolean }} opts
  */
 export async function runQueryRetrieve(opts = {}) {
-  const prompt = process.env.CLAUDE_USER_PROMPT || "";
+  const input = await readStdinJson();
+  const prompt = String(input.prompt || process.env.CLAUDE_USER_PROMPT || "");
+  const cwd = opts.cwd || input.cwd || process.env.CLAUDE_PROJECT_DIR;
   if (!prompt || prompt.length < 10) {
     if (opts.outputJson) process.stdout.write("{}");
     return 0;
@@ -31,7 +34,7 @@ export async function runQueryRetrieve(opts = {}) {
   }
 
   const query = keywords.join(" ");
-  const slug = opts.cwd ? projectSlug(opts.cwd) : null;
+  const slug = cwd ? projectSlug(cwd) : null;
 
   let results;
   try {
@@ -60,7 +63,12 @@ export async function runQueryRetrieve(opts = {}) {
   }
 
   if (opts.outputJson) {
-    process.stdout.write(JSON.stringify({ additionalContext: context }));
+    process.stdout.write(JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: "UserPromptSubmit",
+        additionalContext: context
+      }
+    }));
   } else {
     process.stdout.write(context + "\n");
   }
