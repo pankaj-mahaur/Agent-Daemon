@@ -280,7 +280,7 @@ ad evolve <skill>                      # GEPA self-evolution run for a skill (ne
                                        #   --list-candidates [--json]  list skills with ≥3 failures in 30d (no auth)
                                        #   --export-traces             export JSONL traces for inline GEPA (no auth)
 ad review                              # Accept/reject queued skill proposals
-ad init                                # Scaffold .agent-daemon/ + AGENTS.md in project
+ad init                                # Scaffold .agent-daemon/ + AD-INSTRUCTIONS.md in project
                                        #   --profile <name>     minimal | developer (default) | security
                                        #   --skills-mode <m>    smart (default — stack-detect) | all | minimal | manual
                                        #   --plan               print actions without applying
@@ -498,7 +498,7 @@ cd /path/to/your-project
 
 # Delete the per-project memory + agents guide
 rm -rf .agent-daemon
-rm -f AGENTS.md
+rm -f AD-INSTRUCTIONS.md
 ```
 
 Then open `CLAUDE.md` and remove the block between (and including) these two markers:
@@ -628,7 +628,7 @@ Done. agent-daemon is fully removed.
 - v0.3 — Full self-improving loop, SQLite episodic memory, GEPA, watch daemon, OS service registration
 - v0.4 — Zero API-key digest via agent-emitted blocks
 - v0.5 — Token efficiency, ecosystem interop, cross-agent coexistence
-- v0.6 — Multi-agent orchestration with production hardening, `ad` short commands, AGENTS.md auto-generation
+- v0.6 — Multi-agent orchestration with production hardening, `ad` short commands, AD-INSTRUCTIONS.md auto-generation
 
 **Next:**
 - Semantic task router — LLM-based auto template selection + role assignment

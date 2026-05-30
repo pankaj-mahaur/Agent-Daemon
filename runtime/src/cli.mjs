@@ -137,7 +137,7 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
     { path: "CLAUDE.md",              label: "Claude Code project memory" },
     { path: ".cursor/rules/",         label: "Cursor rules" },
     { path: ".cline/rules/",          label: "Cline rules" },
-    { path: "AGENTS.md",             label: "Multi-agent instructions" },
+    { path: "AD-INSTRUCTIONS.md",    label: "agent-daemon instructions" },
     { path: "CONVENTIONS.md",        label: "Aider conventions" },
     { path: ".agent-daemon/",        label: "agent-daemon (already initialized)" }
   ];
@@ -166,15 +166,18 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
     actions.push(`+ session-logs/                (new — gitignored local journal directory)`);
   }
 
-  // Check if AGENTS.md needs to be created
-  const agentsMdPath = path.join(cwd, "AGENTS.md");
+  // Check if the AD instruction file needs to be created.
+  // Named AD-INSTRUCTIONS.md (agent-daemon branded) rather than the generic
+  // AGENTS.md so it's unambiguously the daemon's guide; it's referenced from
+  // the managed CLAUDE.md block so Claude Code loads it via CLAUDE.md.
+  const agentsMdPath = path.join(cwd, "AD-INSTRUCTIONS.md");
   let agentsMdExists = false;
   try {
     await fs.access(agentsMdPath);
     agentsMdExists = true;
   } catch { /* not present */ }
   if (!agentsMdExists) {
-    actions.push("+ AGENTS.md (multi-agent orchestration guide for Claude)");
+    actions.push("+ AD-INSTRUCTIONS.md (agent-daemon orchestration guide for Claude)");
   }
 
   // Check if CLAUDE.md exists and needs our managed section
@@ -362,12 +365,12 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
   }
   if (copied > 0) console.log(`  ✓ Created .agent-daemon/memory/ (${copied} templates)`);
 
-  // Copy AGENTS.md if not present
+  // Copy the AD instruction file if not present
   if (!agentsMdExists) {
-    const agentsTmpl = path.join(PROJECT_ROOT, "templates", "AGENTS.md.template");
+    const agentsTmpl = path.join(PROJECT_ROOT, "templates", "AD-INSTRUCTIONS.md.template");
     try {
       await fs.copyFile(agentsTmpl, agentsMdPath);
-      console.log("  ✓ Created AGENTS.md (multi-agent guide for Claude)");
+      console.log("  ✓ Created AD-INSTRUCTIONS.md (agent-daemon guide for Claude)");
     } catch {
       // template missing — skip silently
     }

@@ -4,7 +4,7 @@ This project uses [agent-daemon](https://github.com/Pankaj-mobiux/Agent-Daemon) 
 
 ## Getting Started
 
-1. **Scaffold:** `ad init` — creates `.agent-daemon/memory/` templates + AGENTS.md
+1. **Scaffold:** `ad init` — creates `.agent-daemon/memory/` templates + AD-INSTRUCTIONS.md
 2. **Bootstrap:** Tell Claude "bootstrap the daemon memory" — reads your project and populates memory with real context
 3. **Verify:** `ad doctor` — confirms everything is wired up
 

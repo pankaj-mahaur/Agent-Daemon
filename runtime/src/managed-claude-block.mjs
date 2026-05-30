@@ -25,6 +25,7 @@ export function renderManagedClaudeBlock(startMarker, endMarker) {
     "- **CLI:** All commands use the `ad` shorthand (`ad doctor`, `ad init`, `ad tt`, `ad memory`, `ad review`)",
     "- **Skills:** Auto-triggering skills in `~/.claude/skills/` — code review, debugging, orchestration, etc.",
     "- **Self-improvement:** deterministic local capture and optional session-close digests write SQLite memory; skill outcomes remain review-gated",
+    "- **Instructions:** `AD-INSTRUCTIONS.md` (repo root) — agent-daemon orchestration guide + `ad` command reference. Read it before running team/spawn commands.",
     "",
     "### Task-complexity gate (size the request before acting)",
     "",
