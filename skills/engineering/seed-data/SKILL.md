@@ -1,6 +1,6 @@
 ---
 name: seed-data
-description: Generate idempotent database seed scripts with realistic test data. Use only when user explicitly requests seed/test data generation for specified schema/models.
+description: Use only when user explicitly requests seed/test data generation for specified schema/models. Generates idempotent seed scripts with realistic test data.
 license: MIT
 metadata:
   author: agent-daemon

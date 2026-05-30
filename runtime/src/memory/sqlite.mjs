@@ -258,6 +258,29 @@ CREATE INDEX IF NOT EXISTS idx_skill_variants_skill  ON skill_variants(skill_nam
 CREATE UNIQUE INDEX IF NOT EXISTS idx_skill_variants_dedupe ON skill_variants(skill_name, body_hash);
 
 -- ─────────────────────────────────────────────────────────────────
+-- skill_route_events
+-- Separates routing telemetry from execution telemetry so GEPA
+-- failure sampling is not polluted by "recommended but not invoked"
+-- events. A recommendation here does NOT imply a failure.
+-- ─────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS skill_route_events (
+  id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id                  TEXT NOT NULL,
+  project_slug                TEXT,
+  task_size                   TEXT,                                -- 'simple' | 'substantial' | 'high-risk' | 'override'
+  prompt_intent               TEXT,                                -- short label matched from routing map
+  recommended_capability_type TEXT,                                -- 'skill' | 'mcp' | 'native-agent' | null
+  recommended_capability      TEXT,                                -- e.g. 'review-slice', null if no match
+  recommendation_source       TEXT NOT NULL DEFAULT 'capability-route-advice',
+  explicit_agent_request      INTEGER NOT NULL DEFAULT 0,          -- 1 if prompt contained agent-delegation language
+  explicit_capability_constraint INTEGER NOT NULL DEFAULT 0,       -- 1 if prompt said "do not use skills" etc.
+  invoked_skill               TEXT,                                -- filled in later by skill-use telemetry correlation
+  created_at                  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_route_events_session ON skill_route_events(session_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_route_events_skill   ON skill_route_events(recommended_capability, created_at DESC);
+
+-- ─────────────────────────────────────────────────────────────────
 -- proposals  (queued user-review items)
 -- ─────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS proposals (
@@ -349,6 +372,7 @@ export async function open(opts = {}) {
   // re-run on already-migrated DBs.
   migrateLearningsContentHash(raw);
   migrateSkillExecutionTelemetry(raw);
+  migrateSkillRouteEvents(raw);
 
   return {
     raw,
@@ -474,6 +498,34 @@ function migrateSkillExecutionTelemetry(raw) {
       raw.exec(`ALTER TABLE skill_executions ADD COLUMN ${name} ${type}`);
     }
   }
+}
+
+/**
+ * Idempotent migration: create skill_route_events table on existing DBs that
+ * predate its introduction. The SCHEMA block handles fresh DBs; this is the
+ * safety net for live installs.
+ *
+ * @param {any} raw - the better-sqlite3 Database
+ */
+function migrateSkillRouteEvents(raw) {
+  raw.exec(`
+    CREATE TABLE IF NOT EXISTS skill_route_events (
+      id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id                  TEXT NOT NULL,
+      project_slug                TEXT,
+      task_size                   TEXT,
+      prompt_intent               TEXT,
+      recommended_capability_type TEXT,
+      recommended_capability      TEXT,
+      recommendation_source       TEXT NOT NULL DEFAULT 'capability-route-advice',
+      explicit_agent_request      INTEGER NOT NULL DEFAULT 0,
+      explicit_capability_constraint INTEGER NOT NULL DEFAULT 0,
+      invoked_skill               TEXT,
+      created_at                  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_route_events_session ON skill_route_events(session_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_route_events_skill   ON skill_route_events(recommended_capability, created_at DESC);
+  `);
 }
 
 /**

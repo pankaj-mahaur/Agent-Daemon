@@ -1673,11 +1673,12 @@ async function cmdHook(name) {
     case "bash-post":           return (await import("./hooks/bash-post.mjs")).bashPost();
     case "edit-post":           return (await import("./hooks/edit-post.mjs")).editPost();
     case "mcp-pre":             return (await import("./hooks/mcp-audit.mjs")).mcpAudit();
-    case "user-prompt-extract": return (await import("./hooks/user-prompt-extract.mjs")).userPromptExtract();
-    case "skill-use":           return (await import("./hooks/skill-use.mjs")).skillUse();
-    case "session-end-digest":  return (await import("./hooks/session-end-digest.mjs")).sessionEndDigest();
+    case "user-prompt-extract":     return (await import("./hooks/user-prompt-extract.mjs")).userPromptExtract();
+    case "capability-route-advice": return (await import("./hooks/capability-route-advice.mjs")).capabilityRouteAdvice();
+    case "skill-use":               return (await import("./hooks/skill-use.mjs")).skillUse();
+    case "session-end-digest":      return (await import("./hooks/session-end-digest.mjs")).sessionEndDigest();
     default:
-      console.error(`agent-daemon hook: unknown handler "${name}". Known: bash-pre, bash-post, edit-post, mcp-pre, user-prompt-extract, skill-use, session-end-digest`);
+      console.error(`agent-daemon hook: unknown handler "${name}". Known: bash-pre, bash-post, edit-post, mcp-pre, user-prompt-extract, capability-route-advice, skill-use, session-end-digest`);
       return 2;
   }
 }

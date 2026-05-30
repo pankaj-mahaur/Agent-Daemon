@@ -25,7 +25,7 @@ test("minimal profile installs only lifecycle hooks + continuous extraction, no 
   // continuous learning capture, and has zero dependencies.
   assert.deepEqual(
     r.hooks.map(h => h.id).sort(),
-    ["query-retrieve", "session-end", "session-start", "skill-use", "slash-command-use", "user-prompt-extract"]
+    ["capability-route-advice", "query-retrieve", "session-end", "session-start", "skill-use", "slash-command-use", "user-prompt-extract"]
   );
   assert.deepEqual(r.skills, []);
   assert.equal(r.features.qmd, false);

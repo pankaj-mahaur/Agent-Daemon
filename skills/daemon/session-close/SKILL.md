@@ -1,6 +1,6 @@
 ---
 name: session-close
-description: Use when the user signals end-of-session. Trigger phrases (English + Hinglish, substring-matched): "bye", "session khatam", "aaj ka kaam ho gaya", "done for today", "end session", "close session", "wrapping up", "session done", "kal milte hain", "chalo bye", "session band karo", "that's it for today", "ho gaya kaam", "session ending", "ending this session", "I'm done". Runs the daemon's session-close protocol — session log + digest block + handoff + GEPA queue — without needing any API key.
+description: Use when the user signals end-of-session. Trigger phrases (English + Hinglish, substring-matched) — "bye", "session khatam", "aaj ka kaam ho gaya", "done for today", "end session", "close session", "wrapping up", "session done", "kal milte hain", "chalo bye", "session band karo", "that's it for today", "ho gaya kaam", "session ending", "ending this session", "I'm done". Runs the daemon's session-close protocol — session log + digest block + handoff + GEPA queue — without needing any API key.
 license: MIT
 metadata:
   author: agent-daemon

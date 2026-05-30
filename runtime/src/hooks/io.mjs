@@ -42,3 +42,8 @@ export function passthrough() {
 export function warn(message) {
   process.stderr.write(`[agent-daemon] ${message}\n`);
 }
+
+/** Inject text into Claude's context without blocking or approving the prompt. */
+export function advise(additionalContext) {
+  process.stdout.write(JSON.stringify({ additionalContext }));
+}

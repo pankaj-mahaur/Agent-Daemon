@@ -391,3 +391,38 @@ function sanitizeFtsQuery(q) {
   if (tokens.length === 0) return null;
   return tokens.join(" OR ");
 }
+
+/**
+ * Record a capability route advice event. Kept separate from skill_executions
+ * so GEPA failure sampling is not polluted by "recommended but not invoked" rows.
+ *
+ * @param {{
+ *   sessionId: string,
+ *   cwd: string,
+ *   taskSize: string,
+ *   recommendedCapability: string | null,
+ *   explicit_agent?: boolean,
+ *   explicit_constraint?: boolean,
+ * }} event
+ */
+export async function recordRouteAdvice(event) {
+  const handle = await db();
+  if (!handle) return null;
+  const slug = event.cwd ? projectSlug(event.cwd) : null;
+  const capType = event.recommendedCapability ? "skill" : null;
+  handle.run(
+    `INSERT INTO skill_route_events
+       (session_id, project_slug, task_size, recommended_capability_type,
+        recommended_capability, explicit_agent_request, explicit_capability_constraint)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [
+      event.sessionId || "",
+      slug,
+      event.taskSize || null,
+      capType,
+      event.recommendedCapability || null,
+      event.explicit_agent ? 1 : 0,
+      event.explicit_constraint ? 1 : 0,
+    ]
+  );
+}
