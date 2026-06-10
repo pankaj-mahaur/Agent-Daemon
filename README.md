@@ -11,7 +11,7 @@ Now ships with a full **team coordination layer**: spawn multiple Claude Code ag
 
 Skills evolve too: [GEPA](runtime/src/digest/gepa/README.md) (Genetic-Pareto Prompt Evolution) reads execution traces and proposes Pareto-optimal skill refinements that you accept or reject via `agent-daemon review`.
 
-> **v0.2.0 (current):** Cross-harness support for **Claude Code** (native), **Codex** (reference config + sub-agent TOML), and **Cursor** (hook bindings + skill→`.mdc` converter). 3 install profiles (`minimal` / `developer` / `security`), 217 skills (36 curated + 181 vendored from [`everything-claude-code`](https://github.com/affaan-m/everything-claude-code)), 4 ported production hooks, audit-log rotation, GitHub Actions CI on Linux/macOS/Windows. See [CHANGELOG.md](CHANGELOG.md) for the full v0.2.0 story and [docs/manual-test-v0.2.0.md](docs/manual-test-v0.2.0.md) for a step-by-step end-user verification checklist.
+> **v0.2.0 + Phase 5:** Cross-harness support for **Claude Code** (native), **Codex** (reference config + sub-agent TOML), and **Cursor** (hook bindings + skill-to-`.mdc` converter). 3 install profiles (`minimal` / `developer` / `security`) + 4 skill-install modes (`smart` / `all` / `minimal` / `manual`). 229 skills (43 curated + 186 vendored from [`everything-claude-code`](https://github.com/affaan-m/everything-claude-code)), production hooks, audit-log rotation, and GitHub Actions CI on Linux/macOS/Windows. **Phase 5** (see [CHANGELOG.md](CHANGELOG.md)) adds stack-detection-driven smart install, three new daemon skills (`skill-author`, `session-close`, `gepa-evolve-inline`), no-API-key inline GEPA proposals via an active Claude session, Hinglish extractor rules, multi-agent orchestration improvements, and weekly `activeContext.md` rotation.
 
 ## Quick start
 
@@ -29,25 +29,58 @@ ad doctor
 
 # 4. Init in your project
 cd /path/to/your/project
-ad init                       # default: developer profile
-ad init --profile minimal     # memory + lifecycle hooks only
-ad init --profile security    # default + intrusive guards (block --no-verify, MCP audit)
-ad init --plan                # preview without applying
+ad init                              # default: developer profile + smart skill install
+ad init --profile minimal            # memory + lifecycle hooks only
+ad init --profile security           # default + intrusive guards (block --no-verify, MCP audit)
+ad init --skills-mode all            # install ALL 229 skills (vs stack-detect-driven default)
+ad init --skills-mode manual         # install only profile-listed skills (legacy behaviour)
+ad init --plan                       # preview without applying
 
-# 5. Open Claude Code — constitution + memory load automatically.
-#    The agent emits a digest block before ending, the daemon parses it,
-#    memory accumulates across sessions.
+# 5. Open Claude Code — prioritized context and prompt-time retrieval load automatically.
+#    Explicit corrections are captured locally; session-close digest blocks add richer memory.
 ```
 
-The `ad` command is the short alias for `agent-daemon` — both work interchangeably. No API key required for normal operation. Set `ANTHROPIC_API_KEY` only for `ad evolve` (GEPA batch evolution).
+The `ad` command is the short alias for `agent-daemon` — both work interchangeably. No API key is required for local capture, retrieval, deterministic SessionEnd digest parsing, or inline skill evolution proposals. Claude Code itself must be authenticated for interactive sessions; authenticated batch/LLM fallback remains explicit opt-in behavior.
 
 > **Verifying your install end-to-end?** Follow [docs/manual-test-v0.2.0.md](docs/manual-test-v0.2.0.md) — six sections, ~30 steps, each with expected output and the fix when it fails.
+
+### Windows team setup (Claude Code)
+
+Use a clean clone or a clean pull of `main`; do not distribute another developer's linked runtime directory.
+
+```powershell
+# Install the CLI once per machine.
+git clone https://github.com/Pankaj-mobiux/Agent-Daemon.git 'D:\Program Files\Agent-Daemon'
+Set-Location 'D:\Program Files\Agent-Daemon\runtime'
+npm install
+npm link
+
+# Initialize each repository once.
+$project = 'D:\path\to\your-project'
+Set-Location $project
+ad init --profile developer --skills-mode manual
+ad doctor
+```
+
+If `ad doctor` reports memory placeholders or an oversized `activeContext.md`, open `claude` from the project root and ask it to bootstrap the daemon memory using verified repository facts and compact `activeContext.md` below the reported budget. Then run `ad doctor` again.
+
+For a final no-API-key smoke test:
+
+```powershell
+Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
+claude -p "Reply with exactly CLAUDE_DAEMON_OK if you can see agent-daemon instructions and grounded project memory. Do not use tools or write files." `
+  --output-format text `
+  --tools '' `
+  --permission-mode plan
+```
+
+Expected result: `CLAUDE_DAEMON_OK`, with no `SessionEnd hook failed` message after the response.
 
 ### Install profiles
 
 | Profile | Hooks | Skills auto-installed | Best for |
 |---|---|---|---|
-| `minimal` | SessionStart + SessionEnd | none | Users who want explicit control |
+| `minimal` | SessionStart + SessionEnd + prompt retrieval/extraction + skill telemetry | none | Users who want explicit control |
 | `developer` (default) | minimal + `console.log` warn on Edit, build/PR-URL log on Bash | 7 core (bootstrap-daemon, orchestrate-team, debug-triage, …) | Day-to-day coding |
 | `security` | developer + blocks `git --no-verify`, blocks dev-server-without-tmux, audits every MCP call, warns on untrusted MCP servers | developer + 3 (security-audit, production-readiness, llm-app-safety) | High-stakes work, regulated repos |
 
@@ -100,15 +133,15 @@ Auto-finds the newest transcript for the current directory, force-digests it. Id
 
 `ad watch` and `ad digest-latest` are composable — SQLite dedupes already-digested sessions. Run watch as your default, fall back to `digest-latest` when you want immediate confirmation or when the watcher misses a session (Windows quirk — see [docs/troubleshooting.md](docs/troubleshooting.md)).
 
-### The agent must emit a digest block
+### Digest blocks improve memory quality
 
-Both commands need Claude to emit a `<agent-daemon-digest>` block in its final response. The block format lives in [constitution/ending-protocol.md](constitution/ending-protocol.md) and is loaded into every session via SessionStart.
+Prompt hooks capture explicit corrections and retrieve local SQLite learnings without an API key. A `<agent-daemon-digest>` block in Claude's final response adds a richer session summary for `ad digest` or `ad digest-latest`. The block format lives in [constitution/ending-protocol.md](constitution/ending-protocol.md).
 
-The agent doesn't always remember. To guarantee capture, ask Claude before ending:
+To guarantee a full end-of-session summary, ask Claude before ending:
 
 > *"emit the agent-daemon digest block before ending"*
 
-Alternative: pass `--fallback-to-llm` to either command to run an LLM extraction pass when no block is found (requires `claude` CLI on PATH, ~$0.005 per session).
+Alternative: explicitly pass `--fallback-to-llm` to run an authenticated LLM extraction pass when no block is found. This is never installed as the default SessionEnd behavior.
 
 ## Multi-agent orchestration
 
@@ -243,9 +276,14 @@ ad watch                               # Watch transcript dirs, fire digest on n
                                        #   --verbose          log every file event
                                        #   --force            pass --force to each digest run
                                        #   --once-on-existing also digest existing transcripts
-ad evolve <skill>                      # GEPA self-evolution run for a skill
+ad evolve <skill>                      # GEPA self-evolution run for a skill (needs auth)
+                                       #   --list-candidates [--json]  list skills with ≥3 failures in 30d (no auth)
+                                       #   --export-traces             export JSONL traces for inline GEPA (no auth)
 ad review                              # Accept/reject queued skill proposals
-ad init                                # Scaffold .agent-daemon/ + AGENTS.md in project
+ad init                                # Scaffold .agent-daemon/ + AD-INSTRUCTIONS.md in project
+                                       #   --profile <name>     minimal | developer (default) | security
+                                       #   --skills-mode <m>    smart (default — stack-detect) | all | minimal | manual
+                                       #   --plan               print actions without applying
 ad status                              # Show queued proposals
 ad query-retrieve                      # Keyword extraction + learning injection
 
@@ -257,12 +295,13 @@ ad team list-templates (tt)
 ad team inbox    (ti)  --team <id> [--agent <name>]
 ad team cleanup  (tu)                  # Prune stale worktrees
 ad team delete   (td)  --team <id>
+ad team retry    (tr)  --team <id> --task <task-id>   # Reset a failed task
 ad spawn         (sp)  --team <id> --role <name> --task "..."
 ```
 
-## Skill catalog (36 curated + 181 vendored = 217 total)
+## Skill catalog (43 curated + 186 vendored = 229 total)
 
-> The 36 curated skills below are documented; an additional 181 skills were imported from [`everything-claude-code`](https://github.com/affaan-m/everything-claude-code) (MIT) — each tagged with a `source:` frontmatter line. See [skills/README.md](skills/README.md) for the full vendored catalog and re-sync instructions.
+> The 43 curated skills below are documented; an additional 186 skills were imported from [`everything-claude-code`](https://github.com/affaan-m/everything-claude-code) (MIT) — each tagged with a `source:` frontmatter line. See [skills/README.md](skills/README.md) for the full vendored catalog and re-sync instructions.
 
 ### Build & implement
 
@@ -305,9 +344,12 @@ ad spawn         (sp)  --team <id> --role <name> --task "..."
 
 | Skill | Description | Trigger |
 |---|---|---|
-| [bootstrap-daemon](skills/bootstrap-daemon/) | Full end-to-end daemon initialization + memory population | Auto: "initialize daemon", "bootstrap daemon" |
-| [orchestrate-team](skills/orchestrate-team/) | Multi-agent task decomposition + team spawning | Auto: complex multi-domain tasks |
-| [agent-self-improve](skills/agent-self-improve/) | Teaches agents the self-improvement discipline | Auto: session reflection |
+| [bootstrap-daemon](skills/daemon/bootstrap-daemon/) | Full end-to-end daemon initialization + memory population | Auto: "initialize daemon", "bootstrap daemon" |
+| [orchestrate-team](skills/daemon/orchestrate-team/) | Multi-agent task decomposition + team spawning | Auto: complex multi-domain tasks |
+| [agent-self-improve](skills/productivity/agent-self-improve/) | Teaches agents the self-improvement discipline | Auto: session reflection |
+| [skill-author](skills/daemon/skill-author/) | Dedup-first skill authoring (global vs project, ≥70% overlap → append) | Auto: "create a skill", "is se skill banao", "har baar yaad rakhna" / `/skill-author` |
+| [session-close](skills/daemon/session-close/) | No-API session-end macro — session-log + digest + handoff + GEPA queue | Auto: "bye", "session khatam", "aaj ka kaam ho gaya", "done for today" |
+| [gepa-evolve-inline](skills/daemon/gepa-evolve-inline/) | No-API-key GEPA — active Claude session does the reflection itself | Auto: "evolve skill", "skill ko better banao" |
 
 ### Methodology (14 skills)
 
@@ -372,7 +414,7 @@ Skills auto-trigger from frontmatter or via `/skill-name`. The runtime fires hoo
 
 ```bash
 cd Agent-Daemon/runtime && npm install && npm link   # global install — `ad` works everywhere
-ad init                                              # in your project — scaffolds config + AGENTS.md
+ad init                                              # in your project — scaffolds memory + managed CLAUDE.md instructions
 ```
 
 ### Other agents
@@ -456,7 +498,7 @@ cd /path/to/your-project
 
 # Delete the per-project memory + agents guide
 rm -rf .agent-daemon
-rm -f AGENTS.md
+rm -f AD-INSTRUCTIONS.md
 ```
 
 Then open `CLAUDE.md` and remove the block between (and including) these two markers:
@@ -586,7 +628,7 @@ Done. agent-daemon is fully removed.
 - v0.3 — Full self-improving loop, SQLite episodic memory, GEPA, watch daemon, OS service registration
 - v0.4 — Zero API-key digest via agent-emitted blocks
 - v0.5 — Token efficiency, ecosystem interop, cross-agent coexistence
-- v0.6 — Multi-agent orchestration with production hardening, `ad` short commands, AGENTS.md auto-generation
+- v0.6 — Multi-agent orchestration with production hardening, `ad` short commands, AD-INSTRUCTIONS.md auto-generation
 
 **Next:**
 - Semantic task router — LLM-based auto template selection + role assignment
@@ -609,6 +651,7 @@ Copy-paste configuration templates:
 ## Docs
 
 **Start here:**
+- [Onboarding page](docs/onboarding.html) — single self-contained HTML page (open in any browser) — zero-to-one walkthrough with prerequisites, install, daily flow, advanced features, TOS safety
 - [Workflow](docs/workflow.md) — `ad watch` vs `ad digest-latest`, the ending protocol, decision matrix
 - [Troubleshooting](docs/troubleshooting.md) — 13 common failure modes with fixes (Windows watch, LLM fallback, hook misses, etc.)
 - [Architecture](docs/architecture.md) — Three loops, components, data flow, file-system layout

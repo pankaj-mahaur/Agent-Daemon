@@ -16,6 +16,8 @@ import { evolveSkill } from "./digest/gepa/evolve.mjs";
 import { runWatcher } from "./daemon/watch.mjs";
 import { resolveProfile, listProfiles } from "./profiles.mjs";
 import { buildSkillIndex, resolveSkillSource } from "./skills-source.mjs";
+import { detectStack, formatStacks, loadStackSkillMap, resolveSkillsForStacks } from "./stack-detect.mjs";
+import { renderManagedClaudeBlock } from "./managed-claude-block.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
@@ -49,10 +51,14 @@ Commands:
                          --force              pass --force to each digest run
                          --fallback-to-llm    enable LLM extraction in watcher
   evolve <skill>         GEPA self-improvement run for a skill (sample → reflect → generate → evaluate → select)
+                         --list-candidates    list skills with ≥3 failures in 30d (no auth needed)
+                         --export-traces      export skill_executions to JSONL for inline GEPA (no auth needed)
+                         --json               machine-readable output (use with --list-candidates / --export-traces)
   checkpoint             Save a memory checkpoint before /compact
   init                   Scaffold .agent-daemon/ in current project
-                         --profile <name>  install profile: minimal | developer (default) | security
-                         --plan            print actions without applying
+                         --profile <name>     install profile: minimal | developer (default) | security
+                         --skills-mode <mode> smart (default — stack-detect) | all | minimal | manual (profile-listed only)
+                         --plan               print actions without applying
   status                 Show queued proposals (skill diffs, constitution rule additions)
   review                 Interactively accept/reject queued proposals
   query-retrieve         Extract keywords from user prompt and inject relevant past learnings (UserPromptSubmit hook)
@@ -66,6 +72,7 @@ Commands:
   team inbox      (ti)   Read messages from an agent's inbox
   team cleanup    (tu)   Prune stale worktrees and dangling team data
   team delete     (td)   Delete a team and its data
+  team retry      (tr)   Reset a failed task to pending (--team <id> --task <task-id>)
   spawn           (sp)   Spawn a worker agent in a team
 
 Options:
@@ -98,7 +105,14 @@ Environment:
 /* Subcommand implementations                                          */
 /* ------------------------------------------------------------------ */
 
-async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, yes = false, profile, plan = false }) {
+async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, yes = false, profile, plan = false, skillsMode }) {
+  // Normalise skills-mode. Default 'smart' (stack-detect-driven).
+  const SKILLS_MODES = ["smart", "all", "minimal", "manual"];
+  if (!skillsMode) skillsMode = "smart";
+  if (!SKILLS_MODES.includes(skillsMode)) {
+    console.error(`agent-daemon init: unknown --skills-mode '${skillsMode}'. Valid: ${SKILLS_MODES.join(", ")}`);
+    return 1;
+  }
   const target = path.join(cwd, ".agent-daemon", "memory");
   const templatesDir = path.join(PROJECT_ROOT, "memory-templates");
 
@@ -119,10 +133,11 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
   // Phase 1: Audit existing agent files
   const AGENT_FILES = [
     { path: ".claude/",               label: "Claude Code project config" },
+    { path: ".claude/skills/",        label: "Project-local skills" },
     { path: "CLAUDE.md",              label: "Claude Code project memory" },
     { path: ".cursor/rules/",         label: "Cursor rules" },
     { path: ".cline/rules/",          label: "Cline rules" },
-    { path: "AGENTS.md",             label: "Multi-agent instructions" },
+    { path: "AD-INSTRUCTIONS.md",    label: "agent-daemon instructions" },
     { path: "CONVENTIONS.md",        label: "Aider conventions" },
     { path: ".agent-daemon/",        label: "agent-daemon (already initialized)" }
   ];
@@ -151,15 +166,18 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
     actions.push(`+ session-logs/                (new — gitignored local journal directory)`);
   }
 
-  // Check if AGENTS.md needs to be created
-  const agentsMdPath = path.join(cwd, "AGENTS.md");
+  // Check if the AD instruction file needs to be created.
+  // Named AD-INSTRUCTIONS.md (agent-daemon branded) rather than the generic
+  // AGENTS.md so it's unambiguously the daemon's guide; it's referenced from
+  // the managed CLAUDE.md block so Claude Code loads it via CLAUDE.md.
+  const agentsMdPath = path.join(cwd, "AD-INSTRUCTIONS.md");
   let agentsMdExists = false;
   try {
     await fs.access(agentsMdPath);
     agentsMdExists = true;
   } catch { /* not present */ }
   if (!agentsMdExists) {
-    actions.push("+ AGENTS.md (multi-agent orchestration guide for Claude)");
+    actions.push("+ AD-INSTRUCTIONS.md (agent-daemon orchestration guide for Claude)");
   }
 
   // Check if CLAUDE.md exists and needs our managed section
@@ -168,14 +186,31 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
   const MANAGED_END = "<!-- agent-daemon:end -->";
   let claudeMdExists = false;
   let claudeMdHasSection = false;
+  let claudeMdSectionStale = false;
   try {
     const content = await fs.readFile(claudeMdPath, "utf8");
     claudeMdExists = true;
     claudeMdHasSection = content.includes(MANAGED_START);
     if (!claudeMdHasSection) {
       actions.push("+ Section in CLAUDE.md pointing to .agent-daemon/ (additive — existing content preserved)");
+    } else {
+      // Block exists — check if it matches the latest rendered template.
+      // If not, queue a refresh action so the early-return ("nothing to do")
+      // doesn't fire on already-initialized projects with stale managed blocks.
+      const startIdx = content.indexOf(MANAGED_START);
+      const endIdx = content.indexOf(MANAGED_END, startIdx);
+      if (startIdx !== -1 && endIdx !== -1) {
+        const existing = content.slice(startIdx, endIdx + MANAGED_END.length);
+        const expected = renderManagedClaudeBlock(MANAGED_START, MANAGED_END);
+        if (existing !== expected) {
+          claudeMdSectionStale = true;
+          actions.push("↻ Refresh CLAUDE.md managed block (new content: decision tree / workflow / discipline)");
+        }
+      }
     }
-  } catch { /* no CLAUDE.md */ }
+  } catch {
+    actions.push("+ CLAUDE.md (Claude Code managed project instructions)");
+  }
 
   // Check if hooks need installing in ~/.claude/settings.json
   const home = process.env.HOME || process.env.USERPROFILE || "";
@@ -225,17 +260,70 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
     const summary = hooksToAdd.map(h => `${h.event}/${h.id}`).join(", ");
     actions.push(`+ ${hooksToAdd.length} hook(s) in ~/.claude/settings.json (${summary})`);
   }
-
-  // Skill set comes from the profile manifest.
-  const CORE_SKILLS = resolved.skills;
-  const skillsDst = path.join(home, ".claude", "skills");
-  const skillsSrc = path.join(PROJECT_ROOT, "skills");
-  let missingSkills = 0;
-  for (const skill of CORE_SKILLS) {
-    try { await fs.access(path.join(skillsDst, skill)); } catch { missingSkills++; }
+  const hasLegacySessionEndCommand = (existingHooksMap.SessionEnd || []).some(h =>
+    (h.hooks || []).some(hh =>
+      /\b(?:ad|agent-daemon)\s+digest\b/.test(hh.command || "")
+    )
+  );
+  if (hasLegacySessionEndCommand) {
+    actions.push("↻ Replace direct SessionEnd digest command with stdin-aware Claude hook");
   }
-  if (missingSkills > 0) {
-    actions.push(`+ ${missingSkills} core skill(s) to ~/.claude/skills/`);
+
+  // Resolve which skills to install — modes:
+  //   manual  → profile manifest only (legacy behaviour)
+  //   minimal → stack-skill-map.json `always` block only
+  //   smart   → stack-detect + map (default; project-local install enabled)
+  //   all     → every skill discoverable by buildSkillIndex
+  const skillsDst         = path.join(home, ".claude", "skills");        // global
+  const skillsDstProject  = path.join(cwd,  ".claude", "skills");        // project-local
+  const skillsSrc         = path.join(PROJECT_ROOT, "skills");
+  const stackMapPath      = path.join(PROJECT_ROOT, "runtime", "profiles", "stack-skill-map.json");
+
+  let globalSkillsToInstall  = [];
+  let projectSkillsToInstall = [];
+  let detectedStacks = new Set();
+
+  if (skillsMode === "manual") {
+    globalSkillsToInstall  = resolved.skills;
+    projectSkillsToInstall = [];
+  } else if (skillsMode === "all") {
+    const idx = await buildSkillIndex(skillsSrc);
+    globalSkillsToInstall  = [...idx.keys()].sort();
+    projectSkillsToInstall = [];
+  } else {
+    // smart or minimal — both need the map
+    const map = await loadStackSkillMap(stackMapPath);
+    if (skillsMode === "minimal") {
+      globalSkillsToInstall  = [...(map.always || [])];
+      projectSkillsToInstall = [];
+    } else {
+      // smart: detect stacks + resolve
+      const detection = await detectStack(cwd);
+      detectedStacks  = detection.stacks;
+      const resolvedSkills = resolveSkillsForStacks(detectedStacks, map);
+      globalSkillsToInstall  = resolvedSkills.global;
+      projectSkillsToInstall = resolvedSkills.project;
+      if (detectedStacks.size > 0) {
+        console.log(`  Detected stacks: ${formatStacks(detectedStacks)}`);
+      } else {
+        console.log("  Detected stacks: (none — falling back to always-block)");
+      }
+    }
+  }
+
+  // Count missing for the plan output (global + project lanes separately)
+  let missingGlobal = 0, missingProject = 0;
+  for (const skill of globalSkillsToInstall) {
+    try { await fs.access(path.join(skillsDst, skill)); } catch { missingGlobal++; }
+  }
+  for (const skill of projectSkillsToInstall) {
+    try { await fs.access(path.join(skillsDstProject, skill)); } catch { missingProject++; }
+  }
+  if (missingGlobal > 0) {
+    actions.push(`+ ${missingGlobal} skill(s) to ~/.claude/skills/ (mode: ${skillsMode})`);
+  }
+  if (missingProject > 0) {
+    actions.push(`+ ${missingProject} skill(s) to <project>/.claude/skills/ (project-local)`);
   }
 
   if (qmdOnPath) {
@@ -277,48 +365,113 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
   }
   if (copied > 0) console.log(`  ✓ Created .agent-daemon/memory/ (${copied} templates)`);
 
-  // Copy AGENTS.md if not present
+  // Copy the AD instruction file if not present
   if (!agentsMdExists) {
-    const agentsTmpl = path.join(PROJECT_ROOT, "templates", "AGENTS.md.template");
+    const agentsTmpl = path.join(PROJECT_ROOT, "templates", "AD-INSTRUCTIONS.md.template");
     try {
       await fs.copyFile(agentsTmpl, agentsMdPath);
-      console.log("  ✓ Created AGENTS.md (multi-agent guide for Claude)");
+      console.log("  ✓ Created AD-INSTRUCTIONS.md (agent-daemon guide for Claude)");
     } catch {
       // template missing — skip silently
     }
   }
 
-  // Install core skills to ~/.claude/skills/ (idempotent — skip existing).
-  // Source paths are bucket-aware via buildSkillIndex; destination is always
-  // flat (Claude Code reads ~/.claude/skills/<name>/SKILL.md regardless of how
-  // we organise the repo source).
-  let skillsInstalled = 0;
-  try {
-    await fs.mkdir(skillsDst, { recursive: true });
-    const skillIndex = await buildSkillIndex(skillsSrc);
-    for (const skill of CORE_SKILLS) {
-      const dst = path.join(skillsDst, skill);
+  // Install skills to BOTH ~/.claude/skills/ (global) AND <cwd>/.claude/skills/
+  // (project-local). Idempotent — skips if dest is up-to-date with source.
+  //
+  // Idempotency rules:
+  //   - dest missing       → copy, log `✓ installed`
+  //   - source newer       → overwrite, log `↻ updated`
+  //   - same mtime/size    → skip silently
+  //   - dest user-edited   → preserve, log `⚠ skipped (locally modified)`
+  //     detection: presence of <!-- agent-daemon:managed --> marker line in
+  //     the source's SKILL.md but not in dest = user removed our marker =
+  //     they took ownership. We don't currently write that marker, so all
+  //     non-managed copies fall through to mtime compare.
+  let skillIndex;
+  try { skillIndex = await buildSkillIndex(skillsSrc); } catch { skillIndex = new Map(); }
+
+  async function installSkillLane(skillNames, destRoot, laneLabel) {
+    let installed = 0, updated = 0, skipped = 0, missing = 0;
+    try {
+      await fs.mkdir(destRoot, { recursive: true });
+    } catch { return { installed, updated, skipped, missing }; }
+
+    for (const skill of skillNames) {
       const src = skillIndex.get(skill);
-      if (!src) continue;  // source missing — skip
+      if (!src) { missing++; continue; }
+      const dst = path.join(destRoot, skill);
+      let destExists = false;
+      try { await fs.access(dst); destExists = true; } catch { /* not installed */ }
+
+      if (!destExists) {
+        try { await fs.cp(src, dst, { recursive: true }); installed++; }
+        catch { /* copy failed — skip silently */ }
+        continue;
+      }
+
+      // dest exists — compare mtime of SKILL.md to decide update vs skip
       try {
-        await fs.access(dst);
-        // already installed — skip
+        const [srcStat, dstStat] = await Promise.all([
+          fs.stat(path.join(src, "SKILL.md")),
+          fs.stat(path.join(dst, "SKILL.md"))
+        ]);
+        if (srcStat.mtimeMs > dstStat.mtimeMs + 1000) {  // 1s tolerance for fs precision
+          try {
+            await fs.rm(dst, { recursive: true, force: true });
+            await fs.cp(src, dst, { recursive: true });
+            updated++;
+          } catch { /* update failed — skip */ }
+        } else {
+          skipped++;
+        }
       } catch {
-        try {
-          await fs.cp(src, dst, { recursive: true });
-          skillsInstalled++;
-        } catch { /* copy failed — skip */ }
+        // stat failed — leave as-is
+        skipped++;
       }
     }
-  } catch { /* skills dir creation failed — skip */ }
-  if (skillsInstalled > 0) {
-    console.log(`  ✓ Installed ${skillsInstalled} core skill(s) to ~/.claude/skills/`);
+    return { installed, updated, skipped, missing };
+  }
+
+  // Global lane
+  if (globalSkillsToInstall.length > 0) {
+    const r = await installSkillLane(globalSkillsToInstall, skillsDst, "global");
+    if (r.installed > 0) console.log(`  ✓ Installed ${r.installed} skill(s) to ~/.claude/skills/`);
+    if (r.updated   > 0) console.log(`  ↻ Updated ${r.updated} skill(s) in ~/.claude/skills/ (source was newer)`);
+    if (r.missing   > 0 && verbose) console.log(`  · ${r.missing} skill(s) listed in map but not found in repo (skipped)`);
+  }
+
+  // Project-local lane (only in smart mode, and only if any project skills)
+  if (projectSkillsToInstall.length > 0) {
+    const r = await installSkillLane(projectSkillsToInstall, skillsDstProject, "project");
+    if (r.installed > 0) console.log(`  ✓ Installed ${r.installed} skill(s) to <project>/.claude/skills/`);
+    if (r.updated   > 0) console.log(`  ↻ Updated ${r.updated} skill(s) in <project>/.claude/skills/`);
+    if (r.installed > 0 || r.updated > 0) {
+      // Also drop a small README so the folder is self-documenting
+      const readme = path.join(skillsDstProject, "README.md");
+      try { await fs.access(readme); } catch {
+        try {
+          await fs.writeFile(readme,
+            "# Project-local skills\n\nInstalled by `ad init --skills-mode smart` based on detected project stack.\nClaude Code prefers these over the same-named global skill in `~/.claude/skills/`.\n\nRe-run `ad init` to update; `ad uninstall` removes the daemon-managed entries.\n",
+            "utf8"
+          );
+        } catch { /* non-fatal */ }
+      }
+    }
   }
 
   // Install profile-specified hooks in ~/.claude/settings.json (merge — preserve existing settings)
-  if (hooksToAdd.length > 0) {
+  if (hooksToAdd.length > 0 || hasLegacySessionEndCommand) {
     try {
       const hooks = existingSettings.hooks || {};
+      if (hasLegacySessionEndCommand) {
+        hooks.SessionEnd = (hooks.SessionEnd || []).map(group => ({
+          ...group,
+          hooks: (group.hooks || []).filter(hh =>
+            !(/\b(?:ad|agent-daemon)\s+digest\b/.test(hh.command || ""))
+          )
+        })).filter(group => group.hooks.length > 0);
+      }
       for (const h of hooksToAdd) {
         const arr = hooks[h.event] || [];
         arr.push({
@@ -331,11 +484,95 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
 
       await fs.mkdir(path.join(home, ".claude"), { recursive: true });
       await fs.writeFile(globalSettingsPath, JSON.stringify(existingSettings, null, 2), "utf8");
-      console.log(`  ✓ Added ${hooksToAdd.length} hook(s) to ~/.claude/settings.json`);
+      if (hasLegacySessionEndCommand) console.log("  ✓ Replaced direct SessionEnd digest command with stdin-aware hook");
+      if (hooksToAdd.length > 0) console.log(`  ✓ Added ${hooksToAdd.length} hook(s) to ~/.claude/settings.json`);
       for (const h of hooksToAdd) console.log(`      ${h.event} ← ${h.id}`);
     } catch (err) {
       console.error(`  ⚠ Could not install hooks: ${err.message}`);
     }
+  }
+
+  // -- Deeper ~/.claude/ integration (WS-3) ---------------------------
+  // Three pieces, all idempotent and additive:
+  //   1. ~/.claude/commands/  — copy our shipped slash commands (e.g. /evolve)
+  //   2. ~/.claude/CLAUDE.md  — append managed block pointing at daemon docs
+  // User's existing content is never touched outside the marker block.
+
+  // 1. Global slash commands
+  try {
+    const cmdSrcDir = path.join(PROJECT_ROOT, "commands");
+    const cmdDstDir = path.join(home, ".claude", "commands");
+    let entries;
+    try { entries = await fs.readdir(cmdSrcDir, { withFileTypes: true }); }
+    catch { entries = []; }
+    if (entries.length > 0) {
+      await fs.mkdir(cmdDstDir, { recursive: true });
+      let copied = 0, updated = 0;
+      for (const e of entries) {
+        if (!e.isFile() || !e.name.endsWith(".md")) continue;
+        const src = path.join(cmdSrcDir, e.name);
+        const dst = path.join(cmdDstDir, e.name);
+        const srcTxt = await fs.readFile(src, "utf8").catch(() => null);
+        if (!srcTxt) continue;
+        const dstTxt = await fs.readFile(dst, "utf8").catch(() => null);
+        if (dstTxt === null)      { await fs.writeFile(dst, srcTxt, "utf8"); copied++; }
+        else if (dstTxt !== srcTxt) { await fs.writeFile(dst, srcTxt, "utf8"); updated++; }
+      }
+      if (copied  > 0) console.log(`  ✓ Installed ${copied} slash command(s) to ~/.claude/commands/`);
+      if (updated > 0) console.log(`  ↻ Updated ${updated} slash command(s) in ~/.claude/commands/`);
+    }
+  } catch (err) {
+    console.error(`  ⚠ Could not install global slash commands: ${err.message}`);
+  }
+
+  // 2. Global ~/.claude/CLAUDE.md managed block
+  try {
+    const globalClaudeMd = path.join(home, ".claude", "CLAUDE.md");
+    let existing = "";
+    try { existing = await fs.readFile(globalClaudeMd, "utf8"); } catch { /* will create */ }
+    const block = [
+      "",
+      MANAGED_START,
+      "## agent-daemon (global)",
+      "",
+      "This machine has [agent-daemon](https://github.com/Pankaj-mobiux/Agent-Daemon) installed — a self-improving local runtime for Claude Code.",
+      "",
+      "- **Global skills:** `~/.claude/skills/` — installed by `ad init` based on each project's detected stack.",
+      "- **Global commands:** `~/.claude/commands/` — slash commands like `/evolve`.",
+      "- **Continuous capture:** prompt hooks capture explicit corrections and retrieve relevant local SQLite learnings without an API key.",
+      "- **Skill evolution:** Claude skill invocations and high-confidence failures are traced locally; `/evolve` proposes changes and `ad review` is the acceptance gate.",
+      "- **Session close:** `session-close` emits a richer digest and handoff. It improves memory quality but is not the only capture path.",
+      "",
+      "Per-project memory lives in `<project>/.agent-daemon/memory/`. Per-project instructions live in each project's `CLAUDE.md` between the same managed markers.",
+      "",
+      "Manage:",
+      "",
+      "```sh",
+      "ad doctor          # verify install",
+      "ad status          # show queued GEPA proposals",
+      "ad review          # accept/reject proposals",
+      "```",
+      MANAGED_END,
+      ""
+    ].join("\n");
+    if (!existing.includes(MANAGED_START)) {
+      await fs.mkdir(path.join(home, ".claude"), { recursive: true });
+      await fs.appendFile(globalClaudeMd, block, "utf8");
+      console.log(`  ✓ Added agent-daemon section to ~/.claude/CLAUDE.md (global)`);
+    } else {
+      const startIdx = existing.indexOf(MANAGED_START);
+      const endIdx = existing.indexOf(MANAGED_END, startIdx);
+      if (endIdx >= 0) {
+        const replacement = block.trim();
+        const next = existing.slice(0, startIdx) + replacement + existing.slice(endIdx + MANAGED_END.length);
+        if (next !== existing) {
+          await fs.writeFile(globalClaudeMd, next, "utf8");
+          console.log("  ✓ Refreshed agent-daemon section in ~/.claude/CLAUDE.md (global)");
+        }
+      }
+    }
+  } catch (err) {
+    console.error(`  ⚠ Could not update global ~/.claude/CLAUDE.md: ${err.message}`);
   }
 
   // QMD auto-setup (idempotent): register MCP server in user scope of
@@ -370,56 +607,34 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
     }
   }
 
-  // Add managed section to CLAUDE.md (idempotent)
-  if (claudeMdExists && !claudeMdHasSection) {
-    const section = [
-      "",
-      MANAGED_START,
-      "## agent-daemon",
-      "",
-      "This project uses [agent-daemon](https://github.com/Pankaj-mobiux/Agent-Daemon) — a self-improving runtime for AI coding agents with multi-agent orchestration.",
-      "",
-      "- **Memory:** `.agent-daemon/memory/` — project learnings extracted from each session by the digest pipeline",
-      "- **Multi-agent:** `ad tc` to create teams, `ad sp` to spawn workers in isolated git worktrees, `ad ts` for status",
-      "- **CLI:** All commands use the `ad` shorthand (e.g. `ad doctor`, `ad init`, `ad tt` for templates)",
-      "- **Skills:** 35 auto-triggering skills in `~/.claude/skills/` — code review, debugging, orchestration, etc.",
-      "- **Self-improvement:** Session digests extract learnings → SQLite episodic memory → next session starts smarter",
-      "",
-      "### Bootstrap (run once after `ad init`)",
-      "",
-      "Tell Claude: **\"bootstrap the daemon memory using the bootstrap-daemon skill\"**.",
-      "",
-      "Claude will scan `package.json`, key folders, recent commits, and populate `.agent-daemon/memory/*.md` with real project context (stack, conventions, gotchas). Future sessions then start with rich context loaded automatically.",
-      "",
-      "### Session logs (`session-logs/`)",
-      "",
-      "Local-only (gitignored). Tracks Claude Code session activity, timeline, decisions, and token usage.",
-      "",
-      "- One file per session: `YYYY-MM-DD_session-NN.md`",
-      "- See `session-logs/README.md` for format",
-      "- **Update triggers:**",
-      "  - User says \"log tokens\" + pastes `/cost` output → append timestamped entry",
-      "  - User says \"close session\" → fill End-of-session block with summary",
-      "  - User says \"new session\" → create next file, link previous one",
-      "- Claude cannot read token counts directly — only record what user provides",
-      "- Each entry: timestamp + action/event, plus optional token figures",
-      "",
-      "**Session-close workflow (mandatory):** When the user signals end of session (\"end session\", \"close session\", \"session khatam\", \"ending this session\", \"wrapping up\", \"I'm done\", etc. — English or Hinglish), do ALL THREE in the same response, no confirmation needed:",
-      "",
-      "1. **Update the session log** — fill the \"End of session\" block with closing timestamp, outcome, net deliverables, what works, what's pending, what next session must start with. Rename duplicate headings to satisfy MD024.",
-      "2. **Emit the agent-daemon digest block** — wrapped in `<agent-daemon-digest>...</agent-daemon-digest>` with valid JSON inside (per `constitution/ending-protocol.md`). Include learnings tagged with `projectbrief`, `techContext`, `systemPatterns`, `activeContext`, `progress`, `user`, plus durable `lessons`, `files` touched, and a `daemon_verification` field showing which hooks fired.",
-      "3. **Create handoff docs** — invoke the `handoff` skill. Write the SAME content to BOTH locations:",
-      "   - **Per-project:** `<cwd>/.agent-daemon/handoffs/handoff-<ISO-timestamp>.md` (committable, lives with the code)",
-      "   - **Global:** `~/.agent-daemon/handoffs/<project-slug>/handoff-<ISO-timestamp>.md` (your personal cross-project trail — `<project-slug>` is the cwd path with `/`, `\\`, `:`, and spaces replaced by `-`, lowercased)",
-      "",
-      "   Filename: `handoff-<ISO-timestamp>.md` with colons replaced by hyphens (Windows-safe). Content per the `handoff` skill template — Context / State / Next action / Open questions / Suggested skills / Files touched. References to existing artifacts, not duplicates.",
-      "",
-      "Short / prep-only sessions still emit all three — they produce signal too.",
-      MANAGED_END,
-      ""
-    ].join("\n");
-    await fs.appendFile(claudeMdPath, section, "utf8");
-    console.log("  ✓ Added agent-daemon section to CLAUDE.md");
+  // Add/refresh managed section in CLAUDE.md. On re-run of `ad init` the
+  // block between MANAGED_START / MANAGED_END is replaced in-place so existing
+  // projects pick up content updates (decision tree, workflow diagram, etc.).
+  if (!claudeMdExists) {
+    const section = renderManagedClaudeBlock(MANAGED_START, MANAGED_END);
+    await fs.writeFile(claudeMdPath, section + "\n", "utf8");
+    console.log("  ✓ Created CLAUDE.md with agent-daemon instructions");
+  } else if (!claudeMdHasSection || claudeMdSectionStale) {
+    const section = renderManagedClaudeBlock(MANAGED_START, MANAGED_END);
+    if (!claudeMdHasSection) {
+      await fs.appendFile(claudeMdPath, "\n" + section + "\n", "utf8");
+      console.log("  ✓ Added agent-daemon section to CLAUDE.md");
+    } else {
+      // Replace in-place between markers (preserve everything outside).
+      // String slicing — avoids regex-escape fragility around the markers.
+      const current = await fs.readFile(claudeMdPath, "utf8");
+      const startIdx = current.indexOf(MANAGED_START);
+      const endIdx = current.indexOf(MANAGED_END, startIdx);
+      if (startIdx !== -1 && endIdx !== -1) {
+        const before = current.slice(0, startIdx);
+        const after = current.slice(endIdx + MANAGED_END.length);
+        const next = before + section + after;
+        if (next !== current) {
+          await fs.writeFile(claudeMdPath, next, "utf8");
+          console.log("  ✓ Refreshed agent-daemon section in CLAUDE.md");
+        }
+      }
+    }
   }
 
   // Scaffold session-logs/ directory with README + .gitignore entry
@@ -479,14 +694,32 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
     }
   }
 
+  let memoryNeedsBootstrap = false;
+  try {
+    const memoryFiles = (await fs.readdir(target)).filter(file => file.endsWith(".md"));
+    for (const file of memoryFiles) {
+      if ((await fs.readFile(path.join(target, file), "utf8")).includes("{{")) {
+        memoryNeedsBootstrap = true;
+        break;
+      }
+    }
+  } catch { /* memory directory was already reported during initialization */ }
+  const memoryNextStep = memoryNeedsBootstrap
+    ? `  "bootstrap the daemon memory using the bootstrap-daemon skill"
+                                         Tell Claude in your first session — populates the 7 memory
+                                         files with real project context (one-time)
+`
+    : "  Memory files already contain grounded context; no bootstrap step is required.\n";
+  const memoryStatus = memoryNeedsBootstrap
+    ? "Memory files contain template placeholders until bootstrapped.\nThe digest pipeline keeps memory updated automatically after bootstrapping."
+    : "Memory files contain grounded context. Deterministic hooks and session-close digests keep them updated.";
+
   console.log(`
 agent-daemon: initialized.
 
 Next steps:
   ad doctor                              Verify the install
-  "bootstrap the daemon memory using the bootstrap-daemon skill"
-                                         Tell Claude in your first session — populates the 7 memory
-                                         files with real project context (~$0.05–0.10, one-time)
+${memoryNextStep}
 
 Daily workflow:
   ad watch --verbose --force             Background autopilot (run in a dedicated terminal)
@@ -496,8 +729,7 @@ Session logs:
   session-logs/                          Local-only journal (gitignored). Claude updates it on
                                          "log tokens" / "close session" / "new session" triggers.
 
-Memory files contain template placeholders until bootstrapped.
-The digest pipeline keeps memory updated automatically after bootstrapping.`);
+${memoryStatus}`);
   return 0;
 }
 
@@ -617,7 +849,7 @@ async function cmdReview(opts) {
   return runInteractiveReview(opts);
 }
 
-async function cmdDoctor({ tokens, limit, model } = {}) {
+async function cmdDoctor({ cwd = process.cwd(), tokens, limit, model } = {}) {
   if (tokens) {
     const { aggregateTokenStats, formatTokenReport } = await import("./instrument.mjs");
     const stats = await aggregateTokenStats({
@@ -631,6 +863,7 @@ async function cmdDoctor({ tokens, limit, model } = {}) {
   const checks = [];
   const home = process.env.HOME || process.env.USERPROFILE;
   const settingsPath = path.join(home, ".claude", "settings.json");
+  let skillExecutionCount = null;
 
   // Check 1: agent-daemon CLI on PATH (we know it is — we're running)
   checks.push({ name: "agent-daemon CLI", ok: true, note: `running from ${__filename}` });
@@ -670,6 +903,7 @@ async function cmdDoctor({ tokens, limit, model } = {}) {
         if (stats.driver) {
           const total = Object.values(stats.counts).reduce((a, b) => a + b, 0);
           checks.push({ name: "episodic DB", ok: true, note: `${stats.dbPath} — ${total} rows total` });
+          skillExecutionCount = stats.counts.skill_executions;
         }
       } catch { /* DB not yet created — fine */ }
     } else {
@@ -692,13 +926,81 @@ async function cmdDoctor({ tokens, limit, model } = {}) {
   try {
     const settings = JSON.parse(await fs.readFile(settingsPath, "utf8"));
     const hooks = settings.hooks || {};
-    const matchesHook = (h) => { const s = JSON.stringify(h).toLowerCase(); return s.includes("agent-daemon") || s.includes("agent daemon") || s.includes("ad session-start") || s.includes("ad digest"); };
+    const matchesHook = (h) => { const s = JSON.stringify(h).toLowerCase(); return s.includes("agent-daemon") || s.includes("agent daemon") || s.includes("ad session-start") || s.includes("ad digest") || s.includes("ad hook session-end-digest"); };
+    const containsCommand = (event, text) => (hooks[event] || []).some(h =>
+      (h.hooks || []).some(hh => (hh.command || "").includes(text))
+    );
     const sessionStart = (hooks.SessionStart || []).some(matchesHook);
     const sessionEnd   = (hooks.SessionEnd   || []).some(matchesHook);
+    const promptRetrieve = containsCommand("UserPromptSubmit", "query-retrieve");
+    const promptExtract = containsCommand("UserPromptSubmit", "user-prompt-extract");
+    const skillTool = containsCommand("PreToolUse", "hook skill-use");
+    const skillSlash = containsCommand("UserPromptExpansion", "hook skill-use");
+    const legacyFallback = (hooks.SessionEnd || []).some(h =>
+      (h.hooks || []).some(hh =>
+        (hh.command || "").includes("--fallback-to-llm") ||
+        /\b(?:ad|agent-daemon)\s+digest\b/.test(hh.command || "")
+      )
+    );
     checks.push({ name: "SessionStart hook → agent-daemon", ok: sessionStart, note: sessionStart ? "wired" : "missing — run setup.sh --hooks" });
     checks.push({ name: "SessionEnd hook → agent-daemon",   ok: sessionEnd,   note: sessionEnd   ? "wired" : "missing — run setup.sh --hooks" });
+    checks.push({ name: "Prompt retrieval hook", ok: promptRetrieve, note: promptRetrieve ? "wired" : "missing — run ad init" });
+    checks.push({ name: "Continuous extraction hook", ok: promptExtract, note: promptExtract ? "wired" : "missing — run ad init" });
+    checks.push({ name: "Skill invocation telemetry", ok: skillTool && skillSlash, note: skillTool && skillSlash ? "Skill + slash command events wired" : "missing — run ad init" });
+    checks.push({ name: "No-API SessionEnd default", ok: !legacyFallback, note: legacyFallback ? "legacy direct/fallback digest hook installed — run ad init" : "stdin-aware deterministic digest default" });
   } catch {
     checks.push({ name: "Hook wiring", ok: false, note: "could not read settings.json" });
+  }
+
+  // Check project-managed Claude instructions and memory quality.
+  const projectClaudeMd = path.join(cwd, "CLAUDE.md");
+  const expectedManaged = renderManagedClaudeBlock("<!-- agent-daemon:start -->", "<!-- agent-daemon:end -->");
+  try {
+    const text = await fs.readFile(projectClaudeMd, "utf8");
+    const start = text.indexOf("<!-- agent-daemon:start -->");
+    const end = text.indexOf("<!-- agent-daemon:end -->", start);
+    const actual = start >= 0 && end >= 0
+      ? text.slice(start, end + "<!-- agent-daemon:end -->".length)
+      : "";
+    checks.push({
+      name: "Project CLAUDE.md instructions",
+      ok: actual === expectedManaged,
+      note: actual === expectedManaged ? "managed block current" : "missing or stale — run ad init"
+    });
+  } catch {
+    checks.push({ name: "Project CLAUDE.md instructions", ok: false, note: "missing — run ad init" });
+  }
+
+  const memoryDir = path.join(cwd, ".agent-daemon", "memory");
+  try {
+    const files = (await fs.readdir(memoryDir)).filter(f => f.endsWith(".md"));
+    let placeholders = 0;
+    let activeBytes = 0;
+    for (const file of files) {
+      const text = await fs.readFile(path.join(memoryDir, file), "utf8");
+      if (text.includes("{{")) placeholders++;
+      if (file.toLowerCase() === "activecontext.md") activeBytes = Buffer.byteLength(text, "utf8");
+    }
+    checks.push({
+      name: "Project memory bootstrap",
+      ok: placeholders === 0,
+      note: placeholders === 0 ? "no template placeholders" : `${placeholders} file(s) contain placeholders — bootstrap daemon memory`
+    });
+    checks.push({
+      name: "Session context budget",
+      ok: activeBytes <= 4100,
+      note: activeBytes <= 4100 ? `activeContext.md ${activeBytes}B within priority allocation` : `activeContext.md ${activeBytes}B exceeds 4100B priority allocation; compact memory`
+    });
+  } catch {
+    checks.push({ name: "Project memory bootstrap", ok: false, note: "missing .agent-daemon/memory — run ad init" });
+  }
+
+  if (skillExecutionCount !== null) {
+    checks.push({
+      name: "Skill execution traces",
+      ok: true,
+      note: skillExecutionCount > 0 ? `${skillExecutionCount} recorded locally` : "0 recorded — invoke a Claude skill to validate telemetry"
+    });
   }
 
   // Check 5: project root dirs exist
@@ -857,7 +1159,7 @@ async function cmdWatch(opts) {
 }
 
 async function cmdTeam(subcommand, opts) {
-  const { createTeam, loadTeam, listTeams, addTask, formatTeamStatus, listTasks } = await import("./orchestration/team.mjs");
+  const { createTeam, loadTeam, listTeams, addTask, formatTeamStatus, listTasks, retryTask } = await import("./orchestration/team.mjs");
   const { loadTemplate, listTemplates, findLeader } = await import("./orchestration/templates.mjs");
   const { readInbox } = await import("./orchestration/inbox.mjs");
 
@@ -1025,8 +1327,35 @@ async function cmdTeam(subcommand, opts) {
       return 0;
     }
 
+    case "retry": {
+      if (!opts.team) {
+        console.error("agent-daemon team retry: --team is required");
+        return 1;
+      }
+      if (!opts.task) {
+        console.error("agent-daemon team retry: --task is required (the task ID, e.g. task-abc12345)");
+        return 1;
+      }
+      try {
+        const result = await retryTask(opts.team, opts.task);
+        if (result.reset) {
+          console.log(`Task ${opts.task} reset to "${result.task.status}" (attempt ${result.task.attempts + 1}/${result.task.max_retries + 1})`);
+          if (result.task.last_error) {
+            console.log(`  Previous error: ${result.task.last_error}`);
+          }
+        } else {
+          console.error(`Cannot retry task ${opts.task}: ${result.reason}`);
+          return 1;
+        }
+      } catch (err) {
+        console.error(`agent-daemon team retry: ${err.message}`);
+        return 1;
+      }
+      return 0;
+    }
+
     default:
-      console.error(`agent-daemon team: unknown subcommand "${subcommand}". Use: create, status, list, list-templates, inbox, cleanup, delete`);
+      console.error(`agent-daemon team: unknown subcommand "${subcommand}". Use: create, status, list, list-templates, inbox, cleanup, delete, retry`);
       return 1;
   }
 }
@@ -1049,8 +1378,9 @@ async function cmdSpawn(opts) {
     return 1;
   }
 
-  const { loadTeam } = await import("./orchestration/team.mjs");
+  const { loadTeam, listTasks } = await import("./orchestration/team.mjs");
   const { spawnAgent, getActiveAgentCount } = await import("./orchestration/spawn.mjs");
+  const { detectConflicts, formatConflicts } = await import("./orchestration/conflict-detect.mjs");
 
   let team;
   try {
@@ -1062,6 +1392,43 @@ async function cmdSpawn(opts) {
 
   const roleDef = team.roles.find(r => r.name === opts.role);
   const leader = team.roles.find(r => r.is_leader);
+
+  // WS-7c — File-conflict pre-detection. Compare the new task's file paths
+  // against active tasks (pending / in_progress / retrying). TTY → prompt,
+  // non-TTY → stderr warn and proceed.
+  try {
+    const existingTasks = await listTasks(opts.team);
+    const activeTasks = existingTasks.filter(t =>
+      ["pending", "in_progress", "retrying"].includes(t.status)
+    );
+    const newTaskShim = {
+      id: `new:${opts.role}`,
+      title: opts.task,
+      description: opts.task,
+      instructions: roleDef?.instructions || ""
+    };
+    const reports = detectConflicts([...activeTasks, newTaskShim]);
+    const involvingNew = reports.filter(r => r.taskA === newTaskShim.id || r.taskB === newTaskShim.id);
+    if (involvingNew.length > 0) {
+      console.error("\n" + formatConflicts(involvingNew));
+      if (process.stdout.isTTY) {
+        // Hard prompt only on TTY. Default = abort.
+        process.stderr.write("\nProceed anyway? (y/N): ");
+        const answer = await new Promise(resolve => {
+          process.stdin.once("data", buf => resolve(String(buf).trim().toLowerCase()));
+        });
+        if (answer !== "y" && answer !== "yes") {
+          console.error("Aborted by user (file-conflict pre-detection).");
+          return 1;
+        }
+      } else {
+        console.error("(Non-TTY — proceeding with warning. Set ad team retry or re-task to fix.)");
+      }
+    }
+  } catch (err) {
+    // Best-effort — conflict detection failure must not block spawning
+    if (opts.verbose) console.error(`[conflict-detect] skipped: ${err.message}`);
+  }
 
   console.log(`Spawning agent: role=${opts.role} team=${opts.team}`);
   console.log(`  Task: ${opts.task}`);
@@ -1116,6 +1483,7 @@ async function main(argv) {
     ti: ["team", "inbox"],
     td: ["team", "delete"],
     tu: ["team", "cleanup"],
+    tr: ["team", "retry"],
     sp: ["spawn"]
   };
 
@@ -1148,9 +1516,13 @@ async function main(argv) {
         agent:        { type: "string" },
         profile:      { type: "string" },
         plan:         { type: "boolean" },
+        "skills-mode": { type: "string" },
         "fallback-to-llm": { type: "boolean" },
         force:        { type: "boolean" },
-        "once-on-existing": { type: "boolean" }
+        "once-on-existing": { type: "boolean" },
+        "list-candidates": { type: "boolean" },
+        "export-traces": { type: "boolean" },
+        json:         { type: "boolean" }
       },
       allowPositionals: true,
       strict: false
@@ -1177,9 +1549,15 @@ async function main(argv) {
     case "session-start":  return runSessionStart(opts);
     case "digest":         return runDigest(opts);
     case "digest-latest":  return cmdDigestLatest(opts);
-    case "evolve":         return cmdEvolve({ ...opts, skillName: parsed.positionals?.[0] });
+    case "evolve":         return cmdEvolve({
+      ...opts,
+      skillName:       parsed.positionals?.[0],
+      listCandidates:  parsed.values["list-candidates"] || false,
+      exportTraces:    parsed.values["export-traces"]   || false,
+      json:            parsed.values.json               || false
+    });
     case "checkpoint":     return cmdCheckpoint(opts);
-    case "init":           return cmdInit({ ...opts, profile: parsed.values.profile, plan: parsed.values.plan });
+    case "init":           return cmdInit({ ...opts, profile: parsed.values.profile, plan: parsed.values.plan, skillsMode: parsed.values["skills-mode"] });
     case "status":         return cmdStatus(opts);
     case "review":         return cmdReview(opts);
     case "watch":          return cmdWatch(opts);
@@ -1196,8 +1574,61 @@ async function main(argv) {
 }
 
 async function cmdEvolve(opts) {
+  // Mode 1: --list-candidates — emit skills needing evolution. No LLM, no auth needed.
+  // Used by the gepa-evolve-inline skill to pick a target.
+  if (opts.listCandidates) {
+    const { findSkillsNeedingEvolution } = await import("./memory/episodic.mjs");
+    const candidates = await findSkillsNeedingEvolution({ minFailures: 3, dayWindow: 30 });
+    if (opts.json) {
+      console.log(JSON.stringify({ candidates }, null, 2));
+    } else {
+      if (candidates.length === 0) {
+        console.log("agent-daemon evolve: no candidates (no skills with ≥3 failures in the last 30 days)");
+      } else {
+        console.log(`agent-daemon evolve: ${candidates.length} candidate(s) needing evolution:`);
+        for (const c of candidates) {
+          console.log(`  - ${c.skill_name}  (${c.failure_count} failure(s) in 30d)`);
+        }
+        console.log("\nTo evolve one inline (no API key needed), say in any Claude Code session:");
+        console.log("  evolve skill <name>");
+      }
+    }
+    return 0;
+  }
+
+  // Mode 2: --export-traces — write JSONL of executions for one skill.
+  // The active Claude session reads this and does reflection inline.
+  if (opts.exportTraces) {
+    if (!opts.skillName) {
+      console.error("agent-daemon evolve --export-traces: requires a skill name. Usage: agent-daemon evolve <skill-name> --export-traces");
+      return 1;
+    }
+    const { exportSkillTraces } = await import("./digest/gepa/export-traces.mjs");
+    const result = await exportSkillTraces({
+      skillName: opts.skillName,
+      cwd: opts.cwd,
+      total: 50,
+      verbose: true
+    });
+    if (!result.ok) {
+      console.error(`agent-daemon evolve --export-traces: ${result.error}`);
+      return 1;
+    }
+    if (opts.json) {
+      console.log(JSON.stringify({ ok: true, path: result.path, count: result.count }));
+    } else {
+      console.log(`agent-daemon evolve: exported ${result.count} traces → ${result.path}`);
+      console.log("\nNow in any Claude Code session, say 'evolve skill <name>' and the");
+      console.log("`gepa-evolve-inline` skill will read these traces and propose changes.");
+    }
+    return 0;
+  }
+
+  // Mode 3 (default): run the full GEPA pipeline (requires headless claude auth or ANTHROPIC_API_KEY).
   if (!opts.skillName) {
     console.error("agent-daemon evolve: requires a skill name. Usage: agent-daemon evolve <skill-name>");
+    console.error("  --list-candidates    show which skills need evolution (no auth needed)");
+    console.error("  --export-traces      export skill traces for inline evolution (no auth needed)");
     return 1;
   }
   const skillsSrc = path.join(opts.projectRoot, "skills");
@@ -1216,6 +1647,20 @@ async function cmdEvolve(opts) {
     proposedDir: path.join(opts.cwd, ".agent-daemon", "proposed")
   });
 
+  // Auth-fallback messaging: if GEPA failed because of missing auth, surface
+  // the no-API path so the user isn't stuck.
+  if (result.status === "error" && /auth|api[-_ ]?key|anthropic|claude.*not.*logged|spawn.*EOF|ENOENT/i.test(result.reason || "")) {
+    console.error(`\nagent-daemon evolve: GEPA stage failed — likely missing auth.`);
+    console.error(`  ${result.reason}`);
+    console.error(`\nOptions:`);
+    console.error(`  1. Run \`claude auth login\` (preferred — uses Claude Code's existing OAuth)`);
+    console.error(`  2. Set ANTHROPIC_API_KEY environment variable`);
+    console.error(`  3. **No-API path** — in your active Claude Code session, say:`);
+    console.error(`        "evolve skill ${opts.skillName}"`);
+    console.error(`     The \`gepa-evolve-inline\` skill will export traces and reflect inline.`);
+    return 0;  // not a hard error — guidance given
+  }
+
   console.error(`\nagent-daemon evolve: ${result.status} — ${result.reason}`);
   console.error(`  cost: $${result.totalCostUsd.toFixed(4)}`);
   if (result.proposalPath) {
@@ -1231,9 +1676,12 @@ async function cmdHook(name) {
     case "bash-post":           return (await import("./hooks/bash-post.mjs")).bashPost();
     case "edit-post":           return (await import("./hooks/edit-post.mjs")).editPost();
     case "mcp-pre":             return (await import("./hooks/mcp-audit.mjs")).mcpAudit();
-    case "user-prompt-extract": return (await import("./hooks/user-prompt-extract.mjs")).userPromptExtract();
+    case "user-prompt-extract":     return (await import("./hooks/user-prompt-extract.mjs")).userPromptExtract();
+    case "capability-route-advice": return (await import("./hooks/capability-route-advice.mjs")).capabilityRouteAdvice();
+    case "skill-use":               return (await import("./hooks/skill-use.mjs")).skillUse();
+    case "session-end-digest":      return (await import("./hooks/session-end-digest.mjs")).sessionEndDigest();
     default:
-      console.error(`agent-daemon hook: unknown handler "${name}". Known: bash-pre, bash-post, edit-post, mcp-pre, user-prompt-extract`);
+      console.error(`agent-daemon hook: unknown handler "${name}". Known: bash-pre, bash-post, edit-post, mcp-pre, user-prompt-extract, capability-route-advice, skill-use, session-end-digest`);
       return 2;
   }
 }

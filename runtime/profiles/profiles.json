@@ -7,7 +7,7 @@
   "profiles": {
     "minimal": {
       "description": "Memory + lifecycle hooks + continuous learning extraction. No tool guards, no auto-installed skills.",
-      "hooks": ["session-start", "session-end", "user-prompt-extract"],
+      "hooks": ["session-start", "session-end", "user-prompt-extract", "capability-route-advice", "query-retrieve", "skill-use", "slash-command-use"],
       "skills": [],
       "features": {
         "qmd": false,
@@ -21,6 +21,10 @@
         "session-start",
         "session-end",
         "user-prompt-extract",
+        "capability-route-advice",
+        "query-retrieve",
+        "skill-use",
+        "slash-command-use",
         "edit-post-lint",
         "bash-post-log"
       ],
@@ -64,7 +68,7 @@
     "session-end": {
       "event": "SessionEnd",
       "matcher": "",
-      "command": "ad digest --transcript \"$CLAUDE_TRANSCRIPT_PATH\" --session-id \"$CLAUDE_SESSION_ID\" --cwd \"$CLAUDE_PROJECT_DIR\" --fallback-to-llm --verbose",
+      "command": "ad hook session-end-digest",
       "timeout": 30
     },
     "edit-post-lint": {
@@ -95,6 +99,30 @@
       "event": "UserPromptSubmit",
       "matcher": "",
       "command": "ad hook user-prompt-extract",
+      "timeout": 3
+    },
+    "capability-route-advice": {
+      "event": "UserPromptSubmit",
+      "matcher": "",
+      "command": "ad hook capability-route-advice",
+      "timeout": 3
+    },
+    "query-retrieve": {
+      "event": "UserPromptSubmit",
+      "matcher": "",
+      "command": "ad query-retrieve --output-json",
+      "timeout": 3
+    },
+    "skill-use": {
+      "event": "PreToolUse",
+      "matcher": "Skill",
+      "command": "ad hook skill-use",
+      "timeout": 3
+    },
+    "slash-command-use": {
+      "event": "UserPromptExpansion",
+      "matcher": "",
+      "command": "ad hook skill-use",
       "timeout": 3
     }
   }

@@ -4,6 +4,57 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Added — Phase 5: Deeper Claude integration + self-improving polish (WS-1..WS-8)
+
+Eight-workstream pass to make agent-daemon feel native to Claude Code, broader-triggered, fully self-improving without API keys, and tighter on multi-agent internals. Merged as PR #2 (`2a73cb5`). 10 commits, 97 → 141 tests pass, 0 lint errors.
+
+**Stack-detection-driven smart skill install (WS-1 + WS-3):**
+
+- New `ad init --skills-mode <smart|all|minimal|manual>` flag (default `smart`).
+- `runtime/src/stack-detect.mjs` reads `package.json` deps, framework configs, `requirements.txt`, `Cargo.toml`, `go.mod`, `pubspec.yaml`, `Gemfile`, `Dockerfile`, etc. and emits a Set of detected stack labels: `react, next, vite, astro, eleventy, svelte, vue, react-native, expo, flutter, fastapi, flask, django, nest, rails, rust, go, python, dotnet, node-cli, tauri, prisma, drizzle, supabase, postgres, playwright, cypress, docker, monorepo`.
+- `runtime/profiles/stack-skill-map.json` declaratively maps stacks → `{ global, project, exclude }` skill lists + a `combos` field for cross-stack pairings (e.g. `react+fastapi` → `diagnose-fetch-failure`).
+- `cmdInit` now installs skills to BOTH `~/.claude/skills/` (global) AND `<cwd>/.claude/skills/` (project-local subset, smart mode only).
+- Install loop upgraded: mtime-based idempotency — source newer → `↻ updated`, equal → silent skip. Project-local lane auto-scaffolds a `README.md` documenting daemon-managed entries.
+- Deeper `~/.claude/` integration: idempotently copies repo `commands/*.md` to `~/.claude/commands/`, appends a managed `<!-- agent-daemon:start --> ... <!-- agent-daemon:end -->` block to `~/.claude/CLAUDE.md` (never touches user content outside markers), adds `.claude/skills/` to project-audit display.
+
+**Three new daemon skills:**
+
+- **`skills/daemon/skill-author/`** — dedup-first skill authoring. 5-phase procedure: classify scope (global vs project-local), Glob existing SKILL.md and compute trigger + body keyword overlap (≥70% → append-mode), check cross-session log at `.agent-daemon/skill-author-log.jsonl` for prior near-misses, write or append (append-mode preserves Procedure section, only extends triggers / examples / anti-patterns), log JSONL line to both per-project and global logs. Auto-triggers on English + Hinglish phrases ("create a skill", "is se skill banao", "har baar yaad rakhna", "skill bana lo", "promote this to a skill"). Solves the cross-session "Claude keeps creating near-duplicate skills" failure mode.
+- **`skills/daemon/session-close/`** — no-API session-end macro. Auto-triggers on multi-language phrases ("bye", "session khatam", "aaj ka kaam ho gaya", "done for today", "wrapping up", "session band karo", "kal milte hain", etc.). 7-phase protocol: read CLAUDE.md managed block → idempotency check via `.agent-daemon/last-session-close.flag` (5-min throttle, re-trigger re-emits digest only) → update session-logs/<N>.md with End-of-session block → emit `<agent-daemon-digest>` JSON block (schema from `constitution/ending-protocol.md`, cap 8 learnings) → invoke handoff skill (dual-write per-project + global) → query episodic.db for ≥3-failure skills, write stubs to `.agent-daemon/gepa-queue/<skill>.md` → touch idempotency flag. Communication style explicit: no confirmation prompts, no ceremony.
+- **`skills/daemon/gepa-evolve-inline/`** — the zero-API-key GEPA evolution path. Auto-triggers on "evolve skill", "skill ko better banao", "regenerate skill X". 5-step procedure: run `ad evolve --list-candidates --json` → run `ad evolve --export-traces <skill>` → read traces inline (no headless `claude` spawn, no `ANTHROPIC_API_KEY` needed) → reflect in current Claude context → write proposal markdown to `.agent-daemon/proposed/<skill>-<timestamp>.md` matching existing proposal schema → log to `.agent-daemon/gepa-inline-log.jsonl`. Anti-patterns enumerated (hallucinating from <5 traces, confidence theater, full rewrites when reflection only justifies one change).
+
+**GEPA without API key (WS-5):**
+
+- New `ad evolve --list-candidates [--json]` — emits `findSkillsNeedingEvolution()` results (skills with ≥3 failures in last 30 days). Zero LLM calls, zero auth needed.
+- New `ad evolve --export-traces <skill>` — wraps `sampleSkillExecutions()` to write JSONL traces to `<cwd>/.agent-daemon/skill-traces/<skill>.jsonl`. Sanitised (booleans for `succeeded`, no SQLite internals).
+- New module `runtime/src/digest/gepa/export-traces.mjs`.
+- Auth-fallback messaging in `runtime/src/digest/gepa/evolve.mjs`: when the default GEPA pipeline fails with auth-related errors (spawn EOF, ENOENT, "not logged in"), surface all three recovery paths including the no-API inline alternative.
+
+**Broader triggers (WS-6):**
+
+- 7 new Hinglish/Hindi-Roman extractor rules in `runtime/src/hooks/extractors.mjs` at confidence 0.45 (lower than English's 0.55–0.75 to reduce false-positive risk; drain step boosts on duplicates). All clause-anchored with the same `(?:^|[.!?,;:—–-]\s+|\n\s*)` prefix used by v0.4.1 English rules: `correction-galti-hindi`, `pattern-yaad-rakhna`, `convention-yun-karna`, `decision-decide-kiya`, `gotcha-mistake-thi`, `tool-command-chalana`, `pattern-nahi-karna` (the last one uses a `composer` to prepend `"don't"` to the captured action).
+- 4 skill `description:` lines extended with Hinglish trigger phrases: `debug-triage` (+kuch toot gaya, kaam nahi kar raha, broken hai, error aa raha hai, crash ho raha), `implement-feature` (+ye banao, feature add karo, iska page banao, wire up karo, naya banao), `review-slice` (+ye review karo, iska review karna hai, check karo properly), `security-audit` (+security check karo, vulnerability hai kya, audit karo).
+
+**Multi-agent orchestration internals (WS-7):**
+
+- **Inbox acked-message purging (`runtime/src/orchestration/inbox.mjs`):** new `purgeAckedOlderThan(teamId, agentName, opts)` deletes acked messages older than 7 days. Called non-blocking via `setImmediate` at end of every `readInbox()`. Throttled to 6-hour cadence via `<acked>/.last-purge` marker — hot polling loops only pay scan cost 4× per day per inbox.
+- **Task retry/rollback (`runtime/src/orchestration/team.mjs`):** tasks gain `attempts`, `max_retries` (default 2), `last_error`, `next_retry_at` fields. New `"retrying"` and `"error"` statuses. New `markTaskFailed()` increments attempts with exponential backoff (`2^attempts × 30s`); new `retryTask()` resets to pending or blocked depending on dependency state. New CLI: `ad team retry --team <id> --task <task-id>` (alias `ad tr`).
+- **File-conflict pre-detection (new `runtime/src/orchestration/conflict-detect.mjs`):** `detectConflicts(tasks)` scans task descriptions for file path mentions and flags overlaps between unordered (non-blocked_by-chained) task pairs. Path-extraction whitelisted to top-level dirs (`src, app, lib, runtime, skills, teams, components, hooks, services, tests, api, routes, pages, public, templates, static`) and common file extensions. Hook in `cmdSpawn`: TTY → "Proceed anyway? (y/N)" prompt; non-TTY (CI / scripted) → warn-and-proceed. Wrapped in try/catch so detection failure never blocks spawn.
+- **Template schema versioning (`runtime/src/orchestration/templates.mjs`):** `CURRENT_SCHEMA_VERSION = 2`. `loadTemplate()` detects missing/v1 version, runs `migrateV1ToV2()` in memory (no disk write — user templates preserved), prints one-time stderr warning per template name. Migration: sets `schema_version: 2`, defaults `role.max_retries` to 2, mirrors `tasks[].blocked_by` into `blocked_by_titles` for future task-ID resolution. All 4 shipped templates updated.
+
+**activeContext.md weekly rotation (WS-8):**
+
+- New `rotateActiveContextIfNeeded(cwd)` in `runtime/src/session-start.mjs`, called at the very start of every `runSessionStart` (before drain + memory load). Best-effort — failure never blocks session start.
+- Compound trigger — BOTH must hit: size > 32 KB AND mtime > 7 days. Size-only preserves "high-touch project last week"; age-only preserves "low-traffic project with one important note".
+- Splits activeContext.md at midpoint by line count, moves oldest 50% to `.agent-daemon/archive/activeContext-<YYYY-MM-DD>.md` (appends with `---` separator if rotated twice on same day), keeps newest in place with HTML-comment breadcrumb pointing to the archive file.
+
+**Testing:**
+
+- Test count: 97 → 141 pass (44 new tests across 5 new test files).
+- New test files: `runtime/test/inbox-purge.test.mjs`, `team-retry.test.mjs`, `conflict-detect.test.mjs`, `templates-migration.test.mjs`, `active-context-rotation.test.mjs`.
+- Extended `runtime/test/extractors.test.mjs` with 8 Hinglish rule tests.
+- Lint: 0 errors, 18 vendored-only warnings (unchanged).
+
 ### Added — Phase 4 Group A++: 4 generic global skills + dual-write handoff + auto-handoff via CLAUDE.md
 
 Extracted this development session's most reusable lessons as **project-agnostic global skills** — every project that installs agent-daemon gets these, no daemon-specific dependencies. Plus wired the session-close protocol to automatically create handoff docs at both per-project AND global paths.

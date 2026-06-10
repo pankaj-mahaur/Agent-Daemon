@@ -46,7 +46,13 @@
 const DIGEST_BLOCK_RE = /<agent-daemon[-:]digest>\s*([\s\S]*?)\s*<\/agent-daemon[-:]digest>/i;
 const DIGEST_BLOCK_RE_GLOBAL = /<agent-daemon[-:]digest>\s*([\s\S]*?)\s*<\/agent-daemon[-:]digest>/gi;
 
-const VALID_TYPES   = new Set(["correction", "confirmation", "pattern", "tool", "gotcha", "decision"]);
+// VALID_TYPES is intentionally aligned with — but slightly narrower than — the
+// `category` column enum in runtime/src/memory/sqlite.mjs (which also accepts
+// 'preference'). 'fact' was added with Bug B2 salvage because the redseer-style
+// category-keyed YAML emits "additions" entries that are most naturally typed
+// as facts. Adding new types here is safe; SQLite has no enforcement on
+// `category` content.
+const VALID_TYPES   = new Set(["correction", "confirmation", "pattern", "tool", "gotcha", "decision", "fact"]);
 const VALID_SPEAKERS = new Set(["user", "agent"]);
 const VALID_SCOPES   = new Set(["project", "global"]);
 
@@ -92,7 +98,15 @@ export async function extractLearnings(opts) {
 
 /**
  * Walk the transcript's assistant messages in reverse order; the most-recent
- * digest block wins. Search inside `text` content of each event.
+ * PARSEABLE digest block wins. If the most-recent block fails to parse
+ * (common when the agent references the tag in dialogue afterward — e.g.
+ * `<agent-daemon-digest>...</agent-daemon-digest>` with literal three dots
+ * as a placeholder), keep walking earlier turns instead of giving up.
+ *
+ * Real-world transcripts contain this failure mode regularly: the agent
+ * emits the real block in turn N, then in turn N+1 talks ABOUT the digest
+ * and quotes the tag with a placeholder. The reverse walk hits the
+ * placeholder first; before this change, that aborted extraction entirely.
  *
  * @param {import("../adapters/claude-code.mjs").TranscriptSummary} summary
  * @returns {{found: boolean, learnings: Learning[], sessionSummary: string, parseError?: string}}
@@ -103,6 +117,7 @@ export function extractFromAgentBlock(summary) {
 
   // Walk assistant messages in reverse; within each turn, take the LAST block
   // (the agent may have iterated on the digest mid-message).
+  let lastParseError = null;
   for (let i = summary.events.length - 1; i >= 0; i--) {
     const ev = summary.events[i];
     if (ev.type !== "assistant") continue;
@@ -113,22 +128,61 @@ export function extractFromAgentBlock(summary) {
 
     const parsed = parseDigestPayload(m[1]);
     if (!parsed.ok) {
-      // malformed — log and continue searching for an earlier valid block
-      return { ...empty, found: false, parseError: `last digest block failed to parse: ${parsed.error}` };
+      // Malformed — remember the error for diagnostics, but keep walking
+      // earlier turns. Yesterday's failure mode: turn N+1 contains the
+      // tag in a placeholder/illustration; turn N has the real block.
+      lastParseError = parsed.error;
+      continue;
     }
 
-    const learnings = sanitizeLearnings(parsed.value.learnings);
+    let learnings = sanitizeLearnings(parsed.value.learnings);
+
+    // Schema-drift salvage: some agents emit a category-keyed YAML shape
+    // (techContext.additions[], systemPatterns.patterns[], …) instead of a
+    // flat learnings[] array. parseDigestPayload's simple-YAML parser
+    // doesn't recover that shape, so we run a dedicated category-keyed
+    // parser on the raw payload as a fallback. Only kicks in when the
+    // canonical path produced nothing — never overrides good extractions.
+    if (learnings.length === 0) {
+      const flattened = parseCategoryKeyedYaml(m[1]);
+      if (flattened && flattened.length > 0) {
+        learnings = sanitizeLearnings(flattened);
+      }
+    }
+
     return {
       found: true,
       learnings,
       sessionSummary: typeof parsed.value.session_summary === "string" ? parsed.value.session_summary : ""
     };
   }
+  // No turn yielded a parseable block. Surface the last failure (if any)
+  // so the caller can include it in verbose logs.
+  if (lastParseError) {
+    return { ...empty, found: false, parseError: `no parseable digest block found; last attempt: ${lastParseError}` };
+  }
   return empty;
 }
 
 /**
  * Validate + coerce raw learnings array. Drops invalid entries silently.
+ *
+ * Schema drift handling (Claude doesn't always follow the ending-protocol):
+ *
+ *   1. `text` may be missing; accept `lessons` as a synonym. Seen in the
+ *      wild as `{"lessons": "..."}` entries for prose-form takeaways with
+ *      no other fields.
+ *
+ *   2. `type` may be missing or set to a categorical label (e.g.
+ *      "projectbrief", "systemPatterns", "techContext"). When the schema
+ *      uses `tag` (singular) instead of one of our canonical VALID_TYPES,
+ *      treat it as a hint, default `type` to "pattern", and push the
+ *      tag value into `tags[]` so the categorical signal is preserved
+ *      for downstream search.
+ *
+ * Real-world failure that motivated this: mobiux-website session
+ * 2026-05-21 emitted 8 entries with `tag`/`text` shape and 4 with just
+ * `lessons` — all 12 got dropped silently before this change.
  *
  * @param {unknown} raw
  * @returns {Learning[]}
@@ -138,15 +192,35 @@ function sanitizeLearnings(raw) {
   const out = [];
   for (const item of raw.slice(0, 16)) {  // hard cap to avoid pathological blocks
     if (!item || typeof item !== "object") continue;
-    const type = String(item.type || "").trim();
-    if (!VALID_TYPES.has(type)) continue;
-    const text = String(item.text || "").trim();
+
+    // Accept text from `text`, `lessons` (plural), or `lesson` (singular) —
+    // all three are forms Claude has emitted as prose-takeaway drift.
+    const text = String(item.text || item.lessons || item.lesson || "").trim();
     if (text.length < 5 || text.length > 1500) continue;
+
+    // Accept type as-is; fall back to "pattern" when the entry carries a
+    // `tag`/`lessons`/`lesson` hint (clearly intentional, just off-schema).
+    // If the entry has neither a valid type nor any of these hints, it's noise.
+    let type = String(item.type || "").trim();
+    if (!VALID_TYPES.has(type)) {
+      if (item.tag || item.lessons || item.lesson) {
+        type = "pattern";
+      } else {
+        continue;
+      }
+    }
+
     const evidence_quote = String(item.evidence_quote || "").slice(0, 400);
     const evidence_speaker = VALID_SPEAKERS.has(item.evidence_speaker) ? item.evidence_speaker : "user";
     const scope = VALID_SCOPES.has(item.scope) ? item.scope : "project";
     const confidence = clampNum(item.confidence, 0, 1, 0.5);
-    const tags = Array.isArray(item.tags) ? item.tags.filter(t => typeof t === "string").slice(0, 12) : [];
+
+    // Merge the `tag` (singular string) and `tags` (array) drift forms into
+    // one deduped array. Order: singular tag first (more specific), then tags array.
+    const tagsFromArray  = Array.isArray(item.tags) ? item.tags.filter(t => typeof t === "string") : [];
+    const tagsFromString = (typeof item.tag === "string" && item.tag.trim()) ? [item.tag.trim()] : [];
+    const tags = [...new Set([...tagsFromString, ...tagsFromArray])].slice(0, 12);
+
     out.push({ type, text, evidence_quote, evidence_speaker, scope, confidence, tags });
   }
   return out;
@@ -341,6 +415,161 @@ function unquoteScalar(s) {
     return s.slice(1, -1);
   }
   return s;
+}
+
+/* ------------------------------------------------------------------ */
+/* Category-keyed YAML salvage                                          */
+/*                                                                      */
+/* Some agents emit a digest payload organized by memory-file category */
+/* with `additions` / `patterns` (and friends) sub-arrays, instead of   */
+/* a flat `learnings:` list. Real-world example from a redseer session: */
+/*                                                                      */
+/*   techContext:                                                       */
+/*     additions:                                                       */
+/*       - "minisearch@7.2.0 added to deps…"                            */
+/*       - "Next 15 dynamic route handlers receive params as a Promise" */
+/*     patterns:                                                        */
+/*       - "Path-param ids that flow into Typesense filter_by clauses…" */
+/*   systemPatterns:                                                    */
+/*     patterns:                                                        */
+/*       - "React 19's `inert` boolean prop is the right primitive…"    */
+/*                                                                      */
+/* This parser flattens that shape into a learnings[] array compatible  */
+/* with sanitizeLearnings. Sub-key → learning type mapping:             */
+/*   additions     → fact                                               */
+/*   patterns      → pattern                                            */
+/*   corrections   → correction                                         */
+/*   gotchas       → gotcha                                             */
+/*   decisions     → decision                                           */
+/*   tools         → tool                                               */
+/*   confirmations → confirmation                                       */
+/* The category name itself (e.g. "techContext") becomes the entry's    */
+/* first tag, so downstream search can filter by memory area.           */
+/*                                                                      */
+/* Scope inference: `user` is the only `global`-scoped category; all    */
+/* others default to `project`.                                         */
+/* ------------------------------------------------------------------ */
+
+const MEMORY_CATEGORIES = new Set([
+  "projectbrief", "techContext", "systemPatterns",
+  "activeContext", "progress", "productContext", "user"
+]);
+
+const CATEGORY_SUBKEY_TO_TYPE = {
+  additions:     "fact",
+  patterns:      "pattern",
+  corrections:   "correction",
+  gotchas:       "gotcha",
+  decisions:     "decision",
+  tools:         "tool",
+  confirmations: "confirmation"
+};
+
+/**
+ * Detect + flatten the category-keyed YAML shape.
+ *
+ * Returns `null` when the input doesn't match the shape (no recognized
+ * memory-category headers OR no list items recovered). Returns a
+ * `learnings[]` array shaped like sanitizeLearnings expects when it does.
+ *
+ * Public (exported) so tests can pin behavior directly. This is a
+ * single-pass line walker — no general YAML parsing.
+ *
+ * @param {string} raw       The digest-block payload text.
+ * @returns {object[] | null}
+ */
+export function parseCategoryKeyedYaml(raw) {
+  if (!raw || typeof raw !== "string") return null;
+
+  // Strip ```yaml / ```yml code fences if present (mirrors parseDigestPayload).
+  // Some agents wrap the YAML in fences inside the digest block.
+  const trimmed = raw.trim().replace(
+    /^```(?:yaml|yml|json)?\s*\n([\s\S]*?)\n```\s*$/i, "$1"
+  ).trim();
+
+  // Cheap pre-check: bail unless at least one memory-category header at
+  // column 0 is present. Saves walking a payload that clearly isn't this shape.
+  const lines = trimmed.split(/\r?\n/);
+  let sawCategoryHeader = false;
+  for (const line of lines) {
+    const m = line.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s*:/);
+    if (m && MEMORY_CATEGORIES.has(m[1])) { sawCategoryHeader = true; break; }
+  }
+  if (!sawCategoryHeader) return null;
+
+  const learnings = [];
+  let currentCategory = null;
+  let currentSubkey = null;
+
+  for (const rawLine of lines) {
+    // Strip trailing comments + skip blank lines
+    const commentIdx = indexOfYamlComment(rawLine);
+    const clean = commentIdx >= 0 ? rawLine.slice(0, commentIdx) : rawLine;
+    if (!clean.trim()) continue;
+
+    const indent = clean.length - clean.trimStart().length;
+    const stripped = clean.trim();
+
+    // Column 0 key — must be a memory-category to "open" a scope, otherwise close
+    if (indent === 0) {
+      const m = stripped.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*(.*)$/);
+      if (m && MEMORY_CATEGORIES.has(m[1])) {
+        currentCategory = m[1];
+        currentSubkey = null;
+      } else {
+        // Some other top-level key (session_id, branch, session_summary, …).
+        // Close any open category scope so stray list items don't attach.
+        currentCategory = null;
+        currentSubkey = null;
+      }
+      continue;
+    }
+
+    // List item under an open category. Two shapes supported, disambiguated
+    // by the item's indent:
+    //   (a) Direct under category — indent === 2, no subkey involved.
+    //       Default type = "fact" (additions-like). Seen in older redseer
+    //       sessions:  projectbrief:\n  - "fact 1"
+    //   (b) Under a recognized subkey — indent >= 4, requires currentSubkey
+    //       to be set to one of CATEGORY_SUBKEY_TO_TYPE keys. Standard
+    //       variant:  techContext:\n  additions:\n    - "fact 1"
+    // Items at indent >= 4 with NO open subkey (e.g. under an unknown
+    // subkey like `notes:`) are skipped — captures user intent that
+    // unrecognized sub-scopes shouldn't pollute.
+    if (currentCategory && stripped.startsWith("- ")) {
+      const captureType = indent === 2
+        ? "fact"
+        : (indent >= 4 && currentSubkey ? CATEGORY_SUBKEY_TO_TYPE[currentSubkey] : null);
+      if (!captureType) continue;
+      let text = stripped.slice(2).trim();
+      if (text.startsWith('"') && text.endsWith('"')) text = text.slice(1, -1);
+      else if (text.startsWith("'") && text.endsWith("'")) text = text.slice(1, -1);
+      if (text.length < 5) continue;
+      learnings.push({
+        type:       captureType,
+        text,
+        scope:      currentCategory === "user" ? "global" : "project",
+        confidence: 0.7,
+        tags:       [currentCategory]
+      });
+      continue;
+    }
+
+    // Subkey under an open category, at indent 2 (standard 2-space YAML)
+    if (indent === 2 && currentCategory) {
+      const m = stripped.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*(.*)$/);
+      if (m && CATEGORY_SUBKEY_TO_TYPE[m[1]]) {
+        currentSubkey = m[1];
+        continue;
+      }
+      // Unknown subkey — leave subkey unset so future list items at this
+      // category use the default "fact" type instead of stale subkey
+      currentSubkey = null;
+      continue;
+    }
+  }
+
+  return learnings.length > 0 ? learnings : null;
 }
 
 /**

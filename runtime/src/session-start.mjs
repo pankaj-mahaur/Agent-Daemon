@@ -3,7 +3,7 @@
 // SessionStart hook injects as additional context.
 //
 // Output schema (when --output-json):
-//   { "additionalContext": "<markdown string>" }
+//   { "hookSpecificOutput": { "hookEventName": "SessionStart", "additionalContext": "<markdown string>" } }
 //
 // Total length is capped at 9KB to stay under Claude Code's 10K hook output cap.
 
@@ -24,6 +24,14 @@ const MAX_OUTPUT_BYTES = 9000;
  */
 export async function runSessionStart(opts) {
   const sections = [];
+
+  // -1. Rotate activeContext.md if it has grown too large AND is older than
+  //     a week. activeContext.md gets read raw into the 9KB SessionStart
+  //     injection; unbounded growth crowds out constitution + learnings.
+  //     See rotateActiveContextIfNeeded for thresholds. Best-effort.
+  try {
+    await rotateActiveContextIfNeeded(opts.cwd, opts.verbose);
+  } catch { /* fail-safe — never block session-start */ }
 
   // 0. Drain the learning-journal (continuous-extraction buffer from
   //    UserPromptSubmit hooks in prior sessions) into memory + episodic
@@ -72,8 +80,12 @@ export async function runSessionStart(opts) {
   // 2. Memory retrieval — prefer QMD pointer over bulk-loading files.
   //    If QMD (mcp__qmd__search) is available, inject a one-line pointer instead
   //    of loading all memory files. Falls back to bulk-load if QMD isn't installed.
-  const qmdAvailable = await detectQmd();
+  const qmdAvailable = await detectQmd(opts.cwd);
   if (qmdAvailable) {
+    const activeContext = await tryRead(path.join(opts.cwd, ".agent-daemon", "memory", "activeContext.md"));
+    if (activeContext) {
+      sections.push(`<!-- memory: activeContext.md -->\n### activeContext.md\n\n${activeContext}`);
+    }
     sections.push([
       `<!-- memory retrieval (QMD) -->`,
       `## Memory`,
@@ -141,8 +153,9 @@ export async function runSessionStart(opts) {
   }
 
   // 4. Project CLAUDE.md / CONVENTIONS.md (per-project rules supersede constitution)
-  //    Note: AGENTS.md is NOT loaded here — Claude Code reads it natively with
-  //    a much larger budget. Loading it here would double-count against the 9KB cap.
+  //    Note: AD-INSTRUCTIONS.md is NOT loaded here — it is referenced from the
+  //    managed CLAUDE.md block, which Claude Code reads natively with a much
+  //    larger budget. Loading it here would double-count against the 9KB cap.
   for (const fname of ["CLAUDE.md", "CONVENTIONS.md"]) {
     const text = await tryRead(path.join(opts.cwd, fname));
     if (text) {
@@ -197,15 +210,35 @@ export async function runSessionStart(opts) {
     // SQLite optional — silent skip
   }
 
-  // Concatenate, truncate if needed
-  let combined = sections.join("\n\n---\n\n");
-  if (Buffer.byteLength(combined, "utf8") > MAX_OUTPUT_BYTES) {
-    combined = truncateToBytes(combined, MAX_OUTPUT_BYTES);
-    combined += "\n\n<!-- (agent-daemon: context truncated to fit 9KB hook cap) -->";
-  }
+  // Preserve dynamic project context ahead of static guidance under the hook
+  // cap. A large constitution must not hide active context or learnings.
+  const warningSections = sections.filter(s =>
+    s.includes("memory-bootstrap-hint") ||
+    s.includes("agent-daemon-init-hint") ||
+    s.includes("continuous-extraction drain")
+  );
+  const memorySections = sections.filter(s =>
+    s.startsWith("<!-- memory:") ||
+    s.startsWith("<!-- memory retrieval (QMD)") ||
+    s.startsWith("<!-- ~/.agent-daemon/user.md (cross-project user profile)")
+  );
+  const recentSections = sections.filter(s => s.includes("<!-- recent learnings -->"));
+  const dynamic = new Set([...warningSections, ...memorySections, ...recentSections]);
+  const staticSections = sections.filter(s => !dynamic.has(s));
+  const combined = renderPrioritizedContext([
+    { sections: warningSections, cap: 1100 },
+    { sections: memorySections, cap: 4100 },
+    { sections: recentSections, cap: 1700 },
+    { sections: staticSections, cap: MAX_OUTPUT_BYTES }
+  ]);
 
   if (opts.outputJson) {
-    process.stdout.write(JSON.stringify({ additionalContext: combined }));
+    process.stdout.write(JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: "SessionStart",
+        additionalContext: combined
+      }
+    }));
   } else {
     process.stdout.write(combined);
     process.stdout.write("\n");
@@ -234,8 +267,9 @@ async function readMemoryDir(memDir) {
 
     // MEMORY.md first, then the rest sorted alphabetically for byte-stable output
     const ordered = [
+      ...mdFiles.filter(f => /^activeContext\.md$/i.test(f)),
       ...mdFiles.filter(f => /^MEMORY\.md$/i.test(f)),
-      ...mdFiles.filter(f => !/^MEMORY\.md$/i.test(f)).sort()
+      ...mdFiles.filter(f => !/^(activeContext|MEMORY)\.md$/i.test(f)).sort()
     ];
     const blocks = [];
     let hasPlaceholders = false;
@@ -280,13 +314,13 @@ function encodeProjectPath(p) {
   return p.replace(/[\\/:]/g, "-");
 }
 
-async function detectQmd() {
+async function detectQmd(cwd) {
   // Claude Code stores MCP server config in ~/.claude.json (top-level mcpServers
   // for user scope, and projects[<cwd>].mcpServers for local scope). It does NOT
   // live in ~/.claude/settings.json — that file's schema rejects mcpServers.
   // Project-scope .mcp.json is also a valid location.
   const home = homeDir();
-  const cwd = process.cwd();
+  cwd = cwd || process.cwd();
 
   try {
     const claudeJsonPath = path.join(home, ".claude.json");
@@ -381,4 +415,113 @@ function truncateToBytes(s, maxBytes) {
   let end = maxBytes;
   while (end > 0 && (buf[end] & 0xc0) === 0x80) end--;
   return buf.subarray(0, end).toString("utf8");
+}
+
+function renderPrioritizedContext(groups) {
+  const marker = "\n\n<!-- (agent-daemon: context truncated to fit 9KB hook cap) -->";
+  const markerBytes = Buffer.byteLength(marker, "utf8");
+  let output = "";
+  let truncated = false;
+
+  for (const group of groups) {
+    const text = group.sections.join("\n\n---\n\n");
+    if (!text) continue;
+    const separator = output ? "\n\n---\n\n" : "";
+    const remaining = MAX_OUTPUT_BYTES - markerBytes - Buffer.byteLength(output + separator, "utf8");
+    if (remaining <= 0) {
+      truncated = true;
+      break;
+    }
+    const groupBudget = Math.min(group.cap, remaining);
+    const chunk = truncateToBytes(text, groupBudget);
+    output += separator + chunk;
+    if (Buffer.byteLength(text, "utf8") > groupBudget) truncated = true;
+  }
+
+  return truncated ? output + marker : output;
+}
+
+/* ------------------------------------------------------------------ */
+/* WS-8 — activeContext.md rotation                                    */
+/* ------------------------------------------------------------------ */
+
+const ROTATE_SIZE_THRESHOLD = 32 * 1024;             // 32KB
+const ROTATE_AGE_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+/**
+ * Rotate `<cwd>/.agent-daemon/memory/activeContext.md` if it has both grown
+ * past 32KB AND its oldest content is older than 7 days. Both thresholds
+ * must trigger together — size alone preserves "high-touch project last
+ * week", age alone preserves "low-traffic project with one important note".
+ *
+ * On trigger: move oldest 50% (by line count) to
+ *   `<cwd>/.agent-daemon/archive/activeContext-<ISO-date>.md`
+ * Keep newest 50% in place. Idempotent and best-effort — failure to rotate
+ * never blocks session-start.
+ *
+ * @param {string} cwd
+ * @param {boolean} [verbose]
+ * @returns {Promise<{ rotated: boolean, reason?: string, archive?: string }>}
+ */
+export async function rotateActiveContextIfNeeded(cwd, verbose = false) {
+  if (!cwd) return { rotated: false, reason: "no cwd" };
+
+  const memDir   = path.join(cwd, ".agent-daemon", "memory");
+  const filePath = path.join(memDir, "activeContext.md");
+
+  let stat;
+  try { stat = await fs.stat(filePath); }
+  catch { return { rotated: false, reason: "no activeContext.md" }; }
+
+  if (!stat.isFile()) return { rotated: false, reason: "not a file" };
+
+  const sizeOk = stat.size > ROTATE_SIZE_THRESHOLD;
+  const ageOk  = (Date.now() - stat.mtimeMs) > ROTATE_AGE_THRESHOLD_MS;
+
+  if (!sizeOk || !ageOk) {
+    return {
+      rotated: false,
+      reason: `thresholds not met (size=${stat.size}B / ${ROTATE_SIZE_THRESHOLD}B; age=${Math.round((Date.now() - stat.mtimeMs)/86400000)}d / 7d)`
+    };
+  }
+
+  // Both thresholds hit — split file at midpoint by line count
+  let content;
+  try { content = await fs.readFile(filePath, "utf8"); }
+  catch { return { rotated: false, reason: "read failed" }; }
+
+  const lines = content.split(/\r?\n/);
+  if (lines.length < 10) return { rotated: false, reason: "too few lines to split" };
+
+  const mid    = Math.floor(lines.length / 2);
+  const oldest = lines.slice(0, mid).join("\n");
+  const newest = lines.slice(mid).join("\n");
+
+  const archiveDir  = path.join(cwd, ".agent-daemon", "archive");
+  const dateStamp   = new Date().toISOString().slice(0, 10);  // YYYY-MM-DD
+  const archivePath = path.join(archiveDir, `activeContext-${dateStamp}.md`);
+
+  try {
+    await fs.mkdir(archiveDir, { recursive: true });
+
+    // If archive already exists for today (rotation ran earlier today), append
+    let existingArchive = "";
+    try { existingArchive = await fs.readFile(archivePath, "utf8"); } catch { /* new */ }
+    const merged = existingArchive
+      ? existingArchive + "\n\n---\n\n" + oldest
+      : `# Archived from activeContext.md on ${new Date().toISOString()}\n\n${oldest}`;
+    await fs.writeFile(archivePath, merged, "utf8");
+
+    // Truncate activeContext.md to newest half + a breadcrumb pointing to archive
+    const breadcrumb = `<!-- agent-daemon: ${mid} earlier line(s) rotated to ${path.relative(cwd, archivePath)} on ${dateStamp} -->\n\n`;
+    await fs.writeFile(filePath, breadcrumb + newest, "utf8");
+
+    if (verbose) {
+      process.stderr.write(`agent-daemon: rotated ${mid} lines of activeContext.md → ${path.relative(cwd, archivePath)}\n`);
+    }
+
+    return { rotated: true, archive: archivePath };
+  } catch (err) {
+    return { rotated: false, reason: `archive failed: ${err.message}` };
+  }
 }

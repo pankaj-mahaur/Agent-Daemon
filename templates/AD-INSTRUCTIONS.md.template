@@ -1,0 +1,59 @@
+# Agent Daemon
+
+This project uses [agent-daemon](https://github.com/Pankaj-mobiux/Agent-Daemon) for multi-agent orchestration and self-improving memory.
+
+## Getting Started
+
+1. **Scaffold:** `ad init` — creates `.agent-daemon/memory/` templates + AD-INSTRUCTIONS.md
+2. **Bootstrap:** Tell Claude "bootstrap the daemon memory" — reads your project and populates memory with real context
+3. **Verify:** `ad doctor` — confirms everything is wired up
+
+Memory files with `{{PLACEHOLDER}}` text haven't been bootstrapped yet.
+The digest pipeline keeps memory updated automatically after bootstrapping.
+
+## Quick Reference
+
+| Command | Alias | What it does |
+|---------|-------|-------------|
+| `ad doctor` | | Verify install — hooks, PATH, settings |
+| `ad init` | | Scaffold .agent-daemon/ in this project |
+| `ad team list-templates` | `ad tt` | Show available team templates |
+| `ad team create --template <name> --task "..."` | `ad tc` | Create a team with roles + task graph |
+| `ad team status --team <id>` | `ad ts` | Kanban board — tasks, agents, progress |
+| `ad team inbox --team <id> --agent <name>` | `ad ti` | Read completion messages |
+| `ad spawn --team <id> --role <role> --task "..." --cwd .` | `ad sp` | Launch agent in isolated worktree |
+| `ad team delete --team <id>` | `ad td` | Remove a team |
+| `ad team cleanup` | `ad tu` | Prune stale worktrees |
+
+## Templates
+
+- **solo-with-qa** — 1 dev + 1 QA (simplest, good for most tasks)
+- **full-stack-feature** — lead + backend + frontend + QA (parallel work)
+- **bug-triage-team** — lead + investigator + fixer + reviewer
+- **code-review-team** — lead + security + performance reviewers
+
+## When to use multi-agent
+
+Use multi-agent when ALL of these are true:
+- Task spans 2+ domains (backend + frontend, code + tests, etc.)
+- Subtasks can run in parallel
+- Estimated work exceeds ~30 minutes
+
+Stay single-agent for: quick fixes, single-file changes, questions, reviews of small scope.
+
+## Workflow
+
+1. **Analyze** — Break the task into subtasks with dependencies
+2. **Ask the user** — Present the team plan (template, roles, task graph) and wait for approval
+3. **Create** — `ad tc --template <name> --task "..."`
+4. **Spawn** — `ad sp --team <id> --role <role> --task "..." --cwd .` for each worker
+5. **Monitor** — `ad ts --team <id>` to check progress, `ad ti` for inbox
+6. **Merge** — Review agent branches, merge in dependency order, test
+7. **Cleanup** — `ad td --team <id>` when done
+
+## Rules
+
+- **Always ask before spawning** — Never create teams or spawn agents without showing the plan and getting user approval first.
+- **Leader = your session** — You (Claude) are the team lead. Workers run in background worktrees.
+- **Isolation** — Each agent works on its own git branch. Changes don't touch the user's working branch until explicitly merged.
+- **Review before merge** — Always let the user review agent output before merging branches.

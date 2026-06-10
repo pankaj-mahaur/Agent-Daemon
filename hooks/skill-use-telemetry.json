@@ -1,0 +1,29 @@
+{
+  "_comment": "Claude-only local skill invocation telemetry. Merge these entries into ~/.claude/settings.json or run ad init.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agent-daemon hook skill-use",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "UserPromptExpansion": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agent-daemon hook skill-use",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  }
+}

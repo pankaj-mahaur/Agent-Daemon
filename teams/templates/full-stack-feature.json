@@ -1,4 +1,5 @@
 {
+  "schema_version": 2,
   "name": "full-stack-feature",
   "description": "Lead + backend + frontend + QA — for building new features with parallel frontend/backend work",
   "roles": [

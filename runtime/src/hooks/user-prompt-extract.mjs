@@ -22,6 +22,7 @@ import fs from "node:fs/promises";
 import { readStdinJson, passthrough } from "./io.mjs";
 import { extractFromText } from "./extractors.mjs";
 import { appendLearnings } from "./journal.mjs";
+import { markRecentSkillFailure } from "../memory/episodic.mjs";
 
 const TRANSCRIPT_TAIL_BYTES = 64 * 1024;  // 64 KB — enough for the last few turns
 
@@ -43,13 +44,23 @@ export async function userPromptExtract() {
       for (const l of fromUser) {
         learnings.push(stamp(l, { sessionId, source_speaker: "user" }));
       }
+      const failure = fromUser.find(l =>
+        (l.type === "correction" || l.type === "gotcha") && l.confidence >= 0.55
+      );
+      if (failure && sessionId) {
+        await markRecentSkillFailure({
+          sessionId,
+          failureReason: failure.text,
+          outcomeSource: `user-prompt:${failure.rule_id}`
+        });
+      }
     }
 
     // 2. Scan the previous assistant turn for explicit "remember:"-style notes
     //    that the agent itself emitted.
     if (transcriptPath) {
       const lastAssistant = await readLastAssistantTurn(transcriptPath);
-      if (lastAssistant) {
+      if (lastAssistant && !isInjectedDaemonContent(lastAssistant.text)) {
         const fromAssistant = extractFromText(lastAssistant.text, { speaker: "agent", maxLearnings: 4 });
         for (const l of fromAssistant) {
           learnings.push(stamp(l, { sessionId, source_speaker: "agent", source_turn_uuid: lastAssistant.uuid }));
@@ -66,6 +77,18 @@ export async function userPromptExtract() {
 
   passthrough();
   return 0;
+}
+
+function isInjectedDaemonContent(text) {
+  return [
+    "<agent-daemon-digest>",
+    "<!-- agent-daemon:start -->",
+    "UserPromptSubmit",
+    "SessionStart hook",
+    "agent-daemon: context truncated",
+    "learning-journal.jsonl",
+    "skill_executions"
+  ].some(marker => text.includes(marker));
 }
 
 function stamp(learning, extra) {

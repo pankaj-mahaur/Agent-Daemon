@@ -8,14 +8,14 @@ Implemented end-to-end:
 - ✅ CLI dispatcher with all subcommands (`session-start`, `digest`, `init`, `status`, `review`, `doctor`, `checkpoint`, `watch`)
 - ✅ Claude Code transcript JSONL adapter (normalizes events to a typed schema)
 - ✅ Triage gate (deterministic heuristic — no LLM)
-- ✅ `session-start`: reads constitution + cross-project user.md + project memory + per-project rules; emits 9KB-capped JSON for the SessionStart hook
+- ✅ `session-start`: prioritizes active project memory + SQLite learnings before compact guidance; emits current 9KB-capped Claude hook JSON
 - ✅ **`digest`: full pipeline — triage → LLM extract → classify → apply (memory writes + proposal queue)**
 - ✅ Headless `claude` wrapper (`--bare --print --output-format json` with JSON Schema validation, cost cap, timeout, ANTHROPIC_API_KEY check)
 - ✅ Extraction prompt (`prompts/extract.md`) — production-ready, calibrated for the 4 signal types
 - ✅ Classify routing (rules-based, no LLM): low-risk → auto-apply memory; high-risk → proposal queue
 - ✅ Apply: writes to project memory (`activeContext.md`) + global memory (`user.md`) + queues skill/constitution proposals
-- ✅ `doctor`: validates `claude` CLI, ANTHROPIC_API_KEY, settings.json wiring, project dirs
-- ✅ `init`: scaffolds `.agent-daemon/memory/` from templates
+- ✅ `doctor`: validates Claude hook wiring, managed `CLAUDE.md`, memory quality, context budget, and local skill traces
+- ✅ `init`: scaffolds `.agent-daemon/memory/`, creates/refreshed managed `CLAUDE.md`, and installs no-API Claude hooks
 - ✅ Pareto selection for GEPA (working, smoke-tested)
 - ✅ SQLite + FTS5 schema designed (apply pending native binding)
 
@@ -37,7 +37,7 @@ agent-daemon doctor
 
 ### ✅ No API key required for normal digest
 
-As of v0.4, the digest pipeline does **not** require `ANTHROPIC_API_KEY` for ordinary session digesting. The agent itself emits an `<agent-daemon-digest>` JSON block in its final response (per [constitution/ending-protocol.md](../constitution/ending-protocol.md)), and the daemon parses that block — no subprocess, no separate LLM call, no separate billing. The user's existing Claude Code / Cursor / Cline / Codex subscription is the only thing in play.
+Ordinary Claude operation does **not** require `ANTHROPIC_API_KEY`: prompt-time deterministic extraction and retrieval persist local memory, while an optional `<agent-daemon-digest>` JSON block enriches session-close memory. The installed SessionEnd hook does not opt into model extraction.
 
 **API key is required ONLY for:**
 - `agent-daemon evolve <skill>` — GEPA skill self-evolution (batch op, opt-in)

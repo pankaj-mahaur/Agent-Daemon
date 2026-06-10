@@ -69,3 +69,29 @@ test("subprocess: malformed stdin doesn't crash the hook", async () => {
   await new Promise((res) => proc.on("close", res));
   assert.equal(proc.exitCode, 0);
 });
+
+test("subprocess: injected daemon protocol examples from assistant are not persisted", async () => {
+  const cwd = await makeTmp();
+  const transcript = path.join(cwd, "transcript.jsonl");
+  const polluted = {
+    type: "assistant",
+    uuid: "pollution",
+    message: {
+      role: "assistant",
+      content: "SessionStart hook -> UserPromptSubmit. Remember: X\") -> SQLite via learning-journal.jsonl. <agent-daemon-digest>{}</agent-daemon-digest>"
+    }
+  };
+  await fs.writeFile(transcript, JSON.stringify(polluted) + "\n", "utf8");
+  const result = await runHook({
+    session_id: "s-polluted",
+    cwd,
+    prompt: "continue",
+    transcript_path: transcript,
+    hook_event_name: "UserPromptSubmit"
+  });
+  assert.equal(result.code, 0);
+  await assert.rejects(
+    fs.readFile(path.join(cwd, ".agent-daemon", "learning-journal.jsonl"), "utf8"),
+    /ENOENT/
+  );
+});

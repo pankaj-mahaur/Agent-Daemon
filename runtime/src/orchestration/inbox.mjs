@@ -15,6 +15,8 @@ import crypto from "node:crypto";
 
 const MAX_MESSAGE_BYTES = 64 * 1024; // 64KB per message
 const MAX_INBOX_MESSAGES = 500;
+const ACKED_PURGE_AGE_DAYS  = 7;   // delete acked messages older than this
+const ACKED_PURGE_THROTTLE_MS = 6 * 60 * 60 * 1000; // re-scan at most every 6h
 
 /**
  * @typedef {Object} InboxMessage
@@ -127,7 +129,71 @@ export async function readInbox(teamId, agentName) {
     }
   }
 
+  // Non-blocking acked-purge — runs throttled (every 6h max). Fire-and-forget
+  // so readInbox() stays cheap even on hot polling loops.
+  setImmediate(() => {
+    purgeAckedOlderThan(teamId, agentName).catch(() => { /* best-effort */ });
+  });
+
   return messages.sort((a, b) => (a.timestamp || "").localeCompare(b.timestamp || ""));
+}
+
+/**
+ * Purge acknowledged messages older than `ageDays`. Best-effort, throttled
+ * via a `.last-purge` marker so multiple `readInbox()` calls in quick
+ * succession don't repeatedly stat every acked message.
+ *
+ * @param {string} teamId
+ * @param {string} agentName
+ * @param {{ ageDays?: number, force?: boolean }} [opts]
+ * @returns {Promise<{ scanned: number, purged: number }>}
+ */
+export async function purgeAckedOlderThan(teamId, agentName, opts = {}) {
+  const ageDays = opts.ageDays ?? ACKED_PURGE_AGE_DAYS;
+  const force   = opts.force ?? false;
+  const dir     = ackedDir(teamId, agentName);
+  const markerPath = path.join(dir, ".last-purge");
+
+  // Throttle — skip if we ran in the last 6 hours (unless force=true)
+  if (!force) {
+    try {
+      const st = await fs.stat(markerPath);
+      const since = Date.now() - st.mtimeMs;
+      if (since < ACKED_PURGE_THROTTLE_MS) {
+        return { scanned: 0, purged: 0 };
+      }
+    } catch { /* no marker — first run, proceed */ }
+  }
+
+  let entries;
+  try { entries = await fs.readdir(dir); }
+  catch (err) {
+    if (err.code === "ENOENT") return { scanned: 0, purged: 0 };
+    return { scanned: 0, purged: 0 };  // best-effort
+  }
+
+  const cutoff = Date.now() - (ageDays * 24 * 60 * 60 * 1000);
+  let scanned = 0, purged = 0;
+  for (const name of entries) {
+    if (name === ".last-purge" || !name.endsWith(".json")) continue;
+    scanned++;
+    const filePath = path.join(dir, name);
+    try {
+      const st = await fs.stat(filePath);
+      if (st.mtimeMs < cutoff) {
+        await fs.unlink(filePath);
+        purged++;
+      }
+    } catch { /* file vanished between stat and unlink — fine */ }
+  }
+
+  // Touch marker to update throttle
+  try {
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(markerPath, new Date().toISOString(), "utf8");
+  } catch { /* non-fatal */ }
+
+  return { scanned, purged };
 }
 
 /**

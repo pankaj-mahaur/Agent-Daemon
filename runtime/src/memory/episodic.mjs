@@ -10,7 +10,7 @@
 // All writes use prepared statements + transactions for safety.
 
 import path from "node:path";
-import { open } from "./sqlite.mjs";
+import { open, learningContentHash } from "./sqlite.mjs";
 
 /* ------------------------------------------------------------------ */
 /* Lifecycle                                                           */
@@ -118,9 +118,15 @@ export async function insertLearning(learning) {
   const handle = await db();
   if (!handle) return null;
   const tagsJson = learning.tags ? JSON.stringify(learning.tags) : null;
+  const contentHash = learningContentHash(learning.text);
+  // INSERT OR IGNORE: same text from a different session collides on the
+  // partial unique index `idx_learnings_content_hash` and is skipped
+  // silently. (We use OR IGNORE instead of ON CONFLICT(col) because SQLite's
+  // UPSERT requires a FULL unique constraint as the conflict target —
+  // partial indexes don't qualify. OR IGNORE works with either.)
   const result = handle.run(
-    `INSERT INTO learnings (session_id, project_slug, category, text, evidence, confidence, tags, applied_to)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR IGNORE INTO learnings (session_id, project_slug, category, text, evidence, confidence, tags, applied_to, content_hash)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       learning.sessionId || null,
       learning.projectSlug || null,
@@ -129,9 +135,12 @@ export async function insertLearning(learning) {
       learning.evidence || null,
       learning.confidence ?? 0.5,
       tagsJson,
-      learning.appliedTo || null
+      learning.appliedTo || null,
+      contentHash
     ]
   );
+  // result.changes is 0 when ON CONFLICT skipped — return null to signal dedup.
+  if (!result.changes) return null;
   return result.lastInsertRowid;
 }
 
@@ -148,12 +157,14 @@ export async function insertLearnings(learnings) {
   handle.transaction(() => {
     for (const l of learnings) {
       const tagsJson = l.tags ? JSON.stringify(l.tags) : null;
+      const contentHash = learningContentHash(l.text);
       const r = handle.run(
-        `INSERT INTO learnings (session_id, project_slug, category, text, evidence, confidence, tags, applied_to)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [l.sessionId || null, l.projectSlug || null, l.category, l.text, l.evidence || null, l.confidence ?? 0.5, tagsJson, l.appliedTo || null]
+        `INSERT OR IGNORE INTO learnings (session_id, project_slug, category, text, evidence, confidence, tags, applied_to, content_hash)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [l.sessionId || null, l.projectSlug || null, l.category, l.text, l.evidence || null, l.confidence ?? 0.5, tagsJson, l.appliedTo || null, contentHash]
       );
-      ids.push(r.lastInsertRowid);
+      // Push null for deduped (skipped) inserts so caller knows the count.
+      ids.push(r.changes ? r.lastInsertRowid : null);
     }
   });
   return ids;
@@ -247,7 +258,10 @@ export async function listRecentLearnings(opts = {}) {
  *   triggerText?: string,
  *   succeeded?: boolean,
  *   failureReason?: string,
- *   tracePath?: string
+ *   tracePath?: string,
+ *   invocationSource?: string,
+ *   outcomeSource?: string,
+ *   completedAt?: string
  * }} row
  */
 export async function recordSkillExecution(row) {
@@ -255,11 +269,37 @@ export async function recordSkillExecution(row) {
   if (!handle) return null;
   const succeeded = row.succeeded === undefined ? null : (row.succeeded ? 1 : 0);
   const r = handle.run(
-    `INSERT INTO skill_executions (session_id, skill_name, skill_version, trigger_text, succeeded, failure_reason, trace_path)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [row.sessionId, row.skillName, row.skillVersion || null, row.triggerText || null, succeeded, row.failureReason || null, row.tracePath || null]
+    `INSERT INTO skill_executions
+       (session_id, skill_name, skill_version, trigger_text, succeeded, failure_reason, trace_path, invocation_source, outcome_source, completed_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      row.sessionId, row.skillName, row.skillVersion || null, row.triggerText || null,
+      succeeded, row.failureReason || null, row.tracePath || null,
+      row.invocationSource || null, row.outcomeSource || null, row.completedAt || null
+    ]
   );
   return r.lastInsertRowid;
+}
+
+/**
+ * Mark the latest unresolved skill invocation in a session as failed after a
+ * high-confidence user correction. Unknown invocations remain NULL.
+ */
+export async function markRecentSkillFailure({ sessionId, failureReason, outcomeSource = "user-correction" }) {
+  const handle = await db();
+  if (!handle || !sessionId || !failureReason) return false;
+  const r = handle.run(
+    `UPDATE skill_executions
+        SET succeeded = 0, failure_reason = ?, outcome_source = ?, completed_at = ?
+      WHERE id = (
+        SELECT id FROM skill_executions
+         WHERE session_id = ? AND succeeded IS NULL
+           AND created_at >= datetime('now', '-10 minutes')
+         ORDER BY id DESC LIMIT 1
+      )`,
+    [failureReason, outcomeSource, new Date().toISOString(), sessionId]
+  );
+  return r.changes > 0;
 }
 
 /**
@@ -272,7 +312,8 @@ export async function sampleSkillExecutions(opts) {
   const handle = await db();
   if (!handle) return [];
   return handle.all(
-    `SELECT id, session_id, skill_name, succeeded, failure_reason, trigger_text, created_at
+    `SELECT id, session_id, skill_name, succeeded, failure_reason, trigger_text,
+            invocation_source, outcome_source, completed_at, created_at
        FROM skill_executions
       WHERE skill_name = ?
         AND created_at >= datetime('now', '-90 days')
@@ -349,4 +390,39 @@ function sanitizeFtsQuery(q) {
   const tokens = (q.match(/[\p{L}\p{N}_]{2,}/gu) || []).map(t => `"${t.replace(/"/g, '""')}"`);
   if (tokens.length === 0) return null;
   return tokens.join(" OR ");
+}
+
+/**
+ * Record a capability route advice event. Kept separate from skill_executions
+ * so GEPA failure sampling is not polluted by "recommended but not invoked" rows.
+ *
+ * @param {{
+ *   sessionId: string,
+ *   cwd: string,
+ *   taskSize: string,
+ *   recommendedCapability: string | null,
+ *   explicit_agent?: boolean,
+ *   explicit_constraint?: boolean,
+ * }} event
+ */
+export async function recordRouteAdvice(event) {
+  const handle = await db();
+  if (!handle) return null;
+  const slug = event.cwd ? projectSlug(event.cwd) : null;
+  const capType = event.recommendedCapability ? "skill" : null;
+  handle.run(
+    `INSERT INTO skill_route_events
+       (session_id, project_slug, task_size, recommended_capability_type,
+        recommended_capability, explicit_agent_request, explicit_capability_constraint)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [
+      event.sessionId || "",
+      slug,
+      event.taskSize || null,
+      capType,
+      event.recommendedCapability || null,
+      event.explicit_agent ? 1 : 0,
+      event.explicit_constraint ? 1 : 0,
+    ]
+  );
 }

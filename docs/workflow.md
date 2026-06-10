@@ -94,7 +94,7 @@ Flags:
 | `--verbose` | Log every file event (`+ add`, `~ change`) and every digest fire |
 | `--force` | Bypass the triage threshold — digest every session, even short ones |
 | `--once-on-existing` | Also digest transcripts that already exist when the watcher starts |
-| `--fallback-to-llm` | If no agent-emitted digest block is found, run LLM extraction (requires `claude` CLI) |
+| `--fallback-to-llm` | Opt-in only: if no agent-emitted digest block is found, run authenticated LLM extraction |
 
 The watcher:
 
@@ -143,7 +143,7 @@ This:
 | `--verbose` | Print extract / classify / apply steps |
 | `--cwd <path>` | Digest the latest transcript for a *different* project |
 | `--dry-run` | Preview without writing |
-| `--fallback-to-llm` | LLM extraction if no agent block found |
+| `--fallback-to-llm` | Optional authenticated LLM extraction if no agent block found; not installed in default hooks |
 
 ### Composable workflow
 

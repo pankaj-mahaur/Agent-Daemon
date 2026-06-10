@@ -30,6 +30,24 @@ const TRIGGER_CONTAINS_RE = /\bUse\s+(when|for|whenever|only when|if|to)\b/i;
 const MAX_DESCRIPTION_CHARS = 500;
 const MAX_FRONTMATTER_CHARS = 1024;
 
+// Detect whether a YAML scalar value is safely unquoted.
+// A value is unsafe-unquoted when it contains ": " (colon-space) which YAML
+// parsers (including Claude Code's) treat as a nested key separator.
+function isUnsafeUnquotedYaml(rawLine) {
+  // rawLine is the full "key: value" line from frontmatter.
+  // Extract the value portion (everything after "key: ").
+  const colonIdx = rawLine.indexOf(": ");
+  if (colonIdx === -1) return false;
+  const value = rawLine.slice(colonIdx + 2).trim();
+  // Already quoted — safe.
+  if ((value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))) return false;
+  // Block/folded scalar — safe (handled by multi-line YAML).
+  if (value === "|" || value === ">" || value === "") return false;
+  // Unsafe: unquoted value contains ": " which breaks YAML key detection.
+  return value.includes(": ");
+}
+
 async function collectSkillEntries(skillsDir) {
   // Returns [{ name, dir, label }] where:
   //   name  = skill directory name (kebab-case, used for `name:` match)
@@ -114,6 +132,14 @@ function validateSkill(dirName, content) {
   for (const line of frontmatter.split("\n")) {
     const m = line.match(/^(\w[\w-]*):\s*(.*)/);
     if (m) fields[m[1]] = m[2].trim();
+    // Catch unquoted values containing ": " which YAML parsers treat as nested keys.
+    // This is the exact pattern that causes Claude Code startup warnings.
+    if (m && isUnsafeUnquotedYaml(line)) {
+      issues.push({
+        severity: "error",
+        message: `field \`${m[1]}\` has an unquoted value containing ": " — YAML parsers will split this into a nested key. Wrap the value in quotes or replace ": " with " — ".`,
+      });
+    }
   }
 
   // name: must be kebab-case

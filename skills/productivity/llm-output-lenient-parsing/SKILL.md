@@ -1,6 +1,6 @@
 ---
 name: llm-output-lenient-parsing
-description: Pattern for parsing LLM output where you specified a strict format but the model drifts (colon for hyphen, YAML for JSON, fenced for bare, single for double quotes) ~30-50% of the time. Strict parsers reject silently. Use when consuming structured blocks an LLM produces (digest blocks, JSON manifests, action plans). Build a fallback chain: strip fences → strict JSON → tolerant YAML → coerce + retry.
+description: Use when consuming structured blocks an LLM produces (digest blocks, JSON manifests, action plans) where the model drifts from the specified format ~30-50% of the time (colon for hyphen, YAML for JSON, fenced for bare, single for double quotes). Build a fallback chain — strip fences → strict JSON → tolerant YAML → coerce + retry.
 ---
 
 # Lenient parsing for LLM-emitted structured output

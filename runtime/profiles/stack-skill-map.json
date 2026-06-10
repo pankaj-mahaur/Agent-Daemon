@@ -1,0 +1,144 @@
+{
+  "$comment": "Stack → skill mapping for `ad init --skills-mode smart`. Resolution: global = union(always, stacks[s].global) − union(stacks[s].exclude). project = union(stacks[s].project). Only skills that exist in the repo are listed here — keep in sync with skills/ folder. New always-block skills (skill-author, session-close, gepa-evolve-inline) are added as they ship.",
+  "schema_version": 1,
+
+  "always": [
+    "bootstrap-daemon",
+    "agent-self-improve",
+    "orchestrate-team",
+    "handoff",
+    "skill-author",
+    "session-close",
+    "tdd",
+    "prototype",
+    "improve-codebase-architecture",
+    "mattpocock-diagnose",
+    "git-guardrails-claude-code"
+  ],
+
+  "stacks": {
+    "react": {
+      "global":  ["implement-feature", "debug-triage", "review-slice"],
+      "project": []
+    },
+    "next": {
+      "global":  ["implement-feature", "nextjs-turbopack", "debug-triage", "review-slice"],
+      "project": []
+    },
+    "vite": {
+      "global":  ["implement-feature", "debug-triage"],
+      "project": []
+    },
+    "astro": {
+      "global":  ["implement-feature", "debug-triage"],
+      "project": []
+    },
+    "svelte": {
+      "global":  ["implement-feature", "debug-triage"],
+      "project": []
+    },
+    "vue": {
+      "global":  ["implement-feature", "debug-triage"],
+      "project": []
+    },
+    "eleventy": {
+      "global":  ["implement-feature"],
+      "project": [],
+      "exclude": ["db-migrations"]
+    },
+    "react-native": {
+      "global":  ["multiplatform-parity", "implement-feature", "debug-triage"],
+      "project": ["multiplatform-parity"]
+    },
+    "expo": {
+      "global":  ["multiplatform-parity", "implement-feature"],
+      "project": ["multiplatform-parity"]
+    },
+    "flutter": {
+      "global":  ["implement-feature", "debug-triage"],
+      "project": []
+    },
+    "fastapi": {
+      "global":  ["diagnose-fetch-failure", "implement-feature", "debug-triage"],
+      "project": ["diagnose-fetch-failure"]
+    },
+    "flask": {
+      "global":  ["diagnose-fetch-failure", "implement-feature"],
+      "project": []
+    },
+    "django": {
+      "global":  ["diagnose-fetch-failure", "implement-feature", "db-migrations"],
+      "project": []
+    },
+    "nest": {
+      "global":  ["diagnose-fetch-failure", "implement-feature", "debug-triage"],
+      "project": []
+    },
+    "rails": {
+      "global":  ["implement-feature", "db-migrations"],
+      "project": []
+    },
+    "rust": {
+      "global":  ["implement-feature", "debug-triage"],
+      "project": []
+    },
+    "go": {
+      "global":  ["implement-feature", "debug-triage"],
+      "project": []
+    },
+    "python": {
+      "global":  ["implement-feature"],
+      "project": []
+    },
+    "dotnet": {
+      "global":  ["implement-feature"],
+      "project": []
+    },
+    "node-cli": {
+      "global":  ["implement-feature", "debug-triage"],
+      "project": []
+    },
+    "tauri": {
+      "global":  ["implement-feature", "multiplatform-parity"],
+      "project": []
+    },
+    "prisma": {
+      "global":  ["db-migrations"],
+      "project": ["db-migrations"]
+    },
+    "drizzle": {
+      "global":  ["db-migrations"],
+      "project": ["db-migrations"]
+    },
+    "supabase": {
+      "global":  ["db-migrations", "diagnose-fetch-failure"],
+      "project": []
+    },
+    "postgres": {
+      "global":  ["db-migrations"],
+      "project": []
+    },
+    "playwright": {
+      "global":  ["browser-qa", "methodology-tdd"],
+      "project": []
+    },
+    "cypress": {
+      "global":  ["browser-qa", "methodology-tdd"],
+      "project": []
+    },
+    "docker": {
+      "global":  ["deploy-ops"],
+      "project": []
+    },
+    "monorepo": {
+      "global":  ["merge-feature-branch"],
+      "project": []
+    }
+  },
+
+  "combos": {
+    "react+fastapi":      ["diagnose-fetch-failure"],
+    "next+fastapi":       ["diagnose-fetch-failure"],
+    "react-native+expo":  ["multiplatform-parity"]
+  }
+}
