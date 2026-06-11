@@ -21,7 +21,11 @@ import { renderManagedClaudeBlock } from "./managed-claude-block.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
-const PROJECT_ROOT = path.resolve(__dirname, "..", "..");  // .../agent-daemon/
+// AGENT_DAEMON_HOME has always been documented in HELP as the runtime-root
+// override; honor it (tests also use it to point at fixture repos).
+const PROJECT_ROOT = process.env.AGENT_DAEMON_HOME
+  ? path.resolve(process.env.AGENT_DAEMON_HOME)
+  : path.resolve(__dirname, "..", "..");  // .../agent-daemon/
 // VERSION is sourced from runtime/package.json so it can never drift from the
 // shipped version. Fall back to "0.0.0-dev" if the file is unreachable (e.g.
 // running the CLI from a partial checkout).
@@ -46,10 +50,18 @@ Commands:
                          --force              bypass triage threshold
                          --fallback-to-llm    LLM-extract if agent didn't emit a digest block
   digest-latest          Find the newest transcript for --cwd and digest it (--force on by default)
+  digest-sweep           Digest every undigested transcript for --cwd (VS Code SessionEnd fallback;
+                         auto-fires detached from session-start, throttled to one run / 10 min)
+                         --exclude-session <id>  skip the live session's transcript
   watch                  Watch transcript directories and fire digest on new sessions
                          --once-on-existing   also digest existing transcripts at startup
                          --force              pass --force to each digest run
                          --fallback-to-llm    enable LLM extraction in watcher
+                         --log-file <path>    tee output to a rotating log file (for service mode)
+  service install        Register "ad watch" as a per-user login service (Scheduled Task / launchd / systemd)
+                         --log-dir <path>     log directory (default ~/.agent-daemon/logs)
+  service uninstall      Unregister the watch service
+  service status         Show whether the watch service is registered
   evolve <skill>         GEPA self-improvement run for a skill (sample → reflect → generate → evaluate → select)
                          --list-candidates    list skills with ≥3 failures in 30d (no auth needed)
                          --export-traces      export skill_executions to JSONL for inline GEPA (no auth needed)
@@ -62,6 +74,23 @@ Commands:
   status                 Show queued proposals (skill diffs, constitution rule additions)
   review                 Interactively accept/reject queued proposals
   query-retrieve         Extract keywords from user prompt and inject relevant past learnings (UserPromptSubmit hook)
+  memory stats           Episodic store row counts + retrieval telemetry (truncation rate, injected bytes)
+  memory consolidate     Hermes-style evolution pass: near-duplicate merges, stale archive, contradictions
+                         → proposals only; --apply-merges / --apply-stale execute after review
+                         --all-projects       span every project (default: current --cwd only)
+  route stats            Route-advice effectiveness: advised / followed / diverged / ignored per skill
+                         --days <n>           window (default 30); --json for machine output
+  route rebuild          Recompile route maps from installed skills (global + project lanes)
+  route show             Print the merged compiled route map
+  route evolve           Telemetry-backed routing-edit proposals (low follow rate, post-advice failures)
+  skill install <spec>   Install a skill on demand: bundled name | local path | git URL
+                         --project            install to <cwd>/.claude/skills instead of ~/.claude/skills
+                         --skill <name>       pick one skill from a multi-skill source
+                         --force              overwrite an existing install / bypass lint errors
+                         --dry-run            show what would happen
+  skill list             List installed skills (both lanes) with provenance; --available shows the bundle
+  skill remove <name>    Remove a daemon-managed skill (--force for unmanaged); --project for project lane
+  skill search <query>   Search the bundled skill catalog by name/description
   doctor                 Diagnose the install — settings.json, PATH, dirs
   doctor --tokens        Show token usage + cache stats from recent sessions
 
@@ -391,51 +420,11 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
   let skillIndex;
   try { skillIndex = await buildSkillIndex(skillsSrc); } catch { skillIndex = new Map(); }
 
-  async function installSkillLane(skillNames, destRoot, laneLabel) {
-    let installed = 0, updated = 0, skipped = 0, missing = 0;
-    try {
-      await fs.mkdir(destRoot, { recursive: true });
-    } catch { return { installed, updated, skipped, missing }; }
-
-    for (const skill of skillNames) {
-      const src = skillIndex.get(skill);
-      if (!src) { missing++; continue; }
-      const dst = path.join(destRoot, skill);
-      let destExists = false;
-      try { await fs.access(dst); destExists = true; } catch { /* not installed */ }
-
-      if (!destExists) {
-        try { await fs.cp(src, dst, { recursive: true }); installed++; }
-        catch { /* copy failed — skip silently */ }
-        continue;
-      }
-
-      // dest exists — compare mtime of SKILL.md to decide update vs skip
-      try {
-        const [srcStat, dstStat] = await Promise.all([
-          fs.stat(path.join(src, "SKILL.md")),
-          fs.stat(path.join(dst, "SKILL.md"))
-        ]);
-        if (srcStat.mtimeMs > dstStat.mtimeMs + 1000) {  // 1s tolerance for fs precision
-          try {
-            await fs.rm(dst, { recursive: true, force: true });
-            await fs.cp(src, dst, { recursive: true });
-            updated++;
-          } catch { /* update failed — skip */ }
-        } else {
-          skipped++;
-        }
-      } catch {
-        // stat failed — leave as-is
-        skipped++;
-      }
-    }
-    return { installed, updated, skipped, missing };
-  }
+  const { installSkillLane } = await import("./skill-install.mjs");
 
   // Global lane
   if (globalSkillsToInstall.length > 0) {
-    const r = await installSkillLane(globalSkillsToInstall, skillsDst, "global");
+    const r = await installSkillLane(globalSkillsToInstall, skillIndex, skillsDst);
     if (r.installed > 0) console.log(`  ✓ Installed ${r.installed} skill(s) to ~/.claude/skills/`);
     if (r.updated   > 0) console.log(`  ↻ Updated ${r.updated} skill(s) in ~/.claude/skills/ (source was newer)`);
     if (r.missing   > 0 && verbose) console.log(`  · ${r.missing} skill(s) listed in map but not found in repo (skipped)`);
@@ -443,7 +432,7 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
 
   // Project-local lane (only in smart mode, and only if any project skills)
   if (projectSkillsToInstall.length > 0) {
-    const r = await installSkillLane(projectSkillsToInstall, skillsDstProject, "project");
+    const r = await installSkillLane(projectSkillsToInstall, skillIndex, skillsDstProject);
     if (r.installed > 0) console.log(`  ✓ Installed ${r.installed} skill(s) to <project>/.claude/skills/`);
     if (r.updated   > 0) console.log(`  ↻ Updated ${r.updated} skill(s) in <project>/.claude/skills/`);
     if (r.installed > 0 || r.updated > 0) {
@@ -458,6 +447,51 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
         } catch { /* non-fatal */ }
       }
     }
+  }
+
+  // Compile route maps from the freshly installed lanes so the routing hook
+  // covers every installed skill (not just the 5 builtin patterns).
+  if (!dryRun) {
+    try {
+      const { rebuildRouteMaps } = await import("./route-map.mjs");
+      const counts = await rebuildRouteMaps({ home, cwd });
+      console.log(`  ✓ Route map compiled: ${counts.global} global${counts.project !== null ? ` + ${counts.project} project` : ""} skill(s) with triggers`);
+    } catch { /* routing degrades to builtin map — non-fatal */ }
+  } else {
+    console.log("  + route-map.json (generated from installed skills)");
+  }
+
+  // Deprecate superseded skills that earlier installs left behind. The stub
+  // keeps the folder (never delete user dirs) but removes every trigger
+  // phrase so the skill router and Claude's description matching stop
+  // double-firing alongside the replacement.
+  const DEPRECATED_SKILLS = [
+    { name: "session-close-dual", replacedBy: "session-close" }
+  ];
+  for (const dep of DEPRECATED_SKILLS) {
+    const depPath = path.join(skillsDst, dep.name, "SKILL.md");
+    try {
+      const current = await fs.readFile(depPath, "utf8");
+      if (current.includes("status: deprecated")) continue;  // already stubbed
+      if (!dryRun) {
+        await fs.writeFile(depPath, [
+          "---",
+          `name: ${dep.name}`,
+          `description: "Deprecated — superseded by the ${dep.replacedBy} skill. Do not invoke."`,
+          "status: deprecated",
+          `replaced-by: ${dep.replacedBy}`,
+          "---",
+          "",
+          `# ${dep.name} (deprecated)`,
+          "",
+          `This skill is superseded by **${dep.replacedBy}**, which covers the same`,
+          "session-close protocol plus GEPA queueing and idempotency. Invoke that",
+          "instead. This stub exists only so older references fail soft.",
+          ""
+        ].join("\n"), "utf8");
+      }
+      console.log(`  ⚠ Deprecated ${dep.name} (superseded by ${dep.replacedBy}) — stubbed, not deleted`);
+    } catch { /* not installed — nothing to deprecate */ }
   }
 
   // Install profile-specified hooks in ~/.claude/settings.json (merge — preserve existing settings)
@@ -1003,6 +1037,98 @@ async function cmdDoctor({ cwd = process.cwd(), tokens, limit, model } = {}) {
     });
   }
 
+  // Check 4b: digest freshness — newest transcript vs latest digested session.
+  // A widening gap means SessionEnd isn't firing (VS Code extension) AND the
+  // session-start sweep hasn't run for this project recently.
+  try {
+    const ep = await import("./memory/episodic.mjs");
+    const projectsDir = path.join(home, ".claude", "projects");
+    const encoded = encodePath(path.resolve(cwd));
+    let newestMs = 0;
+    for (const name of await fs.readdir(projectsDir).catch(() => [])) {
+      if (name.toLowerCase() !== encoded.toLowerCase()) continue;
+      for (const f of await fs.readdir(path.join(projectsDir, name)).catch(() => [])) {
+        if (!f.endsWith(".jsonl")) continue;
+        const stat = await fs.stat(path.join(projectsDir, name, f)).catch(() => null);
+        if (stat && stat.mtimeMs > newestMs) newestMs = stat.mtimeMs;
+      }
+    }
+    if (newestMs > 0) {
+      const latest = await ep.latestDigestedAt(ep.projectSlug(path.resolve(cwd)));
+      const latestMs = latest ? new Date(latest).getTime() : 0;
+      if (!latestMs) {
+        checks.push({
+          name: "Digest freshness",
+          ok: true,
+          note: "no digests recorded yet — first sweep runs at next session start (or run `ad digest-sweep`)"
+        });
+      } else {
+        const gapH = (newestMs - latestMs) / 3600000;
+        const fresh = gapH <= 24;
+        checks.push({
+          name: "Digest freshness",
+          ok: fresh,
+          note: fresh
+            ? `latest digest within ${Math.max(0, Math.round(gapH))}h of newest transcript`
+            : `newest transcript is ${Math.round(gapH)}h ahead of latest digest — run \`ad digest-sweep\` or \`ad service install\``
+        });
+      }
+    }
+  } catch { /* freshness check is best-effort */ }
+
+  // Check 4b2: retrieval telemetry — high truncation means memory is being cut
+  try {
+    const ep = await import("./memory/episodic.mjs");
+    const s = await ep.stats();
+    if (s.retrieval && s.retrieval.events >= 5) {
+      const rate = s.retrieval.truncationRate;
+      checks.push({
+        name: "Memory telemetry",
+        ok: rate <= 0.5,
+        note: rate <= 0.5
+          ? `${s.retrieval.events} retrieval events (7d), ${(rate * 100).toFixed(0)}% truncated`
+          : `${(rate * 100).toFixed(0)}% of injections truncated — memory exceeds the 9KB budget; compact activeContext.md or enable QMD pointer mode`
+      });
+    }
+  } catch { /* telemetry optional */ }
+
+  // Check 4c: pending-messages queue health (SQLite-locked fallback buffer)
+  try {
+    const queueFile = path.join(home, ".agent-daemon", "pending_messages.json");
+    const pending = JSON.parse(await fs.readFile(queueFile, "utf8"));
+    if (Array.isArray(pending) && pending.length > 0) {
+      const oldestMs = Math.min(...pending.map(e => e.queued_at ? new Date(e.queued_at).getTime() : Date.now()));
+      const ageDays = (Date.now() - oldestMs) / 86400000;
+      const ok = ageDays <= 7;
+      checks.push({
+        name: "Pending learnings queue",
+        ok,
+        note: ok
+          ? `${pending.length} entr${pending.length === 1 ? "y" : "ies"} queued (drains on next digest)`
+          : `${pending.length} entries; oldest is ${Math.round(ageDays)}d old — SQLite inserts are failing persistently`
+      });
+    }
+  } catch { /* no queue — healthy */ }
+
+  // Check 4d: team inbox depth (>80% of the 500-message cap → warn)
+  try {
+    const { listTeams } = await import("./orchestration/team.mjs");
+    const { inboxCount, deadLetterCount, listInboxes } = await import("./orchestration/inbox.mjs");
+    for (const team of (await listTeams()).slice(0, 10)) {
+      for (const agent of await listInboxes(team.id)) {
+        const count = await inboxCount(team.id, agent);
+        const dead = await deadLetterCount(team.id, agent);
+        if (count > 400 || dead > 0) {
+          checks.push({
+            name: `Inbox ${team.id}/${agent}`,
+            ok: count <= 400,
+            note: `${count}/500 pending${dead > 0 ? `, ${dead} dead-lettered` : ""} — consumer is falling behind`
+          });
+        }
+      }
+    }
+  } catch { /* no teams — fine */ }
+
   // Check 5: project root dirs exist
   for (const dir of ["constitution", "memory-templates", "skills", "hooks"]) {
     const p = path.join(PROJECT_ROOT, dir);
@@ -1069,6 +1195,266 @@ async function cmdCheckpoint({ transcript, sessionId }) {
 async function cmdQueryRetrieve(opts) {
   const { runQueryRetrieve } = await import("./query-retrieve.mjs");
   return runQueryRetrieve(opts);
+}
+
+const RESTART_NOTE = "Note: Claude Code discovers skills at session start — restart or open a new session for auto-trigger. To use it NOW, read the installed SKILL.md and follow it inline.";
+
+async function cmdSkill(sub, opts) {
+  const si = await import("./skill-install.mjs");
+  const lane = opts.project ? "project" : "global";
+
+  switch (sub) {
+    case "install": {
+      const spec = opts.spec;
+      if (!spec) {
+        console.error("agent-daemon skill install: a skill name, path, or git URL is required");
+        return 1;
+      }
+      let source;
+      try {
+        source = await si.resolveInstallSource(spec, { projectRoot: PROJECT_ROOT, skillFilter: opts.skill });
+      } catch (err) {
+        console.error(`agent-daemon: ${err.message}`);
+        return 1;
+      }
+      try {
+        if (source.skills.size === 0) {
+          console.error(`agent-daemon: no skills found in "${spec}"${opts.skill ? ` matching --skill ${opts.skill}` : ""}`);
+          return 1;
+        }
+        if (source.skills.size > 1 && !opts.skill) {
+          console.error(`agent-daemon: "${spec}" contains ${source.skills.size} skills — pick one with --skill <name>:`);
+          for (const name of [...source.skills.keys()].sort()) console.error(`    ${name}`);
+          return 1;
+        }
+        let failures = 0;
+        for (const [name, srcDir] of source.skills) {
+          const r = await si.installSkill({
+            name, srcDir, lane, cwd: opts.cwd,
+            sourceType: source.type, sourceRef: source.sourceRef,
+            force: opts.force, dryRun: opts.dryRun
+          });
+          for (const w of r.warnings || []) console.error(`  ⚠ ${name}: ${w}`);
+          if (!r.ok) {
+            failures++;
+            for (const e of r.errors || []) console.error(`  ✗ ${name}: ${e}`);
+            if (r.note) console.error(`    ${r.note}`);
+          } else {
+            console.log(`  ✓ ${name} → ${r.dest}${r.note ? ` (${r.note})` : ""}`);
+          }
+        }
+        if (failures === 0 && !opts.dryRun) console.log(`\n${RESTART_NOTE}`);
+        return failures > 0 ? 1 : 0;
+      } finally {
+        await source.cleanup();
+      }
+    }
+    case "list": {
+      const rows = await si.listSkills({ cwd: opts.cwd, projectRoot: PROJECT_ROOT, available: opts.available });
+      if (opts.outputJson || opts.json) {
+        console.log(JSON.stringify(rows, null, 2));
+        return 0;
+      }
+      if (rows.length === 0) {
+        console.log(opts.available ? "No bundled skills found." : "No skills installed. Try: ad skill list --available");
+        return 0;
+      }
+      const nameW = Math.max(...rows.map(r => r.name.length));
+      const laneW = Math.max(...rows.map(r => r.lane.length));
+      for (const r of rows) {
+        console.log(`  ${r.name.padEnd(nameW)}  ${r.lane.padEnd(laneW)}  ${r.description}`);
+      }
+      return 0;
+    }
+    case "remove": {
+      const name = opts.spec;
+      if (!name) {
+        console.error("agent-daemon skill remove: a skill name is required");
+        return 1;
+      }
+      const r = await si.removeSkill({ name, lane, cwd: opts.cwd, force: opts.force });
+      console.log(`  ${r.ok ? "✓" : "✗"} ${r.note}`);
+      return r.ok ? 0 : 1;
+    }
+    case "search": {
+      const q = opts.spec;
+      if (!q) {
+        console.error("agent-daemon skill search: a query is required");
+        return 1;
+      }
+      const rows = await si.searchSkills({ query: q, projectRoot: PROJECT_ROOT });
+      if (rows.length === 0) {
+        console.log(`No bundled skills match "${q}".`);
+        return 0;
+      }
+      for (const r of rows) {
+        console.log(`  ${r.installed ? "●" : "○"} ${r.name} — ${r.description}`);
+      }
+      console.log(`\n  ● installed   ○ available — install with: ad skill install <name>`);
+      return 0;
+    }
+    default:
+      console.error(`agent-daemon skill: unknown subcommand "${sub || ""}" (use install | list | remove | search)`);
+      return 1;
+  }
+}
+
+async function cmdRoute(sub, opts) {
+  const home = process.env.HOME || process.env.USERPROFILE || ".";
+  switch (sub) {
+    case "stats": {
+      const ep = await import("./memory/episodic.mjs");
+      const days = opts.days ? parseInt(opts.days, 10) : 30;
+      const s = await ep.routeAdviceStats({ days });
+      if (opts.outputJson || opts.json) {
+        console.log(JSON.stringify(s, null, 2));
+        return 0;
+      }
+      if (s.rows.length === 0) {
+        console.log(`No route advice recorded in the last ${days} day(s).`);
+        return 0;
+      }
+      console.log(`Route advice effectiveness (last ${days} days):\n`);
+      const header = ["skill", "advised", "followed", "diverged", "ignored", "follow%"];
+      const rows = s.rows.map(r => [
+        r.skill, r.advised, r.followed, r.diverged, r.ignored,
+        r.advised ? `${Math.round((r.followed / r.advised) * 100)}%` : "-"
+      ]);
+      rows.push(["TOTAL", s.totals.advised, s.totals.followed, s.totals.diverged, s.totals.ignored,
+        s.totals.advised ? `${Math.round((s.totals.followed / s.totals.advised) * 100)}%` : "-"]);
+      const widths = header.map((h, i) => Math.max(h.length, ...rows.map(r => String(r[i]).length)));
+      console.log("  " + header.map((h, i) => h.padEnd(widths[i])).join("  "));
+      for (const r of rows) {
+        console.log("  " + r.map((c, i) => String(c).padEnd(widths[i])).join("  "));
+      }
+      console.log(`\n  Explicit "do not use skills" overrides: ${s.constraintOverrides}`);
+      return 0;
+    }
+    case "rebuild": {
+      const { rebuildRouteMaps } = await import("./route-map.mjs");
+      const counts = await rebuildRouteMaps({ home, cwd: opts.cwd });
+      console.log(`✓ Global route map: ${counts.global} skill(s) with triggers`);
+      if (counts.project !== null) {
+        console.log(`✓ Project route map: ${counts.project} skill(s) with triggers`);
+      }
+      return 0;
+    }
+    case "show": {
+      const { loadRouteMaps } = await import("./route-map.mjs");
+      const entries = await loadRouteMaps({ cwd: opts.cwd, home });
+      if (opts.outputJson || opts.json) {
+        console.log(JSON.stringify(entries.map(({ _re, ...e }) => e), null, 2));
+        return 0;
+      }
+      if (entries.length === 0) {
+        console.log("No compiled route maps. Run: ad route rebuild");
+        return 0;
+      }
+      for (const e of entries) {
+        console.log(`  ${e.skill} [${e.lane}] — ${e.triggers.slice(0, 6).join(" | ")}${e.triggers.length > 6 ? " …" : ""}`);
+      }
+      return 0;
+    }
+    case "evolve": {
+      const { analyzeRouting, writeRoutingProposal } = await import("./digest/gepa/routing.mjs");
+      const days = opts.days ? parseInt(opts.days, 10) : 30;
+      const analysis = await analyzeRouting({ days });
+      if (!analysis.driver) {
+        console.error("agent-daemon: better-sqlite3 not installed — routing evolution unavailable");
+        return 1;
+      }
+      if (analysis.findings.length === 0) {
+        console.log(`No route problems found at the minimum-sample gates (last ${days} days). Telemetry keeps accruing.`);
+        return 0;
+      }
+      for (const f of analysis.findings) {
+        console.log(`  ${f.skill} [${f.kind}] — ${f.evidence}`);
+        console.log(`    → ${f.suggestion}`);
+      }
+      const p = await writeRoutingProposal(analysis, { cwd: opts.cwd, days, dryRun: opts.dryRun });
+      if (p) console.log(`\n${opts.dryRun ? "(dry-run) would write" : "→"} ${p}`);
+      return 0;
+    }
+    default:
+      console.error(`agent-daemon route: unknown subcommand "${sub || ""}" (use stats | rebuild | show | evolve)`);
+      return 1;
+  }
+}
+
+async function cmdMemory(sub, opts) {
+  switch (sub) {
+    case "stats": {
+      const ep = await import("./memory/episodic.mjs");
+      const s = await ep.stats();
+      if (!s.driver) {
+        console.error("agent-daemon: better-sqlite3 not installed — no episodic stats available");
+        return 1;
+      }
+      if (opts.outputJson) {
+        console.log(JSON.stringify(s, null, 2));
+        return 0;
+      }
+      console.log(`Episodic store: ${s.dbPath}`);
+      console.log("");
+      const max = Math.max(...Object.keys(s.counts).map(k => k.length));
+      for (const [table, n] of Object.entries(s.counts)) {
+        console.log(`  ${table.padEnd(max)}  ${n}`);
+      }
+      if (s.retrieval) {
+        console.log("");
+        console.log("Retrieval (last 7 days):");
+        console.log(`  events            ${s.retrieval.events}`);
+        console.log(`  truncation rate   ${(s.retrieval.truncationRate * 100).toFixed(0)}%`);
+        console.log(`  avg injected      ${s.retrieval.avgInjectedBytes} bytes`);
+      } else {
+        console.log("");
+        console.log("Retrieval: no events recorded yet (telemetry starts with the next session)");
+      }
+      return 0;
+    }
+    case "consolidate": {
+      const con = await import("./memory/consolidate.mjs");
+      const ep = await import("./memory/episodic.mjs");
+      const slug = opts.allProjects ? null : ep.projectSlug(path.resolve(opts.cwd));
+      const analysis = await con.analyzeConsolidation({ projectSlug: slug });
+      if (!analysis.driver) {
+        console.error("agent-daemon: better-sqlite3 not installed — consolidation unavailable");
+        return 1;
+      }
+      console.log(`Scanned ${analysis.scanned} active learning(s)${slug ? ` for ${slug}` : ""}:`);
+      console.log(`  merge clusters:   ${analysis.mergeClusters.length}`);
+      console.log(`  stale candidates: ${analysis.staleCandidates.length}`);
+      console.log(`  contradictions:   ${analysis.contradictions.length}`);
+
+      if (opts.applyMerges || opts.applyStale) {
+        // Explicit apply — the user reviewed the prior proposal.
+        if (opts.applyMerges) {
+          const n = await con.applyMerges(analysis);
+          console.log(`  ✓ superseded ${n} duplicate(s)`);
+        }
+        if (opts.applyStale) {
+          const n = await con.applyStaleArchive(analysis);
+          console.log(`  ✓ archived ${n} stale learning(s)`);
+        }
+        return 0;
+      }
+
+      const total = analysis.mergeClusters.length + analysis.staleCandidates.length + analysis.contradictions.length;
+      if (total === 0) {
+        console.log("\nNothing to consolidate — memory is clean.");
+        return 0;
+      }
+      const paths = await con.writeConsolidationProposals(analysis, { cwd: opts.cwd, dryRun: opts.dryRun });
+      for (const p of paths) {
+        console.log(`  ${opts.dryRun ? "(dry-run) would write" : "→"} ${p}`);
+      }
+      console.log("\nReview the proposal(s), then apply with --apply-merges / --apply-stale, or delete to reject.");
+      return 0;
+    }
+    default:
+      console.error(`agent-daemon memory: unknown subcommand "${sub || ""}" (use stats | consolidate)`);
+      return 1;
+  }
 }
 
 /**
@@ -1148,13 +1534,120 @@ function encodePath(p) {
     .replace(/[\s\\/]/g, "-");  // each separator becomes its own "-", do not collapse
 }
 
+/**
+ * `ad digest-sweep` — digest every undigested transcript for --cwd.
+ *
+ * The VS Code extension never fires SessionEnd, so transcripts pile up
+ * undigested. session-start spawns this detached (throttled to one run per
+ * 10 minutes) so the next session — CLI or extension — catches up on
+ * everything the SessionEnd hook missed. Unlike digest-latest this respects
+ * the triage gate (force:false): junk sessions stay skipped.
+ */
+async function cmdDigestSweep(opts) {
+  const home = process.env.HOME || process.env.USERPROFILE || "";
+  const projectsDir = path.join(home, ".claude", "projects");
+  const targetCwd = path.resolve(opts.cwd || process.cwd());
+  const encoded = encodePath(targetCwd);
+  const MAX_SWEEP = 5;
+  const MIN_AGE_MS = 2 * 60 * 1000;  // still-being-written guard
+
+  let entries;
+  try {
+    entries = await fs.readdir(projectsDir);
+  } catch {
+    return 0;  // no transcripts at all — nothing to sweep, not an error
+  }
+
+  const matches = entries.filter(name => name.toLowerCase() === encoded.toLowerCase());
+  if (matches.length === 0) return 0;
+
+  const { sessionDigestInfo, SETTLED_DIGEST_STATUSES } = await import("./memory/episodic.mjs");
+  const REGROWTH_MS = 5 * 60 * 1000;  // transcript grew after digest → resumed session
+
+  const candidates = [];
+  for (const m of matches) {
+    const folder = path.join(projectsDir, m);
+    let files;
+    try { files = await fs.readdir(folder); } catch { continue; }
+    for (const f of files) {
+      if (!f.endsWith(".jsonl")) continue;
+      const sessionId = f.slice(0, -".jsonl".length);
+      if (opts.excludeSession && sessionId === opts.excludeSession) continue;
+      const fp = path.join(folder, f);
+      let stat;
+      try { stat = await fs.stat(fp); } catch { continue; }
+      if (Date.now() - stat.mtimeMs < MIN_AGE_MS) continue;  // live session
+      const info = await sessionDigestInfo(sessionId);
+      if (info && SETTLED_DIGEST_STATUSES.has(info.status)) {
+        const digestedMs = info.digestedAt ? new Date(info.digestedAt).getTime() : 0;
+        if (stat.mtimeMs <= digestedMs + REGROWTH_MS) continue;  // settled
+      }
+      candidates.push({ path: fp, sessionId, mtimeMs: stat.mtimeMs });
+    }
+  }
+
+  if (candidates.length === 0) {
+    if (opts.verbose) console.error("agent-daemon: digest-sweep — nothing undigested");
+    return 0;
+  }
+
+  candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  const batch = candidates.slice(0, MAX_SWEEP);
+  if (candidates.length > batch.length) {
+    console.error(`agent-daemon: digest-sweep capped at ${MAX_SWEEP}; ${candidates.length - batch.length} older transcript(s) deferred to the next sweep`);
+  }
+
+  let failures = 0;
+  for (const c of batch) {
+    console.error(`agent-daemon: sweeping ${path.basename(c.path)}`);
+    try {
+      await runDigest({
+        ...opts,
+        transcript: c.path,
+        sessionId: c.sessionId,
+        cwd: targetCwd,
+        force: false  // triage still gates junk sessions
+      });
+    } catch (err) {
+      failures++;
+      console.error(`agent-daemon: sweep digest failed for ${path.basename(c.path)}: ${err.message}`);
+    }
+  }
+  return failures > 0 ? 1 : 0;
+}
+
+async function cmdService(sub, opts) {
+  const svc = await import("./daemon/service.mjs");
+  switch (sub) {
+    case "install": {
+      const r = await svc.installService({ logDir: opts.logDir });
+      console.log(`${r.ok ? "✓" : "✗"} ${r.note}`);
+      return r.ok ? 0 : 1;
+    }
+    case "uninstall": {
+      const r = await svc.uninstallService();
+      console.log(`${r.ok ? "✓" : "✗"} ${r.note}`);
+      return r.ok ? 0 : 1;
+    }
+    case "status": {
+      const r = await svc.serviceStatus();
+      console.log(`${r.installed ? "✓" : "○"} ${r.note}`);
+      return 0;
+    }
+    default:
+      console.error(`agent-daemon service: unknown subcommand "${sub || ""}" (use install | uninstall | status)`);
+      return 1;
+  }
+}
+
 async function cmdWatch(opts) {
   return runWatcher({
     projectRoot: opts.projectRoot,
     verbose: opts.verbose,
     onceOnExisting: opts.onceOnExisting || false,
     force: opts.force || false,
-    fallbackToLlm: opts.fallbackToLlm || false
+    fallbackToLlm: opts.fallbackToLlm || false,
+    logFile: opts.logFile
   });
 }
 
@@ -1284,8 +1777,16 @@ async function cmdTeam(subcommand, opts) {
     case "cleanup": {
       const { cleanupWorktrees } = await import("./orchestration/spawn.mjs");
       console.log("Cleaning up stale worktrees...");
-      const { removed } = await cleanupWorktrees(opts.cwd);
-      console.log(`  Pruned ${removed} stale worktree(s).`);
+      const { removed, stale, staleRemoved } = await cleanupWorktrees(opts.cwd, { auto: opts.force });
+      console.log(`  Pruned ${removed} broken worktree(s).`);
+      if (staleRemoved > 0) {
+        console.log(`  Removed ${staleRemoved} stale worktree(s) past TTL (--force).`);
+      }
+      if (stale && stale.length > 0) {
+        console.log(`  ${stale.length} stale worktree(s) past 72h TTL with no running agent (may hold uncommitted work):`);
+        for (const s of stale) console.log(`    ${s}`);
+        console.log(`  Re-run with --force to delete them.`);
+      }
 
       // Also report old completed teams
       const teams = await listTeams();
@@ -1522,7 +2023,17 @@ async function main(argv) {
         "once-on-existing": { type: "boolean" },
         "list-candidates": { type: "boolean" },
         "export-traces": { type: "boolean" },
-        json:         { type: "boolean" }
+        json:         { type: "boolean" },
+        "exclude-session": { type: "string" },
+        "log-file":   { type: "string" },
+        "log-dir":    { type: "string" },
+        days:         { type: "string" },
+        project:      { type: "boolean" },
+        available:    { type: "boolean" },
+        skill:        { type: "string" },
+        "apply-merges": { type: "boolean" },
+        "apply-stale":  { type: "boolean" },
+        "all-projects": { type: "boolean" }
       },
       allowPositionals: true,
       strict: false
@@ -1549,6 +2060,8 @@ async function main(argv) {
     case "session-start":  return runSessionStart(opts);
     case "digest":         return runDigest(opts);
     case "digest-latest":  return cmdDigestLatest(opts);
+    case "digest-sweep":   return cmdDigestSweep({ ...opts, excludeSession: parsed.values["exclude-session"] });
+    case "service":        return cmdService(parsed.positionals?.[0], { ...opts, logDir: parsed.values["log-dir"] });
     case "evolve":         return cmdEvolve({
       ...opts,
       skillName:       parsed.positionals?.[0],
@@ -1560,8 +2073,23 @@ async function main(argv) {
     case "init":           return cmdInit({ ...opts, profile: parsed.values.profile, plan: parsed.values.plan, skillsMode: parsed.values["skills-mode"] });
     case "status":         return cmdStatus(opts);
     case "review":         return cmdReview(opts);
-    case "watch":          return cmdWatch(opts);
+    case "watch":          return cmdWatch({ ...opts, logFile: parsed.values["log-file"] });
     case "query-retrieve": return cmdQueryRetrieve(opts);
+    case "memory":         return cmdMemory(parsed.positionals?.[0], {
+      ...opts,
+      applyMerges: parsed.values["apply-merges"] || false,
+      applyStale: parsed.values["apply-stale"] || false,
+      allProjects: parsed.values["all-projects"] || false
+    });
+    case "route":          return cmdRoute(parsed.positionals?.[0], { ...opts, days: parsed.values.days, json: parsed.values.json });
+    case "skill":          return cmdSkill(parsed.positionals?.[0], {
+      ...opts,
+      spec: parsed.positionals?.[1],
+      project: parsed.values.project || false,
+      available: parsed.values.available || false,
+      skill: parsed.values.skill,
+      json: parsed.values.json
+    });
     case "doctor":         return cmdDoctor({ ...opts, tokens: parsed.values.tokens, limit: parsed.values.limit, model: parsed.values.model });
     case "team":           return cmdTeam(parsed.positionals?.[0], { ...opts, template: parsed.values.template, task: parsed.values.task, team: parsed.values.team, agent: parsed.values.agent, model: parsed.values.model });
     case "spawn":          return cmdSpawn({ ...opts, team: parsed.values.team, role: parsed.values.role, task: parsed.values.task, model: parsed.values.model });

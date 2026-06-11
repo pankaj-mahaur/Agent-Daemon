@@ -95,6 +95,58 @@ export async function upsertSession(row) {
   );
 }
 
+/**
+ * True when a session id is already recorded as digested. Used by the
+ * digest-sweep command to skip transcripts that were already processed
+ * (transcript filename stem = session UUID).
+ *
+ * @param {string} sessionId
+ * @returns {Promise<boolean>}
+ */
+export const SETTLED_DIGEST_STATUSES = new Set(["digested", "triaged-skip", "no-block", "no-learnings"]);
+
+export async function isSessionDigested(sessionId) {
+  const info = await sessionDigestInfo(sessionId);
+  return !!info && SETTLED_DIGEST_STATUSES.has(info.status);
+}
+
+/**
+ * Digest bookkeeping for one session: { status, digestedAt } or null when
+ * the session has never been seen. digest-sweep uses digestedAt to detect
+ * transcripts that grew after their last digest (resumed sessions).
+ *
+ * @param {string} sessionId
+ * @returns {Promise<{ status: string|null, digestedAt: string|null } | null>}
+ */
+export async function sessionDigestInfo(sessionId) {
+  const handle = await db();
+  if (!handle || !sessionId) return null;
+  const row = handle.get(
+    `SELECT digest_status AS status, digested_at AS digestedAt
+       FROM sessions WHERE id = ? LIMIT 1`,
+    [sessionId]
+  );
+  return row || null;
+}
+
+/**
+ * ISO timestamp of the most recent digested session for a project slug,
+ * or null. Feeds the doctor freshness check.
+ *
+ * @param {string} projectSlug
+ * @returns {Promise<string | null>}
+ */
+export async function latestDigestedAt(projectSlug) {
+  const handle = await db();
+  if (!handle) return null;
+  const row = handle.get(
+    `SELECT MAX(digested_at) AS latest FROM sessions
+      WHERE project_slug = ? AND digest_status = 'digested'`,
+    [projectSlug]
+  );
+  return row?.latest || null;
+}
+
 /* ------------------------------------------------------------------ */
 /* Learnings                                                           */
 /* ------------------------------------------------------------------ */
@@ -120,8 +172,8 @@ export async function insertLearning(learning) {
   const tagsJson = learning.tags ? JSON.stringify(learning.tags) : null;
   const contentHash = learningContentHash(learning.text);
   // INSERT OR IGNORE: same text from a different session collides on the
-  // partial unique index `idx_learnings_content_hash` and is skipped
-  // silently. (We use OR IGNORE instead of ON CONFLICT(col) because SQLite's
+  // partial unique index `idx_learnings_content_hash` and is skipped.
+  // (We use OR IGNORE instead of ON CONFLICT(col) because SQLite's
   // UPSERT requires a FULL unique constraint as the conflict target —
   // partial indexes don't qualify. OR IGNORE works with either.)
   const result = handle.run(
@@ -139,9 +191,34 @@ export async function insertLearning(learning) {
       contentHash
     ]
   );
-  // result.changes is 0 when ON CONFLICT skipped — return null to signal dedup.
-  if (!result.changes) return null;
+  // Hash collision = the same lesson re-observed in a later session — the
+  // strongest confirmation signal we get. Reinforce instead of discarding.
+  if (!result.changes) {
+    reinforceLearning(handle, contentHash);
+    return null;  // null still signals "dedup" to callers counting inserts
+  }
   return result.lastInsertRowid;
+}
+
+/**
+ * Bump confidence + observed_count on a re-observed learning (content-hash
+ * collision). Confidence saturates at 0.95 — certainty stays earned, never
+ * absolute.
+ *
+ * @param {import("./sqlite.mjs").Db} handle
+ * @param {string} contentHash
+ */
+function reinforceLearning(handle, contentHash) {
+  try {
+    handle.run(
+      `UPDATE learnings
+          SET confidence = MIN(0.95, confidence + 0.1),
+              observed_count = observed_count + 1,
+              last_verified_at = ?
+        WHERE content_hash = ? AND status = 'active'`,
+      [new Date().toISOString(), contentHash]
+    );
+  } catch { /* evolution columns missing on a pre-migration DB — best-effort */ }
 }
 
 /**
@@ -163,7 +240,8 @@ export async function insertLearnings(learnings) {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [l.sessionId || null, l.projectSlug || null, l.category, l.text, l.evidence || null, l.confidence ?? 0.5, tagsJson, l.appliedTo || null, contentHash]
       );
-      // Push null for deduped (skipped) inserts so caller knows the count.
+      // Dedup = re-observation → reinforce confidence instead of discarding.
+      if (!r.changes) reinforceLearning(handle, contentHash);
       ids.push(r.changes ? r.lastInsertRowid : null);
     }
   });
@@ -202,9 +280,17 @@ export async function searchLearnings(query, opts = {}) {
     }
   }
 
+  // Freshness decay at rank time (non-destructive): bm25 score × a half-life
+  // factor on the most recent of last_verified_at / last_retrieved_at /
+  // created_at. 90-day half-life — stale rows lose rank but keep their data.
+  // julianday() arithmetic keeps this deterministic SQL, no JS date math.
   const rows = handle.all(
     `SELECT l.id, l.text, l.evidence, l.category, l.confidence, l.project_slug, l.created_at,
-            -bm25(learnings_fts) AS score
+            -bm25(learnings_fts) *
+              pow(0.5, (julianday('now') - julianday(
+                MAX(COALESCE(l.last_verified_at, l.created_at), COALESCE(l.last_retrieved_at, l.created_at))
+              )) / 90.0)
+              AS score
        FROM learnings_fts
        JOIN learnings l ON l.id = learnings_fts.rowid
       WHERE ${where}
@@ -364,7 +450,168 @@ export async function stats() {
   for (const t of ["sessions", "learnings", "skill_executions", "tool_calls", "user_facts", "skill_variants", "proposals"]) {
     counts[t] = handle.get(`SELECT COUNT(*) AS n FROM ${t}`).n;
   }
-  return { driver: true, dbPath: handle.path, counts };
+
+  // Retrieval telemetry aggregates (last 7 days) — best-effort on pre-migration DBs
+  let retrieval = null;
+  try {
+    const r = handle.get(
+      `SELECT COUNT(*) AS events,
+              SUM(truncated) AS truncatedEvents,
+              CAST(AVG(injected_bytes) AS INTEGER) AS avgInjectedBytes
+         FROM retrieval_events
+        WHERE ts >= datetime('now', '-7 days')`
+    );
+    if (r && r.events > 0) {
+      retrieval = {
+        events: r.events,
+        truncatedEvents: r.truncatedEvents || 0,
+        truncationRate: (r.truncatedEvents || 0) / r.events,
+        avgInjectedBytes: r.avgInjectedBytes || 0
+      };
+    }
+  } catch { /* table missing — fine */ }
+
+  return { driver: true, dbPath: handle.path, counts, retrieval };
+}
+
+/* ------------------------------------------------------------------ */
+/* user_facts — cross-project user profile                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Observe a user-profile fact. Upserts on content_hash: a re-observation
+ * bumps observed_count + confidence and appends the project slug to the
+ * provenance list. Facts observed in ≥2 distinct projects are surfaced by
+ * `ad memory consolidate` as promotion candidates.
+ *
+ * @param {{
+ *   category: string,        // 'identity' | 'preference' | 'tool' | 'anti-preference'
+ *   text: string,
+ *   evidence?: string,
+ *   confidence?: number,
+ *   sessionId?: string,
+ *   projectSlug?: string
+ * }} fact
+ * @returns {Promise<{ id: number | null, observed: number, projects: string[] } | null>}
+ */
+export async function observeUserFact(fact) {
+  const handle = await db();
+  if (!handle) return null;
+  const contentHash = learningContentHash(fact.text);
+  const now = new Date().toISOString();
+
+  const existing = handle.get(
+    `SELECT id, observed_count, projects, confidence FROM user_facts
+      WHERE content_hash = ? AND status = 'active' LIMIT 1`,
+    [contentHash]
+  );
+
+  if (existing) {
+    let projects = [];
+    try { projects = JSON.parse(existing.projects || "[]"); } catch { /* reset */ }
+    if (fact.projectSlug && !projects.includes(fact.projectSlug)) projects.push(fact.projectSlug);
+    handle.run(
+      `UPDATE user_facts
+          SET observed_count = observed_count + 1,
+              confidence = MIN(0.95, confidence + 0.05),
+              last_observed_at = ?,
+              projects = ?
+        WHERE id = ?`,
+      [now, JSON.stringify(projects), existing.id]
+    );
+    return { id: existing.id, observed: existing.observed_count + 1, projects };
+  }
+
+  const projects = fact.projectSlug ? [fact.projectSlug] : [];
+  const r = handle.run(
+    `INSERT INTO user_facts (category, text, evidence, confidence, source_session, observed_count, last_observed_at, projects, content_hash)
+     VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+    [
+      fact.category,
+      fact.text,
+      fact.evidence || null,
+      fact.confidence ?? 0.5,
+      fact.sessionId || null,
+      now,
+      JSON.stringify(projects),
+      contentHash
+    ]
+  );
+  return { id: r.lastInsertRowid, observed: 1, projects };
+}
+
+/**
+ * Top active user facts for SessionStart injection (tiny budget).
+ *
+ * @param {{ limit?: number }} [opts]
+ */
+export async function topUserFacts({ limit = 5 } = {}) {
+  const handle = await db();
+  if (!handle) return [];
+  return handle.all(
+    `SELECT id, category, text, confidence, observed_count
+       FROM user_facts WHERE status = 'active'
+      ORDER BY confidence DESC, observed_count DESC
+      LIMIT ?`,
+    [limit]
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Retrieval telemetry (measurement-first — Phase 1)                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Record one retrieval decision (what was considered vs injected vs cut).
+ *
+ * @param {{
+ *   sessionId?: string,
+ *   cwd?: string,
+ *   source: 'session-start' | 'query-retrieve',
+ *   consideredBytes: number,
+ *   injectedBytes: number,
+ *   truncated: boolean,
+ *   groups?: Array<{label: string, bytesIn: number, bytesKept: number, truncated: boolean}>
+ * }} event
+ */
+export async function recordRetrievalEvent(event) {
+  const handle = await db();
+  if (!handle) return;
+  handle.run(
+    `INSERT INTO retrieval_events
+       (session_id, project_slug, source, considered_bytes, injected_bytes, truncated, groups_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [
+      event.sessionId || null,
+      event.cwd ? projectSlug(event.cwd) : null,
+      event.source,
+      event.consideredBytes | 0,
+      event.injectedBytes | 0,
+      event.truncated ? 1 : 0,
+      event.groups ? JSON.stringify(event.groups) : null
+    ]
+  );
+}
+
+/**
+ * Retrieval write-back: bump retrieval_count + last_retrieved_at for learnings
+ * that were actually injected. Feeds freshness-aware ranking.
+ *
+ * @param {number[]} ids
+ */
+export async function markRetrieved(ids) {
+  const handle = await db();
+  if (!handle || !ids || ids.length === 0) return;
+  try {
+    const now = new Date().toISOString();
+    const stmt = `UPDATE learnings
+                     SET retrieval_count = retrieval_count + 1,
+                         last_retrieved_at = ?
+                   WHERE id = ?`;
+    handle.transaction(() => {
+      for (const id of ids) handle.run(stmt, [now, id]);
+    });
+  } catch { /* evolution columns missing on a pre-migration DB — best-effort */ }
 }
 
 /* ------------------------------------------------------------------ */
@@ -412,17 +659,105 @@ export async function recordRouteAdvice(event) {
   const capType = event.recommendedCapability ? "skill" : null;
   handle.run(
     `INSERT INTO skill_route_events
-       (session_id, project_slug, task_size, recommended_capability_type,
-        recommended_capability, explicit_agent_request, explicit_capability_constraint)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+       (session_id, project_slug, task_size, prompt_intent, recommended_capability_type,
+        recommended_capability, recommendation_source, explicit_agent_request, explicit_capability_constraint)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       event.sessionId || "",
       slug,
       event.taskSize || null,
+      event.promptIntent || null,
       capType,
       event.recommendedCapability || null,
+      event.recommendationSource || "capability-route-advice",
       event.explicit_agent ? 1 : 0,
       event.explicit_constraint ? 1 : 0,
     ]
   );
+}
+
+/**
+ * Correlate a skill invocation back to the route advice that recommended it.
+ * Two passes: (1) exact match — the advice named this skill → "followed";
+ * (2) any open advice in the window → "diverged" (a different skill ran).
+ *
+ * @param {{ sessionId: string, skillName: string, windowMinutes?: number }} opts
+ * @returns {Promise<"followed" | "diverged" | null>}
+ */
+export async function correlateRouteInvocation({ sessionId, skillName, windowMinutes = 15 }) {
+  const handle = await db();
+  if (!handle || !sessionId || !skillName) return null;
+  const now = new Date().toISOString();
+  const window = `-${Math.max(1, windowMinutes | 0)} minutes`;
+
+  const exact = handle.run(
+    `UPDATE skill_route_events
+        SET invoked_skill = ?, invoked_at = ?
+      WHERE id = (
+        SELECT id FROM skill_route_events
+         WHERE session_id = ? AND invoked_skill IS NULL
+           AND recommended_capability = ?
+           AND created_at >= datetime('now', ?)
+         ORDER BY id DESC LIMIT 1
+      )`,
+    [skillName, now, sessionId, skillName, window]
+  );
+  if (exact.changes > 0) return "followed";
+
+  const diverged = handle.run(
+    `UPDATE skill_route_events
+        SET invoked_skill = ?, invoked_at = ?
+      WHERE id = (
+        SELECT id FROM skill_route_events
+         WHERE session_id = ? AND invoked_skill IS NULL
+           AND recommended_capability IS NOT NULL
+           AND created_at >= datetime('now', ?)
+         ORDER BY id DESC LIMIT 1
+      )`,
+    [skillName, now, sessionId, window]
+  );
+  return diverged.changes > 0 ? "diverged" : null;
+}
+
+/**
+ * Advice effectiveness per skill: advised / followed / diverged / ignored.
+ *
+ * @param {{ days?: number }} [opts]
+ * @returns {Promise<{ rows: Array<object>, totals: object, constraintOverrides: number }>}
+ */
+export async function routeAdviceStats({ days = 30 } = {}) {
+  const handle = await db();
+  if (!handle) return { rows: [], totals: { advised: 0, followed: 0, diverged: 0, ignored: 0 }, constraintOverrides: 0 };
+  const since = `-${Math.max(1, days | 0)} days`;
+
+  const rows = handle.all(
+    `SELECT recommended_capability AS skill,
+            COUNT(*) AS advised,
+            SUM(CASE WHEN invoked_skill = recommended_capability THEN 1 ELSE 0 END) AS followed,
+            SUM(CASE WHEN invoked_skill IS NOT NULL AND invoked_skill <> recommended_capability THEN 1 ELSE 0 END) AS diverged,
+            SUM(CASE WHEN invoked_skill IS NULL THEN 1 ELSE 0 END) AS ignored
+       FROM skill_route_events
+      WHERE created_at >= datetime('now', ?) AND recommended_capability IS NOT NULL
+      GROUP BY recommended_capability
+      ORDER BY advised DESC`,
+    [since]
+  );
+
+  const totals = rows.reduce(
+    (a, r) => ({
+      advised: a.advised + r.advised,
+      followed: a.followed + r.followed,
+      diverged: a.diverged + r.diverged,
+      ignored: a.ignored + r.ignored
+    }),
+    { advised: 0, followed: 0, diverged: 0, ignored: 0 }
+  );
+
+  const constraintOverrides = handle.get(
+    `SELECT COUNT(*) AS n FROM skill_route_events
+      WHERE created_at >= datetime('now', ?) AND explicit_capability_constraint = 1`,
+    [since]
+  ).n;
+
+  return { rows, totals, constraintOverrides };
 }

@@ -42,6 +42,10 @@ function ackedDir(teamId, agentName) {
   return path.join(teamsRoot(), teamId, "inboxes", agentName, "acked");
 }
 
+function deadLetterDir(teamId, agentName) {
+  return path.join(teamsRoot(), teamId, "inboxes", agentName, "dead-letter");
+}
+
 /**
  * Ensure inbox directory exists for an agent.
  */
@@ -70,6 +74,28 @@ export async function sendMessage({ teamId, from, to, type, payload }) {
 
   const dir = inboxDir(teamId, to);
   await fs.mkdir(dir, { recursive: true });
+
+  // Cap enforcement: at MAX_INBOX_MESSAGES, move the oldest pending messages
+  // to dead-letter/ (never silently dropped, never rejecting the newest —
+  // fresh information wins). Filenames are msg-<Date.now()>-<rand> so a name
+  // sort is chronological.
+  try {
+    const existing = (await fs.readdir(dir))
+      .filter(e => e.endsWith(".json") && !e.startsWith("."))
+      .sort();
+    if (existing.length >= MAX_INBOX_MESSAGES) {
+      const dlq = deadLetterDir(teamId, to);
+      await fs.mkdir(dlq, { recursive: true });
+      const overflow = existing.slice(0, existing.length - MAX_INBOX_MESSAGES + 1);
+      for (const name of overflow) {
+        await fs.rename(path.join(dir, name), path.join(dlq, name)).catch(() => {});
+      }
+      console.error(
+        `agent-daemon: inbox for ${to} (team ${teamId}) hit the ${MAX_INBOX_MESSAGES}-message cap — ` +
+        `moved ${overflow.length} oldest message(s) to dead-letter/`
+      );
+    }
+  } catch { /* cap enforcement is best-effort — delivery must not fail */ }
 
   const timestamp = new Date().toISOString();
   const rand = crypto.randomBytes(4).toString("hex");
@@ -116,13 +142,26 @@ export async function readInbox(teamId, agentName) {
     throw err;
   }
 
+  // Sort filenames BEFORE applying the cap — readdir order is arbitrary, so
+  // capping during iteration used to drop a random subset. Names sort
+  // chronologically (msg-<Date.now()>-<rand>), so the cap now keeps the
+  // oldest-first window deterministically.
+  const names = entries
+    .filter(e => e.isFile() && e.name.endsWith(".json") && !e.name.startsWith("."))
+    .map(e => e.name)
+    .sort();
+
+  if (names.length > MAX_INBOX_MESSAGES) {
+    console.error(
+      `agent-daemon: inbox for ${agentName} (team ${teamId}) is over the ${MAX_INBOX_MESSAGES}-message cap — ` +
+      `${names.length - MAX_INBOX_MESSAGES} message(s) unread this pass; check dead-letter/`
+    );
+  }
+
   const messages = [];
-  for (const entry of entries) {
-    if (!entry.isFile()) continue;
-    if (!entry.name.endsWith(".json") || entry.name.startsWith(".")) continue;
-    if (messages.length >= MAX_INBOX_MESSAGES) break;
+  for (const name of names.slice(0, MAX_INBOX_MESSAGES)) {
     try {
-      const raw = await fs.readFile(path.join(dir, entry.name), "utf8");
+      const raw = await fs.readFile(path.join(dir, name), "utf8");
       messages.push(JSON.parse(raw));
     } catch {
       // skip corrupt messages
@@ -248,6 +287,42 @@ export async function inboxCount(teamId, agentName) {
   try {
     const entries = await fs.readdir(dir);
     return entries.filter(e => e.endsWith(".json") && !e.startsWith(".")).length;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * List messages that overflowed into dead-letter/ (oldest first).
+ *
+ * @param {string} teamId
+ * @param {string} agentName
+ * @returns {Promise<InboxMessage[]>}
+ */
+export async function listDeadLetters(teamId, agentName) {
+  const dir = deadLetterDir(teamId, agentName);
+  let names;
+  try {
+    names = (await fs.readdir(dir)).filter(e => e.endsWith(".json")).sort();
+  } catch {
+    return [];
+  }
+  const messages = [];
+  for (const name of names) {
+    try {
+      messages.push(JSON.parse(await fs.readFile(path.join(dir, name), "utf8")));
+    } catch { /* skip corrupt */ }
+  }
+  return messages;
+}
+
+/**
+ * Count dead-lettered messages for an agent.
+ */
+export async function deadLetterCount(teamId, agentName) {
+  const dir = deadLetterDir(teamId, agentName);
+  try {
+    return (await fs.readdir(dir)).filter(e => e.endsWith(".json")).length;
   } catch {
     return 0;
   }

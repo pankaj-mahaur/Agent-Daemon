@@ -1,0 +1,37 @@
+{
+  "$comment": "Curated high-priority routing patterns for the capability-route-advice hook. Checked BEFORE the compiled per-install route maps. Override per-user at ~/.agent-daemon/routing-map.json (same schema) — delete that file to instantly roll back. `pattern` is a case-insensitive JS regex source. Routing evolution (`ad route evolve`) proposes edits to this file based on followed/ignored telemetry.",
+  "schema_version": 1,
+  "entries": [
+    {
+      "pattern": "\\b(bye|session\\s*khatam|done\\s+for\\s+today|end\\s+session|close\\s+session|wrapping\\s+up|session\\s+done|ending\\s+this\\s+session|aaj\\s+ka\\s+kaam|ho\\s+gaya\\s+kaam|chalo\\s+bye|i'?m\\s+done)\\b",
+      "skill": "session-close",
+      "tier": "substantial",
+      "note": "session-close skill runs session log + digest + handoff without an API key"
+    },
+    {
+      "pattern": "\\b(security\\s+audit|security\\s+review|vulnerability\\s+check|csp\\s+review|auth\\s+(check|audit)|pen\\s*test|owasp)\\b",
+      "skill": "security-audit",
+      "fallback": "review-slice",
+      "tier": "high-risk",
+      "note": "security-audit (or review-slice) applies a 9-class bug checklist"
+    },
+    {
+      "pattern": "\\b(audit|review\\s+this|review\\s+the|check\\s+karo|deeply\\s+dekho|iska\\s+review|is\\s+page\\s+ko|seo\\s+(of|audit|check)|ux\\s+(review|audit))\\b",
+      "skill": "review-slice",
+      "tier": "substantial",
+      "note": "review-slice applies a 9-class bug checklist grouped by root cause + severity"
+    },
+    {
+      "pattern": "\\b(broken|bug|error|crash|toot\\s+gaya|kaam\\s+nahi|why\\s+is\\s+(this|it)\\s+fail|exception|stack\\s+trace|not\\s+working|isn'?t\\s+working)\\b",
+      "skill": "debug-triage",
+      "tier": "substantial",
+      "note": "debug-triage applies strict triage order: services → data → cache → request → code"
+    },
+    {
+      "pattern": "\\b(implement|add\\s+feature|build\\s+a|create\\s+a|wire\\s+up|banao|naya\\s+banao|feature\\s+add|is\\s+feature\\s+ko)\\b",
+      "skill": "implement-feature",
+      "tier": "substantial",
+      "note": "implement-feature searches for existing utilities before writing new code"
+    }
+  ]
+}

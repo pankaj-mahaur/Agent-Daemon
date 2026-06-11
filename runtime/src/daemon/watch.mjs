@@ -6,15 +6,45 @@
 //   3. Have stable size across two `stableCheckIntervalMs` polls
 //   4. Aren't already marked digested in SQLite (if skipDigested=true)
 //
-// Runs foreground until Ctrl+C. OS service registration (so this runs at
-// login automatically) lands in Stream F.
+// Runs foreground until Ctrl+C. Register it as a per-user login service with
+// `ad service install` (see daemon/service.mjs).
 
 import path from "node:path";
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import { runDigest } from "../digest/digest.mjs";
 import { loadConfig } from "./config.mjs";
 import { readInbox, ackMessage } from "../orchestration/inbox.mjs";
-import { updateTaskStatus, listTasks, listTeams, isTeamComplete } from "../orchestration/team.mjs";
+import { updateTaskStatus, listTasks, listTeams, isTeamComplete, markTaskFailed, retryTask } from "../orchestration/team.mjs";
+import { cleanupWorktrees } from "../orchestration/spawn.mjs";
+
+const WORKTREE_GC_THROTTLE_MS = 6 * 60 * 60 * 1000;  // sweep at most every 6h
+let lastWorktreeGc = 0;
+
+const LOG_ROTATE_BYTES = 1024 * 1024;  // 1MB, keep one .1 generation
+
+/**
+ * Tee console.error to a log file (service mode has no terminal). Size-based
+ * rotation: at 1MB the current log moves to <file>.1, overwriting the prior
+ * generation. Sync appends — the watcher logs a handful of lines per digest.
+ *
+ * @param {string} logFile
+ */
+function teeConsoleToFile(logFile) {
+  try { fsSync.mkdirSync(path.dirname(logFile), { recursive: true }); } catch { /* best-effort */ }
+  const original = console.error.bind(console);
+  console.error = (...args) => {
+    original(...args);
+    try {
+      const line = `[${new Date().toISOString()}] ${args.map(a => typeof a === "string" ? a : JSON.stringify(a)).join(" ")}\n`;
+      try {
+        const stat = fsSync.statSync(logFile);
+        if (stat.size > LOG_ROTATE_BYTES) fsSync.renameSync(logFile, `${logFile}.1`);
+      } catch { /* no log yet */ }
+      fsSync.appendFileSync(logFile, line, "utf8");
+    } catch { /* logging must never crash the watcher */ }
+  };
+}
 
 /**
  * @param {{
@@ -25,6 +55,8 @@ import { updateTaskStatus, listTasks, listTeams, isTeamComplete } from "../orche
  * @returns {Promise<number>} resolves when watcher exits
  */
 export async function runWatcher(opts) {
+  if (opts.logFile) teeConsoleToFile(opts.logFile);
+
   let chokidar;
   try {
     chokidar = (await import("chokidar")).default || (await import("chokidar"));
@@ -209,10 +241,10 @@ async function pollTeamInboxes(verbose) {
         }
 
         for (const msg of messages) {
-          if (msg.type !== "task-complete") continue;
+          if (msg.type !== "task-complete" && msg.type !== "task-failed") continue;
 
           if (verbose) {
-            console.error(`agent-daemon: [team ${team.id}] ${msg.from} completed (${msg.payload?.status || "unknown"})`);
+            console.error(`agent-daemon: [team ${team.id}] ${msg.from} ${msg.type} (${msg.payload?.status || "unknown"})`);
           }
 
           try {
@@ -222,11 +254,18 @@ async function pollTeamInboxes(verbose) {
               (t.owner === msg.payload?.role || t.owner === msg.from) &&
               (t.status === "in_progress" || t.status === "pending")
             );
-            if (ownerTask && msg.payload?.status === "completed") {
+            if (ownerTask && msg.type === "task-complete" && msg.payload?.status === "completed") {
               const { unblocked } = await updateTaskStatus(team.id, ownerTask.id, "completed");
               if (unblocked.length > 0 && verbose) {
                 console.error(`agent-daemon: [team ${team.id}] unblocked: ${unblocked.map(t => t.title).join(", ")}`);
               }
+            }
+            if (ownerTask && msg.type === "task-failed") {
+              // markTaskFailed handles attempt counting + backoff scheduling;
+              // the retry-due sweep below resets it to pending when its
+              // next_retry_at passes.
+              const r = await markTaskFailed(team.id, ownerTask.id, msg.payload?.error || msg.payload?.summary || "agent reported failure");
+              console.error(`agent-daemon: [team ${team.id}] task "${ownerTask.title}" failed (attempt ${r?.task?.attempts ?? "?"})${r?.willRetry ? " — retry scheduled" : ""}`);
             }
           } catch (err) {
             if (verbose) console.error(`agent-daemon: [team ${team.id}] task update error: ${err.message}`);
@@ -245,8 +284,36 @@ async function pollTeamInboxes(verbose) {
           } catch { /* non-critical */ }
         }
       }
+
+      // Retry-due sweep: tasks whose backoff window has elapsed go back to
+      // pending so a leader (or the user via `ad sp`) can respawn them.
+      try {
+        for (const task of await listTasks(team.id)) {
+          if (task.status !== "retrying" || !task.next_retry_at) continue;
+          if (new Date(task.next_retry_at).getTime() > Date.now()) continue;
+          const r = await retryTask(team.id, task.id);
+          if (r.reset) {
+            console.error(`agent-daemon: [team ${team.id}] retry window elapsed — "${task.title}" reset to pending (attempt ${task.attempts || 0})`);
+          }
+        }
+      } catch (err) {
+        if (verbose) console.error(`agent-daemon: [team ${team.id}] retry sweep error: ${err.message}`);
+      }
     } catch (err) {
       if (verbose) console.error(`agent-daemon: [team ${team.id}] poll error: ${err.message}`);
     }
+  }
+
+  // Throttled worktree GC: report (never auto-delete) stale worktrees so the
+  // user can `ad tu --force` them. Broken worktrees (no .git) are removed.
+  if (Date.now() - lastWorktreeGc > WORKTREE_GC_THROTTLE_MS) {
+    lastWorktreeGc = Date.now();
+    try {
+      const { removed, stale } = await cleanupWorktrees(process.cwd());
+      if (removed > 0) console.error(`agent-daemon: worktree GC removed ${removed} broken worktree(s)`);
+      if (stale.length > 0) {
+        console.error(`agent-daemon: ${stale.length} stale worktree(s) past TTL — review with: ad tu`);
+      }
+    } catch { /* GC is best-effort */ }
   }
 }

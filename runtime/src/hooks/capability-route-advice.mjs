@@ -12,8 +12,13 @@
 //   - Does NOT suppress native-agent use for prompts that explicitly request agents.
 //   - Fails safe — any exception → passthrough().
 
+import os from "node:os";
+import path from "node:path";
+import fs from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { readStdinJson, passthrough, advise } from "./io.mjs";
 import { recordRouteAdvice } from "../memory/episodic.mjs";
+import { loadRouteMaps, compileEntryRegex } from "../route-map.mjs";
 
 // ── Explicit constraint patterns ─────────────────────────────────────────────
 // When the user says these things, we suppress forced-skill advice.
@@ -30,9 +35,10 @@ const SIMPLE_PATTERNS = [
   /^(what is|what's|who is|who's|when did|where is|how do I|how does)\b.{0,80}[?]?\s*$/i,
 ];
 
-// ── Routing map: [intent-regex, recommended-skill, description] ──────────────
-// Order matters — first match wins.
-const ROUTING_MAP = [
+// ── Builtin routing map: [intent-regex, recommended-skill, description] ──────
+// Curated, highest-priority tier — first match wins, checked BEFORE the
+// compiled per-install route maps (see ../route-map.mjs).
+const BUILTIN_ROUTING_MAP = [
   // Session close
   {
     re: /\b(bye|session\s*khatam|done\s+for\s+today|end\s+session|close\s+session|wrapping\s+up|session\s+done|ending\s+this\s+session|aaj\s+ka\s+kaam|ho\s+gaya\s+kaam|chalo\s+bye|i'?m\s+done)\b/i,
@@ -71,12 +77,47 @@ const ROUTING_MAP = [
   },
 ];
 
+// ── Curated-map loader ────────────────────────────────────────────────────────
+// Precedence: ~/.agent-daemon/routing-map.json (user override, instant rollback
+// by deleting it) → runtime/profiles/routing-map.json (repo default, evolvable
+// via `ad route evolve` proposals) → BUILTIN_ROUTING_MAP (hardcoded fail-safe).
+// Invalid files fall through silently — routing must never break a prompt.
+
+let _curatedCache = null;
+
+async function loadCuratedMap() {
+  if (_curatedCache) return _curatedCache;
+  const candidates = [
+    path.join(os.homedir(), ".agent-daemon", "routing-map.json"),
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "profiles", "routing-map.json")
+  ];
+  for (const p of candidates) {
+    try {
+      const doc = JSON.parse(await fs.readFile(p, "utf8"));
+      const entries = (doc.entries || [])
+        .filter(e => e?.pattern && e?.skill)
+        .map(e => ({ re: new RegExp(e.pattern, "i"), skill: e.skill, fallback: e.fallback, tier: e.tier || "substantial", note: e.note || `${e.skill} matches this request` }));
+      if (entries.length > 0) {
+        _curatedCache = entries;
+        return entries;
+      }
+    } catch { /* try next */ }
+  }
+  _curatedCache = BUILTIN_ROUTING_MAP;
+  return BUILTIN_ROUTING_MAP;
+}
+
 // ── Task size classifier ──────────────────────────────────────────────────────
 
-function classifyPrompt(prompt) {
+function classifyPrompt(prompt, curatedMap, compiledEntries = []) {
   if (SIMPLE_PATTERNS.some(re => re.test(prompt))) return "simple";
-  // Short prompt with no specialized keyword → probably simple.
-  if (prompt.trim().length < 40 && !ROUTING_MAP.some(r => r.re.test(prompt))) return "simple";
+  // Short prompt with no specialized keyword → probably simple. A compiled
+  // trigger match counts as specialized too.
+  if (prompt.trim().length < 40 &&
+      !curatedMap.some(r => r.re.test(prompt)) &&
+      !compiledEntries.some(e => compileEntryRegex(e).test(prompt))) {
+    return "simple";
+  }
   return "substantial";
 }
 
@@ -101,17 +142,49 @@ export async function capabilityRouteAdvice() {
     // Don't suppress native agents for explicit delegation requests.
     const explicitAgent = EXPLICIT_AGENT_RE.test(prompt);
 
-    const taskSize = classifyPrompt(prompt);
+    // Curated map (user override → repo default → hardcoded fallback) plus
+    // compiled per-install maps (project shadows global). Failure anywhere →
+    // builtin-only routing; the fail-safe contract holds.
+    let curatedMap = BUILTIN_ROUTING_MAP;
+    try {
+      curatedMap = await loadCuratedMap();
+    } catch { /* hardcoded fallback */ }
+    let compiledEntries = [];
+    try {
+      compiledEntries = await loadRouteMaps({ cwd, home: os.homedir() });
+    } catch { /* curated only */ }
+
+    const taskSize = classifyPrompt(prompt, curatedMap, compiledEntries);
 
     if (taskSize === "simple" && !explicitAgent) {
       passthrough();
       return 0;
     }
 
-    // Find the first matching route.
+    // Find the first matching route: curated map first, then compiled.
     let match = null;
-    for (const route of ROUTING_MAP) {
-      if (route.re.test(prompt)) { match = route; break; }
+    let promptIntent = null;
+    let recommendationSource = null;
+    for (const route of curatedMap) {
+      if (route.re.test(prompt)) {
+        match = route;
+        promptIntent = `builtin:${route.skill}`;
+        recommendationSource = "builtin-map";
+        break;
+      }
+    }
+    if (!match) {
+      const curatedSkills = new Set(curatedMap.map(r => r.skill));
+      for (const entry of compiledEntries) {
+        if (curatedSkills.has(entry.skill)) continue;  // curated already vetted it
+        const m = prompt.match(compileEntryRegex(entry));
+        if (m) {
+          match = { skill: entry.skill, tier: entry.tier || "substantial", note: entry.note || `${entry.skill} matches this request` };
+          promptIntent = m[0].toLowerCase();
+          recommendationSource = "compiled-map";
+          break;
+        }
+      }
     }
 
     if (!match) {
@@ -136,14 +209,19 @@ export async function capabilityRouteAdvice() {
     await tryRecordRoute({
       sessionId, cwd, prompt, taskSize: match.tier,
       recommendedCapability: skillName,
+      promptIntent,
+      recommendationSource,
       explicit_agent: explicitAgent,
       explicit_constraint: false,
     });
 
     advise(context);
     return 0;
-  } catch {
+  } catch (err) {
     // Fail-safe: never crash the session.
+    if (process.env.AGENT_DAEMON_DEBUG === "1") {
+      process.stderr.write(`capability-route-advice error: ${err.stack || err.message}\n`);
+    }
     passthrough();
     return 0;
   }

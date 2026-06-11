@@ -9,8 +9,9 @@
 // Output (--output-json):
 //   { "hookSpecificOutput": { "hookEventName": "UserPromptSubmit", "additionalContext": "<markdown string>" } }
 
-import { searchLearnings, projectSlug } from "./memory/episodic.mjs";
+import { searchLearnings, projectSlug, recordRetrievalEvent, markRetrieved } from "./memory/episodic.mjs";
 import { readStdinJson } from "./hooks/io.mjs";
+import { neutralizeText } from "./digest/sanitize.mjs";
 
 const MAX_RESULTS = 3;
 const MAX_OUTPUT_BYTES = 2000;
@@ -54,13 +55,31 @@ export async function runQueryRetrieve(opts = {}) {
   }
 
   const lines = results.map(r =>
-    `- **${r.category}** (conf ${r.confidence.toFixed(2)}): ${r.text}`
+    `- **${r.category}** (conf ${r.confidence.toFixed(2)}): ${neutralizeText(r.text)}`
   );
   let context = `## Relevant past learnings\n\n${lines.join("\n")}`;
 
-  if (Buffer.byteLength(context, "utf8") > MAX_OUTPUT_BYTES) {
+  const consideredBytes = Buffer.byteLength(context, "utf8");
+  const truncated = consideredBytes > MAX_OUTPUT_BYTES;
+  if (truncated) {
     context = context.slice(0, MAX_OUTPUT_BYTES);
   }
+
+  // Retrieval telemetry + write-back (retrieval_count feeds freshness ranking).
+  // Fire-and-forget — the hook must stay fast and fail-safe.
+  try {
+    const sessionId = input.session_id || process.env.CLAUDE_SESSION_ID || null;
+    await recordRetrievalEvent({
+      sessionId,
+      cwd,
+      source: "query-retrieve",
+      consideredBytes,
+      injectedBytes: Buffer.byteLength(context, "utf8"),
+      truncated,
+      groups: [{ label: "learnings", bytesIn: consideredBytes, bytesKept: Buffer.byteLength(context, "utf8"), truncated }]
+    });
+    await markRetrieved(results.map(r => r.id).filter(Boolean));
+  } catch { /* best-effort */ }
 
   if (opts.outputJson) {
     process.stdout.write(JSON.stringify({
