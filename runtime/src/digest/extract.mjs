@@ -48,8 +48,8 @@ const DIGEST_BLOCK_RE_GLOBAL = /<agent-daemon[-:]digest>\s*([\s\S]*?)\s*<\/agent
 
 // VALID_TYPES is intentionally aligned with — but slightly narrower than — the
 // `category` column enum in runtime/src/memory/sqlite.mjs (which also accepts
-// 'preference'). 'fact' was added with Bug B2 salvage because the redseer-style
-// category-keyed YAML emits "additions" entries that are most naturally typed
+// 'preference'). 'fact' was added with Bug B2 salvage because the category-keyed
+// YAML shape emits "additions" entries that are most naturally typed
 // as facts. Adding new types here is safe; SQLite has no enforcement on
 // `category` content.
 const VALID_TYPES   = new Set(["correction", "confirmation", "pattern", "tool", "gotcha", "decision", "fact"]);
@@ -422,7 +422,7 @@ function unquoteScalar(s) {
 /*                                                                      */
 /* Some agents emit a digest payload organized by memory-file category */
 /* with `additions` / `patterns` (and friends) sub-arrays, instead of   */
-/* a flat `learnings:` list. Real-world example from a redseer session: */
+/* a flat `learnings:` list. Real-world example from a client session:  */
 /*                                                                      */
 /*   techContext:                                                       */
 /*     additions:                                                       */
@@ -528,7 +528,7 @@ export function parseCategoryKeyedYaml(raw) {
     // List item under an open category. Two shapes supported, disambiguated
     // by the item's indent:
     //   (a) Direct under category — indent === 2, no subkey involved.
-    //       Default type = "fact" (additions-like). Seen in older redseer
+    //       Default type = "fact" (additions-like). Seen in older real-world
     //       sessions:  projectbrief:\n  - "fact 1"
     //   (b) Under a recognized subkey — indent >= 4, requires currentSubkey
     //       to be set to one of CATEGORY_SUBKEY_TO_TYPE keys. Standard

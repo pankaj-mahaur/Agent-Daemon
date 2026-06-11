@@ -1,6 +1,6 @@
 # v0.2.0 Manual Test Checklist
 
-Step-by-step checklist for you to verify v0.2.0 yourself in `D:\Program Files\Mobiux\redseer-frontend` (or any project). Run each block in order — each step says what to do, what to expect, and what to do if it fails.
+Step-by-step checklist for you to verify v0.2.0 yourself in `D:\projects\my-app` (or any project). Run each block in order — each step says what to do, what to expect, and what to do if it fails.
 
 > Notation: `$` is your shell prompt. Commands are PowerShell-friendly (also work in Git Bash on Windows). Anything in **bold** is what you're testing.
 
@@ -16,13 +16,13 @@ $ ad --version
 
 ✅ Expected: `0.2.0`
 ❌ If you see `0.1.0` or "command not found":
-- "command not found" → `cd D:\Program Files\my-projects\Agent-Daemon\runtime && npm link`
-- `0.1.0` → `cd D:\Program Files\my-projects\Agent-Daemon && git pull --ff-only`, re-run.
+- "command not found" → `cd D:\projects\Agent-Daemon\runtime && npm link`
+- `0.1.0` → `cd D:\projects\Agent-Daemon && git pull --ff-only`, re-run.
 
 ### 0.2 Doctor
 
 ```sh
-$ cd "D:\Program Files\Mobiux\redseer-frontend"
+$ cd "D:\projects\my-app"
 $ ad doctor
 ```
 
@@ -45,7 +45,7 @@ $ ls ~/.claude/settings.json.pre-v0.2.0-bak
 ### 1.1 Preview the install (read-only)
 
 ```sh
-$ cd "D:\Program Files\Mobiux\redseer-frontend"
+$ cd "D:\projects\my-app"
 $ ad init --plan --profile developer
 ```
 
@@ -80,7 +80,7 @@ $ ad init --plan --profile nonsense
 (Already done during E2E earlier — should still be present.)
 
 ```sh
-$ ls "D:\Program Files\Mobiux\redseer-frontend\.agent-daemon\memory"
+$ ls "D:\projects\my-app\.agent-daemon\memory"
 ```
 
 ✅ Expected 7 files: `activeContext.md`, `productContext.md`, `progress.md`, `projectbrief.md`, `systemPatterns.md`, `techContext.md`, `user.md`.
@@ -88,7 +88,7 @@ $ ls "D:\Program Files\Mobiux\redseer-frontend\.agent-daemon\memory"
 ### 1.4 Verify CLAUDE.md was augmented, not destroyed
 
 ```sh
-$ wc -l "D:\Program Files\Mobiux\redseer-frontend\CLAUDE.md"
+$ wc -l "D:\projects\my-app\CLAUDE.md"
 ```
 
 ✅ Expected: ~84 lines (was 72; +12 in the managed section).
@@ -111,18 +111,18 @@ $ ad init --profile developer
 Create a test file with a `console.log` line:
 
 ```sh
-$ echo 'function x() { console.log("test"); }' > "D:\Program Files\Mobiux\redseer-frontend\test-hook.js"
+$ echo 'function x() { console.log("test"); }' > "D:\projects\my-app\test-hook.js"
 ```
 
 Then trigger the hook manually (Claude Code will do this automatically next time it edits a file):
 
 ```sh
-$ echo '{"tool_input":{"file_path":"D:/Program Files/Mobiux/redseer-frontend/test-hook.js"}}' | ad hook edit-post
+$ echo '{"tool_input":{"file_path":"D:/projects/my-app/test-hook.js"}}' | ad hook edit-post
 ```
 
 ✅ Expected on stderr:
 ```
-[agent-daemon] console.log left in D:/Program Files/Mobiux/redseer-frontend/test-hook.js (1 occurrence):
+[agent-daemon] console.log left in D:/projects/my-app/test-hook.js (1 occurrence):
 [agent-daemon]   1: function x() { console.log("test"); }
 [agent-daemon] Strip these or replace with a real logger before committing.
 ```
@@ -130,15 +130,15 @@ $ echo '{"tool_input":{"file_path":"D:/Program Files/Mobiux/redseer-frontend/tes
 
 Cleanup:
 ```sh
-$ rm "D:\Program Files\Mobiux\redseer-frontend\test-hook.js"
+$ rm "D:\projects\my-app\test-hook.js"
 ```
 
 ### 2.2 `edit-post` is silent on non-JS files
 
 ```sh
-$ echo 'console.log("not code")' > "D:\Program Files\Mobiux\redseer-frontend\test.md"
-$ echo '{"tool_input":{"file_path":"D:/Program Files/Mobiux/redseer-frontend/test.md"}}' | ad hook edit-post
-$ rm "D:\Program Files\Mobiux\redseer-frontend\test.md"
+$ echo 'console.log("not code")' > "D:\projects\my-app\test.md"
+$ echo '{"tool_input":{"file_path":"D:/projects/my-app/test.md"}}' | ad hook edit-post
+$ rm "D:\projects\my-app\test.md"
 ```
 
 ✅ Expected: no `[agent-daemon]` message on stderr. Stdout: `{}`.
@@ -217,16 +217,16 @@ $ node -e "console.log(JSON.stringify(JSON.parse(require('fs').readFileSync(proc
 ### 3.2 Run the SessionStart command manually
 
 ```sh
-$ cd "D:\Program Files\Mobiux\redseer-frontend"
+$ cd "D:\projects\my-app"
 $ ad session-start --output-json | head -c 500
 ```
 
 ✅ Expected: JSON starting with `{"additionalContext":"<!-- constitution/core.md -->\n# The Constitution — Core Rules\n...`
 
-### 3.3 Open Claude Code in redseer-frontend — real test
+### 3.3 Open Claude Code in my-app — real test
 
 1. Close any existing Claude Code session.
-2. Open Claude Code in `D:\Program Files\Mobiux\redseer-frontend`.
+2. Open Claude Code in `D:\projects\my-app`.
 3. Ask Claude: **"What's in your active context right now? Quote the first line of the constitution."**
 
 ✅ Expected: Claude quotes "Verify before reporting done" or similar from `core.md`. That means the SessionStart hook fired and injected our constitution.
@@ -246,7 +246,7 @@ While in that Claude Code session:
 
 ### 3.5 PR creation — confirms `bash-post`
 
-If you have an open WIP branch in redseer-frontend, tell Claude:
+If you have an open WIP branch in my-app, tell Claude:
 **"Create a PR for this branch."**
 
 After `gh pr create` runs:
@@ -260,21 +260,21 @@ After `gh pr create` runs:
 ### 4.1 Install hooks
 
 ```sh
-$ mkdir -p "D:\Program Files\Mobiux\redseer-frontend\.cursor"
-$ cp "D:\Program Files\my-projects\Agent-Daemon\adapters\cursor\hooks.json" "D:\Program Files\Mobiux\redseer-frontend\.cursor\hooks.json"
+$ mkdir -p "D:\projects\my-app\.cursor"
+$ cp "D:\projects\Agent-Daemon\adapters\cursor\hooks.json" "D:\projects\my-app\.cursor\hooks.json"
 ```
 
 ✅ Verify:
 ```sh
-$ node -e "const j=require('D:/Program Files/Mobiux/redseer-frontend/.cursor/hooks.json'); console.log('version:',j.version,'events:',Object.keys(j.hooks).join(','))"
+$ node -e "const j=require('D:/projects/my-app/.cursor/hooks.json'); console.log('version:',j.version,'events:',Object.keys(j.hooks).join(','))"
 ```
 Output: `version: 1 events: sessionStart, sessionEnd, beforeShellExecution, afterShellExecution, afterFileEdit, beforeMCPExecution, preCompact`
 
 ### 4.2 Generate Cursor `.mdc` rules from our skills
 
 ```sh
-$ cd "D:\Program Files\Mobiux\redseer-frontend"
-$ node "D:\Program Files\my-projects\Agent-Daemon\adapters\cursor\adapt.mjs" --core --out .cursor/rules
+$ cd "D:\projects\my-app"
+$ node "D:\projects\Agent-Daemon\adapters\cursor\adapt.mjs" --core --out .cursor/rules
 ```
 
 ✅ Expected stderr: `wrote 36 .mdc rules to .cursor/rules`
@@ -296,7 +296,7 @@ alwaysApply: false
 
 ### 4.4 Open the project in Cursor
 
-1. Launch Cursor, open `D:\Program Files\Mobiux\redseer-frontend`.
+1. Launch Cursor, open `D:\projects\my-app`.
 2. Ask Cursor: **"What auto-applied rules do you have?"** (Cursor's `@Rules` panel also shows them.)
 
 ✅ Expected: Cursor lists the skills as available rules.
@@ -309,8 +309,8 @@ alwaysApply: false
 
 ```sh
 $ mkdir -p ~/.codex/agents
-$ cp "D:\Program Files\my-projects\Agent-Daemon\adapters\codex\config.example.toml" ~/.codex/config.toml
-$ cp "D:\Program Files\my-projects\Agent-Daemon\adapters\codex\agents\"*.toml ~/.codex/agents/
+$ cp "D:\projects\Agent-Daemon\adapters\codex\config.example.toml" ~/.codex/config.toml
+$ cp "D:\projects\Agent-Daemon\adapters\codex\agents\"*.toml ~/.codex/agents/
 ```
 
 ### 5.2 Smoke
@@ -338,8 +338,8 @@ This removes the v0.2.0 hooks. SessionStart/SessionEnd from earlier setup may st
 ### 6.2 Remove agent-daemon from a project (clean uninstall)
 
 ```sh
-$ rm -rf "D:\Program Files\Mobiux\redseer-frontend\.agent-daemon"
-$ rm "D:\Program Files\Mobiux\redseer-frontend\AGENTS.md"
+$ rm -rf "D:\projects\my-app\.agent-daemon"
+$ rm "D:\projects\my-app\AGENTS.md"
 ```
 
 Then open `CLAUDE.md` and remove the lines between `<!-- agent-daemon:start -->` and `<!-- agent-daemon:end -->` (inclusive). Existing content above and below those markers stays.
@@ -369,6 +369,6 @@ You've gone production when:
 - [ ] Section 0: all 3 checks pass
 - [ ] Section 1: all 5 init flows work
 - [ ] Section 2: all 8 hook flows match expected
-- [ ] Section 3: real Claude Code session in redseer-frontend shows the constitution loaded
+- [ ] Section 3: real Claude Code session in my-app shows the constitution loaded
 - [ ] Section 4 (optional): Cursor hooks + rules installed
 - [ ] Section 5 (optional): Codex config installed

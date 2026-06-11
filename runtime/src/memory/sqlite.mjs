@@ -539,7 +539,7 @@ function migrateLearningsEvolution(raw) {
 /**
  * Idempotent migration: retrieval_events table — measurement-first telemetry
  * for what SessionStart / query-retrieve considered, injected, and truncated
- * (FUTURE-SCALABLE-MEMORY-RETRIEVAL Phase 1).
+ * (scalable-memory-retrieval plan, Phase 1).
  *
  * @param {any} raw - the better-sqlite3 Database
  */

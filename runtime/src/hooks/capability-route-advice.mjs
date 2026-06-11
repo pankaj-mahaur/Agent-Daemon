@@ -5,7 +5,7 @@
 // For "simple" prompts (greetings, trivial reads, quick questions) it returns
 // {} — no advice, no overhead.
 //
-// Design constraints (from FUTURE-CLAUDE-SKILL-ROUTING-HARDENING-PLAN.md):
+// Design constraints (from the skill-routing hardening plan):
 //   - Deterministic, no LLM call, no API key.
 //   - Never blocks the prompt.
 //   - Respects explicit "do not use skills" / "use only Read/Grep" overrides.

@@ -129,7 +129,7 @@ ad digest-latest --verbose
 
 This:
 
-1. Encodes your current directory the way Claude Code does (e.g. `D:\Program Files\Mobiux\redseer-frontend` → `d--Program-Files-Mobiux-redseer-frontend`)
+1. Encodes your current directory the way Claude Code does (e.g. `D:\projects\my-app` → `d--projects-my-app`)
 2. Finds the newest `.jsonl` under `~/.claude/projects/<encoded>/`
 3. Forces digest on it (bypasses triage — short test sessions still get captured)
 4. Writes learnings to `.agent-daemon/memory/` + SQLite + `sessions.jsonl`

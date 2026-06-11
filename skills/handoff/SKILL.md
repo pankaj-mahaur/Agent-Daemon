@@ -24,7 +24,7 @@ Write a handoff document summarising the current conversation so a fresh agent c
 `~/.agent-daemon/handoffs/<project-slug>/handoff-<ISO-timestamp>.md`
 
 - Lives in your home `.agent-daemon/` — outside any single repo
-- Project-slug subfolder = lowercased path slug (e.g. `d--Program-Files-Mobiux-redseer-frontend`)
+- Project-slug subfolder = lowercased path slug (e.g. `d--projects-my-app`)
 - Lets you grep "what was I doing last week" across every project at once
 - `ad init` creates this directory tree if missing
 

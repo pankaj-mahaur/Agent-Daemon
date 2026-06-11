@@ -247,8 +247,8 @@ Line | {"ts":"...","session_id":"...","adapter":"claude-code",...
 
 **Symptom:**
 ```
-agent-daemon: no transcripts found for D:\Program Files\Mobiux\redseer-frontend
-  searched: C:\Users\panka\.claude\projects\d-Program-Files-Mobiux-redseer-frontend
+agent-daemon: no transcripts found for D:\projects\my-app
+  searched: C:\Users\<you>\.claude\projects\d-projects-my-app
 ```
 
 **Root cause:** The encoded folder name in your search doesn't match the actual one on disk. Usually a case mismatch (`D-` vs `d-`) or hyphen-count mismatch (`d-Program` vs `d--Program`).

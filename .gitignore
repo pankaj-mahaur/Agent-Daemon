@@ -27,3 +27,9 @@ vendored/*
 !vendored/fetch.mjs
 !vendored/.gitkeep
 
+# Internal working docs — local-only, not for the public repo
+HANDOFF.md
+FUTURE-*-PLAN.md
+docs/onboarding.html
+hello-world.js
+
