@@ -13,6 +13,9 @@
 //   - Fails safe — any exception → passthrough().
 
 import os from "node:os";
+import path from "node:path";
+import fs from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { readStdinJson, passthrough, advise } from "./io.mjs";
 import { recordRouteAdvice } from "../memory/episodic.mjs";
 import { loadRouteMaps, compileEntryRegex } from "../route-map.mjs";
@@ -74,14 +77,44 @@ const BUILTIN_ROUTING_MAP = [
   },
 ];
 
+// ── Curated-map loader ────────────────────────────────────────────────────────
+// Precedence: ~/.agent-daemon/routing-map.json (user override, instant rollback
+// by deleting it) → runtime/profiles/routing-map.json (repo default, evolvable
+// via `ad route evolve` proposals) → BUILTIN_ROUTING_MAP (hardcoded fail-safe).
+// Invalid files fall through silently — routing must never break a prompt.
+
+let _curatedCache = null;
+
+async function loadCuratedMap() {
+  if (_curatedCache) return _curatedCache;
+  const candidates = [
+    path.join(os.homedir(), ".agent-daemon", "routing-map.json"),
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "profiles", "routing-map.json")
+  ];
+  for (const p of candidates) {
+    try {
+      const doc = JSON.parse(await fs.readFile(p, "utf8"));
+      const entries = (doc.entries || [])
+        .filter(e => e?.pattern && e?.skill)
+        .map(e => ({ re: new RegExp(e.pattern, "i"), skill: e.skill, fallback: e.fallback, tier: e.tier || "substantial", note: e.note || `${e.skill} matches this request` }));
+      if (entries.length > 0) {
+        _curatedCache = entries;
+        return entries;
+      }
+    } catch { /* try next */ }
+  }
+  _curatedCache = BUILTIN_ROUTING_MAP;
+  return BUILTIN_ROUTING_MAP;
+}
+
 // ── Task size classifier ──────────────────────────────────────────────────────
 
-function classifyPrompt(prompt, compiledEntries = []) {
+function classifyPrompt(prompt, curatedMap, compiledEntries = []) {
   if (SIMPLE_PATTERNS.some(re => re.test(prompt))) return "simple";
   // Short prompt with no specialized keyword → probably simple. A compiled
   // trigger match counts as specialized too.
   if (prompt.trim().length < 40 &&
-      !BUILTIN_ROUTING_MAP.some(r => r.re.test(prompt)) &&
+      !curatedMap.some(r => r.re.test(prompt)) &&
       !compiledEntries.some(e => compileEntryRegex(e).test(prompt))) {
     return "simple";
   }
@@ -109,25 +142,30 @@ export async function capabilityRouteAdvice() {
     // Don't suppress native agents for explicit delegation requests.
     const explicitAgent = EXPLICIT_AGENT_RE.test(prompt);
 
-    // Compiled per-install maps (project shadows global). Failure here →
+    // Curated map (user override → repo default → hardcoded fallback) plus
+    // compiled per-install maps (project shadows global). Failure anywhere →
     // builtin-only routing; the fail-safe contract holds.
+    let curatedMap = BUILTIN_ROUTING_MAP;
+    try {
+      curatedMap = await loadCuratedMap();
+    } catch { /* hardcoded fallback */ }
     let compiledEntries = [];
     try {
       compiledEntries = await loadRouteMaps({ cwd, home: os.homedir() });
-    } catch { /* builtin only */ }
+    } catch { /* curated only */ }
 
-    const taskSize = classifyPrompt(prompt, compiledEntries);
+    const taskSize = classifyPrompt(prompt, curatedMap, compiledEntries);
 
     if (taskSize === "simple" && !explicitAgent) {
       passthrough();
       return 0;
     }
 
-    // Find the first matching route: curated builtins first, then compiled.
+    // Find the first matching route: curated map first, then compiled.
     let match = null;
     let promptIntent = null;
     let recommendationSource = null;
-    for (const route of BUILTIN_ROUTING_MAP) {
+    for (const route of curatedMap) {
       if (route.re.test(prompt)) {
         match = route;
         promptIntent = `builtin:${route.skill}`;
@@ -136,9 +174,9 @@ export async function capabilityRouteAdvice() {
       }
     }
     if (!match) {
-      const builtinSkills = new Set(BUILTIN_ROUTING_MAP.map(r => r.skill));
+      const curatedSkills = new Set(curatedMap.map(r => r.skill));
       for (const entry of compiledEntries) {
-        if (builtinSkills.has(entry.skill)) continue;  // builtin already vetted it
+        if (curatedSkills.has(entry.skill)) continue;  // curated already vetted it
         const m = prompt.match(compileEntryRegex(entry));
         if (m) {
           match = { skill: entry.skill, tier: entry.tier || "substantial", note: entry.note || `${entry.skill} matches this request` };

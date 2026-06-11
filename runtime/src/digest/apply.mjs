@@ -13,7 +13,7 @@
 
 import fs from "node:fs/promises";
 import path from "node:path";
-import { insertLearnings, projectSlug } from "../memory/episodic.mjs";
+import { insertLearnings, projectSlug, observeUserFact } from "../memory/episodic.mjs";
 import { screenLearning, neutralizeText } from "./sanitize.mjs";
 
 /**
@@ -125,6 +125,20 @@ export async function applyLearnings(opts) {
       });
       result.proposalPaths.push(proposalPath);
       result.proposalsQueued++;
+    }
+    if (item.targets.includes("user-fact") && !opts.dryRun) {
+      try {
+        const l = item.learning;
+        await observeUserFact({
+          category: l.type === "tool" ? "tool" : "preference",
+          text: neutralizeText(l.text),
+          evidence: neutralizeText(l.evidence_quote || ""),
+          confidence: l.confidence,
+          sessionId: opts.sessionId,
+          projectSlug: slug
+        });
+        result.userFactsObserved = (result.userFactsObserved || 0) + 1;
+      } catch { /* user-fact observation is best-effort */ }
     }
 
     // Build SQLite row — every learning lands in the audit trail

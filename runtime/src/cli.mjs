@@ -82,6 +82,7 @@ Commands:
                          --days <n>           window (default 30); --json for machine output
   route rebuild          Recompile route maps from installed skills (global + project lanes)
   route show             Print the merged compiled route map
+  route evolve           Telemetry-backed routing-edit proposals (low follow rate, post-advice failures)
   skill install <spec>   Install a skill on demand: bundled name | local path | git URL
                          --project            install to <cwd>/.claude/skills instead of ~/.claude/skills
                          --skill <name>       pick one skill from a multi-skill source
@@ -1354,8 +1355,28 @@ async function cmdRoute(sub, opts) {
       }
       return 0;
     }
+    case "evolve": {
+      const { analyzeRouting, writeRoutingProposal } = await import("./digest/gepa/routing.mjs");
+      const days = opts.days ? parseInt(opts.days, 10) : 30;
+      const analysis = await analyzeRouting({ days });
+      if (!analysis.driver) {
+        console.error("agent-daemon: better-sqlite3 not installed — routing evolution unavailable");
+        return 1;
+      }
+      if (analysis.findings.length === 0) {
+        console.log(`No route problems found at the minimum-sample gates (last ${days} days). Telemetry keeps accruing.`);
+        return 0;
+      }
+      for (const f of analysis.findings) {
+        console.log(`  ${f.skill} [${f.kind}] — ${f.evidence}`);
+        console.log(`    → ${f.suggestion}`);
+      }
+      const p = await writeRoutingProposal(analysis, { cwd: opts.cwd, days, dryRun: opts.dryRun });
+      if (p) console.log(`\n${opts.dryRun ? "(dry-run) would write" : "→"} ${p}`);
+      return 0;
+    }
     default:
-      console.error(`agent-daemon route: unknown subcommand "${sub || ""}" (use stats | rebuild | show)`);
+      console.error(`agent-daemon route: unknown subcommand "${sub || ""}" (use stats | rebuild | show | evolve)`);
       return 1;
   }
 }

@@ -11,7 +11,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { listRecentLearnings, projectSlug } from "./memory/episodic.mjs";
+import { listRecentLearnings, projectSlug, topUserFacts } from "./memory/episodic.mjs";
 import { drainJournal } from "./hooks/journal-drain.mjs";
 import { neutralizeText, neutralizeMemoryFile } from "./digest/sanitize.mjs";
 
@@ -229,6 +229,20 @@ export async function runSessionStart(opts) {
     // SQLite optional — silent skip
   }
 
+  // 5b. Cross-project user facts — tiny budget (~400B). These travel with the
+  //     user, not the project: preferences confirmed across multiple repos.
+  try {
+    const facts = await topUserFacts({ limit: 4 });
+    if (facts && facts.length > 0) {
+      const lines = facts.map(f =>
+        `- ${f.category}: ${neutralizeText(f.text).slice(0, 90)} (seen ${f.observed_count}×)`
+      );
+      sections.push(`<!-- user facts -->\n## User profile\n\n${lines.join("\n")}`);
+    }
+  } catch {
+    // SQLite optional — silent skip
+  }
+
   // Preserve dynamic project context ahead of static guidance under the hook
   // cap. A large constitution must not hide active context or learnings.
   const warningSections = sections.filter(s =>
@@ -241,7 +255,7 @@ export async function runSessionStart(opts) {
     s.startsWith("<!-- memory retrieval (QMD)") ||
     s.startsWith("<!-- ~/.agent-daemon/user.md (cross-project user profile)")
   );
-  const recentSections = sections.filter(s => s.includes("<!-- recent learnings -->"));
+  const recentSections = sections.filter(s => s.includes("<!-- recent learnings -->") || s.includes("<!-- user facts -->"));
   const dynamic = new Set([...warningSections, ...memorySections, ...recentSections]);
   const staticSections = sections.filter(s => !dynamic.has(s));
   const { output: combined, stats: budgetStats } = renderPrioritizedContext([

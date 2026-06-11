@@ -21,6 +21,7 @@ const DEFAULT_SKILLS_DIR = path.resolve(__dirname, "..", "..", "skills");
 
 async function lintSkills(skillsDir) {
   const entries = await collectSkillEntries(skillsDir);
+  const knownSkills = new Set(entries.map(e => e.name));
   let errors = 0;
   let warnings = 0;
   let checked = 0;
@@ -41,6 +42,19 @@ async function lintSkills(skillsDir) {
     checked++;
 
     const issues = validateSkill(entry.name, content);
+
+    // Flow skills (composite workflows): `- uses: \`skill\`` step references
+    // should resolve to a bundled skill. Built-ins and user-installed skills
+    // legitimately live outside the bundle, so unknowns warn rather than fail
+    // — the flow body already handles the not-installed case at runtime.
+    if (entry.name.endsWith("-flow")) {
+      const KNOWN_EXTERNAL = new Set(["verify", "run", "review", "code-review"]);
+      for (const m of content.matchAll(/^- uses:\s*`?([a-z0-9-]+)`?\s*$/gm)) {
+        if (!knownSkills.has(m[1]) && !KNOWN_EXTERNAL.has(m[1])) {
+          issues.push({ severity: "warning", message: `flow step references skill \`${m[1]}\` not in this bundle (built-in or user-installed?)` });
+        }
+      }
+    }
     for (const issue of issues) {
       const prefix = issue.severity === "error" ? "  ✗" : "  ⚠";
       console.log(`${prefix}  ${entry.label}: ${issue.message}`);

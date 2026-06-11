@@ -475,6 +475,89 @@ export async function stats() {
 }
 
 /* ------------------------------------------------------------------ */
+/* user_facts — cross-project user profile                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Observe a user-profile fact. Upserts on content_hash: a re-observation
+ * bumps observed_count + confidence and appends the project slug to the
+ * provenance list. Facts observed in ≥2 distinct projects are surfaced by
+ * `ad memory consolidate` as promotion candidates.
+ *
+ * @param {{
+ *   category: string,        // 'identity' | 'preference' | 'tool' | 'anti-preference'
+ *   text: string,
+ *   evidence?: string,
+ *   confidence?: number,
+ *   sessionId?: string,
+ *   projectSlug?: string
+ * }} fact
+ * @returns {Promise<{ id: number | null, observed: number, projects: string[] } | null>}
+ */
+export async function observeUserFact(fact) {
+  const handle = await db();
+  if (!handle) return null;
+  const contentHash = learningContentHash(fact.text);
+  const now = new Date().toISOString();
+
+  const existing = handle.get(
+    `SELECT id, observed_count, projects, confidence FROM user_facts
+      WHERE content_hash = ? AND status = 'active' LIMIT 1`,
+    [contentHash]
+  );
+
+  if (existing) {
+    let projects = [];
+    try { projects = JSON.parse(existing.projects || "[]"); } catch { /* reset */ }
+    if (fact.projectSlug && !projects.includes(fact.projectSlug)) projects.push(fact.projectSlug);
+    handle.run(
+      `UPDATE user_facts
+          SET observed_count = observed_count + 1,
+              confidence = MIN(0.95, confidence + 0.05),
+              last_observed_at = ?,
+              projects = ?
+        WHERE id = ?`,
+      [now, JSON.stringify(projects), existing.id]
+    );
+    return { id: existing.id, observed: existing.observed_count + 1, projects };
+  }
+
+  const projects = fact.projectSlug ? [fact.projectSlug] : [];
+  const r = handle.run(
+    `INSERT INTO user_facts (category, text, evidence, confidence, source_session, observed_count, last_observed_at, projects, content_hash)
+     VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+    [
+      fact.category,
+      fact.text,
+      fact.evidence || null,
+      fact.confidence ?? 0.5,
+      fact.sessionId || null,
+      now,
+      JSON.stringify(projects),
+      contentHash
+    ]
+  );
+  return { id: r.lastInsertRowid, observed: 1, projects };
+}
+
+/**
+ * Top active user facts for SessionStart injection (tiny budget).
+ *
+ * @param {{ limit?: number }} [opts]
+ */
+export async function topUserFacts({ limit = 5 } = {}) {
+  const handle = await db();
+  if (!handle) return [];
+  return handle.all(
+    `SELECT id, category, text, confidence, observed_count
+       FROM user_facts WHERE status = 'active'
+      ORDER BY confidence DESC, observed_count DESC
+      LIMIT ?`,
+    [limit]
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Retrieval telemetry (measurement-first — Phase 1)                   */
 /* ------------------------------------------------------------------ */
 
@@ -527,7 +610,7 @@ export async function markRetrieved(ids) {
                    WHERE id = ?`;
     handle.transaction(() => {
       for (const id of ids) handle.run(stmt, [now, id]);
-    })();
+    });
   } catch { /* evolution columns missing on a pre-migration DB — best-effort */ }
 }
 

@@ -7,6 +7,7 @@
 //   - "memory:global"      → append to ~/.agent-daemon/user.md (low risk, auto-apply)
 //   - "skill-edit"         → propose a SKILL.md edit (high risk, queue for review)
 //   - "constitution-add"   → propose a constitution rule addition (high risk, queue)
+//   - "user-fact"          → upsert into the cross-project user_facts table
 //   - "episodic-only"      → just store as an episodic SQLite row (default — always)
 
 /**
@@ -106,6 +107,15 @@ function classifyOne(learning, skills) {
       targets.push("memory:project");
       reasons.push(`project tool tip → techContext.md / activeContext.md`);
     }
+  }
+
+  // Cross-project user profile: preferences and global corrections describe
+  // the USER, not the project — observe them in user_facts so confirmations
+  // from multiple projects accumulate into one durable fact.
+  if (learning.type === "preference" ||
+      (learning.scope === "global" && (learning.type === "correction" || learning.type === "tool"))) {
+    targets.push("user-fact");
+    reasons.push(`${learning.type} (user-profile shaped) → user_facts observation`);
   }
 
   return { learning, targets, routeReason: reasons.join("; ") };

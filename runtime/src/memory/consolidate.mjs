@@ -266,7 +266,7 @@ export async function applyMerges(analysis) {
         superseded++;
       }
     }
-  })();
+  });
   return superseded;
 }
 
@@ -285,6 +285,6 @@ export async function applyStaleArchive(analysis) {
       handle.run(`UPDATE learnings SET status = 'archived' WHERE id = ? AND status = 'active'`, [r.id]);
       archived++;
     }
-  })();
+  });
   return archived;
 }

@@ -112,8 +112,10 @@ export function validateSkill(dirName, content) {
     }
   }
 
-  // description: must exist, start with trigger phrase, ≤500 chars
-  const desc = fields.description;
+  // description: must exist, start with trigger phrase, ≤500 chars.
+  // Quoted YAML scalars are tested on their UNQUOTED value — `"Use when..."`
+  // is correct authoring and must not warn about the leading quote.
+  const desc = fields.description ? unquote(fields.description) : "";
   if (!desc) {
     issues.push({ severity: "error", message: "missing `description` field in frontmatter" });
   } else {

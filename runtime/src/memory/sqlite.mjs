@@ -524,6 +524,16 @@ function migrateLearningsEvolution(raw) {
       raw.exec(`ALTER TABLE learnings ADD COLUMN ${name} ${type}`);
     }
   }
+
+  // user_facts provenance: which projects observed this fact (JSON array of
+  // slugs). ≥2 distinct projects is the promotion signal.
+  const ufCols = new Set(raw.prepare("PRAGMA table_info(user_facts)").all().map(c => c.name));
+  if (!ufCols.has("projects")) {
+    raw.exec("ALTER TABLE user_facts ADD COLUMN projects TEXT");
+  }
+  if (!ufCols.has("content_hash")) {
+    raw.exec("ALTER TABLE user_facts ADD COLUMN content_hash TEXT");
+  }
 }
 
 /**
