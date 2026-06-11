@@ -11,7 +11,9 @@ Now ships with a full **team coordination layer**: spawn multiple Claude Code ag
 
 Skills evolve too: [GEPA](runtime/src/digest/gepa/README.md) (Genetic-Pareto Prompt Evolution) reads execution traces and proposes Pareto-optimal skill refinements that you accept or reject via `agent-daemon review`.
 
-> **v0.2.0 + Phase 5:** Cross-harness support for **Claude Code** (native), **Codex** (reference config + sub-agent TOML), and **Cursor** (hook bindings + skill-to-`.mdc` converter). 3 install profiles (`minimal` / `developer` / `security`) + 4 skill-install modes (`smart` / `all` / `minimal` / `manual`). 229 skills (43 curated + 186 vendored from [`everything-claude-code`](https://github.com/affaan-m/everything-claude-code)), production hooks, audit-log rotation, and GitHub Actions CI on Linux/macOS/Windows. **Phase 5** (see [CHANGELOG.md](CHANGELOG.md)) adds stack-detection-driven smart install, three new daemon skills (`skill-author`, `session-close`, `gepa-evolve-inline`), no-API-key inline GEPA proposals via an active Claude session, Hinglish extractor rules, multi-agent orchestration improvements, and weekly `activeContext.md` rotation.
+> **v0.2.0 + Phase 5:** Cross-harness support for **Claude Code** (native), **Codex** (reference config + sub-agent TOML), and **Cursor** (hook bindings + skill-to-`.mdc` converter). 3 install profiles (`minimal` / `developer` / `security`) + 4 skill-install modes (`smart` / `all` / `minimal` / `manual`). 164 skills (52 curated + 112 vendored from [`everything-claude-code`](https://github.com/affaan-m/everything-claude-code)), production hooks, audit-log rotation, and GitHub Actions CI on Linux/macOS/Windows. **Phase 5** (see [CHANGELOG.md](CHANGELOG.md)) adds stack-detection-driven smart install, three new daemon skills (`skill-author`, `session-close`, `gepa-evolve-inline`), no-API-key inline GEPA proposals via an active Claude session, Hinglish extractor rules, multi-agent orchestration improvements, and weekly `activeContext.md` rotation.
+
+> **Latest on `main` (unreleased):** the loop is now closed end to end — automatic digest sweep at SessionStart (covers the VS Code extension, where SessionEnd never fires), deterministic prompt-injection quarantine on extracted learnings, on-demand skill install ([`ad skill install`](#seamless-skills--routing--on-demand-install)) with data-driven routing + follow/diverge telemetry, Hermes-style [memory evolution](#memory-evolution-hermes-style) (reinforce → decay → consolidate), a read-only MCP memory server for mid-session recall, OS service registration (`ad service install`), and composite flow skills (`feature-flow`, `bug-flow`, `release-flow`). 266 tests.
 
 ## Quick start
 
@@ -32,7 +34,7 @@ cd /path/to/your/project
 ad init                              # default: developer profile + smart skill install
 ad init --profile minimal            # memory + lifecycle hooks only
 ad init --profile security           # default + intrusive guards (block --no-verify, MCP audit)
-ad init --skills-mode all            # install ALL 229 skills (vs stack-detect-driven default)
+ad init --skills-mode all            # install ALL 164 bundled skills (vs stack-detect-driven default)
 ad init --skills-mode manual         # install only profile-listed skills (legacy behaviour)
 ad init --plan                       # preview without applying
 
@@ -133,6 +135,16 @@ Auto-finds the newest transcript for the current directory, force-digests it. Id
 
 `ad watch` and `ad digest-latest` are composable — SQLite dedupes already-digested sessions. Run watch as your default, fall back to `digest-latest` when you want immediate confirmation or when the watcher misses a session (Windows quirk — see [docs/troubleshooting.md](docs/troubleshooting.md)).
 
+### Missed sessions self-heal (VS Code extension)
+
+The VS Code extension never fires the SessionEnd hook, so its transcripts used to go undigested. Now every SessionStart spawns a detached, throttled (10-min) `ad digest-sweep` that digests any settled, undigested transcript for the project — skipping the live session and anything written in the last 2 minutes. You can also run it by hand:
+
+```bash
+ad digest-sweep --verbose
+```
+
+Set `AGENT_DAEMON_DISABLE_SWEEP=1` to opt out. `ad doctor` warns when the newest transcript is >24h ahead of the latest digest.
+
 ### Digest blocks improve memory quality
 
 Prompt hooks capture explicit corrections and retrieve local SQLite learnings without an API key. A `<agent-daemon-digest>` block in Claude's final response adds a richer session summary for `ad digest` or `ad digest-latest`. The block format lives in [constitution/ending-protocol.md](constitution/ending-protocol.md).
@@ -228,12 +240,49 @@ Session runs — agent uses skills, recalls past corrections
 SessionEnd hook
     |
 agent-daemon digest pipeline:
-    triage -> extract -> classify -> dedupe -> apply (or queue)
+    triage -> extract -> sanitize -> classify -> dedupe -> apply (or quarantine / queue)
     |
 Memory written, skill diffs queued for review
     |
 Next session starts smarter
 ```
+
+### Injection guardrails
+
+Transcript text is untrusted input. Every extracted learning passes a deterministic screen (instruction-override, role-tag spoofing, digest-marker spoofing, exfiltration/coercion patterns — no LLM call). Suspicious entries are **quarantined as review proposals** — never silently dropped, never auto-applied. Everything re-injected at SessionStart is neutralized (control/zero-width/bidi characters stripped, markers defused) and framed as recorded observations, not instructions.
+
+## Seamless skills — routing + on-demand install
+
+```bash
+ad skill search debug                  # find a bundled skill
+ad skill install debug-triage          # bundled name — or a local path, or a git URL
+ad skill install https://github.com/you/your-skills --skill review-helper
+ad skill list                          # both lanes, with provenance
+```
+
+`ad skill install` lint-gates the frontmatter, records provenance (source + commit + sha256) in `~/.agent-daemon/skill-manifest.json`, and recompiles a **route map** from every installed skill's trigger phrases. A UserPromptSubmit hook matches each prompt against that map and injects a one-line skill recommendation — deterministic, fail-safe, and respectful of "do not use skills". Each recommendation is then correlated with what actually ran, so:
+
+- `ad route stats` — advised / followed / diverged / ignored, per skill
+- `ad route evolve` — telemetry-backed proposals to demote or rewire routes that don't work
+
+Conversationally: tell Claude *"install this skill <url>"* — the bundled `skill-installer` skill drives the same CLI. Installs are copy-only (no code execution), and removal stays manifest-aware via `ad skill remove`.
+
+## Memory evolution (Hermes-style)
+
+Learnings live a lifecycle instead of accumulating forever:
+
+- **Reinforce** — re-observing a known learning bumps confidence (+0.1, capped 0.95) and `observed_count` instead of being silently deduped away.
+- **Decay** — search ranking multiplies BM25 relevance by a 90-day half-life on last-verified/last-retrieved time, so stale entries sink without being deleted.
+- **Consolidate** — `ad memory consolidate` proposes near-duplicate merges (token Jaccard ≥ 0.8), stale archives, and contradiction candidates. Nothing applies without explicit acceptance (`--apply-merges` / `--apply-stale`).
+- **User facts** — durable preferences observed across ≥2 projects promote into a cross-project profile injected at session start.
+
+Mid-session recall is pull-based too — a read-only **MCP memory server** exposes `memory_search`, `memory_recent`, `memory_stats`, `user_facts_list`, and `memory_feedback` (capped at 5 results / 4KB per response):
+
+```bash
+claude mcp add agent-daemon-memory -- node /path/to/Agent-Daemon/runtime/src/mcp/memory-server.mjs
+```
+
+See [mcp/agent-daemon-memory/](mcp/agent-daemon-memory/) for config and the blast-radius statement, and `ad memory stats` for retrieval telemetry.
 
 ## What's in here
 
@@ -244,14 +293,15 @@ agent-daemon/
 ├── runtime/             # Node CLI (agent-daemon) — digest, orchestration, self-improvement
 │   └── src/
 │       ├── orchestration/   # Multi-agent: inbox, spawn, team, templates
-│       ├── daemon/          # Watch daemon with inbox polling
-│       ├── digest/          # Extract → classify → apply pipeline + GEPA
-│       └── memory/          # SQLite + FTS5 episodic store
+│       ├── daemon/          # Watch daemon + OS service registration
+│       ├── digest/          # Extract → sanitize → classify → apply pipeline + GEPA
+│       ├── memory/          # SQLite + FTS5 episodic store + consolidation
+│       └── mcp/             # Read-only stdio MCP memory server
 ├── teams/templates/     # Team blueprints (JSON) — 4 built-in
-├── skills/              # 36 Claude Code skills (SKILL.md), stack-agnostic
+├── skills/              # 164 Claude Code skills (52 curated + 112 vendored)
 ├── playbooks/           # 5 reference docs — any agent or human can use
 ├── hooks/               # Pre-baked Claude Code hook configs
-├── mcp/                 # MCP server configs (scaffolded)
+├── mcp/                 # MCP server config + docs (agent-daemon-memory)
 ├── plugins/             # Claude Code plugins (scaffolded)
 ├── tools/               # Standalone CLI tools (scaffolded)
 ├── adapters/            # SKILL.md → Cursor / AGENTS.md / Copilot (scaffolded)
@@ -272,10 +322,17 @@ ad digest                              # Run digest pipeline (called by SessionE
                                        #   --force            bypass triage threshold
                                        #   --fallback-to-llm  LLM extraction if no digest block
 ad digest-latest                       # One-shot: find newest transcript for --cwd, force-digest
+ad digest-sweep                        # Digest every undigested transcript for --cwd
+                                       #   (VS Code SessionEnd fallback — auto-fires from session-start)
+                                       #   --exclude-session <id>  skip the live session
 ad watch                               # Watch transcript dirs, fire digest on new sessions
                                        #   --verbose          log every file event
                                        #   --force            pass --force to each digest run
                                        #   --once-on-existing also digest existing transcripts
+                                       #   --log-file <path>  tee to a rotating log (service mode)
+ad service install                     # Register `ad watch` as a per-user login service
+ad service uninstall                   #   (Scheduled Task / launchd / systemd-user)
+ad service status
 ad evolve <skill>                      # GEPA self-evolution run for a skill (needs auth)
                                        #   --list-candidates [--json]  list skills with ≥3 failures in 30d (no auth)
                                        #   --export-traces             export JSONL traces for inline GEPA (no auth)
@@ -286,6 +343,25 @@ ad init                                # Scaffold .agent-daemon/ + AD-INSTRUCTIO
                                        #   --plan               print actions without applying
 ad status                              # Show queued proposals
 ad query-retrieve                      # Keyword extraction + learning injection
+
+# Memory
+ad memory stats                        # Row counts + retrieval telemetry (truncation rate, bytes)
+ad memory consolidate                  # Evolution pass: near-dup merges, stale archive, contradictions
+                                       #   proposals only — --apply-merges / --apply-stale execute
+                                       #   --all-projects     span every project (default: --cwd only)
+
+# Skills — routing + on-demand install
+ad skill install <name|path|git-url>   # Lint-gated install with provenance manifest
+                                       #   --project   install to <cwd>/.claude/skills
+                                       #   --skill <n> pick one from a multi-skill source
+                                       #   --force / --dry-run
+ad skill list [--available] [--json]   # Installed skills (both lanes) with provenance
+ad skill remove <name> [--force]       # Manifest-aware removal
+ad skill search <query>                # Search the bundled catalog
+ad route stats [--days N] [--json]     # Advice effectiveness: advised/followed/diverged/ignored
+ad route rebuild                       # Recompile route maps from installed skills
+ad route show                          # Print the merged compiled route map
+ad route evolve                        # Telemetry-backed routing-edit proposals
 
 # Multi-agent orchestration
 ad team create   (tc)  --template <name> --task "..."
@@ -299,9 +375,9 @@ ad team retry    (tr)  --team <id> --task <task-id>   # Reset a failed task
 ad spawn         (sp)  --team <id> --role <name> --task "..."
 ```
 
-## Skill catalog (43 curated + 186 vendored = 229 total)
+## Skill catalog (52 curated + 112 vendored = 164 total)
 
-> The 43 curated skills below are documented; an additional 186 skills were imported from [`everything-claude-code`](https://github.com/affaan-m/everything-claude-code) (MIT) — each tagged with a `source:` frontmatter line. See [skills/README.md](skills/README.md) for the full vendored catalog and re-sync instructions.
+> The curated skills below are documented; an additional 112 skills are vendored from [`everything-claude-code`](https://github.com/affaan-m/everything-claude-code) (MIT) and friends — each tagged with a `source:` frontmatter line. Out-of-scope vendored skills were pruned from the bundle; see [skills/README.md](skills/README.md) for the full catalog and re-sync instructions.
 
 ### Build & implement
 
@@ -350,6 +426,10 @@ ad spawn         (sp)  --team <id> --role <name> --task "..."
 | [skill-author](skills/daemon/skill-author/) | Dedup-first skill authoring (global vs project, ≥70% overlap → append) | Auto: "create a skill", "is se skill banao", "har baar yaad rakhna" / `/skill-author` |
 | [session-close](skills/daemon/session-close/) | No-API session-end macro — session-log + digest + handoff + GEPA queue | Auto: "bye", "session khatam", "aaj ka kaam ho gaya", "done for today" |
 | [gepa-evolve-inline](skills/daemon/gepa-evolve-inline/) | No-API-key GEPA — active Claude session does the reflection itself | Auto: "evolve skill", "skill ko better banao" |
+| [skill-installer](skills/daemon/skill-installer/) | Conversational skill install — drives `ad skill` (bundled / path / git URL) | Auto: "install this skill", "skill install karo", git-URL paste |
+| [feature-flow](skills/daemon/feature-flow/) | Composite flow: plan → implement → verify → review, with checkpoints | Auto: "build the whole feature", "poora feature banao" |
+| [bug-flow](skills/daemon/bug-flow/) | Composite flow: triage → fix root cause → prove by observation | Auto: "fix this bug properly", "root cause and fix" |
+| [release-flow](skills/daemon/release-flow/) | Composite flow: changelog → verify → review diff → go/no-go | Auto: "cut a release", "release banao" |
 
 ### Methodology (14 skills)
 
@@ -389,7 +469,7 @@ Standalone reference docs for any agent or human:
 
 ## Compatibility
 
-- **agentskills.io standard** — all 36 of our curated SKILL.md files have compliant frontmatter. 181 additional skills imported from upstream follow their own conventions and are exempt from our strict linter.
+- **agentskills.io standard** — all 52 of our curated SKILL.md files have compliant frontmatter. The 112 vendored skills follow their own conventions and are exempt from our strict linter.
 - **Hermes-compatible memory** — same SQLite + FTS5 shape so skills + traces travel.
 - **Cross-agent awareness** — session-start reads rules from Cursor (`.cursor/rules/`), Cline (`.cline/rules/`), and Claude Code auto-memory.
 - **Transcript adapters** — digests transcripts from Claude Code, Cursor, Cline, and Codex.
@@ -520,6 +600,10 @@ The hooks `ad init` injects look like this (commands all start with `ad`):
   "hooks": {
     "SessionStart":  [ { "hooks": [{ "command": "ad session-start --output-json" }] } ],
     "SessionEnd":    [ { "hooks": [{ "command": "ad digest ..." }] } ],
+    "UserPromptSubmit": [ { "hooks": [
+      { "command": "ad hook user-prompt-extract" },
+      { "command": "ad query-retrieve ..." }
+    ] } ],
     "PostToolUse":   [
       { "matcher": "Edit|Write|MultiEdit", "hooks": [{ "command": "ad hook edit-post" }] },
       { "matcher": "Bash",                 "hooks": [{ "command": "ad hook bash-post" }] }
@@ -629,11 +713,10 @@ Done. agent-daemon is fully removed.
 - v0.4 — Zero API-key digest via agent-emitted blocks
 - v0.5 — Token efficiency, ecosystem interop, cross-agent coexistence
 - v0.6 — Multi-agent orchestration with production hardening, `ad` short commands, AD-INSTRUCTIONS.md auto-generation
+- `main` (unreleased) — VS Code digest-sweep fallback, injection quarantine guardrails, on-demand `ad skill install` + data-driven routing with follow/diverge telemetry, Hermes-style memory evolution (reinforce → decay → consolidate), cross-project user facts, MCP memory server, `ad service` registration, composite flow skills, routing self-evolution proposals
 
 **Next:**
 - Semantic task router — LLM-based auto template selection + role assignment
-- Cross-agent conflict detection — warn on file modification overlap
-- Auto-trigger evolve on repeated skill failures
 - True trace replay for GEPA evaluate
 - Cross-machine memory sync
 - Web dashboard — kanban board for team tasks and agent status
