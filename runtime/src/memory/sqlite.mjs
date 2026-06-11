@@ -371,8 +371,10 @@ export async function open(opts = {}) {
   // Run migrations AFTER SCHEMA exec. Each migration is idempotent + safe to
   // re-run on already-migrated DBs.
   migrateLearningsContentHash(raw);
+  migrateLearningsEvolution(raw);
   migrateSkillExecutionTelemetry(raw);
   migrateSkillRouteEvents(raw);
+  migrateRetrievalEvents(raw);
 
   return {
     raw,
@@ -501,6 +503,54 @@ function migrateSkillExecutionTelemetry(raw) {
 }
 
 /**
+ * Idempotent migration: memory-evolution columns on learnings. Powers
+ * confidence reinforcement (observed_count), retrieval write-back
+ * (retrieval_count / last_retrieved_at), usefulness feedback, and
+ * contradiction links — the Hermes-style evolution loop.
+ *
+ * @param {any} raw - the better-sqlite3 Database
+ */
+function migrateLearningsEvolution(raw) {
+  const cols = new Set(raw.prepare("PRAGMA table_info(learnings)").all().map(c => c.name));
+  const missing = [
+    ["observed_count", "INTEGER NOT NULL DEFAULT 1"],
+    ["retrieval_count", "INTEGER NOT NULL DEFAULT 0"],
+    ["last_retrieved_at", "TEXT"],
+    ["usefulness", "REAL"],
+    ["contradicted_by", "INTEGER"]
+  ];
+  for (const [name, type] of missing) {
+    if (!cols.has(name)) {
+      raw.exec(`ALTER TABLE learnings ADD COLUMN ${name} ${type}`);
+    }
+  }
+}
+
+/**
+ * Idempotent migration: retrieval_events table — measurement-first telemetry
+ * for what SessionStart / query-retrieve considered, injected, and truncated
+ * (FUTURE-SCALABLE-MEMORY-RETRIEVAL Phase 1).
+ *
+ * @param {any} raw - the better-sqlite3 Database
+ */
+function migrateRetrievalEvents(raw) {
+  raw.exec(`
+    CREATE TABLE IF NOT EXISTS retrieval_events (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts              TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      session_id      TEXT,
+      project_slug    TEXT,
+      source          TEXT NOT NULL,            -- 'session-start' | 'query-retrieve'
+      considered_bytes INTEGER NOT NULL DEFAULT 0,
+      injected_bytes  INTEGER NOT NULL DEFAULT 0,
+      truncated       INTEGER NOT NULL DEFAULT 0,
+      groups_json     TEXT                      -- per-group {label, bytesIn, bytesKept, truncated}
+    );
+    CREATE INDEX IF NOT EXISTS idx_retrieval_events_project ON retrieval_events(project_slug, ts DESC);
+  `);
+}
+
+/**
  * Idempotent migration: create skill_route_events table on existing DBs that
  * predate its introduction. The SCHEMA block handles fresh DBs; this is the
  * safety net for live installs.
@@ -521,11 +571,17 @@ function migrateSkillRouteEvents(raw) {
       explicit_agent_request      INTEGER NOT NULL DEFAULT 0,
       explicit_capability_constraint INTEGER NOT NULL DEFAULT 0,
       invoked_skill               TEXT,
+      invoked_at                  TEXT,
       created_at                  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     CREATE INDEX IF NOT EXISTS idx_route_events_session ON skill_route_events(session_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_route_events_skill   ON skill_route_events(recommended_capability, created_at DESC);
   `);
+  // invoked_at landed after the table's introduction — patch existing DBs.
+  const cols = new Set(raw.prepare("PRAGMA table_info(skill_route_events)").all().map(c => c.name));
+  if (!cols.has("invoked_at")) {
+    raw.exec("ALTER TABLE skill_route_events ADD COLUMN invoked_at TEXT");
+  }
 }
 
 /**

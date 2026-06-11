@@ -54,6 +54,23 @@ export async function runDigest(opts) {
     if (!opts.dryRun) {
       const entry = buildSessionLogEntry({ summary, adapter, sessionId: opts.sessionId, triage: t });
       await appendSessionLog({ cwd: opts.cwd, entry });
+      // Record the skip so digest-sweep doesn't re-triage this transcript on
+      // every run (isSessionDigested treats triaged-skip as settled).
+      try {
+        await upsertSession({
+          id: opts.sessionId || summary.sessionId || "unknown",
+          projectPath: opts.cwd,
+          startedAt: summary.startTime?.toISOString() || new Date().toISOString(),
+          endedAt: summary.endTime?.toISOString(),
+          userTurns: summary.userTurns,
+          assistantTurns: summary.assistantTurns,
+          toolCalls: summary.toolCalls,
+          edits: summary.edits,
+          transcriptPath: opts.transcript,
+          digestStatus: "triaged-skip",
+          digestReason: t.reason
+        });
+      } catch { /* best-effort */ }
     }
     return 0;
   }
@@ -109,6 +126,27 @@ export async function runDigest(opts) {
     return 1;
   }
 
+  // Settle the session row for terminal-but-empty outcomes. Without this the
+  // pre-extraction "in-progress" status sticks forever and digest-sweep
+  // re-processes the transcript on every run.
+  async function settleSession(status, reason) {
+    try {
+      await upsertSession({
+        id: opts.sessionId || summary.sessionId || "unknown",
+        projectPath: opts.cwd,
+        startedAt: summary.startTime?.toISOString() || new Date().toISOString(),
+        endedAt: summary.endTime?.toISOString(),
+        userTurns: summary.userTurns,
+        assistantTurns: summary.assistantTurns,
+        toolCalls: summary.toolCalls,
+        edits: summary.edits,
+        transcriptPath: opts.transcript,
+        digestStatus: status,
+        digestReason: reason
+      });
+    } catch { /* best-effort */ }
+  }
+
   if (extractResult.skipReason) {
     if (opts.verbose) console.error(`agent-daemon: ${extractResult.skipReason}`);
     if (!opts.dryRun) {
@@ -119,6 +157,7 @@ export async function runDigest(opts) {
         extractResult: { ...extractResult, source: extractResult.source || "no-block-found" }
       });
       await appendSessionLog({ cwd: opts.cwd, entry });
+      await settleSession("no-block", extractResult.skipReason);
     }
     return 0;
   }
@@ -133,6 +172,7 @@ export async function runDigest(opts) {
         extractResult
       });
       await appendSessionLog({ cwd: opts.cwd, entry });
+      await settleSession("no-learnings", "extraction produced 0 learnings");
     }
     return 0;
   }

@@ -26,7 +26,8 @@ const DEFAULT_CONFIG = {
   ],
   debounceMs: 30000,
   stableCheckIntervalMs: 5000,
-  skipDigested: true
+  skipDigested: true,
+  logDir: "~/.agent-daemon/logs"
 };
 
 export function configPath() {

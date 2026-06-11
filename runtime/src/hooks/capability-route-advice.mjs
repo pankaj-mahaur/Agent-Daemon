@@ -12,8 +12,10 @@
 //   - Does NOT suppress native-agent use for prompts that explicitly request agents.
 //   - Fails safe — any exception → passthrough().
 
+import os from "node:os";
 import { readStdinJson, passthrough, advise } from "./io.mjs";
 import { recordRouteAdvice } from "../memory/episodic.mjs";
+import { loadRouteMaps, compileEntryRegex } from "../route-map.mjs";
 
 // ── Explicit constraint patterns ─────────────────────────────────────────────
 // When the user says these things, we suppress forced-skill advice.
@@ -30,9 +32,10 @@ const SIMPLE_PATTERNS = [
   /^(what is|what's|who is|who's|when did|where is|how do I|how does)\b.{0,80}[?]?\s*$/i,
 ];
 
-// ── Routing map: [intent-regex, recommended-skill, description] ──────────────
-// Order matters — first match wins.
-const ROUTING_MAP = [
+// ── Builtin routing map: [intent-regex, recommended-skill, description] ──────
+// Curated, highest-priority tier — first match wins, checked BEFORE the
+// compiled per-install route maps (see ../route-map.mjs).
+const BUILTIN_ROUTING_MAP = [
   // Session close
   {
     re: /\b(bye|session\s*khatam|done\s+for\s+today|end\s+session|close\s+session|wrapping\s+up|session\s+done|ending\s+this\s+session|aaj\s+ka\s+kaam|ho\s+gaya\s+kaam|chalo\s+bye|i'?m\s+done)\b/i,
@@ -73,10 +76,15 @@ const ROUTING_MAP = [
 
 // ── Task size classifier ──────────────────────────────────────────────────────
 
-function classifyPrompt(prompt) {
+function classifyPrompt(prompt, compiledEntries = []) {
   if (SIMPLE_PATTERNS.some(re => re.test(prompt))) return "simple";
-  // Short prompt with no specialized keyword → probably simple.
-  if (prompt.trim().length < 40 && !ROUTING_MAP.some(r => r.re.test(prompt))) return "simple";
+  // Short prompt with no specialized keyword → probably simple. A compiled
+  // trigger match counts as specialized too.
+  if (prompt.trim().length < 40 &&
+      !BUILTIN_ROUTING_MAP.some(r => r.re.test(prompt)) &&
+      !compiledEntries.some(e => compileEntryRegex(e).test(prompt))) {
+    return "simple";
+  }
   return "substantial";
 }
 
@@ -101,17 +109,44 @@ export async function capabilityRouteAdvice() {
     // Don't suppress native agents for explicit delegation requests.
     const explicitAgent = EXPLICIT_AGENT_RE.test(prompt);
 
-    const taskSize = classifyPrompt(prompt);
+    // Compiled per-install maps (project shadows global). Failure here →
+    // builtin-only routing; the fail-safe contract holds.
+    let compiledEntries = [];
+    try {
+      compiledEntries = await loadRouteMaps({ cwd, home: os.homedir() });
+    } catch { /* builtin only */ }
+
+    const taskSize = classifyPrompt(prompt, compiledEntries);
 
     if (taskSize === "simple" && !explicitAgent) {
       passthrough();
       return 0;
     }
 
-    // Find the first matching route.
+    // Find the first matching route: curated builtins first, then compiled.
     let match = null;
-    for (const route of ROUTING_MAP) {
-      if (route.re.test(prompt)) { match = route; break; }
+    let promptIntent = null;
+    let recommendationSource = null;
+    for (const route of BUILTIN_ROUTING_MAP) {
+      if (route.re.test(prompt)) {
+        match = route;
+        promptIntent = `builtin:${route.skill}`;
+        recommendationSource = "builtin-map";
+        break;
+      }
+    }
+    if (!match) {
+      const builtinSkills = new Set(BUILTIN_ROUTING_MAP.map(r => r.skill));
+      for (const entry of compiledEntries) {
+        if (builtinSkills.has(entry.skill)) continue;  // builtin already vetted it
+        const m = prompt.match(compileEntryRegex(entry));
+        if (m) {
+          match = { skill: entry.skill, tier: entry.tier || "substantial", note: entry.note || `${entry.skill} matches this request` };
+          promptIntent = m[0].toLowerCase();
+          recommendationSource = "compiled-map";
+          break;
+        }
+      }
     }
 
     if (!match) {
@@ -136,14 +171,19 @@ export async function capabilityRouteAdvice() {
     await tryRecordRoute({
       sessionId, cwd, prompt, taskSize: match.tier,
       recommendedCapability: skillName,
+      promptIntent,
+      recommendationSource,
       explicit_agent: explicitAgent,
       explicit_constraint: false,
     });
 
     advise(context);
     return 0;
-  } catch {
+  } catch (err) {
     // Fail-safe: never crash the session.
+    if (process.env.AGENT_DAEMON_DEBUG === "1") {
+      process.stderr.write(`capability-route-advice error: ${err.stack || err.message}\n`);
+    }
     passthrough();
     return 0;
   }

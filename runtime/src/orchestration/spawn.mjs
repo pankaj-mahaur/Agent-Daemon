@@ -375,15 +375,60 @@ export async function removeWorktree(cwd, branch) {
   });
 }
 
-export async function cleanupWorktrees(cwd) {
+/**
+ * Worktree paths of agents still marked running, across every team manifest.
+ * Used by the TTL sweep so a long-lived but healthy agent never gets flagged.
+ *
+ * @returns {Promise<Set<string>>} normalized absolute paths
+ */
+async function runningWorktreePaths() {
+  const home = process.env.HOME || process.env.USERPROFILE || ".";
+  const teamsDir = path.join(home, ".agent-daemon", "teams");
+  const running = new Set();
+  let teams;
+  try { teams = await fs.readdir(teamsDir); } catch { return running; }
+  for (const t of teams) {
+    if (t === "templates") continue;
+    try {
+      const agents = JSON.parse(await fs.readFile(agentsManifestPath(t), "utf8"));
+      for (const a of agents) {
+        if ((a.status === "running" || a.status === "spawning") && a.worktree) {
+          running.add(path.normalize(a.worktree).toLowerCase());
+        }
+      }
+    } catch { /* no manifest — skip */ }
+  }
+  return running;
+}
+
+/**
+ * Prune dead worktrees.
+ *
+ * Always removes dirs that lost their `.git` link (broken worktrees).
+ * Dirs past `ttlHours` whose agent is no longer running/spawning are STALE:
+ * reported in `stale[]` by default, deleted only with `auto: true` — a
+ * worktree may hold uncommitted work, so deletion stays an explicit choice.
+ *
+ * @param {string} cwd - main repo (for `git worktree prune`)
+ * @param {{ ttlHours?: number, auto?: boolean }} [opts]
+ * @returns {Promise<{ removed: number, stale: string[], staleRemoved: number }>}
+ */
+export async function cleanupWorktrees(cwd, opts = {}) {
+  const ttlHours = opts.ttlHours ?? 72;
+  const auto = opts.auto ?? false;
   const home = process.env.HOME || process.env.USERPROFILE || ".";
   const worktreesDir = path.join(home, ".agent-daemon", "worktrees");
   let entries;
   try {
     entries = await fs.readdir(worktreesDir);
-  } catch { return { removed: 0 }; }
+  } catch { return { removed: 0, stale: [], staleRemoved: 0 }; }
+
+  const running = await runningWorktreePaths();
+  const ttlCutoff = Date.now() - ttlHours * 60 * 60 * 1000;
 
   let removed = 0;
+  let staleRemoved = 0;
+  const stale = [];
   for (const entry of entries) {
     const fullPath = path.join(worktreesDir, entry);
     const stat = await fs.stat(fullPath).catch(() => null);
@@ -395,6 +440,16 @@ export async function cleanupWorktrees(cwd) {
       await fs.rm(fullPath, { recursive: true, force: true }).catch(() => {});
       removed++;
       continue;
+    }
+
+    // TTL sweep: old AND its agent is gone → stale candidate
+    if (stat.mtimeMs < ttlCutoff && !running.has(path.normalize(fullPath).toLowerCase())) {
+      if (auto) {
+        await fs.rm(fullPath, { recursive: true, force: true }).catch(() => {});
+        staleRemoved++;
+      } else {
+        stale.push(fullPath);
+      }
     }
   }
 
@@ -409,5 +464,5 @@ export async function cleanupWorktrees(cwd) {
     child.on("error", () => resolve());
   });
 
-  return { removed };
+  return { removed, stale, staleRemoved };
 }

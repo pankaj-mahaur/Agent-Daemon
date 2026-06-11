@@ -85,13 +85,15 @@ export async function readJournal({ cwd }) {
 /**
  * Move the journal into the archive (concatenating if archive exists),
  * leaving the journal empty. Called by SessionStart drain after applying.
+ * Pass `file` to archive a specific file (e.g. a .draining-<pid> rename)
+ * instead of the live journal.
  *
- * @param {{cwd: string}} opts
+ * @param {{cwd: string, file?: string}} opts
  * @returns {Promise<{ok: boolean, archivedBytes?: number, error?: string}>}
  */
-export async function archiveJournal({ cwd }) {
+export async function archiveJournal({ cwd, file }) {
   if (!cwd) return { ok: false, error: "cwd required" };
-  const file = journalPath(cwd);
+  file = file || journalPath(cwd);
   const arch = archivePath(cwd);
   try {
     let stat;

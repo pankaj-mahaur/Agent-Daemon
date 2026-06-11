@@ -5,7 +5,8 @@
   "type": "module",
   "bin": {
     "agent-daemon": "./src/cli.mjs",
-    "ad": "./src/cli.mjs"
+    "ad": "./src/cli.mjs",
+    "agent-daemon-memory-mcp": "./src/mcp/memory-server.mjs"
   },
   "main": "./src/cli.mjs",
   "exports": {

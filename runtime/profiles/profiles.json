@@ -35,7 +35,8 @@
         "implement-feature",
         "debug-triage",
         "review-slice",
-        "audit-runner"
+        "audit-runner",
+        "skill-installer"
       ],
       "features": {
         "qmd": true,

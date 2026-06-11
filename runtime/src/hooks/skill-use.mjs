@@ -1,7 +1,7 @@
 // Claude-only skill invocation telemetry for local GEPA feedback.
 
 import { readStdinJson, passthrough } from "./io.mjs";
-import { recordSkillExecution, upsertSession } from "../memory/episodic.mjs";
+import { recordSkillExecution, upsertSession, correlateRouteInvocation } from "../memory/episodic.mjs";
 
 export async function skillUse() {
   try {
@@ -26,6 +26,9 @@ export async function skillUse() {
         triggerText,
         invocationSource: source
       });
+      // Close the routing loop: link this invocation back to the route
+      // advice that recommended it (followed vs diverged).
+      try { await correlateRouteInvocation({ sessionId, skillName }); } catch { /* best-effort */ }
     }
   } catch {
     // Skill telemetry is best-effort and must never block Claude.
