@@ -56,6 +56,6 @@ If upstream is compromised, re-hydration via `node vendored/fetch.mjs --force` w
 ## Reporting a vulnerability
 
 - Email: pankaj@mobiux.in
-- Or open a private security advisory on [GitHub](https://github.com/Pankaj-mobiux/Agent-Daemon/security/advisories).
+- Or open a private security advisory on [GitHub](https://github.com/pankaj-mahaur/Agent-Daemon/security/advisories).
 
 We aim to acknowledge within 72 hours and ship a fix on the `main` branch within 7 days for issues of high severity or above.

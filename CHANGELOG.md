@@ -245,5 +245,5 @@ Kept in the snapshot but not ported this release: `.codebuddy/`, `.kiro/`, `.tra
 
 Initial public state. Self-improving memory + skills runtime for Claude Code with multi-agent orchestration. 36 skills, 6 lifecycle hooks (SessionStart, SessionEnd, PreCompact, UserPromptSubmit, plus QMD-redirect), constitution layer, digest pipeline, GEPA skill evolution, multi-agent team templates, `ad init` / `ad doctor` / `ad team` / `ad spawn` CLI.
 
-[0.2.0]: https://github.com/Pankaj-mobiux/Agent-Daemon/releases/tag/v0.2.0
-[0.1.0]: https://github.com/Pankaj-mobiux/Agent-Daemon/releases/tag/v0.1.0
+[0.2.0]: https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v0.2.0
+[0.1.0]: https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v0.1.0

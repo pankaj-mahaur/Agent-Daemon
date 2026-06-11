@@ -1,6 +1,6 @@
 # Agent Daemon
 
-This project uses [agent-daemon](https://github.com/Pankaj-mobiux/Agent-Daemon) for multi-agent orchestration and self-improving memory.
+This project uses [agent-daemon](https://github.com/pankaj-mahaur/Agent-Daemon) for multi-agent orchestration and self-improving memory.
 
 ## Getting Started
 

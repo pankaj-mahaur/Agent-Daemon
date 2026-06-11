@@ -18,7 +18,7 @@ export function renderManagedClaudeBlock(startMarker, endMarker) {
     startMarker,
     "## agent-daemon",
     "",
-    "This project uses [agent-daemon](https://github.com/Pankaj-mobiux/Agent-Daemon) — a self-improving runtime for AI coding agents with multi-agent orchestration. **This section is managed by `ad init` — re-running refreshes it.**",
+    "This project uses [agent-daemon](https://github.com/pankaj-mahaur/Agent-Daemon) — a self-improving runtime for AI coding agents with multi-agent orchestration. **This section is managed by `ad init` — re-running refreshes it.**",
     "",
     "- **Memory:** `.agent-daemon/memory/` — project context and learnings captured continuously by local hooks; session-close digests add richer summaries",
     "- **Multi-agent:** `ad tc` to create teams, `ad sp` to spawn workers in isolated git worktrees, `ad ts` for status",

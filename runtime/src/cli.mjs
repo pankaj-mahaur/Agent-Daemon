@@ -569,7 +569,7 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
       MANAGED_START,
       "## agent-daemon (global)",
       "",
-      "This machine has [agent-daemon](https://github.com/Pankaj-mobiux/Agent-Daemon) installed — a self-improving local runtime for Claude Code.",
+      "This machine has [agent-daemon](https://github.com/pankaj-mahaur/Agent-Daemon) installed — a self-improving local runtime for Claude Code.",
       "",
       "- **Global skills:** `~/.claude/skills/` — installed by `ad init` based on each project's detected stack.",
       "- **Global commands:** `~/.claude/commands/` — slash commands like `/evolve`.",

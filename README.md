@@ -1,6 +1,6 @@
 # agent-daemon
 
-[![test](https://github.com/Pankaj-mobiux/Agent-Daemon/actions/workflows/test.yml/badge.svg)](https://github.com/Pankaj-mobiux/Agent-Daemon/actions/workflows/test.yml)
+[![test](https://github.com/pankaj-mahaur/Agent-Daemon/actions/workflows/test.yml/badge.svg)](https://github.com/pankaj-mahaur/Agent-Daemon/actions/workflows/test.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![version](https://img.shields.io/badge/version-0.2.0-green.svg)](CHANGELOG.md)
 [![harnesses](https://img.shields.io/badge/harnesses-Claude%20Code%20%7C%20Codex%20%7C%20Cursor-purple.svg)](#cross-harness-support)
@@ -17,7 +17,7 @@ Skills evolve too: [GEPA](runtime/src/digest/gepa/README.md) (Genetic-Pareto Pro
 
 ```bash
 # 1. Clone & install
-git clone https://github.com/Pankaj-mobiux/Agent-Daemon.git
+git clone https://github.com/pankaj-mahaur/Agent-Daemon.git
 cd Agent-Daemon/runtime
 npm install
 
@@ -50,7 +50,7 @@ Use a clean clone or a clean pull of `main`; do not distribute another developer
 
 ```powershell
 # Install the CLI once per machine.
-git clone https://github.com/Pankaj-mobiux/Agent-Daemon.git 'D:\Program Files\Agent-Daemon'
+git clone https://github.com/pankaj-mahaur/Agent-Daemon.git 'D:\Program Files\Agent-Daemon'
 Set-Location 'D:\Program Files\Agent-Daemon\runtime'
 npm install
 npm link

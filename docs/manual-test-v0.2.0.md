@@ -146,13 +146,13 @@ $ rm "D:\Program Files\Mobiux\redseer-frontend\test.md"
 ### 2.3 `bash-post` surfaces `gh pr create` URLs
 
 ```sh
-$ echo '{"tool_input":{"command":"gh pr create"},"tool_response":{"output":"https://github.com/Pankaj-mobiux/Agent-Daemon/pull/42"}}' | ad hook bash-post
+$ echo '{"tool_input":{"command":"gh pr create"},"tool_response":{"output":"https://github.com/pankaj-mahaur/Agent-Daemon/pull/42"}}' | ad hook bash-post
 ```
 
 ✅ Expected stderr:
 ```
-[agent-daemon] PR created: https://github.com/Pankaj-mobiux/Agent-Daemon/pull/42
-[agent-daemon] Review with: gh pr view 42 --repo Pankaj-mobiux/Agent-Daemon
+[agent-daemon] PR created: https://github.com/pankaj-mahaur/Agent-Daemon/pull/42
+[agent-daemon] Review with: gh pr view 42 --repo pankaj-mahaur/Agent-Daemon
 ```
 
 ### 2.4 `bash-post` tags `npm run build` completion

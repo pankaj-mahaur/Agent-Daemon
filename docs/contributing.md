@@ -7,7 +7,7 @@ For new developers joining the agent-daemon project. Skim this once before your 
 ## Get the source
 
 ```sh
-git clone https://github.com/Pankaj-mobiux/Agent-Daemon.git
+git clone https://github.com/pankaj-mahaur/Agent-Daemon.git
 cd Agent-Daemon
 cd runtime
 npm install

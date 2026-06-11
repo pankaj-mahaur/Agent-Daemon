@@ -114,7 +114,7 @@ In `D:\Program Files\Mobiux\mobiux-website\`:
 
 ## Related
 
-- **GitHub:** https://github.com/Pankaj-mobiux/Agent-Daemon
+- **GitHub:** https://github.com/pankaj-mahaur/Agent-Daemon
 - **PR #2 (merged):** Phase 5 work
 - **Latest commit:** `2a73cb5` (merge into main)
 - **Plan:** `~/.claude/plans/c-users-panka-claude-skills-humne-jab-da-binary-llama.md`
