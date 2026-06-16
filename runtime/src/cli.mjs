@@ -17,7 +17,7 @@ import { runWatcher } from "./daemon/watch.mjs";
 import { resolveProfile, listProfiles } from "./profiles.mjs";
 import { buildSkillIndex, resolveSkillSource } from "./skills-source.mjs";
 import { detectStack, formatStacks, loadStackSkillMap, resolveSkillsForStacks } from "./stack-detect.mjs";
-import { renderManagedClaudeBlock } from "./managed-claude-block.mjs";
+import { renderManagedClaudeBlock, renderAdInstructions } from "./managed-claude-block.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
@@ -93,6 +93,9 @@ Commands:
   skill search <query>   Search the bundled skill catalog by name/description
   doctor                 Diagnose the install — settings.json, PATH, dirs
   doctor --tokens        Show token usage + cache stats from recent sessions
+  viewer                 Render the episodic store to a single self-contained HTML file (zero-dep snapshot)
+                         --out <path>         output path (default ~/.agent-daemon/viewer.html)
+                         --open               open it in the default browser
 
   team create     (tc)   Create a new multi-agent team
   team status     (ts)   Show team kanban board
@@ -195,18 +198,41 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
     actions.push(`+ session-logs/                (new — gitignored local journal directory)`);
   }
 
-  // Check if the AD instruction file needs to be created.
+  // Check if the AD instruction file needs to be created or refreshed.
   // Named AD-INSTRUCTIONS.md (agent-daemon branded) rather than the generic
-  // AGENTS.md so it's unambiguously the daemon's guide; it's referenced from
-  // the managed CLAUDE.md block so Claude Code loads it via CLAUDE.md.
+  // AGENTS.md so it's unambiguously the daemon's guide. It holds the FULL
+  // operating manual (task-complexity gate, skill decision tree, daemon
+  // workflow, session-close protocol, multi-agent guide) and is read on demand;
+  // the managed CLAUDE.md block carries only a synopsis + a pointer here.
+  // Marker-wrapped + refreshed in place (same logic as the CLAUDE.md block) so
+  // existing projects pick up content updates without losing user content
+  // outside the markers.
+  const AD_MANAGED_START = "<!-- agent-daemon:start -->";
+  const AD_MANAGED_END = "<!-- agent-daemon:end -->";
   const agentsMdPath = path.join(cwd, "AD-INSTRUCTIONS.md");
   let agentsMdExists = false;
+  let agentsMdHasSection = false;
+  let agentsMdSectionStale = false;
   try {
-    await fs.access(agentsMdPath);
+    const adContent = await fs.readFile(agentsMdPath, "utf8");
     agentsMdExists = true;
-  } catch { /* not present */ }
-  if (!agentsMdExists) {
-    actions.push("+ AD-INSTRUCTIONS.md (agent-daemon orchestration guide for Claude)");
+    agentsMdHasSection = adContent.includes(AD_MANAGED_START);
+    if (!agentsMdHasSection) {
+      actions.push("↻ Add agent-daemon manual block to AD-INSTRUCTIONS.md (additive — existing content preserved)");
+    } else {
+      const sIdx = adContent.indexOf(AD_MANAGED_START);
+      const eIdx = adContent.indexOf(AD_MANAGED_END, sIdx);
+      if (sIdx !== -1 && eIdx !== -1) {
+        const existing = adContent.slice(sIdx, eIdx + AD_MANAGED_END.length);
+        const expected = renderAdInstructions(AD_MANAGED_START, AD_MANAGED_END);
+        if (existing !== expected) {
+          agentsMdSectionStale = true;
+          actions.push("↻ Refresh AD-INSTRUCTIONS.md operating manual");
+        }
+      }
+    }
+  } catch {
+    actions.push("+ AD-INSTRUCTIONS.md (agent-daemon operating manual — read on demand)");
   }
 
   // Check if CLAUDE.md exists and needs our managed section
@@ -394,14 +420,32 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
   }
   if (copied > 0) console.log(`  ✓ Created .agent-daemon/memory/ (${copied} templates)`);
 
-  // Copy the AD instruction file if not present
+  // Add/refresh the AD-INSTRUCTIONS.md operating manual. Rendered (not copied
+  // from a static template) so re-running `ad init` refreshes the block in
+  // place, mirroring the CLAUDE.md managed-section logic. User content outside
+  // the markers is preserved.
   if (!agentsMdExists) {
-    const agentsTmpl = path.join(PROJECT_ROOT, "templates", "AD-INSTRUCTIONS.md.template");
-    try {
-      await fs.copyFile(agentsTmpl, agentsMdPath);
-      console.log("  ✓ Created AD-INSTRUCTIONS.md (agent-daemon guide for Claude)");
-    } catch {
-      // template missing — skip silently
+    const manual = renderAdInstructions(AD_MANAGED_START, AD_MANAGED_END);
+    await fs.writeFile(agentsMdPath, manual + "\n", "utf8");
+    console.log("  ✓ Created AD-INSTRUCTIONS.md (agent-daemon operating manual)");
+  } else if (!agentsMdHasSection || agentsMdSectionStale) {
+    const manual = renderAdInstructions(AD_MANAGED_START, AD_MANAGED_END);
+    if (!agentsMdHasSection) {
+      await fs.appendFile(agentsMdPath, "\n" + manual + "\n", "utf8");
+      console.log("  ✓ Added agent-daemon manual block to AD-INSTRUCTIONS.md");
+    } else {
+      const current = await fs.readFile(agentsMdPath, "utf8");
+      const startIdx = current.indexOf(AD_MANAGED_START);
+      const endIdx = current.indexOf(AD_MANAGED_END, startIdx);
+      if (startIdx !== -1 && endIdx !== -1) {
+        const before = current.slice(0, startIdx);
+        const after = current.slice(endIdx + AD_MANAGED_END.length);
+        const next = before + manual + after;
+        if (next !== current) {
+          await fs.writeFile(agentsMdPath, next, "utf8");
+          console.log("  ✓ Refreshed AD-INSTRUCTIONS.md operating manual");
+        }
+      }
     }
   }
 
@@ -1005,6 +1049,27 @@ async function cmdDoctor({ cwd = process.cwd(), tokens, limit, model } = {}) {
     checks.push({ name: "Project CLAUDE.md instructions", ok: false, note: "missing — run ad init" });
   }
 
+  // Check the on-demand operating manual (AD-INSTRUCTIONS.md). The full manual
+  // was moved out of the CLAUDE.md block to keep per-session context lean, so
+  // validate its managed block matches the current render too.
+  const projectAdInstructions = path.join(cwd, "AD-INSTRUCTIONS.md");
+  const expectedManual = renderAdInstructions("<!-- agent-daemon:start -->", "<!-- agent-daemon:end -->");
+  try {
+    const text = await fs.readFile(projectAdInstructions, "utf8");
+    const start = text.indexOf("<!-- agent-daemon:start -->");
+    const end = text.indexOf("<!-- agent-daemon:end -->", start);
+    const actual = start >= 0 && end >= 0
+      ? text.slice(start, end + "<!-- agent-daemon:end -->".length)
+      : "";
+    checks.push({
+      name: "Project AD-INSTRUCTIONS.md",
+      ok: actual === expectedManual,
+      note: actual === expectedManual ? "operating manual current" : "missing or stale — run ad init"
+    });
+  } catch {
+    checks.push({ name: "Project AD-INSTRUCTIONS.md", ok: false, note: "missing — run ad init" });
+  }
+
   const memoryDir = path.join(cwd, ".agent-daemon", "memory");
   try {
     const files = (await fs.readdir(memoryDir)).filter(f => f.endsWith(".md"));
@@ -1455,6 +1520,38 @@ async function cmdMemory(sub, opts) {
       console.error(`agent-daemon memory: unknown subcommand "${sub || ""}" (use stats | consolidate)`);
       return 1;
   }
+}
+
+/**
+ * `ad viewer` — render the episodic store to a single self-contained HTML file
+ * and (optionally) open it. Zero-dependency snapshot; no server, no network.
+ */
+async function cmdViewer(opts) {
+  const { gatherViewerData, buildViewerHtml } = await import("./viewer.mjs");
+  const data = await gatherViewerData();
+  const html = buildViewerHtml(data, new Date().toISOString());
+
+  const home = process.env.HOME || process.env.USERPROFILE || ".";
+  const outPath = opts.out
+    ? path.resolve(opts.out)
+    : path.join(home, ".agent-daemon", "viewer.html");
+  await fs.mkdir(path.dirname(outPath), { recursive: true });
+  await fs.writeFile(outPath, html, "utf8");
+
+  if (data.driver === false) {
+    console.error("agent-daemon: better-sqlite3 not installed — wrote a placeholder viewer");
+  }
+  console.log(`agent-daemon: viewer → ${outPath}`);
+
+  if (opts.open) {
+    const cmd = process.platform === "win32" ? `start "" "${outPath}"`
+      : process.platform === "darwin" ? `open "${outPath}"`
+      : `xdg-open "${outPath}"`;
+    exec(cmd, (err) => {
+      if (err) console.error(`agent-daemon: could not auto-open (${err.message}) — open ${outPath} manually`);
+    });
+  }
+  return 0;
 }
 
 /**
@@ -2033,7 +2130,9 @@ async function main(argv) {
         skill:        { type: "string" },
         "apply-merges": { type: "boolean" },
         "apply-stale":  { type: "boolean" },
-        "all-projects": { type: "boolean" }
+        "all-projects": { type: "boolean" },
+        out:          { type: "string" },
+        open:         { type: "boolean" }
       },
       allowPositionals: true,
       strict: false
@@ -2091,6 +2190,7 @@ async function main(argv) {
       json: parsed.values.json
     });
     case "doctor":         return cmdDoctor({ ...opts, tokens: parsed.values.tokens, limit: parsed.values.limit, model: parsed.values.model });
+    case "viewer":         return cmdViewer({ ...opts, out: parsed.values.out, open: parsed.values.open || false });
     case "team":           return cmdTeam(parsed.positionals?.[0], { ...opts, template: parsed.values.template, task: parsed.values.task, team: parsed.values.team, agent: parsed.values.agent, model: parsed.values.model });
     case "spawn":          return cmdSpawn({ ...opts, team: parsed.values.team, role: parsed.values.role, task: parsed.values.task, model: parsed.values.model });
     case "hook":           return cmdHook(parsed.positionals?.[0]);

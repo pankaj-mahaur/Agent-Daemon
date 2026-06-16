@@ -9,10 +9,16 @@ on-demand database.
 
 ## Tools
 
+Three-layer **progressive disclosure** (index → context → detail) keeps token cost
+low: search for compact ids, then expand only the few worth reading in full.
+
 | Tool | Effect | Writes? |
 |---|---|---|
-| `memory_search(query, scope?, limit?)` | BM25 + freshness-ranked learnings (≤5 results, ≤4KB) | no |
-| `memory_recent(limit?)` | most recent learnings for the current project | no |
+| `memory_search(query, scope?, limit?)` | **index** — BM25 + freshness-ranked learnings (≤5 results, ≤4KB) | no |
+| `memory_recent(limit?)` | **index** — most recent learnings for the current project | no |
+| `memory_files(path, scope?, limit?)` | **index** — learnings tagged with a given file (path or basename) | no |
+| `memory_timeline(id, limit?)` | **context** — the originating session + sibling learnings around a hit | no |
+| `memory_get(ids)` | **detail** — full text + evidence + provenance for the given ids (≤8KB) | **yes** — retrieval write-back (`retrieval_count`, `last_retrieved_at`) |
 | `memory_stats()` | row counts + retrieval telemetry | no |
 | `user_facts_list()` | active cross-project user profile facts | no |
 | `memory_feedback(id, verdict)` | mark a learning `useful` / `stale` / `wrong` | **yes** — `usefulness` column only |
@@ -20,9 +26,10 @@ on-demand database.
 ## Security blast radius
 
 - Reads `~/.agent-daemon/episodic.db` (local SQLite). No network access.
-- The single write surface is `memory_feedback`, which updates one numeric
-  column (`usefulness`) and `last_verified_at` on an existing row. It cannot
-  insert, delete, or alter memory text.
+- Two narrow write surfaces, neither of which can insert, delete, or alter
+  memory text: `memory_feedback` updates one numeric column (`usefulness`) +
+  `last_verified_at`; `memory_get` bumps retrieval counters
+  (`retrieval_count`, `last_retrieved_at`) on the rows it returns.
 - All returned learning text passes the daemon's `neutralizeText` injection
   guard before reaching the model.
 

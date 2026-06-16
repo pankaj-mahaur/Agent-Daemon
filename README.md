@@ -17,6 +17,35 @@ Skills evolve too: [GEPA](runtime/src/digest/gepa/README.md) (Genetic-Pareto Pro
 
 ## Quick start
 
+**One-liner install** — clones, installs deps, and registers the `ad` command globally:
+
+```powershell
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/pankaj-mahaur/Agent-Daemon/main/install.ps1 | iex
+```
+
+```bash
+# macOS / Linux / Git-Bash
+curl -fsSL https://raw.githubusercontent.com/pankaj-mahaur/Agent-Daemon/main/install.sh | bash
+```
+
+Both are idempotent (re-run = `git pull` + relink) and clone to `~/.agent-daemon-src` (override with `AGENT_DAEMON_DIR`). They verify Node >=22, run `ad doctor`, and print the next step. Then, in any project:
+
+```bash
+cd /path/to/your/project
+ad init                              # default: developer profile + smart skill install
+ad init --profile minimal            # memory + lifecycle hooks only
+ad init --profile security           # default + intrusive guards (block --no-verify, MCP audit)
+ad init --skills-mode all            # install ALL 164 bundled skills (vs stack-detect-driven default)
+ad init --skills-mode manual         # install only profile-listed skills (legacy behaviour)
+ad init --plan                       # preview without applying
+```
+
+Then open Claude Code — prioritized context and prompt-time retrieval load automatically. Explicit corrections are captured locally; session-close digest blocks add richer memory.
+
+<details>
+<summary><strong>Manual install</strong> (piping a script to a shell is sensitive — here's exactly what the one-liner does)</summary>
+
 ```bash
 # 1. Clone & install
 git clone https://github.com/pankaj-mahaur/Agent-Daemon.git
@@ -31,16 +60,10 @@ ad doctor
 
 # 4. Init in your project
 cd /path/to/your/project
-ad init                              # default: developer profile + smart skill install
-ad init --profile minimal            # memory + lifecycle hooks only
-ad init --profile security           # default + intrusive guards (block --no-verify, MCP audit)
-ad init --skills-mode all            # install ALL 164 bundled skills (vs stack-detect-driven default)
-ad init --skills-mode manual         # install only profile-listed skills (legacy behaviour)
-ad init --plan                       # preview without applying
-
-# 5. Open Claude Code — prioritized context and prompt-time retrieval load automatically.
-#    Explicit corrections are captured locally; session-close digest blocks add richer memory.
+ad init
 ```
+
+</details>
 
 The `ad` command is the short alias for `agent-daemon` — both work interchangeably. No API key is required for local capture, retrieval, deterministic SessionEnd digest parsing, or inline skill evolution proposals. Claude Code itself must be authenticated for interactive sessions; authenticated batch/LLM fallback remains explicit opt-in behavior.
 
@@ -276,11 +299,22 @@ Learnings live a lifecycle instead of accumulating forever:
 - **Consolidate** — `ad memory consolidate` proposes near-duplicate merges (token Jaccard ≥ 0.8), stale archives, and contradiction candidates. Nothing applies without explicit acceptance (`--apply-merges` / `--apply-stale`).
 - **User facts** — durable preferences observed across ≥2 projects promote into a cross-project profile injected at session start.
 
-Mid-session recall is pull-based too — a read-only **MCP memory server** exposes `memory_search`, `memory_recent`, `memory_stats`, `user_facts_list`, and `memory_feedback` (capped at 5 results / 4KB per response):
+Mid-session recall is pull-based too — a read-only **MCP memory server** with a token-cheap **progressive-disclosure** flow (index → context → detail, inspired by [claude-mem](https://github.com/thedotmack/claude-mem)):
+
+- **Index (compact `[id …]` lines):** `memory_search`, `memory_recent`, `memory_files(path)`
+- **Context:** `memory_timeline(id)` — the originating session + the sibling learnings around a hit
+- **Detail:** `memory_get(ids)` — full text + evidence + provenance for the few ids you keep (write-back marks them retrieved)
+- Plus `memory_stats`, `user_facts_list`, and `memory_feedback`. Index tools cap at 5 results / 4 KB; `memory_get` at 8 KB.
 
 ```bash
 claude mcp add agent-daemon-memory -- node /path/to/Agent-Daemon/runtime/src/mcp/memory-server.mjs
 ```
+
+**File-aware memory** — the digest pipeline tags every learning with the files in play that session, so `memory_files("auth.ts")` recalls "what we learned about auth.ts", and SessionStart auto-boosts learnings tied to the files you're currently editing (from `git diff`/`status`).
+
+**Privacy — `<private>…</private>`** — wrap any content in this tag and it's stripped before any extractor sees it; it never becomes a stored learning. A `screenLearning` backstop quarantines anything that slips through.
+
+**Viewer** — `ad viewer --open` renders a single zero-dependency HTML snapshot (no server, no network) of sessions, learnings, proposals, routing stats, and retrieval telemetry. Defaults to `~/.agent-daemon/viewer.html`; `--out <path>` to redirect.
 
 See [mcp/agent-daemon-memory/](mcp/agent-daemon-memory/) for config and the blast-radius statement, and `ad memory stats` for retrieval telemetry.
 
@@ -349,6 +383,9 @@ ad memory stats                        # Row counts + retrieval telemetry (trunc
 ad memory consolidate                  # Evolution pass: near-dup merges, stale archive, contradictions
                                        #   proposals only — --apply-merges / --apply-stale execute
                                        #   --all-projects     span every project (default: --cwd only)
+ad viewer                              # Render a zero-dep HTML snapshot of the episodic store
+                                       #   --out <path>       output file (default ~/.agent-daemon/viewer.html)
+                                       #   --open             open it in the default browser
 
 # Skills — routing + on-demand install
 ad skill install <name|path|git-url>   # Lint-gated install with provenance manifest

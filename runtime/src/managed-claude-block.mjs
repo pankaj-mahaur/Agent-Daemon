@@ -1,17 +1,32 @@
 /**
- * Render the managed CLAUDE.md section that `ad init` writes between the
- * <!-- agent-daemon:start --> / <!-- agent-daemon:end --> markers.
+ * Renderers for the agent-daemon managed files that `ad init` writes/refreshes.
  *
- * Goal: give Claude (or any AI coding agent) the decision context it needs
- * to actually USE agent-daemon — not just see it exists. The skill list
- * alone gets ignored; this block tells Claude when/why/how to reach for
- * each skill, what the daemon injects at session start, and what it must
- * emit at session end.
+ * There are two managed surfaces, both delimited by the same
+ * <!-- agent-daemon:start --> / <!-- agent-daemon:end --> markers so they can be
+ * refreshed in-place without clobbering user content outside the markers:
  *
- * Idempotent — re-running `ad init` replaces the block in-place so existing
- * projects pick up content updates.
+ *   1. renderManagedClaudeBlock() — a SHORT synopsis injected into the project
+ *      CLAUDE.md. CLAUDE.md loads into EVERY session, so we keep this lean: what
+ *      the daemon is, the key pointers, and a loud instruction to read the full
+ *      manual (AD-INSTRUCTIONS.md) before any substantial work.
+ *
+ *   2. renderAdInstructions() — the FULL operating manual written to
+ *      AD-INSTRUCTIONS.md at the repo root. Claude Code does NOT auto-load this
+ *      file; the agent reads it on demand (Read tool) when the CLAUDE.md synopsis
+ *      tells it to. This keeps the always-on context small while preserving the
+ *      complete decision tree / workflow / session-close protocol.
+ *
+ * Both are idempotent — re-running `ad init` replaces the block in-place so
+ * existing projects pick up content updates.
  *
  * Exported (via module-internal use) for tests.
+ */
+
+/**
+ * SHORT synopsis for the project CLAUDE.md managed block.
+ * Goal: cost almost nothing in always-on context, but make it unmissable that
+ * the full manual lives in AD-INSTRUCTIONS.md and must be read before
+ * substantial/specialized work.
  */
 export function renderManagedClaudeBlock(startMarker, endMarker) {
   return [
@@ -25,9 +40,37 @@ export function renderManagedClaudeBlock(startMarker, endMarker) {
     "- **CLI:** All commands use the `ad` shorthand (`ad doctor`, `ad init`, `ad tt`, `ad memory`, `ad review`)",
     "- **Skills:** Auto-triggering skills in `~/.claude/skills/` — code review, debugging, orchestration, etc.",
     "- **Self-improvement:** deterministic local capture and optional session-close digests write SQLite memory; skill outcomes remain review-gated",
-    "- **Instructions:** `AD-INSTRUCTIONS.md` (repo root) — agent-daemon orchestration guide + `ad` command reference. Read it before running team/spawn commands.",
     "",
-    "### Task-complexity gate (size the request before acting)",
+    "### 📖 Full operating manual → `AD-INSTRUCTIONS.md`",
+    "",
+    "The complete agent-daemon manual — **task-complexity gate, skill decision tree, daemon workflow, mid-session memory discipline, and the mandatory session-close protocol** — lives in [`AD-INSTRUCTIONS.md`](AD-INSTRUCTIONS.md) at the repo root (kept out of CLAUDE.md to save per-session context).",
+    "",
+    "**Read `AD-INSTRUCTIONS.md` before any substantial or specialized task** — audit, implement, debug, review, migration, security, multi-agent orchestration, or session-close. It encodes which skill to invoke and the ordering/dedup/severity logic that one-shot prompting misses.",
+    "",
+    "Proportionality rule (always on): trivial requests (`hey`, a quick question, a one-line edit) — act normally, do NOT search for skills. Anything substantial — **read `AD-INSTRUCTIONS.md` first**, then pick the narrowest matching skill before freelancing. Routing advice is also injected automatically by the `capability-route-advice` hook (see `ad route show`).",
+    "",
+    "**Session close** (\"bye\", \"session khatam\", \"done for today\", \"wrapping up\") is a mandatory 3-step protocol — see the Session-close section of `AD-INSTRUCTIONS.md`.",
+    endMarker
+  ].join("\n");
+}
+
+/**
+ * FULL operating manual for AD-INSTRUCTIONS.md (repo root, read on demand).
+ * This is the content moved out of the CLAUDE.md block, plus the multi-agent
+ * orchestration guide that previously lived in
+ * templates/AD-INSTRUCTIONS.md.template (now retired — this is the single
+ * source of truth). Marker-wrapped so `ad init` can refresh it in place.
+ */
+export function renderAdInstructions(startMarker, endMarker) {
+  return [
+    startMarker,
+    "# Agent Daemon — Operating Manual",
+    "",
+    "> This file is the full agent-daemon operating manual for AI coding agents working in this repo. It is **read on demand** — `CLAUDE.md` carries only a synopsis and points here. Read this before any substantial or specialized task.",
+    "",
+    "This project uses [agent-daemon](https://github.com/pankaj-mahaur/Agent-Daemon) for self-improving memory + multi-agent orchestration. **This file is managed by `ad init` — re-running refreshes everything between the markers.** Anything you add outside the markers is preserved.",
+    "",
+    "## Task-complexity gate (size the request before acting)",
     "",
     "Before doing anything, classify the request into one of three tiers:",
     "",
@@ -39,7 +82,7 @@ export function renderManagedClaudeBlock(startMarker, endMarker) {
     "",
     "Proportionality rule: `hey` → no capability search. `audit this project` → check for a matching skill first. The user can override routing with `do not use skills`, `use only Read/Grep`, or `deploy two agents`.",
     "",
-    "### Skill decision tree (BEFORE writing code)",
+    "## Skill decision tree (BEFORE writing code)",
     "",
     "When the user's request matches any row below, **invoke the skill first**, then act. Do not freestyle when a matching skill exists — skills encode dedup, ordering, and severity logic that one-shot prompting misses.",
     "",
@@ -60,7 +103,7 @@ export function renderManagedClaudeBlock(startMarker, endMarker) {
     "",
     "Routing advice is also generated automatically: the `capability-route-advice` hook matches each prompt against trigger phrases compiled from EVERY installed skill (see `ad route show`), not just the rows above.",
     "",
-    "### Daemon workflow (what fires automatically)",
+    "## Daemon workflow (what fires automatically)",
     "",
     "```",
     "SessionStart hook  →  `ad session-start` injects prioritized context:",
@@ -80,19 +123,33 @@ export function renderManagedClaudeBlock(startMarker, endMarker) {
     "",
     "**Capture model:** local prompt hooks preserve explicit corrections without an API key. Emitting a `<agent-daemon-digest>` block at session-close improves durable project context and handoff quality; it is not the only capture path.",
     "",
-    "### Mid-session memory discipline",
+    "## Recalling memory mid-session + privacy",
+    "",
+    "You don't have to wait for SessionStart injection — query past project memory mid-task via the `agent-daemon-memory` MCP server (`ad init` registers it). It uses a token-cheap **progressive-disclosure** flow:",
+    "",
+    "1. **Index (cheap):** `memory_search(query)`, `memory_recent`, or `memory_files(path)` → compact `[id …]` lines.",
+    "2. **Context:** `memory_timeline(id)` → the originating session + the sibling learnings around a hit.",
+    "3. **Detail:** `memory_get(ids)` → full text + evidence + provenance for the few ids you keep.",
+    "",
+    "- **File-aware recall:** each learning is tagged with the files in play that session, so `memory_files(\"auth.ts\")` surfaces \"what we learned about auth.ts\". SessionStart also auto-boosts learnings tied to files you're currently editing (derived from `git diff`/`status`).",
+    "- **Privacy — `<private>…</private>`:** wrap any content in this tag and it is stripped before any extractor sees it — it never becomes a stored learning. Use it for secrets, tokens, or anything that must stay out of memory.",
+    "- **Inspect everything:** `ad viewer --open` renders a single zero-dependency HTML snapshot of sessions, learnings, proposals, routing stats, and retrieval telemetry.",
+    "",
+    "## Mid-session memory discipline",
     "",
     "After ANY significant decision (architecture choice, gotcha discovered, convention agreed, dependency pinned), append one line to `.agent-daemon/memory/activeContext.md` immediately — don't wait for session-close. Sessions can terminate abruptly (crash, context-limit, network) and unwritten learnings are lost.",
     "",
     "Format: `- YYYY-MM-DD: <one-line decision or gotcha>`",
     "",
-    "### Bootstrap (run once after `ad init`)",
+    "## Bootstrap (run once after `ad init`)",
     "",
     "Tell Claude: **\"bootstrap the daemon memory using the bootstrap-daemon skill\"**.",
     "",
     "Claude will scan `package.json`, key folders, recent commits, and populate `.agent-daemon/memory/*.md` with real project context (stack, conventions, gotchas). Future sessions then start with rich context loaded automatically.",
     "",
-    "### Session logs (`session-logs/`)",
+    "Memory files with `{{PLACEHOLDER}}` text haven't been bootstrapped yet. The digest pipeline keeps memory updated automatically after bootstrapping.",
+    "",
+    "## Session logs (`session-logs/`)",
     "",
     "Local-only (gitignored). Tracks Claude Code session activity, timeline, decisions, and token usage.",
     "",
@@ -104,7 +161,9 @@ export function renderManagedClaudeBlock(startMarker, endMarker) {
     "  - User says \"new session\" → create next file, link previous one",
     "- Claude cannot read token counts directly — only record what user provides",
     "",
-    "**Session-close workflow (mandatory):** When the user signals end of session (\"end session\", \"close session\", \"session khatam\", \"ending this session\", \"wrapping up\", \"I'm done\", \"bye\" — English or Hinglish), do ALL THREE in the same response, no confirmation needed:",
+    "## Session-close workflow (mandatory)",
+    "",
+    "When the user signals end of session (\"end session\", \"close session\", \"session khatam\", \"ending this session\", \"wrapping up\", \"I'm done\", \"bye\" — English or Hinglish), do ALL THREE in the same response, no confirmation needed:",
     "",
     "1. **Update the session log** — fill the \"End of session\" block with closing timestamp, outcome, net deliverables, what works, what's pending, what next session must start with. Rename duplicate headings to satisfy MD024.",
     "2. **Emit the agent-daemon digest block** — wrapped in `<agent-daemon-digest>...</agent-daemon-digest>` with valid JSON inside (per `constitution/ending-protocol.md`). Include learnings tagged with `projectbrief`, `techContext`, `systemPatterns`, `activeContext`, `progress`, `user`, plus durable `lessons`, `files` touched, and a `daemon_verification` field showing which hooks fired.",
@@ -115,6 +174,55 @@ export function renderManagedClaudeBlock(startMarker, endMarker) {
     "   Filename: `handoff-<ISO-timestamp>.md` with colons replaced by hyphens (Windows-safe). Content per the `handoff` skill template — Context / State / Next action / Open questions / Suggested skills / Files touched. References to existing artifacts, not duplicates.",
     "",
     "Short / prep-only sessions still emit all three — they produce signal too.",
+    "",
+    "## Multi-agent orchestration",
+    "",
+    "### Quick reference",
+    "",
+    "| Command | Alias | What it does |",
+    "|---------|-------|-------------|",
+    "| `ad doctor` | | Verify install — hooks, PATH, settings |",
+    "| `ad init` | | Scaffold .agent-daemon/ in this project |",
+    "| `ad team list-templates` | `ad tt` | Show available team templates |",
+    "| `ad team create --template <name> --task \"...\"` | `ad tc` | Create a team with roles + task graph |",
+    "| `ad team status --team <id>` | `ad ts` | Kanban board — tasks, agents, progress |",
+    "| `ad team inbox --team <id> --agent <name>` | `ad ti` | Read completion messages |",
+    "| `ad spawn --team <id> --role <role> --task \"...\" --cwd .` | `ad sp` | Launch agent in isolated worktree |",
+    "| `ad team delete --team <id>` | `ad td` | Remove a team |",
+    "| `ad team cleanup` | `ad tu` | Prune stale worktrees |",
+    "",
+    "### Team templates",
+    "",
+    "- **solo-with-qa** — 1 dev + 1 QA (simplest, good for most tasks)",
+    "- **full-stack-feature** — lead + backend + frontend + QA (parallel work)",
+    "- **bug-triage-team** — lead + investigator + fixer + reviewer",
+    "- **code-review-team** — lead + security + performance reviewers",
+    "",
+    "### When to use multi-agent",
+    "",
+    "Use multi-agent when ALL of these are true:",
+    "- Task spans 2+ domains (backend + frontend, code + tests, etc.)",
+    "- Subtasks can run in parallel",
+    "- Estimated work exceeds ~30 minutes",
+    "",
+    "Stay single-agent for: quick fixes, single-file changes, questions, reviews of small scope.",
+    "",
+    "### Multi-agent workflow",
+    "",
+    "1. **Analyze** — Break the task into subtasks with dependencies",
+    "2. **Ask the user** — Present the team plan (template, roles, task graph) and wait for approval",
+    "3. **Create** — `ad tc --template <name> --task \"...\"`",
+    "4. **Spawn** — `ad sp --team <id> --role <role> --task \"...\" --cwd .` for each worker",
+    "5. **Monitor** — `ad ts --team <id>` to check progress, `ad ti` for inbox",
+    "6. **Merge** — Review agent branches, merge in dependency order, test",
+    "7. **Cleanup** — `ad td --team <id>` when done",
+    "",
+    "### Multi-agent rules",
+    "",
+    "- **Always ask before spawning** — Never create teams or spawn agents without showing the plan and getting user approval first.",
+    "- **Leader = your session** — You (Claude) are the team lead. Workers run in background worktrees.",
+    "- **Isolation** — Each agent works on its own git branch. Changes don't touch the user's working branch until explicitly merged.",
+    "- **Review before merge** — Always let the user review agent output before merging branches.",
     endMarker
   ].join("\n");
 }
