@@ -1,22 +1,26 @@
-// Tests for the managed CLAUDE.md block that `ad init` writes/refreshes
-// between <!-- agent-daemon:start --> / <!-- agent-daemon:end --> markers.
+// Tests for the two managed surfaces that `ad init` writes/refreshes between
+// <!-- agent-daemon:start --> / <!-- agent-daemon:end --> markers:
+//   - renderManagedClaudeBlock() — the SHORT synopsis injected into CLAUDE.md
+//     (loaded every session, so it must stay lean and point at the manual)
+//   - renderAdInstructions()     — the FULL operating manual written to
+//     AD-INSTRUCTIONS.md (read on demand, so it carries the decision tree /
+//     workflow / session-close protocol / multi-agent guide)
 //
-// Background: prior to Tier 1 (2026-05-22), the block was added on first
-// `ad init` and never refreshed — existing projects never picked up content
-// updates (skill decision tree, daemon workflow diagram). This suite pins:
-//   1. renderManagedClaudeBlock() returns a string framed by both markers
-//   2. The block contains the skill decision table + daemon workflow diagram
-//      + mid-session discipline rule (the Tier 1 additions)
-//   3. The block is self-describing — mentions it's managed by `ad init`
-//      so users know re-running upgrades it
+// The full manual used to live inside the CLAUDE.md block; it was moved out to
+// AD-INSTRUCTIONS.md to keep per-session context small. These tests pin both
+// the slimming of the block AND the completeness of the manual.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { renderManagedClaudeBlock } from "../src/managed-claude-block.mjs";
+import { renderManagedClaudeBlock, renderAdInstructions } from "../src/managed-claude-block.mjs";
 
 const START = "<!-- agent-daemon:start -->";
 const END = "<!-- agent-daemon:end -->";
+
+// ---------------------------------------------------------------------------
+// Slim CLAUDE.md synopsis block
+// ---------------------------------------------------------------------------
 
 test("renderManagedClaudeBlock: frames output with both markers", () => {
   const out = renderManagedClaudeBlock(START, END);
@@ -24,26 +28,82 @@ test("renderManagedClaudeBlock: frames output with both markers", () => {
   assert.ok(out.endsWith(END), "ends with end marker");
 });
 
-test("renderManagedClaudeBlock: includes skill decision table", () => {
+test("renderManagedClaudeBlock: self-describes as managed (refresh hint)", () => {
   const out = renderManagedClaudeBlock(START, END);
+  assert.match(out, /managed by `ad init`/i);
+});
+
+test("renderManagedClaudeBlock: points at the on-demand manual", () => {
+  const out = renderManagedClaudeBlock(START, END);
+  assert.match(out, /AD-INSTRUCTIONS\.md/, "names the manual file");
+  assert.match(out, /read .*AD-INSTRUCTIONS\.md.* before any substantial/is,
+    "instructs reading the manual before substantial work");
+});
+
+test("renderManagedClaudeBlock: keeps the always-on proportionality rule", () => {
+  const out = renderManagedClaudeBlock(START, END);
+  assert.match(out, /Proportionality rule/i);
+  assert.match(out, /hey/, "trivial requests skip skill search");
+});
+
+test("renderManagedClaudeBlock: is slim — full manual content moved out", () => {
+  const out = renderManagedClaudeBlock(START, END);
+  // The heavy detail now lives in AD-INSTRUCTIONS.md, not the always-on block.
+  assert.doesNotMatch(out, /\| User says \(English \/ Hinglish\) \| Invoke skill \|/,
+    "no full skill decision table in the slim block");
+  assert.doesNotMatch(out, /SessionStart hook  →/, "no workflow diagram in the slim block");
+  assert.doesNotMatch(out, /Task-complexity gate \(size the request/,
+    "no full task-complexity gate in the slim block");
+  // Keep it genuinely small.
+  assert.ok(out.split("\n").length < 30, "slim block stays under 30 lines");
+});
+
+test("renderManagedClaudeBlock: idempotent — same input produces same output", () => {
+  const a = renderManagedClaudeBlock(START, END);
+  const b = renderManagedClaudeBlock(START, END);
+  assert.equal(a, b);
+});
+
+// ---------------------------------------------------------------------------
+// Full AD-INSTRUCTIONS.md operating manual
+// ---------------------------------------------------------------------------
+
+test("renderAdInstructions: frames output with both markers", () => {
+  const out = renderAdInstructions(START, END);
+  assert.ok(out.startsWith(START), "starts with start marker");
+  assert.ok(out.endsWith(END), "ends with end marker");
+});
+
+test("renderAdInstructions: self-describes as managed (refresh hint)", () => {
+  const out = renderAdInstructions(START, END);
+  assert.match(out, /managed by `ad init`/i);
+});
+
+test("renderAdInstructions: includes the task-complexity gate", () => {
+  const out = renderAdInstructions(START, END);
+  assert.match(out, /Task-complexity gate/i);
+  assert.match(out, /Simple \/ direct/);
+  assert.match(out, /High-risk \/ parallel/);
+});
+
+test("renderAdInstructions: includes the skill decision table", () => {
+  const out = renderAdInstructions(START, END);
   assert.match(out, /Skill decision tree/i);
-  // Spot-check three rows the user explicitly asked for
   assert.match(out, /debug-triage/, "bug → debug-triage");
   assert.match(out, /skill-author/, "create-a-skill → skill-author");
   assert.match(out, /session-close/, "bye → session-close");
 });
 
-test("renderManagedClaudeBlock: covers Hinglish trigger phrases", () => {
-  const out = renderManagedClaudeBlock(START, END);
-  // Hinglish phrases that the daemon workflow specifically targets
+test("renderAdInstructions: covers Hinglish trigger phrases", () => {
+  const out = renderAdInstructions(START, END);
   assert.match(out, /toot gaya/, "Hinglish bug phrase");
   assert.match(out, /banao/, "Hinglish build phrase");
   assert.match(out, /session khatam/, "Hinglish session-end phrase");
   assert.match(out, /har baar yaad rakhna/, "Hinglish skill-author phrase");
 });
 
-test("renderManagedClaudeBlock: includes daemon workflow diagram", () => {
-  const out = renderManagedClaudeBlock(START, END);
+test("renderAdInstructions: includes daemon workflow diagram", () => {
+  const out = renderAdInstructions(START, END);
   assert.match(out, /SessionStart hook/);
   assert.match(out, /UserPromptSubmit/);
   assert.match(out, /PostToolUse/);
@@ -51,37 +111,38 @@ test("renderManagedClaudeBlock: includes daemon workflow diagram", () => {
   assert.match(out, /agent-daemon-digest/);
 });
 
-test("renderManagedClaudeBlock: includes mid-session memory discipline", () => {
-  const out = renderManagedClaudeBlock(START, END);
+test("renderAdInstructions: includes mid-session memory discipline", () => {
+  const out = renderAdInstructions(START, END);
   assert.match(out, /Mid-session memory discipline/i);
   assert.match(out, /activeContext\.md/);
 });
 
-test("renderManagedClaudeBlock: self-describes as managed (refresh hint)", () => {
-  const out = renderManagedClaudeBlock(START, END);
-  // Users must know re-running `ad init` upgrades this block
-  assert.match(out, /managed by `ad init`/i);
-});
-
-test("renderManagedClaudeBlock: preserves the legacy session-close 3-step protocol", () => {
-  const out = renderManagedClaudeBlock(START, END);
+test("renderAdInstructions: preserves the session-close 3-step protocol", () => {
+  const out = renderAdInstructions(START, END);
   assert.match(out, /Update the session log/);
   assert.match(out, /Emit the agent-daemon digest block/);
   assert.match(out, /Create handoff docs/);
-  // Both handoff locations still documented
   assert.match(out, /\.agent-daemon\/handoffs\/handoff-/);
   assert.match(out, /~\/\.agent-daemon\/handoffs\/<project-slug>/);
 });
 
-test("renderManagedClaudeBlock: describes deterministic continuous capture accurately", () => {
-  const out = renderManagedClaudeBlock(START, END);
-  assert.match(out, /continuous extraction still runs/i);
+test("renderAdInstructions: folds in the multi-agent orchestration guide", () => {
+  const out = renderAdInstructions(START, END);
+  assert.match(out, /Multi-agent orchestration/i);
+  // Commands + templates that previously lived in the static template file
+  assert.match(out, /ad team list-templates/);
+  assert.match(out, /full-stack-feature/);
+  assert.match(out, /Always ask before spawning/);
+});
+
+test("renderAdInstructions: describes deterministic continuous capture accurately", () => {
+  const out = renderAdInstructions(START, END);
   assert.match(out, /without an API key/i);
   assert.doesNotMatch(out, /NOTHING lands in SQLite/);
 });
 
-test("renderManagedClaudeBlock: idempotent — same input produces same output", () => {
-  const a = renderManagedClaudeBlock(START, END);
-  const b = renderManagedClaudeBlock(START, END);
+test("renderAdInstructions: idempotent — same input produces same output", () => {
+  const a = renderAdInstructions(START, END);
+  const b = renderAdInstructions(START, END);
   assert.equal(a, b);
 });

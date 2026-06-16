@@ -14,6 +14,46 @@ import { applyLearnings } from "./apply.mjs";
 import { upsertSession, findSkillsNeedingEvolution } from "../memory/episodic.mjs";
 import { appendSessionLog, buildEntry as buildSessionLogEntry } from "./session-log.mjs";
 
+// File-bearing tools — their inputs name the files in play during the session.
+const FILE_TOOLS = new Set(["Edit", "Write", "NotebookEdit", "MultiEdit", "Read"]);
+
+/**
+ * Collect the files touched during a session from the transcript's tool_use
+ * events. Paths are normalized to forward slashes and made cwd-relative when
+ * possible, so file-aware recall (searchLearningsByFile) and the SessionStart
+ * working-set boost can match them deterministically across platforms.
+ *
+ * Coarse by design: these become tags on every learning from the session
+ * ("the files in play that session"), matching claude-mem's loose
+ * filesModified/filesRead model. Capped so a giant session can't bloat tags.
+ *
+ * Exported for unit testing.
+ *
+ * @param {import("../adapters/claude-code.mjs").TranscriptSummary} summary
+ * @param {string} [cwd]
+ * @returns {string[]}
+ */
+export function touchedFiles(summary, cwd) {
+  if (!summary?.events) return [];
+  const cwdNorm = String(cwd || "").replace(/\\/g, "/").replace(/\/+$/, "");
+  const set = new Set();
+  for (const e of summary.events) {
+    if (e.type !== "tool_use" || !FILE_TOOLS.has(e.tool)) continue;
+    let input;
+    try { input = JSON.parse(e.text); } catch { continue; }
+    if (!input || typeof input !== "object") continue;
+    const raw = input.file_path || input.notebook_path || input.path;
+    if (!raw || typeof raw !== "string") continue;
+    let p = raw.replace(/\\/g, "/").trim();
+    if (cwdNorm && p.toLowerCase().startsWith(cwdNorm.toLowerCase() + "/")) {
+      p = p.slice(cwdNorm.length + 1);
+    }
+    if (p) set.add(p);
+    if (set.size >= 12) break;
+  }
+  return [...set];
+}
+
 /**
  * @param {{
  *   transcript?: string,
@@ -196,12 +236,18 @@ export async function runDigest(opts) {
 
   const classified = classify(extractResult.learnings, { availableSkills });
 
+  // File-aware memory: tag every learning with the files in play this session
+  // so later sessions can recall "what did we learn about X.ts" and the
+  // SessionStart working-set boost can prioritize relevant history.
+  const sessionFiles = touchedFiles(summary, opts.cwd);
+
   // Step 5 — apply (write memory or queue proposals)
   const applyResult = await applyLearnings({
     classified,
     sessionId: opts.sessionId || summary.sessionId,
     sessionSummary: extractResult.sessionSummary,
     cwd: opts.cwd,
+    sessionFiles,
     dryRun: opts.dryRun,
     verbose: opts.verbose
   });

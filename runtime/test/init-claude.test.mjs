@@ -41,10 +41,22 @@ test("ad init creates, refreshes, and preserves project CLAUDE.md content", asyn
     assert.equal(result.code, 0);
     const created = await fs.readFile(path.join(project, "CLAUDE.md"), "utf8");
     assert.match(created, /<!-- agent-daemon:start -->/);
-    assert.match(created, /continuous extraction still runs/i);
+    // The slim CLAUDE.md block points at the on-demand manual instead of
+    // carrying the full content (which now lives in AD-INSTRUCTIONS.md).
+    assert.match(created, /AD-INSTRUCTIONS\.md/);
+    assert.doesNotMatch(created, /SessionStart hook  →/, "full workflow diagram is not in CLAUDE.md");
+
+    // AD-INSTRUCTIONS.md is created with the full operating manual.
+    const manual = await fs.readFile(path.join(project, "AD-INSTRUCTIONS.md"), "utf8");
+    assert.match(manual, /<!-- agent-daemon:start -->/);
+    assert.match(manual, /Skill decision tree/i);
+    assert.match(manual, /Update the session log/);
+    assert.match(manual, /Multi-agent orchestration/i);
+
     const diagnosis = await runDoctor(project, root);
     assert.notEqual(diagnosis.code, 0, "new templates should require bootstrap");
     assert.match(diagnosis.stdout, /Project CLAUDE\.md instructions/);
+    assert.match(diagnosis.stdout, /Project AD-INSTRUCTIONS\.md/);
     assert.match(diagnosis.stdout, /Prompt retrieval hook/);
     assert.match(diagnosis.stdout, /Skill invocation telemetry/);
     assert.match(diagnosis.stdout, /Project memory bootstrap/);

@@ -11,6 +11,12 @@
 // Fallback: if no block is found AND ANTHROPIC_API_KEY is set AND
 // AGENT_DAEMON_FALLBACK_LLM=1, we can call headless claude as before. By
 // default we just return empty learnings and skip silently.
+//
+// Privacy: every assistant turn is run through stripPrivate before parsing, so
+// <private>…</private> content the user marked is gone before the digest block
+// (or the LLM-fallback transcript render) ever sees it (see sanitize.mjs).
+
+import { stripPrivate } from "./sanitize.mjs";
 
 /**
  * @typedef {Object} Learning
@@ -121,7 +127,7 @@ export function extractFromAgentBlock(summary) {
   for (let i = summary.events.length - 1; i >= 0; i--) {
     const ev = summary.events[i];
     if (ev.type !== "assistant") continue;
-    const text = ev.text || "";
+    const text = stripPrivate(ev.text || "");
     const allMatches = [...text.matchAll(DIGEST_BLOCK_RE_GLOBAL)];
     if (allMatches.length === 0) continue;
     const m = allMatches[allMatches.length - 1];
@@ -642,7 +648,8 @@ function renderTranscriptForExtraction(summary, maxBytes = 200_000) {
 }
 
 function renderEvent(e) {
-  const text = (e.text || "").trim();
+  // Strip <private> spans before they reach the LLM-fallback prompt too.
+  const text = stripPrivate((e.text || "").trim());
   if (!text) return null;
   const trimmed = text.length > 1500 ? text.slice(0, 750) + " […trimmed…] " + text.slice(-300) : text;
   switch (e.type) {

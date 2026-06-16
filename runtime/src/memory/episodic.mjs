@@ -17,25 +17,37 @@ import { open, learningContentHash } from "./sqlite.mjs";
 /* ------------------------------------------------------------------ */
 
 let _db = null;
-let _attempted = false;
+let _dbPromise = null;
 
 /**
  * Get-or-open the singleton database. Returns null if better-sqlite3 isn't
  * installed (callers handle gracefully — the markdown side of digest still works).
  *
+ * Concurrency-safe: parallel callers (e.g. the MCP server handling several
+ * tool calls at once) share the SAME in-flight open() promise. A previous
+ * boolean-gate implementation returned null to the second caller while the
+ * first open() was still awaiting — surfacing as spurious "(no learning)"
+ * misses under concurrent load. A resolved null (driver missing) is cached so
+ * we don't re-attempt every call; a rejected open() resets so a later call can
+ * retry.
+ *
  * @returns {Promise<import("./sqlite.mjs").Db | null>}
  */
 export async function db() {
   if (_db) return _db;
-  if (_attempted) return null;
-  _attempted = true;
-  _db = await open();
-  return _db;
+  if (!_dbPromise) {
+    _dbPromise = open()
+      .then(handle => { _db = handle; return handle; })
+      .catch(err => { _dbPromise = null; throw err; });
+  }
+  return _dbPromise;
 }
 
 /** Close the singleton (for tests). */
 export function closeDb() {
-  if (_db) { _db.close(); _db = null; _attempted = false; }
+  if (_db) { _db.close(); }
+  _db = null;
+  _dbPromise = null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -325,6 +337,123 @@ export async function listRecentLearnings(opts = {}) {
        FROM learnings
       WHERE ${where}
       ORDER BY created_at DESC
+      LIMIT ?`,
+    [...params, limit]
+  );
+}
+
+/**
+ * Fetch full learnings by id — the "detail" layer of the progressive-disclosure
+ * MCP flow (search returns compact IDs → memory_get fetches the full rows for
+ * the few the agent kept). Returns un-clipped text + evidence + provenance
+ * (session_id, created_at) + evolution counters. Order matches the input ids
+ * is not guaranteed; rows come back id-ascending.
+ *
+ * @param {Array<number|string>} ids
+ * @param {{limit?: number}} [opts]
+ * @returns {Promise<Array<object>>}
+ */
+export async function getLearningsByIds(ids, opts = {}) {
+  const handle = await db();
+  if (!handle || !Array.isArray(ids)) return [];
+  const cap = Math.min(20, Math.max(1, opts.limit ?? 20));
+  const clean = [...new Set(ids.map(n => Number(n)).filter(Number.isInteger))].slice(0, cap);
+  if (clean.length === 0) return [];
+  const placeholders = clean.map(() => "?").join(",");
+  return handle.all(
+    `SELECT id, session_id, project_slug, category, text, evidence, confidence,
+            observed_count, retrieval_count, usefulness, tags, applied_to, status,
+            created_at, last_verified_at
+       FROM learnings
+      WHERE id IN (${placeholders})
+      ORDER BY id ASC`,
+    clean
+  );
+}
+
+/**
+ * Timeline around one learning — the "context" layer of progressive disclosure.
+ * Resolves the learning's originating session, that session's metadata, and the
+ * sibling learnings extracted from the same session (chronological). Lets the
+ * agent see "what else was going on when this was learned" before deciding
+ * whether to fetch full detail.
+ *
+ * @param {number|string} id
+ * @param {{limit?: number}} [opts]
+ * @returns {Promise<{learning: object, session: object|null, neighbors: object[]} | null>}
+ */
+export async function learningTimeline(id, opts = {}) {
+  const handle = await db();
+  if (!handle) return null;
+  const lid = Number(id);
+  if (!Number.isInteger(lid)) return null;
+  const limit = Math.min(50, Math.max(1, opts.limit ?? 10));
+
+  const learning = handle.get(
+    `SELECT id, session_id, project_slug, category, text, confidence, created_at
+       FROM learnings WHERE id = ? LIMIT 1`,
+    [lid]
+  );
+  if (!learning) return null;
+
+  let session = null;
+  let neighbors = [];
+  if (learning.session_id) {
+    session = handle.get(
+      `SELECT id, project_slug, started_at, ended_at, digest_status, transcript_path
+         FROM sessions WHERE id = ? LIMIT 1`,
+      [learning.session_id]
+    ) || null;
+    neighbors = handle.all(
+      `SELECT id, category, text, confidence, created_at
+         FROM learnings
+        WHERE session_id = ? AND id != ? AND status = 'active'
+        ORDER BY created_at ASC, id ASC
+        LIMIT ?`,
+      [learning.session_id, lid, limit]
+    );
+  }
+  return { learning, session, neighbors };
+}
+
+/**
+ * File-aware recall: find learnings whose `tags` reference a given file. The
+ * digest pipeline tags each learning with the files in play that session
+ * (normalized to forward slashes), so this matches either the full normalized
+ * path or just the basename. Deterministic LIKE over the JSON-serialized tags
+ * column — no FTS tokenizer surprises on paths with dots/slashes.
+ *
+ * @param {string} file                              - path or basename
+ * @param {{projectSlug?: string, scope?: 'project'|'global'|'any', limit?: number, status?: string}} [opts]
+ * @returns {Promise<Array<object>>}
+ */
+export async function searchLearningsByFile(file, opts = {}) {
+  const handle = await db();
+  if (!handle || !file) return [];
+  const limit = opts.limit ?? 5;
+  const status = opts.status ?? "active";
+  const norm = String(file).replace(/\\/g, "/").trim();
+  if (!norm) return [];
+  const base = norm.split("/").pop();
+
+  let where = "tags IS NOT NULL AND (tags LIKE ? OR tags LIKE ?) AND status = ?";
+  const params = [`%${norm}%`, `%"${base}"%`, status];
+
+  if (opts.projectSlug && opts.scope !== "global") {
+    if (opts.scope === "project") {
+      where += " AND project_slug = ?";
+      params.push(opts.projectSlug);
+    } else {
+      where += " AND (project_slug = ? OR project_slug IS NULL)";
+      params.push(opts.projectSlug);
+    }
+  }
+
+  return handle.all(
+    `SELECT id, category, text, evidence, confidence, project_slug, created_at, tags
+       FROM learnings
+      WHERE ${where}
+      ORDER BY confidence DESC, created_at DESC
       LIMIT ?`,
     [...params, limit]
   );

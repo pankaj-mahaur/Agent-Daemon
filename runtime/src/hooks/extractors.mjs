@@ -1,6 +1,9 @@
 // Rules-based learning extractors.
 //
 // Pure functions only — no fs, no stdin, no side effects. Easy to test.
+//
+// Privacy: extractFromText strips <private>…</private> regions before any rule
+// runs, so user-marked secrets never become a journal entry (see sanitize.mjs).
 // Each rule scans a chunk of text and returns zero or more {type, text,
 // evidence_quote, confidence} learnings. The UserPromptSubmit hook composes
 // these to capture lessons from the previous assistant turn (and the current
@@ -26,6 +29,8 @@
  * @property {string[]} tags
  * @property {string} rule_id          which rule fired (for debugging/replay)
  */
+
+import { stripPrivate } from "../digest/sanitize.mjs";
 
 /**
  * Single rule definition.
@@ -225,11 +230,15 @@ export function extractFromText(text, meta = {}) {
   const speaker = meta.speaker || "user";
   const cap = meta.maxLearnings ?? 6;
 
+  // Privacy guard — drop <private>…</private> spans before any rule sees them.
+  const cleaned = stripPrivate(text);
+  if (!cleaned) return [];
+
   const out = [];
   const seen = new Set();   // dedupe within this call by `rule_id + text-prefix`
 
   // Slice big inputs — extractors operate on a window
-  const window = text.length > 16_000 ? text.slice(-16_000) : text;
+  const window = cleaned.length > 16_000 ? cleaned.slice(-16_000) : cleaned;
 
   for (const rule of RULES) {
     if (out.length >= cap) break;

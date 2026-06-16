@@ -37,6 +37,7 @@ import { screenLearning, neutralizeText } from "./sanitize.mjs";
  *   sessionId: string|null,
  *   sessionSummary: string,
  *   cwd: string,
+ *   sessionFiles?: string[],
  *   dryRun?: boolean,
  *   verbose?: boolean
  * }} opts
@@ -58,6 +59,10 @@ export async function applyLearnings(opts) {
   const stamp = new Date().toISOString();
   const dateOnly = stamp.slice(0, 10);
   const slug = projectSlug(opts.cwd);
+  // File-aware tags — merged into the SQLite audit row only (NOT the markdown
+  // render, which stays human-readable). Feeds searchLearningsByFile + the
+  // SessionStart working-set boost.
+  const sessionFiles = Array.isArray(opts.sessionFiles) ? opts.sessionFiles : [];
 
   // Resolve memory locations
   const projectMemoryPath = await resolveProjectMemoryPath(opts.cwd);
@@ -151,7 +156,7 @@ export async function applyLearnings(opts) {
       text: l.text,
       evidence: l.evidence_quote,
       confidence: l.confidence,
-      tags: l.tags,
+      tags: mergeFileTags(l.tags, sessionFiles),
       appliedTo: item.targets.filter(t => t !== "episodic-only").join(",") || "episodic"
     });
   }
@@ -259,6 +264,23 @@ async function mirrorToClaudeMd(claudeMdPath, items, dateOnly) {
 
 function escapeRegExp(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Merge a learning's own tags with the session's touched-files list for the
+ * SQLite audit row. Deduped, original tags first (more specific), capped so a
+ * huge session can't bloat the indexed tags column. Returns undefined when
+ * there's nothing to store (keeps the column NULL, matching prior behavior).
+ *
+ * @param {string[]|undefined} ownTags
+ * @param {string[]} fileTags
+ * @returns {string[]|undefined}
+ */
+function mergeFileTags(ownTags, fileTags) {
+  const own = Array.isArray(ownTags) ? ownTags.filter(t => typeof t === "string") : [];
+  if (!fileTags.length) return own.length ? own : undefined;
+  const merged = [...new Set([...own, ...fileTags])].slice(0, 16);
+  return merged.length ? merged : undefined;
 }
 
 const MAX_PENDING_ENTRIES = 100;
