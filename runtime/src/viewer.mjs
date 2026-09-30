@@ -72,7 +72,7 @@ export async function gatherViewerData() {
        FROM sessions ORDER BY started_at DESC LIMIT 50`
   );
   const learnings = safeAll(
-    `SELECT id, category, text, confidence, project_slug, tags,
+    `SELECT id, category, text, confidence, project_slug, tags, derivation,
             observed_count, retrieval_count, created_at
        FROM learnings WHERE status = 'active'
       ORDER BY created_at DESC LIMIT 200`
@@ -154,7 +154,7 @@ function renderLearnings(rows) {
     const tags = (l.tagList || []).map(t => `<span class="tag">${cell(t, 80)}</span>`).join(" ");
     return `<tr>
       <td class="num">${escapeHtml(l.id)}</td>
-      <td><span class="cat cat-${escapeHtml(String(l.category || "").replace(/[^a-z]/gi, ""))}">${cell(l.category, 40)}</span></td>
+      <td><span class="cat cat-${escapeHtml(String(l.category || "").replace(/[^a-z]/gi, ""))}">${cell(l.category, 40)}</span>${l.derivation ? `<span class="tier tier-${escapeHtml(String(l.derivation).replace(/[^a-z]/gi, ""))}">${cell(l.derivation, 20)}</span>` : ""}</td>
       <td class="conf">${escapeHtml(Number(l.confidence).toFixed(2))}</td>
       <td>${cell(l.text)}<div class="tags">${tags}</div></td>
       <td class="num">${escapeHtml(l.observed_count ?? 1)}/${escapeHtml(l.retrieval_count ?? 0)}</td>
@@ -261,6 +261,8 @@ td.dim,.dim{color:var(--dim)}
 tr:hover td{background:#1b1f27}
 .cat{font-size:11px;padding:1px 7px;border-radius:10px;border:1px solid var(--line);white-space:nowrap}
 .cat-correction{color:var(--bad)}.cat-gotcha{color:var(--warn)}.cat-pattern{color:var(--accent)}.cat-decision{color:var(--good)}
+.tier{font-size:10px;margin-left:5px;padding:0 5px;border-radius:8px;border:1px solid var(--line);color:var(--dim)}
+.tier-explicit{color:var(--good)}.tier-inferred{color:var(--warn)}
 .status{font-size:11px;padding:1px 7px;border-radius:10px;border:1px solid var(--line)}
 .status-digested{color:var(--good)}.status-queued{color:var(--warn)}.status-error{color:var(--bad)}
 .tags{margin-top:4px}

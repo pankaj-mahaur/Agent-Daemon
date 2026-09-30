@@ -131,6 +131,7 @@ export function renderAdInstructions(startMarker, endMarker) {
     "2. **Context:** `memory_timeline(id)` → the originating session + the sibling learnings around a hit.",
     "3. **Detail:** `memory_get(ids)` → full text + evidence + provenance for the few ids you keep.",
     "",
+    "- **Know the user:** `memory_profile()` returns a deterministic \"how this user works\" rollup (identity / prefers / tools / conventions / watch-out). Read it before substantial work to align with established preferences and conventions.",
     "- **File-aware recall:** each learning is tagged with the files in play that session, so `memory_files(\"auth.ts\")` surfaces \"what we learned about auth.ts\". SessionStart also auto-boosts learnings tied to files you're currently editing (derived from `git diff`/`status`).",
     "- **Privacy — `<private>…</private>`:** wrap any content in this tag and it is stripped before any extractor sees it — it never becomes a stored learning. Use it for secrets, tokens, or anything that must stay out of memory.",
     "- **Inspect everything:** `ad viewer --open` renders a single zero-dependency HTML snapshot of sessions, learnings, proposals, routing stats, and retrieval telemetry.",

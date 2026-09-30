@@ -70,13 +70,14 @@ test("memory MCP: tools/list advertises the progressive-disclosure tools, and ge
   process.env.HOME = dir;
   process.env.USERPROFILE = dir;
 
-  let id1, id2, toolNames, getText, timelineText, filesText, missText;
+  let id1, id2, toolNames, getText, timelineText, filesText, missText, profileText;
   try {
     // Seed a tmp DB via episodic (same HOME the server will resolve).
     const mod = await import(`../src/memory/episodic.mjs?cachebust=${Date.now()}-${Math.random()}`);
     await mod.upsertSession({ id: "sess-X", projectPath: "/tmp/mcpproj", startedAt: "2026-06-10T09:00:00.000Z" });
     id1 = await mod.insertLearning({ sessionId: "sess-X", category: "gotcha", text: "mcp detail learning", evidence: "the evidence", tags: ["src/mcp/thing.ts"], confidence: 0.7 });
     id2 = await mod.insertLearning({ sessionId: "sess-X", category: "pattern", text: "mcp sibling learning", confidence: 0.6 });
+    await mod.observeUserFact({ category: "tool", text: "prefers pnpm", confidence: 0.8 });
     mod.closeDb();
 
     const env = { ...process.env, HOME: dir, USERPROFILE: dir, CLAUDE_PROJECT_DIR: "/tmp/mcpproj" };
@@ -86,7 +87,8 @@ test("memory MCP: tools/list advertises the progressive-disclosure tools, and ge
       { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "memory_get", arguments: { ids: [id1] } } },
       { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "memory_timeline", arguments: { id: id1 } } },
       { jsonrpc: "2.0", id: 5, method: "tools/call", params: { name: "memory_files", arguments: { path: "thing.ts" } } },
-      { jsonrpc: "2.0", id: 6, method: "tools/call", params: { name: "memory_get", arguments: { ids: [987654] } } }
+      { jsonrpc: "2.0", id: 6, method: "tools/call", params: { name: "memory_get", arguments: { ids: [987654] } } },
+      { jsonrpc: "2.0", id: 7, method: "tools/call", params: { name: "memory_profile", arguments: {} } }
     ]);
 
     toolNames = (responses[2]?.result?.tools || []).map(t => t.name);
@@ -94,6 +96,7 @@ test("memory MCP: tools/list advertises the progressive-disclosure tools, and ge
     timelineText = callText(responses[4]);
     filesText = callText(responses[5]);
     missText = callText(responses[6]);
+    profileText = callText(responses[7]);
   } finally {
     process.env.HOME = prevHome;
     process.env.USERPROFILE = prevUP;
@@ -101,7 +104,7 @@ test("memory MCP: tools/list advertises the progressive-disclosure tools, and ge
   }
 
   // tools/list
-  for (const name of ["memory_search", "memory_get", "memory_timeline", "memory_files"]) {
+  for (const name of ["memory_search", "memory_get", "memory_timeline", "memory_files", "memory_profile"]) {
     assert.ok(toolNames.includes(name), `tools/list missing ${name} (got ${toolNames})`);
   }
   // memory_get — full text + provenance
@@ -115,4 +118,8 @@ test("memory MCP: tools/list advertises the progressive-disclosure tools, and ge
   assert.match(filesText, /mcp detail learning/);
   // memory_get on a missing id — graceful
   assert.match(missText, /no learnings found/i);
+  // memory_profile — deterministic representation rollup
+  assert.match(profileText, /Tools|Prefers|Conventions|Watch out/, `profile had no buckets: ${profileText}`);
+  assert.match(profileText, /pnpm/, "user fact surfaced in the representation");
+  assert.match(profileText, /derived deterministically/);
 });

@@ -36,6 +36,8 @@ import {
   getLearningsByIds,
   learningTimeline,
   markRetrieved,
+  buildUserRepresentation,
+  representationToMarkdown,
   stats,
   projectSlug,
   db
@@ -110,6 +112,11 @@ const TOOLS = [
     }
   },
   {
+    name: "memory_profile",
+    description: "Deterministic 'how this user works' representation — rolls up cross-project user facts + high-confidence stated learnings into identity / prefers / tools / conventions / watch-out. The no-LLM analog of a user model; read this to align with the user's established preferences and conventions before substantial work.",
+    inputSchema: { type: "object", properties: {} }
+  },
+  {
     name: "memory_stats",
     description: "Row counts and retrieval telemetry for the episodic memory store.",
     inputSchema: { type: "object", properties: {} }
@@ -159,8 +166,9 @@ function parseTags(tagsJson) {
 function renderDetailed(rows) {
   if (!rows.length) return "(no learnings found for those ids)";
   const blocks = rows.map(r => {
+    const tier = r.derivation ? `, ${r.derivation}` : "";
     const lines = [
-      `[id ${r.id}] ${r.category} (conf ${Number(r.confidence).toFixed(2)}, seen ${r.observed_count ?? 1}×, retrieved ${r.retrieval_count ?? 0}×)`,
+      `[id ${r.id}] ${r.category}${tier} (conf ${Number(r.confidence).toFixed(2)}, seen ${r.observed_count ?? 1}×, retrieved ${r.retrieval_count ?? 0}×)`,
       neutralizeText(r.text, { maxChars: MAX_DETAIL_TEXT_CHARS })
     ];
     if (r.evidence) lines.push(`evidence: ${neutralizeText(r.evidence, { maxChars: 400 })}`);
@@ -235,6 +243,14 @@ async function callTool(name, args) {
         try { await markRetrieved(rows.map(r => r.id)); } catch { /* best-effort */ }
       }
       return renderDetailed(rows);
+    }
+    case "memory_profile": {
+      const profile = await buildUserRepresentation({ projectSlug: projectSlug(cwd) });
+      if (!profile) return "(no user representation yet — not enough facts/learnings recorded)";
+      let out = representationToMarkdown(profile, { neutralize: neutralizeText });
+      out += `\n\n_(derived deterministically from ${profile.counts.facts} user fact(s) + ${profile.counts.learnings} learning(s))_`;
+      if (Buffer.byteLength(out, "utf8") > MAX_DETAIL_BYTES) out = out.slice(0, MAX_DETAIL_BYTES) + "…";
+      return out;
     }
     case "memory_stats": {
       const s = await stats();
