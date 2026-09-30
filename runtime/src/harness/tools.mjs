@@ -64,8 +64,10 @@ export async function cmdTools(sub, name, opts = {}) {
       err.write(`Refusing to change ${engine.home}: it was not created by ad. Re-run with --force.\n`);
       return 2;
     }
+    // No MCP reload here: this app-server exits right away, and a reload
+    // would only start (and kill) a throwaway npx download. The next
+    // ad run / chat picks the change up.
     await engine.writeConfig(sub === "enable" ? tool.enable() : tool.disable());
-    if (name === "browser") await engine.reloadMcpServers();
     out.write(`${name}: ${sub === "enable" ? "on" : "off"}\n`);
     return 0;
   } catch (e) {

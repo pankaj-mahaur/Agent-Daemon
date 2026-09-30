@@ -48,7 +48,7 @@ test("budgets and the STOP file", () => {
   const h = Array.from({ length: LOOP_DEFAULTS.maxIterations }, () => rec());
   assert.match(loopDecision(h).reason, /iteration limit/);
   assert.match(loopDecision([rec()], { elapsedMs: 61 * 60_000 }).reason, /time limit/);
-  assert.match(loopDecision([rec()], { limits: { ...LOOP_DEFAULTS, maxTokens: 500 }, totalTokens: 600 }).reason, /token budget/);
+  assert.match(loopDecision([rec()], { limits: { ...LOOP_DEFAULTS, maxTokens: 500 }, spentTokens: 600 }).reason, /token budget/);
   assert.match(loopDecision([rec()], { stopRequested: true }).reason, /STOP file/);
 });
 
@@ -115,4 +115,18 @@ test("an existing STOP file refuses to start", async () => {
 test("the token budget stops the loop", async () => {
   const r = await loop("LOOPTEST-STUCK", () => ({ limits: { maxTokens: 1500 } }));
   assert.match(r.out, /token budget \(1500\)/);
+});
+
+test("circuit breaker: shell-command work counts as progress; missing status alone does not match", () => {
+  const cmdOnly = rec({ fileChanges: 0, commands: 2, status: null });
+  assert.equal(loopDecision([cmdOnly, cmdOnly, cmdOnly]).stop, false, "migrations/generators via shell are progress");
+  const silent = rec({ fileChanges: 0, commands: 0, status: null });
+  assert.match(loopDecision([silent, silent, silent]).reason, /no progress/, "no activity and no status at all is stuck");
+  const mixed = [rec({ fileChanges: 0, status: null }), rec({ fileChanges: 0, status: { progress: "x" } }), rec({ fileChanges: 0, status: null })];
+  assert.equal(loopDecision(mixed).stop, false);
+});
+
+test("resume without an objective asks to continue the thread's goal", () => {
+  assert.equal(nextPrompt("", undefined), "Continue working toward this thread's goal.");
+  assert.match(nextPrompt(undefined, rec()), /continue this thread's goal/);
 });

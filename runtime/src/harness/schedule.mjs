@@ -13,7 +13,7 @@
 
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -53,14 +53,15 @@ export function parseCron(expr) {
     return set;
   });
   const [minute, hour, dom, month, dow] = sets;
-  // Classic cron: when both day fields are restricted, either may match.
-  const domAny = parts[2] === "*";
-  const dowAny = parts[4] === "*";
+  // Vixie cron: when both day fields are restricted either may match; a
+  // field starting with "*" (incl. "*/2") counts as unrestricted.
+  const domAny = parts[2].startsWith("*");
+  const dowAny = parts[4].startsWith("*");
   return { minute, hour, dom, month, dow, domAny, dowAny };
 }
 
-export function cronMatches(cron, d) {
-  if (!cron.minute.has(d.getMinutes()) || !cron.hour.has(d.getHours()) || !cron.month.has(d.getMonth() + 1)) return false;
+function dayMatches(cron, d) {
+  if (!cron.month.has(d.getMonth() + 1)) return false;
   const domOk = cron.dom.has(d.getDate());
   const dowOk = cron.dow.has(d.getDay());
   if (cron.domAny && cron.dowAny) return true;
@@ -69,17 +70,32 @@ export function cronMatches(cron, d) {
   return domOk || dowOk;
 }
 
-// Next matching minute strictly after `from` (local time).
+export function cronMatches(cron, d) {
+  return cron.minute.has(d.getMinutes()) && cron.hour.has(d.getHours()) && dayMatches(cron, d);
+}
+
+// Next matching minute strictly after `from` (local time). Skips whole days
+// and hours that can't match, so rare schedules (Feb 29) are found fast.
 export function nextRun(expr, from = new Date()) {
   const cron = parseCron(expr);
   const d = new Date(from);
   d.setSeconds(0, 0);
   d.setMinutes(d.getMinutes() + 1);
-  for (let i = 0; i < 366 * 24 * 60; i++) {
-    if (cronMatches(cron, d)) return d;
-    d.setMinutes(d.getMinutes() + 1);
+  const limit = new Date(from);
+  limit.setFullYear(limit.getFullYear() + 8); // covers leap-day schedules
+  while (d <= limit) {
+    if (!dayMatches(cron, d)) {
+      d.setDate(d.getDate() + 1);
+      d.setHours(0, 0, 0, 0);
+    } else if (!cron.hour.has(d.getHours())) {
+      d.setHours(d.getHours() + 1, 0, 0, 0);
+    } else if (!cron.minute.has(d.getMinutes())) {
+      d.setMinutes(d.getMinutes() + 1);
+    } else {
+      return d;
+    }
   }
-  throw new Error(`cron "${expr}" never matches within a year`);
+  throw new Error(`cron "${expr}" never matches`);
 }
 
 // --------------------------------------------------------------- store --
@@ -123,31 +139,60 @@ export function addJob({ cron, kind, prompt, cwd, now = new Date() }, home) {
 
 // ---------------------------------------------------------------- run --
 
+// "--" ends option parsing: a prompt like "--sandbox=danger-full-access"
+// stays a prompt instead of becoming a flag.
 export function jobArgs(job) {
-  return job.kind === "loop" ? [CLI, "loop", job.prompt, "--cwd", job.cwd] : [CLI, "run", job.prompt, "--cwd", job.cwd];
+  return [CLI, job.kind === "loop" ? "loop" : "run", "--cwd", job.cwd, "--", job.prompt];
+}
+
+// Cross-process "running" lock: a job must not overlap itself even across
+// two daemons, a restart, or `ad schedule run` while the daemon runs it.
+const lockFile = (id, home) => path.join(scheduleDir(home), "schedule-locks", `${id}.pid`);
+function pidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === "EPERM";
+  }
+}
+export function jobLocked(id, home) {
+  const f = lockFile(id, home);
+  if (!existsSync(f)) return false;
+  const pid = Number(readFileSync(f, "utf8"));
+  if (pid && pidAlive(pid)) return true;
+  rmSync(f, { force: true }); // stale lock from a dead process
+  return false;
 }
 
 function runJob(job, { home, spawnFn = spawn, onExit } = {}) {
+  let finished = false;
+  const finish = (code, note) => {
+    if (finished) return; // 'error' and 'close' can both fire
+    finished = true;
+    running.delete(job.id);
+    rmSync(lockFile(job.id, home), { force: true });
+    log.end(`=== ${note}\n`);
+    onExit?.(code);
+  };
   const logDir = path.join(scheduleDir(home), "schedule-logs");
   mkdirSync(logDir, { recursive: true });
   const log = createWriteStream(path.join(logDir, `${job.id}.log`), { flags: "a" });
   // A log problem must never take the daemon down.
   log.on("error", (err) => process.stderr.write(`agent-daemon: schedule log for ${job.id}: ${err.message}\n`));
   log.write(`\n=== ${new Date().toISOString()} ${job.kind}: ${job.prompt}\n`);
+  if (!existsSync(job.cwd)) {
+    queueMicrotask(() => finish(-1, `folder no longer exists: ${job.cwd}`));
+    return null;
+  }
   const child = spawnFn(process.execPath, jobArgs(job), { cwd: job.cwd, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+  mkdirSync(path.dirname(lockFile(job.id, home)), { recursive: true });
+  writeFileSync(lockFile(job.id, home), String(child.pid ?? process.pid));
   child.stdout?.pipe(log, { end: false });
   child.stderr?.pipe(log, { end: false });
   running.set(job.id, child);
-  child.on("close", (code) => {
-    running.delete(job.id);
-    log.end(`=== exit ${code}\n`);
-    onExit?.(code);
-  });
-  child.on("error", (err) => {
-    running.delete(job.id);
-    log.end(`=== failed to start: ${err.message}\n`);
-    onExit?.(-1);
-  });
+  child.on("close", (code) => finish(code, `exit ${code}`));
+  child.on("error", (err) => finish(-1, `failed to start: ${err.message}`));
   return child;
 }
 
@@ -155,40 +200,80 @@ function recordExit(id, code, home) {
   const jobs = loadJobs(home);
   const j = jobs.find((x) => x.id === id);
   if (!j) return;
-  j.lastStatus = code === 0 ? "ok" : `exit ${code}`;
+  j.lastStatus = code === 0 ? "ok" : typeof code === "string" ? code : `exit ${code}`;
   saveJobs(jobs, home);
 }
 
 // Start every enabled job whose nextRun has passed. Returns started ids.
-export function tick({ home, now = new Date(), spawnFn } = {}) {
+// Each job is handled on its own: one broken job can't stop the others or
+// leave them without a new nextRun (which would re-run them every tick).
+export function tick({ home, now = new Date(), spawnFn, log = () => {} } = {}) {
   const jobs = loadJobs(home);
-  const started = [];
+  const due = [];
   for (const job of jobs) {
     if (!job.enabled || new Date(job.nextRun) > now) continue;
-    // Whatever happens, schedule the next run after now: a missed window
-    // runs once, not once per missed occurrence.
-    job.nextRun = nextRun(job.cron, now).toISOString();
-    if (running.has(job.id)) continue; // never overlap a job with itself
+    try {
+      // A missed window runs once, not once per missed occurrence.
+      job.nextRun = nextRun(job.cron, now).toISOString();
+    } catch (err) {
+      job.enabled = false;
+      job.lastStatus = `disabled: ${err.message}`;
+      log(`schedule: disabled ${job.id}: ${err.message}`);
+      continue;
+    }
+    if (running.has(job.id) || jobLocked(job.id, home)) continue; // never overlap a job with itself
     job.lastRun = now.toISOString();
     job.lastStatus = "running";
-    runJob(job, { home, spawnFn, onExit: (code) => recordExit(job.id, code, home) });
-    started.push(job.id);
+    due.push(job);
   }
-  saveJobs(jobs, home);
+  saveJobs(jobs, home); // persist every nextRun BEFORE anything is spawned
+  const started = [];
+  for (const job of due) {
+    try {
+      runJob(job, { home, spawnFn, onExit: (code) => recordExit(job.id, code, home) });
+      started.push(job.id);
+    } catch (err) {
+      log(`schedule: could not start ${job.id}: ${err.message}`);
+      recordExit(job.id, -1, home);
+    }
+  }
   return started;
 }
 
+// Jobs marked "running" by a daemon that died: mark them aborted.
+export function resetStaleRuns(home) {
+  const jobs = loadJobs(home);
+  let changed = false;
+  for (const j of jobs) {
+    if (j.lastStatus === "running" && !running.has(j.id) && !jobLocked(j.id, home)) {
+      j.lastStatus = "aborted";
+      changed = true;
+    }
+  }
+  if (changed) saveJobs(jobs, home);
+}
+
 export function startScheduler({ home, intervalMs = 30_000, log = () => {} } = {}) {
+  resetStaleRuns(home);
   const t = setInterval(() => {
     try {
-      const ids = tick({ home });
+      const ids = tick({ home, log });
       if (ids.length) log(`schedule: started ${ids.join(", ")}`);
     } catch (err) {
       log(`schedule: tick failed: ${err.message}`);
     }
   }, intervalMs);
   t.unref?.();
-  return () => clearInterval(t);
+  // On stop: kill running jobs (tree on Windows) so no child is orphaned
+  // mid-turn, and record them as aborted.
+  return () => {
+    clearInterval(t);
+    for (const [id, child] of running) {
+      if (process.platform === "win32" && child.pid) spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true }).on("error", () => child.kill());
+      else child.kill();
+      recordExit(id, "aborted", home);
+    }
+  };
 }
 
 // ---------------------------------------------------------------- cli --
@@ -233,6 +318,7 @@ export async function cmdSchedule(sub, args = [], opts = {}) {
       case "run": {
         const j = loadJobs(home).find((x) => x.id === args[0]);
         if (!j) throw new Error(`no job ${args[0] ?? "(missing id)"}`);
+        if (running.has(j.id) || jobLocked(j.id, home)) throw new Error(`job ${j.id} is already running`);
         const code = await new Promise((resolve) => runJob(j, { home, spawnFn: opts.spawnFn, onExit: resolve }));
         recordExit(j.id, code, home);
         out.write(`${j.id} finished: exit ${code} (log: ${path.join(scheduleDir(home), "schedule-logs", `${j.id}.log`)})\n`);

@@ -4,10 +4,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { addJob, cmdSchedule, cronMatches, jobArgs, loadJobs, nextRun, parseCron, tick } from "../src/harness/schedule.mjs";
+import { addJob, cmdSchedule, cronMatches, jobArgs, loadJobs, nextRun, parseCron, saveJobs, tick } from "../src/harness/schedule.mjs";
 
 const at = (s) => new Date(s); // local time strings
 const sink = () => ({ text: "", write(c) { this.text += c; return true; } });
@@ -63,10 +63,54 @@ test("tick runs due jobs once, never overlaps, and skips missed windows", async 
   }
 });
 
-test("job command lines run the harness with the job's folder", () => {
-  const args = jobArgs({ kind: "loop", prompt: "keep tests green", cwd: "/w" });
-  assert.deepEqual(args.slice(1), ["loop", "keep tests green", "--cwd", "/w"]);
-  assert.deepEqual(jobArgs({ kind: "run", prompt: "p", cwd: "/w" }).slice(1), ["run", "p", "--cwd", "/w"]);
+test("job command lines: -- guards the prompt against option injection", async () => {
+  assert.deepEqual(jobArgs({ kind: "loop", prompt: "keep tests green", cwd: "/w" }).slice(1), ["loop", "--cwd", "/w", "--", "keep tests green"]);
+  const args = jobArgs({ kind: "run", prompt: "--sandbox=danger-full-access", cwd: "/w" }).slice(2);
+  const { parseArgs } = await import("node:util");
+  const parsed = parseArgs({ args, options: { sandbox: { type: "string" }, cwd: { type: "string" } }, allowPositionals: true, strict: false });
+  assert.equal(parsed.values.sandbox, undefined, "the prompt must not become a flag");
+  assert.deepEqual(parsed.positionals, ["--sandbox=danger-full-access"]);
+});
+
+test("rare schedules (Feb 29) are found quickly; impossible ones throw", () => {
+  const t0 = Date.now();
+  assert.equal(nextRun("0 0 29 2 *", at("2026-10-01T00:00:00")).toString(), at("2028-02-29T00:00:00").toString());
+  assert.ok(Date.now() - t0 < 200);
+  assert.throws(() => nextRun("0 0 31 2 *", at("2026-10-01T00:00:00")), /never matches/);
+  assert.ok(parseCron("0 0 */2 * 1").domAny, "*/2 day-of-month counts as unrestricted (vixie)");
+});
+
+test("a broken job is disabled; other due jobs still get their nextRun saved", () => {
+  const home = mkdtempSync(join(tmpdir(), "ad-sched-bad-"));
+  const spawnFn = () => Object.assign(new EventEmitter(), { stdout: null, stderr: null });
+  try {
+    const good = addJob({ cron: "0 * * * *", kind: "run", prompt: "ok", cwd: home, now: at("2026-10-01T08:10:00") }, home);
+    const jobs = loadJobs(home);
+    jobs.push({ ...jobs[0], id: "broken", cron: "0 0 31 2 *", nextRun: at("2026-10-01T08:00:00").toISOString() });
+    saveJobs(jobs, home);
+    assert.deepEqual(tick({ home, now: at("2026-10-01T09:30:00"), spawnFn }), [good.id]);
+    const after = loadJobs(home);
+    assert.equal(new Date(after.find((j) => j.id === good.id).nextRun).toString(), at("2026-10-01T10:00:00").toString());
+    const broken = after.find((j) => j.id === "broken");
+    assert.equal(broken.enabled, false);
+    assert.match(broken.lastStatus, /disabled: .*never matches/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("a job whose folder was deleted fails once with a clear message", async () => {
+  const home = mkdtempSync(join(tmpdir(), "ad-sched-gone-"));
+  try {
+    const job = addJob({ cron: "@daily", kind: "run", prompt: "x", cwd: join(home, "gone"), now: at("2026-10-01T08:00:00") }, home);
+    const out = sink();
+    const err = sink();
+    assert.equal(await cmdSchedule("run", [job.id], { userHome: home, stdout: out, stderr: err }), 1);
+    await new Promise((r) => setTimeout(r, 50));
+    assert.match(readFileSync(join(home, ".agent-daemon", "schedule-logs", job.id + ".log"), "utf8"), /folder no longer exists/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test("cmdSchedule add / list / disable / remove", async () => {

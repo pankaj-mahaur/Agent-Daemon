@@ -27,6 +27,7 @@ let serverReqId = 0;
 let threadSeq = 0;
 let turnSeq = 0;
 const loopTurns = new Map();
+const hung = new Map(); // "hang" turns, completed as interrupted by turn/interrupt
 let tokensUsed = 0;
 const awaiting = new Map();
 // Config persists in CODEX_HOME/fake-config.json so separate engine runs
@@ -69,7 +70,7 @@ const complete = (threadId, turn, extra = {}) =>
 async function runScriptedTurn(threadId, turn, params) {
   const text = params.input?.[0]?.text ?? "";
   notify("turn/started", { threadId, turn });
-  if (text === "hang") return;
+  if (text === "hang") return hung.set(turn.id, { threadId, turn });
   if (text === "fail-turn") return complete(threadId, turn, { status: "failed", error: { message: "model refused" } });
   if (params.outputSchema) {
     agentMessage(threadId, turn.id, '{"answer":42}');
@@ -217,7 +218,15 @@ async function onRequest({ id, method, params }) {
     case "thread/compact/start":
       send({ id, result: {} });
       return setTimeout(() => notify("thread/compacted", { threadId: params.threadId }), 10);
-    case "turn/interrupt":
+    case "turn/interrupt": {
+      send({ id, result: {} });
+      const h = hung.get(params.turnId);
+      if (h) {
+        hung.delete(params.turnId);
+        complete(h.threadId, h.turn, { status: "interrupted" });
+      }
+      return;
+    }
     case "turn/steer":
     case "thread/goal/clear":
       return send({ id, result: {} });

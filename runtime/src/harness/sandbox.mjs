@@ -17,14 +17,16 @@ export async function sandboxReadiness(engine) {
   return (await engine.server.request("windowsSandbox/readiness", {})).status;
 }
 
+// The mode is written to config only AFTER setup succeeds: written first,
+// a failed setup would look configured and never be retried.
 export async function setupWindowsSandbox(engine, { mode = "unelevated", cwd, timeoutMs = 10 * 60_000 } = {}) {
-  await engine.writeConfig([["windows.sandbox", mode]]);
   const done = engine.waitForNotification("windowsSandbox/setupCompleted", () => true, { timeoutMs });
   done.catch(() => {}); // observed below; avoid an unhandled rejection if setupStart throws
   const started = await engine.server.request("windowsSandbox/setupStart", { mode, ...(cwd ? { cwd } : {}) });
   if (!started?.started) throw new Error("Codex did not start sandbox setup");
   const r = await done;
   if (!r.success) throw new Error(r.error ?? "sandbox setup failed");
+  await engine.writeConfig([["windows.sandbox", mode]]);
   return r;
 }
 

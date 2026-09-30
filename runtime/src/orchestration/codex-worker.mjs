@@ -36,7 +36,7 @@ export async function runCodexWorker({ worktreePath, systemPrompt, userMessage, 
     const prefixed = { write: (s) => err.write(String(s).replace(/^\[agent-daemon\]/gm, "[agent-daemon worker]")) };
     // AD_WORKER: the prompt is the leader's task, not the user speaking —
     // hooks must not capture it as the user's corrections.
-    const started = await startHarnessEngine({ cwd: worktreePath, err: prefixed, ...engineOpts, env: { AD_WORKER: "1", ...(engineOpts.env ?? {}) } });
+    const started = await startHarnessEngine({ cwd: worktreePath, err: prefixed, requireSandbox: true, ...engineOpts, env: { AD_WORKER: "1", ...(engineOpts.env ?? {}) } });
     if (!started.engine) return { ok: false, error: started.error };
     engine = started.engine;
     const { threadId } = await engine.startThread({

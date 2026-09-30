@@ -114,6 +114,10 @@ Harness (Codex engine):
   auth logout [openrouter]
   schedule add "<cron>" run|loop "<prompt>"   Recurring job, run by "ad watch" / the service  [--cwd dir]
   schedule list | remove|enable|disable|run <id> | tick
+  web                    Local web UI: chat with approvals, threads, loops, schedules  [--port <n>]
+  acp                    Serve Agent Client Protocol on stdio (use ad as the agent in Zed / JetBrains)
+  agy "<prompt>"         Opt-in: ask your own Antigravity CLI (Gemini subscription); needs --accept-risk once
+                         --edits (let agy edit files)  --model <m>
   tools list             Optional agent tools and whether they are on
   tools enable <tool>    browser (Playwright MCP) | web-search (live); "tools disable <tool>" turns off
   sandbox setup          Windows: set up Codex's command sandbox for the harness (--elevated: stronger, asks UAC)
@@ -2169,7 +2173,10 @@ async function main(argv) {
         engine:       { type: "string" },
         "max-iterations": { type: "string" },
         "max-minutes":    { type: "string" },
-        "max-tokens":     { type: "string" }
+        "max-tokens":     { type: "string" },
+        "accept-risk":    { type: "boolean" },
+        port:             { type: "string" },
+        edits:            { type: "boolean" }
       },
       allowPositionals: true,
       strict: false
@@ -2245,6 +2252,23 @@ async function main(argv) {
         device: parsed.values.device || false,
         force: parsed.values.force || false,
         clientVersion: VERSION
+      });
+    }
+    case "web": {
+      const { cmdWeb } = await import("./harness/web.mjs");
+      return cmdWeb({ cwd: parsed.values.cwd || process.cwd(), port: parsed.values.port ? Number(parsed.values.port) : 0, clientVersion: VERSION });
+    }
+    case "acp": {
+      const { serveAcp } = await import("./harness/acp.mjs");
+      return serveAcp({ clientVersion: VERSION });
+    }
+    case "agy": {
+      const { cmdAgy } = await import("./harness/agy.mjs");
+      return cmdAgy(parsed.positionals.join(" "), {
+        cwd: parsed.values.cwd || process.cwd(),
+        model: parsed.values.model,
+        edits: parsed.values.edits || false,
+        acceptRisk: parsed.values["accept-risk"] || false
       });
     }
     case "schedule": {

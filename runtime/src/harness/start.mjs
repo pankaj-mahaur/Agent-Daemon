@@ -6,11 +6,12 @@
 import { createEngine } from "../engine/index.mjs";
 import { providerEnv } from "../auth/providers.mjs";
 import { ensureHarnessSetup } from "./setup.mjs";
+import { needsWindowsSandbox, sandboxReadiness } from "./sandbox.mjs";
 
 export const NOT_LOGGED_IN = "Not logged in. Run: ad auth login chatgpt   (or: ad auth login openai | ad auth login openrouter --model <slug>)";
 
 // env: extra variables for Codex and the hooks it runs (e.g. AD_WORKER=1).
-export async function startHarnessEngine({ cwd, home, command, clientVersion, store, onApproval, err = process.stderr, setup = true, platform, env } = {}) {
+export async function startHarnessEngine({ cwd, home, command, clientVersion, store, onApproval, err = process.stderr, setup = true, platform, env, requireSandbox = false } = {}) {
   const engineOpts = { cwd, home, command, clientVersion, env: { ...providerEnv(store), ...(env ?? {}) }, onApproval };
   let engine = await createEngine(engineOpts);
   try {
@@ -25,6 +26,15 @@ export async function startHarnessEngine({ cwd, home, command, clientVersion, st
         await engine.close();
         engine = await createEngine(engineOpts);
         report = await safeSetup(engine, { cwd, platform }, err);
+      }
+    }
+    // Unattended runs (loops, workers) rely on the sandbox instead of a
+    // human; on Windows, refuse to start them without a ready one.
+    if (requireSandbox && needsWindowsSandbox(platform ?? process.platform)) {
+      const status = await sandboxReadiness(engine).catch((e) => `unknown (${e.message})`);
+      if (status !== "ready") {
+        await engine.close();
+        return { engine: null, error: `Windows sandbox is ${status}; unattended runs need it. Run: ad sandbox setup`, code: 2 };
       }
     }
     return { engine };
