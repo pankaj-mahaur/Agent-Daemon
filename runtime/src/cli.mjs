@@ -97,6 +97,17 @@ Commands:
                          --out <path>         output path (default ~/.agent-daemon/viewer.html)
                          --open               open it in the default browser
 
+Harness (Codex engine):
+  run "<prompt>"         One non-interactive agent turn (approvals are declined)
+                         --cwd <dir>  --model <name>  --json
+                         --sandbox <mode>     read-only | workspace-write (default) | danger-full-access
+  auth login chatgpt     Sign in with your ChatGPT subscription (browser; --device for a code)
+  auth login openai      Use an OpenAI API key (hidden prompt, or pipe it on stdin)
+  auth login openrouter  Store an OpenRouter key and make it active (needs --model <slug>)
+  auth use <provider>    Switch active provider: openai | openrouter [--model <slug>]
+  auth status            Show the harness login + active provider (no secrets)
+  auth logout [openrouter]
+
   team create     (tc)   Create a new multi-agent team
   team status     (ts)   Show team kanban board
   team list       (tl)   List all teams
@@ -948,6 +959,10 @@ async function cmdDoctor({ cwd = process.cwd(), tokens, limit, model } = {}) {
 
   // Check 2: claude CLI on PATH
   checks.push(await checkBinary("claude", "headless engine for digest pipeline"));
+
+  // Check 2a: Codex engine (harness) — pinned version + harness home
+  const { codexChecks } = await import("./engine/codex/doctor.mjs");
+  checks.push(...codexChecks());
 
   // Check 2b: Auth — ANTHROPIC_API_KEY or OAuth/keychain
   // As of v0.5, --bare is no longer used. OAuth/keychain auth works for GEPA.
@@ -2132,7 +2147,9 @@ async function main(argv) {
         "apply-stale":  { type: "boolean" },
         "all-projects": { type: "boolean" },
         out:          { type: "string" },
-        open:         { type: "boolean" }
+        open:         { type: "boolean" },
+        sandbox:      { type: "string" },
+        device:       { type: "boolean" }
       },
       allowPositionals: true,
       strict: false
@@ -2191,6 +2208,27 @@ async function main(argv) {
     });
     case "doctor":         return cmdDoctor({ ...opts, tokens: parsed.values.tokens, limit: parsed.values.limit, model: parsed.values.model });
     case "viewer":         return cmdViewer({ ...opts, out: parsed.values.out, open: parsed.values.open || false });
+    case "auth": {
+      const { cmdAuth } = await import("./harness/auth.mjs");
+      return cmdAuth(parsed.positionals[0], parsed.positionals.slice(1), {
+        model: parsed.values.model,
+        device: parsed.values.device || false,
+        force: parsed.values.force || false,
+        clientVersion: VERSION
+      });
+    }
+    case "run": {
+      const { cmdRun } = await import("./harness/run.mjs");
+      return cmdRun(parsed.positionals.join(" "), {
+        // Not opts.cwd: that falls back to CLAUDE_PROJECT_DIR, and the
+        // workspace-write sandbox must be rooted where the user actually is.
+        cwd: parsed.values.cwd || process.cwd(),
+        model: parsed.values.model,
+        sandbox: parsed.values.sandbox,
+        json: parsed.values.json || false,
+        clientVersion: VERSION
+      });
+    }
     case "team":           return cmdTeam(parsed.positionals?.[0], { ...opts, template: parsed.values.template, task: parsed.values.task, team: parsed.values.team, agent: parsed.values.agent, model: parsed.values.model });
     case "spawn":          return cmdSpawn({ ...opts, team: parsed.values.team, role: parsed.values.role, task: parsed.values.task, model: parsed.values.model });
     case "hook":           return cmdHook(parsed.positionals?.[0]);

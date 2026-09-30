@@ -1,0 +1,135 @@
+name: codex-upgrade
+
+# Keeps the pinned Codex engine current without surprises.
+# Weekly: if npm `latest` (never alpha) is newer than the pin, bump it on a
+# branch, regenerate the protocol snapshot, run the full suite, and open a
+# PR whose body is the protocol diff. Breaking protocol changes get a label;
+# nothing merges automatically.
+#
+# Repo setup: Settings → Actions → General → "Allow GitHub Actions to create
+# and approve pull requests" must be on. PRs opened with GITHUB_TOKEN do not
+# trigger other workflows; add a CODEX_UPGRADE_TOKEN secret (fine-grained PAT,
+# contents + pull-requests write) to get the normal CI checks on the PR.
+
+on:
+  schedule:
+    - cron: "17 4 * * 1" # Mondays 04:17 UTC
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Codex version to try (default: npm dist-tag latest)"
+        required: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: codex-upgrade
+  cancel-in-progress: false
+
+jobs:
+  upgrade:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Decide target version
+        id: ver
+        working-directory: runtime
+        env:
+          GH_TOKEN: ${{ secrets.CODEX_UPGRADE_TOKEN || github.token }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          current=$(node -p "require('./package.json').dependencies['@openai/codex']")
+          target="$INPUT_VERSION"
+          [ -z "$target" ] && target=$(npm view @openai/codex dist-tags.latest)
+          if ! printf '%s' "$target" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "refusing non-release version '$target'"
+            exit 1
+          fi
+          branch="codex-upgrade/$target"
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          echo "target=$target" >> "$GITHUB_OUTPUT"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          if [ "$current" = "$target" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Skip only when a PR already exists — a pushed branch without a PR
+          # (e.g. gh pr create failed last week) must be retried, not skipped.
+          if [ "$(gh pr list --head "$branch" --state all --json number --jq length)" != "0" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Bump pin
+        if: steps.ver.outputs.skip != 'true'
+        working-directory: runtime
+        env:
+          TARGET: ${{ steps.ver.outputs.target }}
+        run: npm install --save-exact "@openai/codex@$TARGET"
+
+      - name: Regenerate protocol snapshot + diff
+        if: steps.ver.outputs.skip != 'true'
+        id: diff
+        working-directory: runtime
+        run: |
+          set +e
+          node scripts/codex-schema-snapshot.mjs --diff-md "$RUNNER_TEMP/protocol-diff.md"
+          code=$?
+          set -e
+          if [ "$code" = "3" ]; then
+            echo "breaking=true" >> "$GITHUB_OUTPUT"
+          elif [ "$code" != "0" ]; then
+            exit "$code"
+          fi
+
+      - name: Run test suite
+        if: steps.ver.outputs.skip != 'true'
+        id: tests
+        working-directory: runtime
+        continue-on-error: true
+        run: npm test
+
+      - name: Open PR
+        if: steps.ver.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.CODEX_UPGRADE_TOKEN || github.token }}
+          BASE: ${{ github.event.repository.default_branch }}
+          CURRENT: ${{ steps.ver.outputs.current }}
+          TARGET: ${{ steps.ver.outputs.target }}
+          BRANCH: ${{ steps.ver.outputs.branch }}
+          BREAKING: ${{ steps.diff.outputs.breaking }}
+          TESTS: ${{ steps.tests.outcome }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$BRANCH"
+          git add runtime/package.json runtime/package-lock.json runtime/src/engine/codex/protocol-snapshot.json
+          git commit -m "chore(engine): bump @openai/codex $CURRENT -> $TARGET"
+          git push --force origin "$BRANCH"
+          {
+            echo "Automated Codex engine upgrade: \`$CURRENT\` → \`$TARGET\`."
+            echo
+            echo "- Release notes: https://github.com/openai/codex/releases/tag/rust-v$TARGET"
+            echo "- Test suite: **$TESTS**"
+            echo
+            cat "$RUNNER_TEMP/protocol-diff.md"
+            echo
+            echo "Merge only after a live \`ad run\` smoke on Windows."
+          } > "$RUNNER_TEMP/body.md"
+          labels="codex-upgrade"
+          [ "$BREAKING" = "true" ] && labels="$labels,breaking-protocol"
+          [ "$TESTS" != "success" ] && labels="$labels,tests-failing"
+          for l in ${labels//,/ }; do
+            gh label create "$l" --force >/dev/null 2>&1 || echo "::warning::could not create label $l"
+          done
+          gh pr create --base "$BASE" --head "$BRANCH" \
+            --title "chore(engine): bump Codex to $TARGET" \
+            --body-file "$RUNNER_TEMP/body.md" --label "$labels"

@@ -11,31 +11,57 @@
 import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
+import { approvalResponse, isApprovalMethod } from "./approvals.mjs";
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 
-// On Windows the npm install is a .cmd shim; spawning it needs a shell,
-// which mangles args. Run the package's JS entry with our own node instead.
-export function resolveCodexCommand(env = process.env) {
-  if (env.AD_CODEX_BIN) return { cmd: env.AD_CODEX_BIN, prefix: [] };
-  if (process.platform === "win32" && env.APPDATA) {
-    const entry = join(env.APPDATA, "npm", "node_modules", "@openai", "codex", "bin", "codex.js");
-    if (existsSync(entry)) return { cmd: process.execPath, prefix: [entry] };
+const require = createRequire(import.meta.url);
+
+// The exact version runtime/package.json pins — the protocol we are tested against.
+export function pinnedCodexVersion() {
+  try {
+    return require("../../../package.json").dependencies?.["@openai/codex"] ?? null;
+  } catch {
+    return null;
   }
-  return { cmd: "codex", prefix: [] };
 }
 
-// Approvals are declined unless the caller supplies a handler — the safe
-// default for a harness that has not asked the user.
+// Order: explicit override → pinned npm dependency → global install.
+// Always run the package's JS launcher with our own node: on Windows the
+// global install is a .cmd shim, and spawning that needs a shell, which
+// mangles args.
+export function resolveCodexCommand(env = process.env) {
+  if (env.AD_CODEX_BIN) return { cmd: env.AD_CODEX_BIN, prefix: [], source: "env" };
+  try {
+    const pkg = require.resolve("@openai/codex/package.json");
+    const entry = join(dirname(pkg), "bin", "codex.js");
+    if (existsSync(entry)) return { cmd: process.execPath, prefix: [entry], source: "pinned" };
+  } catch {
+    // not installed as a dependency (e.g. global-only install) — fall through
+  }
+  if (process.platform === "win32" && env.APPDATA) {
+    const entry = join(env.APPDATA, "npm", "node_modules", "@openai", "codex", "bin", "codex.js");
+    if (existsSync(entry)) return { cmd: process.execPath, prefix: [entry], source: "global" };
+  }
+  return { cmd: "codex", prefix: [], source: "path" };
+}
+
+
+// Nobody answered → the safe reply: decline approvals, refuse everything else.
 function defaultServerRequestHandler(msg) {
-  if (/requestApproval$|Approval$/.test(msg.method)) return { decision: "decline" };
+  if (isApprovalMethod(msg.method)) return approvalResponse(msg.method, msg.params, "decline");
   const err = new Error(`unhandled server request: ${msg.method}`);
   err.code = -32601;
   throw err;
 }
 
+// Events: "notification" ({method, params}), "server-request", "exit",
+// "protocol-error", "stdin-error". Notifications are NOT re-emitted under
+// their own method names: the protocol has one called "error", and emitting
+// "error" on an EventEmitter with no listener throws.
 export class CodexAppServer extends EventEmitter {
   constructor(opts = {}) {
     super();
@@ -44,15 +70,17 @@ export class CodexAppServer extends EventEmitter {
     this.pending = new Map();
     this.child = null;
     this.stderr = "";
+    this.exitError = null;
     this.onServerRequest = opts.onServerRequest ?? defaultServerRequestHandler;
   }
 
   async start() {
-    const { cmd, prefix } = this.opts.command ?? resolveCodexCommand(this.opts.env);
+    const env = { ...process.env, ...(this.opts.env ?? {}) };
+    const { cmd, prefix } = this.opts.command ?? resolveCodexCommand(env);
     const args = [...prefix, "app-server", ...(this.opts.codexArgs ?? [])];
     this.child = spawn(cmd, args, {
       cwd: this.opts.cwd,
-      env: { ...process.env, ...(this.opts.env ?? {}) },
+      env,
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
     });
@@ -60,12 +88,17 @@ export class CodexAppServer extends EventEmitter {
       // Keep a bounded tail for error reports.
       this.stderr = (this.stderr + chunk.toString()).slice(-8192);
     });
-    this.child.on("error", (err) => this.#failAll(new Error(`codex spawn failed: ${err.message}`)));
+    this.child.on("error", (err) => {
+      this.exitError ??= new Error(`codex spawn failed: ${err.message}`);
+      this.#failAll(this.exitError);
+    });
     // EPIPE after the server dies would otherwise crash the host process;
     // the exit handler below already fails every pending request.
     this.child.stdin.on("error", (err) => this.emit("stdin-error", err));
-    this.child.on("exit", (code, signal) => {
-      this.exitError = new Error(`codex app-server exited (code=${code}, signal=${signal}) ${this.stderr.trim().slice(-500)}`);
+    // "close" (not "exit"): it fires only after stdout is fully drained, so
+    // a response or turn/completed written just before exit is still seen.
+    this.child.on("close", (code, signal) => {
+      this.exitError ??= new Error(`codex app-server exited (code=${code}, signal=${signal}) ${this.stderr.trim().slice(-500)}`);
       this.#failAll(this.exitError);
       this.emit("exit", { code, signal });
     });
@@ -77,6 +110,10 @@ export class CodexAppServer extends EventEmitter {
     });
     this.notify("initialized");
     return init;
+  }
+
+  get running() {
+    return Boolean(this.child) && this.child.exitCode === null && this.child.signalCode === null;
   }
 
   request(method, params, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
@@ -99,13 +136,33 @@ export class CodexAppServer extends EventEmitter {
     this.#send({ method, ...(params === undefined ? {} : { params }) });
   }
 
+  // Closing stdin asks codex to exit; after 3 s it is killed. On Windows the
+  // child is the node launcher that spawned codex.exe, so kill the tree.
   async close() {
-    if (!this.child || this.child.exitCode !== null) return;
+    if (!this.running) return;
     this.child.stdin.end();
     await new Promise((resolve) => {
-      const t = setTimeout(() => { this.child.kill(); resolve(); }, 3000);
-      this.child.once("exit", () => { clearTimeout(t); resolve(); });
+      const t = setTimeout(() => {
+        this.#killTree();
+        resolve();
+      }, 3000);
+      this.child.once("close", () => {
+        clearTimeout(t);
+        resolve();
+      });
     });
+  }
+
+  #killTree() {
+    if (process.platform === "win32" && this.child.pid) {
+      spawn("taskkill", ["/pid", String(this.child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true })
+        .on("error", () => this.child.kill())
+        .on("exit", (code) => {
+          if (code !== 0) this.child.kill();
+        });
+    } else {
+      this.child.kill();
+    }
   }
 
   #send(msg) {
@@ -125,7 +182,6 @@ export class CodexAppServer extends EventEmitter {
     if (msg.id !== undefined && msg.method === undefined) return this.#onResponse(msg);
     if (msg.id !== undefined) return this.#onServerRequest(msg);
     this.emit("notification", msg);
-    this.emit(msg.method, msg.params);
   }
 
   #onResponse(msg) {
@@ -160,37 +216,4 @@ export class CodexAppServer extends EventEmitter {
       this.pending.delete(id);
     }
   }
-}
-
-// One user turn: start it, stream agent text, resolve when turn/completed.
-export function runTurn(server, { threadId, text, onDelta, timeoutMs = 300_000, ...turnOpts }) {
-  return new Promise((resolve, reject) => {
-    let turnId = null;
-    let output = "";
-    const timer = setTimeout(() => { cleanup(); reject(new Error(`turn timed out after ${timeoutMs}ms`)); }, timeoutMs);
-    const onDeltaEvt = (p) => {
-      if (p.threadId !== threadId) return;
-      output += p.delta;
-      onDelta?.(p.delta);
-    };
-    const onCompleted = (p) => {
-      if (p.threadId !== threadId || (turnId && p.turn.id !== turnId)) return;
-      cleanup();
-      resolve({ turn: p.turn, output });
-    };
-    const onExit = () => { cleanup(); reject(new Error(`codex exited mid-turn: ${server.stderr.trim().slice(-500)}`)); };
-    function cleanup() {
-      clearTimeout(timer);
-      server.off("item/agentMessage/delta", onDeltaEvt);
-      server.off("turn/completed", onCompleted);
-      server.off("exit", onExit);
-    }
-    server.on("item/agentMessage/delta", onDeltaEvt);
-    server.on("turn/completed", onCompleted);
-    server.on("exit", onExit);
-    server
-      .request("turn/start", { threadId, input: [{ type: "text", text }], ...turnOpts })
-      .then((r) => { turnId = r?.turn?.id ?? null; })
-      .catch((err) => { cleanup(); reject(err); });
-  });
 }
