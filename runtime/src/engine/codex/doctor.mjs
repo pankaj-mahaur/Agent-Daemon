@@ -3,6 +3,7 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { pinnedCodexVersion, resolveCodexCommand } from "./app-server.mjs";
 import { defaultCodexHome, isManagedHome } from "./home.mjs";
 
@@ -38,5 +39,44 @@ export function codexChecks({ env = process.env, run = execFileSync } = {}) {
       ? `${home}${isManagedHome(home) ? "" : " (not created by ad — never auto-modified)"}`
       : `${home} (created on first ad run)`,
   });
+  return checks;
+}
+
+// Checks that need a running app-server: login, provider, hook trust and
+// (Windows) sandbox readiness. Skipped until the harness home exists, so
+// doctor never creates it. engineFactory is injectable for tests.
+export async function codexLiveChecks({ env = process.env, engineFactory, platform = process.platform } = {}) {
+  const home = defaultCodexHome(env);
+  if (!existsSync(home)) return [];
+  const checks = [];
+  let engine;
+  try {
+    const factory = engineFactory ?? (async (o) => (await import("../index.mjs")).createEngine(o));
+    engine = await factory({ home });
+    const [acct, cfg] = [await engine.account(), await engine.readConfig()];
+    const provider = cfg.model_provider ?? "openai";
+    const a = acct.account;
+    const loggedIn = Boolean(a) || !acct.requiresOpenaiAuth;
+    checks.push({
+      name: "Harness login",
+      ok: loggedIn,
+      note: loggedIn ? (a?.type === "chatgpt" ? `ChatGPT ${a.planType ?? ""}`.trim() : a?.type ?? `provider ${provider}`) : "not logged in — ad auth login chatgpt",
+    });
+    const hooksFile = join(home, "hooks.json");
+    if (existsSync(hooksFile)) {
+      const norm = (p) => (process.platform === "win32" ? String(p).toLowerCase() : String(p));
+      const ours = (await engine.listHooks([process.cwd()])).filter((h) => norm(h.sourcePath) === norm(hooksFile));
+      const trusted = ours.filter((h) => h.trustStatus === "trusted").length;
+      checks.push({ name: "Harness hooks", ok: trusted === ours.length, note: `${trusted}/${ours.length} trusted${trusted < ours.length ? " — the next ad run re-trusts them" : ""}` });
+    }
+    if (platform === "win32") {
+      const status = (await engine.server.request("windowsSandbox/readiness", {})).status;
+      checks.push({ name: "Windows sandbox", ok: status === "ready", note: status === "ready" ? `ready (${cfg.windows?.sandbox ?? "?"})` : `${status} — ad sandbox setup` });
+    }
+  } catch (e) {
+    checks.push({ name: "Harness engine", ok: false, note: `could not start codex app-server: ${e.message}` });
+  } finally {
+    await engine?.close();
+  }
   return checks;
 }

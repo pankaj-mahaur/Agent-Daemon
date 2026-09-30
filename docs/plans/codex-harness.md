@@ -1,6 +1,41 @@
 # Plan — Agent Daemon as a Codex-based agent harness
 
-Status: DRAFT for approval · 2026-09-30 · branch `feat/codex-harness`
+Status: IMPLEMENTED (Parts 0–14) · approved 2026-09-30 · built 2026-10-01 · branch `feat/codex-harness`
+
+## Implementation status
+
+| # | Part | Status | Where |
+|---|---|---|---|
+| 0 | Foundation & spike | ✅ | `runtime/src/engine/codex/app-server.mjs`, `runtime/testkit/` |
+| 1 | Engine API + Codex engine | ✅ | `engine/index.mjs`, `engine/codex/home.mjs`, `approvals.mjs`, `ad run` |
+| 2 | Upstream tracking | ✅ | `protocol-snapshot.{mjs,json}`, `scripts/codex-schema-snapshot.mjs`, `.github/workflows/codex-upgrade.yml` |
+| 3 | Auth broker | ✅ | `harness/auth.mjs`, `auth/secrets.mjs`, `auth/providers.mjs` |
+| 4 | Memory/hooks/skills/AGENTS.md in Codex | ✅ | `harness/setup.mjs`, `engine/codex/hooks-config.mjs`, `hooks/io.mjs` (host adaptation), `hooks/codex-session-end.mjs` |
+| 5 | `ad chat` | ✅ | `harness/chat.mjs` |
+| 6 | Transcript + digest | ✅ | `adapters/codex.mjs` (real rollouts), `daemon/config.mjs` |
+| 7 | Internal LLM calls via engine | ✅ | `llm.mjs` (`--llm claude|codex|auto`), isolated `engine.complete()` |
+| 8 | Multi-agent on Codex | ✅ | `orchestration/codex-worker.mjs` (`ad spawn --engine`) |
+| 9 | `ad loop` | ✅ | `harness/loop.mjs` |
+| 10 | Agent tools | ✅ | `harness/tools.mjs` (browser, web-search) |
+| 11 | `ad schedule` | ✅ | `harness/schedule.mjs`, run by `ad watch` |
+| 12 | More providers | ✅ `ad agy` · ⏸ translator | `harness/agy.mjs`; the native-key Responses translator was **not built** — its condition ("only if OpenRouter is not enough") isn't met |
+| 13 | Web UI + ACP | ✅ | `harness/web.mjs`, `harness/acp.mjs` |
+| 14 | Docs, doctor, cleanup | ✅ | `engine/codex/doctor.mjs` (live checks), README, adapters/codex, `.out-of-scope/no-codex-runtime.md` (superseded) |
+
+Every part went through implement → test → independent review → fix; the
+reviews' confirmed findings are fixed in the same commits.
+
+**Verified live on Windows (codex 0.159.2):** app-server turns with ChatGPT
+login; hooks.json in the harness home (PowerShell `commandWindows`), hook
+trust via `config/value/write`, SessionStart / UserPromptSubmit / SessionEnd
+payloads and context injection, memory MCP startup, detached SessionEnd
+digest reading a real rollout, config batch writes (null deletes), thread
+config overrides (`features.hooks`, `mcp_servers.<id>.enabled`), Windows
+sandbox setup + readiness, protocol-snapshot diff 0.155.1 → 0.159.2.
+**Not verifiable here without the user's own login/keys:** a full coding turn
+in the harness home (needs `ad auth login chatgpt` once), OpenRouter
+(needs a key), `agy` (uses the user's Google subscription), Playwright MCP
+download, ACP inside a real editor.
 
 ## Context
 

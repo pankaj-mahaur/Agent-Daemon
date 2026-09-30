@@ -1,5 +1,15 @@
 # No full Codex multi-agent runtime port
 
+> **Superseded 2026-10-01.** Agent Daemon now runs its own harness on the
+> Codex engine (`ad chat` / `ad run` / `ad loop`, see
+> [docs/plans/codex-harness.md](../docs/plans/codex-harness.md)). What changed
+> since this was written: Codex ships a documented, on-by-default hook system
+> with the same events and near-identical payloads as Claude Code (verified
+> against codex 0.159.2), and `codex app-server` is an officially supported
+> embedding surface with a generated, versioned JSON schema — which the
+> `codex-upgrade` workflow now diffs on every release. The original reasoning
+> is kept below for history.
+
 ## What was proposed
 
 Port `everything-claude-code`'s Codex integration — including any orchestration / multi-agent runtime hooks — into the daemon, so Codex CLI users get the same memory + skills experience as Claude Code users. The proposal extended beyond config (`adapters/codex/AGENTS.md`, `config.toml` defaults) into actually running a Codex-side equivalent of our `SessionStart` / `SessionEnd` hooks.

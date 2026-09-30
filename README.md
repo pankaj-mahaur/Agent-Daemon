@@ -17,6 +17,8 @@ Skills evolve too: [GEPA](runtime/src/digest/gepa/README.md) (Genetic-Pareto Pro
 >
 > **[claude-mem](https://github.com/thedotmack/claude-mem)-inspired adoptions (latest):** the MCP memory server gained a token-cheap **progressive-disclosure** flow (`memory_search`/`memory_files` → `memory_timeline` → `memory_get`), **file-aware memory** (learnings tagged with the session's files; SessionStart boosts learnings about the files you're editing), a **`<private>…</private>`** exclusion tag that keeps marked content out of memory entirely, and **`ad viewer`** — a zero-dependency single-file HTML snapshot of the episodic store. Stays FTS5-only (no vector DB, no Python). The per-project `CLAUDE.md` block is also slimmed to a synopsis that points at an on-demand `AD-INSTRUCTIONS.md`, plus one-liner `install.sh`/`install.ps1`. 301 tests.
 
+> **New — Agent Daemon is now its own agent harness** on the OpenAI Codex engine: `ad chat`, `ad run`, `ad loop`, `ad schedule`, `ad web`, `ad acp`, with memory, hooks and skills wired in. See [Agent harness](#agent-harness-codex-engine).
+
 ## Quick start
 
 **One-liner install** — clones, installs deps, and registers the `ad` command globally:
@@ -112,6 +114,34 @@ Expected result: `CLAUDE_DAEMON_OK`, with no `SessionEnd hook failed` message af
 | `security` | developer + blocks `git --no-verify`, blocks dev-server-without-tmux, audits every MCP call, warns on untrusted MCP servers | developer + 3 (security-audit, production-readiness, llm-app-safety) | High-stakes work, regulated repos |
 
 Profile manifest: [runtime/profiles/profiles.json](runtime/profiles/profiles.json). Hook handlers under [runtime/src/hooks/](runtime/src/hooks/) are invoked via `ad hook <name>` and consume Claude Code's tool-use JSON on stdin. Profile shape adapted from [`everything-claude-code`](https://github.com/affaan-m/everything-claude-code) — see [ATTRIBUTION.md](ATTRIBUTION.md).
+
+## Agent harness (Codex engine)
+
+Agent Daemon runs agents itself, with [OpenAI Codex](https://github.com/openai/codex) as the engine. It drives a pinned `codex app-server` (JSON-RPC over stdio) in its own `CODEX_HOME` (`~/.agent-daemon/codex-home`), so your own `~/.codex` is never touched. Every run gets the daemon's memory (SessionStart context, per-prompt recall, correction capture, the `agent-daemon-memory` MCP tools), guard hooks, skills and constitution.
+
+```bash
+ad auth login chatgpt            # ChatGPT Plus/Pro (browser; --device for a code)
+ad auth login openai             # or an OpenAI API key (hidden prompt / stdin)
+ad auth login openrouter --model anthropic/<model>   # Claude, Gemini, … via one OpenRouter key
+ad auth status
+
+ad chat                          # interactive; approve commands/edits with y / a / n
+ad run "fix the failing test"    # one non-interactive turn (approvals declined)
+ad loop "make the build green"   # autonomous loop with hard brakes (below)
+ad schedule add "0 9 * * 1-5" run "summarize yesterday's commits"
+ad web                           # local web UI (token-protected, loopback only)
+ad acp                           # Agent Client Protocol agent for Zed / JetBrains
+ad tools enable browser          # Playwright MCP; also: web-search
+ad sandbox setup --elevated      # Windows: stronger command sandbox (one UAC prompt)
+```
+
+**Safety defaults.** Interactive runs use `workspace-write` + `on-request` (the agent writes only inside the project and asks before anything else). Unattended runs (`ad loop`, team workers, schedules) never ask. Instead they are confined to the workspace with no network, and on Windows they refuse to start without a ready sandbox. Team workers can't write to `.git`; their work is committed for them on their own branch. Provider keys are stored with DPAPI / libsecret (never in config or argv) and stripped from the agent's shell.
+
+**`ad loop` brakes:** dual exit (the agent must report `done` *and* `exit_signal`), a circuit breaker (no progress or the same error repeatedly), iteration / time / token budgets, and a STOP file (`.agent-daemon/STOP`) checked mid-turn.
+
+**Subscriptions.** ChatGPT uses Codex's own login. Claude Pro/Max and Google AI Pro/Ultra logins are **never** reused by the harness, because their terms forbid it and it has been enforced. Use API keys or OpenRouter instead. `ad agy` can hand a prompt to *your own* Antigravity CLI (opt-in, `--accept-risk`).
+
+**Staying current with Codex.** The engine is pinned exactly. A committed protocol snapshot is checked by the test suite, and the weekly [`codex-upgrade`](.github/workflows/codex-upgrade.yml) workflow bumps the pin, diffs the protocol (removals flagged as breaking), runs the tests and opens a PR. Design and decisions: [docs/plans/codex-harness.md](docs/plans/codex-harness.md).
 
 ## Daily workflow
 
@@ -353,8 +383,16 @@ agent-daemon/
 All commands work with both `ad` (short) and `agent-daemon` (full). Short aliases are shown in parentheses.
 
 ```bash
+# Harness (Codex engine) — see "Agent harness" above
+ad auth login chatgpt|openai|openrouter   # ad auth use / status / logout
+ad chat | ad run "<prompt>" | ad loop "<objective>"
+ad schedule add|list|remove|enable|disable|run|tick
+ad web | ad acp | ad tools list|enable|disable | ad sandbox setup|status | ad agy "<prompt>"
+ad spawn ... --engine codex|claude     # team workers (default: sandboxed Codex thread)
+ad evolve <skill> --llm claude|codex|auto
+
 # Core
-ad doctor                              # Diagnose install — hooks, PATH, dirs
+ad doctor                              # Diagnose install — hooks, PATH, dirs, harness login/sandbox
 ad doctor --tokens                     # Token usage + cache stats from recent sessions
 ad session-start                       # Inject context (called by SessionStart hook)
 ad digest                              # Run digest pipeline (called by SessionEnd hook)
@@ -523,7 +561,7 @@ Three first-class harnesses. Adapters live under [adapters/](adapters/).
 | Harness | Coverage | Install |
 |---|---|---|
 | **Claude Code** (primary) | Native — `ad init` writes to `~/.claude/`, hooks fire directly. | `ad init --profile <minimal\|developer\|security>` |
-| **Codex** | Reference config + 2 sub-agent TOML files (explorer, reviewer). | `cp adapters/codex/config.example.toml ~/.codex/config.toml && cp adapters/codex/agents/*.toml ~/.codex/agents/` |
+| **Codex** | **Engine of the Agent Daemon harness** (`ad chat` / `run` / `loop`, [above](#agent-harness-codex-engine)); rollout transcripts are digested. Reference config for your own `codex` CLI too. | `ad auth login chatgpt && ad chat` — or `cp adapters/codex/config.example.toml ~/.codex/config.toml` |
 | **Cursor** | Hooks JSON wiring the same `ad hook` handlers + skill→`.mdc` converter. | `cp adapters/cursor/hooks.json .cursor/ && node adapters/cursor/adapt.mjs --core --out .cursor/rules` |
 
 Other harnesses (Kiro / Trae / CodeBuddy / OpenCode / Gemini) are vendored-only for now — see [docs/future-harnesses.md](docs/future-harnesses.md).

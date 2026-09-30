@@ -976,8 +976,9 @@ async function cmdDoctor({ cwd = process.cwd(), tokens, limit, model } = {}) {
   checks.push(await checkBinary("claude", "headless engine for digest pipeline"));
 
   // Check 2a: Codex engine (harness) — pinned version + harness home
-  const { codexChecks } = await import("./engine/codex/doctor.mjs");
+  const { codexChecks, codexLiveChecks } = await import("./engine/codex/doctor.mjs");
   checks.push(...codexChecks());
+  checks.push(...(await codexLiveChecks()));
 
   // Check 2b: Auth — ANTHROPIC_API_KEY or OAuth/keychain
   // As of v0.5, --bare is no longer used. OAuth/keychain auth works for GEPA.
@@ -994,7 +995,7 @@ async function cmdDoctor({ cwd = process.cwd(), tokens, limit, model } = {}) {
     if (hasOAuth) {
       checks.push({ name: "Auth (OAuth)", ok: true, note: "~/.claude/auth.json found — OAuth/keychain login active" });
     } else {
-      checks.push({ name: "Auth", ok: true, note: "no API key or OAuth — digest works via agent-emitted blocks; GEPA requires `claude auth login` or ANTHROPIC_API_KEY" });
+      checks.push({ name: "Auth", ok: true, note: "no Claude login — digest works via agent-emitted blocks; GEPA needs `claude auth login`, ANTHROPIC_API_KEY, or the Codex engine (ad auth login chatgpt; --llm codex)" });
     }
   }
 

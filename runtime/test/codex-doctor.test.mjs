@@ -33,3 +33,32 @@ test("an unrunnable codex fails instead of throwing", () => {
   assert.equal(engine.ok, false);
   assert.match(engine.note, /not runnable \(ENOENT\)/);
 });
+
+test("live checks: skipped without a harness home; report login, hooks, sandbox", async () => {
+  const { codexLiveChecks } = await import("../src/engine/codex/doctor.mjs");
+  const { mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  assert.deepEqual(await codexLiveChecks({ env: { AD_CODEX_HOME: "/nonexistent/ad-home" } }), [], "never creates the home");
+  const home = mkdtempSync(join(tmpdir(), "ad-doc-"));
+  try {
+    writeFileSync(join(home, "hooks.json"), "{}");
+    const fake = {
+      account: async () => ({ account: null, requiresOpenaiAuth: true }),
+      readConfig: async () => ({ windows: { sandbox: "unelevated" } }),
+      listHooks: async () => [{ sourcePath: join(home, "hooks.json"), trustStatus: "trusted" }, { sourcePath: join(home, "hooks.json"), trustStatus: "modified" }],
+      server: { request: async () => ({ status: "ready" }) },
+      close: async () => {},
+    };
+    const checks = await codexLiveChecks({ env: { AD_CODEX_HOME: home }, engineFactory: async () => fake, platform: "win32" });
+    const by = Object.fromEntries(checks.map((c) => [c.name, c]));
+    assert.equal(by["Harness login"].ok, false);
+    assert.match(by["Harness login"].note, /ad auth login chatgpt/);
+    assert.equal(by["Harness hooks"].note.startsWith("1/2 trusted"), true);
+    assert.equal(by["Windows sandbox"].ok, true);
+    const broken = await codexLiveChecks({ env: { AD_CODEX_HOME: home }, engineFactory: async () => { throw new Error("boom"); } });
+    assert.match(broken[0].note, /boom/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
