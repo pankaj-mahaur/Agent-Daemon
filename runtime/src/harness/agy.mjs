@@ -19,30 +19,50 @@ are not settled — use at your own risk. Re-run with --accept-risk to continue.
 
 const consentFile = (home) => path.join(home, ".agent-daemon", "agy-consent.json");
 
-export function agyArgs({ prompt, model, edits }) {
-  const args = ["-p", prompt, "--output-format", "json", "--sandbox", "--disable-slash-commands"];
-  if (model) args.push("--model", model);
-  if (edits) args.push("--mode", "accept-edits");
+const DEFAULT_TIMEOUT_S = 15 * 60;
+
+// The prompt travels as ONE `--prompt=<text>` token: passed as a separate
+// argument after -p, a prompt like "--dangerously-skip-permissions" could
+// be read as a flag.
+export function agyArgs({ prompt, model, edits, timeoutS = DEFAULT_TIMEOUT_S }) {
+  const args = [`--prompt=${prompt}`, "--output-format", "json", "--sandbox", "--disable-slash-commands", `--print-timeout=${timeoutS}s`];
+  if (model) args.push(`--model=${model}`);
+  if (edits) args.push("--mode=accept-edits");
   return args;
 }
 
-export function runAgy({ prompt, cwd, model, edits, command = { cmd: "agy", prefix: [] }, spawnFn = spawn }) {
+const errorText = (e) => (typeof e === "string" ? e : e?.message ?? (e ? JSON.stringify(e) : null));
+
+export function runAgy({ prompt, cwd, model, edits, timeoutS = DEFAULT_TIMEOUT_S, command = { cmd: "agy", prefix: [] }, spawnFn = spawn }) {
   return new Promise((resolve) => {
-    const child = spawnFn(command.cmd, [...command.prefix, ...agyArgs({ prompt, model, edits })], { cwd, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+    let settled = false;
+    const done = (r) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(r);
+    };
+    const child = spawnFn(command.cmd, [...command.prefix, ...agyArgs({ prompt, model, edits, timeoutS })], { cwd, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+    // Backstop in case agy ignores --print-timeout (e.g. waiting on a login prompt).
+    const timer = setTimeout(() => {
+      child.kill();
+      done({ ok: false, error: `agy did not finish within ${timeoutS}s (not logged in? run agy once interactively)` });
+    }, (timeoutS + 30) * 1000);
     let out = "";
     let err = "";
     child.stdout.on("data", (c) => (out += c));
     child.stderr.on("data", (c) => (err = (err + c).slice(-4000)));
-    child.on("error", (e) => resolve({ ok: false, error: e.code === "ENOENT" ? "agy not found on PATH (install the Antigravity CLI and run agy once to log in)" : e.message }));
+    child.on("error", (e) => done({ ok: false, error: e.code === "ENOENT" ? "agy not found on PATH (install the Antigravity CLI and run agy once to log in)" : e.message }));
     child.on("close", (code) => {
-      let r;
+      let r = null;
       try {
         r = JSON.parse(out);
       } catch {
-        return resolve({ ok: false, error: `agy exited ${code} without JSON output: ${(err || out).trim().slice(-300)}` });
+        // handled below
       }
+      if (!r || typeof r !== "object") return done({ ok: false, error: `agy exited ${code} without a JSON result: ${(err || out).trim().slice(-300)}` });
       const ok = r.status === "SUCCESS";
-      resolve({ ok, response: r.response ?? "", conversationId: r.conversation_id, status: r.status, error: ok ? undefined : r.error?.message ?? r.error ?? r.status });
+      done({ ok, response: String(r.response ?? ""), conversationId: r.conversation_id, status: r.status, error: ok ? undefined : errorText(r.error) ?? r.status ?? `exit ${code}` });
     });
   });
 }

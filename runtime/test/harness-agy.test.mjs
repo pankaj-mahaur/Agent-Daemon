@@ -17,9 +17,25 @@ function fakeAgy(root, result) {
   return { cmd: process.execPath, prefix: [script] };
 }
 
-test("agyArgs: headless JSON, sandboxed, no slash commands; edits opt-in", () => {
-  assert.deepEqual(agyArgs({ prompt: "hi" }), ["-p", "hi", "--output-format", "json", "--sandbox", "--disable-slash-commands"]);
-  assert.deepEqual(agyArgs({ prompt: "hi", model: "m", edits: true }).slice(-4), ["--model", "m", "--mode", "accept-edits"]);
+test("agyArgs: prompt is one --prompt= token (no flag injection); sandboxed; edits opt-in", () => {
+  const a = agyArgs({ prompt: "--dangerously-skip-permissions" });
+  assert.equal(a[0], "--prompt=--dangerously-skip-permissions");
+  assert.ok(!a.includes("--dangerously-skip-permissions"));
+  assert.ok(a.includes("--sandbox") && a.includes("--disable-slash-commands"));
+  assert.deepEqual(agyArgs({ prompt: "hi", model: "m", edits: true }).slice(-2), ["--model=m", "--mode=accept-edits"]);
+});
+
+test("odd agy output (null JSON, object error) is reported, not crashed on", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ad-agy-"));
+  try {
+    for (const [result, pattern] of [[null, /without a JSON result/], [{ status: "ERROR", error: { code: 7 } }, /{"code":7}/]]) {
+      const err = sink();
+      assert.equal(await cmdAgy("x", { userHome: root, command: fakeAgy(root, result), stdout: sink(), stderr: err, acceptRisk: true }), 1);
+      assert.match(err.text, pattern);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("first run needs --accept-risk; consent is remembered", async () => {

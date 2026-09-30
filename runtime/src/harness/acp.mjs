@@ -57,27 +57,71 @@ export function approvalFromOutcome(outcome) {
   return { allow_once: "accept", allow_always: "acceptForSession" }[outcome.optionId] ?? "decline";
 }
 
-export function createAcpAgent({ send, request, engineFactory, clientVersion, err = process.stderr }) {
-  let engine = null;
-  const sessions = new Map(); // sessionId (= threadId) → { cwd, turnId, cancelled }
-
-  const getEngine = async (cwd) => {
-    if (engine) return engine;
-    const started = await engineFactory({ cwd, clientVersion, err });
-    if (!started.engine) throw Object.assign(new Error(started.error), { code: -32000 });
-    engine = started.engine;
-    engine.onApproval = async (req) => {
-      const sessionId = req.params.threadId;
-      if (!sessions.has(sessionId)) return "decline";
-      const item = { type: req.kind === "command" ? "commandExecution" : req.kind === "fileChange" ? "fileChange" : "other", id: req.params.itemId ?? `perm-${Date.now()}`, command: req.params.command, changes: [] };
-      const toolCall = toolCallFor(item) ?? { toolCallId: item.id, title: "Grant extra permissions", kind: "other" };
-      const r = await request("session/request_permission", { sessionId, toolCall: { ...toolCall, status: "pending" }, options: PERMISSION_OPTIONS });
-      return approvalFromOutcome(r?.outcome);
+// Tool-call description for a permission request, with the details the
+// user needs to decide: diff + paths for edits, command + cwd for commands.
+export function permissionToolCall(req, fileChanges = new Map()) {
+  const p = req.params ?? {};
+  const id = p.itemId ?? p.approvalId ?? `perm-${Date.now()}`;
+  if (req.kind === "fileChange") {
+    const changes = fileChanges.get(p.itemId)?.changes ?? [];
+    return {
+      toolCallId: id,
+      title: `Edit ${changes.map((c) => c.path).join(", ") || "files"}`,
+      kind: "edit",
+      status: "pending",
+      locations: changes.map((c) => ({ path: c.path })),
+      content: changes.filter((c) => c.diff).map((c) => ({ type: "content", content: { type: "text", text: clip(`${c.path}\n${c.diff}`) } })),
+      rawInput: { reason: p.reason ?? null, grantRoot: p.grantRoot ?? null },
     };
-    return engine;
+  }
+  if (req.kind === "command") {
+    const command = Array.isArray(p.command) ? p.command.join(" ") : p.command;
+    return { toolCallId: id, title: `$ ${command}`, kind: "execute", status: "pending", rawInput: { command, cwd: p.cwd ?? null, reason: p.reason ?? null } };
+  }
+  return { toolCallId: id, title: "Grant extra permissions", kind: "other", status: "pending", rawInput: { permissions: p.permissions ?? null, reason: p.reason ?? null } };
+}
+
+export function createAcpAgent({ send, request, engineFactory, clientVersion, err = process.stderr }) {
+  let enginePromise = null; // cached promise: concurrent session/new share one engine
+  let engine = null;
+  const sessions = new Map(); // sessionId (= threadId) → { cwd, turnId, busy, cancelRequested }
+  const fileChanges = new Map();
+
+  const getEngine = (cwd) => {
+    enginePromise ??= (async () => {
+      const started = await engineFactory({ cwd, clientVersion, err });
+      if (!started.engine) throw Object.assign(new Error(started.error), { code: -32000 });
+      engine = started.engine;
+      engine.on("itemStarted", ({ item }) => {
+        if (item.type === "fileChange") fileChanges.set(item.id, item);
+      });
+      engine.onApproval = async (req) => {
+        // v1 legacy approvals name the thread conversationId.
+        const sessionId = req.params.threadId ?? req.params.conversationId;
+        const s = sessions.get(sessionId);
+        if (!s || s.cancelRequested) return s?.cancelRequested ? "cancel" : "decline";
+        try {
+          const r = await request("session/request_permission", { sessionId, toolCall: permissionToolCall(req, fileChanges), options: PERMISSION_OPTIONS });
+          return approvalFromOutcome(r?.outcome);
+        } catch (e) {
+          err.write(`[acp] permission request failed (${e.message}); declining\n`);
+          return "decline";
+        }
+      };
+      return engine;
+    })().catch((e) => {
+      enginePromise = null; // let a later session/new retry
+      throw e;
+    });
+    return enginePromise;
   };
 
   const update = (sessionId, u) => send({ jsonrpc: "2.0", method: "session/update", params: { sessionId, update: u } });
+
+  async function interruptIfRunning(sessionId, s) {
+    if (!s.turnId) return; // not started yet — interrupted as soon as it is
+    await engine.interrupt(sessionId, s.turnId).catch((e) => err.write(`[acp] interrupt failed: ${e.message}\n`));
+  }
 
   async function handle(method, params = {}) {
     switch (method) {
@@ -93,39 +137,48 @@ export function createAcpAgent({ send, request, engineFactory, clientVersion, er
       case "session/new": {
         const e = await getEngine(params.cwd);
         const { threadId } = await e.startThread({ cwd: params.cwd });
-        sessions.set(threadId, { cwd: params.cwd, turnId: null, cancelled: false });
+        sessions.set(threadId, { cwd: params.cwd, turnId: null, busy: false, cancelRequested: false });
         return { sessionId: threadId };
       }
       case "session/prompt": {
         const s = sessions.get(params.sessionId);
         if (!s) throw Object.assign(new Error(`unknown session ${params.sessionId}`), { code: -32602 });
-        s.cancelled = false;
-        const r = await engine.turn({
-          threadId: params.sessionId,
-          text: promptText(params.prompt),
-          timeoutMs: 0,
-          onEvent: (evt) => {
-            if (evt.type === "turnStarted") s.turnId = evt.turnId;
-            else if (evt.type === "delta") update(params.sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: evt.text } });
-            else if (evt.type === "itemStarted") {
-              const tc = toolCallFor(evt.item);
-              if (tc) update(params.sessionId, { sessionUpdate: "tool_call", ...tc });
-            } else if (evt.type === "item") {
-              const tu = toolCallUpdateFor(evt.item);
-              if (tu) update(params.sessionId, { sessionUpdate: "tool_call_update", ...tu });
-            }
-          },
-        });
-        s.turnId = null;
-        if (s.cancelled || r.status === "interrupted") return { stopReason: "cancelled" };
-        if (r.status !== "completed") update(params.sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: `\n[turn ${r.status}${r.error?.message ? `: ${r.error.message}` : ""}]` } });
-        return { stopReason: "end_turn" };
+        if (s.busy) throw Object.assign(new Error("a prompt is already running in this session"), { code: -32000 });
+        s.busy = true;
+        s.cancelRequested = false;
+        try {
+          const r = await engine.turn({
+            threadId: params.sessionId,
+            text: promptText(params.prompt),
+            timeoutMs: 0,
+            onEvent: (evt) => {
+              if (evt.type === "turnStarted") {
+                s.turnId = evt.turnId;
+                if (s.cancelRequested) interruptIfRunning(params.sessionId, s); // cancel arrived early
+              } else if (evt.type === "delta") update(params.sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: evt.text } });
+              else if (evt.type === "itemStarted") {
+                const tc = toolCallFor(evt.item);
+                if (tc) update(params.sessionId, { sessionUpdate: "tool_call", ...tc });
+              } else if (evt.type === "item") {
+                const tu = toolCallUpdateFor(evt.item);
+                if (tu) update(params.sessionId, { sessionUpdate: "tool_call_update", ...tu });
+              }
+            },
+          });
+          if (s.cancelRequested || r.status === "interrupted") return { stopReason: "cancelled" };
+          if (r.status !== "completed") update(params.sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: `\n[turn ${r.status}${r.error?.message ? `: ${r.error.message}` : ""}]` } });
+          return { stopReason: "end_turn" };
+        } finally {
+          s.turnId = null;
+          s.busy = false;
+          fileChanges.clear();
+        }
       }
       case "session/cancel": {
         const s = sessions.get(params.sessionId);
-        if (s?.turnId) {
-          s.cancelled = true;
-          await engine.interrupt(params.sessionId, s.turnId).catch((e) => err.write(`[acp] interrupt failed: ${e.message}\n`));
+        if (s?.busy) {
+          s.cancelRequested = true;
+          await interruptIfRunning(params.sessionId, s);
         }
         return undefined; // notification
       }
@@ -134,7 +187,7 @@ export function createAcpAgent({ send, request, engineFactory, clientVersion, er
     }
   }
 
-  return { handle, close: () => engine?.close(), sessions };
+  return { handle, close: async () => (enginePromise ? (await enginePromise.catch(() => null))?.close() : undefined), sessions };
 }
 
 // stdio JSON-RPC 2.0 peer: requests from the client are handled by the
@@ -162,10 +215,17 @@ export function serveAcp({ input = process.stdin, output = process.stdout, err =
       } catch {
         return send({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "parse error" } });
       }
-      if (msg.method === undefined && pending.has(msg.id)) {
+      if (!msg || typeof msg !== "object") return send({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "invalid request" } });
+      if (msg.method === undefined) {
+        // A response to one of our requests — never answered back.
         const p = pending.get(msg.id);
+        if (!p) return err.write(`[acp] ignoring response to unknown request ${JSON.stringify(msg.id)}\n`);
         pending.delete(msg.id);
-        return msg.error ? p.reject(new Error(msg.error.message)) : p.resolve(msg.result);
+        return msg.error ? p.reject(new Error(msg.error.message ?? "client error")) : p.resolve(msg.result);
+      }
+      if (typeof msg.method !== "string") {
+        if (msg.id !== undefined) send({ jsonrpc: "2.0", id: msg.id, error: { code: -32600, message: "invalid request" } });
+        return;
       }
       try {
         const result = await agent.handle(msg.method, msg.params);

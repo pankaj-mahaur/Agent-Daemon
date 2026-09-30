@@ -37,7 +37,15 @@ export function recentLoops(cwd, limit = 10) {
     .filter((f) => f.endsWith(".jsonl"))
     .map((f) => {
       const lines = readFileSync(path.join(dir, f), "utf8").trim().split("\n").filter(Boolean);
-      const last = lines.length ? JSON.parse(lines.at(-1)) : null;
+      // A loop may be mid-write: use the last line that parses.
+      let last = null;
+      for (let i = lines.length - 1; i >= 0 && !last; i--) {
+        try {
+          last = JSON.parse(lines[i]);
+        } catch {
+          // partial line — try the one before
+        }
+      }
       return { threadId: f.replace(/\.jsonl$/, ""), iterations: lines.length, last: last && { ts: last.ts, turnStatus: last.turnStatus, progress: last.status?.progress ?? null } };
     })
     .sort((a, b) => String(b.last?.ts).localeCompare(String(a.last?.ts)))
@@ -49,27 +57,57 @@ export async function startWebServer({ cwd = process.cwd(), port = 0, token = ra
   if (!started.engine) throw new Error(started.error);
   const engine = started.engine;
   const clients = new Set();
-  const approvals = new Map(); // id → resolve
+  const approvals = new Map(); // id → { resolve, event } — event is replayed to pages that (re)connect
+  const fileChanges = new Map(); // itemId → fileChange item, for approval details
   let threadId = null;
   let turn = null; // { turnId }
 
+  const sendTo = (res, evt) => res.write(`data: ${JSON.stringify(evt)}\n\n`);
   const broadcast = (evt) => {
-    const data = `data: ${JSON.stringify(evt)}\n\n`;
-    for (const res of clients) res.write(data);
+    for (const res of clients) sendTo(res, evt);
+  };
+  const settleApproval = (id, answer) => {
+    const a = approvals.get(id);
+    if (!a) return false;
+    approvals.delete(id);
+    a.resolve(parseApprovalAnswer(answer));
+    broadcast({ type: "approvalResolved", id });
+    return true;
   };
 
+  engine.on("itemStarted", ({ item }) => {
+    if (item.type === "fileChange") fileChanges.set(item.id, item);
+  });
   engine.onApproval = (req) => {
     if (!clients.size) return "decline";
     const id = randomBytes(6).toString("hex");
     const p = req.params ?? {};
-    broadcast({ type: "approval", id, kind: req.kind, command: Array.isArray(p.command) ? p.command.join(" ") : p.command ?? null, reason: p.reason ?? null, cwd: p.cwd ?? null });
-    return new Promise((resolve) => approvals.set(id, (answer) => resolve(parseApprovalAnswer(answer))));
+    const event = {
+      type: "approval",
+      id,
+      kind: req.kind,
+      command: Array.isArray(p.command) ? p.command.join(" ") : p.command ?? null,
+      reason: p.reason ?? null,
+      cwd: p.cwd ?? null,
+      paths: (fileChanges.get(p.itemId)?.changes ?? []).map((c) => c.path),
+      grantRoot: p.grantRoot ?? null,
+      permissions: p.permissions ?? null,
+    };
+    return new Promise((resolve) => {
+      approvals.set(id, { resolve, event });
+      broadcast(event);
+    });
   };
 
   async function chat(text) {
     if (turn) throw Object.assign(new Error("a turn is already running"), { status: 409 });
-    if (!threadId) threadId = (await engine.startThread({ cwd })).threadId;
-    turn = { turnId: null };
+    turn = { turnId: null }; // claimed before any await: two POSTs can't both start
+    try {
+      if (!threadId) threadId = (await engine.startThread({ cwd })).threadId;
+    } catch (e) {
+      turn = null;
+      throw e;
+    }
     broadcast({ type: "user", text });
     engine
       .turn({
@@ -88,6 +126,7 @@ export async function startWebServer({ cwd = process.cwd(), port = 0, token = ra
       .catch((e) => broadcast({ type: "done", status: "failed", error: e.message }))
       .finally(() => {
         turn = null;
+        fileChanges.clear();
       });
     return { threadId };
   }
@@ -114,10 +153,7 @@ export async function startWebServer({ cwd = process.cwd(), port = 0, token = ra
       return chat(body.text.trim());
     },
     "POST /api/approval": async (body) => {
-      const resolve = approvals.get(body.id);
-      if (!resolve) throw Object.assign(new Error("no such approval"), { status: 404 });
-      approvals.delete(body.id);
-      resolve(body.answer);
+      if (!settleApproval(body.id, body.answer)) throw Object.assign(new Error("no such approval"), { status: 404 });
       return { ok: true };
     },
     "POST /api/interrupt": async () => {
@@ -149,24 +185,41 @@ export async function startWebServer({ cwd = process.cwd(), port = 0, token = ra
       res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive" });
       res.write(": connected\n\n");
       clients.add(res);
-      req.on("close", () => clients.delete(res));
+      // A reloaded page must still see approvals that are waiting.
+      for (const { event } of approvals.values()) sendTo(res, event);
+      req.on("close", () => {
+        clients.delete(res);
+        // Nobody left to answer: decline rather than wedge the turn.
+        if (!clients.size) for (const id of [...approvals.keys()]) settleApproval(id, "n");
+      });
       return;
     }
     const handler = api[`${req.method} ${url.pathname}`];
     if (!handler) return send(404, { error: "not found" });
-    try {
-      let body = {};
-      if (req.method === "POST") {
-        let raw = "";
-        for await (const chunk of req) {
-          raw += chunk;
-          if (raw.length > MAX_BODY) return send(413, { error: "body too large" });
+    let body = {};
+    if (req.method === "POST") {
+      req.setEncoding("utf8"); // multibyte characters may straddle chunks
+      let raw = "";
+      for await (const chunk of req) {
+        raw += chunk;
+        if (raw.length > MAX_BODY) {
+          res.setHeader("connection", "close");
+          send(413, { error: "body too large" });
+          return req.destroy();
         }
-        body = raw ? JSON.parse(raw) : {};
       }
+      try {
+        body = raw ? JSON.parse(raw) : {};
+      } catch {
+        return send(400, { error: "body is not valid JSON" });
+      }
+      if (!body || typeof body !== "object" || Array.isArray(body)) return send(400, { error: "body must be a JSON object" });
+    }
+    try {
       send(200, await handler(body));
     } catch (e) {
-      send(e.status ?? 500, { error: e.message });
+      send(e.status ?? 500, { error: e.status ? e.message : "internal error" });
+      if (!e.status) err.write(`[agent-daemon web] ${req.method} ${url.pathname}: ${e.message}\n`);
     }
   });
 
@@ -175,10 +228,12 @@ export async function startWebServer({ cwd = process.cwd(), port = 0, token = ra
   return {
     port: actualPort,
     token,
-    url: `http://127.0.0.1:${actualPort}/?t=${token}`,
+    // Token in the fragment: never sent to the server and not kept in the
+    // history entry once the page moves it to sessionStorage.
+    url: `http://127.0.0.1:${actualPort}/#t=${token}`,
     close: async () => {
+      for (const id of [...approvals.keys()]) settleApproval(id, "n");
       for (const res of clients) res.end();
-      for (const r of approvals.values()) r("");
       await new Promise((r) => server.close(r));
       await engine.close();
     },
@@ -229,13 +284,14 @@ button{font:inherit;padding:6px 12px;border-radius:8px;border:1px solid var(--li
 <form id="f"><textarea id="t" placeholder="Ask the agent… (Enter to send, Shift+Enter for a new line)"></textarea>
 <div style="display:flex;flex-direction:column;gap:6px"><button class="primary" type="submit">Send</button><button type="button" id="stop">Stop</button><button type="button" id="new">New</button></div></form></main>
 <script>
-const token = new URLSearchParams(location.search).get("t") || sessionStorage.getItem("adt") || "";
+const token = new URLSearchParams(location.hash.slice(1)).get("t") || sessionStorage.getItem("adt") || "";
 try { sessionStorage.setItem("adt", token); } catch {}
 history.replaceState(null, "", "/");
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 const api = (method, p, body) => fetch(p, { method, headers: { "x-ad-token": token, "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined }).then(async (r) => { const j = await r.json(); if (!r.ok) throw new Error(j.error || r.status); return j; });
 let current = null, lastItem = null;
+const boxes = new Map();
 const log = $("log");
 const add = (node) => { log.appendChild(node); log.scrollTop = log.scrollHeight; return node; };
 async function refresh() {
@@ -255,9 +311,16 @@ function onEvent(ev) {
   else if (ev.type === "activity") { add(el("div", "act", ev.itemType === "commandExecution" ? "$ " + ev.command : ev.itemType === "fileChange" ? "~ " + ev.paths.join(", ") : "⚙ " + ev.itemType)); current = null; }
   else if (ev.type === "error") add(el("div", ev.willRetry ? "act warn" : "msg err", ev.message));
   else if (ev.type === "done") { if (ev.status !== "completed") add(el("div", "msg err", "[turn " + ev.status + (ev.error ? ": " + ev.error : "") + "]")); refresh(); }
+  else if (ev.type === "approvalResolved") { const box = boxes.get(ev.id); if (box) box.querySelectorAll("button").forEach((x) => (x.disabled = true)); }
   else if (ev.type === "approval") {
+    if (boxes.has(ev.id)) return; // replayed on reconnect
     const box = add(el("div", "ap"));
+    boxes.set(ev.id, box);
     box.appendChild(el("div", null, ev.kind === "command" ? "Run command?  $ " + ev.command : ev.kind === "fileChange" ? "Apply file changes?" : "Grant extra permissions?"));
+    if (ev.cwd) box.appendChild(el("div", "kv", "in " + ev.cwd));
+    for (const p of ev.paths || []) box.appendChild(el("div", "act", "~ " + p));
+    if (ev.grantRoot) box.appendChild(el("div", "kv", "grants write access to " + ev.grantRoot));
+    if (ev.permissions) box.appendChild(el("div", "act", JSON.stringify(ev.permissions)));
     if (ev.reason) box.appendChild(el("div", "kv", "reason: " + ev.reason));
     for (const [label, answer] of [["Allow", "y"], ["Always (session)", "a"], ["Deny", "n"]]) {
       const b = el("button", null, label);

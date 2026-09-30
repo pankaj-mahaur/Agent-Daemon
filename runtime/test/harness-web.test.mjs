@@ -125,3 +125,63 @@ test("with no page connected, approvals are declined", async () => {
     assert.equal(o.running, false, "turn finished instead of waiting forever");
   });
 });
+
+test("the only page disconnecting mid-approval declines it; the server keeps working", async () => {
+  await withWeb(async (web) => {
+    let approvalSeen;
+    const seen = new Promise((r) => (approvalSeen = r));
+    const stream = await sse(web.port, web.token, (ev) => ev.type === "approval" && approvalSeen(ev));
+    await new Promise((r) => setTimeout(r, 50));
+    await req(web.port, "POST", "/api/chat", { token: web.token, body: { text: "do it" } });
+    await seen;
+    stream.destroy(); // page closed / reloaded
+    let o;
+    for (let i = 0; i < 40; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      o = (await req(web.port, "GET", "/api/overview", { token: web.token })).json();
+      if (!o.running) break;
+    }
+    assert.equal(o.running, false, "turn finished with a decline instead of wedging");
+    assert.equal((await req(web.port, "POST", "/api/new", { token: web.token })).status, 200);
+  });
+});
+
+test("a pending approval is replayed to a page that connects later, with file paths", async () => {
+  await withWeb(async (web) => {
+    const first = [];
+    const s1 = await sse(web.port, web.token, (ev) => first.push(ev));
+    await new Promise((r) => setTimeout(r, 50));
+    await req(web.port, "POST", "/api/chat", { token: web.token, body: { text: "edit-file" } });
+    for (let i = 0; i < 40 && !first.some((e) => e.type === "approval"); i++) await new Promise((r) => setTimeout(r, 50));
+    const second = [];
+    const s2 = await sse(web.port, web.token, (ev) => second.push(ev));
+    await new Promise((r) => setTimeout(r, 100));
+    const replayed = second.find((e) => e.type === "approval");
+    assert.ok(replayed, "late page sees the waiting approval");
+    assert.deepEqual(replayed.paths, ["src/app.js"]);
+    await req(web.port, "POST", "/api/approval", { token: web.token, body: { id: replayed.id, answer: "y" } });
+    await new Promise((r) => setTimeout(r, 200));
+    assert.ok(first.some((e) => e.type === "approvalResolved" && e.id === replayed.id));
+    s1.destroy();
+    s2.destroy();
+  });
+});
+
+test("concurrent chats: exactly one starts; bad bodies are 400/413", async () => {
+  await withWeb(async (web) => {
+    const [a, b] = await Promise.all([
+      req(web.port, "POST", "/api/chat", { token: web.token, body: { text: "hang" } }),
+      req(web.port, "POST", "/api/chat", { token: web.token, body: { text: "hang" } }),
+    ]);
+    assert.deepEqual([a.status, b.status].sort(), [200, 409]);
+    await req(web.port, "POST", "/api/interrupt", { token: web.token });
+    const raw = (body) => new Promise((resolve) => {
+      const r = http.request({ host: "127.0.0.1", port: web.port, method: "POST", path: "/api/chat", headers: { host: `127.0.0.1:${web.port}`, "x-ad-token": web.token } }, (res) => { res.resume(); res.on("end", () => resolve(res.statusCode)); });
+      r.on("error", () => resolve("reset"));
+      r.end(body);
+    });
+    assert.equal(await raw("{not json"), 400);
+    assert.equal(await raw("[1,2]"), 400);
+    assert.ok([413, "reset"].includes(await raw("x".repeat(70_000))));
+  });
+});

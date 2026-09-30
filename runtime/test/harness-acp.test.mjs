@@ -99,3 +99,47 @@ test("mapping helpers", () => {
   assert.equal(approvalFromOutcome({ outcome: "cancelled" }), "decline");
   assert.equal(approvalFromOutcome(undefined), "decline");
 });
+
+test("concurrent session/new share one engine; a busy session rejects a second prompt", async () => {
+  const { createAcpAgent } = await import("../src/harness/acp.mjs");
+  const root = mkdtempSync(join(tmpdir(), "ad-acp-"));
+  let starts = 0;
+  const agent = createAcpAgent({
+    send: () => {},
+    request: async () => { throw new Error("client refused"); },
+    engineFactory: (o) => (starts++, startHarnessEngine({ ...o, home: join(root, "home"), command, store: { get: () => null } })),
+    err: { write: () => true },
+  });
+  try {
+    const [s1, s2] = await Promise.all([agent.handle("session/new", { cwd: root, mcpServers: [] }), agent.handle("session/new", { cwd: root, mcpServers: [] })]);
+    assert.equal(starts, 1, "one engine for both sessions");
+    assert.notEqual(s1.sessionId, s2.sessionId);
+    const running = agent.handle("session/prompt", { sessionId: s1.sessionId, prompt: [{ type: "text", text: "hang" }] });
+    await new Promise((r) => setTimeout(r, 200));
+    await assert.rejects(agent.handle("session/prompt", { sessionId: s1.sessionId, prompt: [{ type: "text", text: "x" }] }), /already running/);
+    await agent.handle("session/cancel", { sessionId: s1.sessionId });
+    assert.equal((await running).stopReason, "cancelled");
+    // A client that errors on request_permission → the approval is declined.
+    const r = await agent.handle("session/prompt", { sessionId: s2.sessionId, prompt: [{ type: "text", text: "do it" }] });
+    assert.equal(r.stopReason, "end_turn");
+  } finally {
+    await agent.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("JSON-RPC hygiene: stray responses and unknown notifications get no reply; bad messages get -32600", async () => {
+  const toAgent = new PassThrough();
+  const fromAgent = new PassThrough();
+  const replies = [];
+  createInterface({ input: fromAgent }).on("line", (l) => replies.push(JSON.parse(l)));
+  const done = serveAcp({ input: toAgent, output: fromAgent, err: { write: () => true }, engineFactory: async () => assert.fail("no engine needed") });
+  toAgent.write(JSON.stringify({ jsonrpc: "2.0", id: "never-asked", result: {} }) + "\n");
+  toAgent.write(JSON.stringify({ jsonrpc: "2.0", method: "unknown/notification", params: {} }) + "\n");
+  toAgent.write(JSON.stringify({ jsonrpc: "2.0", id: 5, method: 42 }) + "\n");
+  toAgent.write("[not an object\n");
+  await new Promise((r) => setTimeout(r, 100));
+  toAgent.end();
+  await done;
+  assert.deepEqual(replies.map((m) => [m.id, m.error?.code]), [[5, -32600], [null, -32700]]);
+});
