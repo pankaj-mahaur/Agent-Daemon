@@ -13,18 +13,20 @@ const MAX_LINES_REPORTED = 5;
 
 export async function editPost() {
   const input = await readStdinJson();
-  const filePath = input?.tool_input?.file_path || input?.path || input?.file || "";
+  // Codex apply_patch can touch several files (hooks/io.mjs fills file_paths).
+  const single = input?.tool_input?.file_path || input?.path || input?.file || "";
+  const files = input?.tool_input?.file_paths?.length ? input.tool_input.file_paths : single ? [single] : [];
+  for (const filePath of files) reportConsoleLogs(filePath);
+  passthrough();
+}
 
-  if (!filePath || !JS_RE.test(filePath) || !existsSync(filePath)) {
-    passthrough();
-    return;
-  }
+function reportConsoleLogs(filePath) {
+  if (!JS_RE.test(filePath) || !existsSync(filePath)) return;
 
   let content;
   try {
     content = readFileSync(filePath, "utf8");
   } catch {
-    passthrough();
     return;
   }
 
@@ -39,6 +41,4 @@ export async function editPost() {
     if (hits.length > MAX_LINES_REPORTED) warn(`  ... and ${hits.length - MAX_LINES_REPORTED} more`);
     warn("Strip these or replace with a real logger before committing.");
   }
-
-  passthrough();
 }

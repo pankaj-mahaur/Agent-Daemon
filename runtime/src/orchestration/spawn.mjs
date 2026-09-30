@@ -14,6 +14,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
 import { sendMessage, createInbox } from "./inbox.mjs";
+import { runCodexWorker } from "./codex-worker.mjs";
 
 const MAX_CONCURRENT_AGENTS = 8;
 const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
@@ -136,6 +137,39 @@ export async function spawnAgent(opts) {
   ].join("\n");
 
   activeAgents.add(agentName);
+
+  // Default worker engine is Codex (sandboxed, no approvals needed);
+  // `--engine claude` / AD_AGENT_ENGINE=claude keeps the headless claude path.
+  const engine = opts.engine ?? process.env.AD_AGENT_ENGINE ?? "codex";
+  if (engine === "codex") {
+    await updateAgentStatus(opts.teamId, agentName, "running", null, process.pid);
+    const r = await (opts.runWorker ?? runCodexWorker)({
+      worktreePath,
+      systemPrompt,
+      userMessage,
+      model: opts.model,
+      timeoutMs,
+      engineOpts: opts.engineOpts,
+    });
+    activeAgents.delete(agentName);
+    const status = r.ok ? "completed" : "error";
+    await updateAgentStatus(opts.teamId, agentName, status, r.ok ? null : r.error);
+    if (opts.leader) {
+      await sendMessage({
+        teamId: opts.teamId,
+        from: agentName,
+        to: opts.leader,
+        type: "task-complete",
+        payload: { role: opts.role, task: opts.task, status, exitCode: r.ok ? 0 : 1, branch, worktreePath, threadId: r.threadId, summary: String(r.output ?? r.error ?? "").slice(0, 1000) },
+      }).catch((err) => process.stderr.write(`[spawn] could not notify ${opts.leader}: ${err.message}\n`));
+    }
+    return { ok: r.ok, agentName, worktreePath, branch, threadId: r.threadId, error: r.ok ? undefined : r.error };
+  }
+  if (engine !== "claude") {
+    activeAgents.delete(agentName);
+    await updateAgentStatus(opts.teamId, agentName, "error", `unknown engine ${engine}`);
+    return { ok: false, agentName, error: `unknown engine "${engine}" (use codex or claude)` };
+  }
 
   return new Promise((resolve) => {
     let settled = false;

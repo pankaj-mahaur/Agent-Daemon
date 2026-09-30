@@ -62,3 +62,8 @@ test("describeItem summarizes tool activity", () => {
   assert.equal(describeItem({ type: "mcpToolCall", server: "memory", tool: "search" }), "⚙ memory.search");
   assert.equal(describeItem({ type: "reasoning" }), null);
 });
+
+test("ad run prints a message that arrives whole (no deltas)", async () => {
+  const r = await run("edit-file");
+  assert.equal(r.stdout, "edit[decline]\n");
+});

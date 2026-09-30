@@ -35,8 +35,15 @@ const state = {
   account: process.env.FAKE_LOGGED_OUT === "1" ? null : { type: "chatgpt", email: "someone@example.com", planType: "plus" },
 };
 
+// a.b."c.d".e → ["a", "b", "c.d", "e"] (Codex keyPath syntax)
+function parseKeyPath(keyPath) {
+  const parts = [];
+  for (const m of keyPath.matchAll(/"((?:[^"\\]|\\.)*)"|([^.]+)/g)) parts.push(m[1] !== undefined ? JSON.parse(`"${m[1]}"`) : m[2]);
+  return parts;
+}
+
 function setPath(obj, keyPath, value) {
-  const parts = keyPath.split(".");
+  const parts = parseKeyPath(keyPath);
   let cur = obj;
   for (const p of parts.slice(0, -1)) cur = cur[p] ??= {};
   if (value === null) delete cur[parts.at(-1)];
@@ -66,19 +73,32 @@ async function runScriptedTurn(threadId, turn, params) {
     agentMessage(threadId, turn.id, '{"answer":42}');
     return complete(threadId, turn);
   }
+  if (text === "two-approvals") {
+    const ask = (cmd) => askClient("item/commandExecution/requestApproval", { threadId, turnId: turn.id, command: cmd });
+    const [a, b] = await Promise.all([ask("echo one"), ask("echo two")]);
+    agentMessage(threadId, turn.id, `two[${a.result.decision},${b.result.decision}]`);
+    return complete(threadId, turn);
+  }
+  if (text === "edit-file") {
+    const item = { type: "fileChange", id: "fc-1", status: "inProgress", changes: [{ path: "src/app.js", kind: { type: "update" }, diff: "-a\n+b" }] };
+    notify("item/started", { threadId, turnId: turn.id, item });
+    const reply = await askClient("item/fileChange/requestApproval", { threadId, turnId: turn.id, itemId: "fc-1", reason: "apply fix" });
+    agentMessage(threadId, turn.id, `edit[${reply.result.decision}]`);
+    return complete(threadId, turn);
+  }
   if (text === "ask-permission" || text === "legacy-approval") {
     const method = text === "ask-permission" ? "item/permissions/requestApproval" : "execCommandApproval";
     const reply = await askClient(method, { threadId, turnId: turn.id, permissions: { network: { enabled: true } }, command: ["ls"] });
     agentMessage(threadId, turn.id, JSON.stringify(reply.result ?? reply.error));
     return complete(threadId, turn);
   }
-  notify("item/agentMessage/delta", { threadId, turnId: turn.id, itemId: "i1", delta: "po" });
+  notify("item/agentMessage/delta", { threadId, turnId: turn.id, itemId: `msg-${turn.id}`, delta: "po" });
   notify("item/agentMessage/delta", { threadId: "other-thread", turnId: "x", itemId: "i9", delta: "NOISE" });
   notify("error", { threadId, turnId: turn.id, error: { message: "Reconnecting 1/5" }, willRetry: true });
-  notify("item/agentMessage/delta", { threadId, turnId: turn.id, itemId: "i1", delta: "ng" });
+  notify("item/agentMessage/delta", { threadId, turnId: turn.id, itemId: `msg-${turn.id}`, delta: "ng" });
   const reply = await askClient("item/commandExecution/requestApproval", { threadId, turnId: turn.id, command: "rm -rf /" });
   const decision = reply.error ? `error:${reply.error.code}` : reply.result.decision;
-  notify("item/agentMessage/delta", { threadId, turnId: turn.id, itemId: "i1", delta: `[${decision}]` });
+  notify("item/agentMessage/delta", { threadId, turnId: turn.id, itemId: `msg-${turn.id}`, delta: `[${decision}]` });
   agentMessage(threadId, turn.id, `pong[${decision}]`);
   complete(threadId, turn);
 }
@@ -112,6 +132,36 @@ async function onRequest({ id, method, params }) {
     case "account/logout":
       state.account = null;
       return send({ id, result: {} });
+    case "hooks/list": {
+      // Mirrors real key format <sourcePath>:<event_snake>:<group>:<handler>.
+      const file = join(process.env.CODEX_HOME, "hooks.json");
+      const hooks = [];
+      if (existsSync(file)) {
+        const def = JSON.parse(readFileSync(file, "utf8")).hooks ?? {};
+        for (const [event, groups] of Object.entries(def)) {
+          groups.forEach((g, gi) => (g.hooks ?? []).forEach((h, hi) => {
+            const key = `${file}:${event.replace(/[A-Z]/g, (c, i) => (i ? "_" : "") + c.toLowerCase())}:${gi}:${hi}`;
+            const currentHash = `sha256:${Buffer.from(JSON.stringify(h)).toString("base64").slice(0, 16)}`;
+            const trusted = state.config.hooks?.state?.[key]?.trusted_hash;
+            hooks.push({ key, eventName: event, sourcePath: file, currentHash, trustStatus: trusted === currentHash ? "trusted" : trusted ? "modified" : "untrusted" });
+          }));
+        }
+      }
+      hooks.push({ key: "C:/repo/.codex/hooks.json:pre_tool_use:0:0", eventName: "PreToolUse", sourcePath: "C:/repo/.codex/hooks.json", currentHash: "sha256:repo", trustStatus: "untrusted" });
+      return send({ id, result: { data: [{ cwd: params.cwds?.[0], hooks, warnings: [], errors: [] }] } });
+    }
+    case "config/value/write":
+      setPath(state.config, params.keyPath, params.value);
+      if (configFile) writeFileSync(configFile, JSON.stringify(state.config));
+      return send({ id, result: { status: "ok", version: "v1", filePath: "config.toml" } });
+    case "windowsSandbox/readiness":
+      return send({ id, result: { status: state.config.windows?.sandbox ? "ready" : "notConfigured" } });
+    case "windowsSandbox/setupStart":
+      send({ id, result: { started: true } });
+      return setTimeout(() => notify("windowsSandbox/setupCompleted", { mode: params.mode, success: process.env.FAKE_SANDBOX_FAIL !== "1", error: process.env.FAKE_SANDBOX_FAIL === "1" ? "denied by policy" : null }), 10);
+    case "skills/extraRoots/set":
+    case "config/mcpServer/reload":
+      return send({ id, result: {} });
     case "config/read":
       return send({ id, result: { config: state.config, origins: {} } });
     case "config/batchWrite":
@@ -143,9 +193,17 @@ async function onRequest({ id, method, params }) {
       send({ id, result: { turn } });
       return runScriptedTurn(threadId, turn, params);
     }
+    case "thread/compact/start":
+      send({ id, result: {} });
+      return setTimeout(() => notify("thread/compacted", { threadId: params.threadId }), 10);
     case "turn/interrupt":
     case "turn/steer":
+    case "thread/goal/clear":
       return send({ id, result: {} });
+    case "thread/goal/set":
+      return send({ id, result: { goal: { threadId: params.threadId, objective: params.objective, status: "active", tokensUsed: 0, timeUsedSeconds: 0, createdAt: 0, updatedAt: 0 } } });
+    case "thread/list":
+      return send({ id, result: { data: [{ id: "thread-old", preview: "fix the\nflaky test", cwd: params?.cwd ?? "", updatedAt: 1 }] } });
     case "test/fail":
       return send({ id, error: { code: -32000, message: "boom", data: { why: "scripted" } } });
     case "test/crash":

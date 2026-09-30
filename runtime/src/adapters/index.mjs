@@ -45,11 +45,13 @@ export async function detect(transcriptPath) {
   if (/saoudrizwan\.claude-dev[/\\]tasks/i.test(transcriptPath)) return "cline";  // VS Code Cline extension
   if (/[/\\]\.cursor[/\\]sessions/i.test(transcriptPath))      return "cursor";
   if (/[/\\]\.codex[/\\]sessions/i.test(transcriptPath))       return "codex";
+  if (/[/\\]codex-home[/\\](?:archived_)?sessions[/\\]/i.test(transcriptPath)) return "codex";  // ad harness CODEX_HOME
 
   // Filename heuristics
   const fname = p.split("/").pop() || "";
   if (/^api_conversation_history\.json$/i.test(fname)) return "cline";
   if (/^ui_messages\.json$/i.test(fname))               return "cline";
+  if (/^rollout-.+\.jsonl$/i.test(fname))               return "codex";
 
   // Content sniff — read first non-empty line
   try {
@@ -78,7 +80,7 @@ function detectFromFirstLine(line) {
   // JSONL — sniff well-known fields
   let obj;
   try { obj = JSON.parse(line); } catch { return "claude-code"; }
-  if (obj?.type === "session.created" || /^(user|assistant|tool|session)\./i.test(obj?.type || "")) return "codex";
+  if (codex.isRolloutLine(obj)) return "codex";
   if (obj?.type === "user_message" || obj?.type === "assistant_message")                            return "cursor";
   if (obj?.say || obj?.ask)                                                                          return "cline";
   return "claude-code";

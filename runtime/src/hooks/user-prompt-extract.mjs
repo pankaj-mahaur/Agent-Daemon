@@ -24,7 +24,10 @@ import { extractFromText } from "./extractors.mjs";
 import { appendLearnings } from "./journal.mjs";
 import { markRecentSkillFailure } from "../memory/episodic.mjs";
 
-const TRANSCRIPT_TAIL_BYTES = 64 * 1024;  // 64 KB — enough for the last few turns
+// 1 MB: Claude turns fit in 64 KB, but Codex rollouts can put >64 KB of
+// tool output / injected context between the last assistant message and
+// the next prompt (~6% of real prompts). Reading 1 MB costs ~ms.
+const TRANSCRIPT_TAIL_BYTES = 1024 * 1024;
 
 export async function userPromptExtract() {
   try {
@@ -127,15 +130,23 @@ async function readLastAssistantTurn(transcriptPath) {
       if (!line) continue;
       let obj;
       try { obj = JSON.parse(line); } catch { continue; }
+      // Codex rollout: {type:"response_item", payload:{type:"message", role:"assistant", content}}
+      // or an item_completed AgentMessage.
+      const p = obj.payload;
+      const codexMsg =
+        (obj.type === "response_item" && p?.type === "message" && p.role === "assistant" && p) ||
+        (obj.type === "event_msg" && p?.type === "item_completed" && p.item?.type === "AgentMessage" && p.item) ||
+        null;
       const isAssistant =
+        Boolean(codexMsg) ||
         obj.type === "assistant" ||
         obj.role === "assistant" ||
         obj.message?.role === "assistant";
       if (!isAssistant) continue;
 
-      const text = stringifyContent(obj.message?.content ?? obj.content);
+      const text = stringifyContent(codexMsg ? codexMsg.content ?? codexMsg.text : obj.message?.content ?? obj.content);
       if (!text || text.length < 8) continue;
-      return { text, uuid: obj.uuid };
+      return { text, uuid: obj.uuid ?? codexMsg?.id };
     }
     return null;
   } catch {
@@ -154,7 +165,7 @@ function stringifyContent(content) {
     return content
       .map(c => {
         if (typeof c === "string") return c;
-        if (c?.type === "text" && typeof c.text === "string") return c.text;
+        if ((c?.type === "text" || c?.type === "output_text") && typeof c.text === "string") return c.text;
         return "";
       })
       .join("\n")

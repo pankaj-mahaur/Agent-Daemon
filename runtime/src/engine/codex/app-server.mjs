@@ -136,16 +136,18 @@ export class CodexAppServer extends EventEmitter {
     this.#send({ method, ...(params === undefined ? {} : { params }) });
   }
 
-  // Closing stdin asks codex to exit; after 3 s it is killed. On Windows the
-  // child is the node launcher that spawned codex.exe, so kill the tree.
-  async close() {
+  // Closing stdin asks codex to exit. Codex then runs SessionEnd hooks (up
+  // to 3 s each), so allow a grace period well past that before killing.
+  // On Windows the child is the node launcher that spawned codex.exe, so
+  // kill the tree.
+  async close({ graceMs = 8000 } = {}) {
     if (!this.running) return;
     this.child.stdin.end();
     await new Promise((resolve) => {
       const t = setTimeout(() => {
         this.#killTree();
         resolve();
-      }, 3000);
+      }, graceMs);
       this.child.once("close", () => {
         clearTimeout(t);
         resolve();

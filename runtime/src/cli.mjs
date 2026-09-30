@@ -63,6 +63,7 @@ Commands:
   service uninstall      Unregister the watch service
   service status         Show whether the watch service is registered
   evolve <skill>         GEPA self-improvement run for a skill (sample → reflect → generate → evaluate → select)
+                         --llm <backend>      claude | codex | auto (default: claude, else Codex engine)
                          --list-candidates    list skills with ≥3 failures in 30d (no auth needed)
                          --export-traces      export skill_executions to JSONL for inline GEPA (no auth needed)
                          --json               machine-readable output (use with --list-candidates / --export-traces)
@@ -98,6 +99,8 @@ Commands:
                          --open               open it in the default browser
 
 Harness (Codex engine):
+  chat                   Interactive agent session (approve commands/edits as they come; /help inside)
+                         --cwd <dir>  --model <name>  --sandbox <mode>  --resume <thread-id>
   run "<prompt>"         One non-interactive agent turn (approvals are declined)
                          --cwd <dir>  --model <name>  --json
                          --sandbox <mode>     read-only | workspace-write (default) | danger-full-access
@@ -107,6 +110,8 @@ Harness (Codex engine):
   auth use <provider>    Switch active provider: openai | openrouter [--model <slug>]
   auth status            Show the harness login + active provider (no secrets)
   auth logout [openrouter]
+  sandbox setup          Windows: set up Codex's command sandbox for the harness (--elevated: stronger, asks UAC)
+  sandbox status         Windows: show sandbox readiness
 
   team create     (tc)   Create a new multi-agent team
   team status     (ts)   Show team kanban board
@@ -116,7 +121,7 @@ Harness (Codex engine):
   team cleanup    (tu)   Prune stale worktrees and dangling team data
   team delete     (td)   Delete a team and its data
   team retry      (tr)   Reset a failed task to pending (--team <id> --task <task-id>)
-  spawn           (sp)   Spawn a worker agent in a team
+  spawn           (sp)   Spawn a worker agent in a team (--engine codex [default, sandboxed] | claude)
 
 Options:
   --version              Print version and exit
@@ -2056,7 +2061,8 @@ async function cmdSpawn(opts) {
     cwd: opts.cwd,
     worktree: true,
     leader: leader?.name || null,
-    verbose: opts.verbose
+    verbose: opts.verbose,
+    engine: opts.engine
   });
 
   if (result.ok) {
@@ -2149,7 +2155,12 @@ async function main(argv) {
         out:          { type: "string" },
         open:         { type: "boolean" },
         sandbox:      { type: "string" },
-        device:       { type: "boolean" }
+        device:       { type: "boolean" },
+        host:         { type: "string" },
+        resume:       { type: "string" },
+        llm:          { type: "string" },
+        elevated:     { type: "boolean" },
+        engine:       { type: "string" }
       },
       allowPositionals: true,
       strict: false
@@ -2159,10 +2170,20 @@ async function main(argv) {
     return 1;
   }
 
+  // `--host codex` (set in the harness hooks.json) makes hooks/io.mjs adapt
+  // hook input/output to Codex. Default is Claude Code.
+  if (parsed.values.host) process.env.AD_HOOK_HOST = parsed.values.host;
+  // Backend for ad's own LLM calls (digest fallback, GEPA) — see llm.mjs.
+  if (parsed.values.llm) process.env.AD_LLM_BACKEND = parsed.values.llm;
+  // Under Codex, CLAUDE_* vars are leftovers from an outer Claude Code
+  // session (e.g. `ad chat` started from inside one) and name the wrong
+  // project; hooks get cwd/session from their stdin payload instead.
+  const claudeEnv = process.env.AD_HOOK_HOST === "codex" ? {} : process.env;
+
   const opts = {
-    transcript:  parsed.values.transcript    || process.env.CLAUDE_TRANSCRIPT_PATH,
-    sessionId:   parsed.values["session-id"] || process.env.CLAUDE_SESSION_ID,
-    cwd:         parsed.values.cwd           || process.env.CLAUDE_PROJECT_DIR || process.cwd(),
+    transcript:  parsed.values.transcript    || claudeEnv.CLAUDE_TRANSCRIPT_PATH,
+    sessionId:   parsed.values["session-id"] || claudeEnv.CLAUDE_SESSION_ID,
+    cwd:         parsed.values.cwd           || claudeEnv.CLAUDE_PROJECT_DIR || process.cwd(),
     outputJson:  parsed.values["output-json"] || false,
     dryRun:      parsed.values["dry-run"]    || false,
     verbose:     parsed.values.verbose       || false,
@@ -2217,6 +2238,25 @@ async function main(argv) {
         clientVersion: VERSION
       });
     }
+    case "sandbox": {
+      const { cmdSandbox } = await import("./harness/sandbox.mjs");
+      return cmdSandbox(parsed.positionals[0], {
+        elevated: parsed.values.elevated || false,
+        force: parsed.values.force || false,
+        cwd: parsed.values.cwd || process.cwd(),
+        clientVersion: VERSION
+      });
+    }
+    case "chat": {
+      const { cmdChat } = await import("./harness/chat.mjs");
+      return cmdChat({
+        cwd: parsed.values.cwd || process.cwd(),
+        model: parsed.values.model,
+        sandbox: parsed.values.sandbox,
+        resume: parsed.values.resume,
+        clientVersion: VERSION
+      });
+    }
     case "run": {
       const { cmdRun } = await import("./harness/run.mjs");
       return cmdRun(parsed.positionals.join(" "), {
@@ -2230,7 +2270,7 @@ async function main(argv) {
       });
     }
     case "team":           return cmdTeam(parsed.positionals?.[0], { ...opts, template: parsed.values.template, task: parsed.values.task, team: parsed.values.team, agent: parsed.values.agent, model: parsed.values.model });
-    case "spawn":          return cmdSpawn({ ...opts, team: parsed.values.team, role: parsed.values.role, task: parsed.values.task, model: parsed.values.model });
+    case "spawn":          return cmdSpawn({ ...opts, team: parsed.values.team, role: parsed.values.role, task: parsed.values.task, model: parsed.values.model, engine: parsed.values.engine });
     case "hook":           return cmdHook(parsed.positionals?.[0]);
     default:
       console.error(`agent-daemon: unknown command "${command}"`);

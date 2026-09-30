@@ -83,8 +83,8 @@ export async function mcpAudit() {
       ts: new Date().toISOString(),
       server,
       tool,
-      session: process.env.CLAUDE_SESSION_ID || null,
-      project: process.env.CLAUDE_PROJECT_DIR || null,
+      session: input?.session_id || process.env.CLAUDE_SESSION_ID || null,
+      project: input?.cwd || process.env.CLAUDE_PROJECT_DIR || null,
     });
     appendFileSync(path, line + "\n");
   } catch {

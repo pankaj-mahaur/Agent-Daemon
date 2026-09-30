@@ -69,6 +69,12 @@ export class Engine extends EventEmitter {
       onServerRequest: (msg) => this.#onServerRequest(msg),
     });
     this.server.on("exit", (info) => this.emit("exit", info));
+    // Unbuffered item stream: approval requests can arrive before a turn's
+    // buffered events are replayed, and an approval prompt needs the item
+    // (e.g. the fileChange with its paths) it refers to.
+    this.server.on("notification", ({ method, params }) => {
+      if (method === "item/started" && params?.item) this.emit("itemStarted", params);
+    });
     this.initInfo = await this.server.start();
     return this;
   }
@@ -90,6 +96,31 @@ export class Engine extends EventEmitter {
       edits: edits.map(([keyPath, value]) => ({ keyPath, value, mergeStrategy: "replace" })),
       reloadUserConfig: reload,
     });
+  }
+
+  // [{key, eventName, sourcePath, trustStatus, currentHash, …}] for cwds.
+  async listHooks(cwds) {
+    const r = await this.server.request("hooks/list", { cwds });
+    return (r.data ?? []).flatMap((d) => d.hooks ?? []);
+  }
+
+  // Record trust for one hook definition (the same thing /hooks does).
+  trustHook(key, currentHash) {
+    return this.server.request("config/value/write", {
+      keyPath: `hooks.state.${JSON.stringify(key)}.trusted_hash`,
+      value: currentHash,
+      mergeStrategy: "replace",
+    });
+  }
+
+  // Re-read mcp_servers after a config change so new servers start.
+  reloadMcpServers() {
+    return this.server.request("config/mcpServer/reload", {});
+  }
+
+  // Extra skill folders for this app-server process (not persisted).
+  setSkillRoots(roots) {
+    return this.server.request("skills/extraRoots/set", { extraRoots: roots });
   }
 
   // Start a login. params: {type:"chatgpt"} | {type:"chatgptDeviceCode"} |
@@ -208,6 +239,26 @@ export class Engine extends EventEmitter {
         })
         .catch((err) => finish(reject, err));
     });
+  }
+
+  // Recent threads (newest first): [{id, preview, cwd, updatedAt, name?}]
+  // sourceKinds: omitted = Codex's default (interactive sources only).
+  async listThreads({ cwd, limit = 20, sourceKinds } = {}) {
+    const r = await this.server.request("thread/list", clean({ cwd, limit, sourceKinds }));
+    return r.data ?? [];
+  }
+
+  compactThread(threadId) {
+    return this.server.request("thread/compact/start", { threadId });
+  }
+
+  // Durable objective for long-running work (Codex tracks time/tokens used).
+  async setGoal(threadId, objective, { tokenBudget } = {}) {
+    return (await this.server.request("thread/goal/set", clean({ threadId, objective, tokenBudget }))).goal;
+  }
+
+  clearGoal(threadId) {
+    return this.server.request("thread/goal/clear", { threadId });
   }
 
   interrupt(threadId, turnId) {
