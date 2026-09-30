@@ -164,6 +164,21 @@ export async function latestDigestedAt(projectSlug) {
 /* ------------------------------------------------------------------ */
 
 /**
+ * Honcho-inspired derivation tier, computed deterministically from category.
+ * Honcho types observations as explicit / deductive / inductive via an LLM; we
+ * collapse the two inferred kinds into 'inferred' because telling deductive
+ * from inductive reliably needs an LLM (truth over a fake 3-way split). The one
+ * generalized category we emit is 'pattern' ("we always X", conventions) →
+ * 'inferred'; everything else is a directly-stated fact → 'explicit'.
+ *
+ * @param {string} category
+ * @returns {'explicit'|'inferred'}
+ */
+export function deriveTier(category) {
+  return category === "pattern" ? "inferred" : "explicit";
+}
+
+/**
  * Insert one learning row. Returns the new id, or null if the driver isn't loaded.
  *
  * @param {{
@@ -189,8 +204,8 @@ export async function insertLearning(learning) {
   // UPSERT requires a FULL unique constraint as the conflict target —
   // partial indexes don't qualify. OR IGNORE works with either.)
   const result = handle.run(
-    `INSERT OR IGNORE INTO learnings (session_id, project_slug, category, text, evidence, confidence, tags, applied_to, content_hash)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR IGNORE INTO learnings (session_id, project_slug, category, text, evidence, confidence, tags, applied_to, content_hash, derivation)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       learning.sessionId || null,
       learning.projectSlug || null,
@@ -200,7 +215,8 @@ export async function insertLearning(learning) {
       learning.confidence ?? 0.5,
       tagsJson,
       learning.appliedTo || null,
-      contentHash
+      contentHash,
+      deriveTier(learning.category)
     ]
   );
   // Hash collision = the same lesson re-observed in a later session — the
@@ -248,9 +264,9 @@ export async function insertLearnings(learnings) {
       const tagsJson = l.tags ? JSON.stringify(l.tags) : null;
       const contentHash = learningContentHash(l.text);
       const r = handle.run(
-        `INSERT OR IGNORE INTO learnings (session_id, project_slug, category, text, evidence, confidence, tags, applied_to, content_hash)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [l.sessionId || null, l.projectSlug || null, l.category, l.text, l.evidence || null, l.confidence ?? 0.5, tagsJson, l.appliedTo || null, contentHash]
+        `INSERT OR IGNORE INTO learnings (session_id, project_slug, category, text, evidence, confidence, tags, applied_to, content_hash, derivation)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [l.sessionId || null, l.projectSlug || null, l.category, l.text, l.evidence || null, l.confidence ?? 0.5, tagsJson, l.appliedTo || null, contentHash, deriveTier(l.category)]
       );
       // Dedup = re-observation → reinforce confidence instead of discarding.
       if (!r.changes) reinforceLearning(handle, contentHash);
@@ -296,12 +312,16 @@ export async function searchLearnings(query, opts = {}) {
   // factor on the most recent of last_verified_at / last_retrieved_at /
   // created_at. 90-day half-life — stale rows lose rank but keep their data.
   // julianday() arithmetic keeps this deterministic SQL, no JS date math.
+  // Ranking = BM25 relevance × 90-day freshness half-life × a small derivation
+  // factor (directly-stated facts edge out inferred generalizations on ties).
+  // Honcho-inspired, fully deterministic — no embeddings.
   const rows = handle.all(
-    `SELECT l.id, l.text, l.evidence, l.category, l.confidence, l.project_slug, l.created_at,
+    `SELECT l.id, l.text, l.evidence, l.category, l.confidence, l.project_slug, l.created_at, l.derivation,
             -bm25(learnings_fts) *
               pow(0.5, (julianday('now') - julianday(
                 MAX(COALESCE(l.last_verified_at, l.created_at), COALESCE(l.last_retrieved_at, l.created_at))
-              )) / 90.0)
+              )) / 90.0) *
+              (CASE WHEN l.derivation = 'inferred' THEN 0.9 ELSE 1.0 END)
               AS score
        FROM learnings_fts
        JOIN learnings l ON l.id = learnings_fts.rowid
@@ -363,7 +383,7 @@ export async function getLearningsByIds(ids, opts = {}) {
   return handle.all(
     `SELECT id, session_id, project_slug, category, text, evidence, confidence,
             observed_count, retrieval_count, usefulness, tags, applied_to, status,
-            created_at, last_verified_at
+            created_at, last_verified_at, derivation
        FROM learnings
       WHERE id IN (${placeholders})
       ORDER BY id ASC`,
@@ -684,6 +704,99 @@ export async function topUserFacts({ limit = 5 } = {}) {
       LIMIT ?`,
     [limit]
   );
+}
+
+/**
+ * Build a deterministic "how this user works" representation — the no-LLM
+ * analog of Honcho's dialectic/representation. Rolls up cross-project
+ * `user_facts` plus high-confidence project learnings (preferring directly
+ * stated 'explicit' facts) into a small structured profile. Pure data; callers
+ * render + neutralize via representationToMarkdown.
+ *
+ * @param {{ projectSlug?: string, factLimit?: number, learningLimit?: number }} [opts]
+ * @returns {Promise<{identity:string[],preferences:string[],tools:string[],conventions:string[],gotchas:string[],counts:object}|null>}
+ */
+export async function buildUserRepresentation({ projectSlug, factLimit = 8, learningLimit = 12 } = {}) {
+  const handle = await db();
+  if (!handle) return null;
+
+  const facts = handle.all(
+    `SELECT category, text FROM user_facts WHERE status = 'active'
+      ORDER BY confidence DESC, observed_count DESC LIMIT ?`,
+    [factLimit]
+  );
+
+  let where = "status = 'active' AND confidence >= 0.6";
+  const params = [];
+  if (projectSlug) {
+    where += " AND (project_slug = ? OR project_slug IS NULL)";
+    params.push(projectSlug);
+  }
+  // Explicit (stated) facts first, then by confidence + reinforcement.
+  const learnings = handle.all(
+    `SELECT category, text FROM learnings
+      WHERE ${where}
+      ORDER BY (CASE WHEN derivation = 'explicit' THEN 1 ELSE 0 END) DESC,
+               confidence DESC, observed_count DESC
+      LIMIT ?`,
+    [...params, learningLimit]
+  );
+
+  const profile = { identity: [], preferences: [], tools: [], conventions: [], gotchas: [], counts: {} };
+  for (const f of facts) {
+    if (f.category === "identity") profile.identity.push(f.text);
+    else if (f.category === "tool") profile.tools.push(f.text);
+    else if (f.category === "anti-preference") profile.preferences.push(`avoid: ${f.text}`);
+    else profile.preferences.push(f.text);            // preference / project
+  }
+  for (const l of learnings) {
+    if (l.category === "tool") profile.tools.push(l.text);
+    else if (l.category === "gotcha") profile.gotchas.push(l.text);
+    else if (l.category === "pattern" || l.category === "decision") profile.conventions.push(l.text);
+    else profile.preferences.push(l.text);            // correction / fact / confirmation
+  }
+  for (const k of ["identity", "preferences", "tools", "conventions", "gotchas"]) {
+    profile[k] = [...new Set(profile[k])].slice(0, 6);  // dedup + cap each bucket
+  }
+  profile.counts = { facts: facts.length, learnings: learnings.length };
+
+  const total = profile.identity.length + profile.preferences.length +
+                profile.tools.length + profile.conventions.length + profile.gotchas.length;
+  return total > 0 ? profile : null;
+}
+
+/**
+ * Render a representation profile to markdown. `compact` produces one line per
+ * non-empty bucket (for the SessionStart budget); full produces a section per
+ * bucket. Pass `neutralize` (e.g. sanitize.neutralizeText) so transcript-derived
+ * text can't break out at the injection surface.
+ *
+ * @param {ReturnType<typeof buildUserRepresentation> extends Promise<infer T> ? T : never} profile
+ * @param {{ compact?: boolean, neutralize?: (s: string) => string }} [opts]
+ * @returns {string}
+ */
+export function representationToMarkdown(profile, { compact = false, neutralize = (s) => s } = {}) {
+  if (!profile) return "";
+  const clean = (t) => neutralize(String(t)).replace(/\s+/g, " ").trim();
+  const sections = [
+    ["Identity", profile.identity],
+    ["Prefers", profile.preferences],
+    ["Tools", profile.tools],
+    ["Conventions", profile.conventions],
+    ["Watch out", profile.gotchas]
+  ];
+  const lines = [];
+  for (const [label, items] of sections) {
+    if (!items || items.length === 0) continue;
+    const shown = compact ? items.slice(0, 3) : items;
+    if (compact) {
+      lines.push(`- **${label}:** ${shown.map(clean).join("; ")}`);
+    } else {
+      lines.push(`### ${label}`);
+      for (const t of shown) lines.push(`- ${clean(t)}`);
+    }
+  }
+  return lines.join("\n");
 }
 
 /* ------------------------------------------------------------------ */

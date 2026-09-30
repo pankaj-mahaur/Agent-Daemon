@@ -517,13 +517,27 @@ function migrateLearningsEvolution(raw) {
     ["retrieval_count", "INTEGER NOT NULL DEFAULT 0"],
     ["last_retrieved_at", "TEXT"],
     ["usefulness", "REAL"],
-    ["contradicted_by", "INTEGER"]
+    ["contradicted_by", "INTEGER"],
+    // Honcho-inspired derivation tier (deterministic 2-way):
+    //   'explicit'  — directly stated (correction/decision/tool/fact/gotcha/confirmation)
+    //   'inferred'  — generalized from behavior (pattern)
+    // We deliberately collapse Honcho's deductive/inductive split into 'inferred'
+    // because distinguishing them reliably requires an LLM — see episodic.deriveTier().
+    ["derivation", "TEXT"]
   ];
   for (const [name, type] of missing) {
     if (!cols.has(name)) {
       raw.exec(`ALTER TABLE learnings ADD COLUMN ${name} ${type}`);
     }
   }
+
+  // Backfill derivation on legacy rows from their category (idempotent — only
+  // touches NULLs). 'pattern' is the one generalized category → 'inferred'.
+  raw.exec(
+    `UPDATE learnings
+        SET derivation = CASE WHEN category = 'pattern' THEN 'inferred' ELSE 'explicit' END
+      WHERE derivation IS NULL`
+  );
 
   // user_facts provenance: which projects observed this fact (JSON array of
   // slugs). ≥2 distinct projects is the promotion signal.

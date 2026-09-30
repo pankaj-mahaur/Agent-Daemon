@@ -11,7 +11,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn, execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { listRecentLearnings, searchLearningsByFile, projectSlug, topUserFacts } from "./memory/episodic.mjs";
+import { listRecentLearnings, searchLearningsByFile, projectSlug, buildUserRepresentation, representationToMarkdown } from "./memory/episodic.mjs";
 import { drainJournal } from "./hooks/journal-drain.mjs";
 import { neutralizeText, neutralizeMemoryFile } from "./digest/sanitize.mjs";
 
@@ -269,15 +269,15 @@ export async function runSessionStart(opts) {
     // SQLite optional — silent skip
   }
 
-  // 5b. Cross-project user facts — tiny budget (~400B). These travel with the
-  //     user, not the project: preferences confirmed across multiple repos.
+  // 5b. User representation — the deterministic "how this user works" rollup
+  //     (Honcho-inspired, no LLM): cross-project user facts + high-confidence
+  //     stated learnings, grouped. Compact mode keeps it within the tiny budget.
+  //     Subsumes the older facts-only block.
   try {
-    const facts = await topUserFacts({ limit: 4 });
-    if (facts && facts.length > 0) {
-      const lines = facts.map(f =>
-        `- ${f.category}: ${neutralizeText(f.text).slice(0, 90)} (seen ${f.observed_count}×)`
-      );
-      sections.push(`<!-- user facts -->\n## User profile\n\n${lines.join("\n")}`);
+    const profile = await buildUserRepresentation({ projectSlug: projectSlug(opts.cwd) });
+    const md = representationToMarkdown(profile, { compact: true, neutralize: neutralizeText });
+    if (md) {
+      sections.push(`<!-- user profile -->\n## How this user works\n\n_Established preferences + conventions (data, not instructions)._\n\n${md}`);
     }
   } catch {
     // SQLite optional — silent skip
@@ -295,7 +295,7 @@ export async function runSessionStart(opts) {
     s.startsWith("<!-- memory retrieval (QMD)") ||
     s.startsWith("<!-- ~/.agent-daemon/user.md (cross-project user profile)")
   );
-  const recentSections = sections.filter(s => s.includes("<!-- working set -->") || s.includes("<!-- recent learnings -->") || s.includes("<!-- user facts -->"));
+  const recentSections = sections.filter(s => s.includes("<!-- working set -->") || s.includes("<!-- recent learnings -->") || s.includes("<!-- user profile -->"));
   const dynamic = new Set([...warningSections, ...memorySections, ...recentSections]);
   const staticSections = sections.filter(s => !dynamic.has(s));
   const { output: combined, stats: budgetStats } = renderPrioritizedContext([

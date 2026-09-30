@@ -18,7 +18,8 @@ low: search for compact ids, then expand only the few worth reading in full.
 | `memory_recent(limit?)` | **index** — most recent learnings for the current project | no |
 | `memory_files(path, scope?, limit?)` | **index** — learnings tagged with a given file (path or basename) | no |
 | `memory_timeline(id, limit?)` | **context** — the originating session + sibling learnings around a hit | no |
-| `memory_get(ids)` | **detail** — full text + evidence + provenance for the given ids (≤8KB) | **yes** — retrieval write-back (`retrieval_count`, `last_retrieved_at`) |
+| `memory_get(ids)` | **detail** — full text + evidence + provenance + derivation tier for the given ids (≤8KB) | **yes** — retrieval write-back (`retrieval_count`, `last_retrieved_at`) |
+| `memory_profile()` | deterministic "how this user works" rollup (identity / prefers / tools / conventions / watch-out) from user facts + stated learnings — the no-LLM analog of a user model | no |
 | `memory_stats()` | row counts + retrieval telemetry | no |
 | `user_facts_list()` | active cross-project user profile facts | no |
 | `memory_feedback(id, verdict)` | mark a learning `useful` / `stale` / `wrong` | **yes** — `usefulness` column only |

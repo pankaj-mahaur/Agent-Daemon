@@ -300,12 +300,15 @@ Learnings live a lifecycle instead of accumulating forever:
 - **Decay** — search ranking multiplies BM25 relevance by a 90-day half-life on last-verified/last-retrieved time, so stale entries sink without being deleted.
 - **Consolidate** — `ad memory consolidate` proposes near-duplicate merges (token Jaccard ≥ 0.8), stale archives, and contradiction candidates. Nothing applies without explicit acceptance (`--apply-merges` / `--apply-stale`).
 - **User facts** — durable preferences observed across ≥2 projects promote into a cross-project profile injected at session start.
+- **Typed observations** ([Honcho](https://github.com/plastic-labs/honcho)-inspired, deterministic) — each learning is tagged `explicit` (directly stated) vs `inferred` (generalized pattern); recall and the representation prefer stated facts. We keep the honest 2-way split — distinguishing deductive from inductive reliably needs an LLM, so we don't fake it.
+- **User representation** — `buildUserRepresentation()` rolls facts + high-confidence stated learnings into a "how this user works" profile, surfaced at SessionStart and via the `memory_profile` MCP tool — the no-LLM analog of Honcho's dialectic.
 
 Mid-session recall is pull-based too — a read-only **MCP memory server** with a token-cheap **progressive-disclosure** flow (index → context → detail, inspired by [claude-mem](https://github.com/thedotmack/claude-mem)):
 
 - **Index (compact `[id …]` lines):** `memory_search`, `memory_recent`, `memory_files(path)`
 - **Context:** `memory_timeline(id)` — the originating session + the sibling learnings around a hit
-- **Detail:** `memory_get(ids)` — full text + evidence + provenance for the few ids you keep (write-back marks them retrieved)
+- **Detail:** `memory_get(ids)` — full text + evidence + provenance + derivation tier for the few ids you keep (write-back marks them retrieved)
+- **Profile:** `memory_profile()` — a deterministic "how this user works" rollup (identity / prefers / tools / conventions / watch-out)
 - Plus `memory_stats`, `user_facts_list`, and `memory_feedback`. Index tools cap at 5 results / 4 KB; `memory_get` at 8 KB.
 
 ```bash
