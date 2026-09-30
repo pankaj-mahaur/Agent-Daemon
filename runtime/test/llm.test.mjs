@@ -88,3 +88,23 @@ test("auto does not fall back for ordinary claude failures", async () => {
   const r = await callLlm({ userMessage: "q" }, { callClaude: async () => ({ ok: false, error: "budget exceeded" }), engineFactory: async () => assert.fail("must not start codex") });
   assert.equal(r.error, "budget exceeded");
 });
+
+test("parseJsonReply: stray braces in prose, several objects, arrays", () => {
+  assert.deepEqual(parseJsonReply('Here {is} my answer: {"a": {"b": "}"}} and a {note}.'), { a: { b: "}" } });
+  assert.deepEqual(parseJsonReply('{"first":1} {"second":2}'), { first: 1 });
+  assert.deepEqual(parseJsonReply('prefix { not json\n```json\n{"x":1}\n```'), { x: 1 });
+  assert.equal(parseJsonReply('[{"a":1}]').a, 1, "an object inside an array is still found");
+});
+
+test("a schema'd call whose reply has no JSON fails with a reason", async () => {
+  const r = await callLlm({ backend: "claude", userMessage: "q", jsonSchema: { type: "object" } }, { callClaude: async () => ({ ok: true, result: "sorry, no" }) });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /no JSON object/);
+});
+
+test("codexModelFor maps Claude aliases to AD_CODEX_LLM_MODEL", async () => {
+  const { codexModelFor } = await import("../src/llm.mjs");
+  assert.equal(codexModelFor("haiku", {}), undefined);
+  assert.equal(codexModelFor("haiku", { AD_CODEX_LLM_MODEL: "gpt-mini" }), "gpt-mini");
+  assert.equal(codexModelFor("gpt-x", { AD_CODEX_LLM_MODEL: "gpt-mini" }), "gpt-x");
+});

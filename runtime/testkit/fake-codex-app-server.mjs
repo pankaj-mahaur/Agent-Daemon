@@ -26,6 +26,8 @@ const calls = [];
 let serverReqId = 0;
 let threadSeq = 0;
 let turnSeq = 0;
+const loopTurns = new Map();
+let tokensUsed = 0;
 const awaiting = new Map();
 // Config persists in CODEX_HOME/fake-config.json so separate engine runs
 // (separate ad commands) see each other's writes, like the real config.toml.
@@ -71,6 +73,25 @@ async function runScriptedTurn(threadId, turn, params) {
   if (text === "fail-turn") return complete(threadId, turn, { status: "failed", error: { message: "model refused" } });
   if (params.outputSchema) {
     agentMessage(threadId, turn.id, '{"answer":42}');
+    return complete(threadId, turn);
+  }
+  // `ad loop` scripts: the objective text carries the scenario name.
+  if (/LOOPTEST-/.test(text)) {
+    const n = (loopTurns.get(threadId) ?? 0) + 1;
+    loopTurns.set(threadId, n);
+    tokensUsed += 1000;
+    notify("thread/tokenUsage/updated", { threadId, turnId: turn.id, tokenUsage: { total: { totalTokens: tokensUsed }, last: { totalTokens: 1000 } } });
+    let status;
+    if (/LOOPTEST-DONE-AFTER-2/.test(text)) {
+      if (n < 2) notify("item/completed", { threadId, turnId: turn.id, item: { type: "fileChange", id: `fc-${n}`, changes: [{ path: "a.js" }] } });
+      status = n >= 2 ? { done: true, exit_signal: true, progress: "all done" } : { done: false, exit_signal: false, progress: `step ${n}` };
+    } else if (/LOOPTEST-CLAIMS-DONE/.test(text)) {
+      notify("item/completed", { threadId, turnId: turn.id, item: { type: "fileChange", id: `fc-${n}`, changes: [{ path: "a.js" }] } });
+      status = { done: true, exit_signal: false, progress: `claims done ${n}` };
+    } else {
+      status = { done: false, exit_signal: false, progress: "thinking" }; // LOOPTEST-STUCK
+    }
+    agentMessage(threadId, turn.id, `working…\nLOOP_STATUS: ${JSON.stringify(status)}`);
     return complete(threadId, turn);
   }
   if (text === "two-approvals") {

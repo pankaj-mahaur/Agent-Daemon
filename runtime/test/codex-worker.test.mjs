@@ -5,31 +5,35 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { gitCommonDir, runCodexWorker, workerSandboxPolicy } from "../src/orchestration/codex-worker.mjs";
+import { commitWorktree, runCodexWorker, WORKER_SANDBOX_POLICY } from "../src/orchestration/codex-worker.mjs";
 
 const FAKE = fileURLToPath(new URL("../testkit/fake-codex-app-server.mjs", import.meta.url));
 const command = { cmd: process.execPath, prefix: [FAKE] };
 
-test("workerSandboxPolicy: workspace-write, no network, git dir writable only when outside", () => {
-  const wt = resolve("/repo/.worktrees/a");
-  assert.deepEqual(workerSandboxPolicy(wt, resolve("/repo/.git")), { type: "workspaceWrite", writableRoots: [resolve("/repo/.git")], networkAccess: false });
-  assert.deepEqual(workerSandboxPolicy(wt, join(wt, ".git")).writableRoots, [], "a git dir inside the worktree needs no extra root");
-  assert.deepEqual(workerSandboxPolicy(wt, null).writableRoots, []);
+test("worker sandbox: workspace-write, no network, no extra writable roots (.git stays read-only)", () => {
+  assert.deepEqual(WORKER_SANDBOX_POLICY, { type: "workspaceWrite", writableRoots: [], networkAccess: false });
 });
 
-test("gitCommonDir resolves a real worktree's shared git dir", () => {
+test("commitWorktree commits the worker's changes on its own branch, or nothing", () => {
   const root = mkdtempSync(join(tmpdir(), "ad-wt-"));
   try {
-    const git = (...a) => execFileSync("git", a, { cwd: root, stdio: "ignore" });
+    const git = (...a) => execFileSync("git", a, { cwd: root, encoding: "utf8" }).trim();
     git("init", "-q");
     git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init");
-    git("worktree", "add", "-q", "-b", "w", join(root, "wt"));
-    assert.equal(resolve(gitCommonDir(join(root, "wt"))).toLowerCase(), resolve(root, ".git").toLowerCase());
-    assert.equal(gitCommonDir(tmpdir() + "/definitely-not-a-repo-xyz"), null);
+    git("config", "user.email", "t@t");
+    git("config", "user.name", "t");
+    git("worktree", "add", "-q", "-b", "team/t1/w", join(root, "wt"));
+    const wt = join(root, "wt");
+    assert.equal(commitWorktree(wt, "nothing"), null, "clean tree → no commit");
+    writeFileSync(join(wt, "new.txt"), "hi");
+    const sha = commitWorktree(wt, "w (coder): add file");
+    assert.match(sha, /^[0-9a-f]{40}$/);
+    assert.equal(execFileSync("git", ["-C", wt, "log", "-1", "--format=%s"], { encoding: "utf8" }).trim(), "w (coder): add file");
+    assert.equal(execFileSync("git", ["-C", wt, "branch", "--show-current"], { encoding: "utf8" }).trim(), "team/t1/w");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

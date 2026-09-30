@@ -296,6 +296,7 @@ export class Engine extends EventEmitter {
         sandbox: "read-only",
         approvalPolicy: "never",
         developerInstructions: system,
+        config: await this.#isolatedThreadConfig(),
       });
       const r = await this.turn({ threadId, text: user, outputSchema: schema, timeoutMs: opts.timeoutMs ?? 120_000 });
       if (r.status !== "completed") {
@@ -317,6 +318,22 @@ export class Engine extends EventEmitter {
 
   close() {
     return this.server?.close();
+  }
+
+  // A completion is a pure function call: no harness hooks (they would
+  // inject memory into GEPA prompts and re-extract "corrections" from the
+  // transcript being analysed) and no MCP servers. Dotted keys are what
+  // thread/start's config override honours (verified on codex 0.159.2).
+  async #isolatedThreadConfig() {
+    const config = { "features.hooks": false };
+    let cfg = {};
+    try {
+      cfg = await this.readConfig();
+    } catch (err) {
+      this.emit("warning", `could not read config to disable MCP servers: ${err.message}`);
+    }
+    for (const id of Object.keys(cfg.mcp_servers ?? {})) config[`mcp_servers.${id}.enabled`] = false;
+    return config;
   }
 
   async #onServerRequest(msg) {

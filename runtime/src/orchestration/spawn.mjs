@@ -14,7 +14,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
 import { sendMessage, createInbox } from "./inbox.mjs";
-import { runCodexWorker } from "./codex-worker.mjs";
+import { commitWorktree, runCodexWorker } from "./codex-worker.mjs";
 
 const MAX_CONCURRENT_AGENTS = 8;
 const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
@@ -142,28 +142,43 @@ export async function spawnAgent(opts) {
   // `--engine claude` / AD_AGENT_ENGINE=claude keeps the headless claude path.
   const engine = opts.engine ?? process.env.AD_AGENT_ENGINE ?? "codex";
   if (engine === "codex") {
-    await updateAgentStatus(opts.teamId, agentName, "running", null, process.pid);
-    const r = await (opts.runWorker ?? runCodexWorker)({
-      worktreePath,
-      systemPrompt,
-      userMessage,
-      model: opts.model,
-      timeoutMs,
-      engineOpts: opts.engineOpts,
-    });
-    activeAgents.delete(agentName);
+    let r;
+    try {
+      await updateAgentStatus(opts.teamId, agentName, "running", null, process.pid);
+      r = await (opts.runWorker ?? runCodexWorker)({
+        worktreePath,
+        systemPrompt,
+        userMessage,
+        model: opts.model,
+        timeoutMs,
+        engineOpts: opts.engineOpts,
+      });
+      // The worker can't touch .git (see codex-worker.mjs); commit its work
+      // here, outside the sandbox, on its own branch.
+      if (r.ok && opts.worktree !== false) {
+        try {
+          r.commit = (opts.commitWorktree ?? commitWorktree)(worktreePath, `${agentName} (${opts.role}): ${opts.task}`.slice(0, 200));
+        } catch (e) {
+          r = { ...r, ok: false, error: `work finished but commit failed: ${e.message}` };
+        }
+      }
+    } catch (e) {
+      r = { ok: false, error: e.message };
+    } finally {
+      activeAgents.delete(agentName);
+    }
     const status = r.ok ? "completed" : "error";
-    await updateAgentStatus(opts.teamId, agentName, status, r.ok ? null : r.error);
+    await updateAgentStatus(opts.teamId, agentName, status, r.ok ? null : r.error).catch((e) => process.stderr.write(`[spawn] status update failed: ${e.message}\n`));
     if (opts.leader) {
       await sendMessage({
         teamId: opts.teamId,
         from: agentName,
         to: opts.leader,
         type: "task-complete",
-        payload: { role: opts.role, task: opts.task, status, exitCode: r.ok ? 0 : 1, branch, worktreePath, threadId: r.threadId, summary: String(r.output ?? r.error ?? "").slice(0, 1000) },
+        payload: { role: opts.role, task: opts.task, status, exitCode: r.ok ? 0 : 1, branch, worktreePath, threadId: r.threadId, commit: r.commit ?? null, summary: String(r.output ?? r.error ?? "").slice(0, 1000) },
       }).catch((err) => process.stderr.write(`[spawn] could not notify ${opts.leader}: ${err.message}\n`));
     }
-    return { ok: r.ok, agentName, worktreePath, branch, threadId: r.threadId, error: r.ok ? undefined : r.error };
+    return { ok: r.ok, agentName, worktreePath, branch, threadId: r.threadId, commit: r.commit ?? null, error: r.ok ? undefined : r.error };
   }
   if (engine !== "claude") {
     activeAgents.delete(agentName);

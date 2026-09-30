@@ -257,6 +257,11 @@ export async function cmdChat(opts = {}) {
     const askOnce = (question) =>
       new Promise((resolve) => {
         const q = `\n${question}`; // the prompt may interrupt streamed text mid-line
+        if (inputEnded && interactive) {
+          // Ctrl+D/Ctrl+Z closed input: rl.question would throw. Decline.
+          out.write(`${q}(input closed — declined)\n`);
+          return resolve("");
+        }
         if (!interactive) {
           out.write(q);
           const line = queue.shift();

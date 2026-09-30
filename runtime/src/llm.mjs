@@ -34,31 +34,59 @@ export function isStrictSchema(schema) {
   return true;
 }
 
-// First JSON object in a reply (bare, or inside a ```json fence).
+// End index (inclusive) of the balanced {...} starting at `start`, skipping
+// braces inside JSON strings; -1 if unbalanced.
+function balancedEnd(s, start) {
+  let depth = 0;
+  let inString = false;
+  for (let i = start; i < s.length; i++) {
+    const ch = s[i];
+    if (inString) {
+      if (ch === "\\") i++;
+      else if (ch === '"') inString = false;
+    } else if (ch === '"') inString = true;
+    else if (ch === "{") depth++;
+    else if (ch === "}" && --depth === 0) return i;
+  }
+  return -1;
+}
+
+// The first top-level JSON object in a reply — fenced ```json blocks first,
+// then any balanced {...} that parses. Prose with stray braces around it,
+// or a second object after it, doesn't break it.
 export function parseJsonReply(text) {
   if (typeof text !== "string") return null;
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const candidates = [fenced?.[1], text];
-  for (const c of candidates) {
-    if (!c) continue;
-    const start = c.indexOf("{");
-    const end = c.lastIndexOf("}");
-    if (start === -1 || end <= start) continue;
-    try {
-      return JSON.parse(c.slice(start, end + 1));
-    } catch {
-      // try the next candidate
+  const fences = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)].map((m) => m[1]);
+  for (const src of [...fences, text]) {
+    for (let start = src.indexOf("{"); start !== -1; start = src.indexOf("{", start + 1)) {
+      const end = balancedEnd(src, start);
+      if (end === -1) continue;
+      try {
+        const v = JSON.parse(src.slice(start, end + 1));
+        if (v && typeof v === "object" && !Array.isArray(v)) return v;
+      } catch {
+        // not JSON at this brace — keep scanning
+      }
     }
   }
   return null;
 }
 
-function withParsedJson(result) {
+function withParsedJson(result, { schema } = {}) {
   if (result.ok && result.parsedJson == null) {
     const parsed = parseJsonReply(result.result);
     if (parsed) return { ...result, parsedJson: parsed };
+    // Callers read parsedJson; say why it's missing instead of a bare ok.
+    if (schema) return { ...result, ok: false, error: "the reply contained no JSON object" };
   }
   return result;
+}
+
+// Claude aliases ("haiku") mean nothing to Codex; AD_CODEX_LLM_MODEL picks
+// the Codex model for these background calls (e.g. a cheaper one).
+export function codexModelFor(model, env = process.env) {
+  if (!model || ["haiku", "sonnet", "opus"].includes(model)) return env.AD_CODEX_LLM_MODEL || undefined;
+  return model;
 }
 
 async function callCodex(opts, { engineFactory } = {}) {
@@ -74,8 +102,8 @@ async function callCodex(opts, { engineFactory } = {}) {
     const userMessage = schema && !strict
       ? `${opts.userMessage}\n\nRespond with ONLY a JSON object (no prose) matching this JSON Schema:\n${JSON.stringify(schema)}`
       : opts.userMessage;
-    const r = await engine.complete({ ...opts, userMessage, jsonSchema: strict ? schema : undefined, schema: undefined });
-    return withParsedJson(r);
+    const r = await engine.complete({ ...opts, userMessage, model: codexModelFor(opts.model), jsonSchema: strict ? schema : undefined, schema: undefined });
+    return withParsedJson(r, { schema });
   } catch (err) {
     return { ok: false, error: `codex backend: ${err.message}` };
   } finally {
@@ -87,7 +115,7 @@ export async function callLlm(opts, deps = {}) {
   const backend = llmBackend(opts);
   if (backend === "codex") return callCodex(opts, deps);
   const claude = deps.callClaude ?? callHeadlessClaude;
-  const r = withParsedJson(await claude(opts));
+  const r = withParsedJson(await claude(opts), { schema: opts.jsonSchema });
   if (backend === "auto" && !r.ok && /spawn failed: .*ENOENT/.test(r.error ?? "")) {
     if (opts.verbose) process.stderr.write("[agent-daemon] claude CLI not found; using the Codex engine\n");
     return callCodex(opts, deps);

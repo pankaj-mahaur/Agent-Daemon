@@ -281,3 +281,16 @@ test("ensureCodexHome refuses a path that is a file, with a clear message", () =
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("complete() runs isolated: hooks off and every MCP server disabled for its thread", async () => {
+  await withEngine({}, async (engine) => {
+    await engine.writeConfig([["mcp_servers.agent-daemon-memory", { command: "node" }], ["mcp_servers.playwright", { command: "npx" }]]);
+    await engine.complete({ userMessage: "q" });
+    const { lastParams } = await engine.server.request("debug/state");
+    assert.deepEqual(lastParams["thread/start"].config, {
+      "features.hooks": false,
+      "mcp_servers.agent-daemon-memory.enabled": false,
+      "mcp_servers.playwright.enabled": false,
+    });
+  });
+});

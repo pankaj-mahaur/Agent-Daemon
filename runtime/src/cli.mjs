@@ -101,6 +101,8 @@ Commands:
 Harness (Codex engine):
   chat                   Interactive agent session (approve commands/edits as they come; /help inside)
                          --cwd <dir>  --model <name>  --sandbox <mode>  --resume <thread-id>
+  loop "<objective>"     Autonomous loop until done (dual exit, circuit breaker, budgets, STOP file)
+                         --max-iterations 20  --max-minutes 60  --max-tokens <n>  --resume <thread-id>
   run "<prompt>"         One non-interactive agent turn (approvals are declined)
                          --cwd <dir>  --model <name>  --json
                          --sandbox <mode>     read-only | workspace-write (default) | danger-full-access
@@ -110,6 +112,10 @@ Harness (Codex engine):
   auth use <provider>    Switch active provider: openai | openrouter [--model <slug>]
   auth status            Show the harness login + active provider (no secrets)
   auth logout [openrouter]
+  schedule add "<cron>" run|loop "<prompt>"   Recurring job, run by "ad watch" / the service  [--cwd dir]
+  schedule list | remove|enable|disable|run <id> | tick
+  tools list             Optional agent tools and whether they are on
+  tools enable <tool>    browser (Playwright MCP) | web-search (live); "tools disable <tool>" turns off
   sandbox setup          Windows: set up Codex's command sandbox for the harness (--elevated: stronger, asks UAC)
   sandbox status         Windows: show sandbox readiness
 
@@ -2160,7 +2166,10 @@ async function main(argv) {
         resume:       { type: "string" },
         llm:          { type: "string" },
         elevated:     { type: "boolean" },
-        engine:       { type: "string" }
+        engine:       { type: "string" },
+        "max-iterations": { type: "string" },
+        "max-minutes":    { type: "string" },
+        "max-tokens":     { type: "string" }
       },
       allowPositionals: true,
       strict: false
@@ -2235,6 +2244,25 @@ async function main(argv) {
         model: parsed.values.model,
         device: parsed.values.device || false,
         force: parsed.values.force || false,
+        clientVersion: VERSION
+      });
+    }
+    case "schedule": {
+      const { cmdSchedule } = await import("./harness/schedule.mjs");
+      return cmdSchedule(parsed.positionals[0], parsed.positionals.slice(1), { cwd: parsed.values.cwd || process.cwd() });
+    }
+    case "tools": {
+      const { cmdTools } = await import("./harness/tools.mjs");
+      return cmdTools(parsed.positionals[0], parsed.positionals[1], { force: parsed.values.force || false, clientVersion: VERSION });
+    }
+    case "loop": {
+      const { cmdLoop } = await import("./harness/loop.mjs");
+      const num = (k) => (parsed.values[k] === undefined ? undefined : Number(parsed.values[k]));
+      return cmdLoop(parsed.positionals.join(" "), {
+        cwd: parsed.values.cwd || process.cwd(),
+        model: parsed.values.model,
+        resume: parsed.values.resume,
+        limits: { maxIterations: num("max-iterations"), maxMinutes: num("max-minutes"), maxTokens: num("max-tokens") },
         clientVersion: VERSION
       });
     }

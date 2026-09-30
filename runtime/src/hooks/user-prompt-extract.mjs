@@ -32,6 +32,11 @@ const TRANSCRIPT_TAIL_BYTES = 1024 * 1024;
 export async function userPromptExtract() {
   try {
     const input = await readStdinJson();
+    // Team workers (AD_WORKER=1) are prompted by the leader, not the user.
+    if (process.env.AD_WORKER === "1") {
+      passthrough();
+      return 0;
+    }
     const cwd = String(input.cwd || process.env.CLAUDE_PROJECT_DIR || process.cwd());
     const userPrompt = String(input.prompt || "");
     const transcriptPath = String(input.transcript_path || process.env.CLAUDE_TRANSCRIPT_PATH || "");

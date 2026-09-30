@@ -199,6 +199,10 @@ export async function runWatcher(opts) {
     }
   }, INBOX_POLL_MS);
 
+  // Scheduled harness jobs (`ad schedule`) run from this daemon.
+  const { startScheduler } = await import("../harness/schedule.mjs");
+  const stopScheduler = startScheduler({ log: (m) => console.error(`agent-daemon: ${m}`) });
+
   // Block until Ctrl+C (guard against double-fire)
   return new Promise((resolve) => {
     let shuttingDown = false;
@@ -207,6 +211,7 @@ export async function runWatcher(opts) {
       shuttingDown = true;
       console.error("\nagent-daemon: stopping watch...");
       clearInterval(inboxPollHandle);
+      stopScheduler();
       for (const h of pendingDigests.values()) clearTimeout(h);
       pendingDigests.clear();
       for (const w of watchers) await w.close().catch(() => {});
