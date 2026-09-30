@@ -11,6 +11,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { waitFor } from "../testkit/wait.mjs";
 import { approvalFromOutcome, promptText, serveAcp, toolCallFor, toolCallUpdateFor } from "../src/harness/acp.mjs";
 import { startHarnessEngine } from "../src/harness/start.mjs";
 
@@ -79,7 +80,7 @@ test("session/cancel interrupts the running prompt → stopReason cancelled", as
     await c.call("initialize", { protocolVersion: 1 });
     const { result } = await c.call("session/new", { cwd: root, mcpServers: [] });
     const running = c.call("session/prompt", { sessionId: result.sessionId, prompt: [{ type: "text", text: "hang" }] });
-    await new Promise((r) => setTimeout(r, 300));
+    // Sent right away on purpose: a cancel that beats turn/started must still land.
     c.notify("session/cancel", { sessionId: result.sessionId });
     const r = await running;
     assert.equal(r.result.stopReason, "cancelled");
@@ -115,7 +116,6 @@ test("concurrent session/new share one engine; a busy session rejects a second p
     assert.equal(starts, 1, "one engine for both sessions");
     assert.notEqual(s1.sessionId, s2.sessionId);
     const running = agent.handle("session/prompt", { sessionId: s1.sessionId, prompt: [{ type: "text", text: "hang" }] });
-    await new Promise((r) => setTimeout(r, 200));
     await assert.rejects(agent.handle("session/prompt", { sessionId: s1.sessionId, prompt: [{ type: "text", text: "x" }] }), /already running/);
     await agent.handle("session/cancel", { sessionId: s1.sessionId });
     assert.equal((await running).stopReason, "cancelled");
@@ -138,7 +138,7 @@ test("JSON-RPC hygiene: stray responses and unknown notifications get no reply; 
   toAgent.write(JSON.stringify({ jsonrpc: "2.0", method: "unknown/notification", params: {} }) + "\n");
   toAgent.write(JSON.stringify({ jsonrpc: "2.0", id: 5, method: 42 }) + "\n");
   toAgent.write("[not an object\n");
-  await new Promise((r) => setTimeout(r, 100));
+  await waitFor(() => replies.length >= 2, { what: "two error replies" });
   toAgent.end();
   await done;
   assert.deepEqual(replies.map((m) => [m.id, m.error?.code]), [[5, -32600], [null, -32700]]);

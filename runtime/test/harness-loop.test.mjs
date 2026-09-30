@@ -130,3 +130,12 @@ test("resume without an objective asks to continue the thread's goal", () => {
   assert.equal(nextPrompt("", undefined), "Continue working toward this thread's goal.");
   assert.match(nextPrompt(undefined, rec()), /continue this thread's goal/);
 });
+
+test("unattended threads: only the memory MCP server stays on; live web search is downgraded", async () => {
+  const { UNATTENDED_ENV, UNATTENDED_SANDBOX_POLICY, unattendedThreadConfig } = await import("../src/harness/unattended.mjs");
+  const fake = { readConfig: async () => ({ mcp_servers: { "agent-daemon-memory": {}, playwright: {}, github: {} }, web_search: "live" }) };
+  assert.deepEqual(await unattendedThreadConfig(fake), { "mcp_servers.playwright.enabled": false, "mcp_servers.github.enabled": false, web_search: "cached" });
+  assert.deepEqual(await unattendedThreadConfig({ readConfig: async () => ({ web_search: "cached" }) }), {});
+  assert.deepEqual(UNATTENDED_SANDBOX_POLICY, { type: "workspaceWrite", writableRoots: [], networkAccess: false });
+  assert.equal(UNATTENDED_ENV.AD_WORKER, "1", "loop re-prompts are not the user's corrections");
+});

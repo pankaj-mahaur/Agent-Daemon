@@ -9,7 +9,7 @@ Status: IMPLEMENTED (Parts 0–14) · approved 2026-09-30 · built 2026-10-01 ·
 | 0 | Foundation & spike | ✅ | `runtime/src/engine/codex/app-server.mjs`, `runtime/testkit/` |
 | 1 | Engine API + Codex engine | ✅ | `engine/index.mjs`, `engine/codex/home.mjs`, `approvals.mjs`, `ad run` |
 | 2 | Upstream tracking | ✅ | `protocol-snapshot.{mjs,json}`, `scripts/codex-schema-snapshot.mjs`, `.github/workflows/codex-upgrade.yml` |
-| 3 | Auth broker | ✅ | `harness/auth.mjs`, `auth/secrets.mjs`, `auth/providers.mjs` |
+| 3 | Auth broker | ✅ (macOS: 0600 file — Keychain backend not built: `security` only takes the secret in argv) | `harness/auth.mjs`, `auth/secrets.mjs`, `auth/providers.mjs` |
 | 4 | Memory/hooks/skills/AGENTS.md in Codex | ✅ | `harness/setup.mjs`, `engine/codex/hooks-config.mjs`, `hooks/io.mjs` (host adaptation), `hooks/codex-session-end.mjs` |
 | 5 | `ad chat` | ✅ | `harness/chat.mjs` |
 | 6 | Transcript + digest | ✅ | `adapters/codex.mjs` (real rollouts), `daemon/config.mjs` |

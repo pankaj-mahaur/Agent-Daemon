@@ -2081,7 +2081,7 @@ async function cmdSpawn(opts) {
     console.log(`  Name: ${result.agentName}`);
     console.log(`  Branch: ${result.branch}`);
     console.log(`  Worktree: ${result.worktreePath}`);
-    console.log(`  PID: ${result.pid}`);
+    console.log(result.threadId ? `  Codex thread: ${result.threadId}${result.commit ? `\n  Commit: ${result.commit}` : ""}` : `  PID: ${result.pid}`);
   } else {
     console.error(`\nSpawn failed: ${result.error}`);
   }
@@ -2095,11 +2095,14 @@ async function cmdSpawn(opts) {
 
 async function main(argv) {
   // Show help if no args or --help
-  if (argv.length === 0 || argv.includes("--help") || argv.includes("-h")) {
+  // Only before "--": after it everything is a positional (e.g. a scheduled
+  // job's prompt that happens to be "-h").
+  const flagsPart = argv.includes("--") ? argv.slice(0, argv.indexOf("--")) : argv;
+  if (argv.length === 0 || flagsPart.includes("--help") || flagsPart.includes("-h")) {
     console.log(HELP);
     return 0;
   }
-  if (argv.includes("--version") || argv.includes("-v")) {
+  if (flagsPart.includes("--version") || flagsPart.includes("-v")) {
     console.log(VERSION);
     return 0;
   }
@@ -2190,6 +2193,11 @@ async function main(argv) {
   // `--host codex` (set in the harness hooks.json) makes hooks/io.mjs adapt
   // hook input/output to Codex. Default is Claude Code.
   if (parsed.values.host) process.env.AD_HOOK_HOST = parsed.values.host;
+  const SANDBOX_MODES = ["read-only", "workspace-write", "danger-full-access"];
+  if (parsed.values.sandbox !== undefined && !SANDBOX_MODES.includes(parsed.values.sandbox)) {
+    console.error(`agent-daemon: --sandbox must be one of ${SANDBOX_MODES.join(", ")}`);
+    return 1;
+  }
   // Backend for ad's own LLM calls (digest fallback, GEPA) — see llm.mjs.
   if (parsed.values.llm) process.env.AD_LLM_BACKEND = parsed.values.llm;
   // Under Codex, CLAUDE_* vars are leftovers from an outer Claude Code

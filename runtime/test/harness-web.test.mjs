@@ -10,6 +10,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { waitFor } from "../testkit/wait.mjs";
 import { isLoopbackHost, recentLoops, startWebServer, tokenOk } from "../src/harness/web.mjs";
 
 const FAKE = fileURLToPath(new URL("../testkit/fake-codex-app-server.mjs", import.meta.url));
@@ -120,9 +121,7 @@ test("chat streams over SSE and an approval is answered over HTTP", async () => 
 test("with no page connected, approvals are declined", async () => {
   await withWeb(async (web) => {
     await req(web.port, "POST", "/api/chat", { token: web.token, body: { text: "do it" } });
-    await new Promise((r) => setTimeout(r, 1500));
-    const o = (await req(web.port, "GET", "/api/overview", { token: web.token })).json();
-    assert.equal(o.running, false, "turn finished instead of waiting forever");
+    await waitFor(async () => !(await req(web.port, "GET", "/api/overview", { token: web.token })).json().running, { what: "turn to finish instead of waiting forever" });
   });
 });
 
@@ -152,16 +151,13 @@ test("a pending approval is replayed to a page that connects later, with file pa
     const s1 = await sse(web.port, web.token, (ev) => first.push(ev));
     await new Promise((r) => setTimeout(r, 50));
     await req(web.port, "POST", "/api/chat", { token: web.token, body: { text: "edit-file" } });
-    for (let i = 0; i < 40 && !first.some((e) => e.type === "approval"); i++) await new Promise((r) => setTimeout(r, 50));
+    await waitFor(() => first.some((e) => e.type === "approval"), { what: "the approval" });
     const second = [];
     const s2 = await sse(web.port, web.token, (ev) => second.push(ev));
-    await new Promise((r) => setTimeout(r, 100));
-    const replayed = second.find((e) => e.type === "approval");
-    assert.ok(replayed, "late page sees the waiting approval");
+    const replayed = await waitFor(() => second.find((e) => e.type === "approval"), { what: "late page to see the waiting approval" });
     assert.deepEqual(replayed.paths, ["src/app.js"]);
     await req(web.port, "POST", "/api/approval", { token: web.token, body: { id: replayed.id, answer: "y" } });
-    await new Promise((r) => setTimeout(r, 200));
-    assert.ok(first.some((e) => e.type === "approvalResolved" && e.id === replayed.id));
+    await waitFor(() => first.some((e) => e.type === "approvalResolved" && e.id === replayed.id), { what: "approvalResolved" });
     s1.destroy();
     s2.destroy();
   });

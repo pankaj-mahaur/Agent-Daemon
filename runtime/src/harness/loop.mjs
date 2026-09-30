@@ -21,6 +21,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { describeItem } from "./run.mjs";
 import { startHarnessEngine } from "./start.mjs";
+import { UNATTENDED_ENV, UNATTENDED_SANDBOX_POLICY, unattendedThreadConfig } from "./unattended.mjs";
 
 export const LOOP_DEFAULTS = {
   maxIterations: 20,
@@ -120,13 +121,15 @@ export async function cmdLoop(objective, opts = {}) {
   let threadId;
   let goalSet = false;
   try {
-    const started = await startHarnessEngine({ cwd, home: opts.home, command: opts.command, clientVersion: opts.clientVersion, store: opts.store, platform: opts.platform, err, requireSandbox: true });
+    // UNATTENDED_ENV: our re-prompts echo the agent's own status text —
+    // hooks must not store that as the user's corrections.
+    const started = await startHarnessEngine({ cwd, home: opts.home, command: opts.command, clientVersion: opts.clientVersion, store: opts.store, platform: opts.platform, err, requireSandbox: true, env: UNATTENDED_ENV });
     if (!started.engine) {
       err.write(started.error + "\n");
       return started.code;
     }
     engine = started.engine;
-    const threadOpts = { cwd, model: opts.model, sandbox: "workspace-write", approvalPolicy: "never", developerInstructions: LOOP_PROTOCOL };
+    const threadOpts = { cwd, model: opts.model, sandbox: "workspace-write", approvalPolicy: "never", developerInstructions: LOOP_PROTOCOL, config: await unattendedThreadConfig(engine) };
     ({ threadId } = opts.resume ? await engine.resumeThread(opts.resume, threadOpts) : await engine.startThread(threadOpts));
     if (objective?.trim()) {
       await engine
@@ -210,6 +213,7 @@ async function runIteration(engine, { threadId, text, stopRequested, err, limits
       threadId,
       text,
       timeoutMs: 0,
+      sandboxPolicy: UNATTENDED_SANDBOX_POLICY, // every turn, whatever config.toml says
       onEvent: (evt) => {
         if (evt.type === "turnStarted") turnId = evt.turnId;
         else if (evt.type === "item" && evt.item?.type === "fileChange") fileChanges += evt.item.changes?.length || 1;

@@ -10,6 +10,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { waitFor } from "../testkit/wait.mjs";
 import { createEngine, DEFAULT_APPROVAL_POLICY, DEFAULT_SANDBOX, Engine, normalizeNotification } from "../src/engine/index.mjs";
 import { ensureCodexHome, isManagedHome, MANAGED_MARKER } from "../src/engine/codex/home.mjs";
 
@@ -172,9 +173,10 @@ test("a timed-out turn is interrupted, not left running", async () => {
   await withEngine({}, async (engine) => {
     const { threadId } = await engine.startThread({});
     await assert.rejects(engine.turn({ threadId, text: "hang", timeoutMs: 300 }), /timed out after 300ms/);
-    await new Promise((r) => setTimeout(r, 100));
-    const { calls, lastParams } = await engine.server.request("debug/state");
-    assert.ok(calls.includes("turn/interrupt"));
+    const { lastParams } = await waitFor(async () => {
+      const s = await engine.server.request("debug/state");
+      return s.calls.includes("turn/interrupt") && s;
+    }, { what: "turn/interrupt" });
     assert.equal(lastParams["turn/interrupt"].threadId, threadId);
   });
 });
@@ -255,9 +257,7 @@ test("a turn that times out before turn/start answers is still interrupted", asy
   await withEngine({}, async (engine) => {
     const { threadId } = await engine.startThread({});
     await assert.rejects(engine.turn({ threadId, text: "slow-start", timeoutMs: 100 }), /timed out after 100ms/);
-    await new Promise((r) => setTimeout(r, 400));
-    const { calls } = await engine.server.request("debug/state");
-    assert.ok(calls.includes("turn/interrupt"), "late-starting turn must be interrupted");
+    await waitFor(async () => (await engine.server.request("debug/state")).calls.includes("turn/interrupt"), { what: "late-starting turn to be interrupted" });
   });
 });
 
@@ -265,9 +265,7 @@ test("a throwing onEvent also interrupts the running turn", async () => {
   await withEngine({}, async (engine) => {
     const { threadId } = await engine.startThread({});
     await assert.rejects(engine.turn({ threadId, text: "hang", onEvent: () => { throw new Error("boom"); } }), /boom/);
-    await new Promise((r) => setTimeout(r, 100));
-    const { calls } = await engine.server.request("debug/state");
-    assert.ok(calls.includes("turn/interrupt"));
+    await waitFor(async () => (await engine.server.request("debug/state")).calls.includes("turn/interrupt"), { what: "turn/interrupt" });
   });
 });
 

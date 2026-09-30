@@ -11,6 +11,8 @@
 
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 import { sendMessage, createInbox } from "./inbox.mjs";
@@ -19,7 +21,44 @@ import { commitWorktree, runCodexWorker } from "./codex-worker.mjs";
 const MAX_CONCURRENT_AGENTS = 8;
 const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
 const MAX_STDOUT_BYTES = 512 * 1024; // 512KB cap on buffered output
-const activeAgents = new Set();
+// Running agents across ALL ad processes (each `ad spawn` is its own
+// process): one pid file per agent in ~/.agent-daemon/running-agents,
+// holding the pid of the ad process supervising it. Stale files (dead
+// pids) are dropped when counted.
+const runningDir = () => path.join(os.homedir(), ".agent-daemon", "running-agents");
+function pidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === "EPERM";
+  }
+}
+const activeAgents = {
+  add(name) {
+    fsSync.mkdirSync(runningDir(), { recursive: true });
+    fsSync.writeFileSync(path.join(runningDir(), `${name}.pid`), String(process.pid));
+  },
+  delete(name) {
+    fsSync.rmSync(path.join(runningDir(), `${name}.pid`), { force: true });
+  },
+  get size() {
+    let n = 0;
+    let files = [];
+    try {
+      files = fsSync.readdirSync(runningDir()).filter((f) => f.endsWith(".pid"));
+    } catch {
+      return 0; // no registry yet
+    }
+    for (const f of files) {
+      const p = path.join(runningDir(), f);
+      const pid = Number(fsSync.readFileSync(p, "utf8"));
+      if (pid && pidAlive(pid)) n++;
+      else fsSync.rmSync(p, { force: true });
+    }
+    return n;
+  },
+};
 
 /**
  * @typedef {Object} SpawnOptions

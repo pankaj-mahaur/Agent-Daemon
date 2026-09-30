@@ -27,7 +27,7 @@ export async function cmdRun(prompt, opts = {}) {
   const out = opts.stdout ?? process.stdout;
   const err = opts.stderr ?? process.stderr;
   if (!prompt?.trim()) {
-    err.write('Usage: ad run "<prompt>" [--cwd <dir>] [--model <m>] [--sandbox read-only|workspace-write] [--json]\n');
+    err.write('Usage: ad run "<prompt>" [--cwd <dir>] [--model <m>] [--sandbox read-only|workspace-write|danger-full-access] [--json]\n');
     return 1;
   }
 

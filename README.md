@@ -135,13 +135,21 @@ ad tools enable browser          # Playwright MCP; also: web-search
 ad sandbox setup --elevated      # Windows: stronger command sandbox (one UAC prompt)
 ```
 
-**Safety defaults.** Interactive runs use `workspace-write` + `on-request` (the agent writes only inside the project and asks before anything else). Unattended runs (`ad loop`, team workers, schedules) never ask. Instead they are confined to the workspace with no network, and on Windows they refuse to start without a ready sandbox. Team workers can't write to `.git`; their work is committed for them on their own branch. Provider keys are stored with DPAPI / libsecret (never in config or argv) and stripped from the agent's shell.
+**Safety defaults.**
+- **Interactive runs** (`ad chat`, `ad web`, `ad acp`) use `workspace-write` + `on-request`: the agent writes only inside the project and asks before anything else.
+- **`ad run`** is the same, but nobody can answer, so anything needing approval is declined.
+- **Unattended runs** (`ad loop`, team workers, and `loop` schedule jobs) never ask. Instead, every turn is confined to the workspace with no network. MCP servers other than memory are off, and live web search is off. On Windows they refuse to start without a ready sandbox.
+- **Team workers** can't write to `.git`. Their work is committed for them on their own branch, with repo hooks disabled for that commit.
+
+**Keys.**
+- OpenRouter keys are stored with DPAPI on Windows, libsecret on Linux (falling back to a 0600 file), and a 0600 file on macOS. They never go into config or argv, and `OPENROUTER_API_KEY` is stripped from the agent's shell.
+- ChatGPT / OpenAI logins are kept by Codex in the harness home (`auth.json`). Your own environment variables (e.g. `GITHUB_TOKEN`) are passed through as in any Codex session.
 
 **`ad loop` brakes:** dual exit (the agent must report `done` *and* `exit_signal`), a circuit breaker (no progress or the same error repeatedly), iteration / time / token budgets, and a STOP file (`.agent-daemon/STOP`) checked mid-turn.
 
 **Subscriptions.** ChatGPT uses Codex's own login. Claude Pro/Max and Google AI Pro/Ultra logins are **never** reused by the harness, because their terms forbid it and it has been enforced. Use API keys or OpenRouter instead. `ad agy` can hand a prompt to *your own* Antigravity CLI (opt-in, `--accept-risk`).
 
-**Staying current with Codex.** The engine is pinned exactly. A committed protocol snapshot is checked by the test suite, and the weekly [`codex-upgrade`](.github/workflows/codex-upgrade.yml) workflow bumps the pin, diffs the protocol (removals flagged as breaking), runs the tests and opens a PR. Design and decisions: [docs/plans/codex-harness.md](docs/plans/codex-harness.md).
+**Staying current with Codex.** The engine is pinned exactly. A committed protocol snapshot is checked by the test suite, and the weekly [`codex-upgrade`](.github/workflows/codex-upgrade.yml) workflow bumps the pin, diffs the protocol (removals flagged as breaking), runs the tests and opens a PR. The workflow runs on Linux only, so do a live `ad run` smoke on Windows before merging an upgrade. Design and decisions: [docs/plans/codex-harness.md](docs/plans/codex-harness.md).
 
 ## Daily workflow
 
