@@ -11,7 +11,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
-import { CodexAppServer, pinnedCodexVersion, resolveCodexCommand } from "../src/engine/codex/app-server.mjs";
+import { CodexAppServer, pinnedCodexVersion, resolveCodexCommand, withoutStoreAliases } from "../src/engine/codex/app-server.mjs";
 import { approvalResponse } from "../src/engine/codex/approvals.mjs";
 
 const FAKE = fileURLToPath(new URL("../testkit/fake-codex-app-server.mjs", import.meta.url));
@@ -164,4 +164,12 @@ test("approvalResponse is not fooled by Object.prototype keys", () => {
   assert.deepEqual(approvalResponse("execCommandApproval", {}, "toString"), { decision: "denied" });
   assert.throws(() => approvalResponse("toString", {}, "accept"), /not an approval request/);
   assert.throws(() => approvalResponse("constructor", {}, "accept"), /not an approval request/);
+});
+
+test("Windows: Store app-alias dirs leave the engine's PATH (the sandbox can't launch them)", () => {
+  const Path = "C:/Windows/system32;C:/Users/u/AppData/Local/Microsoft/WindowsApps;C:/Program Files/nodejs;C:/Users/u/AppData/Local/Microsoft/WindowsApps/";
+  assert.deepEqual(withoutStoreAliases({ Path, X: "1" }, "win32"), { Path: "C:/Windows/system32;C:/Program Files/nodejs", X: "1" });
+  assert.equal(withoutStoreAliases({ PATH: "a;C:/x/WindowsAppsTools" }, "win32").PATH, "a;C:/x/WindowsAppsTools", "only the alias dir itself");
+  const posix = { PATH: "/usr/bin:/mnt/c/Users/u/AppData/Local/Microsoft/WindowsApps" };
+  assert.equal(withoutStoreAliases(posix, "linux"), posix);
 });
