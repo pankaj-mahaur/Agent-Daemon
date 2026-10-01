@@ -1,6 +1,6 @@
 {
   "name": "agent-daemon",
-  "version": "0.2.0",
+  "version": "2.0.0",
   "description": "Self-improving memory + skills runtime for AI coding agents",
   "type": "module",
   "bin": {
@@ -24,6 +24,7 @@
     "node": ">=22.0.0"
   },
   "dependencies": {
+    "@openai/codex": "0.159.2",
     "better-sqlite3": "^11.5.0",
     "chokidar": "^4.0.1"
   },

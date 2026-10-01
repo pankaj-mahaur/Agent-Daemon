@@ -24,6 +24,7 @@ const DEFAULT_CONFIG = {
     { path: "~/.cursor/sessions",   pattern: "**/*.jsonl", adapter: "cursor" },
     { path: "~/.codex/sessions",    pattern: "**/*.jsonl", adapter: "codex" }
   ],
+  harnessSessions: true,
   debounceMs: 30000,
   stableCheckIntervalMs: 5000,
   skipDigested: true,
@@ -50,7 +51,7 @@ export async function loadConfig() {
       // Create default
       await fs.mkdir(path.dirname(p), { recursive: true });
       await fs.writeFile(p, JSON.stringify(DEFAULT_CONFIG, null, 2), "utf8");
-      return { ...DEFAULT_CONFIG, watch: DEFAULT_CONFIG.watch.map(expandEntry) };
+      return withHarnessSessions({ ...DEFAULT_CONFIG, watch: DEFAULT_CONFIG.watch.map(expandEntry) });
     }
     throw err;
   }
@@ -58,11 +59,24 @@ export async function loadConfig() {
   try { parsed = JSON.parse(raw); } catch (err) {
     throw new Error(`watch.json is not valid JSON (${p}): ${err.message}`);
   }
-  return {
+  return withHarnessSessions({
     ...DEFAULT_CONFIG,
     ...parsed,
     watch: (parsed.watch || []).map(expandEntry)
-  };
+  });
+}
+
+// The ad harness writes Codex rollouts to its own CODEX_HOME. Watched even
+// for watch.json files written before the harness existed; opt out with
+// "harnessSessions": false.
+export const HARNESS_SESSIONS_ENTRY = { path: "~/.agent-daemon/codex-home/sessions", pattern: "**/*.jsonl", adapter: "codex" };
+
+export function withHarnessSessions(config) {
+  if (config.harnessSessions === false) return config;
+  const entry = expandEntry(HARNESS_SESSIONS_ENTRY);
+  const norm = (x) => path.resolve(x).toLowerCase();
+  if (config.watch.some((w) => norm(w.path) === norm(entry.path))) return config;
+  return { ...config, watch: [...config.watch, entry] };
 }
 
 /**

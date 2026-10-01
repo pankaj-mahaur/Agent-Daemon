@@ -15,9 +15,9 @@ approval_policy = "on-request"
 sandbox_mode = "workspace-write"
 web_search = "live"
 
-# Persistent instructions are appended to every prompt (additive). AGENTS.md
-# at the project root is consumed automatically by Codex — don't replace it.
-persistent_instructions = "Follow project AGENTS.md and constitution/. Use `qmd` MCP for memory retrieval before reading files directly."
+# Extra developer instructions injected into every session (additive).
+# AGENTS.md files are consumed automatically by Codex — don't replace them.
+developer_instructions = "Follow project AGENTS.md and constitution/. Use `qmd` MCP for memory retrieval before reading files directly."
 
 # ---------------------------------------------------------------------------
 # MCP servers — keep the project default lean. Uncomment optional ones as needed.

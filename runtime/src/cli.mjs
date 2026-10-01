@@ -63,6 +63,7 @@ Commands:
   service uninstall      Unregister the watch service
   service status         Show whether the watch service is registered
   evolve <skill>         GEPA self-improvement run for a skill (sample → reflect → generate → evaluate → select)
+                         --llm <backend>      claude | codex | auto (default: claude, else Codex engine)
                          --list-candidates    list skills with ≥3 failures in 30d (no auth needed)
                          --export-traces      export skill_executions to JSONL for inline GEPA (no auth needed)
                          --json               machine-readable output (use with --list-candidates / --export-traces)
@@ -97,6 +98,31 @@ Commands:
                          --out <path>         output path (default ~/.agent-daemon/viewer.html)
                          --open               open it in the default browser
 
+Harness (Codex engine):
+  chat                   Interactive agent session (approve commands/edits as they come; /help inside)
+                         --cwd <dir>  --model <name>  --sandbox <mode>  --resume <thread-id>
+  loop "<objective>"     Autonomous loop until done (dual exit, circuit breaker, budgets, STOP file)
+                         --max-iterations 20  --max-minutes 60  --max-tokens <n>  --resume <thread-id>
+  run "<prompt>"         One non-interactive agent turn (approvals are declined)
+                         --cwd <dir>  --model <name>  --json
+                         --sandbox <mode>     read-only | workspace-write (default) | danger-full-access
+  auth login chatgpt     Sign in with your ChatGPT subscription (browser; --device for a code)
+  auth login openai      Use an OpenAI API key (hidden prompt, or pipe it on stdin)
+  auth login openrouter  Store an OpenRouter key and make it active (needs --model <slug>)
+  auth use <provider>    Switch active provider: openai | openrouter [--model <slug>]
+  auth status            Show the harness login + active provider (no secrets)
+  auth logout [openrouter]
+  schedule add "<cron>" run|loop "<prompt>"   Recurring job, run by "ad watch" / the service  [--cwd dir]
+  schedule list | remove|enable|disable|run <id> | tick
+  web                    Local web UI: chat with approvals, threads, loops, schedules  [--port <n>]
+  acp                    Serve Agent Client Protocol on stdio (use ad as the agent in Zed / JetBrains)
+  agy "<prompt>"         Opt-in: ask your own Antigravity CLI (Gemini subscription); needs --accept-risk once
+                         --edits (let agy edit files)  --model <m>
+  tools list             Optional agent tools and whether they are on
+  tools enable <tool>    browser (Playwright MCP) | web-search (live); "tools disable <tool>" turns off
+  sandbox setup          Windows: set up Codex's command sandbox for the harness (--elevated: stronger, asks UAC)
+  sandbox status         Windows: show sandbox readiness
+
   team create     (tc)   Create a new multi-agent team
   team status     (ts)   Show team kanban board
   team list       (tl)   List all teams
@@ -105,7 +131,7 @@ Commands:
   team cleanup    (tu)   Prune stale worktrees and dangling team data
   team delete     (td)   Delete a team and its data
   team retry      (tr)   Reset a failed task to pending (--team <id> --task <task-id>)
-  spawn           (sp)   Spawn a worker agent in a team
+  spawn           (sp)   Spawn a worker agent in a team (--engine codex [default, sandboxed] | claude)
 
 Options:
   --version              Print version and exit
@@ -949,6 +975,11 @@ async function cmdDoctor({ cwd = process.cwd(), tokens, limit, model } = {}) {
   // Check 2: claude CLI on PATH
   checks.push(await checkBinary("claude", "headless engine for digest pipeline"));
 
+  // Check 2a: Codex engine (harness) — pinned version + harness home
+  const { codexChecks, codexLiveChecks } = await import("./engine/codex/doctor.mjs");
+  checks.push(...codexChecks());
+  checks.push(...(await codexLiveChecks()));
+
   // Check 2b: Auth — ANTHROPIC_API_KEY or OAuth/keychain
   // As of v0.5, --bare is no longer used. OAuth/keychain auth works for GEPA.
   if (process.env.ANTHROPIC_API_KEY) {
@@ -964,7 +995,7 @@ async function cmdDoctor({ cwd = process.cwd(), tokens, limit, model } = {}) {
     if (hasOAuth) {
       checks.push({ name: "Auth (OAuth)", ok: true, note: "~/.claude/auth.json found — OAuth/keychain login active" });
     } else {
-      checks.push({ name: "Auth", ok: true, note: "no API key or OAuth — digest works via agent-emitted blocks; GEPA requires `claude auth login` or ANTHROPIC_API_KEY" });
+      checks.push({ name: "Auth", ok: true, note: "no Claude login — digest works via agent-emitted blocks; GEPA needs `claude auth login`, ANTHROPIC_API_KEY, or the Codex engine (ad auth login chatgpt; --llm codex)" });
     }
   }
 
@@ -2041,7 +2072,8 @@ async function cmdSpawn(opts) {
     cwd: opts.cwd,
     worktree: true,
     leader: leader?.name || null,
-    verbose: opts.verbose
+    verbose: opts.verbose,
+    engine: opts.engine
   });
 
   if (result.ok) {
@@ -2049,7 +2081,7 @@ async function cmdSpawn(opts) {
     console.log(`  Name: ${result.agentName}`);
     console.log(`  Branch: ${result.branch}`);
     console.log(`  Worktree: ${result.worktreePath}`);
-    console.log(`  PID: ${result.pid}`);
+    console.log(result.threadId ? `  Codex thread: ${result.threadId}${result.commit ? `\n  Commit: ${result.commit}` : ""}` : `  PID: ${result.pid}`);
   } else {
     console.error(`\nSpawn failed: ${result.error}`);
   }
@@ -2063,11 +2095,14 @@ async function cmdSpawn(opts) {
 
 async function main(argv) {
   // Show help if no args or --help
-  if (argv.length === 0 || argv.includes("--help") || argv.includes("-h")) {
+  // Only before "--": after it everything is a positional (e.g. a scheduled
+  // job's prompt that happens to be "-h").
+  const flagsPart = argv.includes("--") ? argv.slice(0, argv.indexOf("--")) : argv;
+  if (argv.length === 0 || flagsPart.includes("--help") || flagsPart.includes("-h")) {
     console.log(HELP);
     return 0;
   }
-  if (argv.includes("--version") || argv.includes("-v")) {
+  if (flagsPart.includes("--version") || flagsPart.includes("-v")) {
     console.log(VERSION);
     return 0;
   }
@@ -2132,7 +2167,20 @@ async function main(argv) {
         "apply-stale":  { type: "boolean" },
         "all-projects": { type: "boolean" },
         out:          { type: "string" },
-        open:         { type: "boolean" }
+        open:         { type: "boolean" },
+        sandbox:      { type: "string" },
+        device:       { type: "boolean" },
+        host:         { type: "string" },
+        resume:       { type: "string" },
+        llm:          { type: "string" },
+        elevated:     { type: "boolean" },
+        engine:       { type: "string" },
+        "max-iterations": { type: "string" },
+        "max-minutes":    { type: "string" },
+        "max-tokens":     { type: "string" },
+        "accept-risk":    { type: "boolean" },
+        port:             { type: "string" },
+        edits:            { type: "boolean" }
       },
       allowPositionals: true,
       strict: false
@@ -2142,10 +2190,25 @@ async function main(argv) {
     return 1;
   }
 
+  // `--host codex` (set in the harness hooks.json) makes hooks/io.mjs adapt
+  // hook input/output to Codex. Default is Claude Code.
+  if (parsed.values.host) process.env.AD_HOOK_HOST = parsed.values.host;
+  const SANDBOX_MODES = ["read-only", "workspace-write", "danger-full-access"];
+  if (parsed.values.sandbox !== undefined && !SANDBOX_MODES.includes(parsed.values.sandbox)) {
+    console.error(`agent-daemon: --sandbox must be one of ${SANDBOX_MODES.join(", ")}`);
+    return 1;
+  }
+  // Backend for ad's own LLM calls (digest fallback, GEPA) — see llm.mjs.
+  if (parsed.values.llm) process.env.AD_LLM_BACKEND = parsed.values.llm;
+  // Under Codex, CLAUDE_* vars are leftovers from an outer Claude Code
+  // session (e.g. `ad chat` started from inside one) and name the wrong
+  // project; hooks get cwd/session from their stdin payload instead.
+  const claudeEnv = process.env.AD_HOOK_HOST === "codex" ? {} : process.env;
+
   const opts = {
-    transcript:  parsed.values.transcript    || process.env.CLAUDE_TRANSCRIPT_PATH,
-    sessionId:   parsed.values["session-id"] || process.env.CLAUDE_SESSION_ID,
-    cwd:         parsed.values.cwd           || process.env.CLAUDE_PROJECT_DIR || process.cwd(),
+    transcript:  parsed.values.transcript    || claudeEnv.CLAUDE_TRANSCRIPT_PATH,
+    sessionId:   parsed.values["session-id"] || claudeEnv.CLAUDE_SESSION_ID,
+    cwd:         parsed.values.cwd           || claudeEnv.CLAUDE_PROJECT_DIR || process.cwd(),
     outputJson:  parsed.values["output-json"] || false,
     dryRun:      parsed.values["dry-run"]    || false,
     verbose:     parsed.values.verbose       || false,
@@ -2191,8 +2254,84 @@ async function main(argv) {
     });
     case "doctor":         return cmdDoctor({ ...opts, tokens: parsed.values.tokens, limit: parsed.values.limit, model: parsed.values.model });
     case "viewer":         return cmdViewer({ ...opts, out: parsed.values.out, open: parsed.values.open || false });
+    case "auth": {
+      const { cmdAuth } = await import("./harness/auth.mjs");
+      return cmdAuth(parsed.positionals[0], parsed.positionals.slice(1), {
+        model: parsed.values.model,
+        device: parsed.values.device || false,
+        force: parsed.values.force || false,
+        clientVersion: VERSION
+      });
+    }
+    case "web": {
+      const { cmdWeb } = await import("./harness/web.mjs");
+      return cmdWeb({ cwd: parsed.values.cwd || process.cwd(), port: parsed.values.port ? Number(parsed.values.port) : 0, clientVersion: VERSION });
+    }
+    case "acp": {
+      const { serveAcp } = await import("./harness/acp.mjs");
+      return serveAcp({ clientVersion: VERSION });
+    }
+    case "agy": {
+      const { cmdAgy } = await import("./harness/agy.mjs");
+      return cmdAgy(parsed.positionals.join(" "), {
+        cwd: parsed.values.cwd || process.cwd(),
+        model: parsed.values.model,
+        edits: parsed.values.edits || false,
+        acceptRisk: parsed.values["accept-risk"] || false
+      });
+    }
+    case "schedule": {
+      const { cmdSchedule } = await import("./harness/schedule.mjs");
+      return cmdSchedule(parsed.positionals[0], parsed.positionals.slice(1), { cwd: parsed.values.cwd || process.cwd() });
+    }
+    case "tools": {
+      const { cmdTools } = await import("./harness/tools.mjs");
+      return cmdTools(parsed.positionals[0], parsed.positionals[1], { force: parsed.values.force || false, clientVersion: VERSION });
+    }
+    case "loop": {
+      const { cmdLoop } = await import("./harness/loop.mjs");
+      const num = (k) => (parsed.values[k] === undefined ? undefined : Number(parsed.values[k]));
+      return cmdLoop(parsed.positionals.join(" "), {
+        cwd: parsed.values.cwd || process.cwd(),
+        model: parsed.values.model,
+        resume: parsed.values.resume,
+        limits: { maxIterations: num("max-iterations"), maxMinutes: num("max-minutes"), maxTokens: num("max-tokens") },
+        clientVersion: VERSION
+      });
+    }
+    case "sandbox": {
+      const { cmdSandbox } = await import("./harness/sandbox.mjs");
+      return cmdSandbox(parsed.positionals[0], {
+        elevated: parsed.values.elevated || false,
+        force: parsed.values.force || false,
+        cwd: parsed.values.cwd || process.cwd(),
+        clientVersion: VERSION
+      });
+    }
+    case "chat": {
+      const { cmdChat } = await import("./harness/chat.mjs");
+      return cmdChat({
+        cwd: parsed.values.cwd || process.cwd(),
+        model: parsed.values.model,
+        sandbox: parsed.values.sandbox,
+        resume: parsed.values.resume,
+        clientVersion: VERSION
+      });
+    }
+    case "run": {
+      const { cmdRun } = await import("./harness/run.mjs");
+      return cmdRun(parsed.positionals.join(" "), {
+        // Not opts.cwd: that falls back to CLAUDE_PROJECT_DIR, and the
+        // workspace-write sandbox must be rooted where the user actually is.
+        cwd: parsed.values.cwd || process.cwd(),
+        model: parsed.values.model,
+        sandbox: parsed.values.sandbox,
+        json: parsed.values.json || false,
+        clientVersion: VERSION
+      });
+    }
     case "team":           return cmdTeam(parsed.positionals?.[0], { ...opts, template: parsed.values.template, task: parsed.values.task, team: parsed.values.team, agent: parsed.values.agent, model: parsed.values.model });
-    case "spawn":          return cmdSpawn({ ...opts, team: parsed.values.team, role: parsed.values.role, task: parsed.values.task, model: parsed.values.model });
+    case "spawn":          return cmdSpawn({ ...opts, team: parsed.values.team, role: parsed.values.role, task: parsed.values.task, model: parsed.values.model, engine: parsed.values.engine });
     case "hook":           return cmdHook(parsed.positionals?.[0]);
     default:
       console.error(`agent-daemon: unknown command "${command}"`);

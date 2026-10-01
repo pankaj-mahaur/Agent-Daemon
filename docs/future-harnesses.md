@@ -1,5 +1,11 @@
 # Future harnesses
 
+> **Update 2026-10-01:** Codex is no longer "secondary" — it is the engine of
+> Agent Daemon's own harness (see [plans/codex-harness.md](plans/codex-harness.md)).
+> OpenCode was evaluated as an engine and not chosen (its v2 plugin/server
+> APIs were being replaced, with no stability guarantee); it stays
+> vendored-only below.
+
 These IDE harnesses are present in the [vendored ECC snapshot](../vendored/everything-claude-code/) but are **not** ported into the daemon yet. Listed here so the next person picking up cross-harness work knows where to look.
 
 | Harness | Vendored path | Notable artifacts |

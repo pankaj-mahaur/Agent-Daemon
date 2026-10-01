@@ -11,14 +11,54 @@
 
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 import { sendMessage, createInbox } from "./inbox.mjs";
+import { commitWorktree, runCodexWorker } from "./codex-worker.mjs";
 
 const MAX_CONCURRENT_AGENTS = 8;
 const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
 const MAX_STDOUT_BYTES = 512 * 1024; // 512KB cap on buffered output
-const activeAgents = new Set();
+// Running agents across ALL ad processes (each `ad spawn` is its own
+// process): one pid file per agent in ~/.agent-daemon/running-agents,
+// holding the pid of the ad process supervising it. Stale files (dead
+// pids) are dropped when counted.
+const runningDir = () => path.join(os.homedir(), ".agent-daemon", "running-agents");
+function pidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === "EPERM";
+  }
+}
+const activeAgents = {
+  add(name) {
+    fsSync.mkdirSync(runningDir(), { recursive: true });
+    fsSync.writeFileSync(path.join(runningDir(), `${name}.pid`), String(process.pid));
+  },
+  delete(name) {
+    fsSync.rmSync(path.join(runningDir(), `${name}.pid`), { force: true });
+  },
+  get size() {
+    let n = 0;
+    let files = [];
+    try {
+      files = fsSync.readdirSync(runningDir()).filter((f) => f.endsWith(".pid"));
+    } catch {
+      return 0; // no registry yet
+    }
+    for (const f of files) {
+      const p = path.join(runningDir(), f);
+      const pid = Number(fsSync.readFileSync(p, "utf8"));
+      if (pid && pidAlive(pid)) n++;
+      else fsSync.rmSync(p, { force: true });
+    }
+    return n;
+  },
+};
 
 /**
  * @typedef {Object} SpawnOptions
@@ -136,6 +176,54 @@ export async function spawnAgent(opts) {
   ].join("\n");
 
   activeAgents.add(agentName);
+
+  // Default worker engine is Codex (sandboxed, no approvals needed);
+  // `--engine claude` / AD_AGENT_ENGINE=claude keeps the headless claude path.
+  const engine = opts.engine ?? process.env.AD_AGENT_ENGINE ?? "codex";
+  if (engine === "codex") {
+    let r;
+    try {
+      await updateAgentStatus(opts.teamId, agentName, "running", null, process.pid);
+      r = await (opts.runWorker ?? runCodexWorker)({
+        worktreePath,
+        systemPrompt,
+        userMessage,
+        model: opts.model,
+        timeoutMs,
+        engineOpts: opts.engineOpts,
+      });
+      // The worker can't touch .git (see codex-worker.mjs); commit its work
+      // here, outside the sandbox, on its own branch.
+      if (r.ok && opts.worktree !== false) {
+        try {
+          r.commit = (opts.commitWorktree ?? commitWorktree)(worktreePath, `${agentName} (${opts.role}): ${opts.task}`.slice(0, 200));
+        } catch (e) {
+          r = { ...r, ok: false, error: `work finished but commit failed: ${e.message}` };
+        }
+      }
+    } catch (e) {
+      r = { ok: false, error: e.message };
+    } finally {
+      activeAgents.delete(agentName);
+    }
+    const status = r.ok ? "completed" : "error";
+    await updateAgentStatus(opts.teamId, agentName, status, r.ok ? null : r.error).catch((e) => process.stderr.write(`[spawn] status update failed: ${e.message}\n`));
+    if (opts.leader) {
+      await sendMessage({
+        teamId: opts.teamId,
+        from: agentName,
+        to: opts.leader,
+        type: "task-complete",
+        payload: { role: opts.role, task: opts.task, status, exitCode: r.ok ? 0 : 1, branch, worktreePath, threadId: r.threadId, commit: r.commit ?? null, summary: String(r.output ?? r.error ?? "").slice(0, 1000) },
+      }).catch((err) => process.stderr.write(`[spawn] could not notify ${opts.leader}: ${err.message}\n`));
+    }
+    return { ok: r.ok, agentName, worktreePath, branch, threadId: r.threadId, commit: r.commit ?? null, error: r.ok ? undefined : r.error };
+  }
+  if (engine !== "claude") {
+    activeAgents.delete(agentName);
+    await updateAgentStatus(opts.teamId, agentName, "error", `unknown engine ${engine}`);
+    return { ok: false, agentName, error: `unknown engine "${engine}" (use codex or claude)` };
+  }
 
   return new Promise((resolve) => {
     let settled = false;

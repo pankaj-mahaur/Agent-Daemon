@@ -11,10 +11,14 @@
 #   4. Runs `ad doctor` and prints the next step.
 #
 # Override the clone location with:  AGENT_DAEMON_DIR=/path ./install.sh
+# Pin a release (e.g. v1, the Claude Code memory runtime):
+#   curl -fsSL .../main/install.sh | AD_VERSION=v1.0.0 bash
+# Re-running without AD_VERSION moves a pinned install back to main.
 set -euo pipefail
 
 REPO_URL="https://github.com/pankaj-mahaur/Agent-Daemon.git"
 INSTALL_DIR="${AGENT_DAEMON_DIR:-$HOME/.agent-daemon-src}"
+AD_VERSION="${AD_VERSION:-}"
 MIN_NODE_MAJOR=22
 
 say()  { printf '\033[1;36m›\033[0m %s\n' "$*"; }
@@ -33,13 +37,26 @@ ok "Prerequisites OK (node $(node -v))"
 
 # 2. Clone or update --------------------------------------------------------
 if [ -d "$INSTALL_DIR/.git" ]; then
-  say "Updating existing clone at $INSTALL_DIR"
-  git -C "$INSTALL_DIR" pull --ff-only
+  if [ -n "$AD_VERSION" ]; then
+    say "Switching $INSTALL_DIR to $AD_VERSION"
+    git -C "$INSTALL_DIR" fetch --depth 1 origin "+refs/tags/$AD_VERSION:refs/tags/$AD_VERSION"
+    git -C "$INSTALL_DIR" -c advice.detachedHead=false checkout -q "$AD_VERSION"
+  elif git -C "$INSTALL_DIR" symbolic-ref -q HEAD >/dev/null; then
+    say "Updating existing clone at $INSTALL_DIR"
+    git -C "$INSTALL_DIR" pull --ff-only
+  else
+    say "Moving $INSTALL_DIR from a pinned release back to main"
+    # A tag clone's fetch refspec covers only that tag; point it back at main.
+    git -C "$INSTALL_DIR" config remote.origin.fetch "+refs/heads/main:refs/remotes/origin/main"
+    git -C "$INSTALL_DIR" fetch --depth 1 origin
+    git -C "$INSTALL_DIR" checkout -q -B main origin/main
+    git -C "$INSTALL_DIR" branch -q --set-upstream-to=origin/main main
+  fi
 elif [ -e "$INSTALL_DIR" ]; then
   die "$INSTALL_DIR exists but is not a git clone. Remove it or set AGENT_DAEMON_DIR."
 else
-  say "Cloning agent-daemon into $INSTALL_DIR"
-  git clone --depth 1 "$REPO_URL" "$INSTALL_DIR"
+  say "Cloning agent-daemon${AD_VERSION:+ $AD_VERSION} into $INSTALL_DIR"
+  git -c advice.detachedHead=false clone --depth 1 ${AD_VERSION:+--branch "$AD_VERSION"} "$REPO_URL" "$INSTALL_DIR"
 fi
 ok "Source ready at $INSTALL_DIR"
 

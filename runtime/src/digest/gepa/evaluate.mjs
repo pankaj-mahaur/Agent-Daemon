@@ -12,7 +12,7 @@
 
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { callHeadlessClaude } from "../../claude.mjs";
+import { callLlm } from "../../llm.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
@@ -144,7 +144,7 @@ async function scoreOne({ candidate, candidateLabel, parentBody, skillName, refl
     JSON.stringify(reflections, null, 2)
   ].join("\n");
 
-  const result = await callHeadlessClaude({
+  const result = await callLlm({
     systemPromptFile: EVALUATE_PROMPT_PATH,
     userMessage,
     model: model || "haiku",

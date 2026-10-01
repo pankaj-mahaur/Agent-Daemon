@@ -95,3 +95,35 @@ test("subprocess: injected daemon protocol examples from assistant are not persi
     /ENOENT/
   );
 });
+
+test("subprocess (Codex host): assistant 'remember:' note is read from a rollout transcript", async () => {
+  const cwd = await makeTmp();
+  const transcript = path.join(cwd, "rollout-2026-10-01T00-00-00-x.jsonl");
+  const lines = [
+    { type: "session_meta", payload: { id: "s-codex", cwd } },
+    { type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "Done. Remember: always run npm run lint before committing in this repo." }] } },
+  ];
+  await fs.writeFile(transcript, lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+  const result = await new Promise((resolve) => {
+    const proc = spawn(process.execPath, [CLI, "hook", "user-prompt-extract", "--host", "codex"], { stdio: ["pipe", "pipe", "pipe"] });
+    let stdout = "";
+    proc.stdout.on("data", (c) => (stdout += c));
+    proc.on("close", (code) => resolve({ code, stdout }));
+    proc.stdin.end(JSON.stringify({ session_id: "s-codex", cwd, transcript_path: transcript, prompt: "ok, next task please", hook_event_name: "UserPromptSubmit" }));
+  });
+  assert.equal(result.code, 0);
+  assert.equal(result.stdout.trim(), "{}");
+  const raw = await fs.readFile(path.join(cwd, ".agent-daemon", "learning-journal.jsonl"), "utf8");
+  assert.match(raw, /npm run lint before committing/);
+});
+
+test("subprocess: a team worker's prompt (AD_WORKER=1) is not captured as the user's correction", async () => {
+  const cwd = await makeTmp();
+  const code = await new Promise((resolve) => {
+    const proc = spawn(process.execPath, [CLI, "hook", "user-prompt-extract", "--host", "codex"], { stdio: ["pipe", "ignore", "ignore"], env: { ...process.env, AD_WORKER: "1" } });
+    proc.on("close", resolve);
+    proc.stdin.end(JSON.stringify({ session_id: "w", cwd, prompt: "Actually, we use pnpm here, not npm.", hook_event_name: "UserPromptSubmit" }));
+  });
+  assert.equal(code, 0);
+  await assert.rejects(fs.readFile(path.join(cwd, ".agent-daemon", "learning-journal.jsonl"), "utf8"), /ENOENT/);
+});

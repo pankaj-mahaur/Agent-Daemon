@@ -588,8 +588,8 @@ export function parseCategoryKeyedYaml(raw) {
  */
 async function extractWithLlm(opts) {
   try {
-    const [{ callHeadlessClaude }, path, fileURLToPath] = await Promise.all([
-      import("../claude.mjs"),
+    const [{ callLlm }, path, fileURLToPath] = await Promise.all([
+      import("../llm.mjs"),
       import("node:path").then(m => m.default || m),
       import("node:url").then(m => m.fileURLToPath || m.default?.fileURLToPath)
     ]);
@@ -599,7 +599,7 @@ async function extractWithLlm(opts) {
 
     // Render compact transcript
     const userMessage = renderTranscriptForExtraction(opts.summary);
-    const result = await callHeadlessClaude({
+    const result = await callLlm({
       systemPromptFile: promptPath,
       userMessage,
       model: "haiku",

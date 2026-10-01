@@ -1,0 +1,205 @@
+// Protocol snapshot — the part of the codex app-server protocol Agent Daemon
+// depends on, reduced to a small, stable, diffable JSON document.
+//
+// Built from `codex app-server generate-json-schema --out <dir>`. The full
+// schema is ~40 files and changes cosmetically every release; the snapshot
+// keeps only method lists plus the shape (required + property names, enum
+// values, union tags) of the definitions we actually read or send. Upgrade
+// CI regenerates it for a new Codex version and diffs: removals are
+// breaking, additions are informational.
+
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { resolveCodexCommand } from "./app-server.mjs";
+
+// Definitions the engine sends or reads. Add a name here whenever engine
+// code starts depending on a new request/response/notification shape.
+export const TRACKED_DEFINITIONS = [
+  "InitializeParams",
+  "ClientInfo",
+  "ThreadStartParams",
+  "ThreadStartResponse",
+  "ThreadResumeParams",
+  "ThreadResumeResponse",
+  "Thread",
+  "TurnStartParams",
+  "TurnStartResponse",
+  "TurnInterruptParams",
+  "TurnSteerParams",
+  "TurnCompletedNotification",
+  "TurnStartedNotification",
+  "Turn",
+  "TurnStatus",
+  "TurnError",
+  "UserInput",
+  "ThreadItem",
+  "FileUpdateChange",
+  "AgentMessageDeltaNotification",
+  "ItemStartedNotification",
+  "ItemCompletedNotification",
+  "ErrorNotification",
+  "SandboxMode",
+  "AskForApproval",
+  "CommandExecutionApprovalDecision",
+  "FileChangeApprovalDecision",
+  "GetAccountResponse",
+  "LoginAccountParams",
+  "LoginAccountResponse",
+  "ConfigBatchWriteParams",
+  "ConfigValueWriteParams",
+  "ConfigEdit",
+  "MergeStrategy",
+  "HooksListParams",
+  "HookMetadata",
+  "SkillsExtraRootsSetParams",
+  "ThreadListParams",
+  "ThreadListResponse",
+];
+
+const methodsOf = (schema) =>
+  (schema.oneOf ?? schema.anyOf ?? [])
+    .map((o) => o.properties?.method?.enum?.[0])
+    .filter(Boolean)
+    .sort();
+
+// A stable name for a union variant that survives field additions:
+// discriminator value → single-key object name → title → $ref → enum value.
+function variantTag(v) {
+  const props = v.properties ?? {};
+  if (props.type?.enum?.length === 1) return props.type.enum[0];
+  for (const [key, p] of Object.entries(props)) if (p?.enum?.length === 1) return `${key}=${p.enum[0]}`;
+  const keys = Object.keys(props);
+  if (keys.length === 1 && v.required?.includes(keys[0])) return keys[0];
+  return v.title ?? v.$ref?.split("/").pop() ?? (v.enum?.length ? v.enum.join("|") : v.type ?? "variant");
+}
+
+// Reduce one JSON-schema definition to its contract-relevant shape.
+export function shapeOf(def) {
+  if (!def) return null;
+  const variants = def.oneOf ?? def.anyOf;
+  if (variants) {
+    const seen = new Map();
+    return {
+      union: variants
+        .map((v) => {
+          let tag = variantTag(v);
+          const n = (seen.get(tag) ?? 0) + 1;
+          seen.set(tag, n);
+          if (n > 1) tag = `${tag}#${n}`;
+          const props = v.properties ? Object.keys(v.properties).sort() : undefined;
+          return props ? { tag, props } : { tag };
+        })
+        .sort((a, b) => String(a.tag).localeCompare(String(b.tag))),
+    };
+  }
+  if (def.enum) return { enum: [...def.enum].sort() };
+  if (def.properties) {
+    return {
+      required: [...(def.required ?? [])].sort(),
+      props: Object.keys(def.properties).sort(),
+    };
+  }
+  return { type: def.type ?? null };
+}
+
+// The v2 bundle holds most definitions; a few (approval decisions) only
+// exist inside their own per-message files. Merge everything, bundle first.
+function collectDefinitions(schemaDir, read) {
+  const defs = { ...(read("codex_app_server_protocol.v2.schemas.json").definitions ?? {}) };
+  for (const file of readdirSync(schemaDir).filter((f) => f.endsWith(".json")).sort()) {
+    const schema = read(file);
+    for (const [name, def] of Object.entries(schema.definitions ?? {})) defs[name] ??= def;
+    defs[file.replace(/\.json$/, "")] ??= schema;
+  }
+  return defs;
+}
+
+export function buildSnapshot(schemaDir, codexVersion) {
+  const read = (f) => JSON.parse(readFileSync(join(schemaDir, f), "utf8"));
+  const defs = collectDefinitions(schemaDir, read);
+  const definitions = {};
+  for (const name of TRACKED_DEFINITIONS) definitions[name] = shapeOf(defs[name]);
+  return {
+    codexVersion,
+    methods: {
+      clientRequests: methodsOf(read("ClientRequest.json")),
+      clientNotifications: methodsOf(read("ClientNotification.json")),
+      serverRequests: methodsOf(read("ServerRequest.json")),
+      serverNotifications: methodsOf(read("ServerNotification.json")),
+    },
+    definitions,
+  };
+}
+
+// Run a codex binary's schema generator into a temp dir and snapshot it.
+// Defaults to the PINNED binary (empty env: AD_CODEX_BIN is ignored), since
+// the snapshot is labelled with the pinned version.
+export function generateSnapshot({ command = resolveCodexCommand({}), codexVersion } = {}) {
+  const dir = mkdtempSync(join(tmpdir(), "ad-codex-schema-"));
+  try {
+    execFileSync(command.cmd, [...command.prefix, "app-server", "generate-json-schema", "--out", dir], {
+      stdio: ["ignore", "ignore", "pipe"],
+      windowsHide: true,
+    });
+    return buildSnapshot(dir, codexVersion);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+const setDiff = (a = [], b = []) => ({
+  removed: a.filter((x) => !b.includes(x)),
+  added: b.filter((x) => !a.includes(x)),
+});
+
+// → { breaking: string[], info: string[] }. A removed method, definition,
+// field, enum value or union variant is breaking; a newly REQUIRED field on
+// something we send is breaking too.
+export function diffSnapshots(oldSnap, newSnap) {
+  const breaking = [];
+  const info = [];
+  for (const group of Object.keys({ ...oldSnap.methods, ...newSnap.methods })) {
+    const d = setDiff(oldSnap.methods[group], newSnap.methods[group]);
+    d.removed.forEach((m) => breaking.push(`${group}: removed ${m}`));
+    d.added.forEach((m) => info.push(`${group}: added ${m}`));
+  }
+  for (const name of Object.keys({ ...oldSnap.definitions, ...newSnap.definitions })) {
+    const a = oldSnap.definitions[name];
+    const b = newSnap.definitions[name];
+    if (a && !b) { breaking.push(`${name}: definition removed`); continue; }
+    if (!a && b) { info.push(`${name}: definition added`); continue; }
+    if (!a && !b) continue;
+    for (const key of ["props", "enum"]) {
+      const d = setDiff(a[key], b[key]);
+      d.removed.forEach((x) => breaking.push(`${name}.${key}: removed ${x}`));
+      d.added.forEach((x) => info.push(`${name}.${key}: added ${x}`));
+    }
+    const req = setDiff(a.required, b.required);
+    req.added.forEach((x) => breaking.push(`${name}: ${x} is now required`));
+    req.removed.forEach((x) => info.push(`${name}: ${x} is no longer required`));
+    if (a.union || b.union) {
+      const tags = (s) => (s.union ?? []).map((v) => String(v.tag));
+      const d = setDiff(tags(a), tags(b));
+      d.removed.forEach((t) => breaking.push(`${name}: variant ${t} removed`));
+      d.added.forEach((t) => info.push(`${name}: variant ${t} added`));
+      for (const va of a.union ?? []) {
+        const vb = (b.union ?? []).find((v) => String(v.tag) === String(va.tag));
+        if (!vb) continue;
+        const pd = setDiff(va.props, vb.props);
+        pd.removed.forEach((p) => breaking.push(`${name}[${va.tag}]: removed ${p}`));
+        pd.added.forEach((p) => info.push(`${name}[${va.tag}]: added ${p}`));
+      }
+    }
+  }
+  return { breaking, info };
+}
+
+export function diffToMarkdown({ breaking, info }, fromVersion, toVersion) {
+  const lines = [`## Codex app-server protocol: ${fromVersion} → ${toVersion}`, ""];
+  if (!breaking.length && !info.length) lines.push("No changes to the tracked protocol surface.");
+  if (breaking.length) lines.push(`### ⚠️ Breaking (${breaking.length})`, ...breaking.map((x) => `- ${x}`), "");
+  if (info.length) lines.push(`### Added / relaxed (${info.length})`, ...info.map((x) => `- ${x}`), "");
+  return lines.join("\n");
+}

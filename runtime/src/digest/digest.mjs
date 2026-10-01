@@ -13,6 +13,7 @@ import { classify } from "./classify.mjs";
 import { applyLearnings } from "./apply.mjs";
 import { upsertSession, findSkillsNeedingEvolution } from "../memory/episodic.mjs";
 import { appendSessionLog, buildEntry as buildSessionLogEntry } from "./session-log.mjs";
+import { patchPaths } from "../hooks/io.mjs";
 
 // File-bearing tools — their inputs name the files in play during the session.
 const FILE_TOOLS = new Set(["Edit", "Write", "NotebookEdit", "MultiEdit", "Read"]);
@@ -37,21 +38,31 @@ export function touchedFiles(summary, cwd) {
   if (!summary?.events) return [];
   const cwdNorm = String(cwd || "").replace(/\\/g, "/").replace(/\/+$/, "");
   const set = new Set();
-  for (const e of summary.events) {
-    if (e.type !== "tool_use" || !FILE_TOOLS.has(e.tool)) continue;
-    let input;
-    try { input = JSON.parse(e.text); } catch { continue; }
-    if (!input || typeof input !== "object") continue;
-    const raw = input.file_path || input.notebook_path || input.path;
-    if (!raw || typeof raw !== "string") continue;
+  const add = (raw) => {
     let p = raw.replace(/\\/g, "/").trim();
     if (cwdNorm && p.toLowerCase().startsWith(cwdNorm.toLowerCase() + "/")) {
       p = p.slice(cwdNorm.length + 1);
     }
     if (p) set.add(p);
+  };
+  for (const e of summary.events) {
     if (set.size >= 12) break;
+    if (e.type !== "tool_use") continue;
+    // Codex apply_patch: the input is the raw patch text, not JSON.
+    if (e.tool === "apply_patch") {
+      // As written: patch paths are cwd-relative already (absolute ones are
+      // relativized by add()); resolving would inject a drive letter.
+      for (const p of patchPaths(e.text, undefined, { resolve: false })) add(p);
+      continue;
+    }
+    if (!FILE_TOOLS.has(e.tool)) continue;
+    let input;
+    try { input = JSON.parse(e.text); } catch { continue; }
+    if (!input || typeof input !== "object") continue;
+    const raw = input.file_path || input.notebook_path || input.path;
+    if (raw && typeof raw === "string") add(raw);
   }
-  return [...set];
+  return [...set].slice(0, 12);
 }
 
 /**
