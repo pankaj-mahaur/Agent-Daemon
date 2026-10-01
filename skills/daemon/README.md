@@ -7,4 +7,12 @@ These are **destructive or high-impact** — the bootstrap skill writes files, s
 | Skill | What it does |
 |---|---|
 | [bootstrap-daemon](bootstrap-daemon/) | Fully scaffold and populate agent-daemon memory with real project context. Manual-only — `disable-model-invocation: true`. |
+| [session-close](session-close/) | End-of-session macro: session log, `<agent-daemon-digest>` block, handoff docs. |
+| [skill-author](skill-author/) | Dedup-first skill authoring: classify scope, check overlap with existing skills, write or extend, log it. |
+| [skill-installer](skill-installer/) | Install, find or remove skills (`ad skill install`). |
+| [gepa-evolve-inline](gepa-evolve-inline/) | Evolve a skill from its execution traces inside the current session, with no API key. |
 | [orchestrate-team](orchestrate-team/) | Deploy 2+ specialist agents in parallel for cross-cutting work. Use when a task spans 2+ domains and >30 min of work. |
+| [feature-flow](feature-flow/) | Feature end to end: plan → build → verify. |
+| [bug-flow](bug-flow/) | Bug end to end: debug-triage → fix → verify. |
+| [release-flow](release-flow/) | Cut a release: changelog → verify → review → go/no-go. Never tags or pushes without OK. |
+| [codex-upgrade](codex-upgrade/) | Maintainers: land a Codex engine bump — protocol diff, suite, live Windows sandbox smoke, then release-flow. |
