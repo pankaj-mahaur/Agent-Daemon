@@ -1,10 +1,31 @@
 # Installation Guide
 
-Three ways to install skills from this toolkit.
+## Install agent-daemon (recommended)
 
-## Method 1: Install Script (Recommended)
+The one-liner clones the repo to `~/.agent-daemon-src`, installs dependencies (including the pinned `@openai/codex` engine), registers the global `ad` command and runs `ad doctor`. It needs git and Node.js 22 or later.
 
-### All Skills
+```bash
+# macOS / Linux / Git-Bash
+curl -fsSL https://raw.githubusercontent.com/pankaj-mahaur/Agent-Daemon/main/install.sh | bash
+```
+
+```powershell
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/pankaj-mahaur/Agent-Daemon/main/install.ps1 | iex
+```
+
+- **Pin a release:** set `AD_VERSION` (e.g. `AD_VERSION=v1.0.0` for the Claude Code–only v1). Re-run without it to move back to `main`.
+- **From a clone instead:** `cd runtime && npm install && npm link`.
+- **Then, per project:** `ad init`.
+- **To use the agent harness** (`ad chat`, `ad run`, `ad loop` …): `ad auth login chatgpt` (or `openai` / `openrouter --model <slug>`).
+
+## Skills only (no `ad` command)
+
+The methods below copy skills without installing the runtime.
+
+### Method 1: Install Script
+
+#### All Skills
 
 ```bash
 # Linux/macOS
@@ -14,7 +35,7 @@ Three ways to install skills from this toolkit.
 ./setup.ps1 -All
 ```
 
-### Specific Skills
+#### Specific Skills
 
 ```bash
 # Linux/macOS
@@ -24,21 +45,21 @@ Three ways to install skills from this toolkit.
 ./setup.ps1 -Skills diagnose-fetch-failure,review-slice,seed-data
 ```
 
-### List Available Skills
+#### List Available Skills
 
 ```bash
 ./setup.sh --list
 ./setup.ps1 -List
 ```
 
-### Dry Run (See What Would Happen)
+#### Dry Run (See What Would Happen)
 
 ```bash
 ./setup.sh --skills review-slice --dry-run
 ./setup.ps1 -Skills review-slice -DryRun
 ```
 
-## Method 2: Manual Copy
+### Method 2: Manual Copy
 
 Copy any skill folder to your global skills directory:
 
@@ -53,13 +74,13 @@ Copy-Item -Recurse skills/diagnose-fetch-failure $env:USERPROFILE/.claude/skills
 xcopy /E /I skills\diagnose-fetch-failure %USERPROFILE%\.claude\skills\diagnose-fetch-failure
 ```
 
-## Method 3: Project-Local Install
+### Method 3: Project-Local Install
 
-Install skills only for a specific project by copying to `.agents/skills/`:
+Install skills only for a specific project by copying to `.claude/skills/`:
 
 ```bash
 # From your project directory
-cp -r /path/to/claude-code-toolkit/skills/review-slice .agents/skills/
+cp -r /path/to/Agent-Daemon/skills/review-slice .claude/skills/
 
 # Or using the install script
 /path/to/setup.sh --skills review-slice --project-local
@@ -73,7 +94,7 @@ After installing, open Claude Code in any project and check:
 
 1. **Slash command skills** — Type `/graphify` or `/qmd` and see if autocomplete shows the skill
 2. **Auto-trigger skills** — Say "review this page" and see if review-slice activates
-3. **List installed skills** — Check `~/.claude/skills/` or `.agents/skills/` directory
+3. **List installed skills** — Check `~/.claude/skills/` or `.claude/skills/` directory
 
 ## Updating Skills
 
@@ -83,7 +104,7 @@ The install script copies files — it doesn't create symlinks. To update:
 2. Re-run the install script (it overwrites existing files)
 
 ```bash
-cd /path/to/claude-code-toolkit
+cd /path/to/Agent-Daemon
 git pull
 ./setup.sh --all  # or specific skills
 ```
@@ -97,7 +118,7 @@ Delete the skill folder:
 rm -rf ~/.claude/skills/skill-name
 
 # Project-local
-rm -rf .agents/skills/skill-name
+rm -rf .claude/skills/skill-name
 ```
 
 ## Dependencies

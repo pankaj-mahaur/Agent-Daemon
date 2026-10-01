@@ -49,6 +49,20 @@ export function resolveCodexCommand(env = process.env) {
   return { cmd: "codex", prefix: [], source: "path" };
 }
 
+// Codex picks the first pwsh.exe on PATH as the agent's shell. The Microsoft
+// Store's pwsh is an app-execution alias under ...\Microsoft\WindowsApps, and
+// the Windows sandbox's restricted token can't launch aliases
+// (CreateProcessAsUserW: Access is denied), so every command fails. Without
+// those entries Codex falls back to an installed pwsh 7 or powershell.exe.
+export function withoutStoreAliases(env, platform = process.platform) {
+  if (platform !== "win32") return env;
+  const out = { ...env };
+  for (const key of Object.keys(out)) {
+    if (key.toUpperCase() !== "PATH" || typeof out[key] !== "string") continue;
+    out[key] = out[key].split(";").filter((p) => !/[\\/]WindowsApps[\\/]?$/i.test(p.trim())).join(";");
+  }
+  return out;
+}
 
 // Nobody answered → the safe reply: decline approvals, refuse everything else.
 function defaultServerRequestHandler(msg) {
@@ -75,7 +89,7 @@ export class CodexAppServer extends EventEmitter {
   }
 
   async start() {
-    const env = { ...process.env, ...(this.opts.env ?? {}) };
+    const env = withoutStoreAliases({ ...process.env, ...(this.opts.env ?? {}) });
     const { cmd, prefix } = this.opts.command ?? resolveCodexCommand(env);
     const args = [...prefix, "app-server", ...(this.opts.codexArgs ?? [])];
     this.child = spawn(cmd, args, {

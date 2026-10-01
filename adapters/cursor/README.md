@@ -40,7 +40,7 @@ node adapters/cursor/adapt.mjs skills/debug-triage > .cursor/rules/debug-triage.
 Or batch all skills:
 
 ```sh
-# Our 36 curated skills only (skips the 181 vendored ECC imports)
+# Our curated skills only (skips the vendored ECC imports)
 node adapters/cursor/adapt.mjs --core --out .cursor/rules
 
 # Everything (our + vendored)

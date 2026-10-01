@@ -53,6 +53,7 @@ Single entry point. Subcommand dispatcher. Roughly:
 | `team *`, `spawn` | `runtime/src/orchestration/*.mjs` |
 | `evolve` | `runtime/src/digest/gepa/*.mjs` |
 | `checkpoint` | `runtime/src/cli.mjs` directly |
+| `auth`, `chat`, `run`, `loop`, `schedule`, `web`, `acp`, `tools`, `sandbox`, `agy` | `runtime/src/harness/*.mjs` (engine: `runtime/src/engine/codex/`) |
 
 ### 2. Hooks (`runtime/src/hooks/`)
 
@@ -140,7 +141,9 @@ Foreground process. Uses `chokidar` (with Windows polling fallback) to watch tra
 4. Extract cwd from the transcript itself (Claude Code embeds it)
 5. Fire `runDigest({ transcript, cwd, ... })`
 
-Also polls team inboxes every 10 sec for multi-agent orchestration.
+Watched directories: `~/.claude/projects`, `~/.cursor/sessions`, `~/.codex/sessions`, and the harness's `~/.agent-daemon/codex-home/sessions` (opt out with `"harnessSessions": false`).
+
+Also polls team inboxes every 10 sec for multi-agent orchestration, and runs scheduled harness jobs (`ad schedule`).
 
 ### 6. Constitution (`constitution/`)
 
@@ -162,7 +165,9 @@ Constitution changes propagate to all future sessions on the next start. **No ag
 
 Optional multi-agent layer. `ad team create` spins up a coordinator + workers, each in its own git worktree. `ad spawn` adds workers to an existing team. `ad team inbox` reads cross-agent messages.
 
-Out of scope for daily solo workflow — see [`skills/orchestrate-team/SKILL.md`](../skills/orchestrate-team/SKILL.md) when you need it.
+Workers default to sandboxed Codex threads: they can't reach the network or write `.git`, and the daemon commits their work on their branch. `--engine claude` (or `AD_AGENT_ENGINE=claude`) spawns headless `claude` as in v1.
+
+Out of scope for daily solo workflow — see [`skills/orchestrate-team/SKILL.md`](../skills/daemon/orchestrate-team/SKILL.md) when you need it.
 
 ---
 
@@ -184,7 +189,6 @@ SessionStart hook fires
         ▼
 PreToolUse hooks fire on each tool call
    → ad hook bash-pre  (e.g. block `--no-verify`)
-   → ad hook edit-pre  (no-op by default)
         │
         ▼
 [ Tool runs, e.g. Edit creates file.ts ]
@@ -242,7 +246,6 @@ Agent-Daemon/                       # The cloned repo
 ├── hooks/                          # Hook JSON snippets for settings.json
 ├── teams/                          # Multi-agent team templates
 ├── adapters/
-│   ├── claude-code/
 │   ├── codex/
 │   └── cursor/
 ├── runtime/                        # Node implementation
@@ -251,6 +254,10 @@ Agent-Daemon/                       # The cloned repo
 │   │   ├── digest/                 # Pipeline modules
 │   │   ├── hooks/                  # Hook handlers
 │   │   ├── memory/
+│   │   ├── mcp/                    # Read-only MCP memory server
+│   │   ├── engine/                 # Codex app-server driver
+│   │   ├── harness/                # chat/run/loop/schedule/web/acp/auth/sandbox/agy
+│   │   ├── auth/                   # Provider keys + secret store
 │   │   ├── orchestration/
 │   │   ├── adapters/
 │   │   ├── daemon/                 # Watcher
@@ -265,17 +272,29 @@ Agent-Daemon/                       # The cloned repo
 ├── episodic.db                     # SQLite — learnings, sessions
 ├── audit/mcp.jsonl                 # MCP call audit (security profile)
 ├── logs/                           # Digest failure reports
-└── watch.json                      # Watcher config
+├── watch.json                      # Watcher config
+├── codex-home/                     # Harness CODEX_HOME (login, config, rollouts)
+├── secrets/                        # Provider keys (file backends)
+├── schedules.json, schedule-logs/  # ad schedule jobs + output
+├── teams/                          # Team state + inboxes
+└── worktrees/                      # Worker git worktrees
 
 <project>/.agent-daemon/            # Per-project state (per-codebase)
 ├── memory/                         # 7 markdown files
 ├── proposals/                      # Queued diffs for review
 ├── sessions.jsonl                  # Per-session audit ledger
-└── checkpoints/                    # Pre-compact memory snapshots
+├── checkpoints/                    # Pre-compact memory snapshots
+├── loops/                          # ad loop iteration logs
+└── STOP                            # Create to stop a running ad loop
 
 ~/.claude/settings.json             # Where hooks are registered
 ~/.claude/projects/<encoded>/*.jsonl  # Transcripts (input to digest)
+~/.agent-daemon/codex-home/sessions/**/rollout-*.jsonl  # Harness transcripts
 ```
+
+### Harness mode
+
+The same hooks from `runtime/profiles/profiles.json` are rendered into `CODEX_HOME/hooks.json`, so `ad chat` / `ad run` / `ad loop` get memory injection, correction capture and guards. Codex caps SessionEnd at 3 s, so that hook spawns a detached `ad digest` instead of digesting inline. Memory is also exposed to the agent as the `agent-daemon-memory` MCP server. Design: [plans/codex-harness.md](plans/codex-harness.md).
 
 ---
 
@@ -287,7 +306,7 @@ A few load-bearing decisions:
 A daemon bug must never block the user's tool execution. Trade-off: an adversary who controls the hook's stdin could bypass it. But the stdin comes from the Claude Code host, which is the user's own machine — out of scope.
 
 ### Zero-LLM digest (with optional fallback)
-Default extraction is parse-only — the agent emits a structured block during the session. Cheap, deterministic, no API key needed. LLM fallback exists for sessions where the agent didn't follow protocol.
+Default extraction is parse-only — the agent emits a structured block during the session. Cheap, deterministic, no API key needed. LLM fallback exists for sessions where the agent didn't follow protocol; it runs on `claude` or the Codex engine (`--llm claude|codex|auto`).
 
 ### Per-project memory, global SQLite
 Per-project markdown means each codebase has its own brain. Global SQLite means queries can span all projects ("what have I learned about React in any project?").
@@ -306,4 +325,4 @@ Per-project markdown means each codebase has its own brain. Global SQLite means 
 - [Troubleshooting](./troubleshooting.md) — common issues
 - [Contributing](./contributing.md) — for new devs
 - [SECURITY.md](../SECURITY.md) — threat model
-- [Manual test](./manual-test-v0.2.0.md) — end-to-end verification
+- [Manual test](./manual-test-v0.2.0.md) — historical v0.2.0-era checklist

@@ -17,12 +17,12 @@ npm link
 Verify:
 
 ```sh
-ad --version       # → 2.0.0+
+ad --version       # → the version in runtime/package.json
 ad doctor          # → all green
 cd ../runtime && npm test
 ```
 
-You should see `# pass 33` (or whatever the current count is).
+All tests should pass (`# fail 0`).
 
 ---
 
@@ -34,13 +34,15 @@ runtime/src/digest/digest.mjs    ← Pipeline orchestrator (read first)
 runtime/src/hooks/*.mjs          ← One file per hook handler
 runtime/src/adapters/*.mjs       ← Transcript parsers (claude-code, codex, cursor)
 runtime/src/memory/episodic.mjs  ← SQLite wrapper
-runtime/src/orchestration/       ← Multi-agent team layer
+runtime/src/orchestration/       ← Multi-agent team layer (Codex + claude workers)
+runtime/src/engine/codex/        ← Codex app-server driver (the harness engine)
+runtime/src/harness/             ← ad chat / run / loop / schedule / web / acp / auth / sandbox
 runtime/test/*.test.mjs          ← node:test suite
 
 constitution/                    ← Loaded into every session
 skills/<name>/SKILL.md           ← One per skill
 hooks/*.json                     ← Snippets for ~/.claude/settings.json
-profiles/profiles.json           ← What each install profile pulls in
+runtime/profiles/profiles.json   ← What each install profile pulls in
 ```
 
 Read [`docs/architecture.md`](./architecture.md) for the full picture.
@@ -123,6 +125,8 @@ test("hello command exits 0", async () => {
 6. **Test it** with a subprocess test (see `runtime/test/hooks.test.mjs` for the pattern)
 7. **Document** in `hooks/README.md`
 
+Hooks in `profiles.json` are also rendered into the Codex harness (`CODEX_HOME/hooks.json`, see `runtime/src/engine/codex/hooks-config.mjs`). There the handler runs with `--host codex`, so read input and write decisions through `io.mjs`, which adapts Codex's shapes. Skill-use hooks are skipped in the harness.
+
 Hook handler contract:
 
 - Reads JSON from `stdin`
@@ -180,6 +184,8 @@ npm test
 
 For subprocess tests (CLI commands, hook handlers), see [`runtime/test/hooks.test.mjs`](../runtime/test/hooks.test.mjs) for the established pattern.
 
+Harness tests never call the real Codex: they drive the scripted fake app-server in [`runtime/testkit/fake-codex-app-server.mjs`](../runtime/testkit/fake-codex-app-server.mjs). CI and the weekly `codex-upgrade` workflow can't exercise the Windows sandbox, so before merging an engine bump do a live `ad run` smoke on Windows in a scratch directory (the [`codex-upgrade`](../skills/daemon/codex-upgrade/SKILL.md) skill has the steps).
+
 ---
 
 ## Commit conventions
@@ -218,10 +224,11 @@ Body should explain **why**, not what. The diff shows what.
 
 ## Versioning + releases
 
-- We use **semver** (currently 2.0.0)
+- We use **semver** (current version: `runtime/package.json`)
 - Bump `runtime/package.json` `version` field
 - Update `CHANGELOG.md` with the new section
-- Tag the release: `git tag v0.2.x && git push --tags`
+- Tag the release after merge: `git tag -a vX.Y.Z -m "…" && git push origin vX.Y.Z`
+- v1 bug fixes go to the `release/v1` branch (tags `v1.x.y`)
 - `runtime/src/cli.mjs` reads version from `package.json` — no separate update needed
 
 ---
@@ -267,6 +274,6 @@ Edit `~/.agent-daemon/watch.json` to point at a sandbox directory.
 - [Workflow](./workflow.md) — daily use
 - [Troubleshooting](./troubleshooting.md) — common failure modes
 - [SECURITY.md](../SECURITY.md) — threat model + responsible disclosure
-- [Manual test checklist](./manual-test-v0.2.0.md) — full end-to-end verification
+- [Manual test checklist](./manual-test-v0.2.0.md) — historical v0.2.0-era checklist
 
 Welcome aboard.

@@ -1,5 +1,7 @@
 # v0.2.0 Manual Test Checklist
 
+> **Historical.** This is the v0.2.0-era checklist and is out of date for v2 (e.g. it expects `ad --version` = 0.2.0 and an `AGENTS.md` that is now `AD-INSTRUCTIONS.md`). For the harness, check `ad doctor`, `ad auth status` and the live smoke in [`skills/daemon/codex-upgrade`](../skills/daemon/codex-upgrade/SKILL.md).
+
 Step-by-step checklist for you to verify v0.2.0 yourself in `D:\projects\my-app` (or any project). Run each block in order — each step says what to do, what to expect, and what to do if it fails.
 
 > Notation: `$` is your shell prompt. Commands are PowerShell-friendly (also work in Git Bash on Windows). Anything in **bold** is what you're testing.

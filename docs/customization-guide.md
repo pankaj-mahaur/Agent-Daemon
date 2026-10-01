@@ -4,13 +4,13 @@ How to adapt toolkit skills for your specific project.
 
 ## Forking a Skill
 
-1. Copy the skill to your project's `.agents/skills/` directory
+1. Copy the skill to your project's `.claude/skills/` directory
 2. Edit the SKILL.md to add project-specific context
 3. The project-local version takes precedence over the global one
 
 ```bash
 # Copy review-slice for customization
-cp -r ~/.claude/skills/review-slice .agents/skills/review-slice
+cp -r ~/.claude/skills/review-slice .claude/skills/review-slice
 ```
 
 ## Customizing review-slice
@@ -107,7 +107,7 @@ Fill in the "Known Conflict Surface" table after your first merge:
 
 See [Skill Anatomy](skill-anatomy.md) for the full SKILL.md specification. Key steps:
 
-1. Create a folder under `~/.claude/skills/` or `.agents/skills/`
+1. Create a folder under `~/.claude/skills/` or `.claude/skills/`
 2. Write a `SKILL.md` with YAML frontmatter
 3. Include a clear `description` with trigger phrases
 4. Test by asking Claude Code questions that should trigger the skill
