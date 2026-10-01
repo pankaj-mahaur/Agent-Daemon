@@ -7,7 +7,7 @@
 
       irm https://raw.githubusercontent.com/pankaj-mahaur/Agent-Daemon/main/install.ps1 | iex
 
-  What it does (all idempotent — safe to re-run):
+  What it does (all idempotent - safe to re-run):
     1. Verifies git, node (>=22) and npm are available.
     2. Clones the repo to $env:AGENT_DAEMON_DIR (default: ~\.agent-daemon-src),
        or `git pull`s if it's already there.
@@ -27,9 +27,9 @@ $InstallDir  = if ($env:AGENT_DAEMON_DIR) { $env:AGENT_DAEMON_DIR } else { Join-
 $Version     = $env:AD_VERSION
 $MinNodeMajor = 22
 
-function Say  ($m) { Write-Host "› $m"  -ForegroundColor Cyan }
-function Ok   ($m) { Write-Host "✓ $m"  -ForegroundColor Green }
-function Die  ($m) { Write-Host "✗ $m"  -ForegroundColor Red; exit 1 }
+function Say  ($m) { Write-Host "> $m"  -ForegroundColor Cyan }
+function Ok   ($m) { Write-Host "+ $m"  -ForegroundColor Green }
+function Die  ($m) { Write-Host "x $m"  -ForegroundColor Red; exit 1 }
 
 # 1. Prerequisites ----------------------------------------------------------
 foreach ($cmd in 'git', 'node', 'npm') {
@@ -97,7 +97,7 @@ Write-Host ''
 Ok 'agent-daemon installed.'
 Write-Host @'
 
-Next step — initialize it in a project:
+Next step - initialize it in a project:
 
   cd C:\path\to\your\project
   ad init
