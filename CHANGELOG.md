@@ -4,6 +4,12 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [2.0.1] — 2026-10-01
+
+### Fixed
+
+- Windows: agent shell commands no longer fail with "Access is denied" when PowerShell 7 comes from the Microsoft Store. The Store's `pwsh.exe` is an app alias the Codex sandbox can't launch, so `WindowsApps` is kept off the engine's PATH and Codex falls back to an installed pwsh 7 or `powershell.exe`.
+
 ## [2.0.0] — 2026-10-01
 
 Agent Daemon becomes its own agent harness on the OpenAI Codex engine. Claude Code mode (hooks, memory, skills, GEPA) is unchanged. Design: [docs/plans/codex-harness.md](docs/plans/codex-harness.md).
@@ -276,6 +282,7 @@ Kept in the snapshot but not ported this release: `.codebuddy/`, `.kiro/`, `.tra
 
 Initial public state. Self-improving memory + skills runtime for Claude Code with multi-agent orchestration. 36 skills, 6 lifecycle hooks (SessionStart, SessionEnd, PreCompact, UserPromptSubmit, plus QMD-redirect), constitution layer, digest pipeline, GEPA skill evolution, multi-agent team templates, `ad init` / `ad doctor` / `ad team` / `ad spawn` CLI.
 
+[2.0.1]: https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v2.0.1
 [2.0.0]: https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v2.0.0
 [1.0.0]: https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v1.0.0
 [0.2.0]: https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v0.2.0
