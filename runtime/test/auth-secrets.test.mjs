@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createSecretStore, dpapiBackend, fileBackend } from "../src/auth/secrets.mjs";
+import { createSecretStore, dpapiBackend, fileBackend, windowsPowerShellEnv } from "../src/auth/secrets.mjs";
 
 const FAKE_KEY = "sk-or-v1-test-0123456789abcdef";
 
@@ -66,4 +66,9 @@ test("has() reports presence without decrypting", () => {
   const store = createSecretStore({ name: "x", get: () => (decrypts++, "v"), has: () => true, set() {}, delete() {} });
   assert.equal(store.has("openrouter"), true);
   assert.equal(decrypts, 0);
+});
+
+test("Windows PowerShell 5.1 gets no PSModulePath (pwsh 7's modules break DPAPI cmdlets)", () => {
+  const env = windowsPowerShellEnv({ PATH: "p", PSModulePath: "C:/Program Files/PowerShell/7/Modules", psmodulepath: "x" });
+  assert.deepEqual(env, { PATH: "p" });
 });

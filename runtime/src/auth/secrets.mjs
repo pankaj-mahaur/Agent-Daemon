@@ -30,8 +30,14 @@ function ensureDir(dir) {
   if (process.platform !== "win32") chmodSync(dir, 0o700);
 }
 
-const run = (cmd, args, input) =>
-  execFileSync(cmd, args, { input, encoding: "utf8", windowsHide: true, timeout: TIMEOUT_MS, stdio: ["pipe", "pipe", "pipe"] });
+const run = (cmd, args, input, env) =>
+  execFileSync(cmd, args, { input, env, encoding: "utf8", windowsHide: true, timeout: TIMEOUT_MS, stdio: ["pipe", "pipe", "pipe"] });
+
+// Launched from pwsh 7, PSModulePath points Windows PowerShell 5.1 at the 7.x
+// Microsoft.PowerShell.Security module, which it cannot load
+// (CouldNotAutoloadMatchingModule). Without the variable, 5.1 uses its defaults.
+export const windowsPowerShellEnv = (env = process.env) =>
+  Object.fromEntries(Object.entries(env).filter(([k]) => k.toUpperCase() !== "PSMODULEPATH"));
 
 // PowerShell scripts read the secret / ciphertext from stdin, never argv.
 // $ErrorActionPreference=Stop turns non-terminating errors into exit 1.
@@ -40,7 +46,8 @@ const PS_PROTECT =
 const PS_UNPROTECT =
   "$ErrorActionPreference='Stop'; $c=[Console]::In.ReadToEnd().Trim(); $ss=ConvertTo-SecureString -String $c; " +
   "$b=[Runtime.InteropServices.Marshal]::SecureStringToBSTR($ss); try { [Console]::Out.Write([Runtime.InteropServices.Marshal]::PtrToStringBSTR($b)) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($b) }";
-const powershell = (script, input) => run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], input);
+const powershell = (script, input) =>
+  run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], input, windowsPowerShellEnv());
 
 // Write a file that is 0600 from its first byte (an existing, wider file is
 // removed first rather than overwritten in place).
