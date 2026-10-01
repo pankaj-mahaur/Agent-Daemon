@@ -2,8 +2,10 @@
 
 [![test](https://github.com/pankaj-mahaur/Agent-Daemon/actions/workflows/test.yml/badge.svg)](https://github.com/pankaj-mahaur/Agent-Daemon/actions/workflows/test.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![version](https://img.shields.io/badge/version-0.2.0-green.svg)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.0.0-green.svg)](CHANGELOG.md)
 [![harnesses](https://img.shields.io/badge/harnesses-Claude%20Code%20%7C%20Codex%20%7C%20Cursor-purple.svg)](#cross-harness-support)
+
+> **v1 maintenance branch.** This is agent-daemon v1, the Claude Code memory runtime. Active development moved to v2 (the Codex-based agent harness) on `main`. Install v1 with `AD_VERSION=v1.0.0` (see the installer on `main`). Only bug fixes land here.
 
 A **self-improving runtime** for AI coding agents — with **multi-agent orchestration** built in. Wraps Claude Code (and any agent that writes a session transcript) with universal guardrails, persistent memory, and a digest pipeline that distills lessons from every session so the next one is automatically smarter.
 
