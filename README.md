@@ -5,17 +5,13 @@
 [![version](https://img.shields.io/badge/version-2.0.1-green.svg)](CHANGELOG.md)
 [![harnesses](https://img.shields.io/badge/harnesses-Claude%20Code%20%7C%20Codex%20%7C%20Cursor-purple.svg)](#cross-harness-support)
 
-A **self-improving runtime** for AI coding agents — with **multi-agent orchestration** built in. Wraps Claude Code (and any agent that writes a session transcript) with universal guardrails, persistent memory, and a digest pipeline that distills lessons from every session so the next one is automatically smarter.
+A **self-improving runtime** for AI coding agents — with **multi-agent orchestration** built in. Wraps Claude Code (and any agent that writes a session transcript) with universal guardrails, persistent memory, and a digest pipeline that distills lessons from every session so the next one is automatically smarter. Since v2 it also runs agents itself, on the OpenAI Codex engine.
 
-Now ships with a full **team coordination layer**: spawn multiple Claude Code agents in isolated git worktrees, coordinate them through filesystem-based inboxes, and manage task dependencies with auto-unblocking — all without a central server, database, or API key.
+Ships with a full **team coordination layer**: spawn worker agents (sandboxed Codex workers by default, Claude Code with `--engine claude`) in isolated git worktrees, coordinate them through filesystem-based inboxes, and manage task dependencies with auto-unblocking — all without a central server or database.
 
 Skills evolve too: [GEPA](runtime/src/digest/gepa/README.md) (Genetic-Pareto Prompt Evolution) reads execution traces and proposes Pareto-optimal skill refinements that you accept or reject via `agent-daemon review`.
 
-> **v0.2.0 + Phase 5:** Cross-harness support for **Claude Code** (native), **Codex** (reference config + sub-agent TOML), and **Cursor** (hook bindings + skill-to-`.mdc` converter). 3 install profiles (`minimal` / `developer` / `security`) + 4 skill-install modes (`smart` / `all` / `minimal` / `manual`). 164 skills (52 curated + 112 vendored from [`everything-claude-code`](https://github.com/affaan-m/everything-claude-code)), production hooks, audit-log rotation, and GitHub Actions CI on Linux/macOS/Windows. **Phase 5** (see [CHANGELOG.md](CHANGELOG.md)) adds stack-detection-driven smart install, three new daemon skills (`skill-author`, `session-close`, `gepa-evolve-inline`), no-API-key inline GEPA proposals via an active Claude session, Hinglish extractor rules, multi-agent orchestration improvements, and weekly `activeContext.md` rotation.
-
-> **Latest on `main` (unreleased):** the loop is now closed end to end — automatic digest sweep at SessionStart (covers the VS Code extension, where SessionEnd never fires), deterministic prompt-injection quarantine on extracted learnings, on-demand skill install ([`ad skill install`](#seamless-skills--routing--on-demand-install)) with data-driven routing + follow/diverge telemetry, Hermes-style [memory evolution](#memory-evolution-hermes-style) (reinforce → decay → consolidate), a read-only MCP memory server for mid-session recall, OS service registration (`ad service install`), and composite flow skills (`feature-flow`, `bug-flow`, `release-flow`).
->
-> **[claude-mem](https://github.com/thedotmack/claude-mem)-inspired adoptions (latest):** the MCP memory server gained a token-cheap **progressive-disclosure** flow (`memory_search`/`memory_files` → `memory_timeline` → `memory_get`), **file-aware memory** (learnings tagged with the session's files; SessionStart boosts learnings about the files you're editing), a **`<private>…</private>`** exclusion tag that keeps marked content out of memory entirely, and **`ad viewer`** — a zero-dependency single-file HTML snapshot of the episodic store. Stays FTS5-only (no vector DB, no Python). The per-project `CLAUDE.md` block is also slimmed to a synopsis that points at an on-demand `AD-INSTRUCTIONS.md`, plus one-liner `install.sh`/`install.ps1`. 301 tests.
+> **v1.0.0** is the stable Claude Code memory runtime (hooks, memory, skills, GEPA, teams). See [CHANGELOG.md](CHANGELOG.md).
 
 > **v2.0.0 — Agent Daemon is now its own agent harness** on the OpenAI Codex engine: `ad chat`, `ad run`, `ad loop`, `ad schedule`, `ad web`, `ad acp`, with memory, hooks and skills wired in. See [Agent harness](#agent-harness-codex-engine). Want the Claude Code–only v1? See [Versions](#versions-v1-vs-v2).
 
@@ -40,7 +36,7 @@ cd /path/to/your/project
 ad init                              # default: developer profile + smart skill install
 ad init --profile minimal            # memory + lifecycle hooks only
 ad init --profile security           # default + intrusive guards (block --no-verify, MCP audit)
-ad init --skills-mode all            # install ALL 164 bundled skills (vs stack-detect-driven default)
+ad init --skills-mode all            # install ALL bundled skills (vs stack-detect-driven default)
 ad init --skills-mode manual         # install only profile-listed skills (legacy behaviour)
 ad init --plan                       # preview without applying
 ```
@@ -71,7 +67,7 @@ ad init
 
 The `ad` command is the short alias for `agent-daemon` — both work interchangeably. No API key is required for local capture, retrieval, deterministic SessionEnd digest parsing, or inline skill evolution proposals. Claude Code itself must be authenticated for interactive sessions; authenticated batch/LLM fallback remains explicit opt-in behavior.
 
-> **Verifying your install end-to-end?** Follow [docs/manual-test-v0.2.0.md](docs/manual-test-v0.2.0.md) — six sections, ~30 steps, each with expected output and the fix when it fails.
+The harness commands (`ad chat`, `ad run`, `ad loop`, `ad schedule`, `ad web`, `ad acp`) need a login first: `ad auth login chatgpt` (or `openai` / `openrouter`). See [Agent harness](#agent-harness-codex-engine).
 
 ### Windows team setup (Claude Code)
 
@@ -205,7 +201,7 @@ Leave it running in a background terminal:
 ad watch --verbose --force
 ```
 
-It monitors `~/.claude/projects/**/*.jsonl` and `~/.codex/sessions/**/*.jsonl`. When a transcript settles (no writes for 30s, size stable), it auto-fires `ad digest` with the right `cwd` (read from inside the transcript). Set-and-forget.
+It monitors `~/.claude/projects/**/*.jsonl`, `~/.cursor/sessions`, `~/.codex/sessions` and the harness's own `~/.agent-daemon/codex-home/sessions` (opt out of the last with `"harnessSessions": false`). It also runs your `ad schedule` jobs. When a transcript settles (no writes for 30s, size stable), it auto-fires `ad digest` with the right `cwd` (read from inside the transcript). Set-and-forget.
 
 ### Option B — `ad digest-latest` (one-shot)
 
@@ -244,7 +240,7 @@ Alternative: explicitly pass `--fallback-to-llm` to run an authenticated LLM ext
 
 ## Multi-agent orchestration
 
-Spawn a team of specialized Claude Code agents that work in parallel on isolated branches, coordinate through filesystem inboxes, and auto-unblock dependent tasks on completion.
+Spawn a team of specialized agents that work in parallel on isolated branches, coordinate through filesystem inboxes, and auto-unblock dependent tasks on completion.
 
 ```bash
 # List available team templates
@@ -277,7 +273,7 @@ User gives complex task
         |
 [ad sp] for each role:
   - Creates isolated git worktree at ~/.agent-daemon/worktrees/
-  - Spawns headless `claude` CLI with role-specific system prompt
+  - Starts a sandboxed Codex worker with a role-specific system prompt (no network, no `.git` writes; the daemon commits its work on its branch). `--engine claude` / `AD_AGENT_ENGINE=claude` spawns headless `claude` instead
   - Agent works independently on its branch
         |
 [Filesystem Inboxes] coordination:
@@ -306,7 +302,7 @@ Templates live in `teams/templates/`. Add your own as JSON files in `~/.agent-da
 
 The orchestration layer is hardened for real use:
 
-- **Spawn timeout** (15 min default) with SIGTERM → SIGKILL escalation
+- **Spawn timeout** (15 min default): Codex workers get a per-turn timeout; `claude` workers get SIGTERM → SIGKILL escalation
 - **Concurrent agent limit** (max 8) prevents runaway process spawning
 - **Stdout/stderr buffer caps** (512KB) prevent OOM on verbose agents
 - **Atomic JSON writes** (tmp + rename) across all state files
@@ -393,19 +389,22 @@ agent-daemon/
 ├── memory-templates/    # 6-file scaffold for project memory
 ├── runtime/             # Node CLI (agent-daemon) — digest, orchestration, self-improvement
 │   └── src/
-│       ├── orchestration/   # Multi-agent: inbox, spawn, team, templates
+│       ├── engine/          # Codex app-server driver (pinned @openai/codex)
+│       ├── harness/         # ad chat/run/loop/schedule/web/acp/auth/sandbox/agy
+│       ├── auth/            # Provider keys + OS secret store
+│       ├── orchestration/   # Multi-agent: inbox, spawn, team, templates, Codex workers
 │       ├── daemon/          # Watch daemon + OS service registration
 │       ├── digest/          # Extract → sanitize → classify → apply pipeline + GEPA
 │       ├── memory/          # SQLite + FTS5 episodic store + consolidation
 │       └── mcp/             # Read-only stdio MCP memory server
 ├── teams/templates/     # Team blueprints (JSON) — 4 built-in
-├── skills/              # 164 Claude Code skills (52 curated + 112 vendored)
+├── skills/              # Bundled skills (curated + vendored)
 ├── playbooks/           # 5 reference docs — any agent or human can use
 ├── hooks/               # Pre-baked Claude Code hook configs
 ├── mcp/                 # MCP server config + docs (agent-daemon-memory)
 ├── plugins/             # Claude Code plugins (scaffolded)
 ├── tools/               # Standalone CLI tools (scaffolded)
-├── adapters/            # SKILL.md → Cursor / AGENTS.md / Copilot (scaffolded)
+├── adapters/            # Codex reference config + Cursor hooks / .mdc converter
 ├── examples/            # Settings + config templates
 └── docs/                # Anatomy guides, install, customization
 ```
@@ -487,7 +486,7 @@ ad team retry    (tr)  --team <id> --task <task-id>   # Reset a failed task
 ad spawn         (sp)  --team <id> --role <name> --task "..."
 ```
 
-## Skill catalog (52 curated + 112 vendored = 164 total)
+## Skill catalog
 
 > The curated skills below are documented; an additional 112 skills are vendored from [`everything-claude-code`](https://github.com/affaan-m/everything-claude-code) (MIT) and friends — each tagged with a `source:` frontmatter line. Out-of-scope vendored skills were pruned from the bundle; see [skills/README.md](skills/README.md) for the full catalog and re-sync instructions.
 
@@ -495,38 +494,38 @@ ad spawn         (sp)  --team <id> --role <name> --task "..."
 
 | Skill | Description | Trigger |
 |---|---|---|
-| [implement-feature](skills/implement-feature/) | Search-for-existing-utility discipline + correctness checklist | Auto: "add", "implement", "build" |
-| [seed-data](skills/seed-data/) | Idempotent database seed scripts with realistic data | Auto: "generate seed data" |
-| [db-migrations](skills/db-migrations/) | Numbered migrations, never-edit-shipped, forward-compatible | Auto: schema changes |
-| [merge-feature-branch](skills/merge-feature-branch/) | Pull a shared branch into a feature branch safely | Auto: merge/rebase requests |
-| [multiplatform-parity](skills/multiplatform-parity/) | Keep web + mobile in lockstep on shared backend changes | Auto: cross-client changes |
+| [implement-feature](skills/engineering/implement-feature/) | Search-for-existing-utility discipline + correctness checklist | Auto: "add", "implement", "build" |
+| [seed-data](skills/engineering/seed-data/) | Idempotent database seed scripts with realistic data | Auto: "generate seed data" |
+| [db-migrations](skills/engineering/db-migrations/) | Numbered migrations, never-edit-shipped, forward-compatible | Auto: schema changes |
+| [merge-feature-branch](skills/engineering/merge-feature-branch/) | Pull a shared branch into a feature branch safely | Auto: merge/rebase requests |
+| [multiplatform-parity](skills/engineering/multiplatform-parity/) | Keep web + mobile in lockstep on shared backend changes | Auto: cross-client changes |
 
 ### Diagnose & debug
 
 | Skill | Description | Trigger |
 |---|---|---|
-| [debug-triage](skills/debug-triage/) | Triage ladder: services → data → cache → request → code | Auto: "broken", "blank screen" |
-| [diagnose-fetch-failure](skills/diagnose-fetch-failure/) | CORS / network errors in frontend-backend setups | Auto: "CORS blocked" |
-| [diagnose-intermittent-failure](skills/diagnose-intermittent-failure/) | Zombie watchers, env not re-read, port collisions | Auto: intermittent errors |
+| [debug-triage](skills/engineering/debug-triage/) | Triage ladder: services → data → cache → request → code | Auto: "broken", "blank screen" |
+| [diagnose-fetch-failure](skills/engineering/diagnose-fetch-failure/) | CORS / network errors in frontend-backend setups | Auto: "CORS blocked" |
+| [diagnose-intermittent-failure](skills/engineering/diagnose-intermittent-failure/) | Zombie watchers, env not re-read, port collisions | Auto: intermittent errors |
 
 ### Audit & review
 
 | Skill | Description | Trigger |
 |---|---|---|
 | [review-slice](skills/review-slice/) | Deep-review any page using a 9-class bug checklist | `/review-slice` |
-| [audit-runner](skills/audit-runner/) | Execute audit punch-list with severity sequencing | Auto: "work through findings" |
-| [security-audit](skills/security-audit/) | Trust boundary mapping + security review | `/security-audit` |
-| [production-readiness](skills/production-readiness/) | Launch readiness across all layers | `/production-readiness` |
-| [optimization-audit](skills/optimization-audit/) | Frontend + backend performance review | `/optimization-audit` |
-| [dead-code-review](skills/dead-code-review/) | Proof-based dead code cleanup | `/dead-code-review` |
-| [docs-sync-audit](skills/docs-sync-audit/) | Detect and fix documentation drift | `/docs-sync-audit` |
+| [audit-runner](skills/engineering/audit-runner/) | Execute audit punch-list with severity sequencing | Auto: "work through findings" |
+| [security-audit](skills/engineering/security-audit/) | Trust boundary mapping + security review | `/security-audit` |
+| [production-readiness](skills/engineering/production-readiness/) | Launch readiness across all layers | `/production-readiness` |
+| [optimization-audit](skills/engineering/optimization-audit/) | Frontend + backend performance review | `/optimization-audit` |
+| [dead-code-review](skills/engineering/dead-code-review/) | Proof-based dead code cleanup | `/dead-code-review` |
+| [docs-sync-audit](skills/engineering/docs-sync-audit/) | Detect and fix documentation drift | `/docs-sync-audit` |
 
 ### Operate & deploy
 
 | Skill | Description | Trigger |
 |---|---|---|
-| [deploy-ops](skills/deploy-ops/) | Deploy contract, CI gates, rollback playbook | Auto: "deploy", "prod" |
-| [llm-app-safety](skills/llm-app-safety/) | Model fallback, agent veto, deterministic safety | Auto: AI/prompt changes |
+| [deploy-ops](skills/engineering/deploy-ops/) | Deploy contract, CI gates, rollback playbook | Auto: "deploy", "prod" |
+| [llm-app-safety](skills/engineering/llm-app-safety/) | Model fallback, agent veto, deterministic safety | Auto: AI/prompt changes |
 
 ### Orchestration
 
@@ -543,31 +542,31 @@ ad spawn         (sp)  --team <id> --role <name> --task "..."
 | [bug-flow](skills/daemon/bug-flow/) | Composite flow: triage → fix root cause → prove by observation | Auto: "fix this bug properly", "root cause and fix" |
 | [release-flow](skills/daemon/release-flow/) | Composite flow: changelog → verify → review diff → go/no-go | Auto: "cut a release", "release banao" |
 
-### Methodology (14 skills)
+### Methodology
 
 | Skill | Trigger |
 |---|---|
-| [methodology-tdd](skills/methodology-tdd/) | Auto: test-related work |
-| [methodology-code-review](skills/methodology-code-review/) | `/code-review` |
-| [methodology-systematic-debugging](skills/methodology-systematic-debugging/) | Auto: debugging |
-| [methodology-refactoring](skills/methodology-refactoring/) | Auto: refactor requests |
-| [methodology-api-design](skills/methodology-api-design/) | Auto: API work |
-| [methodology-incremental-delivery](skills/methodology-incremental-delivery/) | Auto: large features |
-| [methodology-error-handling](skills/methodology-error-handling/) | Auto: error handling |
-| [methodology-performance-profiling](skills/methodology-performance-profiling/) | Auto: perf issues |
-| [methodology-architectural-decision](skills/methodology-architectural-decision/) | Auto: architecture |
-| [methodology-dependency-management](skills/methodology-dependency-management/) | Auto: deps |
-| [methodology-documentation](skills/methodology-documentation/) | Auto: docs |
-| [methodology-brainstorm](skills/methodology-brainstorm/) | `/brainstorm` |
-| [methodology-pair-programming](skills/methodology-pair-programming/) | Auto: pair work |
-| [methodology-writing-plan](skills/methodology-writing-plan/) | `/plan` |
+| [methodology-tdd](skills/engineering/methodology-tdd/) | Auto: test-related work |
+| [methodology-code-review](skills/engineering/methodology-code-review/) | `/code-review` |
+| [methodology-systematic-debugging](skills/engineering/methodology-systematic-debugging/) | Auto: debugging |
+| [methodology-refactoring](skills/engineering/methodology-refactoring/) | Auto: refactor requests |
+| [methodology-api-design](skills/engineering/methodology-api-design/) | Auto: API work |
+| [methodology-incremental-delivery](skills/engineering/methodology-incremental-delivery/) | Auto: large features |
+| [methodology-error-handling](skills/engineering/methodology-error-handling/) | Auto: error handling |
+| [methodology-performance-profiling](skills/engineering/methodology-performance-profiling/) | Auto: perf issues |
+| [methodology-architectural-decision](skills/engineering/methodology-architectural-decision/) | Auto: architecture |
+| [methodology-dependency-management](skills/engineering/methodology-dependency-management/) | Auto: deps |
+| [methodology-documentation](skills/engineering/methodology-documentation/) | Auto: docs |
+| [methodology-brainstorm](skills/engineering/methodology-brainstorm/) | `/brainstorm` |
+| [methodology-pair-programming](skills/engineering/methodology-pair-programming/) | Auto: pair work |
+| [methodology-writing-plan](skills/engineering/methodology-writing-plan/) | `/plan` |
 
 ### Tools
 
 | Skill | Dependencies | Trigger |
 |---|---|---|
-| [graphify](skills/graphify/) | Python 3.9+, `pip install graphifyy` | `/graphify` |
-| [qmd](skills/qmd/) | Node 18+, `npm install -g @tobilu/qmd` | `/qmd` |
+| [graphify](skills/productivity/graphify/) | Python 3.9+, `pip install graphifyy` | `/graphify` |
+| [qmd](skills/productivity/qmd/) | Node 18+, `npm install -g @tobilu/qmd` | `/qmd` |
 
 ## Playbooks
 
@@ -581,7 +580,7 @@ Standalone reference docs for any agent or human:
 
 ## Compatibility
 
-- **agentskills.io standard** — all 52 of our curated SKILL.md files have compliant frontmatter. The 112 vendored skills follow their own conventions and are exempt from our strict linter.
+- **agentskills.io standard** — all our curated SKILL.md files have compliant frontmatter. Vendored skills follow their own conventions and are exempt from our strict linter.
 - **Hermes-compatible memory** — same SQLite + FTS5 shape so skills + traces travel.
 - **Cross-agent awareness** — session-start reads rules from Cursor (`.cursor/rules/`), Cline (`.cline/rules/`), and Claude Code auto-memory.
 - **Transcript adapters** — digests transcripts from Claude Code, Cursor, Cline, and Codex.
@@ -611,14 +610,16 @@ ad init                                              # in your project — scaff
 
 ### Other agents
 
-Open `skills/<name>/SKILL.md` directly — paste the content into your agent's system prompt or rules file. The frontmatter is informational; the body is plain markdown. Adapter scripts for Cursor/Copilot/AGENTS.md format are in development.
+Open `skills/<name>/SKILL.md` directly — paste the content into your agent's system prompt or rules file. The frontmatter is informational; the body is plain markdown. Cursor has an adapter (`adapters/cursor/`), and the Codex harness writes its own `AGENTS.md`.
 
 ## Installation options
 
 ```bash
-# Recommended: npm link (registers `ad` globally)
+# Recommended: the one-liner in Quick start (AD_VERSION=vX.Y.Z to pin a release)
+
+# From a clone: npm link (registers `ad` globally)
 cd Agent-Daemon/runtime
-npm install
+npm install                  # also installs the pinned @openai/codex engine
 npm link                     # now `ad` works from any directory
 
 # Legacy: setup scripts (skills + hooks only, no `ad` command)
@@ -660,6 +661,8 @@ Rotated at 5 MB (keeps `.1` + `.2`, discards older). Fully local — never shipp
 agent-daemon has three install surfaces (global CLI, per-project files, user-level Claude settings). Remove them top-down for a clean wipe — no residue left behind.
 
 ### 1. Unlink the global `ad` command
+
+Stop background work first: `ad service uninstall` (otherwise the login task keeps running `ad watch` and schedules) and `ad auth logout openrouter` (on Linux the key lives in libsecret, outside `~/.agent-daemon`).
 
 ```sh
 npm unlink -g agent-daemon
@@ -764,7 +767,11 @@ Remove-Item -Recurse -Force "$env:USERPROFILE\.agent-daemon"
 This deletes:
 - `audit/mcp.jsonl` and its rotations — MCP audit trail
 - `episodic.db` — SQLite episodic memory across all projects
+- `codex-home/` — the harness's Codex home (ChatGPT/OpenAI login `auth.json`, session rollouts)
+- `secrets/`, `schedules.json`, `schedule-logs/` — provider keys, scheduled jobs and their logs
 - Any future state files
+
+The one-liner's clone lives at `~/.agent-daemon-src` (delete it in step 2).
 
 ### 6. Verify
 
@@ -825,13 +832,14 @@ Done. agent-daemon is fully removed.
 - v0.4 — Zero API-key digest via agent-emitted blocks
 - v0.5 — Token efficiency, ecosystem interop, cross-agent coexistence
 - v0.6 — Multi-agent orchestration with production hardening, `ad` short commands, AD-INSTRUCTIONS.md auto-generation
-- `main` (unreleased) — VS Code digest-sweep fallback, injection quarantine guardrails, on-demand `ad skill install` + data-driven routing with follow/diverge telemetry, Hermes-style memory evolution (reinforce → decay → consolidate), cross-project user facts, MCP memory server, `ad service` registration, composite flow skills, routing self-evolution proposals; **claude-mem-inspired:** progressive-disclosure MCP recall (`memory_get`/`memory_timeline`/`memory_files`), file-aware memory + SessionStart working-set boost, `<private>` exclusion tag, and `ad viewer` (zero-dep HTML snapshot)
+- v1.0.0 — VS Code digest-sweep fallback, injection quarantine guardrails, on-demand `ad skill install` + data-driven routing with follow/diverge telemetry, Hermes-style memory evolution (reinforce → decay → consolidate), cross-project user facts, MCP memory server, `ad service` registration, composite flow skills, routing self-evolution proposals; **claude-mem-inspired:** progressive-disclosure MCP recall (`memory_get`/`memory_timeline`/`memory_files`), file-aware memory + SessionStart working-set boost, `<private>` exclusion tag, and `ad viewer` (zero-dep HTML snapshot)
+- v2.0.0 — Agent harness on the Codex engine (`ad chat/run/loop/schedule/web/acp`), Codex team workers, `AD_VERSION` installer pinning
 
 **Next:**
 - Semantic task router — LLM-based auto template selection + role assignment
 - True trace replay for GEPA evaluate
 - Cross-machine memory sync
-- Web dashboard — kanban board for team tasks and agent status
+- Team kanban (tasks + agent status) in `ad web`
 
 ## Examples
 
@@ -847,7 +855,7 @@ Copy-paste configuration templates:
 
 **Start here:**
 - [Workflow](docs/workflow.md) — `ad watch` vs `ad digest-latest`, the ending protocol, decision matrix
-- [Troubleshooting](docs/troubleshooting.md) — 13 common failure modes with fixes (Windows watch, LLM fallback, hook misses, etc.)
+- [Troubleshooting](docs/troubleshooting.md) — Common failure modes with fixes (Windows watch, LLM fallback, hook misses, etc.)
 - [Architecture](docs/architecture.md) — Three loops, components, data flow, file-system layout
 - [Contributing](docs/contributing.md) — For new devs joining the project
 
@@ -855,7 +863,9 @@ Copy-paste configuration templates:
 - [Installation Guide](docs/installation-guide.md) — All install methods with OS-specific instructions
 - [Customization Guide](docs/customization-guide.md) — Fork and adapt skills for your project
 - [Skill Anatomy](docs/skill-anatomy.md) — How SKILL.md works, frontmatter fields, trigger system
-- [Manual test v0.2.0](docs/manual-test-v0.2.0.md) — End-to-end verification checklist
+- [Codex harness plan](docs/plans/codex-harness.md) — Design and decisions behind v2
+- [Backlog](docs/plans/backlog.md) — Ideas not yet planned
+- [Manual test v0.2.0](docs/manual-test-v0.2.0.md) — Historical v0.2.0-era checklist
 - [Ecosystem](docs/ecosystem.md) — Hermes interop, cross-agent awareness
 - [Future harnesses](docs/future-harnesses.md) — Kiro/Trae/CodeBuddy/OpenCode/Gemini (vendored only)
 

@@ -28,4 +28,4 @@ The vendored snapshot is the source-of-truth — re-run `node vendored/fetch.mjs
 
 ## Why these aren't done yet
 
-User scope right now is Claude Code primary + Codex secondary. The other harnesses are real but not in the immediate path. Adding them costs ~half a day each (config research + docs + smoke test) and we'd rather ship one solid Codex story than five half-done ones.
+Claude Code (hooks) and Codex (the harness engine) are first-class; the rest stay vendored. The other harnesses are real but not in the immediate path. Adding them costs ~half a day each (config research + docs + smoke test) and we'd rather ship one solid Codex story than five half-done ones.

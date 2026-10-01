@@ -23,7 +23,8 @@ cat .agent-daemon/sessions.jsonl           # audit ledger — one line per drain
 The on-demand commands still exist for edge cases:
 
 ```sh
-# Set-and-forget transcript watcher (now mostly redundant — continuous hook does the work)
+# Set-and-forget watcher: digests Claude/Cursor/Codex/harness sessions and runs `ad schedule` jobs
+# (or register it as a service: ad service install)
 ad watch --verbose --force
 
 # Manual one-shot digest of the most recent session (rescues end-of-session digest blocks)
@@ -44,7 +45,7 @@ ad init --profile developer
 
 That scaffolds:
 - `.agent-daemon/memory/` — 7 markdown templates ready for the digest pipeline to fill
-- `AGENTS.md` — multi-agent orchestration guide (loaded into every session)
+- `AD-INSTRUCTIONS.md` — the full operating manual, linked from `CLAUDE.md`
 - `session-logs/` — local-only (gitignored) journal directory with a README
 - Adds an `## agent-daemon` managed section to `CLAUDE.md`
 - Merges hook entries into `~/.claude/settings.json`
@@ -98,7 +99,7 @@ Flags:
 
 The watcher:
 
-1. Monitors `~/.claude/projects/**/*.jsonl` (Claude Code) and `~/.codex/sessions/**/*.jsonl` (Codex)
+1. Monitors `~/.claude/projects/**/*.jsonl` (Claude Code), `~/.cursor/sessions` (Cursor), `~/.codex/sessions/**/*.jsonl` (Codex) and `~/.agent-daemon/codex-home/sessions` (the `ad chat` / `ad run` harness; opt out with `"harnessSessions": false`)
 2. Waits for a file to be "stable" — no writes for ~30 seconds, size unchanged across two 5-second polls
 3. Reads the `cwd` field from inside the transcript so memory lands in the right project
 4. Fires `ad digest` with the right transcript + cwd
@@ -144,6 +145,7 @@ This:
 | `--cwd <path>` | Digest the latest transcript for a *different* project |
 | `--dry-run` | Preview without writing |
 | `--fallback-to-llm` | Optional authenticated LLM extraction if no agent block found; not installed in default hooks |
+| `--llm <claude, codex or auto>` | Which engine the LLM fallback uses (also `AD_LLM_BACKEND`); `auto` tries `claude`, then Codex |
 
 ### Composable workflow
 
@@ -245,6 +247,8 @@ ad review        # interactive accept / reject
 
 For `ad digest-latest`, run it from each project's root.
 
+**Harness sessions:** `ad digest-latest` only searches `~/.claude/projects`, so it never finds `ad chat` / `ad run` sessions. Those are digested by the harness's SessionEnd hook or by `ad watch`. Manual fallback: `ad digest --transcript ~/.agent-daemon/codex-home/sessions/<…>/rollout-*.jsonl --cwd <project>`.
+
 ---
 
 ## Decision matrix — which command to use when
@@ -265,4 +269,4 @@ For `ad digest-latest`, run it from each project's root.
 - [Architecture](./architecture.md) — how the digest pipeline works internally
 - [Troubleshooting](./troubleshooting.md) — common failures and fixes
 - [Installation](./installation-guide.md) — first-time setup
-- [Manual test checklist](./manual-test-v0.2.0.md) — full end-to-end verification
+- [Manual test checklist](./manual-test-v0.2.0.md) — historical v0.2.0-era checklist

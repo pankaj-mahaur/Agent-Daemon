@@ -10,6 +10,15 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 - Windows: agent shell commands no longer fail with "Access is denied" when PowerShell 7 comes from the Microsoft Store. The Store's `pwsh.exe` is an app alias the Codex sandbox can't launch, so `WindowsApps` is kept off the engine's PATH and Codex falls back to an installed pwsh 7 or `powershell.exe`.
 
+### Added
+
+- `codex-upgrade` daemon skill (maintainers): protocol diff review, suite, live Windows sandbox smoke, then release-flow.
+- `docs/plans/backlog.md` for ideas not yet planned.
+
+### Docs
+
+- Docs refreshed for v2: harness commands and state paths in architecture, workflow, installation and contributing guides; new troubleshooting entries (login, Windows sandbox, Store pwsh, `spawn EPERM`, stopping `ad loop`); `.agents/skills` → `.claude/skills`; broken skill-catalog links fixed; stale counts and version promises removed.
+
 ## [2.0.0] — 2026-10-01
 
 Agent Daemon becomes its own agent harness on the OpenAI Codex engine. Claude Code mode (hooks, memory, skills, GEPA) is unchanged. Design: [docs/plans/codex-harness.md](docs/plans/codex-harness.md).

@@ -47,7 +47,7 @@ The schema is idempotent (`CREATE TABLE IF NOT EXISTS` everywhere), uses WAL jou
 
 ### 3. Self-evolution via GEPA
 
-Both projects use [GEPA — Genetic-Pareto Prompt Evolution](https://arxiv.org/abs/...) (Agrawal et al., ICLR 2026 oral) for skill self-improvement. Our implementation in [runtime/src/digest/gepa/](../runtime/src/digest/gepa/) ports the algorithm to Node + headless `claude` calls, while Hermes's [hermes-agent-self-evolution](https://github.com/NousResearch/hermes-agent-self-evolution) runs it in Python with DSPy.
+Both projects use [GEPA — Genetic-Pareto Prompt Evolution](https://arxiv.org/abs/...) (Agrawal et al., ICLR 2026 oral) for skill self-improvement. Our implementation in [runtime/src/digest/gepa/](../runtime/src/digest/gepa/) ports the algorithm to Node + headless `claude` or Codex-engine calls (`--llm`), while Hermes's [hermes-agent-self-evolution](https://github.com/NousResearch/hermes-agent-self-evolution) runs it in Python with DSPy.
 
 The five stages — sample → reflect → generate → evaluate → Pareto-select — are identical. Either implementation can produce candidates against either skill library because the input format (SKILL.md) is the same.
 
@@ -57,13 +57,13 @@ The five stages — sample → reflect → generate → evaluate → Pareto-sele
 
 | Dimension | Hermes Agent | agent-daemon |
 |---|---|---|
-| **Agent loop** | Owns it (Hermes IS the agent) | Layers on top (works with Claude Code, Cursor, etc.) |
-| **Trigger** | Internal task lifecycle | Claude Code hooks (`SessionStart` / `SessionEnd` / `PreCompact`) + cross-agent fswatch (v0.2) |
-| **Stack** | Python | Node ESM (zero deps for v0.1) |
-| **Distillation engine** | OpenAI-compatible API (Anthropic / Gemini / OpenRouter / TokenMix) | Headless `claude` CLI (your existing Claude Code install) |
+| **Agent loop** | Owns it (Hermes IS the agent) | Layers on Claude Code / Cursor, and since v2 ships its own harness on the Codex engine (`ad chat`, `ad run`, `ad loop`) |
+| **Trigger** | Internal task lifecycle | Claude Code hooks (`SessionStart` / `SessionEnd` / `PreCompact`), the same hooks inside the Codex harness, + cross-agent fswatch (`ad watch`) |
+| **Stack** | Python | Node ESM, few dependencies (incl. the pinned `@openai/codex` engine) |
+| **Distillation engine** | OpenAI-compatible API (Anthropic / Gemini / OpenRouter / TokenMix) | Headless `claude` CLI or the Codex engine (`--llm`) |
 | **Constitution** | Personalities (soft, configurable) | Hard cardinal rules (12 in [constitution/core.md](../constitution/core.md)) |
 | **Skill content** | Mostly assistant tasks (messaging, search, automation) | Software engineering disciplines (debug-triage, audit-runner, db-migrations, …) |
-| **Distribution** | Self-hosted always-on agent | Skills + runtime that piggyback on the user's existing agent |
+| **Distribution** | Self-hosted always-on agent | Skills + runtime for your existing agent, plus an optional local harness |
 
 Different products, complementary use cases. Most users will pick one based on whether they want **a new agent** (Hermes) or **a layer on their existing agent** (agent-daemon).
 
@@ -87,7 +87,7 @@ hermes import-skills ./skills/
 
 We use the same schema *shape* but the `*.db` files are independent — different column-default bytes, different paths, different evolution. Don't copy `episodic.db` between the two; the FTS5 tokens may differ, the schema_version trail will diverge.
 
-If you want cross-tool memory, in v0.3 we'll provide an export/import via JSONL.
+There's no export/import between the two stores today.
 
 ### Hooks vs lifecycle
 
@@ -110,14 +110,14 @@ If you want our constitution active in Hermes too, copy the `constitution/` cont
 - You're writing tasks broader than coding (research, scheduling, comms, automation)
 
 **Use agent-daemon if:**
-- You're primarily coding in Claude Code (or Cursor / Cline / Aider once v0.2 ships)
+- You're primarily coding in Claude Code or Cursor, or want a local Codex-based agent (`ad chat`, `ad loop`, `ad schedule`)
 - You want hard guardrails (the constitution)
 - You want skills + memory specifically for software engineering disciplines
-- You want to keep using your existing agent — agent-daemon is a layer, not a replacement
+- You want to keep using your existing agent — agent-daemon is a layer first; the harness is optional
 
 **Use both if:**
 - You want background-agent capability AND IDE-augmentation
-- You're willing to maintain two memory stores (they don't sync in v0.1)
+- You're willing to maintain two memory stores (they don't sync)
 - You want to publish your evolved skills to both ecosystems
 
 ---

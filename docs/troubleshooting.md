@@ -104,7 +104,7 @@ The `--force` flag bypasses triage. The session log will still record the run.
    ```sh
    ad digest --transcript <path> --cwd <project> --fallback-to-llm --force
    ```
-   The fallback uses your local `claude` CLI to extract learnings post-hoc.
+   The fallback uses your local `claude` CLI to extract learnings post-hoc, or the Codex engine with `--llm codex` (`--llm auto` falls back to Codex when `claude` isn't installed).
 
 3. **Make it stick** — add a reminder to `AGENTS.md` or `CLAUDE.md`:
    ```
@@ -134,7 +134,7 @@ Error: write EOF
 - Update if behind: see the official Claude Code install docs.
 - As a workaround, skip the LLM fallback entirely and rely on agent-emitted blocks (see #4).
 
-**Tracking:** This is a known issue with `runtime/src/claude.mjs` flag compatibility; fix slated for v0.2.1.
+**Tracking:** This is a known issue with `runtime/src/claude.mjs` flag compatibility.
 
 ---
 
@@ -285,6 +285,62 @@ Error: write EOF
   ad watch --verbose --force
   ```
 - If it recurs, the issue is likely in `runtime/src/digest/extract.mjs` LLM fallback path. Run without `--fallback-to-llm`.
+
+---
+
+## 14. Harness: `Not logged in. Run: ad auth login chatgpt`
+
+**Symptom:** `ad chat`, `ad run`, `ad loop` (and the other harness commands) exit with code 2.
+
+**Fix:** log the harness in once. It keeps its own login in `~/.agent-daemon/codex-home`, separate from your own `~/.codex`.
+
+```sh
+ad auth login chatgpt                          # ChatGPT plan (browser; --device for a code)
+ad auth login openai                           # or an OpenAI API key
+ad auth login openrouter --model <slug>        # or an OpenRouter key
+ad auth status
+```
+
+---
+
+## 15. Harness: `Windows sandbox is …; unattended runs need it`
+
+**Symptom:** `ad loop`, team workers or scheduled `loop` jobs refuse to start on Windows.
+
+**Cause:** unattended runs never ask for approval, so on Windows they require a ready sandbox.
+
+**Fix:** `ad sandbox setup` (unelevated), or `ad sandbox setup --elevated` for stronger isolation (one UAC prompt). `ad sandbox status` shows the current state.
+
+---
+
+## 16. Harness on Windows: every agent command fails with "Access is denied"
+
+**Symptom:** `ad run` / `ad chat` finish, but the agent says its shell was denied and changes nothing. Codex's log (`logs_2.sqlite` in the harness home) shows `CreateProcessAsUserW failed: 5 (Access is denied.)` for `...MicrosoftWindowsAppspwsh.exe`.
+
+**Cause:** PowerShell 7 from the Microsoft Store is an app-execution alias, and the sandbox's restricted token can't launch aliases.
+
+**Fix:** upgrade to agent-daemon **2.0.1** or later, which keeps `WindowsApps` off the engine's PATH so Codex uses an installed pwsh 7 or `powershell.exe`.
+
+---
+
+## 17. Harness on Windows: `spawn EPERM` when the agent runs `node --test`
+
+**Symptom:** in the default (unelevated) sandbox, commands that make Node start child processes, like `node --test`, fail with `spawn EPERM`. Plain `node file.js` works.
+
+**Workaround:** the agent can run test files directly (`node math.test.js`). `ad sandbox setup --elevated` may lift the limit. That's **untested**, so please report back if you try it.
+
+---
+
+## 18. `ad loop` won't stop
+
+**Fix:** create a STOP file. The loop checks it between turns and during a turn:
+
+```sh
+touch .agent-daemon/STOP        # this project
+touch ~/.agent-daemon/STOP      # every loop on this machine
+```
+
+Delete the file before starting the next loop (an existing STOP file refuses to start).
 
 ---
 
