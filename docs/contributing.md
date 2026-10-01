@@ -17,7 +17,7 @@ npm link
 Verify:
 
 ```sh
-ad --version       # → 0.2.0+
+ad --version       # → 2.0.0+
 ad doctor          # → all green
 cd ../runtime && npm test
 ```
@@ -218,7 +218,7 @@ Body should explain **why**, not what. The diff shows what.
 
 ## Versioning + releases
 
-- We use **semver** (currently 0.2.0)
+- We use **semver** (currently 2.0.0)
 - Bump `runtime/package.json` `version` field
 - Update `CHANGELOG.md` with the new section
 - Tag the release: `git tag v0.2.x && git push --tags`

@@ -2,7 +2,7 @@
 
 [![test](https://github.com/pankaj-mahaur/Agent-Daemon/actions/workflows/test.yml/badge.svg)](https://github.com/pankaj-mahaur/Agent-Daemon/actions/workflows/test.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![version](https://img.shields.io/badge/version-0.2.0-green.svg)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.0.0-green.svg)](CHANGELOG.md)
 [![harnesses](https://img.shields.io/badge/harnesses-Claude%20Code%20%7C%20Codex%20%7C%20Cursor-purple.svg)](#cross-harness-support)
 
 A **self-improving runtime** for AI coding agents — with **multi-agent orchestration** built in. Wraps Claude Code (and any agent that writes a session transcript) with universal guardrails, persistent memory, and a digest pipeline that distills lessons from every session so the next one is automatically smarter.
@@ -17,7 +17,7 @@ Skills evolve too: [GEPA](runtime/src/digest/gepa/README.md) (Genetic-Pareto Pro
 >
 > **[claude-mem](https://github.com/thedotmack/claude-mem)-inspired adoptions (latest):** the MCP memory server gained a token-cheap **progressive-disclosure** flow (`memory_search`/`memory_files` → `memory_timeline` → `memory_get`), **file-aware memory** (learnings tagged with the session's files; SessionStart boosts learnings about the files you're editing), a **`<private>…</private>`** exclusion tag that keeps marked content out of memory entirely, and **`ad viewer`** — a zero-dependency single-file HTML snapshot of the episodic store. Stays FTS5-only (no vector DB, no Python). The per-project `CLAUDE.md` block is also slimmed to a synopsis that points at an on-demand `AD-INSTRUCTIONS.md`, plus one-liner `install.sh`/`install.ps1`. 301 tests.
 
-> **New — Agent Daemon is now its own agent harness** on the OpenAI Codex engine: `ad chat`, `ad run`, `ad loop`, `ad schedule`, `ad web`, `ad acp`, with memory, hooks and skills wired in. See [Agent harness](#agent-harness-codex-engine).
+> **v2.0.0 — Agent Daemon is now its own agent harness** on the OpenAI Codex engine: `ad chat`, `ad run`, `ad loop`, `ad schedule`, `ad web`, `ad acp`, with memory, hooks and skills wired in. See [Agent harness](#agent-harness-codex-engine). Want the Claude Code–only v1? See [Versions](#versions-v1-vs-v2).
 
 ## Quick start
 
@@ -33,7 +33,7 @@ irm https://raw.githubusercontent.com/pankaj-mahaur/Agent-Daemon/main/install.ps
 curl -fsSL https://raw.githubusercontent.com/pankaj-mahaur/Agent-Daemon/main/install.sh | bash
 ```
 
-Both are idempotent (re-run = `git pull` + relink) and clone to `~/.agent-daemon-src` (override with `AGENT_DAEMON_DIR`). They verify Node >=22, run `ad doctor`, and print the next step. Then, in any project:
+Both are idempotent (re-run = `git pull` + relink) and clone to `~/.agent-daemon-src` (override with `AGENT_DAEMON_DIR`). They verify Node >=22, run `ad doctor`, and print the next step. Pin a release with `AD_VERSION` (e.g. `AD_VERSION=v1.0.0`, see [Versions](#versions-v1-vs-v2)). Then, in any project:
 
 ```bash
 cd /path/to/your/project
@@ -150,6 +150,30 @@ ad sandbox setup --elevated      # Windows: stronger command sandbox (one UAC pr
 **Subscriptions.** ChatGPT uses Codex's own login. Claude Pro/Max and Google AI Pro/Ultra logins are **never** reused by the harness, because their terms forbid it and it has been enforced. Use API keys or OpenRouter instead. `ad agy` can hand a prompt to *your own* Antigravity CLI (opt-in, `--accept-risk`).
 
 **Staying current with Codex.** The engine is pinned exactly. A committed protocol snapshot is checked by the test suite, and the weekly [`codex-upgrade`](.github/workflows/codex-upgrade.yml) workflow bumps the pin, diffs the protocol (removals flagged as breaking), runs the tests and opens a PR. The workflow runs on Linux only, so do a live `ad run` smoke on Windows before merging an upgrade. Design and decisions: [docs/plans/codex-harness.md](docs/plans/codex-harness.md).
+
+## Versions: v1 vs v2
+
+| | **v2** (`main`, 2.x) | **v1** (`release/v1`, 1.x) |
+|---|---|---|
+| What | Agent harness on the Codex engine **plus** everything in v1 | Claude Code memory runtime (hooks, memory, skills, GEPA, teams) |
+| Status | Active development | Bug fixes only |
+| Install | default one-liner | `AD_VERSION=v1.0.0` with the one-liner |
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/pankaj-mahaur/Agent-Daemon/main/install.sh | AD_VERSION=v1.0.0 bash
+```
+
+```powershell
+$env:AD_VERSION = 'v1.0.0'; irm https://raw.githubusercontent.com/pankaj-mahaur/Agent-Daemon/main/install.ps1 | iex
+```
+
+Re-run the one-liner without `AD_VERSION` to move back to `main`.
+
+**Upgrading v1 → v2.** Claude Code mode is unchanged: `ad init`, the hooks, memory, skills and `/evolve` work as before. What changes:
+- `ad sp` (spawn a team worker) now runs a **Codex** worker by default. Pass `--engine claude` for the v1 behaviour.
+- New commands: `ad auth`, `ad chat`, `ad run`, `ad loop`, `ad schedule`, `ad web`, `ad acp`, `ad tools`, `ad sandbox`, `ad agy`. The ones that run the agent need a login first (`ad auth login chatgpt` / `openai` / `openrouter`).
+- Digest/extract and GEPA LLM calls take `--llm claude|codex|auto` (`AD_LLM_BACKEND`). The default `auto` uses Claude and falls back to Codex when `claude` isn't installed.
+- `ad doctor` adds Codex engine checks. The login, hook and sandbox checks are skipped until the harness home exists.
 
 ## Daily workflow
 

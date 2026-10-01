@@ -4,6 +4,37 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [2.0.0] — 2026-10-01
+
+Agent Daemon becomes its own agent harness on the OpenAI Codex engine. Claude Code mode (hooks, memory, skills, GEPA) is unchanged. Design: [docs/plans/codex-harness.md](docs/plans/codex-harness.md).
+
+### Added
+
+- Codex engine: pinned `@openai/codex` driven over `codex app-server` JSON-RPC in an isolated `CODEX_HOME` (`~/.agent-daemon/codex-home`); memory, guard hooks, skills, AGENTS.md and the memory MCP server wired in automatically.
+- `ad auth` — ChatGPT login (browser / device code), OpenAI API key, OpenRouter key for Claude/Gemini models. Keys in an OS secret store (DPAPI / libsecret / 0600 file), never in config or the agent's shell.
+- `ad chat`, `ad run`, `ad loop` (autonomous loop with dual exit, circuit breaker, budgets, STOP file), `ad schedule` (cron jobs), `ad web` (loopback UI), `ad acp` (Agent Client Protocol for Zed / JetBrains), `ad tools` (Playwright browser, web search), `ad sandbox` (Windows sandbox setup), `ad agy` (opt-in hand-off to your own Antigravity CLI).
+- Codex workers for teams: sandboxed, no `.git` writes, committed for them on their own branch.
+- `--llm claude|codex|auto` for digest, extract and GEPA calls.
+- Upstream tracking: committed Codex protocol snapshot + weekly `codex-upgrade` workflow that opens labelled upgrade PRs.
+- Installers accept `AD_VERSION` to pin a release (e.g. `v1.0.0`).
+
+### Changed
+
+- **Breaking:** `ad sp` spawns Codex workers by default. Use `--engine claude` (or `AD_AGENT_ENGINE=claude`) for v1 behaviour.
+- Codex session adapter rewritten for current rollout files; `.out-of-scope/no-codex-runtime.md` superseded.
+
+## [1.0.0] — 2026-10-01
+
+First stable release of the Claude Code memory runtime, and the last before the Codex-based agent harness (v2). Fixes land on the `release/v1` branch; install it with `AD_VERSION=v1.0.0`.
+
+### Added since 0.2.0 (highlights)
+
+- Honcho-inspired typed observations (`derivation` explicit/inferred) and a no-LLM user representation (`memory_profile` MCP tool, SessionStart profile block).
+- claude-mem-inspired recall: progressive-disclosure MCP tools (`memory_get`, `memory_timeline`, `memory_files`), `<private>` stripping, file-aware learnings, `ad viewer` HTML snapshot.
+- Slim per-project CLAUDE.md block + `AD-INSTRUCTIONS.md`; one-liner installers (`install.sh`, `install.ps1`).
+- User-facts profile, workflow flows, routing-map evolution; deterministic skill-routing advice at prompt time.
+- Reliability hardening: digest parsing salvage, content-hash dedup, Claude-local evolution feedback.
+
 ### Added — Phase 5: Deeper Claude integration + self-improving polish (WS-1..WS-8)
 
 Eight-workstream pass to make agent-daemon feel native to Claude Code, broader-triggered, fully self-improving without API keys, and tighter on multi-agent internals. Merged as PR #2 (`2a73cb5`). 10 commits, 97 → 141 tests pass, 0 lint errors.
@@ -245,5 +276,7 @@ Kept in the snapshot but not ported this release: `.codebuddy/`, `.kiro/`, `.tra
 
 Initial public state. Self-improving memory + skills runtime for Claude Code with multi-agent orchestration. 36 skills, 6 lifecycle hooks (SessionStart, SessionEnd, PreCompact, UserPromptSubmit, plus QMD-redirect), constitution layer, digest pipeline, GEPA skill evolution, multi-agent team templates, `ad init` / `ad doctor` / `ad team` / `ad spawn` CLI.
 
+[2.0.0]: https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v2.0.0
+[1.0.0]: https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v1.0.0
 [0.2.0]: https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v0.2.0
 [0.1.0]: https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v0.1.0
