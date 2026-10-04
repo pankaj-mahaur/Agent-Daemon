@@ -217,12 +217,12 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
 ---
 
 ### Part 0 — Housekeeping, Codex 0.160.0, installers, spikes
-- ✅ **Codex 0.159.2 → 0.160.0**: the snapshot diff is the version line only; `npm test` 503/503. Still to do: a live `ad run` smoke in a scratch dir.
+- ✅ **Codex 0.159.2 → 0.160.0**: the snapshot diff is the version line only; `npm test` 503/503; live `ad run` smoke in a scratch dir passed (session written only to the harness home).
 - ✅ **Codex-home isolation guard** (D13): `assertIsolatedHome` in `CodexAppServer.start()`; `ad doctor` and schema generation use temp homes; tests in `codex-home-isolation.test.mjs`.
-- **Installers:**
+- ✅ **Installers:**
   - `npm install --omit=dev && npm link --omit=dev`, asserted in `installers.test.mjs`.
   - Node ≥ 22 hard floor (unchanged); warn below 22.17.
-- **CI and repo:** Node-24-ready `actions/checkout` and `actions/setup-node` majors; `.gitattributes` with `eol=lf` for goldens.
+- ✅ **CI and repo:** `actions/checkout@v7` and `actions/setup-node@v7` (node24); `.gitattributes` with `eol=lf` for goldens.
 - **Prerequisite for S1 and S1b:** this machine's Node goes from 22.14 to 22.17+ first. Otherwise the probes would measure the old Windows input path that D8 rejects. Both probes print `process.version` and the raw-mode kind.
 - **S1 — input probe** (interactive, with the user). `runtime/scripts/tui-probe.mjs keys` prints decoded bytes on Windows Terminal 1.24 and 1.25 and VS Code. It checks:
   - Enter with Shift, Ctrl and Alt; Ctrl+J

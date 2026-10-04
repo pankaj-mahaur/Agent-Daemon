@@ -1,0 +1,3 @@
+# Screen goldens for the terminal UI are compared byte for byte: keep them LF
+# on every platform (Windows runners would otherwise check them out as CRLF).
+runtime/test/golden/** text eol=lf

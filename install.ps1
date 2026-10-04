@@ -44,6 +44,13 @@ if ($nodeMajor -lt $MinNodeMajor) {
 }
 Ok "Prerequisites OK (node $(node -v))"
 
+# The terminal UI needs Node's VT console input (22.17+ or 24.2+); the rest of ad works on any 22.
+$nodeMinor = [int](node -p 'process.versions.node.split(".")[1]')
+if (($nodeMajor -eq 22 -and $nodeMinor -lt 17) -or $nodeMajor -eq 23 -or ($nodeMajor -eq 24 -and $nodeMinor -lt 2)) {
+  Write-Host "! Node $(node -v): the ad terminal UI needs 22.17+ or 24.2+ (everything else works)." -ForegroundColor Yellow
+  Write-Host "  Upgrade within 22.x (no rebuild needed): winget install --id OpenJS.NodeJS.22 -e" -ForegroundColor Yellow
+}
+
 # 2. Clone or update --------------------------------------------------------
 # Native commands don't throw on failure, so check each git exit code.
 function Invoke-Git { git @args; if ($LASTEXITCODE -ne 0) { Die "git $($args -join ' ') failed." } }
@@ -82,8 +89,11 @@ Ok "Source ready at $InstallDir"
 Say 'Installing dependencies + linking the `ad` command'
 Push-Location (Join-Path $InstallDir 'runtime')
 try {
-  npm install
-  npm link
+  # --omit=dev: test-only packages (terminal emulators for screen tests) stay out of user installs.
+  npm install --omit=dev
+  if ($LASTEXITCODE -ne 0) { Die 'npm install failed.' }
+  npm link --omit=dev
+  if ($LASTEXITCODE -ne 0) { Die 'npm link failed.' }
 } finally {
   Pop-Location
 }

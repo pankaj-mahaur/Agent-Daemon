@@ -22,3 +22,22 @@ test("both installers honour AD_VERSION", () => {
   assert.match(read("install.sh"), /AD_VERSION/);
   assert.match(read("install.ps1"), /\$env:AD_VERSION/);
 });
+
+test("installers keep devDependencies (test-only terminal emulators) out of user installs", () => {
+  for (const name of ["install.sh", "install.ps1"]) {
+    const src = read(name);
+    assert.match(src, /npm install --omit=dev/, `${name}: npm install --omit=dev`);
+    assert.match(src, /npm link --omit=dev/, `${name}: npm link --omit=dev`);
+    assert.doesNotMatch(src, /npm (install|link)\s*(\)|&&|$)/m, `${name}: no bare npm install/link`);
+  }
+});
+
+test("installers warn (not fail) when Node is too old for the terminal UI", () => {
+  for (const name of ["install.sh", "install.ps1"]) assert.match(read(name), /22\.17\+ or 24\.2\+/, name);
+});
+
+test("install.ps1 stops when npm fails instead of reporting success", () => {
+  const src = read("install.ps1");
+  assert.match(src, /npm install --omit=dev\s*\r?\n\s*if \(\$LASTEXITCODE -ne 0\)/);
+  assert.match(src, /npm link --omit=dev\s*\r?\n\s*if \(\$LASTEXITCODE -ne 0\)/);
+});
