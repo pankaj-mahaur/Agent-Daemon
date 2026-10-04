@@ -8,10 +8,12 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 - The Windows one-liner installer works in Windows PowerShell 5.1 again. 5.1 stripped the quotes inside `node -p '…split(".")…'`, so the Node check always read version 0 and stopped with "Node.js >=22 required". A failing step now stops the script with `throw` instead of `exit`, which used to close the window under `irm | iex`.
 - ad never runs Codex in your own Codex home:
-  - It refuses `~/.codex` and a `CODEX_HOME` your shell sets, however the path is spelled (junctions, `\\?\`, case, relative paths).
-  - It drops inherited `CODEX_*` variables such as `CODEX_SQLITE_HOME`.
+  - It refuses `~/.codex` and a `CODEX_HOME` your shell sets, however the path is spelled (junctions, `\\?\`, case, relative paths, a trailing dot or space).
+  - It refuses network (UNC) homes.
+  - It drops `CODEX_*` variables such as `CODEX_SQLITE_HOME`; `CODEX_CA_CERTIFICATE` is kept.
   - It only runs its pinned Codex, never a global or PATH install.
   - `ad doctor` and schema generation use throwaway homes.
+  - Hooks that Codex runs for ad still recognise ad's home, through `AD_ENGINE_HOME`.
 
 ### Changed
 
@@ -23,6 +25,14 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 - `runtime/scripts/tui-probe.mjs keys|screen`: shows what your terminal sends for each key and how it wraps and reflows. It's a troubleshooting tool for the terminal UI.
 - Plan and research for the `ad` terminal UI: `docs/plans/ad-tui.md`, `docs/research/`.
+
+### Docs
+
+- **Harness guide:** what ad does and doesn't touch of your own Codex, including that `ad watch` reads `~/.codex/sessions`. The elevated Windows sandbox is machine-wide. New env-var rows.
+- **Troubleshooting:** entries 19–22 (own-Codex-home refusal, missing engine, PowerShell 5.1 installer, keys and paste with `tui-probe`). Fixed the broken Store-pwsh path in entry 16.
+- **Other guides:** the installation guide, architecture (isolation and the engine test layers), contributing (real-engine tests, isolation rule, editing files that contain backslashes) and the README (CI coverage for Codex upgrades) are updated.
+- **`runtime/README.md`:** rewritten for v2.
+- **Skills:** `codex-upgrade` gains the real-engine step; `harness-troubleshoot` gains the new errors.
 
 ## [2.0.2] — 2026-10-04
 

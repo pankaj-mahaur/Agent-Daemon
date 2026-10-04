@@ -184,7 +184,19 @@ npm test
 
 For subprocess tests (CLI commands, hook handlers), see [`runtime/test/hooks.test.mjs`](../runtime/test/hooks.test.mjs) for the established pattern.
 
-Harness tests never call the real Codex: they drive the scripted fake app-server in [`runtime/testkit/fake-codex-app-server.mjs`](../runtime/testkit/fake-codex-app-server.mjs). CI and the weekly `codex-upgrade` workflow can't exercise the Windows sandbox, so before merging an engine bump do a live `ad run` smoke on Windows in a scratch directory (the [`codex-upgrade`](../skills/daemon/codex-upgrade/SKILL.md) skill has the steps).
+Harness tests come in two kinds:
+
+- **Fake engine (default).** Most harness tests drive the scripted fake app-server in [`runtime/testkit/fake-codex-app-server.mjs`](../runtime/testkit/fake-codex-app-server.mjs): fast, and good for crashes and odd traffic. A test that builds `CodexAppServer` around the fake directly marks the command `source: "test-double"`.
+- **Real engine (opt-in).** [`runtime/test/engine-real.test.mjs`](../runtime/test/engine-real.test.mjs) runs the pinned Codex binary against [`runtime/testkit/mock-responses.mjs`](../runtime/testkit/mock-responses.mjs), a scripted stand-in for the Responses API. No login and no network are needed. It catches behaviour changes in a Codex release that a protocol snapshot can't. CI's `engine-real` job runs it on Linux, macOS and Windows.
+
+  ```sh
+  cd runtime
+  AD_REAL_ENGINE=1 node --test --test-concurrency=1 --test-force-exit test/engine-real.test.mjs
+  ```
+
+**Never start the real Codex outside an isolated home.** Every spawn site builds its environment with `codexEnv()` (`runtime/src/engine/codex/home.mjs`). That refuses the user's own `~/.codex` and their `CODEX_HOME`, and drops their `CODEX_*` variables. A test fails when a new file resolves the Codex binary without it. Tests use temp homes.
+
+CI has no real login and no Windows sandbox. Before merging an engine bump, do a live `ad run` smoke on Windows in a scratch directory; the [`codex-upgrade`](../skills/daemon/codex-upgrade/SKILL.md) skill has the steps.
 
 ---
 
@@ -218,7 +230,7 @@ Body should explain **why**, not what. The diff shows what.
 - Name your branch `feat/<thing>` or `fix/<thing>`
 - Open PRs early as drafts if you want feedback
 - Squash-merge into `main` (we prefer linear history)
-- Every PR must pass CI: `npm test` + `npm run lint:skills` on Ubuntu / macOS / Windows × Node 22
+- Every PR must pass CI: `npm test` + `npm run lint:skills` on Ubuntu / macOS / Windows × Node 22. The `engine-real` job (real Codex vs a mock model) runs alongside; it is `continue-on-error` while each platform's sandbox behaviour is being recorded.
 
 ---
 
@@ -257,6 +269,19 @@ echo '{"tool_name":"Bash","tool_input":{"command":"git push"}}' |
 ### Watch the watcher without polluting your real `~/.claude/projects/`
 
 Edit `~/.agent-daemon/watch.json` to point at a sandbox directory.
+
+### See what a terminal sends (terminal UI work)
+
+```sh
+node runtime/scripts/tui-probe.mjs keys     # keys and pastes as raw bytes
+node runtime/scripts/tui-probe.mjs screen   # wrapping, autowrap-off, sync output, resize reflow
+```
+
+Logs land in `~/.agent-daemon/logs/tui-probe-*.log`. The plan and research behind the terminal UI are in [plans/ad-tui.md](plans/ad-tui.md) and [research/](research/).
+
+### Edit files that contain backslashes or `$`
+
+Use an editor or a script file, not a shell heredoc: heredocs in some Windows shells silently halve backslashes. In Node scripts, pass a function to `String.prototype.replace` (`s.replace(a, () => b)`), because `$'` and `$&` in a replacement string are patterns.
 
 ---
 

@@ -29,7 +29,7 @@ irm https://raw.githubusercontent.com/pankaj-mahaur/Agent-Daemon/main/install.ps
 curl -fsSL https://raw.githubusercontent.com/pankaj-mahaur/Agent-Daemon/main/install.sh | bash
 ```
 
-Both are idempotent (re-run = `git pull` + relink) and clone to `~/.agent-daemon-src` (override with `AGENT_DAEMON_DIR`). They verify Node >=22, run `ad doctor`, and print the next step. Pin a release with `AD_VERSION` (e.g. `AD_VERSION=v1.0.0`, see [Versions](#versions-v1-vs-v2)). Then, in any project:
+Both are idempotent (re-run = `git pull` + relink) and clone to `~/.agent-daemon-src` (override with `AGENT_DAEMON_DIR`). They verify Node >=22 (on Windows they also warn below 22.17, which the coming terminal UI needs), skip test-only packages, run `ad doctor`, and print the next step. Pin a release with `AD_VERSION` (e.g. `AD_VERSION=v1.0.0`, see [Versions](#versions-v1-vs-v2)). Then, in any project:
 
 ```bash
 cd /path/to/your/project
@@ -147,7 +147,15 @@ ad sandbox setup --elevated      # Windows: stronger command sandbox (one UAC pr
 
 Full guide: [docs/harness.md](docs/harness.md).
 
-**Staying current with Codex.** The engine is pinned exactly. A committed protocol snapshot is checked by the test suite, and the weekly [`codex-upgrade`](.github/workflows/codex-upgrade.yml) workflow bumps the pin, diffs the protocol (removals flagged as breaking), runs the tests and opens a PR. The workflow runs on Linux only, so do a live `ad run` smoke on Windows before merging an upgrade. Design and decisions: [docs/plans/codex-harness.md](docs/plans/codex-harness.md).
+**Staying current with Codex.** The engine is pinned exactly.
+- A committed protocol snapshot is checked by the test suite.
+- The weekly [`codex-upgrade`](.github/workflows/codex-upgrade.yml) workflow bumps the pin, diffs the protocol (removals flagged as breaking) and opens a PR.
+- That PR's CI runs the suite on Linux, macOS and Windows, including the real pinned Codex against a mock model (`runtime/test/engine-real.test.mjs`).
+- CI has no real login and no Windows sandbox, so still do a live `ad run` smoke on Windows before merging.
+
+Design and decisions: [docs/plans/codex-harness.md](docs/plans/codex-harness.md).
+
+**Your own Codex stays yours.** The harness runs a separate pinned copy of Codex in its own home. It refuses to run in `~/.codex` (or a `CODEX_HOME` you set), and never passes your `CODEX_*` variables to its engine. The optional `ad watch` daemon reads `~/.codex/sessions` to learn from your own sessions, and writes nothing there.
 
 ## Versions: v1 vs v2
 
@@ -867,6 +875,8 @@ Copy-paste configuration templates:
 - [Customization Guide](docs/customization-guide.md) — Fork and adapt skills for your project
 - [Skill Anatomy](docs/skill-anatomy.md) — How SKILL.md works, frontmatter fields, trigger system
 - [Codex harness plan](docs/plans/codex-harness.md) — Design and decisions behind v2
+- [Terminal UI plan](docs/plans/ad-tui.md) — The coming `ad` terminal UI: decisions, parts, progress
+- [Research](docs/research/) — The Codex TUI and app-server, terminal engineering, how other harnesses are built
 - [Backlog](docs/plans/backlog.md) — Ideas not yet planned
 - [Manual test](docs/manual-test.md) — End-to-end checklist (Claude Code mode + harness)
 - [Manual test v0.2.0](docs/manual-test-v0.2.0.md) — Historical v0.2.0-era checklist

@@ -28,7 +28,12 @@ Since v2, agent-daemon runs agents itself. The engine is [OpenAI Codex](https://
 
 3. **Windows only:** the first run sets up Codex's command sandbox (unelevated). For stronger isolation run `ad sandbox setup --elevated` once (one UAC prompt). See [Windows](#windows).
 
-The harness keeps its own Codex home at `~/.agent-daemon/codex-home`. Your own `~/.codex` (config, login, history) is never read or changed.
+The harness keeps its own Codex home at `~/.agent-daemon/codex-home`, and its own pinned Codex binary under `runtime/node_modules`. Your own Codex is never changed:
+- The harness refuses to run Codex in `~/.codex`, in a `CODEX_HOME` your shell sets, or in any path that leads there (junctions, `\\?\`, a trailing dot or space).
+- It never runs your global `codex` binary.
+- It never passes your `CODEX_*` variables to its engine (`CODEX_CA_CERTIFICATE` excepted).
+
+The one thing that reads your Codex data is the optional `ad watch` daemon: it reads `~/.codex/sessions` transcripts to learn from your own Codex sessions. It never writes there.
 
 **Subscriptions.** ChatGPT uses Codex's own login. Claude Pro/Max and Google AI Pro/Ultra logins are never reused: their terms forbid it. For Claude or Gemini models use an API key or OpenRouter. `ad agy` can hand a prompt to *your own* Antigravity CLI (see below).
 
@@ -166,7 +171,7 @@ Loop and worker prompts are marked as non-user (`AD_WORKER=1`), so they never en
 
 ## Windows
 
-- **Sandbox.** `ad sandbox status` shows readiness. The default is unelevated; `ad sandbox setup --elevated` is stronger (one UAC prompt).
+- **Sandbox.** `ad sandbox status` shows readiness. The default is unelevated, and its sandbox identity is kept per Codex home, so it is separate from your own Codex. `ad sandbox setup --elevated` is stronger (one UAC prompt), but it is **machine-wide**: it creates Windows sandbox accounts and rules that your own Codex uses too.
 - **PowerShell from the Microsoft Store** can't be launched by the sandbox. Since 2.0.1 the harness keeps `WindowsApps` off the engine's PATH, so Codex uses an installed pwsh 7 or `powershell.exe`.
 - **`node --test` fails with `spawn EPERM`** in the unelevated sandbox, because Node can't start child processes there. The agent can run test files directly (`node file.test.js`). `--elevated` may lift this, but that's untested.
 
@@ -184,8 +189,10 @@ Loop and worker prompts are marked as non-user (`AD_WORKER=1`), so they never en
 
 | Variable | Effect |
 |---|---|
-| `AD_CODEX_HOME` | use another harness Codex home |
-| `AD_CODEX_BIN` | run a specific `codex` binary instead of the pinned one |
+| `AD_CODEX_HOME` | use another harness Codex home (never your own `~/.codex` or `CODEX_HOME`: refused) |
+| `AD_CODEX_BIN` | run a specific `codex` binary instead of the pinned one (testing) |
+| `CODEX_*` (yours) | not passed to the harness's Codex, so they can't point it at your own state; `CODEX_CA_CERTIFICATE` is kept |
+| `AD_ENGINE_HOME` | set by ad on the Codex processes it starts (hooks use it); don't set it yourself |
 | `AD_AGENT_ENGINE` | `codex` (default) or `claude` for team workers |
 | `AD_LLM_BACKEND` | `claude`, `codex` or `auto` for digest / GEPA LLM calls (same as `--llm`) |
 | `AD_CODEX_LLM_MODEL` | model for those calls when they run on Codex |
@@ -197,5 +204,5 @@ Loop and worker prompts are marked as non-user (`AD_WORKER=1`), so they never en
 
 1. `ad doctor`: engine version, login, hooks trusted, Windows sandbox.
 2. `ad auth status` and `ad sandbox status`.
-3. [troubleshooting.md](troubleshooting.md), entries 14–18.
+3. [troubleshooting.md](troubleshooting.md), entries 14–22.
 4. Codex's own log: `logs_2.sqlite` in the harness home (table `logs`). The [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill shows how to read it.

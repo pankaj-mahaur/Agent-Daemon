@@ -309,13 +309,13 @@ ad auth status
 
 **Cause:** unattended runs never ask for approval, so on Windows they require a ready sandbox.
 
-**Fix:** `ad sandbox setup` (unelevated), or `ad sandbox setup --elevated` for stronger isolation (one UAC prompt). `ad sandbox status` shows the current state.
+**Fix:** `ad sandbox setup` (unelevated), or `ad sandbox setup --elevated` for stronger isolation (one UAC prompt; machine-wide, so your own Codex shares the sandbox accounts it creates). `ad sandbox status` shows the current state.
 
 ---
 
 ## 16. Harness on Windows: every agent command fails with "Access is denied"
 
-**Symptom:** `ad run` / `ad chat` finish, but the agent says its shell was denied and changes nothing. Codex's log (`logs_2.sqlite` in the harness home) shows `CreateProcessAsUserW failed: 5 (Access is denied.)` for `...MicrosoftWindowsAppspwsh.exe`.
+**Symptom:** `ad run` / `ad chat` finish, but the agent says its shell was denied and changes nothing. Codex's log (`logs_2.sqlite` in the harness home) shows `CreateProcessAsUserW failed: 5 (Access is denied.)` for `...\Microsoft\WindowsApps\pwsh.exe`.
 
 **Cause:** PowerShell 7 from the Microsoft Store is an app-execution alias, and the sandbox's restricted token can't launch aliases.
 
@@ -341,6 +341,66 @@ touch ~/.agent-daemon/STOP      # every loop on this machine
 ```
 
 Delete the file before starting the next loop (an existing STOP file refuses to start).
+
+---
+
+## 19. Harness: `refusing to run Codex in …: that is your own Codex home`
+
+**Symptom:** a harness command stops before Codex starts, with one of:
+
+- `refusing to run Codex in <path>: that is your own Codex home`
+- `refusing CODEX_HOME "<path>": Windows ignores a trailing dot or space …`
+- `refusing CODEX_HOME <path>: network (UNC) paths are not supported`
+
+**Cause:** the harness only runs Codex in its own home, `~/.agent-daemon/codex-home`, or wherever `AD_CODEX_HOME` points. It refuses any of these:
+
+- `~/.codex`;
+- a `CODEX_HOME` your shell sets for your own Codex;
+- any path that leads to one of those (a junction, symlink, `\\?\` prefix, a trailing dot or space, a network share).
+
+Your own Codex keeps its login, sessions and config to itself.
+
+**Fix:** unset `AD_CODEX_HOME`, or point it at a new folder of its own. Leaving `CODEX_HOME` set for your own Codex is fine: the harness never passes `CODEX_*` variables to its engine (except `CODEX_CA_CERTIFICATE`).
+
+---
+
+## 20. Harness: `Codex engine not installed — run: cd runtime && npm install`
+
+**Symptom:** `ad doctor` or any harness command reports the engine missing, even though `codex` works in your terminal.
+
+**Cause:** the harness runs only the Codex version it pins (`runtime/package.json`), installed under `runtime/node_modules`. It never falls back to your global or PATH `codex`, so your own install and its version stay yours.
+
+**Fix:** re-run the installer, or `cd runtime && npm install`. `AD_CODEX_BIN` can point at a specific binary for testing.
+
+---
+
+## 21. Windows PowerShell 5.1: the one-liner stops at `Node.js >=22 required`
+
+**Symptom:** `irm …/install.ps1 | iex` in Windows PowerShell (the blue 5.1 one) says Node is too old although `node -v` shows 22 or later.
+
+**Cause:** before the fix, the installer asked node to split its version with `node -p '…split(".")…'`. 5.1 strips the inner quotes, so the check always read version 0.
+
+**Fix:** update. The installer now parses `node -v` itself. On an older copy, run the same one-liner in PowerShell 7 (`pwsh`).
+
+---
+
+## 22. Keys or paste behave oddly in a terminal
+
+**Symptom:** for example, Shift+Enter acts like Enter, a multi-line paste sends each line separately, or Esc arrives late.
+
+**Check what your terminal really sends:**
+
+```sh
+node runtime/scripts/tui-probe.mjs keys      # each key and paste as raw bytes, with a name
+node runtime/scripts/tui-probe.mjs screen    # wrapping, autowrap-off, sync output, resize reflow
+```
+
+Quit with `qqq`, or press Ctrl+C three times. Results are saved to `~/.agent-daemon/logs/tui-probe-*.log`; attach that file to a bug report.
+
+**Known causes:**
+
+- On Windows, Node older than 22.17 (or 24.0–24.1) has no bracketed paste. Upgrade within your major version.
+- Windows Terminal 1.24 and the VS Code terminal send Shift+Enter as plain Enter; use Ctrl+J for a newline. Windows Terminal 1.25 supports the keyboard protocol that tells them apart.
 
 ---
 

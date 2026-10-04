@@ -2,7 +2,9 @@
 
 ## Install agent-daemon (recommended)
 
-The one-liner clones the repo to `~/.agent-daemon-src`, installs dependencies (including the pinned `@openai/codex` engine), registers the global `ad` command and runs `ad doctor`. It needs git and Node.js 22 or later.
+The one-liner clones the repo to `~/.agent-daemon-src`, installs runtime dependencies (including the pinned `@openai/codex` engine; test-only packages are skipped with `--omit=dev`), registers the global `ad` command and runs `ad doctor`. It needs git and Node.js 22 or later. On Windows it warns when Node is older than 22.17 (or 24.0–24.1): the coming `ad` terminal UI needs Node's VT console input, and everything else works without it.
+
+The engine is a separate copy of Codex in `~/.agent-daemon-src/runtime`, with its own home in `~/.agent-daemon/codex-home`. An existing Codex install and its `~/.codex` are left alone.
 
 ```bash
 # macOS / Linux / Git-Bash
@@ -15,7 +17,7 @@ irm https://raw.githubusercontent.com/pankaj-mahaur/Agent-Daemon/main/install.ps
 ```
 
 - **Pin a release:** set `AD_VERSION` (e.g. `AD_VERSION=v1.0.0` for the Claude Code–only v1). Re-run without it to move back to `main`.
-- **From a clone instead:** `cd runtime && npm install && npm link`.
+- **From a clone instead:** `cd runtime && npm install --omit=dev && npm link --omit=dev` (contributors drop `--omit=dev` to get the test tools).
 - **Then, per project:** `ad init`.
 - **To use the agent harness** (`ad chat`, `ad run`, `ad loop` …): `ad auth login chatgpt` (or `openai` / `openrouter --model <slug>`).
 

@@ -63,7 +63,16 @@ node --test            # expect: 1 failing test (the bug the agent will fix in s
 | `ad watch --verbose` (Ctrl+C after a minute) | watcher starts; due jobs run | [troubleshooting #2](troubleshooting.md#2-ad-watch-runs-but-never-logs--add--never-fires-digest) |
 | `ad schedule remove <id>` | job gone | — |
 
-## 6. Clean up
+## 6. Terminal check (for the coming `ad` terminal UI)
+
+Run these in each terminal you use (Windows Terminal, the VS Code terminal, …). They change nothing but the terminal's modes, which they restore on exit.
+
+| Run | Expect | If not |
+|---|---|---|
+| `node runtime/scripts/tui-probe.mjs keys` (from the repo), press a few keys and paste two lines, then `qqq` | each key named. On Windows with Node 22.17+ the paste shows as one `PASTE (… line breaks)` row | [troubleshooting #22](troubleshooting.md#22-keys-or-paste-behave-oddly-in-a-terminal) |
+| `node runtime/scripts/tui-probe.mjs screen`, resize the window narrower then wider, then `qqq` | wrap and autowrap verdicts, plus one line per resize | attach `~/.agent-daemon/logs/tui-probe-*.log` to an issue |
+
+## 7. Clean up
 
 ```bash
 cd .. && rm -rf ad-manual-test

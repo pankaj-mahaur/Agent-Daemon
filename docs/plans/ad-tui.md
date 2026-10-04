@@ -1,7 +1,14 @@
 # Plan — `ad`: a Codex-style terminal UI with agent-daemon's powers
 
 > Status: **final v4** (2026-10-04), after three review rounds. Changes from here on need a revision-log entry.
-> Progress: Part 0 started — Codex 0.160.0 pinned; Codex-home isolation guard landed (see "Your own Codex is never touched").
+> Progress: **Part 0** — code done and reviewed twice:
+> - Codex 0.160.0 pinned.
+> - Isolation guard in place (see "Your own Codex is never touched").
+> - Installers fixed.
+> - Real-engine tests running.
+> - S2 (local), S3 and S4 answered.
+>
+> Waiting on the user: a Node upgrade (22.14 → 22.17+), then S1/S1b probes and the FC0 decisions. The S2 CI matrix runs once the branch is pushed.
 > Research: [Codex TUI + app-server](../research/codex-tui-and-app-server.md) · [terminal engineering](../research/terminal-engineering.md) · [harness landscape](../research/harness-landscape.md).
 
 ## Goal

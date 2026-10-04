@@ -51,6 +51,8 @@ Any harness command errors out, hangs, or finishes without doing the work ("my s
 | hooks never fire / no memory injected | hooks untrusted, or `features.hooks` off for that thread | `ad doctor`; unattended threads only switch off non-memory MCP servers, not hooks |
 | `ad digest-latest` finds no harness session | it only searches `~/.claude/projects` | `ad digest --transcript ~/.agent-daemon/codex-home/sessions/<…>/rollout-*.jsonl --cwd <project>` |
 | `ad loop` stops right away | a STOP file exists, or a budget is too small | remove `.agent-daemon/STOP`; raise `--max-*` |
+| `refusing to run Codex in …: that is your own Codex home` (or `trailing dot or space`, `network (UNC) paths`) | `AD_CODEX_HOME` points at the user's own `~/.codex` / `CODEX_HOME`, or a path leading there | unset `AD_CODEX_HOME` or point it at a new folder; never "fix" the guard |
+| `Codex engine not installed — run: cd runtime && npm install` | the pinned engine is missing; ad never falls back to the user's global `codex` | re-run the installer or `cd runtime && npm install` |
 | `401 Unauthorized` on `plugins/featured` in the log | Codex warming its plugin list | harmless, ignore |
 | `Shell snapshot not supported yet for PowerShell` (WARN) | Codex feature not available on Windows shells | harmless, ignore |
 
@@ -67,6 +69,6 @@ The agent says its shell was denied. Step 5 shows `CreateProcessAsUserW failed: 
 ## Anti-patterns
 
 - **Debugging in the user's repo.** Probe prompts get captured as memory there.
-- **Editing `~/.codex`.** It's the user's own Codex; the harness never uses it.
+- **Editing `~/.codex`, or running the probe with the user's own Codex.** It's the user's own install; the harness never runs Codex there, and `codexEnv()` refuses it. Debug with the harness home or a temp `CODEX_HOME` only.
 - **Turning the sandbox off** (`--sandbox danger-full-access`) to make an error go away. Find the cause.
 - **Pasting log rows wholesale.** They can be long; print the tail of the message, and never auth data.
