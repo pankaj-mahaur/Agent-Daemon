@@ -29,7 +29,7 @@ Typing `ad` opens an interactive TUI that looks and works like the OpenAI Codex 
 | D2 | **Inline first.** History goes into the terminal's own scrollback and is never repainted. Only the live region (≤ `rows − 1`) is redrawn. History is pre-wrapped at word boundaries (readable, like Codex). `/raw` switches to copy-friendly unwrapped output and `/copy` copies the last answer. Fullscreen is a later opt-in. The user signs off on inline vs fullscreen at FC0/FC1. | Native scrollback, selection and copy matter most to users, and alternate screens drew backlash. Windows Node has no mouse in raw mode (libuv#5155). Terminal soft-wrap breaks words mid-word. |
 | D3 | **Our own zero-dependency renderer**, using Codex's architecture and pi-tui's algorithms (MIT, credited). | House style. pi-tui needs Node ≥ 22.19 and native code; OpenTUI needs Bun or Node 26; Ink's adopters rewrote or forked it. |
 | D4 | **One event layer, one session controller.** `engine/codex/events.mjs` turns protocol traffic into `ad` events. `harness/session.mjs` is UI-agnostic and is tested through a headless subscriber. ACP, chat and web move onto it after the MVP, once ACP has been verified live in Zed. | Every wrapper that survived normalizes behind a per-engine adapter. Refactoring an integration nobody has seen working is a needless risk. |
-| D5 | **Stable protocol only; `experimentalApi` stays false.** Errors are classified by code plus message: -32600 with "unknown variant" naming the method = missing; "requires experimentalApi capability" = gated; any other "Invalid request:" = shape changed; -32601 = unsupported operation. **Steer errors:** only "not steerable" carries `error.data.codexErrorInfo` (→ queue). Any other steer error means the turn ended, so the text is submitted as a new turn. **One known leak:** exec approvals carry the experimental `availableDecisions`, because upstream strips only `additionalPermissions`. We use it when present, with Codex's own fallback otherwise (Part 3a). A real-engine test fails by name when it disappears. | Hard rule. Verified against `message_processor.rs`, `experimental_api.rs`, `turn_processor.rs` and `v2/item.rs` at 0.160.0. |
+| D5 | **Stable protocol only; `experimentalApi` stays false.** Errors are classified by code plus message: -32600 with "unknown variant" naming the method = missing; "requires experimentalApi capability" = gated; any other "Invalid request:" = shape changed (params are parsed before the experimental gate is checked, verified live); -32601 = unsupported operation. **Steer errors:** only "not steerable" carries `error.data.codexErrorInfo` (→ queue). Any other steer error means the turn ended, so the text is submitted as a new turn. **One known leak:** exec approvals carry the experimental `availableDecisions`, because upstream strips only `additionalPermissions`. We use it when present, with Codex's own fallback otherwise (Part 3a). A real-engine test fails by name when it disappears. | Hard rule. Verified against `message_processor.rs`, `experimental_api.rs`, `turn_processor.rs` and `v2/item.rs` at 0.160.0. |
 | D6 | **`ad` features live in two layers.** First-class UI in our TUI, plus engine-level surfaces (hooks, the memory MCP server, AGENTS.md, skills) that also work in `ad codex`. Skills reach Codex only through `skills/extraRoots/set`, so `ad codex` gets them mirrored into `$CODEX_HOME/skills`; spike S3 decides how. | Capabilities must not depend on the front end. |
 | D7 | **Entry.** `ad tui [prompt] [--last \| --resume <id>]` opens the TUI. `cli.mjs` becomes a thin launcher at the same path, so the npm-link shims stay valid: it routes `tui` before loading the heavy command module. **Bare `ad` keeps printing help until the user signs off at FC3.** After that, bare `ad` opens the TUI when all of these hold: stdin and stdout are TTYs, `TERM` ≠ `dumb`, `AD_TUI` ≠ `0`, and Node is 22.17+ or 24.2+. Otherwise it prints help with a one-line reason and a working alternative. `ad --last` then resumes the last thread. `ad chat` stays the plain line mode. | The global `ad` is npm-linked to this repo. Flipping it early would hand the user a half-built UI. |
 | D8 | **Node:** the TUI needs 22.17+ or 24.2+ (not 23.x or 24.0–24.1), where `setRawMode` uses VT input on Windows. Below that the TUI says why and everything else keeps working. `engines` and the installers' hard floor stay at 22. Installers warn below 22.17 and recommend upgrading within 22.x (same ABI, no rebuild). `ad doctor` detects a `better-sqlite3` ABI mismatch and prints the fix. | Older 22.x turns a multi-line paste into one turn per line. A hard floor would block updates that don't need VT input. |
@@ -248,12 +248,45 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
     - All: escalation approvals with `experimentalApi:false`; cold start and cleanup times.
   - Tool shapes: an unknown slug gives `exec_command {cmd, workdir}` with `apply_patch` via heredoc. Test whether a known slug brings the freeform `apply_patch` tool.
   - Record whether exec approvals still carry `availableDecisions` with `experimentalApi:false`.
+  - ✅ **Local result (Windows, 2026-10-04, `scratchpad/spike-s2.mjs`):**
+    - The real 0.160.0 app-server ran four turns against the mock with no login, in a temp `CODEX_HOME`: message + reasoning, shell, apply_patch (file really written), and escalation.
+    - Cold start was 0.75–1 s; 7 model calls for 4 turns (no hidden calls).
+    - With `windows.sandbox` unset, every command asked for approval (as predicted).
+    - Exec approvals carry `availableDecisions` (`["accept", {"acceptWithExecpolicyAmendment": {"execpolicy_amendment": [...]}}, "cancel"]`). File-change approvals carry none.
+    - The unknown slug `mock-model` raises a `warning` ("Model metadata … not found") each turn and gets these tools: `exec_command`, `write_stdin`, `request_user_input`, `view_image`, `multi_agent_v1`, the goal tools and `web_search` (no `update_plan`).
+    - In the repo: `testkit/mock-responses.mjs` and `test/engine-real.test.mjs` (opt-in `AD_REAL_ENGINE=1`; 4/4 green on Windows). They cover a turn, an exec approval with `availableDecisions`, a patch, and the D5 error classes.
+    - **CI matrix still to do:** the `engine-real` job in `test.yml` (`continue-on-error`) runs on the next push or a `gh workflow run test.yml --ref feat/tui`.
 - **S3 — the stock UI on our home.**
-  - Skill discovery: `$CODEX_HOME/skills`, junctions/symlinks, or copy-sync.
-  - The update-banner config key.
-  - Folder-trust semantics under app-server.
-  - Whether `codex resume <id> --no-daemon` sees threads written by our stdio app-server.
+  - ✅ **Skills:** Codex 0.160 reads, in this order:
+    - `$CODEX_HOME/skills` (marked deprecated, still supported);
+    - `~/.agents/skills` (**shared with your own Codex**: never write there);
+    - project `.codex/skills` and `.agents/skills`;
+    - plugins;
+    - runtime extra roots.
+
+    So `ad codex` copy-syncs `~/.claude/skills` into the harness home's `skills/`. That root then leaves our engine's `extraRoots`, so skills don't appear twice. Project `.claude/skills` are a documented gap in `ad codex`. A real-engine test watches the deprecated root.
+  - ✅ **Update banner:** `check_for_update_on_startup = false` in the harness config.
+  - ✅ **Trust:** `projects."<path>".trust_level = trusted|untrusted`; it gates project-level `.codex` config, hooks and skills. Our threads set sandbox and approval explicitly, so our TUI mirrors Codex's one-time trust prompt and writes the level into the harness config.
+  - **Resume across processes:**
+    - Partly verified: a separate stock `codex exec resume <id>` (same isolated home) found our thread (`thread.started` with its id).
+    - Its turn never reached the mock model. That was `codex exec`-specific (with stdin closed and a non-temp home too), and `exec` isn't in our design.
+    - **Open:** an interactive `codex resume <id> --no-daemon` check, with the user, in Part 6.
+  - Gotcha: Codex won't create its PATH helper aliases when `CODEX_HOME` is under `%TEMP%`. It only warns, and `apply_patch` through `exec_command` still worked in S2. Engine tests should expect that stderr line rather than treat it as a failure.
 - **S4 — checkpoint timing.** On the largest local repo and a ~50k-file clone, on Windows: temp-index snapshot via `cp index` + `add -A` + `write-tree` + `commit-tree`. Budget: p50 ≤ 300 ms, p95 ≤ 1 s with warm caches. The result decides Part 10.
+  - ✅ **Result** (Windows, synthetic repos in scratch, 12 warm runs each; `scratchpad/spike-s4.mjs`):
+
+    | Files | Copied index (p50 / p95) | Persistent private index + untracked cache (p50 / p95) |
+    |---|---|---|
+    | 2,000 | — | 603 / 649 ms |
+    | 10,000 | — | 502 / 633 ms |
+    | 50,000 | 826 / 1254 ms | 717 / 928 ms |
+
+  - The cost is mostly a fixed charge: about 4 git processes at ~150 ms each, since process start-up is slow on this machine (`node -e 0` takes ~0.8 s). Repo size matters less. The user's real index stayed untouched in every run.
+  - **Decision: Part 10 stays, redesigned so snapshots never sit on the turn's critical path:**
+    - Use a persistent ad-owned index (`.git/ad-checkpoint-index`, seeded once from the user's index), so the untracked cache survives between snapshots.
+    - Use two git processes (`add -A`, `write-tree`). Refs point at trees and are written in one batched `update-ref --stdin` per turn.
+    - Take a snapshot when the composer starts getting input (pre-emptive) and when a turn completes.
+    - `turn/start` waits at most 150 ms for one still in flight. If it misses, the checkpoint is marked best-effort and `/undo` says so.
 - **User actions:**
   - merge PR #9;
   - upgrade this machine's Node within 22.x (now 22.14);

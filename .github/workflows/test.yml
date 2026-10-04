@@ -69,3 +69,35 @@ jobs:
               console.log('shape OK', { ours: j.ours, ecc: j.ecc, netNew: j['net-new'].length });
             });
           "
+
+  engine-real:
+    # The real pinned Codex binary against a mock model (runtime/testkit/mock-responses.mjs).
+    # continue-on-error while each platform's sandbox behaviour is being learned (plan S2).
+    name: real engine / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: runtime/package-lock.json
+
+      - name: Install runtime deps
+        working-directory: runtime
+        run: npm ci
+
+      - name: Real Codex vs mock model
+        working-directory: runtime
+        env:
+          AD_REAL_ENGINE: "1"
+        run: node --test --test-concurrency=1 test/engine-real.test.mjs
