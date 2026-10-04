@@ -41,7 +41,7 @@ foreach ($cmd in 'git', 'node', 'npm') {
 
 # Parse `node -v` here: Windows PowerShell 5.1 strips the inner quotes of
 # `node -p '...split(".")...'`, so asking node to split always failed there.
-$nodeVersion = [version]((node -v).Trim().TrimStart('v'))
+$nodeVersion = [version](((node -v).Trim() -replace '^v', '') -replace '-.*$', '')
 if ($nodeVersion.Major -lt $MinNodeMajor) {
   Die "Node.js >=$MinNodeMajor required, found v$nodeVersion."
 }
@@ -54,6 +54,8 @@ if (-not $tuiNode) {
   Write-Host "! Node v$nodeVersion: the ad terminal UI needs 22.17+ or 24.2+ (everything else works)." -ForegroundColor Yellow
   if ($nodeVersion.Major -eq 22) {
     Write-Host "  Upgrade within 22.x (same native-module ABI, nothing to rebuild): winget install --id OpenJS.NodeJS.22 -e" -ForegroundColor Yellow
+  } elseif ($nodeVersion.Major -eq 24) {
+    Write-Host "  Upgrade within 24.x (same native-module ABI, nothing to rebuild): winget install --id OpenJS.NodeJS.LTS -e" -ForegroundColor Yellow
   } else {
     Write-Host "  Upgrade to Node 24.2+ (winget install --id OpenJS.NodeJS.LTS -e), then run: cd `"$InstallDir\runtime`"; npm rebuild" -ForegroundColor Yellow
   }

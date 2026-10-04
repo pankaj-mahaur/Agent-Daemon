@@ -43,8 +43,8 @@ case "$(uname -s)" in
     if { [ "$NODE_MAJOR" -eq 22 ] && [ "$NODE_MINOR" -lt 17 ]; } || [ "$NODE_MAJOR" -eq 23 ] \
       || { [ "$NODE_MAJOR" -eq 24 ] && [ "$NODE_MINOR" -lt 2 ]; }; then
       printf '\033[1;33m!\033[0m Node %s: the ad terminal UI needs 22.17+ or 24.2+ on Windows (everything else works).\n' "$(node -v)"
-      if [ "$NODE_MAJOR" -eq 22 ]; then
-        printf '  Upgrade within 22.x (same native-module ABI, nothing to rebuild).\n'
+      if [ "$NODE_MAJOR" -eq 22 ] || [ "$NODE_MAJOR" -eq 24 ]; then
+        printf '  Upgrade within %s.x (same native-module ABI, nothing to rebuild).\n' "$NODE_MAJOR"
       else
         printf '  Upgrade to Node 24.2+, then run: cd "%s/runtime" && npm rebuild\n' "$INSTALL_DIR"
       fi

@@ -7,6 +7,7 @@
 import { EventEmitter } from "node:events";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { resolve } from "node:path";
 import { CodexAppServer } from "./codex/app-server.mjs";
 import { APPROVAL_METHODS, approvalResponse } from "./codex/approvals.mjs";
 import { defaultCodexHome, ensureCodexHome } from "./codex/home.mjs";
@@ -54,7 +55,9 @@ export class Engine extends EventEmitter {
     super();
     this.opts = opts;
     this.env = { ...process.env, ...(opts.env ?? {}) };
-    this.home = opts.home ?? defaultCodexHome(this.env);
+    // Resolved once, against the directory Codex runs in: ensureCodexHome and
+    // Codex itself must agree on which folder a relative home means.
+    this.home = resolve(opts.cwd ?? process.cwd(), opts.home ?? defaultCodexHome(this.env));
     this.onApproval = opts.onApproval ?? (() => "decline");
     this.server = null;
   }

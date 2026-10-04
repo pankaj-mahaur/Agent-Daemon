@@ -53,7 +53,10 @@ Typing `ad` opens an interactive TUI that looks and works like the OpenAI Codex 
   - `~/.codex`, for both the current HOME and the OS account's home;
   - a `CODEX_HOME` inherited from your shell, unless ad created that folder.
 - Paths are compared by their real location, so junctions, symlinks, `\\?\`, 8.3 names, case and relative paths can't sneak through.
-- It drops every inherited `CODEX_*` variable (`CODEX_SQLITE_HOME`, `CODEX_EXEC_SERVER_URL`, `CODEX_API_KEY`, …), because those override config.
+- On Windows it also refuses homes with a trailing dot or space in any segment, and network (UNC) homes.
+- It drops every `CODEX_*` variable (`CODEX_SQLITE_HOME`, `CODEX_EXEC_SERVER_URL`, `CODEX_API_KEY`, …), inherited or passed in, because those override config. The exception is `CODEX_CA_CERTIFICATE` (TLS trust behind proxies).
+- It stamps `AD_ENGINE_HOME`, so ad processes that Codex starts (hooks) recognise that home as ad's.
+- Every guard is mutation-tested: removing it fails a test.
 - The home is checked before ad writes anything into it.
 - ad runs only the pinned binary (or `AD_CODEX_BIN`), never your global or PATH install.
 - `ad doctor` and schema generation run Codex in throwaway temp homes.

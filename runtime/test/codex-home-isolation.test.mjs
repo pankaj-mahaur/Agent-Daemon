@@ -129,3 +129,52 @@ test("every source file that resolves the Codex binary isolates its environment"
     assert.match(readFileSync(file, "utf8"), /codexEnv\(/, `${relative(src, file)} resolves the Codex binary without codexEnv()`);
   }
 });
+
+test("Windows: a trailing dot or space can't smuggle in another folder", { skip: !win && "Windows path rules" }, () => {
+  scratch((root) => {
+    const theirs = join(root, "their-codex");
+    mkdirSync(theirs);
+    const env = { CODEX_HOME: theirs };
+    for (const sneaky of [`${theirs}.`, `${theirs} `, `${theirs}. `, join(root, "work.", "nested")]) {
+      assert.throws(() => assertIsolatedHome(sneaky, env), /trailing dot or space/, JSON.stringify(sneaky));
+    }
+    assert.throws(() => ensureCodexHome(join(root, "work."), { env: {} }), /trailing dot or space/);
+    assert.equal(existsSync(join(root, "work.")), false, "nothing was created");
+  });
+});
+
+test("Windows: network (UNC) homes are refused, including loopback admin shares", { skip: !win && "Windows only" }, () => {
+  const drive = homedir().slice(0, 1).toLowerCase();
+  const share = `\\\\localhost\\${drive}$${homedir().slice(2)}\\.codex`;
+  assert.throws(() => assertIsolatedHome(share, {}), /network \(UNC\)|your own Codex home/);
+  // 192.0.2.1 is TEST-NET-1 (never routed), so this fails fast instead of waiting on SMB name resolution.
+  assert.throws(() => assertIsolatedHome("\\\\192.0.2.1\\share\\ad-home", {}), /network \(UNC\)/);
+});
+
+test("a hook started by ad's Codex may start an engine in the same home; an unrelated CODEX_HOME may not", () => {
+  scratch((root) => {
+    const home = join(root, "custom-ad-home"); // AD_CODEX_HOME used as-is: no marker
+    mkdirSync(home);
+    writeFileSync(join(home, "config.toml"), "# pre-existing\n");
+    const child = codexEnv({ home, base: {} });
+    assert.equal(child.AD_ENGINE_HOME, canonicalPath(home));
+    const hookEnv = { CODEX_HOME: child.CODEX_HOME, AD_ENGINE_HOME: child.AD_ENGINE_HOME, AD_CODEX_HOME: home };
+    assert.doesNotThrow(() => assertIsolatedHome(home, hookEnv));
+    assert.throws(() => assertIsolatedHome(home, { CODEX_HOME: home, AD_CODEX_HOME: home }), /your own Codex home/, "no provenance");
+    assert.throws(() => assertIsolatedHome(home, { CODEX_HOME: home, AD_ENGINE_HOME: canonicalPath(join(root, "other")) }), /your own Codex home/, "provenance for another home");
+  });
+});
+
+test("codexEnv keeps CA trust, and filters CODEX_* passed in by callers too", () => {
+  scratch((root) => {
+    const env = codexEnv({
+      home: join(root, "h"),
+      base: { CODEX_CA_CERTIFICATE: "/etc/ssl/corp.pem", CODEX_SQLITE_HOME: "x" },
+      extra: { CODEX_SQLITE_HOME: "y", codex_api_key: "k", OPENROUTER_API_KEY: "or" },
+    });
+    assert.equal(env.CODEX_CA_CERTIFICATE, "/etc/ssl/corp.pem");
+    assert.equal(env.CODEX_SQLITE_HOME, undefined);
+    assert.equal(env.codex_api_key, undefined);
+    assert.equal(env.OPENROUTER_API_KEY, "or");
+  });
+});

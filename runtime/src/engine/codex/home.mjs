@@ -26,12 +26,20 @@ export function defaultCodexHome(env = process.env) {
   return env.AD_CODEX_HOME ? resolve(env.AD_CODEX_HOME) : managedHome();
 }
 
+const WIN = process.platform === "win32";
+
+// Win32 path rules drop trailing dots and spaces from every segment, so
+// `.codex.` and `.codex ` open the real `.codex` in most programs (Codex
+// included) — while Node's \\?\-prefixed fs calls treat them as other names.
+const trailingDotOrSpace = (p) => WIN && resolve(p).split(/[\\/]/).slice(1).some((seg) => seg !== "" && /[. ]$/.test(seg));
+const win32Segments = (p) => (WIN ? p.split(/([\\/])/).map((s) => (/^[\\/]$/.test(s) ? s : s.replace(/[. ]+$/, "") || s)).join("") : p);
+
 // A path's identity for "is this the same folder?": the real path of its
 // nearest existing ancestor — so junctions, symlinks, 8.3 short names, subst
 // drives and the \\?\ prefix all collapse — plus the part that doesn't exist
 // yet, case-folded where filesystems are case-insensitive by default.
 export function canonicalPath(p, base = process.cwd()) {
-  let current = resolve(base, p);
+  let current = win32Segments(resolve(base, p));
   const missing = [];
   for (;;) {
     try {
@@ -50,9 +58,10 @@ export function canonicalPath(p, base = process.cwd()) {
 }
 
 // The user's own Codex homes: ~/.codex (for both the current HOME and the OS
-// account's home), plus a CODEX_HOME inherited from their shell — unless that
-// one is a home ad created (Codex runs our hooks with our CODEX_HOME, and they
-// must still be able to start an engine).
+// account's home), plus a CODEX_HOME inherited from their shell — unless ad
+// started that Codex. Codex runs our hooks with our CODEX_HOME, and they must
+// still be able to start an engine: codexEnv() stamps AD_ENGINE_HOME on every
+// Codex it starts, and a home ad created carries the managed marker.
 export function userCodexHomes(env = process.env) {
   const homes = new Set([join(homedir(), ".codex")]);
   try {
@@ -60,7 +69,11 @@ export function userCodexHomes(env = process.env) {
   } catch {
     // no OS account info (rare containers) — HOME's ~/.codex is still covered
   }
-  if (env.CODEX_HOME && !isManagedHome(resolve(env.CODEX_HOME))) homes.add(resolve(env.CODEX_HOME));
+  if (env.CODEX_HOME) {
+    const inherited = resolve(env.CODEX_HOME);
+    const startedByAd = env.AD_ENGINE_HOME && canonicalPath(inherited) === env.AD_ENGINE_HOME;
+    if (!startedByAd && !isManagedHome(inherited)) homes.add(inherited);
+  }
   return [...homes];
 }
 
@@ -72,22 +85,35 @@ export function assertIsolatedHome(home, env = process.env, base = process.cwd()
   if (!home) {
     throw new Error("refusing to start Codex without an explicit CODEX_HOME: the default (~/.codex) belongs to your own Codex");
   }
-  const target = canonicalPath(home, base);
+  const full = resolve(base, home);
+  if (trailingDotOrSpace(full)) {
+    throw new Error(`refusing CODEX_HOME ${JSON.stringify(full)}: Windows ignores a trailing dot or space in a folder name, so it could open another folder`);
+  }
+  const target = canonicalPath(full);
+  if (WIN && target.startsWith("\\\\")) {
+    throw new Error(`refusing CODEX_HOME ${full}: network (UNC) paths are not supported`);
+  }
   if (userCodexHomes(env).some((h) => canonicalPath(h) === target)) {
-    throw new Error(`refusing to run Codex in ${resolve(base, home)}: that is your own Codex home. Point AD_CODEX_HOME somewhere else.`);
+    throw new Error(`refusing to run Codex in ${full}: that is your own Codex home. Point AD_CODEX_HOME somewhere else.`);
   }
 }
 
-// The environment for every real Codex process ad starts. Inherited CODEX_*
-// variables are dropped first — CODEX_SQLITE_HOME, CODEX_EXEC_SERVER_URL,
-// CODEX_API_KEY and friends override config and would point ad's Codex at the
-// user's own state, executor or credentials. Then ad's own values, then an
-// absolute, isolated CODEX_HOME.
+// Inherited CODEX_* variables that only configure trust, not state: kept.
+const CODEX_ENV_ALLOWED = new Set(["CODEX_CA_CERTIFICATE"]);
+const dropCodexVars = (vars) =>
+  Object.fromEntries(Object.entries(vars).filter(([key]) => !/^codex_/i.test(key) || CODEX_ENV_ALLOWED.has(key.toUpperCase())));
+
+// The environment for every real Codex process ad starts. CODEX_* variables
+// are dropped from both the inherited and the passed-in environment —
+// CODEX_SQLITE_HOME, CODEX_EXEC_SERVER_URL, CODEX_API_KEY and friends override
+// config and would point ad's Codex at the user's own state, executor or
+// credentials (CODEX_CA_CERTIFICATE stays: TLS trust behind proxies). Then an
+// absolute, isolated CODEX_HOME, and AD_ENGINE_HOME so ad processes Codex
+// starts (hooks) recognise the home as ad's.
 export function codexEnv({ home, base = process.env, extra = {}, cwd = process.cwd() } = {}) {
   assertIsolatedHome(home, base, cwd);
-  const env = {};
-  for (const [key, value] of Object.entries(base)) if (!/^codex_/i.test(key)) env[key] = value;
-  return { ...env, ...extra, CODEX_HOME: resolve(cwd, home) };
+  const full = resolve(cwd, home);
+  return { ...dropCodexVars(base), ...dropCodexVars(extra), CODEX_HOME: full, AD_ENGINE_HOME: canonicalPath(full) };
 }
 
 export const MANAGED_MARKER = ".agent-daemon-managed";

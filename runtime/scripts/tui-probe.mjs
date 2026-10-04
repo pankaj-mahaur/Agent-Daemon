@@ -101,7 +101,7 @@ function restore() {
 const quit = (code = 0) => { out(`log: ${logFile}`); restore(); process.exit(code); };
 process.on("exit", restore);
 process.on("uncaughtException", (err) => { restore(); console.error(err); process.exit(1); });
-for (const sig of ["SIGTERM", "SIGHUP", "SIGBREAK"]) {
+for (const sig of ["SIGTERM", "SIGHUP", "SIGBREAK", "SIGINT"]) {
   try { process.on(sig, () => { restore(); process.exit(1); }); } catch { /* signal not supported on this platform */ }
 }
 
@@ -115,15 +115,42 @@ process.stdout.write(SETUP);
 let collector = null;
 let handler = null;
 let quitRun = "";
-process.stdin.on("data", (chunk) => {
+let carry = "";
+// Ctrl+C as a byte, or as kitty CSI-u (`c` = 99) with the Ctrl bit set —
+// lock keys (CapsLock 64, NumLock 128) add bits we ignore.
+const isCtrlC = (part) => {
+  if (part === "\x03") return true;
+  const m = /^\x1b\[99(?::\d+)*;(\d+)(?::\d+)?u$/.exec(part);
+  return Boolean(m) && ((Number(m[1]) - 1) & 4) !== 0;
+};
+const deliver = (chunk) => {
   for (const part of split(chunk)) {
-    if (part === "q" || /^q+$/.test(part)) quitRun += part.length > 1 ? part : "q";
-    else if (part === "\x03" || part === "\x1b[99;5u") quitRun += "c";
+    if (/^q+$/i.test(part)) quitRun += "q".repeat(part.length);
+    else if (isCtrlC(part)) quitRun += "c";
     else quitRun = "";
     if (/q{3}$|c{3}$/.test(quitRun)) quit(0);
   }
   if (collector) collector.push(chunk);
   else handler?.(chunk);
+};
+let carryTimer = null;
+process.stdin.on("data", (raw) => {
+  // An escape sequence split across reads is held back until it completes;
+  // a lone ESC that nothing follows within 50 ms is delivered as the Esc key.
+  clearTimeout(carryTimer);
+  let chunk = carry + raw;
+  carry = "";
+  const tail = /\x1b(\[[0-?]*[ -/]*)?$/.exec(chunk);
+  if (tail) {
+    carry = chunk.slice(tail.index);
+    chunk = chunk.slice(0, tail.index);
+    carryTimer = setTimeout(() => {
+      const lone = carry;
+      carry = "";
+      if (lone) deliver(lone);
+    }, 50);
+  }
+  if (chunk) deliver(chunk);
 });
 
 // Queries run one at a time; a reply that misses its window is reported, not misread.

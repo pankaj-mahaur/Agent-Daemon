@@ -12,7 +12,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolveCodexCommand } from "./app-server.mjs";
+import { CODEX_MISSING, resolveCodexCommand } from "./app-server.mjs";
 import { codexEnv } from "./home.mjs";
 
 // Definitions the engine sends or reads. Add a name here whenever engine
@@ -138,6 +138,7 @@ export function buildSnapshot(schemaDir, codexVersion) {
 // Defaults to the PINNED binary (empty env: AD_CODEX_BIN is ignored), since
 // the snapshot is labelled with the pinned version.
 export function generateSnapshot({ command = resolveCodexCommand({}), codexVersion } = {}) {
+  if (!command.cmd) throw new Error(CODEX_MISSING);
   const dir = mkdtempSync(join(tmpdir(), "ad-codex-schema-"));
   // Its own throwaway CODEX_HOME too: Codex's default is the user's ~/.codex.
   const home = mkdtempSync(join(tmpdir(), "ad-codex-schema-home-"));
