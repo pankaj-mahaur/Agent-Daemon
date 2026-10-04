@@ -344,6 +344,8 @@ Delete the file before starting the next loop (an existing STOP file refuses to 
 
 ---
 
+For harness problems, the [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill walks through login → hooks → sandbox → Codex's own log. See also [harness.md](harness.md).
+
 ## Still stuck?
 
 Open an issue at the repo with:

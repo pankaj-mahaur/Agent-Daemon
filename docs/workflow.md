@@ -269,4 +269,4 @@ For `ad digest-latest`, run it from each project's root.
 - [Architecture](./architecture.md) — how the digest pipeline works internally
 - [Troubleshooting](./troubleshooting.md) — common failures and fixes
 - [Installation](./installation-guide.md) — first-time setup
-- [Manual test checklist](./manual-test-v0.2.0.md) — historical v0.2.0-era checklist
+- [Manual test checklist](./manual-test.md) — end-to-end checklist (Claude Code mode + harness)

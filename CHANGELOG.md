@@ -4,6 +4,12 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Added
+
+- `docs/harness.md`: full agent-harness guide (setup, every command, safety model, memory/hooks/skills inside the harness, Windows, files and env vars).
+- `docs/manual-test.md`: current end-to-end checklist for Claude Code mode and the harness.
+- Skills `ad-harness` (hand work to `ad run` / `ad loop` / `ad schedule` / `ad sp`, with brakes and self-verification) and `harness-troubleshoot` (login → hooks → sandbox → Codex log, known Windows causes). Both are installed by default.
+
 ## [2.0.1] — 2026-10-01
 
 ### Fixed

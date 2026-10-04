@@ -325,4 +325,4 @@ Per-project markdown means each codebase has its own brain. Global SQLite means 
 - [Troubleshooting](./troubleshooting.md) — common issues
 - [Contributing](./contributing.md) — for new devs
 - [SECURITY.md](../SECURITY.md) — threat model
-- [Manual test](./manual-test-v0.2.0.md) — historical v0.2.0-era checklist
+- [Manual test](./manual-test.md) — end-to-end checklist (Claude Code mode + harness)

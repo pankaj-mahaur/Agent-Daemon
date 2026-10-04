@@ -145,6 +145,8 @@ ad sandbox setup --elevated      # Windows: stronger command sandbox (one UAC pr
 
 **Subscriptions.** ChatGPT uses Codex's own login. Claude Pro/Max and Google AI Pro/Ultra logins are **never** reused by the harness, because their terms forbid it and it has been enforced. Use API keys or OpenRouter instead. `ad agy` can hand a prompt to *your own* Antigravity CLI (opt-in, `--accept-risk`).
 
+Full guide: [docs/harness.md](docs/harness.md).
+
 **Staying current with Codex.** The engine is pinned exactly. A committed protocol snapshot is checked by the test suite, and the weekly [`codex-upgrade`](.github/workflows/codex-upgrade.yml) workflow bumps the pin, diffs the protocol (removals flagged as breaking), runs the tests and opens a PR. The workflow runs on Linux only, so do a live `ad run` smoke on Windows before merging an upgrade. Design and decisions: [docs/plans/codex-harness.md](docs/plans/codex-harness.md).
 
 ## Versions: v1 vs v2
@@ -854,6 +856,7 @@ Copy-paste configuration templates:
 ## Docs
 
 **Start here:**
+- [Agent harness guide](docs/harness.md) — `ad auth`, `ad chat/run/loop/schedule/web/acp`, safety model, Windows notes
 - [Workflow](docs/workflow.md) — `ad watch` vs `ad digest-latest`, the ending protocol, decision matrix
 - [Troubleshooting](docs/troubleshooting.md) — Common failure modes with fixes (Windows watch, LLM fallback, hook misses, etc.)
 - [Architecture](docs/architecture.md) — Three loops, components, data flow, file-system layout
@@ -865,6 +868,7 @@ Copy-paste configuration templates:
 - [Skill Anatomy](docs/skill-anatomy.md) — How SKILL.md works, frontmatter fields, trigger system
 - [Codex harness plan](docs/plans/codex-harness.md) — Design and decisions behind v2
 - [Backlog](docs/plans/backlog.md) — Ideas not yet planned
+- [Manual test](docs/manual-test.md) — End-to-end checklist (Claude Code mode + harness)
 - [Manual test v0.2.0](docs/manual-test-v0.2.0.md) — Historical v0.2.0-era checklist
 - [Ecosystem](docs/ecosystem.md) — Hermes interop, cross-agent awareness
 - [Future harnesses](docs/future-harnesses.md) — Kiro/Trae/CodeBuddy/OpenCode/Gemini (vendored only)

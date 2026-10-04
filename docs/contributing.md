@@ -274,6 +274,6 @@ Edit `~/.agent-daemon/watch.json` to point at a sandbox directory.
 - [Workflow](./workflow.md) — daily use
 - [Troubleshooting](./troubleshooting.md) — common failure modes
 - [SECURITY.md](../SECURITY.md) — threat model + responsible disclosure
-- [Manual test checklist](./manual-test-v0.2.0.md) — historical v0.2.0-era checklist
+- [Manual test checklist](./manual-test.md) — end-to-end checklist (Claude Code mode + harness)
 
 Welcome aboard.
