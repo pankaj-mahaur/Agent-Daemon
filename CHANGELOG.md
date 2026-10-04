@@ -24,7 +24,10 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 ### Added
 
 - `runtime/scripts/tui-probe.mjs keys|screen`: shows what your terminal sends for each key and how it wraps and reflows. It's a troubleshooting tool for the terminal UI.
-- Plan and research for the `ad` terminal UI: `docs/plans/ad-tui.md`, `docs/research/`.
+- Plan and research for the `ad` terminal UI: `docs/plans/ad-tui.md`, `docs/research/` (with an index).
+- Skills:
+  - `big-feature-flow` (installed by default): research how others built it → plan in parts → adversarial review rounds until final → spikes → a per-part implement/test/review loop.
+  - `ad-tui-dev` (maintainers): working on the terminal UI with its isolation and renderer rules.
 
 ### Docs
 

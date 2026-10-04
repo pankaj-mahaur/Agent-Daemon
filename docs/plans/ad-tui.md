@@ -8,7 +8,9 @@
 > - Real-engine tests running.
 > - S2 (local), S3 and S4 answered.
 >
-> Waiting on the user: a Node upgrade (22.14 → 22.17+), then S1/S1b probes and the FC0 decisions. The S2 CI matrix runs once the branch is pushed.
+> - S2 CI matrix done. Windows and macOS are green; on Linux, the sandboxed shell needs the userns sysctl (see S2).
+>
+> Waiting on the user: a Node upgrade (22.14 → 22.17+), then S1/S1b probes and the FC0 decisions.
 > Research: [Codex TUI + app-server](../research/codex-tui-and-app-server.md) · [terminal engineering](../research/terminal-engineering.md) · [harness landscape](../research/harness-landscape.md).
 
 ## Goal
@@ -273,7 +275,17 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
     - Exec approvals carry `availableDecisions` (`["accept", {"acceptWithExecpolicyAmendment": {"execpolicy_amendment": [...]}}, "cancel"]`). File-change approvals carry none.
     - The unknown slug `mock-model` raises a `warning` ("Model metadata … not found") each turn and gets these tools: `exec_command`, `write_stdin`, `request_user_input`, `view_image`, `multi_agent_v1`, the goal tools and `web_search` (no `update_plan`).
     - In the repo: `testkit/mock-responses.mjs` and `test/engine-real.test.mjs` (opt-in `AD_REAL_ENGINE=1`; 4/4 green on Windows). They cover a turn, an exec approval with `availableDecisions`, a patch, and the D5 error classes.
-    - **CI matrix still to do:** the `engine-real` job in `test.yml` (`continue-on-error`) runs on the next push or a `gh workflow run test.yml --ref feat/tui`.
+    - ✅ **CI matrix** (run 37224746807 on `feat/tui`, 2026-10-04):
+
+      | Runner | Result |
+      |---|---|
+      | Windows | 5/5 |
+      | macOS | 5/5 (seatbelt sandbox works) |
+      | Ubuntu | 4/5 |
+
+      On Ubuntu, the sandboxed plain shell call produced no `commandExecution` item. Escalated (unsandboxed) commands, patches, streaming and the error classes all passed.
+
+      The likely cause is bubblewrap under Ubuntu 24.04's AppArmor user-namespace restriction. **Next:** in the Linux job, add `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` and re-run. If that doesn't fix it, mark the sandboxed-shell test as expected-unsandboxed on Linux CI.
 - **S3 — the stock UI on our home.**
   - ✅ **Skills:** Codex 0.160 reads, in this order:
     - `$CODEX_HOME/skills` (marked deprecated, still supported);
