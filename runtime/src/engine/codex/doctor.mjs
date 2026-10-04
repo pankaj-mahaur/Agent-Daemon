@@ -2,7 +2,8 @@
 // the rest of cmdDoctor's checks.
 
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pinnedCodexVersion, resolveCodexCommand } from "./app-server.mjs";
 import { defaultCodexHome, isManagedHome } from "./home.mjs";
@@ -16,10 +17,19 @@ export function codexChecks({ env = process.env, run = execFileSync } = {}) {
   const pinned = pinnedCodexVersion();
   const command = resolveCodexCommand(env);
   let installed = null;
+  // A throwaway CODEX_HOME: without one, Codex falls back to ~/.codex, the user's own install.
+  const scratchHome = mkdtempSync(join(tmpdir(), "ad-codex-version-"));
   try {
-    installed = parseCodexVersion(run(command.cmd, [...command.prefix, "--version"], { encoding: "utf8", timeout: 15_000, windowsHide: true }));
+    installed = parseCodexVersion(run(command.cmd, [...command.prefix, "--version"], {
+      encoding: "utf8",
+      timeout: 15_000,
+      windowsHide: true,
+      env: { ...env, CODEX_HOME: scratchHome },
+    }));
   } catch (err) {
     checks.push({ name: "Codex engine", ok: false, note: `not runnable (${err.code ?? err.message}) — cd runtime && npm install` });
+  } finally {
+    rmSync(scratchHome, { recursive: true, force: true });
   }
   if (installed) {
     const match = installed === pinned;

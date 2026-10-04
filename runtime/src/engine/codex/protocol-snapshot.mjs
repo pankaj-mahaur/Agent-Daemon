@@ -138,14 +138,18 @@ export function buildSnapshot(schemaDir, codexVersion) {
 // the snapshot is labelled with the pinned version.
 export function generateSnapshot({ command = resolveCodexCommand({}), codexVersion } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "ad-codex-schema-"));
+  // Its own throwaway CODEX_HOME too: Codex's default is the user's ~/.codex.
+  const home = mkdtempSync(join(tmpdir(), "ad-codex-schema-home-"));
   try {
     execFileSync(command.cmd, [...command.prefix, "app-server", "generate-json-schema", "--out", dir], {
       stdio: ["ignore", "ignore", "pipe"],
       windowsHide: true,
+      env: { ...process.env, CODEX_HOME: home },
     });
     return buildSnapshot(dir, codexVersion);
   } finally {
     rmSync(dir, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
   }
 }
 

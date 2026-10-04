@@ -173,3 +173,13 @@ test("Windows: Store app-alias dirs leave the engine's PATH (the sandbox can't l
   const posix = { PATH: "/usr/bin:/mnt/c/Users/u/AppData/Local/Microsoft/WindowsApps" };
   assert.equal(withoutStoreAliases(posix, "linux"), posix);
 });
+
+test("the real Codex binary never starts without ad's own CODEX_HOME", async () => {
+  const { homedir } = await import("node:os");
+  const { join } = await import("node:path");
+  const noHome = new CodexAppServer({ env: {} });
+  await assert.rejects(noHome.start(), /without an explicit CODEX_HOME/);
+  assert.equal(noHome.running, false, "nothing was spawned");
+  const userHome = new CodexAppServer({ env: { CODEX_HOME: join(homedir(), ".codex") } });
+  await assert.rejects(userHome.start(), /your own Codex home/);
+});

@@ -12,7 +12,7 @@ allowed-tools: Bash, Read, Grep, Edit
 
 # Codex Upgrade
 
-The harness pins `@openai/codex` exactly (`runtime/package.json`). Each upgrade is a protocol change we must review before it reaches users. CI runs on Linux only, so a green bot PR proves the unit suite, not the Windows sandbox. This flow is the missing half.
+The harness pins `@openai/codex` exactly (`runtime/package.json`). Each upgrade is a protocol change we must review before it reaches users. CI runs the unit suite on Linux, macOS and Windows, but against a fake engine, so a green bot PR doesn't prove the real Windows sandbox. This flow is the missing half. Every command here runs our pinned binary in the harness home or a temp home; the user's own `codex` and `~/.codex` are never touched.
 
 ## When to use
 

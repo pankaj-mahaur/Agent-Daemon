@@ -15,6 +15,7 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { approvalResponse, isApprovalMethod } from "./approvals.mjs";
+import { assertIsolatedHome } from "./home.mjs";
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 
@@ -90,6 +91,9 @@ export class CodexAppServer extends EventEmitter {
 
   async start() {
     const env = withoutStoreAliases({ ...process.env, ...(this.opts.env ?? {}) });
+    // Injected test commands carry no `source`; anything resolved to a real
+    // Codex binary must get its home from opts.env, never the inherited one.
+    if (!this.opts.command || this.opts.command.source) assertIsolatedHome(this.opts.env?.CODEX_HOME);
     const { cmd, prefix } = this.opts.command ?? resolveCodexCommand(env);
     const args = [...prefix, "app-server", ...(this.opts.codexArgs ?? [])];
     this.child = spawn(cmd, args, {
