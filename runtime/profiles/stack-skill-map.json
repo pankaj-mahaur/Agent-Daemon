@@ -14,7 +14,9 @@
     "prototype",
     "improve-codebase-architecture",
     "mattpocock-diagnose",
-    "git-guardrails-claude-code"
+    "git-guardrails-claude-code",
+    "ad-harness",
+    "harness-troubleshoot"
   ],
 
   "stacks": {

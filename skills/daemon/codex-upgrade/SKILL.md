@@ -44,7 +44,7 @@ The harness pins `@openai/codex` exactly (`runtime/package.json`). Each upgrade 
    node "<repo>/runtime/src/cli.mjs" doctor
    ```
    Pass = `math.js` fixed, your `node --test` green, doctor shows the hooks trusted and the sandbox ready.
-4. **If the smoke fails, read Codex's own log** before guessing: `logs_2.sqlite` in the harness home (`~/.agent-daemon/codex-home`, table `logs`, column `feedback_log_body`). There's no `sqlite3` on this machine, so query it with `node --experimental-sqlite` (`DatabaseSync`, read-only), filtering `level IN ('ERROR','WARN')` and the newest ids. Never print `auth.json`.
+4. **If the smoke fails, read Codex's own log** before guessing (the [`harness-troubleshoot`](../harness-troubleshoot/SKILL.md) skill has the query and a table of known causes): `logs_2.sqlite` in the harness home (`~/.agent-daemon/codex-home`, table `logs`, column `feedback_log_body`). There's no `sqlite3` on this machine, so query it with `node --experimental-sqlite` (`DatabaseSync`, read-only), filtering `level IN ('ERROR','WARN')` and the newest ids. Never print `auth.json`.
 5. **Ship.** Bump the patch/minor version in `runtime/package.json` + `package-lock.json`, add a CHANGELOG entry naming the new Codex version, then hand off to `release-flow`. Tag only after the user merges.
 
 ## Known gotchas (check these first)

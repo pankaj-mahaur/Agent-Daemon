@@ -15,4 +15,6 @@ These are **destructive or high-impact** — the bootstrap skill writes files, s
 | [feature-flow](feature-flow/) | Feature end to end: plan → build → verify. |
 | [bug-flow](bug-flow/) | Bug end to end: debug-triage → fix → verify. |
 | [release-flow](release-flow/) | Cut a release: changelog → verify → review → go/no-go. Never tags or pushes without OK. |
+| [ad-harness](ad-harness/) | Hand work to the harness: pick `ad run` / `ad loop` / `ad schedule` / `ad sp`, set brakes, verify the result yourself. |
+| [harness-troubleshoot](harness-troubleshoot/) | Harness failures: login → engine/hooks → sandbox → Codex's own log, with the known Windows causes. |
 | [codex-upgrade](codex-upgrade/) | Maintainers: land a Codex engine bump — protocol diff, suite, live Windows sandbox smoke, then release-flow. |

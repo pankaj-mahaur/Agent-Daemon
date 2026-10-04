@@ -4,6 +4,14 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [2.0.2] — 2026-10-04
+
+### Added
+
+- `docs/harness.md`: full agent-harness guide (setup, every command, safety model, memory/hooks/skills inside the harness, Windows, files and env vars).
+- `docs/manual-test.md`: current end-to-end checklist for Claude Code mode and the harness.
+- Skills `ad-harness` (hand work to `ad run` / `ad loop` / `ad schedule` / `ad sp`, with brakes and self-verification) and `harness-troubleshoot` (login → hooks → sandbox → Codex log, known Windows causes). Both are installed by default.
+
 ## [2.0.1] — 2026-10-01
 
 ### Fixed
@@ -291,6 +299,7 @@ Kept in the snapshot but not ported this release: `.codebuddy/`, `.kiro/`, `.tra
 
 Initial public state. Self-improving memory + skills runtime for Claude Code with multi-agent orchestration. 36 skills, 6 lifecycle hooks (SessionStart, SessionEnd, PreCompact, UserPromptSubmit, plus QMD-redirect), constitution layer, digest pipeline, GEPA skill evolution, multi-agent team templates, `ad init` / `ad doctor` / `ad team` / `ad spawn` CLI.
 
+[2.0.2]: https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v2.0.2
 [2.0.1]: https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v2.0.1
 [2.0.0]: https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v2.0.0
 [1.0.0]: https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v1.0.0
