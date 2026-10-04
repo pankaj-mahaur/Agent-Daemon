@@ -29,7 +29,8 @@ $MinNodeMajor = 22
 
 function Say  ($m) { Write-Host "> $m"  -ForegroundColor Cyan }
 function Ok   ($m) { Write-Host "+ $m"  -ForegroundColor Green }
-function Die  ($m) { Write-Host "x $m"  -ForegroundColor Red; exit 1 }
+# throw, not exit: under `irm | iex` an exit would close the user's PowerShell window.
+function Die  ($m) { Write-Host "x $m"  -ForegroundColor Red; throw "agent-daemon install stopped: $m" }
 
 # 1. Prerequisites ----------------------------------------------------------
 foreach ($cmd in 'git', 'node', 'npm') {
@@ -38,17 +39,24 @@ foreach ($cmd in 'git', 'node', 'npm') {
   }
 }
 
-$nodeMajor = [int](node -p 'process.versions.node.split(".")[0]')
-if ($nodeMajor -lt $MinNodeMajor) {
-  Die "Node.js >=$MinNodeMajor required, found $(node -v)."
+# Parse `node -v` here: Windows PowerShell 5.1 strips the inner quotes of
+# `node -p '...split(".")...'`, so asking node to split always failed there.
+$nodeVersion = [version]((node -v).Trim().TrimStart('v'))
+if ($nodeVersion.Major -lt $MinNodeMajor) {
+  Die "Node.js >=$MinNodeMajor required, found v$nodeVersion."
 }
-Ok "Prerequisites OK (node $(node -v))"
+Ok "Prerequisites OK (node v$nodeVersion)"
 
-# The terminal UI needs Node's VT console input (22.17+ or 24.2+); the rest of ad works on any 22.
-$nodeMinor = [int](node -p 'process.versions.node.split(".")[1]')
-if (($nodeMajor -eq 22 -and $nodeMinor -lt 17) -or $nodeMajor -eq 23 -or ($nodeMajor -eq 24 -and $nodeMinor -lt 2)) {
-  Write-Host "! Node $(node -v): the ad terminal UI needs 22.17+ or 24.2+ (everything else works)." -ForegroundColor Yellow
-  Write-Host "  Upgrade within 22.x (no rebuild needed): winget install --id OpenJS.NodeJS.22 -e" -ForegroundColor Yellow
+# The terminal UI reads keys through Node's VT console input on Windows: 22.17+ or 24.2+.
+# Everything else in ad works on any Node 22.
+$tuiNode = ($nodeVersion.Major -eq 22 -and $nodeVersion.Minor -ge 17) -or ($nodeVersion.Major -eq 24 -and $nodeVersion.Minor -ge 2) -or ($nodeVersion.Major -ge 25)
+if (-not $tuiNode) {
+  Write-Host "! Node v$nodeVersion: the ad terminal UI needs 22.17+ or 24.2+ (everything else works)." -ForegroundColor Yellow
+  if ($nodeVersion.Major -eq 22) {
+    Write-Host "  Upgrade within 22.x (same native-module ABI, nothing to rebuild): winget install --id OpenJS.NodeJS.22 -e" -ForegroundColor Yellow
+  } else {
+    Write-Host "  Upgrade to Node 24.2+ (winget install --id OpenJS.NodeJS.LTS -e), then run: cd `"$InstallDir\runtime`"; npm rebuild" -ForegroundColor Yellow
+  }
 }
 
 # 2. Clone or update --------------------------------------------------------

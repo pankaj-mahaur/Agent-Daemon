@@ -4,6 +4,26 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Fixed
+
+- The Windows one-liner installer works in Windows PowerShell 5.1 again. 5.1 stripped the quotes inside `node -p '…split(".")…'`, so the Node check always read version 0 and stopped with "Node.js >=22 required". A failing step now stops the script with `throw` instead of `exit`, which used to close the window under `irm | iex`.
+- ad never runs Codex in your own Codex home:
+  - It refuses `~/.codex` and a `CODEX_HOME` your shell sets, however the path is spelled (junctions, `\\?\`, case, relative paths).
+  - It drops inherited `CODEX_*` variables such as `CODEX_SQLITE_HOME`.
+  - It only runs its pinned Codex, never a global or PATH install.
+  - `ad doctor` and schema generation use throwaway homes.
+
+### Changed
+
+- Codex engine 0.160.0 (protocol unchanged from 0.159.2).
+- Installers skip devDependencies (`npm install --omit=dev`, `npm link --omit=dev`). On Windows, they warn when Node is older than 22.17 / 24.2, which the coming terminal UI needs.
+- CI uses `actions/checkout@v7` and `actions/setup-node@v7`, and gains an opt-in job that runs the real pinned Codex against a mock model on Linux, macOS and Windows.
+
+### Added
+
+- `runtime/scripts/tui-probe.mjs keys|screen`: shows what your terminal sends for each key and how it wraps and reflows. It's a troubleshooting tool for the terminal UI.
+- Plan and research for the `ad` terminal UI: `docs/plans/ad-tui.md`, `docs/research/`.
+
 ## [2.0.2] — 2026-10-04
 
 ### Added

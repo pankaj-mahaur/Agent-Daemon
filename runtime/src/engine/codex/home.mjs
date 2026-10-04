@@ -8,9 +8,9 @@
 // app-server's own `config/batchWrite`, so we never hand-edit TOML that
 // Codex also writes (hook trust, login state).
 
-import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { existsSync, mkdirSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { homedir, userInfo } from "node:os";
+import { basename, dirname, join, resolve } from "node:path";
 
 export const BOOTSTRAP_CONFIG = `# Agent Daemon harness config (CODEX_HOME).
 # Managed settings are written by \`ad\` through codex app-server; edit freely.
@@ -26,31 +26,68 @@ export function defaultCodexHome(env = process.env) {
   return env.AD_CODEX_HOME ? resolve(env.AD_CODEX_HOME) : managedHome();
 }
 
-const samePath = (a, b) => {
-  const x = resolve(a);
-  const y = resolve(b);
-  return process.platform === "win32" ? x.toLowerCase() === y.toLowerCase() : x === y;
-};
+// A path's identity for "is this the same folder?": the real path of its
+// nearest existing ancestor — so junctions, symlinks, 8.3 short names, subst
+// drives and the \\?\ prefix all collapse — plus the part that doesn't exist
+// yet, case-folded where filesystems are case-insensitive by default.
+export function canonicalPath(p, base = process.cwd()) {
+  let current = resolve(base, p);
+  const missing = [];
+  for (;;) {
+    try {
+      current = realpathSync.native(current);
+      break;
+    } catch {
+      const parent = dirname(current);
+      if (parent === current) break;
+      missing.unshift(basename(current));
+      current = parent;
+    }
+  }
+  let out = join(current, ...missing).replace(/^\\\\\?\\(UNC\\)?/, (_, unc) => (unc ? "\\\\" : ""));
+  out = out.replace(/[\\/]+$/, "") || out;
+  return process.platform === "win32" || process.platform === "darwin" ? out.toLowerCase() : out;
+}
 
-// The user's own Codex homes: ~/.codex, plus a CODEX_HOME inherited from
-// their shell unless it is ad's own home (hooks that Codex runs for us
-// inherit our CODEX_HOME, and must still be able to start an engine).
+// The user's own Codex homes: ~/.codex (for both the current HOME and the OS
+// account's home), plus a CODEX_HOME inherited from their shell — unless that
+// one is a home ad created (Codex runs our hooks with our CODEX_HOME, and they
+// must still be able to start an engine).
 export function userCodexHomes(env = process.env) {
-  const homes = [join(homedir(), ".codex")];
-  if (env.CODEX_HOME && !samePath(env.CODEX_HOME, defaultCodexHome(env))) homes.push(resolve(env.CODEX_HOME));
-  return homes;
+  const homes = new Set([join(homedir(), ".codex")]);
+  try {
+    homes.add(join(userInfo().homedir, ".codex"));
+  } catch {
+    // no OS account info (rare containers) — HOME's ~/.codex is still covered
+  }
+  if (env.CODEX_HOME && !isManagedHome(resolve(env.CODEX_HOME))) homes.add(resolve(env.CODEX_HOME));
+  return [...homes];
 }
 
 // Every real Codex process ad starts must run in its own home. Codex's
 // default home is the user's own install — their login, sessions, daemon and
-// config — and ad never reads or writes it.
-export function assertIsolatedHome(home, env = process.env) {
+// config — and ad never runs Codex in it or writes to it. A relative home is
+// resolved against `base`, the directory Codex will be started in.
+export function assertIsolatedHome(home, env = process.env, base = process.cwd()) {
   if (!home) {
     throw new Error("refusing to start Codex without an explicit CODEX_HOME: the default (~/.codex) belongs to your own Codex");
   }
-  if (userCodexHomes(env).some((h) => samePath(h, home))) {
-    throw new Error(`refusing to run Codex in ${resolve(home)}: that is your own Codex home. Point AD_CODEX_HOME somewhere else.`);
+  const target = canonicalPath(home, base);
+  if (userCodexHomes(env).some((h) => canonicalPath(h) === target)) {
+    throw new Error(`refusing to run Codex in ${resolve(base, home)}: that is your own Codex home. Point AD_CODEX_HOME somewhere else.`);
   }
+}
+
+// The environment for every real Codex process ad starts. Inherited CODEX_*
+// variables are dropped first — CODEX_SQLITE_HOME, CODEX_EXEC_SERVER_URL,
+// CODEX_API_KEY and friends override config and would point ad's Codex at the
+// user's own state, executor or credentials. Then ad's own values, then an
+// absolute, isolated CODEX_HOME.
+export function codexEnv({ home, base = process.env, extra = {}, cwd = process.cwd() } = {}) {
+  assertIsolatedHome(home, base, cwd);
+  const env = {};
+  for (const [key, value] of Object.entries(base)) if (!/^codex_/i.test(key)) env[key] = value;
+  return { ...env, ...extra, CODEX_HOME: resolve(cwd, home) };
 }
 
 export const MANAGED_MARKER = ".agent-daemon-managed";
@@ -65,7 +102,9 @@ export function isManagedHome(dir) {
 // Bootstraps (config + marker) only a folder that did not exist or was
 // empty. A folder with anything in it — even just auth.json — is the
 // user's, and is used as-is.
-export function ensureCodexHome(dir = defaultCodexHome()) {
+export function ensureCodexHome(dir = defaultCodexHome(), { env = process.env } = {}) {
+  // Before anything is written: a marker in the user's own home would make it look like ours.
+  assertIsolatedHome(dir, env);
   if (existsSync(dir) && !statSync(dir).isDirectory()) throw new Error(`CODEX_HOME ${dir} exists but is not a directory`);
   const fresh = !existsSync(dir) || readdirSync(dir).length === 0;
   mkdirSync(dir, { recursive: true });

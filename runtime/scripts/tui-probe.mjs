@@ -4,9 +4,12 @@
 //   node runtime/scripts/tui-probe.mjs keys     every key/paste as raw bytes + a best-effort name
 //   node runtime/scripts/tui-probe.mjs screen   wrap, autowrap-off, sync output, resize reflow
 //
+// Quit: type qqq, or press Ctrl+C three times in a row (single Ctrl+C presses
+// are shown, since they are part of what is being probed).
+//
 // Results also go to ~/.agent-daemon/logs/tui-probe-<mode>-<time>.log so they can
-// be attached to a bug report. Read-only: it changes nothing but this terminal's
-// modes, and restores them on exit.
+// be attached to a bug report. It changes nothing but this terminal's modes, and
+// restores them on every exit path.
 
 import { appendFileSync, mkdirSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
@@ -29,6 +32,7 @@ const log = (line) => appendFileSync(logFile, line + "\n");
 const out = (line) => { process.stdout.write(line + "\r\n"); log(line); };
 
 const [major, minor] = process.versions.node.split(".").map(Number);
+// The VT-input concern is Windows-only: POSIX raw mode always passes the terminal's bytes through.
 const vtInput = process.platform !== "win32" || (major === 22 && minor >= 17) || (major === 24 && minor >= 2) || major >= 25;
 out(`tui-probe ${mode} · node ${process.version} · ${process.platform} · ${process.stdout.columns}x${process.stdout.rows}`);
 out(`TERM=${process.env.TERM ?? "-"} TERM_PROGRAM=${process.env.TERM_PROGRAM ?? "-"} WT_SESSION=${process.env.WT_SESSION ? "set" : "-"} COLORTERM=${process.env.COLORTERM ?? "-"}`);
@@ -45,7 +49,8 @@ const SINGLE = { "\r": "Enter", "\n": "Ctrl+J / Ctrl+Enter", "\t": "Tab", "\x7f"
 function name(seq) {
   if (SINGLE[seq]) return SINGLE[seq];
   let m;
-  if ((m = /^\x1b\[(\d+);(\d+)R$/.exec(seq))) return `reply: cursor at row ${m[1]} col ${m[2]}`;
+  // `CSI row;col R` is also what Shift/Ctrl+F3 send on some terminals.
+  if ((m = /^\x1b\[(\d+);(\d+)R$/.exec(seq))) return `cursor report row ${m[1]} col ${m[2]} (or modified F3)`;
   if ((m = /^\x1b\[\?([\d;]*)c$/.exec(seq))) return `reply: DA1 (${m[1]})`;
   if ((m = /^\x1b\[\?(\d+);(\d)\$y$/.exec(seq))) return `reply: mode ?${m[1]} = ${["not recognized", "set", "reset", "permanently set", "permanently reset"][Number(m[2])] ?? m[2]}`;
   if ((m = /^\x1b\[\?(\d+)u$/.exec(seq))) return `reply: kitty keyboard flags ${m[1]}`;
@@ -80,9 +85,11 @@ function split(chunk) {
   return merged;
 }
 
-let restored = false;
+// Only what we set: kitty flags (pushed), bracketed paste, autowrap (toggled),
+// cursor visibility, a synchronized update left open by a kill.
 const SETUP = "\x1b[?2004h\x1b[>1u";
-const RESTORE = "\x1b[<u\x1b[>4;0m\x1b[?2004l\x1b[?1004l\x1b[?7h\x1b[?25h\x1b[r";
+const RESTORE = "\x1b[?2026l\x1b[<u\x1b[?2004l\x1b[?7h\x1b[?25h";
+let restored = false;
 function restore() {
   if (restored) return;
   restored = true;
@@ -91,62 +98,89 @@ function restore() {
   try { process.stdin.setRawMode(false); } catch {}
   process.stdin.pause();
 }
+const quit = (code = 0) => { out(`log: ${logFile}`); restore(); process.exit(code); };
 process.on("exit", restore);
 process.on("uncaughtException", (err) => { restore(); console.error(err); process.exit(1); });
+for (const sig of ["SIGTERM", "SIGHUP", "SIGBREAK"]) {
+  try { process.on(sig, () => { restore(); process.exit(1); }); } catch { /* signal not supported on this platform */ }
+}
 
 process.stdin.setRawMode(true);
 process.stdin.setEncoding("latin1");
 process.stdout.write(SETUP);
 
-let t0 = Date.now();
-const replies = [];
-let onData = null;
-process.stdin.on("data", (chunk) => onData?.(chunk));
-const ask = (query, ms = 400) => new Promise((resolve) => {
-  const got = [];
-  const prev = onData;
-  onData = (chunk) => got.push(chunk);
-  process.stdout.write(query);
-  setTimeout(() => { onData = prev; resolve(got.join("")); }, ms);
+// One dispatcher. Quit is checked before anything else, so no handler state
+// can ever swallow it. While a query is in flight its replies are collected;
+// otherwise data goes to the mode's handler.
+let collector = null;
+let handler = null;
+let quitRun = "";
+process.stdin.on("data", (chunk) => {
+  for (const part of split(chunk)) {
+    if (part === "q" || /^q+$/.test(part)) quitRun += part.length > 1 ? part : "q";
+    else if (part === "\x03" || part === "\x1b[99;5u") quitRun += "c";
+    else quitRun = "";
+    if (/q{3}$|c{3}$/.test(quitRun)) quit(0);
+  }
+  if (collector) collector.push(chunk);
+  else handler?.(chunk);
 });
 
-const capabilities = await ask("\x1b[?u\x1b[?2026$p\x1b[6n\x1b[c", 600);
-for (const p of split(capabilities)) { replies.push(p); out(`  ${name(p) ?? "reply"}  [${show(p)}]`); }
+// Queries run one at a time; a reply that misses its window is reported, not misread.
+let queue = Promise.resolve();
+const ask = (query, ms = 800) => {
+  const run = () => new Promise((resolve) => {
+    collector = [];
+    process.stdout.write(query);
+    setTimeout(() => { const got = collector.join(""); collector = null; resolve(got); }, ms);
+  });
+  const result = queue.then(run);
+  queue = result.catch(() => {});
+  return result;
+};
+
+const capabilities = await ask("\x1b[?u\x1b[?2026$p\x1b[6n\x1b[c", 1000);
+for (const p of split(capabilities)) out(`  ${name(p) ?? "reply"}  [${show(p)}]`);
 if (!/\x1b\[\?\d+u/.test(capabilities)) out("  (no kitty keyboard reply: Shift+Enter will look like Enter here)");
+if (!/\x1b\[\?2026;\d\$y/.test(capabilities)) out("  (no reply about synchronized output ?2026)");
 
 if (mode === "keys") {
   out("");
   out("Press keys: Enter, Shift+Enter, Ctrl+Enter, Alt+Enter, Ctrl+J, Esc, Tab, Shift+Tab, arrows with Shift/Ctrl/Alt,");
-  out("Backspace, Ctrl+Backspace, Ctrl+C, Ctrl+Z, Ctrl+V (text, then an image), and paste a few lines. Type qqq to quit.");
-  let quit = "";
-  onData = (chunk) => {
+  out("Backspace, Ctrl+Backspace, Ctrl+C, Ctrl+Z, Ctrl+V (text, then an image), and paste a few lines.");
+  out("Quit: qqq, or Ctrl+C three times.");
+  let t0 = Date.now();
+  handler = (chunk) => {
     const dt = Date.now() - t0;
     t0 = Date.now();
     for (const part of split(chunk)) {
       const paste = part.startsWith("\x1b[200~");
       const label = paste ? `PASTE (${part.length - 12} chars, ${(part.match(/\r\n|\r|\n/g) ?? []).length} line breaks)` : name(part) ?? `text "${show(part)}"`;
-      out(`+${String(dt).padStart(5)}ms  ${label.padEnd(36)} ${hex(part).slice(0, 72)}`);
-      quit = part === "q" ? quit + "q" : part.length > 1 && /^q+$/.test(part) ? quit + part : "";
-      if (quit.length >= 3) { out(`log: ${logFile}`); restore(); process.exit(0); }
+      out(`+${String(dt).padStart(5)}ms  ${label.padEnd(40)} ${hex(part).slice(0, 72)}`);
     }
-    if (chunk.length > 1 && !chunk.startsWith("\x1b") && /\r/.test(chunk)) out("        ^ one chunk with text and Enter: an unbracketed paste would look like this");
+    if (chunk.length > 1 && !chunk.startsWith("\x1b") && /\r/.test(chunk)) out("        ^ text and Enter in one chunk: an unbracketed paste would look like this");
   };
 } else {
-  const cpr = async () => { const r = await ask("\x1b[6n", 300); const m = /\x1b\[(\d+);(\d+)R/.exec(r); return m ? [Number(m[1]), Number(m[2])] : null; };
+  const cpr = async () => {
+    const reply = await ask("\x1b[6n", 800);
+    const m = /\x1b\[(\d+);(\d+)R/.exec(reply);
+    return m ? [Number(m[1]), Number(m[2])] : null;
+  };
+  const verdict = (pos, ok, yes, no) => (pos ? (ok ? yes : no) : "unknown (no cursor report)");
   const cols = process.stdout.columns;
   out("");
   process.stdout.write("\r" + "X".repeat(cols));
   const afterFull = await cpr();
   process.stdout.write("\r\n");
   const afterNewline = await cpr();
-  out(`full-width line: cursor ${JSON.stringify(afterFull)} then after \\r\\n ${JSON.stringify(afterNewline)} → ${afterFull && afterFull[1] === cols ? "deferred wrap (xterm-like)" : "immediate wrap (Windows-console-like)"}`);
+  out(`full-width line: cursor ${JSON.stringify(afterFull)} then after \\r\\n ${JSON.stringify(afterNewline)} → ${verdict(afterFull, afterFull?.[1] === cols, "deferred wrap (xterm-like)", "immediate wrap (Windows-console-like)")}`);
   process.stdout.write("\x1b[?7l\r" + "Y".repeat(cols + 5));
   const noWrap = await cpr();
   process.stdout.write("\x1b[?7h\r\n");
-  out(`autowrap off (?7l) + ${cols + 5} chars: cursor ${JSON.stringify(noWrap)} → ${noWrap && noWrap[1] === cols ? "DECAWM honoured" : "DECAWM NOT honoured"}`);
+  out(`autowrap off (?7l) + ${cols + 5} chars: cursor ${JSON.stringify(noWrap)} → ${verdict(noWrap, noWrap?.[1] === cols, "DECAWM honoured", "DECAWM NOT honoured")}`);
   out("");
   out("Resize test: a 6-line live region is drawn below. Make the window narrower, then wider.");
-  out("Each resize logs where the cursor ended up. Type q to quit.");
+  out("Each resize logs where the cursor ended up. Quit: qqq, or Ctrl+C three times.");
   const widths = [10, 30, 50, 70, 20, 40];
   const draw = () => {
     const c = process.stdout.columns;
@@ -154,7 +188,7 @@ if (mode === "keys") {
     process.stdout.write("\x1b[?2026h\x1b[?7l" + lines.join("\r\n") + "\x1b[3A\r\x1b[10C\x1b[?7h\x1b[?2026l");
     return lines;
   };
-  let lines = draw();
+  const lines = draw();
   let before = await cpr();
   out(`  drawn at ${process.stdout.columns}x${process.stdout.rows}; cursor parked on live line 3, col 11: ${JSON.stringify(before)}`);
   let timer = null;
@@ -168,5 +202,4 @@ if (mode === "keys") {
       before = now;
     }, 200);
   });
-  onData = (chunk) => { if (chunk.includes("q")) { out(`log: ${logFile}`); restore(); process.exit(0); } };
 }

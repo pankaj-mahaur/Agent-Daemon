@@ -15,7 +15,7 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { approvalResponse, isApprovalMethod } from "./approvals.mjs";
-import { assertIsolatedHome } from "./home.mjs";
+import { codexEnv } from "./home.mjs";
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 
@@ -30,10 +30,10 @@ export function pinnedCodexVersion() {
   }
 }
 
-// Order: explicit override → pinned npm dependency → global install.
-// Always run the package's JS launcher with our own node: on Windows the
-// global install is a .cmd shim, and spawning that needs a shell, which
-// mangles args.
+// Order: explicit override → the pinned npm dependency. Never the user's own
+// global or PATH install: ad runs exactly the version it is tested against,
+// and the user's Codex stays theirs. Run the package's JS launcher with our
+// own node (a .cmd shim would need a shell, which mangles args on Windows).
 export function resolveCodexCommand(env = process.env) {
   if (env.AD_CODEX_BIN) return { cmd: env.AD_CODEX_BIN, prefix: [], source: "env" };
   try {
@@ -41,14 +41,12 @@ export function resolveCodexCommand(env = process.env) {
     const entry = join(dirname(pkg), "bin", "codex.js");
     if (existsSync(entry)) return { cmd: process.execPath, prefix: [entry], source: "pinned" };
   } catch {
-    // not installed as a dependency (e.g. global-only install) — fall through
+    // not installed as a dependency — reported as missing below
   }
-  if (process.platform === "win32" && env.APPDATA) {
-    const entry = join(env.APPDATA, "npm", "node_modules", "@openai", "codex", "bin", "codex.js");
-    if (existsSync(entry)) return { cmd: process.execPath, prefix: [entry], source: "global" };
-  }
-  return { cmd: "codex", prefix: [], source: "path" };
+  return { cmd: null, prefix: [], source: "missing" };
 }
+
+export const CODEX_MISSING = "Codex engine not installed — run: cd runtime && npm install";
 
 // Codex picks the first pwsh.exe on PATH as the agent's shell. The Microsoft
 // Store's pwsh is an app-execution alias under ...\Microsoft\WindowsApps, and
@@ -90,11 +88,15 @@ export class CodexAppServer extends EventEmitter {
   }
 
   async start() {
-    const env = withoutStoreAliases({ ...process.env, ...(this.opts.env ?? {}) });
-    // Injected test commands carry no `source`; anything resolved to a real
-    // Codex binary must get its home from opts.env, never the inherited one.
-    if (!this.opts.command || this.opts.command.source) assertIsolatedHome(this.opts.env?.CODEX_HOME);
+    // Only test doubles that say so skip isolation. Anything else is treated as
+    // the real Codex: its home must come from opts.env and be ad's own, and
+    // inherited CODEX_* variables never reach it (codexEnv).
+    const testDouble = this.opts.command?.source === "test-double";
+    const env = withoutStoreAliases(testDouble
+      ? { ...process.env, ...(this.opts.env ?? {}) }
+      : codexEnv({ home: this.opts.env?.CODEX_HOME, extra: this.opts.env ?? {}, cwd: this.opts.cwd ?? process.cwd() }));
     const { cmd, prefix } = this.opts.command ?? resolveCodexCommand(env);
+    if (!cmd) throw new Error(CODEX_MISSING);
     const args = [...prefix, "app-server", ...(this.opts.codexArgs ?? [])];
     this.child = spawn(cmd, args, {
       cwd: this.opts.cwd,
@@ -125,7 +127,7 @@ export class CodexAppServer extends EventEmitter {
     const init = await this.request("initialize", {
       clientInfo: { name: "agent_daemon", title: "Agent Daemon", version: this.opts.clientVersion ?? "0.0.0" },
       ...(this.opts.capabilities ? { capabilities: this.opts.capabilities } : {}),
-    });
+    }, { timeoutMs: this.opts.initTimeoutMs ?? DEFAULT_TIMEOUT_MS });
     this.notify("initialized");
     return init;
   }

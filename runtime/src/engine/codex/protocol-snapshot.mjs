@@ -13,6 +13,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveCodexCommand } from "./app-server.mjs";
+import { codexEnv } from "./home.mjs";
 
 // Definitions the engine sends or reads. Add a name here whenever engine
 // code starts depending on a new request/response/notification shape.
@@ -144,7 +145,7 @@ export function generateSnapshot({ command = resolveCodexCommand({}), codexVersi
     execFileSync(command.cmd, [...command.prefix, "app-server", "generate-json-schema", "--out", dir], {
       stdio: ["ignore", "ignore", "pipe"],
       windowsHide: true,
-      env: { ...process.env, CODEX_HOME: home },
+      env: codexEnv({ home }),
     });
     return buildSnapshot(dir, codexVersion);
   } finally {

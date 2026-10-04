@@ -15,7 +15,7 @@ import { CodexAppServer, pinnedCodexVersion, resolveCodexCommand, withoutStoreAl
 import { approvalResponse } from "../src/engine/codex/approvals.mjs";
 
 const FAKE = fileURLToPath(new URL("../testkit/fake-codex-app-server.mjs", import.meta.url));
-const fakeServer = (opts = {}) => new CodexAppServer({ command: { cmd: process.execPath, prefix: [FAKE] }, ...opts });
+const fakeServer = (opts = {}) => new CodexAppServer({ command: { cmd: process.execPath, prefix: [FAKE], source: "test-double" }, ...opts });
 
 // Start a turn and resolve with the last agentMessage text at turn/completed.
 async function rawTurn(server, text) {
@@ -174,12 +174,18 @@ test("Windows: Store app-alias dirs leave the engine's PATH (the sandbox can't l
   assert.equal(withoutStoreAliases(posix, "linux"), posix);
 });
 
-test("the real Codex binary never starts without ad's own CODEX_HOME", async () => {
+test("a real Codex command never starts without ad's own CODEX_HOME", async () => {
   const { homedir } = await import("node:os");
   const { join } = await import("node:path");
-  const noHome = new CodexAppServer({ env: {} });
+  // Harmless stand-in marked as the real binary: if the guard ever regresses,
+  // this exits instead of starting Codex in the user's ~/.codex.
+  const command = { cmd: process.execPath, prefix: ["-e", "process.exit(97)"], source: "pinned" };
+  const noHome = new CodexAppServer({ command, env: {} });
   await assert.rejects(noHome.start(), /without an explicit CODEX_HOME/);
   assert.equal(noHome.running, false, "nothing was spawned");
-  const userHome = new CodexAppServer({ env: { CODEX_HOME: join(homedir(), ".codex") } });
+  const userHome = new CodexAppServer({ command, env: { CODEX_HOME: join(homedir(), ".codex") } });
   await assert.rejects(userHome.start(), /your own Codex home/);
+  // An unmarked command is treated as real too; only an explicit test double skips the guard.
+  const unmarked = new CodexAppServer({ command: { cmd: process.execPath, prefix: ["-e", "process.exit(97)"] }, env: {} });
+  await assert.rejects(unmarked.start(), /without an explicit CODEX_HOME/);
 });

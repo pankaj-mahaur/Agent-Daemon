@@ -75,6 +75,7 @@ jobs:
     # continue-on-error while each platform's sandbox behaviour is being learned (plan S2).
     name: real engine / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     continue-on-error: true
     strategy:
       fail-fast: false
@@ -100,4 +101,4 @@ jobs:
         working-directory: runtime
         env:
           AD_REAL_ENGINE: "1"
-        run: node --test --test-concurrency=1 test/engine-real.test.mjs
+        run: node --test --test-concurrency=1 --test-force-exit test/engine-real.test.mjs

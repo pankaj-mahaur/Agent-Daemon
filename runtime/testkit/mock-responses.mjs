@@ -17,6 +17,8 @@ export const ev = {
   created: (id = "resp-1") => ({ type: "response.created", response: { id } }),
   completed: (id = "resp-1") => ({ type: "response.completed", response: { id, usage } }),
   failed: (id = "resp-1", message = "mock failure") => ({ type: "response.failed", response: { id, error: { code: "server_error", message } } }),
+  // Codex drops text deltas that arrive before their message item is added.
+  messageAdded: (id = "msg-1") => ({ type: "response.output_item.added", item: { type: "message", role: "assistant", id, content: [] } }),
   textDelta: (delta) => ({ type: "response.output_text.delta", delta }),
   message: (text, id = "msg-1") => ({ type: "response.output_item.done", item: { type: "message", role: "assistant", id, content: [{ type: "output_text", text }] } }),
   reasoning: (summary, id = "rs-1") => ({
@@ -61,7 +63,7 @@ export function defaultScript(body) {
     const patch = "*** Begin Patch\n*** Add File: hello.txt\n+hello from the mock\n*** End Patch";
     return [ev.created(), ev.functionCall("call-patch", "exec_command", { cmd: `apply_patch <<'EOF'\n${patch}\nEOF\n` }), ev.completed()];
   }
-  return [ev.created(), ev.reasoning("**Thinking** about the reply"), ev.textDelta("po"), ev.textDelta("ng"), ev.message("pong"), ev.completed()];
+  return [ev.created(), ev.reasoning("**Thinking** about the reply"), ev.messageAdded(), ev.textDelta("po"), ev.textDelta("ng"), ev.message("pong"), ev.completed()];
 }
 
 // Start the mock on a random loopback port. `requests` records every call
@@ -73,11 +75,14 @@ export async function startMockResponses({ script = defaultScript } = {}) {
     let raw = "";
     req.on("data", (chunk) => (raw += chunk));
     req.on("end", () => {
-      let body = {};
+      let body;
       try {
         body = JSON.parse(raw);
       } catch {
-        // Non-JSON bodies are recorded and answered with the default reply.
+        // A body we can't read means the request format drifted: say so loudly.
+        requests.push({ path: req.url, invalidJson: true });
+        res.writeHead(400, { "content-type": "application/json" }).end(JSON.stringify({ error: { message: "mock: request body is not JSON" } }));
+        return;
       }
       requests.push({ path: req.url, model: body.model, tools: (body.tools ?? []).map((t) => t.name ?? t.type), text: lastUserText(body) });
       if (!/\/responses$/.test(req.url ?? "")) {
@@ -108,6 +113,7 @@ export function writeMockCodexHome(home, { url, approvalPolicy = "on-request", s
     `sandbox_mode = "${sandboxMode}"`,
     `model_provider = "mock"`,
     `check_for_update_on_startup = false`,
+    `cli_auth_credentials_store = "file"`,
     ``,
     `[features]`,
     `plugins = false`,

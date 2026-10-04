@@ -47,10 +47,18 @@ Typing `ad` opens an interactive TUI that looks and works like the OpenAI Codex 
 | Home (config, login, sessions, logs, hooks, daemon socket, sandbox SID) | `~/.codex` | `~/.agent-daemon/codex-home` (or `AD_CODEX_HOME`) |
 
 **Guard (in code since Part 0):**
-- `assertIsolatedHome()` runs before every real Codex process starts.
-- It refuses a missing `CODEX_HOME`, `~/.codex`, and a `CODEX_HOME` your shell sets for your own Codex.
+- Every real Codex process gets its environment from `codexEnv()`. That is enforced by a test that fails when a new spawn site skips it.
+- `codexEnv()` refuses three homes:
+  - a missing `CODEX_HOME`;
+  - `~/.codex`, for both the current HOME and the OS account's home;
+  - a `CODEX_HOME` inherited from your shell, unless ad created that folder.
+- Paths are compared by their real location, so junctions, symlinks, `\\?\`, 8.3 names, case and relative paths can't sneak through.
+- It drops every inherited `CODEX_*` variable (`CODEX_SQLITE_HOME`, `CODEX_EXEC_SERVER_URL`, `CODEX_API_KEY`, …), because those override config.
+- The home is checked before ad writes anything into it.
+- ad runs only the pinned binary (or `AD_CODEX_BIN`), never your global or PATH install.
 - `ad doctor` and schema generation run Codex in throwaway temp homes.
-- Tests use temp homes and the fake engine.
+- Tests use temp homes, an explicit `test-double` fake, or a harmless stand-in.
+- **What ad does read:** the optional `ad watch` watcher reads `~/.codex/sessions` to learn from your own Codex transcripts. This is read-only and an existing feature; it can be switched off in its watch config. Nothing else of yours is read.
 
 **Rules for the rest of this plan:**
 - Probes, spikes and live smokes use the harness home or a temp home, in a scratch directory.
