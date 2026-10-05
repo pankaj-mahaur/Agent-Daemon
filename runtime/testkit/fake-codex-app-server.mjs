@@ -60,16 +60,37 @@ function setPath(obj, keyPath, value) {
 const send = (msg) => process.stdout.write(JSON.stringify(msg) + "\n");
 const notify = (method, params) => send({ method, params });
 
+const requestThreads = new Map(); // server request id → threadId
 function askClient(method, params) {
   const id = `srv-${++serverReqId}`;
+  requestThreads.set(id, params?.threadId ?? null);
   send({ id, method, params });
   return new Promise((resolve) => awaiting.set(id, resolve));
 }
 
-const agentMessage = (threadId, turnId, text) =>
-  notify("item/completed", { threadId, turnId, item: { type: "agentMessage", id: `msg-${turnId}`, text } });
-const complete = (threadId, turn, extra = {}) =>
-  notify("turn/completed", { threadId, turn: { ...turn, status: "completed", ...extra } });
+// Per-thread turn history (thread/turns/list, thread/resume, thread/revert).
+const history = new Map(); // threadId → [{id, status, items}]
+const turnsOf = (threadId) => (history.has(threadId) ? history.get(threadId) : history.set(threadId, []).get(threadId));
+const recordItem = (threadId, turnId, item) => turnsOf(threadId).find((t) => t.id === turnId)?.items.push(item);
+
+const agentMessage = (threadId, turnId, text) => {
+  const item = { type: "agentMessage", id: `msg-${turnId}`, text };
+  recordItem(threadId, turnId, item);
+  notify("item/completed", { threadId, turnId, item });
+};
+const complete = (threadId, turn, extra = {}) => {
+  const done = { ...turn, status: "completed", ...extra };
+  const t = turnsOf(threadId).find((x) => x.id === turn.id);
+  if (t) t.status = done.status;
+  notify("turn/completed", { threadId, turn: done });
+};
+// The user's message as Codex echoes it, with the client's id.
+const userMessage = (threadId, turnId, text, clientId, id = `um-${turnId}`) => {
+  const item = { type: "userMessage", id, content: [{ type: "text", text }], clientId: clientId ?? null };
+  recordItem(threadId, turnId, item);
+  notify("item/started", { threadId, turnId, item });
+  notify("item/completed", { threadId, turnId, item });
+};
 
 async function runScriptedTurn(threadId, turn, params) {
   const text = params.input?.[0]?.text ?? "";
@@ -153,6 +174,7 @@ async function runScriptedTurn(threadId, turn, params) {
   }
   if (text === "resolved-elsewhere" || text === "revert-pending") {
     const id = `srv-${++serverReqId}`;
+    requestThreads.set(id, threadId);
     send({ id, method: "item/commandExecution/requestApproval", params: { threadId, turnId: turn.id, itemId: "c1", command: "ls" } });
     const reply = new Promise((resolve) => awaiting.set(id, resolve));
     setTimeout(() => {
@@ -247,7 +269,17 @@ async function onRequest({ id, method, params }) {
       const threadId = params.threadId;
       const turn = { id: `turn-${++turnSeq}`, status: "inProgress", items: [] };
       const text = params.input?.[0]?.text ?? "";
-      if (text === "slow-start") return setTimeout(() => send({ id, result: { turn } }), 300);
+      turnsOf(threadId).push({ id: turn.id, status: "inProgress", items: [] });
+      // Codex echoes the prompt as the turn begins (here even before turn/start answers).
+      if (params.clientUserMessageId) userMessage(threadId, turn.id, text, params.clientUserMessageId);
+      if (text === "slow-start") {
+        // Answers late, then runs until interrupted.
+        return setTimeout(() => {
+          send({ id, result: { turn } });
+          notify("turn/started", { threadId, turn });
+          hung.set(turn.id, { threadId, turn });
+        }, 300);
+      }
       if (text === "early-complete") {
         agentMessage(threadId, turn.id, "early");
         complete(threadId, turn);
@@ -276,7 +308,59 @@ async function onRequest({ id, method, params }) {
       }
       return;
     }
-    case "turn/steer":
+    case "turn/steer": {
+      const h = hung.get(params.expectedTurnId);
+      if (!h || h.threadId !== params.threadId) return send({ id, error: { code: -32600, message: `no active turn ${params.expectedTurnId} to steer` } });
+      if (h.unsteerable) return send({ id, error: { code: -32600, message: "turn is not steerable (review)" } });
+      const text = params.input?.[0]?.text ?? "";
+      send({ id, result: { turnId: h.turn.id } });
+      userMessage(h.threadId, h.turn.id, text, params.clientUserMessageId, `um-steer-${h.turn.id}`);
+      // A steered turn finishes with a reply that names the steer.
+      setTimeout(() => {
+        if (!hung.has(h.turn.id)) return;
+        hung.delete(h.turn.id);
+        agentMessage(h.threadId, h.turn.id, `steered: ${text}`);
+        complete(h.threadId, h.turn);
+      }, 30);
+      return;
+    }
+    case "thread/turns/list": {
+      const all = turnsOf(params.threadId).map((t) => ({ ...t, itemsView: params.itemsView ?? "summary", items: params.itemsView === "full" ? t.items : [] }));
+      const ordered = params.sortDirection === "asc" ? all : [...all].reverse();
+      const start = params.cursor ? Number(params.cursor) : 0;
+      const limit = params.limit ?? ordered.length;
+      const page = ordered.slice(start, start + limit);
+      const next = start + limit < ordered.length ? String(start + limit) : null;
+      return send({ id, result: { data: page, nextCursor: next, backwardsCursor: null } });
+    }
+    case "review/start": {
+      const threadId = params.threadId;
+      const turn = { id: `turn-${++turnSeq}`, status: "inProgress", items: [] };
+      turnsOf(threadId).push({ id: turn.id, status: "inProgress", items: [] });
+      send({ id, result: { turn, reviewThreadId: threadId } });
+      notify("turn/started", { threadId, turn });
+      notify("item/completed", { threadId, turnId: turn.id, item: { type: "enteredReviewMode", id: `rv-in-${turn.id}`, review: "uncommitted changes" } });
+      if (params.target?.type === "custom" && params.target.instructions === "hang") return hung.set(turn.id, { threadId, turn, unsteerable: true });
+      agentMessage(threadId, turn.id, "review: looks fine");
+      notify("item/completed", { threadId, turnId: turn.id, item: { type: "exitedReviewMode", id: `rv-out-${turn.id}`, review: "looks fine" } });
+      return complete(threadId, turn);
+    }
+    case "thread/shellCommand": {
+      send({ id, result: {} });
+      const threadId = params.threadId;
+      const item = { type: "commandExecution", id: `sh-${++turnSeq}`, command: params.command, cwd: "/fake", status: "inProgress", source: "userShell", commandActions: [] };
+      notify("item/started", { threadId, turnId: "shell", item });
+      notify("item/commandExecution/outputDelta", { threadId, turnId: "shell", itemId: item.id, delta: "shell output\n" });
+      return notify("item/completed", { threadId, turnId: "shell", item: { ...item, status: "completed", exitCode: 0, aggregatedOutput: "shell output\n" } });
+    }
+    case "thread/revert": {
+      const turns = turnsOf(params.threadId);
+      const i = turns.findIndex((t) => t.id === params.beforeTurnId);
+      if (i < 0) return send({ id, error: { code: -32600, message: `unknown turn ${params.beforeTurnId}` } });
+      turns.splice(i);
+      send({ id, result: { thread: { id: params.threadId, turns: turns.map((t) => ({ ...t, items: [] })) } } });
+      return notify("thread/reverted", { threadId: params.threadId });
+    }
     case "thread/goal/clear":
       return send({ id, result: {} });
     case "thread/goal/set":
@@ -303,6 +387,9 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   if (msg.method === undefined && awaiting.has(msg.id)) {
     awaiting.get(msg.id)(msg);
     awaiting.delete(msg.id);
+    // Codex announces every answered request (beh.rs resolve_server_request_on_thread_listener).
+    notify("serverRequest/resolved", { threadId: requestThreads.get(msg.id) ?? null, requestId: msg.id });
+    requestThreads.delete(msg.id);
     return;
   }
   if (msg.id === undefined) {

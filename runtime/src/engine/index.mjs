@@ -71,6 +71,7 @@ export class Engine extends EventEmitter {
     this.labels = new Map();
     this.subscribers = new Map(); // threadId | null (thread-less) → Set(fn)
     this.pendingRequests = new Map(); // JSON-RPC id → {request, cancel}
+    this.answered = new Set(); // ids we answered; Codex's serverRequest/resolved for them is dropped
   }
 
   /**
@@ -83,7 +84,11 @@ export class Engine extends EventEmitter {
     const key = threadId ?? null;
     if (!this.subscribers.has(key)) this.subscribers.set(key, new Set());
     this.subscribers.get(key).add(fn);
-    return () => this.subscribers.get(key)?.delete(fn);
+    return () => {
+      const set = this.subscribers.get(key);
+      set?.delete(fn);
+      if (set && !set.size) this.subscribers.delete(key);
+    };
   }
 
   /** The chain from a thread up to its root: [thread, parent, …, root]. */
@@ -113,8 +118,14 @@ export class Engine extends EventEmitter {
 
   // Learn the thread tree from what Codex says, before events are delivered.
   #learn(method, params) {
+    // Only Codex's own spawn records link threads: a model-chosen tool call
+    // (sendInput, wait, closeAgent…) names threads it doesn't own. A known
+    // parent is never replaced, and a link that would make a cycle is refused.
     const link = (child, parent) => {
-      if (child && parent && child !== parent) this.parents.set(child, parent);
+      if (typeof child !== "string" || typeof parent !== "string" || child === parent) return;
+      if (this.parents.has(child)) return;
+      if (this.threadChain(parent).includes(child)) return;
+      this.parents.set(child, parent);
     };
     if (method === "thread/started" && params?.thread) {
       const t = params.thread;
@@ -124,20 +135,42 @@ export class Engine extends EventEmitter {
     }
     if ((method === "item/started" || method === "item/completed") && params?.item) {
       const it = params.item;
-      if (it.type === "collabAgentToolCall") for (const r of it.receiverThreadIds ?? []) link(r, params.threadId);
-      if (it.type === "subAgentActivity") link(it.agentThreadId, params.threadId);
+      if (it.type === "collabAgentToolCall" && it.tool === "spawnAgent" && Array.isArray(it.receiverThreadIds)) {
+        for (const r of it.receiverThreadIds) link(r, params.threadId);
+      }
+      if (it.type === "subAgentActivity" && it.kind === "started") link(it.agentThreadId, params.threadId);
     }
   }
 
-  #route({ method, params }) {
+  #route(msg) {
+    try {
+      this.#routeUnsafe(msg);
+    } catch (err) {
+      this.emit("warning", `could not handle ${msg?.method}: ${err.message}`);
+    }
+  }
+
+  #routeUnsafe({ method, params }) {
     this.#learn(method, params);
-    if (method === "serverRequest/resolved" && this.pendingRequests.has(params?.requestId)) {
-      // Ours: #handleRequest emits the one request.resolved (with the reason).
-      this.#cancelRequests((r) => r.id === params.requestId, "resolved");
+    if (method === "thread/closed" || method === "thread/deleted") this.#forget(params?.threadId);
+    if (method === "serverRequest/resolved") {
+      // #handleRequest emits the one request.resolved for every request it
+      // opened; Codex's own notification (sent after any answer) adds nothing.
+      const id = params?.requestId;
+      if (this.pendingRequests.has(id)) this.#cancelRequests((r) => r.id === id, "resolved");
+      this.answered.delete(id);
       return;
     }
     if (method === "thread/reverted") this.#cancelRequests((r) => r.threadId === params?.threadId, "reverted");
     for (const ev of adaptNotification(method, params)) this.#deliver(ev);
+  }
+
+  #forget(threadId) {
+    if (!threadId) return;
+    queueMicrotask(() => {
+      this.labels.delete(threadId);
+      for (const [child, parent] of this.parents) if (child === threadId || parent === threadId) this.parents.delete(child);
+    });
   }
 
   #cancelRequests(match, why) {
@@ -473,6 +506,8 @@ export class Engine extends EventEmitter {
     } finally {
       this.pendingRequests.delete(msg.id);
     }
+    this.answered.add(msg.id);
+    if (this.answered.size > 1000) this.answered.delete(this.answered.values().next().value);
     this.#deliver({ type: "request.resolved", threadId: req.threadId ?? undefined, requestId: msg.id, ...(outcome.cancelled ? { cancelled: outcome.cancelled } : {}) });
     return requestResult(req, outcome.cancelled ? null : outcome.answer);
   }
@@ -492,16 +527,34 @@ export function requestResult(req, answer) {
       return approvalResponse(req.method, req.params, word);
     }
     case "user-input": {
-      // {questionId: [answers]} → {answers: {questionId: {answers: [...]}}}; nothing chosen = no answers.
+      // {questionId: [answers]} → {answers: {questionId: {answers: [...]}}}.
+      // Strings only, and only offered labels unless the question takes free text.
       const answers = {};
       for (const q of req.questions ?? []) {
         const a = answer?.[q.id];
-        if (Array.isArray(a)) answers[q.id] = { answers: a.map(String) };
+        if (!Array.isArray(a)) continue;
+        const labels = new Set((q.options ?? []).map((o) => o.label));
+        const ok = a.filter((x) => typeof x === "string" && (q.other || q.secret || !labels.size || labels.has(x)));
+        if (ok.length) answers[q.id] = { answers: ok };
       }
       return { answers };
     }
-    case "elicitation":
-      return elicitationResponse(answer?.action ?? "decline", answer?.content ?? null, answer?._meta);
+    case "elicitation": {
+      const action = answer?.action;
+      if (action !== "accept") return elicitationResponse(action === "cancel" ? "cancel" : "decline");
+      const form = req.form ?? {};
+      if (form.mode === "url") return elicitationResponse("accept", null, answer?._meta);
+      const content = answer?.content;
+      if (!content || typeof content !== "object" || Array.isArray(content)) return elicitationResponse("decline");
+      if (form.mode === "form") {
+        // Every required field present; only fields the form asked for.
+        for (const f of form.fields ?? []) if (f.required && (content[f.name] === undefined || content[f.name] === null || content[f.name] === "")) return elicitationResponse("decline");
+        const names = new Set((form.fields ?? []).map((f) => f.name));
+        const clean = Object.fromEntries(Object.entries(content).filter(([k]) => names.has(k)));
+        return elicitationResponse("accept", clean, answer?._meta);
+      }
+      return elicitationResponse("accept", content, answer?._meta);
+    }
     default: {
       const err = new Error(`agent-daemon does not handle ${req.method}`);
       err.code = -32601;

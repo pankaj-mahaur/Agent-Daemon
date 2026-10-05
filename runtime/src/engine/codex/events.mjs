@@ -76,7 +76,7 @@ export const NOTIFICATION_HANDLERS = {
   "turn/diff/updated": (p) => [base("turn.diff", p, { diff: String(p.diff ?? "") })],
   "turn/plan/updated": (p) => [
     base("turn.plan", p, {
-      steps: (p.plan ?? []).map((s) => ({ step: String(s.step ?? ""), status: s.status ?? "pending" })),
+      steps: (Array.isArray(p.plan) ? p.plan : []).map((s) => ({ step: String(s?.step ?? ""), status: s?.status ?? "pending" })),
       explanation: p.explanation ?? null,
     }),
   ],
@@ -93,7 +93,7 @@ export const NOTIFICATION_HANDLERS = {
   "item/commandExecution/terminalInteraction": (p) => [delta(p, "terminal", p.stdin)],
   "item/fileChange/outputDelta": (p) => [delta(p, "output", p.delta)],
   "item/fileChange/patchUpdated": (p) => [
-    base("item.delta", p, { itemId: p.itemId, kind: "patch", delta: "", changes: (p.changes ?? []).map(fileChange) }),
+    base("item.delta", p, { itemId: p.itemId, kind: "patch", delta: "", changes: (Array.isArray(p.changes) ? p.changes : []).map(fileChange) }),
   ],
   "item/mcpToolCall/progress": (p) => [delta(p, "progress", p.message)],
   "serverRequest/resolved": (p) => [base("request.resolved", p, { requestId: p.requestId })],
@@ -137,7 +137,8 @@ export const NOTIFICATION_HANDLERS = {
   ],
 };
 
-function hookRun(r = {}) {
+function hookRun(run) {
+  const r = run ?? {};
   return {
     id: r.id ?? null,
     event: r.eventName ?? null,
@@ -145,7 +146,7 @@ function hookRun(r = {}) {
     source: r.source ?? "unknown",
     sourcePath: r.sourcePath ?? null,
     durationMs: r.durationMs ?? null,
-    entries: (r.entries ?? []).map((e) => ({ kind: e.kind ?? "text", text: String(e.text ?? "") })),
+    entries: (Array.isArray(r.entries) ? r.entries : []).map((e) => ({ kind: e?.kind ?? "text", text: String(e?.text ?? "") })),
   };
 }
 
@@ -167,13 +168,14 @@ export function adaptNotification(method, params = {}, { debug = false } = {}) {
 
 const KIND_NAMES = { add: "add", delete: "delete", update: "update" };
 
-function fileChange(c = {}) {
+function fileChange(change) {
+  const c = change ?? {};
   const k = c.kind?.type ?? c.kind;
   return { path: c.path ?? "", kind: KIND_NAMES[k] ?? "update", movePath: c.kind?.move_path ?? null, diff: String(c.diff ?? "") };
 }
 
-function userText(content = []) {
-  return content
+function userText(content) {
+  return (Array.isArray(content) ? content : [])
     .map((c) => {
       if (c?.type === "text") return c.text ?? "";
       if (c?.type === "localImage") return `[image ${c.path}]`;
