@@ -6,6 +6,7 @@ import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { hookRows, meters, preflight, sinceLastTime, splitArgs, splitUnifiedDiff } from "../src/tui/main.mjs";
 import { codexArgs, MIRROR_MARKER, MIRRORED_FLAG, runStockCodex, syncSkills } from "../src/harness/codex-ui.mjs";
 import { skillRoots } from "../src/harness/setup.mjs";
@@ -205,4 +206,40 @@ test("syncSkills follows a linked skill folder; setup refreshes the mirror on ev
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("bare ad: help until the TUI is the default (FC3) or AD_TUI=1; then the TUI where it can run, else a reason", async () => {
+  const { bareAdChoice, chatHintOnce, TUI_IS_DEFAULT } = await import("../src/tui/flip.mjs");
+  const tty = { isTTY: true };
+  const ok = { stdin: tty, stdout: tty, platform: "linux", version: "22.17.0" };
+  assert.equal(TUI_IS_DEFAULT, false, "flips only after the user's FC3 sign-off");
+  assert.deepEqual(bareAdChoice({ ...ok, env: {}, isDefault: false }), { tui: false });
+  assert.deepEqual(bareAdChoice({ ...ok, env: { AD_TUI: "1" }, isDefault: false }), { tui: true });
+  assert.deepEqual(bareAdChoice({ ...ok, env: {}, isDefault: true }), { tui: true });
+  assert.deepEqual(bareAdChoice({ ...ok, env: { AD_TUI: "0" }, isDefault: true }), { tui: false });
+  assert.match(bareAdChoice({ ...ok, stdout: {}, env: {}, isDefault: true }).reason, /interactive terminal/);
+  assert.match(bareAdChoice({ ...ok, env: { TERM: "dumb" }, isDefault: true }).reason, /TERM=dumb/);
+  const dir = mkdtempSync(path.join(tmpdir(), "ad-hint-"));
+  try {
+    const file = path.join(dir, "hint");
+    assert.equal(chatHintOnce({ isDefault: false, file }), null);
+    assert.match(chatHintOnce({ isDefault: true, file }), /`ad` alone now opens the terminal UI/);
+    assert.equal(chatHintOnce({ isDefault: true, file }), null, "only once");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the launcher routes tui before the full CLI and passes everything else through", async () => {
+  const { spawnSync } = await import("node:child_process");
+  const cli = fileURLToPath(new URL("../src/cli.mjs", import.meta.url));
+  const run = (args, env = {}) => spawnSync(process.execPath, [cli, ...args], { encoding: "utf8", env: { ...process.env, ...env }, input: "" });
+  assert.match(run(["--version"]).stdout, /^\d+\.\d+\.\d+/);
+  const t = run(["tui"]);
+  assert.equal(t.status, 2);
+  assert.match(t.stderr, /interactive terminal/);
+  const bare = run([], { AD_TUI: "1" });
+  assert.match(bare.stderr, /interactive terminal/, "the reason first");
+  assert.match(bare.stdout, /Usage:/, "then the help");
+  assert.match(run([]).stdout, /Usage:/);
 });

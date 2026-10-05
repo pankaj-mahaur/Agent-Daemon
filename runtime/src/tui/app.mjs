@@ -1110,6 +1110,11 @@ export function createApp({
       commitCell(renderNotice({ level, message: text }, { width: width() }));
       draw();
     },
+    /** Sends a prompt as if typed (ad tui "<prompt>"). */
+    send(text) {
+      dispatch(String(text ?? ""));
+      draw();
+    },
     get state() {
       return { composer: composer.text, modal: modal?.view.kind ?? null, popup: popup?.kind ?? null, overlay, note: note?.text ?? null, committed: committed.size };
     },
