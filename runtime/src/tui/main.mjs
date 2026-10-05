@@ -24,6 +24,7 @@ import { probeWidthProfile, reflowModel, terminalName } from "./terminal/detect.
 import { sanitize } from "./terminal/sanitize.mjs";
 import { createApp } from "./app.mjs";
 import { createHistory } from "./history.mjs";
+import { createAdLayer } from "./ad-layer.mjs";
 import { createPicker, newlineHint, renderHeader } from "./view/chrome.mjs";
 import { truncate } from "./terminal/text.mjs";
 
@@ -378,6 +379,9 @@ export async function cmdTui(opts = {}) {
       if (id) await session.resume(id).catch((e) => intro.push([{ text: `  Could not resume: ${sanitize(e.message, "transcript")}`, style: { fg: "yellow" } }]));
     }
 
+    const ad = createAdLayer({ cwd, home: opts.adHome ?? homedir(), memory: opts.memory === false ? null : await import("../memory/episodic.mjs").catch(() => null), cli: CLI });
+    const overdue = await ad.schedulerWarning().catch(() => null);
+    if (overdue) intro.push(truncate([{ text: `  ${overdue}`, style: { fg: "yellow" } }], Math.max(10, io.size().cols - 2)));
     let focused = true;
     io.onInput((ev) => {
       if (ev.type === "focus") focused = ev.focused;
@@ -396,11 +400,7 @@ export async function cmdTui(opts = {}) {
         const { insertLearning, projectSlug } = await import("../memory/episodic.mjs");
         await insertLearning({ category: "pattern", text, projectSlug: projectSlug(cwd), confidence: 0.9, evidence: "ad tui /remember", tags: ["remember"] });
       },
-      memorySummary: opts.memory === false ? undefined : async () => {
-        const { stats } = await import("../memory/episodic.mjs");
-        const s = await stats();
-        return s.driver ? `ad memory: ${s.counts.learnings} learnings, ${s.counts.sessions} sessions. Codex's own /memories is separate.` : "ad memory isn't set up (ad doctor).";
-      },
+      ad,
       login: async (arg) => {
         const code = await handoff(io, renderer, () => runChild(process.execPath, [CLI, "auth", "login", ...splitArgs(arg || "chatgpt")], { cwd }));
         if (code !== 0) return `Sign-in didn't finish (exit ${code}). Nothing changed.`;

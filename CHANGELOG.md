@@ -62,6 +62,10 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
   - Alt+, and Alt+. change the reasoning effort.
   - Auto-review verdicts show as notices.
   - `/terminal-setup` explains how to set up Shift+Enter.
+- ad's own features in `ad tui`:
+  - `/memory` search, recent, forget and profile; `/private`; "Learned:" rows after a turn; `/proposals`.
+  - `/loop` in the background, with a row per iteration; `/team`, `/schedule`, `/tools`.
+  - A warning when scheduled jobs are overdue.
 - Codex upgrades are safer:
   - `ad doctor` and `/status` show the tested Codex versions and what changed.
   - `/warnings` lists events from a newer Codex that ad doesn't know yet.

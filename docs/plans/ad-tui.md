@@ -1,6 +1,6 @@
 # Plan — `ad`: a Codex-style terminal UI with agent-daemon's powers
 
-> Status: **final v4.10** (2026-10-06; v4 on 2026-10-04 after three review rounds). Changes from here on need a revision-log entry.
+> Status: **final v4.11** (2026-10-06; v4 on 2026-10-04 after three review rounds). Changes from here on need a revision-log entry.
 > Progress: **Part 0** — code done and reviewed twice:
 > - Codex 0.160.0 pinned.
 > - Isolation guard in place (see "Your own Codex is never touched").
@@ -32,8 +32,9 @@
 > - **Part 6** (app shell MVP: `ad tui`, `ad codex`) built (v4.8). **FC3 pending (user).**
 > - **Part 7** (resilience) built (v4.9). **Narrowing-ghost probe runs pending (user).**
 > - **Part 8** (Codex parity++) built (v4.10). **Live checks pending (user).**
+> - **Part 9** (`ad` capabilities) built (v4.11). **FC4 pending (user).**
 >
-> **Next:** Part 9 (`ad` capabilities).
+> **Next:** Part 10 (checkpoints and `/undo`).
 > Research: [Codex TUI + app-server](../research/codex-tui-and-app-server.md) · [terminal engineering](../research/terminal-engineering.md) · [harness landscape](../research/harness-landscape.md).
 
 ## Goal
@@ -908,6 +909,22 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
   - `ad tools` toggles.
   - The `/codex` round trip polished.
 - **Done when:** each feature passes unit and fake-engine tests, a live check, and the user's FC4.
+- ✅ **Built 2026-10-06** (`tui/ad-layer.mjs`; `test/tui-ad.test.mjs`; 10 guards mutation-checked). **FC4 and live checks: pending (user).**
+  - **9a, see what ad knows:**
+    - `/memory` runs `search`, `recent`, `forget <id>`, `profile` and a summary on the episodic store.
+      - `forget` archives the row (status `archived`, never deleted) and validates the id.
+      - Text is sanitized and shortened.
+    - `/private` wraps prompts in `<private>…</private>`, which the extractors already strip, and adds a footer chip.
+    - After each turn, a "Learned:" row reads `learnings` with `session_id` = the thread id and `created_at` since the turn started (each id once).
+    - `/proposals` lists `.agent-daemon/proposed/*.md`; review runs `/ad review`.
+  - **9b, work while you're away:**
+    - `/loop "<objective>"` spawns `ad loop --cwd … -- <objective>` in the background (`AD_WORKER=1`; `ad loop` keeps its own Windows-sandbox check and brakes). Its output goes to `.agent-daemon/loop-tui.log`.
+    - The TUI tails the newest `loops/*.jsonl`: one row per iteration, a `loop N` footer chip, and a row when it ends.
+    - `/loop stop` writes `.agent-daemon/STOP`. A STOP this TUI wrote is removed before the next `/loop`; one the user wrote is respected.
+    - `/team [id]` shows `formatTeamStatus`.
+    - `/schedule` lists jobs, and `/schedule run <id>` hands off to `ad schedule run`. The header warns when an enabled job is more than 5 minutes overdue (the scheduler isn't running).
+  - **9c, never stuck:** `/tools` → `ad tools …`. `/ad doctor` and `/ad sandbox …` go through the `/ad` handoff. The `/codex` round trip is from Part 6.
+  - **Not built:** the team board's needs-input BEL and live peek, which need team state the orchestrator doesn't publish yet. They are in the backlog.
 
 ### Part 10 — Checkpoints and `/undo` (only if S4 passes)
 - **Why Codex removed its ghost-commit undo:** answered in writing first (#3914, #5629, now a legacy no-op).
@@ -1108,3 +1125,7 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
   - **Additions:** `tui/commands.mjs`, `session.fork()` / `rename()`, and `SILENT_NOTIFICATIONS`. Auto-review notifications map to notices; they were ignored before.
   - **Keys:** Alt+, and Alt+. for effort (Alt+[ is a CSI introducer).
   - **Pager:** the Ctrl+T pager lives in the live region instead of an alternate screen.
+- **v4.11** (2026-10-06): Part 9.
+  - **Additions:** `tui/ad-layer.mjs` (`createAdLayer`), which the app reaches through `actions.ad`. `/memory` gains subcommands.
+  - **New commands:** `/private`, `/proposals`, `/loop`, `/team`, `/schedule` and `/tools` (all ad's own).
+  - **Deferred:** the team needs-input BEL and peek.

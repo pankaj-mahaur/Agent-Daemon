@@ -91,7 +91,14 @@ A Codex-style terminal UI on ad's own Codex home. It is new: expect rough edges,
   - **Work:** `/goal`, `/review`, `/diff`, `/init`, `/image`.
   - **Output:** `/copy` (the last answer, to the clipboard), `/raw` (the last answer as plain text).
   - **Inspection:** `/status`, `/usage`, `/mcp`, `/hooks`, `/skills`, `/warnings`.
-  - **ad:** `/remember`, `/memory`, `/codex`, `/ad <command>`.
+  - **ad:**
+    - `/remember`.
+    - `/memory` (`search <words>`, `recent`, `forget <id>`, `profile`).
+    - `/private` wraps your prompts in `<private>`, so ad never learns from them.
+    - `/proposals`.
+    - `/loop "<objective>"` runs `ad loop` in the background with its brakes; one row per iteration. `/loop stop` ends it.
+    - `/team`, `/schedule` (`run <id>`), `/tools`, `/codex`, `/ad <command>`.
+  - **Rows and warnings:** after a turn, a "Learned:" row shows what ad's hooks recorded. If a scheduled job is overdue, the header says the scheduler isn't running.
   - **Help:** `/terminal-setup` (how to make Shift+Enter add a newline in your terminal), `/help`, `/quit`.
 - **`/codex`** opens the stock Codex UI on the same conversation (ad lets go of it meanwhile) and comes back when you quit it.
 - **On exit** ad prints how to continue: `ad tui --resume <id>`.

@@ -46,7 +46,13 @@ export const SLASH_COMMANDS = [
   { name: "init", source: "codex", desc: "create an AGENTS.md for this repo (Codex's prompt)" },
   { name: "warnings", source: "codex", desc: "notices kept from this session, and unknown events" },
   { name: "remember", source: "ad", desc: "save a note to ad's project memory" },
-  { name: "memory", source: "ad", desc: "ad's project memory (not Codex's /memories)" },
+  { name: "memory", source: "ad", desc: "ad's memory: search, recent, forget, profile (not Codex's /memories)" },
+  { name: "private", source: "ad", desc: "toggle: prompts are wrapped in <private> (ad never learns from them)" },
+  { name: "proposals", source: "ad", desc: "skill changes ad proposes (review with /ad review)" },
+  { name: "loop", source: "ad", desc: "work toward an objective in the background (/loop stop)" },
+  { name: "team", source: "ad", desc: "the team board" },
+  { name: "schedule", source: "ad", desc: "scheduled jobs (/schedule run <id>)" },
+  { name: "tools", source: "ad", desc: "optional agent tools (/tools enable browser)" },
   { name: "login", source: "ad", desc: "sign in (ChatGPT, OpenAI key, OpenRouter)" },
   { name: "logout", source: "codex", desc: "sign out of Codex in ad's home" },
   { name: "codex", source: "ad", desc: "open the stock Codex UI on this conversation" },
@@ -125,6 +131,9 @@ export function createApp({
   let lastEsc = -Infinity;
   let attachments = []; // image paths for the next prompt
   let pager = null; // {lines, top} while Ctrl+T shows the transcript
+  let privateMode = false; // prompts wrapped in <private>…</private>
+  const learnedShown = new Set(); // learning ids already shown as a row
+  let loopWasRunning = false;
   let turnStartedAt = null; // the running turn's start (for "Worked for")
   const turnStarts = new Map(); // turnId → when this app first saw it running
   let drawTimer = null;
@@ -237,6 +246,7 @@ export function createApp({
       if (turnsSeen.get(t.id) === t.status) continue;
       turnsSeen.set(t.id, t.status);
       actions.bell?.({ unfocusedOnly: true });
+      showLearned(turnStarts.get(t.id) ?? turnStartedAt);
       if (t.status === "failed" && t.error) commitCell(renderNotice({ level: "error", message: `The turn failed: ${t.error.message ?? "unknown error"}` }, { width: width() }));
       else if (t.status === "interrupted") commitCell(renderNotice({ level: "warn", message: "Interrupted. Tell Codex what to do differently." }, { width: width() }));
       const started = turnStarts.get(t.id) ?? turnStartedAt;
@@ -250,6 +260,35 @@ export function createApp({
         turnStartedAt = null;
       }
     }
+  }
+
+  // "Learned:" rows for what ad's hooks recorded during the turn (keyed by thread id).
+  function showLearned(since) {
+    const ad = actions.ad;
+    if (!ad?.learnedSince || !st.thread || since == null) return;
+    const iso = new Date(since - 1000).toISOString().replace("T", " ").slice(0, 19);
+    Promise.resolve(ad.learnedSince(st.thread.id, iso))
+      .then((rows) => {
+        for (const r of rows ?? []) {
+          if (learnedShown.has(r.id)) continue;
+          learnedShown.add(r.id);
+          commitCell(renderAdRow("learned", r.text, { width: width() }));
+        }
+        if (rows?.length) drawSoon();
+      })
+      .catch(() => {});
+  }
+
+  // Background loop: one ad row per iteration, and one when it ends.
+  function pollLoop() {
+    const loop = actions.ad?.loop;
+    if (!loop) return;
+    for (const r of loop.poll()) {
+      commitCell(renderAdRow("loop", `iteration ${r.iteration} ${r.turnStatus}${r.progress ? ` \u{b7} ${r.progress}` : ""}`, { width: width() }));
+    }
+    const state = loop.state;
+    if (loopWasRunning && !state.running) commitCell(renderAdRow("loop", `finished after ${state.iterations} iteration${state.iterations === 1 ? "" : "s"} (exit ${state.exit})`, { width: width() }));
+    loopWasRunning = state.running;
   }
 
   function reportNotices() {
@@ -342,7 +381,11 @@ export function createApp({
   function footer() {
     const running = turnActive();
     const hints = running ? ["enter steer", "tab queue", `${newline} newline`] : ["? shortcuts", "@ files", `${newline} newline`];
-    return renderFooter({ hints, chips: chips(), meters: meters(st) }, { width: width() });
+    const own = [];
+    if (privateMode) own.push({ full: "private", short: "P" });
+    const loop = actions.ad?.loop?.state;
+    if (loop?.running) own.push({ full: `loop ${loop.iterations}`, short: `L${loop.iterations}` });
+    return renderFooter({ hints, chips: [...chips(), ...own], meters: meters(st) }, { width: width() });
   }
 
   function draw() {
@@ -597,9 +640,44 @@ export function createApp({
         if (!arg) return warn("/remember <what to remember>");
         if (!actions.remember) return warn("Memory isn't available here.");
         return Promise.resolve(actions.remember(arg)).then(() => commitCell(renderAdRow("learned", arg, { width: width() })), fail);
-      case "memory":
-        if (!actions.memorySummary) return warn("Memory isn't available here.");
-        return Promise.resolve(actions.memorySummary()).then((t) => info0(t), fail);
+      case "memory": {
+        if (!actions.ad?.memory) return warn("Memory isn't available here.");
+        const [sub, ...rest] = arg.split(/\s+/);
+        return Promise.resolve(actions.ad.memory(sub ?? "", rest.join(" "))).then((lines) => commitCell(lines.map((l) => truncate([{ text: clean(l), style: DIM }], width()))), fail);
+      }
+      case "private":
+        privateMode = !privateMode;
+        return info0(privateMode ? "Private: your prompts are wrapped in <private>, so ad never learns from them. /private again turns it off." : "Private is off.");
+      case "proposals":
+        if (!actions.ad?.proposals) return warn("Proposals aren't available here.");
+        return commitCell(actions.ad.proposals().map((l) => truncate([{ text: clean(l) }], width())));
+      case "loop": {
+        const loop = actions.ad?.loop;
+        if (!loop) return warn("Loops aren't available here.");
+        if (!arg) {
+          const s = loop.state;
+          return info0(s.running ? `A loop is running: iteration ${s.iterations}${s.last?.progress ? ` (${s.last.progress})` : ""}. /loop stop ends it after this turn.` : '/loop "<objective>" works toward it in the background, with ad loop\'s brakes.');
+        }
+        if (arg === "stop") {
+          const r = loop.stop();
+          return r.error ? warn(r.error) : info0("Stopping the loop after its current turn.");
+        }
+        const r = loop.start(arg.replace(/^"(.*)"$/s, "$1"));
+        if (r.error) return warn(r.error);
+        loopWasRunning = true;
+        return commitCell(renderAdRow("loop", `started: ${arg}`, { width: width() }));
+      }
+      case "team":
+        if (!actions.ad?.team) return warn("Teams aren't available here.");
+        return Promise.resolve(actions.ad.team(arg || null)).then((lines) => commitCell(lines.map((l) => truncate([{ text: clean(l) }], width()))), fail);
+      case "schedule": {
+        if (!actions.ad?.schedules) return warn("Schedules aren't available here.");
+        const m = /^run\s+(\S+)$/.exec(arg);
+        if (m) return slash("ad", `schedule run ${m[1]}`);
+        return Promise.resolve(actions.ad.schedules()).then((lines) => commitCell(lines.map((l) => truncate([{ text: clean(l) }], width()))), fail);
+      }
+      case "tools":
+        return slash("ad", `tools ${arg || "list"}`);
       case "login":
       case "codex":
       case "ad": {
@@ -743,6 +821,7 @@ export function createApp({
     try {
       const images = attachments;
       attachments = [];
+      if (privateMode && !shown) text = `<private>${text}</private>`;
       const r = session.submit(images.length ? [{ type: "text", text }, ...images.map((p) => ({ type: "localImage", path: p }))] : text);
       if (shown) {
         echoesShown.add(r.clientUserMessageId);
@@ -963,7 +1042,8 @@ export function createApp({
   const offInput = io.onInput(onInput);
   const offResize = renderer.onResize?.(() => draw()) ?? (() => {});
   ticker = setI(() => {
-    if (turnActive() || modal) draw();
+    pollLoop();
+    if (turnActive() || modal || loopWasRunning) draw();
   }, 1000);
   ticker.unref?.();
 

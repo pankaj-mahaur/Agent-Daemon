@@ -91,7 +91,8 @@ test("a late kitty reply (after DA1, as under ConPTY) still upgrades and turns m
   const caps = await io.enter();
   assert.equal(caps.kitty, false);
   assert.equal(caps.modifyOtherKeys, true);
-  await tick(30);
+  // Wait for the late reply (a fixed sleep was flaky under a loaded test run).
+  for (let i = 0; i < 100 && !caps.kitty; i++) await tick(10);
   assert.equal(caps.kitty, true);
   assert.equal(caps.modifyOtherKeys, false);
   assert.ok(t.written.includes("\x1b[>4;0m"));
