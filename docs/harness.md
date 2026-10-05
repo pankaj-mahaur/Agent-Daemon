@@ -63,6 +63,23 @@ When the agent wants to run something outside its sandbox or edit outside the wo
 | `/status` | login, model, folder, thread |
 | `/exit` | quit |
 
+### `ad tui --preview`: the coming terminal UI (preview)
+
+```bash
+ad tui --preview                 # in the current folder
+```
+
+This is an early preview of the Codex-style terminal UI. History stays in your terminal's own scrollback, so scrolling, selecting and copying work as usual. Only the bottom few lines (the composer and the footer) are redrawn.
+- **Keys:**
+  - Enter sends.
+  - The newline key depends on the terminal: Shift+Enter in Zed, Ctrl+Enter in Windows Terminal, Ctrl+J anywhere.
+  - Esc interrupts a running turn. Ctrl+C clears the composer, and quits when the composer is empty.
+- **Approvals:** answer them with `y`, `a` (always, this session) or `n` / Esc. Pastes and other keys never answer an approval.
+- **Commands:** the in-chat commands above work too.
+- **Requirements:** an interactive terminal, and on Windows Node 22.17+ or 24.2+. Otherwise use `ad chat`.
+
+To try the terminal layer on its own, with no engine and no login, run `node runtime/scripts/tui-demo.mjs`.
+
 ### `ad run`: one turn, no questions
 
 ```bash

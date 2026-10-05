@@ -35,6 +35,50 @@ async function waitFor(fn, what, ms = 15000) {
   throw new Error(`timed out waiting for ${what}`);
 }
 
+test("ad tui --preview in a real pty, on the fake engine: turn, approval, quit", { skip: !pty && "node-pty unavailable", timeout: 60000 }, async () => {
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const root = mkdtempSync(path.join(tmpdir(), "ad-tui-pty-"));
+  const term = new xtermHeadless.Terminal({ cols: 80, rows: 24, scrollback: 500, allowProposedApi: true });
+  const env = { ...process.env, TERM: "xterm-256color" };
+  delete env.WT_SESSION;
+  delete env.TERM_PROGRAM;
+  delete env.CODEX_HOME;
+  const script = path.join(here, "..", "testkit", "tui-preview-fake.mjs");
+  const child = pty.spawn(process.execPath, [script, path.join(root, "home"), root], { cols: 80, rows: 24, cwd: root, env, name: "xterm-256color" });
+  let raw = "";
+  let exit = null;
+  child.onData((d) => {
+    raw += d;
+    term.write(d);
+  });
+  child.onExit((e) => {
+    exit = e;
+  });
+  term.onData((d) => child.write(d));
+  try {
+    await waitFor(() => screenText(term).includes("Ask ad to do anything"), "the composer");
+    assert.match(screenText(term), /terminal UI preview/);
+    child.write("hello\r");
+    await waitFor(() => screenText(term).includes("Run command?"), "the approval prompt");
+    await new Promise((r) => setTimeout(r, 500)); // prompts take an answer only after 400 ms
+    child.write("y");
+    await waitFor(() => screenText(term).includes("[accept]"), "the approved turn to finish");
+    child.write("\x03");
+    await waitFor(() => exit !== null, "ad tui to exit", 15000);
+    assert.equal(exit.exitCode, 0);
+    assert.ok(raw.includes("\x1b[?2004l"), "terminal restored");
+  } finally {
+    try {
+      child.kill();
+    } catch {
+      // Already gone.
+    }
+    term.dispose();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("demo in a real pty: type, send, resize, quit, restored", { skip: !pty && "node-pty unavailable", timeout: 60000 }, async () => {
   const term = new xtermHeadless.Terminal({ cols: 70, rows: 20, scrollback: 500, allowProposedApi: true });
   const env = { ...process.env, TERM: "xterm-256color" };

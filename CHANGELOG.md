@@ -33,6 +33,7 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
   - **Terminal session:** raw mode and capability negotiation, a restore on every exit path (signals, crashes), handing the terminal to a child program, and Ctrl+Z on Linux/macOS.
   - **Inline renderer:** history goes into your terminal's own scrollback (scroll, select and copy as usual), and only the bottom few lines are redrawn. Resizing re-anchors without erasing history. Terminal detection covers Windows Terminal, Zed, VS Code and others.
   - `node runtime/scripts/tui-demo.mjs`: try the terminal layer on its own, with no engine.
+- `ad tui --preview`: an early preview of the terminal UI on the real engine. Answers stream into your scrollback; approve with y / a / n; Esc interrupts; Ctrl+C quits.
   - **Tests:** golden-file tests (`AD_UPDATE_GOLDEN=1` rewrites them).
 - Skills:
   - `big-feature-flow` (installed by default): research how others built it → plan in parts → adversarial review rounds until final → spikes → a per-part implement/test/review loop.

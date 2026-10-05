@@ -101,6 +101,8 @@ Commands:
 Harness (Codex engine):
   chat                   Interactive agent session (approve commands/edits as they come; /help inside)
                          --cwd <dir>  --model <name>  --sandbox <mode>  --resume <thread-id>
+  tui --preview          Preview of the coming terminal UI (Codex-style, inline): stream, approve, Esc interrupts
+                         --cwd <dir>  --model <name>  --sandbox <mode>
   loop "<objective>"     Autonomous loop until done (dual exit, circuit breaker, budgets, STOP file)
                          --max-iterations 20  --max-minutes 60  --max-tokens <n>  --resume <thread-id>
   run "<prompt>"         One non-interactive agent turn (approvals are declined)
@@ -2174,6 +2176,7 @@ async function main(argv) {
         resume:       { type: "string" },
         llm:          { type: "string" },
         elevated:     { type: "boolean" },
+        preview:      { type: "boolean" },
         engine:       { type: "string" },
         "max-iterations": { type: "string" },
         "max-minutes":    { type: "string" },
@@ -2305,6 +2308,19 @@ async function main(argv) {
         elevated: parsed.values.elevated || false,
         force: parsed.values.force || false,
         cwd: parsed.values.cwd || process.cwd(),
+        clientVersion: VERSION
+      });
+    }
+    case "tui": {
+      if (!parsed.values.preview) {
+        process.stderr.write("The terminal UI is being built. Try the walking skeleton: ad tui --preview   (or ad chat)\n");
+        return 2;
+      }
+      const { cmdTuiPreview } = await import("./tui/preview.mjs");
+      return cmdTuiPreview({
+        cwd: parsed.values.cwd || process.cwd(),
+        model: parsed.values.model,
+        sandbox: parsed.values.sandbox,
         clientVersion: VERSION
       });
     }

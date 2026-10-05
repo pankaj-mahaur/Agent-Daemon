@@ -60,6 +60,8 @@ const right = (n) => (n > 0 ? `${CSI}${n}C` : "");
 
 export const RESIZE_QUIET_MS = 75;
 export const COMMIT_BATCH_MS = 150;
+// Writes this recent may still be on their way when a resize happens.
+export const RECENT_WRITE_MS = 250;
 
 export function createRenderer({
   io,
@@ -87,9 +89,18 @@ export function createRenderer({
   // generation changed after its CPR await writes nothing: its geometry is stale.
   let generation = 0;
   const resizeListeners = new Set();
+  let lastLiveWrite = -Infinity; // when the live region was last written
+  let recentWriteAtResize = false; // this resize pause began right after a write
+  let reanchoring = false; // a re-anchor is waiting for CPR
+  let missedResize = false; // a resize came while suspended or starting
+  let disposed = false;
 
   const size = () => io.size();
   const wrapSync = (s) => (caps.sync ? SYNC_ON + s + SYNC_OFF : s);
+  const send = (out) => {
+    io.write(wrapSync(out));
+    lastLiveWrite = now();
+  };
 
   function toLine(line) {
     return typeof line === "string" ? [{ text: line }] : line;
@@ -168,7 +179,7 @@ export function createRenderer({
       if (strings.length < prev.length) out += `${RESET}${CSI}J`;
     }
     out += park(at, strings.length ? row : 0, col, cols) + AUTOWRAP_ON;
-    io.write(wrapSync(out));
+    send(out);
     prev = strings;
     prevMinWidths = widths;
     cursorRow = strings.length ? row : 0;
@@ -181,7 +192,7 @@ export function createRenderer({
     let out = toTop() + AUTOWRAP_OFF;
     for (const s of strings) out += s + EOL + "\r\n";
     out += fullLive(cols) + AUTOWRAP_ON;
-    io.write(wrapSync(out));
+    send(out);
     lastCommitAt = now();
   }
 
@@ -198,12 +209,16 @@ export function createRenderer({
    * Rows between the live top and the cursor after a resize to `newCols`. A
    * LOWER bound: everything from the live top down is erased, so counting one
    * row too many erases a history row, while one too few only leaves a ghost
-   * row (accepted). Live rows above the cursor re-wrap on a reflowing terminal
-   * (counted from a minimum of what was drawn); the cursor's own row doesn't
-   * (xterm.js keeps the cursor on its row and clamps the column).
+   * row (accepted).
+   *   - Live rows above the cursor re-wrap on a reflowing terminal, counted
+   *     from a minimum of what was drawn. The cursor's own row doesn't
+   *     (xterm.js keeps the cursor on its row and clamps the column).
+   *   - Rows written just before the resize may have reached the terminal
+   *     after it, drawn at the new width (one row each, autowrap off): then
+   *     nothing is assumed to have re-wrapped.
    */
   function rowsAboveCursor(newCols, kind) {
-    if (kind !== "resize" || reflow !== "reflow") return cursorRow;
+    if (kind !== "resize" || reflow !== "reflow" || recentWriteAtResize) return cursorRow;
     let p = 0;
     for (let i = 0; i < cursorRow; i++) p += Math.max(1, Math.ceil((prevMinWidths[i] ?? 0) / newCols));
     return p;
@@ -214,9 +229,15 @@ export function createRenderer({
     paused = true;
     // (Never called while suspended: suspend() cancels a pending resize and
     // redraw() returns while paused. A CPR query then would reach the child.)
-    const pos = await io.cpr();
-    // A newer resize, redraw or suspend happened meanwhile: this geometry is stale.
-    if (mine !== generation || suspended) return false;
+    reanchoring = true;
+    let pos;
+    try {
+      pos = await io.cpr();
+    } finally {
+      if (mine === generation) reanchoring = false;
+    }
+    // A newer resize, redraw, suspend or dispose happened meanwhile: this geometry is stale.
+    if (mine !== generation || suspended || disposed) return false;
     const { cols } = size();
     const p = rowsAboveCursor(cols, kind);
     let out;
@@ -235,8 +256,9 @@ export function createRenderer({
     out += AUTOWRAP_OFF;
     for (const s of renderRows(history, cols).strings) out += s + EOL + "\r\n";
     out += fullLive(cols) + AUTOWRAP_ON;
-    io.write(wrapSync(out));
+    send(out);
     if (history.length) lastCommitAt = now();
+    recentWriteAtResize = false;
     // A resize arriving during the await would have made this run stale, so
     // nothing else is pending here.
     paused = false;
@@ -244,7 +266,14 @@ export function createRenderer({
   }
 
   function onResizeSignal() {
-    if (!started || suspended) return;
+    if (disposed) return;
+    if (!started || suspended) {
+      missedResize = true; // re-layout once the UI is back
+      return;
+    }
+    // Was anything written so recently that it may reach the terminal after
+    // this resize? Then the reflow estimate can't be trusted for this pause.
+    if (now() - lastLiveWrite < RECENT_WRITE_MS) recentWriteAtResize = true;
     generation++; // a re-anchor waiting for CPR now has stale geometry
     paused = true;
     if (resizeTimer) clearT(resizeTimer);
@@ -255,9 +284,36 @@ export function createRenderer({
   }
   resizeSource?.on?.("resize", onResizeSignal);
 
+  // Erases the live region and writes the history still queued, from wherever
+  // the live region is now (a pending resize may have re-wrapped it). Used when
+  // the terminal is handed over (suspend) or the UI goes away (dispose).
+  function eraseLive() {
+    const { cols } = size();
+    const resizePending = resizeTimer !== null || reanchoring;
+    const p = resizePending ? rowsAboveCursor(cols, "resize") : cursorRow;
+    const history = queued;
+    queued = [];
+    // Erase first: a re-wrapped row keeps its wrap flag, and history written
+    // onto it would be glued to the ghost on the next widening.
+    let out = "\r" + up(p) + AUTOWRAP_OFF + `${RESET}${CSI}J`;
+    for (const s of renderRows(history, cols).strings) out += s + EOL + "\r\n";
+    out += `${RESET}${CSI}J` + AUTOWRAP_ON;
+    send(out);
+    prev = [];
+    prevMinWidths = [];
+    cursorRow = 0;
+  }
+
+  function cancelTimers() {
+    if (commitTimer) clearT(commitTimer);
+    commitTimer = null;
+    if (resizeTimer) clearT(resizeTimer);
+    resizeTimer = null;
+  }
+
   return {
     async start() {
-      if (started) return;
+      if (started || disposed) return;
       const pos = await io.cpr();
       // Not at column 1 (a prompt without a newline): start on a fresh row.
       if (pos && pos.col !== 1) io.write(RESET + "\r\n");
@@ -268,14 +324,19 @@ export function createRenderer({
       queued = [];
       if (history.length) doCommit(history);
       else if (current.lines.length) drawFrame();
+      if (missedResize) {
+        missedResize = false;
+        for (const fn of resizeListeners) fn(size());
+      }
     },
     frame({ lines = [], cursor } = {}) {
+      if (disposed) return;
       current = { lines, cursor: cursor ?? { row: Math.max(0, lines.length - 1), col: 0 } };
       if (!started || paused) return;
       drawFrame();
     },
     commit(lines) {
-      if (!lines?.length) return;
+      if (!lines?.length || disposed) return;
       queued.push(...lines);
       if (!started || paused) return;
       const wait = caps.sync ? 0 : lastCommitAt + COMMIT_BATCH_MS - now();
@@ -283,48 +344,43 @@ export function createRenderer({
       else if (!commitTimer) commitTimer = setT(flushCommits, wait);
     },
     suspend() {
-      if (!started || suspended) return;
+      if (!started || suspended || disposed) return;
       generation++; // cancels a re-anchor waiting for CPR
-      if (commitTimer) clearT(commitTimer);
-      commitTimer = null;
-      if (resizeTimer) clearT(resizeTimer);
-      resizeTimer = null;
       // Commits still waiting go out now, so they land above the child's output.
-      const history = queued;
-      queued = [];
-      const { cols } = size();
-      let out = toTop() + AUTOWRAP_OFF;
-      for (const s of renderRows(history, cols).strings) out += s + EOL + "\r\n";
-      out += `${RESET}${CSI}J` + AUTOWRAP_ON;
-      io.write(wrapSync(out));
+      eraseLive();
+      cancelTimers();
+      reanchoring = false;
       suspended = true;
       paused = true;
-      prev = [];
-      cursorRow = 0;
     },
     async resume() {
-      if (!suspended) return;
+      if (!suspended || disposed) return;
       suspended = false;
       paused = false;
       started = false;
+      recentWriteAtResize = false;
       await this.start();
       if (!prev.length && current.lines.length) drawFrame();
     },
     async redraw() {
-      if (!started || paused) return; // a resize re-anchors anyway
+      if (!started || paused || disposed) return; // a resize re-anchors anyway
       await reanchor("redraw");
     },
     onResize(fn) {
       resizeListeners.add(fn);
       return () => resizeListeners.delete(fn);
     },
+    /** Writes queued history, erases the live region, and stops for good. */
     dispose() {
+      if (disposed) return;
+      // (A re-anchor waiting for CPR sees `disposed` afterwards and writes nothing.)
       resizeSource?.off?.("resize", onResizeSignal);
-      if (commitTimer) clearT(commitTimer);
-      if (resizeTimer) clearT(resizeTimer);
+      if (started && !suspended) eraseLive();
+      cancelTimers();
+      disposed = true;
     },
     get state() {
-      return { started, paused, suspended, rows: prev.length, cursorRow, queued: queued.length };
+      return { started, paused, suspended, disposed, rows: prev.length, cursorRow, queued: queued.length };
     },
   };
 }

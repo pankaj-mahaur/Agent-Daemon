@@ -102,6 +102,7 @@ for (const [name, make, reflow] of SCREENS) {
     r.commit(["short history"]);
     r.frame({ lines: ["a".repeat(35), "b".repeat(35), "> type here"], cursor: { row: 2, col: 11 } });
     await scr.settle();
+    await wait(300); // the frame is long on screen before the user resizes
     let resized = 0;
     r.onResize(() => resized++);
     scr.resize(20, 10);
@@ -314,6 +315,7 @@ for (const [name, make, reflow] of SCREENS) {
     r.commit(["hist"]);
     r.frame({ lines: ["a".repeat(35), "> z"], cursor: { row: 1, col: 3 } });
     await scr.settle();
+    await wait(300);
     const p = r.redraw();
     scr.resize(20, 10);
     await p;
@@ -322,6 +324,98 @@ for (const [name, make, reflow] of SCREENS) {
     r.frame({ lines: ["a".repeat(15), "> z"], cursor: { row: 1, col: 3 } });
     await scr.settle();
     assert.deepEqual(scr.visible(), ["$ ad", "hist", "a".repeat(15), "> z"]);
+  });
+}
+
+/* Re-review 1c: H1, M1, M2, L1–L3 */
+
+for (const [name, make, reflow] of SCREENS) {
+  test(`${name}: a frame still on its way when the window narrows doesn't erase history`, async () => {
+    const { scr, r } = await setup(make, reflow);
+    r.commit(["hist 1", "hist 2"]);
+    await scr.settle();
+    await wait(300);
+    r.frame({ lines: ["a".repeat(39), "b".repeat(39), "> z"], cursor: { row: 2, col: 3 } });
+    scr.resize(20, 10); // before the frame has settled
+    await wait(250);
+    await scr.settle();
+    const lines = scr.lines();
+    for (const h of ["$ ad", "hist 1", "hist 2"]) assert.ok(lines.includes(h), `${h} kept: ${JSON.stringify(lines)}`);
+    assert.equal(lines.at(-1), "> z");
+  });
+
+  test(`${name}: suspend inside the resize window: queued history lands cleanly above the child`, async () => {
+    const { scr, r } = await setup(make, reflow);
+    r.commit(["hist"]);
+    r.frame({ lines: ["a".repeat(39), "> z"], cursor: { row: 1, col: 3 } });
+    await scr.settle();
+    await wait(300);
+    scr.resize(20, 10);
+    r.commit(["NEW"]);
+    r.suspend();
+    scr.feed("child\r\n");
+    await r.resume();
+    r.frame({ lines: ["> z"] });
+    await scr.settle();
+    scr.resize(40, 10);
+    await wait(150);
+    await scr.settle();
+    // No ghost of the re-wrapped live region, NEW on its own line, then the child.
+    assert.deepEqual(scr.lines(), ["$ ad", "hist", "NEW", "child", "> z"]);
+  });
+
+  test(`${name}: dispose writes batched history and erases the live region`, async () => {
+    const scr = make({ cols: 40, rows: 10, sync: false });
+    const r = createRenderer({ io: scr.io, reflow });
+    scr.feed("$ ad\r\n");
+    await scr.settle();
+    await r.start();
+    r.frame({ lines: ["> composer", "footer"] });
+    r.commit(["answer part 1"]);
+    r.commit(["answer part 2"]); // waits for the 150 ms batch
+    r.dispose();
+    scr.feed("$ next shell prompt");
+    await scr.settle();
+    assert.deepEqual(scr.lines(), ["$ ad", "answer part 1", "answer part 2", "$ next shell prompt"]);
+    assert.equal(r.state.queued, 0);
+  });
+
+  test(`${name}: dispose inside the resize window still erases the live region`, async () => {
+    const { scr, r } = await setup(make, reflow);
+    r.frame({ lines: ["> c", "footer"] });
+    await scr.settle();
+    scr.resize(36, 10);
+    r.dispose();
+    scr.feed("$ shell prompt");
+    await wait(150);
+    await scr.settle();
+    assert.deepEqual(scr.lines(), ["$ ad", "$ shell prompt"]);
+  });
+
+  test(`${name}: a redraw waiting for CPR writes nothing after dispose`, async () => {
+    const { scr, r } = await setup(make, reflow, { cprDelayMs: 50 });
+    r.frame({ lines: ["> c"] });
+    await scr.settle();
+    const p = r.redraw();
+    r.dispose();
+    const i = scr.writes.length;
+    await p;
+    await wait(20);
+    assert.deepEqual(scr.writes.slice(i).filter((w) => !w.includes("\x1b[6n")), []);
+  });
+
+  test(`${name}: a resize while suspended re-lays out after resume`, async () => {
+    const { scr, r } = await setup(make, reflow);
+    r.frame({ lines: ["> c"] });
+    await scr.settle();
+    let resized = 0;
+    r.onResize(() => resized++);
+    r.suspend();
+    scr.resize(30, 10);
+    await wait(120);
+    assert.equal(resized, 0, "not while the child owns the terminal");
+    await r.resume();
+    assert.equal(resized, 1, "once the UI is back");
   });
 }
 
@@ -479,10 +573,11 @@ async function randomSession(make, reflow, seed, exact) {
   }
   await new Promise((res) => setTimeout(res, 100));
   await scr.settle();
-  r.dispose();
   const live = frame.slice(-Math.max(1, rows - 1)).map((l) => cut(l, cols));
   while (live.length && live.at(-1) === "") live.pop();
-  return { lines: scr.lines(), visible: scr.visible(), history, live, cols, rows, narrowed };
+  const result = { lines: scr.lines(), visible: scr.visible(), history, live, cols, rows, narrowed };
+  r.dispose();
+  return result;
 }
 
 for (const [name, make, reflow] of SCREENS) {

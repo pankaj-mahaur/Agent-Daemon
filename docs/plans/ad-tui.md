@@ -22,7 +22,10 @@
 >
 > - **Part 1c** (inline renderer) built, reviewed, and checked live by the user in Windows Terminal and Zed (v4.4). **Part 1 is done.**
 >
-> **Next:** Part 2 (walking skeleton, `ad tui --preview`).
+> - **Part 2** (`ad tui --preview`) built and reviewed. **FC1 pending (user):** live use in Windows Terminal and Zed.
+> - From 2026-10-06 the plan is being worked solo (user instruction). Items that need the user are marked **pending (user)** and don't block later parts.
+>
+> **Next:** Part 3 (engine events).
 > Research: [Codex TUI + app-server](../research/codex-tui-and-app-server.md) · [terminal engineering](../research/terminal-engineering.md) · [harness landscape](../research/harness-landscape.md).
 
 ## Goal
@@ -492,12 +495,27 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
       - Shrinking the height, or a reflow that pushes live rows above the viewport, moves them into scrollback as ghost rows. History is never erased.
       - Measured on xterm.js: when the live region sits at the bottom of the screen and the window narrows, rows below the cursor wrap and scroll the content, but the cursor keeps its screen row. The cursor then lands on a later row of the live region, and the lower-bound re-anchor leaves those rows above as ghost rows in the visible screen until they scroll away. Fixing this needs the live region's screen position tracked across writes, and measurements from Windows Terminal and Zed; that is Part 7.
     - **Cursor:** never styled or made to blink by ad. It follows the terminal's settings (user, 2026-10-06), and an idle screen never redraws.
+    - **Re-review fixes** (1 high, 2 medium, 3 low):
+      - **Writes in flight:** live rows written less than 250 ms before a resize may reach the terminal after it, so the reflow estimate is skipped for that pause.
+      - **Suspend during a resize:** `suspend()` inside a pending resize erases from the reflowed live top, before writing queued history.
+      - **Dispose:** `dispose()` writes batched history, erases the live region, and makes a pending re-anchor write nothing.
+      - **Missed resize:** a resize that came while suspended re-lays out after `resume()`.
 
 ### Part 2 — Walking skeleton (`ad tui --preview`)
 - Built on the Part 1 renderer, a plain multi-line composer (no popups), and the existing `engine.turn()` (called with `timeoutMs: 0`; the 600 s default would interrupt long turns) / `onApproval`.
 - It streams plain text and handles approvals with y/a/n, Esc (interrupt), and Ctrl+C quit with restore.
 - Throwaway glue; the renderer and io are kept.
 - **Done when:** a real turn with an approval works live on Windows Terminal and VS Code → **FC1**.
+- ✅ **Built 2026-10-06** (`src/tui/preview.mjs`, `ad tui --preview`):
+  - It reuses `createChatSession` from `ad chat`. The engine runs `detached` on POSIX. The boxed header is sanitized and cut to fit.
+  - **Tests:** fake-engine tests on a test screen cover streaming, approvals, Esc, Ctrl+C, paste and the composer. A ConPTY smoke runs the real `cmdTuiPreview` on the fake engine (`testkit/tui-preview-fake.mjs`).
+  - **Review fixes** (1 high, 3 medium):
+    - **Arming:** an approval prompt takes y/a only 400 ms after it appears, so type-ahead, a double tap or a held key can't answer it, and only an exact single character counts. Declining (n, Esc, Ctrl+C) works at once.
+    - **Open prompts:** a prompt still open when the turn ends or the engine stops is declined and cleared.
+    - **Quit:** a second Ctrl+C within 1.5 s quits even if a turn won't stop.
+    - **Streaming:** the live region wraps only the tail of an unfinished line, and redraws from output are coalesced to about 30 fps.
+    - **History:** shows the whole approved request.
+  - **Pending (user): FC1.** Run a real turn with an approval live in Windows Terminal and Zed, then use it for a day or two (flicker, scrollback, copy, resize, paste). VS Code is secondary.
 
 ### Part 3 — Engine events
 - **3a. Adapter + exhaustiveness** (`engine/codex/events.mjs`, `surface.mjs`)
