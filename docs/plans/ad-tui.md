@@ -1,6 +1,6 @@
 # Plan — `ad`: a Codex-style terminal UI with agent-daemon's powers
 
-> Status: **final v4.9** (2026-10-06; v4 on 2026-10-04 after three review rounds). Changes from here on need a revision-log entry.
+> Status: **final v4.10** (2026-10-06; v4 on 2026-10-04 after three review rounds). Changes from here on need a revision-log entry.
 > Progress: **Part 0** — code done and reviewed twice:
 > - Codex 0.160.0 pinned.
 > - Isolation guard in place (see "Your own Codex is never touched").
@@ -31,8 +31,9 @@
 > - **Part 5** (view components) built (v4.7). **FC2 pending (user).**
 > - **Part 6** (app shell MVP: `ad tui`, `ad codex`) built (v4.8). **FC3 pending (user).**
 > - **Part 7** (resilience) built (v4.9). **Narrowing-ghost probe runs pending (user).**
+> - **Part 8** (Codex parity++) built (v4.10). **Live checks pending (user).**
 >
-> **Next:** Part 8 (Codex parity++).
+> **Next:** Part 9 (`ad` capabilities).
 > Research: [Codex TUI + app-server](../research/codex-tui-and-app-server.md) · [terminal engineering](../research/terminal-engineering.md) · [harness landscape](../research/harness-landscape.md).
 
 ## Goal
@@ -874,6 +875,23 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
 - **Auto-review:** `item/autoApprovalReview/*`, `guardianWarning`, `thread/approveGuardianDeniedAction`.
 - **Windows Terminal setup:** a print-only `/terminal-setup` (`sendInput` binding for `CSI 13;2u`, with a tip that Windows Terminal 1.25 fixes Shift+Enter).
 - **Done when:** each command has unit and golden tests and a live check.
+- ✅ **Built 2026-10-06** (`tui/commands.mjs`, app keys and commands; `test/tui-parity.test.mjs`, goldens `parity-*.txt`). **Live checks: pending (user)**, with FC3.
+  - **Esc Esc:** on an empty prompt, while idle and on a durable thread, Esc Esc opens a "Rewind to" picker of earlier prompts.
+    - It runs `thread/revert` and puts the prompt back in the composer, saying files weren't changed (`/undo` is Part 10).
+    - The first Esc hints at the second.
+  - **Ctrl+T:** the transcript pager pages every item of the thread inside the live region (no alternate screen).
+  - **Copy and export:**
+    - `/copy` writes OSC 52 and runs the platform's tool (clip.exe with UTF-16LE and a BOM, pbcopy, wl-copy, xclip, xsel).
+    - `/raw` prints the last answer as plain lines.
+    - `/export [name]` writes sanitized markdown inside the folder only, never overwriting.
+  - **Thread commands:** `/fork` (`thread/fork`, then a resume of the copy) and `/rename` (`thread/name/set`). The session gains `fork()` and `rename()`.
+  - **Inspection:** `/mcp` (`mcpServerStatus/list`), `/hooks` (ad's own hooks marked), `/skills` (`skills/list`) and `/usage` (rate-limit windows, plus `account/usage/read` when the account reports it).
+  - **Images:** a pasted or dragged image path attaches as `localImage` (quotes and `file://` handled, existing image files only). There is also `/image <path>`, and Esc on an empty prompt clears attachments. An empty paste (a clipboard image) explains this.
+  - **Editor:** Ctrl+G opens `$VISUAL`, then `$EDITOR` (with its arguments), else notepad or vi, on a private temp file through a terminal handoff. A failed editor changes nothing.
+  - **Reasoning:** Alt+, and Alt+. step the effort through low, medium, high and xhigh for the next turn.
+  - **Auto-review:** `item/autoApprovalReview/completed` becomes a notice ("approved: …", or "denied … (rationale). To allow it anyway, use /codex"). The start is silent (`SILENT_NOTIFICATIONS`). `thread/approveGuardianDeniedAction` isn't wired: its payload is unstable upstream.
+  - **`/terminal-setup`:** print-only advice for Windows Terminal (the `sendInput` of `CSI 13;2u`), VS Code, Zed and others.
+  - **Slash names:** every new command is checked against Codex's names. `image` and `terminal-setup` are ad's own.
 
 ### Part 9 — `ad` capabilities (one loop each; FC4 after each)
 - **9a. See what ad knows:**
@@ -1086,3 +1104,7 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
   - **Engine:** gains `unknownCounts()`.
   - **Slash commands:** `SLASH_COMMANDS` entries carry `source`, and `/warnings` is added.
   - **Narrowing-ghost compensation:** waits on per-terminal probe data from the user.
+- **v4.10** (2026-10-06): Part 8.
+  - **Additions:** `tui/commands.mjs`, `session.fork()` / `rename()`, and `SILENT_NOTIFICATIONS`. Auto-review notifications map to notices; they were ignored before.
+  - **Keys:** Alt+, and Alt+. for effort (Alt+[ is a CSI introducer).
+  - **Pager:** the Ctrl+T pager lives in the live region instead of an alternate screen.

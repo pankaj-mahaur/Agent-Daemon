@@ -414,6 +414,22 @@ async function onRequest({ id, method, params }) {
       return send({ id, result: {} });
     case "thread/goal/set":
       return send({ id, result: { goal: { threadId: params.threadId, objective: params.objective, status: "active", tokensUsed: 0, timeUsedSeconds: 0, createdAt: 0, updatedAt: 0 } } });
+    case "thread/name/set":
+      notify("thread/name/updated", { threadId: params.threadId, threadName: params.name });
+      return send({ id, result: {} });
+    case "thread/fork": {
+      const forkId = `thread-${++threadSeq}`;
+      const src = turnsOf(params.threadId);
+      const cut = params.lastTurnId ? src.findIndex((t) => t.id === params.lastTurnId) + 1 : src.length;
+      history.set(forkId, src.slice(0, cut > 0 ? cut : src.length).map((t) => ({ ...t, items: [...t.items] })));
+      return send({ id, result: { thread: { id: forkId, forkedFromId: params.threadId }, model: "fake-model", modelProvider: "fake" } });
+    }
+    case "mcpServerStatus/list":
+      return send({ id, result: { data: [{ name: "memory", runtimeStatus: "ready", pluginId: null, httpOrigin: null, serverInfo: null }, { name: "broken", runtimeStatus: "failed", pluginId: null, httpOrigin: null, serverInfo: null }], nextCursor: null } });
+    case "skills/list":
+      return send({ id, result: { data: [{ cwd: params?.cwds?.[0] ?? "", skills: [{ name: "debug-triage", description: "Find the cause of a bug", path: "/s/debug-triage/SKILL.md", scope: "user", enabled: true, pluginId: null }], errors: [] }] } });
+    case "account/usage/read":
+      return send({ id, result: { summary: { lifetimeTokens: 123456, peakDailyTokens: 5000, longestRunningTurnSec: 90, currentStreakDays: 3, longestStreakDays: 7 }, dailyUsageBuckets: null } });
     case "fuzzyFileSearch":
       return send({ id, result: { files: ["src/main.mjs", "src/app.mjs", "README.md"].filter((f) => f.includes(params?.query ?? "")).map((path) => ({ root: params.roots?.[0] ?? "", path, match_type: "file", file_name: path.split("/").pop(), score: 1, indices: null })) } });
     case "model/list":

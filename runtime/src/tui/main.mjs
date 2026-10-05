@@ -89,6 +89,37 @@ export function splitArgs(s) {
 }
 
 /* ------------------------------------------------------------------ */
+/* External editor (Ctrl+G)                                            */
+/* ------------------------------------------------------------------ */
+
+/** The editor command: $VISUAL, then $EDITOR, else notepad on Windows and vi elsewhere. */
+export function editorCommand(env = process.env, platform = process.platform) {
+  const raw = env.VISUAL || env.EDITOR || (platform === "win32" ? "notepad" : "vi");
+  const [cmd, ...args] = splitArgs(raw);
+  return { cmd, args };
+}
+
+/**
+ * Edits `text` in the user's editor (the terminal is handed over) and returns
+ * the result, or null when the editor failed. The temp file is private and removed.
+ */
+export async function editInEditor(text, { run, env = process.env, platform = process.platform } = {}) {
+  const { mkdtempSync, readFileSync: read, rmSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const dir = mkdtempSync(path.join(tmpdir(), "ad-prompt-"));
+  const file = path.join(dir, "prompt.md");
+  try {
+    writeFileSync(file, text, { mode: 0o600 });
+    const { cmd, args } = editorCommand(env, platform);
+    const code = await run(cmd, [...args, file]);
+    if (code !== 0) return null;
+    return read(file, "utf8");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* git                                                                 */
 /* ------------------------------------------------------------------ */
 
@@ -390,9 +421,10 @@ export async function cmdTui(opts = {}) {
         return `Back from the stock Codex UI (exit ${code}).`;
       },
       hookRows: (run) => hookRows(run, { hooksFile }),
+      editText: (text) => handoff(io, renderer, () => editInEditor(text, { run: (cmd, args) => runChild(cmd, args, { cwd }) })),
     };
 
-    app = createApp({ io, renderer, session, cwd, header: intro, newline, history: createHistory(opts.historyFile ? { file: opts.historyFile } : {}), actions, meters, info: { compat: `${codexVersion} (tested)` } });
+    app = createApp({ io, renderer, session, cwd, header: intro, newline, history: createHistory(opts.historyFile ? { file: opts.historyFile } : {}), actions, meters, info: { compat: `${codexVersion} (tested)`, terminal: term } });
     await app.done;
     state[key] = { lastSeen: Date.now() };
     await writeState(stateFile, state);

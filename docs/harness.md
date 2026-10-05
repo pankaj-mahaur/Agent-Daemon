@@ -80,8 +80,19 @@ A Codex-style terminal UI on ad's own Codex home. It is new: expect rough edges,
   - Esc interrupts. Ctrl+C closes a popup, then clears the composer, then interrupts; pressing it twice quickly quits.
   - ↑/↓ walk your prompt history (`~/.agent-daemon/tui/history.jsonl`), Ctrl+R searches it, `?` shows every shortcut.
   - `@` completes file names, `/` completes commands, `!cmd` runs a shell command (unsandboxed, like Codex's).
+  - Esc twice on an empty prompt rewinds the conversation to an earlier prompt and puts that prompt back to edit. Files on disk stay as they are.
+  - Ctrl+T pages through the whole transcript, and Ctrl+G edits the prompt in your editor (`$VISUAL` / `$EDITOR`, else Notepad or vi).
+  - Alt+, and Alt+. lower or raise the reasoning effort.
+  - **Images:** paste or drag an image file's path, or use `/image <path>`, to attach it to the next prompt.
 - **Approvals:** a prompt lists what Codex offers (yes, yes for this session, "don't ask again for this prefix", no). Keys pressed in the first 400 ms are ignored, so type-ahead never approves. Hidden characters in commands are shown as `<U+…>`.
-- **Commands:** `/help`, `/new`, `/resume`, `/model`, `/permissions`, `/status`, `/goal`, `/review`, `/diff`, `/compact`, `/init`, `/remember`, `/memory`, `/login`, `/logout`, `/codex`, `/ad <command>`, `/quit`.
+- **Commands:**
+  - **Conversations:** `/new`, `/resume`, `/fork`, `/rename`, `/compact`, `/export` (markdown, in this folder).
+  - **Settings:** `/model`, `/permissions`, `/login`, `/logout`.
+  - **Work:** `/goal`, `/review`, `/diff`, `/init`, `/image`.
+  - **Output:** `/copy` (the last answer, to the clipboard), `/raw` (the last answer as plain text).
+  - **Inspection:** `/status`, `/usage`, `/mcp`, `/hooks`, `/skills`, `/warnings`.
+  - **ad:** `/remember`, `/memory`, `/codex`, `/ad <command>`.
+  - **Help:** `/terminal-setup` (how to make Shift+Enter add a newline in your terminal), `/help`, `/quit`.
 - **`/codex`** opens the stock Codex UI on the same conversation (ad lets go of it meanwhile) and comes back when you quit it.
 - **On exit** ad prints how to continue: `ad tui --resume <id>`.
 - **Requirements:** an interactive terminal, and on Windows Node 22.17+ or 24.2+. Otherwise use `ad chat`.

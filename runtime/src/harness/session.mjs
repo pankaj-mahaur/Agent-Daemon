@@ -767,6 +767,25 @@ export function createSession({
       }
       change("revert");
     },
+    /** Names the thread (Codex's thread/name/set). */
+    async rename(name) {
+      if (!state.thread) throw new Error("nothing to name yet: send a prompt first");
+      const n = String(name ?? "").trim();
+      if (!n) throw new Error("a name is needed");
+      await eng.server.request("thread/name/set", { threadId: state.thread.id, name: n });
+      state.thread = { ...state.thread, name: n };
+      change("thread.name");
+      return n;
+    },
+    /** Copies the thread (up to and including `throughTurnId`, or all of it) into a new one and continues there. */
+    async fork(throughTurnId = null) {
+      if (!state.thread) throw new Error("nothing to fork yet");
+      if (state.activeTurnId || state.starting) throw new Error("wait for the turn to finish first");
+      const r = await eng.server.request("thread/fork", { threadId: state.thread.id, ...(throughTurnId ? { lastTurnId: throughTurnId } : {}) });
+      const id = r?.thread?.id;
+      if (!id) throw new Error("Codex didn't return the new thread");
+      return api.resume(id);
+    },
     /** Leaves the current thread; the next prompt starts a new one. */
     newThread() {
       detach();

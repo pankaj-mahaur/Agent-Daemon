@@ -11,8 +11,6 @@ import notifications from "./protocol-notifications.json" with { type: "json" };
 
 export const IGNORED_NOTIFICATIONS = {
   "thread/attachment/updated": "thread attachments are not part of ad's UI",
-  "item/autoApprovalReview/started": "automatic (guardian) approval reviews are not surfaced yet",
-  "item/autoApprovalReview/completed": "automatic (guardian) approval reviews are not surfaced yet",
   "rawResponseItem/completed": "raw model output, only for debugging clients",
   "rawResponse/completed": "raw model output, only for debugging clients",
   "command/exec/outputDelta": "ad doesn't use the standalone command/exec request",

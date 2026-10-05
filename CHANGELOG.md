@@ -54,6 +54,14 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
   `ad tui --last` / `--resume <id>` continue a conversation. See `docs/harness.md`.
 - `ad codex [args…]`: the pinned stock Codex UI on ad's home (never `~/.codex`), with your `~/.claude/skills` mirrored in.
+- More Codex parity in `ad tui`:
+  - Esc Esc rewinds to an earlier prompt, and Ctrl+T shows the transcript.
+  - `/copy`, `/raw`, `/export`, `/fork`, `/rename`, `/mcp`, `/hooks`, `/skills`, `/usage`.
+  - Images: paste a file path, or use `/image`.
+  - Ctrl+G edits the prompt in your editor.
+  - Alt+, and Alt+. change the reasoning effort.
+  - Auto-review verdicts show as notices.
+  - `/terminal-setup` explains how to set up Shift+Enter.
 - Codex upgrades are safer:
   - `ad doctor` and `/status` show the tested Codex versions and what changed.
   - `/warnings` lists events from a newer Codex that ad doesn't know yet.

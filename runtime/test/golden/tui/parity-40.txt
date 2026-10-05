@@ -1,0 +1,22 @@
+── mcp ──
+MCP servers
+  memory                ready
+  broken                failed  https:/…
+── hooks ──
+Hooks
+  UserPromptSubmit    trusted  ad
+  PreToolUse          untrusted  /repo/…
+── skills ──
+Skills (2)
+  debug-triage  Find the cause of a bug
+  old  disabled one
+── usage ──
+Usage
+  5h: 38% used
+  7d: 85% used
+  this conversation: 4,321 tokens
+  lifetime: 123,456 tokens
+  streak: 3 days (longest 7)
+── usage (none) ──
+Usage
+  No usage data from this account (API keys don't report it).

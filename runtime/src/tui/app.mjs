@@ -18,6 +18,9 @@ import { ARM_MS, createRequestModal } from "./view/modals.mjs";
 import { sanitize } from "./terminal/sanitize.mjs";
 import { truncate } from "./terminal/text.mjs";
 import { INIT_PROMPT } from "./init-prompt.mjs";
+import { existsSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { copyText, exportMarkdown, imagePath, lastAgentText, renderHooks, renderMcp, renderSkills, renderUsage, terminalSetup, transcriptLines } from "./commands.mjs";
 
 export const FORCE_QUIT_MS = 1500;
 const FRAME_MS = 33;
@@ -48,6 +51,17 @@ export const SLASH_COMMANDS = [
   { name: "logout", source: "codex", desc: "sign out of Codex in ad's home" },
   { name: "codex", source: "ad", desc: "open the stock Codex UI on this conversation" },
   { name: "ad", source: "ad", desc: "run an ad command, e.g. /ad doctor" },
+  { name: "fork", source: "codex", desc: "continue in a copy of this conversation" },
+  { name: "rename", source: "codex", desc: "name this conversation" },
+  { name: "copy", source: "codex", desc: "copy the last answer to the clipboard" },
+  { name: "raw", source: "codex", desc: "print the last answer as plain text (for selecting)" },
+  { name: "export", source: "codex", desc: "save the conversation as markdown in this folder" },
+  { name: "mcp", source: "codex", desc: "MCP servers and their status" },
+  { name: "hooks", source: "codex", desc: "hooks and whether they are trusted" },
+  { name: "skills", source: "codex", desc: "skills Codex can use here" },
+  { name: "usage", source: "codex", desc: "usage limits and tokens" },
+  { name: "image", source: "ad", desc: "attach an image file to the next prompt" },
+  { name: "terminal-setup", source: "ad", desc: "how to make Shift+Enter add a newline here" },
   { name: "quit", source: "codex", desc: "exit ad" },
   { name: "exit", source: "codex", desc: "exit ad" },
 ];
@@ -108,6 +122,9 @@ export function createApp({
   let overlay = false; // the ? shortcuts
   let note = null; // one transient line above the composer
   let lastCtrlC = -Infinity;
+  let lastEsc = -Infinity;
+  let attachments = []; // image paths for the next prompt
+  let pager = null; // {lines, top} while Ctrl+T shows the transcript
   let turnStartedAt = null; // the running turn's start (for "Worked for")
   const turnStarts = new Map(); // turnId → when this app first saw it running
   let drawTimer = null;
@@ -339,6 +356,15 @@ export function createApp({
     const w = width();
     const rows = height();
     const lines = [];
+    if (pager && !modal) {
+      // Ctrl+T: the whole transcript, paged inside the live region.
+      const view = Math.max(1, rows - 2);
+      pager.top = Math.max(0, Math.min(pager.top, pager.lines.length - view));
+      lines.push(truncate([{ text: `Transcript ${pager.top + 1}\u{2013}${Math.min(pager.lines.length, pager.top + view)} of ${pager.lines.length}  `, style: { bold: true } }, { text: "\u{2191}\u{2193} pgup pgdn home end \u{b7} q or esc closes", style: DIM }], w));
+      lines.push(...pager.lines.slice(pager.top, pager.top + view));
+      renderer.frame({ lines, cursor: { row: 0, col: 0 } });
+      return;
+    }
     let live = liveItems(pending);
     const cap = Math.max(3, Math.floor(rows * LIVE_SHARE));
     if (live.length > cap) live = [[{ text: `  \u{2026} ${live.length - cap + 1} more lines above`, style: DIM }], ...live.slice(-(cap - 1))];
@@ -357,6 +383,7 @@ export function createApp({
       cursor = { row: lines.length - 1, col: 0 };
     } else {
       if (note) lines.push(truncate([{ text: clean(note.text), style: note.level === "warn" || note.level === "error" ? WARN : DIM }], w));
+      if (attachments.length) lines.push(truncate([{ text: `  \u{1f4ce} ${attachments.map((a) => clean(path.basename(a))).join(", ")}`, style: { fg: "cyan" } }], w));
       if (lines.length) lines.push([]);
       const top = lines.length;
       const c = composer.render({ width: w, prompt: "\u{203a} ", placeholder: turnActive() ? "Steer the turn, or tab to queue" : "Ask ad to do anything" });
@@ -518,6 +545,54 @@ export function createApp({
             commitCell(renderDiff(d.changes, { width: width(), verb: "Changes:", maxLines: 200 }));
           })
           .catch(fail);
+      case "fork":
+        if (turnActive()) return warn("Wait for the turn to finish (or esc), then /fork.");
+        return session.fork().then(() => info0("Forked: you are in the copy now; the original is unchanged."), fail);
+      case "rename":
+        if (!arg) return warn("/rename <name>");
+        return session.rename(arg).then((n) => info0(`Named: ${clean(n)}`), fail);
+      case "copy": {
+        const t = lastAgentText(st);
+        if (!t) return warn("No answer to copy yet.");
+        return (actions.copy ?? copyText)(t, { write: (d) => io.write(d) }).then((r) => (r.ok ? info0(`Copied the last answer${r.via && r.via !== "terminal" ? ` (${r.via})` : ""}.`) : warn("Couldn't reach a clipboard. /raw prints it for selecting.")));
+      }
+      case "raw": {
+        const t = lastAgentText(st);
+        if (!t) return warn("No answer yet.");
+        return commitCell(sanitize(t, "transcript").replace(/\t/g, "    ").split("\n").map((l) => [{ text: l }]));
+      }
+      case "export": {
+        if (!st.thread) return warn("Nothing to export yet.");
+        const name = arg || `ad-conversation-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.md`;
+        const file = path.resolve(cwd, name);
+        if (path.relative(cwd, file).startsWith("..") || path.isAbsolute(path.relative(cwd, file))) return warn("/export writes inside this folder only.");
+        if (existsSync(file)) return warn(`${clean(name)} exists already: pick another name.`);
+        try {
+          writeFileSync(file, exportMarkdown(st), { flag: "wx" });
+          return info0(`Saved ${clean(path.relative(cwd, file))}`);
+        } catch (err) {
+          return fail(err);
+        }
+      }
+      case "mcp":
+        return session.engine.server.request("mcpServerStatus/list", {}).then((r) => commitCell(renderMcp(r?.data, { width: width() })), fail);
+      case "hooks":
+        return Promise.resolve(session.engine.listHooks([cwd])).then((h) => commitCell(renderHooks(h, { width: width(), hooksFile: session.engine.home ? path.join(session.engine.home, "hooks.json") : null })), fail);
+      case "skills":
+        return session.engine.server.request("skills/list", { cwds: [cwd] }).then((r) => commitCell(renderSkills(r?.data, { width: width() })), fail);
+      case "usage": {
+        const rl = await session.engine.server.request("account/rateLimits/read", {}).catch(() => st.rateLimits);
+        const usage = await session.engine.server.request("account/usage/read", {}).catch(() => null);
+        return commitCell(renderUsage({ rateLimits: rl ?? st.rateLimits, usage, tokens: st.tokens }, { width: width() }));
+      }
+      case "image": {
+        const img = imagePath(arg, cwd);
+        if (!img) return warn("/image <path to a .png, .jpg, .gif, .webp or .bmp file>");
+        attachments.push(img);
+        return info0(`Attached ${clean(path.basename(img))} to the next prompt (esc on an empty prompt removes it).`);
+      }
+      case "terminal-setup":
+        return commitCell(terminalSetup(info.terminal).map((l) => truncate([{ text: l }], width())));
       case "remember":
         if (!arg) return warn("/remember <what to remember>");
         if (!actions.remember) return warn("Memory isn't available here.");
@@ -582,6 +657,34 @@ export function createApp({
     return [[{ text: "Status", style: { bold: true } }], ...rows.map(([k, v]) => truncate([{ text: `  ${k.padEnd(13)}`, style: DIM }, { text: clean(v) }], width()))];
   }
 
+  // Esc Esc: pick an earlier prompt; the thread is rewound to just before it
+  // and the prompt comes back into the composer to edit. Files stay as they are.
+  function openBacktrack() {
+    if (!st.thread || st.thread.ephemeral) return warn("Nothing to rewind here.");
+    if (turnActive()) return warn("Wait for the turn to finish (or esc), then rewind.");
+    const prompts = [];
+    for (const t of st.turns) {
+      const um = t.itemIds.map((id) => st.items.get(id)).find((i) => i?.kind === "userMessage");
+      if (um) prompts.push({ turnId: t.id, text: String(um.text ?? "") });
+    }
+    if (!prompts.length) return info0("No earlier prompts in this conversation.");
+    openPicker(
+      "backtrack",
+      prompts.reverse().map((p, i) => ({ label: clean(p.text).slice(0, 200) || "(empty)", hint: i === 0 ? "last" : `${i + 1} back`, value: p })),
+      (p) => {
+        session
+          .revert(p.turnId)
+          .then(() => {
+            composer.set(p.text);
+            info0(`Rewound to before \u{201c}${clean(p.text).slice(0, 60)}\u{201d}. Files on disk weren't changed.`);
+            draw();
+          })
+          .catch(fail);
+      },
+      { title: "Rewind to" },
+    );
+  }
+
   async function pickModel() {
     let models = [];
     try {
@@ -638,7 +741,9 @@ export function createApp({
   function send(text, shown = null) {
     turnStartedAt ??= now();
     try {
-      const r = session.submit(text);
+      const images = attachments;
+      attachments = [];
+      const r = session.submit(images.length ? [{ type: "text", text }, ...images.map((p) => ({ type: "localImage", path: p }))] : text);
       if (shown) {
         echoesShown.add(r.clientUserMessageId);
         commitCell(renderCell({ kind: "userMessage", text: shown }, { width: width() }));
@@ -731,6 +836,23 @@ export function createApp({
       return draw();
     }
     if (ev.type === "key" && ev.ctrl && ev.name === "l") return void renderer.redraw();
+    if (pager) {
+      const view = Math.max(1, height() - 2);
+      if (ev.type === "key" && (ev.name === "escape" || (ev.ctrl && ev.name === "t"))) pager = null;
+      else if (ev.type === "text" && ev.text === "q") pager = null;
+      else if (ev.type === "key" && ev.name === "up") pager.top--;
+      else if (ev.type === "key" && ev.name === "down") pager.top++;
+      else if (ev.type === "key" && ev.name === "pageup") pager.top -= view;
+      else if (ev.type === "key" && (ev.name === "pagedown" || ev.name === "space")) pager.top += view;
+      else if (ev.type === "key" && ev.name === "home") pager.top = 0;
+      else if (ev.type === "key" && ev.name === "end") pager.top = Infinity;
+      if (pager) pager.top = Math.max(0, Math.min(pager.top, pager.lines.length - view));
+      return draw();
+    }
+    if (ev.type === "key" && ev.ctrl && ev.name === "t" && !modal) {
+      pager = { lines: transcriptLines(st, { width: width() }), top: Infinity };
+      return draw();
+    }
     if (modal) {
       const r = modal.view.handle(ev);
       if (r && "answer" in r) answer(r.answer);
@@ -742,7 +864,35 @@ export function createApp({
     }
     if (popup && popupKey(ev)) return draw();
     if (ev.type === "paste-empty") {
-      note = { level: "warn", text: "Image paste isn't supported yet: save the image and mention it with @." };
+      note = { level: "warn", text: "The clipboard holds an image: save it as a file, then /image <path> (or paste the file's path)." };
+      return draw();
+    }
+    // A pasted or dragged image file path attaches the image.
+    if (ev.type === "paste") {
+      const img = imagePath(ev.text, cwd);
+      if (img) {
+        attachments.push(img);
+        note = { level: "info", text: `Attached ${path.basename(img)} to the next prompt.` };
+        return draw();
+      }
+    }
+    if (ev.type === "key" && ev.ctrl && ev.name === "g" && actions.editText) {
+      const before = composer.expanded();
+      Promise.resolve(actions.editText(before))
+        .then((after) => {
+          if (typeof after === "string") composer.set(after.replace(/\r\n/g, "\n").replace(/\n$/, ""));
+          renderer.redraw?.();
+          draw();
+        })
+        .catch(fail);
+      return;
+    }
+    if (ev.type === "key" && ev.alt && (ev.name === "," || ev.name === ".")) {
+      const levels = ["low", "medium", "high", "xhigh"];
+      const cur = levels.indexOf(st.config.effort ?? "medium");
+      const next = levels[Math.max(0, Math.min(levels.length - 1, (cur < 0 ? 1 : cur) + (ev.name === "." ? 1 : -1)))];
+      session.setNextTurn({ effort: next });
+      note = { level: "info", text: `Reasoning effort: ${next} (from the next turn). alt+, lower \u{b7} alt+. higher` };
       return draw();
     }
     if (ev.type === "text" && ev.text === "?" && !composer.text) {
@@ -753,7 +903,24 @@ export function createApp({
       if (turnActive()) {
         session.interrupt();
         note = { level: "warn", text: "Interrupting…" };
-      } else note = null;
+        return draw();
+      }
+      if (composer.text) return draw();
+      if (attachments.length) {
+        attachments = [];
+        note = { level: "info", text: "Attachments removed." };
+        return draw();
+      }
+      // Esc twice on an empty prompt: rewind to an earlier prompt.
+      const t = now();
+      if (t - lastEsc < 1000) {
+        lastEsc = -Infinity;
+        note = null;
+        openBacktrack();
+      } else {
+        lastEsc = t;
+        note = st.thread ? { level: "info", text: "Esc again to rewind to an earlier prompt." } : null;
+      }
       return draw();
     }
     if (ev.type === "key" && ev.name === "tab" && !ev.ctrl && !ev.alt) {

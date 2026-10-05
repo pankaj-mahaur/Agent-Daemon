@@ -159,6 +159,10 @@ export function renderShortcuts({ newline = "ctrl+j" } = {}, { width = 80 } = {}
     ["@", "mention a file"],
     ["/", "commands"],
     ["!", "run a shell command (unsandboxed)"],
+    ["esc esc", "rewind to an earlier prompt"],
+    ["ctrl+t", "the whole transcript"],
+    ["ctrl+g", "edit the prompt in your editor"],
+    ["alt+, alt+.", "lower / raise reasoning effort"],
     ["ctrl+l", "redraw the screen"],
   ];
   const kw = Math.max(...keys.map(([k]) => stringWidth(k))) + 2;

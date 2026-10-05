@@ -14,6 +14,7 @@ import {
   classifyRequest,
   defaultExecDecisions,
   elicitationResponse,
+  SILENT_NOTIFICATIONS,
 } from "../src/engine/codex/events.mjs";
 import { IGNORED_NOTIFICATIONS, PINNED_NOTIFICATIONS } from "../src/engine/codex/surface.mjs";
 import { approvalResponse } from "../src/engine/codex/approvals.mjs";
@@ -73,7 +74,7 @@ test("every handler survives minimal and empty params and emits only known event
   for (const m of Object.keys(NOTIFICATION_HANDLERS)) {
     for (const params of [minimal, {}]) {
       const events = adaptNotification(m, params);
-      assert.ok(Array.isArray(events) && events.length >= 1, m);
+      assert.ok(Array.isArray(events) && (events.length >= 1 || SILENT_NOTIFICATIONS.has(m)), m);
       for (const ev of events) {
         assert.ok(EVENT_TYPES.has(ev.type), `${m} → ${ev.type}`);
         if (ev.type === "item.delta") assert.ok(DELTA_KINDS.has(ev.kind), `${m} kind ${ev.kind}`);

@@ -123,6 +123,17 @@ export const NOTIFICATION_HANDLERS = {
   "modelProvider/authRecoveryCompleted": (p) => [notice(p, "info", "provider.authRecovery", p.message ?? "Re-authenticated.", { provider: p.provider ?? null, done: true })],
   warning: (p) => [notice(p, "warn", "warning", p.message)],
   guardianWarning: (p) => [notice(p, "warn", "guardian", p.message)],
+  // [UNSTABLE upstream] Codex's automatic approval reviewer. Its verdicts show
+  // as notices; the start is silent (the completion says it all).
+  "item/autoApprovalReview/started": () => [],
+  "item/autoApprovalReview/completed": (p) => {
+    const r = p.review ?? {};
+    const what = autoReviewAction(p.action);
+    if (r.status === "approved") return [notice(p, "info", "autoReview.approved", `Auto-review approved${what ? `: ${what}` : ""}.`)];
+    if (r.status === "denied") return [notice(p, "warn", "autoReview.denied", `Auto-review denied${what ? ` ${what}` : ""}${r.rationale ? ` (${r.rationale})` : ""}. To allow it anyway, use /codex.`)];
+    if (r.status === "timedOut" || r.status === "aborted") return [notice(p, "warn", `autoReview.${r.status}`, `Auto-review ${r.status === "timedOut" ? "timed out" : "was aborted"}${what ? ` for ${what}` : ""}.`)];
+    return [notice(p, "info", "autoReview", `Auto-review finished${what ? ` for ${what}` : ""}.`)];
+  },
   deprecationNotice: (p) => [notice(p, "info", "deprecation", p.summary, p.details ?? undefined)],
   configWarning: (p) => [notice(p, "warn", "config", p.summary, { path: p.path ?? null, details: p.details ?? null })],
   "windows/worldWritableWarning": (p) => [
@@ -136,6 +147,22 @@ export const NOTIFICATION_HANDLERS = {
     notice(p, p.success ? "info" : "error", "windowsSandbox.setup", p.success ? `Windows sandbox ready (${p.mode}).` : `Windows sandbox setup failed${p.error ? `: ${p.error}` : ""}.`, { mode: p.mode ?? null, success: Boolean(p.success) }),
   ],
 };
+
+// A short description of what an auto-review looked at.
+function autoReviewAction(a) {
+  if (!a || typeof a !== "object") return "";
+  if (a.type === "command") return `\`${a.command ?? ""}\``;
+  if (a.type === "execve") return `\`${[a.program, ...(a.argv ?? []).slice(1)].join(" ")}\``;
+  if (a.type === "applyPatch") return `edits to ${(a.files ?? []).length} file(s)`;
+  if (a.type === "networkAccess") return `network access to ${a.host ?? a.target ?? "a host"}`;
+  if (a.type === "mcpToolCall") return `${a.server ?? "MCP"}.${a.toolName ?? "tool"}`;
+  if (a.type === "writeStdin") return "input to a running command";
+  if (a.type === "requestPermissions") return "extra permissions";
+  return "";
+}
+
+/** Notifications handled on purpose with no event (the next one carries the news). */
+export const SILENT_NOTIFICATIONS = new Set(["item/autoApprovalReview/started"]);
 
 function hookRun(run) {
   const r = run ?? {};
