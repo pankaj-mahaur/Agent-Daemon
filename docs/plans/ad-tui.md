@@ -1,6 +1,6 @@
 # Plan — `ad`: a Codex-style terminal UI with agent-daemon's powers
 
-> Status: **final v4.5** (2026-10-06; v4 on 2026-10-04 after three review rounds). Changes from here on need a revision-log entry.
+> Status: **final v4.6** (2026-10-06; v4 on 2026-10-04 after three review rounds). Changes from here on need a revision-log entry.
 > Progress: **Part 0** — code done and reviewed twice:
 > - Codex 0.160.0 pinned.
 > - Isolation guard in place (see "Your own Codex is never touched").
@@ -27,7 +27,9 @@
 >
 > - **Part 3** (engine events: adapter, routing, real-engine CI) built and reviewed (v4.5).
 >
-> **Next:** Part 4 (session controller).
+> - **Part 4** (session controller) built (v4.6).
+>
+> **Next:** Part 5 (view components).
 > Research: [Codex TUI + app-server](../research/codex-tui-and-app-server.md) · [terminal engineering](../research/terminal-engineering.md) · [harness landscape](../research/harness-landscape.md).
 
 ## Goal
@@ -626,6 +628,22 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
   - Esc → interrupt.
   - Text stays in the composer until the server accepts it.
   - **Done when:** steer accepted / rejected / raced-with-completion tests are green.
+- ✅ **Built 2026-10-06** (`harness/session.mjs`, 18 tests on the fake engine through a headless subscriber):
+  - **4a, lifecycle:**
+    - **Threads:** lazy (no thread or lock until the first prompt). The local echo is replaced by Codex's copy, matched by `clientUserMessageId`.
+    - **Locks:** `lockThread()` uses pid + process start. A live holder gives `SessionLockedError`; a stale lock is taken over.
+    - **Requests:** FIFO in `state.requests`, answered by `resolve(id, answer)`. Subagent requests are labelled and agents listed.
+    - **Resume:** `resume()` sends `excludeTurns`, then pages `thread/turns/list` (`itemsView: "full"`, ascending).
+    - **Next-turn overrides:** `setNextTurn()` is sent once on the next `turn/start`.
+    - **Commands:** review, compact, shell (`thread/shellCommand`, items without a turn), goal and revert.
+    - **Hooks:** `beforeTurn` may change the input. `turnStarted` also fires for server-started turns (review). `turnCompleted`.
+    - **Crash:** the running turn ends as failed, open requests are declined, and the state shows `crashed`. With `restart`, the engine is replaced (capped) and the thread resumed; the session is "ready" only after that.
+  - **4b, steer / queue / interrupt:**
+    - Enter while running sends `turn/steer` with `expectedTurnId`. If the turn can't be steered (review) or has just ended, the prompt is queued and runs as soon as the thread is idle. The queue is editable and drains in order.
+    - An interrupt sent before Codex accepted the turn is applied the moment it is.
+  - **Bug found by the tests:** Codex can complete a turn before `turn/start` answers. Such a turn is no longer made "active", which had pushed every later prompt into the queue. Items that arrive before their turn is known join it.
+  - **Fake engine:** gains turn history, prompt echo, a real `turn/steer`, `turns/list`, `review/start`, `thread/shellCommand` and `thread/revert`, and a `serverRequest/resolved` after every answer, as Codex sends.
+  - **Real engine:** the controller runs on the real engine through the same API as the fake. A dedicated real-engine session test comes with Part 6, when the app drives it.
 
 ### Part 5 — View components (`tui/view/`, pure)
 - **5a. Composer:**
@@ -899,3 +917,14 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
     - The engine gains `subscribe`, `threadChain`, `startTurn`, `onRequest`, `openRequests` and `requestResult`.
   - **Approvals:** decisions are validated against the offered options. The plan's rename of `req.kind` is dropped (compatibility).
   - **Protocol diff:** the snapshot records types.
+- **v4.6** (2026-10-06): Part 4.
+  - **SessionState (as built):**
+    - `turns` holds `{id, status, error, itemIds}` and `items` is a Map of ViewItems (with `threadId`, `turnId`, `streaming` and accumulated delta text).
+    - `echoes` is a Map from clientUserMessageId to text.
+    - `starting` is true while turn/start is on its way.
+    - `engine.state` gains "restarting".
+  - **Session API:**
+    - `createSession` also takes `lockDir`, `restart` and `maxRestarts`;
+    - the session gains `init()` (account and rate limits, read once);
+    - `submit()` during a turn steers, and while a turn is starting it queues.
+  - **Part 3 re-review:** one `request.resolved` per request, links only from real spawns, and validated answers.
