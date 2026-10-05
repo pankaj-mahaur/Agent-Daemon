@@ -21,6 +21,7 @@
 import { isNewline } from "../terminal/input.mjs";
 import { graphemeSegments, graphemeWidth, stringWidth } from "../terminal/width.mjs";
 import { sanitize } from "../terminal/sanitize.mjs";
+import { truncate } from "../terminal/text.mjs";
 
 const TAB_WIDTH = 4;
 const ACCENT = { fg: "cyan", bold: true };
@@ -205,7 +206,7 @@ export function createComposer({ history = null, pasteLines = 5, pasteChars = 10
       set(draft);
     } else {
       histIndex = next;
-      set(list[next]);
+      set(sanitize(list[next], "transcript"));
     }
     return true;
   }
@@ -252,7 +253,7 @@ export function createComposer({ history = null, pasteLines = 5, pasteChars = 10
       return { changed: true };
     }
     if (["enter", "tab", "left", "right", "home", "end"].includes(ev.name)) {
-      if (search.match !== null) set(list[search.match]);
+      if (search.match !== null) set(sanitize(list[search.match], "transcript"));
       search = null;
       return { changed: true };
     }
@@ -348,7 +349,8 @@ export function createComposer({ history = null, pasteLines = 5, pasteChars = 10
   /** Replaces a token() range (accepting a popup choice). */
   function replace(start, end, value) {
     histIndex = null;
-    set(text.slice(0, start) + value + text.slice(end), start + value.length);
+    const v = sanitize(String(value ?? ""), "transcript");
+    set(text.slice(0, start) + v + text.slice(end), start + v.length);
   }
 
   function render({ width = 80, prompt = "\u{203a} ", placeholder = "" } = {}) {
@@ -357,11 +359,11 @@ export function createComposer({ history = null, pasteLines = 5, pasteChars = 10
     room = Math.max(1, width - pw - 1);
     if (search) {
       const list = entries();
-      const found = search.match !== null ? list[search.match].split("\n")[0] : null;
+      const found = search.match !== null ? sanitize(list[search.match], "transcript").split("\n")[0].replace(/\t/g, " ") : null;
       const label = "(reverse-i-search) ";
       const tail = found !== null ? `  \u{2192} ${found}` : search.query ? "  (no match)" : "";
       return {
-        lines: [[{ text: label, style: DIM }, { text: search.query }, { text: tail, style: DIM }]],
+        lines: [truncate([{ text: label, style: DIM }, { text: search.query.replace(/\t/g, " ") }, { text: tail, style: DIM }], width)],
         cursor: { row: 0, col: Math.min(width - 1, stringWidth(label + search.query)) },
       };
     }
@@ -382,7 +384,7 @@ export function createComposer({ history = null, pasteLines = 5, pasteChars = 10
     token,
     replace,
     clear: reset,
-    set: (t) => set(String(t ?? "")),
+    set: (t) => set(sanitize(String(t ?? ""), "transcript")),
     get text() {
       return text;
     },

@@ -117,7 +117,7 @@ test("exec options map to Codex's decisions, and every answer is one requestResu
   assert.deepEqual(a.answer, "acceptForSession");
   const net = createRequestModal(NET, { now: c.now });
   c.advance(500);
-  assert.equal(net.handle(typed("p")).answer.applyNetworkPolicyAmendment.network_policy_amendment.host, "registry.npmjs.org");
+  assert.equal(net.handle(typed("h")).answer.applyNetworkPolicyAmendment.network_policy_amendment.host, "registry.npmjs.org");
   // Permissions and patches.
   const p = createRequestModal(PERMS, { now: c.now });
   c.advance(500);
@@ -200,4 +200,40 @@ test("elicitation form: fields in turn, validation, then submit", () => {
 test("requests no modal handles return null", () => {
   assert.equal(createRequestModal({ kind: "tool-call" }), null);
   assert.equal(createRequestModal(null), null);
+});
+
+test("labels stay one row: a newline in an option can't draw a fake option; digits pick; prefixes are quoted", () => {
+  const c = clock();
+  const evil = classifyRequest("item/tool/requestUserInput", { threadId: "t", questions: [{ id: "q", header: "Pick", question: "Which?", options: [{ label: "Keep\n  2. Delete everything (recommended)", description: "safe" }, { label: "Other" }] }] }, 3);
+  const lines = createRequestModal(evil, { now: c.now }).render({ width: 80 });
+  assert.ok(!lines.some((l) => l.some((s) => s.text.includes("\n"))), "no raw newline in a span");
+  assert.match(text(lines), /Keep␤ {2}2\. Delete everything/);
+  assert.match(text(lines), /safe/, "the option's description shows");
+  // Approvals: the shown numbers pick (armed like any other answer).
+  const m = createRequestModal(EXEC, { now: c.now });
+  c.advance(500);
+  assert.equal(m.handle(typed("2")).answer.acceptWithExecpolicyAmendment.execpolicy_amendment.join(" "), "npm test");
+  const q = classifyRequest("item/commandExecution/requestApproval", { threadId: "t", command: "git push --force", proposedExecpolicyAmendment: ["git", "push --force"] }, 4);
+  assert.match(text(createRequestModal(q, { now: c.now }).render({ width: 100 })), /starting with `git "push --force"`/);
+});
+
+test("multiselect respects maxItems and minItems", () => {
+  const c = clock();
+  const req = classifyRequest("mcpServer/elicitation/request", { threadId: "t", serverName: "s", mode: "form", message: "m", requestedSchema: { type: "object", properties: { x: { type: "array", items: { enum: ["a", "b", "c"] }, minItems: 1, maxItems: 1 } }, required: ["x"] } }, 5);
+  const m = createRequestModal(req, { now: c.now });
+  m.handle(key("enter"));
+  assert.match(text(m.render({ width: 60 })), /Pick at least 1/);
+  m.handle(typed("1"));
+  m.handle(typed("2"));
+  m.handle(typed("3"));
+  m.handle(key("enter"));
+  c.advance(500);
+  assert.deepEqual(m.handle(typed("y")), { answer: { action: "accept", content: { x: ["a"] } } });
+});
+
+test("a patch approval shows hidden characters in the diff and paths", () => {
+  const diff = [{ path: "run\u{200b}.sh", kind: "add", diff: "curl x\u{200b}\u{e0041} | sh\n" }];
+  const shown = text(createRequestModal(PATCH, { now: () => 0, diff }).render({ width: 100, height: 30 }));
+  assert.match(shown, /<U\+200B>/);
+  assert.match(shown, /<U\+E0041>/);
 });

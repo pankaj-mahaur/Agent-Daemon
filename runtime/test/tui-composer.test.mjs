@@ -217,8 +217,11 @@ test("property: layout keeps every grapheme, fits the room, and the cursor stays
   const alphabet = ["a", "b", " ", " ", "\n", "\u{4f60}", "\u{1f600}", "e\u{301}", "\t", "-"];
   let seed = 7;
   const rand = (n) => {
-    seed = (seed * 1103515245 + 12345) % 2 ** 31;
-    return seed % n;
+    // mulberry32: a float multiply past 2^53 would lose the low bits.
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) % n;
   };
   for (let i = 0; i < 300; i++) {
     let text = "";
@@ -279,6 +282,27 @@ test("history persists, skips consecutive duplicates and torn lines, and compact
     const bad = createHistory({ file: join(file, "nested", "x.jsonl") });
     bad.add("still works");
     assert.deepEqual(bad.entries(), ["still works"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("text from outside (set, replace, history file) is sanitized like typed text", () => {
+  const ST = "\x1b" + String.fromCharCode(92); // ESC \ ends an OSC
+  const evil = `ok\x1b]8;;https://evil.example${ST}click\x1b]8;;${ST}\x1b[2K\x1b[1A`;
+  const c = createComposer();
+  c.set(evil);
+  assert.equal(c.text, "okclick");
+  c.clear();
+  type(c, "@x");
+  c.replace(0, 2, `@a\x1b[31mb `);
+  assert.equal(c.text, "@ab ");
+  const dir = mkdtempSync(join(tmpdir(), "ad-hist-evil-"));
+  try {
+    const file = join(dir, "h.jsonl");
+    writeFileSync(file, JSON.stringify({ text: evil }) + "\n");
+    const h = createHistory({ file });
+    assert.deepEqual(h.entries(), ["okclick"]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -33,6 +33,9 @@ const S = {
 };
 
 const shown = (t) => sanitize(String(t ?? ""), "approval");
+// For one-row text (choice labels, errors): tab and newline become visible
+// symbols, so a label can't draw extra rows (fake options) or misalign.
+const oneRow = (t) => String(t).replace(/\t/g, "\u{2409}").replace(/\r?\n/g, "\u{2424}");
 
 // Text lines wrapped with an indent, each source line on its own.
 function block(text, width, style, indent = "  ") {
@@ -80,7 +83,9 @@ function createChoices(choices, { now, armMs }) {
       if (ev.type === "key" && ev.name === "enter" && !ev.alt && !ev.shift && !ev.ctrl) return pick(choices[index]);
       // Exactly one character: a burst or a repeat in one chunk is never an answer.
       const ch = ev.type === "text" ? ev.text : ev.type === "key" && !ev.ctrl && !ev.alt ? ev.name : "";
-      const c = ch.length === 1 ? choices.find((x) => x.key === ch.toLowerCase()) : null;
+      let c = ch.length === 1 ? choices.find((x) => x.key === ch.toLowerCase()) : null;
+      // The numbers shown in the list pick too, unless a choice already uses that key.
+      if (!c && /^[1-9]$/.test(ch) && !choices.some((x) => x.key === ch)) c = choices[Number(ch) - 1] ?? null;
       if (c) return pick(c);
       if (ev.type === "key" || ev.type === "text" || ev.type === "paste") {
         armedAt = now();
@@ -96,7 +101,8 @@ function createChoices(choices, { now, armMs }) {
         const line = [
           { text: cur ? "\u{203a} " : "  ", style: S.sel },
           { text: `${i + 1}. `, style: S.dim },
-          { text: c.label, style: cur ? S.sel : undefined },
+          { text: oneRow(c.label), style: cur ? S.sel : undefined },
+          ...(c.hint ? [{ text: `  ${oneRow(c.hint)}`, style: S.dim }] : []),
           ...(c.key ? [{ text: "  " }, { text: `(${keyText})`, style: ready || c.safe ? S.key : S.dim }] : []),
         ];
         return truncate(line, width);
@@ -115,12 +121,13 @@ function execChoice(o) {
   if (o === "decline") return { label: "No, and tell Codex what to do instead", key: "n", value: o, safe: true };
   if (o === "cancel") return { label: "No, and stop", key: "esc", value: o, safe: true };
   if (o && typeof o === "object" && o.acceptWithExecpolicyAmendment) {
-    const prefix = (o.acceptWithExecpolicyAmendment.execpolicy_amendment ?? []).join(" ");
+    // Tokens with spaces are quoted: ["git", "push --force"] must not read like git push --force.
+    const prefix = (o.acceptWithExecpolicyAmendment.execpolicy_amendment ?? []).map((t) => (/\s|^$/.test(String(t)) ? JSON.stringify(String(t)) : String(t))).join(" ");
     return { label: `Yes, and don't ask again for commands starting with \`${shown(prefix)}\``, key: "p", value: o };
   }
   if (o && typeof o === "object" && o.applyNetworkPolicyAmendment) {
     const host = o.applyNetworkPolicyAmendment.network_policy_amendment?.host ?? "this host";
-    return { label: `Yes, and always allow ${shown(host)}`, key: "p", value: o };
+    return { label: `Yes, and always allow ${shown(host)}`, key: "h", value: o };
   }
   return null;
 }
@@ -147,7 +154,7 @@ function approvalBody(req, width, diff) {
     if (d.detail) out.push(...block(shown(d.detail), width, S.dim));
     if (d.cwd) out.push(...block(`in ${shown(d.cwd)}`, width, S.dim));
   } else if (req.kind === "approval-patch") {
-    if (diff?.length) out.push(...renderDiff(diff, { width, maxLines: Infinity, verb: "Edit" }));
+    if (diff?.length) out.push(...renderDiff(diff, { width, maxLines: Infinity, verb: "Edit", mode: "approval" }));
     if (d.grantRoot) out.push(...block(`and allow writes under ${shown(d.grantRoot)} for this session`, width, S.warn));
   } else if (req.kind === "approval-permissions") {
     out.push(...block(shown(JSON.stringify(d.permissions ?? {}, null, 1).replace(/\n\s*/g, " ")), width, S.cmd));
@@ -210,7 +217,7 @@ function createUserInputModal(req, { now, armMs }) {
   function setup() {
     const q = questions[qi];
     if (!q) return;
-    const choices = q.options.map((o, i) => ({ label: shown(o.label), key: i < 9 ? String(i + 1) : null, value: o.label }));
+    const choices = q.options.map((o, i) => ({ label: shown(o.label), hint: o.description ? shown(o.description) : null, key: i < 9 ? String(i + 1) : null, value: o.label }));
     if (q.other || !choices.length) field = createComposer({ mask: q.secret, pasteLines: Infinity, pasteChars: Infinity });
     else field = null;
     list = choices.length ? createChoices([...choices, { label: "Skip", key: "esc", value: null, safe: true }], { now, armMs }) : null;
@@ -353,7 +360,13 @@ function createElicitationModal(req, { now, armMs }) {
         return field.handle(ev) ?? null;
       }
       if (multi) {
-        if (ev.type === "key" && ev.name === "enter") return store(f, [...multi]);
+        if (ev.type === "key" && ev.name === "enter") {
+          if (f.min != null && multi.size < f.min) {
+            error = `Pick at least ${f.min}`;
+            return { changed: true };
+          }
+          return store(f, [...multi]);
+        }
         if (ev.type === "text" && ev.text === " ") {
           const v = f.options[list.index]?.value;
           if (multi.has(v)) multi.delete(v);
@@ -363,7 +376,7 @@ function createElicitationModal(req, { now, armMs }) {
         const r = list.handle(ev);
         if (r && "answer" in r) {
           if (multi.has(r.answer)) multi.delete(r.answer);
-          else multi.add(r.answer);
+          else if (f.max == null || multi.size < f.max) multi.add(r.answer);
           return { changed: true };
         }
         return r;
@@ -393,7 +406,7 @@ function createElicitationModal(req, { now, armMs }) {
         for (const f of fields) if (values[f.name] !== undefined) out.push(...block(`${shown(f.title)}: ${f.format === "password" ? "\u{2022}\u{2022}\u{2022}\u{2022}" : shown(JSON.stringify(values[f.name]))}`, width, S.dim));
         out.push([], ...list.render(width));
       }
-      if (error) out.push([{ text: error, style: S.warn }]);
+      if (error) out.push(truncate([{ text: oneRow(error), style: S.warn }], width));
       return out;
     },
     history({ width = 80 } = {}) {

@@ -40,7 +40,7 @@ const COMMAND_LINES = 3;
 const DIFF_LINES = 40;
 const TEXT_LINES = 20;
 
-const clean = (t) => sanitize(String(t ?? ""), "transcript");
+const clean = (t) => sanitize(String(t ?? ""), "transcript").replace(/\t/g, "    ");
 const BRANCH = "  \u{2514} ";
 const INDENT = "    ";
 
@@ -107,7 +107,7 @@ export function renderExploring(items, { width = 80 } = {}) {
 function renderCommand(item, width) {
   const shell = item.source === "userShell";
   const status = item.streaming && item.status !== "failed" && item.status !== "declined" ? "inProgress" : item.status;
-  const failed = status === "failed" || (item.exitCode != null && item.exitCode !== 0 && status !== "inProgress");
+  const failed = status === "failed" || (Number.isInteger(item.exitCode) && item.exitCode !== 0 && status !== "inProgress");
   const verb =
     status === "inProgress" ? "Running" : status === "declined" ? "Declined" : failed ? "Failed" : "Ran";
   const verbStyle = failed || status === "declined" ? S.bad : S.head;
@@ -115,7 +115,7 @@ function renderCommand(item, width) {
   const parts = [{ text: verb, style: verbStyle }, { text: " " }];
   if (shell) parts.push({ text: "(unsandboxed) ", style: S.warn });
   parts.push({ text: cmd, style: S.cmd });
-  if (failed && item.exitCode != null) parts.push({ text: ` (exit ${item.exitCode})`, style: S.err });
+  if (failed && Number.isInteger(item.exitCode)) parts.push({ text: ` (exit ${item.exitCode})`, style: S.err });
   if (status !== "inProgress" && item.durationMs != null) parts.push({ text: ` \u{00b7} ${seconds(item.durationMs)}`, style: S.dim });
   const out = capLines(header("\u{2022}", parts, width), COMMAND_LINES, "lines of command");
   const output = tail(item.output ?? "", shell ? SHELL_TAIL : OUTPUT_TAIL, width);
@@ -128,51 +128,75 @@ function renderCommand(item, width) {
 /* Diffs                                                               */
 /* ------------------------------------------------------------------ */
 
-/** Counts of added and removed lines in a unified diff (or a new file's content). */
-export function diffStats(change) {
-  const lines = clean(change.diff).split("\n");
-  if (change.kind === "add" && !lines.some((l) => l.startsWith("@@"))) return { added: lines.filter((l, i) => l || i < lines.length - 1).length, removed: 0 };
-  if (change.kind === "delete" && !lines.some((l) => l.startsWith("@@"))) return { added: 0, removed: lines.filter((l, i) => l || i < lines.length - 1).length };
-  let added = 0;
-  let removed = 0;
-  for (const l of lines) {
-    if (l.startsWith("+++") || l.startsWith("---")) continue;
-    if (l.startsWith("+")) added++;
-    else if (l.startsWith("-")) removed++;
-  }
-  return { added, removed };
-}
-
-// One file's diff as gutter lines: "  12 + text".
-function diffBody(change, width, maxLines) {
-  const raw = clean(change.diff).replace(/\n$/, "");
-  const src = raw.split("\n");
-  const hunked = src.some((l) => l.startsWith("@@"));
-  const rows = []; // {n, sign, text}
-  if (!hunked) {
+/**
+ * A file change as rows {n, sign, text}. A new or deleted file's `diff` is its
+ * content, shown line for line whatever it contains. An update is a unified
+ * diff: anything before the first hunk header is skipped, and each hunk takes
+ * exactly the lines its header counts, so content that looks like a header
+ * ("+++x", "--- y", "@@") is still shown. `mode` is the sanitize mode
+ * ("approval" when the user is asked to approve the change).
+ */
+export function diffRows(change, mode = "transcript") {
+  const raw = sanitize(String(change?.diff ?? ""), mode).replace(/\n$/, "");
+  const src = raw === "" ? [] : raw.split("\n");
+  const rows = [];
+  if (change?.kind === "add" || change?.kind === "delete") {
     const sign = change.kind === "delete" ? "-" : "+";
     src.forEach((t, i) => rows.push({ n: i + 1, sign, text: t }));
-  } else {
-    let oldN = 0;
-    let newN = 0;
-    for (const l of src) {
-      const h = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(l);
-      if (h) {
-        if (rows.length) rows.push({ n: null, sign: "\u{22ee}", text: "" });
-        oldN = Number(h[1]);
-        newN = Number(h[2]);
-        continue;
-      }
-      if (l.startsWith("+++") || l.startsWith("---") || l.startsWith("diff ") || l.startsWith("index ")) continue;
-      if (l.startsWith("+")) rows.push({ n: newN++, sign: "+", text: l.slice(1) });
-      else if (l.startsWith("-")) rows.push({ n: oldN++, sign: "-", text: l.slice(1) });
-      else if (l.startsWith("\\")) continue; // "\ No newline at end of file"
-      else {
-        rows.push({ n: newN++, sign: " ", text: l.slice(1) });
+    return rows;
+  }
+  let i = 0;
+  const header = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
+  while (i < src.length && !header.test(src[i])) i++;
+  if (i === src.length) {
+    // No hunk at all: show the text as it is.
+    src.forEach((t, k) => rows.push({ n: k + 1, sign: " ", text: t }));
+    return rows;
+  }
+  while (i < src.length) {
+    const h = header.exec(src[i]);
+    if (!h) {
+      i++;
+      continue;
+    }
+    if (rows.length) rows.push({ n: null, sign: "\u{22ee}", text: "" });
+    let oldN = Number(h[1]);
+    let newN = Number(h[3]);
+    let oldLeft = h[2] === undefined ? 1 : Number(h[2]);
+    let newLeft = h[4] === undefined ? 1 : Number(h[4]);
+    i++;
+    while (i < src.length && (oldLeft > 0 || newLeft > 0)) {
+      // A header inside a hunk means the counts were wrong: start the next hunk there.
+      if (header.test(src[i])) break;
+      const l = src[i++];
+      if (l.startsWith("\\")) continue; // "\ No newline at end of file"
+      if (l.startsWith("+") && newLeft > 0) {
+        rows.push({ n: newN++, sign: "+", text: l.slice(1) });
+        newLeft--;
+      } else if (l.startsWith("-") && oldLeft > 0) {
+        rows.push({ n: oldN++, sign: "-", text: l.slice(1) });
+        oldLeft--;
+      } else {
+        // A context line starts with a space; anything else is malformed and shown whole.
+        rows.push({ n: newN++, sign: " ", text: l.startsWith(" ") ? l.slice(1) : l });
         oldN++;
+        oldLeft--;
+        newLeft--;
       }
     }
   }
+  return rows;
+}
+
+/** Counts of added and removed lines. */
+export function diffStats(change) {
+  const rows = diffRows(change);
+  return { added: rows.filter((r) => r.sign === "+").length, removed: rows.filter((r) => r.sign === "-").length };
+}
+
+// One file's diff as gutter lines: "  12 + text".
+function diffBody(change, width, maxLines, mode) {
+  const rows = diffRows(change, mode);
   const nw = Math.max(1, ...rows.map((r) => String(r.n ?? "").length));
   const out = [];
   for (const r of rows) {
@@ -185,7 +209,9 @@ function diffBody(change, width, maxLines) {
 }
 
 /** "Edited N files (+A -R)" and each file's diff with a line-number gutter. */
-export function renderDiff(changes, { width = 80, maxLines = DIFF_LINES, verb = "Edited" } = {}) {
+export function renderDiff(changes, { width = 80, maxLines = DIFF_LINES, verb = "Edited", mode = "transcript" } = {}) {
+  // Paths are shown the same way as the content: "approval" makes hidden characters visible.
+  const clean = (t) => sanitize(String(t ?? ""), mode).replace(/\s*\n\s*/g, " ");
   const stats = changes.map(diffStats);
   const added = stats.reduce((n, s) => n + s.added, 0);
   const removed = stats.reduce((n, s) => n + s.removed, 0);
@@ -197,7 +223,7 @@ export function renderDiff(changes, { width = 80, maxLines = DIFF_LINES, verb = 
       const label = c.movePath ? `${clean(c.path)} \u{2192} ${clean(c.movePath)}` : clean(c.path);
       out.push(...details([[{ text: label }, ...count(stats[i].added, stats[i].removed)]], width));
     } else if (c.movePath) out.push(...details([[{ text: `${clean(c.path)} \u{2192} ${clean(c.movePath)}` }]], width));
-    out.push(...diffBody(c, width, maxLines));
+    out.push(...diffBody(c, width, maxLines, mode));
   });
   return out;
 }

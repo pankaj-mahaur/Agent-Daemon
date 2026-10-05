@@ -26,7 +26,7 @@ const S = {
   sel: { fg: "cyan", bold: true },
 };
 
-const clean = (t) => sanitize(String(t ?? ""), "transcript").replace(/\s*\n\s*/g, " ");
+const clean = (t) => sanitize(String(t ?? ""), "transcript").replace(/\s*\n\s*/g, " ").replace(/\t/g, " ");
 const pad = (n) => ({ text: " ".repeat(Math.max(0, n)) });
 
 /** "D:\a\b\c\project" → "D:\…\c\project" when it is too wide. */
@@ -181,7 +181,7 @@ export function createPicker({ items = [], title = "", placeholder = "type to fi
   const filtered = () => {
     const words = query.text.toLowerCase().split(/\s+/).filter(Boolean);
     return items.filter((it) => {
-      const hay = `${it.label} ${it.hint ?? ""}`.toLowerCase();
+      const hay = `${clean(it.label)} ${clean(it.hint ?? "")}`.toLowerCase();
       return words.every((w) => hay.includes(w));
     });
   };

@@ -11,6 +11,7 @@
 import { appendFileSync, chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { sanitize } from "./terminal/sanitize.mjs";
 
 export const DEFAULT_HISTORY_FILE = join(homedir(), ".agent-daemon", "tui", "history.jsonl");
 
@@ -23,7 +24,8 @@ export function createHistory({ file = DEFAULT_HISTORY_FILE, max = 1000 } = {}) 
       lines++;
       try {
         const e = JSON.parse(line);
-        if (typeof e?.text === "string" && e.text) list.push(e.text);
+        // The file is outside ad's control: what comes back is sanitized like typed text.
+        if (typeof e?.text === "string" && e.text) list.push(sanitize(e.text, "transcript"));
       } catch {
         // A torn line from a crash: skipped.
       }

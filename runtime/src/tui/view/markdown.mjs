@@ -237,6 +237,8 @@ const merge = (style, extra) => (style ? { ...style, ...extra } : extra);
 
 /** Inline markdown to spans. `base` is the surrounding style. */
 export function inline(text, base = undefined) {
+  // Per-text indexes so unmatched openers cost O(n) in all, not O(n) each.
+  const ctx = { text, fail: new Map(), brackets: null, ticks: new Map() };
   const out = [];
   let buf = "";
   const flush = () => {
@@ -292,7 +294,7 @@ export function inline(text, base = undefined) {
       continue;
     }
     if (c === "[") {
-      const link = parseLink(text, i);
+      const link = parseLink(ctx, i);
       if (link) {
         flush();
         const label = inline(link.label, merge(base, { underline: true, link: link.url }));
@@ -322,7 +324,7 @@ export function inline(text, base = undefined) {
       }
     }
     if (c === "*" || c === "_" || c === "~") {
-      const em = parseEmphasis(text, i);
+      const em = parseEmphasis(ctx, i);
       if (em) {
         flush();
         out.push(...inline(em.inner, merge(base, em.style)));
@@ -337,25 +339,54 @@ export function inline(text, base = undefined) {
   return out;
 }
 
-function parseLink(text, i) {
-  // [label](url "title") with balanced brackets in the label.
-  let depth = 0;
-  let j = i;
-  for (; j < text.length; j++) {
-    if (text[j] === "\\") {
-      j++;
-      continue;
-    }
-    if (text[j] === "[") depth++;
-    else if (text[j] === "]" && --depth === 0) break;
+// "[" position → its matching "]" (balanced, backslash escapes skipped), one pass.
+function bracketPairs(text) {
+  const pairs = new Map();
+  const stack = [];
+  for (let j = 0; j < text.length; j++) {
+    if (text[j] === "\\") j++;
+    else if (text[j] === "[") stack.push(j);
+    else if (text[j] === "]" && stack.length) pairs.set(stack.pop(), j);
   }
-  if (depth !== 0 || text[j + 1] !== "(") return null;
+  return pairs;
+}
+
+function parseLink(ctx, i) {
+  // [label](url "title") with balanced brackets in the label.
+  const text = ctx.text;
+  ctx.brackets ??= bracketPairs(text);
+  const j = ctx.brackets.get(i);
+  if (j === undefined || text[j + 1] !== "(") return null;
   const m = /^\(\s*<?([^\s()<>]*)>?(?:\s+"[^"]*")?\s*\)/.exec(text.slice(j + 1));
   if (!m || !m[1]) return null;
   return { label: text.slice(i + 1, j), url: m[1], end: j + 1 + m[0].length };
 }
 
-function parseEmphasis(text, i) {
+// The end of the code span whose backtick run starts at j, or -1 (cached per text).
+function codeSpanEnd(ctx, j) {
+  if (ctx.ticks.has(j)) return ctx.ticks.get(j);
+  const text = ctx.text;
+  let n = 0;
+  while (text[j + n] === "`") n++;
+  const close = text.indexOf("`".repeat(n), j + n);
+  const end = close > 0 ? close + n - 1 : -1;
+  ctx.ticks.set(j, end);
+  return end;
+}
+
+// No closer exists after a failed opener of the same kind, so later openers
+// of that kind fail at once (they search a subset of the same range).
+function failedFrom(ctx, key, i) {
+  const at = ctx.fail.get(key);
+  return at !== undefined && i >= at;
+}
+function markFailed(ctx, key, i) {
+  const at = ctx.fail.get(key);
+  if (at === undefined || i < at) ctx.fail.set(key, i);
+}
+
+function parseEmphasis(ctx, i) {
+  const text = ctx.text;
   const c = text[i];
   let n = 0;
   while (text[i + n] === c) n++;
@@ -366,6 +397,8 @@ function parseEmphasis(text, i) {
   // A left-flanking opener: not followed by whitespace; "_" not inside a word.
   if (after === undefined || /\s/.test(after)) return null;
   if (c === "_" && i > 0 && /[\p{L}\p{N}]/u.test(text[i - 1])) return null;
+  const key = `${c}${len}`;
+  if (failedFrom(ctx, key, i)) return len > 1 && c !== "~" ? parseEmphasisRun(ctx, i, len - 1) : null;
   for (let j = i + len + 1; j <= text.length - len; j++) {
     if (text[j] === "\\") {
       j++;
@@ -373,10 +406,9 @@ function parseEmphasis(text, i) {
     }
     if (text[j] === "`") {
       // Skip code spans: emphasis never closes inside one.
-      let n2 = 0;
-      while (text[j + n2] === "`") n2++;
-      const close = text.indexOf("`".repeat(n2), j + n2);
-      if (close > 0) j = close + n2 - 1;
+      const end = codeSpanEnd(ctx, j);
+      if (end > 0) j = end;
+      else while (text[j + 1] === "`") j++;
       continue;
     }
     if (text.startsWith(run, j) && text[j + len] !== c && !/\s/.test(text[j - 1])) {
@@ -385,23 +417,28 @@ function parseEmphasis(text, i) {
       return { inner: text.slice(i + len, j), style, end: j + len };
     }
   }
+  markFailed(ctx, key, i);
   // "***x**" and the like: try a shorter run.
   if (len > 1 && c !== "~") {
-    const shorter = parseEmphasisRun(text, i, len - 1);
+    const shorter = parseEmphasisRun(ctx, i, len - 1);
     if (shorter) return shorter;
   }
   return null;
 }
 
-function parseEmphasisRun(text, i, len) {
+function parseEmphasisRun(ctx, i, len) {
+  const text = ctx.text;
   const c = text[i];
   const run = c.repeat(len);
+  const key = `run${c}${len}`;
+  if (failedFrom(ctx, key, i)) return null;
   for (let j = i + len + 1; j <= text.length - len; j++) {
     if (text.startsWith(run, j) && !/\s/.test(text[j - 1]) && text[j - 1] !== c) {
       const style = len === 2 ? { bold: true } : { italic: true };
       return { inner: text.slice(i + len, j), style, end: j + len };
     }
   }
+  markFailed(ctx, key, i);
   return null;
 }
 
@@ -454,7 +491,9 @@ function renderList(block, width, depth) {
 
 function renderTable(block, width) {
   const cols = Math.max(block.head.length, ...block.rows.map((r) => r.length));
-  const cells = [block.head, ...block.rows].map((r) => Array.from({ length: cols }, (_, k) => normalize(inline(r[k] ?? ""))));
+  // Cells may be cut to fit, which would hide a link's " (url)" suffix: no hyperlinks in tables.
+  const noLink = (spans) => spans.map((sp) => (sp.style?.link ? { ...sp, style: (({ link, ...rest }) => rest)(sp.style) } : sp));
+  const cells = [block.head, ...block.rows].map((r) => Array.from({ length: cols }, (_, k) => normalize(noLink(inline(r[k] ?? "")))));
   let widths = Array.from({ length: cols }, (_, k) => Math.max(1, ...cells.map((r) => lineWidth(r[k]))));
   const sep = 3; // " │ "
   const total = () => widths.reduce((a, b) => a + b, 0) + sep * (cols - 1);
@@ -538,6 +577,9 @@ export function renderMarkdown(text, { width = 80 } = {}) {
 /* Streaming                                                           */
 /* ------------------------------------------------------------------ */
 
+const LIVE_EXACT_CHARS = 8000;
+const LIVE_TAIL_CHARS = 3000;
+
 export function createMarkdownStream({ width = 80 } = {}) {
   width = Math.max(1, width);
   let raw = ""; // everything pushed
@@ -546,8 +588,20 @@ export function createMarkdownStream({ width = 80 } = {}) {
   let blocksBefore = 0; // final blocks already emitted
   let codeEmitted = 0; // lines of an open fence (at `base`) already emitted
   let finished = false;
+  // Complete lines, sanitized once each. A newline ends every escape
+  // sequence sanitize() recognises, so line-by-line equals all at once.
+  const done = [];
+  let doneAt = 0;
 
-  const lines = () => sanitize(raw.slice(0, gated), "transcript").split("\n").slice(0, -1);
+  function lines() {
+    if (doneAt < gated) {
+      const parts = sanitize(raw.slice(doneAt, gated), "transcript").split("\n");
+      parts.pop(); // after the last newline: nothing
+      for (const l of parts) done.push(l);
+      doneAt = gated;
+    }
+    return done;
+  }
 
   // Lines that became final since the last call.
   function advance(final) {
@@ -589,6 +643,21 @@ export function createMarkdownStream({ width = 80 } = {}) {
     return { out };
   }
 
+  function liveTail(region) {
+    const tail = [];
+    let size = 0;
+    for (let i = region.length - 1; i >= 0 && size < LIVE_TAIL_CHARS; i--) {
+      tail.unshift(region[i]);
+      size += region[i].length + 1;
+    }
+    // One enormous line: keep its end, from a word boundary.
+    if (tail.length === 1 && tail[0].length > LIVE_TAIL_CHARS) {
+      const cut = tail[0].slice(-LIVE_TAIL_CHARS);
+      tail[0] = cut.slice(Math.max(0, cut.indexOf(" ") + 1));
+    }
+    return [[{ text: "  \u{2026}", style: { dim: true } }], ...renderBlocks(parseBlocks(tail), width)];
+  }
+
   return {
     push(delta) {
       if (finished || !delta) return [];
@@ -601,7 +670,15 @@ export function createMarkdownStream({ width = 80 } = {}) {
     /** Provisional lines for the live region: the held-back block, partial line included. */
     live() {
       if (finished) return [];
-      const region = toLinesOf(raw).slice(base);
+      const region = lines().slice(base);
+      const partial = sanitize(raw.slice(gated), "transcript");
+      if (partial) region.push(partial);
+      let size = 0;
+      for (const l of region) size += l.length + 1;
+      // A very long held-back block (a huge paragraph or list) is shown by its
+      // tail only: rendering all of it on every frame would be too slow. What
+      // commits stays exact; only this provisional view is cut.
+      if (size > LIVE_EXACT_CHARS) return liveTail(region);
       const blocks = parseBlocks(region);
       if (!blocks.length) return [];
       const b = blocks[0];
