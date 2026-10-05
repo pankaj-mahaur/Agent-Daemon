@@ -1,6 +1,6 @@
 # Plan — `ad`: a Codex-style terminal UI with agent-daemon's powers
 
-> Status: **final v4.8** (2026-10-06; v4 on 2026-10-04 after three review rounds). Changes from here on need a revision-log entry.
+> Status: **final v4.9** (2026-10-06; v4 on 2026-10-04 after three review rounds). Changes from here on need a revision-log entry.
 > Progress: **Part 0** — code done and reviewed twice:
 > - Codex 0.160.0 pinned.
 > - Isolation guard in place (see "Your own Codex is never touched").
@@ -30,8 +30,9 @@
 > - **Part 4** (session controller) built (v4.6).
 > - **Part 5** (view components) built (v4.7). **FC2 pending (user).**
 > - **Part 6** (app shell MVP: `ad tui`, `ad codex`) built (v4.8). **FC3 pending (user).**
+> - **Part 7** (resilience) built (v4.9). **Narrowing-ghost probe runs pending (user).**
 >
-> **Next:** Part 7 (resilience hardening).
+> **Next:** Part 8 (Codex parity++).
 > Research: [Codex TUI + app-server](../research/codex-tui-and-app-server.md) · [terminal engineering](../research/terminal-engineering.md) · [harness landscape](../research/harness-landscape.md).
 
 ## Goal
@@ -796,6 +797,37 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
   - Track the live region's screen row across writes.
   - Where a terminal keeps the cursor's screen row (xterm.js does), compensate in the re-anchor, but only when the region is known to be flush with the bottom. Keep the lower bound everywhere else.
 - **Done when:** the future fixture passes, a collision test fails as expected, and an upgrade dry run is documented.
+- ✅ **Built 2026-10-06** (`test/tui-resilience.test.mjs`, `testkit/protocol-check.mjs`, `scripts/codex-slash.mjs`, `engine/codex/compat.json`).
+  - **`compat.json`:** pinned and tested versions, plus a user-facing "what changed" per version. It shows in `/status` and `ad doctor` ("Codex compatibility"). A test ties it to the pin.
+  - **Slash names:**
+    - `codex-slash.json` (65 names at rust-v0.160.0) is generated from `slash_command.rs`.
+    - Every ad command is marked `source: "codex"` (it must stay one of Codex's) or `"ad"` (it must never be one).
+    - `slashCollisions` is tested both ways, including a simulated Codex `/remember`.
+  - **Protocol checks:**
+    - The snapshot now records each server notification's and request's params type (83 + 10) and their shapes.
+    - `protocol-check.mjs` validates required fields, enums, union variants (`type` or `key=value` tags) and basic types.
+    - Every fake-server message in the main scenarios passes. That needed fixes to the fake: `startedAtMs` / `completedAtMs`, full `Thread` objects, and the approval's `itemId`.
+  - **Future fixture:** the fake's `future` scenario sends:
+    - an unknown notification, item type, item status, action type, extra fields and plan-step status;
+    - an unknown request (refused with -32601).
+
+    The turn completes, the item renders as "not shown", and `/warnings` lists the unknown method with a count (`engine.unknownCounts()`).
+  - **Upgrade flow** (`codex-upgrade.yml`):
+    - regenerates `codex-slash.json`;
+    - bumps `compat.json` (the "what changed" note is left for a human, so its test fails until then);
+    - runs the real engine against the mock model and lists failures in the PR body (label `real-engine-failing`).
+
+    The skill gains the resilience test, the `/init` re-copy and a live `ad tui` smoke.
+  - **Upgrade dry run (2026-10-06, Windows, no-op bump to 0.160.0):**
+    - `codex-schema-snapshot --check` → up to date;
+    - `codex-slash.mjs` → 65 names, no diff;
+    - compat bump → no change;
+    - `npm test` green;
+    - `AD_REAL_ENGINE=1` engine-real → 9/9, including a new test: a `projects` upsert with Windows paths keeps both folders and reads back.
+  - **Narrowing ghosts:** characterized on xterm.js (headless).
+    - When rows above the cursor wrap on narrowing, xterm.js also moves the cursor down by more than the re-wrap accounts for, flush with the bottom or not. So a lower-bound re-anchor leaves the old copy of the wrapped rows as a ghost; history is never erased.
+    - A compensation needs real per-terminal data. `tui-probe screen --bottom` now records it (CPR after each resize, region flush with the bottom).
+    - **Pending (user):** run `node runtime/scripts/tui-probe.mjs screen` and `screen --bottom` in Windows Terminal, Zed and VS Code (narrow, then widen), and share the log and a screenshot. Compensation lands afterwards.
 
 ### Part 8 — Codex parity++
 - **Turn history:**
@@ -1017,3 +1049,8 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
     - `engine.writeConfig` edits take an optional `"upsert"` strategy;
     - `skillRoots({engineHome})`.
   - **Flags and commands:** `ad tui` (`--last`, `--resume`) and `ad codex [args…]`; `ad tui --preview` stays for now.
+- **v4.9** (2026-10-06): Part 7.
+  - **Snapshot:** gains `params` (method → params type), and the shapes of all those types.
+  - **Engine:** gains `unknownCounts()`.
+  - **Slash commands:** `SLASH_COMMANDS` entries carry `source`, and `/warnings` is added.
+  - **Narrowing-ghost compensation:** waits on per-terminal probe data from the user.

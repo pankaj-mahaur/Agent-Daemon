@@ -26,26 +26,30 @@ const LIVE_SHARE = 0.6; // at most this much of the screen for streaming cells
 const DIM = { dim: true };
 const WARN = { fg: "yellow" };
 
+// source "codex": the same command as Codex's (its name must stay one of
+// Codex's); "ad": ad's own (its name must never be one of Codex's). The
+// collision test checks both against codex-slash.json from the pinned tag.
 export const SLASH_COMMANDS = [
-  { name: "help", desc: "what you can do here" },
-  { name: "new", desc: "start a new conversation" },
-  { name: "resume", desc: "continue an earlier conversation" },
-  { name: "model", desc: "choose the model and reasoning effort" },
-  { name: "permissions", desc: "what Codex may do without asking" },
-  { name: "status", desc: "account, model, sandbox, tokens, limits" },
-  { name: "goal", desc: "set a goal for this conversation (/goal clear)" },
-  { name: "review", desc: "review your uncommitted changes" },
-  { name: "diff", desc: "show git changes, untracked files included" },
-  { name: "compact", desc: "summarize the conversation to free context" },
-  { name: "init", desc: "create an AGENTS.md for this repo (Codex's prompt)" },
-  { name: "remember", desc: "save a note to ad's project memory" },
-  { name: "memory", desc: "ad's project memory (not Codex's /memories)" },
-  { name: "login", desc: "sign in (ChatGPT, OpenAI key, OpenRouter)" },
-  { name: "logout", desc: "sign out of Codex in ad's home" },
-  { name: "codex", desc: "open the stock Codex UI on this conversation" },
-  { name: "ad", desc: "run an ad command, e.g. /ad doctor" },
-  { name: "quit", desc: "exit ad" },
-  { name: "exit", desc: "exit ad" },
+  { name: "help", source: "ad", desc: "what you can do here" },
+  { name: "new", source: "codex", desc: "start a new conversation" },
+  { name: "resume", source: "codex", desc: "continue an earlier conversation" },
+  { name: "model", source: "codex", desc: "choose the model and reasoning effort" },
+  { name: "permissions", source: "codex", desc: "what Codex may do without asking" },
+  { name: "status", source: "codex", desc: "account, model, sandbox, tokens, limits" },
+  { name: "goal", source: "codex", desc: "set a goal for this conversation (/goal clear)" },
+  { name: "review", source: "codex", desc: "review your uncommitted changes" },
+  { name: "diff", source: "codex", desc: "show git changes, untracked files included" },
+  { name: "compact", source: "codex", desc: "summarize the conversation to free context" },
+  { name: "init", source: "codex", desc: "create an AGENTS.md for this repo (Codex's prompt)" },
+  { name: "warnings", source: "codex", desc: "notices kept from this session, and unknown events" },
+  { name: "remember", source: "ad", desc: "save a note to ad's project memory" },
+  { name: "memory", source: "ad", desc: "ad's project memory (not Codex's /memories)" },
+  { name: "login", source: "ad", desc: "sign in (ChatGPT, OpenAI key, OpenRouter)" },
+  { name: "logout", source: "codex", desc: "sign out of Codex in ad's home" },
+  { name: "codex", source: "ad", desc: "open the stock Codex UI on this conversation" },
+  { name: "ad", source: "ad", desc: "run an ad command, e.g. /ad doctor" },
+  { name: "quit", source: "codex", desc: "exit ad" },
+  { name: "exit", source: "codex", desc: "exit ad" },
 ];
 
 const PERMISSION_PRESETS = [
@@ -462,6 +466,8 @@ export function createApp({
         return send(INIT_PROMPT, "/init");
       case "status":
         return commitCell(statusReport());
+      case "warnings":
+        return commitCell(warningsReport());
       case "model":
         return pickModel();
       case "permissions":
@@ -516,6 +522,19 @@ export function createApp({
       default:
         return warn(`Unknown command /${clean(name)}. /help lists them.`);
     }
+  }
+
+  function warningsReport() {
+    const kept = st.notices.filter((n) => n.level !== "info");
+    const unknown = Object.entries(session.engine?.unknownCounts?.() ?? {});
+    if (!kept.length && !unknown.length) return renderNotice({ level: "info", message: "No warnings in this session." }, { width: width() });
+    const out = [[{ text: "Warnings", style: { bold: true } }]];
+    for (const n of kept.slice(-20)) out.push(...renderNotice(n, { width: width() }));
+    if (unknown.length) {
+      out.push([{ text: "Events this ad doesn't know (a newer Codex?):", style: DIM }]);
+      for (const [method, n] of unknown.slice(0, 20)) out.push(truncate([{ text: `  ${clean(method)} ×${n}`, style: DIM }], width()));
+    }
+    return out;
   }
 
   function statusReport() {
@@ -754,4 +773,18 @@ export function createApp({
       offResize();
     },
   };
+}
+
+/**
+ * Collisions between ad's slash commands and Codex's (plan Part 7): an ad
+ * command must not take a Codex name, and a mirrored one must still exist.
+ */
+export function slashCollisions(commands, codexNames) {
+  const codex = new Set(codexNames);
+  const out = [];
+  for (const c of commands) {
+    if (c.source === "ad" && codex.has(c.name)) out.push(`/${c.name} is ad's own but Codex now has it too`);
+    if (c.source === "codex" && !codex.has(c.name)) out.push(`/${c.name} mirrors Codex but Codex no longer has it`);
+  }
+  return out;
 }

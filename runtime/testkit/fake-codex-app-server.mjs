@@ -57,7 +57,33 @@ function setPath(obj, keyPath, value) {
   else cur[parts.at(-1)] = value;
 }
 
-const send = (msg) => process.stdout.write(JSON.stringify(msg) + "\n");
+// Fields the real Codex always sends, filled in where a scenario leaves them
+// out, so every message matches the pinned protocol (test/tui-resilience).
+const fullThread = (t) => ({
+  cliVersion: "0.160.0",
+  createdAt: 0,
+  updatedAt: 0,
+  cwd: process.cwd(),
+  ephemeral: false,
+  modelProvider: "fake",
+  preview: "",
+  projectId: null,
+  sessionId: t?.id ?? "session",
+  source: "appServer",
+  status: { type: "idle" },
+  turns: [],
+  ...t,
+});
+function complete_(msg) {
+  const p = msg.params;
+  if (!p || typeof p !== "object") return msg;
+  if (msg.method === "item/started") return { ...msg, params: { startedAtMs: 0, ...p } };
+  if (msg.method === "item/completed") return { ...msg, params: { completedAtMs: 0, ...p } };
+  if (msg.method === "thread/started") return { ...msg, params: { ...p, thread: fullThread(p.thread) } };
+  if (msg.method === "item/commandExecution/requestApproval") return { ...msg, params: { itemId: `cmd-${msg.id}`, startedAtMs: 0, ...p } };
+  return msg;
+}
+const send = (msg) => process.stdout.write(JSON.stringify(msg.method ? complete_(msg) : msg) + "\n");
 const notify = (method, params) => send({ method, params });
 
 const requestThreads = new Map(); // server request id → threadId
@@ -140,6 +166,20 @@ async function runScriptedTurn(threadId, turn, params) {
     return complete(threadId, turn);
   }
   // Part 3b routing scenarios.
+  if (text === "future") {
+    // A synthetic newer Codex (plan Part 7): methods, item types, fields and
+    // enum values this ad has never seen, and a request it can't answer.
+    notify("thread/hologram/updated", { threadId, hologram: { depth: 3 } });
+    notify("item/started", { threadId, turnId: turn.id, item: { type: "hologramProjection", id: "holo-1", depth: 3 } });
+    notify("item/completed", { threadId, turnId: turn.id, item: { type: "hologramProjection", id: "holo-1", depth: 3 } });
+    notify("item/completed", { threadId, turnId: turn.id, item: { type: "commandExecution", id: "cmd-f", command: "ls", status: "teleported", exitCode: 0, aggregatedOutput: "a\n", commandActions: [{ type: "beam", command: "ls" }], futureField: { x: 1 } } });
+    notify("item/agentMessage/delta", { threadId, turnId: turn.id, itemId: "msg-f", delta: "from the future", sparkle: true });
+    notify("turn/plan/updated", { threadId, turnId: turn.id, plan: [{ step: "warp", status: "warping" }] });
+    notify("thread/tokenUsage/updated", { threadId, turnId: turn.id, tokenUsage: { total: { totalTokens: 10, quantumTokens: 2 }, last: { totalTokens: 10 }, modelContextWindow: 1000 } });
+    const reply = await askClient("item/teleport/requestApproval", { threadId, turnId: turn.id, itemId: "tp-1", destination: "mars" });
+    agentMessage(threadId, turn.id, `future[${reply.result?.decision ?? reply.error?.code}]`);
+    return complete(threadId, turn);
+  }
   if (text === "subagent") {
     const child = `child-of-${threadId}`;
     notify("thread/started", { thread: { id: child, parentThreadId: threadId, agentNickname: "explorer", agentRole: "explorer" } });

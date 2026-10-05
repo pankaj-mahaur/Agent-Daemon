@@ -217,3 +217,16 @@ test("bad requests are classified the way plan D5 expects", { skip, timeout: STA
     assert.match(shape.message, /Invalid request/);
   });
 });
+
+test("folder trust: an upsert of projects keeps other folders, and config/read returns it (plan Part 6, S3)", { skip, timeout: START_TIMEOUT_MS + 30_000 }, async () => {
+  await withRealEngine(async ({ server, cwd }) => {
+    const other = join(cwd, "other folder");
+    const write = (path, level) => server.request("config/batchWrite", { edits: [{ keyPath: "projects", value: { [path]: { trust_level: level } }, mergeStrategy: "upsert" }], reloadUserConfig: true });
+    await write(cwd, "trusted");
+    await write(other, "untrusted");
+    const config = (await server.request("config/read", {})).config ?? {};
+    const level = (p) => Object.entries(config.projects ?? {}).find(([k]) => k.toLowerCase() === p.toLowerCase())?.[1]?.trust_level;
+    assert.equal(level(cwd), "trusted", JSON.stringify(config.projects));
+    assert.equal(level(other), "untrusted");
+  });
+});

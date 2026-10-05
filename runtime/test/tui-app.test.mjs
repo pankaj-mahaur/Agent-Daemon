@@ -202,3 +202,15 @@ test("a tiny screen still shows the composer; no footer under 10 rows", async ()
     { rows: 8, cols: 30 },
   );
 });
+
+test("/warnings lists kept notices and events from a newer Codex", async () => {
+  await withApp(async ({ type, until, text }) => {
+    type("/warnings\r");
+    await until(() => /No warnings in this session/.test(text()), "the empty report");
+    type("future\r");
+    await until(() => /Worked for/.test(text()), "the future turn");
+    assert.match(text(), /not shown: hologramProjection/);
+    type("/warnings\r");
+    await until(() => /thread\/hologram\/updated ×1/.test(text()), "the unknown event");
+  });
+});

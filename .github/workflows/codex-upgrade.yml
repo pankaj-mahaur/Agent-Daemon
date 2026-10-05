@@ -90,12 +90,44 @@ jobs:
             exit "$code"
           fi
 
+      - name: Regenerate Codex slash names and compat
+        if: steps.ver.outputs.skip != 'true'
+        working-directory: runtime
+        env:
+          GH_TOKEN: ${{ secrets.CODEX_UPGRADE_TOKEN || github.token }}
+          TARGET: ${{ steps.ver.outputs.target }}
+        run: |
+          # ad's own slash commands must not collide with new Codex ones (test/tui-resilience).
+          node scripts/codex-slash.mjs
+          # compat.json: the new pin is tested; "what changed" is left for a human,
+          # so the compat test fails until someone writes it.
+          node -e '
+            const fs = require("fs"); const f = "src/engine/codex/compat.json";
+            const c = JSON.parse(fs.readFileSync(f, "utf8")); const t = process.env.TARGET;
+            c.pinned = t; if (!c.tested.includes(t)) c.tested.push(t);
+            fs.writeFileSync(f, JSON.stringify(c, null, 2) + "\n");'
+
       - name: Run test suite
         if: steps.ver.outputs.skip != 'true'
         id: tests
         working-directory: runtime
         continue-on-error: true
         run: npm test
+
+      - name: Real engine against the mock model
+        if: steps.ver.outputs.skip != 'true'
+        id: real
+        working-directory: runtime
+        continue-on-error: true
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          set +e
+          AD_REAL_ENGINE=1 node --test --test-concurrency=1 --test-force-exit --test-reporter=tap test/engine-real.test.mjs > "$RUNNER_TEMP/real.tap" 2>&1
+          code=$?
+          set -e
+          # The failing tests by name, for the PR body.
+          grep -E '^\s*not ok' "$RUNNER_TEMP/real.tap" | sed -E 's/^\s*not ok [0-9]+ - /- /' > "$RUNNER_TEMP/real-failures.md" || true
+          exit "$code"
 
       - name: Open PR
         if: steps.ver.outputs.skip != 'true'
@@ -107,11 +139,12 @@ jobs:
           BRANCH: ${{ steps.ver.outputs.branch }}
           BREAKING: ${{ steps.diff.outputs.breaking }}
           TESTS: ${{ steps.tests.outcome }}
+          REAL: ${{ steps.real.outcome }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$BRANCH"
-          git add runtime/package.json runtime/package-lock.json runtime/src/engine/codex/protocol-snapshot.json
+          git add runtime/package.json runtime/package-lock.json runtime/src/engine/codex/protocol-snapshot.json runtime/src/tui/codex-slash.json runtime/src/engine/codex/compat.json
           git commit -m "chore(engine): bump @openai/codex $CURRENT -> $TARGET"
           git push --force origin "$BRANCH"
           {
@@ -119,14 +152,23 @@ jobs:
             echo
             echo "- Release notes: https://github.com/openai/codex/releases/tag/rust-v$TARGET"
             echo "- Test suite: **$TESTS**"
+            echo "- Real engine vs mock model (Linux): **$REAL**"
+            if [ -s "$RUNNER_TEMP/real-failures.md" ]; then
+              echo
+              echo "Real-engine failures:"
+              cat "$RUNNER_TEMP/real-failures.md"
+            fi
+            echo
+            echo "- \`compat.json\`: write the user-facing \"what changed\" note for $TARGET (its test fails until then)."
             echo
             cat "$RUNNER_TEMP/protocol-diff.md"
             echo
-            echo "Merge only after a live \`ad run\` smoke on Windows."
+            echo "Merge only after the live smokes in the codex-upgrade skill (\`ad run\` and \`ad tui\`) on Windows."
           } > "$RUNNER_TEMP/body.md"
           labels="codex-upgrade"
           [ "$BREAKING" = "true" ] && labels="$labels,breaking-protocol"
           [ "$TESTS" != "success" ] && labels="$labels,tests-failing"
+          [ "$REAL" != "success" ] && labels="$labels,real-engine-failing"
           for l in ${labels//,/ }; do
             gh label create "$l" --force >/dev/null 2>&1 || echo "::warning::could not create label $l"
           done

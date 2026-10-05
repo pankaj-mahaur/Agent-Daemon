@@ -208,7 +208,1608 @@
       "windowsSandbox/setupCompleted"
     ]
   },
+  "params": {
+    "serverNotifications": {
+      "account/gatewayOAuth/changed": "GatewayOAuthChangedNotification",
+      "account/login/completed": "AccountLoginCompletedNotification",
+      "account/rateLimits/updated": "AccountRateLimitsUpdatedNotification",
+      "account/updated": "AccountUpdatedNotification",
+      "app/list/updated": "AppListUpdatedNotification",
+      "autoApprovalReview/strictReviewRequired": "StrictReviewRequiredNotification",
+      "command/exec/outputDelta": "CommandExecOutputDeltaNotification",
+      "configWarning": "ConfigWarningNotification",
+      "deprecationNotice": "DeprecationNoticeNotification",
+      "error": "ErrorNotification",
+      "externalAgentConfig/import/completed": "ExternalAgentConfigImportCompletedNotification",
+      "externalAgentConfig/import/progress": "ExternalAgentConfigImportProgressNotification",
+      "fs/changed": "FsChangedNotification",
+      "fuzzyFileSearch/sessionCompleted": "FuzzyFileSearchSessionCompletedNotification",
+      "fuzzyFileSearch/sessionUpdated": "FuzzyFileSearchSessionUpdatedNotification",
+      "guardianWarning": "GuardianWarningNotification",
+      "hook/completed": "HookCompletedNotification",
+      "hook/started": "HookStartedNotification",
+      "item/agentMessage/delta": "AgentMessageDeltaNotification",
+      "item/autoApprovalReview/completed": "ItemGuardianApprovalReviewCompletedNotification",
+      "item/autoApprovalReview/started": "ItemGuardianApprovalReviewStartedNotification",
+      "item/commandExecution/outputDelta": "CommandExecutionOutputDeltaNotification",
+      "item/commandExecution/terminalInteraction": "TerminalInteractionNotification",
+      "item/completed": "ItemCompletedNotification",
+      "item/fileChange/outputDelta": "FileChangeOutputDeltaNotification",
+      "item/fileChange/patchUpdated": "FileChangePatchUpdatedNotification",
+      "item/mcpToolCall/progress": "McpToolCallProgressNotification",
+      "item/plan/delta": "PlanDeltaNotification",
+      "item/reasoning/summaryPartAdded": "ReasoningSummaryPartAddedNotification",
+      "item/reasoning/summaryTextDelta": "ReasoningSummaryTextDeltaNotification",
+      "item/reasoning/textDelta": "ReasoningTextDeltaNotification",
+      "item/started": "ItemStartedNotification",
+      "mcpServer/event/stream/notification": "McpServerEventStreamNotification",
+      "mcpServer/oauthLogin/completed": "McpServerOauthLoginCompletedNotification",
+      "mcpServer/startupStatus/updated": "McpServerStatusUpdatedNotification",
+      "model/rerouted": "ModelReroutedNotification",
+      "model/safetyBuffering/updated": "ModelSafetyBufferingUpdatedNotification",
+      "model/verification": "ModelVerificationNotification",
+      "modelProvider/authRecoveryCompleted": "AuthRecoveryNotification",
+      "modelProvider/authRecoveryStarted": "AuthRecoveryNotification",
+      "process/exited": "ProcessExitedNotification",
+      "process/outputDelta": "ProcessOutputDeltaNotification",
+      "project/changed": "ProjectChangedNotification",
+      "remoteControl/status/changed": "RemoteControlStatusChangedNotification",
+      "serverRequest/resolved": "ServerRequestResolvedNotification",
+      "skills/changed": "SkillsChangedNotification",
+      "thread/archived": "ThreadArchivedNotification",
+      "thread/attachment/updated": "ThreadAttachmentUpdatedNotification",
+      "thread/closed": "ThreadClosedNotification",
+      "thread/compacted": "ContextCompactedNotification",
+      "thread/deleted": "ThreadDeletedNotification",
+      "thread/environment/connected": "EnvironmentConnectionNotification",
+      "thread/environment/disconnected": "EnvironmentConnectionNotification",
+      "thread/goal/cleared": "ThreadGoalClearedNotification",
+      "thread/goal/updated": "ThreadGoalUpdatedNotification",
+      "thread/name/updated": "ThreadNameUpdatedNotification",
+      "thread/project/updated": "ThreadProjectUpdatedNotification",
+      "thread/queue/changed": "ThreadQueueChangedNotification",
+      "thread/realtime/closed": "ThreadRealtimeClosedNotification",
+      "thread/realtime/error": "ThreadRealtimeErrorNotification",
+      "thread/realtime/item/completed": "ThreadRealtimeItemCompletedNotification",
+      "thread/realtime/item/started": "ThreadRealtimeItemStartedNotification",
+      "thread/realtime/item/transcript/delta": "ThreadRealtimeItemTranscriptDeltaNotification",
+      "thread/realtime/itemAdded": "ThreadRealtimeItemAddedNotification",
+      "thread/realtime/outputAudio/delta": "ThreadRealtimeOutputAudioDeltaNotification",
+      "thread/realtime/sdp": "ThreadRealtimeSdpNotification",
+      "thread/realtime/started": "ThreadRealtimeStartedNotification",
+      "thread/realtime/transcript/delta": "ThreadRealtimeTranscriptDeltaNotification",
+      "thread/realtime/transcript/done": "ThreadRealtimeTranscriptDoneNotification",
+      "thread/reverted": "ThreadRevertedNotification",
+      "thread/settings/updated": "ThreadSettingsUpdatedNotification",
+      "thread/started": "ThreadStartedNotification",
+      "thread/status/changed": "ThreadStatusChangedNotification",
+      "thread/tokenUsage/updated": "ThreadTokenUsageUpdatedNotification",
+      "thread/unarchived": "ThreadUnarchivedNotification",
+      "turn/completed": "TurnCompletedNotification",
+      "turn/diff/updated": "TurnDiffUpdatedNotification",
+      "turn/moderationMetadata": "TurnModerationMetadataNotification",
+      "turn/plan/updated": "TurnPlanUpdatedNotification",
+      "turn/started": "TurnStartedNotification",
+      "warning": "WarningNotification",
+      "windows/worldWritableWarning": "WindowsWorldWritableWarningNotification",
+      "windowsSandbox/setupCompleted": "WindowsSandboxSetupCompletedNotification"
+    },
+    "serverRequests": {
+      "account/chatgptAuthTokens/refresh": "ChatgptAuthTokensRefreshParams",
+      "applyPatchApproval": "ApplyPatchApprovalParams",
+      "attestation/generate": "AttestationGenerateParams",
+      "execCommandApproval": "ExecCommandApprovalParams",
+      "item/commandExecution/requestApproval": "CommandExecutionRequestApprovalParams",
+      "item/fileChange/requestApproval": "FileChangeRequestApprovalParams",
+      "item/permissions/requestApproval": "PermissionsRequestApprovalParams",
+      "item/tool/call": "DynamicToolCallParams",
+      "item/tool/requestUserInput": "ToolRequestUserInputParams",
+      "mcpServer/elicitation/request": "McpServerElicitationRequestParams"
+    }
+  },
   "definitions": {
+    "AccountLoginCompletedNotification": {
+      "required": [
+        "success"
+      ],
+      "props": [
+        "error",
+        "loginId",
+        "onboardingEntrypoint",
+        "success"
+      ],
+      "types": {
+        "error": "null|string",
+        "loginId": "null|string",
+        "onboardingEntrypoint": "DesktopOnboardingEntrypoint|null",
+        "success": "boolean"
+      }
+    },
+    "AccountRateLimitsUpdatedNotification": {
+      "required": [
+        "rateLimits"
+      ],
+      "props": [
+        "rateLimits"
+      ],
+      "types": {
+        "rateLimits": "RateLimitSnapshot"
+      }
+    },
+    "AccountUpdatedNotification": {
+      "required": [],
+      "props": [
+        "authMode",
+        "planType"
+      ],
+      "types": {
+        "authMode": "AuthMode|null",
+        "planType": "PlanType|null"
+      }
+    },
+    "AppListUpdatedNotification": {
+      "required": [
+        "data"
+      ],
+      "props": [
+        "data"
+      ],
+      "types": {
+        "data": "array<AppInfo>"
+      }
+    },
+    "ApplyPatchApprovalParams": {
+      "required": [
+        "callId",
+        "conversationId",
+        "fileChanges"
+      ],
+      "props": [
+        "callId",
+        "conversationId",
+        "fileChanges",
+        "grantRoot",
+        "reason"
+      ],
+      "types": {
+        "callId": "string",
+        "conversationId": "ThreadId",
+        "fileChanges": "object",
+        "grantRoot": "null|string",
+        "reason": "null|string"
+      }
+    },
+    "AttestationGenerateParams": {
+      "type": "object"
+    },
+    "AuthRecoveryNotification": {
+      "required": [
+        "message",
+        "provider",
+        "threadId",
+        "turnId"
+      ],
+      "props": [
+        "message",
+        "provider",
+        "threadId",
+        "turnId"
+      ],
+      "types": {
+        "message": "string",
+        "provider": "string",
+        "threadId": "string",
+        "turnId": "string"
+      }
+    },
+    "ChatgptAuthTokensRefreshParams": {
+      "required": [
+        "reason"
+      ],
+      "props": [
+        "previousAccountId",
+        "reason"
+      ],
+      "types": {
+        "previousAccountId": "null|string",
+        "reason": "ChatgptAuthTokensRefreshReason"
+      }
+    },
+    "CommandExecOutputDeltaNotification": {
+      "required": [
+        "capReached",
+        "deltaBase64",
+        "processId",
+        "stream"
+      ],
+      "props": [
+        "capReached",
+        "deltaBase64",
+        "processId",
+        "stream"
+      ],
+      "types": {
+        "capReached": "boolean",
+        "deltaBase64": "string",
+        "processId": "string",
+        "stream": "CommandExecOutputStream"
+      }
+    },
+    "CommandExecutionOutputDeltaNotification": {
+      "required": [
+        "delta",
+        "itemId",
+        "threadId",
+        "turnId"
+      ],
+      "props": [
+        "delta",
+        "itemId",
+        "threadId",
+        "turnId"
+      ],
+      "types": {
+        "delta": "string",
+        "itemId": "string",
+        "threadId": "string",
+        "turnId": "string"
+      }
+    },
+    "CommandExecutionRequestApprovalParams": {
+      "required": [
+        "itemId",
+        "startedAtMs",
+        "threadId",
+        "turnId"
+      ],
+      "props": [
+        "approvalId",
+        "command",
+        "commandActions",
+        "cwd",
+        "environmentId",
+        "itemId",
+        "kind",
+        "networkApprovalContext",
+        "proposedExecpolicyAmendment",
+        "proposedNetworkPolicyAmendments",
+        "reason",
+        "startedAtMs",
+        "threadId",
+        "turnId"
+      ],
+      "types": {
+        "approvalId": "null|string",
+        "command": "null|string",
+        "commandActions": "array<CommandAction>|null",
+        "cwd": "LegacyAppPathString|null",
+        "environmentId": "null|string",
+        "itemId": "string",
+        "kind": "CommandExecutionApprovalKind",
+        "networkApprovalContext": "NetworkApprovalContext|null",
+        "proposedExecpolicyAmendment": "array<string>|null",
+        "proposedNetworkPolicyAmendments": "array<NetworkPolicyAmendment>|null",
+        "reason": "null|string",
+        "startedAtMs": "integer",
+        "threadId": "string",
+        "turnId": "string"
+      }
+    },
+    "ConfigWarningNotification": {
+      "required": [
+        "summary"
+      ],
+      "props": [
+        "details",
+        "path",
+        "range",
+        "summary"
+      ],
+      "types": {
+        "details": "null|string",
+        "path": "null|string",
+        "range": "TextRange|null",
+        "summary": "string"
+      }
+    },
+    "ContextCompactedNotification": {
+      "required": [
+        "threadId",
+        "turnId"
+      ],
+      "props": [
+        "threadId",
+        "turnId"
+      ],
+      "types": {
+        "threadId": "string",
+        "turnId": "string"
+      }
+    },
+    "DeprecationNoticeNotification": {
+      "required": [
+        "summary"
+      ],
+      "props": [
+        "details",
+        "summary"
+      ],
+      "types": {
+        "details": "null|string",
+        "summary": "string"
+      }
+    },
+    "DynamicToolCallParams": {
+      "required": [
+        "arguments",
+        "callId",
+        "threadId",
+        "tool",
+        "turnId"
+      ],
+      "props": [
+        "arguments",
+        "callId",
+        "namespace",
+        "threadId",
+        "tool",
+        "turnId"
+      ],
+      "types": {
+        "arguments": "any",
+        "callId": "string",
+        "namespace": "null|string",
+        "threadId": "string",
+        "tool": "string",
+        "turnId": "string"
+      }
+    },
+    "EnvironmentConnectionNotification": {
+      "required": [
+        "environmentId",
+        "threadId"
+      ],
+      "props": [
+        "environmentId",
+        "threadId"
+      ],
+      "types": {
+        "environmentId": "string",
+        "threadId": "string"
+      }
+    },
+    "ExecCommandApprovalParams": {
+      "required": [
+        "callId",
+        "command",
+        "conversationId",
+        "cwd",
+        "parsedCmd"
+      ],
+      "props": [
+        "approvalId",
+        "callId",
+        "command",
+        "conversationId",
+        "cwd",
+        "parsedCmd",
+        "reason"
+      ],
+      "types": {
+        "approvalId": "null|string",
+        "callId": "string",
+        "command": "array<string>",
+        "conversationId": "ThreadId",
+        "cwd": "string",
+        "parsedCmd": "array<ParsedCommand>",
+        "reason": "null|string"
+      }
+    },
+    "ExternalAgentConfigImportCompletedNotification": {
+      "required": [
+        "importId",
+        "itemTypeResults"
+      ],
+      "props": [
+        "importId",
+        "itemTypeResults"
+      ],
+      "types": {
+        "importId": "string",
+        "itemTypeResults": "array<ExternalAgentConfigImportTypeResult>"
+      }
+    },
+    "ExternalAgentConfigImportProgressNotification": {
+      "required": [
+        "importId",
+        "itemTypeResults"
+      ],
+      "props": [
+        "importId",
+        "itemTypeResults"
+      ],
+      "types": {
+        "importId": "string",
+        "itemTypeResults": "array<ExternalAgentConfigImportTypeResult>"
+      }
+    },
+    "FileChangeOutputDeltaNotification": {
+      "required": [
+        "delta",
+        "itemId",
+        "threadId",
+        "turnId"
+      ],
+      "props": [
+        "delta",
+        "itemId",
+        "threadId",
+        "turnId"
+      ],
+      "types": {
+        "delta": "string",
+        "itemId": "string",
+        "threadId": "string",
+        "turnId": "string"
+      }
+    },
+    "FileChangePatchUpdatedNotification": {
+      "required": [
+        "changes",
+        "itemId",
+        "threadId",
+        "turnId"
+      ],
+      "props": [
+        "changes",
+        "itemId",
+        "threadId",
+        "turnId"
+      ],
+      "types": {
+        "changes": "array<FileUpdateChange>",
+        "itemId": "string",
+        "threadId": "string",
+        "turnId": "string"
+      }
+    },
+    "FileChangeRequestApprovalParams": {
+      "required": [
+        "itemId",
+        "startedAtMs",
+        "threadId",
+        "turnId"
+      ],
+      "props": [
+        "grantRoot",
+        "itemId",
+        "reason",
+        "startedAtMs",
+        "threadId",
+        "turnId"
+      ],
+      "types": {
+        "grantRoot": "null|string",
+        "itemId": "string",
+        "reason": "null|string",
+        "startedAtMs": "integer",
+        "threadId": "string",
+        "turnId": "string"
+      }
+    },
+    "FsChangedNotification": {
+      "required": [
+        "changedPaths",
+        "watchId"
+      ],
+      "props": [
+        "changedPaths",
+        "watchId"
+      ],
+      "types": {
+        "changedPaths": "array<AbsolutePathBuf>",
+        "watchId": "string"
+      }
+    },
+    "FuzzyFileSearchSessionCompletedNotification": {
+      "required": [
+        "sessionId"
+      ],
+      "props": [
+        "sessionId"
+      ],
+      "types": {
+        "sessionId": "string"
+      }
+    },
+    "FuzzyFileSearchSessionUpdatedNotification": {
+      "required": [
+        "files",
+        "query",
+        "sessionId"
+      ],
+      "props": [
+        "files",
+        "query",
+        "sessionId"
+      ],
+      "types": {
+        "files": "array<FuzzyFileSearchResult>",
+        "query": "string",
+        "sessionId": "string"
+      }
+    },
+    "GatewayOAuthChangedNotification": {
+      "required": [
+        "providerId",
+        "status"
+      ],
+      "props": [
+        "authUrl",
+        "error",
+        "providerId",
+        "status"
+      ],
+      "types": {
+        "authUrl": "null|string",
+        "error": "null|string",
+        "providerId": "string",
+        "status": "GatewayOAuthStatus"
+      }
+    },
+    "GuardianWarningNotification": {
+      "required": [
+        "message",
+        "threadId"
+      ],
+      "props": [
+        "message",
+        "threadId"
+      ],
+      "types": {
+        "message": "string",
+        "threadId": "string"
+      }
+    },
+    "HookCompletedNotification": {
+      "required": [
+        "run",
+        "threadId"
+      ],
+      "props": [
+        "run",
+        "threadId",
+        "turnId"
+      ],
+      "types": {
+        "run": "HookRunSummary",
+        "threadId": "string",
+        "turnId": "null|string"
+      }
+    },
+    "HookStartedNotification": {
+      "required": [
+        "run",
+        "threadId"
+      ],
+      "props": [
+        "run",
+        "threadId",
+        "turnId"
+      ],
+      "types": {
+        "run": "HookRunSummary",
+        "threadId": "string",
+        "turnId": "null|string"
+      }
+    },
+    "ItemGuardianApprovalReviewCompletedNotification": {
+      "required": [
+        "action",
+        "completedAtMs",
+        "decisionSource",
+        "review",
+        "reviewId",
+        "startedAtMs",
+        "threadId",
+        "turnId"
+      ],
+      "props": [
+        "action",
+        "completedAtMs",
+        "decisionSource",
+        "review",
+        "reviewId",
+        "startedAtMs",
+        "targetItemId",
+        "threadId",
+        "turnId"
+      ],
+      "types": {
+        "action": "GuardianApprovalReviewAction",
+        "completedAtMs": "integer",
+        "decisionSource": "AutoReviewDecisionSource",
+        "review": "GuardianApprovalReview",
+        "reviewId": "string",
+        "startedAtMs": "integer",
+        "targetItemId": "null|string",
+        "threadId": "string",
+        "turnId": "string"
+      }
+    },
+    "ItemGuardianApprovalReviewStartedNotification": {
+      "required": [
+        "action",
+        "review",
+        "reviewId",
+        "startedAtMs",
+        "threadId",
+        "turnId"
+      ],
+      "props": [
+        "action",
+        "review",
+        "reviewId",
+        "startedAtMs",
+        "targetItemId",
+        "threadId",
+        "turnId"
+      ],
+      "types": {
+        "action": "GuardianApprovalReviewAction",
+        "review": "GuardianApprovalReview",
+        "reviewId": "string",
+        "startedAtMs": "integer",
+        "targetItemId": "null|string",
+        "threadId": "string",
+        "turnId": "string"
+      }
+    },
+    "McpServerElicitationRequestParams": {
+      "union": [
+        {
+          "tag": "mode=form",
+          "props": [
+            "_meta",
+            "message",
+            "mode",
+            "requestedSchema"
+          ],
+          "types": {
+            "_meta": "any",
+            "message": "string",
+            "mode": "enum(form)",
+            "requestedSchema": "McpElicitationSchema"
+          }
+        },
+        {
+          "tag": "mode=openai/form",
+          "props": [
+            "_meta",
+            "message",
+            "mode",
+            "requestedSchema"
+          ],
+          "types": {
+            "_meta": "any",
+            "message": "string",
+            "mode": "enum(openai/form)",
+            "requestedSchema": "any"
+          }
+        },
+        {
+          "tag": "mode=openaiForm",
+          "props": [
+            "_meta",
+            "message",
+            "mode",
+            "requestedSchema"
+          ],
+          "types": {
+            "_meta": "any",
+            "message": "string",
+            "mode": "enum(openaiForm)",
+            "requestedSchema": "any"
+          }
+        },
+        {
+          "tag": "mode=url",
+          "props": [
+            "_meta",
+            "elicitationId",
+            "message",
+            "mode",
+            "url"
+          ],
+          "types": {
+            "_meta": "any",
+            "elicitationId": "string",
+            "message": "string",
+            "mode": "enum(url)",
+            "url": "string"
+          }
+        }
+      ]
+    },
+    "McpServerEventStreamNotification": {
+      "required": [
+        "notification",
+        "subscriptionId"
+      ],
+      "props": [
+        "notification",
+        "subscriptionId"
+      ],
+      "types": {
+        "notification": "McpServerEventNotification",
+        "subscriptionId": "string"
+      }
+    },
+    "McpServerOauthLoginCompletedNotification": {
+      "required": [
+        "name",
+        "success"
+      ],
+      "props": [
+        "error",
+        "name",
+        "success",
+        "threadId"
+      ],
+      "types": {
+        "error": "null|string",
+        "name": "string",
+        "success": "boolean",
+        "threadId": "null|string"
+      }
+    },
+    "McpServerStatusUpdatedNotification": {
+      "required": [
+        "name",
+        "status"
+      ],
+      "props": [
+        "error",
+        "failureReason",
+        "name",
+        "status",
+        "threadId"
+      ],
+      "types": {
+        "error": "null|string",
+        "failureReason": "McpServerStartupFailureReason|null",
+        "name": "string",
+        "status": "McpServerStartupState",
+        "threadId": "null|string"
+      }
+    },
+    "McpToolCallProgressNotification": {
+      "required": [
+        "itemId",
+        "message",
+        "threadId",
+        "turnId"
+      ],
+      "props": [
+        "itemId",
+        "message",
+        "threadId",
+        "turnId"
+      ],
+      "types": {
+        "itemId": "string",
+        "message": "string",
+        "threadId": "string",
+        "turnId": "string"
+      }
+    },
+    "ModelReroutedNotification": {
+      "required": [
+        "fromModel",
+        "reason",
+        "threadId",
+        "toModel",
+        "turnId"
+      ],
+      "props": [
+        "fromModel",
+        "reason",
+        "threadId",
+        "toModel",
+        "turnId"
+      ],
+      "types": {
+        "fromModel": "string",
+        "reason": "ModelRerouteReason",
+        "threadId": "string",
+        "toModel": "string",
+        "turnId": "string"
+      }
+    },
+    "ModelSafetyBufferingUpdatedNotification": {
+      "required": [
+        "model",
+        "reasons",
+        "showBufferingUi",
+        "threadId",
+        "turnId",
+        "useCases"
+      ],
+      "props": [
+        "fasterModel",
+        "model",
+        "reasons",
+        "showBufferingUi",
+        "threadId",
+        "turnId",
+        "useCases"
+      ],
+      "types": {
+        "fasterModel": "null|string",
+        "model": "string",
+        "reasons": "array<string>",
+        "showBufferingUi": "boolean",
+        "threadId": "string",
+        "turnId": "string",
+        "useCases": "array<string>"
+      }
+    },
+    "ModelVerificationNotification": {
+      "required": [
+        "threadId",
+        "turnId",
+        "verifications"
+      ],
+      "props": [
+        "threadId",
+        "turnId",
+        "verifications"
+      ],
+      "types": {
+        "threadId": "string",
+        "turnId": "string",
+        "verifications": "array<ModelVerification>"
+      }
+    },
+    "PermissionsRequestApprovalParams": {
+      "required": [
+        "cwd",
+        "itemId",
+        "permissions",
+        "startedAtMs",
+        "threadId",
+        "turnId"
+      ],
+      "props": [
+        "cwd",
+        "environmentId",
+        "itemId",
+        "permissions",
+        "reason",
+        "startedAtMs",
+        "threadId",
+        "turnId"
+      ],
+      "types": {
+        "cwd": "LegacyAppPathString",
+        "environmentId": "null|string",
+        "itemId": "string",
+        "permissions": "RequestPermissionProfile",
+        "reason": "null|string",
+        "startedAtMs": "integer",
+        "threadId": "string",
+        "turnId": "string"
+      }
+    },
+    "PlanDeltaNotification": {
+      "required": [
+        "delta",
+        "itemId",
+        "threadId",
+        "turnId"
+      ],
+      "props": [
+        "delta",
+        "itemId",
+        "threadId",
+        "turnId"
+      ],
+      "types": {
+        "delta": "string",
+        "itemId": "string",
+        "threadId": "string",
+        "turnId": "string"
+      }
+    },
+    "ProcessExitedNotification": {
+      "required": [
+        "exitCode",
+        "processHandle",
+        "stderr",
+        "stderrCapReached",
+        "stdout",
+        "stdoutCapReached"
+      ],
+      "props": [
+        "exitCode",
+        "processHandle",
+        "stderr",
+        "stderrCapReached",
+        "stdout",
+        "stdoutCapReached"
+      ],
+      "types": {
+        "exitCode": "integer",
+        "processHandle": "string",
+        "stderr": "string",
+        "stderrCapReached": "boolean",
+        "stdout": "string",
+        "stdoutCapReached": "boolean"
+      }
+    },
+    "ProcessOutputDeltaNotification": {
+      "required": [
+        "capReached",
+        "deltaBase64",
+        "processHandle",
+        "stream"
+      ],
+      "props": [
+        "capReached",
+        "deltaBase64",
+        "processHandle",
+        "stream"
+      ],
+      "types": {
+        "capReached": "boolean",
+        "deltaBase64": "string",
+        "processHandle": "string",
+        "stream": "ProcessOutputStream"
+      }
+    },
+    "ProjectChangedNotification": {
+      "required": [
+        "changeType",
+        "projectId"
+      ],
+      "props": [
+        "changeType",
+        "projectId"
+      ],
+      "types": {
+        "changeType": "ProjectChangeType",
+        "projectId": "string"
+      }
+    },
+    "ReasoningSummaryPartAddedNotification": {
+      "required": [
+        "itemId",
+        "summaryIndex",
+        "threadId",
+        "turnId"
+      ],
+      "props": [
+        "itemId",
+        "summaryIndex",
+        "threadId",
+        "turnId"
+      ],
+      "types": {
+        "itemId": "string",
+        "summaryIndex": "integer",
+        "threadId": "string",
+        "turnId": "string"
+      }
+    },
+    "ReasoningSummaryTextDeltaNotification": {
+      "required": [
+        "delta",
+        "itemId",
+        "summaryIndex",
+        "threadId",
+        "turnId"
+      ],
+      "props": [
+        "delta",
+        "itemId",
+        "summaryIndex",
+        "threadId",
+        "turnId"
+      ],
+      "types": {
+        "delta": "string",
+        "itemId": "string",
+        "summaryIndex": "integer",
+        "threadId": "string",
+        "turnId": "string"
+      }
+    },
+    "ReasoningTextDeltaNotification": {
+      "required": [
+        "contentIndex",
+        "delta",
+        "itemId",
+        "threadId",
+        "turnId"
+      ],
+      "props": [
+        "contentIndex",
+        "delta",
+        "itemId",
+        "threadId",
+        "turnId"
+      ],
+      "types": {
+        "contentIndex": "integer",
+        "delta": "string",
+        "itemId": "string",
+        "threadId": "string",
+        "turnId": "string"
+      }
+    },
+    "RemoteControlStatusChangedNotification": {
+      "required": [
+        "installationId",
+        "serverName",
+        "status"
+      ],
+      "props": [
+        "environmentId",
+        "installationId",
+        "serverName",
+        "status"
+      ],
+      "types": {
+        "environmentId": "null|string",
+        "installationId": "string",
+        "serverName": "string",
+        "status": "RemoteControlConnectionStatus"
+      }
+    },
+    "ServerRequestResolvedNotification": {
+      "required": [
+        "requestId",
+        "threadId"
+      ],
+      "props": [
+        "requestId",
+        "threadId"
+      ],
+      "types": {
+        "requestId": "RequestId",
+        "threadId": "string"
+      }
+    },
+    "SkillsChangedNotification": {
+      "type": "object"
+    },
+    "StrictReviewRequiredNotification": {
+      "required": [
+        "startedAtMs",
+        "threadId",
+        "turnId"
+      ],
+      "props": [
+        "startedAtMs",
+        "threadId",
+        "turnId"
+      ],
+      "types": {
+        "startedAtMs": "integer",
+        "threadId": "string",
+        "turnId": "string"
+      }
+    },
+    "TerminalInteractionNotification": {
+      "required": [
+        "itemId",
+        "processId",
+        "stdin",
+        "threadId",
+        "turnId"
+      ],
+      "props": [
+        "itemId",
+        "processId",
+        "stdin",
+        "threadId",
+        "turnId"
+      ],
+      "types": {
+        "itemId": "string",
+        "processId": "string",
+        "stdin": "string",
+        "threadId": "string",
+        "turnId": "string"
+      }
+    },
+    "ThreadArchivedNotification": {
+      "required": [
+        "threadId"
+      ],
+      "props": [
+        "threadId"
+      ],
+      "types": {
+        "threadId": "string"
+      }
+    },
+    "ThreadAttachmentUpdatedNotification": {
+      "required": [
+        "attachmentId",
+        "attachmentType",
+        "identityKey",
+        "operation",
+        "threadId"
+      ],
+      "props": [
+        "attachmentId",
+        "attachmentType",
+        "identityKey",
+        "operation",
+        "threadId"
+      ],
+      "types": {
+        "attachmentId": "string",
+        "attachmentType": "string",
+        "identityKey": "string",
+        "operation": "ThreadAttachmentOperation",
+        "threadId": "string"
+      }
+    },
+    "ThreadClosedNotification": {
+      "required": [
+        "threadId"
+      ],
+      "props": [
+        "threadId"
+      ],
+      "types": {
+        "threadId": "string"
+      }
+    },
+    "ThreadDeletedNotification": {
+      "required": [
+        "threadId"
+      ],
+      "props": [
+        "threadId"
+      ],
+      "types": {
+        "threadId": "string"
+      }
+    },
+    "ThreadGoalClearedNotification": {
+      "required": [
+        "threadId"
+      ],
+      "props": [
+        "threadId"
+      ],
+      "types": {
+        "threadId": "string"
+      }
+    },
+    "ThreadGoalUpdatedNotification": {
+      "required": [
+        "goal",
+        "threadId"
+      ],
+      "props": [
+        "goal",
+        "threadId",
+        "turnId"
+      ],
+      "types": {
+        "goal": "ThreadGoal",
+        "threadId": "string",
+        "turnId": "null|string"
+      }
+    },
+    "ThreadNameUpdatedNotification": {
+      "required": [
+        "threadId"
+      ],
+      "props": [
+        "threadId",
+        "threadName"
+      ],
+      "types": {
+        "threadId": "string",
+        "threadName": "null|string"
+      }
+    },
+    "ThreadProjectUpdatedNotification": {
+      "required": [
+        "projectId",
+        "threadId"
+      ],
+      "props": [
+        "projectId",
+        "threadId"
+      ],
+      "types": {
+        "projectId": "null|string",
+        "threadId": "string"
+      }
+    },
+    "ThreadQueueChangedNotification": {
+      "required": [
+        "threadId"
+      ],
+      "props": [
+        "threadId"
+      ],
+      "types": {
+        "threadId": "string"
+      }
+    },
+    "ThreadRealtimeClosedNotification": {
+      "required": [
+        "threadId"
+      ],
+      "props": [
+        "reason",
+        "threadId"
+      ],
+      "types": {
+        "reason": "null|string",
+        "threadId": "string"
+      }
+    },
+    "ThreadRealtimeErrorNotification": {
+      "required": [
+        "message",
+        "threadId"
+      ],
+      "props": [
+        "message",
+        "threadId"
+      ],
+      "types": {
+        "message": "string",
+        "threadId": "string"
+      }
+    },
+    "ThreadRealtimeItemAddedNotification": {
+      "required": [
+        "item",
+        "threadId"
+      ],
+      "props": [
+        "item",
+        "threadId"
+      ],
+      "types": {
+        "item": "any",
+        "threadId": "string"
+      }
+    },
+    "ThreadRealtimeItemCompletedNotification": {
+      "required": [
+        "item",
+        "threadId"
+      ],
+      "props": [
+        "item",
+        "threadId"
+      ],
+      "types": {
+        "item": "ThreadRealtimeItem",
+        "threadId": "string"
+      }
+    },
+    "ThreadRealtimeItemStartedNotification": {
+      "required": [
+        "item",
+        "threadId"
+      ],
+      "props": [
+        "item",
+        "threadId"
+      ],
+      "types": {
+        "item": "ThreadRealtimeItem",
+        "threadId": "string"
+      }
+    },
+    "ThreadRealtimeItemTranscriptDeltaNotification": {
+      "required": [
+        "delta",
+        "itemId",
+        "threadId"
+      ],
+      "props": [
+        "delta",
+        "itemId",
+        "threadId"
+      ],
+      "types": {
+        "delta": "string",
+        "itemId": "string",
+        "threadId": "string"
+      }
+    },
+    "ThreadRealtimeOutputAudioDeltaNotification": {
+      "required": [
+        "audio",
+        "threadId"
+      ],
+      "props": [
+        "audio",
+        "threadId"
+      ],
+      "types": {
+        "audio": "ThreadRealtimeAudioChunk",
+        "threadId": "string"
+      }
+    },
+    "ThreadRealtimeSdpNotification": {
+      "required": [
+        "sdp",
+        "threadId"
+      ],
+      "props": [
+        "sdp",
+        "threadId"
+      ],
+      "types": {
+        "sdp": "string",
+        "threadId": "string"
+      }
+    },
+    "ThreadRealtimeStartedNotification": {
+      "required": [
+        "threadId",
+        "version"
+      ],
+      "props": [
+        "realtimeSessionId",
+        "threadId",
+        "version"
+      ],
+      "types": {
+        "realtimeSessionId": "null|string",
+        "threadId": "string",
+        "version": "RealtimeConversationVersion"
+      }
+    },
+    "ThreadRealtimeTranscriptDeltaNotification": {
+      "required": [
+        "delta",
+        "role",
+        "threadId"
+      ],
+      "props": [
+        "delta",
+        "role",
+        "threadId"
+      ],
+      "types": {
+        "delta": "string",
+        "role": "string",
+        "threadId": "string"
+      }
+    },
+    "ThreadRealtimeTranscriptDoneNotification": {
+      "required": [
+        "role",
+        "text",
+        "threadId"
+      ],
+      "props": [
+        "role",
+        "text",
+        "threadId"
+      ],
+      "types": {
+        "role": "string",
+        "text": "string",
+        "threadId": "string"
+      }
+    },
+    "ThreadRevertedNotification": {
+      "required": [
+        "threadId"
+      ],
+      "props": [
+        "threadId"
+      ],
+      "types": {
+        "threadId": "string"
+      }
+    },
+    "ThreadSettingsUpdatedNotification": {
+      "required": [
+        "threadId",
+        "threadSettings"
+      ],
+      "props": [
+        "threadId",
+        "threadSettings"
+      ],
+      "types": {
+        "threadId": "string",
+        "threadSettings": "ThreadSettings"
+      }
+    },
+    "ThreadStartedNotification": {
+      "required": [
+        "thread"
+      ],
+      "props": [
+        "thread"
+      ],
+      "types": {
+        "thread": "Thread"
+      }
+    },
+    "ThreadStatusChangedNotification": {
+      "required": [
+        "status",
+        "threadId"
+      ],
+      "props": [
+        "status",
+        "threadId"
+      ],
+      "types": {
+        "status": "ThreadStatus",
+        "threadId": "string"
+      }
+    },
+    "ThreadTokenUsageUpdatedNotification": {
+      "required": [
+        "threadId",
+        "tokenUsage",
+        "turnId"
+      ],
+      "props": [
+        "threadId",
+        "tokenUsage",
+        "turnId"
+      ],
+      "types": {
+        "threadId": "string",
+        "tokenUsage": "ThreadTokenUsage",
+        "turnId": "string"
+      }
+    },
+    "ThreadUnarchivedNotification": {
+      "required": [
+        "threadId"
+      ],
+      "props": [
+        "threadId"
+      ],
+      "types": {
+        "threadId": "string"
+      }
+    },
+    "ToolRequestUserInputParams": {
+      "required": [
+        "isBlocking",
+        "itemId",
+        "questions",
+        "threadId",
+        "turnId"
+      ],
+      "props": [
+        "autoResolutionMs",
+        "isBlocking",
+        "itemId",
+        "questions",
+        "threadId",
+        "turnId"
+      ],
+      "types": {
+        "autoResolutionMs": "integer|null",
+        "isBlocking": "boolean",
+        "itemId": "string",
+        "questions": "array<ToolRequestUserInputQuestion>",
+        "threadId": "string",
+        "turnId": "string"
+      }
+    },
+    "TurnDiffUpdatedNotification": {
+      "required": [
+        "diff",
+        "threadId",
+        "turnId"
+      ],
+      "props": [
+        "diff",
+        "threadId",
+        "turnId"
+      ],
+      "types": {
+        "diff": "string",
+        "threadId": "string",
+        "turnId": "string"
+      }
+    },
+    "TurnModerationMetadataNotification": {
+      "required": [
+        "metadata",
+        "threadId",
+        "turnId"
+      ],
+      "props": [
+        "metadata",
+        "threadId",
+        "turnId"
+      ],
+      "types": {
+        "metadata": "any",
+        "threadId": "string",
+        "turnId": "string"
+      }
+    },
+    "TurnPlanUpdatedNotification": {
+      "required": [
+        "plan",
+        "threadId",
+        "turnId"
+      ],
+      "props": [
+        "explanation",
+        "plan",
+        "threadId",
+        "turnId"
+      ],
+      "types": {
+        "explanation": "null|string",
+        "plan": "array<TurnPlanStep>",
+        "threadId": "string",
+        "turnId": "string"
+      }
+    },
+    "WarningNotification": {
+      "required": [
+        "message"
+      ],
+      "props": [
+        "message",
+        "threadId"
+      ],
+      "types": {
+        "message": "string",
+        "threadId": "null|string"
+      }
+    },
+    "WindowsSandboxSetupCompletedNotification": {
+      "required": [
+        "mode",
+        "success"
+      ],
+      "props": [
+        "error",
+        "mode",
+        "success"
+      ],
+      "types": {
+        "error": "null|string",
+        "mode": "WindowsSandboxSetupMode",
+        "success": "boolean"
+      }
+    },
+    "WindowsWorldWritableWarningNotification": {
+      "required": [
+        "extraCount",
+        "failedScan",
+        "samplePaths"
+      ],
+      "props": [
+        "extraCount",
+        "failedScan",
+        "samplePaths"
+      ],
+      "types": {
+        "extraCount": "integer",
+        "failedScan": "boolean",
+        "samplePaths": "array<string>"
+      }
+    },
     "InitializeParams": {
       "required": [
         "clientInfo"

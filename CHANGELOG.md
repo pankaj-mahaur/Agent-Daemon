@@ -54,6 +54,10 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
   `ad tui --last` / `--resume <id>` continue a conversation. See `docs/harness.md`.
 - `ad codex [args…]`: the pinned stock Codex UI on ad's home (never `~/.codex`), with your `~/.claude/skills` mirrored in.
+- Codex upgrades are safer:
+  - `ad doctor` and `/status` show the tested Codex versions and what changed.
+  - `/warnings` lists events from a newer Codex that ad doesn't know yet.
+  - The weekly upgrade PR also checks slash-command names and runs the real engine.
 - Terminal UI view components (`runtime/src/tui/view/`):
   - **Composer:** a multi-line prompt editor with word moves, kill/yank, history (`~/.agent-daemon/tui/history.jsonl`, private, Ctrl+R search) and big pastes shown as `[Pasted N lines]`.
   - **Streaming markdown:** a streamed answer looks exactly like the finished one.

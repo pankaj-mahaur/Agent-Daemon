@@ -187,6 +187,7 @@ For subprocess tests (CLI commands, hook handlers), see [`runtime/test/hooks.tes
 Harness tests come in two kinds:
 
 - **Fake engine (default).** Most harness tests drive the scripted fake app-server in [`runtime/testkit/fake-codex-app-server.mjs`](../runtime/testkit/fake-codex-app-server.mjs): fast, and good for crashes and odd traffic. A test that builds `CodexAppServer` around the fake directly marks the command `source: "test-double"`.
+  - **The fake speaks the pinned protocol.** `test/tui-resilience.test.mjs` checks its messages with [`runtime/testkit/protocol-check.mjs`](../runtime/testkit/protocol-check.mjs) (required fields, enums, variants from the snapshot). A new scenario must keep passing it. The `future` scenario is the deliberate exception: a synthetic newer Codex.
 - **Real engine (opt-in).** [`runtime/test/engine-real.test.mjs`](../runtime/test/engine-real.test.mjs) runs the pinned Codex binary against [`runtime/testkit/mock-responses.mjs`](../runtime/testkit/mock-responses.mjs), a scripted stand-in for the Responses API. No login and no network are needed. It catches behaviour changes in a Codex release that a protocol snapshot can't. CI's `engine-real` job runs it on Linux, macOS and Windows.
 
   ```sh

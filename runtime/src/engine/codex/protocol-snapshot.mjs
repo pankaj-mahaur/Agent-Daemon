@@ -65,6 +65,17 @@ const methodsOf = (schema) =>
     .filter(Boolean)
     .sort();
 
+// method → the name of its params type, for what Codex sends us. Their
+// shapes are tracked too, so the fake server's messages can be checked
+// against the pinned protocol (testkit/protocol-check.mjs).
+const paramsOf = (schema) =>
+  Object.fromEntries(
+    (schema.oneOf ?? schema.anyOf ?? [])
+      .map((o) => [o.properties?.method?.enum?.[0], typeLabel(o.properties?.params)])
+      .filter(([m, t]) => m && t && t !== "any" && /^[A-Z]\w*$/.test(t))
+      .sort(([a], [b]) => a.localeCompare(b)),
+  );
+
 // A stable name for a union variant that survives field additions:
 // discriminator value → single-key object name → title → $ref → enum value.
 function variantTag(v) {
@@ -148,8 +159,13 @@ function collectDefinitions(schemaDir, read) {
 export function buildSnapshot(schemaDir, codexVersion) {
   const read = (f) => JSON.parse(readFileSync(join(schemaDir, f), "utf8"));
   const defs = collectDefinitions(schemaDir, read);
+  const params = {
+    serverNotifications: paramsOf(read("ServerNotification.json")),
+    serverRequests: paramsOf(read("ServerRequest.json")),
+  };
+  const names = new Set([...TRACKED_DEFINITIONS, ...Object.values(params.serverNotifications), ...Object.values(params.serverRequests)]);
   const definitions = {};
-  for (const name of TRACKED_DEFINITIONS) definitions[name] = shapeOf(defs[name]);
+  for (const name of [...names].sort((a, b) => TRACKED_DEFINITIONS.indexOf(a) - TRACKED_DEFINITIONS.indexOf(b) || a.localeCompare(b))) if (defs[name]) definitions[name] = shapeOf(defs[name]);
   return {
     codexVersion,
     methods: {
@@ -158,6 +174,7 @@ export function buildSnapshot(schemaDir, codexVersion) {
       serverRequests: methodsOf(read("ServerRequest.json")),
       serverNotifications: methodsOf(read("ServerNotification.json")),
     },
+    params,
     definitions,
   };
 }

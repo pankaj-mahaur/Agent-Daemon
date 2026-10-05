@@ -3,6 +3,9 @@
 //
 //   node runtime/scripts/tui-probe.mjs keys     every key/paste as raw bytes + a best-effort name
 //   node runtime/scripts/tui-probe.mjs screen   wrap, autowrap-off, sync output, resize reflow
+//   node runtime/scripts/tui-probe.mjs screen --bottom
+//                                               the same with the live region flush with the
+//                                               bottom of the window (narrowing ghosts, plan Part 7)
 //
 // Quit: type qqq, or press Ctrl+C three times in a row (single Ctrl+C presses
 // are shown, since they are part of what is being probed).
@@ -207,6 +210,9 @@ if (mode === "keys") {
   process.stdout.write("\x1b[?7h\r\n");
   out(`autowrap off (?7l) + ${cols + 5} chars: cursor ${JSON.stringify(noWrap)} → ${verdict(noWrap, noWrap?.[1] === cols, "DECAWM honoured", "DECAWM NOT honoured")}`);
   out("");
+  const atBottom = process.argv.includes("--bottom");
+  // Flush with the bottom: scroll everything up so the region's last line is the window's last row.
+  if (atBottom) process.stdout.write("\r\n".repeat(process.stdout.rows));
   out("Resize test: a 6-line live region is drawn below. Make the window narrower, then wider.");
   out("Each resize logs where the cursor ended up. Quit: qqq, or Ctrl+C three times.");
   const widths = [10, 30, 50, 70, 20, 40];
@@ -224,7 +230,8 @@ if (mode === "keys") {
   const note = (line) => { results.push(line); log(line); };
   // Below the 6-line region (the cursor is parked on its line 3), synchronously.
   onQuit = () => writeSync(1, "\x1b[3B\r\n" + results.map((l) => l + "\r\n").join(""));
-  note(`  drawn at ${process.stdout.columns}x${process.stdout.rows}; cursor parked on live line 3, col 11: ${JSON.stringify(before)}`);
+  note(`  drawn at ${process.stdout.columns}x${process.stdout.rows}${atBottom ? " flush with the bottom" : ""}; cursor parked on live line 3, col 11: ${JSON.stringify(before)}`);
+  note("  after quitting, please also screenshot the window: ghost rows (old copies of the region's lines) show there");
   let timer = null;
   process.stdout.on("resize", () => {
     clearTimeout(timer);

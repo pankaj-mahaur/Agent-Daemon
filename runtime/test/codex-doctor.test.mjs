@@ -74,3 +74,10 @@ test("the version probe runs Codex in a throwaway CODEX_HOME, never ~/.codex", a
   assert.match(seen, /ad-codex-version-/);
   assert.equal(existsSync(seen), false, "the scratch home is removed afterwards");
 });
+
+test("a matching install also reports the tested versions and what changed (compat.json)", () => {
+  const checks = codexChecks({ env, run: () => `codex-cli ${pinnedCodexVersion()}` });
+  const compat = checks.find((c) => c.name === "Codex compatibility");
+  assert.ok(compat, "compat line present");
+  assert.match(compat.note, new RegExp(`tested: .*${pinnedCodexVersion().replace(/\./g, "\.")}`));
+});

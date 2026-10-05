@@ -32,11 +32,16 @@ The harness pins `@openai/codex` exactly (`runtime/package.json`). Each upgrade 
    node scripts/codex-schema-snapshot.mjs --check
    node scripts/codex-notifications.mjs          # stable/experimental notification list for the new pin
    node --test test/codex-events.test.mjs        # every new notification needs a handler or an ignore reason
+   node scripts/codex-slash.mjs                  # Codex's slash names at the new tag (needs gh)
+   node --test test/tui-resilience.test.mjs      # slash collisions, compat.json, fake-vs-protocol, future fixture
    AD_REAL_ENGINE=1 node --test --test-concurrency=1 --test-force-exit test/engine-real.test.mjs
    ```
    - `--check` exits 1 if the committed snapshot doesn't match the pinned binary.
    - The last line runs the **real** new Codex against a mock model (`testkit/mock-responses.mjs`; no login, throwaway homes). It covers a streamed turn, an escalation approval, a patch, and the error classes the code relies on. A behaviour change shows up here even when the schema didn't change.
-   - The PR's CI runs the same suite in its `engine-real` job on Linux, macOS and Windows; read those results too.
+   - The PR's CI runs the same suite in its `engine-real` job on Linux, macOS and Windows; read those results too. The bot's PR body lists real-engine failures by name (label `real-engine-failing`).
+   - **`compat.json`** (`runtime/src/engine/codex/compat.json`): write the one-line, user-facing "what changed" note for the new version. `/status` and `ad doctor` show it.
+   - **A slash collision** (test names it) means Codex now has a command ad uses for something else: rename ad's, or mark it `source: "codex"` if it now means the same.
+   - **`/init`**: re-copy Codex's prompt into `runtime/src/tui/init-prompt.mjs` from `codex-rs/tui/assets/prompt_for_init_command.md` at the new tag.
 3. **Live smoke on Windows**, in a scratch directory, **never the repo**. Prompts run in the repo write learnings into its memory journal.
    ```bash
    mkdir <scratch>/smoke && cd <scratch>/smoke && git init -q
@@ -49,6 +54,12 @@ The harness pins `@openai/codex` exactly (`runtime/package.json`). Each upgrade 
    node "<repo>/runtime/src/cli.mjs" doctor
    ```
    Pass = `math.js` fixed, your `node --test` green, doctor shows the hooks trusted and the sandbox ready.
+
+   Then the terminal UI, in the same scratch folder, in Windows Terminal (and Zed if you have it):
+   ```bash
+   node "<repo>/runtime/src/cli.mjs" tui
+   ```
+   Trust the folder, ask it to fix the test again, approve the command (check the prompt shows the full command), steer once while it runs (Enter), queue one (Tab), `/status` (the Codex line says "tested"), `/codex` and quit back, then Ctrl+C twice. `node "<repo>/runtime/src/cli.mjs" tui --last` must show the conversation again.
 4. **If the smoke fails, read Codex's own log** before guessing (the [`harness-troubleshoot`](../harness-troubleshoot/SKILL.md) skill has the query and a table of known causes): `logs_2.sqlite` in the harness home (`~/.agent-daemon/codex-home`, table `logs`, column `feedback_log_body`). There's no `sqlite3` on this machine, so query it with `node --experimental-sqlite` (`DatabaseSync`, read-only), filtering `level IN ('ERROR','WARN')` and the newest ids. Never print `auth.json`.
 5. **Ship.** Bump the patch/minor version in `runtime/package.json` + `package-lock.json`, add a CHANGELOG entry naming the new Codex version, then hand off to `release-flow`. Tag only after the user merges.
 

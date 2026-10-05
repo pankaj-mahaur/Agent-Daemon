@@ -64,6 +64,7 @@ export class Engine extends EventEmitter {
     // onRequest(PendingRequest) → answer. Without it the old behaviour stays:
     // approvals go to onApproval, user input and elicitation are refused.
     this.onRequest = opts.onRequest ?? null;
+    this.unknown = new Map(); // unknown notification method → count
     this.server = null;
     // Routing (plan 3b): child threads (subagents) and their parents, the
     // labels to show for them, subscribers per thread, open requests.
@@ -162,7 +163,16 @@ export class Engine extends EventEmitter {
       return;
     }
     if (method === "thread/reverted") this.#cancelRequests((r) => r.threadId === params?.threadId, "reverted");
-    for (const ev of adaptNotification(method, params)) this.#deliver(ev);
+    for (const ev of adaptNotification(method, params)) {
+      // Notifications a newer Codex sends that this ad doesn't know: counted for /warnings.
+      if (ev.type === "unknown" && (this.unknown.has(ev.method) || this.unknown.size < 200)) this.unknown.set(ev.method, (this.unknown.get(ev.method) ?? 0) + 1);
+      this.#deliver(ev);
+    }
+  }
+
+  /** {method: count} of notifications this ad didn't recognise. */
+  unknownCounts() {
+    return Object.fromEntries(this.unknown);
   }
 
   #forget(threadId) {
