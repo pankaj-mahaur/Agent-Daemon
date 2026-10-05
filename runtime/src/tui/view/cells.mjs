@@ -109,7 +109,7 @@ function renderCommand(item, width) {
   const status = item.streaming && item.status !== "failed" && item.status !== "declined" ? "inProgress" : item.status;
   const failed = status === "failed" || (Number.isInteger(item.exitCode) && item.exitCode !== 0 && status !== "inProgress");
   const verb =
-    status === "inProgress" ? "Running" : status === "declined" ? "Declined" : failed ? "Failed" : "Ran";
+    item.incomplete ? "Stopped" : status === "inProgress" ? "Running" : status === "declined" ? "Declined" : failed ? "Failed" : "Ran";
   const verbStyle = failed || status === "declined" ? S.bad : S.head;
   const cmd = clean(item.command).replace(/\s*\n\s*/g, " \u{21b5} ");
   const parts = [{ text: verb, style: verbStyle }, { text: " " }];
@@ -319,14 +319,14 @@ function cellLines(item, width) {
       return isExploring(item) ? renderExploring([item], { width }) : renderCommand(item, width);
     case "fileChange": {
       const changes = item.changes ?? [];
-      const verb = item.status === "failed" ? "Edit failed" : item.status === "declined" ? "Edit declined" : !done || item.status === "inProgress" ? "Editing" : "Edited";
+      const verb = item.incomplete ? "Not applied" : item.status === "failed" ? "Edit failed" : item.status === "declined" ? "Edit declined" : !done || item.status === "inProgress" ? "Editing" : "Edited";
       return changes.length ? renderDiff(changes, { width, verb }) : header("\u{2022}", [{ text: verb, style: S.head }], width);
     }
     case "mcpToolCall":
     case "dynamicToolCall": {
       const name = item.kind === "mcpToolCall" ? `${clean(item.server)}.${clean(item.tool)}` : [item.namespace, item.tool].filter(Boolean).map(clean).join(".");
       const failed = item.status === "failed" || item.success === false;
-      const verb = item.status === "inProgress" || !done ? "Calling" : failed ? "Tool failed" : "Called";
+      const verb = item.incomplete ? "Tool stopped" : item.status === "inProgress" || !done ? "Calling" : failed ? "Tool failed" : "Called";
       const out = capLines(header("\u{2022}", [{ text: verb, style: failed ? S.bad : S.head }, { text: " " }, { text: name, style: S.cmd }, { text: `(${toolArgs(item.arguments)})`, style: S.dim }], width), COMMAND_LINES);
       const res = item.kind === "mcpToolCall" ? toolResult(item.result, item.error) : "";
       if (res) out.push(...tail(res, OUTPUT_TAIL, width).map((l, i) => normalize([{ text: i === 0 ? BRANCH : INDENT, style: S.dim }, ...l])));

@@ -82,8 +82,16 @@ export function canonicalPath(p) {
 // Once `ad codex` mirrors ~/.claude/skills into the engine home's skills/
 // (which Codex reads itself), passing it again as an extra root would list
 // every skill twice.
-export function skillRoots({ cwd, home = homedir(), engineHome = null } = {}) {
+export function skillRoots({ cwd, home = homedir(), engineHome = null, refresh = null } = {}) {
   const mirrored = engineHome && existsSync(path.join(engineHome, "skills", ".ad-mirrored-claude-skills"));
+  // Keep the mirror current on every engine start, so skills added later show up everywhere.
+  if (mirrored && refresh) {
+    try {
+      refresh({ home: engineHome, from: path.join(home, ".claude", "skills") });
+    } catch {
+      // A stale mirror is still better than none.
+    }
+  }
   const roots = mirrored ? [] : [path.join(home, ".claude", "skills")];
   if (cwd) roots.push(path.join(cwd, ".claude", "skills"));
   return roots.filter((r) => existsSync(r));
@@ -161,7 +169,8 @@ export async function ensureHarnessSetup(engine, { cwd = process.cwd(), profile 
   });
 
   await step("skills", async () => {
-    report.skillRoots = roots ?? skillRoots({ cwd, engineHome: engine.home });
+    const { syncSkills } = await import("./codex-ui.mjs");
+    report.skillRoots = roots ?? skillRoots({ cwd, engineHome: engine.home, refresh: syncSkills });
     if (report.skillRoots.length) await engine.setSkillRoots(report.skillRoots);
   });
 

@@ -162,6 +162,46 @@ test("runStockCodex: pinned binary, isolated CODEX_HOME, no CODEX_* leaks, provi
     assert.equal(seen.opts.env.CODEX_SQLITE_HOME, undefined);
     assert.deepEqual(seen.args.slice(-5), ["resume", "t9", "--no-daemon", "-C", root]);
     assert.equal(seen.opts.stdio, "inherit");
+    assert.ok(Object.values(seen.opts.env).includes("sk-or-test"), "the provider key from ad's store reaches the stock UI");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("sinceLastTime never passes a loop log's escapes through (a cloned repo can ship one)", async () => {
+  const cwd = mkdtempSync(path.join(tmpdir(), "ad-since-evil-"));
+  try {
+    mkdirSync(path.join(cwd, ".agent-daemon", "loops"), { recursive: true });
+    const OSC52 = "\x1b]52;c;cm0gLXJmIC8=\x07";
+    writeFileSync(path.join(cwd, ".agent-daemon", "loops", "t.jsonl"), JSON.stringify({ ts: new Date(Date.now() + 86_400_000).toISOString(), turnStatus: "x\ny", status: { progress: `ok${OSC52}\nline2` } }) + "\n");
+    const parts = await sinceLastTime({ cwd, since: Date.now(), home: path.join(cwd, "no-home") });
+    const all = parts.join(" ");
+    assert.ok(!/[\x00-\x1f\x7f]/.test(all), JSON.stringify(all));
+    assert.match(all, /ok line2/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("syncSkills follows a linked skill folder; setup refreshes the mirror on every engine start", async () => {
+  const { symlinkSync } = await import("node:fs");
+  const root = mkdtempSync(path.join(tmpdir(), "ad-skills-link-"));
+  try {
+    const real = path.join(root, "elsewhere", "linked");
+    mkdirSync(real, { recursive: true });
+    writeFileSync(path.join(real, "SKILL.md"), "# linked");
+    const from = path.join(root, "claude-skills");
+    mkdirSync(from);
+    symlinkSync(real, path.join(from, "linked"), "junction");
+    const home = path.join(root, "home");
+    assert.equal(syncSkills({ home, from }).copied, 1);
+    assert.equal(readFileSync(path.join(home, "skills", "linked", "SKILL.md"), "utf8"), "# linked");
+    // A skill added later reaches the mirror through skillRoots' refresh (setup runs it on every start).
+    const user = path.join(root, "user");
+    mkdirSync(path.join(user, ".claude", "skills", "fresh"), { recursive: true });
+    writeFileSync(path.join(user, ".claude", "skills", "fresh", "SKILL.md"), "# fresh");
+    assert.deepEqual(skillRoots({ home: user, engineHome: home, refresh: syncSkills }), []);
+    assert.ok(existsSync(path.join(home, "skills", "fresh", "SKILL.md")));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

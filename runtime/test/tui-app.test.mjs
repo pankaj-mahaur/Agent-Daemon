@@ -18,10 +18,16 @@ const FAKE = fileURLToPath(new URL("../testkit/fake-codex-app-server.mjs", impor
 const command = { cmd: process.execPath, prefix: [FAKE] };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function withApp(fn, { cols = 70, rows = 20, actions = {}, armMs = 60, sessionOpts = {} } = {}) {
+async function withApp(fn, { cols = 70, rows = 20, actions = {}, armMs = 60, sessionOpts = {}, restartable = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), "ad-app-"));
-  const engine = await createEngine({ home: join(root, "home"), command });
-  const session = createSession({ engine, cwd: root, lockDir: join(root, "locks"), ...sessionOpts });
+  const engines = [];
+  const make = async () => {
+    const e = await createEngine({ home: join(root, "home"), command });
+    engines.push(e);
+    return e;
+  };
+  const engine = await make();
+  const session = createSession({ engine, cwd: root, lockDir: join(root, "locks"), ...(restartable ? { restart: make } : {}), ...sessionOpts });
   const scr = modelScreen({ cols, rows });
   const listeners = new Set();
   const io = { ...scr.io, onInput: (f) => (listeners.add(f), () => listeners.delete(f)) };
@@ -29,6 +35,14 @@ async function withApp(fn, { cols = 70, rows = 20, actions = {}, armMs = 60, ses
   const type = (s) => decoder.feed(s);
   const renderer = createRenderer({ io, reflow: "none" });
   await renderer.start();
+  // What went into the scrollback (as opposed to the live region).
+  const scrollback = [];
+  const commit = renderer.commit.bind(renderer);
+  renderer.commit = (lines) => {
+    for (const l of lines) scrollback.push((typeof l === "string" ? l : l.map((s) => s.text).join("")).replace(/ +$/, ""));
+    return commit(lines);
+  };
+  const committed = () => scrollback.join("\n");
   const bells = [];
   const app = createApp({ io, renderer, session, cwd: root, header: [[{ text: "HEADER" }]], armMs, actions: { bell: (o) => bells.push(o), ...actions } });
   const text = () => scr.lines().join("\n");
@@ -41,25 +55,81 @@ async function withApp(fn, { cols = 70, rows = 20, actions = {}, armMs = 60, ses
     throw new Error(`timed out waiting for ${what}:\n${text()}`);
   };
   try {
-    await fn({ app, scr, type, until, engine, session, text, bells, root });
+    await fn({ app, scr, type, until, engine, session, text, bells, root, committed, engines });
   } finally {
     app.dispose();
     renderer.dispose();
     session.close();
-    await engine.close();
+    for (const e of engines) await e.close().catch(() => {});
     rmSync(root, { recursive: true, force: true });
   }
 }
 
-test("a prompt runs: the answer and the command go to scrollback; the turn ends with a separator", async () => {
-  await withApp(async ({ type, until, text, bells }) => {
+test("a prompt runs: the prompt, the answer and the turn's end go to scrollback", async () => {
+  await withApp(async ({ type, until, text, bells, committed }) => {
     assert.match(text(), /HEADER/);
+    type("early-complete\r");
+    await until(() => /Worked for/.test(committed()), "the turn's end in scrollback");
+    assert.match(committed(), /› early-complete/);
+    assert.match(committed(), /• early/);
     type("fail-turn\r");
-    await until(() => /Worked for/.test(text()), "the turn's end");
-    const t = text();
-    assert.match(t, /› fail-turn/);
-    assert.match(t, /The turn failed/);
-    assert.ok(bells.length >= 1, "a bell when the turn ends");
+    await until(() => /The turn failed/.test(committed()), "the failure in scrollback");
+    assert.ok(bells.length >= 1, "a bell when a turn ends");
+  });
+});
+
+test("a crash mid-stream doesn't wedge the scrollback: the next answer still shows", async () => {
+  await withApp(
+    async ({ app, type, until, committed, engines, session }) => {
+      type("hello\r");
+      await until(() => app.state.modal, "the approval");
+      engines[0].server.request("test/crash", {}).catch(() => {});
+      await until(() => engines.length === 2 && session.state.engine.state === "ready", "the restart");
+      type("early-complete\r");
+      await until(() => /• early/.test(committed()), "the next answer in scrollback");
+    },
+    { restartable: true },
+  );
+});
+
+test("a declined patch whose item never completes doesn't hold back the next turn", async () => {
+  await withApp(async ({ app, type, until, committed }) => {
+    type("edit-file\r");
+    await until(() => app.state.modal === "approval-patch", "the patch approval");
+    type("\x1b");
+    await until(() => /Worked for/.test(committed()), "the turn's end");
+    type("early-complete\r");
+    await until(() => /• early/.test(committed()), "the next answer");
+  });
+});
+
+test("Codex stopped and not restarted: a banner; Enter restarts and the kept prompt runs", async () => {
+  await withApp(
+    async ({ type, until, text, committed, engines, session }) => {
+      type("fail-turn\r");
+      await until(() => /Worked for/.test(committed()), "a first turn");
+      engines[0].server.request("test/crash", {}).catch(() => {});
+      await until(() => /Codex stopped \(exit 3\)\. Your text is kept\. Enter restarts/.test(text()), "the banner");
+      type("early-complete\r");
+      await until(() => session.state.engine.state === "ready" && /• early/.test(committed()), "the restart and the prompt");
+    },
+    { restartable: true, sessionOpts: { maxRestarts: 0 } },
+  );
+});
+
+test("/resume of a thread another ad holds changes nothing in the scrollback", async () => {
+  await withApp(async ({ app, type, until, committed, root }) => {
+    type("fail-turn\r");
+    await until(() => /The turn failed/.test(committed()), "a turn");
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+    mkdirSync(join(root, "locks"), { recursive: true });
+    writeFileSync(join(root, "locks", "thread-old.lock"), JSON.stringify({ pid: process.ppid, threadId: "thread-old" }));
+    type("/resume\r");
+    await until(() => app.state.popup === "resume", "the picker");
+    type("\r");
+    await until(() => /open in another ad/.test(committed()), "the refusal");
+    await sleep(200);
+    assert.equal(committed().split("› fail-turn").length - 1, 1, "the conversation isn't committed twice");
   });
 });
 
@@ -120,8 +190,7 @@ test("Ctrl+C: clears the composer, then interrupts, then a second press quits", 
     await until(() => app.state.composer === "draft", "typed");
     type("\x03");
     assert.equal(app.state.composer, "");
-    await sleep(1600); // past the force-quit window
-    type("\x03");
+    type("\x03"); // clearing didn't arm the quit: this one interrupts
     await until(() => /Interrupting/.test(app.state.note ?? ""), "interrupting");
     await until(() => !session.state.activeTurnId, "the interrupt");
     let quit = false;
@@ -212,5 +281,76 @@ test("/warnings lists kept notices and events from a newer Codex", async () => {
     assert.match(text(), /not shown: hologramProjection/);
     type("/warnings\r");
     await until(() => /thread\/hologram\/updated ×1/.test(text()), "the unknown event");
+  });
+});
+
+// A scripted session: just enough of the controller's surface for the app.
+function stubSession(state) {
+  const listeners = new Set();
+  const calls = [];
+  const st = {
+    thread: { id: "t" }, turns: [], items: new Map(), echoes: new Map(), activeTurnId: null, starting: false, requests: [], queue: [],
+    config: { model: "m", effort: null, sandbox: "workspace-write", approvalPolicy: "on-request", cwd: "/x" },
+    account: null, goal: null, agents: new Map(), mcp: new Map(), tokens: null, plan: null, diff: null, rateLimits: null, notices: [],
+    engine: { state: "ready", exitCode: null, restarts: 0 },
+    ...state,
+  };
+  return {
+    state: st,
+    calls,
+    on: (ev, fn) => (ev === "change" && listeners.add(fn), () => listeners.delete(fn)),
+    emit: (what) => listeners.forEach((f) => f({ what, state: st })),
+    submit: (text) => (calls.push(["submit", text]), { clientUserMessageId: "c", accepted: Promise.resolve({ turnId: "u" }), done: Promise.resolve({}) }),
+    shell: (cmd) => (calls.push(["shell", cmd]), Promise.resolve({})),
+    queue: () => 0, editQueued: () => true, interrupt: async () => true, resolve: () => true, setNextTurn: () => {}, newThread: () => {},
+  };
+}
+
+async function withStub(session, fn, { cols = 70, rows = 20 } = {}) {
+  const scr = modelScreen({ cols, rows });
+  const listeners = new Set();
+  const io = { ...scr.io, onInput: (f) => (listeners.add(f), () => listeners.delete(f)) };
+  const decoder = createInputDecoder({ onEvent: (e) => listeners.forEach((f) => f(e)), escTimeoutMs: 5 });
+  const renderer = createRenderer({ io, reflow: "none" });
+  await renderer.start();
+  const app = createApp({ io, renderer, session, cwd: "/x", armMs: 0 });
+  try {
+    await fn({ app, type: (s) => decoder.feed(s), text: () => scr.lines().join("\n") });
+  } finally {
+    app.dispose();
+    renderer.dispose();
+  }
+}
+
+test("an agent message behind a still-running item is drawn live", async () => {
+  const s = stubSession({ activeTurnId: "u", turns: [{ id: "u", status: "inProgress", itemIds: [] }] });
+  s.state.items.set("c1", { id: "c1", kind: "commandExecution", command: "npm test", status: "inProgress", streaming: true, actions: [], turnId: "u", threadId: "t" });
+  s.state.items.set("m1", { id: "m1", kind: "agentMessage", text: "meanwhile, a note", streaming: true, turnId: "u", threadId: "t" });
+  await withStub(s, async ({ app, text }) => {
+    app.draw();
+    assert.match(text(), /Running npm test/);
+    assert.match(text(), /meanwhile, a note/);
+  });
+});
+
+test("a pasted multi-line prompt that starts with ! is a prompt, not a shell command", async () => {
+  const s = stubSession({});
+  await withStub(s, async ({ type }) => {
+    type("\x1b[200~![diagram](img.png)\nwhat does this show?\x1b[201~");
+    type("\r");
+    await sleep(20);
+    assert.deepEqual(s.calls.map((c) => c[0]), ["submit"]);
+    type("!git status\r");
+    await sleep(20);
+    assert.deepEqual(s.calls.at(-1), ["shell", "git status"]);
+  });
+});
+
+test("/status shows the tokens used", async () => {
+  const s = stubSession({ tokens: { total: { total: 1234 }, last: { total: 10 }, contextWindow: 1000 } });
+  await withStub(s, async ({ type, text }) => {
+    type("/status\r");
+    await sleep(20);
+    assert.match(text(), /1,234 tokens used/);
   });
 });

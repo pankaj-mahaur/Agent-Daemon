@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Runs `ad tui` against the fake Codex app-server, in a throwaway Codex home,
 // for the pty smoke test. Never starts the real Codex, and never touches ad's
-// real memory, prompt history or state (all under <root>).
+// real memory, prompt history, state, thread locks or schedules (all under <root>).
 //   node testkit/tui-fake.mjs <root> <cwd>
 
 import path from "node:path";
@@ -23,5 +23,7 @@ const code = await cmdTui({
   memory: false,
   historyFile: path.join(root, "history.jsonl"),
   stateFile: path.join(root, "state.json"),
+  lockDir: path.join(root, "locks"),
+  adHome: path.join(root, "ad-home"),
 });
 process.exit(code);

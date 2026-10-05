@@ -719,6 +719,23 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
     - **Arming:** the 400 ms window moved into the modal, so every front end gets it.
     - **Scrolling:** a long command scrolls inside the modal (PgUp/PgDn), and the full request goes to history.
     - **openaiForm:** points to `/codex`.
+  - **Review (2 high, 5 medium, all fixed; 14 guards mutation-checked):**
+    - **Composer:** text from outside (an MCP form's default, a picked file name, the history file) is sanitized like typed text.
+    - **Diffs:** they never hide a line.
+      - A new or deleted file's `diff` is its content, shown whole.
+      - A hunk takes exactly the lines its header counts, so `+++`/`---`/`@@` content stays.
+      - A malformed line is shown whole.
+    - **Patch approvals:** they render in approval mode, so hidden characters show.
+    - **Labels:** one-row labels show tab and newline as symbols, so a label can't draw fake options.
+      - Digits pick approval options, and the network-amendment key is `h`.
+      - Prefixes with spaces are quoted; option descriptions show; multiselect min/max are enforced.
+    - **Markdown speed:**
+      - Unmatched openers cost O(n) in total (failure memo, bracket pairs, cached code spans): 20 KB went from 2 s to under 10 ms.
+      - The stream sanitizes each line once.
+      - `live()` shows only the tail of a held-back block over 8 KB. That view is provisional; what commits stays exact.
+    - **Tables:** no hyperlinks in tables, since a cut cell could hide where a link goes.
+    - **Tests:** the property tests use mulberry32, and compare styles too.
+    - **Accepted:** free text in a question isn't armed (typing then Enter is normal), and the picker title and placeholder are left to the renderer's clip.
 
 ### Part 6 — App shell (MVP)
 - **`tui/app.mjs`:**
@@ -780,6 +797,21 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
   - **Tests:**
     - app tests on the fake engine (turn, approval with arming, steer, queue, Ctrl+C, slash, `!`, `@`, small screens);
     - helper tests, and a real-pty smoke of `ad tui` (trust → turn → approval → `/status` → quit → resume hint, history written).
+  - **Review (1 high, 5 medium, all fixed; 13 guards mutation-checked):**
+    - **Scrollback:** it can't wedge any more. An item whose turn has ended commits even if Codex never completed it (shown as "Stopped" / "Not applied"). A crash clears the turn's items, and an agent message behind a running item is drawn live.
+    - **Crashes:** a crash the automatic restarts gave up on shows "Codex stopped (exit N). Your text is kept. Enter restarts and resumes." The session gains `restartEngine()`, and prompts typed meanwhile queue.
+    - **Resume:** `/resume` no longer resets the view, so a refused (locked) resume duplicates nothing.
+    - **Login and sanitizing:** `/login` checks the exit code and restarts Codex after a login. "Since last time" is sanitized (loop logs ship with repos).
+    - **Skills:** the mirror refreshes on every engine start, and linked skill folders are followed (links inside are copied as links).
+    - **Keys:**
+      - Ctrl+C arms quit only after an interrupt or an idle press.
+      - A multi-line paste starting with `!` is a prompt.
+    - **Smaller fixes:**
+      - `/status` tokens fixed, and the timer is kept per turn.
+      - Notices land after the items they follow.
+      - `--cwd` is resolved before the trust key.
+      - The fake launcher keeps locks and schedules in its temp root, and the fake's turn ids are unique per process.
+    - **Tests:** the app tests now assert on the scrollback itself, not the screen.
   - **Open (live, with the user):**
     - FC3's script;
     - `codex resume <id> --no-daemon` interactively (S3);

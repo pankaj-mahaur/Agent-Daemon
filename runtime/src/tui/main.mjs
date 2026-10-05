@@ -25,6 +25,7 @@ import { sanitize } from "./terminal/sanitize.mjs";
 import { createApp } from "./app.mjs";
 import { createHistory } from "./history.mjs";
 import { createPicker, newlineHint, renderHeader } from "./view/chrome.mjs";
+import { truncate } from "./terminal/text.mjs";
 
 const CLI = fileURLToPath(new URL("../cli.mjs", import.meta.url));
 const DEFAULT_STATE_FILE = path.join(homedir(), ".agent-daemon", "tui", "state.json");
@@ -185,7 +186,8 @@ export async function sinceLastTime({ cwd, since = 0, home } = {}) {
   } catch {
     // none
   }
-  return parts;
+  // Loop logs live in the folder, so a cloned repo could ship one: never trust their text.
+  return parts.map((p) => sanitize(p, "transcript").replace(/\s+/g, " ").slice(0, 160));
 }
 
 /** ad rows for a hook run of ad's own hooks.json (recalled memory, guard blocks). */
@@ -227,7 +229,7 @@ export function meters(st) {
 export async function cmdTui(opts = {}) {
   const err = opts.stderr ?? process.stderr;
   const out = opts.stdout ?? process.stdout;
-  const cwd = opts.cwd ?? process.cwd();
+  const cwd = path.resolve(opts.cwd ?? process.cwd());
   const why = preflight();
   if (why) {
     err.write(`${why}\n`);
@@ -297,7 +299,7 @@ export async function cmdTui(opts = {}) {
       if (!again.engine) throw new Error(again.error);
       return again.engine;
     };
-    session = createSession({ engine, cwd, model: opts.model, sandbox: opts.sandbox, restart, maxRestarts: 3 });
+    session = createSession({ engine, cwd, model: opts.model, sandbox: opts.sandbox, restart, maxRestarts: 3, ...(opts.lockDir ? { lockDir: opts.lockDir } : {}) });
     await session.init();
 
     const term = terminalName();
@@ -332,7 +334,7 @@ export async function cmdTui(opts = {}) {
     const key = canonicalPath(cwd);
     const since = await sinceLastTime({ cwd, since: state[key]?.lastSeen ?? Date.now(), home: opts.adHome });
     const intro = [...header];
-    if (since.length) intro.push([{ text: `  Since last time: ${since.join(" \u{b7} ")}`, style: { dim: true } }]);
+    if (since.length) intro.push(truncate([{ text: `  Since last time: ${since.join(" \u{b7} ")}`, style: { dim: true } }], Math.max(10, io.size().cols - 2)));
     intro.push([], [{ text: "  Try /review \u{b7} /goal \u{b7} /resume \u{b7} /codex = stock Codex UI \u{b7} ? for shortcuts", style: { dim: true } }], []);
     for (const n of setupNotes.filter(Boolean)) intro.push([{ text: `  ${sanitize(n, "transcript")}`, style: { fg: "yellow" } }]);
 
@@ -369,8 +371,11 @@ export async function cmdTui(opts = {}) {
         return s.driver ? `ad memory: ${s.counts.learnings} learnings, ${s.counts.sessions} sessions. Codex's own /memories is separate.` : "ad memory isn't set up (ad doctor).";
       },
       login: async (arg) => {
-        await handoff(io, renderer, () => runChild(process.execPath, [CLI, "auth", "login", ...splitArgs(arg || "chatgpt")], { cwd }));
-        return "Signed in. New turns use it.";
+        const code = await handoff(io, renderer, () => runChild(process.execPath, [CLI, "auth", "login", ...splitArgs(arg || "chatgpt")], { cwd }));
+        if (code !== 0) return `Sign-in didn't finish (exit ${code}). Nothing changed.`;
+        // Keys reach Codex when it starts, and a new login is read at start too: restart it.
+        await session.restartEngine();
+        return "Signed in; Codex restarted with it.";
       },
       runAd: async (arg) => {
         if (!arg) return "Usage: /ad <command>, e.g. /ad doctor";

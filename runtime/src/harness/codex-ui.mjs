@@ -11,7 +11,7 @@
 //     Project .claude/skills are a known gap in `ad codex`.
 
 import { spawn } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { providerEnv } from "../auth/providers.mjs";
@@ -38,7 +38,15 @@ export function syncSkills({ home, from = path.join(homedir(), ".claude", "skill
   const dest = path.join(home, "skills");
   const out = { copied: 0, removed: 0 };
   mkdirSync(dest, { recursive: true });
-  const sources = existsSync(from) ? readdirSync(from, { withFileTypes: true }).filter((e) => e.isDirectory() && existsSync(path.join(from, e.name, "SKILL.md"))) : [];
+  // statSync follows a linked (symlink / junction) skill folder like a real one.
+  const isDir = (p) => {
+    try {
+      return statSync(p).isDirectory();
+    } catch {
+      return false;
+    }
+  };
+  const sources = existsSync(from) ? readdirSync(from, { withFileTypes: true }).filter((e) => isDir(path.join(from, e.name)) && existsSync(path.join(from, e.name, "SKILL.md"))) : [];
   const names = new Set(sources.map((e) => e.name));
   for (const e of sources) {
     const src = path.join(from, e.name);
@@ -46,7 +54,8 @@ export function syncSkills({ home, from = path.join(homedir(), ".claude", "skill
     if (existsSync(dst) && !existsSync(path.join(dst, MIRROR_MARKER))) continue; // the user's own
     if (existsSync(dst) && newestMtime(src) <= statSync(path.join(dst, MIRROR_MARKER)).mtimeMs) continue;
     rmSync(dst, { recursive: true, force: true });
-    cpSync(src, dst, { recursive: true, dereference: true });
+    // The folder itself is resolved; links inside it are copied as links (never followed into big trees).
+    cpSync(realpathSync(src), dst, { recursive: true, verbatimSymlinks: true });
     writeFileSync(path.join(dst, MIRROR_MARKER), "mirrored from ~/.claude/skills by ad codex; edits here are overwritten\n");
     out.copied++;
   }

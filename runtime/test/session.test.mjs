@@ -659,3 +659,16 @@ test("during a restart, a prompt is queued and runs once the engine is back, wit
     },
   );
 });
+
+test("a crash ends the running turn's items too: none is left streaming", async () => {
+  await withSession(none, async ({ session, engine }) => {
+    session.submit("hello");
+    await until(() => session.state.requests.length === 1, "the approval");
+    const turnId = session.state.activeTurnId;
+    engine.server.request("test/crash", {}).catch(() => {});
+    await until(() => session.state.engine.state === "crashed", "crashed");
+    const items = [...session.state.items.values()].filter((i) => i.turnId === turnId);
+    assert.ok(items.length > 0);
+    assert.ok(items.every((i) => !i.streaming && i.status !== "inProgress"), JSON.stringify(items));
+  });
+});

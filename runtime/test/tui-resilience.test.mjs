@@ -55,7 +55,7 @@ test("the fake server only sends what the pinned Codex could (required fields, e
     };
     const timer = setInterval(answer, 20);
     try {
-      for (const prompt of ["hello", "fail-turn", "early-complete", "subagent", "user-input", "elicitation", "patch"]) {
+      for (const prompt of ["hello", "fail-turn", "early-complete", "subagent", "user-input", "elicitation", "edit-file", "two-approvals", "ask-permission"]) {
         await session.submit(prompt).done;
       }
       const hang = session.submit("hang");

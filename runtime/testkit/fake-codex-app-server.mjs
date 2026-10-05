@@ -30,6 +30,9 @@ const calls = [];
 let serverReqId = 0;
 let threadSeq = 0;
 let turnSeq = 0;
+// Turn ids differ between fake processes, as real Codex's are unique: a
+// restarted engine must not reuse the crashed one's turn and item ids.
+const RUN = process.pid.toString(36);
 const loopTurns = new Map();
 const hung = new Map(); // "hang" turns, completed as interrupted by turn/interrupt
 let tokensUsed = 0;
@@ -81,6 +84,8 @@ function complete_(msg) {
   if (msg.method === "item/completed") return { ...msg, params: { completedAtMs: 0, ...p } };
   if (msg.method === "thread/started") return { ...msg, params: { ...p, thread: fullThread(p.thread) } };
   if (msg.method === "item/commandExecution/requestApproval") return { ...msg, params: { itemId: `cmd-${msg.id}`, startedAtMs: 0, ...p } };
+  if (msg.method === "item/fileChange/requestApproval") return { ...msg, params: { startedAtMs: 0, ...p } };
+  if (msg.method === "item/permissions/requestApproval") return { ...msg, params: { itemId: `perm-${msg.id}`, cwd: process.cwd(), startedAtMs: 0, ...p } };
   return msg;
 }
 const send = (msg) => process.stdout.write(JSON.stringify(msg.method ? complete_(msg) : msg) + "\n");
@@ -311,7 +316,7 @@ async function onRequest({ id, method, params }) {
       return send({ id, result: { thread: { id: params.threadId }, model: "fake-model", modelProvider: "fake" } });
     case "turn/start": {
       const threadId = params.threadId;
-      const turn = { id: `turn-${++turnSeq}`, status: "inProgress", items: [] };
+      const turn = { id: `turn-${RUN}-${++turnSeq}`, status: "inProgress", items: [] };
       const text = params.input?.[0]?.text ?? "";
       turnsOf(threadId).push({ id: turn.id, status: "inProgress", items: [] });
       // Codex echoes the prompt as the turn begins (here even before turn/start answers).
@@ -379,7 +384,7 @@ async function onRequest({ id, method, params }) {
     }
     case "review/start": {
       const threadId = params.threadId;
-      const turn = { id: `turn-${++turnSeq}`, status: "inProgress", items: [] };
+      const turn = { id: `turn-${RUN}-${++turnSeq}`, status: "inProgress", items: [] };
       turnsOf(threadId).push({ id: turn.id, status: "inProgress", items: [] });
       send({ id, result: { turn, reviewThreadId: threadId } });
       notify("turn/started", { threadId, turn });

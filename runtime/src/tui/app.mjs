@@ -108,7 +108,8 @@ export function createApp({
   let overlay = false; // the ? shortcuts
   let note = null; // one transient line above the composer
   let lastCtrlC = -Infinity;
-  let turnStartedAt = null;
+  let turnStartedAt = null; // the running turn's start (for "Worked for")
+  const turnStarts = new Map(); // turnId → when this app first saw it running
   let drawTimer = null;
   let ticker = null;
   let searchTimer = null;
@@ -143,6 +144,17 @@ export function createApp({
   const rootItems = () => [...st.items.values()].filter((it) => !st.thread || it.threadId === st.thread.id || it.threadId == null);
   const turnActive = () => Boolean(st.activeTurnId || st.starting);
 
+  // An item whose turn has ended can't change any more, even if Codex never
+  // completed it (a crash, a declined patch): it must not hold back the
+  // scrollback behind it.
+  function turnOver(it) {
+    const t = it.turnId ? st.turns.find((x) => x.id === it.turnId) : null;
+    if (t) return t.status !== "inProgress";
+    return !turnActive();
+  }
+  const open = (it) => (it.streaming || it.status === "inProgress") && !turnOver(it);
+  const settledView = (it) => (it.streaming || it.status === "inProgress" ? { ...it, streaming: false, incomplete: true } : it);
+
   /**
    * Commits every item that can no longer change, in order. Stops at the
    * first one still streaming (an agent message commits its finished lines
@@ -167,14 +179,15 @@ export function createApp({
         const text = String(it.text ?? "");
         const fresh = s.md.push(text.slice(s.fed));
         s.fed = text.length;
-        const out = it.streaming ? fresh : [...fresh, ...s.md.finish()];
+        const live = open(it);
+        const out = live ? fresh : [...fresh, ...s.md.finish()];
         if (out.length) {
           const lines = out.map((l) => [{ text: s.started ? "  " : "\u{2022} ", style: DIM }, ...l]);
           if (!s.started) commitCell(lines);
           else commit(lines);
           s.started = true;
         }
-        if (it.streaming) return items.slice(i);
+        if (live) return items.slice(i);
         committed.add(it.id);
         streams.delete(it.id);
         continue;
@@ -183,30 +196,36 @@ export function createApp({
         let j = i;
         while (j < items.length && isExploring(items[j])) j++;
         const group = items.slice(i, j);
-        const settled = group.every((g) => !g.streaming && g.status !== "inProgress");
+        const settled = group.every((g) => !open(g));
         // A run of exploring commands is one cell: it ends at the next other item or the turn's end.
         if (!settled || (j === items.length && turnActive())) return items.slice(i);
-        commitCell(renderExploring(group, { width: width() }));
+        commitCell(renderExploring(group.map(settledView), { width: width() }));
         for (const g of group) committed.add(g.id);
         i = j - 1;
         continue;
       }
-      if (it.streaming || it.status === "inProgress") return items.slice(i);
+      if (open(it)) return items.slice(i);
       committed.add(it.id);
-      commitCell(renderCell(it, { width: width() }));
+      commitCell(renderCell(settledView(it), { width: width() }));
     }
     return [];
   }
 
   function reportTurns() {
     for (const t of st.turns) {
-      if (t.status === "inProgress" || turnsSeen.get(t.id) === t.status) continue;
+      if (t.status === "inProgress") {
+        if (!turnStarts.has(t.id)) turnStarts.set(t.id, turnStartedAt ?? now());
+        continue;
+      }
+      if (turnsSeen.get(t.id) === t.status) continue;
       turnsSeen.set(t.id, t.status);
       actions.bell?.({ unfocusedOnly: true });
       if (t.status === "failed" && t.error) commitCell(renderNotice({ level: "error", message: `The turn failed: ${t.error.message ?? "unknown error"}` }, { width: width() }));
       else if (t.status === "interrupted") commitCell(renderNotice({ level: "warn", message: "Interrupted. Tell Codex what to do differently." }, { width: width() }));
-      if (turnStartedAt != null) {
-        const label = ` Worked for ${elapsed(now() - turnStartedAt)} `;
+      const started = turnStarts.get(t.id) ?? turnStartedAt;
+      turnStarts.delete(t.id);
+      if (started != null) {
+        const label = ` Worked for ${elapsed(now() - started)} `;
         const w = width();
         const side = Math.max(1, Math.floor((w - label.length) / 2));
         commit([[], [{ text: `${"\u{2500}".repeat(side)}${label}${"\u{2500}".repeat(Math.max(1, w - side - label.length))}`, style: DIM }]]);
@@ -278,8 +297,11 @@ export function createApp({
       const it = pending[i];
       if (it.kind === "agentMessage") {
         const s = streams.get(it.id);
-        const lines = s ? s.md.live() : [];
-        out.push(...lines.map((l, k) => [{ text: k === 0 && !s?.started ? "\u{2022} " : "  ", style: DIM }, ...l]));
+        if (!s) {
+          out.push(...renderCell(it, { width: w }));
+          continue;
+        }
+        out.push(...s.md.live().map((l, k) => [{ text: k === 0 && !s.started ? "\u{2022} " : "  ", style: DIM }, ...l]));
       } else if (isExploring(it)) {
         let j = i;
         while (j < pending.length && isExploring(pending[j])) j++;
@@ -296,7 +318,8 @@ export function createApp({
     if (!turnActive()) return [];
     let label = "Working";
     for (const it of rootItems()) if (it.kind === "reasoning") label = reasoningHeadline(it.summaryText ?? (it.summary ?? []).join("\n")) ?? label;
-    return renderStatus({ label, elapsedMs: now() - (turnStartedAt ?? now()), frame: Math.floor(now() / 600), queued: st.queue.map((q) => q.text) }, { width: width() });
+    const since = (st.activeTurnId && turnStarts.get(st.activeTurnId)) ?? turnStartedAt ?? now();
+    return renderStatus({ label, elapsedMs: now() - since, frame: Math.floor(now() / 600), queued: st.queue.map((q) => q.text) }, { width: width() });
   }
 
   function footer() {
@@ -309,8 +332,8 @@ export function createApp({
     clearT(drawTimer);
     drawTimer = null;
     if (quitting) return;
-    reportNotices();
     const pending = flush();
+    reportNotices();
     reportTurns();
     syncModal();
     const w = width();
@@ -322,6 +345,10 @@ export function createApp({
     lines.push(...live);
     if (st.plan && turnActive()) lines.push(...renderPlan(st.plan.steps, { width: w, explanation: st.plan.explanation }));
     lines.push(...statusLines());
+    if (st.engine.state === "crashed") {
+      const code = Number.isInteger(st.engine.exitCode) ? ` (exit ${st.engine.exitCode})` : "";
+      lines.push(truncate([{ text: `\u{25a0} Codex stopped${code}. Your text is kept. Enter restarts and resumes.`, style: WARN }], w));
+    } else if (st.engine.state === "restarting") lines.push(truncate([{ text: "\u{25e6} Restarting Codex\u{2026}", style: DIM }], w));
     let cursor = null;
     if (modal) {
       if (lines.length) lines.push([]);
@@ -540,7 +567,7 @@ export function createApp({
   function statusReport() {
     const c = st.config;
     const acct = st.account?.type ? (st.account.type === "chatgpt" ? `ChatGPT ${st.account.planType ?? ""}`.trim() : st.account.type) : st.account?.requiresOpenaiAuth ? "not signed in" : "provider key";
-    const tokens = st.tokens?.total?.totalTokens != null ? `${st.tokens.total.totalTokens.toLocaleString("en-US")} tokens used` : "no tokens used yet";
+    const tokens = st.tokens?.total?.total ? `${st.tokens.total.total.toLocaleString("en-US")} tokens used` : "no tokens used yet";
     const rows = [
       ["account", acct],
       ["model", `${c.model ?? "(default)"}${c.effort ? ` ${c.effort}` : ""}`],
@@ -590,7 +617,8 @@ export function createApp({
       "resume",
       threads.map((t) => ({ label: clean(t.name || t.preview || t.id).slice(0, 200), hint: t.updatedAt ? new Date(t.updatedAt * 1000).toLocaleString() : "", value: t.id })),
       (id) => {
-        resetThreadView();
+        // The view isn't reset: the resumed thread's items are new ids, and if
+        // resume fails (locked elsewhere) what is in the scrollback stays committed.
         session
           .resume(id)
           .then(() => {
@@ -623,7 +651,7 @@ export function createApp({
         },
         (err) => {
           warn(`Not sent: ${err.message}`);
-          if (!composer.text) composer.set(text);
+          if (!composer.text && !shown) composer.set(text);
           drawSoon();
         },
       );
@@ -632,12 +660,29 @@ export function createApp({
     }
   }
 
+  // After a crash the automatic restarts gave up on: Enter tries once more.
+  function restartEngine() {
+    note = { level: "info", text: "Restarting Codex\u{2026}" };
+    Promise.resolve(session.restartEngine?.())
+      .then((ok) => {
+        note = ok ? null : { level: "warn", text: "Codex didn't come back. Enter tries again; /quit and `ad tui --last` start fresh." };
+        drawSoon();
+      })
+      .catch((err) => {
+        note = null;
+        fail(err);
+        drawSoon();
+      });
+  }
+
   function dispatch(text) {
     note = null;
+    if (st.engine.state === "crashed") restartEngine(); // the prompt waits in the queue meanwhile
     const t = text.trim();
     const m = /^\/([a-z][\w-]*)(?:\s+([\s\S]*))?$/i.exec(t);
     if (m && SLASH_COMMANDS.some((c) => c.name === m[1].toLowerCase())) return void slash(m[1].toLowerCase(), (m[2] ?? "").trim());
-    if (t.startsWith("!") && t.length > 1) {
+    // A one-line "!cmd" runs in the shell; a multi-line paste that starts with "!" (an image link…) is a prompt.
+    if (t.startsWith("!") && t.length > 1 && !t.includes("\n")) {
       if (turnActive()) return warn("Wait for the turn to finish (or esc) before running a shell command.");
       return void session.shell(t.slice(1).trim()).catch(fail);
     }
@@ -655,7 +700,8 @@ export function createApp({
   function onCtrlC() {
     const t = now();
     if (t - lastCtrlC < FORCE_QUIT_MS) return quit("ctrl-c");
-    lastCtrlC = t;
+    // Declining, closing or clearing doesn't arm the quit: only an interrupt or an idle press does.
+    lastCtrlC = -Infinity;
     if (modal) {
       answer(null);
       return;
@@ -669,6 +715,7 @@ export function createApp({
       composer.clear();
       return;
     }
+    lastCtrlC = t;
     if (turnActive()) {
       session.interrupt();
       note = { level: "warn", text: "Interrupting. Ctrl+C again quits." };
@@ -719,6 +766,10 @@ export function createApp({
         session.editQueued(last, null);
         composer.set(text);
       }
+      return draw();
+    }
+    if (ev.type === "key" && ev.name === "enter" && !ev.alt && st.engine.state === "crashed" && !composer.text.trim()) {
+      restartEngine();
       return draw();
     }
     const r = composer.handle(ev);

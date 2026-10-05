@@ -371,6 +371,12 @@ export function createSession({
       const t = turnOf(state.activeTurnId);
       t.status = "failed";
       t.error = { message: "Codex stopped" };
+      // Its items will never complete either.
+      for (const it of state.items.values()) {
+        if (it.turnId !== t.id) continue;
+        it.streaming = false;
+        if (it.status === "inProgress") it.status = "failed";
+      }
       for (const resolve of doneWaiters.get(t.id) ?? []) resolve({ turnId: t.id, status: "failed", error: t.error });
       doneWaiters.delete(t.id);
       state.activeTurnId = null;
@@ -378,10 +384,16 @@ export function createSession({
     state.starting = false;
     for (const r of state.requests.splice(0)) r.resolve(null);
     change("engine");
-    if (!restart) return;
+    if (restart) await recover(maxRestarts);
+  }
+
+  // Starts new engines until one is up with the thread resumed, or `limit`
+  // attempts (counted in state.engine.restarts) are used. True when ready.
+  async function recover(limit) {
+    if (restarting || closed) return false;
     restarting = true;
     try {
-      while (!closed && state.engine.restarts < maxRestarts) {
+      while (!closed && state.engine.restarts < limit) {
         state.engine = { ...state.engine, state: "restarting", restarts: state.engine.restarts + 1 };
         change("engine");
         unwire();
@@ -423,12 +435,13 @@ export function createSession({
         notice("info", "engine.restarted", "Codex restarted; the conversation continues.");
         change("engine");
         queueMicrotask(drainQueue);
-        return;
+        return true;
       }
       if (!closed) {
         state.engine = { ...state.engine, state: "crashed" };
         change("engine");
       }
+      return false;
     } finally {
       restarting = false;
     }
@@ -689,6 +702,24 @@ export function createSession({
       return eng;
     },
 
+    /**
+     * Restarts Codex by hand: after a crash the automatic attempts gave up on
+     * (one more try), or to pick up a new login. Not while a turn runs.
+     */
+    async restartEngine() {
+      if (!restart) throw new Error("Codex can't be restarted from here: quit and start ad again.");
+      if (closed || restarting) return false;
+      if (state.activeTurnId || state.starting) throw new Error("wait for the turn to finish first");
+      if (state.engine.state === "ready") {
+        // A live engine: let it go quietly (no crash handling), then start fresh.
+        const old = eng;
+        unwire();
+        await old.close?.().catch?.(() => {});
+      }
+      state.engine = { ...state.engine, state: "restarting" };
+      change("engine");
+      return recover(state.engine.restarts + 1);
+    },
     /** Account and rate limits, read once at startup; later changes arrive as events. */
     async init() {
       const acct = await eng.account().catch(() => null);
