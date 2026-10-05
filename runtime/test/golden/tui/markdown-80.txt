@@ -1,0 +1,25 @@
+Fixing the flaky login test
+
+The test used fake timers, so refresh() never ran. See the docs
+(https://vitest.dev/api/vi.html) or https://vitest.dev.
+
+1. Switch to real timers
+2. Add a retry
+   ◦ only around the refresh call
+   ◦ keep the timeout at 5s
+
+▎ Note: the signup test has the same pattern.
+
+    it("logs in", async () => {
+      vi.useRealTimers();
+      await login();
+    });
+
+Test   │ Before │ After
+───────┼────────┼──────
+login  │ flaky  │ green
+signup │ flaky  │ green
+
+────────────────────────────────────────
+
+Done.

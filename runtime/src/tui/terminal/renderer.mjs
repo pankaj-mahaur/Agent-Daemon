@@ -67,6 +67,7 @@ export function createRenderer({
   io,
   caps = io.caps ?? {},
   depth = 0,
+  hyperlinks = false, // OSC 8 for spans with style.link (text.mjs)
   reflow = "unknown", // "reflow" | "none" | "unknown" (per terminal, from S1b)
   resizeSource = null,
   now = () => Date.now(),
@@ -109,7 +110,7 @@ export function createRenderer({
   function renderRows(lines, cols) {
     const max = Math.max(1, cols - 1);
     const cut = lines.map((l) => truncate(toLine(l), max));
-    return { strings: cut.map((l) => renderLine(l, depth)), widths: cut.map(minCells) };
+    return { strings: cut.map((l) => renderLine(l, depth, { hyperlinks })), widths: cut.map(minCells) };
   }
 
   // The visible part of the live frame: at most rows − 1 lines, bottom kept.

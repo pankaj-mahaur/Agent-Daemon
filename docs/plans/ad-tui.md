@@ -1,6 +1,6 @@
 # Plan — `ad`: a Codex-style terminal UI with agent-daemon's powers
 
-> Status: **final v4.6** (2026-10-06; v4 on 2026-10-04 after three review rounds). Changes from here on need a revision-log entry.
+> Status: **final v4.7** (2026-10-06; v4 on 2026-10-04 after three review rounds). Changes from here on need a revision-log entry.
 > Progress: **Part 0** — code done and reviewed twice:
 > - Codex 0.160.0 pinned.
 > - Isolation guard in place (see "Your own Codex is never touched").
@@ -28,8 +28,9 @@
 > - **Part 3** (engine events: adapter, routing, real-engine CI) built and reviewed (v4.5).
 >
 > - **Part 4** (session controller) built (v4.6).
+> - **Part 5** (view components) built (v4.7). **FC2 pending (user).**
 >
-> **Next:** Part 5 (view components).
+> **Next:** Part 6 (app shell MVP).
 > Research: [Codex TUI + app-server](../research/codex-tui-and-app-server.md) · [terminal engineering](../research/terminal-engineering.md) · [harness landscape](../research/harness-landscape.md).
 
 ## Goal
@@ -692,6 +693,30 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
     - User-input form (masked when `isSecret`).
     - Elicitation forms per mode.
 - **Done when:** goldens at widths 40, 80 and 120 and small heights pass → **FC2**.
+- ✅ **Built 2026-10-06** (`tui/view/`, `tui/history.mjs`; goldens in `test/golden/tui/`). **FC2: pending (user)**, a look at the goldens and, with Part 6, the live app.
+  - **Widths:** every view renders lines that fit the `width` it is given. The app (Part 6) passes `cols - 2`, so lines stay ≤ 78 at 80 columns.
+  - **5a, composer** (`composer.mjs`):
+    - **Editing:** grapheme cursor and word moves. Up/Down move by visual row, then walk the history at the first or last row.
+    - **Rendering:** a soft wrap prefers spaces; a space that overflows stays hidden at the row's end. Tabs show as 4 cells.
+    - **Mask:** masked input wraps by cells only, so no word lengths show. It never reaches the history and never searches.
+    - **Popups:** `token()` / `replace()` feed the `@` and `/` popups.
+    - **History** (`history.mjs`): JSONL, 0600, compacted past twice `max`. A torn line is skipped, and I/O errors keep history in memory.
+  - **5b, markdown** (`markdown.mjs`):
+    - **Stream property:** everything a stream commits, concatenated, is exactly the full render.
+    - **Live property:** committed lines plus `live()` always equal the render of the text received so far.
+    - Both are fuzzed with 20 000 random documents.
+    - **Links:** a link's URL is shown after its text when they differ. OSC 8 (`renderLine(…, {hyperlinks})`, renderer option `hyperlinks`) is used for http(s)/mailto only.
+    - **Pacing:** `createPacer`.
+  - **5c, cells** (`cells.mjs`):
+    - **Commands:** Explored / Ran / Failed (exit N) / Declined, with the output tail. A user's `!` command is labelled `(unsandboxed)`.
+    - **Diffs:** a gutter diff with line numbers.
+    - **Also:** plan, tools, web, review, compaction, agents, notices and ad rows. Every line is cut to the width as a last guard.
+  - **5d, chrome, popups and modals:**
+    - **`chrome.mjs`:** the header card (middle-ellipsis paths), the status line with queued prompts, the footer drop order, the newline hint per terminal, the `?` overlay and the picker.
+    - **`modals.mjs`:** approval, user-input and elicitation modals built from `PendingRequest`.
+    - **Arming:** the 400 ms window moved into the modal, so every front end gets it.
+    - **Scrolling:** a long command scrolls inside the modal (PgUp/PgDn), and the full request goes to history.
+    - **openaiForm:** points to `/codex`.
 
 ### Part 6 — App shell (MVP)
 - **`tui/app.mjs`:**
@@ -946,3 +971,9 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
     - the session gains `init()` (account and rate limits, read once);
     - `submit()` during a turn steers, and while a turn is starting it queues.
   - **Part 3 re-review:** one `request.resolved` per request, links only from real spawns, and validated answers.
+- **v4.7** (2026-10-06): Part 5.
+  - **Interfaces added:**
+    - `createComposer`, `createHistory`, `renderMarkdown` / `createMarkdownStream` / `createPacer`, `renderCell` and friends, `renderHeader` / `renderStatus` / `renderFooter` / `createPicker`, and `createRequestModal`.
+    - `renderLine` and `createRenderer` take `hyperlinks`.
+  - **Arming:** the approval window lives in the modal, not the app.
+  - **Widths:** views get `cols - 2` from the app.

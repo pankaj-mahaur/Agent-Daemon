@@ -1,0 +1,62 @@
+── exec ──
+Run command?
+  $ npm test -- login.spec.ts
+  in D:\proj
+  Reason: run the failing test
+
+› 1. Yes  (y)
+  2. Yes, and don't ask again for comma…
+  3. No, and stop  (esc)
+── patch ──
+Apply file changes?
+• Edit src/auth.ts (+1 -1)
+    1 - old
+    1 + new
+    2   same
+  Reason: fix timers
+
+› 1. Yes  (y)
+  2. Yes, and don't ask again for these…
+  3. No, and tell Codex what to do inst…
+  4. No, and stop  (esc)
+── permissions ──
+Grant extra permissions?
+  { "network": true }
+  Reason: fetch deps
+
+› 1. Yes, for this turn  (y)
+  2. Yes, for this session  (a)
+  3. No  (n)
+── network ──
+Allow network access to
+registry.npmjs.org?
+  https registry.npmjs.org
+
+› 1. Yes  (y)
+  2. Yes, and don't ask again this sess…
+  3. Yes, and always allow registry.npm…
+  4. No, and stop  (esc)
+── user input ──
+Database (1/2)
+  Which database?
+
+› 1. Postgres  (1)
+  2. SQLite  (2)
+  3. Skip  (esc)
+
+› or type an answer
+── form ──
+deploy asks:
+  Deploy settings
+
+env * (1/3)
+› 1. staging  (1)
+  2. prod  (2)
+── url ──
+auth asks:
+  Sign in
+  URL: https://auth.example/x
+
+› 1. Open it, then continue  (y)
+  2. Decline  (n)
+  3. Cancel  (esc)

@@ -46,6 +46,12 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
   - It holds one conversation: prompts, steering a running turn, a prompt queue and approvals.
   - Two ad windows can't open the same thread.
   - When Codex crashes, the running turn fails cleanly, Codex restarts (capped) and the conversation resumes.
+- Terminal UI view components (`runtime/src/tui/view/`, not wired to a command yet):
+  - **Composer:** a multi-line prompt editor with word moves, kill/yank, history (`~/.agent-daemon/tui/history.jsonl`, private, Ctrl+R search) and big pastes shown as `[Pasted N lines]`.
+  - **Streaming markdown:** a streamed answer looks exactly like the finished one.
+  - **Transcript cells:** commands (Explored / Ran / Failed), diffs with line numbers, plans, tools and notices.
+  - **Chrome:** the header card, status line and adaptive footer.
+  - **Prompts:** approval, question and form prompts. Approvals show hidden characters and ignore keys pressed too soon.
 - Skills:
   - `big-feature-flow` (installed by default): research how others built it → plan in parts → adversarial review rounds until final → spikes → a per-part implement/test/review loop.
   - `ad-tui-dev` (maintainers): working on the terminal UI with its isolation and renderer rules.

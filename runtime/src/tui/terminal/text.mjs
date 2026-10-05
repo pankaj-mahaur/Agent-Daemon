@@ -3,7 +3,7 @@
 //
 // A span is {text, style?}. A line is an array of spans. Style fields: fg, bg
 // (a name from COLORS or "#rrggbb"), bold, dim, italic, underline, inverse,
-// strike. Span text must already be sanitized (sanitize.mjs); tabs and
+// strike, link (an http(s)/mailto URL: an OSC 8 hyperlink when enabled). Span text must already be sanitized (sanitize.mjs); tabs and
 // newlines are handled here.
 
 import { graphemes, graphemeSegments, graphemeWidth, stringWidth } from "./width.mjs";
@@ -127,11 +127,36 @@ export function normalize(line) {
   return out;
 }
 
-/** One line to a string. Ends with RESET whenever it emitted any SGR. */
-export function renderLine(line, depth) {
+/**
+ * The URL an OSC 8 hyperlink may carry: http(s) or mailto only, normalised by
+ * the URL parser (which percent-encodes anything that could end the sequence).
+ */
+export function safeLink(url) {
+  try {
+    const u = new URL(String(url));
+    if (!["http:", "https:", "mailto:"].includes(u.protocol)) return null;
+    return /^[\x21-\x7e]+$/.test(u.href) ? u.href : null;
+  } catch {
+    return null;
+  }
+}
+
+const OSC8_END = "\x1b]8;;\x1b\\";
+
+/**
+ * One line to a string. Ends with RESET whenever it emitted any SGR. With
+ * `hyperlinks`, spans whose style has a safe `link` become OSC 8 links.
+ */
+export function renderLine(line, depth, { hyperlinks = false } = {}) {
   let out = "";
   let styled = false;
+  let link = null;
   for (const span of line) {
+    const want = hyperlinks ? safeLink(span.style?.link) : null;
+    if (want !== link) {
+      out += want ? `\x1b]8;;${want}\x1b\\` : OSC8_END;
+      link = want;
+    }
     const on = sgr(span.style, depth);
     if (on) {
       out += (styled ? RESET : "") + on + span.text;
@@ -141,6 +166,7 @@ export function renderLine(line, depth) {
       styled = false;
     }
   }
+  if (link) out += OSC8_END;
   return styled ? out + RESET : out;
 }
 
