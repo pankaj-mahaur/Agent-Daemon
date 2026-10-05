@@ -148,6 +148,61 @@ test("an apply_patch call becomes a fileChange that writes the file", opts, asyn
   });
 });
 
+// Waits for a notification matching `pred` (seen already or still to come).
+function waitNote(server, notes, pred, what, ms = TURN_TIMEOUT_MS) {
+  const hit = notes.find(pred);
+  if (hit) return Promise.resolve(hit);
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => (server.off("notification", on), reject(new Error(`no ${what} in ${ms} ms`))), ms);
+    const on = (n) => {
+      if (!pred(n)) return;
+      clearTimeout(timer);
+      server.off("notification", on);
+      resolve(n);
+    };
+    server.on("notification", on);
+  });
+}
+
+test("turn/interrupt ends a running turn as interrupted and hangs up on the model", opts, async () => {
+  await withRealEngine(async ({ server, cwd, notes, mock }) => {
+    const { thread } = await server.request("thread/start", { cwd });
+    const { turn } = await server.request("turn/start", { threadId: thread.id, input: [{ type: "text", text: "HOLD" }] });
+    await mock.held();
+    await waitNote(server, notes, (n) => n.method === "item/agentMessage/delta" && n.params.delta === "waiting", "the held delta");
+    await server.request("turn/interrupt", { threadId: thread.id, turnId: turn.id });
+    const done = await waitNote(server, notes, (n) => n.method === "turn/completed" && n.params.turn?.id === turn.id, "turn/completed");
+    assert.equal(done.params.turn.status, "interrupted");
+    assert.ok(mock.release() === false || mock.hangups >= 1, "the held model response was abandoned");
+  });
+});
+
+test("turn/steer adds input to a running turn; the model sees it", opts, async () => {
+  await withRealEngine(async ({ server, cwd, notes, mock }) => {
+    const { thread } = await server.request("thread/start", { cwd });
+    const { turn } = await server.request("turn/start", { threadId: thread.id, input: [{ type: "text", text: "HOLD" }] });
+    await mock.held();
+    await server.request("turn/steer", { threadId: thread.id, expectedTurnId: turn.id, input: [{ type: "text", text: "STEERED please PING" }] });
+    mock.release();
+    await waitNote(server, notes, (n) => n.method === "turn/completed" && n.params.turn?.id === turn.id, "turn/completed");
+    assert.ok(mock.requests.some((r) => r.text.includes("STEERED")), `requests: ${JSON.stringify(mock.requests.map((r) => r.text))}`);
+  });
+});
+
+test("the events adapter understands everything the real Codex sends in a turn", opts, async () => {
+  const { adaptNotification } = await import("../src/engine/codex/events.mjs");
+  await withRealEngine(async ({ server, cwd, notes }) => {
+    const { thread } = await server.request("thread/start", { cwd });
+    await runTurn(server, notes, thread.id, "PING");
+    await runTurn(server, notes, thread.id, "SHELL");
+    await runTurn(server, notes, thread.id, "PATCH");
+    const unknown = notes.flatMap((n) => adaptNotification(n.method, n.params)).filter((e) => e.type === "unknown");
+    assert.deepEqual(unknown.map((e) => e.method), [], "a notification Codex sends that events.mjs doesn't know");
+    const types = new Set(notes.flatMap((n) => adaptNotification(n.method, n.params)).map((e) => e.type));
+    for (const t of ["turn.started", "turn.completed", "item.started", "item.completed", "item.delta"]) assert.ok(types.has(t), t);
+  });
+});
+
 test("bad requests are classified the way plan D5 expects", { skip, timeout: START_TIMEOUT_MS + 30_000 }, async () => {
   await withRealEngine(async ({ server }) => {
     const missing = await server.request("thread/doesNotExist", {}).catch((e) => e);

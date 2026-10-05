@@ -15,6 +15,7 @@
 import { createInterface } from "node:readline";
 import { DEFAULT_APPROVAL_POLICY, DEFAULT_SANDBOX } from "../engine/index.mjs";
 import { describeItem } from "./run.mjs";
+import { execDisplay } from "../engine/codex/events.mjs";
 import { startHarnessEngine } from "./start.mjs";
 
 const useColor = (stream) => Boolean(stream.isTTY) && !process.env.NO_COLOR;
@@ -51,8 +52,11 @@ export function approvalQuestion(req, fileChanges = new Map()) {
   const p = req.params ?? {};
   const why = p.reason ? `\n  reason: ${p.reason}` : "";
   if (req.kind === "command") {
-    const cmd = Array.isArray(p.command) ? p.command.join(" ") : p.command;
-    return `Run command?\n  $ ${cmd}${p.cwd ? `\n  in ${p.cwd}` : ""}${why}\n[y]es / [a]lways this session / [n]o: `;
+    // Same display as the TUI: a network approval names the host, a stdin
+    // write shows the input escaped; never "$ null".
+    const d = execDisplay(p);
+    const body = d.command != null ? `\n  $ ${d.command}` : d.detail ? `\n  ${d.detail}` : "";
+    return `${d.title}${body}${p.cwd ? `\n  in ${p.cwd}` : ""}${why}\n[y]es / [a]lways this session / [n]o: `;
   }
   if (req.kind === "fileChange") {
     const changes = fileChanges.get(p.itemId)?.changes ?? [];

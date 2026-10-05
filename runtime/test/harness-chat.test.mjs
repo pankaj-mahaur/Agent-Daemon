@@ -187,3 +187,11 @@ test("/compact waits for compaction; /model alone resets to the thread default",
     assert.equal(session.state.model, "fake-model", "explicit default, since turn/start's model sticks");
   });
 });
+
+test("approvalQuestion: a network approval names the host, a stdin write shows its input escaped", () => {
+  const net = approvalQuestion({ kind: "command", params: { networkApprovalContext: { host: "pypi.org", protocol: "https" }, command: null } });
+  assert.match(net, /^Allow network access to pypi\.org\?/);
+  assert.doesNotMatch(net, /null/);
+  const stdin = approvalQuestion({ kind: "command", params: { kind: "writeStdin", command: "yes\n" } });
+  assert.ok(stdin.startsWith('Send input to the running command?\n  $ "yes\\n"'), JSON.stringify(stdin));
+});

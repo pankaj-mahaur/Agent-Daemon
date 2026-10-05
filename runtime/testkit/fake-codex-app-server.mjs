@@ -9,6 +9,10 @@
 //   "stale-noise"     → a stale turn's delta + turn/completed arrive first
 //   "hang"            → never completes (tests timeouts; interrupt is recorded)
 //   "slow-start"      → turn/start answers only after 300 ms, then hangs
+//   "subagent"        → a child thread (parentThreadId) streams and asks an approval
+//   "user-input"      → item/tool/requestUserInput; "elicitation" → an MCP form
+//   "resolved-elsewhere" / "revert-pending" → an approval that serverRequest/resolved
+//                        or thread/reverted ends while it is open
 //   (outputSchema)    → final agent message is JSON `{"answer":42}`
 //   anything else     → "po"+"ng", an `error` notification, a command
 //                        approval, then "[<decision>]"
@@ -112,6 +116,51 @@ async function runScriptedTurn(threadId, turn, params) {
     const method = text === "ask-permission" ? "item/permissions/requestApproval" : "execCommandApproval";
     const reply = await askClient(method, { threadId, turnId: turn.id, permissions: { network: { enabled: true } }, command: ["ls"] });
     agentMessage(threadId, turn.id, JSON.stringify(reply.result ?? reply.error));
+    return complete(threadId, turn);
+  }
+  // Part 3b routing scenarios.
+  if (text === "subagent") {
+    const child = `child-of-${threadId}`;
+    notify("thread/started", { thread: { id: child, parentThreadId: threadId, agentNickname: "explorer", agentRole: "explorer" } });
+    notify("item/started", { threadId, turnId: turn.id, item: { type: "collabAgentToolCall", id: "collab-1", tool: "spawnAgent", status: "inProgress", receiverThreadIds: [child], senderThreadId: threadId } });
+    notify("item/agentMessage/delta", { threadId: child, turnId: "child-turn", itemId: "child-msg", delta: "child says hi" });
+    const reply = await askClient("item/commandExecution/requestApproval", { threadId: child, turnId: "child-turn", itemId: "child-cmd", command: "ls" });
+    agentMessage(threadId, turn.id, `subagent[${reply.result?.decision ?? reply.error?.code}]`);
+    return complete(threadId, turn);
+  }
+  if (text === "user-input") {
+    const reply = await askClient("item/tool/requestUserInput", {
+      threadId,
+      turnId: turn.id,
+      itemId: "ui-1",
+      isBlocking: true,
+      questions: [{ id: "q", header: "Pick", question: "Which one?", options: [{ label: "A", description: "first" }] }],
+    });
+    agentMessage(threadId, turn.id, `input${JSON.stringify(reply.result ?? reply.error)}`);
+    return complete(threadId, turn);
+  }
+  if (text === "elicitation") {
+    const reply = await askClient("mcpServer/elicitation/request", {
+      serverName: "jira",
+      threadId,
+      turnId: turn.id,
+      mode: "form",
+      message: "Ticket details?",
+      requestedSchema: { type: "object", properties: { title: { type: "string" } }, required: ["title"] },
+    });
+    agentMessage(threadId, turn.id, `elicit${JSON.stringify(reply.result ?? reply.error)}`);
+    return complete(threadId, turn);
+  }
+  if (text === "resolved-elsewhere" || text === "revert-pending") {
+    const id = `srv-${++serverReqId}`;
+    send({ id, method: "item/commandExecution/requestApproval", params: { threadId, turnId: turn.id, itemId: "c1", command: "ls" } });
+    const reply = new Promise((resolve) => awaiting.set(id, resolve));
+    setTimeout(() => {
+      if (text === "resolved-elsewhere") notify("serverRequest/resolved", { threadId, requestId: id });
+      else notify("thread/reverted", { threadId, thread: { id: threadId } });
+    }, 50);
+    const r = await reply;
+    agentMessage(threadId, turn.id, `${text}[${r.result?.decision ?? r.error?.code}]`);
     return complete(threadId, turn);
   }
   notify("item/agentMessage/delta", { threadId, turnId: turn.id, itemId: `msg-${turn.id}`, delta: "po" });

@@ -30,6 +30,8 @@ The harness pins `@openai/codex` exactly (`runtime/package.json`). Each upgrade 
    npm install
    npm test
    node scripts/codex-schema-snapshot.mjs --check
+   node scripts/codex-notifications.mjs          # stable/experimental notification list for the new pin
+   node --test test/codex-events.test.mjs        # every new notification needs a handler or an ignore reason
    AD_REAL_ENGINE=1 node --test --test-concurrency=1 --test-force-exit test/engine-real.test.mjs
    ```
    - `--check` exits 1 if the committed snapshot doesn't match the pinned binary.
@@ -55,6 +57,7 @@ The harness pins `@openai/codex` exactly (`runtime/package.json`). Each upgrade 
 - **Store pwsh.** `...\Microsoft\WindowsApps\pwsh.exe` is an app alias; the sandbox's restricted token can't launch it (`CreateProcessAsUserW failed: 5`). `withoutStoreAliases()` in `app-server.mjs` strips `WindowsApps` from the engine PATH. If commands are denied again, check whether Codex changed how it picks a shell.
 - **`spawn EPERM` in the unelevated sandbox.** Node can't start child processes there, so `node --test` fails inside the agent's shell. That's expected with `windows.sandbox = "unelevated"`, not a regression.
 - **Thread config overrides need dotted keys** (`"features.hooks": false`, `"mcp_servers.<id>.enabled": false`). Nested objects and the app-server `--disable` / `-c` flags were silently ignored in 0.159 (unchanged through 0.160). Re-verify if a smoke shows hooks or MCP servers running when they should be off.
+- **A new server notification** fails `codex-events.test.mjs` by name until it has a handler in `engine/codex/events.mjs` or a reason in `surface.mjs`. The real-engine test "the events adapter understands everything the real Codex sends" catches one that the regenerated list misses.
 - **`availableDecisions` on exec approvals is experimental** and only reaches us because upstream doesn't strip it yet. `engine-real.test.mjs` fails by name when it disappears; the TUI then falls back to Codex's default decision list.
 - **Isolation.** Every Codex process ad starts goes through `codexEnv()` (`src/engine/codex/home.mjs`). If an upgrade adds a new `CODEX_*` variable that matters for TLS or proxies (like `CODEX_CA_CERTIFICATE`), add it to that file's allowlist rather than passing the user's environment through.
 - **Hook trust is by hash.** A Codex upgrade that changes hook hashing shows up as `Harness hooks: 0/N trusted` in doctor. `ensureHarnessSetup` re-trusts only our own hooks on the next run.

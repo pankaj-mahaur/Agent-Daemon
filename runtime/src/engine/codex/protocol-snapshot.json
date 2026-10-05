@@ -216,7 +216,11 @@
       "props": [
         "capabilities",
         "clientInfo"
-      ]
+      ],
+      "types": {
+        "capabilities": "InitializeCapabilities|null",
+        "clientInfo": "ClientInfo"
+      }
     },
     "ClientInfo": {
       "required": [
@@ -227,7 +231,12 @@
         "name",
         "title",
         "version"
-      ]
+      ],
+      "types": {
+        "name": "string",
+        "title": "null|string",
+        "version": "string"
+      }
     },
     "ThreadStartParams": {
       "required": [],
@@ -247,7 +256,24 @@
         "serviceTier",
         "sessionStartSource",
         "threadSource"
-      ]
+      ],
+      "types": {
+        "approvalPolicy": "AskForApproval|null",
+        "approvalsReviewer": "ApprovalsReviewer|null",
+        "baseInstructions": "null|string",
+        "config": "null|object",
+        "cwd": "null|string",
+        "developerInstructions": "null|string",
+        "ephemeral": "boolean|null",
+        "model": "null|string",
+        "modelProvider": "null|string",
+        "personality": "Personality|null",
+        "sandbox": "SandboxMode|null",
+        "serviceName": "null|string",
+        "serviceTier": "null|string",
+        "sessionStartSource": "ThreadStartSource|null",
+        "threadSource": "ThreadSource|null"
+      }
     },
     "ThreadStartResponse": {
       "required": [
@@ -271,7 +297,20 @@
         "sandbox",
         "serviceTier",
         "thread"
-      ]
+      ],
+      "types": {
+        "approvalPolicy": "AskForApproval",
+        "approvalsReviewer": "ApprovalsReviewer",
+        "cwd": "AbsolutePathBuf",
+        "disabledPluginIds": "array<string>",
+        "instructionSources": "array<LegacyAppPathString>",
+        "model": "string",
+        "modelProvider": "string",
+        "reasoningEffort": "ReasoningEffort|null",
+        "sandbox": "SandboxPolicy",
+        "serviceTier": "null|string",
+        "thread": "Thread"
+      }
     },
     "ThreadResumeParams": {
       "required": [
@@ -291,7 +330,22 @@
         "sandbox",
         "serviceTier",
         "threadId"
-      ]
+      ],
+      "types": {
+        "approvalPolicy": "AskForApproval|null",
+        "approvalsReviewer": "ApprovalsReviewer|null",
+        "baseInstructions": "null|string",
+        "config": "null|object",
+        "cwd": "null|string",
+        "developerInstructions": "null|string",
+        "excludeTurns": "boolean",
+        "model": "null|string",
+        "modelProvider": "null|string",
+        "personality": "Personality|null",
+        "sandbox": "SandboxMode|null",
+        "serviceTier": "null|string",
+        "threadId": "string"
+      }
     },
     "ThreadResumeResponse": {
       "required": [
@@ -318,7 +372,23 @@
         "serviceTier",
         "thread",
         "turnsBackwardsCursor"
-      ]
+      ],
+      "types": {
+        "approvalPolicy": "AskForApproval",
+        "approvalsReviewer": "ApprovalsReviewer",
+        "collaborationMode": "CollaborationMode|null",
+        "cwd": "AbsolutePathBuf",
+        "disabledPluginIds": "array<string>",
+        "instructionSources": "array<LegacyAppPathString>",
+        "itemsBackwardsCursor": "null|string",
+        "model": "string",
+        "modelProvider": "string",
+        "reasoningEffort": "ReasoningEffort|null",
+        "sandbox": "SandboxPolicy",
+        "serviceTier": "null|string",
+        "thread": "Thread",
+        "turnsBackwardsCursor": "null|string"
+      }
     },
     "Thread": {
       "required": [
@@ -365,7 +435,37 @@
         "threadSource",
         "turns",
         "updatedAt"
-      ]
+      ],
+      "types": {
+        "agentNickname": "null|string",
+        "agentRole": "null|string",
+        "cliVersion": "string",
+        "createdAt": "integer",
+        "cwd": "AbsolutePathBuf",
+        "ephemeral": "boolean",
+        "forkedFromId": "null|string",
+        "gitInfo": "GitInfo|null",
+        "historyMode": "ThreadHistoryMode",
+        "id": "string",
+        "model": "null|string",
+        "modelProvider": "string",
+        "name": "null|string",
+        "originator": "null|string",
+        "parentThreadId": "null|string",
+        "path": "null|string",
+        "preview": "string",
+        "projectId": "null|string",
+        "reasoningEffort": "ReasoningEffort|null",
+        "recencyAt": "integer|null",
+        "section": "ThreadSection|null",
+        "sectionEnteredAt": "integer|null",
+        "sessionId": "string",
+        "source": "SessionSource",
+        "status": "ThreadStatus",
+        "threadSource": "ThreadSource|null",
+        "turns": "array<Turn>",
+        "updatedAt": "integer"
+      }
     },
     "TurnStartParams": {
       "required": [
@@ -390,7 +490,26 @@
         "threadId",
         "toolOutput",
         "turnTrigger"
-      ]
+      ],
+      "types": {
+        "approvalPolicy": "AskForApproval|null",
+        "approvalsReviewer": "ApprovalsReviewer|null",
+        "clientUserMessageId": "null|string",
+        "cwd": "null|string",
+        "disabledPluginIds": "array<string>|null",
+        "effort": "ReasoningEffort|null",
+        "input": "array<UserInput>",
+        "model": "null|string",
+        "outputSchema": "any",
+        "personality": "Personality|null",
+        "sandboxPolicy": "SandboxPolicy|null",
+        "serviceTier": "null|string",
+        "serviceTierForTurn": "null|string",
+        "summary": "ReasoningSummary|null",
+        "threadId": "string",
+        "toolOutput": "TurnToolOutput|null",
+        "turnTrigger": "null|string"
+      }
     },
     "TurnStartResponse": {
       "required": [
@@ -398,7 +517,10 @@
       ],
       "props": [
         "turn"
-      ]
+      ],
+      "types": {
+        "turn": "Turn"
+      }
     },
     "TurnInterruptParams": {
       "required": [
@@ -408,7 +530,11 @@
       "props": [
         "threadId",
         "turnId"
-      ]
+      ],
+      "types": {
+        "threadId": "string",
+        "turnId": "string"
+      }
     },
     "TurnSteerParams": {
       "required": [
@@ -421,7 +547,13 @@
         "expectedTurnId",
         "input",
         "threadId"
-      ]
+      ],
+      "types": {
+        "clientUserMessageId": "null|string",
+        "expectedTurnId": "string",
+        "input": "array<UserInput>",
+        "threadId": "string"
+      }
     },
     "TurnCompletedNotification": {
       "required": [
@@ -431,7 +563,11 @@
       "props": [
         "threadId",
         "turn"
-      ]
+      ],
+      "types": {
+        "threadId": "string",
+        "turn": "Turn"
+      }
     },
     "TurnStartedNotification": {
       "required": [
@@ -441,7 +577,11 @@
       "props": [
         "threadId",
         "turn"
-      ]
+      ],
+      "types": {
+        "threadId": "string",
+        "turn": "Turn"
+      }
     },
     "Turn": {
       "required": [
@@ -458,7 +598,17 @@
         "itemsView",
         "startedAt",
         "status"
-      ]
+      ],
+      "types": {
+        "completedAt": "integer|null",
+        "durationMs": "integer|null",
+        "error": "TurnError|null",
+        "id": "string",
+        "items": "array<ThreadItem>",
+        "itemsView": "TurnItemsView",
+        "startedAt": "integer|null",
+        "status": "TurnStatus"
+      }
     },
     "TurnStatus": {
       "enum": [
@@ -477,7 +627,13 @@
         "codexErrorInfo",
         "message",
         "misalignment"
-      ]
+      ],
+      "types": {
+        "additionalDetails": "null|string",
+        "codexErrorInfo": "CodexErrorInfo|null",
+        "message": "string",
+        "misalignment": "MisalignmentErrorDetails|null"
+      }
     },
     "UserInput": {
       "union": [
@@ -486,21 +642,33 @@
           "props": [
             "type",
             "url"
-          ]
+          ],
+          "types": {
+            "type": "enum(audio)",
+            "url": "string"
+          }
         },
         {
           "tag": "image",
           "props": [
             "detail",
             "type"
-          ]
+          ],
+          "types": {
+            "detail": "ImageDetail|null",
+            "type": "enum(image)"
+          }
         },
         {
           "tag": "localAudio",
           "props": [
             "path",
             "type"
-          ]
+          ],
+          "types": {
+            "path": "string",
+            "type": "enum(localAudio)"
+          }
         },
         {
           "tag": "localImage",
@@ -508,7 +676,12 @@
             "detail",
             "path",
             "type"
-          ]
+          ],
+          "types": {
+            "detail": "ImageDetail|null",
+            "path": "string",
+            "type": "enum(localImage)"
+          }
         },
         {
           "tag": "mention",
@@ -516,7 +689,12 @@
             "name",
             "path",
             "type"
-          ]
+          ],
+          "types": {
+            "name": "string",
+            "path": "string",
+            "type": "enum(mention)"
+          }
         },
         {
           "tag": "skill",
@@ -524,7 +702,12 @@
             "name",
             "path",
             "type"
-          ]
+          ],
+          "types": {
+            "name": "string",
+            "path": "string",
+            "type": "enum(skill)"
+          }
         },
         {
           "tag": "text",
@@ -532,7 +715,12 @@
             "text",
             "text_elements",
             "type"
-          ]
+          ],
+          "types": {
+            "text": "string",
+            "text_elements": "array<TextElement>",
+            "type": "enum(text)"
+          }
         }
       ]
     },
@@ -548,7 +736,16 @@
             "questions",
             "text",
             "type"
-          ]
+          ],
+          "types": {
+            "delivery": "AgentMessageDelivery|null",
+            "id": "string",
+            "memoryCitation": "MemoryCitation|null",
+            "phase": "MessagePhase|null",
+            "questions": "array<AsyncUserInputQuestion>|null",
+            "text": "string",
+            "type": "enum(agentMessage)"
+          }
         },
         {
           "tag": "collabAgentToolCall",
@@ -563,7 +760,19 @@
             "status",
             "tool",
             "type"
-          ]
+          ],
+          "types": {
+            "agentsStates": "object",
+            "id": "string",
+            "model": "null|string",
+            "prompt": "null|string",
+            "reasoningEffort": "ReasoningEffort|null",
+            "receiverThreadIds": "array<string>",
+            "senderThreadId": "string",
+            "status": "CollabAgentToolCallStatus",
+            "tool": "CollabAgentTool",
+            "type": "enum(collabAgentToolCall)"
+          }
         },
         {
           "tag": "commandExecution",
@@ -581,14 +790,33 @@
             "source",
             "status",
             "type"
-          ]
+          ],
+          "types": {
+            "aggregatedOutput": "null|string",
+            "command": "string",
+            "commandActions": "array<CommandAction>",
+            "cwd": "LegacyAppPathString",
+            "durationMs": "integer|null",
+            "exitCode": "integer|null",
+            "id": "string",
+            "pluginId": "null|string",
+            "processId": "null|string",
+            "scriptPath": "null|string",
+            "source": "CommandExecutionSource",
+            "status": "CommandExecutionStatus",
+            "type": "enum(commandExecution)"
+          }
         },
         {
           "tag": "contextCompaction",
           "props": [
             "id",
             "type"
-          ]
+          ],
+          "types": {
+            "id": "string",
+            "type": "enum(contextCompaction)"
+          }
         },
         {
           "tag": "dynamicToolCall",
@@ -602,7 +830,18 @@
             "success",
             "tool",
             "type"
-          ]
+          ],
+          "types": {
+            "arguments": "any",
+            "contentItems": "array<DynamicToolCallOutputContentItem>|null",
+            "durationMs": "integer|null",
+            "id": "string",
+            "namespace": "null|string",
+            "status": "DynamicToolCallStatus",
+            "success": "boolean|null",
+            "tool": "string",
+            "type": "enum(dynamicToolCall)"
+          }
         },
         {
           "tag": "enteredReviewMode",
@@ -610,7 +849,12 @@
             "id",
             "review",
             "type"
-          ]
+          ],
+          "types": {
+            "id": "string",
+            "review": "string",
+            "type": "enum(enteredReviewMode)"
+          }
         },
         {
           "tag": "exitedReviewMode",
@@ -618,7 +862,12 @@
             "id",
             "review",
             "type"
-          ]
+          ],
+          "types": {
+            "id": "string",
+            "review": "string",
+            "type": "enum(exitedReviewMode)"
+          }
         },
         {
           "tag": "fileChange",
@@ -627,7 +876,13 @@
             "id",
             "status",
             "type"
-          ]
+          ],
+          "types": {
+            "changes": "array<FileUpdateChange>",
+            "id": "string",
+            "status": "PatchApplyStatus",
+            "type": "enum(fileChange)"
+          }
         },
         {
           "tag": "functionCallOutput",
@@ -637,7 +892,14 @@
             "namespace",
             "output",
             "type"
-          ]
+          ],
+          "types": {
+            "id": "string",
+            "name": "string",
+            "namespace": "null|string",
+            "output": "FunctionCallOutputBody",
+            "type": "enum(functionCallOutput)"
+          }
         },
         {
           "tag": "hookPrompt",
@@ -645,7 +907,12 @@
             "fragments",
             "id",
             "type"
-          ]
+          ],
+          "types": {
+            "fragments": "array<HookPromptFragment>",
+            "id": "string",
+            "type": "enum(hookPrompt)"
+          }
         },
         {
           "tag": "imageGeneration",
@@ -658,7 +925,17 @@
             "status",
             "transparentBackground",
             "type"
-          ]
+          ],
+          "types": {
+            "failure": "ImageGenerationFailure|null",
+            "id": "string",
+            "result": "string",
+            "revisedPrompt": "null|string",
+            "savedPath": "AbsolutePathBuf|null",
+            "status": "string",
+            "transparentBackground": "boolean|null",
+            "type": "enum(imageGeneration)"
+          }
         },
         {
           "tag": "imageView",
@@ -666,7 +943,12 @@
             "id",
             "path",
             "type"
-          ]
+          ],
+          "types": {
+            "id": "string",
+            "path": "LegacyAppPathString",
+            "type": "enum(imageView)"
+          }
         },
         {
           "tag": "mcpToolCall",
@@ -685,7 +967,23 @@
             "status",
             "tool",
             "type"
-          ]
+          ],
+          "types": {
+            "appContext": "McpToolCallAppContext|null",
+            "arguments": "any",
+            "durationMs": "integer|null",
+            "error": "McpToolCallError|null",
+            "id": "string",
+            "mcpAppResourceUri": "null|string",
+            "mcpAppUi": "McpAppUi|null",
+            "pluginId": "null|string",
+            "readOnlyHint": "boolean|null",
+            "result": "McpToolCallResult|null",
+            "server": "string",
+            "status": "McpToolCallStatus",
+            "tool": "string",
+            "type": "enum(mcpToolCall)"
+          }
         },
         {
           "tag": "plan",
@@ -693,7 +991,12 @@
             "id",
             "text",
             "type"
-          ]
+          ],
+          "types": {
+            "id": "string",
+            "text": "string",
+            "type": "enum(plan)"
+          }
         },
         {
           "tag": "reasoning",
@@ -702,7 +1005,13 @@
             "id",
             "summary",
             "type"
-          ]
+          ],
+          "types": {
+            "content": "array<string>",
+            "id": "string",
+            "summary": "array<string>",
+            "type": "enum(reasoning)"
+          }
         },
         {
           "tag": "sleep",
@@ -710,7 +1019,12 @@
             "durationMs",
             "id",
             "type"
-          ]
+          ],
+          "types": {
+            "durationMs": "integer",
+            "id": "string",
+            "type": "enum(sleep)"
+          }
         },
         {
           "tag": "subAgentActivity",
@@ -720,7 +1034,14 @@
             "id",
             "kind",
             "type"
-          ]
+          ],
+          "types": {
+            "agentPath": "string",
+            "agentThreadId": "string",
+            "id": "string",
+            "kind": "SubAgentActivityKind",
+            "type": "enum(subAgentActivity)"
+          }
         },
         {
           "tag": "userMessage",
@@ -729,7 +1050,13 @@
             "content",
             "id",
             "type"
-          ]
+          ],
+          "types": {
+            "clientId": "null|string",
+            "content": "array<UserInput>",
+            "id": "string",
+            "type": "enum(userMessage)"
+          }
         },
         {
           "tag": "webSearch",
@@ -739,7 +1066,14 @@
             "query",
             "results",
             "type"
-          ]
+          ],
+          "types": {
+            "action": "WebSearchAction|null",
+            "id": "string",
+            "query": "string",
+            "results": "array<any>|null",
+            "type": "enum(webSearch)"
+          }
         }
       ]
     },
@@ -753,7 +1087,12 @@
         "diff",
         "kind",
         "path"
-      ]
+      ],
+      "types": {
+        "diff": "string",
+        "kind": "PatchChangeKind",
+        "path": "string"
+      }
     },
     "AgentMessageDeltaNotification": {
       "required": [
@@ -767,7 +1106,13 @@
         "itemId",
         "threadId",
         "turnId"
-      ]
+      ],
+      "types": {
+        "delta": "string",
+        "itemId": "string",
+        "threadId": "string",
+        "turnId": "string"
+      }
     },
     "ItemStartedNotification": {
       "required": [
@@ -781,7 +1126,13 @@
         "startedAtMs",
         "threadId",
         "turnId"
-      ]
+      ],
+      "types": {
+        "item": "ThreadItem",
+        "startedAtMs": "integer",
+        "threadId": "string",
+        "turnId": "string"
+      }
     },
     "ItemCompletedNotification": {
       "required": [
@@ -795,7 +1146,13 @@
         "item",
         "threadId",
         "turnId"
-      ]
+      ],
+      "types": {
+        "completedAtMs": "integer",
+        "item": "ThreadItem",
+        "threadId": "string",
+        "turnId": "string"
+      }
     },
     "ErrorNotification": {
       "required": [
@@ -809,7 +1166,13 @@
         "threadId",
         "turnId",
         "willRetry"
-      ]
+      ],
+      "types": {
+        "error": "TurnError",
+        "threadId": "string",
+        "turnId": "string",
+        "willRetry": "boolean"
+      }
     },
     "SandboxMode": {
       "enum": [
@@ -824,7 +1187,10 @@
           "tag": "granular",
           "props": [
             "granular"
-          ]
+          ],
+          "types": {
+            "granular": "{mcp_elicitations:boolean,request_permissions:boolean,rules:boolean,sandbox_approval:boolean,skill_approval:boolean}"
+          }
         },
         {
           "tag": "untrusted|on-request|never"
@@ -843,13 +1209,19 @@
           "tag": "acceptWithExecpolicyAmendment",
           "props": [
             "acceptWithExecpolicyAmendment"
-          ]
+          ],
+          "types": {
+            "acceptWithExecpolicyAmendment": "{execpolicy_amendment:array<string>}"
+          }
         },
         {
           "tag": "applyNetworkPolicyAmendment",
           "props": [
             "applyNetworkPolicyAmendment"
-          ]
+          ],
+          "types": {
+            "applyNetworkPolicyAmendment": "{network_policy_amendment:NetworkPolicyAmendment}"
+          }
         },
         {
           "tag": "cancel"
@@ -882,7 +1254,11 @@
       "props": [
         "account",
         "requiresOpenaiAuth"
-      ]
+      ],
+      "types": {
+        "account": "Account|null",
+        "requiresOpenaiAuth": "boolean"
+      }
     },
     "LoginAccountParams": {
       "union": [
@@ -892,7 +1268,12 @@
             "apiKey",
             "region",
             "type"
-          ]
+          ],
+          "types": {
+            "apiKey": "string",
+            "region": "string",
+            "type": "enum(amazonBedrock)"
+          }
         },
         {
           "tag": "amazonBedrockAccessKeys",
@@ -902,14 +1283,25 @@
             "secretAccessKey",
             "sessionToken",
             "type"
-          ]
+          ],
+          "types": {
+            "accessKeyId": "string",
+            "region": "string",
+            "secretAccessKey": "string",
+            "sessionToken": "null|string",
+            "type": "enum(amazonBedrockAccessKeys)"
+          }
         },
         {
           "tag": "apiKey",
           "props": [
             "apiKey",
             "type"
-          ]
+          ],
+          "types": {
+            "apiKey": "string",
+            "type": "enum(apiKey)"
+          }
         },
         {
           "tag": "chatgpt",
@@ -918,7 +1310,13 @@
             "codexStreamlinedLogin",
             "type",
             "useHostedLoginSuccessPage"
-          ]
+          ],
+          "types": {
+            "appBrand": "LoginAppBrand|null",
+            "codexStreamlinedLogin": "boolean",
+            "type": "enum(chatgpt)",
+            "useHostedLoginSuccessPage": "boolean"
+          }
         },
         {
           "tag": "chatgptAuthTokens",
@@ -927,13 +1325,22 @@
             "chatgptAccountId",
             "chatgptPlanType",
             "type"
-          ]
+          ],
+          "types": {
+            "accessToken": "string",
+            "chatgptAccountId": "string",
+            "chatgptPlanType": "null|string",
+            "type": "enum(chatgptAuthTokens)"
+          }
         },
         {
           "tag": "chatgptDeviceCode",
           "props": [
             "type"
-          ]
+          ],
+          "types": {
+            "type": "enum(chatgptDeviceCode)"
+          }
         }
       ]
     },
@@ -943,13 +1350,19 @@
           "tag": "amazonBedrock",
           "props": [
             "type"
-          ]
+          ],
+          "types": {
+            "type": "enum(amazonBedrock)"
+          }
         },
         {
           "tag": "apiKey",
           "props": [
             "type"
-          ]
+          ],
+          "types": {
+            "type": "enum(apiKey)"
+          }
         },
         {
           "tag": "chatgpt",
@@ -957,13 +1370,21 @@
             "authUrl",
             "loginId",
             "type"
-          ]
+          ],
+          "types": {
+            "authUrl": "string",
+            "loginId": "string",
+            "type": "enum(chatgpt)"
+          }
         },
         {
           "tag": "chatgptAuthTokens",
           "props": [
             "type"
-          ]
+          ],
+          "types": {
+            "type": "enum(chatgptAuthTokens)"
+          }
         },
         {
           "tag": "chatgptDeviceCode",
@@ -972,7 +1393,13 @@
             "type",
             "userCode",
             "verificationUrl"
-          ]
+          ],
+          "types": {
+            "loginId": "string",
+            "type": "enum(chatgptDeviceCode)",
+            "userCode": "string",
+            "verificationUrl": "string"
+          }
         }
       ]
     },
@@ -985,7 +1412,13 @@
         "expectedVersion",
         "filePath",
         "reloadUserConfig"
-      ]
+      ],
+      "types": {
+        "edits": "array<ConfigEdit>",
+        "expectedVersion": "null|string",
+        "filePath": "null|string",
+        "reloadUserConfig": "boolean"
+      }
     },
     "ConfigValueWriteParams": {
       "required": [
@@ -999,7 +1432,14 @@
         "keyPath",
         "mergeStrategy",
         "value"
-      ]
+      ],
+      "types": {
+        "expectedVersion": "null|string",
+        "filePath": "null|string",
+        "keyPath": "string",
+        "mergeStrategy": "MergeStrategy",
+        "value": "any"
+      }
     },
     "ConfigEdit": {
       "required": [
@@ -1011,7 +1451,12 @@
         "keyPath",
         "mergeStrategy",
         "value"
-      ]
+      ],
+      "types": {
+        "keyPath": "string",
+        "mergeStrategy": "MergeStrategy",
+        "value": "any"
+      }
     },
     "MergeStrategy": {
       "enum": [
@@ -1023,7 +1468,10 @@
       "required": [],
       "props": [
         "cwds"
-      ]
+      ],
+      "types": {
+        "cwds": "array<string>"
+      }
     },
     "HookMetadata": {
       "union": [
@@ -1031,7 +1479,10 @@
           "tag": "handlerType=agent",
           "props": [
             "handlerType"
-          ]
+          ],
+          "types": {
+            "handlerType": "enum(agent)"
+          }
         },
         {
           "tag": "handlerType=command",
@@ -1039,7 +1490,12 @@
             "async",
             "command",
             "handlerType"
-          ]
+          ],
+          "types": {
+            "async": "boolean",
+            "command": "string",
+            "handlerType": "enum(command)"
+          }
         },
         {
           "tag": "handlerType=mcpTool",
@@ -1047,13 +1503,21 @@
             "handlerType",
             "server",
             "tool"
-          ]
+          ],
+          "types": {
+            "handlerType": "enum(mcpTool)",
+            "server": "string",
+            "tool": "string"
+          }
         },
         {
           "tag": "handlerType=prompt",
           "props": [
             "handlerType"
-          ]
+          ],
+          "types": {
+            "handlerType": "enum(prompt)"
+          }
         }
       ]
     },
@@ -1063,7 +1527,10 @@
       ],
       "props": [
         "extraRoots"
-      ]
+      ],
+      "types": {
+        "extraRoots": "array<AbsolutePathBuf>"
+      }
     },
     "ThreadListParams": {
       "required": [],
@@ -1080,7 +1547,21 @@
         "sortKey",
         "sourceKinds",
         "useStateDbOnly"
-      ]
+      ],
+      "types": {
+        "archived": "boolean|null",
+        "cursor": "null|string",
+        "cwd": "ThreadListCwdFilter|null",
+        "limit": "integer|null",
+        "modelProviders": "array<string>|null",
+        "originators": "array<string>|null",
+        "searchTerm": "null|string",
+        "sectionId": "null|string",
+        "sortDirection": "SortDirection|null",
+        "sortKey": "ThreadSortKey|null",
+        "sourceKinds": "array<ThreadSourceKind>|null",
+        "useStateDbOnly": "boolean"
+      }
     },
     "ThreadListResponse": {
       "required": [
@@ -1090,7 +1571,12 @@
         "backwardsCursor",
         "data",
         "nextCursor"
-      ]
+      ],
+      "types": {
+        "backwardsCursor": "null|string",
+        "data": "array<Thread>",
+        "nextCursor": "null|string"
+      }
     }
   }
 }

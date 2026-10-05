@@ -65,7 +65,7 @@ test("default handler declines permission requests with an empty grant", async (
 
 test("default handler answers legacy v1 approvals with a ReviewDecision", async () => {
   await withServer({}, async (s) => {
-    assert.deepEqual(JSON.parse(await rawTurn(s, "legacy-approval")), { decision: "denied" });
+    assert.deepEqual(JSON.parse(await rawTurn(s, "legacy-approval")), { decision: { denied: { rejection: "declined by the user" } } });
   });
 });
 
@@ -156,12 +156,12 @@ test("approvalResponse maps one-word answers to each protocol's reply shape", ()
   assert.deepEqual(approvalResponse("item/permissions/requestApproval", perm, "accept"), { ...perm, scope: "turn" });
   assert.deepEqual(approvalResponse("item/permissions/requestApproval", perm, "acceptForSession").scope, "session");
   assert.deepEqual(approvalResponse("item/permissions/requestApproval", perm, "decline"), { permissions: {} });
-  assert.deepEqual(approvalResponse(cmd, {}, { custom: 1 }), { custom: 1 }, "raw objects pass through");
+  assert.deepEqual(approvalResponse(cmd, {}, { custom: 1 }), { decision: "decline" }, "an object that was not offered declines");
   assert.throws(() => approvalResponse("item/tool/call", {}, "accept"), /not an approval request/);
 });
 
 test("approvalResponse is not fooled by Object.prototype keys", () => {
-  assert.deepEqual(approvalResponse("execCommandApproval", {}, "toString"), { decision: "denied" });
+  assert.deepEqual(approvalResponse("execCommandApproval", {}, "toString"), { decision: { denied: { rejection: "declined by the user" } } });
   assert.throws(() => approvalResponse("toString", {}, "accept"), /not an approval request/);
   assert.throws(() => approvalResponse("constructor", {}, "accept"), /not an approval request/);
 });

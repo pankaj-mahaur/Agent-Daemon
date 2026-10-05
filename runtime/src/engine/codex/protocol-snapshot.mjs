@@ -90,19 +90,47 @@ export function shapeOf(def) {
           seen.set(tag, n);
           if (n > 1) tag = `${tag}#${n}`;
           const props = v.properties ? Object.keys(v.properties).sort() : undefined;
-          return props ? { tag, props } : { tag };
+          if (!props) return { tag };
+          // Variant fields carry their types too: a field changing type inside a
+          // variant (ThreadItem.command string → array) breaks readers.
+          return { tag, props, types: Object.fromEntries(props.map((k) => [k, typeLabel(v.properties[k])])) };
         })
         .sort((a, b) => String(a.tag).localeCompare(String(b.tag))),
     };
   }
   if (def.enum) return { enum: [...def.enum].sort() };
   if (def.properties) {
+    const props = Object.keys(def.properties).sort();
     return {
       required: [...(def.required ?? [])].sort(),
-      props: Object.keys(def.properties).sort(),
+      props,
+      types: Object.fromEntries(props.map((k) => [k, typeLabel(def.properties[k])])),
     };
   }
   return { type: def.type ?? null };
+}
+
+// A short, stable label for a property's type: "string", "string|null",
+// a definition name, "A|null" for an optional reference, "array<T>".
+export function typeLabel(p, depth = 0) {
+  if (!p || p === true) return "any";
+  if (p.$ref) return p.$ref.split("/").pop();
+  if (p.allOf?.length === 1) return typeLabel(p.allOf[0], depth);
+  const variants = p.anyOf ?? p.oneOf;
+  if (variants) return [...new Set(variants.map((v) => typeLabel(v, depth)))].sort().join("|");
+  // Inline enums keep their values; inline objects their fields (two levels),
+  // so a renamed inner key or a dropped enum value shows up in the diff.
+  if (p.enum) return `enum(${[...p.enum].map(String).sort().join("|")})`;
+  if (p.properties && depth < 2) {
+    const keys = Object.keys(p.properties).sort();
+    return `{${keys.map((k) => `${k}:${typeLabel(p.properties[k], depth + 1)}`).join(",")}}`;
+  }
+  const types = Array.isArray(p.type) ? p.type : p.type ? [p.type] : [];
+  if (!types.length) return "any";
+  return types
+    .map((t) => (t === "array" ? `array<${typeLabel(p.items, depth)}>` : t))
+    .sort()
+    .join("|");
 }
 
 // The v2 bundle holds most definitions; a few (approval decisions) only
@@ -155,6 +183,22 @@ export function generateSnapshot({ command = resolveCodexCommand({}), codexVersi
   }
 }
 
+// A field that changed type breaks whoever reads or sends it; one that only
+// became nullable is worth knowing but isn't breaking for a reader that copes.
+function typeChanges(where, ta = {}, tb = {}, breaking, info) {
+  for (const [prop, a] of Object.entries(ta ?? {})) {
+    const b = tb?.[prop];
+    if (b === undefined || b === a) continue;
+    const parts = (t) => new Set(t.split("|"));
+    const pa = parts(a);
+    const pb = parts(b);
+    const added = [...pb].filter((x) => !pa.has(x));
+    const removed = [...pa].filter((x) => !pb.has(x));
+    if (!removed.length && added.length === 1 && added[0] === "null") info.push(`${where}.${prop}: now nullable (${a} -> ${b})`);
+    else breaking.push(`${where}.${prop}: type ${a} -> ${b}`);
+  }
+}
+
 const setDiff = (a = [], b = []) => ({
   removed: a.filter((x) => !b.includes(x)),
   added: b.filter((x) => !a.includes(x)),
@@ -182,6 +226,8 @@ export function diffSnapshots(oldSnap, newSnap) {
       d.removed.forEach((x) => breaking.push(`${name}.${key}: removed ${x}`));
       d.added.forEach((x) => info.push(`${name}.${key}: added ${x}`));
     }
+    // A field that changed type breaks whoever reads or sends it.
+    typeChanges(name, a.types, b.types, breaking, info);
     const req = setDiff(a.required, b.required);
     req.added.forEach((x) => breaking.push(`${name}: ${x} is now required`));
     req.removed.forEach((x) => info.push(`${name}: ${x} is no longer required`));
@@ -193,6 +239,7 @@ export function diffSnapshots(oldSnap, newSnap) {
       for (const va of a.union ?? []) {
         const vb = (b.union ?? []).find((v) => String(v.tag) === String(va.tag));
         if (!vb) continue;
+        typeChanges(`${name}[${va.tag}]`, va.types, vb.types, breaking, info);
         const pd = setDiff(va.props, vb.props);
         pd.removed.forEach((p) => breaking.push(`${name}[${va.tag}]: removed ${p}`));
         pd.added.forEach((p) => info.push(`${name}[${va.tag}]: added ${p}`));

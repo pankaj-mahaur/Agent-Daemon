@@ -15,9 +15,16 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
   - `ad doctor` and schema generation use throwaway homes.
   - Hooks that Codex runs for ad still recognise ad's home, through `AD_ENGINE_HOME`.
 
+- `ad chat` approvals for network access now name the host (they read "$ null"), and a request to send input to a running command shows that input, escaped.
+- An approval answer can only send a "don't ask again" rule that the request actually offered. A rule whose command prefix hides control or invisible characters is never offered.
+
 ### Changed
 
 - Codex engine 0.160.0 (protocol unchanged from 0.159.2).
+- **Engine:**
+  - Every Codex notification is now mapped to ad's own event vocabulary, or deliberately ignored with a reason. A Codex release that adds one fails a test by name until it is handled.
+  - Subagent threads are routed to their parent.
+  - The protocol diff on Codex upgrades now catches type changes.
 - Installers skip devDependencies (`npm install --omit=dev`, `npm link --omit=dev`). On Windows, they warn when Node is older than 22.17 / 24.2, which the coming terminal UI needs.
 - CI uses `actions/checkout@v7` and `actions/setup-node@v7`, and gains an opt-in job that runs the real pinned Codex against a mock model on Linux, macOS and Windows. On Linux it allows unprivileged user namespaces, which Codex's sandbox needs on Ubuntu 24.04 runners.
 

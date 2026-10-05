@@ -48,6 +48,7 @@ const shellCommand = (text) => (process.platform === "win32" ? `cmd.exe /d /c ec
 //   ESCALATE  exec_command asking for sandbox escalation
 //   PATCH     apply_patch through exec_command, adding hello.txt
 //   FAIL      response.failed
+//   HOLD      streams "waiting" and holds the response until mock.release()
 // A request answering a tool call gets a closing message naming that call.
 export function defaultScript(body) {
   const input = Array.isArray(body?.input) ? body.input : [];
@@ -55,6 +56,11 @@ export function defaultScript(body) {
   if (last?.type === "function_call_output") return [ev.created(), ev.message(`done after ${last.call_id}`), ev.completed()];
   const text = lastUserText(body);
   if (text.includes("FAIL")) return [ev.created(), ev.failed()];
+  if (text.includes("HOLD")) {
+    // Streams "waiting", then holds the response open until the test calls
+    // mock.release() (or Codex hangs up, e.g. on turn/interrupt).
+    return { hold: [ev.created(), ev.messageAdded("msg-hold"), ev.textDelta("waiting")], after: [ev.message("waiting, released", "msg-hold"), ev.completed()] };
+  }
   if (text.includes("ESCALATE")) {
     return [ev.created(), ev.functionCall("call-escalate", "exec_command", { cmd: shellCommand("escalated"), sandbox_permissions: "require_escalated", justification: "mock escalation" }), ev.completed()];
   }
@@ -90,16 +96,47 @@ export async function startMockResponses({ script = defaultScript } = {}) {
         return;
       }
       res.writeHead(200, { "content-type": "text/event-stream" });
-      res.end(sse(current(body)));
+      const out = current(body);
+      if (Array.isArray(out)) return void res.end(sse(out));
+      // {hold, after}: send `hold` now, `after` when the test releases it.
+      res.write(sse(out.hold));
+      const held = { res, after: out.after, closed: false };
+      res.on("close", () => {
+        held.closed = true;
+        hangups++;
+      });
+      holds.push(held);
+      for (const fn of holdWaiters.splice(0)) fn();
     });
   });
+  // Control API (no sleeps in tests): wait for a held response, release it.
+  const holds = [];
+  const holdWaiters = [];
+  let hangups = 0;
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address();
   return {
     url: `http://127.0.0.1:${port}/v1`,
     requests,
     setScript: (fn) => { current = fn; },
-    close: () => new Promise((resolve) => server.close(() => resolve())),
+    /** Resolves once a HOLD response is open. */
+    held: () => (holds.some((h) => !h.closed && !h.done) ? Promise.resolve() : new Promise((r) => holdWaiters.push(r))),
+    /** Finishes the oldest open HOLD response; false if none is open. */
+    release() {
+      const h = holds.find((x) => !x.closed && !x.done);
+      if (!h) return false;
+      h.done = true;
+      h.res.end(sse(h.after));
+      return true;
+    },
+    /** How many held responses the client hung up on (an interrupt does). */
+    get hangups() {
+      return hangups;
+    },
+    close: () => {
+      for (const h of holds) if (!h.closed) h.res.destroy();
+      return new Promise((resolve) => server.close(() => resolve()));
+    },
   };
 }
 
