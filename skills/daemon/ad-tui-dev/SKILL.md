@@ -38,11 +38,13 @@ Any change under `runtime/src/tui/`, `runtime/src/harness/session.mjs`, `runtime
      - send `ESC[0m` before every `\r\n`, `ESC[K` and `ESC[J`.
    - **Frames and history:**
      - one `write()` per frame inside `?2026`;
-     - history is committed by overpainting;
+     - history is committed by overpainting, also with autowrap off (lines are pre-wrapped);
+     - width: measure with `tui/terminal/width.mjs`, which defaults to the `codepoint` profile (safe). Use `grapheme` only for Windows Terminal or after the CPR probe;
      - without 2026, commit at most every 150 ms.
    - **Resize:** pause, wait 75 ms, then re-anchor with a cursor-position query and the terminal's reflow model. Ctrl+L is re-anchor plus redraw.
    - **Exit:** restore synchronously (`fs.writeSync`) on every exit path.
-   - **Untrusted text:** strip control characters in the transcript; make them visible in approvals.
+   - **Untrusted text:** always through `sanitize()` (`tui/terminal/sanitize.mjs`): `"transcript"` strips controls, `"approval"` makes every invisible visible. Sanitize the accumulated text, not each delta.
+   - **Source files:** write invisible characters as `\u{...}` escapes. The Write/Edit tools decode 4-hex `\uXXXX` into raw characters. Check with `grep -nP '[^\x00-\x7F]'`.
 5. **Windows input facts:**
    - VT input needs Node 22.17+ or 24.2+.
    - Windows Terminal 1.24 and VS Code send Shift+Enter as Enter: offer Ctrl+J.

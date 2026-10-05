@@ -1,6 +1,6 @@
 # Plan — `ad`: a Codex-style terminal UI with agent-daemon's powers
 
-> Status: **final v4** (2026-10-04), after three review rounds. Changes from here on need a revision-log entry.
+> Status: **final v4.1** (2026-10-05; v4 on 2026-10-04 after three review rounds). Changes from here on need a revision-log entry.
 > Progress: **Part 0** — code done and reviewed twice:
 > - Codex 0.160.0 pinned.
 > - Isolation guard in place (see "Your own Codex is never touched").
@@ -10,7 +10,9 @@
 >
 > - S2 CI matrix done. Windows and macOS are green; on Linux, the sandboxed shell needs the userns sysctl (see S2).
 >
-> Waiting on the user: a Node upgrade (22.14 → 22.17+), then S1/S1b probes and the FC0 decisions.
+> - **Part 1b** (width + text + sanitize) built ahead of FC0, since it doesn't depend on it. Reviewed, fixed and mutation-checked; this is v4.1.
+>
+> Waiting on the user: a Node upgrade (22.14 → 22.17+), then S1/S1b probes and the FC0 decisions. After that comes Part 1a.
 > Research: [Codex TUI + app-server](../research/codex-tui-and-app-server.md) · [terminal engineering](../research/terminal-engineering.md) · [harness landscape](../research/harness-landscape.md).
 
 ## Goal
@@ -353,18 +355,33 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
   - **Tests:** byte fixtures (split chunks, interleaved replies, paste with escapes, flag-1 encodings); restore balance.
   - **Done when:** tests are green and the probe output from S1 replays through the parser unchanged.
 - **1b. width + text**
-  - **Width:**
-    - Graphemes via `Intl.Segmenter`.
-    - Vendored East Asian Width and emoji tables from `scripts/gen-width-tables.mjs`: ambiguous = 1, combining = 0, `\p{RGI_Emoji}` = 2.
-  - **Text:**
-    - Styled spans; word wrap with hard-break fallback at `cols − 1`; ellipsis truncation.
-    - SGR reset (`ESC[0m`) before every `\r\n`, `ESC[K` and `ESC[J`.
-    - NO_COLOR / FORCE_COLOR; colour depth also from `COLORTERM` and `WT_SESSION`.
-  - **`sanitize(text, mode)`:**
-    - `transcript`: strips ESC, C0 (except tab and newline) and C1.
-    - `approval`: makes control, bidi and zero-width characters visible (`␛`, `<U+202E>`).
-  - **Tests** use only cases that are stable across Unicode versions.
-  - **Done when:** width and wrap goldens plus hostile-string tests pass.
+  - **Width** (`width.mjs`):
+    - Graphemes via `Intl.Segmenter`, measured over a line's joined text (a cluster can straddle spans).
+    - Code points:
+      - The East Asian Wide/Fullwidth table is vendored from `scripts/gen-width-tables.mjs`, pinned to Unicode 16.0.0. JS regexes have no EAW property.
+      - Ambiguous = 1.
+      - Mn/Me/Cf and U+1160–11FF = 0.
+      - 1F93B and 1F946 are legacy-wide (2).
+    - **Two cluster profiles**, because terminals disagree. Windows Terminal draws a ZWJ family as 2 cells; xterm.js (VS Code) adds up its code points (6).
+      - `codepoint` (default) gives an RGI emoji max(2, Σ). It is safe everywhere, because over-counting only leaves blank cells.
+      - `grapheme` gives an RGI emoji 2. The renderer selects it in 1c when the terminal is known to cluster: `WT_SESSION`, or a CPR measurement at startup.
+      - Other clusters are Σ of their code points in both profiles (wcwidth-style; Devanagari conjuncts over-count).
+  - **Text** (`text.mjs`):
+    - Styled spans; word wrap with hard-break fallback; indentation kept; ellipsis truncation.
+    - Tabs go to 8-column stops.
+    - `renderLine` ends with `ESC[0m` whenever it styled anything. The renderer adds the reset before `\r\n`, `ESC[K` and `ESC[J`.
+    - Colour depth: NO_COLOR; FORCE_COLOR wins and acts as a floor on a TTY; `COLORTERM`; `WT_SESSION`; TERM.
+    - `#rrggbb` maps to the nearest xterm-256 cube or grey entry. Very dark tints collapse (#1f3a1f and #3a1f1f both map to grey 235), so Part 5 theme tokens carry explicit 256- and 16-colour fallbacks.
+  - **`sanitize(text, mode)`** (`sanitize.mjs`):
+    - `transcript`:
+      - strips escape sequences, C0 (except tab and newline), DEL, C1 and bidi controls;
+      - an unterminated OSC/DCS/SOS/PM/APC ends at the next newline, so one stray introducer can't hide the rest of the output;
+      - runs in linear time.
+    - `approval` hides nothing:
+      - every Cc/Cf/Zl/Zp, default-ignorable, variation selector and non-ASCII space is shown (`␛`, control pictures, `<U+202E>`);
+      - tab and newline stay.
+  - **Tests** use only cases that are stable across Unicode versions. Width cases are asserted in both profiles; every guard is mutation-checked.
+  - **Done when:** width and wrap goldens plus hostile-string tests pass. ✅ 2026-10-05: 120 tests, 3 goldens (widths 20/40/79), 14 mutants killed.
 - **1c. Inline renderer** (`renderer.mjs`)
   - **Frame** (live region only, ≤ `rows − 1` lines):
     1. Move to the live top: `\r` then `ESC[pA`. **Skip any cursor move whose count is 0**, because `ESC[0A` and `ESC[0B` move one row.
@@ -375,9 +392,9 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
 
     One `write()` per frame, wrapped in `?2026` when available. With autowrap off, every live line is exactly one row whatever the width tables say, and the bottom-right-cell scroll can't happen.
   - **Commit (overpaint, never erase first):**
-    1. Move to the live top as in step 1.
-    2. Write each history line as `…ESC[0m ESC[K\r\n` with autowrap on.
-    3. `ESC[?7l` and the live lines.
+    1. Move to the live top as in step 1, then `ESC[?7l`.
+    2. Write each history line as `…ESC[0m ESC[K\r\n`, **also with autowrap off** (v4.1). Lines are pre-wrapped to `cols − 1`, so a width disagreement clips a cell instead of adding a hidden row behind the row accounting.
+    3. The live lines.
     4. `ESC[J`, park, `ESC[?7h`.
 
     Without 2026, commits are batched at least 150 ms apart.
@@ -389,6 +406,7 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
       - non-reflowing or unknown: p′ = p (may leave ghost rows, never erases history).
     - Then `ESC[{liveTop};1H ESC[J` and redraw.
   - **First frame:** CPR. If the cursor isn't in column 1, emit `\r\n` first.
+  - **Width profile** (v4.1): use `grapheme` when `WT_SESSION` is set, or when a startup probe shows clustering. The probe writes a ZWJ family at column 1 and sends CPR: column 3 means clustering, column 7 means summing. It then erases the probe with `\r ESC[K`. Otherwise stay on `codepoint`.
   - **Ctrl+L (`redraw()`):** the same CPR re-anchor plus a full live redraw. Never `2J`/`3J`.
   - **Tests** with `@xterm/headless` + `addon-unicode11` (devDependencies) and a non-reflowing screen model:
     - property: screen = history + last frame after random frame, commit and resize sequences;
@@ -702,3 +720,18 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
   - **Naming:** `/feedback` becomes `/ad feedback`.
   - **Smaller fixes:** 63 stable + 22 experimental notifications; the steer-error rule; focus reporting; handoff pauses stdin and needs an idle turn; footer drop order; the blank-row and `ESC[0B` rules; a thin `cli.mjs` launcher; one Node range everywhere; a Linux check via WSL.
   - **D13 and its section:** your own Codex is never touched, enforced in code.
+- **v4.1** (2026-10-05): Part 1b review (2 high, 4 medium).
+  - **Width:**
+    - Emoji width now has `codepoint` (default, safe) and `grapheme` profiles, because xterm.js adds up ZWJ sequences while Windows Terminal clusters them.
+    - The renderer picks the profile by `WT_SESSION` or a CPR probe.
+    - Zero-width is narrowed to Mn/Me/Cf plus conjoining jamo.
+  - **Renderer:** history commits are drawn with autowrap off too, so any remaining width disagreement is cosmetic.
+  - **Sanitize:** approval mode shows every default-ignorable, variation selector and non-ASCII space; transcript mode ends an unterminated string at the newline.
+  - **Colour:** 256-colour uses xterm's real levels; theme tokens carry explicit 256/16 fallbacks.
+  - **Re-review** (no critical or high findings):
+    - Fixed one medium: a long zero-width run overflowed the stack in `wrap`.
+    - Lows fixed:
+      - approval also shows private-use, unassigned and blank-glyph characters;
+      - an OSC ends at ESC/CAN/SUB.
+    - Accepted, cosmetic: marks newer than Unicode 11 count 0 where xterm.js draws 1.
+    - Later: wrap speed (1M characters take about 5 s).

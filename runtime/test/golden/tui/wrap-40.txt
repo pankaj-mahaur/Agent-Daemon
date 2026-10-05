@@ -1,0 +1,21 @@
+|Codex-style answers wrap at word|
+|boundaries, like this bold phrase, and|
+|keep CJK text (日本語のテキスト) and|
+|emoji 👨‍👩‍👧 🇮🇳 whole.|
+|    Indented code stays indented;|
+|then a tab.|
+||
+|A_very_long_identifier_that_has_no_space|
+|s_at_all_and_must_be_hard_broken_somewhe|
+|re|
+--- ansi (depth 4)
+"Codex-style answers wrap at word"
+"boundaries, like \u001b[1mthis bold phrase\u001b[0m, and"
+"keep CJK text (日本語のテキスト) and"
+"emoji 👨‍👩‍👧 🇮🇳 whole."
+"    Indented code stays indented;"
+"then a tab."
+""
+"\u001b[36mA_very_long_identifier_that_has_no_space\u001b[0m"
+"\u001b[36ms_at_all_and_must_be_hard_broken_somewhe\u001b[0m"
+"\u001b[36mre\u001b[0m"
