@@ -67,6 +67,7 @@ export const SLASH_COMMANDS = [
   { name: "skills", source: "codex", desc: "skills Codex can use here" },
   { name: "usage", source: "codex", desc: "usage limits and tokens" },
   { name: "image", source: "ad", desc: "attach an image file to the next prompt" },
+  { name: "undo", source: "ad", desc: "put back the files the last turn changed, and rewind it (/undo force)" },
   { name: "terminal-setup", source: "ad", desc: "how to make Shift+Enter add a newline here" },
   { name: "quit", source: "codex", desc: "exit ad" },
   { name: "exit", source: "codex", desc: "exit ad" },
@@ -634,6 +635,16 @@ export function createApp({
         attachments.push(img);
         return info0(`Attached ${clean(path.basename(img))} to the next prompt (esc on an empty prompt removes it).`);
       }
+      case "undo":
+        if (!actions.undo) return warn("/undo needs a git repo (and ad tui running while the turn happened).");
+        return Promise.resolve(actions.undo({ force: arg === "force" }))
+          .then((r) => {
+            if (r.error) return warn(r.error);
+            if (r.prompt && !composer.text) composer.set(r.prompt);
+            info0(r.message);
+            draw();
+          })
+          .catch(fail);
       case "terminal-setup":
         return commitCell(terminalSetup(info.terminal).map((l) => truncate([{ text: l }], width())));
       case "remember":
@@ -974,6 +985,7 @@ export function createApp({
       note = { level: "info", text: `Reasoning effort: ${next} (from the next turn). alt+, lower \u{b7} alt+. higher` };
       return draw();
     }
+    if ((ev.type === "text" || ev.type === "paste") && !turnActive()) actions.onTyping?.();
     if (ev.type === "text" && ev.text === "?" && !composer.text) {
       overlay = true;
       return draw();

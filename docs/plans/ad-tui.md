@@ -1,6 +1,6 @@
 # Plan — `ad`: a Codex-style terminal UI with agent-daemon's powers
 
-> Status: **final v4.11** (2026-10-06; v4 on 2026-10-04 after three review rounds). Changes from here on need a revision-log entry.
+> Status: **final v4.12** (2026-10-06; v4 on 2026-10-04 after three review rounds). Changes from here on need a revision-log entry.
 > Progress: **Part 0** — code done and reviewed twice:
 > - Codex 0.160.0 pinned.
 > - Isolation guard in place (see "Your own Codex is never touched").
@@ -33,8 +33,9 @@
 > - **Part 7** (resilience) built (v4.9). **Narrowing-ghost probe runs pending (user).**
 > - **Part 8** (Codex parity++) built (v4.10). **Live checks pending (user).**
 > - **Part 9** (`ad` capabilities) built (v4.11). **FC4 pending (user).**
+> - **Part 10** (checkpoints and `/undo`) built (v4.12).
 >
-> **Next:** Part 10 (checkpoints and `/undo`).
+> **Next:** Part 11 (flip bare `ad`, docs, release prep). The flip waits for FC3.
 > Research: [Codex TUI + app-server](../research/codex-tui-and-app-server.md) · [terminal engineering](../research/terminal-engineering.md) · [harness landscape](../research/harness-landscape.md).
 
 ## Goal
@@ -940,6 +941,28 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
   - Then `thread/revert`.
   - The UI says that ignored files, submodule contents and LFS/eol-filtered files are not restored byte-exact.
 - **Done when:** tests run on temp repos (including Windows paths, spaces, CRLF, an untracked big file and a conflict), and the S4 budget holds in CI timing.
+- ✅ **Built 2026-10-06** (`harness/checkpoints.mjs`, `tui/undo.mjs`, `/undo`; `test/checkpoints.test.mjs`).
+  - **Why Codex removed its undo (answered):**
+    - Codex's ghost-commit undo (#3914; TUI undo #5629) snapshotted the worktree every turn and recorded the snapshots in the session rollout.
+    - In big repos it was slow and warned about large untracked folders (#6977, #6990).
+    - Listing every untracked file in every snapshot grew one session file to 1.9 GB (#7395).
+    - Standard folders were then ignored (#7483). The feature became the opt-in `undo` flag (#7966), and later a no-op.
+  - **ad's answer:**
+    - Snapshots are git trees under `refs/ad/checkpoints/<thread>/<turn>-{before,after}`, written by one batched `update-ref --stdin`. Nothing goes into any rollout.
+    - A private persistent index (`.git/ad-checkpoint-index`) is used. `.gitignore` is respected; untracked files over 2 MB and the usual heavy folders (`node_modules`, `.venv`, `dist`, `build`, `target`…) are skipped. The last 20 turns per thread are kept.
+  - **When snapshots are taken:**
+    - They are taken when the user starts typing (at most every 5 s) and when a turn ends.
+    - `beforeTurn` waits at most 150 ms. Otherwise it falls back to the last "after" tree, marked best effort.
+  - **Changed from S4:** the private index is **not seeded** from the user's.
+    - The user's index entries carry blobs made under their eol filters, so a CRLF file came back as LF.
+    - Every snapshot, comparison and restore now runs with eol conversion off, which makes restores byte for byte. The first snapshot hashes everything once.
+    - Warm snapshots of a 2000-file repo take a median of 372 ms on this machine; CI asserts under 3 s.
+  - **Restore:**
+    - It takes the turn's before→after diff (`--no-renames`: a rename is a delete plus an add).
+    - Any path whose current content differs from the turn's result is a conflict, and then nothing is undone; `/undo force` overrides.
+    - Then it runs `git restore --source=<before> --worktree` from a NUL-separated literal pathspec, deletes the files the turn added, and calls `thread/revert`. The prompt comes back in the composer.
+    - The UI states the limits: ignored files, submodule contents, and LFS or eol-filtered files.
+  - **Untouched:** the user's index, HEAD, branches and stash. A test checks each of them.
 
 ### Part 11 — Flip bare `ad`, docs, verification, release
 - **Flip:** after FC3, apply D7, and add `ad --last`. `ad chat` shows a one-time hint.
@@ -1129,3 +1152,6 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
   - **Additions:** `tui/ad-layer.mjs` (`createAdLayer`), which the app reaches through `actions.ad`. `/memory` gains subcommands.
   - **New commands:** `/private`, `/proposals`, `/loop`, `/team`, `/schedule` and `/tools` (all ad's own).
   - **Deferred:** the team needs-input BEL and peek.
+- **v4.12** (2026-10-06): Part 10.
+  - **Additions:** `createCheckpoints` and `checkpointWiring` (the session's `beforeTurn` / `turnStarted` / `turnCompleted` hooks), `/undo [force]`, and the app's `actions.onTyping`.
+  - **Changed from S4:** no index seeding, for byte-exact restores.

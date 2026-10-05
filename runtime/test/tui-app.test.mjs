@@ -354,3 +354,32 @@ test("/status shows the tokens used", async () => {
     assert.match(text(), /1,234 tokens used/);
   });
 });
+
+test("/undo: files back and the prompt returns; typing takes the next turn's snapshot early", async () => {
+  const s = stubSession({});
+  let typed = 0;
+  const undo = async ({ force }) => (force ? { message: "forced" } : { message: "Undid the last turn: 2 files put back.", prompt: "fix the bug" });
+  const scr = modelScreen({ cols: 70, rows: 20 });
+  const listeners = new Set();
+  const io = { ...scr.io, onInput: (f) => (listeners.add(f), () => listeners.delete(f)) };
+  const decoder = createInputDecoder({ onEvent: (e) => listeners.forEach((f) => f(e)), escTimeoutMs: 5 });
+  const renderer = createRenderer({ io, reflow: "none" });
+  await renderer.start();
+  const app = createApp({ io, renderer, session: s, cwd: "/x", armMs: 0, actions: { undo, onTyping: () => typed++ } });
+  try {
+    decoder.feed("/undo\r");
+    await sleep(30);
+    assert.equal(app.state.composer, "fix the bug");
+    assert.match(scr.lines().join("\n"), /Undid the last turn: 2 files put back/);
+    assert.ok(typed > 0, "typing asked for a snapshot");
+  } finally {
+    app.dispose();
+    renderer.dispose();
+  }
+  // Without checkpoints (not a git repo) /undo says why.
+  await withStub(stubSession({}), async ({ type, text }) => {
+    type("/undo\r");
+    await sleep(20);
+    assert.match(text(), /\/undo needs a git repo/);
+  });
+});

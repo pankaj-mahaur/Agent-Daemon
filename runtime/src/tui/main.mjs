@@ -331,7 +331,12 @@ export async function cmdTui(opts = {}) {
       if (!again.engine) throw new Error(again.error);
       return again.engine;
     };
-    session = createSession({ engine, cwd, model: opts.model, sandbox: opts.sandbox, restart, maxRestarts: 3, ...(opts.lockDir ? { lockDir: opts.lockDir } : {}) });
+    // Checkpoints for /undo, in a git repo only (plan Part 10).
+    const { createCheckpoints } = await import("../harness/checkpoints.mjs");
+    const { checkpointWiring } = await import("./undo.mjs");
+    const cp = createCheckpoints({ cwd });
+    const undoKit = (await cp.repo().catch(() => null)) ? checkpointWiring(cp) : null;
+    session = createSession({ engine, cwd, model: opts.model, sandbox: opts.sandbox, restart, maxRestarts: 3, hooks: undoKit?.hooks ?? {}, ...(opts.lockDir ? { lockDir: opts.lockDir } : {}) });
     await session.init();
 
     const term = terminalName();
@@ -401,6 +406,7 @@ export async function cmdTui(opts = {}) {
         await insertLearning({ category: "pattern", text, projectSlug: projectSlug(cwd), confidence: 0.9, evidence: "ad tui /remember", tags: ["remember"] });
       },
       ad,
+      ...(undoKit ? { undo: (o) => undoKit.undo(session, o), onTyping: () => undoKit.onTyping() } : {}),
       login: async (arg) => {
         const code = await handoff(io, renderer, () => runChild(process.execPath, [CLI, "auth", "login", ...splitArgs(arg || "chatgpt")], { cwd }));
         if (code !== 0) return `Sign-in didn't finish (exit ${code}). Nothing changed.`;

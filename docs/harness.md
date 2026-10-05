@@ -89,6 +89,9 @@ A Codex-style terminal UI on ad's own Codex home. It is new: expect rough edges,
   - **Conversations:** `/new`, `/resume`, `/fork`, `/rename`, `/compact`, `/export` (markdown, in this folder).
   - **Settings:** `/model`, `/permissions`, `/login`, `/logout`.
   - **Work:** `/goal`, `/review`, `/diff`, `/init`, `/image`.
+  - **`/undo`:** in a git repo, puts back the files the last turn changed and rewinds it. It refuses if you have changed those files since; `/undo force` overrides.
+    - Checkpoints are git trees under `refs/ad/checkpoints/`. Your index, branches and stash are never touched.
+    - Ignored files, submodules and LFS files aren't restored.
   - **Output:** `/copy` (the last answer, to the clipboard), `/raw` (the last answer as plain text).
   - **Inspection:** `/status`, `/usage`, `/mcp`, `/hooks`, `/skills`, `/warnings`.
   - **ad:**
