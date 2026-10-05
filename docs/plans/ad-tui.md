@@ -644,6 +644,24 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
   - **Bug found by the tests:** Codex can complete a turn before `turn/start` answers. Such a turn is no longer made "active", which had pushed every later prompt into the queue. Items that arrive before their turn is known join it.
   - **Fake engine:** gains turn history, prompt echo, a real `turn/steer`, `turns/list`, `review/start`, `thread/shellCommand` and `thread/revert`, and a `serverRequest/resolved` after every answer, as Codex sends.
   - **Real engine:** the controller runs on the real engine through the same API as the fake. A dedicated real-engine session test comes with Part 6, when the app drives it.
+  - **Review and two re-reviews (2026-10-06):** 33 tests; every guard mutation-checked.
+    - **Leaving a thread** (`newThread`, `resume`, `close`) bumps an epoch.
+      - A running turn is interrupted and its waiters settle as "abandoned" (or "closed").
+      - A thread, turn or history page that lands later is dropped, and a late turn is stopped.
+      - Requests for any other thread are declined.
+    - **One of each:** one `thread/start` at a time, and one session per engine.
+    - **Overrides:** `setNextTurn` values stick. A new, resumed or restarted thread gets them again, and the sandbox policy maps to the sandbox mode.
+    - **Queue:**
+      - The queue drains whenever the thread is idle, including after a turn that ends before `turn/start` answers.
+      - While the engine restarts, prompts queue.
+    - **Restart:**
+      - Every attempt counts toward the cap, with one restart loop at a time.
+      - A new engine that dies while resuming counts as a failed attempt.
+      - A thread the new engine can't resume is dropped with a notice; the next prompt starts a new thread.
+    - **Locks:**
+      - A heartbeat (mtime) replaces the pid-only check, so a reused pid can't keep a dead holder's lock.
+      - Takeover is serialised by an O_EXCL `.takeover` file; two processes never both win.
+      - An unreadable fresh lock is busy, and release goes by token.
 
 ### Part 5 — View components (`tui/view/`, pure)
 - **5a. Composer:**

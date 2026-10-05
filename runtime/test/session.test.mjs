@@ -44,6 +44,7 @@ async function withSession(opts, fn) {
   }
 }
 const none = () => ({});
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const debugState = (engine) => engine.server.request("debug/state", {});
 const agentTexts = (s) => [...s.state.items.values()].filter((i) => i.kind === "agentMessage").map((i) => i.text);
 
@@ -127,9 +128,29 @@ test("a thread held by a live process can't be opened; a stale lock is taken ove
     assert.equal(readdirSync(dir).length, 1);
     takeover();
     assert.equal(readdirSync(dir).length, 0);
-    mkdirSync(dir, { recursive: true });
+    // Unreadable: someone mid-write (busy) until it is older than staleMs.
     writeFileSync(join(dir, "t2.lock"), "not json");
-    lockThread("t2", { dir, pid: 333, isAlive: () => true })();
+    assert.throws(() => lockThread("t2", { dir, pid: 333, isAlive: () => true }), SessionLockedError);
+    lockThread("t2", { dir, pid: 333, isAlive: () => true, now: () => Date.now() + 200_000 })();
+    // A live pid whose heartbeat stopped (a reused pid) doesn't keep the lock.
+    lockThread("t3", { dir, pid: 444, isAlive: () => true });
+    assert.throws(() => lockThread("t3", { dir, pid: 555, isAlive: () => true }), SessionLockedError);
+    lockThread("t3", { dir, pid: 555, isAlive: () => true, now: () => Date.now() + 200_000 })();
+    // The same process can't hold one thread twice.
+    const mine = lockThread("t4", { dir });
+    assert.throws(() => lockThread("t4", { dir }), SessionLockedError);
+    // A stale-lock takeover by the same pid: the old holder's release leaves it.
+    const later = lockThread("t4", { dir, now: () => Date.now() + 200_000, isAlive: () => false });
+    mine();
+    assert.ok(existsSync(join(dir, "t4.lock")));
+    later();
+    assert.ok(!existsSync(join(dir, "t4.lock")));
+    // Someone else is mid-takeover (fresh guard): busy. A guard left by a crash expires.
+    writeFileSync(join(dir, "t5.lock"), JSON.stringify({ pid: 999999, threadId: "t5" }));
+    writeFileSync(join(dir, "t5.lock.takeover"), "1");
+    assert.throws(() => lockThread("t5", { dir, isAlive: () => false }), SessionLockedError);
+    lockThread("t5", { dir, isAlive: () => false, now: () => Date.now() + 200_000 })();
+    assert.deepEqual(readdirSync(dir).filter((f) => f.startsWith("t5")), []);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -139,9 +160,9 @@ test("resuming a thread another session holds fails with SessionLockedError", as
   await withSession(none, async ({ session, engine, root, lockDir }) => {
     await session.submit("fail-turn").done;
     const threadId = session.state.thread.id;
-    session.newThread(); // this process lets go
+    session.close(); // this process lets go
     // Another live ad (our parent process stands in for it) holds the thread.
-    writeFileSync(join(lockDir, `${threadId}.lock`), JSON.stringify({ pid: process.ppid, startedAt: 0, threadId }));
+    writeFileSync(join(lockDir, `${threadId}.lock`), JSON.stringify({ pid: process.ppid, threadId }));
     const other = createSession({ engine, cwd: root, lockDir });
     await assert.rejects(other.resume(threadId), SessionLockedError);
     other.close();
@@ -200,13 +221,25 @@ test("a steer that races the turn's completion becomes a queued prompt and still
 
 test("queue and editQueued: visible, editable, drained in order", async () => {
   await withSession(none, async ({ session }) => {
+    const running = session.submit("hang");
+    await running.accepted;
     session.queue("first");
     session.queue("second");
     session.queue("third");
-    assert.ok(session.editQueued(1, "fail-turn"));
+    assert.ok(session.editQueued(1, "early-complete"));
     assert.ok(session.editQueued(0, null));
+    assert.ok(session.editQueued(1, "fail-turn"));
     assert.ok(!session.editQueued(9, "x"));
-    assert.deepEqual(session.state.queue.map((q) => q.text), ["fail-turn", "third"]);
+    assert.deepEqual(session.state.queue.map((q) => q.text), ["early-complete", "fail-turn"]);
+    await sleep(100);
+    assert.equal(session.state.queue.length, 2, "nothing runs while a turn does");
+    await session.interrupt();
+    await until(() => session.state.queue.length === 0 && session.state.turns.length === 3 && session.state.turns.every((t) => t.status !== "inProgress"), "the queue to drain");
+    const prompts = [...session.state.items.values()].filter((i) => i.kind === "userMessage").map((i) => i.text);
+    assert.deepEqual(prompts, ["hang", "early-complete", "fail-turn"]);
+    // Queued while idle: runs at once.
+    session.queue("fail-turn");
+    await until(() => session.state.turns.length === 4, "an idle queue to run");
   });
 });
 
@@ -267,6 +300,7 @@ test("resume loads the thread's history in order, with full items", async () => 
     const threadId = session.state.thread.id;
     session.newThread();
     assert.equal(session.state.thread, null);
+    session.close(); // one session per engine
     const other = createSession({ engine, cwd: root, lockDir });
     try {
       await other.resume(threadId);
@@ -326,7 +360,302 @@ test("close declines open requests and resolves waiting turns", async () => {
     await until(() => session.state.requests.length === 1, "the approval");
     session.close();
     const r = await s.done;
-    assert.ok(["closed", "completed"].includes(r.status));
+    assert.equal(r.status, "closed");
     assert.throws(() => session.submit("x"), /closed/);
   });
+});
+
+/* ------------------------------------------------------------------ */
+/* Part 4 re-review: thread switches, close and restart races          */
+/* ------------------------------------------------------------------ */
+
+test("newThread during a running turn interrupts it and settles its waiters as abandoned", async () => {
+  await withSession(none, async ({ session, engine }) => {
+    const a = session.submit("hang");
+    await a.accepted;
+    session.newThread();
+    assert.equal((await a.done).status, "abandoned");
+    await sleep(50);
+    const st = await debugState(engine);
+    assert.ok(st.calls.includes("turn/interrupt"));
+    // A request from the thread left behind is declined, never shown as the new thread's.
+    await session.submit("fail-turn").done;
+    assert.equal(await engine.onRequest({ id: 99, kind: "approval-exec", threadId: "thread-1" }), null);
+    assert.equal(session.state.requests.length, 0);
+  });
+});
+
+test("newThread while turn/start is in flight: the late turn is stopped, the session stays usable", async () => {
+  await withSession(none, async ({ session, engine }) => {
+    const a = session.submit("slow-start");
+    await sleep(50);
+    await session.interrupt();
+    session.newThread();
+    assert.equal(session.state.starting, false);
+    // The old start lands while the new one is still starting: it neither
+    // becomes the active turn nor clears "starting".
+    const b = session.submit("slow-start");
+    await assert.rejects(a.accepted, /moved on/);
+    assert.equal(session.state.activeTurnId, null);
+    assert.deepEqual(session.state.turns, []);
+    assert.equal(session.state.starting, true);
+    const { turnId } = await b.accepted;
+    assert.equal(session.state.activeTurnId, turnId);
+    await session.interrupt();
+    assert.equal((await b.done).status, "interrupted");
+    assert.notEqual(session.state.thread, null);
+    const st = await debugState(engine);
+    assert.equal(st.calls.filter((c) => c === "thread/start").length, 2);
+  });
+});
+
+test("a prompt queued behind a start that dies with the engine runs on the restarted one", async () => {
+  await withSession((make) => ({ restart: make }), async ({ session, engines }) => {
+    const a = session.submit("slow-start");
+    session.queue("fail-turn");
+    await sleep(50);
+    engines[0].server.request("test/crash", {}).catch(() => {});
+    await assert.rejects(a.accepted);
+    await until(() => engines.length === 2 && session.state.engine.state === "ready", "the restart");
+    await until(() => session.state.queue.length === 0, "the queue to drain");
+    await sleep(100);
+    const st = await debugState(engines[1]);
+    assert.deepEqual(st.lastParams["turn/start"]?.input?.map((i) => i.text), ["fail-turn"]);
+  });
+});
+
+test("close while the thread is being created leaves no lock and sends no turn", async () => {
+  await withSession(none, async ({ session, engine, lockDir }) => {
+    const a = session.submit("hang");
+    session.close();
+    await assert.rejects(a.accepted);
+    await sleep(300);
+    assert.deepEqual(existsSync(lockDir) ? readdirSync(lockDir) : [], []);
+    assert.ok(!(await debugState(engine)).calls.includes("turn/start"));
+  });
+});
+
+test("one thread/start for concurrent first calls (goal + prompt)", async () => {
+  await withSession(none, async ({ session, engine }) => {
+    const g = session.setGoal("ship it");
+    const s = session.submit("fail-turn");
+    await g;
+    await s.done;
+    const st = await debugState(engine);
+    assert.equal(st.calls.filter((c) => c === "thread/start").length, 1);
+    assert.equal(st.lastParams["thread/goal/set"].threadId, session.state.thread.id);
+  });
+});
+
+test("one session per engine; a request for another thread is declined", async () => {
+  await withSession(none, async ({ session, engine, root, lockDir }) => {
+    assert.throws(() => createSession({ engine, cwd: root, lockDir }), /already has a session/);
+    // The failed second session didn't take the first one's request handler.
+    const s = session.submit("hello");
+    await until(() => session.state.requests.length === 1, "the approval");
+    session.resolve(session.state.requests[0].request.id, "accept");
+    assert.equal((await s.done).status, "completed");
+  });
+});
+
+test("sandbox overrides map to the thread's sandbox mode and carry to a new thread", async () => {
+  await withSession(none, async ({ session, engine }) => {
+    session.setNextTurn({ sandboxPolicy: { type: "readOnly" }, effort: "high" });
+    await session.submit("fail-turn").done;
+    session.newThread();
+    await session.submit("fail-turn").done;
+    const st = await debugState(engine);
+    assert.equal(st.lastParams["thread/start"].sandbox, "read-only");
+    assert.equal(st.lastParams["turn/start"].effort, "high");
+    assert.equal(session.state.config.sandbox, "read-only");
+  });
+});
+
+test("after a crash, a queued prompt waits for the restarted engine and then runs", async () => {
+  await withSession((make) => ({ restart: make }), async ({ session, engines }) => {
+    const a = session.submit("hang");
+    await a.accepted;
+    session.queue("fail-turn");
+    engines[0].server.request("test/crash", {}).catch(() => {});
+    await a.done;
+    await until(() => engines.length === 2 && session.state.engine.state === "ready", "the restart");
+    await until(() => session.state.queue.length === 0, "the queue to drain");
+    await sleep(50);
+    const st = await debugState(engines[1]);
+    assert.ok(st.calls.includes("turn/start"), "the queued prompt ran on the new engine");
+  });
+});
+
+test("close during a restart closes the new engine", async () => {
+  await withSession((make) => ({ restart: make }), async ({ session, engines }) => {
+    await session.submit("fail-turn").done;
+    engines[0].server.request("test/crash", {}).catch(() => {});
+    await until(() => session.state.engine.state === "restarting", "restarting", 5000);
+    session.close();
+    await until(() => engines.length === 2, "the new engine");
+    await until(() => engines[1].server?.child?.exitCode !== null || engines[1].server?.closed, "the new engine closed", 5000).catch(() => {});
+    assert.equal(engines[1].onRequest, null);
+    assert.equal(engines[1].subscribers.size, 0);
+  });
+});
+
+test("two processes racing for a stale lock: exactly one wins", async () => {
+  const { spawn } = await import("node:child_process");
+  const dir = mkdtempSync(join(tmpdir(), "ad-lockrace-"));
+  const mod = new URL("../src/harness/session.mjs", import.meta.url).href;
+  const child = `const { lockThread } = await import(${JSON.stringify(mod)});
+    const at = Number(process.argv[1]); while (Date.now() < at) {}
+    try { lockThread("t", { dir: ${JSON.stringify(dir)} }); console.log("OWNER"); await new Promise((r) => setTimeout(r, 300)); }
+    catch (e) { console.log(e.code); }`;
+  try {
+    for (let i = 0; i < 5; i++) {
+      writeFileSync(join(dir, "t.lock"), JSON.stringify({ pid: 999999, threadId: "t" }));
+      const at = String(Date.now() + 600);
+      const outs = await Promise.all(
+        [0, 1].map(
+          () =>
+            new Promise((resolve) => {
+              const p = spawn(process.execPath, ["--input-type=module", "-e", child, at], { stdio: ["ignore", "pipe", "inherit"] });
+              let out = "";
+              p.stdout.on("data", (d) => (out += d));
+              p.on("exit", () => resolve(out.trim()));
+            }),
+        ),
+      );
+      assert.equal(outs.filter((o) => o === "OWNER").length, 1, `trial ${i}: ${outs}`);
+      rmSync(join(dir, "t.lock"), { force: true });
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/* ------------------------------------------------------------------ */
+/* Part 4 second re-review                                             */
+/* ------------------------------------------------------------------ */
+
+test("a prompt queued behind a turn that ends before turn/start answers still runs", async () => {
+  await withSession(none, async ({ session, engine }) => {
+    const a = session.submit("early-complete");
+    const b = session.submit("fail-turn");
+    assert.equal((await b.accepted).queued, true);
+    await a.accepted;
+    await until(() => session.state.queue.length === 0 && session.state.turns.length === 2, "the queued prompt");
+    const st = await debugState(engine);
+    assert.equal(st.calls.filter((c) => c === "turn/start").length, 2);
+  });
+});
+
+const delayTurnsList = (engine, ms) => {
+  const orig = engine.server.request.bind(engine.server);
+  engine.server.request = async (m, p, o) => {
+    const r = await orig(m, p, o);
+    if (m === "thread/turns/list") await sleep(ms);
+    return r;
+  };
+};
+
+test("leaving a thread while its history loads: nothing of it leaks into the next", async () => {
+  await withSession(none, async ({ session, engine }) => {
+    await session.submit("early-complete").done;
+    const A = session.state.thread.id;
+    session.newThread();
+    await session.submit("early-complete").done;
+    const B = session.state.thread.id;
+    session.newThread();
+    delayTurnsList(engine, 300);
+    const pa = session.resume(A);
+    await sleep(100);
+    session.newThread();
+    await assert.rejects(pa, /moved on/);
+    assert.equal(session.state.thread, null);
+    assert.deepEqual(session.state.turns, []);
+    assert.equal(session.state.items.size, 0);
+    const pa2 = session.resume(A);
+    await sleep(100);
+    const pb = session.resume(B);
+    await Promise.allSettled([pa2, pb]);
+    assert.equal(session.state.thread.id, B);
+    assert.deepEqual([...new Set([...session.state.items.values()].map((i) => i.threadId))], [B]);
+    assert.equal(await session.resume(B), B, "resuming the current thread is a no-op");
+  });
+});
+
+test("restarts are capped even when every new engine dies while resuming", async () => {
+  let calls = 0;
+  let inFlight = 0;
+  let maxInFlight = 0;
+  await withSession(
+    (make) => ({
+      maxRestarts: 3,
+      restart: async () => {
+        calls++;
+        if (calls > 6) throw new Error("runaway");
+        maxInFlight = Math.max(maxInFlight, ++inFlight);
+        const e = await make().finally(() => inFlight--);
+        const orig = e.resumeThread.bind(e);
+        e.resumeThread = async (...a) => {
+          e.server.request("test/crash", {}).catch(() => {});
+          return orig(...a);
+        };
+        return e;
+      },
+    }),
+    async ({ session, engine }) => {
+      await session.submit("early-complete").done;
+      engine.server.request("test/crash", {}).catch(() => {});
+      await until(() => session.state.engine.state === "crashed" && session.state.engine.restarts === 3, "the cap", 8000);
+      await sleep(300);
+      assert.equal(calls, 3);
+      assert.equal(maxInFlight, 1, "one restart at a time");
+    },
+  );
+});
+
+test("a thread the restarted engine can't resume is dropped; the engine is ready and the queue runs", async () => {
+  await withSession(
+    (make) => ({
+      restart: async () => {
+        const e = await make();
+        e.resumeThread = async () => {
+          throw new Error("no rollout found");
+        };
+        return e;
+      },
+    }),
+    async ({ session, engine, engines }) => {
+      await session.submit("early-complete").done;
+      engine.server.request("test/crash", {}).catch(() => {});
+      await until(() => engines.length === 2 && session.state.engine.state === "ready", "ready");
+      assert.equal(session.state.thread, null);
+      assert.ok(session.state.notices.some((n) => n.code === "thread.notResumed"));
+      session.queue("fail-turn");
+      await until(() => session.state.queue.length === 0 && session.state.thread !== null, "the queue on a new thread");
+    },
+  );
+});
+
+test("during a restart, a prompt is queued and runs once the engine is back, with the overrides", async () => {
+  await withSession(
+    (make) => ({
+      restart: async () => {
+        await sleep(300);
+        return make();
+      },
+    }),
+    async ({ session, engine, engines }) => {
+      session.setNextTurn({ model: "m-override", effort: "high" });
+      await session.submit("early-complete").done;
+      engine.server.request("test/crash", {}).catch(() => {});
+      await until(() => session.state.engine.state === "restarting", "restarting");
+      const s = session.submit("fail-turn");
+      assert.equal((await s.accepted).queued, true);
+      await until(() => session.state.engine.state === "ready" && session.state.queue.length === 0, "the queue after the restart");
+      await sleep(100);
+      const st = await debugState(engines[1]);
+      assert.deepEqual(st.lastParams["turn/start"].input.map((i) => i.text), ["fail-turn"]);
+      assert.equal(st.lastParams["turn/start"].model, "m-override");
+      assert.equal(st.lastParams["turn/start"].effort, "high");
+    },
+  );
 });

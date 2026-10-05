@@ -42,6 +42,10 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
   - `node runtime/scripts/tui-demo.mjs`: try the terminal layer on its own, with no engine.
 - `ad tui --preview`: an early preview of the terminal UI on the real engine. Answers stream into your scrollback; approve with y / a / n; Esc interrupts; Ctrl+C quits.
   - **Tests:** golden-file tests (`AD_UPDATE_GOLDEN=1` rewrites them).
+- A session controller (`runtime/src/harness/session.mjs`) that the terminal UI will drive:
+  - It holds one conversation: prompts, steering a running turn, a prompt queue and approvals.
+  - Two ad windows can't open the same thread.
+  - When Codex crashes, the running turn fails cleanly, Codex restarts (capped) and the conversation resumes.
 - Skills:
   - `big-feature-flow` (installed by default): research how others built it → plan in parts → adversarial review rounds until final → spikes → a per-part implement/test/review loop.
   - `ad-tui-dev` (maintainers): working on the terminal UI with its isolation and renderer rules.

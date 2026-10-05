@@ -16,13 +16,20 @@
 //     when a turn completes.
 //   - Requests (approvals, user input, MCP forms) wait in state.requests, in
 //     arrival order, until resolve(); subagent requests carry their label.
+//     Only requests for the current thread (or its subagents) are shown;
+//     others are declined. One session per engine.
 //   - A thread lock (~/.agent-daemon/locks) keeps two ad instances off one thread.
+//   - newThread / resume / close leave the current thread: a running turn is
+//     interrupted and its waiters settle ("abandoned" / "closed"); a thread or
+//     turn still being started when that happens is dropped (and stopped).
+//   - Setting overrides (setNextTurn) stick: a new or resumed thread gets them
+//     on its first turn.
 //   - Engine crash: state.engine says so; with `restart` the engine is
-//     replaced (capped) and the thread resumed.
+//     replaced (capped), the thread resumed, then the queue drains.
 
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_APPROVAL_POLICY, DEFAULT_SANDBOX } from "../engine/index.mjs";
@@ -48,33 +55,84 @@ function alive(pid) {
   }
 }
 
-/** Takes the lock for a thread, or throws SessionLockedError. Returns a release function. */
-export function lockThread(threadId, { dir = DEFAULT_LOCK_DIR, pid = process.pid, isAlive = alive } = {}) {
+/**
+ * Takes the lock for a thread, or throws SessionLockedError. Returns a release
+ * function.
+ *
+ * A holder refreshes its file's mtime every `heartbeatMs`. A lock is stale
+ * when its process is gone or its heartbeat stopped `staleMs` ago (a reused
+ * pid can't keep a dead holder's lock). Takeover is serialised by a `.takeover`
+ * file made with O_EXCL, so two processes never both take a stale lock. An
+ * unreadable lock younger than `staleMs` is someone mid-write: busy. A live
+ * holder is never skipped, the same process included (one session per thread).
+ */
+export function lockThread(threadId, opts = {}) {
+  const { dir = DEFAULT_LOCK_DIR, pid = process.pid, isAlive = alive, now = Date.now, staleMs = 120_000, heartbeatMs = 30_000 } = opts;
   mkdirSync(dir, { recursive: true });
   const file = join(dir, `${String(threadId).replace(/[^A-Za-z0-9_.-]/g, "_")}.lock`);
-  const me = JSON.stringify({ pid, startedAt: PROCESS_STARTED_AT, threadId });
+  const token = randomUUID();
+  const me = JSON.stringify({ pid, startedAt: PROCESS_STARTED_AT, threadId, token });
+  const busy = (holder) => new SessionLockedError(threadId, holder ?? { pid: "unknown" });
   try {
     writeFileSync(file, me, { flag: "wx" });
   } catch (err) {
     if (err.code !== "EEXIST") throw err;
-    let holder = null;
+    const guard = `${file}.takeover`;
     try {
-      holder = JSON.parse(readFileSync(file, "utf8"));
-    } catch {
-      holder = null; // unreadable: treat as stale
+      writeFileSync(guard, String(pid), { flag: "wx" });
+    } catch (e) {
+      if (e.code !== "EEXIST") throw e;
+      // Another process is taking it over; a guard left by a crash expires.
+      let age = Infinity;
+      try {
+        age = now() - statSync(guard).mtimeMs;
+      } catch {
+        // Gone already: retry.
+      }
+      if (opts.retried || age < 10_000) throw busy(null);
+      rmSync(guard, { force: true });
+      return lockThread(threadId, { ...opts, retried: true });
     }
-    if (holder && holder.pid !== pid && isAlive(holder.pid)) throw new SessionLockedError(threadId, holder);
-    writeFileSync(file, me); // stale (its process is gone) or our own: take it
-  }
-  return () => {
     try {
-      const holder = JSON.parse(readFileSync(file, "utf8"));
-      if (holder.pid === pid) rmSync(file, { force: true });
+      let holder = null;
+      let fresh = true;
+      try {
+        fresh = now() - statSync(file).mtimeMs < staleMs;
+        holder = JSON.parse(readFileSync(file, "utf8"));
+      } catch (e) {
+        if (e.code === "ENOENT") fresh = false;
+      }
+      if (!holder && fresh) throw busy(null);
+      if (holder && fresh && isAlive(holder.pid)) throw busy(holder);
+      writeFileSync(file, me); // stale: take it
+    } finally {
+      rmSync(guard, { force: true });
+    }
+  }
+  const beat = setInterval(() => {
+    try {
+      const t = new Date(now());
+      utimesSync(file, t, t);
     } catch {
-      // Already gone.
+      // The file is gone; release will find out.
+    }
+  }, heartbeatMs);
+  beat.unref?.();
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    clearInterval(beat);
+    try {
+      if (JSON.parse(readFileSync(file, "utf8")).token === token) rmSync(file, { force: true });
+    } catch {
+      // Already gone, or someone else's now.
     }
   };
 }
+
+// A turn's sandboxPolicy type → the sandbox mode thread/start and thread/resume take.
+const SANDBOX_MODE = { readOnly: "read-only", workspaceWrite: "workspace-write", dangerFullAccess: "danger-full-access" };
 
 const toInput = (input) => (typeof input === "string" ? [{ type: "text", text: input }] : input);
 const inputText = (input) =>
@@ -117,11 +175,20 @@ export function createSession({
     engine: { state: "ready", exitCode: null, restarts: 0 },
   };
   let nextTurn = {};
+  // Every override so far: a new or resumed thread gets them on its first turn.
+  let sticky = {};
   let releaseLock = null;
+  // Bumped by newThread / resume / close: work begun under an older epoch
+  // (a thread being created, a turn being started) is dropped when it lands.
+  let epoch = 0;
+  let threadStarting = null; // the one in-flight thread/start
   let unsubThread = null;
   let unsubGlobal = null;
   let pendingInterrupt = false;
   let closed = false;
+  let restarting = false; // one restart loop at a time
+  let exitHandler = null;
+  const stale = (e) => closed || e !== epoch;
   const doneWaiters = new Map(); // turnId → [resolve]
 
   const change = (what) => emitter.emit("change", { what, state });
@@ -135,22 +202,33 @@ export function createSession({
   /* Engine wiring                                                  */
   /* -------------------------------------------------------------- */
 
+  // Requests for another thread (one this session left) are declined: they
+  // must not show up as the current thread's.
+  const onRequest = (request) => {
+    const root = state.thread?.id;
+    if (request.threadId && (!root || !eng.threadChain(request.threadId).includes(root))) return null;
+    return new Promise((resolve) => {
+      state.requests.push({ request, resolve });
+      change("requests");
+    });
+  };
+
   function wire() {
-    eng.onRequest = (request) =>
-      new Promise((resolve) => {
-        state.requests.push({ request, resolve });
-        change("requests");
-      });
+    if (eng.onRequest && eng.onRequest !== onRequest) throw new Error("this engine already has a session");
+    eng.onRequest = onRequest;
     unsubGlobal = eng.subscribe(null, onGlobal);
-    eng.on("exit", onExit);
+    const wired = eng;
+    exitHandler = (info) => onExit(info, wired);
+    eng.on("exit", exitHandler);
   }
 
   function unwire() {
     unsubGlobal?.();
     unsubThread?.();
     unsubGlobal = unsubThread = null;
-    eng.off?.("exit", onExit);
-    if (eng.onRequest) eng.onRequest = null;
+    if (exitHandler) eng.off?.("exit", exitHandler);
+    exitHandler = null;
+    if (eng.onRequest === onRequest) eng.onRequest = null;
   }
 
   function onGlobal(ev) {
@@ -276,8 +354,12 @@ export function createSession({
     change(ev.type);
   }
 
-  async function onExit(info) {
-    if (closed) return;
+  // An engine exit: the running turn fails, open requests are declined, and
+  // with `restart` new engines are tried (each attempt counts towards
+  // maxRestarts) until one is up with the thread resumed. A thread the new
+  // engine can't resume is dropped: the next prompt starts a new one.
+  async function onExit(info, from) {
+    if (closed || from !== eng || restarting) return;
     state.engine = { ...state.engine, state: "crashed", exitCode: info?.code ?? null };
     // The running turn won't complete: end it as failed for whoever waits.
     if (state.activeTurnId) {
@@ -291,24 +373,59 @@ export function createSession({
     state.starting = false;
     for (const r of state.requests.splice(0)) r.resolve(null);
     change("engine");
-    if (!restart || state.engine.restarts >= maxRestarts) return;
+    if (!restart) return;
+    restarting = true;
     try {
-      unwire();
-      state.engine = { ...state.engine, state: "restarting" };
-      change("engine");
-      eng = await restart();
-      wire();
-      if (state.thread) {
-        await eng.resumeThread(state.thread.id, { cwd, sandbox: state.config.sandbox, approvalPolicy: state.config.approvalPolicy, excludeTurns: true });
-        unsubThread = eng.subscribe(state.thread.id, onThreadEvent);
+      while (!closed && state.engine.restarts < maxRestarts) {
+        state.engine = { ...state.engine, state: "restarting", restarts: state.engine.restarts + 1 };
+        change("engine");
+        unwire();
+        let fresh = null;
+        try {
+          fresh = await restart();
+          if (closed) return void (await fresh?.close?.());
+          eng = fresh;
+          wire();
+        } catch (err) {
+          await fresh?.close?.()?.catch?.(() => {});
+          notice("error", "engine.restartFailed", `Codex could not be restarted: ${err.message}`);
+          continue;
+        }
+        if (state.thread) {
+          const id = state.thread.id;
+          try {
+            await eng.resumeThread(id, { cwd, sandbox: state.config.sandbox, approvalPolicy: state.config.approvalPolicy, excludeTurns: true });
+          } catch (err) {
+            if (closed) return void (await eng.close?.());
+            if (eng.server?.exitError) {
+              notice("error", "engine.restartFailed", `Codex stopped again: ${err.message}`);
+              continue; // the new engine died too
+            }
+            notice("warn", "thread.notResumed", `The conversation could not be resumed (${err.message}); the next prompt starts a new one.`);
+            const queued = state.queue;
+            detach();
+            resetThreadState();
+            state.queue = queued;
+            change("thread");
+          }
+          if (closed) return void (await eng.close?.());
+          if (state.thread?.id === id) unsubThread = eng.subscribe(id, onThreadEvent);
+        }
+        // Overrides go again on the next turn, in case Codex lost them.
+        nextTurn = { ...sticky, ...nextTurn };
+        // Ready only once the thread is back: a prompt sent now goes to the right place.
+        state.engine = { state: "ready", exitCode: null, restarts: state.engine.restarts };
+        notice("info", "engine.restarted", "Codex restarted; the conversation continues.");
+        change("engine");
+        queueMicrotask(drainQueue);
+        return;
       }
-      // Ready only once the thread is back: a prompt sent now goes to the right place.
-      state.engine = { state: "ready", exitCode: null, restarts: state.engine.restarts + 1 };
-      notice("info", "engine.restarted", "Codex restarted; the conversation continues.");
-      change("engine");
-    } catch (err) {
-      state.engine = { ...state.engine, state: "crashed" };
-      notice("error", "engine.restartFailed", `Codex could not be restarted: ${err.message}`);
+      if (!closed) {
+        state.engine = { ...state.engine, state: "crashed" };
+        change("engine");
+      }
+    } finally {
+      restarting = false;
     }
   }
 
@@ -322,7 +439,15 @@ export function createSession({
     unsubThread = eng.subscribe(threadId, onThreadEvent);
   }
 
-  function detach() {
+  // Leaves the current thread: a running turn is interrupted (it would go on
+  // writing files unobserved) and its waiters settle as "abandoned".
+  function detach(status = "abandoned") {
+    epoch++;
+    threadStarting = null;
+    pendingInterrupt = false;
+    if (state.thread && state.activeTurnId) eng.interrupt(state.thread.id, state.activeTurnId).catch(() => {});
+    for (const [turnId, list] of doneWaiters) for (const r of list) r({ turnId, status, error: null });
+    doneWaiters.clear();
     unsubThread?.();
     unsubThread = null;
     releaseLock?.();
@@ -330,13 +455,24 @@ export function createSession({
     for (const r of state.requests.splice(0)) r.resolve(null);
   }
 
-  async function ensureThread() {
-    if (state.thread) return state.thread.id;
-    const t = await eng.startThread({ cwd, model: state.config.model ?? undefined, sandbox: state.config.sandbox, approvalPolicy: state.config.approvalPolicy });
-    state.config.model ??= t.model ?? null;
-    attach(t.threadId, t.thread);
-    change("thread");
-    return t.threadId;
+  // One thread/start at a time; a result that lands after newThread, resume
+  // or close is dropped.
+  function ensureThread() {
+    if (state.thread) return Promise.resolve(state.thread.id);
+    if (threadStarting) return threadStarting;
+    const e = epoch;
+    const p = (async () => {
+      const t = await eng.startThread({ cwd, model: state.config.model ?? undefined, sandbox: state.config.sandbox, approvalPolicy: state.config.approvalPolicy });
+      if (stale(e)) throw new Error("the session moved on before the thread started");
+      state.config.model ??= t.model ?? null;
+      attach(t.threadId, t.thread);
+      change("thread");
+      return t.threadId;
+    })().finally(() => {
+      if (threadStarting === p) threadStarting = null;
+    });
+    threadStarting = p;
+    return p;
   }
 
   function resetThreadState() {
@@ -352,6 +488,7 @@ export function createSession({
     state.diff = null;
     state.tokens = null;
     state.agents = new Map();
+    nextTurn = { ...sticky };
   }
 
   /* -------------------------------------------------------------- */
@@ -374,6 +511,7 @@ export function createSession({
   }
 
   function startTurn(input, cid) {
+    const e = epoch;
     state.starting = true;
     change("starting");
     const accepted = (async () => {
@@ -381,34 +519,41 @@ export function createSession({
         const threadId = await ensureThread();
         let inp = toInput(input);
         if (hooks.beforeTurn) inp = toInput((await hooks.beforeTurn({ input: inp, session: api })) ?? inp);
+        if (stale(e)) throw new Error("the session moved on before the turn started");
         const o = takeNextTurn();
         const { turnId } = await eng.startTurn({ threadId, input: inp, clientUserMessageId: cid, ...o });
+        if (stale(e)) {
+          // Started on a thread this session has left: stop it.
+          eng.interrupt(threadId, turnId).catch(() => {});
+          throw new Error("the session moved on before the turn started");
+        }
         const t = turnOf(turnId);
         adoptItems(t);
         // Codex may finish a turn before turn/start even answers: only a turn
         // still in progress becomes the active one.
         if (t.status === "inProgress") state.activeTurnId ??= turnId;
-        return { turnId };
-      } catch (err) {
-        state.echoes.delete(cid);
-        throw err;
-      } finally {
-        state.starting = false;
-        change("starting");
-      }
-    })();
-    accepted.then(
-      ({ turnId }) => {
         if (pendingInterrupt) {
           pendingInterrupt = false;
-          eng.interrupt(state.thread.id, turnId).catch((e) => notice("warn", "interrupt.failed", e.message));
+          eng.interrupt(threadId, turnId).catch((err) => notice("warn", "interrupt.failed", err.message));
         }
-      },
-      () => {
-        pendingInterrupt = false;
-        queueMicrotask(drainQueue);
-      },
-    );
+        return { turnId };
+      } catch (err) {
+        if (!stale(e)) state.echoes.delete(cid);
+        throw err;
+      } finally {
+        if (!stale(e)) {
+          state.starting = false;
+          change("starting");
+          // A turn that completed before turn/start answered couldn't drain the queue.
+          queueMicrotask(drainQueue);
+        }
+      }
+    })();
+    accepted.catch(() => {
+      if (stale(e)) return;
+      pendingInterrupt = false;
+      queueMicrotask(drainQueue);
+    });
     const done = accepted.then(({ turnId }) => waitTurn(turnId));
     done.catch(() => {});
     return { accepted, done };
@@ -423,7 +568,8 @@ export function createSession({
     if (closed) throw new Error("session closed");
     if (state.activeTurnId) return steer(input);
     const cid = randomUUID();
-    if (state.starting) {
+    // While a turn is starting or the engine is restarting, the prompt waits in the queue.
+    if (state.starting || state.engine.state !== "ready") {
       const accepted = Promise.resolve({ queued: true, index: queue(input) });
       return { clientUserMessageId: cid, accepted, done: accepted };
     }
@@ -456,9 +602,12 @@ export function createSession({
     return { clientUserMessageId: cid, accepted, done };
   }
 
+  // Queued prompts run in order whenever the thread is idle (edits made in
+  // the same tick still apply).
   function queue(input) {
     state.queue.push({ id: randomUUID(), input: toInput(input), text: inputText(input) });
     change("queue");
+    queueMicrotask(drainQueue);
     return state.queue.length - 1;
   }
 
@@ -471,7 +620,7 @@ export function createSession({
   }
 
   function drainQueue() {
-    if (closed || state.activeTurnId || state.starting || !state.queue.length) return;
+    if (closed || state.engine.state !== "ready" || state.activeTurnId || state.starting || !state.queue.length) return;
     const next = state.queue.shift();
     change("queue");
     const cid = randomUUID();
@@ -501,24 +650,25 @@ export function createSession({
   }
 
   function setNextTurn(o = {}) {
-    for (const k of ["model", "effort", "approvalPolicy", "sandboxPolicy"]) if (o[k] !== undefined) nextTurn[k] = o[k];
+    for (const k of ["model", "effort", "approvalPolicy", "sandboxPolicy"]) if (o[k] !== undefined) nextTurn[k] = sticky[k] = o[k];
     if (o.model !== undefined) state.config.model = o.model;
     if (o.effort !== undefined) state.config.effort = o.effort;
     if (o.approvalPolicy !== undefined) state.config.approvalPolicy = o.approvalPolicy;
-    if (o.sandboxPolicy !== undefined) state.config.sandbox = o.sandboxPolicy?.type ?? o.sandboxPolicy;
+    if (o.sandboxPolicy !== undefined) state.config.sandbox = SANDBOX_MODE[o.sandboxPolicy?.type] ?? state.config.sandbox;
     change("config");
   }
 
-  async function loadTurns(threadId) {
+  async function loadTurns(threadId, e) {
+    const { normalizeItem } = await import("../engine/codex/events.mjs");
     const turns = [];
     let cursor = null;
     for (let page = 0; page < 1000; page++) {
       const r = await eng.server.request("thread/turns/list", { threadId, itemsView: "full", sortDirection: "asc", limit: 50, ...(cursor ? { cursor } : {}) });
+      if (stale(e)) throw new Error("the session moved on before the history loaded");
       turns.push(...(r?.data ?? []));
       cursor = r?.nextCursor ?? null;
       if (!cursor) break;
     }
-    const { normalizeItem } = await import("../engine/codex/events.mjs");
     for (const t of turns) {
       const turn = turnOf(t.id);
       turn.status = t.status ?? "completed";
@@ -589,19 +739,34 @@ export function createSession({
     },
     /** Continues an earlier thread, with its history loaded. */
     async resume(threadId) {
+      if (closed) throw new Error("session closed");
+      if (threadId === state.thread?.id) return threadId;
+      // Locked first: a thread another ad holds is never resumed here.
+      const release = lockThread(threadId, { dir: lockDir });
       detach();
       resetThreadState();
-      const t = await eng.resumeThread(threadId, { cwd, sandbox: state.config.sandbox, approvalPolicy: state.config.approvalPolicy, excludeTurns: true });
+      const e = epoch;
+      let t;
+      try {
+        t = await eng.resumeThread(threadId, { cwd, sandbox: state.config.sandbox, approvalPolicy: state.config.approvalPolicy, excludeTurns: true });
+        if (stale(e)) throw new Error("the session moved on before the thread resumed");
+      } catch (err) {
+        release();
+        throw err;
+      }
       state.config.model = t.model ?? state.config.model;
-      attach(t.threadId, t.thread);
-      await loadTurns(t.threadId);
+      releaseLock = release;
+      state.thread = { ...(t.thread ?? {}), id: t.threadId };
+      unsubThread = eng.subscribe(t.threadId, onThreadEvent);
+      await loadTurns(t.threadId, e);
       change("thread");
       return t.threadId;
     },
     close() {
       if (closed) return;
       closed = true;
-      detach();
+      detach("closed");
+      state.queue = [];
       unwire();
       for (const [, list] of doneWaiters) for (const r of list) r({ status: "closed" });
       doneWaiters.clear();
