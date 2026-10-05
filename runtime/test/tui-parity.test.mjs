@@ -125,7 +125,11 @@ test("imagePath: an existing image file, quotes and file:// removed; anything el
   try {
     writeFileSync(join(dir, "shot one.png"), "x");
     assert.equal(imagePath(`"${join(dir, "shot one.png")}"`, dir), join(dir, "shot one.png"));
-    assert.equal(imagePath("shot one.png", dir), join(dir, "shot one.png"));
+    assert.equal(imagePath("shot one.png", dir), null, "a bare name pasted into a sentence stays text");
+    assert.equal(imagePath(`./shot one.png`, dir), join(dir, "shot one.png"));
+    const url = "file:///" + join(dir, "shot one.png").replace(/\\/g, "/").replace(/^\//, "").replace(/ /g, "%20");
+    assert.equal(imagePath(url, dir), join(dir, "shot one.png"), "file:// URLs, %20 decoded, the drive letter kept");
+    assert.equal(imagePath("//server/share/x.png", dir), null, "no network lookups for UNC paths");
     assert.equal(imagePath("missing.png", dir), null);
     writeFileSync(join(dir, "notes.txt"), "x");
     assert.equal(imagePath("notes.txt", dir), null);
@@ -142,6 +146,7 @@ test("editor: $VISUAL, then $EDITOR (with its arguments), else notepad / vi; a f
   let seenFile = null;
   const out = await editInEditor("draft", {
     env: { EDITOR: "fake-ed -x" },
+    platform: "linux",
     run: async (cmd, args) => {
       assert.equal(cmd, "fake-ed");
       seenFile = args.at(-1);
@@ -152,7 +157,25 @@ test("editor: $VISUAL, then $EDITOR (with its arguments), else notepad / vi; a f
   });
   assert.equal(out, "edited\n");
   assert.ok(!existsSync(seenFile), "the temp file is removed");
-  assert.equal(await editInEditor("draft", { env: { EDITOR: "x" }, run: async () => 1 }), null);
+  assert.equal(await editInEditor("draft", { env: { EDITOR: "x" }, platform: "linux", run: async () => 1 }), null);
+  // An editor that returns at once with nothing changed didn't wait: the prompt is kept, with a reason.
+  await assert.rejects(editInEditor("draft", { env: { EDITOR: "notepad" }, platform: "win32", run: async () => 0 }), /didn't wait|without waiting/);
+  // .cmd shims (code, subl) go through cmd.exe with every argument quoted.
+  let seen = null;
+  await editInEditor("d", {
+    env: { EDITOR: "code --wait" },
+    platform: "win32",
+    now: (() => {
+      let t = 0;
+      return () => (t += 5000);
+    })(),
+    run: async (cmd, args, verbatim) => ((seen = { cmd, args, verbatim }), 0),
+  });
+  assert.match(seen.cmd, /cmd(\.exe)?$/i);
+  assert.equal(seen.verbatim, true);
+  assert.match(seen.args.at(-1), /^""code" "--wait" ".*prompt\.md""$/);
+  // An unquoted path with spaces is one command when it exists.
+  assert.deepEqual(editorCommand({ EDITOR: "C:/Program Files/Ed/ed.exe" }, "win32", () => true), { cmd: "C:/Program Files/Ed/ed.exe", args: [] });
 });
 
 test("auto-review verdicts become notices; the start is silent", () => {

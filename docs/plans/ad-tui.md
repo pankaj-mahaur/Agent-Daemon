@@ -894,6 +894,44 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
   - **Auto-review:** `item/autoApprovalReview/completed` becomes a notice ("approved: …", or "denied … (rationale). To allow it anyway, use /codex"). The start is silent (`SILENT_NOTIFICATIONS`). `thread/approveGuardianDeniedAction` isn't wired: its payload is unstable upstream.
   - **`/terminal-setup`:** print-only advice for Windows Terminal (the `sendInput` of `CSI 13;2u`), VS Code, Zed and others.
   - **Slash names:** every new command is checked against Codex's names. `image` and `terminal-setup` are ad's own.
+  - **Review (1 high, 4 medium), plus a re-review of Parts 5–7 (4 medium): all fixed; 16 guards mutation-checked** (`test/tui-hardening.test.mjs`).
+    - **Crashes from commands:**
+      - `/copy` can't crash the TUI any more: a stdin error from a clipboard tool means "no", and every slash command's failure is caught and shown.
+      - The clipboard gets sanitized text.
+    - **Pager:** a request opening while the pager is up closes the pager; keys go to the request.
+    - **Effort keys:** they step through the current model's own levels (`model/list`), starting from the real current level.
+    - **Editor:**
+      - `.cmd` editors run through `cmd /d /s /c` with quoting.
+      - An unquoted path with spaces works.
+      - An editor that returns at once with nothing changed (Store Notepad) keeps the prompt and says why.
+    - **`/export`:**
+      - It refuses device names, alternate data streams and links leading out of the folder (`realpath`), and accepts `..name`.
+      - The title's newlines are flattened, and fences are longer than any backtick run inside.
+    - **Images:** `file:///C:/…` and `%20` work, and so does a POSIX `\ ` escape. A bare file name in a sentence stays text, and UNC paths are never touched.
+    - **Rewind:** the picker hints read "latest" and "N before it". A prompt already typed is kept. Attachments survive a failed send.
+    - **What counts as live:**
+      - A turn is live only while it is the running one, so a resumed turn still `inProgress` in history no longer wedges the scrollback.
+      - An item with no turn (`!`) stays open while Codex is up, and a crash settles every running item.
+    - **Restarts:** a manual restart doesn't use up the automatic ones, and the state says "restarting" before the old engine closes. `/login` reports a failed restart.
+    - **Markdown:**
+      - Run counting is capped. A failed delimiter run is consumed whole. Inline nesting depth is capped at 16 and block nesting at 24, and each block renders inside a guard.
+      - Code spans are found once from the start. The failure memo is skipped for openers inside a code span (reached through a link).
+      - The closer scan starts right after the opener.
+      - CommonMark's flanking rules (punctuation) apply, so `a*`` b*` has no emphasis.
+      - Checked by a differential fuzz against a no-memo copy: 0 differences in 200 000 cases.
+      - A long open fence in the live view shows only its uncommitted lines, as code.
+    - **Diffs:** lines outside every hunk's counts show with a `?` sign instead of vanishing.
+    - **Skills mirror:** a skill is copied next to the mirror and swapped in, so a failed copy keeps the old one, and broken links are skipped.
+    - **Upgrade workflow:**
+      - It never downgrades, and a failing `gh pr list` stops the job.
+      - A failing `codex-slash.mjs` only warns.
+      - The suite runs with `AD_COMPAT_NOTE_PENDING=1`, so a missing note doesn't mask real failures.
+    - **Fake:** `execCommandApproval` and `thread/compacted` now match the protocol.
+    - **Accepted:**
+      - Responses aren't schema-checked.
+      - `thread/approveGuardianDeniedAction` stays unwired.
+      - The fake keeps ids on `/fork`; real Codex's fresh ids may re-print history once.
+      - A Ctrl+C right after an interrupt still quits (the plan's semantics).
 
 ### Part 9 — `ad` capabilities (one loop each; FC4 after each)
 - **9a. See what ad knows:**

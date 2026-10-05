@@ -382,6 +382,12 @@ export function createSession({
       state.activeTurnId = null;
     }
     state.starting = false;
+    // Nothing that was running in that engine will finish (a ! command has no turn).
+    for (const it of state.items.values()) {
+      if (!it.streaming && it.status !== "inProgress") continue;
+      it.streaming = false;
+      if (it.status === "inProgress") it.status = "failed";
+    }
     for (const r of state.requests.splice(0)) r.resolve(null);
     change("engine");
     if (restart) await recover(maxRestarts);
@@ -710,15 +716,21 @@ export function createSession({
       if (!restart) throw new Error("Codex can't be restarted from here: quit and start ad again.");
       if (closed || restarting) return false;
       if (state.activeTurnId || state.starting) throw new Error("wait for the turn to finish first");
-      if (state.engine.state === "ready") {
+      // "restarting" first: a prompt sent meanwhile is queued, not sent to the engine being closed.
+      const wasReady = state.engine.state === "ready";
+      const budget = state.engine.restarts;
+      state.engine = { ...state.engine, state: "restarting" };
+      change("engine");
+      if (wasReady) {
         // A live engine: let it go quietly (no crash handling), then start fresh.
         const old = eng;
         unwire();
         await old.close?.().catch?.(() => {});
       }
-      state.engine = { ...state.engine, state: "restarting" };
-      change("engine");
-      return recover(state.engine.restarts + 1);
+      const ok = await recover(budget + 1);
+      // A restart asked for by hand doesn't use up the automatic ones.
+      if (ok) state.engine = { ...state.engine, restarts: budget };
+      return ok;
     },
     /** Account and rate limits, read once at startup; later changes arrive as events. */
     async init() {

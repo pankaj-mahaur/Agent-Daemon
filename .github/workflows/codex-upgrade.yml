@@ -62,9 +62,18 @@ jobs:
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          # Never a downgrade (npm latest can lag behind a pin set by hand).
+          newest=$(printf '%s\n%s\n' "$current" "$target" | sort -V | tail -n1)
+          if [ "$newest" != "$target" ]; then
+            echo "target $target is older than the pin $current: nothing to do"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           # Skip only when a PR already exists — a pushed branch without a PR
           # (e.g. gh pr create failed last week) must be retried, not skipped.
-          if [ "$(gh pr list --head "$branch" --state all --json number --jq length)" != "0" ]; then
+          # A failing gh call stops the job instead of skipping silently.
+          count=$(gh pr list --head "$branch" --state all --json number --jq length)
+          if [ "$count" != "0" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
           fi
 
@@ -98,9 +107,9 @@ jobs:
           TARGET: ${{ steps.ver.outputs.target }}
         run: |
           # ad's own slash commands must not collide with new Codex ones (test/tui-resilience).
-          node scripts/codex-slash.mjs
-          # compat.json: the new pin is tested; "what changed" is left for a human,
-          # so the compat test fails until someone writes it.
+          node scripts/codex-slash.mjs || echo "::warning::could not regenerate codex-slash.json; the collision test runs on the old list"
+          # compat.json: the new pin is tested; "what changed" is left for a human
+          # (the PR body asks for it; the test suite runs with AD_COMPAT_NOTE_PENDING=1).
           node -e '
             const fs = require("fs"); const f = "src/engine/codex/compat.json";
             const c = JSON.parse(fs.readFileSync(f, "utf8")); const t = process.env.TARGET;
@@ -112,6 +121,8 @@ jobs:
         id: tests
         working-directory: runtime
         continue-on-error: true
+        env:
+          AD_COMPAT_NOTE_PENDING: "1"
         run: npm test
 
       - name: Real engine against the mock model

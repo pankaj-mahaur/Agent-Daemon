@@ -156,6 +156,8 @@ export function diffRows(change, mode = "transcript") {
   while (i < src.length) {
     const h = header.exec(src[i]);
     if (!h) {
+      // Outside every hunk's counts (a malformed diff): shown, marked "?", never hidden.
+      if (src[i] !== "") rows.push({ n: null, sign: "?", text: src[i] });
       i++;
       continue;
     }
@@ -200,7 +202,7 @@ function diffBody(change, width, maxLines, mode) {
   const nw = Math.max(1, ...rows.map((r) => String(r.n ?? "").length));
   const out = [];
   for (const r of rows) {
-    const style = r.sign === "+" ? S.add : r.sign === "-" ? S.del : r.sign === " " ? undefined : S.dim;
+    const style = r.sign === "+" ? S.add : r.sign === "-" ? S.del : r.sign === " " ? undefined : r.sign === "?" ? S.warn : S.dim;
     const gutter = `${INDENT}${String(r.n ?? "").padStart(nw)} ${r.sign} `;
     const room = Math.max(1, width - stringWidth(gutter));
     codeLines(r.text, room, style).forEach((l, i) => out.push(normalize([{ text: i === 0 ? gutter : " ".repeat(stringWidth(gutter)), style: S.dim }, ...l])));

@@ -113,14 +113,17 @@ export function lastAgentText(st) {
 /** The conversation as markdown, for /export. Untrusted text is sanitized. */
 export function exportMarkdown(st, { title = "Conversation" } = {}) {
   const text = (t) => sanitize(String(t ?? ""), "transcript");
-  const out = [`# ${text(st.thread?.name ?? title)}`, ""];
+  const out = [`# ${text(st.thread?.name ?? title).replace(/\s*\n\s*/g, " ")}`, ""];
   if (st.thread?.id) out.push(`Thread: \`${text(st.thread.id)}\``, "");
   for (const it of rootItems(st)) {
     if (it.kind === "userMessage") out.push("## You", "", text(it.text), "");
     else if (it.kind === "agentMessage") out.push("## Codex", "", text(it.text), "");
     else if (it.kind === "commandExecution") {
-      const fence = "````";
-      out.push(`${fence}console`, `$ ${text(it.command)}`, ...text(it.output ?? "").replace(/\n+$/, "").split("\n").slice(-50), fence, "");
+      const body = [`$ ${text(it.command)}`, ...text(it.output ?? "").replace(/\n+$/, "").split("\n").slice(-50)];
+      // A fence longer than any backtick run inside, so the output can't close it.
+      const longest = Math.max(2, ...body.map((l) => Math.max(0, ...(l.match(/`+/g) ?? []).map((r) => r.length))));
+      const fence = "`".repeat(longest + 1);
+      out.push(`${fence}console`, ...body, fence, "");
     } else if (it.kind === "fileChange") out.push(`Edited: ${(it.changes ?? []).map((c) => `\`${text(c.path)}\``).join(", ")}`, "");
   }
   return out.join("\n");
@@ -162,6 +165,8 @@ function runWithInput(cmd, args, input, spawnFn) {
     }
     child.on("error", () => resolve(false));
     child.on("exit", (code) => resolve(code === 0));
+    // A tool that exits without reading (xclip with no display) makes the write fail: that's a "no".
+    child.stdin.on?.("error", () => resolve(false));
     child.stdin.end(input);
   });
 }
@@ -195,11 +200,25 @@ const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp)$/i;
  * A pasted or typed image path → an absolute path of an image file that
  * exists, or null. Quotes from drag-and-drop are removed.
  */
-export function imagePath(raw, cwd) {
+export function imagePath(raw, cwd, { platform = process.platform } = {}) {
   let p = String(raw ?? "").trim();
-  if (/^(["']).*\1$/.test(p)) p = p.slice(1, -1);
-  p = p.replace(/^file:\/\//i, "");
+  const quoted = /^(["']).*\1$/.test(p);
+  if (quoted) p = p.slice(1, -1);
+  if (/^file:\/\//i.test(p)) {
+    try {
+      p = decodeURIComponent(p.replace(/^file:\/\//i, ""));
+    } catch {
+      return null;
+    }
+    if (platform === "win32") p = p.replace(/^\/([A-Za-z]:)/, "$1"); // file:///C:/x → C:/x
+  }
+  // A drag on macOS/Linux escapes spaces ("my\ pic.png").
+  if (platform !== "win32") p = p.replace(/\\ /g, " ");
   if (!p || !IMAGE_EXT.test(p) || /[\n\r\0]/.test(p)) return null;
+  // A bare name ("a.png") pasted into a sentence is text: only paths attach.
+  if (!quoted && !/[\\/]/.test(p)) return null;
+  // Never touch the network for a pasted UNC path.
+  if (/^(\\\\|\/\/)/.test(p)) return null;
   const abs = path.resolve(cwd, p);
   try {
     return existsSync(abs) && statSync(abs).isFile() ? abs : null;

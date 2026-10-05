@@ -118,7 +118,8 @@ test("compat.json tracks the pinned Codex and says what changed", () => {
   const pinned = PKG.dependencies["@openai/codex"];
   assert.equal(c.pinned, pinned);
   assert.ok(c.tested.includes(pinned));
-  assert.ok(c.whatChanged[pinned]);
+  // The upgrade bot leaves the note to a human (and says so in its PR); everywhere else it must exist.
+  if (process.env.AD_COMPAT_NOTE_PENDING !== "1") assert.ok(c.whatChanged[pinned], `write compat.json's "what changed" for ${pinned}`);
 });
 
 test("the protocol check itself catches missing fields, bad enums, unknown variants and methods", () => {

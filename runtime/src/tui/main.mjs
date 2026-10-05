@@ -94,17 +94,26 @@ export function splitArgs(s) {
 /* ------------------------------------------------------------------ */
 
 /** The editor command: $VISUAL, then $EDITOR, else notepad on Windows and vi elsewhere. */
-export function editorCommand(env = process.env, platform = process.platform) {
-  const raw = env.VISUAL || env.EDITOR || (platform === "win32" ? "notepad" : "vi");
+export function editorCommand(env = process.env, platform = process.platform, exists = existsSync) {
+  const raw = (env.VISUAL || env.EDITOR || (platform === "win32" ? "notepad" : "vi")).trim();
+  // An unquoted path with spaces (C:\Program Files\…\notepad++.exe) is one command.
+  if (/[\\/]/.test(raw) && exists(raw)) return { cmd: raw, args: [] };
   const [cmd, ...args] = splitArgs(raw);
   return { cmd, args };
+}
+
+// .cmd / .bat shims (code, subl) need cmd.exe on Windows: every argument is quoted.
+function editorSpawn(cmd, args, platform) {
+  if (platform !== "win32" || /\.exe$/i.test(cmd) || !/\.(cmd|bat)$|^[^.\\/]+$/i.test(cmd) || /^notepad$/i.test(cmd)) return { cmd, args };
+  const quote = (a) => `"${String(a).replace(/"/g, '""')}"`;
+  return { cmd: process.env.ComSpec || "cmd.exe", args: ["/d", "/s", "/c", `"${[cmd, ...args].map(quote).join(" ")}"`], verbatim: true };
 }
 
 /**
  * Edits `text` in the user's editor (the terminal is handed over) and returns
  * the result, or null when the editor failed. The temp file is private and removed.
  */
-export async function editInEditor(text, { run, env = process.env, platform = process.platform } = {}) {
+export async function editInEditor(text, { run, env = process.env, platform = process.platform, now = () => Date.now() } = {}) {
   const { mkdtempSync, readFileSync: read, rmSync, writeFileSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
   const dir = mkdtempSync(path.join(tmpdir(), "ad-prompt-"));
@@ -112,9 +121,15 @@ export async function editInEditor(text, { run, env = process.env, platform = pr
   try {
     writeFileSync(file, text, { mode: 0o600 });
     const { cmd, args } = editorCommand(env, platform);
-    const code = await run(cmd, [...args, file]);
+    const spawnAs = editorSpawn(cmd, [...args, file], platform);
+    const t0 = now();
+    const code = await run(spawnAs.cmd, spawnAs.args, spawnAs.verbatim);
     if (code !== 0) return null;
-    return read(file, "utf8");
+    const out = read(file, "utf8");
+    // Back at once with nothing changed: the editor didn't wait (it opened the
+    // file in an existing window). Keep the prompt rather than lose the edit.
+    if (out === text && now() - t0 < 1500) throw new Error("The editor returned at once without waiting. Set EDITOR to one that waits (e.g. \"code --wait\"); your prompt is unchanged.");
+    return out;
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -411,8 +426,8 @@ export async function cmdTui(opts = {}) {
         const code = await handoff(io, renderer, () => runChild(process.execPath, [CLI, "auth", "login", ...splitArgs(arg || "chatgpt")], { cwd }));
         if (code !== 0) return `Sign-in didn't finish (exit ${code}). Nothing changed.`;
         // Keys reach Codex when it starts, and a new login is read at start too: restart it.
-        await session.restartEngine();
-        return "Signed in; Codex restarted with it.";
+        const ok = await session.restartEngine().catch(() => false);
+        return ok ? "Signed in; Codex restarted with it." : "Signed in, but Codex didn't restart: /quit and start ad again to use the new sign-in.";
       },
       runAd: async (arg) => {
         if (!arg) return "Usage: /ad <command>, e.g. /ad doctor";
@@ -427,7 +442,7 @@ export async function cmdTui(opts = {}) {
         return `Back from the stock Codex UI (exit ${code}).`;
       },
       hookRows: (run) => hookRows(run, { hooksFile }),
-      editText: (text) => handoff(io, renderer, () => editInEditor(text, { run: (cmd, args) => runChild(cmd, args, { cwd }) })),
+      editText: (text) => handoff(io, renderer, () => editInEditor(text, { run: (cmd, args, verbatim) => runChild(cmd, args, { cwd, windowsVerbatimArguments: Boolean(verbatim) }) })),
     };
 
     app = createApp({ io, renderer, session, cwd, header: intro, newline, history: createHistory(opts.historyFile ? { file: opts.historyFile } : {}), actions, meters, info: { compat: `${codexVersion} (tested)`, terminal: term } });

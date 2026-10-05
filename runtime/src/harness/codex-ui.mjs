@@ -11,7 +11,15 @@
 //     Project .claude/skills are a known gap in `ad codex`.
 
 import { spawn } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+
+function isBrokenLink(p) {
+  try {
+    return lstatSync(p).isSymbolicLink() && !existsSync(p);
+  } catch {
+    return true;
+  }
+}
 import { homedir } from "node:os";
 import path from "node:path";
 import { providerEnv } from "../auth/providers.mjs";
@@ -25,7 +33,11 @@ function newestMtime(dir) {
   let newest = statSync(dir).mtimeMs;
   for (const e of readdirSync(dir, { withFileTypes: true })) {
     const p = path.join(dir, e.name);
-    newest = Math.max(newest, e.isDirectory() ? newestMtime(p) : statSync(p).mtimeMs);
+    try {
+      newest = Math.max(newest, e.isDirectory() ? newestMtime(p) : statSync(p).mtimeMs);
+    } catch {
+      // A broken link: it can't be copied either; ignore it.
+    }
   }
   return newest;
 }
@@ -53,11 +65,22 @@ export function syncSkills({ home, from = path.join(homedir(), ".claude", "skill
     const dst = path.join(dest, e.name);
     if (existsSync(dst) && !existsSync(path.join(dst, MIRROR_MARKER))) continue; // the user's own
     if (existsSync(dst) && newestMtime(src) <= statSync(path.join(dst, MIRROR_MARKER)).mtimeMs) continue;
-    rmSync(dst, { recursive: true, force: true });
-    // The folder itself is resolved; links inside it are copied as links (never followed into big trees).
-    cpSync(realpathSync(src), dst, { recursive: true, verbatimSymlinks: true });
-    writeFileSync(path.join(dst, MIRROR_MARKER), "mirrored from ~/.claude/skills by ad codex; edits here are overwritten\n");
-    out.copied++;
+    // Copied next to the mirror first and swapped in only when complete, so a
+    // failed copy (no symlink rights on Windows, a broken link) never loses
+    // the mirrored copy that was there.
+    const tmp = `${dst}.ad-tmp-${process.pid}`;
+    try {
+      rmSync(tmp, { recursive: true, force: true });
+      // The folder itself is resolved; links inside are kept as links (never followed into big trees).
+      cpSync(realpathSync(src), tmp, { recursive: true, verbatimSymlinks: true, filter: (from) => !isBrokenLink(from) });
+      writeFileSync(path.join(tmp, MIRROR_MARKER), "mirrored from ~/.claude/skills by ad codex; edits here are overwritten\n");
+      rmSync(dst, { recursive: true, force: true });
+      renameSync(tmp, dst);
+      out.copied++;
+    } catch {
+      rmSync(tmp, { recursive: true, force: true });
+      out.failed = (out.failed ?? 0) + 1;
+    }
   }
   for (const e of readdirSync(dest, { withFileTypes: true })) {
     if (!e.isDirectory() || names.has(e.name)) continue;

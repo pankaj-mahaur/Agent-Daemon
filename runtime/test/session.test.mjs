@@ -672,3 +672,15 @@ test("a crash ends the running turn's items too: none is left streaming", async 
     assert.ok(items.every((i) => !i.streaming && i.status !== "inProgress"), JSON.stringify(items));
   });
 });
+
+test("a crash also settles items that have no turn (a running ! command)", async () => {
+  await withSession(none, async ({ session, engine }) => {
+    await session.submit("fail-turn").done;
+    session.state.items.set("sh-x", { id: "sh-x", kind: "commandExecution", command: "make", status: "inProgress", streaming: true, turnId: null, threadId: session.state.thread.id });
+    engine.server.request("test/crash", {}).catch(() => {});
+    await until(() => session.state.engine.state === "crashed", "crashed");
+    const it = session.state.items.get("sh-x");
+    assert.equal(it.streaming, false);
+    assert.equal(it.status, "failed");
+  });
+});

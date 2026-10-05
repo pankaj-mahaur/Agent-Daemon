@@ -107,7 +107,11 @@ const dedent = (line, n) => {
  * Splits lines into blocks: [{type, start, end, ...}], `end` exclusive.
  * `complete` says nothing more can be added to the block (used by streams).
  */
-export function parseBlocks(lines) {
+const MAX_BLOCK_DEPTH = 24;
+
+export function parseBlocks(lines, depth = 0) {
+  // Quotes and lists nested deeper than this are shown as plain text.
+  if (depth > MAX_BLOCK_DEPTH) return lines.some((l) => !blank(l)) ? [{ type: "paragraph", lines: lines.filter((l) => !blank(l)), start: 0, end: lines.length, complete: false }] : [];
   const blocks = [];
   let i = 0;
   while (i < lines.length) {
@@ -155,7 +159,7 @@ export function parseBlocks(lines) {
         else break;
         i++;
       }
-      blocks.push({ type: "quote", blocks: parseBlocks(inner), start, end: i, complete: false });
+      blocks.push({ type: "quote", blocks: parseBlocks(inner, depth + 1), start, end: i, complete: false });
       continue;
     }
     const it = itemOf(l);
@@ -191,7 +195,7 @@ export function parseBlocks(lines) {
           trail++;
         }
         lastBlank = trail > 0;
-        items.push({ marker: cur.marker, start: cur.start, blocks: parseBlocks(body) });
+        items.push({ marker: cur.marker, start: cur.start, blocks: parseBlocks(body, depth + 1) });
         if (lastBlank && (i >= lines.length || !itemOf(lines[i]))) break;
       }
       blocks.push({ type: "list", ordered, items, start, end: i, complete: false });
@@ -236,9 +240,15 @@ const BARE_URL = /^https?:\/\/[^\s<>()]*[^\s<>().,;:!?'"*_~]/;
 const merge = (style, extra) => (style ? { ...style, ...extra } : extra);
 
 /** Inline markdown to spans. `base` is the surrounding style. */
-export function inline(text, base = undefined) {
-  // Per-text indexes so unmatched openers cost O(n) in all, not O(n) each.
-  const ctx = { text, fail: new Map(), brackets: null, ticks: new Map() };
+const MAX_INLINE_DEPTH = 16;
+
+export function inline(text, base = undefined, depth = 0) {
+  // Nested emphasis and link labels deeper than this stay plain text: model
+  // output must never overflow the stack (and take the TUI down with it).
+  if (depth > MAX_INLINE_DEPTH) return text ? [base ? { text, style: base } : { text }] : [];
+  // Per-text indexes, built once from the start, so unmatched openers cost O(n)
+  // in all and every scan agrees on where code spans are.
+  const ctx = { text, fail: new Map(), brackets: null, spans: codeSpans(text), covered: null };
   const out = [];
   let buf = "";
   const flush = () => {
@@ -274,22 +284,16 @@ export function inline(text, base = undefined) {
     if (c === "`") {
       let n = 0;
       while (text[i + n] === "`") n++;
-      const fence = "`".repeat(n);
-      let j = text.indexOf(fence, i + n);
-      while (j >= 0 && text[j + n] === "`") {
-        let k = j;
-        while (text[k] === "`") k++;
-        j = text.indexOf(fence, k);
-      }
-      if (j >= 0) {
+      const end = ctx.spans.get(i);
+      if (end !== undefined) {
         flush();
-        let code = text.slice(i + n, j).replace(/\n/g, " ");
+        let code = text.slice(i + n, end - n + 1).replace(/\n/g, " ");
         if (/^ .* $/.test(code) && code.trim()) code = code.slice(1, -1);
         out.push({ text: code, style: merge(base, S.code) });
-        i = j + n;
+        i = end + 1;
         continue;
       }
-      buf += fence;
+      buf += "`".repeat(n);
       i += n;
       continue;
     }
@@ -297,7 +301,7 @@ export function inline(text, base = undefined) {
       const link = parseLink(ctx, i);
       if (link) {
         flush();
-        const label = inline(link.label, merge(base, { underline: true, link: link.url }));
+        const label = inline(link.label, merge(base, { underline: true, link: link.url }), depth + 1);
         out.push(...label);
         const shown = label.map((s) => s.text).join("");
         if (shown !== link.url && `mailto:${shown}` !== link.url) out.push({ text: ` (${link.url})`, style: merge(base, S.url) });
@@ -327,10 +331,16 @@ export function inline(text, base = undefined) {
       const em = parseEmphasis(ctx, i);
       if (em) {
         flush();
-        out.push(...inline(em.inner, merge(base, em.style)));
+        out.push(...inline(em.inner, merge(base, em.style), depth + 1));
         i = em.end;
         continue;
       }
+      // No emphasis opens here: the whole delimiter run is text (linear on "*****…").
+      let j = i;
+      while (text[j] === c) j++;
+      buf += text.slice(i, j);
+      i = j;
+      continue;
     }
     buf += c;
     i++;
@@ -362,24 +372,78 @@ function parseLink(ctx, i) {
   return { label: text.slice(i + 1, j), url: m[1], end: j + 1 + m[0].length };
 }
 
-// The end of the code span whose backtick run starts at j, or -1 (cached per text).
-function codeSpanEnd(ctx, j) {
-  if (ctx.ticks.has(j)) return ctx.ticks.get(j);
-  const text = ctx.text;
-  let n = 0;
-  while (text[j + n] === "`") n++;
-  const close = text.indexOf("`".repeat(n), j + n);
-  const end = close > 0 ? close + n - 1 : -1;
-  ctx.ticks.set(j, end);
-  return end;
+// Code spans, scanned once from the start: backtick-run start → index of the
+// span's last backtick. A run is closed by the next run of the same length;
+// one that is never closed is literal. Escaped backticks don't open spans.
+function codeSpans(text) {
+  const spans = new Map();
+  const runs = new Map(); // run length → positions of runs not yet used, in order
+  const order = [];
+  for (let i = 0; i < text.length; ) {
+    if (text[i] === "\\") {
+      i += 2;
+      continue;
+    }
+    if (text[i] !== "`") {
+      i++;
+      continue;
+    }
+    let n = 0;
+    while (text[i + n] === "`") n++;
+    order.push([i, n]);
+    i += n;
+  }
+  // Pair left to right: an opener takes the next run of the same length after it.
+  // Runs inside a span are content, so they can't open or close another.
+  const next = new Map();
+  for (let k = order.length - 1; k >= 0; k--) {
+    const [, n] = order[k];
+    next.set(k, runs.get(n) ?? -1);
+    runs.set(n, k);
+  }
+  let k = 0;
+  while (k < order.length) {
+    const close = next.get(k);
+    if (close !== -1 && close !== undefined) {
+      const [start, n] = order[k];
+      spans.set(start, order[close][0] + n - 1);
+      k = close + 1;
+    } else k++;
+  }
+  return spans;
 }
 
 // No closer exists after a failed opener of the same kind, so later openers
-// of that kind fail at once (they search a subset of the same range).
+// of that kind fail at once (they search a subset of the same range). Not for
+// an opener inside a code span the earlier scan jumped over (reached because a
+// link swallowed the span's opening backtick): that one scans for itself.
 function failedFrom(ctx, key, i) {
   const at = ctx.fail.get(key);
-  return at !== undefined && i >= at;
+  return at !== undefined && i >= at && !insideSpan(ctx, i);
 }
+
+function insideSpan(ctx, i) {
+  if (!ctx.spans.size) return false;
+  ctx.covered ??= [...ctx.spans].sort((a, b) => a[0] - b[0]);
+  let lo = 0;
+  let hi = ctx.covered.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const [start, end] = ctx.covered[mid];
+    if (i < start) hi = mid - 1;
+    else if (i > end) lo = mid + 1;
+    else return true;
+  }
+  return false;
+}
+
+// CommonMark's flanking rules: an opener isn't followed by whitespace, and if
+// it is followed by punctuation it comes after whitespace or punctuation; a
+// closer mirrors that. "a*`` b*" then has no emphasis, as in CommonMark.
+const isSpace = (ch) => ch === undefined || /\s/.test(ch);
+const isPunct = (ch) => ch !== undefined && /[\p{P}\p{S}]/u.test(ch);
+const leftFlanking = (before, after) => !isSpace(after) && (!isPunct(after) || isSpace(before) || isPunct(before));
+const rightFlanking = (before, after) => !isSpace(before) && (!isPunct(before) || isSpace(after) || isPunct(after));
 function markFailed(ctx, key, i) {
   const at = ctx.fail.get(key);
   if (at === undefined || i < at) ctx.fail.set(key, i);
@@ -389,29 +453,31 @@ function parseEmphasis(ctx, i) {
   const text = ctx.text;
   const c = text[i];
   let n = 0;
-  while (text[i + n] === c) n++;
+  while (n < 4 && text[i + n] === c) n++; // only the first 3 matter
   if (c === "~" && n !== 2) return null;
   const run = c.repeat(Math.min(n, c === "~" ? 2 : 3));
   const len = run.length;
   const after = text[i + len];
-  // A left-flanking opener: not followed by whitespace; "_" not inside a word.
-  if (after === undefined || /\s/.test(after)) return null;
+  // A left-flanking opener; "_" not inside a word.
+  if (after === undefined || !leftFlanking(text[i - 1], after)) return null;
   if (c === "_" && i > 0 && /[\p{L}\p{N}]/u.test(text[i - 1])) return null;
   const key = `${c}${len}`;
   if (failedFrom(ctx, key, i)) return len > 1 && c !== "~" ? parseEmphasisRun(ctx, i, len - 1) : null;
-  for (let j = i + len + 1; j <= text.length - len; j++) {
+  // From right after the opener, so a code span starting there is skipped whole;
+  // a closer needs at least one character of content.
+  for (let j = i + len; j <= text.length - len; j++) {
     if (text[j] === "\\") {
       j++;
       continue;
     }
     if (text[j] === "`") {
       // Skip code spans: emphasis never closes inside one.
-      const end = codeSpanEnd(ctx, j);
-      if (end > 0) j = end;
+      const end = ctx.spans.get(j);
+      if (end !== undefined) j = end;
       else while (text[j + 1] === "`") j++;
       continue;
     }
-    if (text.startsWith(run, j) && text[j + len] !== c && !/\s/.test(text[j - 1])) {
+    if (j > i + len && text.startsWith(run, j) && text[j + len] !== c && text[j - 1] !== c && rightFlanking(text[j - 1], text[j + len])) {
       if (c === "_" && /[\p{L}\p{N}]/u.test(text[j + len] ?? "")) continue;
       const style = c === "~" ? { strike: true } : len === 3 ? { bold: true, italic: true } : len === 2 ? { bold: true } : { italic: true };
       return { inner: text.slice(i + len, j), style, end: j + len };
@@ -432,8 +498,18 @@ function parseEmphasisRun(ctx, i, len) {
   const run = c.repeat(len);
   const key = `run${c}${len}`;
   if (failedFrom(ctx, key, i)) return null;
-  for (let j = i + len + 1; j <= text.length - len; j++) {
-    if (text.startsWith(run, j) && !/\s/.test(text[j - 1]) && text[j - 1] !== c) {
+  for (let j = i + len; j <= text.length - len; j++) {
+    if (text[j] === "\\") {
+      j++;
+      continue;
+    }
+    if (text[j] === "`") {
+      const end = ctx.spans.get(j);
+      if (end !== undefined) j = end;
+      else while (text[j + 1] === "`") j++;
+      continue;
+    }
+    if (j > i + len && text.startsWith(run, j) && text[j - 1] !== c && rightFlanking(text[j - 1], text[j + len])) {
       const style = len === 2 ? { bold: true } : { italic: true };
       return { inner: text.slice(i + len, j), style, end: j + len };
     }
@@ -528,7 +604,18 @@ function renderTable(block, width) {
   return out.map(normalize);
 }
 
+// A block that fails to render (a bug, or something pathological in the
+// model's text) shows as plain wrapped text instead of taking the TUI down.
 function renderBlock(b, width, depth = 0) {
+  try {
+    return renderBlockUnsafe(b, width, depth);
+  } catch {
+    const raw = b.lines ?? b.body ?? [b.text ?? ""];
+    return wrap([{ text: raw.join("\n") }], Math.max(1, width));
+  }
+}
+
+function renderBlockUnsafe(b, width, depth = 0) {
   switch (b.type) {
     case "heading": {
       const style = b.level === 1 ? S.h1 : S.h;
@@ -643,13 +730,17 @@ export function createMarkdownStream({ width = 80 } = {}) {
     return { out };
   }
 
-  function liveTail(region) {
+  function liveTail(region, fenced = false) {
     const tail = [];
     let size = 0;
-    for (let i = region.length - 1; i >= 0 && size < LIVE_TAIL_CHARS; i--) {
+    let from = region.length;
+    for (let i = region.length - 1; i >= (fenced ? 1 : 0) && size < LIVE_TAIL_CHARS; i--) {
       tail.unshift(region[i]);
       size += region[i].length + 1;
+      from = i;
     }
+    // Inside an open fence the tail is still code: keep the fence line in front.
+    if (fenced && from > 0) tail.unshift(region[0]);
     // One enormous line: keep its end, from a word boundary.
     if (tail.length === 1 && tail[0].length > LIVE_TAIL_CHARS) {
       const cut = tail[0].slice(-LIVE_TAIL_CHARS);
@@ -670,22 +761,22 @@ export function createMarkdownStream({ width = 80 } = {}) {
     /** Provisional lines for the live region: the held-back block, partial line included. */
     live() {
       if (finished) return [];
-      const region = lines().slice(base);
+      let region = lines().slice(base);
       const partial = sanitize(raw.slice(gated), "transcript");
       if (partial) region.push(partial);
+      // An open fence that is streaming: its committed lines are not shown again.
+      if (codeEmitted) region = [region[0], ...region.slice(1 + codeEmitted)];
       let size = 0;
       for (const l of region) size += l.length + 1;
       // A very long held-back block (a huge paragraph or list) is shown by its
       // tail only: rendering all of it on every frame would be too slow. What
       // commits stays exact; only this provisional view is cut.
-      if (size > LIVE_EXACT_CHARS) return liveTail(region);
+      if (size > LIVE_EXACT_CHARS) return liveTail(region, codeEmitted > 0);
       const blocks = parseBlocks(region);
       if (!blocks.length) return [];
-      const b = blocks[0];
-      const rest = b.type === "code" && codeEmitted ? [{ ...b, body: b.body.slice(codeEmitted) }, ...blocks.slice(1)] : blocks;
       const out = [];
-      rest.forEach((x, i) => {
-        if (i > 0 || (blocksBefore > 0 && !(x === rest[0] && codeEmitted))) out.push([]);
+      blocks.forEach((x, i) => {
+        if (i > 0 || (blocksBefore > 0 && !(i === 0 && codeEmitted))) out.push([]);
         out.push(...renderBlock(x, width));
       });
       return out;

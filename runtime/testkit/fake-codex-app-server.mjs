@@ -85,6 +85,8 @@ function complete_(msg) {
   if (msg.method === "thread/started") return { ...msg, params: { ...p, thread: fullThread(p.thread) } };
   if (msg.method === "item/commandExecution/requestApproval") return { ...msg, params: { itemId: `cmd-${msg.id}`, startedAtMs: 0, ...p } };
   if (msg.method === "item/fileChange/requestApproval") return { ...msg, params: { startedAtMs: 0, ...p } };
+  if (msg.method === "execCommandApproval") return { ...msg, params: { conversationId: p.threadId ?? "c", callId: `call-${msg.id}`, cwd: process.cwd(), parsedCmd: [], ...p } };
+  if (msg.method === "thread/compacted") return { ...msg, params: { turnId: "compact", ...p } };
   if (msg.method === "item/permissions/requestApproval") return { ...msg, params: { itemId: `perm-${msg.id}`, cwd: process.cwd(), startedAtMs: 0, ...p } };
   return msg;
 }

@@ -18,7 +18,7 @@ import { ARM_MS, createRequestModal } from "./view/modals.mjs";
 import { sanitize } from "./terminal/sanitize.mjs";
 import { truncate } from "./terminal/text.mjs";
 import { INIT_PROMPT } from "./init-prompt.mjs";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { copyText, exportMarkdown, imagePath, lastAgentText, renderHooks, renderMcp, renderSkills, renderUsage, terminalSetup, transcriptLines } from "./commands.mjs";
 
@@ -174,10 +174,14 @@ export function createApp({
   // An item whose turn has ended can't change any more, even if Codex never
   // completed it (a crash, a declined patch): it must not hold back the
   // scrollback behind it.
+  // A turn is live only while it is the running one (or one is being
+  // started): a resumed turn still "inProgress" in history is over here.
+  // An item with no known turn (a user's ! command) stays open while Codex
+  // is up; a crash settles it.
   function turnOver(it) {
     const t = it.turnId ? st.turns.find((x) => x.id === it.turnId) : null;
-    if (t) return t.status !== "inProgress";
-    return !turnActive();
+    if (t) return t.status !== "inProgress" || (t.id !== st.activeTurnId && !st.starting);
+    return st.engine.state !== "ready" && st.engine.state !== "restarting";
   }
   const open = (it) => (it.streaming || it.status === "inProgress") && !turnOver(it);
   const settledView = (it) => (it.streaming || it.status === "inProgress" ? { ...it, streaming: false, incomplete: true } : it);
@@ -312,6 +316,8 @@ export function createApp({
       modal = null;
     }
     if (!modal && head) {
+      pager = null; // the request comes first
+      lastCtrlC = -Infinity; // a Ctrl+C meant for the new prompt must not quit
       const diff = head.kind === "approval-patch" ? (st.items.get(head.itemId)?.changes ?? null) : null;
       const view = createRequestModal(head, { now, armMs, diff });
       if (!view) {
@@ -404,7 +410,8 @@ export function createApp({
       // Ctrl+T: the whole transcript, paged inside the live region.
       const view = Math.max(1, rows - 2);
       pager.top = Math.max(0, Math.min(pager.top, pager.lines.length - view));
-      lines.push(truncate([{ text: `Transcript ${pager.top + 1}\u{2013}${Math.min(pager.lines.length, pager.top + view)} of ${pager.lines.length}  `, style: { bold: true } }, { text: "\u{2191}\u{2193} pgup pgdn home end \u{b7} q or esc closes", style: DIM }], w));
+      const where = pager.lines.length ? `Transcript ${pager.top + 1}\u{2013}${Math.min(pager.lines.length, pager.top + view)} of ${pager.lines.length}  ` : "The transcript is empty  ";
+      lines.push(truncate([{ text: where, style: { bold: true } }, { text: "\u{2191}\u{2193} pgup pgdn home end \u{b7} q or esc closes", style: DIM }], w));
       lines.push(...pager.lines.slice(pager.top, pager.top + view));
       renderer.frame({ lines, cursor: { row: 0, col: 0 } });
       return;
@@ -598,7 +605,8 @@ export function createApp({
       case "copy": {
         const t = lastAgentText(st);
         if (!t) return warn("No answer to copy yet.");
-        return (actions.copy ?? copyText)(t, { write: (d) => io.write(d) }).then((r) => (r.ok ? info0(`Copied the last answer${r.via && r.via !== "terminal" ? ` (${r.via})` : ""}.`) : warn("Couldn't reach a clipboard. /raw prints it for selecting.")));
+        // Sanitized like /raw: no escape sequence or bidi control rides along into a later paste.
+        return (actions.copy ?? copyText)(sanitize(t, "transcript"), { write: (d) => io.write(d) }).then((r) => (r.ok ? info0(`Copied the last answer${r.via && r.via !== "terminal" ? ` (${r.via})` : ""}.`) : warn("Couldn't reach a clipboard. /raw prints it for selecting.")));
       }
       case "raw": {
         const t = lastAgentText(st);
@@ -609,7 +617,18 @@ export function createApp({
         if (!st.thread) return warn("Nothing to export yet.");
         const name = arg || `ad-conversation-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.md`;
         const file = path.resolve(cwd, name);
-        if (path.relative(cwd, file).startsWith("..") || path.isAbsolute(path.relative(cwd, file))) return warn("/export writes inside this folder only.");
+        const rel = path.relative(cwd, file);
+        const outside = rel === ".." || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel);
+        // No device names (con, nul, com1…), no alternate data streams, no path through a link that leads out.
+        const device = /^(con|prn|aux|nul|com\d|lpt\d)(\..*)?$/i.test(path.basename(file));
+        if (outside || device || rel.includes(":")) return warn("/export writes a plain file inside this folder only.");
+        try {
+          const parent = realpathSync(path.dirname(file));
+          const root = realpathSync(cwd);
+          if (parent !== root && !parent.startsWith(root + path.sep)) return warn("/export writes a plain file inside this folder only.");
+        } catch {
+          return warn("That folder doesn't exist.");
+        }
         if (existsSync(file)) return warn(`${clean(name)} exists already: pick another name.`);
         try {
           writeFileSync(file, exportMarkdown(st), { flag: "wx" });
@@ -759,12 +778,12 @@ export function createApp({
     if (!prompts.length) return info0("No earlier prompts in this conversation.");
     openPicker(
       "backtrack",
-      prompts.reverse().map((p, i) => ({ label: clean(p.text).slice(0, 200) || "(empty)", hint: i === 0 ? "last" : `${i + 1} back`, value: p })),
+      prompts.reverse().map((p, i) => ({ label: clean(p.text).slice(0, 200) || "(empty)", hint: i === 0 ? "latest" : `${i} before it`, value: p })),
       (p) => {
         session
           .revert(p.turnId)
           .then(() => {
-            composer.set(p.text);
+            if (!composer.text) composer.set(p.text);
             info0(`Rewound to before \u{201c}${clean(p.text).slice(0, 60)}\u{201d}. Files on disk weren't changed.`);
             draw();
           })
@@ -772,6 +791,27 @@ export function createApp({
       },
       { title: "Rewind to" },
     );
+  }
+
+  // Alt+, / Alt+.: the current model's own effort levels, from where it is now.
+  const EFFORT_ORDER = ["none", "minimal", "low", "medium", "high", "xhigh"];
+  let modelsCache = null;
+  async function stepEffort(dir) {
+    modelsCache ??= await session.engine.server.request("model/list", {}).then((r) => r?.data ?? [], () => []);
+    const model = st.config.model ?? null;
+    const m = modelsCache.find((x) => x.model === model || x.id === model) ?? modelsCache.find((x) => x.isDefault);
+    let levels = (m?.supportedReasoningEfforts ?? []).map((e) => e.reasoningEffort ?? e).filter((e) => EFFORT_ORDER.includes(e));
+    if (!levels.length) levels = ["low", "medium", "high"];
+    levels.sort((a, b) => EFFORT_ORDER.indexOf(a) - EFFORT_ORDER.indexOf(b));
+    const current = st.config.effort ?? m?.defaultReasoningEffort ?? "medium";
+    // The next level above (or below) the current one, among the model's levels.
+    const rank = EFFORT_ORDER.indexOf(current);
+    const above = levels.filter((l) => EFFORT_ORDER.indexOf(l) > rank);
+    const below = levels.filter((l) => EFFORT_ORDER.indexOf(l) < rank);
+    const next = dir > 0 ? (above[0] ?? levels.at(-1)) : (below.at(-1) ?? levels[0]);
+    session.setNextTurn({ effort: next });
+    note = { level: "info", text: `Reasoning effort: ${next} (from the next turn). alt+, lower \u{b7} alt+. higher` };
+    draw();
   }
 
   async function pickModel() {
@@ -832,6 +872,7 @@ export function createApp({
     try {
       const images = attachments;
       attachments = [];
+      const raw = text;
       if (privateMode && !shown) text = `<private>${text}</private>`;
       const r = session.submit(images.length ? [{ type: "text", text }, ...images.map((p) => ({ type: "localImage", path: p }))] : text);
       if (shown) {
@@ -846,7 +887,8 @@ export function createApp({
         },
         (err) => {
           warn(`Not sent: ${err.message}`);
-          if (!composer.text && !shown) composer.set(text);
+          if (!composer.text && !shown) composer.set(raw);
+          if (images.length && !attachments.length) attachments = images;
           drawSoon();
         },
       );
@@ -875,7 +917,8 @@ export function createApp({
     if (st.engine.state === "crashed") restartEngine(); // the prompt waits in the queue meanwhile
     const t = text.trim();
     const m = /^\/([a-z][\w-]*)(?:\s+([\s\S]*))?$/i.exec(t);
-    if (m && SLASH_COMMANDS.some((c) => c.name === m[1].toLowerCase())) return void slash(m[1].toLowerCase(), (m[2] ?? "").trim());
+    // Any failure inside a command (a rejected request, a renderer error) is shown, never left unhandled.
+    if (m && SLASH_COMMANDS.some((c) => c.name === m[1].toLowerCase())) return void Promise.resolve(slash(m[1].toLowerCase(), (m[2] ?? "").trim())).catch(fail);
     // A one-line "!cmd" runs in the shell; a multi-line paste that starts with "!" (an image link…) is a prompt.
     if (t.startsWith("!") && t.length > 1 && !t.includes("\n")) {
       if (turnActive()) return warn("Wait for the turn to finish (or esc) before running a shell command.");
@@ -926,14 +969,14 @@ export function createApp({
       return draw();
     }
     if (ev.type === "key" && ev.ctrl && ev.name === "l") return void renderer.redraw();
-    if (pager) {
+    if (pager && !modal) {
       const view = Math.max(1, height() - 2);
       if (ev.type === "key" && (ev.name === "escape" || (ev.ctrl && ev.name === "t"))) pager = null;
       else if (ev.type === "text" && ev.text === "q") pager = null;
       else if (ev.type === "key" && ev.name === "up") pager.top--;
       else if (ev.type === "key" && ev.name === "down") pager.top++;
       else if (ev.type === "key" && ev.name === "pageup") pager.top -= view;
-      else if (ev.type === "key" && (ev.name === "pagedown" || ev.name === "space")) pager.top += view;
+      else if ((ev.type === "key" && (ev.name === "pagedown" || ev.name === "space")) || (ev.type === "text" && ev.text === " ")) pager.top += view;
       else if (ev.type === "key" && ev.name === "home") pager.top = 0;
       else if (ev.type === "key" && ev.name === "end") pager.top = Infinity;
       if (pager) pager.top = Math.max(0, Math.min(pager.top, pager.lines.length - view));
@@ -978,13 +1021,10 @@ export function createApp({
       return;
     }
     if (ev.type === "key" && ev.alt && (ev.name === "," || ev.name === ".")) {
-      const levels = ["low", "medium", "high", "xhigh"];
-      const cur = levels.indexOf(st.config.effort ?? "medium");
-      const next = levels[Math.max(0, Math.min(levels.length - 1, (cur < 0 ? 1 : cur) + (ev.name === "." ? 1 : -1)))];
-      session.setNextTurn({ effort: next });
-      note = { level: "info", text: `Reasoning effort: ${next} (from the next turn). alt+, lower \u{b7} alt+. higher` };
-      return draw();
+      stepEffort(ev.name === "." ? 1 : -1).catch(fail);
+      return;
     }
+    if (ev.type === "text" || ev.type === "paste") lastCtrlC = -Infinity; // new text: Ctrl+C clears it, not quit
     if ((ev.type === "text" || ev.type === "paste") && !turnActive()) actions.onTyping?.();
     if (ev.type === "text" && ev.text === "?" && !composer.text) {
       overlay = true;
