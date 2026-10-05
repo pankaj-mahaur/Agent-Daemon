@@ -47,8 +47,10 @@ export function createTranscript({ commit, width }) {
         buf = "";
       }
       kind = k;
-      buf += String(chunk);
-      flushComplete();
+      const text = String(chunk);
+      buf += text;
+      // Only a chunk with a newline can complete a line (keeps long lines linear).
+      if (text.includes("\n")) flushComplete();
     },
     /** End the unfinished line (end of a turn). */
     end() {
@@ -116,7 +118,17 @@ export function createPreviewApp({ io, renderer, makeSession, header = [], hints
     new Promise((resolve) => {
       // Approval text hides nothing: controls, bidi and zero-width characters are shown.
       const text = sanitize(question, "approval").replace(/\s*\[y\]es[^\n]*$/, "");
-      approval = { lines: text.split("\n"), resolve, armedAt: now() };
+      const lines = text.split("\n");
+      if (!busy) {
+        // Queued behind a prompt of a turn that has ended: decline it.
+        renderer.commit([[{ text: "  declined (the turn ended): ", style: WARN }, { text: lines[0] ?? "", style: DIM }]]);
+        return resolve("n");
+      }
+      // The whole request goes into history first, so a long one can be read in
+      // full (scroll up) even when the prompt below only shows its start and end.
+      transcript.end();
+      renderer.commit([[], ...lines.map((l, i) => [{ text: `  ${l}`, style: i === 0 ? { bold: true } : undefined }])]);
+      approval = { lines, resolve, armedAt: now() };
       draw();
     });
   const session = makeSession({ out: sinks.out, err: sinks.err, ask: serializedAsk(askOnce) });
@@ -125,8 +137,8 @@ export function createPreviewApp({ io, renderer, makeSession, header = [], hints
     const a = approval;
     approval = null;
     const label = key === "y" ? "approved" : key === "a" ? "approved for this session" : "declined";
-    // The whole request, so history shows what was approved, not just "Run command?".
-    renderer.commit([[{ text: `  ${label}: `, style: key === "n" ? WARN : DIM }, { text: a.lines[0] ?? "", style: DIM }], ...a.lines.slice(1).map((l) => [{ text: `  ${l}`, style: DIM }])]);
+    // The request itself is already in history, right above.
+    renderer.commit([[{ text: `  ${label}: `, style: key === "n" ? WARN : DIM }, { text: a.lines[0] ?? "", style: DIM }]]);
     a.resolve(key);
     draw();
   }
@@ -153,6 +165,7 @@ export function createPreviewApp({ io, renderer, makeSession, header = [], hints
     } finally {
       // A prompt still open when the turn ends (engine gone, turn failed) is declined.
       if (approval) answer("n");
+      lastInterruptAt = -Infinity;
       clearInterval(tick);
       tick = null;
       busy = false;
@@ -180,17 +193,23 @@ export function createPreviewApp({ io, renderer, makeSession, header = [], hints
   // Esc / Ctrl+C during a turn. A second Ctrl+C soon after quits even if the
   // turn never stops (raw mode has no SIGINT, so there would be no way out).
   function interruptOrQuit(force) {
-    if (force && now() - lastInterruptAt < FORCE_QUIT_MS) return quit();
+    if (!force) return void session.interrupt(); // Esc: interrupt only
+    if (now() - lastInterruptAt < FORCE_QUIT_MS) return quit();
     lastInterruptAt = now();
-    notice = force ? "Interrupting. Ctrl+C again quits." : null;
+    notice = "Interrupting. Ctrl+C again quits.";
     session.interrupt();
+    draw();
   }
 
   function onInput(ev) {
     if (approval) {
       const key = approvalKey(ev);
-      // Declining is always safe; approving needs the prompt to have been visible.
-      if (key === "n" || (key && now() - approval.armedAt >= armMs)) answer(key);
+      // Declining is always safe; approving needs a pause of armMs since the
+      // prompt appeared and since the last key, so typing, a held key or its
+      // auto-repeat never approves.
+      if (key === "n") answer(key);
+      else if (key && now() - approval.armedAt >= armMs) answer(key);
+      else if (ev.type === "key" || ev.type === "text") approval.armedAt = now();
       return;
     }
     if (ev.type === "paste") composer += sanitize(ev.text, "transcript");
@@ -221,7 +240,16 @@ export function createPreviewApp({ io, renderer, makeSession, header = [], hints
     }
     if (approval) {
       lines.push([]);
-      for (const l of approval.lines) for (const w of wrap([{ text: l }], Math.max(4, cols - 3))) lines.push([{ text: "  " }, ...w]);
+      const rows = [];
+      for (const l of approval.lines) for (const w of wrap([{ text: l }], Math.max(4, cols - 3))) rows.push([{ text: "  " }, ...w]);
+      const room = Math.max(4, io.size().rows - 8);
+      if (rows.length <= room) lines.push(...rows);
+      else {
+        const head = room - 3;
+        lines.push(...rows.slice(0, head));
+        lines.push([{ text: `  \u{2026} ${rows.length - head - 2} more lines: the full request is in the scrollback above`, style: WARN }]);
+        lines.push(...rows.slice(-2));
+      }
       lines.push([{ text: "  y", style: ACCENT }, { text: " yes  " }, { text: "a", style: ACCENT }, { text: " always this session  " }, { text: "n", style: ACCENT }, { text: " no (esc)" }]);
     }
     if (notice) lines.push([{ text: notice, style: WARN }]);

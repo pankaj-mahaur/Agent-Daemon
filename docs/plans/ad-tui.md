@@ -515,6 +515,12 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
     - **Quit:** a second Ctrl+C within 1.5 s quits even if a turn won't stop.
     - **Streaming:** the live region wraps only the tail of an unfinished line, and redraws from output are coalesced to about 30 fps.
     - **History:** shows the whole approved request.
+  - **Re-review fixes** (1 high, 2 medium, 4 low):
+    - **Long requests:** the whole request goes into history before the prompt is armed. A request too tall for the live region shows its first and last lines with "N more lines: the full request is in the scrollback above".
+    - **Arming:** while a prompt is open it owns the input. Any key that doesn't answer it restarts the 400 ms window, so typing, a held key or its auto-repeat can't approve.
+    - **Queued prompts:** a prompt queued behind one when the turn ends is declined.
+    - **Force-quit:** only Ctrl+C counts, and the count restarts each turn. The notice is drawn at once.
+    - **Streaming:** only a chunk with a newline is searched for one.
   - **Pending (user): FC1.** Run a real turn with an approval live in Windows Terminal and Zed, then use it for a day or two (flicker, scrollback, copy, resize, paste). VS Code is secondary.
 
 ### Part 3 — Engine events
