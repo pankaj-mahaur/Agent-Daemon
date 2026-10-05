@@ -97,6 +97,12 @@ jobs:
         working-directory: runtime
         run: npm ci
 
+      # Ubuntu 24.04 runners block unprivileged user namespaces through AppArmor,
+      # which Codex's bubblewrap sandbox needs (plan S2). Runner VMs are throwaway.
+      - name: Allow user namespaces for the Linux sandbox
+        if: runner.os == 'Linux'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
       - name: Real Codex vs mock model
         working-directory: runtime
         env:
