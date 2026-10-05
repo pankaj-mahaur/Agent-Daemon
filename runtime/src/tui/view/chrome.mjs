@@ -173,7 +173,7 @@ export function renderShortcuts({ newline = "ctrl+j" } = {}, { width = 80 } = {}
  * ↑/↓ move, Enter picks, Esc closes.
  * items: [{label, hint?, value}]
  */
-export function createPicker({ items = [], title = "", placeholder = "type to filter" } = {}) {
+export function createPicker({ items = [], title = "", placeholder = "type to filter", showQuery = true } = {}) {
   const query = createComposer();
   let index = 0;
   let top = 0;
@@ -206,12 +206,12 @@ export function createPicker({ items = [], title = "", placeholder = "type to fi
     render({ width = 80, height = 10 } = {}) {
       const list = filtered();
       index = Math.min(index, Math.max(0, list.length - 1));
-      const rows = Math.max(1, height - 2);
+      const rows = Math.max(1, height - (showQuery ? 2 : 1));
       if (index < top) top = index;
       if (index >= top + rows) top = index - rows + 1;
       const out = [];
       const q = query.render({ width, prompt: title ? `${clean(title)} \u{203a} ` : "\u{203a} ", placeholder });
-      out.push(...q.lines.slice(0, 1));
+      if (showQuery) out.push(...q.lines.slice(0, 1));
       if (!list.length) out.push([{ text: "  no matches", style: S.dim }]);
       for (let i = top; i < Math.min(list.length, top + rows); i++) {
         const it = list[i];

@@ -258,7 +258,11 @@ async function onRequest({ id, method, params }) {
     case "config/read":
       return send({ id, result: { config: state.config, origins: {} } });
     case "config/batchWrite":
-      for (const e of params.edits) setPath(state.config, e.keyPath, e.value);
+      for (const e of params.edits) {
+        const cur = e.keyPath.split(".").reduce((o, k) => (o && typeof o === "object" ? o[k] : undefined), state.config);
+        const merge = e.mergeStrategy === "upsert" && cur && typeof cur === "object" && e.value && typeof e.value === "object";
+        setPath(state.config, e.keyPath, merge ? { ...cur, ...e.value } : e.value);
+      }
       if (configFile) writeFileSync(configFile, JSON.stringify(state.config));
       return send({ id, result: { status: "ok", version: "v1", filePath: "config.toml" } });
     case "thread/start":
@@ -365,6 +369,10 @@ async function onRequest({ id, method, params }) {
       return send({ id, result: {} });
     case "thread/goal/set":
       return send({ id, result: { goal: { threadId: params.threadId, objective: params.objective, status: "active", tokensUsed: 0, timeUsedSeconds: 0, createdAt: 0, updatedAt: 0 } } });
+    case "fuzzyFileSearch":
+      return send({ id, result: { files: ["src/main.mjs", "src/app.mjs", "README.md"].filter((f) => f.includes(params?.query ?? "")).map((path) => ({ root: params.roots?.[0] ?? "", path, match_type: "file", file_name: path.split("/").pop(), score: 1, indices: null })) } });
+    case "model/list":
+      return send({ id, result: { data: [{ id: "fake-model", model: "fake-model", displayName: "Fake model", description: "for tests", hidden: false, supportedReasoningEfforts: [{ reasoningEffort: "low" }, { reasoningEffort: "high" }], defaultReasoningEffort: "low", isDefault: true }], nextCursor: null } });
     case "thread/list":
       return send({ id, result: { data: [{ id: "thread-old", preview: "fix the\nflaky test", cwd: params?.cwd ?? "", updatedAt: 1 }] } });
     case "test/fail":

@@ -215,11 +215,12 @@ export class Engine extends EventEmitter {
     return (await this.server.request("config/read", {})).config ?? {};
   }
 
-  // edits: [[keyPath, value], …]; a null value deletes the key. Goes through
-  // Codex itself so we never hand-edit TOML that Codex also writes.
+  // edits: [[keyPath, value, strategy?], …]; a null value deletes the key;
+  // strategy "upsert" merges a table into what is there. Goes through Codex
+  // itself so we never hand-edit TOML that Codex also writes.
   writeConfig(edits, { reload = true } = {}) {
     return this.server.request("config/batchWrite", {
-      edits: edits.map(([keyPath, value]) => ({ keyPath, value, mergeStrategy: "replace" })),
+      edits: edits.map(([keyPath, value, strategy]) => ({ keyPath, value, mergeStrategy: strategy === "upsert" ? "upsert" : "replace" })),
       reloadUserConfig: reload,
     });
   }

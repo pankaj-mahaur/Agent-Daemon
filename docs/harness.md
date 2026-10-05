@@ -63,13 +63,43 @@ When the agent wants to run something outside its sandbox or edit outside the wo
 | `/status` | login, model, folder, thread |
 | `/exit` | quit |
 
-### `ad tui --preview`: the coming terminal UI (preview)
+### `ad tui`: the terminal UI (early)
 
 ```bash
-ad tui --preview                 # in the current folder
+ad tui                           # in the current folder
+ad tui --last                    # continue the newest conversation here
+ad tui --resume <thread-id>      # continue a given one
 ```
 
-This is an early preview of the Codex-style terminal UI. History stays in your terminal's own scrollback, so scrolling, selecting and copying work as usual. Only the bottom few lines (the composer and the footer) are redrawn.
+A Codex-style terminal UI on ad's own Codex home. It is new: expect rough edges, and use `ad chat` if something gets in the way.
+- **First run in a folder:** ad asks once whether you trust it. Trusted folders may load their own `.codex` config, hooks and skills.
+- **Not signed in:** a sign-in panel offers ChatGPT, an OpenAI key or OpenRouter. It runs `ad auth login …` for you.
+- **Keys:**
+  - Enter sends. While a turn runs, Enter steers it and Tab queues the prompt for afterwards; Tab on an empty composer pulls the last queued prompt back.
+  - The newline key depends on the terminal: Shift+Enter in Zed, Ctrl+Enter in Windows Terminal, Ctrl+J anywhere, or `\` + Enter.
+  - Esc interrupts. Ctrl+C closes a popup, then clears the composer, then interrupts; pressing it twice quickly quits.
+  - ↑/↓ walk your prompt history (`~/.agent-daemon/tui/history.jsonl`), Ctrl+R searches it, `?` shows every shortcut.
+  - `@` completes file names, `/` completes commands, `!cmd` runs a shell command (unsandboxed, like Codex's).
+- **Approvals:** a prompt lists what Codex offers (yes, yes for this session, "don't ask again for this prefix", no). Keys pressed in the first 400 ms are ignored, so type-ahead never approves. Hidden characters in commands are shown as `<U+…>`.
+- **Commands:** `/help`, `/new`, `/resume`, `/model`, `/permissions`, `/status`, `/goal`, `/review`, `/diff`, `/compact`, `/init`, `/remember`, `/memory`, `/login`, `/logout`, `/codex`, `/ad <command>`, `/quit`.
+- **`/codex`** opens the stock Codex UI on the same conversation (ad lets go of it meanwhile) and comes back when you quit it.
+- **On exit** ad prints how to continue: `ad tui --resume <id>`.
+- **Requirements:** an interactive terminal, and on Windows Node 22.17+ or 24.2+. Otherwise use `ad chat`.
+
+`ad tui --preview` still runs the earlier walking skeleton.
+
+### `ad codex`: the stock Codex UI on ad's home
+
+```bash
+ad codex                         # the pinned Codex's own UI
+ad codex resume --last           # any codex arguments
+```
+
+The pinned Codex, with `CODEX_HOME` set to ad's home (never `~/.codex`) and `--no-daemon`, so it never talks to your own Codex. Your `~/.claude/skills` are mirrored into the home's `skills/` folder first; folders you put there yourself are never touched. Project `.claude/skills` aren't visible in `ad codex`.
+
+### `ad tui --preview`: the walking skeleton
+
+This is the earlier preview of the Codex-style terminal UI. History stays in your terminal's own scrollback, so scrolling, selecting and copying work as usual. Only the bottom few lines (the composer and the footer) are redrawn.
 - **Keys:**
   - Enter sends.
   - The newline key depends on the terminal: Shift+Enter in Zed, Ctrl+Enter in Windows Terminal, Ctrl+J anywhere.

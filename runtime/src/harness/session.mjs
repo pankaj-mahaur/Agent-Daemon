@@ -232,6 +232,7 @@ export function createSession({
   }
 
   function onGlobal(ev) {
+    if (ev.type === "hook.started" || ev.type === "hook.completed") return void emitter.emit("hook", { ...ev.run, phase: ev.type.slice(5) });
     if (ev.type === "account") state.account = { ...(state.account ?? {}), ...ev.account };
     else if (ev.type === "rateLimits") state.rateLimits = ev.limits;
     else if (ev.type === "mcp.status") state.mcp.set(ev.server, { status: ev.status, error: ev.error, failureReason: ev.failureReason });
@@ -345,6 +346,10 @@ export function createSession({
       }
       case "notice":
         return notice(ev.level, ev.code, ev.message);
+      case "hook.started":
+      case "hook.completed":
+        // ad's hook rows (recalled memory, guard blocks…) for the front end.
+        return void emitter.emit("hook", { ...ev.run, phase: ev.type.slice(5), threadId: ev.threadId });
       case "thread.reverted":
       case "thread.compacted":
         break;

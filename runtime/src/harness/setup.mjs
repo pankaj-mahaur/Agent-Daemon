@@ -79,8 +79,12 @@ export function canonicalPath(p) {
   return process.platform === "win32" ? r.toLowerCase() : r;
 }
 
-export function skillRoots({ cwd, home = homedir() } = {}) {
-  const roots = [path.join(home, ".claude", "skills")];
+// Once `ad codex` mirrors ~/.claude/skills into the engine home's skills/
+// (which Codex reads itself), passing it again as an extra root would list
+// every skill twice.
+export function skillRoots({ cwd, home = homedir(), engineHome = null } = {}) {
+  const mirrored = engineHome && existsSync(path.join(engineHome, "skills", ".ad-mirrored-claude-skills"));
+  const roots = mirrored ? [] : [path.join(home, ".claude", "skills")];
   if (cwd) roots.push(path.join(cwd, ".claude", "skills"));
   return roots.filter((r) => existsSync(r));
 }
@@ -157,7 +161,7 @@ export async function ensureHarnessSetup(engine, { cwd = process.cwd(), profile 
   });
 
   await step("skills", async () => {
-    report.skillRoots = roots ?? skillRoots({ cwd });
+    report.skillRoots = roots ?? skillRoots({ cwd, engineHome: engine.home });
     if (report.skillRoots.length) await engine.setSkillRoots(report.skillRoots);
   });
 

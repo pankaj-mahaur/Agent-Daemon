@@ -1,0 +1,757 @@
+// The terminal app (plan Part 6): input → intents, session state → frames.
+// Finished cells go into the terminal's scrollback (renderer.commit); the
+// live region holds what is still changing, the status line, a modal or
+// popup, the composer and the footer.
+//
+//   createApp({io, renderer, session, cwd, header, newline, history, actions, …})
+//     → {done: Promise<{reason}>, draw(), notice(level, text), commit(lines), dispose()}
+//
+// Terminal-free apart from `io` (size, input) and `renderer`, so it runs
+// against the test screens. Everything slow or outside the session (git,
+// file search, handing the terminal to another program) comes in `actions`.
+
+import { createComposer } from "./view/composer.mjs";
+import { createMarkdownStream } from "./view/markdown.mjs";
+import { isExploring, renderAdRow, renderCell, renderDiff, renderExploring, renderNotice, renderPlan } from "./view/cells.mjs";
+import { createPicker, renderFooter, renderShortcuts, renderStatus } from "./view/chrome.mjs";
+import { ARM_MS, createRequestModal } from "./view/modals.mjs";
+import { sanitize } from "./terminal/sanitize.mjs";
+import { truncate } from "./terminal/text.mjs";
+import { INIT_PROMPT } from "./init-prompt.mjs";
+
+export const FORCE_QUIT_MS = 1500;
+const FRAME_MS = 33;
+const LIVE_SHARE = 0.6; // at most this much of the screen for streaming cells
+
+const DIM = { dim: true };
+const WARN = { fg: "yellow" };
+
+export const SLASH_COMMANDS = [
+  { name: "help", desc: "what you can do here" },
+  { name: "new", desc: "start a new conversation" },
+  { name: "resume", desc: "continue an earlier conversation" },
+  { name: "model", desc: "choose the model and reasoning effort" },
+  { name: "permissions", desc: "what Codex may do without asking" },
+  { name: "status", desc: "account, model, sandbox, tokens, limits" },
+  { name: "goal", desc: "set a goal for this conversation (/goal clear)" },
+  { name: "review", desc: "review your uncommitted changes" },
+  { name: "diff", desc: "show git changes, untracked files included" },
+  { name: "compact", desc: "summarize the conversation to free context" },
+  { name: "init", desc: "create an AGENTS.md for this repo (Codex's prompt)" },
+  { name: "remember", desc: "save a note to ad's project memory" },
+  { name: "memory", desc: "ad's project memory (not Codex's /memories)" },
+  { name: "login", desc: "sign in (ChatGPT, OpenAI key, OpenRouter)" },
+  { name: "logout", desc: "sign out of Codex in ad's home" },
+  { name: "codex", desc: "open the stock Codex UI on this conversation" },
+  { name: "ad", desc: "run an ad command, e.g. /ad doctor" },
+  { name: "quit", desc: "exit ad" },
+  { name: "exit", desc: "exit ad" },
+];
+
+const PERMISSION_PRESETS = [
+  { label: "Read only", hint: "asks before any change", value: { sandboxPolicy: { type: "readOnly" }, approvalPolicy: "on-request" } },
+  { label: "Auto", hint: "edits this folder, asks for the rest (default)", value: { sandboxPolicy: { type: "workspaceWrite" }, approvalPolicy: "on-request" } },
+  { label: "Full access", hint: "no sandbox, never asks; use with care", value: { sandboxPolicy: { type: "dangerFullAccess" }, approvalPolicy: "never" } },
+];
+
+const clean = (t) => sanitize(String(t ?? ""), "transcript");
+
+/** The first bold phrase of a reasoning summary ("**Checking tests**"), for the status line. */
+export function reasoningHeadline(text) {
+  const m = /\*\*([^*\n]{1,80})\*\*/.exec(String(text ?? ""));
+  return m ? clean(m[1]).trim() : null;
+}
+
+function elapsed(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
+}
+
+export function createApp({
+  io,
+  renderer,
+  session,
+  cwd = process.cwd(),
+  header = [],
+  newline = "ctrl+j",
+  history = null,
+  actions = {},
+  meters = () => [],
+  chips = () => [],
+  info = {},
+  now = () => Date.now(),
+  setTimeout: setT = setTimeout,
+  clearTimeout: clearT = clearTimeout,
+  setInterval: setI = setInterval,
+  clearInterval: clearI = clearInterval,
+  armMs = ARM_MS,
+}) {
+  const st = session.state;
+  const composer = createComposer({ history });
+  const width = () => Math.max(10, io.size().cols - 2);
+  const height = () => Math.max(4, io.size().rows);
+
+  // What is already in the scrollback.
+  let committed = new Set(); // item ids
+  let streams = new Map(); // agentMessage id → {md, fed}
+  let echoesShown = new Set(); // clientUserMessageIds committed as typed
+  let turnsSeen = new Map(); // turnId → status reported
+  const noticesSeen = new WeakSet();
+  let lastWasCell = false;
+
+  let modal = null; // {id, view}
+  let popup = null; // {kind, view, onSelect}
+  let overlay = false; // the ? shortcuts
+  let note = null; // one transient line above the composer
+  let lastCtrlC = -Infinity;
+  let turnStartedAt = null;
+  let drawTimer = null;
+  let ticker = null;
+  let searchTimer = null;
+  let searchSeq = 0;
+  let quitResolve;
+  let quitting = false;
+  const done = new Promise((r) => (quitResolve = r));
+
+  /* -------------------------------------------------------------- */
+  /* Scrollback                                                      */
+  /* -------------------------------------------------------------- */
+
+  function commit(lines) {
+    if (lines.length) renderer.commit(lines);
+  }
+
+  // A cell gets a blank line before it, as in Codex.
+  function commitCell(lines) {
+    if (!lines.length) return;
+    commit(lastWasCell ? [[], ...lines] : lines);
+    lastWasCell = true;
+  }
+
+  function resetThreadView() {
+    committed = new Set();
+    streams = new Map();
+    echoesShown = new Set();
+    turnsSeen = new Map();
+    turnStartedAt = null;
+  }
+
+  const rootItems = () => [...st.items.values()].filter((it) => !st.thread || it.threadId === st.thread.id || it.threadId == null);
+  const turnActive = () => Boolean(st.activeTurnId || st.starting);
+
+  /**
+   * Commits every item that can no longer change, in order. Stops at the
+   * first one still streaming (an agent message commits its finished lines
+   * as it goes); what is left is drawn live.
+   */
+  function flush() {
+    const items = rootItems().filter((it) => !committed.has(it.id));
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (it.kind === "userMessage") {
+        committed.add(it.id);
+        if (it.clientId && echoesShown.has(it.clientId)) continue;
+        commitCell(renderCell(it, { width: width() }));
+        continue;
+      }
+      if (it.kind === "agentMessage") {
+        let s = streams.get(it.id);
+        if (!s) {
+          s = { md: createMarkdownStream({ width: width() - 2 }), fed: 0, started: false };
+          streams.set(it.id, s);
+        }
+        const text = String(it.text ?? "");
+        const fresh = s.md.push(text.slice(s.fed));
+        s.fed = text.length;
+        const out = it.streaming ? fresh : [...fresh, ...s.md.finish()];
+        if (out.length) {
+          const lines = out.map((l) => [{ text: s.started ? "  " : "\u{2022} ", style: DIM }, ...l]);
+          if (!s.started) commitCell(lines);
+          else commit(lines);
+          s.started = true;
+        }
+        if (it.streaming) return items.slice(i);
+        committed.add(it.id);
+        streams.delete(it.id);
+        continue;
+      }
+      if (isExploring(it)) {
+        let j = i;
+        while (j < items.length && isExploring(items[j])) j++;
+        const group = items.slice(i, j);
+        const settled = group.every((g) => !g.streaming && g.status !== "inProgress");
+        // A run of exploring commands is one cell: it ends at the next other item or the turn's end.
+        if (!settled || (j === items.length && turnActive())) return items.slice(i);
+        commitCell(renderExploring(group, { width: width() }));
+        for (const g of group) committed.add(g.id);
+        i = j - 1;
+        continue;
+      }
+      if (it.streaming || it.status === "inProgress") return items.slice(i);
+      committed.add(it.id);
+      commitCell(renderCell(it, { width: width() }));
+    }
+    return [];
+  }
+
+  function reportTurns() {
+    for (const t of st.turns) {
+      if (t.status === "inProgress" || turnsSeen.get(t.id) === t.status) continue;
+      turnsSeen.set(t.id, t.status);
+      actions.bell?.({ unfocusedOnly: true });
+      if (t.status === "failed" && t.error) commitCell(renderNotice({ level: "error", message: `The turn failed: ${t.error.message ?? "unknown error"}` }, { width: width() }));
+      else if (t.status === "interrupted") commitCell(renderNotice({ level: "warn", message: "Interrupted. Tell Codex what to do differently." }, { width: width() }));
+      if (turnStartedAt != null) {
+        const label = ` Worked for ${elapsed(now() - turnStartedAt)} `;
+        const w = width();
+        const side = Math.max(1, Math.floor((w - label.length) / 2));
+        commit([[], [{ text: `${"\u{2500}".repeat(side)}${label}${"\u{2500}".repeat(Math.max(1, w - side - label.length))}`, style: DIM }]]);
+        lastWasCell = false;
+        turnStartedAt = null;
+      }
+    }
+  }
+
+  function reportNotices() {
+    for (const n of st.notices) {
+      if (noticesSeen.has(n)) continue;
+      noticesSeen.add(n);
+      commitCell(renderNotice(n, { width: width() }));
+    }
+  }
+
+  /* -------------------------------------------------------------- */
+  /* Requests                                                        */
+  /* -------------------------------------------------------------- */
+
+  function syncModal() {
+    const head = st.requests[0]?.request ?? null;
+    if (modal && modal.id !== head?.id) {
+      // Answered here, or resolved elsewhere (another client, the turn ended).
+      if (!modal.answered) commit([[{ text: "  The request was withdrawn.", style: DIM }]]);
+      modal = null;
+    }
+    if (!modal && head) {
+      const diff = head.kind === "approval-patch" ? (st.items.get(head.itemId)?.changes ?? null) : null;
+      const view = createRequestModal(head, { now, armMs, diff });
+      if (!view) {
+        // Nothing here can answer it (a tool call): decline, and say how to get it.
+        session.resolve(head.id, null);
+        note = { level: "warn", text: "This needs the stock UI: /codex" };
+        return;
+      }
+      modal = { id: head.id, view, answered: false };
+      commitCell(view.history({ width: width() }));
+      actions.bell?.();
+    }
+  }
+
+  function answerLabel(value) {
+    if (value == null || value === "decline" || value === "cancel" || value?.action === "decline" || value?.action === "cancel") return null;
+    if (value === "accept" || value === "turn") return "approved";
+    if (value === "acceptForSession" || value === "session") return "approved for this session";
+    if (value?.acceptWithExecpolicyAmendment) return "approved; won't ask again for this prefix";
+    if (value?.applyNetworkPolicyAmendment) return "approved; this host is always allowed";
+    return "answered";
+  }
+
+  function answer(value) {
+    const m = modal;
+    m.answered = true;
+    const label = answerLabel(value);
+    commit([[{ text: label ? `  \u{2714} ${label}` : "  \u{2717} declined", style: label ? DIM : WARN }]]);
+    session.resolve(m.id, value);
+  }
+
+  /* -------------------------------------------------------------- */
+  /* Drawing                                                         */
+  /* -------------------------------------------------------------- */
+
+  function liveItems(pending) {
+    const out = [];
+    const w = width();
+    for (let i = 0; i < pending.length; i++) {
+      const it = pending[i];
+      if (it.kind === "agentMessage") {
+        const s = streams.get(it.id);
+        const lines = s ? s.md.live() : [];
+        out.push(...lines.map((l, k) => [{ text: k === 0 && !s?.started ? "\u{2022} " : "  ", style: DIM }, ...l]));
+      } else if (isExploring(it)) {
+        let j = i;
+        while (j < pending.length && isExploring(pending[j])) j++;
+        out.push(...renderExploring(pending.slice(i, j), { width: w }));
+        i = j - 1;
+      } else if (it.kind !== "userMessage") out.push(...renderCell(it, { width: w }));
+    }
+    // Prompts sent but not yet echoed by Codex.
+    for (const [cid, text] of st.echoes) if (!echoesShown.has(cid)) out.push(...renderCell({ kind: "userMessage", text }, { width: w }));
+    return out;
+  }
+
+  function statusLines() {
+    if (!turnActive()) return [];
+    let label = "Working";
+    for (const it of rootItems()) if (it.kind === "reasoning") label = reasoningHeadline(it.summaryText ?? (it.summary ?? []).join("\n")) ?? label;
+    return renderStatus({ label, elapsedMs: now() - (turnStartedAt ?? now()), frame: Math.floor(now() / 600), queued: st.queue.map((q) => q.text) }, { width: width() });
+  }
+
+  function footer() {
+    const running = turnActive();
+    const hints = running ? ["enter steer", "tab queue", `${newline} newline`] : ["? shortcuts", "@ files", `${newline} newline`];
+    return renderFooter({ hints, chips: chips(), meters: meters(st) }, { width: width() });
+  }
+
+  function draw() {
+    clearT(drawTimer);
+    drawTimer = null;
+    if (quitting) return;
+    reportNotices();
+    const pending = flush();
+    reportTurns();
+    syncModal();
+    const w = width();
+    const rows = height();
+    const lines = [];
+    let live = liveItems(pending);
+    const cap = Math.max(3, Math.floor(rows * LIVE_SHARE));
+    if (live.length > cap) live = [[{ text: `  \u{2026} ${live.length - cap + 1} more lines above`, style: DIM }], ...live.slice(-(cap - 1))];
+    lines.push(...live);
+    if (st.plan && turnActive()) lines.push(...renderPlan(st.plan.steps, { width: w, explanation: st.plan.explanation }));
+    lines.push(...statusLines());
+    let cursor = null;
+    if (modal) {
+      if (lines.length) lines.push([]);
+      const budget = Math.max(4, rows - lines.length - 2);
+      lines.push(...modal.view.render({ width: w, height: budget }));
+      cursor = { row: lines.length - 1, col: 0 };
+    } else {
+      if (note) lines.push(truncate([{ text: clean(note.text), style: note.level === "warn" || note.level === "error" ? WARN : DIM }], w));
+      if (lines.length) lines.push([]);
+      const top = lines.length;
+      const c = composer.render({ width: w, prompt: "\u{203a} ", placeholder: turnActive() ? "Steer the turn, or tab to queue" : "Ask ad to do anything" });
+      lines.push(...c.lines);
+      cursor = { row: top + c.cursor.row, col: c.cursor.col };
+      if (popup) lines.push(...popup.view.render({ width: w, height: Math.min(10, Math.max(3, rows - lines.length - 1)) }));
+      else if (overlay) lines.push(...renderShortcuts({ newline }, { width: w }));
+      else if (rows >= 10) lines.push(footer());
+    }
+    // The live region never takes the whole screen.
+    const max = Math.max(1, rows - 1);
+    const cut = lines.length > max ? lines.length - max : 0;
+    renderer.frame({ lines: lines.slice(cut), cursor: cursor ? { row: Math.max(0, cursor.row - cut), col: cursor.col } : undefined });
+  }
+
+  function drawSoon() {
+    if (drawTimer) return;
+    drawTimer = setT(draw, FRAME_MS);
+  }
+
+  /* -------------------------------------------------------------- */
+  /* Popups                                                          */
+  /* -------------------------------------------------------------- */
+
+  function openPicker(kind, items, onSelect, opts = {}) {
+    popup = { kind, view: createPicker({ items, ...opts }), onSelect };
+    draw();
+  }
+
+  // @ and / complete from what is being typed in the composer.
+  function syncTokenPopup() {
+    const tok = composer.token();
+    if (!tok) {
+      if (popup?.kind === "command" || popup?.kind === "mention") popup = null;
+      return;
+    }
+    if (tok.kind === "command") {
+      const q = tok.text.slice(1).toLowerCase();
+      const items = SLASH_COMMANDS.filter((c) => c.name.startsWith(q)).map((c) => ({ label: `/${c.name}`, hint: c.desc, value: c.name }));
+      popup = items.length ? { kind: "command", view: createPicker({ items, showQuery: false }), tok, onSelect: (name) => composer.replace(tok.start, tok.end, `/${name} `) } : null;
+      return;
+    }
+    if (!actions.searchFiles) return;
+    const q = tok.text.slice(1);
+    clearT(searchTimer);
+    const seq = ++searchSeq;
+    searchTimer = setT(async () => {
+      const files = await actions.searchFiles(q).catch(() => []);
+      if (seq !== searchSeq) return;
+      const t = composer.token();
+      if (!t || t.kind !== "mention") return;
+      const items = files.slice(0, 50).map((f) => ({ label: clean(f), value: f }));
+      popup = items.length ? { kind: "mention", view: createPicker({ items, showQuery: false }), onSelect: (f) => composer.replace(t.start, t.end, `@${/\s/.test(f) ? `"${f}"` : f} `) } : null;
+      draw();
+    }, 120);
+  }
+
+  // Keys for a completion popup: ↑/↓ pick, Tab/Enter accept, Esc closes; typing goes to the composer.
+  function popupKey(ev) {
+    if (popup.kind === "command" || popup.kind === "mention") {
+      if (ev.type === "key" && ["up", "down", "tab"].includes(ev.name)) {
+        const r = popup.view.handle(ev.name === "tab" ? { ...ev, name: "enter" } : ev);
+        if (r?.select !== undefined) {
+          const p = popup;
+          popup = null;
+          p.onSelect(r.select);
+        }
+        return true;
+      }
+      if (ev.type === "key" && ev.name === "escape") {
+        popup = null;
+        return true;
+      }
+      if (ev.type === "key" && ev.name === "enter" && !ev.shift && !ev.ctrl && !ev.alt) {
+        const r = popup.view.handle(ev);
+        const p = popup;
+        popup = null;
+        if (r?.select === undefined) return false;
+        if (p.kind === "mention") p.onSelect(r.select);
+        else {
+          // Enter on the command list runs the highlighted command.
+          composer.clear();
+          dispatch(`/${r.select}`);
+        }
+        return true;
+      }
+      return false; // typing goes to the composer
+    }
+    const r = popup.view.handle(ev);
+    if (r?.cancel) popup = null;
+    else if (r?.select !== undefined) {
+      const p = popup;
+      popup = null;
+      p.onSelect(r.select, r.item);
+    }
+    return true;
+  }
+
+  /* -------------------------------------------------------------- */
+  /* Commands                                                        */
+  /* -------------------------------------------------------------- */
+
+  const info0 = (text) => commitCell(renderNotice({ level: "info", message: text }, { width: width() }));
+  const warn = (text) => commitCell(renderNotice({ level: "warn", message: text }, { width: width() }));
+  const fail = (err) => warn(err?.message ?? String(err));
+
+  async function slash(name, arg) {
+    switch (name) {
+      case "help":
+        return commitCell([
+          [{ text: "Commands", style: { bold: true } }],
+          ...SLASH_COMMANDS.filter((c) => c.name !== "exit").map((c) => truncate([{ text: `  /${c.name.padEnd(12)}`, style: { fg: "cyan" } }, { text: c.desc, style: DIM }], width())),
+          [],
+          ...renderShortcuts({ newline }, { width: width() }),
+        ]);
+      case "new":
+        session.newThread();
+        resetThreadView();
+        return info0("New conversation.");
+      case "quit":
+      case "exit":
+        return quit("command");
+      case "compact":
+        if (!st.thread) return warn("Nothing to compact yet.");
+        info0("Compacting…");
+        return session.compact().catch(fail);
+      case "goal":
+        if (!arg) return info0(st.goal ? `Goal: ${clean(typeof st.goal === "string" ? st.goal : (st.goal.objective ?? JSON.stringify(st.goal)))}` : "No goal. /goal <objective> sets one.");
+        return session.setGoal(arg === "clear" ? null : arg).then((g) => info0(g ? "Goal set." : "Goal cleared."), fail);
+      case "review":
+        if (turnActive()) return warn("Wait for the turn to finish (or esc), then /review.");
+        return session.review().catch(fail);
+      case "init":
+        return send(INIT_PROMPT, "/init");
+      case "status":
+        return commitCell(statusReport());
+      case "model":
+        return pickModel();
+      case "permissions":
+        return openPicker("permissions", PERMISSION_PRESETS.map((p) => ({ label: p.label, hint: p.hint, value: p.value })), (value, item) => {
+          session.setNextTurn(value);
+          info0(`Permissions: ${item.label} (from the next turn).`);
+        });
+      case "resume":
+        return pickThread();
+      case "logout":
+        return Promise.resolve(session.engine.logout())
+          .then(() => warn("Signed out. /login to sign in again."))
+          .catch(fail);
+      case "diff":
+        if (!actions.gitDiff) return warn("/diff isn't available here.");
+        return actions
+          .gitDiff()
+          .then((d) => {
+            if (d.error) return warn(d.error);
+            if (!d.changes.length) return info0("No changes.");
+            commitCell(renderDiff(d.changes, { width: width(), verb: "Changes:", maxLines: 200 }));
+          })
+          .catch(fail);
+      case "remember":
+        if (!arg) return warn("/remember <what to remember>");
+        if (!actions.remember) return warn("Memory isn't available here.");
+        return Promise.resolve(actions.remember(arg)).then(() => commitCell(renderAdRow("learned", arg, { width: width() })), fail);
+      case "memory":
+        if (!actions.memorySummary) return warn("Memory isn't available here.");
+        return Promise.resolve(actions.memorySummary()).then((t) => info0(t), fail);
+      case "login":
+      case "codex":
+      case "ad": {
+        const run = { login: actions.login, codex: actions.openCodex, ad: actions.runAd }[name];
+        if (!run) return warn(`/${name} isn't available here.`);
+        if (turnActive()) return warn(`Wait for the turn to finish (or esc), then /${name}.`);
+        // /codex lets go of the thread and resumes it afterwards: what is
+        // already in the scrollback stays committed; only new turns show.
+        const known = new Set(committed);
+        const seen = new Map(turnsSeen);
+        return Promise.resolve(run(arg, { threadId: st.thread?.id ?? null }))
+          .then((msg) => {
+            if (name === "codex") {
+              for (const id of known) committed.add(id);
+              for (const [k, v] of seen) turnsSeen.set(k, v);
+            }
+            if (msg) info0(msg);
+            renderer.redraw?.();
+          })
+          .catch(fail);
+      }
+      default:
+        return warn(`Unknown command /${clean(name)}. /help lists them.`);
+    }
+  }
+
+  function statusReport() {
+    const c = st.config;
+    const acct = st.account?.type ? (st.account.type === "chatgpt" ? `ChatGPT ${st.account.planType ?? ""}`.trim() : st.account.type) : st.account?.requiresOpenaiAuth ? "not signed in" : "provider key";
+    const tokens = st.tokens?.total?.totalTokens != null ? `${st.tokens.total.totalTokens.toLocaleString("en-US")} tokens used` : "no tokens used yet";
+    const rows = [
+      ["account", acct],
+      ["model", `${c.model ?? "(default)"}${c.effort ? ` ${c.effort}` : ""}`],
+      ["sandbox", `${c.sandbox} \u{b7} ${c.approvalPolicy}`],
+      ["directory", c.cwd ?? cwd],
+      ["conversation", st.thread?.id ?? "(new)"],
+      ["tokens", tokens],
+    ];
+    const rl = st.rateLimits?.primary;
+    if (rl?.usedPercent != null) rows.push(["usage", `${Math.round(rl.usedPercent)}% of the ${rl.windowDurationMins ? `${Math.round(rl.windowDurationMins / 60)}h` : "current"} window`]);
+    if (info.compat) rows.push(["codex", info.compat]);
+    return [[{ text: "Status", style: { bold: true } }], ...rows.map(([k, v]) => truncate([{ text: `  ${k.padEnd(13)}`, style: DIM }, { text: clean(v) }], width()))];
+  }
+
+  async function pickModel() {
+    let models = [];
+    try {
+      const r = await session.engine.server.request("model/list", {});
+      models = r?.data ?? [];
+    } catch (err) {
+      return fail(err);
+    }
+    if (!models.length) return warn("No models listed for this account.");
+    openPicker("model", models.map((m) => ({ label: clean(m.displayName || m.model), hint: clean(m.description ?? ""), value: m })), (m) => {
+      const efforts = (m.supportedReasoningEfforts ?? []).map((e) => e.reasoningEffort ?? e).filter(Boolean);
+      if (!efforts.length) {
+        session.setNextTurn({ model: m.model });
+        return info0(`Model: ${clean(m.model)} (from the next turn).`);
+      }
+      openPicker("effort", efforts.map((e) => ({ label: clean(e), hint: e === m.defaultReasoningEffort ? "default" : "", value: e })), (effort) => {
+        session.setNextTurn({ model: m.model, effort });
+        info0(`Model: ${clean(m.model)} ${clean(effort)} (from the next turn).`);
+      });
+    });
+  }
+
+  async function pickThread() {
+    let threads = [];
+    try {
+      const r = await session.engine.server.request("thread/list", { cwd, limit: 30, modelProviders: [], sourceKinds: ["cli", "vscode", "exec", "appServer"] });
+      threads = (r?.data ?? []).filter((t) => t.id !== st.thread?.id);
+    } catch (err) {
+      return fail(err);
+    }
+    if (!threads.length) return info0("No earlier conversations in this folder.");
+    openPicker(
+      "resume",
+      threads.map((t) => ({ label: clean(t.name || t.preview || t.id).slice(0, 200), hint: t.updatedAt ? new Date(t.updatedAt * 1000).toLocaleString() : "", value: t.id })),
+      (id) => {
+        resetThreadView();
+        session
+          .resume(id)
+          .then(() => {
+            info0("Resumed.");
+            draw();
+          })
+          .catch(fail);
+      },
+      { title: "Resume" },
+    );
+  }
+
+  /* -------------------------------------------------------------- */
+  /* Input                                                           */
+  /* -------------------------------------------------------------- */
+
+  function send(text, shown = null) {
+    turnStartedAt ??= now();
+    try {
+      const r = session.submit(text);
+      if (shown) {
+        echoesShown.add(r.clientUserMessageId);
+        commitCell(renderCell({ kind: "userMessage", text: shown }, { width: width() }));
+      }
+      r.accepted.then(
+        (a) => {
+          if (a?.turnId && !a.steered) turnStartedAt ??= now();
+          if (a?.queued) note = { level: "info", text: "Queued: it runs when this turn ends (tab edits it)." };
+          drawSoon();
+        },
+        (err) => {
+          warn(`Not sent: ${err.message}`);
+          if (!composer.text) composer.set(text);
+          drawSoon();
+        },
+      );
+    } catch (err) {
+      warn(`Not sent: ${err.message}`);
+    }
+  }
+
+  function dispatch(text) {
+    note = null;
+    const t = text.trim();
+    const m = /^\/([a-z][\w-]*)(?:\s+([\s\S]*))?$/i.exec(t);
+    if (m && SLASH_COMMANDS.some((c) => c.name === m[1].toLowerCase())) return void slash(m[1].toLowerCase(), (m[2] ?? "").trim());
+    if (t.startsWith("!") && t.length > 1) {
+      if (turnActive()) return warn("Wait for the turn to finish (or esc) before running a shell command.");
+      return void session.shell(t.slice(1).trim()).catch(fail);
+    }
+    if (/^\/[a-z]/i.test(t) && !/\s/.test(t.split("\n")[0].slice(0, 40)) && t.length < 40) return warn(`Unknown command ${clean(t.split(/\s/)[0])}. /help lists them.`);
+    send(text);
+  }
+
+  function quit(reason = "quit") {
+    if (quitting) return;
+    quitting = true;
+    if (modal && !modal.answered) session.resolve(modal.id, null);
+    quitResolve({ reason });
+  }
+
+  function onCtrlC() {
+    const t = now();
+    if (t - lastCtrlC < FORCE_QUIT_MS) return quit("ctrl-c");
+    lastCtrlC = t;
+    if (modal) {
+      answer(null);
+      return;
+    }
+    if (popup || overlay) {
+      popup = null;
+      overlay = false;
+      return;
+    }
+    if (composer.text) {
+      composer.clear();
+      return;
+    }
+    if (turnActive()) {
+      session.interrupt();
+      note = { level: "warn", text: "Interrupting. Ctrl+C again quits." };
+      return;
+    }
+    note = { level: "info", text: "Ctrl+C again quits." };
+  }
+
+  function onInput(ev) {
+    if (quitting) return;
+    if (ev.type === "key" && ev.ctrl && ev.name === "c") {
+      onCtrlC();
+      return draw();
+    }
+    if (ev.type === "key" && ev.ctrl && ev.name === "l") return void renderer.redraw();
+    if (modal) {
+      const r = modal.view.handle(ev);
+      if (r && "answer" in r) answer(r.answer);
+      return draw();
+    }
+    if (overlay && (ev.type === "key" || ev.type === "text")) {
+      overlay = false;
+      if (ev.type === "key" && ev.name === "escape") return draw();
+    }
+    if (popup && popupKey(ev)) return draw();
+    if (ev.type === "paste-empty") {
+      note = { level: "warn", text: "Image paste isn't supported yet: save the image and mention it with @." };
+      return draw();
+    }
+    if (ev.type === "text" && ev.text === "?" && !composer.text) {
+      overlay = true;
+      return draw();
+    }
+    if (ev.type === "key" && ev.name === "escape" && !ev.ctrl) {
+      if (turnActive()) {
+        session.interrupt();
+        note = { level: "warn", text: "Interrupting…" };
+      } else note = null;
+      return draw();
+    }
+    if (ev.type === "key" && ev.name === "tab" && !ev.ctrl && !ev.alt) {
+      if (composer.text.trim() && turnActive()) {
+        session.queue(composer.expanded());
+        composer.clear();
+      } else if (!composer.text && st.queue.length) {
+        const last = st.queue.length - 1;
+        const text = st.queue[last].text;
+        session.editQueued(last, null);
+        composer.set(text);
+      }
+      return draw();
+    }
+    const r = composer.handle(ev);
+    if (r?.submit != null) dispatch(r.submit);
+    syncTokenPopup();
+    draw();
+  }
+
+  /* -------------------------------------------------------------- */
+  /* Wiring                                                          */
+  /* -------------------------------------------------------------- */
+
+  const offChange = session.on("change", ({ what }) => {
+    if (what === "thread" && !st.thread) resetThreadView();
+    // A resumed conversation's turns are history, not news: never reported as just ended.
+    if (what === "thread" && st.thread) for (const t of st.turns) if (t.status !== "inProgress" && !turnsSeen.has(t.id)) turnsSeen.set(t.id, t.status);
+    if ((what === "turn" || what === "starting" || what === "turn.started") && st.activeTurnId) turnStartedAt ??= now();
+    drawSoon();
+  });
+  const offHook = session.on("hook", (run) => {
+    for (const row of actions.hookRows?.(run) ?? []) commitCell(renderAdRow(row.kind, row.text, { width: width() }));
+    drawSoon();
+  });
+  const offInput = io.onInput(onInput);
+  const offResize = renderer.onResize?.(() => draw()) ?? (() => {});
+  ticker = setI(() => {
+    if (turnActive() || modal) draw();
+  }, 1000);
+  ticker.unref?.();
+
+  commit(header);
+  draw();
+
+  return {
+    done,
+    draw,
+    commit: commitCell,
+    notice(level, text) {
+      commitCell(renderNotice({ level, message: text }, { width: width() }));
+      draw();
+    },
+    get state() {
+      return { composer: composer.text, modal: modal?.view.kind ?? null, popup: popup?.kind ?? null, overlay, note: note?.text ?? null, committed: committed.size };
+    },
+    dispose() {
+      clearT(drawTimer);
+      clearT(searchTimer);
+      clearI(ticker);
+      offChange();
+      offHook();
+      offInput();
+      offResize();
+    },
+  };
+}

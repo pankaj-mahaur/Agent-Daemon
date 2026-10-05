@@ -46,7 +46,15 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
   - It holds one conversation: prompts, steering a running turn, a prompt queue and approvals.
   - Two ad windows can't open the same thread.
   - When Codex crashes, the running turn fails cleanly, Codex restarts (capped) and the conversation resumes.
-- Terminal UI view components (`runtime/src/tui/view/`, not wired to a command yet):
+- `ad tui`: the terminal UI, early. It runs on ad's own Codex home, with:
+  - sign-in and folder-trust prompts;
+  - streaming answers in your scrollback;
+  - approvals, steering and a prompt queue;
+  - `@` file mentions, `!` shell commands and slash commands (`/model`, `/permissions`, `/resume`, `/diff`, `/review`, `/remember`, `/codex`…).
+
+  `ad tui --last` / `--resume <id>` continue a conversation. See `docs/harness.md`.
+- `ad codex [args…]`: the pinned stock Codex UI on ad's home (never `~/.codex`), with your `~/.claude/skills` mirrored in.
+- Terminal UI view components (`runtime/src/tui/view/`):
   - **Composer:** a multi-line prompt editor with word moves, kill/yank, history (`~/.agent-daemon/tui/history.jsonl`, private, Ctrl+R search) and big pastes shown as `[Pasted N lines]`.
   - **Streaming markdown:** a streamed answer looks exactly like the finished one.
   - **Transcript cells:** commands (Explored / Ran / Failed), diffs with line numbers, plans, tools and notices.

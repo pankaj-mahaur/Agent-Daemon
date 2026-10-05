@@ -1,6 +1,6 @@
 # Plan — `ad`: a Codex-style terminal UI with agent-daemon's powers
 
-> Status: **final v4.7** (2026-10-06; v4 on 2026-10-04 after three review rounds). Changes from here on need a revision-log entry.
+> Status: **final v4.8** (2026-10-06; v4 on 2026-10-04 after three review rounds). Changes from here on need a revision-log entry.
 > Progress: **Part 0** — code done and reviewed twice:
 > - Codex 0.160.0 pinned.
 > - Isolation guard in place (see "Your own Codex is never touched").
@@ -29,8 +29,9 @@
 >
 > - **Part 4** (session controller) built (v4.6).
 > - **Part 5** (view components) built (v4.7). **FC2 pending (user).**
+> - **Part 6** (app shell MVP: `ad tui`, `ad codex`) built (v4.8). **FC3 pending (user).**
 >
-> **Next:** Part 6 (app shell MVP).
+> **Next:** Part 7 (resilience hardening).
 > Research: [Codex TUI + app-server](../research/codex-tui-and-app-server.md) · [terminal engineering](../research/terminal-engineering.md) · [harness landscape](../research/harness-landscape.md).
 
 ## Goal
@@ -751,6 +752,38 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
   9. `ad tui --last`
 
   → **FC3**.
+- ✅ **Built 2026-10-06** (`tui/app.mjs`, `tui/main.mjs`, `harness/codex-ui.mjs`; `ad tui`, `ad codex`). **FC3: pending (user)**, the live script on Windows Terminal, Zed and VS Code.
+  - **App:**
+    - **Scrollback:** finished items commit to scrollback in order. An agent message commits its finished markdown lines as it streams, and a run of exploring commands commits as one cell. What still changes is drawn live, with at most 60 % of the screen used for streaming cells.
+    - **Turns:** a turn's end shows "Worked for Ns", plus the error or interrupt notice. A resumed conversation's old turns are never reported as news.
+    - **Requests:** an open request becomes a modal (Part 5). Its full text goes to scrollback first, and the answer is logged as "approved", "approved for this session" or "declined".
+  - **Keys:**
+    - Ctrl+C closes a popup, then clears the composer, then interrupts; a second press within 1.5 s quits.
+    - Esc interrupts. Tab queues while a turn runs, and on an empty composer pulls the last queued prompt back.
+    - `?` opens the overlay. `@` searches with `fuzzyFileSearch`, debounced. `/` opens the command popup (Enter runs the highlighted command). `!` runs `thread/shellCommand`.
+    - A BEL sounds when an approval waits, or when a turn ends while the terminal is unfocused.
+  - **Slash MVP:** all listed commands.
+    - `/init` sends Codex 0.160's own prompt, vendored in `tui/init-prompt.mjs` (Apache-2.0, re-copied on upgrades).
+    - `/codex` releases the thread, runs the stock UI on it, then resumes it; what is already in scrollback stays.
+  - **`ad tui`:**
+    - preflight (TTY, `TERM=dumb`, Node on Windows, mintty);
+    - a sign-in panel that hands off to `ad auth login …`;
+    - the folder-trust prompt, written as an `upsert` of `projects` (`writeConfig` gains the strategy);
+    - the header card with the "since last time" line (loops, schedules, proposals);
+    - setup warnings shown inside the UI;
+    - `--last` and `--resume`, and the exit hint `ad tui --resume <id>` with tokens.
+  - **ad layer:** hook rows come only from ad's own `hooks.json` (recalled N learnings, guard blocks, hook failures); the session emits `hook` events. `/remember` writes a learning, and `/memory` summarizes the store.
+  - **`ad codex`:**
+    - The pinned binary with `--no-daemon`, `codexEnv` on the harness home, and provider keys from the secret store.
+    - `~/.claude/skills` is mirrored into `$CODEX_HOME/skills` (marker per folder; the user's own folders are never touched). The engine then drops that extra root.
+  - **Tests:**
+    - app tests on the fake engine (turn, approval with arming, steer, queue, Ctrl+C, slash, `!`, `@`, small screens);
+    - helper tests, and a real-pty smoke of `ad tui` (trust → turn → approval → `/status` → quit → resume hint, history written).
+  - **Open (live, with the user):**
+    - FC3's script;
+    - `codex resume <id> --no-daemon` interactively (S3);
+    - that Codex honours the trust key as written on Windows paths;
+    - de-duplicating SessionEnd digests by thread id across `/codex` (not done yet).
 
 ### Part 7 — Resilience hardening
 - **`codex-compat.json`:** tested versions plus a user-facing "what changed" note; `/status` line; `ad doctor`.
@@ -977,3 +1010,10 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
     - `renderLine` and `createRenderer` take `hyperlinks`.
   - **Arming:** the approval window lives in the modal, not the app.
   - **Widths:** views get `cols - 2` from the app.
+- **v4.8** (2026-10-06): Part 6.
+  - **Interfaces added:**
+    - `createApp`, `cmdTui` and `runStockCodex` / `syncSkills`;
+    - the session's `hook` event;
+    - `engine.writeConfig` edits take an optional `"upsert"` strategy;
+    - `skillRoots({engineHome})`.
+  - **Flags and commands:** `ad tui` (`--last`, `--resume`) and `ad codex [args…]`; `ad tui --preview` stays for now.

@@ -101,8 +101,10 @@ Commands:
 Harness (Codex engine):
   chat                   Interactive agent session (approve commands/edits as they come; /help inside)
                          --cwd <dir>  --model <name>  --sandbox <mode>  --resume <thread-id>
-  tui --preview          Preview of the coming terminal UI (Codex-style, inline): stream, approve, Esc interrupts
-                         --cwd <dir>  --model <name>  --sandbox <mode>
+  tui                    The terminal UI (Codex-style, inline; early: see docs/harness.md)
+                         --cwd <dir>  --model <name>  --sandbox <mode>  --resume <thread-id>  --last
+                         --preview            the Part 2 walking skeleton instead
+  codex [args…]          The pinned stock Codex UI on ad's own Codex home (never ~/.codex)
   loop "<objective>"     Autonomous loop until done (dual exit, circuit breaker, budgets, STOP file)
                          --max-iterations 20  --max-minutes 60  --max-tokens <n>  --resume <thread-id>
   run "<prompt>"         One non-interactive agent turn (approvals are declined)
@@ -2129,6 +2131,12 @@ async function main(argv) {
 
   const [command, ...rest] = expanded;
 
+  // `ad codex [args…]`: everything after "codex" goes to the stock UI as is.
+  if (command === "codex") {
+    const { cmdCodex } = await import("./harness/codex-ui.mjs");
+    return cmdCodex(rest);
+  }
+
   // Parse remaining args generically (each command interprets what it needs)
   let parsed;
   try {
@@ -2177,6 +2185,7 @@ async function main(argv) {
         llm:          { type: "string" },
         elevated:     { type: "boolean" },
         preview:      { type: "boolean" },
+        last:         { type: "boolean" },
         engine:       { type: "string" },
         "max-iterations": { type: "string" },
         "max-minutes":    { type: "string" },
@@ -2313,8 +2322,15 @@ async function main(argv) {
     }
     case "tui": {
       if (!parsed.values.preview) {
-        process.stderr.write("The terminal UI is being built. Try the walking skeleton: ad tui --preview   (or ad chat)\n");
-        return 2;
+        const { cmdTui } = await import("./tui/main.mjs");
+        return cmdTui({
+          cwd: parsed.values.cwd || process.cwd(),
+          model: parsed.values.model,
+          sandbox: parsed.values.sandbox,
+          resume: parsed.values.resume,
+          last: parsed.values.last,
+          clientVersion: VERSION
+        });
       }
       const { cmdTuiPreview } = await import("./tui/preview.mjs");
       return cmdTuiPreview({
