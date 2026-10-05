@@ -19,12 +19,17 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 - Codex engine 0.160.0 (protocol unchanged from 0.159.2).
 - Installers skip devDependencies (`npm install --omit=dev`, `npm link --omit=dev`). On Windows, they warn when Node is older than 22.17 / 24.2, which the coming terminal UI needs.
-- CI uses `actions/checkout@v7` and `actions/setup-node@v7`, and gains an opt-in job that runs the real pinned Codex against a mock model on Linux, macOS and Windows.
+- CI uses `actions/checkout@v7` and `actions/setup-node@v7`, and gains an opt-in job that runs the real pinned Codex against a mock model on Linux, macOS and Windows. On Linux it allows unprivileged user namespaces, which Codex's sandbox needs on Ubuntu 24.04 runners.
 
 ### Added
 
 - `runtime/scripts/tui-probe.mjs keys|screen`: shows what your terminal sends for each key and how it wraps and reflows. It's a troubleshooting tool for the terminal UI.
 - Plan and research for the `ad` terminal UI: `docs/plans/ad-tui.md`, `docs/research/` (with an index).
+- Terminal UI groundwork (not wired to a command yet), in `runtime/src/tui/terminal/`:
+  - **Cell widths:** a vendored Unicode 16 wide-character table. There are two emoji profiles, because VS Code and Windows Terminal draw emoji sequences differently.
+  - **Styled text:** colour-depth detection, word wrap, truncation.
+  - **`sanitize()`:** strips terminal control sequences from untrusted output, and shows every hidden character in approval prompts.
+  - **Tests:** golden-file tests (`AD_UPDATE_GOLDEN=1` rewrites them).
 - Skills:
   - `big-feature-flow` (installed by default): research how others built it → plan in parts → adversarial review rounds until final → spikes → a per-part implement/test/review loop.
   - `ad-tui-dev` (maintainers): working on the terminal UI with its isolation and renderer rules.

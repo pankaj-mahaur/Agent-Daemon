@@ -194,6 +194,16 @@ Harness tests come in two kinds:
   AD_REAL_ENGINE=1 node --test --test-concurrency=1 --test-force-exit test/engine-real.test.mjs
   ```
 
+**Golden files.** Terminal UI output is compared byte for byte with files under `runtime/test/golden/` (kept LF by `.gitattributes`) through `assertGolden()` in [`runtime/testkit/golden.mjs`](../runtime/testkit/golden.mjs). After an intended change, rewrite them and review the diff before committing:
+
+```sh
+cd runtime
+AD_UPDATE_GOLDEN=1 node --test test/tui-text.test.mjs
+git diff test/golden
+```
+
+**Width table.** `runtime/src/tui/terminal/width-table.mjs` is generated: `node runtime/scripts/gen-width-tables.mjs [version]` (pinned to Unicode 16.0.0). Bump it on purpose and re-run the width tests.
+
 **Never start the real Codex outside an isolated home.** Every spawn site builds its environment with `codexEnv()` (`runtime/src/engine/codex/home.mjs`). That refuses the user's own `~/.codex` and their `CODEX_HOME`, and drops their `CODEX_*` variables. A test fails when a new file resolves the Codex binary without it. Tests use temp homes.
 
 CI has no real login and no Windows sandbox. Before merging an engine bump, do a live `ad run` smoke on Windows in a scratch directory; the [`codex-upgrade`](../skills/daemon/codex-upgrade/SKILL.md) skill has the steps.
@@ -282,6 +292,8 @@ Logs land in `~/.agent-daemon/logs/tui-probe-*.log`. The plan and research behin
 ### Edit files that contain backslashes or `$`
 
 Use an editor or a script file, not a shell heredoc: heredocs in some Windows shells silently halve backslashes. In Node scripts, pass a function to `String.prototype.replace` (`s.replace(a, () => b)`), because `$'` and `$&` in a replacement string are patterns.
+
+Write invisible characters (zero-width, bidi, control) as braced escapes such as `\u{200b}`, never raw. Some editing tools turn 4-hex escapes into the raw character. `grep -nP '[^\x00-\x7F]' <file>` shows what landed.
 
 ---
 
