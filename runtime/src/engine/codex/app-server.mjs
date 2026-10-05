@@ -102,7 +102,11 @@ export class CodexAppServer extends EventEmitter {
       cwd: this.opts.cwd,
       env,
       stdio: ["pipe", "pipe", "pipe"],
+      // CREATE_NO_WINDOW on Windows (with piped stdio). On POSIX the terminal
+      // UI asks for its own process group, so terminal job control (Ctrl+Z,
+      // SIGINT to the foreground group) never reaches the engine.
       windowsHide: true,
+      detached: this.opts.detached === true && process.platform !== "win32",
     });
     this.child.stderr.on("data", (chunk) => {
       // Keep a bounded tail for error reports.

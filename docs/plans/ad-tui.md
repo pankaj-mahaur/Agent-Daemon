@@ -1,6 +1,6 @@
 # Plan — `ad`: a Codex-style terminal UI with agent-daemon's powers
 
-> Status: **final v4.2** (2026-10-05; v4 on 2026-10-04 after three review rounds). Changes from here on need a revision-log entry.
+> Status: **final v4.3** (2026-10-05; v4 on 2026-10-04 after three review rounds). Changes from here on need a revision-log entry.
 > Progress: **Part 0** — code done and reviewed twice:
 > - Codex 0.160.0 pinned.
 > - Isolation guard in place (see "Your own Codex is never touched").
@@ -18,7 +18,9 @@
 >   - The user chose inline mode, the LF newline rule and the full boxed header.
 >   - Zed is a primary target.
 >
-> **Next:** Part 1a (io + input).
+> - **Part 1a** (io + input) built and reviewed (v4.3).
+>
+> **Next:** Part 1c (inline renderer).
 > Research: [Codex TUI + app-server](../research/codex-tui-and-app-server.md) · [terminal engineering](../research/terminal-engineering.md) · [harness landscape](../research/harness-landscape.md).
 
 ## Goal
@@ -182,8 +184,12 @@ SessionState = {thread, turns, items(Map), activeTurnId, requests(FIFO by JSON-R
 
 // tui/terminal/renderer.mjs
 createRenderer({io, caps}) → {frame({lines, cursor}), commit(lines), suspend(), resume(), onResize(fn), redraw()}
-// tui/terminal/io.mjs
-createIo({stdin, stdout}) → {caps, write, enter(), restore(), handoff(async fn), onInput(fn), size()}
+// tui/terminal/io.mjs (v4.3 adds close, suspend, cpr, onResume; caps = {kitty, modifyOtherKeys, sync, focus, da1})
+createIo({stdin, stdout}) → {caps, write, enter(), restore(), close(), handoff(async fn), suspend(),
+                             cpr() → {row, col}|null, onInput(fn), onResume(fn), size()}
+// tui/terminal/input.mjs — events for onInput
+key {name, ctrl, alt, shift, super, raw} | text {text} | paste {text} | paste-empty | focus {focused}
+isNewline(ev): LF, Shift/Ctrl+Enter (CSI-u, modifyOtherKeys), Ctrl+J in any encoding
 ```
 
 ## How `ad` copes with Codex releases
@@ -385,6 +391,28 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
     - **Image paste:** an empty bracketed paste (Windows Terminal, image on the clipboard) is reported as `paste-empty`, so the composer can offer to attach the clipboard image.
   - **Tests:** byte fixtures (split chunks, interleaved replies, paste with escapes, flag-1 encodings); restore balance.
   - **Done when:** tests are green and the probe output from S1 replays through the parser unchanged.
+  - ✅ **Built 2026-10-05:** 74 input and 34 io tests; S1 bytes in `test/fixtures/tui/s1-keys.json`; 38 mutants killed. Review hardening:
+    - **Sequences:** the started-sequence cap counts from the start (not re-armed by a trickle), and a CSI over 256 bytes is dropped.
+    - **Paste:** a stalled paste is shown after 1 s but stays a paste until its end marker or 10 s of quiet, so its line breaks never become Enter.
+    - **CPR:** a timed-out CPR's late reply is dropped (it can't answer the next query or eat Shift+F3), and expires after 2 s.
+    - **Signals:** Ctrl+C / Ctrl+Break during a handoff belong to the child.
+    - **Lifecycle:**
+      - `restore()` resets the decoder and unhooks the process listeners;
+      - concurrent `enter()` calls share one negotiation;
+      - `close()` inside a handoff stays closed.
+    - **Re-review:** no medium-or-worse finding. Lows fixed:
+      - the 10 s paste limit counts from the first stall, and a lone Ctrl+C ends a paste whose end marker was lost;
+      - a CRLF split by a stall stays one line break;
+      - there is never a second input listener;
+      - no modifyOtherKeys while a handoff child owns the terminal;
+      - a failed suspend takes the terminal back.
+    - **Accepted (odd call orders or reply orders):**
+      - a CSI over 256 bytes decodes differently depending on where the chunks split;
+      - `restore()` then `enter()` during a negotiation;
+      - a lost CPR reply makes the next one count as stale for 2 s.
+    - **For Part 5:** with kitty flag 1, numpad digits and operators arrive as keys (`"5"`, `"+"`); the composer inserts them.
+    - **Not done:** the paste-burst heuristic is off and unused while both target terminals have bracketed paste.
+    - **Engine:** `CodexAppServer` takes `detached: true` (POSIX only) for the TUI.
 - **1b. width + text**
   - **Width** (`width.mjs`):
     - Graphemes via `Intl.Segmenter`, measured over a line's joined text (a cluster can straddle spans).
@@ -774,3 +802,9 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
     - The full boxed header.
   - **Input:** an empty bracketed paste is reported as `paste-empty`, so the composer can offer to attach the clipboard image.
   - **Probe fix:** `tui-probe screen` no longer prints during the resize test.
+- **v4.3** (2026-10-05): Part 1a.
+  - **Interfaces:**
+    - `createIo` gains `close()`, `suspend()`, `cpr()` and `onResume()`;
+    - the input event shapes and `isNewline()` are fixed;
+    - Ctrl+J counts as a newline in every encoding.
+  - **Review:** 4 medium findings fixed (sequence cap, stale CPR, signals during handoff, stalled paste), plus 6 of 7 lows.

@@ -29,6 +29,8 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
   - **Cell widths:** a vendored Unicode 16 wide-character table. There are two emoji profiles, because VS Code and Windows Terminal draw emoji sequences differently.
   - **Styled text:** colour-depth detection, word wrap, truncation.
   - **`sanitize()`:** strips terminal control sequences from untrusted output, and shows every hidden character in approval prompts.
+  - **Keyboard and paste input:** decodes what Windows Terminal, Zed and kitty-protocol terminals send. Enter sends; Shift+Enter (Zed), Ctrl+Enter (Windows Terminal) or Ctrl+J adds a new line. A paste is one event even when it stalls, and an image paste is recognised.
+  - **Terminal session:** raw mode and capability negotiation, a restore on every exit path (signals, crashes), handing the terminal to a child program, and Ctrl+Z on Linux/macOS.
   - **Tests:** golden-file tests (`AD_UPDATE_GOLDEN=1` rewrites them).
 - Skills:
   - `big-feature-flow` (installed by default): research how others built it → plan in parts → adversarial review rounds until final → spikes → a per-part implement/test/review loop.
