@@ -98,7 +98,8 @@ function restore() {
   try { process.stdin.setRawMode(false); } catch {}
   process.stdin.pause();
 }
-const quit = (code = 0) => { out(`log: ${logFile}`); restore(); process.exit(code); };
+let onQuit = null;
+const quit = (code = 0) => { onQuit?.(); out(`log: ${logFile}`); restore(); process.exit(code); };
 process.on("exit", restore);
 process.on("uncaughtException", (err) => { restore(); console.error(err); process.exit(1); });
 for (const sig of ["SIGTERM", "SIGHUP", "SIGBREAK", "SIGINT"]) {
@@ -217,7 +218,13 @@ if (mode === "keys") {
   };
   const lines = draw();
   let before = await cpr();
-  out(`  drawn at ${process.stdout.columns}x${process.stdout.rows}; cursor parked on live line 3, col 11: ${JSON.stringify(before)}`);
+  // From here on, results go to the log only: printing them would move the
+  // cursor and spoil the next measurement. They are printed again on quit.
+  const results = [];
+  const note = (line) => { results.push(line); log(line); };
+  // Below the 6-line region (the cursor is parked on its line 3), synchronously.
+  onQuit = () => writeSync(1, "\x1b[3B\r\n" + results.map((l) => l + "\r\n").join(""));
+  note(`  drawn at ${process.stdout.columns}x${process.stdout.rows}; cursor parked on live line 3, col 11: ${JSON.stringify(before)}`);
   let timer = null;
   process.stdout.on("resize", () => {
     clearTimeout(timer);
@@ -225,7 +232,7 @@ if (mode === "keys") {
       const C = process.stdout.columns;
       const now = await cpr();
       const reflowRows = lines.slice(0, 2).reduce((n, l) => n + Math.max(1, Math.ceil(l.length / C)), 0) + Math.floor(10 / C);
-      out(`  resized to ${C}x${process.stdout.rows}: cursor ${JSON.stringify(now)} (was ${JSON.stringify(before)}); rows above cursor if reflowing ≈ ${reflowRows}, if not = 2`);
+      note(`  resized to ${C}x${process.stdout.rows}: cursor ${JSON.stringify(now)} (was ${JSON.stringify(before)}); rows above cursor if reflowing ≈ ${reflowRows}, if not = 2`);
       before = now;
     }, 200);
   });

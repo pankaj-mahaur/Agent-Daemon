@@ -47,7 +47,8 @@ Any change under `runtime/src/tui/`, `runtime/src/harness/session.mjs`, `runtime
    - **Source files:** write invisible characters as `\u{...}` escapes. The Write/Edit tools decode 4-hex `\uXXXX` into raw characters. Check with `grep -nP '[^\x00-\x7F]'`.
 5. **Windows input facts:**
    - VT input needs Node 22.17+ or 24.2+.
-   - Windows Terminal 1.24 and VS Code send Shift+Enter as Enter: offer Ctrl+J.
+   - Windows Terminal 1.24 and VS Code send Shift+Enter as Enter. Zed sends Shift+Enter as LF (`0a`), and Windows Terminal sends Ctrl+Enter as LF. Rule (FC0): `0d` submits and `0a` is a newline; the footer hint is per terminal.
+   - Primary live-check terminals are Windows Terminal and **Zed** (the user's daily terminal). VS Code is secondary.
    - Alt+Enter is taken by Windows Terminal's fullscreen toggle, and Ctrl+V by its paste.
    - The kitty keyboard protocol arrives in Windows Terminal 1.25.
    - When in doubt, run `node runtime/scripts/tui-probe.mjs keys|screen` and read `~/.agent-daemon/logs/tui-probe-*.log`.

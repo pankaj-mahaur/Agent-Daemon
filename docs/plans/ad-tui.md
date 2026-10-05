@@ -1,6 +1,6 @@
 # Plan — `ad`: a Codex-style terminal UI with agent-daemon's powers
 
-> Status: **final v4.1** (2026-10-05; v4 on 2026-10-04 after three review rounds). Changes from here on need a revision-log entry.
+> Status: **final v4.2** (2026-10-05; v4 on 2026-10-04 after three review rounds). Changes from here on need a revision-log entry.
 > Progress: **Part 0** — code done and reviewed twice:
 > - Codex 0.160.0 pinned.
 > - Isolation guard in place (see "Your own Codex is never touched").
@@ -12,7 +12,13 @@
 >
 > - **Part 1b** (width + text + sanitize) built ahead of FC0, since it doesn't depend on it. Reviewed, fixed and mutation-checked; this is v4.1.
 >
-> Waiting on the user: a Node upgrade (22.14 → 22.17+), then S1/S1b probes and the FC0 decisions. After that comes Part 1a.
+> - **FC0 done** (2026-10-05, v4.2):
+>   - Node is 22.23.2.
+>   - S1/S1b recorded for Windows Terminal and Zed.
+>   - The user chose inline mode, the LF newline rule and the full boxed header.
+>   - Zed is a primary target.
+>
+> **Next:** Part 1a (io + input).
 > Research: [Codex TUI + app-server](../research/codex-tui-and-app-server.md) · [terminal engineering](../research/terminal-engineering.md) · [harness landscape](../research/harness-landscape.md).
 
 ## Goal
@@ -37,7 +43,7 @@ Typing `ad` opens an interactive TUI that looks and works like the OpenAI Codex 
 | # | Decision | Why |
 |---|---|---|
 | D1 | **Two front ends on one engine home.** `ad` is our TUI. `ad codex` / `/codex` run the official Codex TUI on the harness home. They ship in the MVP, and `/codex` returns to `ad` on the same thread. | Full parity takes time. The stock UI is the escape hatch for Codex features we haven't adopted yet (Happy, Sculptor and Warp do the same). |
-| D2 | **Inline first.** History goes into the terminal's own scrollback and is never repainted. Only the live region (≤ `rows − 1`) is redrawn. History is pre-wrapped at word boundaries (readable, like Codex). `/raw` switches to copy-friendly unwrapped output and `/copy` copies the last answer. Fullscreen is a later opt-in. The user signs off on inline vs fullscreen at FC0/FC1. | Native scrollback, selection and copy matter most to users, and alternate screens drew backlash. Windows Node has no mouse in raw mode (libuv#5155). Terminal soft-wrap breaks words mid-word. |
+| D2 | **Inline first.** History goes into the terminal's own scrollback and is never repainted. Only the live region (≤ `rows − 1`) is redrawn. History is pre-wrapped at word boundaries (readable, like Codex). `/raw` switches to copy-friendly unwrapped output and `/copy` copies the last answer. Fullscreen is a later opt-in. ✅ FC0 (2026-10-05): the user chose inline. | Native scrollback, selection and copy matter most to users, and alternate screens drew backlash. Windows Node has no mouse in raw mode (libuv#5155). Terminal soft-wrap breaks words mid-word. |
 | D3 | **Our own zero-dependency renderer**, using Codex's architecture and pi-tui's algorithms (MIT, credited). | House style. pi-tui needs Node ≥ 22.19 and native code; OpenTUI needs Bun or Node 26; Ink's adopters rewrote or forked it. |
 | D4 | **One event layer, one session controller.** `engine/codex/events.mjs` turns protocol traffic into `ad` events. `harness/session.mjs` is UI-agnostic and is tested through a headless subscriber. ACP, chat and web move onto it after the MVP, once ACP has been verified live in Zed. | Every wrapper that survived normalizes behind a per-engine adapter. Refactoring an integration nobody has seen working is a needless risk. |
 | D5 | **Stable protocol only; `experimentalApi` stays false.** Errors are classified by code plus message: -32600 with "unknown variant" naming the method = missing; "requires experimentalApi capability" = gated; any other "Invalid request:" = shape changed (params are parsed before the experimental gate is checked, verified live); -32601 = unsupported operation. **Steer errors:** only "not steerable" carries `error.data.codexErrorInfo` (→ queue). Any other steer error means the turn ended, so the text is submitted as a new turn. **One known leak:** exec approvals carry the experimental `availableDecisions`, because upstream strips only `additionalPermissions`. We use it when present, with Codex's own fallback otherwise (Part 3a). A real-engine test fails by name when it disappears. | Hard rule. Verified against `message_processor.rs`, `experimental_api.rs`, `turn_processor.rs` and `v2/item.rs` at 0.160.0. |
@@ -116,7 +122,10 @@ Typing `ad` opens an interactive TUI that looks and works like the OpenAI Codex 
 **Layout rules:**
 - `ad` rows appear only when something happens, one dim line each.
 - Footer chips (loop, team) appear only while active.
-- The newline hint adapts to the terminal: `shift+enter` when CSI-u was negotiated, otherwise `ctrl+j`. Alt+Enter is never advertised: it is Windows Terminal's fullscreen toggle.
+- **Newline rule (FC0, 2026-10-05):** `0d` (Enter) submits and `0a` (LF) inserts a newline. That gives Shift+Enter in Zed, Ctrl+Enter in Windows Terminal, Ctrl+J everywhere and `\`+Enter as a fallback. Under CSI-u, Shift+Enter and Ctrl+Enter are decoded directly.
+  - The hint adapts to the terminal: `shift+enter` in Zed or when CSI-u was negotiated, `ctrl+enter` in Windows Terminal, otherwise `ctrl+j`.
+  - Alt+Enter is never advertised: it is Windows Terminal's fullscreen toggle.
+- **Header (FC0):** the full boxed header above, shown once at start; it then scrolls into history like any other output.
 - Idle footer: `? shortcuts · @ files · ctrl+j newline   ctx 100% · 5h 34%`.
 - **When the footer is too wide, drop in this order:** key hints first, then shorten the chips (`loop 3/20` → `L3`), and the meters (ctx, usage) last.
 - `/memory` (ad's project memory) and Codex's `/memories` both appear in the popup, each with a one-line hint so they aren't confused.
@@ -196,7 +205,7 @@ createIo({stdin, stdout}) → {caps, write, enter(), restore(), handoff(async fn
 
 | FC | When | The user… |
 |---|---|---|
-| FC0 | end of Part 0 | runs the key and resize probes with me; decides inline vs fullscreen, the newline key and the header lines |
+| FC0 | end of Part 0 | runs the key and resize probes with me; decides inline vs fullscreen, the newline key and the header lines. ✅ 2026-10-05: inline, LF newline rule, full boxed header |
 | FC1 | after Part 2 (walking skeleton) | uses `ad tui --preview` for real for 1–2 days: flicker, scrollback, copy, resize, paste |
 | FC2 | after Part 5 | approves the 80-column goldens (header, cells, approval modal, footer) |
 | FC3 | after Part 6 (MVP) | uses `ad tui` for a week (notes via `/ad feedback`, a local log; Codex's own `/feedback` keeps its meaning); re-ranks Part 9; approves flipping bare `ad` |
@@ -260,6 +269,27 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
   - shrink and grow with a 6-line live region, logging CPR before and after, to learn each terminal's reflow model
 
   Both probe scripts stay in the repo as troubleshooting tools.
+- ✅ **S1/S1b results** (2026-10-05, Node 22.23.2; logs in `~/.agent-daemon/logs/tui-probe-*`). The user works in **Zed** daily, so Zed joins Windows Terminal as a primary target; VS Code drops to secondary.
+
+  | | Windows Terminal (`WT_SESSION`) | Zed (`TERM_PROGRAM=zed`, Alacritty core) |
+  |---|---|---|
+  | Raw input | VT input; bracketed paste works | VT input; bracketed paste |
+  | Kitty keyboard (`?u`) | no reply | no reply |
+  | `?2026` (DECRQM) | recognised | recognised |
+  | DA1 | `61;4;6;7;14;21;22;23;24;28;32;42;52` | `6` |
+  | Enter / Shift+Enter | `0d` / `0d` (same) | `0d` / `0a` |
+  | Ctrl+Enter / Ctrl+J | `0a` / `0a` | (no mapping) / `0a` |
+  | Alt+Enter | swallowed (fullscreen toggle) | `ESC 0d` |
+  | Ctrl+Backspace | `08` (Backspace is `7f`) | `08` |
+  | Arrows with Shift/Ctrl/Alt | `CSI 1;2/5/3 A–D` | same (xterm modifier codes) |
+  | Ctrl+V with an image | an empty bracketed paste | not measured |
+  | Wrap at the last column | deferred (xterm-like) | deferred |
+  | DECAWM `?7l` | honoured | honoured |
+  | Resize | reflows history; the cursor stays on its cell, so CPR re-anchoring holds | not measured yet (Alacritty reflows); check live in Part 2 |
+
+  - The Zed key column comes from Zed's source (`crates/terminal/src/mappings/keys.rs`, last changed 2026-08-19). Zed's terminal can't be driven from here, and injected bytes would defeat the point of the probe. The `screen` capabilities are from a Zed run.
+  - The first Zed resize run was spoiled because the probe printed its results mid-test, which moved the cursor. The probe now logs during the test and prints the results on quit.
+  - Not covered: Windows Terminal 1.25 (kitty), and the VS Code terminal. Re-probe when either becomes relevant.
 - **S2 — mock model.**
   - Config:
     - `model_provider="mock"`, `[model_providers.mock]` with `base_url="http://127.0.0.1:P/v1"`, `wire_api="responses"` and retries off. No `env_key`, no login.
@@ -351,7 +381,8 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
     - **Reply router:** handles CPR, DA1, DECRQM and `?u`. `CSI 1;2R` counts as CPR only while one is outstanding.
     - **ESC timeout:** applies only to a lone trailing ESC (30 ms; 100 ms with `SSH_CONNECTION`). Started sequences wait for their final byte (cap 500 ms).
     - **Paste-burst heuristic:** only when bracketed paste is unavailable.
-    - **Newline:** Ctrl+J, Ctrl+Enter, `\`+Enter, and Shift+Enter when CSI-u is on.
+    - **Newline (FC0):** a bare `0a` is the newline key. That covers Ctrl+J, Ctrl+Enter in Windows Terminal, and Shift+Enter in Zed. Also `\`+Enter, and Shift+Enter / Ctrl+Enter decoded from CSI-u. Enter (`0d`) submits.
+    - **Image paste:** an empty bracketed paste (Windows Terminal, image on the clipboard) is reported as `paste-empty`, so the composer can offer to attach the clipboard image.
   - **Tests:** byte fixtures (split chunks, interleaved replies, paste with escapes, flag-1 encodings); restore balance.
   - **Done when:** tests are green and the probe output from S1 replays through the parser unchanged.
 - **1b. width + text**
@@ -415,7 +446,7 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
     - small heights;
     - balanced modes.
     - One Windows CI smoke test drives real ConPTY through `@lydell/node-pty` (devDependency) into headless xterm.
-  - **Done when:** the property tests pass under both reflow models, the ConPTY smoke passes, and `scripts/tui-demo.mjs` is clean live on Windows Terminal 1.24 and VS Code.
+  - **Done when:** the property tests pass under both reflow models, the ConPTY smoke passes, and `scripts/tui-demo.mjs` is clean live on Windows Terminal 1.24 and Zed (the user's daily terminal), and checked once in VS Code.
 
 ### Part 2 — Walking skeleton (`ad tui --preview`)
 - Built on the Part 1 renderer, a plain multi-line composer (no popups), and the existing `engine.turn()` (called with `timeoutMs: 0`; the 600 s default would interrupt long turns) / `onApproval`.
@@ -735,3 +766,11 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
       - an OSC ends at ESC/CAN/SUB.
     - Accepted, cosmetic: marks newer than Unicode 11 count 0 where xterm.js draws 1.
     - Later: wrap speed (1M characters take about 5 s).
+- **v4.2** (2026-10-05): FC0.
+  - **Probes:** S1/S1b results for Windows Terminal and Zed are in Part 0. The user's daily terminal is Zed, so Zed replaces VS Code as a primary live-check target.
+  - **Decisions:**
+    - Inline mode (D2).
+    - Newline = a bare LF (`0a`): Shift+Enter in Zed, Ctrl+Enter in Windows Terminal, Ctrl+J everywhere. The footer hint is per terminal.
+    - The full boxed header.
+  - **Input:** an empty bracketed paste is reported as `paste-empty`, so the composer can offer to attach the clipboard image.
+  - **Probe fix:** `tui-probe screen` no longer prints during the resize test.
