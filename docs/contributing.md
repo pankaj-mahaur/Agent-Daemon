@@ -202,6 +202,8 @@ AD_UPDATE_GOLDEN=1 node --test test/tui-text.test.mjs
 git diff test/golden
 ```
 
+**Screen tests.** Renderer tests run against two terminals from [`runtime/testkit/screen.mjs`](../runtime/testkit/screen.mjs). `xtermScreen` is real `@xterm/headless`, which reflows on resize like Windows Terminal and Zed. `modelScreen` is a small VT model that never reflows. Both can delay CPR answers (`cprDelayMs`) to expose races. `test/tui-pty-smoke.test.mjs` runs `scripts/tui-demo.mjs` in a real pseudo-terminal (ConPTY on Windows) through `@lydell/node-pty`. All three packages are devDependencies only. To check the terminal layer by eye, run `node runtime/scripts/tui-demo.mjs`.
+
 **Width table.** `runtime/src/tui/terminal/width-table.mjs` is generated: `node runtime/scripts/gen-width-tables.mjs [version]` (pinned to Unicode 16.0.0). Bump it on purpose and re-run the width tests.
 
 **Never start the real Codex outside an isolated home.** Every spawn site builds its environment with `codexEnv()` (`runtime/src/engine/codex/home.mjs`). That refuses the user's own `~/.codex` and their `CODEX_HOME`, and drops their `CODEX_*` variables. A test fails when a new file resolves the Codex binary without it. Tests use temp homes.

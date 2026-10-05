@@ -1,6 +1,6 @@
 # Plan — `ad`: a Codex-style terminal UI with agent-daemon's powers
 
-> Status: **final v4.3** (2026-10-05; v4 on 2026-10-04 after three review rounds). Changes from here on need a revision-log entry.
+> Status: **final v4.4** (2026-10-06; v4 on 2026-10-04 after three review rounds). Changes from here on need a revision-log entry.
 > Progress: **Part 0** — code done and reviewed twice:
 > - Codex 0.160.0 pinned.
 > - Isolation guard in place (see "Your own Codex is never touched").
@@ -20,7 +20,9 @@
 >
 > - **Part 1a** (io + input) built and reviewed (v4.3).
 >
-> **Next:** Part 1c (inline renderer).
+> - **Part 1c** (inline renderer) built, reviewed, and checked live by the user in Windows Terminal and Zed (v4.4). **Part 1 is done.**
+>
+> **Next:** Part 2 (walking skeleton, `ad tui --preview`).
 > Research: [Codex TUI + app-server](../research/codex-tui-and-app-server.md) · [terminal engineering](../research/terminal-engineering.md) · [harness landscape](../research/harness-landscape.md).
 
 ## Goal
@@ -183,7 +185,8 @@ SessionState = {thread, turns, items(Map), activeTurnId, requests(FIFO by JSON-R
                 engine:{state: starting|ready|crashed, exitCode, logPath, restarts}}
 
 // tui/terminal/renderer.mjs
-createRenderer({io, caps}) → {frame({lines, cursor}), commit(lines), suspend(), resume(), onResize(fn), redraw()}
+createRenderer({io, caps, depth, reflow, resizeSource}) → {start(), frame({lines, cursor}), commit(lines), suspend(), resume(),
+                                                     onResize(fn), redraw(), dispose(), state}
 // tui/terminal/io.mjs (v4.3 adds close, suspend, cpr, onResume; caps = {kitty, modifyOtherKeys, sync, focus, da1})
 createIo({stdin, stdout}) → {caps, write, enter(), restore(), close(), handoff(async fn), suspend(),
                              cpr() → {row, col}|null, onInput(fn), onResume(fn), size()}
@@ -475,6 +478,20 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
     - balanced modes.
     - One Windows CI smoke test drives real ConPTY through `@lydell/node-pty` (devDependency) into headless xterm.
   - **Done when:** the property tests pass under both reflow models, the ConPTY smoke passes, and `scripts/tui-demo.mjs` is clean live on Windows Terminal 1.24 and Zed (the user's daily terminal), and checked once in VS Code.
+  - ✅ **Built 2026-10-05/06:**
+    - **Files:** `renderer.mjs`, `detect.mjs` (terminal name, reflow model, width probe) and `scripts/tui-demo.mjs`. Test terminals in `testkit/screen.mjs`: real `@xterm/headless`, which reflows like Windows Terminal and Zed, and a VT model that never reflows. Both can delay CPR to expose races.
+    - **Tests:** a ConPTY smoke test through `@lydell/node-pty` drives the demo end to end.
+    - **Live check:** the user saw the demo clean in Windows Terminal and Zed. VS Code not checked.
+    - **Review fixes** (2 critical, 3 high):
+      - **Re-anchor races:** every re-anchor carries a generation. A resize, redraw or suspend that lands while it waits for CPR makes it write nothing, and commits made meanwhile stay queued.
+      - **Reflow estimate:** the re-anchor row count is a **lower bound**. Each row's width uses the fewest cells any terminal draws, and the cursor's own row doesn't count (xterm.js doesn't re-wrap it). An under-count leaves a ghost row; an over-count would erase history.
+      - **Suspend:** cancels a pending resize.
+      - **Probe:** never erases text on the cursor's row.
+      - **Detection:** `TERM_PROGRAM` wins over an inherited `WT_SESSION`.
+    - **Accepted:**
+      - Shrinking the height, or a reflow that pushes live rows above the viewport, moves them into scrollback as ghost rows. History is never erased.
+      - Measured on xterm.js: when the live region sits at the bottom of the screen and the window narrows, rows below the cursor wrap and scroll the content, but the cursor keeps its screen row. The cursor then lands on a later row of the live region, and the lower-bound re-anchor leaves those rows above as ghost rows in the visible screen until they scroll away. Fixing this needs the live region's screen position tracked across writes, and measurements from Windows Terminal and Zed; that is Part 7.
+    - **Cursor:** never styled or made to blink by ad. It follows the terminal's settings (user, 2026-10-06), and an idle screen never redraws.
 
 ### Part 2 — Walking skeleton (`ad tui --preview`)
 - Built on the Part 1 renderer, a plain multi-line composer (no popups), and the existing `engine.turn()` (called with `timeoutMs: 0`; the 600 s default would interrupt long turns) / `onApproval`.
@@ -620,6 +637,10 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
 - **Fixtures:** the synthetic future-Codex fixture; fake-server messages validated against the pinned JSON schema (required fields and enums).
 - **`/warnings`:** retained notices and unknown-event counts.
 - **Upgrade flow:** the upgrade workflow summarizes real-engine failures; the `codex-upgrade` skill gains the TUI smoke steps.
+- **Narrowing ghosts (from 1c):**
+  - Extend `tui-probe screen` to record, per terminal, where the cursor and the live rows end up after a narrowing resize, with the live region at the bottom of the screen and wrapping rows below the cursor.
+  - Track the live region's screen row across writes.
+  - Where a terminal keeps the cursor's screen row (xterm.js does), compensate in the re-anchor, but only when the region is known to be flush with the bottom. Keep the lower bound everywhere else.
 - **Done when:** the future fixture passes, a collision test fails as expected, and an upgrade dry run is documented.
 
 ### Part 8 — Codex parity++
@@ -808,3 +829,7 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
     - the input event shapes and `isNewline()` are fixed;
     - Ctrl+J counts as a newline in every encoding.
   - **Review:** 4 medium findings fixed (sequence cap, stale CPR, signals during handoff, stalled paste), plus 6 of 7 lows.
+- **v4.4** (2026-10-06): Part 1c.
+  - **Interfaces:** `createRenderer` gains `start()`, `dispose()` and `state`, plus the options `depth`, `reflow` and `resizeSource`. `frame()` takes span lines or strings.
+  - **Re-anchor:** guarded by a generation counter, and its rows-above-cursor estimate is a lower bound (ghost rows are acceptable, erased history is not).
+  - **devDependencies:** `@xterm/headless`, `@xterm/addon-unicode11` and `@lydell/node-pty` for the screen tests and the ConPTY smoke.

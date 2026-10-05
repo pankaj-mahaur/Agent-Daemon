@@ -42,6 +42,10 @@ Any change under `runtime/src/tui/`, `runtime/src/harness/session.mjs`, `runtime
      - width: measure with `tui/terminal/width.mjs`, which defaults to the `codepoint` profile (safe). Use `grapheme` only for Windows Terminal or after the CPR probe;
      - without 2026, commit at most every 150 ms.
    - **Resize:** pause, wait 75 ms, then re-anchor with a cursor-position query and the terminal's reflow model. Ctrl+L is re-anchor plus redraw.
+     - The rows-above-cursor estimate must be a lower bound: an over-count erases history, an under-count only leaves a ghost row.
+     - Any await on CPR is a race. Re-anchors carry a generation, so a resize, redraw or suspend that arrives meanwhile makes them write nothing.
+     - Test races with `cprDelayMs` in `testkit/screen.mjs`.
+   - **Cursor:** never restyle it or force a blink, and never redraw an idle screen (each write restarts the blink).
    - **Exit:** restore synchronously (`fs.writeSync`) on every exit path.
    - **Untrusted text:** always through `sanitize()` (`tui/terminal/sanitize.mjs`): `"transcript"` strips controls, `"approval"` makes every invisible visible. Sanitize the accumulated text, not each delta.
    - **Source files:** write invisible characters as `\u{...}` escapes. The Write/Edit tools decode 4-hex `\uXXXX` into raw characters. Check with `grep -nP '[^\x00-\x7F]'`.
