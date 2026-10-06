@@ -22,9 +22,9 @@
 //
 // Undo is conservative: it puts back only what the agent's own edits
 // changed. A path the agent didn't report editing, one changed since the
-// turn, one the snapshots left out, or a directory standing where a file
-// was, is a conflict, and nothing is undone (force overrides only "changed
-// since the turn").
+// turn, one changed during the turn by someone else, one the snapshots
+// left out, or a directory standing where a file was, is a conflict, and
+// nothing is undone (force overrides only the "changed since…" kinds).
 
 import { spawn } from "node:child_process";
 import { existsSync, lstatSync, rmSync } from "node:fs";

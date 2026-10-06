@@ -7,7 +7,7 @@ export function preflight({ stdin = process.stdin, stdout = process.stdout, plat
   if (env.TERM === "dumb") return "This terminal (TERM=dumb) can't show the UI. Use `ad chat`.";
   const [major, minor] = version.split(".").map(Number);
   if (platform === "win32" && !((major === 22 && minor >= 17) || (major === 24 && minor >= 2) || major >= 25)) {
-    return `ad tui needs Node 22.17+ or 24.2+ on Windows (this is ${version}): older versions turn a multi-line paste into one message per line. Upgrade Node within 22.x, or use \`ad chat\`.`;
+    return `ad tui needs Node 22.17+ or 24.2+ on Windows (this is ${version}): older versions turn a multi-line paste into one message per line. Upgrade Node (22.x to 22.17+, 24.x to 24.2+, 23.x to 24.2+ then \`npm rebuild\` in runtime/), or use \`ad chat\`.`;
   }
   if (platform === "win32" && env.TERM_PROGRAM === "mintty") return "mintty (Git Bash's window) can't pass keys to ad. Run `winpty ad tui`, or use Windows Terminal.";
   return null;

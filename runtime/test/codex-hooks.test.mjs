@@ -61,7 +61,7 @@ test("security profile adds the Bash guard and MCP audit as PreToolUse hooks", a
 
 test("shell quoting survives ASCII and typographic quotes in paths", () => {
   assert.equal(psQuote("C:\\O'Brien\\node.exe"), "'C:\\O''Brien\\node.exe'");
-  assert.equal(psQuote("C:\\Pankaj\u2019s\\x"), "'C:\\Pankaj\u2019\u2019s\\x'");
+  assert.equal(psQuote("C:\\Sam\u2019s\\x"), "'C:\\Sam\u2019\u2019s\\x'");
   assert.equal(psQuote("C:\\$HOME `x"), "'C:\\$HOME `x'", "$ and backtick are literal in single quotes");
   assert.equal(shQuote("/home/o'brien/node"), "'/home/o'\\''brien/node'");
 });

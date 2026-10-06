@@ -3,9 +3,9 @@
 Pull-based mid-session access to the agent-daemon episodic memory store.
 
 Hook injection (SessionStart / UserPromptSubmit) is push-only and budget-capped
-(~3 results / 2KB). This server lets Claude *query* memory when it decides it
-needs history — converting the episodic store from a 2KB drip into an
-on-demand database.
+(~3 results / 2KB). This server lets the agent (Claude Code, or ad's own
+harness on Codex) *query* memory when it decides it needs history — converting
+the episodic store from a 2KB drip into an on-demand database.
 
 ## Tools
 
@@ -33,6 +33,18 @@ low: search for compact ids, then expand only the few worth reading in full.
   (`retrieval_count`, `last_retrieved_at`) on the rows it returns.
 - All returned learning text passes the daemon's `neutralizeText` injection
   guard before reaching the model.
+- In ad's own harness the tools run **without an approval prompt** (see below),
+  because the blast radius is this narrow.
+
+## In ad's own harness (`ad`, `ad tui`, `ad chat`, `ad run`, `ad loop`)
+
+Nothing to install. Before each run ad registers this server in its Codex home
+(`~/.agent-daemon/codex-home/config.toml`, `mcp_servers.agent-daemon-memory`)
+and sets `default_tools_approval_mode = "approve"`, so the agent's memory
+lookups and feedback don't ask each time. If you set another approval mode for
+this server yourself (anything but `auto`), ad keeps it. Unattended runs
+(`ad loop`, team workers, scheduled loops) turn every other MCP server off but
+keep this one.
 
 ## Install (Claude Code)
 

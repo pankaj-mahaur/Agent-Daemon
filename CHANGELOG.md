@@ -10,11 +10,19 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 From the first live use on a real ChatGPT login:
 
-- Windows with PowerShell 7 from the Microsoft Store: every sandboxed command failed (`CreateProcessAsUserW failed`) and needed approval to run outside the sandbox. The engine's PATH now leaves out the WindowsApps folders in that case, so commands run sandboxed in Windows PowerShell 5.1 (or an MSI PowerShell 7).
+- Windows, when ad is started from PowerShell 7 installed from the Microsoft Store: every sandboxed command failed (`CreateProcessAsUserW failed`) and needed approval to run outside the sandbox. PowerShell puts its Store package folder first on PATH, and the 2.0.1 fix only removed the app-alias folder. The engine's PATH now leaves out every `WindowsApps` folder, so commands run sandboxed in Windows PowerShell 5.1 (or an MSI PowerShell 7).
 - ad's own memory tools (`memory_search` …) no longer ask for approval each time (`default_tools_approval_mode = "approve"` on the memory server, unless you set a mode yourself).
 - `ad tui`: a reply that wraps shows its bullet on the first line only (every line had one).
 - `ad tui`: links to local files (`[app.js](</D:/My Projects/app.js:12>)`, as Codex writes them) render as links instead of raw text.
 - `ad tui`: the header names the model Codex will use instead of "default"; choosing `/permissions` during a turn says the running turn keeps its settings.
+- `ad --last` when the terminal UI is turned off (`AD_TUI=0`) or can't run here says what to do instead of "unknown command".
+- `ad tui` on old Node on Windows: the message says exactly which versions to move to (22.17+, 24.2+).
+
+### Changed
+
+- New design and contributor docs: [harness design](docs/harness-design.md), [terminal UI architecture](docs/tui-architecture.md) (with the `/undo` safety model) and [testing](docs/testing.md). The public docs were checked against the code and brought up to date (security model for the harness and the terminal UI, uninstall steps, layout trees, Node requirements).
+- The maintainer's working plans and research notes are no longer published (they stay local); example names in tests and docs are generic.
+- `runtime/scripts/check-doc-links.mjs` checks that every relative link in the docs points at a file in the repo.
 
 ## [2.1.0] — 2026-10-06
 
@@ -143,7 +151,7 @@ From the first live use on a real ChatGPT login:
 
 ## [2.0.0] — 2026-10-01
 
-Agent Daemon becomes its own agent harness on the OpenAI Codex engine. Claude Code mode (hooks, memory, skills, GEPA) is unchanged. Design: [docs/plans/codex-harness.md](docs/plans/codex-harness.md).
+Agent Daemon becomes its own agent harness on the OpenAI Codex engine. Claude Code mode (hooks, memory, skills, GEPA) is unchanged. Design: [docs/harness-design.md](docs/harness-design.md).
 
 ### Added
 

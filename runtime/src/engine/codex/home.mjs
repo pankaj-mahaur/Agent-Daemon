@@ -8,7 +8,7 @@
 // app-server's own `config/batchWrite`, so we never hand-edit TOML that
 // Codex also writes (hook trust, login state).
 
-import { existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 
@@ -113,36 +113,9 @@ const dropCodexVars = (vars) =>
 export function codexEnv({ home, base = process.env, extra = {}, cwd = process.cwd() } = {}) {
   assertIsolatedHome(home, base, cwd);
   const full = resolve(cwd, home);
-  return sandboxablePath({ ...dropCodexVars(base), ...dropCodexVars(extra), CODEX_HOME: full, AD_ENGINE_HOME: canonicalPath(full) });
+  return { ...dropCodexVars(base), ...dropCodexVars(extra), CODEX_HOME: full, AD_ENGINE_HOME: canonicalPath(full) };
 }
 
-const isStoreDir = (d) => /\\WindowsApps(\\|$)/i.test(d);
-const present = (p) => {
-  try {
-    lstatSync(p); // an app execution alias is a reparse point: lstat, not stat
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-/**
- * The engine's PATH on Windows when PowerShell 7 comes from the Microsoft
- * Store: Codex runs commands in the first pwsh on PATH, and the Windows
- * sandbox can't start a Store (MSIX) app (CreateProcessAsUserW: access
- * denied), so every sandboxed command failed and needed approval to run
- * outside the sandbox. Without the WindowsApps folders Codex uses another
- * pwsh or Windows PowerShell 5.1. Only the engine's environment changes.
- */
-export function sandboxablePath(env, { platform = process.platform, exists = present } = {}) {
-  if (platform !== "win32") return env;
-  const key = Object.keys(env).find((k) => k.toUpperCase() === "PATH");
-  if (!key) return env;
-  const dirs = String(env[key]).split(";");
-  const first = dirs.find((d) => d && exists(`${d.replace(/[\\/]+$/, "")}\\pwsh.exe`));
-  if (!first || !isStoreDir(first)) return env;
-  return { ...env, [key]: dirs.filter((d) => !isStoreDir(d)).join(";") };
-}
 
 export const MANAGED_MARKER = ".agent-daemon-managed";
 

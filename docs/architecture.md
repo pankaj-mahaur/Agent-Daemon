@@ -39,20 +39,22 @@ agent-daemon is best understood as three nested loops:
 
 ## Components
 
-### 1. CLI (`runtime/src/cli.mjs`)
+### 1. CLI (`runtime/src/cli.mjs` + `runtime/src/cli-full.mjs`)
 
-Single entry point. Subcommand dispatcher. Roughly:
+`runtime/src/cli.mjs` is the entry point the `ad` / `agent-daemon` bin shims and hook commands call. It is a small launcher: it routes the terminal UI (bare `ad`, `ad --last`, `ad tui`) and `ad codex` itself, and hands every other command to `runtime/src/cli-full.mjs`, which holds the help text and the subcommand dispatcher. Roughly:
 
 | Command | Module |
 |---|---|
+| bare `ad`, `ad --last`, `tui` | `runtime/src/tui/main.mjs` (`tui --preview`: `runtime/src/tui/preview.mjs`); whether bare `ad` can open it: `tui/flip.mjs`, `tui/preflight.mjs` |
+| `codex` | `runtime/src/harness/codex-ui.mjs` |
 | `session-start` | `runtime/src/session-start.mjs` |
-| `digest`, `digest-latest` | `runtime/src/digest/digest.mjs` |
-| `watch` | `runtime/src/daemon/watch.mjs` |
+| `digest`, `digest-latest`, `digest-sweep` | `runtime/src/digest/digest.mjs` |
+| `watch`, `service` | `runtime/src/daemon/` |
 | `hook <name>` | `runtime/src/hooks/*.mjs` |
-| `init`, `doctor`, `status`, `review` | `runtime/src/cli.mjs` directly |
+| `init`, `doctor`, `status`, `review`, `checkpoint` | `runtime/src/cli-full.mjs` directly |
+| `memory`, `route`, `skill`, `viewer` | `runtime/src/memory/`, `route-map.mjs`, `skill-install.mjs`, `viewer.mjs` |
 | `team *`, `spawn` | `runtime/src/orchestration/*.mjs` |
 | `evolve` | `runtime/src/digest/gepa/*.mjs` |
-| `checkpoint` | `runtime/src/cli.mjs` directly |
 | `auth`, `chat`, `run`, `loop`, `schedule`, `web`, `acp`, `tools`, `sandbox`, `agy` | `runtime/src/harness/*.mjs` (engine: `runtime/src/engine/codex/`) |
 
 ### 2. Hooks (`runtime/src/hooks/`)
@@ -96,7 +98,7 @@ transcript.jsonl
     ▼
 ┌─────────────────────────────────────────────┐
 │ 4. classify(learnings, availableSkills)      │  Route each learning to a target:
-│    → ClassifiedLearning[]                    │  activeContext.md | proposals/
+│    → ClassifiedLearning[]                    │  activeContext.md | proposed/
 │                                              │  | constitution/ | skills/
 └─────────────────────────────────────────────┘
     │
@@ -105,7 +107,7 @@ transcript.jsonl
 │ 5. applyLearnings(classified)                │  Write to memory or queue:
 │    → { memoryProjectAppended, ... }          │  - Auto-append low-risk to .md
 │                                              │  - Insert into SQLite
-│                                              │  - Queue high-risk to proposals/
+│                                              │  - Queue high-risk to .agent-daemon/proposed/
 └─────────────────────────────────────────────┘
     │
     ▼
@@ -168,6 +170,14 @@ Optional multi-agent layer. `ad team create` spins up a coordinator + workers, e
 Workers default to sandboxed Codex threads: they can't reach the network or write `.git`, and the daemon commits their work on their branch. `--engine claude` (or `AD_AGENT_ENGINE=claude`) spawns headless `claude` as in v1.
 
 Out of scope for daily solo workflow — see [`skills/orchestrate-team/SKILL.md`](../skills/daemon/orchestrate-team/SKILL.md) when you need it.
+
+### 9. Agent harness (`runtime/src/harness/`, `runtime/src/engine/`)
+
+ad's own agent runs on a pinned `codex app-server`, driven over JSON-RPC on stdio in ad's own Codex home. `engine/index.mjs` is the engine API the rest of ad uses; `engine/codex/` is the only code that knows Codex's protocol and the only code that starts Codex. `harness/` holds the front ends (`chat`, `run`, `loop`, `schedule`, `web`, `acp`, `auth`, `sandbox`, `tools`, `agy`, `codex-ui`), the harness-home setup (`setup.mjs`: hooks, memory MCP server, skills, Windows sandbox), the session controller the terminal UI drives (`session.mjs`) and the `/undo` checkpoints (`checkpoints.mjs`). See [harness-design.md](harness-design.md).
+
+### 10. Terminal UI (`runtime/src/tui/`)
+
+Bare `ad` / `ad tui`: an inline, Codex-style terminal UI on the session controller. `terminal/` is the terminal layer (input decoding, sanitizing, widths, the inline renderer), `view/` the components (composer, markdown, cells, chrome, approval prompts), `app.mjs` the slash commands and keys, `main.mjs` the startup (sign-in, folder trust, header), `ad-layer.mjs` ad's own features (memory, loops, schedules, teams) and `undo.mjs` the `/undo` wiring. See [tui-architecture.md](tui-architecture.md) and [tui.md](tui.md).
 
 ---
 
@@ -234,9 +244,12 @@ Agent-Daemon/                       # The cloned repo
 │   ├── workflow.md                 # ← this stream of docs
 │   ├── troubleshooting.md
 │   ├── architecture.md             # ← you are here
+│   ├── harness.md, harness-design.md       # the agent harness: use, design
+│   ├── tui.md, tui-architecture.md         # the terminal UI: use, design
+│   ├── testing.md, manual-test.md          # test layers and CI, end-to-end checklist
+│   ├── contributing.md
 │   ├── installation-guide.md
 │   ├── customization-guide.md
-│   ├── manual-test-v0.2.0.md
 │   ├── skill-anatomy.md
 │   ├── ecosystem.md
 │   └── future-harnesses.md
@@ -250,13 +263,15 @@ Agent-Daemon/                       # The cloned repo
 │   └── cursor/
 ├── runtime/                        # Node implementation
 │   ├── src/
-│   │   ├── cli.mjs                 # Entry point
+│   │   ├── cli.mjs                 # Launcher: terminal UI and ad codex; the rest → cli-full.mjs
+│   │   ├── cli-full.mjs            # Help text + dispatcher for every other command
 │   │   ├── digest/                 # Pipeline modules
 │   │   ├── hooks/                  # Hook handlers
 │   │   ├── memory/
-│   │   ├── mcp/                    # Read-only MCP memory server
+│   │   ├── mcp/                    # MCP memory server (reads + usefulness feedback)
 │   │   ├── engine/                 # Codex app-server driver
-│   │   ├── harness/                # chat/run/loop/schedule/web/acp/auth/sandbox/agy
+│   │   ├── harness/                # chat/run/loop/schedule/web/acp/auth/sandbox/agy/codex, session controller, /undo checkpoints
+│   │   ├── tui/                    # Terminal UI: terminal/ layer, view/ components, app, /undo wiring
 │   │   ├── auth/                   # Provider keys + secret store
 │   │   ├── orchestration/
 │   │   ├── adapters/
@@ -271,21 +286,29 @@ Agent-Daemon/                       # The cloned repo
 ~/.agent-daemon/                    # User-level state (per-machine)
 ├── episodic.db                     # SQLite — learnings, sessions
 ├── audit/mcp.jsonl                 # MCP call audit (security profile)
-├── logs/                           # Digest failure reports
+├── logs/                           # Digest failure reports, tui-probe logs
+├── checkpoints/                    # Pre-compact memory markers (ad checkpoint; not /undo)
 ├── watch.json                      # Watcher config
-├── codex-home/                     # Harness CODEX_HOME (login, config, rollouts)
+├── codex-home/                     # Harness CODEX_HOME (login, config, rollouts, skills mirror)
 ├── secrets/                        # Provider keys (file backends)
 ├── schedules.json, schedule-logs/  # ad schedule jobs + output
+├── tui/                            # Terminal UI: prompt history (0600), per-folder state
+├── locks/                          # Conversation locks (one ad per conversation)
+├── skill-manifest.json             # Provenance of skills installed with ad skill install
 ├── teams/                          # Team state + inboxes
 └── worktrees/                      # Worker git worktrees
 
 <project>/.agent-daemon/            # Per-project state (per-codebase)
-├── memory/                         # 7 markdown files
-├── proposals/                      # Queued diffs for review
+├── memory/                         # Project memory markdown files
+├── proposed/                       # Queued diffs for review (ad status / ad review)
 ├── sessions.jsonl                  # Per-session audit ledger
-├── checkpoints/                    # Pre-compact memory snapshots
 ├── loops/                          # ad loop iteration logs
+├── loop-tui.log                    # Output of a /loop started from ad tui
 └── STOP                            # Create to stop a running ad loop
+
+<repo>/.git/                        # Per repo where ad tui ran (/undo)
+├── ad-checkpoint-index             # Private index for snapshots (never your index)
+└── refs/ad/checkpoints/            # Snapshot trees, before and after each turn
 
 ~/.claude/settings.json             # Where hooks are registered
 ~/.claude/projects/<encoded>/*.jsonl  # Transcripts (input to digest)
@@ -294,7 +317,7 @@ Agent-Daemon/                       # The cloned repo
 
 ### Harness mode
 
-The same hooks from `runtime/profiles/profiles.json` are rendered into `CODEX_HOME/hooks.json`, so `ad chat` / `ad run` / `ad loop` get memory injection, correction capture and guards. Codex caps SessionEnd at 3 s, so that hook spawns a detached `ad digest` instead of digesting inline. Memory is also exposed to the agent as the `agent-daemon-memory` MCP server. Design: [plans/codex-harness.md](plans/codex-harness.md).
+The same hooks from `runtime/profiles/profiles.json` are rendered into `CODEX_HOME/hooks.json`, so `ad tui` (bare `ad`), `ad chat`, `ad run` and `ad loop` get memory injection, correction capture and guards. Codex caps SessionEnd at 3 s, so that hook spawns a detached `ad digest` instead of digesting inline. Memory is also exposed to the agent as the `agent-daemon-memory` MCP server, whose tools run without an approval prompt (`default_tools_approval_mode = "approve"`, unless the user set a mode). Design: [harness-design.md](harness-design.md).
 
 **Isolation from the user's own Codex.** `runtime/src/engine/codex/` is the only code that starts Codex, and every spawn goes through `codexEnv()` in `home.mjs`:
 
@@ -303,12 +326,16 @@ The same hooks from `runtime/profiles/profiles.json` are rendered into `CODEX_HO
 - Every `CODEX_*` variable is dropped, because those override config; `CODEX_CA_CERTIFICATE` is kept.
 - `AD_ENGINE_HOME` is stamped on the child, so hooks that Codex runs for ad recognise the home as ad's.
 - `ad doctor` and the protocol-schema generator run Codex in throwaway temp homes.
+- On Windows, `withoutStoreAliases()` in `app-server.mjs` drops every PATH entry with a `WindowsApps` segment at each spawn (`ad codex` too): the sandbox can't start PowerShell 7 from the Microsoft Store, so Codex uses an MSI PowerShell 7 or Windows PowerShell 5.1.
 
-**Testing against the engine.** Two layers sit under the unit tests:
+**Testing against the engine.** Three layers sit under the unit tests:
 - the scripted fake app-server (`runtime/testkit/fake-codex-app-server.mjs`) for crashes and edge traffic;
-- the real pinned binary against a mock Responses server (`runtime/testkit/mock-responses.mjs`, opt-in `AD_REAL_ENGINE=1`), so a Codex bump that changes behaviour fails CI on all three platforms.
+- the real pinned binary against a mock Responses server (`runtime/test/engine-real.test.mjs` with `runtime/testkit/mock-responses.mjs`, opt-in `AD_REAL_ENGINE=1`), for behaviour a protocol snapshot can't catch;
+- the real `ad tui` in a pseudo-terminal on the real binary and the mock model (`runtime/test/tui-live.test.mjs`, same opt-in).
 
-The coming terminal UI builds on the same engine: [plans/ad-tui.md](plans/ad-tui.md).
+CI's real-engine job runs the last two on Linux, macOS and Windows; it is non-blocking (`continue-on-error`), so read its result. Details: [testing.md](testing.md).
+
+The terminal UI (`ad tui`, bare `ad`) builds on the same engine: [tui-architecture.md](tui-architecture.md).
 
 ---
 
@@ -339,4 +366,6 @@ Per-project markdown means each codebase has its own brain. Global SQLite means 
 - [Troubleshooting](./troubleshooting.md) — common issues
 - [Contributing](./contributing.md) — for new devs
 - [SECURITY.md](../SECURITY.md) — threat model
-- [Manual test](./manual-test.md) — end-to-end checklist (Claude Code mode + harness)
+- [Harness design](./harness-design.md) and [terminal UI architecture](./tui-architecture.md) — the agent harness and `ad tui` in depth
+- [Testing](./testing.md) — test layers and CI
+- [Manual test](./manual-test.md) — end-to-end checklist (Claude Code mode + harness + terminal UI)

@@ -2,7 +2,7 @@
 
 Two ways to use Agent Daemon with [OpenAI Codex](https://developers.openai.com/codex):
 
-1. **The Agent Daemon harness (recommended).** `ad chat`, `ad run`, `ad loop` drive Codex through `codex app-server` with memory, hooks, skills and the constitution wired in automatically, in the harness's own `CODEX_HOME` (`~/.agent-daemon/codex-home`). Nothing in your own `~/.codex` is touched. Start with `ad auth login chatgpt`, then `ad chat`. See the plan and design notes in [docs/plans/codex-harness.md](../../docs/plans/codex-harness.md).
+1. **The Agent Daemon harness (recommended).** The terminal UI (bare `ad`, `ad tui`), `ad chat`, `ad run` and `ad loop` drive Codex through `codex app-server` with memory, hooks, skills and the constitution wired in automatically, in the harness's own `CODEX_HOME` (`~/.agent-daemon/codex-home`). `ad codex` opens the stock Codex UI on that same home. Nothing in your own `~/.codex` is touched. Start with `ad` in your project: it asks you to sign in on the first run. Usage: [docs/harness.md](../../docs/harness.md) and [docs/tui.md](../../docs/tui.md); design: [docs/harness-design.md](../../docs/harness-design.md).
 2. **Your own `codex` CLI** with the reference config in this folder — copy and edit by hand.
 
 Structured after the [`everything-claude-code`](https://github.com/affaan-m/everything-claude-code) Codex pack (MIT) — see [ATTRIBUTION.md](../../ATTRIBUTION.md).

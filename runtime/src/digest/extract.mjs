@@ -186,7 +186,7 @@ export function extractFromAgentBlock(summary) {
  *      tag value into `tags[]` so the categorical signal is preserved
  *      for downstream search.
  *
- * Real-world failure that motivated this: mobiux-website session
+ * Real-world failure that motivated this: marketing-site session
  * 2026-05-21 emitted 8 entries with `tag`/`text` shape and 4 with just
  * `lessons` — all 12 got dropped silently before this change.
  *

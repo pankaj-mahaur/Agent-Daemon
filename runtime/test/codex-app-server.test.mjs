@@ -170,6 +170,9 @@ test("Windows: Store app-alias dirs leave the engine's PATH (the sandbox can't l
   const Path = "C:/Windows/system32;C:/Users/u/AppData/Local/Microsoft/WindowsApps;C:/Program Files/nodejs;C:/Users/u/AppData/Local/Microsoft/WindowsApps/";
   assert.deepEqual(withoutStoreAliases({ Path, X: "1" }, "win32"), { Path: "C:/Windows/system32;C:/Program Files/nodejs", X: "1" });
   assert.equal(withoutStoreAliases({ PATH: "a;C:/x/WindowsAppsTools" }, "win32").PATH, "a;C:/x/WindowsAppsTools", "only the alias dir itself");
+  // Started from the Store's PowerShell 7, its package folder leads PATH: it goes too.
+  const pkg = "C:\\Program Files\\WindowsApps\\Microsoft.PowerShell_7.6.6.0_x64__8wekyb3d8bbwe";
+  assert.equal(withoutStoreAliases({ Path: `${pkg};C:\\Windows\\system32` }, "win32").Path, "C:\\Windows\\system32");
   const posix = { PATH: "/usr/bin:/mnt/c/Users/u/AppData/Local/Microsoft/WindowsApps" };
   assert.equal(withoutStoreAliases(posix, "linux"), posix);
 });

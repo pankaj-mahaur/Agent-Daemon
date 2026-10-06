@@ -176,12 +176,12 @@ Decision:
 
 ### Example 3: Project-specific pattern
 
-User says: *"DriveYO mein har baar negotiator test karte time GCP creds set karna padta hai, ye remember karwa lo"*
+User says: *"shop-app mein har baar checkout test karte time Stripe test keys set karni padti hain, ye remember karwa lo"*
 
 Decision:
-- **Scope:** project (mentions DriveYO + negotiator + GCP creds — project-specific)
-- **Dedup search:** `test-driveyo-negotiator` exists in `~/.claude/skills/` (user's global) with 60% overlap
-- **Action:** Surface to user — "Found global `test-driveyo-negotiator`. The GCP creds detail is project-specific to DriveYO. Append to global, or create new project-local `negotiator-test-creds`?"
+- **Scope:** project (mentions shop-app + checkout + Stripe test keys — project-specific)
+- **Dedup search:** `test-shop-app-checkout` exists in `~/.claude/skills/` (user's global) with 60% overlap
+- **Action:** Surface to user — "Found global `test-shop-app-checkout`. The Stripe keys detail is project-specific to shop-app. Append to global, or create new project-local `negotiator-test-creds`?"
 - After user picks → write accordingly
 
 ## Anti-patterns

@@ -2,8 +2,8 @@
 ╭────────────────────────────────────────────────────────────────────────────╮
 │ >_ Agent Daemon (v2.1.0) · on Codex 0.160.0 (tested)                       │
 │                                                                            │
-│ model:     gpt-5.x-codex medium · ChatGPT Go              /model to change │
-│ directory: D:\Program Files\my-projects\DriveYO · git: dev                 │
+│ model:     gpt-5.x-codex medium · ChatGPT Plus            /model to change │
+│ directory: D:\Program Files\work\shop-app · git: dev                       │
 │ memory:    142 learnings · profile loaded                          /memory │
 │ sandbox:   workspace-write · asks first · Windows sandbox ready            │
 ╰────────────────────────────────────────────────────────────────────────────╯

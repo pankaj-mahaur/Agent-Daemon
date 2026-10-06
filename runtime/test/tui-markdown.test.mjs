@@ -257,8 +257,8 @@ test("live() stays cheap for a huge held-back paragraph (its tail only)", () => 
 });
 
 test("a link destination in <…> may hold spaces (Codex's local file links); a Windows path loses its leading /", () => {
-  const spans = inline("see [step6.js](</D:/Program Files/my-projects/app/step6.js:2>) now");
-  assert.equal(spans.map((s) => s.text).join(""), "see step6.js (D:/Program Files/my-projects/app/step6.js:2) now");
+  const spans = inline("see [step6.js](</D:/Program Files/work/app/step6.js:2>) now");
+  assert.equal(spans.map((s) => s.text).join(""), "see step6.js (D:/Program Files/work/app/step6.js:2) now");
   assert.equal(styleOf(spans, "step6.js").underline, true);
   assert.equal(inline("[a](<x y>)").map((s) => s.text).join(""), "a (x y)");
   assert.equal(inline("[a](x y)").map((s) => s.text).join(""), "[a](x y)", "without <…>, a space ends it: not a link");

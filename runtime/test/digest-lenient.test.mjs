@@ -138,7 +138,7 @@ test("new types (gotcha, decision) survive sanitization", () => {
 /* ------------------------------------------------------------------ */
 /* Bug A regression: parser must fall through to earlier turns when    */
 /* the most recent block is a placeholder/illustration, not the real   */
-/* digest. Real-world failure seen in mobiux-website session 2026-05-21*/
+/* digest. Real-world failure seen in marketing-site session 2026-05-21*/
 /* ------------------------------------------------------------------ */
 
 test("fallback: malformed LAST turn skips to earlier valid block (placeholder dialogue)", () => {
@@ -211,14 +211,14 @@ test("fallback: still respects most-recent-PARSEABLE-wins ordering", () => {
 /* ------------------------------------------------------------------ */
 /* Bug B regression: sanitizeLearnings accepts `tag`/`lessons` drift   */
 /* that Claude commonly emits instead of canonical `type`/`text`.      */
-/* Real-world failure: mobiux-website session 2026-05-21 had 8 with   */
+/* Real-world failure: marketing-site session 2026-05-21 had 8 with   */
 /* {tag,text} shape and 4 with {lessons} — all 12 dropped before fix.  */
 /* ------------------------------------------------------------------ */
 
 test("schema drift: {tag, text} entries land as type=pattern with tag preserved in tags[]", () => {
   const text = `<agent-daemon-digest>
 {"learnings":[
-  {"tag":"projectbrief","text":"mobiux-website is an Eleventy + Nunjucks marketing site"},
+  {"tag":"projectbrief","text":"marketing-site is an Eleventy + Nunjucks marketing site"},
   {"tag":"systemPatterns","text":"design tokens: --bg #f4eedd, --accent #8a2430 (oxblood), --accent-on-accent #d9b865"}
 ],"session_summary":"shipped 3 trello cards"}
 </agent-daemon-digest>`;
@@ -229,7 +229,7 @@ test("schema drift: {tag, text} entries land as type=pattern with tag preserved 
   assert.equal(res.learnings[1].type, "pattern");
   assert.deepEqual(res.learnings[0].tags, ["projectbrief"], "tag value preserved in tags[]");
   assert.deepEqual(res.learnings[1].tags, ["systemPatterns"]);
-  assert.equal(res.learnings[0].text, "mobiux-website is an Eleventy + Nunjucks marketing site");
+  assert.equal(res.learnings[0].text, "marketing-site is an Eleventy + Nunjucks marketing site");
 });
 
 test("schema drift: {lessons} (no type, no text) entries land as type=pattern", () => {

@@ -299,7 +299,7 @@ export async function cmdTui(opts = {}) {
         intro: [[{ text: "ad isn't signed in to Codex yet.", style: { bold: true } }]],
         items: [
           { label: "ChatGPT", hint: "sign in with your ChatGPT plan (browser)", value: ["auth", "login", "chatgpt"] },
-          { label: "OpenAI API key", hint: "stored in ad's secret store", value: ["auth", "login", "openai"] },
+          { label: "OpenAI API key", hint: "kept by Codex in ad's own Codex home", value: ["auth", "login", "openai"] },
           { label: "OpenRouter", hint: "API key + model", value: ["auth", "login", "openrouter"] },
         ],
       });

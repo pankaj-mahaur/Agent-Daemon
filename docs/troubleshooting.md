@@ -160,7 +160,7 @@ Error: write EOF
 
 - `type: "pattern"` + `scope: "project"` → `activeContext.md`
 - `type: "tool"` → `systemPatterns.md` or `techContext.md` depending on subtype
-- `type: "correction"` → queued in `proposals/`
+- `type: "correction"` → queued in `.agent-daemon/proposed/` (review with `ad review`)
 
 **Fix:** Check `activeContext.md` first — most learnings land there. To see exactly where they went:
 
@@ -313,13 +313,19 @@ ad auth status
 
 ---
 
-## 16. Harness on Windows: every agent command fails with "Access is denied"
+## 16. Harness on Windows: every agent command fails ("Access is denied" or `CreateProcessAsUserW failed`)
 
-**Symptom:** `ad run` / `ad chat` finish, but the agent says its shell was denied and changes nothing. Codex's log (`logs_2.sqlite` in the harness home) shows `CreateProcessAsUserW failed: 5 (Access is denied.)` for `...\Microsoft\WindowsApps\pwsh.exe`.
+**Symptom:** one of:
 
-**Cause:** PowerShell 7 from the Microsoft Store is an app-execution alias, and the sandbox's restricted token can't launch aliases.
+- `ad run` / `ad chat` finish, but the agent says its shell was denied and changes nothing. Codex's log (`logs_2.sqlite` in the harness home) shows `CreateProcessAsUserW failed: 5 (Access is denied.)` for `...\Microsoft\WindowsApps\pwsh.exe`.
+- In `ad tui`, each command shows `Failed … Failed to create unified exec process: CreateProcessAsUserW failed: -1073283067`, naming a `pwsh.exe` under `C:\Program Files\WindowsApps\…`, and the agent then asks to run it outside the sandbox.
 
-**Fix:** upgrade to agent-daemon **2.0.1** or later, which keeps `WindowsApps` off the engine's PATH so Codex uses an installed pwsh 7 or `powershell.exe`.
+**Cause:** PowerShell 7 installed from the Microsoft Store. Codex runs commands in the first `pwsh` on PATH, and the Windows sandbox can't start a Store (MSIX) app. Two PATH entries lead to it: the per-user app-alias folder (`…\Microsoft\WindowsApps`), and the package folder (`C:\Program Files\WindowsApps\Microsoft.PowerShell_…`), which that PowerShell puts at the front of PATH when you start ad from it.
+
+**Fix:** update agent-daemon. Fixed in 2.0.1 (the alias folder) and completed in 2.1.1 (the package folder): on Windows, ad leaves every `WindowsApps` folder out of its engine's PATH, so commands run inside the sandbox in a PowerShell 7 installed from the [MSI](https://learn.microsoft.com/powershell/scripting/install/installing-powershell-on-windows) or in Windows PowerShell 5.1. Your own shell and PATH are unchanged.
+
+- To have the agent use PowerShell 7, install it from the MSI as well.
+- Store app aliases (for example `winget`, or the `python` stub) aren't on the agent's PATH either.
 
 ---
 
@@ -399,26 +405,31 @@ Quit with `qqq`, or press Ctrl+C three times. Results are saved to `~/.agent-dae
 
 **Known causes:**
 
-- On Windows, Node older than 22.17 (or 24.0–24.1) has no bracketed paste. Upgrade within your major version.
+- On Windows, Node 22 before 22.17, 23.x and 24 before 24.2 have no bracketed paste. Upgrade 22.x to 22.17+ or 24.x to 24.2+; from 23.x, move to 24.2+ and run `npm rebuild` in `runtime/`.
 - Windows Terminal 1.24 and the VS Code terminal send Shift+Enter as plain Enter; use Ctrl+J for a newline. Windows Terminal 1.25 supports the keyboard protocol that tells them apart.
 
 ---
 
 ## 23. `ad tui` says it needs an interactive terminal or Node 22.17+
 
-**Symptom:** `ad tui` (or bare `ad`) exits at once with one of:
+**Symptom:** `ad tui` (or bare `ad`, or `ad --last`) exits at once with one of:
 
 - `ad tui needs an interactive terminal. Use ad chat for pipes and scripts.`
 - `This terminal (TERM=dumb) can't show the UI. Use ad chat.`
 - `ad tui needs Node 22.17+ or 24.2+ on Windows (this is …)`
 - `mintty (Git Bash's window) can't pass keys to ad. Run winpty ad tui, or use Windows Terminal.`
 
+Bare `ad` then prints the help. `ad --last` adds that you can use `ad chat` and `/resume` instead, and exits with code 2.
+
 **Cause:** the terminal UI needs a real terminal on both stdin and stdout. On Windows it also needs a Node with VT input in raw mode (22.17+ or 24.2+, not 23.x or 24.0–24.1); older ones turn a multi-line paste into one message per line. mintty doesn't pass keys to Windows console programs.
 
 **Fix:**
 
 - Run it in a terminal window, not through a pipe, `nohup` or a script. For scripts use `ad run` or `ad chat`.
-- Upgrade Node within your major version (22.x stays ABI-compatible, nothing to rebuild), then check with `node -v`.
+- Upgrade Node, then check with `node -v`:
+  - 22.x: to 22.17 or later (same native-module ABI, nothing to rebuild);
+  - 24.x: to 24.2 or later (nothing to rebuild);
+  - 23.x: to 24.2 or later, then run `npm rebuild` in `runtime/` (the native SQLite module is built per Node version).
 - In Git Bash: `winpty ad tui`, or open Git Bash as a Windows Terminal profile.
 - Everything else in ad keeps working on older Node; only the TUI checks this.
 
@@ -469,17 +480,22 @@ make the window narrower, then wider, quit with `qqq`, and attach `~/.agent-daem
 - `a file is where its folder was`: a file or symlink now stands where one of the path's folders was. `force` doesn't override this.
 - `not in the checkpoint`: the agent edited a file the snapshots leave out (untracked and over 2 MB, or in a heavy folder like `build/` or `node_modules/`). There is nothing to put back; `force` doesn't change that.
 
-With any of these, nothing is undone.
+With any of these, plain `/undo` changes nothing.
 
 **Fix:**
 
 - Look at the files first (`/diff`, or `git diff`).
-- If later changes to the agent's files can go, `/undo force` puts those files back too. Even forced, files the agent's edits didn't report are never touched, and folders are never removed or replaced; those are reported as left alone.
+- If later changes to the agent's files can go, `/undo force` puts those files back too, and undoes the rest of the turn. Even forced, the files with any other conflict are left alone, and folders are never removed or replaced. The result says how many files were "left alone (not the agent's edit, changed during the turn, not in the checkpoint, or a folder or file stands in the way)".
 - If you want to keep them, fix the files by hand. Esc Esc rewinds just the conversation and leaves the files alone.
 
 **Other `/undo` messages:**
 
-- `The last turn has no checkpoint (…)`: the snapshot taken when you sent the prompt wasn't done within 10 s (a very large working folder), snapshots fail in this repo (git's message follows), the turn was started by Codex itself (a review, a goal) rather than a prompt here, or it ran before `ad tui` started.
+- `The last turn has no checkpoint (…)`, with the reason:
+  - the snapshot taken when you sent the prompt wasn't done within 10 s (a very large working folder, a busy machine);
+  - snapshots fail in this repo (git's message follows), or the snapshot after the turn failed;
+  - the turn wasn't started from a prompt here: Codex started it itself (a review, a goal);
+  - one of the agent's edits couldn't be read back, so ad can't tell its lines from anyone else's;
+  - the turn ran before `ad tui` started.
 - `… edit(s) outside this repo weren't touched`: the agent edited files outside the repo `ad tui` runs in; `/undo` only covers this repo.
 - `Not a git repo`: checkpoints need a git repo.
 - `A turn started meanwhile`: a prompt was sent while `/undo` was checking. Run `/undo` again once that turn finishes.
@@ -516,6 +532,8 @@ $env:EDITOR = "code --wait"                  # PowerShell (this session)
 
 Other choices: `nvim`, `vim`, `nano`, or Notepad++ with `-multiInst -nosession`. A full path with spaces works without quotes when there are no arguments; with arguments, quote the path (`"C:\Program Files\Notepad++\notepad++.exe" -multiInst -nosession`).
 
+---
+
 ## 29. Windows: the first command or edit after installing takes ~35 s
 
 **Symptom:** right after installing (or with a fresh `~/.agent-daemon/codex-home`), the agent's first command or file edit sits on "Thinking" for about half a minute. Later ones take a second or two.
@@ -523,14 +541,6 @@ Other choices: `nvim`, `vim`, `nano`, or Notepad++ with `-multiInst -nosession`.
 **Cause:** Codex sets up its Windows sandbox for ad's Codex home on the first sandboxed action. It happens once per Codex home, not per project folder.
 
 **Fix:** nothing to do; wait it out once. A command you approve to run outside the sandbox doesn't pay it.
-
-## 30. Windows: every command fails with `CreateProcessAsUserW failed`, then asks to run outside the sandbox
-
-**Symptom:** each command the agent runs shows `Failed … Failed to create unified exec process: CreateProcessAsUserW failed: -1073283067`, naming a `pwsh.exe` under `C:\Program Files\WindowsApps\…`. The agent then asks to run it outside the sandbox.
-
-**Cause:** PowerShell 7 installed from the Microsoft Store. Codex runs commands in the first `pwsh` on PATH, and the Windows sandbox can't start a Store (MSIX) app (access denied).
-
-**Fix:** since v2.1.1, ad leaves the WindowsApps folders out of its engine's PATH when the Store PowerShell comes first, so commands run in Windows PowerShell 5.1 (or a PowerShell 7 installed from the MSI, if there is one), inside the sandbox. Your own shell and PATH are unchanged. To have the agent use PowerShell 7, install it from the [MSI](https://learn.microsoft.com/powershell/scripting/install/installing-powershell-on-windows) as well.
 
 ---
 

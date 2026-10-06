@@ -28,24 +28,14 @@ mcp/<server-name>/
 - **Config snippets are real, copy-pasteable JSON** — not pseudocode.
 - **No hardcoded secrets.** Use `${VAR_NAME}` placeholders and document the required env vars.
 
-## Status
+## Servers
 
-Scaffolded — content coming in subsequent passes. Initial candidates:
+| Server | What it does |
+|---|---|
+| [`agent-daemon-memory`](agent-daemon-memory/README.md) | Pull-based access to agent-daemon's own memory store (search, recent, timeline, detail, profile, feedback). In ad's own harness it is registered automatically; for Claude Code, add it with `claude mcp add` (see its README). |
 
-- `repomix` — pack a codebase into AI-readable XML for review
-- `qmd` — search local markdown knowledge bases (BM25 + vector)
-- `filesystem` — sandboxed file ops with allowlist
-- `postgres` — run read-only SQL against a Postgres instance
-- `github` — issue / PR / release access via GitHub API
+Candidates for later: `repomix` (pack a codebase for review), `qmd` (search local markdown), `filesystem` (sandboxed file ops), `postgres` (read-only SQL), `github` (issues, PRs, releases).
 
-## Install (when content lands)
+## Install
 
-```bash
-# Bash
-./setup.sh --mcp repomix,qmd
-
-# PowerShell
-./setup.ps1 -Mcp "repomix,qmd"
-```
-
-The installer will append the server entry to your global Claude Code `settings.json` (or print the snippet for manual paste if you prefer that flow).
+Each server's README has the exact install line. `./setup.sh --mcp <name>` (`./setup.ps1 -Mcp "<name>"`) prints that server's install hint; it doesn't change any settings file.

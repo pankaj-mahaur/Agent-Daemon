@@ -50,15 +50,17 @@ export const CODEX_MISSING = "Codex engine not installed — run: cd runtime && 
 
 // Codex picks the first pwsh.exe on PATH as the agent's shell. The Microsoft
 // Store's pwsh is an app-execution alias under ...\Microsoft\WindowsApps, and
-// the Windows sandbox's restricted token can't launch aliases
-// (CreateProcessAsUserW: Access is denied), so every command fails. Without
-// those entries Codex falls back to an installed pwsh 7 or powershell.exe.
+// the Windows sandbox's restricted token can't launch it (CreateProcessAsUserW:
+// Access is denied), so every command fails. Started from that PowerShell 7,
+// ad also inherits its package folder (C:\Program Files\WindowsApps\
+// Microsoft.PowerShell_...) at the front of PATH. Without every WindowsApps
+// entry Codex falls back to an installed pwsh 7 or powershell.exe.
 export function withoutStoreAliases(env, platform = process.platform) {
   if (platform !== "win32") return env;
   const out = { ...env };
   for (const key of Object.keys(out)) {
     if (key.toUpperCase() !== "PATH" || typeof out[key] !== "string") continue;
-    out[key] = out[key].split(";").filter((p) => !/[\\/]WindowsApps[\\/]?$/i.test(p.trim())).join(";");
+    out[key] = out[key].split(";").filter((p) => !/[\\/]WindowsApps(?:[\\/]|$)/i.test(p.trim())).join(";");
   }
   return out;
 }
