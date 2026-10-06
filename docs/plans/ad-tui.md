@@ -1052,6 +1052,7 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
     - **Deleted heavy-folder or ignored files:** an agent path gone before and after that was never snapshotted is `not in the checkpoint`, not a silent "0 files put back".
     - **The user's index lock:** the restore runs on a scratch index, so it neither needs nor can leave `.git/index.lock`. A lock on ad's private index older than 5 min (git killed at its 60 s timeout) is removed.
     - **Lows fixed:** the "after" snapshot's skipped files count too; a failed `thread/revert` after the files came back says so. **Accepted lows:** a "before" left by a failed turn/start is used by the next server-started turn; wall-clock `since`.
+  - **Second re-review: no medium-or-worse remain.** Lows also fixed: one `hash-object --stdin-paths` per edit (smaller hash window), the refusal names why "changed during the turn" can't be forced (a formatter counts), a unique scratch index per restore, the latest edit wins over case variants. Accepted: two ad processes racing on a stale private-index lock (both write a whole index; last wins); a `.gitignore` the agent deleted in the same turn.
 
 ### Part 11 — Flip bare `ad`, docs, verification, release
 - **Flip:** after FC3, apply D7, and add `ad --last`. `ad chat` shows a one-time hint.

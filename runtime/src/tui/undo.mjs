@@ -62,7 +62,14 @@ export function checkpointWiring(cp, { cwd = process.cwd(), waitMs = 1000, typin
         if (!before) return;
         if (!after || !threadId) return void missing.set(turn.id, cp.lastError ? `snapshots fail here: ${cp.lastError}` : "the snapshot after it failed");
         // A hash that failed is left out: that path is then a conflict.
-        const agentBlobs = Object.assign({}, ...(await Promise.all((written.get(turn.id) ?? []).map((w) => w.catch(() => ({}))))));
+        const agentBlobs = {};
+        for (const hashes of await Promise.all((written.get(turn.id) ?? []).map((w) => w.catch(() => ({}))))) {
+          // Re-inserted, so the latest edit comes last (and wins when case is folded).
+          for (const [p, blob] of Object.entries(hashes)) {
+            delete agentBlobs[p];
+            agentBlobs[p] = blob;
+          }
+        }
         // What either snapshot left out was never captured on that side.
         const skipped = [...new Set([...(before.skipped ?? []), ...(after.skipped ?? [])])];
         if (await cp.record(threadId, turn.id, { before: before.tree, after: after.tree }).catch(() => false)) recorded.set(turn.id, { skipped, agentBlobs });
@@ -129,13 +136,13 @@ export function checkpointWiring(cp, { cwd = process.cwd(), waitMs = 1000, typin
       if (st.activeTurnId || st.starting) return { error: "A turn started meanwhile: /undo again once it finishes." };
       const { skipped: left, agentBlobs } = recorded.get(target.id);
       const r = await cp.restore(st.thread.id, target.id, { force, agentPaths: await agentPaths(session, target), skipped: left, agentBlobs });
-      if (r.error) return { error: r.conflicts?.length && !force ? `${r.error} /undo force overrides "changed since the turn" (files the agent didn't edit and folders are never touched).` : r.error };
+      if (r.error) return { error: r.conflicts?.length && !force ? `${r.error} /undo force overrides "changed since the turn" only; the rest are never touched (for "changed during the turn": you, a formatter or a command changed a file after the agent's edit).` : r.error };
       const um = target.itemIds.map((id) => st.items.get(id)).find((i) => i?.kind === "userMessage");
       recorded.delete(target.id);
       try {
         await session.revert(target.id);
       } catch (err) {
-        return { error: `Files put back (${r.restored}), but the conversation couldn't be rewound: ${err?.message ?? err}` };
+        return { error: `Files put back (${r.restored}), but the conversation couldn't be rewound: ${err?.message ?? err}. Esc Esc rewinds it.` };
       }
       const n = r.restored;
       const skipped = r.skipped ? ` ${r.skipped} left alone (not the agent's edit, not in the checkpoint, or a folder is there now).` : "";

@@ -335,7 +335,7 @@ With any conflict, `/undo` changes nothing and lists them:
 Not undone: src/app.js (changed since the turn). /undo force puts back the rest (folders are never touched).
 ```
 
-`/undo force` overrides "changed since the turn" only: those files are put back too, overwriting later edits to them. Every other conflict stays: forced or not, `/undo` never touches those files and never removes or replaces a folder; they are reported as left alone. Only edits that were applied count: a patch you declined isn't the agent's change.
+`/undo force` overrides "changed since the turn" only: those files are put back too, overwriting later edits to them. Every other conflict stays: forced or not, `/undo` never touches those files and never removes or replaces a folder; they are reported as left alone. A formatter the agent runs on a file it just edited (`prettier --write`, `cargo fmt`) also makes that file "changed during the turn": the file stays as it is, and with force the turn's other files are still put back. Only edits that were applied count: a patch you declined isn't the agent's change.
 
 **When there is no checkpoint,** `/undo` says why: the snapshot before the turn wasn't ready in time, snapshots fail in this repo (with git's message), or the turn ran before `ad tui` started.
 

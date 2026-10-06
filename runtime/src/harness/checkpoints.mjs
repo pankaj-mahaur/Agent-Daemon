@@ -83,6 +83,7 @@ export function createCheckpoints({ cwd, git = runGit, maxUntrackedBytes = 2 * 1
   let info = null; // {root, index, exact} once known
   let inFlight = null; // {promise, startedAt}
   let latest = null; // the newest completed snapshot {tree, at, startedAt}
+  let restores = 0; // scratch index names stay unique per restore
   let lastError = null;
   let seq = 0;
 
@@ -279,7 +280,20 @@ export function createCheckpoints({ cwd, git = runGit, maxUntrackedBytes = 2 * 1
     const r = await repo();
     if (!r) return {};
     const out = {};
-    for (const p of paths) out[p] = await workBlob(r.root, p, r.exact);
+    const files = [];
+    for (const p of paths) {
+      const st = lstatOrNull(path.join(r.root, p));
+      if (!st) out[p] = null;
+      else if (st.isDirectory()) out[p] = "<directory>";
+      else files.push(p);
+    }
+    // One git for all of them: the window in which a save counts as the agent's stays small.
+    if (files.length) {
+      const res = await g([...r.exact, "hash-object", "--stdin-paths"], { cwd: r.root, input: `${files.join("\n")}\n` });
+      const ids = res.code === 0 ? res.stdout.trim().split("\n") : [];
+      // A miscount (a path with a newline) leaves them unreadable: then they are conflicts.
+      files.forEach((p, i) => (out[p] = ids.length === files.length ? ids[i] : "<unreadable>"));
+    }
     return out;
   }
 
@@ -379,7 +393,7 @@ export function createCheckpoints({ cwd, git = runGit, maxUntrackedBytes = 2 * 1
     if (back.length) {
       // A scratch index: restore --worktree would otherwise lock the user's
       // (.git/index.lock), and a killed git could leave that lock behind.
-      const scratch = `${r.index}.restore`;
+      const scratch = `${r.index}.restore-${process.pid}-${++restores}`;
       const res = await g([...r.exact, "restore", `--source=${p.before}`, "--worktree", "--pathspec-from-file=-", "--pathspec-file-nul"], { cwd: r.root, env: { GIT_INDEX_FILE: scratch }, input: back.map((x) => `:(literal)${x}`).join("\0") });
       rmSync(scratch, { force: true });
       rmSync(`${scratch}.lock`, { force: true });

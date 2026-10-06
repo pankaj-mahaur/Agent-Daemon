@@ -458,7 +458,7 @@ make the window narrower, then wider, quit with `qqq`, and attach `~/.agent-daem
 
 ## 26. `/undo` refuses: `Not undone`
 
-**Symptom:** `/undo` says `Not undone: <file> (<why>), …. /undo force overrides "changed since the turn" (files the agent didn't edit and folders are never touched).`
+**Symptom:** `/undo` says `Not undone: <file> (<why>), …. /undo force overrides "changed since the turn" only; the rest are never touched (…).`
 
 **Cause:** `/undo` only puts back what the agent's own edits changed in the last turn, and only when nothing else touched those files. Each listed file says why it was refused:
 
