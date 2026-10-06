@@ -11,7 +11,30 @@
 import { realpathSync } from "node:fs";
 import path from "node:path";
 import { FORCEABLE, UNDO_LIMITS } from "../harness/checkpoints.mjs";
-import { diffStats } from "./view/cells.mjs";
+
+/**
+ * The lines an edit's diff adds and removes, as text (a trailing CR dropped),
+ * read from Codex's raw diff: hunk lines for an update, the content for an add
+ * or a delete (split as git counts lines).
+ */
+export function diffLines(c) {
+  const raw = String(c.diff ?? "");
+  const cut = (l) => l.replace(/\r$/, "");
+  if (c.kind === "add" || c.kind === "delete") {
+    const lines = raw.split("\n");
+    if (lines.at(-1) === "") lines.pop();
+    return c.kind === "add" ? { plus: lines.map(cut), minus: [] } : { plus: [], minus: lines.map(cut) };
+  }
+  const plus = [];
+  const minus = [];
+  let inHunk = false;
+  for (const l of raw.split("\n")) {
+    if (l.startsWith("@@")) inHunk = true;
+    else if (inHunk && l.startsWith("+")) plus.push(cut(l.slice(1)));
+    else if (inHunk && l.startsWith("-")) minus.push(cut(l.slice(1)));
+  }
+  return { plus, minus };
+}
 
 // The real path, in its true case, of a file that may no longer exist (a
 // deleted file: its nearest existing folder's real path, plus the rest).
@@ -105,18 +128,24 @@ export function checkpointWiring(cp, { cwd = process.cwd(), waitMs = 10_000, typ
   };
 
   // An applied edit as it landed: each file's blob (hashed now), and per change
-  // {src, dst, added, removed, blob}: what its diff says it did, for the chain check.
+  // {src, dst, plus, minus, blob}: the lines its diff says it changed, for the chain check.
   async function editResult(item, root) {
     const changes = [];
+    const foreign = [];
     for (const c of item.changes ?? []) {
       const [src] = relPaths({ changes: [{ path: c.path }] }, root);
       const to = c.movePath ?? c.kind?.move_path;
       const [dst] = to ? relPaths({ changes: [{ path: to }] }, root) : [src];
-      if (!src || !dst) continue; // outside the repo
-      changes.push({ src, dst, ...diffStats(c), kind: c.kind });
+      // Moved in from outside the repo: its only copy is here, never something to delete.
+      if (!src && dst) foreign.push(dst);
+      if (!src || !dst) continue;
+      changes.push({ src, dst, ...diffLines(c), kind: c.kind });
     }
     const hashes = await cp.hashPaths([...new Set(changes.flatMap((c) => [c.src, c.dst]))]);
-    const chain = changes.map(({ src, dst, added, removed, kind }) => ({ src, dst, added, removed, blob: kind === "delete" ? null : (hashes[dst] ?? null) }));
+    const chain = [
+      ...changes.map(({ src, dst, plus, minus, kind }) => ({ src, dst, plus, minus, blob: kind === "delete" ? null : (hashes[dst] ?? null) })),
+      ...foreign.map((dst) => ({ src: dst, dst, foreign: true })),
+    ];
     return { hashes, chain };
   }
 

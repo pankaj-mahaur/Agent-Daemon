@@ -267,26 +267,40 @@ export function createCheckpoints({ cwd, git = runGit, maxUntrackedBytes = 2 * 1
     return out;
   }
 
-  /** Lines gained and lost from blob `a` to blob `b` (null: no file); null when git can't tell. */
+  /** The lines added and removed from blob `a` to blob `b` (null: no file); null when git can't tell. */
   let emptyBlob = null;
-  async function blobNumstat(a, b) {
-    if (a === b) return { added: 0, removed: 0 };
+  async function blobPatch(a, b) {
+    if (a === b) return { plus: [], minus: [] };
     if ([a, b].some((x) => typeof x === "string" && x.startsWith("<"))) return null; // a folder, unreadable
     emptyBlob ??= (await g(["hash-object", "-w", "--stdin"], { input: "" })).stdout.trim();
     // The patch, not --numstat: --text applies to it (a file with a NUL byte or a
     // -diff attribute still counts by lines, as the agent's diff does).
-    const d = await g(["diff", "--text", "--minimal", "--unified=0", "--no-color", "--no-ext-diff", a ?? emptyBlob, b ?? emptyBlob]);
+    // Myers, minimal: a user's diff.algorithm can't make git's lines differ from the agent's diff.
+    const d = await g(["diff", "--text", "--minimal", "--diff-algorithm=myers", "--unified=0", "--no-color", "--no-ext-diff", a ?? emptyBlob, b ?? emptyBlob]);
     if (d.code !== 0) return null;
-    let added = 0;
-    let removed = 0;
+    const plus = [];
+    const minus = [];
     let inHunk = false;
+    const cut = (l) => l.slice(1).replace(/\r$/, "");
     for (const line of d.stdout.split("\n")) {
       if (line.startsWith("@@")) inHunk = true;
-      else if (inHunk && line.startsWith("+")) added++;
-      else if (inHunk && line.startsWith("-")) removed++;
+      else if (inHunk && line.startsWith("+")) plus.push(cut(line));
+      else if (inHunk && line.startsWith("-")) minus.push(cut(line));
     }
     // Different blobs and no hunk ("Binary files differ"): can't tell, so not a fit.
-    return inHunk ? { added, removed } : null;
+    return inHunk ? { plus, minus } : null;
+  }
+
+  // Every line in `lines` is one of `mine` (as many times as it appears there).
+  function within(lines, mine) {
+    const left = new Map();
+    for (const l of mine ?? []) left.set(l, (left.get(l) ?? 0) + 1);
+    for (const l of lines) {
+      const n = left.get(l) ?? 0;
+      if (!n) return false;
+      left.set(l, n - 1);
+    }
+    return true;
   }
 
   async function blobIn(tree, p) {
@@ -360,16 +374,22 @@ export function createCheckpoints({ cwd, git = runGit, maxUntrackedBytes = 2 * 1
     const blobs = agentBlobs ? new Map(Object.entries(agentBlobs).map(([p, b]) => [key(p), b])) : null;
     const conflicts = [];
     // Each of the agent's edits must account for every line that changed
-    // since the one before it (the turn's "before" for the first): more means
-    // someone else (the user's save, a command) changed that file during the
-    // turn, before or between the agent's edits, and undoing would take it too.
+    // since the one before it (the turn's "before" for the first): any other
+    // line means someone else (the user's save, a command) changed that file
+    // during the turn, before or between the agent's edits, and undoing would
+    // take it too.
     const tainted = new Set();
+    const foreign = new Set(); // moved in from outside the repo: the only copy is here
     if (agentChain) {
       const last = new Map(); // key(path) → blob the agent's latest edit left (null: gone)
       for (const e of agentChain) {
+        if (e.foreign) {
+          foreign.add(key(e.dst));
+          continue;
+        }
         const from = last.has(key(e.src)) ? last.get(key(e.src)) : await blobIn(t.before, e.src);
-        const n = await blobNumstat(from, e.blob);
-        if (!n || n.added > e.added || n.removed > e.removed) for (const p of [e.src, e.dst]) tainted.add(key(p));
+        const n = await blobPatch(from, e.blob);
+        if (!n || !within(n.plus, e.plus) || !within(n.minus, e.minus)) for (const p of [e.src, e.dst]) tainted.add(key(p));
         if (e.src !== e.dst) last.set(key(e.src), null);
         last.set(key(e.dst), e.blob);
       }
@@ -393,6 +413,10 @@ export function createCheckpoints({ cwd, git = runGit, maxUntrackedBytes = 2 * 1
         continue;
       }
       if (left.has(key(c.path))) {
+        conflicts.push({ path: c.path, why: "not in the checkpoint" });
+        continue;
+      }
+      if (foreign.has(key(c.path))) {
         conflicts.push({ path: c.path, why: "not in the checkpoint" });
         continue;
       }
