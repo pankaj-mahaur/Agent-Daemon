@@ -341,7 +341,7 @@ export async function cmdTui(opts = {}) {
     const { createCheckpoints } = await import("../harness/checkpoints.mjs");
     const { checkpointWiring } = await import("./undo.mjs");
     const cp = createCheckpoints({ cwd });
-    const undoKit = (await cp.repo().catch(() => null)) ? checkpointWiring(cp) : null;
+    const undoKit = (await cp.repo().catch(() => null)) ? checkpointWiring(cp, { cwd }) : null;
     session = createSession({ engine, cwd, model: opts.model, sandbox: opts.sandbox, restart, maxRestarts: 3, hooks: undoKit?.hooks ?? {}, ...(opts.lockDir ? { lockDir: opts.lockDir } : {}) });
     await session.init();
 
@@ -445,6 +445,10 @@ export async function cmdTui(opts = {}) {
     const tid = session.state.thread?.id;
     const total = session.state.tokens?.total?.total;
     exitHint = tid ? `To continue: ad tui --resume ${tid}${total ? `   (${total.toLocaleString("en-US")} tokens)` : ""}` : null;
+    if (ad.loop.state.running) {
+      const loopNote = "A loop is still working in the background (log: .agent-daemon/loop-tui.log). To stop it, create .agent-daemon/STOP.";
+      exitHint = exitHint ? `${exitHint}\n${loopNote}` : loopNote;
+    }
     return 0;
   } catch (e) {
     io?.restore();

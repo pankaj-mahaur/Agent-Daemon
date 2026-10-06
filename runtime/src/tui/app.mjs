@@ -1002,7 +1002,7 @@ export function createApp({
     }
     // A pasted or dragged image file path attaches the image.
     if (ev.type === "paste") {
-      const img = imagePath(ev.text, cwd);
+      const img = imagePath(ev.text, cwd, { pasted: true });
       if (img) {
         attachments.push(img);
         note = { level: "info", text: `Attached ${path.basename(img)} to the next prompt.` };

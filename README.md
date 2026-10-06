@@ -67,7 +67,7 @@ ad init
 
 The `ad` command is the short alias for `agent-daemon` — both work interchangeably. No API key is required for local capture, retrieval, deterministic SessionEnd digest parsing, or inline skill evolution proposals. Claude Code itself must be authenticated for interactive sessions; authenticated batch/LLM fallback remains explicit opt-in behavior.
 
-The harness commands (`ad chat`, `ad run`, `ad loop`, `ad schedule`, `ad web`, `ad acp`) need a login first: `ad auth login chatgpt` (or `openai` / `openrouter`). See [Agent harness](#agent-harness-codex-engine).
+The harness commands (`ad tui`, `ad chat`, `ad run`, `ad loop`, `ad schedule`, `ad web`, `ad acp`) need a login first: `ad auth login chatgpt` (or `openai` / `openrouter`). See [Agent harness](#agent-harness-codex-engine).
 
 ### Windows team setup (Claude Code)
 
@@ -121,7 +121,9 @@ ad auth login openai             # or an OpenAI API key (hidden prompt / stdin)
 ad auth login openrouter --model anthropic/<model>   # Claude, Gemini, … via one OpenRouter key
 ad auth status
 
-ad chat                          # interactive; approve commands/edits with y / a / n
+ad tui                           # Codex-style terminal UI (early); docs/tui.md
+ad codex                         # the stock Codex UI, on the harness home
+ad chat                          # plain line mode; approve commands/edits with y / a / n
 ad run "fix the failing test"    # one non-interactive turn (approvals declined)
 ad loop "make the build green"   # autonomous loop with hard brakes (below)
 ad schedule add "0 9 * * 1-5" run "summarize yesterday's commits"
@@ -132,7 +134,7 @@ ad sandbox setup --elevated      # Windows: stronger command sandbox (one UAC pr
 ```
 
 **Safety defaults.**
-- **Interactive runs** (`ad chat`, `ad web`, `ad acp`) use `workspace-write` + `on-request`: the agent writes only inside the project and asks before anything else.
+- **Interactive runs** (`ad tui`, `ad chat`, `ad web`, `ad acp`) use `workspace-write` + `on-request`: the agent writes only inside the project and asks before anything else.
 - **`ad run`** is the same, but nobody can answer, so anything needing approval is declined.
 - **Unattended runs** (`ad loop`, team workers, and `loop` schedule jobs) never ask. Instead, every turn is confined to the workspace with no network. MCP servers other than memory are off, and live web search is off. On Windows they refuse to start without a ready sandbox.
 - **Team workers** can't write to `.git`. Their work is committed for them on their own branch, with repo hooks disabled for that commit.
@@ -144,6 +146,8 @@ ad sandbox setup --elevated      # Windows: stronger command sandbox (one UAC pr
 **`ad loop` brakes:** dual exit (the agent must report `done` *and* `exit_signal`), a circuit breaker (no progress or the same error repeatedly), iteration / time / token budgets, and a STOP file (`.agent-daemon/STOP`) checked mid-turn.
 
 **Subscriptions.** ChatGPT uses Codex's own login. Claude Pro/Max and Google AI Pro/Ultra logins are **never** reused by the harness, because their terms forbid it and it has been enforced. Use API keys or OpenRouter instead. `ad agy` can hand a prompt to *your own* Antigravity CLI (opt-in, `--accept-risk`).
+
+**`ad tui`** is a Codex-style terminal UI on the same engine: history in your terminal's scrollback, approvals with the full command, steer and queue while a turn runs, `/undo` for the files a turn changed, and ad's memory, loops and schedules as slash commands. `/codex` (or `ad codex`) opens the stock Codex UI on the same conversation. Bare `ad` opens it with `AD_TUI=1`. Guide: [docs/tui.md](docs/tui.md).
 
 Full guide: [docs/harness.md](docs/harness.md).
 
@@ -177,7 +181,7 @@ Re-run the one-liner without `AD_VERSION` to move back to `main`.
 
 **Upgrading v1 → v2.** Claude Code mode is unchanged: `ad init`, the hooks, memory, skills and `/evolve` work as before. What changes:
 - `ad sp` (spawn a team worker) now runs a **Codex** worker by default. Pass `--engine claude` for the v1 behaviour.
-- New commands: `ad auth`, `ad chat`, `ad run`, `ad loop`, `ad schedule`, `ad web`, `ad acp`, `ad tools`, `ad sandbox`, `ad agy`. The ones that run the agent need a login first (`ad auth login chatgpt` / `openai` / `openrouter`).
+- New commands: `ad auth`, `ad tui` (terminal UI), `ad codex` (the stock Codex UI on the harness home), `ad chat`, `ad run`, `ad loop`, `ad schedule`, `ad web`, `ad acp`, `ad tools`, `ad sandbox`, `ad agy`. The ones that run the agent need a login first (`ad auth login chatgpt` / `openai` / `openrouter`).
 - Digest/extract and GEPA LLM calls take `--llm claude|codex|auto` (`AD_LLM_BACKEND`). The default `auto` uses Claude and falls back to Codex when `claude` isn't installed.
 - `ad doctor` adds Codex engine checks. The login, hook and sandbox checks are skipped until the harness home exists.
 
@@ -426,6 +430,7 @@ All commands work with both `ad` (short) and `agent-daemon` (full). Short aliase
 ```bash
 # Harness (Codex engine) — see "Agent harness" above
 ad auth login chatgpt|openai|openrouter   # ad auth use / status / logout
+ad tui ["<prompt>"] [--last | --resume <id>]   # terminal UI (docs/tui.md); ad codex = stock Codex UI
 ad chat | ad run "<prompt>" | ad loop "<objective>"
 ad schedule add|list|remove|enable|disable|run|tick
 ad web | ad acp | ad tools list|enable|disable | ad sandbox setup|status | ad agy "<prompt>"

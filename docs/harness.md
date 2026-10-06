@@ -67,47 +67,20 @@ When the agent wants to run something outside its sandbox or edit outside the wo
 
 ```bash
 ad tui                           # in the current folder
+ad tui "<prompt>"                # and send a first prompt
 ad tui --last                    # continue the newest conversation here
 ad tui --resume <thread-id>      # continue a given one
 ```
 
-A Codex-style terminal UI on ad's own Codex home. It is new: expect rough edges, and use `ad chat` if something gets in the way.
-- **First run in a folder:** ad asks once whether you trust it. Trusted folders may load their own `.codex` config, hooks and skills.
-- **Not signed in:** a sign-in panel offers ChatGPT, an OpenAI key or OpenRouter. It runs `ad auth login …` for you.
-- **Keys:**
-  - Enter sends. While a turn runs, Enter steers it and Tab queues the prompt for afterwards; Tab on an empty composer pulls the last queued prompt back.
-  - The newline key depends on the terminal: Shift+Enter in Zed, Ctrl+Enter in Windows Terminal, Ctrl+J anywhere, or `\` + Enter.
-  - Esc interrupts. Ctrl+C closes a popup, then clears the composer, then interrupts; pressing it twice quickly quits.
-  - ↑/↓ walk your prompt history (`~/.agent-daemon/tui/history.jsonl`), Ctrl+R searches it, `?` shows every shortcut.
-  - `@` completes file names, `/` completes commands, `!cmd` runs a shell command (unsandboxed, like Codex's).
-  - Esc twice on an empty prompt rewinds the conversation to an earlier prompt and puts that prompt back to edit. Files on disk stay as they are.
-  - Ctrl+T pages through the whole transcript, and Ctrl+G edits the prompt in your editor (`$VISUAL` / `$EDITOR`, else Notepad or vi).
-  - Alt+, and Alt+. lower or raise the reasoning effort.
-  - **Images:** paste or drag an image file's path, or use `/image <path>`, to attach it to the next prompt.
-- **Approvals:** a prompt lists what Codex offers (yes, yes for this session, "don't ask again for this prefix", no). Keys pressed in the first 400 ms are ignored, so type-ahead never approves. Hidden characters in commands are shown as `<U+…>`.
-- **Commands:**
-  - **Conversations:** `/new`, `/resume`, `/fork`, `/rename`, `/compact`, `/export` (markdown, in this folder).
-  - **Settings:** `/model`, `/permissions`, `/login`, `/logout`.
-  - **Work:** `/goal`, `/review`, `/diff`, `/init`, `/image`.
-  - **`/undo`:** in a git repo, puts back the files the last turn changed and rewinds it. It refuses if you have changed those files since; `/undo force` overrides.
-    - Checkpoints are git trees under `refs/ad/checkpoints/`. Your index, branches and stash are never touched.
-    - Ignored files, submodules and LFS files aren't restored.
-  - **Output:** `/copy` (the last answer, to the clipboard), `/raw` (the last answer as plain text).
-  - **Inspection:** `/status`, `/usage`, `/mcp`, `/hooks`, `/skills`, `/warnings`.
-  - **ad:**
-    - `/remember`.
-    - `/memory` (`search <words>`, `recent`, `forget <id>`, `profile`).
-    - `/private` wraps your prompts in `<private>`, so ad never learns from them.
-    - `/proposals`.
-    - `/loop "<objective>"` runs `ad loop` in the background with its brakes; one row per iteration. `/loop stop` ends it.
-    - `/team`, `/schedule` (`run <id>`), `/tools`, `/codex`, `/ad <command>`.
-  - **Rows and warnings:** after a turn, a "Learned:" row shows what ad's hooks recorded. If a scheduled job is overdue, the header says the scheduler isn't running.
-  - **Help:** `/terminal-setup` (how to make Shift+Enter add a newline in your terminal), `/help`, `/quit`.
-- **`/codex`** opens the stock Codex UI on the same conversation (ad lets go of it meanwhile) and comes back when you quit it.
-- **On exit** ad prints how to continue: `ad tui --resume <id>`.
+A Codex-style terminal UI on ad's own Codex home. History goes into your terminal's scrollback; only the bottom of the screen is redrawn. It is new: expect rough edges, and use `ad chat` if something gets in the way.
+- **First run:** a sign-in panel if ad isn't signed in (it runs `ad auth login …` for you), then a one-time trust question per folder.
+- **Keys:** Enter sends, and steers a running turn. Tab queues a prompt for after the turn. Esc interrupts. The newline key depends on the terminal (Shift+Enter in Zed, Ctrl+Enter in Windows Terminal, Ctrl+J or `\` + Enter anywhere). `?` shows every shortcut.
+- **Approvals** list what Codex offers. Keys pressed in the first 400 ms are ignored, so type-ahead never approves, and hidden characters show as `<U+…>`.
+- **Commands:** Codex's (`/new`, `/resume`, `/model`, `/review`, `/diff`, `/compact`, …) keep Codex's meaning. ad adds `/undo` (put back the files the last turn changed), `/memory`, `/remember`, `/private`, `/loop`, `/team`, `/schedule`, `/codex` and `/ad <command>`.
+- **Bare `ad`** still prints the help. `AD_TUI=1` makes it open the TUI now; once the TUI is the default, `AD_TUI=0` turns that off.
 - **Requirements:** an interactive terminal, and on Windows Node 22.17+ or 24.2+. Otherwise use `ad chat`.
 
-`ad tui --preview` still runs the earlier walking skeleton.
+Keys, commands, `/undo`, terminals and the files it writes: **[tui.md](tui.md)**. `ad tui --preview` still runs the earlier walking skeleton.
 
 ### `ad codex`: the stock Codex UI on ad's home
 
@@ -116,7 +89,7 @@ ad codex                         # the pinned Codex's own UI
 ad codex resume --last           # any codex arguments
 ```
 
-The pinned Codex, with `CODEX_HOME` set to ad's home (never `~/.codex`) and `--no-daemon`, so it never talks to your own Codex. Your `~/.claude/skills` are mirrored into the home's `skills/` folder first; folders you put there yourself are never touched. Project `.claude/skills` aren't visible in `ad codex`.
+The pinned Codex, with `CODEX_HOME` set to ad's home (never `~/.codex`) and `--no-daemon`, so it never talks to your own Codex. Your `~/.claude/skills` are mirrored into the home's `skills/` folder first; folders you put there yourself are never touched. Project `.claude/skills` aren't visible in `ad codex`. Inside `ad tui`, `/codex` opens it on the same conversation and returns to `ad` afterwards ([tui.md](tui.md#ad-codex-and-codex)).
 
 ### `ad tui --preview`: the walking skeleton
 
@@ -211,7 +184,7 @@ Opt-in, and it uses *your* installed Antigravity CLI and its login. The daemon n
 
 | Mode | Used by | Sandbox | Approvals |
 |---|---|---|---|
-| Interactive | `ad chat`, `ad web`, `ad acp` | `workspace-write`: writes only inside the project | asks you |
+| Interactive | `ad tui`, `ad chat`, `ad web`, `ad acp` | `workspace-write`: writes only inside the project | asks you |
 | One-shot | `ad run` | `workspace-write` (or `--sandbox`) | declined |
 | Unattended | `ad loop`, team workers, `loop` schedule jobs | workspace only, **no network** | never asked |
 
@@ -254,9 +227,11 @@ Loop and worker prompts are marked as non-user (`AD_WORKER=1`), so they never en
 | `~/.agent-daemon/schedules.json`, `schedule-logs/` | scheduled jobs and their output |
 | `<project>/.agent-daemon/loops/` | `ad loop` iteration logs |
 | `<project>/.agent-daemon/STOP` | stop file for loops in this project |
+| `~/.agent-daemon/tui/`, `~/.agent-daemon/locks/` | `ad tui` prompt history and per-folder state; conversation locks (see [tui.md](tui.md#files-ad-writes)) |
 
 | Variable | Effect |
 |---|---|
+| `AD_TUI` | `1`: bare `ad` opens the terminal UI now. `0`: it never does (once the TUI is the default) |
 | `AD_CODEX_HOME` | use another harness Codex home (never your own `~/.codex` or `CODEX_HOME`: refused) |
 | `AD_CODEX_BIN` | run a specific `codex` binary instead of the pinned one (testing) |
 | `CODEX_*` (yours) | not passed to the harness's Codex, so they can't point it at your own state; `CODEX_CA_CERTIFICATE` is kept |
@@ -272,5 +247,5 @@ Loop and worker prompts are marked as non-user (`AD_WORKER=1`), so they never en
 
 1. `ad doctor`: engine version, login, hooks trusted, Windows sandbox.
 2. `ad auth status` and `ad sandbox status`.
-3. [troubleshooting.md](troubleshooting.md), entries 14–22.
+3. [troubleshooting.md](troubleshooting.md), entries 14–22 (harness) and 23–28 (`ad tui`).
 4. Codex's own log: `logs_2.sqlite` in the harness home (table `logs`). The [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill shows how to read it.

@@ -46,6 +46,11 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
   - It holds one conversation: prompts, steering a running turn, a prompt queue and approvals.
   - Two ad windows can't open the same thread.
   - When Codex crashes, the running turn fails cleanly, Codex restarts (capped) and the conversation resumes.
+- Bare `ad` is ready to open the terminal UI. Until the release that turns it on, set `AD_TUI=1` to try it; afterwards `AD_TUI=0` turns it off.
+  - The TUI needs an interactive terminal and, on Windows, Node 22.17+ or 24.2+.
+  - When it can't run, `ad` says why and prints the help.
+  - `ad tui "<prompt>"` starts with that prompt.
+  - Under the hood, `runtime/src/cli.mjs` is now a small launcher (bin shims unchanged).
 - `ad tui`: the terminal UI, early. It runs on ad's own Codex home, with:
   - sign-in and folder-trust prompts;
   - streaming answers in your scrollback;

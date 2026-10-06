@@ -200,7 +200,7 @@ const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp)$/i;
  * A pasted or typed image path → an absolute path of an image file that
  * exists, or null. Quotes from drag-and-drop are removed.
  */
-export function imagePath(raw, cwd, { platform = process.platform } = {}) {
+export function imagePath(raw, cwd, { platform = process.platform, pasted = false } = {}) {
   let p = String(raw ?? "").trim();
   const quoted = /^(["']).*\1$/.test(p);
   if (quoted) p = p.slice(1, -1);
@@ -215,8 +215,8 @@ export function imagePath(raw, cwd, { platform = process.platform } = {}) {
   // A drag on macOS/Linux escapes spaces ("my\ pic.png").
   if (platform !== "win32") p = p.replace(/\\ /g, " ");
   if (!p || !IMAGE_EXT.test(p) || /[\n\r\0]/.test(p)) return null;
-  // A bare name ("a.png") pasted into a sentence is text: only paths attach.
-  if (!quoted && !/[\\/]/.test(p)) return null;
+  // A bare name ("a.png") pasted into a sentence is text: only pasted paths attach (/image takes names).
+  if (pasted && !quoted && !/[\\/]/.test(p)) return null;
   // Never touch the network for a pasted UNC path.
   if (/^(\\\\|\/\/)/.test(p)) return null;
   const abs = path.resolve(cwd, p);

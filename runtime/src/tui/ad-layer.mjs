@@ -49,7 +49,8 @@ export function createAdLayer({ cwd, home = homedir(), memory = null, cli = null
       const handle = await memory.db();
       if (!handle) return ["ad memory isn't set up (ad doctor)."];
       // Archived, not deleted: `ad memory` can still show it, and nothing else depends on the row going away.
-      const r = handle.run("UPDATE learnings SET status = 'archived' WHERE id = ? AND status = 'active'", [id]);
+      // Only this project's (or global) learnings: an id from another project is left alone.
+      const r = handle.run("UPDATE learnings SET status = 'archived' WHERE id = ? AND status = 'active' AND (project_slug = ? OR project_slug IS NULL)", [id, slug]);
       return [r.changes ? `Forgot #${id}: it won't be recalled again.` : `No active learning #${id}.`];
     }
     if (s === "profile") {
@@ -104,17 +105,6 @@ export function createAdLayer({ cwd, home = homedir(), memory = null, cli = null
   const stopFile = path.join(adDir, "STOP");
   const loop = { child: null, file: null, seen: 0, startedAt: 0, ownStop: false, exit: null, iterations: 0, last: null };
 
-  function newestLog(since) {
-    if (!existsSync(loopsDir)) return null;
-    let best = null;
-    for (const f of readdirSync(loopsDir).filter((x) => x.endsWith(".jsonl"))) {
-      const p = path.join(loopsDir, f);
-      const m = statSync(p).mtimeMs;
-      if (m >= since - 1000 && (!best || m > best.m)) best = { p, m };
-    }
-    return best?.p ?? null;
-  }
-
   const loopApi = {
     get state() {
       return { running: Boolean(loop.child && loop.exit === null), iterations: loop.iterations, last: loop.last, exit: loop.exit, log: loop.file };
@@ -128,17 +118,32 @@ export function createAdLayer({ cwd, home = homedir(), memory = null, cli = null
       if (loop.ownStop && existsSync(stopFile)) rmSync(stopFile, { force: true });
       loop.ownStop = false;
       if (existsSync(stopFile)) return { error: `A STOP file exists (${stopFile}): remove it to start a loop.` };
+      const homeStop = path.join(home, ".agent-daemon", "STOP");
+      if (existsSync(homeStop)) return { error: `A STOP file exists (${homeStop}): it stops every loop; remove it to start one.` };
       mkdirSync(adDir, { recursive: true });
-      const out = openSync(path.join(adDir, "loop-tui.log"), "a");
+      const logPath = path.join(adDir, "loop-tui.log");
+      loop.logOffset = existsSync(logPath) ? statSync(logPath).size : 0;
+      loop.logPath = logPath;
+      const out = openSync(logPath, "a");
       const args = [cli, "loop", ...(maxIterations ? ["--max-iterations", String(maxIterations)] : []), "--cwd", cwd, "--", objective];
-      loop.child = spawnFn(process.execPath, args, { cwd, stdio: ["ignore", out, out], env: { ...process.env, AD_WORKER: "1" }, windowsHide: true });
+      // Detached: the loop keeps working when the TUI quits (it is a background
+      // job with its own brakes; /loop stop or a STOP file ends it).
+      loop.child = spawnFn(process.execPath, args, { cwd, stdio: ["ignore", out, out], env: { ...process.env, AD_WORKER: "1" }, windowsHide: true, detached: true });
+      loop.child.unref?.();
       loop.exit = null;
       loop.startedAt = now();
       loop.file = null;
       loop.seen = 0;
       loop.iterations = 0;
       loop.last = null;
-      loop.child.on?.("exit", (code) => (loop.exit = code ?? 1));
+      loop.child.on?.("exit", (code) => {
+        loop.exit = code ?? 1;
+        // The STOP this TUI wrote did its job: leave no STOP behind for the next `ad loop`.
+        if (loop.ownStop) {
+          rmSync(stopFile, { force: true });
+          loop.ownStop = false;
+        }
+      });
       loop.child.on?.("error", () => (loop.exit = 1));
       return { ok: true };
     },
@@ -153,7 +158,12 @@ export function createAdLayer({ cwd, home = homedir(), memory = null, cli = null
     /** New iteration records since the last poll: [{iteration, turnStatus, progress, tokens}]. */
     poll() {
       if (!loop.child) return [];
-      loop.file ??= newestLog(loop.startedAt);
+      // The loop prints its thread id ("ad loop — thread <id>") into our log: that names its file.
+      if (!loop.file && loop.logPath && existsSync(loop.logPath)) {
+        const text = readFileSync(loop.logPath, "utf8").slice(loop.logOffset ?? 0);
+        const m = /thread (\S+)/.exec(text);
+        if (m) loop.file = path.join(loopsDir, `${m[1]}.jsonl`);
+      }
       if (!loop.file || !existsSync(loop.file)) return [];
       const lines = readFileSync(loop.file, "utf8").split("\n").filter(Boolean);
       const fresh = [];

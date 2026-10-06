@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -48,7 +48,8 @@ test("memory: search, recent, forget (archived, not deleted), profile, summary; 
     assert.deepEqual(memory.sql[0], ["search", "timers", { limit: 10, projectSlug: `slug:${cwd}` }]);
     assert.match((await ad.memory("recent"))[1], /#9 \[pattern\] run tests first/);
     assert.deepEqual(await ad.memory("forget", "#7"), ["Forgot #7: it won't be recalled again."]);
-    assert.match(memory.sql.at(-1)[0], /UPDATE learnings SET status = 'archived' WHERE id = \? AND status = 'active'/);
+    assert.match(memory.sql.at(-1)[0], /UPDATE learnings SET status = 'archived' WHERE id = \? AND status = 'active' AND \(project_slug = \? OR project_slug IS NULL\)/);
+    assert.deepEqual(memory.sql.at(-1)[1], [7, `slug:${cwd}`], "only this project's (or global) learnings");
     assert.deepEqual(await ad.memory("forget", "8"), ["No active learning #8."]);
     assert.match((await ad.memory("forget", "x; DROP"))[0], /forget <id>/);
     assert.deepEqual(await ad.memory("profile"), ["## You", "- prefer short replies"]);
@@ -80,6 +81,8 @@ function fakeLoopSpawn(cwd) {
   const spawnFn = (cmd, args, opts) => {
     calls.push({ cmd, args, opts });
     child = new EventEmitter();
+    // As `ad loop` does: its thread id goes to stdout (the TUI's log file).
+    writeSync(opts.stdio[1], "ad loop — thread thread-9\nlog: …\n");
     return child;
   };
   const log = join(cwd, ".agent-daemon", "loops", "thread-9.jsonl");
@@ -94,12 +97,16 @@ test("loop: starts ad loop in the background, tails its log, STOP stops it; its 
   const cwd = mkdtempSync(join(tmpdir(), "ad-loop-"));
   try {
     const f = fakeLoopSpawn(cwd);
-    const ad = createAdLayer({ cwd, cli: "/ad/cli.mjs", spawnFn: f.spawnFn });
+    const ad = createAdLayer({ cwd, home: cwd, cli: "/ad/cli.mjs", spawnFn: f.spawnFn });
     assert.match(ad.loop.start("").error, /objective/);
     assert.deepEqual(ad.loop.start("make the docs build"), { ok: true });
     const c = f.calls[0];
     assert.deepEqual(c.args.slice(-4), ["--cwd", cwd, "--", "make the docs build"]);
     assert.equal(c.opts.env.AD_WORKER, "1");
+    assert.equal(c.opts.detached, true, "the loop outlives the TUI");
+    // Another loop writing in the same folder isn't mistaken for this one.
+    mkdirSync(join(cwd, ".agent-daemon", "loops"), { recursive: true });
+    writeFileSync(join(cwd, ".agent-daemon", "loops", "other.jsonl"), JSON.stringify({ iteration: 7, turnStatus: "completed" }) + "\n");
     assert.match(ad.loop.start("again").error, /already running/);
     f.iterate(1, "docs \x1b[2Jbuild failing");
     f.iterate(2, "fixed links");
@@ -111,6 +118,7 @@ test("loop: starts ad loop in the background, tails its log, STOP stops it; its 
     assert.ok(existsSync(join(cwd, ".agent-daemon", "STOP")));
     f.exit(0);
     assert.equal(ad.loop.state.running, false);
+    assert.ok(!existsSync(join(cwd, ".agent-daemon", "STOP")), "its STOP is gone once it stopped");
     assert.deepEqual(ad.loop.start("next objective"), { ok: true }, "the STOP it wrote itself is removed");
     assert.ok(!existsSync(join(cwd, ".agent-daemon", "STOP")));
     f.exit(0);
@@ -180,7 +188,7 @@ async function withApp(fn, ad) {
 test("in the app: /memory, /private wraps prompts, learned rows after a turn, /loop rows and chip, /proposals", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "ad-adapp-loop-"));
   const f = fakeLoopSpawn(cwd);
-  const ad = createAdLayer({ cwd, memory: fakeMemory(), cli: "/ad/cli.mjs", spawnFn: f.spawnFn });
+  const ad = createAdLayer({ cwd, home: cwd, memory: fakeMemory(), cli: "/ad/cli.mjs", spawnFn: f.spawnFn });
   try {
     await withApp(async ({ app, type, until, committed, engine, screen }) => {
       type("/memory search timers\r");

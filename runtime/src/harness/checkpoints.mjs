@@ -8,7 +8,7 @@
 // (#7483), and the feature became an opt-in `undo` flag and later a no-op.
 //
 // So ad's checkpoints:
-//   - live only as git trees under refs/ad/checkpoints/<thread>/<turn>-{before,after}
+//   - live only as git trees under refs/ad/checkpoints/<thread>/<seq>-<turn>-{before,after}
 //     (nothing in any rollout or log), written by one batched update-ref;
 //   - use a private, persistent index (.git/ad-checkpoint-index), so the
 //     stat and untracked caches survive between snapshots, and the user's
@@ -16,19 +16,27 @@
 //   - respect .gitignore, skip untracked files over a size limit and the
 //     usual heavy folders, and keep only the last N turns per thread;
 //   - are taken off the turn's critical path: when the user starts typing
-//     and when a turn ends. A turn waits at most 150 ms for one in flight.
+//     and when a turn ends. A turn only uses a snapshot taken after the
+//     previous turn ended; one that isn't ready 150 ms in means no
+//     checkpoint for that turn, never a guess.
 //
-// Restore puts back what a turn changed (the before→after diff of the
-// turn), refusing paths the user changed since, then rewinds the thread.
+// Undo is conservative: it puts back only what the agent's own edits
+// changed. A path the agent didn't report editing, one changed since the
+// turn, or a directory standing where a file was, is a conflict, and
+// nothing is undone (force skips conflicts but never removes a directory).
 
 import { spawn } from "node:child_process";
-import { existsSync, rmSync, statSync } from "node:fs";
+import { existsSync, lstatSync, rmSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import path from "node:path";
 
 export const CHECKPOINT_REF = "refs/ad/checkpoints";
-// Snapshots, comparisons and restores all see bytes as they are on disk (no eol conversion).
+// Snapshots, comparisons and restores all see bytes as they are on disk (no
+// eol conversion); with git 2.40+ the repo's .gitattributes are ignored too.
 const EXACT = ["-c", "core.autocrlf=false", "-c", "core.eol=lf", "-c", "core.safecrlf=false"];
 const HEAVY_DIRS = ["node_modules", ".venv", "venv", "__pycache__", ".next", "dist", "build", "target", ".gradle", ".turbo", ".cache"];
+const HEAVY_SPECS = HEAVY_DIRS.map((d) => `:(exclude,glob)**/${d}/**`);
+const MAX_REFS = 400; // all threads together: about 200 turns
 
 /** Runs git; never throws for a non-zero exit. */
 export function runGit(args, { cwd, env = {}, input = null, timeoutMs = 60_000 } = {}) {
@@ -52,15 +60,28 @@ export function runGit(args, { cwd, env = {}, input = null, timeoutMs = 60_000 }
       clearTimeout(timer);
       resolve({ code: code ?? 1, stdout: Buffer.concat(out).toString("utf8"), stderr: Buffer.concat(errs).toString("utf8") });
     });
+    child.stdin.on("error", () => {});
     child.stdin.end(input ?? undefined);
   });
 }
 
 const safeRefPart = (s) => String(s).replace(/[^A-Za-z0-9._-]/g, "_").replace(/^\.+/, "_").slice(0, 120);
+const firstLine = (s) => String(s ?? "").trim().split("\n")[0];
+
+function lstatOrNull(p) {
+  try {
+    return lstatSync(p);
+  } catch {
+    return null;
+  }
+}
 
 export function createCheckpoints({ cwd, git = runGit, maxUntrackedBytes = 2 * 1024 * 1024, keep = 20, now = () => Date.now() } = {}) {
-  let info = null; // {root, index, userIndex} once known
-  let inFlight = null; // the snapshot being taken
+  let info = null; // {root, index, exact} once known
+  let inFlight = null; // {promise, startedAt}
+  let latest = null; // the newest completed snapshot {tree, at, startedAt}
+  let lastError = null;
+  let seq = 0;
 
   const g = (args, opts = {}) => git(args, { cwd: info?.root ?? cwd, ...opts });
 
@@ -71,58 +92,85 @@ export function createCheckpoints({ cwd, git = runGit, maxUntrackedBytes = 2 * 1
     const root = top.stdout.trim();
     const bare = await git(["rev-parse", "--is-bare-repository"], { cwd: root });
     if (bare.stdout.trim() === "true") return null;
-    const paths = await git(["rev-parse", "--git-path", "index", "--git-path", "ad-checkpoint-index"], { cwd: root });
-    const [userIndex, index] = paths.stdout.split(/\r?\n/).map((p) => path.resolve(root, p.trim()));
-    info = { root, index, userIndex };
+    const p = await git(["rev-parse", "--git-path", "ad-checkpoint-index"], { cwd: root });
+    const index = path.resolve(root, p.stdout.trim());
+    // An empty tree as the attribute source makes .gitattributes (text=auto,
+    // eol, filters) irrelevant: byte for byte (git 2.40+). Older git: without.
+    const empty = (await git(["hash-object", "-t", "tree", "--stdin"], { cwd: root, input: "" })).stdout.trim();
+    const probe = empty ? await git([`--attr-source=${empty}`, "rev-parse", "--git-dir"], { cwd: root }) : { code: 1 };
+    const exact = probe.code === 0 ? [`--attr-source=${empty}`, ...EXACT] : EXACT;
+    info = { root, index, exact, byteExact: probe.code === 0 };
     return info;
   }
 
-  /** Untracked files (respecting .gitignore) larger than the limit, as exclude pathspecs. */
+  /** Untracked files (respecting .gitignore, outside heavy folders) larger than the limit. */
   async function bigUntracked(root) {
-    const r = await g(["ls-files", "--others", "--exclude-standard", "-z"], { cwd: root });
+    const r = await g(["ls-files", "--others", "--exclude-standard", "-z", "--", ".", ...HEAVY_SPECS], { cwd: root });
+    const files = r.stdout.split("\0").filter(Boolean);
     const big = [];
-    for (const f of r.stdout.split("\0").filter(Boolean)) {
-      try {
-        if (statSync(path.join(root, f)).size > maxUntrackedBytes) big.push(f);
-      } catch {
-        // gone meanwhile
-      }
+    // Stat in batches without blocking the UI's event loop.
+    for (let i = 0; i < files.length; i += 256) {
+      const batch = files.slice(i, i + 256);
+      const sizes = await Promise.all(batch.map((f) => stat(path.join(root, f)).then((s) => s.size, () => 0)));
+      sizes.forEach((size, k) => size > maxUntrackedBytes && big.push(batch[k]));
     }
     return big;
   }
 
-  /** A tree of the worktree now, or null (not a repo, git failed). */
-  async function takeSnapshot() {
+  /** A tree of the worktree now, or null (not a repo, git failed: see lastError). */
+  async function takeSnapshot(startedAt) {
     const r = await repo();
     if (!r) return null;
     const env = { GIT_INDEX_FILE: r.index };
     // The private index is never seeded from the user's: its blobs were made
     // under the user's eol filters, and restores would not be byte for byte.
-    // The first snapshot hashes everything once; later ones reuse its stat cache.
     const big = await bigUntracked(r.root);
-    const specs = [".", ...HEAVY_DIRS.map((d) => `:(exclude,glob)**/${d}/**`), ...big.map((f) => `:(exclude,literal)${f}`)];
-    const add = await g(["-c", "gc.auto=0", ...EXACT, "add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul"], { cwd: r.root, env, input: specs.join("\0") });
-    if (add.code !== 0) return null;
+    const specs = [".", ...HEAVY_SPECS, ...big.map((f) => `:(exclude,literal)${f}`)];
+    const add = await g([...r.exact, "-c", "gc.auto=0", "add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul"], { cwd: r.root, env, input: specs.join("\0") });
+    if (add.code !== 0) {
+      lastError = firstLine(add.stderr) || "git add failed";
+      return null;
+    }
     const tree = await g(["write-tree"], { cwd: r.root, env });
-    if (tree.code !== 0) return null;
-    return { tree: tree.stdout.trim(), at: now(), skipped: big };
+    if (tree.code !== 0) {
+      lastError = firstLine(tree.stderr) || "git write-tree failed";
+      return null;
+    }
+    lastError = null;
+    const snap = { tree: tree.stdout.trim(), at: now(), startedAt, skipped: big };
+    if (!latest || startedAt >= latest.startedAt) latest = snap;
+    return snap;
   }
 
   /** Starts a snapshot unless one is running; returns its promise. */
   function snapshot() {
-    inFlight ??= takeSnapshot().finally(() => {
-      inFlight = null;
-    });
-    return inFlight;
+    if (!inFlight) {
+      const startedAt = now();
+      const promise = takeSnapshot(startedAt).finally(() => {
+        if (inFlight?.promise === promise) inFlight = null;
+      });
+      inFlight = { promise, startedAt };
+    }
+    return inFlight.promise;
   }
 
-  /** The snapshot in flight (or a fresh one), waiting at most `ms`; null when late. */
-  async function snapshotWithin(ms = 150) {
-    const p = inFlight ?? snapshot();
+  /**
+   * The "before" of a turn: a snapshot started after `since` (the previous
+   * turn's end, or 0), taken before this turn. The newest finished one if it
+   * qualifies; else one in flight or a new one, if it finishes within
+   * `waitMs`. Null otherwise: no checkpoint for this turn, never a guess.
+   */
+  async function beforeSnapshot({ since = 0, waitMs = 150 } = {}) {
+    if (latest && latest.startedAt >= since) return latest;
+    const chain = (async () => {
+      // One started before `since` reflects the previous turn mid-way: let it finish, then take a fresh one.
+      if (inFlight && inFlight.startedAt < since) await inFlight.promise.catch(() => null);
+      return inFlight && inFlight.startedAt >= since ? inFlight.promise : snapshot();
+    })();
     let timer;
-    const late = new Promise((r) => (timer = setTimeout(() => r(null), ms)));
+    const late = new Promise((r) => (timer = setTimeout(() => r(null), waitMs)));
     try {
-      return await Promise.race([p, late]);
+      return await Promise.race([chain, late]);
     } finally {
       clearTimeout(timer);
     }
@@ -132,7 +180,9 @@ export function createCheckpoints({ cwd, git = runGit, maxUntrackedBytes = 2 * 1
   async function record(threadId, turnId, trees) {
     const r = await repo();
     if (!r) return false;
-    const base = `${CHECKPOINT_REF}/${safeRefPart(threadId)}/${safeRefPart(turnId)}`;
+    // A sequence in the name keeps the refs in turn order (trees carry no date).
+    const order = `${String(now()).padStart(15, "0")}${String(seq++ % 1000).padStart(3, "0")}`;
+    const base = `${CHECKPOINT_REF}/${safeRefPart(threadId)}/${order}-${safeRefPart(turnId)}`;
     const lines = Object.entries(trees)
       .filter(([, t]) => t)
       .map(([phase, t]) => `update ${base}-${phase} ${t}\n`);
@@ -143,31 +193,37 @@ export function createCheckpoints({ cwd, git = runGit, maxUntrackedBytes = 2 * 1
     return true;
   }
 
-  async function list(threadId) {
-    const r = await repo();
-    if (!r) return [];
-    const res = await g(["for-each-ref", "--sort=creatordate", "--format=%(refname) %(objectname)", `${CHECKPOINT_REF}/${safeRefPart(threadId)}/`], { cwd: r.root });
+  async function listRefs(prefix) {
+    const res = await g(["for-each-ref", "--format=%(refname) %(objectname)", prefix]);
     const turns = new Map();
     for (const line of res.stdout.split(/\r?\n/).filter(Boolean)) {
       const [ref, sha] = line.split(" ");
-      const m = /\/([^/]+)-(before|after)$/.exec(ref);
+      const m = /\/(\d{18})-(.+)-(before|after)$/.exec(ref);
       if (!m) continue;
-      const t = turns.get(m[1]) ?? { turnId: m[1], before: null, after: null, refs: [] };
-      t[m[2]] = sha;
+      const key = ref.slice(0, ref.lastIndexOf("-"));
+      const t = turns.get(key) ?? { order: m[1], turnId: m[2], before: null, after: null, refs: [] };
+      t[m[3]] = sha;
       t.refs.push(ref);
-      turns.set(m[1], t);
+      turns.set(key, t);
     }
-    return [...turns.values()];
+    return [...turns.values()].sort((a, b) => a.order.localeCompare(b.order));
+  }
+
+  async function list(threadId) {
+    if (!(await repo())) return [];
+    return listRefs(`${CHECKPOINT_REF}/${safeRefPart(threadId)}/`);
   }
 
   async function prune(threadId) {
-    const all = await list(threadId);
-    const old = all.slice(0, Math.max(0, all.length - keep));
-    if (!old.length) return;
-    await g(["update-ref", "--stdin"], { input: old.flatMap((t) => t.refs.map((ref) => `delete ${ref}\n`)).join("") });
+    const old = (await list(threadId)).slice(0, -keep || undefined);
+    // And a cap over all threads, so old conversations don't keep trees forever.
+    const all = await listRefs(`${CHECKPOINT_REF}/`);
+    const overall = all.slice(0, Math.max(0, all.length - Math.floor(MAX_REFS / 2)));
+    const gone = [...new Set([...old, ...overall].flatMap((t) => t.refs))];
+    if (gone.length) await g(["update-ref", "--stdin"], { input: gone.map((ref) => `delete ${ref}\n`).join("") });
   }
 
-  /** Paths a turn changed: [{status: A|M|D, path}]. */
+  /** Paths a turn changed: [{status: A|M|D|T, path}]. */
   async function changes(before, after) {
     const d = await g(["diff-tree", "-r", "-z", "--no-renames", "--name-status", before, after]);
     const parts = d.stdout.split("\0").filter((x) => x !== "");
@@ -176,56 +232,85 @@ export function createCheckpoints({ cwd, git = runGit, maxUntrackedBytes = 2 * 1
     return out;
   }
 
-  // The blob id a path has in a tree, or null.
   async function blobIn(tree, p) {
     const r = await g(["rev-parse", "--verify", "--quiet", `${tree}:${p}`]);
     return r.code === 0 ? r.stdout.trim() : null;
   }
 
-  async function workBlob(root, p) {
-    const abs = path.join(root, p);
-    if (!existsSync(abs)) return null;
-    // As git would store it now (filters applied), so CRLF/eol settings compare fairly.
-    const r = await g([...EXACT, "hash-object", "--path", p, "--", abs]);
-    return r.code === 0 ? r.stdout.trim() : null;
+  async function workBlob(root, p, exact) {
+    const st = lstatOrNull(path.join(root, p));
+    if (!st) return null;
+    if (st.isDirectory()) return "<directory>";
+    const r = await g([...exact, "hash-object", "--path", p, "--", path.join(root, p)]);
+    return r.code === 0 ? r.stdout.trim() : "<unreadable>";
   }
 
   /**
-   * What undoing `turnId` would do: the paths to put back and any the user
-   * changed since the turn (conflicts). Nothing is written.
+   * What undoing `turnId` would do, without writing anything:
+   * {paths, conflicts: [{path, why}]}. `agentPaths` (repo-relative, "/"
+   * separated) are the files the agent's edits reported; anything else the
+   * turn's diff shows (the user's editor, another agent, a command) is a
+   * conflict rather than something to undo blindly.
    */
-  async function plan(threadId, turnId) {
+  async function plan(threadId, turnId, { agentPaths = null } = {}) {
     const r = await repo();
     if (!r) return { error: "Not a git repo: /undo isn't available here." };
-    const t = (await list(threadId)).find((x) => x.turnId === safeRefPart(turnId));
-    if (!t?.before || !t?.after) return { error: "No checkpoint for that turn (taken only while ad tui runs, in a git repo)." };
+    const t = (await list(threadId)).filter((x) => x.turnId === safeRefPart(turnId)).at(-1);
+    if (!t?.before || !t?.after) return { error: "No checkpoint for that turn." };
     const paths = await changes(t.before, t.after);
+    const reported = agentPaths ? new Set(agentPaths.map((p) => p.toLowerCase())) : null;
     const conflicts = [];
     for (const c of paths) {
+      if (reported && !reported.has(c.path.toLowerCase())) {
+        conflicts.push({ path: c.path, why: "not changed by the agent's edits" });
+        continue;
+      }
       const expected = c.status === "D" ? null : await blobIn(t.after, c.path);
-      const now_ = await workBlob(r.root, c.path);
-      if (now_ !== expected) conflicts.push(c.path);
+      const current = await workBlob(r.root, c.path, r.exact);
+      if (current === "<directory>") conflicts.push({ path: c.path, why: "a folder is there now" });
+      else if (current !== expected) conflicts.push({ path: c.path, why: "changed since the turn" });
     }
-    return { before: t.before, after: t.after, paths, conflicts };
+    return { before: t.before, after: t.after, paths, conflicts, byteExact: r.byteExact };
   }
 
-  /** Puts back what the turn changed. Refuses when the user changed those files since, unless `force`. */
-  async function restore(threadId, turnId, { force = false } = {}) {
-    const p = await plan(threadId, turnId);
+  /**
+   * Puts back what the turn changed. With conflicts nothing is done, unless
+   * `force`: then files changed since the turn are put back too. Even forced,
+   * a path the agent's edits didn't report is never touched, and a directory
+   * is never removed or replaced.
+   */
+  async function restore(threadId, turnId, { force = false, agentPaths = null } = {}) {
+    const p = await plan(threadId, turnId, { agentPaths });
     if (p.error) return p;
-    if (p.conflicts.length && !force) return { ...p, error: `Changed since that turn: ${p.conflicts.slice(0, 5).join(", ")}${p.conflicts.length > 5 ? "…" : ""}. Nothing was undone.` };
-    const r = await repo();
-    const back = p.paths.filter((c) => c.status !== "A").map((c) => c.path);
-    if (back.length) {
-      const res = await g([...EXACT, "restore", `--source=${p.before}`, "--worktree", "--pathspec-from-file=-", "--pathspec-file-nul"], { cwd: r.root, input: back.map((x) => `:(literal)${x}`).join("\0") });
-      if (res.code !== 0) return { ...p, error: `git restore failed: ${res.stderr.trim().split("\n")[0]}` };
+    if (p.conflicts.length && !force) {
+      const list = p.conflicts.slice(0, 5).map((c) => `${c.path} (${c.why})`).join(", ");
+      return { ...p, error: `Not undone: ${list}${p.conflicts.length > 5 ? "…" : ""}.` };
     }
-    for (const c of p.paths.filter((x) => x.status === "A")) rmSync(path.join(r.root, c.path), { force: true });
-    return { ...p, restored: p.paths.length };
+    const r = await repo();
+    const isDir = (rel) => lstatOrNull(path.join(r.root, rel))?.isDirectory() === true;
+    const notOurs = new Set(p.conflicts.filter((c) => c.why === "not changed by the agent's edits").map((c) => c.path));
+    const todo = p.paths.filter((c) => !isDir(c.path) && !notOurs.has(c.path));
+    const back = todo.filter((c) => c.status !== "A").map((c) => c.path);
+    if (back.length) {
+      const res = await g([...r.exact, "restore", `--source=${p.before}`, "--worktree", "--pathspec-from-file=-", "--pathspec-file-nul"], { cwd: r.root, input: back.map((x) => `:(literal)${x}`).join("\0") });
+      if (res.code !== 0) return { ...p, error: `git restore failed: ${firstLine(res.stderr)}` };
+    }
+    for (const c of todo.filter((x) => x.status === "A")) rmSync(path.join(r.root, c.path), { force: true }); // a file, never a directory
+    return { ...p, restored: todo.length, skipped: p.paths.length - todo.length };
   }
 
-  return { repo, snapshot, snapshotWithin, record, list, plan, restore };
+  return {
+    repo,
+    snapshot,
+    beforeSnapshot,
+    record,
+    list,
+    plan,
+    restore,
+    get lastError() {
+      return lastError;
+    },
+  };
 }
 
-export const UNDO_LIMITS =
-  "Not restored byte for byte: ignored files, submodule contents, and files git filters (LFS, eol conversion).";
+export const UNDO_LIMITS = "Not restored: ignored files, submodule contents and LFS files.";

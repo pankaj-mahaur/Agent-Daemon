@@ -125,7 +125,8 @@ test("imagePath: an existing image file, quotes and file:// removed; anything el
   try {
     writeFileSync(join(dir, "shot one.png"), "x");
     assert.equal(imagePath(`"${join(dir, "shot one.png")}"`, dir), join(dir, "shot one.png"));
-    assert.equal(imagePath("shot one.png", dir), null, "a bare name pasted into a sentence stays text");
+    assert.equal(imagePath("shot one.png", dir, { pasted: true }), null, "a bare name pasted into a sentence stays text");
+    assert.equal(imagePath("shot one.png", dir), join(dir, "shot one.png"), "/image takes a bare name");
     assert.equal(imagePath(`./shot one.png`, dir), join(dir, "shot one.png"));
     const url = "file:///" + join(dir, "shot one.png").replace(/\\/g, "/").replace(/^\//, "").replace(/ /g, "%20");
     assert.equal(imagePath(url, dir), join(dir, "shot one.png"), "file:// URLs, %20 decoded, the drive letter kept");

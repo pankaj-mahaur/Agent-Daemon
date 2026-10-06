@@ -1,6 +1,6 @@
 # Plan — `ad`: a Codex-style terminal UI with agent-daemon's powers
 
-> Status: **final v4.12** (2026-10-06; v4 on 2026-10-04 after three review rounds). Changes from here on need a revision-log entry.
+> Status: **final v4.13** (2026-10-06; v4 on 2026-10-04 after three review rounds). Changes from here on need a revision-log entry.
 > Progress: **Part 0** — code done and reviewed twice:
 > - Codex 0.160.0 pinned.
 > - Isolation guard in place (see "Your own Codex is never touched").
@@ -34,8 +34,23 @@
 > - **Part 8** (Codex parity++) built (v4.10). **Live checks pending (user).**
 > - **Part 9** (`ad` capabilities) built (v4.11). **FC4 pending (user).**
 > - **Part 10** (checkpoints and `/undo`) built (v4.12).
+> - **Part 11** built where it doesn't need the user (v4.13): the thin launcher, `ad tui "<prompt>"`, the bare-`ad` flip coded but gated (`TUI_IS_DEFAULT = false`; `AD_TUI=1` opts in now), `docs/tui.md` and the docs and skills updates.
+>   - **Pending (user):** FC3 sign-off, then set `TUI_IS_DEFAULT = true` (`runtime/src/tui/flip.mjs`). Then the v2.1.0 release: version bump, CHANGELOG section, tag, GitHub release.
+> - **Part 12** is **pending (user)** by design: the plan moves ACP, chat and web onto the controller only after ACP is verified live in Zed.
+> - **Part 13** (fullscreen and inline reflow) is not started: it is built only if the user asks for it.
 >
-> **Next:** Part 11 (flip bare `ad`, docs, release prep). The flip waits for FC3.
+> **Everything that waits for the user, in one list:**
+> 1. **FC1:** live use of `ad tui --preview`. Superseded by FC3, so it can be skipped.
+> 2. **FC2:** look at the goldens in `runtime/test/golden/tui/`, then at the live app.
+> 3. **FC3:** the live script on Windows Terminal, Zed and VS Code: ask, exec approval, patch approval, steer, queue, interrupt, `/codex` and back, quit, `ad tui --last`. See `docs/manual-test.md`.
+>    - Part 8's live checks run with it.
+>    - Also check that `codex resume <id> --no-daemon` works interactively (S3).
+> 4. **FC4:** Part 9 live: `/memory`, `/private`, `/loop`, `/team`, `/schedule`.
+> 5. **Narrowing ghosts:** run `node runtime/scripts/tui-probe.mjs screen` and `screen --bottom` in each terminal, and share the logs and screenshots. The compensation lands after that.
+> 6. **After FC3:** flip bare `ad`, merge `feat/tui` (and PR #9), then release v2.1.0.
+> 7. **Part 12:** verify ACP live in Zed first.
+>
+> **Next:** waiting on the user (above). No plan part is left that can be built without them.
 > Research: [Codex TUI + app-server](../research/codex-tui-and-app-server.md) · [terminal engineering](../research/terminal-engineering.md) · [harness landscape](../research/harness-landscape.md).
 
 ## Goal
@@ -964,6 +979,13 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
     - `/schedule` lists jobs, and `/schedule run <id>` hands off to `ad schedule run`. The header warns when an enabled job is more than 5 minutes overdue (the scheduler isn't running).
   - **9c, never stuck:** `/tools` → `ad tools …`. `/ad doctor` and `/ad sandbox …` go through the `/ad` handoff. The `/codex` round trip is from Part 6.
   - **Not built:** the team board's needs-input BEL and live peek, which need team state the orchestrator doesn't publish yet. They are in the backlog.
+  - **Review (with Part 10):**
+    - **`/loop`:**
+      - It is spawned detached, so it outlives the TUI. The exit hint then says it is still running and how to stop it.
+      - It follows its own log: the thread id the loop prints in `loop-tui.log`.
+      - Its own STOP file is removed once it stops, and `~/.agent-daemon/STOP` is checked before starting.
+    - **`/memory forget`** only touches this project's (or global) learnings.
+    - **`/image`** takes a bare file name again; only pasted text needs a path.
 
 ### Part 10 — Checkpoints and `/undo` (only if S4 passes)
 - **Why Codex removed its ghost-commit undo:** answered in writing first (#3914, #5629, now a legacy no-op).
@@ -1001,6 +1023,21 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
     - Then it runs `git restore --source=<before> --worktree` from a NUL-separated literal pathspec, deletes the files the turn added, and calls `thread/revert`. The prompt comes back in the composer.
     - The UI states the limits: ignored files, submodule contents, and LFS or eol-filtered files.
   - **Untouched:** the user's index, HEAD, branches and stash. A test checks each of them.
+  - **Review: 1 high (data loss), 5 medium. Undo was redesigned to be conservative; 15 guards mutation-checked.**
+    - **No guessed "before":**
+      - The old "last turn's after" fallback is gone. That fallback was the normal path on Windows, since snapshots take 300 ms or more, and it reverted the user's edits and deleted their files.
+      - A turn's "before" must be a snapshot started after the previous turn ended. Otherwise that turn has no checkpoint, and `/undo` says why.
+    - **Agent edits only:** `/undo` puts back only the paths the turn's own `fileChange` items reported. Anything else in the diff is a conflict: the user's editor, a command, another agent, or a `/loop`.
+    - **Folders and force:** a folder standing where a file was is a conflict. `force` overrides only "changed since the turn": it never touches a path the agent did not edit, and never removes a folder.
+    - **Last turn only:** `/undo` targets only the last finished turn and waits for its checkpoint to be recorded. It never falls back to an older one.
+    - **Byte for byte under .gitattributes** too: with `--attr-source=<empty tree>` on git 2.40+. Older git says so.
+    - **Speed:** the untracked scan skips heavy folders and stats files asynchronously in batches.
+    - **Refs:**
+      - Their names carry a sequence, so they stay in turn order.
+      - Besides the 20 turns kept per thread, there is a cap of about 200 turns over all threads.
+      - Snapshot failures (for example a nested repo with no commits) are reported.
+    - **Smaller fixes:** `/undo` strips the `<private>` wrapper from the prompt it puts back.
+    - **Accepted:** an edit the user makes between their last keystroke's snapshot and pressing Enter, to a file the agent then edits, isn't preserved by `/undo`.
 
 ### Part 11 — Flip bare `ad`, docs, verification, release
 - **Flip:** after FC3, apply D7, and add `ad --last`. `ad chat` shows a one-time hint.
@@ -1012,6 +1049,12 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
 - **Verification track:** every item in the table under Parts is done before the release.
 - **Release:** v2.1.0.
 - **Done when:** CI is green, the docs match the code, and the release is tagged by the usual process.
+- ✅ **Built 2026-10-06, except what waits for the user.**
+  - **Launcher:** `runtime/src/cli.mjs` is a thin launcher. It routes `tui`, `codex` and bare `ad` / `ad --last` before loading `cli-full.mjs` (the old CLI, moved). Bin shims and hook commands are unchanged.
+  - **First prompt:** `ad tui "<prompt>"` sends it right away.
+  - **Flip (`tui/flip.mjs`):** `bareAdChoice` follows D7 exactly (TTYs, `TERM`, `AD_TUI`, Node), and `TUI_IS_DEFAULT` stays `false` until FC3. `AD_TUI=1` opts in today. `ad chat` prints its one-time hint once the flip is on. `preflight` moved to `tui/preflight.mjs`, so the launcher stays light.
+  - **Docs:** `docs/tui.md`, the harness guide, the README, troubleshooting, the `manual-test.md` TUI section, and the `ad-harness`, `harness-troubleshoot` and `ad-tui-dev` skills.
+  - **Release:** v2.1.0 is the user's to cut after FC3 and the flip, by the usual process.
 
 ### Part 12 — ACP, chat and web onto the controller
 - After ACP is verified live in Zed. Remove the duplicated turn, approval and fileChange logic. Behaviour and tests stay unchanged.
@@ -1193,3 +1236,8 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
 - **v4.12** (2026-10-06): Part 10.
   - **Additions:** `createCheckpoints` and `checkpointWiring` (the session's `beforeTurn` / `turnStarted` / `turnCompleted` hooks), `/undo [force]`, and the app's `actions.onTyping`.
   - **Changed from S4:** no index seeding, for byte-exact restores.
+- **v4.13** (2026-10-06): Part 11 (all but the user's steps).
+  - **Launcher:** `cli.mjs` is now a thin launcher, with the commands in `cli-full.mjs`.
+  - **Flip:** `tui/flip.mjs` holds `TUI_IS_DEFAULT`, `bareAdChoice` and `chatHintOnce`.
+  - **Code moves and additions:** `tui/preflight.mjs`, and `app.send()` for `ad tui "<prompt>"`.
+  - **Status:** Parts 12 and 13 are parked: Part 12 on a live ACP check, Part 13 on the user asking for it.

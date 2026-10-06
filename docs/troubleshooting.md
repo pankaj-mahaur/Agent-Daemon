@@ -404,7 +404,116 @@ Quit with `qqq`, or press Ctrl+C three times. Results are saved to `~/.agent-dae
 
 ---
 
-For harness problems, the [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill walks through login → hooks → sandbox → Codex's own log. See also [harness.md](harness.md).
+## 23. `ad tui` says it needs an interactive terminal or Node 22.17+
+
+**Symptom:** `ad tui` (or bare `ad` with `AD_TUI=1`) exits at once with one of:
+
+- `ad tui needs an interactive terminal. Use ad chat for pipes and scripts.`
+- `This terminal (TERM=dumb) can't show the UI. Use ad chat.`
+- `ad tui needs Node 22.17+ or 24.2+ on Windows (this is …)`
+- `mintty (Git Bash's window) can't pass keys to ad. Run winpty ad tui, or use Windows Terminal.`
+
+**Cause:** the terminal UI needs a real terminal on both stdin and stdout. On Windows it also needs a Node with VT input in raw mode (22.17+ or 24.2+, not 23.x or 24.0–24.1); older ones turn a multi-line paste into one message per line. mintty doesn't pass keys to Windows console programs.
+
+**Fix:**
+
+- Run it in a terminal window, not through a pipe, `nohup` or a script. For scripts use `ad run` or `ad chat`.
+- Upgrade Node within your major version (22.x stays ABI-compatible, nothing to rebuild), then check with `node -v`.
+- In Git Bash: `winpty ad tui`, or open Git Bash as a Windows Terminal profile.
+- Everything else in ad keeps working on older Node; only the TUI checks this.
+
+---
+
+## 24. `ad tui`: Shift+Enter sends instead of adding a newline
+
+**Symptom:** pressing Shift+Enter sends the prompt.
+
+**Cause:** Windows Terminal 1.24 and the VS Code terminal send Shift+Enter exactly like Enter, so ad can't tell them apart. ad sends on Enter and adds a newline on a line feed.
+
+**Fix:** any of these:
+
+- Use the key the footer shows: Ctrl+Enter in Windows Terminal, Ctrl+J in any terminal.
+- Type `\` and then Enter: that adds a newline everywhere.
+- Run `/terminal-setup` in `ad tui`. It prints the binding that makes Shift+Enter send a newline in your terminal (a `sendInput` action in Windows Terminal, a `sendSequence` keybinding in VS Code). Windows Terminal 1.25 and Zed need no setup.
+
+---
+
+## 25. Ghost copies of the bottom lines after narrowing the window
+
+**Symptom:** after making the window narrower while `ad tui` runs, old copies of the status line, composer or footer stay in the scrollback above the live lines.
+
+**Cause:** known, and being characterized. When a terminal re-wraps lines on a resize, some (xterm.js-based ones, like VS Code) also move the cursor further than the re-wrap accounts for. ad then re-draws below the old copy instead of over it. It errs this way on purpose: guessing the other way would erase your history.
+
+**Fix:** press Ctrl+L to redraw. History itself is never lost.
+
+Please help pin it down: in the terminal where it happens, run
+
+```sh
+node runtime/scripts/tui-probe.mjs screen --bottom
+```
+
+make the window narrower, then wider, quit with `qqq`, and attach `~/.agent-daemon/logs/tui-probe-screen-*.log` plus a screenshot of the window to an issue.
+
+---
+
+## 26. `/undo` refuses: `Not undone`
+
+**Symptom:** `/undo` says `Not undone: <file> (<why>), …. /undo force overrides "changed since the turn" (files the agent didn't edit and folders are never touched).`
+
+**Cause:** `/undo` only puts back what the agent's own edits changed in the last turn, and only when nothing else touched those files. Each listed file says why it was refused:
+
+- `changed since the turn`: you (or another tool) edited it after the turn. Undoing would throw that away.
+- `not changed by the agent's edits`: it changed during the turn some other way, for example through a command the agent ran (`npm install`, a formatter, `sed`) or your editor.
+- `a folder is there now`: a folder stands where the file was.
+
+With any of these, nothing is undone.
+
+**Fix:**
+
+- Look at the files first (`/diff`, or `git diff`).
+- If later edits to the agent's files can go, `/undo force` puts those files back too. Even forced, files the agent's edits didn't report are never touched, and folders are never removed or replaced; those are reported as left alone.
+- If you want to keep them, fix the files by hand. Esc Esc rewinds just the conversation and leaves the files alone.
+
+**Other `/undo` messages:**
+
+- `The last turn has no checkpoint (…)`: the snapshot before the turn wasn't ready within 150 ms, snapshots fail in this repo (git's message follows), or the turn ran before `ad tui` started. Start typing a moment before sending, so the snapshot is ready.
+- `Not a git repo`: checkpoints need a git repo.
+- Ignored files, submodule contents and LFS files are never restored. With git older than 2.40, files with `.gitattributes` eol rules may come back normalized.
+
+---
+
+## 27. `ad tui`: `Codex stopped (exit N)`
+
+**Symptom:** a banner under the composer says `Codex stopped (exit N). Your text is kept. Enter restarts and resumes.`
+
+**Cause:** the Codex engine process exited, and ad's automatic restarts (3) didn't bring it back. The running turn is marked failed; your prompt and the scrollback are kept.
+
+**Fix:**
+
+- Press Enter on an empty prompt to try again. A prompt you send meanwhile waits in the queue and goes once Codex is back.
+- If it keeps stopping: `/quit`, then `ad doctor`, then `ad tui --last` to continue the conversation.
+- To see why: Codex's own log is `logs_2.sqlite` in the harness home (`~/.agent-daemon/codex-home`, table `logs`). The [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill shows how to read it. Common causes are a lost login (`ad auth status`) and the Windows sandbox (#16).
+
+---
+
+## 28. `ad tui`: the editor (Ctrl+G) returned at once
+
+**Symptom:** Ctrl+G flashes, and ad says `The editor returned at once without waiting. Set EDITOR to one that waits …`.
+
+**Cause:** the editor handed the file to a window that was already open and exited straight away (Notepad from the Microsoft Store, `code` without `--wait`). ad can't know when you finish, so it keeps your prompt unchanged.
+
+**Fix:** point `VISUAL` or `EDITOR` at a command that waits until the file is closed:
+
+```sh
+export EDITOR="code --wait"                  # bash / zsh
+$env:EDITOR = "code --wait"                  # PowerShell (this session)
+```
+
+Other choices: `nvim`, `vim`, `nano`, or Notepad++ with `-multiInst -nosession`. A full path with spaces works without quotes when there are no arguments; with arguments, quote the path (`"C:\Program Files\Notepad++\notepad++.exe" -multiInst -nosession`).
+
+---
+
+For harness problems, the [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill walks through login → hooks → sandbox → Codex's own log. See also [harness.md](harness.md) and, for the terminal UI, [tui.md](tui.md).
 
 ## Still stuck?
 

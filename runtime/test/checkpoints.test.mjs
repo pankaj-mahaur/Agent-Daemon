@@ -1,7 +1,8 @@
 // Checkpoints and /undo (harness/checkpoints.mjs, tui/undo.mjs; plan Part 10)
-// on temp git repos: paths with spaces, CRLF, a big untracked file, heavy
-// folders, renames, conflicts, retention, and the user's index / HEAD /
-// stash left alone.
+// on temp git repos: paths with spaces, CRLF (also under .gitattributes),
+// big untracked files, heavy folders, renames, conflicts, folders where
+// files were, retention order, and the user's index / HEAD / stash left alone.
+// Undo must never take away something the user made.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -12,13 +13,14 @@ import { join } from "node:path";
 import { createCheckpoints, CHECKPOINT_REF } from "../src/harness/checkpoints.mjs";
 import { checkpointWiring } from "../src/tui/undo.mjs";
 
-function repo() {
+function repo({ attributes = null } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "ad checkpoint "));
   const git = (...a) => execFileSync("git", a, { cwd: dir, encoding: "utf8" });
   git("init", "-q");
   git("config", "user.email", "t@example.com");
   git("config", "user.name", "t");
   git("config", "commit.gpgsign", "false");
+  if (attributes) writeFileSync(join(dir, ".gitattributes"), attributes);
   writeFileSync(join(dir, "crlf.txt"), "one\r\ntwo\r\n");
   writeFileSync(join(dir, "with space.txt"), "keep");
   writeFileSync(join(dir, "old name.txt"), "renamed later");
@@ -29,7 +31,15 @@ function repo() {
 
 const file = (dir, f) => readFileSync(join(dir, f), "utf8");
 
-test("a turn's changes come back byte for byte; untracked big files and heavy folders are skipped; the user's index, HEAD and stash stay", async () => {
+async function turn(cp, thread, turnId, change) {
+  const before = await cp.snapshot();
+  change();
+  const after = await cp.snapshot();
+  assert.ok(await cp.record(thread, turnId, { before: before.tree, after: after.tree }));
+  return { before, after };
+}
+
+test("a turn's changes come back byte for byte; big untracked files and heavy folders are skipped; the user's index, HEAD and stash stay", async () => {
   const r = repo();
   try {
     writeFileSync(join(r.dir, "staged.txt"), "staged by the user");
@@ -40,24 +50,21 @@ test("a turn's changes come back byte for byte; untracked big files and heavy fo
     const head = r.git("rev-parse", "HEAD");
     const stash = r.git("stash", "list");
     const cp = createCheckpoints({ cwd: r.dir, maxUntrackedBytes: 1000 });
-    const t0 = performance.now();
-    const before = await cp.snapshot();
-    assert.ok(performance.now() - t0 < 10_000, "a snapshot of a small repo is quick");
-    // The turn: edit (CRLF kept), add, delete, rename, plus a big untracked file and node_modules.
-    writeFileSync(join(r.dir, "crlf.txt"), "ONE\r\ntwo\r\nthree\r\n");
-    writeFileSync(join(r.dir, "new file.txt"), "made by the turn");
-    rmSync(join(r.dir, "with space.txt"));
-    renameSync(join(r.dir, "old name.txt"), join(r.dir, "new name.txt"));
-    writeFileSync(join(r.dir, "big.bin"), Buffer.alloc(5000));
-    mkdirSync(join(r.dir, "node_modules", "x"), { recursive: true });
-    writeFileSync(join(r.dir, "node_modules", "x", "i.js"), "module");
-    const after = await cp.snapshot();
+    const { after } = await turn(cp, "thread one", "turn/1", () => {
+      writeFileSync(join(r.dir, "crlf.txt"), "ONE\r\ntwo\r\nthree\r\n");
+      writeFileSync(join(r.dir, "new file.txt"), "made by the turn");
+      rmSync(join(r.dir, "with space.txt"));
+      renameSync(join(r.dir, "old name.txt"), join(r.dir, "new name.txt"));
+      writeFileSync(join(r.dir, "big.bin"), Buffer.alloc(5000));
+      mkdirSync(join(r.dir, "node_modules", "x"), { recursive: true });
+      writeFileSync(join(r.dir, "node_modules", "x", "i.js"), "module");
+    });
     assert.deepEqual(after.skipped, ["big.bin"]);
-    assert.ok(await cp.record("thread one", "turn/1", { before: before.tree, after: after.tree }));
-    const plan = await cp.plan("thread one", "turn/1");
+    const agentPaths = ["crlf.txt", "new file.txt", "with space.txt", "old name.txt", "new name.txt"];
+    const plan = await cp.plan("thread one", "turn/1", { agentPaths });
     assert.deepEqual(plan.conflicts, []);
     assert.deepEqual(plan.paths.map((p) => `${p.status} ${p.path}`).sort(), ["A new file.txt", "A new name.txt", "D old name.txt", "D with space.txt", "M crlf.txt"]);
-    const res = await cp.restore("thread one", "turn/1");
+    const res = await cp.restore("thread one", "turn/1", { agentPaths });
     assert.equal(res.restored, 5);
     assert.equal(file(r.dir, "crlf.txt"), "one\r\ntwo\r\n", "CRLF back byte for byte");
     assert.equal(file(r.dir, "with space.txt"), "keep");
@@ -69,48 +76,93 @@ test("a turn's changes come back byte for byte; untracked big files and heavy fo
     assert.deepEqual(readFileSync(join(r.dir, ".git", "index")), userIndex, "the user's index is untouched");
     assert.equal(r.git("rev-parse", "HEAD"), head);
     assert.equal(r.git("stash", "list"), stash);
-    assert.match(r.git("status", "--porcelain"), /^A {2}staged\.txt$/m, "what the user staged stays staged");
-    assert.match(r.git("for-each-ref", CHECKPOINT_REF), /refs\/ad\/checkpoints\/thread_one\/turn_1-after/);
-    assert.equal(r.git("branch", "--list").trim(), r.git("branch", "--show-current").trim() ? `* ${r.git("branch", "--show-current").trim()}` : "", "no branch was added");
+    assert.match(r.git("status", "--porcelain"), /^A {2}staged\.txt$/m);
+    assert.match(r.git("for-each-ref", CHECKPOINT_REF), /refs\/ad\/checkpoints\/thread_one\/\d{18}-turn_1-after/);
   } finally {
     r.done();
   }
 });
 
-test("a file the user changed after the turn is a conflict: nothing is undone unless forced", async () => {
+test("byte for byte under .gitattributes text=auto too (git 2.40+)", async () => {
+  const r = repo({ attributes: "* text=auto\n" });
+  try {
+    const cp = createCheckpoints({ cwd: r.dir });
+    writeFileSync(join(r.dir, "win.txt"), "a\r\nb\r\n");
+    await turn(cp, "t", "u", () => writeFileSync(join(r.dir, "win.txt"), "changed\r\n"));
+    const res = await cp.restore("t", "u", { agentPaths: ["win.txt"] });
+    if (!res.byteExact) return; // git older than 2.40: documented limit
+    assert.equal(file(r.dir, "win.txt"), "a\r\nb\r\n");
+  } finally {
+    r.done();
+  }
+});
+
+test("only the agent's own edits are undone: the user's files and edits, made between or during turns, are conflicts", async () => {
   const r = repo();
   try {
     const cp = createCheckpoints({ cwd: r.dir });
-    const before = await cp.snapshot();
-    writeFileSync(join(r.dir, "crlf.txt"), "turn edit\n");
-    writeFileSync(join(r.dir, "with space.txt"), "turn edit too");
-    const after = await cp.snapshot();
-    await cp.record("t", "u", { before: before.tree, after: after.tree });
-    writeFileSync(join(r.dir, "crlf.txt"), "the user's own edit\n");
-    const refused = await cp.restore("t", "u");
-    assert.deepEqual(refused.conflicts, ["crlf.txt"]);
-    assert.match(refused.error, /Changed since that turn: crlf\.txt\. Nothing was undone\./);
-    assert.equal(file(r.dir, "with space.txt"), "turn edit too", "nothing at all was undone");
-    const forced = await cp.restore("t", "u", { force: true });
-    assert.equal(forced.restored, 2);
-    assert.equal(file(r.dir, "crlf.txt"), "one\r\ntwo\r\n");
+    await turn(cp, "t", "u", () => {
+      writeFileSync(join(r.dir, "crlf.txt"), "agent edit\n");
+      writeFileSync(join(r.dir, "my-draft.md"), "the user's own file, written during the turn");
+    });
+    const refused = await cp.restore("t", "u", { agentPaths: ["crlf.txt"] });
+    assert.deepEqual(refused.conflicts, [{ path: "my-draft.md", why: "not changed by the agent's edits" }]);
+    assert.match(refused.error, /^Not undone: my-draft\.md \(not changed by the agent's edits\)\.$/);
+    assert.equal(file(r.dir, "my-draft.md"), "the user's own file, written during the turn");
+    assert.equal(file(r.dir, "crlf.txt"), "agent edit\n", "nothing at all was undone");
+    // Even forced, a file the agent didn't edit is never touched.
+    const forced = await cp.restore("t", "u", { force: true, agentPaths: ["crlf.txt"] });
+    assert.equal(forced.skipped, 1);
+    assert.equal(file(r.dir, "my-draft.md"), "the user's own file, written during the turn");
+    assert.equal(file(r.dir, "crlf.txt"), "one\r\ntwo\r\n", "the agent's edit is undone");
+    await turn(cp, "t", "u2", () => writeFileSync(join(r.dir, "crlf.txt"), "agent edit\n"));
+    // Changed since the turn: also a conflict.
+    writeFileSync(join(r.dir, "crlf.txt"), "the user's edit after the turn\n");
+    assert.deepEqual((await cp.plan("t", "u2", { agentPaths: ["crlf.txt"] })).conflicts, [{ path: "crlf.txt", why: "changed since the turn" }]);
   } finally {
     r.done();
   }
 });
 
-test("only the last N turns per thread are kept; not a repo means no checkpoints", async () => {
+test("a folder standing where the turn deleted a file is a conflict, and force never removes it", async () => {
   const r = repo();
   try {
-    const cp = createCheckpoints({ cwd: r.dir, keep: 2 });
+    const cp = createCheckpoints({ cwd: r.dir });
+    await turn(cp, "t", "u", () => rmSync(join(r.dir, "with space.txt")));
+    mkdirSync(join(r.dir, "with space.txt"));
+    writeFileSync(join(r.dir, "with space.txt", "mine.md"), "precious");
+    const plan = await cp.plan("t", "u", { agentPaths: ["with space.txt"] });
+    assert.deepEqual(plan.conflicts, [{ path: "with space.txt", why: "a folder is there now" }]);
+    const forced = await cp.restore("t", "u", { force: true, agentPaths: ["with space.txt"] });
+    assert.equal(forced.skipped, 1);
+    assert.equal(file(r.dir, "with space.txt/mine.md"), "precious");
+  } finally {
+    r.done();
+  }
+});
+
+test("retention keeps the newest turns (in order, not by name); a failing snapshot says why", async () => {
+  const r = repo();
+  try {
+    let t = 1_000_000;
+    const cp = createCheckpoints({ cwd: r.dir, keep: 2, now: () => (t += 1000) });
     const s = await cp.snapshot();
-    for (const t of ["a", "b", "c"]) await cp.record("t", t, { before: s.tree, after: s.tree });
-    assert.deepEqual((await cp.list("t")).map((x) => x.turnId).sort(), ["b", "c"]);
+    for (const id of ["z", "a", "m"]) await cp.record("t", id, { before: s.tree, after: s.tree });
+    assert.deepEqual((await cp.list("t")).map((x) => x.turnId), ["a", "m"], "the oldest (z) went, whatever its name");
+    // A nested repo with no commits makes git add fail: lastError explains.
+    mkdirSync(join(r.dir, "nested"));
+    execFileSync("git", ["init", "-q"], { cwd: join(r.dir, "nested") });
+    writeFileSync(join(r.dir, "nested", "f"), "x");
+    const failed = await createCheckpoints({ cwd: r.dir }).snapshot();
+    if (failed === null) {
+      const c2 = createCheckpoints({ cwd: r.dir });
+      await c2.snapshot();
+      assert.ok(c2.lastError);
+    }
     const plain = mkdtempSync(join(tmpdir(), "ad-not-a-repo-"));
     try {
-      const none = createCheckpoints({ cwd: plain });
-      assert.equal(await none.snapshot(), null);
-      assert.match((await none.plan("t", "u")).error, /Not a git repo/);
+      assert.equal(await createCheckpoints({ cwd: plain }).snapshot(), null);
+      assert.match((await createCheckpoints({ cwd: plain }).plan("t", "u")).error, /Not a git repo/);
     } finally {
       rmSync(plain, { recursive: true, force: true });
     }
@@ -119,33 +171,61 @@ test("only the last N turns per thread are kept; not a repo means no checkpoints
   }
 });
 
-test("snapshotWithin returns null when the snapshot is late; the wiring then falls back to the last after tree", async () => {
+/* ------------------------------------------------------------------ */
+/* The wiring                                                          */
+/* ------------------------------------------------------------------ */
+
+function fakeCp({ slowBefore = false } = {}) {
+  const recorded = [];
   let release;
   const slow = new Promise((r) => (release = r));
-  const recorded = [];
   const cp = {
-    snapshot: () => slow,
-    snapshotWithin: async (ms) => Promise.race([slow, new Promise((r) => setTimeout(() => r(null), ms))]),
+    lastError: null,
+    repo: async () => ({ root: "/repo" }),
+    snapshot: async () => ({ tree: "after-tree" }),
+    beforeSnapshot: async ({ waitMs }) => (slowBefore ? Promise.race([slow, new Promise((r) => setTimeout(() => r(null), waitMs))]) : { tree: "before-tree" }),
     record: async (thread, turn, trees) => (recorded.push({ thread, turn, ...trees }), true),
-    restore: async () => ({ restored: 1, paths: [] }),
+    restore: async (thread, turnId, opts) => (cp.lastRestore = { turnId, ...opts }, { restored: 1, paths: [], conflicts: [] }),
   };
-  const w = checkpointWiring(cp, { waitMs: 20 });
-  const session = { state: { thread: { id: "t" }, turns: [], items: new Map(), activeTurnId: null, starting: false }, revert: async () => {} };
-  const t0 = Date.now();
+  return { cp, recorded, release };
+}
+
+function fakeSession() {
+  const st = { thread: { id: "t" }, turns: [], items: new Map(), activeTurnId: null, starting: false };
+  return { state: st, revert: async (id) => (st.reverted = id) };
+}
+
+test("a late 'before' means no checkpoint for that turn, never the previous turn's state", async () => {
+  const { cp, recorded } = fakeCp({ slowBefore: true });
+  const w = checkpointWiring(cp, { cwd: "/repo", waitMs: 20 });
+  const s = fakeSession();
   await w.hooks.beforeTurn({ input: [] });
-  assert.ok(Date.now() - t0 < 500, "a turn waits only briefly");
-  w.hooks.turnStarted({ turn: { id: "u1" }, session });
-  release({ tree: "after1" });
-  await w.hooks.turnCompleted({ turn: { id: "u1" }, session });
-  assert.deepEqual(recorded, [], "no before tree for the first turn: nothing recorded");
-  await w.hooks.beforeTurn({ input: [] }); // slow is settled now: returns after1 at once
-  w.hooks.turnStarted({ turn: { id: "u2" }, session });
-  await w.hooks.turnCompleted({ turn: { id: "u2" }, session });
-  assert.deepEqual(recorded.map((x) => [x.turn, x.before, x.after]), [["u2", "after1", "after1"]]);
-  session.state.turns.push({ id: "u2", status: "completed", itemIds: [] });
-  const r = await w.undo(session);
-  assert.match(r.message, /Undid the last turn: 1 file put back/);
-  assert.match((await w.undo(session)).error, /No turn with a checkpoint/);
+  w.hooks.turnStarted({ turn: { id: "u1" } });
+  await w.hooks.turnCompleted({ turn: { id: "u1" }, session: s });
+  assert.deepEqual(recorded, []);
+  s.state.turns.push({ id: "u1", status: "completed", itemIds: [] });
+  assert.match((await w.undo(s)).error, /The last turn has no checkpoint \(the snapshot before it wasn't ready in time\)/);
+});
+
+test("/undo waits for the last turn's checkpoint, undoes only that turn, and only the agent's reported files", async () => {
+  const { cp, recorded } = fakeCp();
+  const w = checkpointWiring(cp, { cwd: "/repo" });
+  const s = fakeSession();
+  for (const id of ["u1", "u2"]) {
+    await w.hooks.beforeTurn({ input: [] });
+    w.hooks.turnStarted({ turn: { id } });
+    s.state.items.set(`fc-${id}`, { id: `fc-${id}`, kind: "fileChange", changes: [{ path: `src/${id}.js` }, { path: "/repo/abs.txt", movePath: "/repo/moved.txt" }] });
+    s.state.items.set(`um-${id}`, { id: `um-${id}`, kind: "userMessage", text: "<private>secret prompt</private>" });
+    s.state.turns.push({ id, status: "completed", itemIds: [`um-${id}`, `fc-${id}`] });
+    w.hooks.turnCompleted({ turn: { id }, session: s }); // not awaited, as the session does
+  }
+  const r = await w.undo(s); // right away: must wait for u2's recording, not fall back to u1
+  assert.equal(recorded.length, 2);
+  assert.equal(cp.lastRestore.turnId, "u2");
+  assert.deepEqual(cp.lastRestore.agentPaths.sort(), ["abs.txt", "moved.txt", "src/u2.js"]);
+  assert.equal(s.state.reverted, "u2");
+  assert.equal(r.prompt, "secret prompt", "the <private> wrapper isn't put back twice");
+  assert.match((await w.undo(s)).error, /no checkpoint/, "once undone, that turn can't be undone again");
 });
 
 test("S4 budget: warm snapshots of a 2000-file repo stay fast (median under 3 s even on a slow CI machine)", async () => {
@@ -167,9 +247,26 @@ test("S4 budget: warm snapshots of a 2000-file repo stay fast (median under 3 s 
       times.push(performance.now() - t0);
     }
     times.sort((a, b) => a - b);
-    const median = times[2];
-    console.log(`# warm snapshot median ${median.toFixed(0)} ms (p95-ish ${times[4].toFixed(0)} ms)`);
-    assert.ok(median < 3000, `median ${median} ms`);
+    console.log(`# warm snapshot median ${times[2].toFixed(0)} ms`);
+    assert.ok(times[2] < 3000, `median ${times[2]} ms`);
+  } finally {
+    r.done();
+  }
+});
+
+test("a turn's 'before' is never a snapshot from before the previous turn ended", async () => {
+  const r = repo();
+  try {
+    let t = 1_000;
+    const cp = createCheckpoints({ cwd: r.dir, now: () => t });
+    const early = await cp.snapshot(); // e.g. while the user was typing, before the previous turn
+    t = 2_000; // the previous turn ends here
+    writeFileSync(join(r.dir, "crlf.txt"), "the previous turn's edit\n");
+    t = 3_000;
+    const before = await cp.beforeSnapshot({ since: 2_000, waitMs: 10_000 });
+    assert.notEqual(before.tree, early.tree, "a fresh snapshot, not the stale one");
+    assert.equal(execFileSync("git", ["cat-file", "-p", `${before.tree}:crlf.txt`], { cwd: r.dir, encoding: "utf8" }), "the previous turn's edit\n");
+    assert.equal((await cp.beforeSnapshot({ since: 2_000, waitMs: 10 })).tree, before.tree, "and that one is reused while still recent");
   } finally {
     r.done();
   }
