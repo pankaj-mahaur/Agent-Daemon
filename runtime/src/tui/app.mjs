@@ -215,7 +215,8 @@ export function createApp({
         const live = open(it);
         const out = live ? fresh : [...fresh, ...s.md.finish()];
         if (out.length) {
-          const lines = out.map((l) => [{ text: s.started ? "  " : "\u{2022} ", style: DIM }, ...l]);
+          // The bullet on the message's first line only; the rest (and later batches) indent.
+          const lines = out.map((l, k) => [{ text: s.started || k > 0 ? "  " : "\u{2022} ", style: DIM }, ...l]);
           if (!s.started) commitCell(lines);
           else commit(lines);
           s.started = true;
@@ -580,7 +581,8 @@ export function createApp({
       case "permissions":
         return openPicker("permissions", PERMISSION_PRESETS.map((p) => ({ label: p.label, hint: p.hint, value: p.value })), (value, item) => {
           session.setNextTurn(value);
-          info0(`Permissions: ${item.label} (from the next turn).`);
+          // Codex fixes a turn's permissions when it starts: say so if one is running.
+          info0(`Permissions: ${item.label} (from the next turn${turnActive() ? "; the running turn keeps asking as before" : ""}).`);
         });
       case "resume":
         return pickThread();

@@ -255,3 +255,12 @@ test("live() stays cheap for a huge held-back paragraph (its tail only)", () => 
   assert.ok(live.length < 60);
   assert.equal(text(s.finish()).length > 190000, true, "what commits is still all of it");
 });
+
+test("a link destination in <…> may hold spaces (Codex's local file links); a Windows path loses its leading /", () => {
+  const spans = inline("see [step6.js](</D:/Program Files/my-projects/app/step6.js:2>) now");
+  assert.equal(spans.map((s) => s.text).join(""), "see step6.js (D:/Program Files/my-projects/app/step6.js:2) now");
+  assert.equal(styleOf(spans, "step6.js").underline, true);
+  assert.equal(inline("[a](<x y>)").map((s) => s.text).join(""), "a (x y)");
+  assert.equal(inline("[a](x y)").map((s) => s.text).join(""), "[a](x y)", "without <…>, a space ends it: not a link");
+  assert.equal(inline("[a](</posix/path.js>)").map((s) => s.text).join(""), "a (/posix/path.js)");
+});

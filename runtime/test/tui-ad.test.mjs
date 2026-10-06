@@ -259,3 +259,17 @@ test("a reply whose id a rewound turn used still shows", async () => {
     await until(() => /reply to same-id two/.test(committed()), "the reply reusing the id");
   });
 });
+
+test("a reply that wraps has its bullet on the first line only", async () => {
+  await withApp(async ({ type, until, committed }) => {
+    type(`same-id ${"word ".repeat(40)}\r`);
+    await until(() => /reply to same-id/.test(committed()), "the reply");
+    await until(() => committed().split("\n").filter((l) => /word/.test(l)).length >= 3, "the reply wrapped over several lines");
+    const all = committed().split("\n");
+    const at = all.findIndex((l) => /reply to same-id/.test(l));
+    const lines = [all[at], ...all.slice(at + 1).filter((l) => /word/.test(l))];
+    assert.match(lines[0], /^• reply to same-id/);
+    assert.ok(lines.length >= 3, "wrapped");
+    for (const l of lines.slice(1)) assert.match(l, /^ {2}\S/, `continuation lines indent, no bullet: ${JSON.stringify(l)}`);
+  });
+});

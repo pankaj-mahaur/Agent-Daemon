@@ -434,6 +434,7 @@ Everything else (conversations, logs, login) is Codex's own, in ad's Codex home;
 | "Codex stopped (exit N)" | [#27](troubleshooting.md#27-ad-tui-codex-stopped-exit-n) |
 | Ctrl+G returns at once | [#28](troubleshooting.md#28-ad-tui-the-editor-ctrlg-returned-at-once) |
 | Windows: the first command or edit takes ~35 s | [#29](troubleshooting.md#29-windows-the-first-command-or-edit-after-installing-takes-35-s) |
+| Windows: every command fails with `CreateProcessAsUserW failed` | [#30](troubleshooting.md#30-windows-every-command-fails-with-createprocessasuserw-failed-then-asks-to-run-outside-the-sandbox) |
 | keys or paste behave oddly | [#22](troubleshooting.md#22-keys-or-paste-behave-oddly-in-a-terminal) |
 | not signed in, sandbox, hooks, "Access is denied" | [harness.md](harness.md#when-something-goes-wrong), troubleshooting #14–21 |
 

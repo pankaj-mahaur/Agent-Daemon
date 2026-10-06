@@ -4,6 +4,16 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Fixed
+
+From the first live use on a real ChatGPT login:
+
+- Windows with PowerShell 7 from the Microsoft Store: every sandboxed command failed (`CreateProcessAsUserW failed`) and needed approval to run outside the sandbox. The engine's PATH now leaves out the WindowsApps folders in that case, so commands run sandboxed in Windows PowerShell 5.1 (or an MSI PowerShell 7).
+- ad's own memory tools (`memory_search` …) no longer ask for approval each time (`default_tools_approval_mode = "approve"` on the memory server, unless you set a mode yourself).
+- `ad tui`: a reply that wraps shows its bullet on the first line only (every line had one).
+- `ad tui`: links to local files (`[app.js](</D:/My Projects/app.js:12>)`, as Codex writes them) render as links instead of raw text.
+- `ad tui`: the header names the model Codex will use instead of "default"; choosing `/permissions` during a turn says the running turn keeps its settings.
+
 ## [2.1.0] — 2026-10-06
 
 `ad` is now a Codex-style terminal UI with agent-daemon's extras: bare `ad` opens it (`AD_TUI=0` turns that off). Guide: [docs/tui.md](docs/tui.md).

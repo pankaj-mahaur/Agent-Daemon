@@ -199,6 +199,7 @@ test("ensureHarnessSetup wires hooks, AGENTS.md, memory MCP and env filters, and
     const cfg = await engine.readConfig();
     assert.equal(cfg.mcp_servers[MEMORY_SERVER_ID].command, process.execPath);
     assert.match(cfg.mcp_servers[MEMORY_SERVER_ID].args[0], /memory-server\.mjs$/);
+    assert.equal(cfg.mcp_servers[MEMORY_SERVER_ID].default_tools_approval_mode, "approve", "ad's own memory tools don't ask each time");
     assert.equal(cfg.shell_environment_policy.filters.OPENROUTER_API_KEY, "exclude");
 
     const again = await ensureHarnessSetup(engine, { cwd: tmpdir(), roots: [], profile: "developer" });
@@ -208,9 +209,10 @@ test("ensureHarnessSetup wires hooks, AGENTS.md, memory MCP and env filters, and
 
 test("a user's own fields on the memory server survive setup", async () => {
   await withEngine(async (engine) => {
-    await engine.writeConfig([[`mcp_servers.${MEMORY_SERVER_ID}.enabled`, false]]);
+    await engine.writeConfig([[`mcp_servers.${MEMORY_SERVER_ID}.enabled`, false], [`mcp_servers.${MEMORY_SERVER_ID}.default_tools_approval_mode`, "prompt"]]);
     await ensureHarnessSetup(engine, { cwd: tmpdir(), roots: [], profile: "developer" });
     assert.equal((await engine.readConfig()).mcp_servers[MEMORY_SERVER_ID].enabled, false);
+    assert.equal((await engine.readConfig()).mcp_servers[MEMORY_SERVER_ID].default_tools_approval_mode, "prompt", "a mode the user chose is kept");
   });
 });
 

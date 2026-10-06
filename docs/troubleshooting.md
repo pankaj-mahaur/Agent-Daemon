@@ -524,6 +524,14 @@ Other choices: `nvim`, `vim`, `nano`, or Notepad++ with `-multiInst -nosession`.
 
 **Fix:** nothing to do; wait it out once. A command you approve to run outside the sandbox doesn't pay it.
 
+## 30. Windows: every command fails with `CreateProcessAsUserW failed`, then asks to run outside the sandbox
+
+**Symptom:** each command the agent runs shows `Failed … Failed to create unified exec process: CreateProcessAsUserW failed: -1073283067`, naming a `pwsh.exe` under `C:\Program Files\WindowsApps\…`. The agent then asks to run it outside the sandbox.
+
+**Cause:** PowerShell 7 installed from the Microsoft Store. Codex runs commands in the first `pwsh` on PATH, and the Windows sandbox can't start a Store (MSIX) app (access denied).
+
+**Fix:** since 2.1.1, ad leaves the WindowsApps folders out of its engine's PATH when the Store PowerShell comes first, so commands run in Windows PowerShell 5.1 (or a PowerShell 7 installed from the MSI, if there is one), inside the sandbox. Your own shell and PATH are unchanged. To have the agent use PowerShell 7, install it from the [MSI](https://learn.microsoft.com/powershell/scripting/install/installing-powershell-on-windows) as well.
+
 ---
 
 For harness problems, the [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill walks through login → hooks → sandbox → Codex's own log. See also [harness.md](harness.md) and, for the terminal UI, [tui.md](tui.md).

@@ -178,3 +178,23 @@ test("codexEnv keeps CA trust, and filters CODEX_* passed in by callers too", ()
     assert.equal(env.OPENROUTER_API_KEY, "or");
   });
 });
+
+test("Windows: with PowerShell 7 from the Store first on PATH, the engine's PATH drops the WindowsApps folders (the sandbox can't start Store apps)", async () => {
+  const { sandboxablePath } = await import("../src/engine/codex/home.mjs");
+  const storePkg = "C:\\Program Files\\WindowsApps\\Microsoft.PowerShell_7.6.6.0_x64__8wekyb3d8bbwe";
+  const aliases = "C:\\Users\\p\\AppData\\Local\\Microsoft\\WindowsApps";
+  const msi = "C:\\Program Files\\PowerShell\\7";
+  const sys = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0";
+  const pwshIn = (...dirs) => (p) => dirs.some((d) => p === `${d}\\pwsh.exe`);
+  const path = [storePkg, "C:\\Windows\\system32", sys, aliases, msi].join(";");
+  // The Store pwsh comes first: WindowsApps goes, so Codex finds the MSI pwsh (or Windows PowerShell).
+  const out = sandboxablePath({ Path: path, OTHER: "x" }, { platform: "win32", exists: pwshIn(storePkg, aliases, msi) });
+  assert.equal(out.Path, ["C:\\Windows\\system32", sys, msi].join(";"));
+  assert.equal(out.OTHER, "x");
+  // A pwsh from the MSI comes first: nothing changes.
+  const msiFirst = [msi, storePkg, aliases].join(";");
+  assert.equal(sandboxablePath({ PATH: msiFirst }, { platform: "win32", exists: pwshIn(msi, storePkg, aliases) }).PATH, msiFirst);
+  // No pwsh at all, or not Windows: nothing changes.
+  assert.equal(sandboxablePath({ PATH: path }, { platform: "win32", exists: () => false }).PATH, path);
+  assert.equal(sandboxablePath({ PATH: path }, { platform: "linux", exists: pwshIn(storePkg) }).PATH, path);
+});

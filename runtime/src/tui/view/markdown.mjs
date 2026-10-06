@@ -367,9 +367,14 @@ function parseLink(ctx, i) {
   ctx.brackets ??= bracketPairs(text);
   const j = ctx.brackets.get(i);
   if (j === undefined || text[j + 1] !== "(") return null;
-  const m = /^\(\s*<?([^\s()<>]*)>?(?:\s+"[^"]*")?\s*\)/.exec(text.slice(j + 1));
-  if (!m || !m[1]) return null;
-  return { label: text.slice(i + 1, j), url: m[1], end: j + 1 + m[0].length };
+  // A destination in <…> may hold spaces (CommonMark): Codex names local files
+  // that way, as in [app.js](</D:/My Projects/app.js:12>).
+  const m = /^\(\s*(?:<([^<>\n]*)>|([^\s()<>]+))(?:\s+"[^"]*")?\s*\)/.exec(text.slice(j + 1));
+  const raw = m && (m[1] ?? m[2]);
+  if (!raw) return null;
+  // "/D:/x" is a Windows path written as a URL path: shown as "D:/x".
+  const url = /^\/[A-Za-z]:[\\/]/.test(raw) ? raw.slice(1) : raw;
+  return { label: text.slice(i + 1, j), url, end: j + 1 + m[0].length };
 }
 
 // Code spans, scanned once from the start: backtick-run start → index of the
