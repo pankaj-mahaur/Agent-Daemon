@@ -323,8 +323,10 @@ A Codex command ad doesn't have yet answers "Unknown command … /help lists the
 | Conflict | Means |
 |---|---|
 | `not changed by the agent's edits` | the file changed during the turn some other way: a command the agent ran, your editor, another tool |
+| `changed during the turn` | the agent edited it, but at the turn's end it wasn't what the agent's edit wrote: you (or a command) changed it too. Each edit is hashed as it completes |
 | `changed since the turn` | the file changed after the turn ended |
 | `a folder is there now` | a folder stands where the file was |
+| `a file is where its folder was` | a file (or symlink) now stands where one of the path's folders was |
 | `not in the checkpoint` | the agent edited a file the snapshots leave out (over 2 MB, or in a heavy folder): there is nothing to put back |
 
 With any conflict, `/undo` changes nothing and lists them:
@@ -333,7 +335,7 @@ With any conflict, `/undo` changes nothing and lists them:
 Not undone: src/app.js (changed since the turn). /undo force puts back the rest (folders are never touched).
 ```
 
-`/undo force` overrides "changed since the turn": those files are put back too, overwriting later edits to them. Even forced, `/undo` never touches a file the agent's edits didn't report or the checkpoint doesn't hold, and never removes or replaces a folder; those are reported as left alone. Only edits that were applied count: a patch you declined isn't the agent's change.
+`/undo force` overrides "changed since the turn" only: those files are put back too, overwriting later edits to them. Every other conflict stays: forced or not, `/undo` never touches those files and never removes or replaces a folder; they are reported as left alone. Only edits that were applied count: a patch you declined isn't the agent's change.
 
 **When there is no checkpoint,** `/undo` says why: the snapshot before the turn wasn't ready in time, snapshots fail in this repo (with git's message), or the turn ran before `ad tui` started.
 
@@ -342,6 +344,7 @@ Not undone: src/app.js (changed since the turn). /undo force puts back the rest 
 - Ignored files, submodule contents and LFS files are not restored.
 - Restores are byte for byte with git 2.40 or later. With older git, or with `.git/info/attributes` or `core.attributesFile` set, files with eol rules may come back normalized, and `/undo` says so.
 - Wait for the turn to finish (or Esc) before `/undo`.
+- `/undo` never takes your git index lock: you can run git while it works.
 
 To drop every checkpoint in a repo:
 

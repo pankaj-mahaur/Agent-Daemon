@@ -464,7 +464,9 @@ make the window narrower, then wider, quit with `qqq`, and attach `~/.agent-daem
 
 - `changed since the turn`: you (or another tool) edited it after the turn. Undoing would throw that away.
 - `not changed by the agent's edits`: it changed during the turn some other way, for example through a command the agent ran (`npm install`, a formatter, `sed`) or your editor.
+- `changed during the turn`: the agent edited it, but by the turn's end someone else had changed it too (you, your editor's format-on-save, or a command the agent ran). Undoing would throw that change away. `force` doesn't override this.
 - `a folder is there now`: a folder stands where the file was.
+- `a file is where its folder was`: a file or symlink now stands where one of the path's folders was. `force` doesn't override this.
 - `not in the checkpoint`: the agent edited a file the snapshots leave out (untracked and over 2 MB, or in a heavy folder like `build/` or `node_modules/`). There is nothing to put back; `force` doesn't change that.
 
 With any of these, nothing is undone.

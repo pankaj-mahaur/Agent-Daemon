@@ -38,7 +38,8 @@ const EXACT = ["-c", "core.autocrlf=false", "-c", "core.eol=lf", "-c", "core.saf
 const HEAVY_DIRS = ["node_modules", ".venv", "venv", "__pycache__", ".next", "dist", "build", "target", ".gradle", ".turbo", ".cache"];
 const HEAVY_SPECS = HEAVY_DIRS.map((d) => `:(exclude,glob)**/${d}/**`);
 const MAX_REFS = 400; // all threads together: about 200 turns
-const FOLDS_CASE = process.platform === "win32" || process.platform === "darwin";
+const STALE_LOCK_MS = 5 * 60_000;
+const FOLDS_CASE =process.platform === "win32" || process.platform === "darwin";
 
 /** Runs git; never throws for a non-zero exit. */
 export function runGit(args, { cwd, env = {}, input = null, timeoutMs = 60_000 } = {}) {
@@ -128,6 +129,10 @@ export function createCheckpoints({ cwd, git = runGit, maxUntrackedBytes = 2 * 1
     const r = await repo();
     if (!r) return null;
     const env = { GIT_INDEX_FILE: r.index };
+    // A lock on ad's private index left by a git killed at its timeout (git
+    // runs here never last past 60 s): stale, or every snapshot would fail.
+    const lock = lstatOrNull(`${r.index}.lock`);
+    if (lock && Date.now() - lock.mtimeMs > STALE_LOCK_MS) rmSync(`${r.index}.lock`, { force: true });
     // The private index is never seeded from the user's: its blobs were made
     // under the user's eol filters, and restores would not be byte for byte.
     const big = await bigUntracked(r.root);
@@ -269,6 +274,31 @@ export function createCheckpoints({ cwd, git = runGit, maxUntrackedBytes = 2 * 1
     return r.code === 0 ? r.stdout.trim() : "<unreadable>";
   }
 
+  /** Each path's content now, as checkpoints hash it: {path: blob | null}. */
+  async function hashPaths(paths) {
+    const r = await repo();
+    if (!r) return {};
+    const out = {};
+    for (const p of paths) out[p] = await workBlob(r.root, p, r.exact);
+    return out;
+  }
+
+  /** A leading part of `rel` that is no longer a real folder (a file or a symlink stands there). */
+  function brokenParent(root, rel) {
+    const parts = rel.split("/");
+    for (let i = 1; i < parts.length; i++) {
+      const st = lstatOrNull(path.join(root, ...parts.slice(0, i)));
+      if (st && (!st.isDirectory() || st.isSymbolicLink())) return true;
+    }
+    return false;
+  }
+
+  /** Never in any snapshot: inside a heavy folder, or ignored. */
+  async function excluded(root, rel) {
+    if (rel.split("/").slice(0, -1).some((d) => HEAVY_DIRS.includes(d))) return true;
+    return (await g(["check-ignore", "-q", "--no-index", "--", rel], { cwd: root })).code === 0;
+  }
+
   /**
    * What undoing `turnId` would do, without writing anything:
    * {paths, conflicts: [{path, why}]}. `agentPaths` (repo-relative, "/"
@@ -276,7 +306,7 @@ export function createCheckpoints({ cwd, git = runGit, maxUntrackedBytes = 2 * 1
    * turn's diff shows (the user's editor, another agent, a command) is a
    * conflict rather than something to undo blindly.
    */
-  async function plan(threadId, turnId, { agentPaths = null, skipped = [] } = {}) {
+  async function plan(threadId, turnId, { agentPaths = null, skipped = [], agentBlobs = null } = {}) {
     const r = await repo();
     if (!r) return { error: "Not a git repo: /undo isn't available here." };
     const t = (await list(threadId)).filter((x) => x.turnId === safeRefPart(turnId)).at(-1);
@@ -285,6 +315,7 @@ export function createCheckpoints({ cwd, git = runGit, maxUntrackedBytes = 2 * 1
     const key = (p) => (FOLDS_CASE ? p.toLowerCase() : p);
     const reported = agentPaths ? new Set(agentPaths.map(key)) : null;
     const left = new Set(skipped.map(key));
+    const blobs = agentBlobs ? new Map(Object.entries(agentBlobs).map(([p, b]) => [key(p), b])) : null;
     const conflicts = [];
     // The agent edited something the checkpoints left out (too big, a heavy
     // folder): there is nothing to put back, so it can't be undone.
@@ -294,7 +325,9 @@ export function createCheckpoints({ cwd, git = runGit, maxUntrackedBytes = 2 * 1
         if (inDiff.has(key(a))) continue;
         const was = await blobIn(t.before, a);
         const now_ = await workBlob(r.root, a, r.exact);
-        if (left.has(key(a)) || was !== now_) conflicts.push({ path: a, why: "not in the checkpoint" });
+        // Gone before and after: fine for a scratch file, but a deleted
+        // heavy-folder or ignored file was never snapshotted.
+        if (left.has(key(a)) || was !== now_ || (was === null && (await excluded(r.root, a)))) conflicts.push({ path: a, why: "not in the checkpoint" });
       }
     }
     for (const c of paths) {
@@ -307,6 +340,16 @@ export function createCheckpoints({ cwd, git = runGit, maxUntrackedBytes = 2 * 1
         continue;
       }
       const expected = c.status === "D" ? null : await blobIn(t.after, c.path);
+      // The turn's result must be what the agent's edits wrote: an edit by
+      // the user (or a command) during the turn is folded into "after" too.
+      if (blobs && (!blobs.has(key(c.path)) || blobs.get(key(c.path)) !== expected)) {
+        conflicts.push({ path: c.path, why: "changed during the turn" });
+        continue;
+      }
+      if (brokenParent(r.root, c.path)) {
+        conflicts.push({ path: c.path, why: "a file is where its folder was" });
+        continue;
+      }
       const current = await workBlob(r.root, c.path, r.exact);
       if (current === "<directory>") conflicts.push({ path: c.path, why: "a folder is there now" });
       else if (current !== expected) conflicts.push({ path: c.path, why: "changed since the turn" });
@@ -320,8 +363,8 @@ export function createCheckpoints({ cwd, git = runGit, maxUntrackedBytes = 2 * 1
    * a path the agent's edits didn't report is never touched, and a directory
    * is never removed or replaced.
    */
-  async function restore(threadId, turnId, { force = false, agentPaths = null, skipped = [] } = {}) {
-    const p = await plan(threadId, turnId, { agentPaths, skipped });
+  async function restore(threadId, turnId, { force = false, agentPaths = null, skipped = [], agentBlobs = null } = {}) {
+    const p = await plan(threadId, turnId, { agentPaths, skipped, agentBlobs });
     if (p.error) return p;
     if (p.conflicts.length && !force) {
       const list = p.conflicts.slice(0, 5).map((c) => `${c.path} (${c.why})`).join(", ");
@@ -334,7 +377,12 @@ export function createCheckpoints({ cwd, git = runGit, maxUntrackedBytes = 2 * 1
     const todo = p.paths.filter((c) => !isDir(c.path) && !notOurs.has(c.path));
     const back = todo.filter((c) => c.status !== "A").map((c) => c.path);
     if (back.length) {
-      const res = await g([...r.exact, "restore", `--source=${p.before}`, "--worktree", "--pathspec-from-file=-", "--pathspec-file-nul"], { cwd: r.root, input: back.map((x) => `:(literal)${x}`).join("\0") });
+      // A scratch index: restore --worktree would otherwise lock the user's
+      // (.git/index.lock), and a killed git could leave that lock behind.
+      const scratch = `${r.index}.restore`;
+      const res = await g([...r.exact, "restore", `--source=${p.before}`, "--worktree", "--pathspec-from-file=-", "--pathspec-file-nul"], { cwd: r.root, env: { GIT_INDEX_FILE: scratch }, input: back.map((x) => `:(literal)${x}`).join("\0") });
+      rmSync(scratch, { force: true });
+      rmSync(`${scratch}.lock`, { force: true });
       if (res.code !== 0) return { ...p, error: `git restore failed: ${firstLine(res.stderr)}` };
     }
     for (const c of todo.filter((x) => x.status === "A")) rmSync(path.join(r.root, c.path), { force: true }); // a file, never a directory
@@ -346,6 +394,7 @@ export function createCheckpoints({ cwd, git = runGit, maxUntrackedBytes = 2 * 1
     snapshot,
     beforeSnapshot,
     freshSnapshot,
+    hashPaths,
     record,
     list,
     plan,

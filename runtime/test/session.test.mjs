@@ -292,6 +292,18 @@ test("review, shell, goal and revert", async () => {
   });
 });
 
+test("itemCompleted fires for each completed item of the thread, with its turn (for /undo's edit hashes)", async () => {
+  const seen = [];
+  await withSession(() => ({ hooks: { itemCompleted: ({ item }) => seen.push(item) } }), async ({ session }) => {
+    await session.submit("apply-edit").done;
+    const fc = seen.find((i) => i.kind === "fileChange");
+    assert.ok(fc, "the applied edit");
+    assert.equal(fc.status, "completed");
+    assert.equal(fc.turnId, session.state.turns.at(-1).id);
+    assert.equal(fc.changes[0].path, "src/app.js");
+  });
+});
+
 test("resume loads the thread's history in order, with full items", async () => {
   await withSession(none, async ({ session, engine, root, lockDir }) => {
     const a = session.submit("early-complete");

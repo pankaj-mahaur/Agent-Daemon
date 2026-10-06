@@ -7,7 +7,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createCheckpoints, CHECKPOINT_REF } from "../src/harness/checkpoints.mjs";
@@ -189,7 +189,8 @@ function fakeCp({ slowBefore = false } = {}) {
     repo: async () => ({ root: "/repo" }),
     calls: [],
     snapshot: async () => ({ tree: "typing-tree" }),
-    freshSnapshot: async (since) => (cp.calls.push(["fresh", since]), { tree: "after-tree" }),
+    freshSnapshot: async (since) => (cp.calls.push(["fresh", since]), { tree: "after-tree", skipped: ["grew.bin"] }),
+    hashPaths: async (paths) => Object.fromEntries(paths.map((p) => [p, `blob:${p}`])),
     beforeSnapshot: async ({ since, waitMs }) => (cp.calls.push(["before", since]), slowBefore ? Promise.race([slow, new Promise((r) => setTimeout(() => r(null), waitMs))]) : { tree: "before-tree", skipped: ["big.bin"] }),
     record: async (thread, turn, trees) => (recorded.push({ thread, turn, ...trees }), true),
     restore: async (thread, turnId, opts) => (cp.lastRestore = { turnId, ...opts }, { restored: 1, paths: [], conflicts: [] }),
@@ -224,9 +225,11 @@ test("/undo waits for the last turn's checkpoint, undoes only that turn, and onl
     await w.hooks.beforeTurn({ input: [] });
     assert.ok(cp.calls.at(-1)[1] > sent, "the 'before' is a snapshot from the moment the prompt is sent");
     w.hooks.turnStarted({ turn: { id } });
-    s.state.items.set(`fc-${id}`, { id: `fc-${id}`, kind: "fileChange", status: "completed", changes: [{ path: `src/${id}.js` }, { path: "/repo/abs.txt", movePath: "/repo/moved.txt" }] });
+    s.state.items.set(`fc-${id}`, { id: `fc-${id}`, turnId: id, kind: "fileChange", status: "completed", changes: [{ path: `src/${id}.js` }, { path: "/repo/abs.txt", movePath: "/repo/moved.txt" }] });
     // A patch the user declined isn't the agent's change.
-    s.state.items.set(`fcd-${id}`, { id: `fcd-${id}`, kind: "fileChange", status: "declined", changes: [{ path: "declined.txt" }] });
+    s.state.items.set(`fcd-${id}`, { id: `fcd-${id}`, turnId: id, kind: "fileChange", status: "declined", changes: [{ path: "declined.txt" }] });
+    w.hooks.itemCompleted({ item: s.state.items.get(`fc-${id}`) });
+    w.hooks.itemCompleted({ item: s.state.items.get(`fcd-${id}`) });
     s.state.items.set(`um-${id}`, { id: `um-${id}`, kind: "userMessage", text: "<private>secret prompt</private>" });
     s.state.turns.push({ id, status: "completed", itemIds: [`um-${id}`, `fc-${id}`, `fcd-${id}`] });
     w.hooks.turnCompleted({ turn: { id }, session: s }); // not awaited, as the session does
@@ -235,7 +238,8 @@ test("/undo waits for the last turn's checkpoint, undoes only that turn, and onl
   assert.equal(recorded.length, 2);
   assert.equal(cp.lastRestore.turnId, "u2");
   assert.deepEqual(cp.lastRestore.agentPaths.sort(), ["abs.txt", "moved.txt", "src/u2.js"]);
-  assert.deepEqual(cp.lastRestore.skipped, ["big.bin"], "what the 'before' left out goes along");
+  assert.deepEqual(cp.lastRestore.skipped, ["big.bin", "grew.bin"], "what either snapshot left out goes along");
+  assert.deepEqual(cp.lastRestore.agentBlobs, { "src/u2.js": "blob:src/u2.js", "abs.txt": "blob:abs.txt", "moved.txt": "blob:moved.txt" }, "each applied edit hashed as it completed; the declined one not");
   assert.ok(cp.calls.some((c) => c[0] === "fresh"), "the 'after' is a fresh snapshot");
   assert.equal(s.state.reverted, "u2");
   assert.equal(r.prompt, "secret prompt", "the <private> wrapper isn't put back twice");
@@ -322,6 +326,93 @@ test("what checkpoints leave out can't be undone: a big file, a heavy folder, a 
     await cp.record("t", "u2", { before: b2.tree, after: a2.tree });
     const p2 = await cp.plan("t", "u2", { agentPaths: ["huge.log"], skipped: b2.skipped });
     assert.deepEqual(p2.conflicts.map((c) => [c.path, c.why]), [["huge.log", "not in the checkpoint"]]);
+  } finally {
+    r.done();
+  }
+});
+
+test("the user's edits during the turn, a file where a folder was, a deleted heavy-folder file, the user's index.lock: never undone blindly", async () => {
+  const r = repo();
+  try {
+    const cp = createCheckpoints({ cwd: r.dir });
+    // 1. The agent edits a file; the user then adds a line to it before the turn ends.
+    const before = await cp.snapshot();
+    writeFileSync(join(r.dir, "with space.txt"), "agent");
+    const agentBlobs = await cp.hashPaths(["with space.txt"]); // as the edit completes
+    writeFileSync(join(r.dir, "with space.txt"), "agent\nthe user's line");
+    const after = await cp.snapshot();
+    await cp.record("t", "u", { before: before.tree, after: after.tree });
+    const p1 = await cp.plan("t", "u", { agentPaths: ["with space.txt"], agentBlobs });
+    assert.deepEqual(p1.conflicts, [{ path: "with space.txt", why: "changed during the turn" }]);
+    const f1 = await cp.restore("t", "u", { force: true, agentPaths: ["with space.txt"], agentBlobs });
+    assert.equal(f1.restored, 0, "not even forced");
+    assert.equal(file(r.dir, "with space.txt"), "agent\nthe user's line");
+    // Without the user's line, the same undo goes through.
+    writeFileSync(join(r.dir, "old name.txt"), "agent only");
+    const b2 = await cp.snapshot();
+    writeFileSync(join(r.dir, "old name.txt"), "agent again");
+    const blobs2 = await cp.hashPaths(["old name.txt"]);
+    const a2 = await cp.snapshot();
+    await cp.record("t", "u2", { before: b2.tree, after: a2.tree });
+    assert.equal((await cp.restore("t", "u2", { agentPaths: ["old name.txt"], agentBlobs: blobs2 })).restored, 1);
+    assert.equal(file(r.dir, "old name.txt"), "agent only");
+
+    // 2. The agent deletes notes/todo.md; the user then makes a file called notes.
+    mkdirSync(join(r.dir, "notes"));
+    writeFileSync(join(r.dir, "notes", "todo.md"), "todo");
+    const b3 = await cp.snapshot();
+    rmSync(join(r.dir, "notes"), { recursive: true });
+    const blobs3 = await cp.hashPaths(["notes/todo.md"]);
+    const a3 = await cp.snapshot();
+    await cp.record("t", "u3", { before: b3.tree, after: a3.tree });
+    writeFileSync(join(r.dir, "notes"), "the user's notes file");
+    const p3 = await cp.plan("t", "u3", { agentPaths: ["notes/todo.md"], agentBlobs: blobs3 });
+    assert.deepEqual(p3.conflicts, [{ path: "notes/todo.md", why: "a file is where its folder was" }]);
+    await cp.restore("t", "u3", { force: true, agentPaths: ["notes/todo.md"], agentBlobs: blobs3 });
+    assert.equal(file(r.dir, "notes"), "the user's notes file");
+
+    // 3. The agent deletes an untracked file in a heavy folder: never snapshotted, so not undone.
+    mkdirSync(join(r.dir, "build"));
+    writeFileSync(join(r.dir, "build", "release.sh"), "echo hi");
+    const b4 = await cp.snapshot();
+    rmSync(join(r.dir, "build", "release.sh"));
+    const a4 = await cp.snapshot();
+    await cp.record("t", "u4", { before: b4.tree, after: a4.tree });
+    const p4 = await cp.plan("t", "u4", { agentPaths: ["build/release.sh"], agentBlobs: {} });
+    assert.deepEqual(p4.conflicts, [{ path: "build/release.sh", why: "not in the checkpoint" }]);
+    // A scratch file the agent made and removed is fine.
+    assert.deepEqual((await cp.plan("t", "u4", { agentPaths: ["scratch.tmp"], agentBlobs: {} })).conflicts, []);
+
+    // 4. The user's index is locked (their own git running): /undo still works, without touching it.
+    writeFileSync(join(r.dir, "crlf.txt"), "x\r\n");
+    const b5 = await cp.snapshot();
+    writeFileSync(join(r.dir, "crlf.txt"), "y\r\n");
+    const blobs5 = await cp.hashPaths(["crlf.txt"]);
+    const a5 = await cp.snapshot();
+    await cp.record("t", "u5", { before: b5.tree, after: a5.tree });
+    writeFileSync(join(r.dir, ".git", "index.lock"), "");
+    const res5 = await cp.restore("t", "u5", { agentPaths: ["crlf.txt"], agentBlobs: blobs5 });
+    assert.equal(res5.error, undefined);
+    assert.equal(file(r.dir, "crlf.txt"), "x\r\n");
+    assert.equal(readFileSync(join(r.dir, ".git", "index.lock"), "utf8"), "", "their lock is theirs");
+    rmSync(join(r.dir, ".git", "index.lock"));
+  } finally {
+    r.done();
+  }
+});
+
+test("a stale lock on ad's private index (git killed at its timeout) doesn't stop every later snapshot", async () => {
+  const r = repo();
+  try {
+    const cp = createCheckpoints({ cwd: r.dir });
+    const { index } = await cp.repo();
+    writeFileSync(`${index}.lock`, "");
+    const old = new Date(Date.now() - 10 * 60_000);
+    utimesSync(`${index}.lock`, old, old);
+    assert.ok(await cp.snapshot(), cp.lastError);
+    writeFileSync(`${index}.lock`, ""); // a fresh one is another ad's git at work: respected
+    assert.equal(await cp.snapshot(), null);
+    assert.match(cp.lastError, /lock/);
   } finally {
     r.done();
   }

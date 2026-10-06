@@ -334,6 +334,7 @@ export function createSession({
       case "item.started":
       case "item.completed":
         placeItem({ ...ev.item, streaming: ev.type === "item.started" }, ev);
+        if (root && ev.type === "item.completed") hooks.itemCompleted?.({ item: state.items.get(ev.item.id), session: api });
         break;
       case "item.delta":
         applyDelta(ev);

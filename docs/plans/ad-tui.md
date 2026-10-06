@@ -1046,6 +1046,12 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
     - **Honest byte-exact:** `.git/info/attributes` or `core.attributesFile` turn off the byte-for-byte promise, and the message says why.
     - **Launcher:** `ad tui` parses strictly (a mistyped flag exits 2 with usage instead of becoming the prompt), validates `--sandbox`, has `--help` and `--version`, and reports launch errors cleanly.
     - **Loop log:** the new loop's thread id is read from the log by byte offset (multi-byte text before it no longer hides it).
+  - **Re-review of that round: 1 high, 3 medium. All fixed; 11 more guards mutation-checked.**
+    - **The user's edits during the turn (high):** "after" folded in anything saved to an agent-edited file during the turn. Now each applied edit's files are hashed when its `fileChange` item completes (the session's new `itemCompleted` hook); if the turn's result for a path isn't what the agent's last edit wrote, it is the unforceable conflict `changed during the turn`. Accepted: a save in the instant between the edit landing and its hash.
+    - **A file where a folder was:** every leading part of a path must still be a real folder (not a file or symlink), else `a file is where its folder was`, unforceable. Before, `git restore` replaced the user's file with a folder.
+    - **Deleted heavy-folder or ignored files:** an agent path gone before and after that was never snapshotted is `not in the checkpoint`, not a silent "0 files put back".
+    - **The user's index lock:** the restore runs on a scratch index, so it neither needs nor can leave `.git/index.lock`. A lock on ad's private index older than 5 min (git killed at its 60 s timeout) is removed.
+    - **Lows fixed:** the "after" snapshot's skipped files count too; a failed `thread/revert` after the files came back says so. **Accepted lows:** a "before" left by a failed turn/start is used by the next server-started turn; wall-clock `since`.
 
 ### Part 11 — Flip bare `ad`, docs, verification, release
 - **Flip:** after FC3, apply D7, and add `ad --last`. `ad chat` shows a one-time hint.

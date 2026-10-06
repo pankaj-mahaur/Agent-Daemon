@@ -67,7 +67,7 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
   - Alt+, and Alt+. change the reasoning effort.
   - Auto-review verdicts show as notices.
   - `/terminal-setup` explains how to set up Shift+Enter.
-- `/undo` in `ad tui` (git repos): puts back the files the last turn's applied edits changed, byte for byte, and rewinds the conversation. The "before" snapshot is taken when you press Enter. It refuses when you edited those files since, and never touches files the agent didn't edit or the snapshots leave out (big files, heavy folders). Checkpoints are private git trees; your index, branches and stash are untouched.
+- `/undo` in `ad tui` (git repos): puts back the files the last turn's applied edits changed, byte for byte, and rewinds the conversation. The "before" snapshot is taken when you press Enter. It refuses when you edited those files during or since the turn, and never touches files the agent didn't edit or the snapshots leave out (big files, heavy folders). It never takes your git index lock. Checkpoints are private git trees; your index, branches and stash are untouched.
 - ad's own features in `ad tui`:
   - `/memory` search, recent, forget and profile; `/private`; "Learned:" rows after a turn; `/proposals`.
   - `/loop` in the background, with a row per iteration; `/team`, `/schedule`, `/tools`.

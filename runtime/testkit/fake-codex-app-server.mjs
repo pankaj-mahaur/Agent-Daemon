@@ -159,6 +159,12 @@ async function runScriptedTurn(threadId, turn, params) {
     agentMessage(threadId, turn.id, `two[${a.result.decision},${b.result.decision}]`);
     return complete(threadId, turn);
   }
+  if (text === "apply-edit") {
+    const item = { type: "fileChange", id: "fc-applied", changes: [{ path: "src/app.js", kind: { type: "update" }, diff: "-a\n+b" }] };
+    notify("item/started", { threadId, turnId: turn.id, item: { ...item, status: "inProgress" } });
+    notify("item/completed", { threadId, turnId: turn.id, item: { ...item, status: "completed" } });
+    return complete(threadId, turn);
+  }
   if (text === "edit-file") {
     const item = { type: "fileChange", id: "fc-1", status: "inProgress", changes: [{ path: "src/app.js", kind: { type: "update" }, diff: "-a\n+b" }] };
     notify("item/started", { threadId, turnId: turn.id, item });
