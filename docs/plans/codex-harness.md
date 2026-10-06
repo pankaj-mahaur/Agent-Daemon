@@ -2,6 +2,8 @@
 
 Status: IMPLEMENTED (Parts 0–14) · approved 2026-09-30 · built 2026-10-01 · branch `feat/codex-harness`
 
+Next: the `ad` terminal UI on top of this engine → [ad-tui.md](ad-tui.md). Since then, the engine also refuses to run Codex in the user's own home (`codexEnv()`, see [harness.md](../harness.md)).
+
 ## Implementation status
 
 | # | Part | Status | Where |

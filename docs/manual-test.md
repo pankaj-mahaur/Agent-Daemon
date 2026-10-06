@@ -63,7 +63,44 @@ node --test            # expect: 1 failing test (the bug the agent will fix in s
 | `ad watch --verbose` (Ctrl+C after a minute) | watcher starts; due jobs run | [troubleshooting #2](troubleshooting.md#2-ad-watch-runs-but-never-logs--add--never-fires-digest) |
 | `ad schedule remove <id>` | job gone | — |
 
-## 6. Clean up
+## 6. Terminal UI (`ad tui`)
+
+Run this in each terminal you use: Windows Terminal, Zed and the VS Code terminal. Stay in the scratch project from step 0, never a real repo. Start with `git checkout math.js` so the bug is back.
+
+**Live script** (the FC3 sign-off). It also runs automated, on the real Codex with a mock model: `cd runtime && AD_REAL_ENGINE=1 node --test test/tui-live.test.mjs` (about two minutes; the first run on Windows adds ~35 s once).
+
+| # | Do | Expect | If not |
+|---|---|---|---|
+| 1 | `ad tui` | the sign-in panel if needed, then "Do you trust …?" on the first run (answer Yes), then the header card: version, Codex version, model, directory with `git: <branch>`, memory, sandbox | [troubleshooting #23](troubleshooting.md#23-ad-tui-says-it-needs-an-interactive-terminal-or-node-2217) |
+| 2 | **Ask:** *"What does math.js do? Don't change anything."* | Explored / Ran rows, a streamed answer, "Worked for Ns"; `ctx N%` in the footer | — |
+| 3 | `/permissions` → **Read only**. Then: *"Run `echo hi > hello.txt` in the shell."* | **exec approval:** a box with the full command and the choices Codex offers (`y`, `p` for "don't ask again", Esc = "No, and stop"; `n` when Codex offers "No, and tell Codex what to do instead"). `y` within 400 ms of it opening does nothing; Esc declines and ends the turn | — |
+| 4 | Still Read only: *"Fix the bug in math.js."* | **patch approval:** a box with the diff of `math.js`. `y` → "approved", and the file changes. Then `/permissions` → **Auto** | — |
+| 5 | **Steer:** ask *"Explain node:test in 40 lines."*, and while it runs type *"make it 5 lines"* + Enter | the footer reads `enter steer`; your text joins the running turn and the answer follows it | — |
+| 6 | **Queue:** while a turn runs, type *"now run node --test"* + Tab | `↳ queued: now run node --test` under the status line. Tab on an empty prompt pulls it back; Tab again queues it. It runs when the turn ends | — |
+| 7 | **Interrupt:** start a long answer, press Esc | "Interrupting…", and the turn ends as interrupted. Ctrl+C on a running turn does the same | — |
+| 8 | **`/codex` and back:** `/codex`, ask one thing there, quit the stock UI | the stock Codex UI opens on the same conversation; back in ad, "Back from the stock Codex UI (exit 0)", the new turn shows, and nothing earlier is printed twice | — |
+| 9 | **Quit:** Ctrl+C on an empty prompt, then Ctrl+C again | "Ctrl+C again quits", then ad exits with `To continue: ad tui --resume <id>` and the tokens. The terminal works normally (cursor, echo) | `reset` the terminal and report it |
+| 10 | `ad tui --last` | the same conversation; *"What did we change?"* answers from it | — |
+
+**Quick checks** (same scratch project):
+
+| Do | Expect | If not |
+|---|---|---|
+| Type, then send *"Add a subtract function to math.js."*; when it is done, `/undo` | "Undid the last turn: 1 file put back …"; the prompt is back in the composer; `git diff math.js` shows no `subtract` | — |
+| Ask the same again, edit `math.js` yourself, then `/undo` | "Not undone: math.js (changed since the turn). /undo force overrides …"; nothing changed. `/undo force` puts it back | [troubleshooting #26](troubleshooting.md#26-undo-refuses-not-undone) |
+| Esc Esc on an empty prompt while idle | "Esc again to rewind…", then a "Rewind to" picker. Pick one: "Rewound to before … Files on disk weren't changed.", and that prompt is back in the composer | — |
+| Ctrl+T | the whole transcript in a pager (↑ ↓ PgUp PgDn); Esc closes it and the scrollback is unchanged | — |
+| `?`, then `/terminal-setup` | the shortcuts with the newline key for this terminal; advice for this terminal | [troubleshooting #24](troubleshooting.md#24-ad-tui-shiftenter-sends-instead-of-adding-a-newline) |
+| Make the window narrower, then wider, while `ad tui` runs | no stray copies of the bottom lines; if there are, Ctrl+L redraws | [troubleshooting #25](troubleshooting.md#25-ghost-copies-of-the-bottom-lines-after-narrowing-the-window) |
+
+**Terminal probes** (from the repo). They change nothing but the terminal's modes, which they restore on exit.
+
+| Run | Expect | If not |
+|---|---|---|
+| `node runtime/scripts/tui-probe.mjs keys`, press a few keys and paste two lines, then `qqq` | each key named. On Windows with Node 22.17+ the paste shows as one `PASTE (… line breaks)` row | [troubleshooting #22](troubleshooting.md#22-keys-or-paste-behave-oddly-in-a-terminal) |
+| `node runtime/scripts/tui-probe.mjs screen --bottom`, make the window narrower then wider, then `qqq` | wrap and autowrap verdicts, plus one line per resize | attach `~/.agent-daemon/logs/tui-probe-screen-*.log` and a screenshot to an issue |
+
+## 7. Clean up
 
 ```bash
 cd .. && rm -rf ad-manual-test

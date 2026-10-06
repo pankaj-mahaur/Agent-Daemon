@@ -12,7 +12,7 @@ allowed-tools: Bash, Read, Grep, Edit
 
 # Codex Upgrade
 
-The harness pins `@openai/codex` exactly (`runtime/package.json`). Each upgrade is a protocol change we must review before it reaches users. CI runs on Linux only, so a green bot PR proves the unit suite, not the Windows sandbox. This flow is the missing half.
+The harness pins `@openai/codex` exactly (`runtime/package.json`). Each upgrade is a protocol change we must review before it reaches users. CI runs the unit suite on Linux, macOS and Windows, but against a fake engine, so a green bot PR doesn't prove the real Windows sandbox. This flow is the missing half. Every command here runs our pinned binary in the harness home or a temp home; the user's own `codex` and `~/.codex` are never touched.
 
 ## When to use
 
@@ -30,8 +30,18 @@ The harness pins `@openai/codex` exactly (`runtime/package.json`). Each upgrade 
    npm install
    npm test
    node scripts/codex-schema-snapshot.mjs --check
+   node scripts/codex-notifications.mjs          # stable/experimental notification list for the new pin
+   node --test test/codex-events.test.mjs        # every new notification needs a handler or an ignore reason
+   node scripts/codex-slash.mjs                  # Codex's slash names at the new tag (needs gh)
+   node --test test/tui-resilience.test.mjs      # slash collisions, compat.json, fake-vs-protocol, future fixture
+   AD_REAL_ENGINE=1 node --test --test-concurrency=1 --test-force-exit test/engine-real.test.mjs
    ```
-   `--check` exits 1 if the committed snapshot doesn't match the pinned binary.
+   - `--check` exits 1 if the committed snapshot doesn't match the pinned binary.
+   - The last line runs the **real** new Codex against a mock model (`testkit/mock-responses.mjs`; no login, throwaway homes). It covers a streamed turn, an escalation approval, a patch, and the error classes the code relies on. A behaviour change shows up here even when the schema didn't change.
+   - The PR's CI runs the same suite in its `engine-real` job on Linux, macOS and Windows; read those results too. The bot's PR body lists real-engine failures by name (label `real-engine-failing`).
+   - **`compat.json`** (`runtime/src/engine/codex/compat.json`): write the one-line, user-facing "what changed" note for the new version. `/status` and `ad doctor` show it.
+   - **A slash collision** (test names it) means Codex now has a command ad uses for something else: rename ad's, or mark it `source: "codex"` if it now means the same.
+   - **`/init`**: re-copy Codex's prompt into `runtime/src/tui/init-prompt.mjs` from `codex-rs/tui/assets/prompt_for_init_command.md` at the new tag.
 3. **Live smoke on Windows**, in a scratch directory, **never the repo**. Prompts run in the repo write learnings into its memory journal.
    ```bash
    mkdir <scratch>/smoke && cd <scratch>/smoke && git init -q
@@ -44,6 +54,12 @@ The harness pins `@openai/codex` exactly (`runtime/package.json`). Each upgrade 
    node "<repo>/runtime/src/cli.mjs" doctor
    ```
    Pass = `math.js` fixed, your `node --test` green, doctor shows the hooks trusted and the sandbox ready.
+
+   Then the terminal UI, in the same scratch folder, in Windows Terminal (and Zed if you have it):
+   ```bash
+   node "<repo>/runtime/src/cli.mjs" tui
+   ```
+   Trust the folder, ask it to fix the test again, approve the command (check the prompt shows the full command), steer once while it runs (Enter), queue one (Tab), `/status` (the Codex line says "tested"), `/codex` and quit back, then Ctrl+C twice. `node "<repo>/runtime/src/cli.mjs" tui --last` must show the conversation again.
 4. **If the smoke fails, read Codex's own log** before guessing (the [`harness-troubleshoot`](../harness-troubleshoot/SKILL.md) skill has the query and a table of known causes): `logs_2.sqlite` in the harness home (`~/.agent-daemon/codex-home`, table `logs`, column `feedback_log_body`). There's no `sqlite3` on this machine, so query it with `node --experimental-sqlite` (`DatabaseSync`, read-only), filtering `level IN ('ERROR','WARN')` and the newest ids. Never print `auth.json`.
 5. **Ship.** Bump the patch/minor version in `runtime/package.json` + `package-lock.json`, add a CHANGELOG entry naming the new Codex version, then hand off to `release-flow`. Tag only after the user merges.
 
@@ -51,9 +67,12 @@ The harness pins `@openai/codex` exactly (`runtime/package.json`). Each upgrade 
 
 - **Store pwsh.** `...\Microsoft\WindowsApps\pwsh.exe` is an app alias; the sandbox's restricted token can't launch it (`CreateProcessAsUserW failed: 5`). `withoutStoreAliases()` in `app-server.mjs` strips `WindowsApps` from the engine PATH. If commands are denied again, check whether Codex changed how it picks a shell.
 - **`spawn EPERM` in the unelevated sandbox.** Node can't start child processes there, so `node --test` fails inside the agent's shell. That's expected with `windows.sandbox = "unelevated"`, not a regression.
-- **Thread config overrides need dotted keys** (`"features.hooks": false`, `"mcp_servers.<id>.enabled": false`). Nested objects and the app-server `--disable` / `-c` flags were silently ignored in 0.159. Re-verify if a smoke shows hooks or MCP servers running when they should be off.
+- **Thread config overrides need dotted keys** (`"features.hooks": false`, `"mcp_servers.<id>.enabled": false`). Nested objects and the app-server `--disable` / `-c` flags were silently ignored in 0.159 (unchanged through 0.160). Re-verify if a smoke shows hooks or MCP servers running when they should be off.
+- **A new server notification** fails `codex-events.test.mjs` by name until it has a handler in `engine/codex/events.mjs` or a reason in `surface.mjs`. The real-engine test "the events adapter understands everything the real Codex sends" catches one that the regenerated list misses.
+- **`availableDecisions` on exec approvals is experimental** and only reaches us because upstream doesn't strip it yet. `engine-real.test.mjs` fails by name when it disappears; the TUI then falls back to Codex's default decision list.
+- **Isolation.** Every Codex process ad starts goes through `codexEnv()` (`src/engine/codex/home.mjs`). If an upgrade adds a new `CODEX_*` variable that matters for TLS or proxies (like `CODEX_CA_CERTIFICATE`), add it to that file's allowlist rather than passing the user's environment through.
 - **Hook trust is by hash.** A Codex upgrade that changes hook hashing shows up as `Harness hooks: 0/N trusted` in doctor. `ensureHarnessSetup` re-trusts only our own hooks on the next run.
-- **Rollout format.** If `ad digest` stops finding prompts in Codex sessions, compare a fresh `sessions/**/rollout-*.jsonl` against `runtime/test/fixtures/codex-rollout.jsonl` (0.159 records the prompt only in `item_completed` UserMessage events).
+- **Rollout format.** If `ad digest` stops finding prompts in Codex sessions, compare a fresh `sessions/**/rollout-*.jsonl` against `runtime/test/fixtures/codex-rollout.jsonl` (0.159–0.160 record the prompt only in `item_completed` UserMessage events).
 
 ## Examples
 

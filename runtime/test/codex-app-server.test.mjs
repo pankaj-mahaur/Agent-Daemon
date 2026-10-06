@@ -15,7 +15,7 @@ import { CodexAppServer, pinnedCodexVersion, resolveCodexCommand, withoutStoreAl
 import { approvalResponse } from "../src/engine/codex/approvals.mjs";
 
 const FAKE = fileURLToPath(new URL("../testkit/fake-codex-app-server.mjs", import.meta.url));
-const fakeServer = (opts = {}) => new CodexAppServer({ command: { cmd: process.execPath, prefix: [FAKE] }, ...opts });
+const fakeServer = (opts = {}) => new CodexAppServer({ command: { cmd: process.execPath, prefix: [FAKE], source: "test-double" }, ...opts });
 
 // Start a turn and resolve with the last agentMessage text at turn/completed.
 async function rawTurn(server, text) {
@@ -65,7 +65,7 @@ test("default handler declines permission requests with an empty grant", async (
 
 test("default handler answers legacy v1 approvals with a ReviewDecision", async () => {
   await withServer({}, async (s) => {
-    assert.deepEqual(JSON.parse(await rawTurn(s, "legacy-approval")), { decision: "denied" });
+    assert.deepEqual(JSON.parse(await rawTurn(s, "legacy-approval")), { decision: { denied: { rejection: "declined by the user" } } });
   });
 });
 
@@ -156,12 +156,12 @@ test("approvalResponse maps one-word answers to each protocol's reply shape", ()
   assert.deepEqual(approvalResponse("item/permissions/requestApproval", perm, "accept"), { ...perm, scope: "turn" });
   assert.deepEqual(approvalResponse("item/permissions/requestApproval", perm, "acceptForSession").scope, "session");
   assert.deepEqual(approvalResponse("item/permissions/requestApproval", perm, "decline"), { permissions: {} });
-  assert.deepEqual(approvalResponse(cmd, {}, { custom: 1 }), { custom: 1 }, "raw objects pass through");
+  assert.deepEqual(approvalResponse(cmd, {}, { custom: 1 }), { decision: "decline" }, "an object that was not offered declines");
   assert.throws(() => approvalResponse("item/tool/call", {}, "accept"), /not an approval request/);
 });
 
 test("approvalResponse is not fooled by Object.prototype keys", () => {
-  assert.deepEqual(approvalResponse("execCommandApproval", {}, "toString"), { decision: "denied" });
+  assert.deepEqual(approvalResponse("execCommandApproval", {}, "toString"), { decision: { denied: { rejection: "declined by the user" } } });
   assert.throws(() => approvalResponse("toString", {}, "accept"), /not an approval request/);
   assert.throws(() => approvalResponse("constructor", {}, "accept"), /not an approval request/);
 });
@@ -172,4 +172,20 @@ test("Windows: Store app-alias dirs leave the engine's PATH (the sandbox can't l
   assert.equal(withoutStoreAliases({ PATH: "a;C:/x/WindowsAppsTools" }, "win32").PATH, "a;C:/x/WindowsAppsTools", "only the alias dir itself");
   const posix = { PATH: "/usr/bin:/mnt/c/Users/u/AppData/Local/Microsoft/WindowsApps" };
   assert.equal(withoutStoreAliases(posix, "linux"), posix);
+});
+
+test("a real Codex command never starts without ad's own CODEX_HOME", async () => {
+  const { homedir } = await import("node:os");
+  const { join } = await import("node:path");
+  // Harmless stand-in marked as the real binary: if the guard ever regresses,
+  // this exits instead of starting Codex in the user's ~/.codex.
+  const command = { cmd: process.execPath, prefix: ["-e", "process.exit(97)"], source: "pinned" };
+  const noHome = new CodexAppServer({ command, env: {} });
+  await assert.rejects(noHome.start(), /without an explicit CODEX_HOME/);
+  assert.equal(noHome.running, false, "nothing was spawned");
+  const userHome = new CodexAppServer({ command, env: { CODEX_HOME: join(homedir(), ".codex") } });
+  await assert.rejects(userHome.start(), /your own Codex home/);
+  // An unmarked command is treated as real too; only an explicit test double skips the guard.
+  const unmarked = new CodexAppServer({ command: { cmd: process.execPath, prefix: ["-e", "process.exit(97)"] }, env: {} });
+  await assert.rejects(unmarked.start(), /without an explicit CODEX_HOME/);
 });

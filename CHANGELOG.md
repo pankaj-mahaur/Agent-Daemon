@@ -4,6 +4,108 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [2.1.0] — 2026-10-06
+
+`ad` is now a Codex-style terminal UI with agent-daemon's extras: bare `ad` opens it (`AD_TUI=0` turns that off). Guide: [docs/tui.md](docs/tui.md).
+
+### Fixed
+
+- `ad tui`: a reply or command whose item id a provider reuses from an earlier turn shows again (it was merged into the old item and never printed).
+- `ad tui`: "Learned:" rows show during the session, and `/memory` lists what was captured but not yet saved.
+- `ad tui`: `/undo` compares with what the agent's edit wrote, so a file you saved right after the turn is "changed since the agent's edit", which `/undo force` can override.
+- `ad tui`: `/private` prompts show as typed, marked "(private)".
+- `ad tui`: `/undo` recognizes the agent's edits when Codex names the folder differently from git (an 8.3 short name like `RUNNER~1`, a junction, a `subst` drive).
+- `ad tui`: `/undo` keeps a checkpoint on a busy machine (the snapshot taken at send may take up to 10 s), and never undoes a save of yours made during the turn to a file the agent also edited ("changed during the turn").
+- `ad acp`: with two sessions open, one prompt ending no longer drops the other's edit diff from its permission request.
+
+- The Windows one-liner installer works in Windows PowerShell 5.1 again. 5.1 stripped the quotes inside `node -p '…split(".")…'`, so the Node check always read version 0 and stopped with "Node.js >=22 required". A failing step now stops the script with `throw` instead of `exit`, which used to close the window under `irm | iex`.
+- ad never runs Codex in your own Codex home:
+  - It refuses `~/.codex` and a `CODEX_HOME` your shell sets, however the path is spelled (junctions, `\\?\`, case, relative paths, a trailing dot or space).
+  - It refuses network (UNC) homes.
+  - It drops `CODEX_*` variables such as `CODEX_SQLITE_HOME`; `CODEX_CA_CERTIFICATE` is kept.
+  - It only runs its pinned Codex, never a global or PATH install.
+  - `ad doctor` and schema generation use throwaway homes.
+  - Hooks that Codex runs for ad still recognise ad's home, through `AD_ENGINE_HOME`.
+
+- `ad chat` approvals for network access now name the host (they read "$ null"), and a request to send input to a running command shows that input, escaped.
+- An approval answer can only send a "don't ask again" rule that the request actually offered. A rule whose command prefix hides control or invisible characters is never offered.
+
+### Changed
+
+- Codex engine 0.160.0 (protocol unchanged from 0.159.2).
+- **Engine:**
+  - Every Codex notification is now mapped to ad's own event vocabulary, or deliberately ignored with a reason. A Codex release that adds one fails a test by name until it is handled.
+  - Subagent threads are routed to their parent.
+  - The protocol diff on Codex upgrades now catches type changes.
+- Installers skip devDependencies (`npm install --omit=dev`, `npm link --omit=dev`). On Windows, they warn when Node is older than 22.17 / 24.2, which the coming terminal UI needs.
+- CI uses `actions/checkout@v7` and `actions/setup-node@v7`, and gains an opt-in job that runs the real pinned Codex against a mock model on Linux, macOS and Windows. On Linux it allows unprivileged user namespaces, which Codex's sandbox needs on Ubuntu 24.04 runners.
+
+### Added
+
+- `runtime/scripts/tui-probe.mjs keys|screen`: shows what your terminal sends for each key and how it wraps and reflows. It's a troubleshooting tool for the terminal UI.
+- Plan and research for the `ad` terminal UI: `docs/plans/ad-tui.md`, `docs/research/` (with an index).
+- Terminal UI groundwork (not wired to a command yet), in `runtime/src/tui/terminal/`:
+  - **Cell widths:** a vendored Unicode 16 wide-character table. There are two emoji profiles, because VS Code and Windows Terminal draw emoji sequences differently.
+  - **Styled text:** colour-depth detection, word wrap, truncation.
+  - **`sanitize()`:** strips terminal control sequences from untrusted output, and shows every hidden character in approval prompts.
+  - **Keyboard and paste input:** decodes what Windows Terminal, Zed and kitty-protocol terminals send. Enter sends; Shift+Enter (Zed), Ctrl+Enter (Windows Terminal) or Ctrl+J adds a new line. A paste is one event even when it stalls, and an image paste is recognised.
+  - **Terminal session:** raw mode and capability negotiation, a restore on every exit path (signals, crashes), handing the terminal to a child program, and Ctrl+Z on Linux/macOS.
+  - **Inline renderer:** history goes into your terminal's own scrollback (scroll, select and copy as usual), and only the bottom few lines are redrawn. Resizing re-anchors without erasing history. Terminal detection covers Windows Terminal, Zed, VS Code and others.
+  - `node runtime/scripts/tui-demo.mjs`: try the terminal layer on its own, with no engine.
+- `ad tui --preview`: an early preview of the terminal UI on the real engine. Answers stream into your scrollback; approve with y / a / n; Esc interrupts; Ctrl+C quits.
+  - **Tests:** golden-file tests (`AD_UPDATE_GOLDEN=1` rewrites them).
+- A session controller (`runtime/src/harness/session.mjs`) that the terminal UI will drive:
+  - It holds one conversation: prompts, steering a running turn, a prompt queue and approvals.
+  - Two ad windows can't open the same thread.
+  - When Codex crashes, the running turn fails cleanly, Codex restarts (capped) and the conversation resumes.
+- Bare `ad` (and `ad --last`) opens the terminal UI where the terminal can show it. `AD_TUI=0` turns that off; `ad chat` stays the plain line mode and says so once.
+  - The TUI needs an interactive terminal and, on Windows, Node 22.17+ or 24.2+.
+  - When it can't run, `ad` says why and prints the help.
+  - `ad tui "<prompt>"` starts with that prompt.
+  - Under the hood, `runtime/src/cli.mjs` is now a small launcher (bin shims unchanged).
+- `ad tui`: the terminal UI, early. It runs on ad's own Codex home, with:
+  - sign-in and folder-trust prompts;
+  - streaming answers in your scrollback;
+  - approvals, steering and a prompt queue;
+  - `@` file mentions, `!` shell commands and slash commands (`/model`, `/permissions`, `/resume`, `/diff`, `/review`, `/remember`, `/codex`…).
+
+  `ad tui --last` / `--resume <id>` continue a conversation. See `docs/harness.md`.
+- `ad codex [args…]`: the pinned stock Codex UI on ad's home (never `~/.codex`), with your `~/.claude/skills` mirrored in.
+- More Codex parity in `ad tui`:
+  - Esc Esc rewinds to an earlier prompt, and Ctrl+T shows the transcript.
+  - `/copy`, `/raw`, `/export`, `/fork`, `/rename`, `/mcp`, `/hooks`, `/skills`, `/usage`.
+  - Images: paste a file path, or use `/image`.
+  - Ctrl+G edits the prompt in your editor.
+  - Alt+, and Alt+. change the reasoning effort.
+  - Auto-review verdicts show as notices.
+  - `/terminal-setup` explains how to set up Shift+Enter.
+- `/undo` in `ad tui` (git repos): puts back the files the last turn's applied edits changed, byte for byte, and rewinds the conversation. The "before" snapshot is taken when you press Enter. It refuses when you edited those files during or since the turn, and never touches files the agent didn't edit or the snapshots leave out (big files, heavy folders). It never takes your git index lock. Checkpoints are private git trees; your index, branches and stash are untouched.
+- ad's own features in `ad tui`:
+  - `/memory` search, recent, forget and profile; `/private`; "Learned:" rows after a turn; `/proposals`.
+  - `/loop` in the background, with a row per iteration; `/team`, `/schedule`, `/tools`.
+  - A warning when scheduled jobs are overdue.
+- Codex upgrades are safer:
+  - `ad doctor` and `/status` show the tested Codex versions and what changed.
+  - `/warnings` lists events from a newer Codex that ad doesn't know yet.
+  - The weekly upgrade PR also checks slash-command names and runs the real engine.
+- Terminal UI view components (`runtime/src/tui/view/`):
+  - **Composer:** a multi-line prompt editor with word moves, kill/yank, history (`~/.agent-daemon/tui/history.jsonl`, private, Ctrl+R search) and big pastes shown as `[Pasted N lines]`.
+  - **Streaming markdown:** a streamed answer looks exactly like the finished one.
+  - **Transcript cells:** commands (Explored / Ran / Failed), diffs with line numbers, plans, tools and notices.
+  - **Chrome:** the header card, status line and adaptive footer.
+  - **Prompts:** approval, question and form prompts. Approvals show hidden characters and ignore keys pressed too soon.
+- Skills:
+  - `big-feature-flow` (installed by default): research how others built it → plan in parts → adversarial review rounds until final → spikes → a per-part implement/test/review loop.
+  - `ad-tui-dev` (maintainers): working on the terminal UI with its isolation and renderer rules.
+
+### Docs
+
+- **Harness guide:** what ad does and doesn't touch of your own Codex, including that `ad watch` reads `~/.codex/sessions`. The elevated Windows sandbox is machine-wide. New env-var rows.
+- **Troubleshooting:** entries 19–22 (own-Codex-home refusal, missing engine, PowerShell 5.1 installer, keys and paste with `tui-probe`). Fixed the broken Store-pwsh path in entry 16.
+- **Other guides:** the installation guide, architecture (isolation and the engine test layers), contributing (real-engine tests, isolation rule, editing files that contain backslashes) and the README (CI coverage for Codex upgrades) are updated.
+- **`runtime/README.md`:** rewritten for v2.
+- **Skills:** `codex-upgrade` gains the real-engine step; `harness-troubleshoot` gains the new errors.
+
 ## [2.0.2] — 2026-10-04
 
 ### Added
@@ -299,6 +401,7 @@ Kept in the snapshot but not ported this release: `.codebuddy/`, `.kiro/`, `.tra
 
 Initial public state. Self-improving memory + skills runtime for Claude Code with multi-agent orchestration. 36 skills, 6 lifecycle hooks (SessionStart, SessionEnd, PreCompact, UserPromptSubmit, plus QMD-redirect), constitution layer, digest pipeline, GEPA skill evolution, multi-agent team templates, `ad init` / `ad doctor` / `ad team` / `ad spawn` CLI.
 
+[2.1.0]: https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v2.1.0
 [2.0.2]: https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v2.0.2
 [2.0.1]: https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v2.0.1
 [2.0.0]: https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v2.0.0

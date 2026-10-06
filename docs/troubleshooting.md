@@ -309,13 +309,13 @@ ad auth status
 
 **Cause:** unattended runs never ask for approval, so on Windows they require a ready sandbox.
 
-**Fix:** `ad sandbox setup` (unelevated), or `ad sandbox setup --elevated` for stronger isolation (one UAC prompt). `ad sandbox status` shows the current state.
+**Fix:** `ad sandbox setup` (unelevated), or `ad sandbox setup --elevated` for stronger isolation (one UAC prompt; machine-wide, so your own Codex shares the sandbox accounts it creates). `ad sandbox status` shows the current state.
 
 ---
 
 ## 16. Harness on Windows: every agent command fails with "Access is denied"
 
-**Symptom:** `ad run` / `ad chat` finish, but the agent says its shell was denied and changes nothing. Codex's log (`logs_2.sqlite` in the harness home) shows `CreateProcessAsUserW failed: 5 (Access is denied.)` for `...MicrosoftWindowsAppspwsh.exe`.
+**Symptom:** `ad run` / `ad chat` finish, but the agent says its shell was denied and changes nothing. Codex's log (`logs_2.sqlite` in the harness home) shows `CreateProcessAsUserW failed: 5 (Access is denied.)` for `...\Microsoft\WindowsApps\pwsh.exe`.
 
 **Cause:** PowerShell 7 from the Microsoft Store is an app-execution alias, and the sandbox's restricted token can't launch aliases.
 
@@ -344,7 +344,189 @@ Delete the file before starting the next loop (an existing STOP file refuses to 
 
 ---
 
-For harness problems, the [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill walks through login → hooks → sandbox → Codex's own log. See also [harness.md](harness.md).
+## 19. Harness: `refusing to run Codex in …: that is your own Codex home`
+
+**Symptom:** a harness command stops before Codex starts, with one of:
+
+- `refusing to run Codex in <path>: that is your own Codex home`
+- `refusing CODEX_HOME "<path>": Windows ignores a trailing dot or space …`
+- `refusing CODEX_HOME <path>: network (UNC) paths are not supported`
+
+**Cause:** the harness only runs Codex in its own home, `~/.agent-daemon/codex-home`, or wherever `AD_CODEX_HOME` points. It refuses any of these:
+
+- `~/.codex`;
+- a `CODEX_HOME` your shell sets for your own Codex;
+- any path that leads to one of those (a junction, symlink, `\\?\` prefix, a trailing dot or space, a network share).
+
+Your own Codex keeps its login, sessions and config to itself.
+
+**Fix:** unset `AD_CODEX_HOME`, or point it at a new folder of its own. Leaving `CODEX_HOME` set for your own Codex is fine: the harness never passes `CODEX_*` variables to its engine (except `CODEX_CA_CERTIFICATE`).
+
+---
+
+## 20. Harness: `Codex engine not installed — run: cd runtime && npm install`
+
+**Symptom:** `ad doctor` or any harness command reports the engine missing, even though `codex` works in your terminal.
+
+**Cause:** the harness runs only the Codex version it pins (`runtime/package.json`), installed under `runtime/node_modules`. It never falls back to your global or PATH `codex`, so your own install and its version stay yours.
+
+**Fix:** re-run the installer, or `cd runtime && npm install`. `AD_CODEX_BIN` can point at a specific binary for testing.
+
+---
+
+## 21. Windows PowerShell 5.1: the one-liner stops at `Node.js >=22 required`
+
+**Symptom:** `irm …/install.ps1 | iex` in Windows PowerShell (the blue 5.1 one) says Node is too old although `node -v` shows 22 or later.
+
+**Cause:** before the fix, the installer asked node to split its version with `node -p '…split(".")…'`. 5.1 strips the inner quotes, so the check always read version 0.
+
+**Fix:** update. The installer now parses `node -v` itself. On an older copy, run the same one-liner in PowerShell 7 (`pwsh`).
+
+---
+
+## 22. Keys or paste behave oddly in a terminal
+
+**Symptom:** for example, Shift+Enter acts like Enter, a multi-line paste sends each line separately, or Esc arrives late.
+
+**Check what your terminal really sends:**
+
+```sh
+node runtime/scripts/tui-probe.mjs keys      # each key and paste as raw bytes, with a name
+node runtime/scripts/tui-probe.mjs screen    # wrapping, autowrap-off, sync output, resize reflow
+```
+
+Quit with `qqq`, or press Ctrl+C three times. Results are saved to `~/.agent-daemon/logs/tui-probe-*.log`; attach that file to a bug report.
+
+**Known causes:**
+
+- On Windows, Node older than 22.17 (or 24.0–24.1) has no bracketed paste. Upgrade within your major version.
+- Windows Terminal 1.24 and the VS Code terminal send Shift+Enter as plain Enter; use Ctrl+J for a newline. Windows Terminal 1.25 supports the keyboard protocol that tells them apart.
+
+---
+
+## 23. `ad tui` says it needs an interactive terminal or Node 22.17+
+
+**Symptom:** `ad tui` (or bare `ad`) exits at once with one of:
+
+- `ad tui needs an interactive terminal. Use ad chat for pipes and scripts.`
+- `This terminal (TERM=dumb) can't show the UI. Use ad chat.`
+- `ad tui needs Node 22.17+ or 24.2+ on Windows (this is …)`
+- `mintty (Git Bash's window) can't pass keys to ad. Run winpty ad tui, or use Windows Terminal.`
+
+**Cause:** the terminal UI needs a real terminal on both stdin and stdout. On Windows it also needs a Node with VT input in raw mode (22.17+ or 24.2+, not 23.x or 24.0–24.1); older ones turn a multi-line paste into one message per line. mintty doesn't pass keys to Windows console programs.
+
+**Fix:**
+
+- Run it in a terminal window, not through a pipe, `nohup` or a script. For scripts use `ad run` or `ad chat`.
+- Upgrade Node within your major version (22.x stays ABI-compatible, nothing to rebuild), then check with `node -v`.
+- In Git Bash: `winpty ad tui`, or open Git Bash as a Windows Terminal profile.
+- Everything else in ad keeps working on older Node; only the TUI checks this.
+
+---
+
+## 24. `ad tui`: Shift+Enter sends instead of adding a newline
+
+**Symptom:** pressing Shift+Enter sends the prompt.
+
+**Cause:** Windows Terminal 1.24 and the VS Code terminal send Shift+Enter exactly like Enter, so ad can't tell them apart. ad sends on Enter and adds a newline on a line feed.
+
+**Fix:** any of these:
+
+- Use the key the footer shows: Ctrl+Enter in Windows Terminal, Ctrl+J in any terminal.
+- Type `\` and then Enter: that adds a newline everywhere.
+- Run `/terminal-setup` in `ad tui`. It prints the binding that makes Shift+Enter send a newline in your terminal (a `sendInput` action in Windows Terminal, a `sendSequence` keybinding in VS Code). Windows Terminal 1.25 and Zed need no setup.
+
+---
+
+## 25. Ghost copies of the bottom lines after narrowing the window
+
+**Symptom:** after making the window narrower while `ad tui` runs, old copies of the status line, composer or footer stay in the scrollback above the live lines.
+
+**Cause:** known, and being characterized. When a terminal re-wraps lines on a resize, some (xterm.js-based ones, like VS Code) also move the cursor further than the re-wrap accounts for. ad then re-draws below the old copy instead of over it. It errs this way on purpose: guessing the other way would erase your history.
+
+**Fix:** press Ctrl+L to redraw. History itself is never lost.
+
+Please help pin it down: in the terminal where it happens, run
+
+```sh
+node runtime/scripts/tui-probe.mjs screen --bottom
+```
+
+make the window narrower, then wider, quit with `qqq`, and attach `~/.agent-daemon/logs/tui-probe-screen-*.log` plus a screenshot of the window to an issue.
+
+---
+
+## 26. `/undo` refuses: `Not undone`
+
+**Symptom:** `/undo` says `Not undone: <file> (<why>), …. /undo force puts the agent's files back anyway, discarding the changes made after its edit; the rest are never touched.`
+
+**Cause:** `/undo` only puts back what the agent's own edits changed in the last turn, and only when nothing else touched those files. Each listed file says why it was refused:
+
+- `changed during the turn`: more of it changed during the turn than the agent's own edits account for (you saved it, or a command changed it, before or between the agent's edits). `force` doesn't override this: your change would be lost.
+- `changed since the agent's edit`: the agent edited it, and it changed after that: you, your editor's format-on-save, or a formatter the agent ran, during the turn or after it. Undoing would throw that away; `force` does exactly that.
+- `not changed by the agent's edits`: it changed during the turn some other way, for example through a command the agent ran (`npm install`, a formatter, `sed`) or your editor.
+- `a folder is there now`: a folder stands where the file was.
+- `a file is where its folder was`: a file or symlink now stands where one of the path's folders was. `force` doesn't override this.
+- `not in the checkpoint`: the agent edited a file the snapshots leave out (untracked and over 2 MB, or in a heavy folder like `build/` or `node_modules/`). There is nothing to put back; `force` doesn't change that.
+
+With any of these, nothing is undone.
+
+**Fix:**
+
+- Look at the files first (`/diff`, or `git diff`).
+- If later changes to the agent's files can go, `/undo force` puts those files back too. Even forced, files the agent's edits didn't report are never touched, and folders are never removed or replaced; those are reported as left alone.
+- If you want to keep them, fix the files by hand. Esc Esc rewinds just the conversation and leaves the files alone.
+
+**Other `/undo` messages:**
+
+- `The last turn has no checkpoint (…)`: the snapshot taken when you sent the prompt wasn't done within 10 s (a very large working folder), snapshots fail in this repo (git's message follows), the turn was started by Codex itself (a review, a goal) rather than a prompt here, or it ran before `ad tui` started.
+- `… edit(s) outside this repo weren't touched`: the agent edited files outside the repo `ad tui` runs in; `/undo` only covers this repo.
+- `Not a git repo`: checkpoints need a git repo.
+- `A turn started meanwhile`: a prompt was sent while `/undo` was checking. Run `/undo` again once that turn finishes.
+- Ignored files, submodule contents and LFS files are never restored. With git older than 2.40, or with `.git/info/attributes` or `core.attributesFile` set, files with eol rules may come back normalized.
+
+---
+
+## 27. `ad tui`: `Codex stopped (exit N)`
+
+**Symptom:** a banner under the composer says `Codex stopped (exit N). Your text is kept. Enter restarts and resumes.`
+
+**Cause:** the Codex engine process exited, and ad's automatic restarts (3) didn't bring it back. The running turn is marked failed; your prompt and the scrollback are kept.
+
+**Fix:**
+
+- Press Enter on an empty prompt to try again. A prompt you send meanwhile waits in the queue and goes once Codex is back.
+- If it keeps stopping: `/quit`, then `ad doctor`, then `ad tui --last` to continue the conversation.
+- To see why: Codex's own log is `logs_2.sqlite` in the harness home (`~/.agent-daemon/codex-home`, table `logs`). The [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill shows how to read it. Common causes are a lost login (`ad auth status`) and the Windows sandbox (#16).
+
+---
+
+## 28. `ad tui`: the editor (Ctrl+G) returned at once
+
+**Symptom:** Ctrl+G flashes, and ad says `The editor returned at once without waiting. Set EDITOR to one that waits …`.
+
+**Cause:** the editor handed the file to a window that was already open and exited straight away (Notepad from the Microsoft Store, `code` without `--wait`). ad can't know when you finish, so it keeps your prompt unchanged.
+
+**Fix:** point `VISUAL` or `EDITOR` at a command that waits until the file is closed:
+
+```sh
+export EDITOR="code --wait"                  # bash / zsh
+$env:EDITOR = "code --wait"                  # PowerShell (this session)
+```
+
+Other choices: `nvim`, `vim`, `nano`, or Notepad++ with `-multiInst -nosession`. A full path with spaces works without quotes when there are no arguments; with arguments, quote the path (`"C:\Program Files\Notepad++\notepad++.exe" -multiInst -nosession`).
+
+## 29. Windows: the first command or edit after installing takes ~35 s
+
+**Symptom:** right after installing (or with a fresh `~/.agent-daemon/codex-home`), the agent's first command or file edit sits on "Thinking" for about half a minute. Later ones take a second or two.
+
+**Cause:** Codex sets up its Windows sandbox for ad's Codex home on the first sandboxed action. It happens once per Codex home, not per project folder.
+
+**Fix:** nothing to do; wait it out once. A command you approve to run outside the sandbox doesn't pay it.
+
+---
+
+For harness problems, the [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill walks through login → hooks → sandbox → Codex's own log. See also [harness.md](harness.md) and, for the terminal UI, [tui.md](tui.md).
 
 ## Still stuck?
 

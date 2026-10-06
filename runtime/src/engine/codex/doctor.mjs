@@ -2,13 +2,23 @@
 // the rest of cmdDoctor's checks.
 
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pinnedCodexVersion, resolveCodexCommand } from "./app-server.mjs";
-import { defaultCodexHome, isManagedHome } from "./home.mjs";
+import { CODEX_MISSING, pinnedCodexVersion, resolveCodexCommand } from "./app-server.mjs";
+import { codexEnv, defaultCodexHome, isManagedHome } from "./home.mjs";
 
 export function parseCodexVersion(text) {
   return String(text).match(/(\d+\.\d+\.\d+(?:-[\w.]+)?)/)?.[1] ?? null;
+}
+
+/** The tested Codex versions and what changed in each (compat.json). */
+export function codexCompat() {
+  try {
+    return JSON.parse(readFileSync(new URL("./compat.json", import.meta.url), "utf8"));
+  } catch {
+    return { pinned: null, tested: [], whatChanged: {} };
+  }
 }
 
 export function codexChecks({ env = process.env, run = execFileSync } = {}) {
@@ -16,10 +26,24 @@ export function codexChecks({ env = process.env, run = execFileSync } = {}) {
   const pinned = pinnedCodexVersion();
   const command = resolveCodexCommand(env);
   let installed = null;
-  try {
-    installed = parseCodexVersion(run(command.cmd, [...command.prefix, "--version"], { encoding: "utf8", timeout: 15_000, windowsHide: true }));
-  } catch (err) {
-    checks.push({ name: "Codex engine", ok: false, note: `not runnable (${err.code ?? err.message}) — cd runtime && npm install` });
+  if (!command.cmd) {
+    checks.push({ name: "Codex engine", ok: false, note: CODEX_MISSING });
+  } else {
+    // A throwaway CODEX_HOME: without one, Codex falls back to ~/.codex, the user's own install.
+    let scratchHome = null;
+    try {
+      scratchHome = mkdtempSync(join(tmpdir(), "ad-codex-version-"));
+      installed = parseCodexVersion(run(command.cmd, [...command.prefix, "--version"], {
+        encoding: "utf8",
+        timeout: 15_000,
+        windowsHide: true,
+        env: codexEnv({ home: scratchHome, base: env }),
+      }));
+    } catch (err) {
+      checks.push({ name: "Codex engine", ok: false, note: `not runnable (${err.code ?? err.message}) — cd runtime && npm install` });
+    } finally {
+      if (scratchHome) rmSync(scratchHome, { recursive: true, force: true });
+    }
   }
   if (installed) {
     const match = installed === pinned;
@@ -39,6 +63,8 @@ export function codexChecks({ env = process.env, run = execFileSync } = {}) {
       ? `${home}${isManagedHome(home) ? "" : " (not created by ad — never auto-modified)"}`
       : `${home} (created on first ad run)`,
   });
+  const compat = codexCompat();
+  if (installed === pinned && compat.whatChanged?.[pinned]) checks.push({ name: "Codex compatibility", ok: true, note: `tested: ${compat.tested.join(", ")}. ${compat.whatChanged[pinned]}` });
   return checks;
 }
 

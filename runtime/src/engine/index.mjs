@@ -7,9 +7,11 @@
 import { EventEmitter } from "node:events";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { resolve } from "node:path";
 import { CodexAppServer } from "./codex/app-server.mjs";
 import { APPROVAL_METHODS, approvalResponse } from "./codex/approvals.mjs";
 import { defaultCodexHome, ensureCodexHome } from "./codex/home.mjs";
+import { adaptNotification, classifyRequest, elicitationResponse } from "./codex/events.mjs";
 
 // Harness defaults (user-approved): writes only inside the workspace, asks
 // before anything riskier.
@@ -54,9 +56,140 @@ export class Engine extends EventEmitter {
     super();
     this.opts = opts;
     this.env = { ...process.env, ...(opts.env ?? {}) };
-    this.home = opts.home ?? defaultCodexHome(this.env);
+    // Resolved once, against the directory Codex runs in: ensureCodexHome and
+    // Codex itself must agree on which folder a relative home means.
+    this.home = resolve(opts.cwd ?? process.cwd(), opts.home ?? defaultCodexHome(this.env));
     this.onApproval = opts.onApproval ?? (() => "decline");
+    // Front ends that handle every server request themselves (the TUI) set
+    // onRequest(PendingRequest) → answer. Without it the old behaviour stays:
+    // approvals go to onApproval, user input and elicitation are refused.
+    this.onRequest = opts.onRequest ?? null;
+    this.unknown = new Map(); // unknown notification method → count
     this.server = null;
+    // Routing (plan 3b): child threads (subagents) and their parents, the
+    // labels to show for them, subscribers per thread, open requests.
+    this.parents = new Map();
+    this.labels = new Map();
+    this.subscribers = new Map(); // threadId | null (thread-less) → Set(fn)
+    this.pendingRequests = new Map(); // JSON-RPC id → {request, cancel}
+    this.answered = new Set(); // ids we answered; Codex's serverRequest/resolved for them is dropped
+  }
+
+  /**
+   * Adapted events (engine/codex/events.mjs) for one thread and every child
+   * thread it spawned (subagents), or with threadId null the events that
+   * belong to no thread (account, rate limits, MCP status, warnings).
+   * Returns an unsubscribe function.
+   */
+  subscribe(threadId, fn) {
+    const key = threadId ?? null;
+    if (!this.subscribers.has(key)) this.subscribers.set(key, new Set());
+    this.subscribers.get(key).add(fn);
+    return () => {
+      const set = this.subscribers.get(key);
+      set?.delete(fn);
+      if (set && !set.size) this.subscribers.delete(key);
+    };
+  }
+
+  /** The chain from a thread up to its root: [thread, parent, …, root]. */
+  threadChain(threadId) {
+    const chain = [];
+    const seen = new Set();
+    for (let t = threadId; t && !seen.has(t); t = this.parents.get(t)) {
+      seen.add(t);
+      chain.push(t);
+    }
+    return chain;
+  }
+
+  #deliver(ev) {
+    const targets = ev.threadId ? this.threadChain(ev.threadId) : [null];
+    for (const key of targets) {
+      for (const fn of this.subscribers.get(key) ?? []) {
+        try {
+          fn(ev);
+        } catch (err) {
+          this.emit("warning", `event subscriber threw: ${err.message}`);
+        }
+      }
+    }
+    this.emit("event", ev);
+  }
+
+  // Learn the thread tree from what Codex says, before events are delivered.
+  #learn(method, params) {
+    // Only Codex's own spawn records link threads: a model-chosen tool call
+    // (sendInput, wait, closeAgent…) names threads it doesn't own. A known
+    // parent is never replaced, and a link that would make a cycle is refused.
+    const link = (child, parent) => {
+      if (typeof child !== "string" || typeof parent !== "string" || child === parent) return;
+      if (this.parents.has(child)) return;
+      if (this.threadChain(parent).includes(child)) return;
+      this.parents.set(child, parent);
+    };
+    if (method === "thread/started" && params?.thread) {
+      const t = params.thread;
+      link(t.id, t.parentThreadId);
+      const label = t.agentNickname ?? t.agentRole ?? null;
+      if (label) this.labels.set(t.id, label);
+    }
+    if ((method === "item/started" || method === "item/completed") && params?.item) {
+      const it = params.item;
+      if (it.type === "collabAgentToolCall" && it.tool === "spawnAgent" && Array.isArray(it.receiverThreadIds)) {
+        for (const r of it.receiverThreadIds) link(r, params.threadId);
+      }
+      if (it.type === "subAgentActivity" && it.kind === "started") link(it.agentThreadId, params.threadId);
+    }
+  }
+
+  #route(msg) {
+    try {
+      this.#routeUnsafe(msg);
+    } catch (err) {
+      this.emit("warning", `could not handle ${msg?.method}: ${err.message}`);
+    }
+  }
+
+  #routeUnsafe({ method, params }) {
+    this.#learn(method, params);
+    if (method === "thread/closed" || method === "thread/deleted") this.#forget(params?.threadId);
+    if (method === "serverRequest/resolved") {
+      // #handleRequest emits the one request.resolved for every request it
+      // opened; Codex's own notification (sent after any answer) adds nothing.
+      const id = params?.requestId;
+      if (this.pendingRequests.has(id)) this.#cancelRequests((r) => r.id === id, "resolved");
+      this.answered.delete(id);
+      return;
+    }
+    if (method === "thread/reverted") this.#cancelRequests((r) => r.threadId === params?.threadId, "reverted");
+    for (const ev of adaptNotification(method, params)) {
+      // Notifications a newer Codex sends that this ad doesn't know: counted for /warnings.
+      if (ev.type === "unknown" && (this.unknown.has(ev.method) || this.unknown.size < 200)) this.unknown.set(ev.method, (this.unknown.get(ev.method) ?? 0) + 1);
+      this.#deliver(ev);
+    }
+  }
+
+  /** {method: count} of notifications this ad didn't recognise. */
+  unknownCounts() {
+    return Object.fromEntries(this.unknown);
+  }
+
+  #forget(threadId) {
+    if (!threadId) return;
+    queueMicrotask(() => {
+      this.labels.delete(threadId);
+      for (const [child, parent] of this.parents) if (child === threadId || parent === threadId) this.parents.delete(child);
+    });
+  }
+
+  #cancelRequests(match, why) {
+    for (const [id, entry] of this.pendingRequests) if (match(entry.request)) entry.cancel(why);
+  }
+
+  /** Open requests (for a reconnecting UI), oldest first. */
+  openRequests() {
+    return [...this.pendingRequests.values()].map((e) => e.request);
   }
 
   async start() {
@@ -65,6 +198,7 @@ export class Engine extends EventEmitter {
       command: this.opts.command,
       cwd: this.opts.cwd,
       clientVersion: this.opts.clientVersion,
+      detached: this.opts.detached,
       env: { ...(this.opts.env ?? {}), CODEX_HOME: this.home },
       onServerRequest: (msg) => this.#onServerRequest(msg),
     });
@@ -75,6 +209,8 @@ export class Engine extends EventEmitter {
     this.server.on("notification", ({ method, params }) => {
       if (method === "item/started" && params?.item) this.emit("itemStarted", params);
     });
+    this.server.on("notification", (msg) => this.#route(msg));
+    this.server.on("exit", () => this.#cancelRequests(() => true, "engine exited"));
     this.initInfo = await this.server.start();
     return this;
   }
@@ -89,11 +225,12 @@ export class Engine extends EventEmitter {
     return (await this.server.request("config/read", {})).config ?? {};
   }
 
-  // edits: [[keyPath, value], …]; a null value deletes the key. Goes through
-  // Codex itself so we never hand-edit TOML that Codex also writes.
+  // edits: [[keyPath, value, strategy?], …]; a null value deletes the key;
+  // strategy "upsert" merges a table into what is there. Goes through Codex
+  // itself so we never hand-edit TOML that Codex also writes.
   writeConfig(edits, { reload = true } = {}) {
     return this.server.request("config/batchWrite", {
-      edits: edits.map(([keyPath, value]) => ({ keyPath, value, mergeStrategy: "replace" })),
+      edits: edits.map(([keyPath, value, strategy]) => ({ keyPath, value, mergeStrategy: strategy === "upsert" ? "upsert" : "replace" })),
       reloadUserConfig: reload,
     });
   }
@@ -261,6 +398,17 @@ export class Engine extends EventEmitter {
     return this.server.request("thread/goal/clear", { threadId });
   }
 
+  /**
+   * Start a turn and return as soon as Codex accepted it ({turnId}); events
+   * arrive through subscribe(). turn() stays for callers that want to wait.
+   */
+  async startTurn({ threadId, text, input, ...turnOpts }) {
+    const r = await this.server.request("turn/start", clean({ threadId, input: input ?? [{ type: "text", text }], ...turnOpts }));
+    const turnId = r?.turn?.id ?? null;
+    if (!turnId) throw new Error("turn/start returned no turn id");
+    return { turnId, turn: r.turn };
+  }
+
   interrupt(threadId, turnId) {
     return this.server.request("turn/interrupt", { threadId, turnId });
   }
@@ -337,6 +485,7 @@ export class Engine extends EventEmitter {
   }
 
   async #onServerRequest(msg) {
+    if (this.onRequest) return this.#handleRequest(msg);
     const spec = Object.hasOwn(APPROVAL_METHODS, msg.method) ? APPROVAL_METHODS[msg.method] : null;
     if (!spec) {
       const err = new Error(`agent-daemon does not handle ${msg.method}`);
@@ -346,6 +495,82 @@ export class Engine extends EventEmitter {
     const req = { kind: spec.kind, method: msg.method, params: msg.params ?? {} };
     this.emit("approval", req);
     return approvalResponse(msg.method, req.params, await this.onApproval(req));
+  }
+
+  // onRequest mode: every server request becomes a PendingRequest, open until
+  // the front end answers, Codex says it was resolved elsewhere, the thread
+  // is reverted, or the engine exits (those decline).
+  async #handleRequest(msg) {
+    const tid = msg.params?.threadId ?? msg.params?.conversationId ?? null;
+    const req = classifyRequest(msg.method, msg.params ?? {}, msg.id, { agentLabel: tid ? (this.labels.get(tid) ?? null) : null });
+    if (req.kind === "unknown" || req.kind === "tool-call") return requestResult(req, null); // refused (-32601)
+    let cancel;
+    const cancelled = new Promise((resolve) => (cancel = (why) => resolve({ cancelled: why })));
+    this.pendingRequests.set(msg.id, { request: req, cancel });
+    this.#deliver({ type: "request.opened", threadId: req.threadId ?? undefined, turnId: req.turnId ?? undefined, request: req });
+    let outcome;
+    try {
+      outcome = await Promise.race([Promise.resolve(this.onRequest(req)).then((answer) => ({ answer })), cancelled]);
+    } catch (err) {
+      this.emit("warning", `request handler failed: ${err.message}`);
+      outcome = { cancelled: "handler failed" };
+    } finally {
+      this.pendingRequests.delete(msg.id);
+    }
+    this.answered.add(msg.id);
+    if (this.answered.size > 1000) this.answered.delete(this.answered.values().next().value);
+    this.#deliver({ type: "request.resolved", threadId: req.threadId ?? undefined, requestId: msg.id, ...(outcome.cancelled ? { cancelled: outcome.cancelled } : {}) });
+    return requestResult(req, outcome.cancelled ? null : outcome.answer);
+  }
+}
+
+// Turns a front end's answer to a PendingRequest into the JSON-RPC result.
+// Anything unexpected declines.
+export function requestResult(req, answer) {
+  switch (req.kind) {
+    case "approval-exec":
+    case "approval-patch": {
+      const ok = req.options.some((o) => JSON.stringify(o) === JSON.stringify(answer));
+      return approvalResponse(req.method, req.params, ok ? answer : "decline");
+    }
+    case "approval-permissions": {
+      const word = answer === "turn" ? "accept" : answer === "session" ? "acceptForSession" : "decline";
+      return approvalResponse(req.method, req.params, word);
+    }
+    case "user-input": {
+      // {questionId: [answers]} → {answers: {questionId: {answers: [...]}}}.
+      // Strings only, and only offered labels unless the question takes free text.
+      const answers = {};
+      for (const q of req.questions ?? []) {
+        const a = answer?.[q.id];
+        if (!Array.isArray(a)) continue;
+        const labels = new Set((q.options ?? []).map((o) => o.label));
+        const ok = a.filter((x) => typeof x === "string" && (q.other || q.secret || !labels.size || labels.has(x)));
+        if (ok.length) answers[q.id] = { answers: ok };
+      }
+      return { answers };
+    }
+    case "elicitation": {
+      const action = answer?.action;
+      if (action !== "accept") return elicitationResponse(action === "cancel" ? "cancel" : "decline");
+      const form = req.form ?? {};
+      if (form.mode === "url") return elicitationResponse("accept", null, answer?._meta);
+      const content = answer?.content;
+      if (!content || typeof content !== "object" || Array.isArray(content)) return elicitationResponse("decline");
+      if (form.mode === "form") {
+        // Every required field present; only fields the form asked for.
+        for (const f of form.fields ?? []) if (f.required && (content[f.name] === undefined || content[f.name] === null || content[f.name] === "")) return elicitationResponse("decline");
+        const names = new Set((form.fields ?? []).map((f) => f.name));
+        const clean = Object.fromEntries(Object.entries(content).filter(([k]) => names.has(k)));
+        return elicitationResponse("accept", clean, answer?._meta);
+      }
+      return elicitationResponse("accept", content, answer?._meta);
+    }
+    default: {
+      const err = new Error(`agent-daemon does not handle ${req.method}`);
+      err.code = -32601;
+      throw err;
+    }
   }
 }
 

@@ -85,15 +85,18 @@ export function createAcpAgent({ send, request, engineFactory, clientVersion, er
   let enginePromise = null; // cached promise: concurrent session/new share one engine
   let engine = null;
   const sessions = new Map(); // sessionId (= threadId) → { cwd, turnId, busy, cancelRequested }
-  const fileChanges = new Map();
+  const fileChanges = new Map(); // itemId → fileChange item (for permission diffs)
+  const itemThread = new Map(); // itemId → the thread it belongs to
 
   const getEngine = (cwd) => {
     enginePromise ??= (async () => {
       const started = await engineFactory({ cwd, clientVersion, err });
       if (!started.engine) throw Object.assign(new Error(started.error), { code: -32000 });
       engine = started.engine;
-      engine.on("itemStarted", ({ item }) => {
-        if (item.type === "fileChange") fileChanges.set(item.id, item);
+      engine.on("itemStarted", ({ item, threadId }) => {
+        if (item.type !== "fileChange") return;
+        fileChanges.set(item.id, item);
+        itemThread.set(item.id, threadId);
       });
       engine.onApproval = async (req) => {
         // v1 legacy approvals name the thread conversationId.
@@ -171,7 +174,13 @@ export function createAcpAgent({ send, request, engineFactory, clientVersion, er
         } finally {
           s.turnId = null;
           s.busy = false;
-          fileChanges.clear();
+          // Only what no running prompt can still ask about: another session's
+          // pending edit keeps its diff for its permission request.
+          for (const id of [...fileChanges.keys()]) {
+            if (sessions.get(itemThread.get(id))?.busy) continue;
+            fileChanges.delete(id);
+            itemThread.delete(id);
+          }
         }
       }
       case "session/cancel": {

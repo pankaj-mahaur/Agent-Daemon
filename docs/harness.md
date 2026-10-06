@@ -28,7 +28,12 @@ Since v2, agent-daemon runs agents itself. The engine is [OpenAI Codex](https://
 
 3. **Windows only:** the first run sets up Codex's command sandbox (unelevated). For stronger isolation run `ad sandbox setup --elevated` once (one UAC prompt). See [Windows](#windows).
 
-The harness keeps its own Codex home at `~/.agent-daemon/codex-home`. Your own `~/.codex` (config, login, history) is never read or changed.
+The harness keeps its own Codex home at `~/.agent-daemon/codex-home`, and its own pinned Codex binary under `runtime/node_modules`. Your own Codex is never changed:
+- The harness refuses to run Codex in `~/.codex`, in a `CODEX_HOME` your shell sets, or in any path that leads there (junctions, `\\?\`, a trailing dot or space).
+- It never runs your global `codex` binary.
+- It never passes your `CODEX_*` variables to its engine (`CODEX_CA_CERTIFICATE` excepted).
+
+The one thing that reads your Codex data is the optional `ad watch` daemon: it reads `~/.codex/sessions` transcripts to learn from your own Codex sessions. It never writes there.
 
 **Subscriptions.** ChatGPT uses Codex's own login. Claude Pro/Max and Google AI Pro/Ultra logins are never reused: their terms forbid it. For Claude or Gemini models use an API key or OpenRouter. `ad agy` can hand a prompt to *your own* Antigravity CLI (see below).
 
@@ -57,6 +62,47 @@ When the agent wants to run something outside its sandbox or edit outside the wo
 | `/compact` | summarize the thread to free context |
 | `/status` | login, model, folder, thread |
 | `/exit` | quit |
+
+### `ad tui`: the terminal UI (early)
+
+```bash
+ad tui                           # in the current folder
+ad tui "<prompt>"                # and send a first prompt
+ad tui --last                    # continue the newest conversation here
+ad tui --resume <thread-id>      # continue a given one
+```
+
+A Codex-style terminal UI on ad's own Codex home. History goes into your terminal's scrollback; only the bottom of the screen is redrawn. It is new: expect rough edges, and use `ad chat` if something gets in the way.
+- **First run:** a sign-in panel if ad isn't signed in (it runs `ad auth login …` for you), then a one-time trust question per folder.
+- **Keys:** Enter sends, and steers a running turn. Tab queues a prompt for after the turn. Esc interrupts. The newline key depends on the terminal (Shift+Enter in Zed, Ctrl+Enter in Windows Terminal, Ctrl+J or `\` + Enter anywhere). `?` shows every shortcut.
+- **Approvals** list what Codex offers. Keys pressed in the first 400 ms are ignored, so type-ahead never approves, and hidden characters show as `<U+…>`.
+- **Commands:** Codex's (`/new`, `/resume`, `/model`, `/review`, `/diff`, `/compact`, …) keep Codex's meaning. ad adds `/undo` (put back the files the last turn changed), `/memory`, `/remember`, `/private`, `/loop`, `/team`, `/schedule`, `/codex` and `/ad <command>`.
+- **Bare `ad`** opens the TUI (where the terminal can show it). `AD_TUI=0` turns that off, and bare `ad` prints the help.
+- **Requirements:** an interactive terminal, and on Windows Node 22.17+ or 24.2+. Otherwise use `ad chat`.
+
+Keys, commands, `/undo`, terminals and the files it writes: **[tui.md](tui.md)**. `ad tui --preview` still runs the earlier walking skeleton.
+
+### `ad codex`: the stock Codex UI on ad's home
+
+```bash
+ad codex                         # the pinned Codex's own UI
+ad codex resume --last           # any codex arguments
+```
+
+The pinned Codex, with `CODEX_HOME` set to ad's home (never `~/.codex`) and `--no-daemon`, so it never talks to your own Codex. Your `~/.claude/skills` are mirrored into the home's `skills/` folder first; folders you put there yourself are never touched. Project `.claude/skills` aren't visible in `ad codex`. Inside `ad tui`, `/codex` opens it on the same conversation and returns to `ad` afterwards ([tui.md](tui.md#ad-codex-and-codex)).
+
+### `ad tui --preview`: the walking skeleton
+
+This is the earlier preview of the Codex-style terminal UI. History stays in your terminal's own scrollback, so scrolling, selecting and copying work as usual. Only the bottom few lines (the composer and the footer) are redrawn.
+- **Keys:**
+  - Enter sends.
+  - The newline key depends on the terminal: Shift+Enter in Zed, Ctrl+Enter in Windows Terminal, Ctrl+J anywhere.
+  - Esc interrupts a running turn. Ctrl+C clears the composer, and quits when the composer is empty.
+- **Approvals:** answer them with `y`, `a` (always, this session) or `n` / Esc. Pastes and other keys never answer an approval.
+- **Commands:** the in-chat commands above work too.
+- **Requirements:** an interactive terminal, and on Windows Node 22.17+ or 24.2+. Otherwise use `ad chat`.
+
+To try the terminal layer on its own, with no engine and no login, run `node runtime/scripts/tui-demo.mjs`.
 
 ### `ad run`: one turn, no questions
 
@@ -138,7 +184,7 @@ Opt-in, and it uses *your* installed Antigravity CLI and its login. The daemon n
 
 | Mode | Used by | Sandbox | Approvals |
 |---|---|---|---|
-| Interactive | `ad chat`, `ad web`, `ad acp` | `workspace-write`: writes only inside the project | asks you |
+| Interactive | `ad tui`, `ad chat`, `ad web`, `ad acp` | `workspace-write`: writes only inside the project | asks you |
 | One-shot | `ad run` | `workspace-write` (or `--sandbox`) | declined |
 | Unattended | `ad loop`, team workers, `loop` schedule jobs | workspace only, **no network** | never asked |
 
@@ -166,7 +212,7 @@ Loop and worker prompts are marked as non-user (`AD_WORKER=1`), so they never en
 
 ## Windows
 
-- **Sandbox.** `ad sandbox status` shows readiness. The default is unelevated; `ad sandbox setup --elevated` is stronger (one UAC prompt).
+- **Sandbox.** `ad sandbox status` shows readiness. The default is unelevated, and its sandbox identity is kept per Codex home, so it is separate from your own Codex. `ad sandbox setup --elevated` is stronger (one UAC prompt), but it is **machine-wide**: it creates Windows sandbox accounts and rules that your own Codex uses too.
 - **PowerShell from the Microsoft Store** can't be launched by the sandbox. Since 2.0.1 the harness keeps `WindowsApps` off the engine's PATH, so Codex uses an installed pwsh 7 or `powershell.exe`.
 - **`node --test` fails with `spawn EPERM`** in the unelevated sandbox, because Node can't start child processes there. The agent can run test files directly (`node file.test.js`). `--elevated` may lift this, but that's untested.
 
@@ -181,11 +227,15 @@ Loop and worker prompts are marked as non-user (`AD_WORKER=1`), so they never en
 | `~/.agent-daemon/schedules.json`, `schedule-logs/` | scheduled jobs and their output |
 | `<project>/.agent-daemon/loops/` | `ad loop` iteration logs |
 | `<project>/.agent-daemon/STOP` | stop file for loops in this project |
+| `~/.agent-daemon/tui/`, `~/.agent-daemon/locks/` | `ad tui` prompt history and per-folder state; conversation locks (see [tui.md](tui.md#files-ad-writes)) |
 
 | Variable | Effect |
 |---|---|
-| `AD_CODEX_HOME` | use another harness Codex home |
-| `AD_CODEX_BIN` | run a specific `codex` binary instead of the pinned one |
+| `AD_TUI` | `1`: bare `ad` opens the terminal UI now. `0`: it never does (once the TUI is the default) |
+| `AD_CODEX_HOME` | use another harness Codex home (never your own `~/.codex` or `CODEX_HOME`: refused) |
+| `AD_CODEX_BIN` | run a specific `codex` binary instead of the pinned one (testing) |
+| `CODEX_*` (yours) | not passed to the harness's Codex, so they can't point it at your own state; `CODEX_CA_CERTIFICATE` is kept |
+| `AD_ENGINE_HOME` | set by ad on the Codex processes it starts (hooks use it); don't set it yourself |
 | `AD_AGENT_ENGINE` | `codex` (default) or `claude` for team workers |
 | `AD_LLM_BACKEND` | `claude`, `codex` or `auto` for digest / GEPA LLM calls (same as `--llm`) |
 | `AD_CODEX_LLM_MODEL` | model for those calls when they run on Codex |
@@ -197,5 +247,5 @@ Loop and worker prompts are marked as non-user (`AD_WORKER=1`), so they never en
 
 1. `ad doctor`: engine version, login, hooks trusted, Windows sandbox.
 2. `ad auth status` and `ad sandbox status`.
-3. [troubleshooting.md](troubleshooting.md), entries 14–18.
+3. [troubleshooting.md](troubleshooting.md), entries 14–22 (harness) and 23–28 (`ad tui`).
 4. Codex's own log: `logs_2.sqlite` in the harness home (table `logs`). The [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill shows how to read it.

@@ -296,6 +296,20 @@ Agent-Daemon/                       # The cloned repo
 
 The same hooks from `runtime/profiles/profiles.json` are rendered into `CODEX_HOME/hooks.json`, so `ad chat` / `ad run` / `ad loop` get memory injection, correction capture and guards. Codex caps SessionEnd at 3 s, so that hook spawns a detached `ad digest` instead of digesting inline. Memory is also exposed to the agent as the `agent-daemon-memory` MCP server. Design: [plans/codex-harness.md](plans/codex-harness.md).
 
+**Isolation from the user's own Codex.** `runtime/src/engine/codex/` is the only code that starts Codex, and every spawn goes through `codexEnv()` in `home.mjs`:
+
+- It runs only the pinned binary from `runtime/node_modules` (or `AD_CODEX_BIN`), never a global or PATH install.
+- Its home must be ad's own. `~/.codex`, a `CODEX_HOME` set by the user's shell, and any path that resolves to one of them are refused. Paths are compared by real path, which collapses junctions, symlinks, `\\?\`, 8.3 names and case. On Windows, trailing dots and spaces and UNC paths are refused too.
+- Every `CODEX_*` variable is dropped, because those override config; `CODEX_CA_CERTIFICATE` is kept.
+- `AD_ENGINE_HOME` is stamped on the child, so hooks that Codex runs for ad recognise the home as ad's.
+- `ad doctor` and the protocol-schema generator run Codex in throwaway temp homes.
+
+**Testing against the engine.** Two layers sit under the unit tests:
+- the scripted fake app-server (`runtime/testkit/fake-codex-app-server.mjs`) for crashes and edge traffic;
+- the real pinned binary against a mock Responses server (`runtime/testkit/mock-responses.mjs`, opt-in `AD_REAL_ENGINE=1`), so a Codex bump that changes behaviour fails CI on all three platforms.
+
+The coming terminal UI builds on the same engine: [plans/ad-tui.md](plans/ad-tui.md).
+
 ---
 
 ## Why this design

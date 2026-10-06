@@ -1,6 +1,6 @@
 # Backlog — ideas not yet planned
 
-Ideas and research leads that haven't become a plan yet. When one is picked up, it moves to its own `docs/plans/<name>.md`.
+Ideas and research leads that haven't become a plan yet. When one is picked up, it moves to its own `docs/plans/<name>.md`. The terminal UI has its own "later" list in [ad-tui.md](ad-tui.md#housekeeping-and-later).
 
 ## 1. Put the daemon's instructions into Claude Code's own per-project memory
 

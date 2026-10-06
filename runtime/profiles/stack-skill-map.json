@@ -16,7 +16,8 @@
     "mattpocock-diagnose",
     "git-guardrails-claude-code",
     "ad-harness",
-    "harness-troubleshoot"
+    "harness-troubleshoot",
+    "big-feature-flow"
   ],
 
   "stacks": {

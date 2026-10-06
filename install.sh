@@ -35,6 +35,23 @@ NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
   || die "Node.js >=${MIN_NODE_MAJOR} required, found $(node -v)."
 ok "Prerequisites OK (node $(node -v))"
 
+# On Windows (Git Bash/MSYS) the terminal UI reads keys through Node's VT console
+# input: 22.17+ or 24.2+. Everything else in ad works on any Node 22.
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    NODE_MINOR="$(node -v | sed 's/^v//' | cut -d. -f2)"
+    if { [ "$NODE_MAJOR" -eq 22 ] && [ "$NODE_MINOR" -lt 17 ]; } || [ "$NODE_MAJOR" -eq 23 ] \
+      || { [ "$NODE_MAJOR" -eq 24 ] && [ "$NODE_MINOR" -lt 2 ]; }; then
+      printf '\033[1;33m!\033[0m Node %s: the ad terminal UI needs 22.17+ or 24.2+ on Windows (everything else works).\n' "$(node -v)"
+      if [ "$NODE_MAJOR" -eq 22 ] || [ "$NODE_MAJOR" -eq 24 ]; then
+        printf '  Upgrade within %s.x (same native-module ABI, nothing to rebuild).\n' "$NODE_MAJOR"
+      else
+        printf '  Upgrade to Node 24.2+, then run: cd "%s/runtime" && npm rebuild\n' "$INSTALL_DIR"
+      fi
+    fi
+    ;;
+esac
+
 # 2. Clone or update --------------------------------------------------------
 if [ -d "$INSTALL_DIR/.git" ]; then
   if [ -n "$AD_VERSION" ]; then
@@ -62,7 +79,8 @@ ok "Source ready at $INSTALL_DIR"
 
 # 3. Install + link ---------------------------------------------------------
 say "Installing dependencies + linking the \`ad\` command"
-( cd "$INSTALL_DIR/runtime" && npm install && npm link )
+# --omit=dev: test-only packages (terminal emulators for screen tests) stay out of user installs.
+( cd "$INSTALL_DIR/runtime" && npm install --omit=dev && npm link --omit=dev )
 ok "\`ad\` command registered globally"
 
 # 4. Verify -----------------------------------------------------------------

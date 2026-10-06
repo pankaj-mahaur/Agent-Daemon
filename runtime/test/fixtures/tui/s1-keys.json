@@ -1,0 +1,43 @@
+{
+  "_comment": "Bytes recorded by `tui-probe keys` (Windows Terminal, Node 22.23.2, 2026-10-05, ~/.agent-daemon/logs/tui-probe-keys-2026-10-05T13-46-41-875Z.log) and taken from Zed's crates/terminal/src/mappings/keys.rs (2026-08-19). Expected events are what input.mjs must decode them to.",
+  "keys": [
+    { "terminal": "wt", "label": "Enter", "hex": "0d", "expect": { "name": "enter" } },
+    { "terminal": "wt", "label": "Shift+Enter (sent as Enter)", "hex": "0d", "expect": { "name": "enter" } },
+    { "terminal": "wt", "label": "Ctrl+Enter", "hex": "0a", "expect": { "name": "newline" } },
+    { "terminal": "wt", "label": "Ctrl+J", "hex": "0a", "expect": { "name": "newline" } },
+    { "terminal": "wt", "label": "Esc", "hex": "1b", "expect": { "name": "escape" } },
+    { "terminal": "wt", "label": "Tab", "hex": "09", "expect": { "name": "tab" } },
+    { "terminal": "wt", "label": "Shift+Tab", "hex": "1b5b5a", "expect": { "name": "tab", "shift": true } },
+    { "terminal": "wt", "label": "Shift+Left", "hex": "1b5b313b3244", "expect": { "name": "left", "shift": true } },
+    { "terminal": "wt", "label": "Shift+Down", "hex": "1b5b313b3242", "expect": { "name": "down", "shift": true } },
+    { "terminal": "wt", "label": "Shift+Up", "hex": "1b5b313b3241", "expect": { "name": "up", "shift": true } },
+    { "terminal": "wt", "label": "Shift+Right", "hex": "1b5b313b3243", "expect": { "name": "right", "shift": true } },
+    { "terminal": "wt", "label": "Ctrl+Down", "hex": "1b5b313b3542", "expect": { "name": "down", "ctrl": true } },
+    { "terminal": "wt", "label": "Ctrl+Up", "hex": "1b5b313b3541", "expect": { "name": "up", "ctrl": true } },
+    { "terminal": "wt", "label": "Ctrl+Left", "hex": "1b5b313b3544", "expect": { "name": "left", "ctrl": true } },
+    { "terminal": "wt", "label": "Ctrl+Right", "hex": "1b5b313b3543", "expect": { "name": "right", "ctrl": true } },
+    { "terminal": "wt", "label": "Alt+Left", "hex": "1b5b313b3344", "expect": { "name": "left", "alt": true } },
+    { "terminal": "wt", "label": "Alt+Down", "hex": "1b5b313b3342", "expect": { "name": "down", "alt": true } },
+    { "terminal": "wt", "label": "Alt+Up", "hex": "1b5b313b3341", "expect": { "name": "up", "alt": true } },
+    { "terminal": "wt", "label": "Alt+Right", "hex": "1b5b313b3343", "expect": { "name": "right", "alt": true } },
+    { "terminal": "wt", "label": "Backspace", "hex": "7f", "expect": { "name": "backspace" } },
+    { "terminal": "wt", "label": "Ctrl+Backspace", "hex": "08", "expect": { "name": "backspace", "ctrl": true } },
+    { "terminal": "wt", "label": "Ctrl+C", "hex": "03", "expect": { "name": "c", "ctrl": true } },
+    { "terminal": "wt", "label": "Ctrl+Z", "hex": "1a", "expect": { "name": "z", "ctrl": true } },
+    { "terminal": "zed", "label": "Shift+Enter", "hex": "0a", "expect": { "name": "newline" } },
+    { "terminal": "zed", "label": "Alt+Enter", "hex": "1b0d", "expect": { "name": "enter", "alt": true } },
+    { "terminal": "zed", "label": "Ctrl+Backspace", "hex": "08", "expect": { "name": "backspace", "ctrl": true } },
+    { "terminal": "zed", "label": "Alt+Backspace", "hex": "1b7f", "expect": { "name": "backspace", "alt": true } },
+    { "terminal": "zed", "label": "Shift+Tab", "hex": "1b5b5a", "expect": { "name": "tab", "shift": true } },
+    { "terminal": "zed", "label": "Ctrl+Space", "hex": "00", "expect": { "name": "space", "ctrl": true } },
+    { "terminal": "zed", "label": "Alt+x", "hex": "1b78", "expect": { "name": "x", "alt": true } },
+    { "terminal": "zed", "label": "Ctrl+Alt+x", "hex": "1b18", "expect": { "name": "x", "ctrl": true, "alt": true } },
+    { "terminal": "zed", "label": "Shift+Home", "hex": "1b5b313b3248", "expect": { "name": "home", "shift": true } },
+    { "terminal": "zed", "label": "Ctrl+PageUp", "hex": "1b5b353b357e", "expect": { "name": "pageup", "ctrl": true } }
+  ],
+  "replies": [
+    { "terminal": "wt", "label": "DECRQM ?2026", "hex": "1b5b3f323032363b322479", "expect": { "type": "reply", "kind": "decrqm", "mode": 2026, "value": 2 } },
+    { "terminal": "wt", "label": "DA1", "hex": "1b5b3f36313b343b363b373b31343b32313b32323b32333b32343b32383b33323b34323b353263", "expect": { "type": "reply", "kind": "da1" } },
+    { "terminal": "zed", "label": "DA1", "hex": "1b5b3f3663", "expect": { "type": "reply", "kind": "da1" } }
+  ]
+}

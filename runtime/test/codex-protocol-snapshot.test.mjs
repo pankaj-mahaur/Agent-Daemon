@@ -80,3 +80,31 @@ test("shapeOf names untagged union variants stably and uniquely", () => {
   assert.ok(tags.includes("accept"));
   assert.equal(new Set(tags).size, tags.length, "tags must be unique");
 });
+
+// Review 3a M3: changes the old snapshot missed, and one it over-reported.
+const snap = (defs) => ({ codexVersion: "x", methods: {}, definitions: Object.fromEntries(Object.entries(defs).map(([k, v]) => [k, shapeOf(v)])) });
+
+test("diffSnapshots: a field changing type inside a union variant is breaking", () => {
+  const before = snap({ ThreadItem: { oneOf: [{ properties: { type: { enum: ["commandExecution"] }, command: { type: "string" } }, required: ["type"] }] } });
+  const after = snap({ ThreadItem: { oneOf: [{ properties: { type: { enum: ["commandExecution"] }, command: { type: "array", items: { type: "string" } } }, required: ["type"] }] } });
+  const d = diffSnapshots(before, after);
+  assert.ok(d.breaking.some((x) => /ThreadItem\[commandExecution\]\.command: type string -> array<string>/.test(x)), JSON.stringify(d));
+});
+
+test("diffSnapshots: a renamed key inside an inline object is breaking", () => {
+  const inner = (key) => ({ oneOf: [{ properties: { acceptWithExecpolicyAmendment: { type: "object", properties: { [key]: { type: "array", items: { type: "string" } } } } }, required: ["acceptWithExecpolicyAmendment"] }] });
+  const d = diffSnapshots(snap({ Decision: inner("execpolicy_amendment") }), snap({ Decision: inner("execpolicyAmendment") }));
+  assert.ok(d.breaking.length >= 1, JSON.stringify(d));
+});
+
+test("diffSnapshots: an inline enum losing a value is breaking", () => {
+  const def = (values) => ({ properties: { mode: { type: "string", enum: values } }, required: [] });
+  const d = diffSnapshots(snap({ P: def(["form", "url"]) }), snap({ P: def(["form"]) }));
+  assert.ok(d.breaking.some((x) => /P\.mode: type enum\(form\|url\) -> enum\(form\)/.test(x)), JSON.stringify(d));
+});
+
+test("diffSnapshots: a field that only became nullable is info, not breaking", () => {
+  const d = diffSnapshots(snap({ P: { properties: { cwd: { type: "string" } } } }), snap({ P: { properties: { cwd: { type: ["string", "null"] } } } }));
+  assert.deepEqual(d.breaking, []);
+  assert.ok(d.info.some((x) => /P\.cwd: now nullable/.test(x)), JSON.stringify(d));
+});

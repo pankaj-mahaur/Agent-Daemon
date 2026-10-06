@@ -29,7 +29,8 @@ $MinNodeMajor = 22
 
 function Say  ($m) { Write-Host "> $m"  -ForegroundColor Cyan }
 function Ok   ($m) { Write-Host "+ $m"  -ForegroundColor Green }
-function Die  ($m) { Write-Host "x $m"  -ForegroundColor Red; exit 1 }
+# throw, not exit: under `irm | iex` an exit would close the user's PowerShell window.
+function Die  ($m) { Write-Host "x $m"  -ForegroundColor Red; throw "agent-daemon install stopped: $m" }
 
 # 1. Prerequisites ----------------------------------------------------------
 foreach ($cmd in 'git', 'node', 'npm') {
@@ -38,11 +39,27 @@ foreach ($cmd in 'git', 'node', 'npm') {
   }
 }
 
-$nodeMajor = [int](node -p 'process.versions.node.split(".")[0]')
-if ($nodeMajor -lt $MinNodeMajor) {
-  Die "Node.js >=$MinNodeMajor required, found $(node -v)."
+# Parse `node -v` here: Windows PowerShell 5.1 strips the inner quotes of
+# `node -p '...split(".")...'`, so asking node to split always failed there.
+$nodeVersion = [version](((node -v).Trim() -replace '^v', '') -replace '-.*$', '')
+if ($nodeVersion.Major -lt $MinNodeMajor) {
+  Die "Node.js >=$MinNodeMajor required, found v$nodeVersion."
 }
-Ok "Prerequisites OK (node $(node -v))"
+Ok "Prerequisites OK (node v$nodeVersion)"
+
+# The terminal UI reads keys through Node's VT console input on Windows: 22.17+ or 24.2+.
+# Everything else in ad works on any Node 22.
+$tuiNode = ($nodeVersion.Major -eq 22 -and $nodeVersion.Minor -ge 17) -or ($nodeVersion.Major -eq 24 -and $nodeVersion.Minor -ge 2) -or ($nodeVersion.Major -ge 25)
+if (-not $tuiNode) {
+  Write-Host "! Node v$nodeVersion: the ad terminal UI needs 22.17+ or 24.2+ (everything else works)." -ForegroundColor Yellow
+  if ($nodeVersion.Major -eq 22) {
+    Write-Host "  Upgrade within 22.x (same native-module ABI, nothing to rebuild): winget install --id OpenJS.NodeJS.22 -e" -ForegroundColor Yellow
+  } elseif ($nodeVersion.Major -eq 24) {
+    Write-Host "  Upgrade within 24.x (same native-module ABI, nothing to rebuild): winget install --id OpenJS.NodeJS.LTS -e" -ForegroundColor Yellow
+  } else {
+    Write-Host "  Upgrade to Node 24.2+ (winget install --id OpenJS.NodeJS.LTS -e), then run: cd `"$InstallDir\runtime`"; npm rebuild" -ForegroundColor Yellow
+  }
+}
 
 # 2. Clone or update --------------------------------------------------------
 # Native commands don't throw on failure, so check each git exit code.
@@ -82,8 +99,11 @@ Ok "Source ready at $InstallDir"
 Say 'Installing dependencies + linking the `ad` command'
 Push-Location (Join-Path $InstallDir 'runtime')
 try {
-  npm install
-  npm link
+  # --omit=dev: test-only packages (terminal emulators for screen tests) stay out of user installs.
+  npm install --omit=dev
+  if ($LASTEXITCODE -ne 0) { Die 'npm install failed.' }
+  npm link --omit=dev
+  if ($LASTEXITCODE -ne 0) { Die 'npm link failed.' }
 } finally {
   Pop-Location
 }

@@ -9,6 +9,10 @@
 //   "stale-noise"     → a stale turn's delta + turn/completed arrive first
 //   "hang"            → never completes (tests timeouts; interrupt is recorded)
 //   "slow-start"      → turn/start answers only after 300 ms, then hangs
+//   "subagent"        → a child thread (parentThreadId) streams and asks an approval
+//   "user-input"      → item/tool/requestUserInput; "elicitation" → an MCP form
+//   "resolved-elsewhere" / "revert-pending" → an approval that serverRequest/resolved
+//                        or thread/reverted ends while it is open
 //   (outputSchema)    → final agent message is JSON `{"answer":42}`
 //   anything else     → "po"+"ng", an `error` notification, a command
 //                        approval, then "[<decision>]"
@@ -26,6 +30,9 @@ const calls = [];
 let serverReqId = 0;
 let threadSeq = 0;
 let turnSeq = 0;
+// Turn ids differ between fake processes, as real Codex's are unique: a
+// restarted engine must not reuse the crashed one's turn and item ids.
+const RUN = process.pid.toString(36);
 const loopTurns = new Map();
 const hung = new Map(); // "hang" turns, completed as interrupted by turn/interrupt
 let tokensUsed = 0;
@@ -53,19 +60,70 @@ function setPath(obj, keyPath, value) {
   else cur[parts.at(-1)] = value;
 }
 
-const send = (msg) => process.stdout.write(JSON.stringify(msg) + "\n");
+// Fields the real Codex always sends, filled in where a scenario leaves them
+// out, so every message matches the pinned protocol (test/tui-resilience).
+const fullThread = (t) => ({
+  cliVersion: "0.160.0",
+  createdAt: 0,
+  updatedAt: 0,
+  cwd: process.cwd(),
+  ephemeral: false,
+  modelProvider: "fake",
+  preview: "",
+  projectId: null,
+  sessionId: t?.id ?? "session",
+  source: "appServer",
+  status: { type: "idle" },
+  turns: [],
+  ...t,
+});
+function complete_(msg) {
+  const p = msg.params;
+  if (!p || typeof p !== "object") return msg;
+  if (msg.method === "item/started") return { ...msg, params: { startedAtMs: 0, ...p } };
+  if (msg.method === "item/completed") return { ...msg, params: { completedAtMs: 0, ...p } };
+  if (msg.method === "thread/started") return { ...msg, params: { ...p, thread: fullThread(p.thread) } };
+  if (msg.method === "item/commandExecution/requestApproval") return { ...msg, params: { itemId: `cmd-${msg.id}`, startedAtMs: 0, ...p } };
+  if (msg.method === "item/fileChange/requestApproval") return { ...msg, params: { startedAtMs: 0, ...p } };
+  if (msg.method === "execCommandApproval") return { ...msg, params: { conversationId: p.threadId ?? "c", callId: `call-${msg.id}`, cwd: process.cwd(), parsedCmd: [], ...p } };
+  if (msg.method === "thread/compacted") return { ...msg, params: { turnId: "compact", ...p } };
+  if (msg.method === "item/permissions/requestApproval") return { ...msg, params: { itemId: `perm-${msg.id}`, cwd: process.cwd(), startedAtMs: 0, ...p } };
+  return msg;
+}
+const send = (msg) => process.stdout.write(JSON.stringify(msg.method ? complete_(msg) : msg) + "\n");
 const notify = (method, params) => send({ method, params });
 
+const requestThreads = new Map(); // server request id → threadId
 function askClient(method, params) {
   const id = `srv-${++serverReqId}`;
+  requestThreads.set(id, params?.threadId ?? null);
   send({ id, method, params });
   return new Promise((resolve) => awaiting.set(id, resolve));
 }
 
-const agentMessage = (threadId, turnId, text) =>
-  notify("item/completed", { threadId, turnId, item: { type: "agentMessage", id: `msg-${turnId}`, text } });
-const complete = (threadId, turn, extra = {}) =>
-  notify("turn/completed", { threadId, turn: { ...turn, status: "completed", ...extra } });
+// Per-thread turn history (thread/turns/list, thread/resume, thread/revert).
+const history = new Map(); // threadId → [{id, status, items}]
+const turnsOf = (threadId) => (history.has(threadId) ? history.get(threadId) : history.set(threadId, []).get(threadId));
+const recordItem = (threadId, turnId, item) => turnsOf(threadId).find((t) => t.id === turnId)?.items.push(item);
+
+const agentMessage = (threadId, turnId, text) => {
+  const item = { type: "agentMessage", id: `msg-${turnId}`, text };
+  recordItem(threadId, turnId, item);
+  notify("item/completed", { threadId, turnId, item });
+};
+const complete = (threadId, turn, extra = {}) => {
+  const done = { ...turn, status: "completed", ...extra };
+  const t = turnsOf(threadId).find((x) => x.id === turn.id);
+  if (t) t.status = done.status;
+  notify("turn/completed", { threadId, turn: done });
+};
+// The user's message as Codex echoes it, with the client's id.
+const userMessage = (threadId, turnId, text, clientId, id = `um-${turnId}`) => {
+  const item = { type: "userMessage", id, content: [{ type: "text", text }], clientId: clientId ?? null };
+  recordItem(threadId, turnId, item);
+  notify("item/started", { threadId, turnId, item });
+  notify("item/completed", { threadId, turnId, item });
+};
 
 async function runScriptedTurn(threadId, turn, params) {
   const text = params.input?.[0]?.text ?? "";
@@ -101,6 +159,19 @@ async function runScriptedTurn(threadId, turn, params) {
     agentMessage(threadId, turn.id, `two[${a.result.decision},${b.result.decision}]`);
     return complete(threadId, turn);
   }
+  // Some providers reuse item ids across turns: the same id every time.
+  if (text.startsWith("same-id")) {
+    notify("item/started", { threadId, turnId: turn.id, item: { type: "agentMessage", id: "msg-same", text: "" } });
+    notify("item/agentMessage/delta", { threadId, turnId: turn.id, itemId: "msg-same", delta: `reply to ${text}` });
+    notify("item/completed", { threadId, turnId: turn.id, item: { type: "agentMessage", id: "msg-same", text: `reply to ${text}` } });
+    return complete(threadId, turn);
+  }
+  if (text === "apply-edit") {
+    const item = { type: "fileChange", id: "fc-applied", changes: [{ path: "src/app.js", kind: { type: "update" }, diff: "-a\n+b" }] };
+    notify("item/started", { threadId, turnId: turn.id, item: { ...item, status: "inProgress" } });
+    notify("item/completed", { threadId, turnId: turn.id, item: { ...item, status: "completed" } });
+    return complete(threadId, turn);
+  }
   if (text === "edit-file") {
     const item = { type: "fileChange", id: "fc-1", status: "inProgress", changes: [{ path: "src/app.js", kind: { type: "update" }, diff: "-a\n+b" }] };
     notify("item/started", { threadId, turnId: turn.id, item });
@@ -112,6 +183,66 @@ async function runScriptedTurn(threadId, turn, params) {
     const method = text === "ask-permission" ? "item/permissions/requestApproval" : "execCommandApproval";
     const reply = await askClient(method, { threadId, turnId: turn.id, permissions: { network: { enabled: true } }, command: ["ls"] });
     agentMessage(threadId, turn.id, JSON.stringify(reply.result ?? reply.error));
+    return complete(threadId, turn);
+  }
+  // Part 3b routing scenarios.
+  if (text === "future") {
+    // A synthetic newer Codex (plan Part 7): methods, item types, fields and
+    // enum values this ad has never seen, and a request it can't answer.
+    notify("thread/hologram/updated", { threadId, hologram: { depth: 3 } });
+    notify("item/started", { threadId, turnId: turn.id, item: { type: "hologramProjection", id: "holo-1", depth: 3 } });
+    notify("item/completed", { threadId, turnId: turn.id, item: { type: "hologramProjection", id: "holo-1", depth: 3 } });
+    notify("item/completed", { threadId, turnId: turn.id, item: { type: "commandExecution", id: "cmd-f", command: "ls", status: "teleported", exitCode: 0, aggregatedOutput: "a\n", commandActions: [{ type: "beam", command: "ls" }], futureField: { x: 1 } } });
+    notify("item/agentMessage/delta", { threadId, turnId: turn.id, itemId: "msg-f", delta: "from the future", sparkle: true });
+    notify("turn/plan/updated", { threadId, turnId: turn.id, plan: [{ step: "warp", status: "warping" }] });
+    notify("thread/tokenUsage/updated", { threadId, turnId: turn.id, tokenUsage: { total: { totalTokens: 10, quantumTokens: 2 }, last: { totalTokens: 10 }, modelContextWindow: 1000 } });
+    const reply = await askClient("item/teleport/requestApproval", { threadId, turnId: turn.id, itemId: "tp-1", destination: "mars" });
+    agentMessage(threadId, turn.id, `future[${reply.result?.decision ?? reply.error?.code}]`);
+    return complete(threadId, turn);
+  }
+  if (text === "subagent") {
+    const child = `child-of-${threadId}`;
+    notify("thread/started", { thread: { id: child, parentThreadId: threadId, agentNickname: "explorer", agentRole: "explorer" } });
+    notify("item/started", { threadId, turnId: turn.id, item: { type: "collabAgentToolCall", id: "collab-1", tool: "spawnAgent", status: "inProgress", receiverThreadIds: [child], senderThreadId: threadId } });
+    notify("item/agentMessage/delta", { threadId: child, turnId: "child-turn", itemId: "child-msg", delta: "child says hi" });
+    const reply = await askClient("item/commandExecution/requestApproval", { threadId: child, turnId: "child-turn", itemId: "child-cmd", command: "ls" });
+    agentMessage(threadId, turn.id, `subagent[${reply.result?.decision ?? reply.error?.code}]`);
+    return complete(threadId, turn);
+  }
+  if (text === "user-input") {
+    const reply = await askClient("item/tool/requestUserInput", {
+      threadId,
+      turnId: turn.id,
+      itemId: "ui-1",
+      isBlocking: true,
+      questions: [{ id: "q", header: "Pick", question: "Which one?", options: [{ label: "A", description: "first" }] }],
+    });
+    agentMessage(threadId, turn.id, `input${JSON.stringify(reply.result ?? reply.error)}`);
+    return complete(threadId, turn);
+  }
+  if (text === "elicitation") {
+    const reply = await askClient("mcpServer/elicitation/request", {
+      serverName: "jira",
+      threadId,
+      turnId: turn.id,
+      mode: "form",
+      message: "Ticket details?",
+      requestedSchema: { type: "object", properties: { title: { type: "string" } }, required: ["title"] },
+    });
+    agentMessage(threadId, turn.id, `elicit${JSON.stringify(reply.result ?? reply.error)}`);
+    return complete(threadId, turn);
+  }
+  if (text === "resolved-elsewhere" || text === "revert-pending") {
+    const id = `srv-${++serverReqId}`;
+    requestThreads.set(id, threadId);
+    send({ id, method: "item/commandExecution/requestApproval", params: { threadId, turnId: turn.id, itemId: "c1", command: "ls" } });
+    const reply = new Promise((resolve) => awaiting.set(id, resolve));
+    setTimeout(() => {
+      if (text === "resolved-elsewhere") notify("serverRequest/resolved", { threadId, requestId: id });
+      else notify("thread/reverted", { threadId, thread: { id: threadId } });
+    }, 50);
+    const r = await reply;
+    agentMessage(threadId, turn.id, `${text}[${r.result?.decision ?? r.error?.code}]`);
     return complete(threadId, turn);
   }
   notify("item/agentMessage/delta", { threadId, turnId: turn.id, itemId: `msg-${turn.id}`, delta: "po" });
@@ -187,7 +318,11 @@ async function onRequest({ id, method, params }) {
     case "config/read":
       return send({ id, result: { config: state.config, origins: {} } });
     case "config/batchWrite":
-      for (const e of params.edits) setPath(state.config, e.keyPath, e.value);
+      for (const e of params.edits) {
+        const cur = e.keyPath.split(".").reduce((o, k) => (o && typeof o === "object" ? o[k] : undefined), state.config);
+        const merge = e.mergeStrategy === "upsert" && cur && typeof cur === "object" && e.value && typeof e.value === "object";
+        setPath(state.config, e.keyPath, merge ? { ...cur, ...e.value } : e.value);
+      }
       if (configFile) writeFileSync(configFile, JSON.stringify(state.config));
       return send({ id, result: { status: "ok", version: "v1", filePath: "config.toml" } });
     case "thread/start":
@@ -196,9 +331,21 @@ async function onRequest({ id, method, params }) {
       return send({ id, result: { thread: { id: params.threadId }, model: "fake-model", modelProvider: "fake" } });
     case "turn/start": {
       const threadId = params.threadId;
-      const turn = { id: `turn-${++turnSeq}`, status: "inProgress", items: [] };
+      // A turn/start Codex rejects (as for a bad input or a thread it lost).
+      if ((params.input?.[0]?.text ?? "") === "reject-start") return send({ id, error: { code: -32600, message: "turn/start rejected" } });
+      const turn = { id: `turn-${RUN}-${++turnSeq}`, status: "inProgress", items: [] };
       const text = params.input?.[0]?.text ?? "";
-      if (text === "slow-start") return setTimeout(() => send({ id, result: { turn } }), 300);
+      turnsOf(threadId).push({ id: turn.id, status: "inProgress", items: [] });
+      // Codex echoes the prompt as the turn begins (here even before turn/start answers).
+      if (params.clientUserMessageId) userMessage(threadId, turn.id, text, params.clientUserMessageId);
+      if (text === "slow-start") {
+        // Answers late, then runs until interrupted.
+        return setTimeout(() => {
+          send({ id, result: { turn } });
+          notify("turn/started", { threadId, turn });
+          hung.set(turn.id, { threadId, turn });
+        }, 300);
+      }
       if (text === "early-complete") {
         agentMessage(threadId, turn.id, "early");
         complete(threadId, turn);
@@ -227,11 +374,83 @@ async function onRequest({ id, method, params }) {
       }
       return;
     }
-    case "turn/steer":
+    case "turn/steer": {
+      const h = hung.get(params.expectedTurnId);
+      if (!h || h.threadId !== params.threadId) return send({ id, error: { code: -32600, message: `no active turn ${params.expectedTurnId} to steer` } });
+      if (h.unsteerable) return send({ id, error: { code: -32600, message: "turn is not steerable (review)" } });
+      const text = params.input?.[0]?.text ?? "";
+      send({ id, result: { turnId: h.turn.id } });
+      userMessage(h.threadId, h.turn.id, text, params.clientUserMessageId, `um-steer-${h.turn.id}`);
+      // A steered turn finishes with a reply that names the steer.
+      setTimeout(() => {
+        if (!hung.has(h.turn.id)) return;
+        hung.delete(h.turn.id);
+        agentMessage(h.threadId, h.turn.id, `steered: ${text}`);
+        complete(h.threadId, h.turn);
+      }, 30);
+      return;
+    }
+    case "thread/turns/list": {
+      const all = turnsOf(params.threadId).map((t) => ({ ...t, itemsView: params.itemsView ?? "summary", items: params.itemsView === "full" ? t.items : [] }));
+      const ordered = params.sortDirection === "asc" ? all : [...all].reverse();
+      const start = params.cursor ? Number(params.cursor) : 0;
+      const limit = params.limit ?? ordered.length;
+      const page = ordered.slice(start, start + limit);
+      const next = start + limit < ordered.length ? String(start + limit) : null;
+      return send({ id, result: { data: page, nextCursor: next, backwardsCursor: null } });
+    }
+    case "review/start": {
+      const threadId = params.threadId;
+      const turn = { id: `turn-${RUN}-${++turnSeq}`, status: "inProgress", items: [] };
+      turnsOf(threadId).push({ id: turn.id, status: "inProgress", items: [] });
+      send({ id, result: { turn, reviewThreadId: threadId } });
+      notify("turn/started", { threadId, turn });
+      notify("item/completed", { threadId, turnId: turn.id, item: { type: "enteredReviewMode", id: `rv-in-${turn.id}`, review: "uncommitted changes" } });
+      if (params.target?.type === "custom" && params.target.instructions === "hang") return hung.set(turn.id, { threadId, turn, unsteerable: true });
+      agentMessage(threadId, turn.id, "review: looks fine");
+      notify("item/completed", { threadId, turnId: turn.id, item: { type: "exitedReviewMode", id: `rv-out-${turn.id}`, review: "looks fine" } });
+      return complete(threadId, turn);
+    }
+    case "thread/shellCommand": {
+      send({ id, result: {} });
+      const threadId = params.threadId;
+      const item = { type: "commandExecution", id: `sh-${++turnSeq}`, command: params.command, cwd: "/fake", status: "inProgress", source: "userShell", commandActions: [] };
+      notify("item/started", { threadId, turnId: "shell", item });
+      notify("item/commandExecution/outputDelta", { threadId, turnId: "shell", itemId: item.id, delta: "shell output\n" });
+      return notify("item/completed", { threadId, turnId: "shell", item: { ...item, status: "completed", exitCode: 0, aggregatedOutput: "shell output\n" } });
+    }
+    case "thread/revert": {
+      const turns = turnsOf(params.threadId);
+      const i = turns.findIndex((t) => t.id === params.beforeTurnId);
+      if (i < 0) return send({ id, error: { code: -32600, message: `unknown turn ${params.beforeTurnId}` } });
+      turns.splice(i);
+      send({ id, result: { thread: { id: params.threadId, turns: turns.map((t) => ({ ...t, items: [] })) } } });
+      return notify("thread/reverted", { threadId: params.threadId });
+    }
     case "thread/goal/clear":
       return send({ id, result: {} });
     case "thread/goal/set":
       return send({ id, result: { goal: { threadId: params.threadId, objective: params.objective, status: "active", tokensUsed: 0, timeUsedSeconds: 0, createdAt: 0, updatedAt: 0 } } });
+    case "thread/name/set":
+      notify("thread/name/updated", { threadId: params.threadId, threadName: params.name });
+      return send({ id, result: {} });
+    case "thread/fork": {
+      const forkId = `thread-${++threadSeq}`;
+      const src = turnsOf(params.threadId);
+      const cut = params.lastTurnId ? src.findIndex((t) => t.id === params.lastTurnId) + 1 : src.length;
+      history.set(forkId, src.slice(0, cut > 0 ? cut : src.length).map((t) => ({ ...t, items: [...t.items] })));
+      return send({ id, result: { thread: { id: forkId, forkedFromId: params.threadId }, model: "fake-model", modelProvider: "fake" } });
+    }
+    case "mcpServerStatus/list":
+      return send({ id, result: { data: [{ name: "memory", runtimeStatus: "ready", pluginId: null, httpOrigin: null, serverInfo: null }, { name: "broken", runtimeStatus: "failed", pluginId: null, httpOrigin: null, serverInfo: null }], nextCursor: null } });
+    case "skills/list":
+      return send({ id, result: { data: [{ cwd: params?.cwds?.[0] ?? "", skills: [{ name: "debug-triage", description: "Find the cause of a bug", path: "/s/debug-triage/SKILL.md", scope: "user", enabled: true, pluginId: null }], errors: [] }] } });
+    case "account/usage/read":
+      return send({ id, result: { summary: { lifetimeTokens: 123456, peakDailyTokens: 5000, longestRunningTurnSec: 90, currentStreakDays: 3, longestStreakDays: 7 }, dailyUsageBuckets: null } });
+    case "fuzzyFileSearch":
+      return send({ id, result: { files: ["src/main.mjs", "src/app.mjs", "README.md"].filter((f) => f.includes(params?.query ?? "")).map((path) => ({ root: params.roots?.[0] ?? "", path, match_type: "file", file_name: path.split("/").pop(), score: 1, indices: null })) } });
+    case "model/list":
+      return send({ id, result: { data: [{ id: "fake-model", model: "fake-model", displayName: "Fake model", description: "for tests", hidden: false, supportedReasoningEfforts: [{ reasoningEffort: "low" }, { reasoningEffort: "high" }], defaultReasoningEffort: "low", isDefault: true }], nextCursor: null } });
     case "thread/list":
       return send({ id, result: { data: [{ id: "thread-old", preview: "fix the\nflaky test", cwd: params?.cwd ?? "", updatedAt: 1 }] } });
     case "test/fail":
@@ -254,6 +473,9 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   if (msg.method === undefined && awaiting.has(msg.id)) {
     awaiting.get(msg.id)(msg);
     awaiting.delete(msg.id);
+    // Codex announces every answered request (beh.rs resolve_server_request_on_thread_listener).
+    notify("serverRequest/resolved", { threadId: requestThreads.get(msg.id) ?? null, requestId: msg.id });
+    requestThreads.delete(msg.id);
     return;
   }
   if (msg.id === undefined) {

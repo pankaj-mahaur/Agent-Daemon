@@ -1,0 +1,33 @@
+── header ──
+╭────────────────────────────────────────────────────────────────────────────╮
+│ >_ Agent Daemon (v2.1.0) · on Codex 0.160.0 (tested)                       │
+│                                                                            │
+│ model:     gpt-5.x-codex medium · ChatGPT Go              /model to change │
+│ directory: D:\Program Files\my-projects\DriveYO · git: dev                 │
+│ memory:    142 learnings · profile loaded                          /memory │
+│ sandbox:   workspace-write · asks first · Windows sandbox ready            │
+╰────────────────────────────────────────────────────────────────────────────╯
+── status ──
+◦ Checking token refresh (14s · esc to interrupt)
+  ↳ queued: also run the signup test                                                                           tab: edit
+── footer idle ──
+  ? shortcuts · @ files · ctrl+j newline                                                               ctx 100% · 5h 34%
+── footer busy ──
+  enter steer · tab queue · ctrl+j newline                                                  ctx 91% · 5h 38% · loop 3/20
+── shortcuts ──
+Shortcuts
+  enter        send (steers a running turn)
+  ctrl+enter   new line (\ + enter works too)
+  tab          queue for after this turn
+  esc          interrupt the turn
+  ctrl+c       clear, interrupt, then quit
+  ↑ / ↓        history (at the first/last line)
+  ctrl+r       search history
+  @            mention a file
+  /            commands
+  !            run a shell command (unsandboxed)
+  esc esc      rewind to an earlier prompt
+  ctrl+t       the whole transcript
+  ctrl+g       edit the prompt in your editor
+  alt+, alt+.  lower / raise reasoning effort
+  ctrl+l       redraw the screen

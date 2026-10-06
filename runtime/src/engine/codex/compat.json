@@ -1,0 +1,11 @@
+{
+  "pinned": "0.160.0",
+  "tested": [
+    "0.159.2",
+    "0.160.0"
+  ],
+  "whatChanged": {
+    "0.160.0": "Protocol unchanged from 0.159.2. ad maps all 63 stable notifications; the 22 experimental ones are ignored on purpose.",
+    "0.159.2": "First Codex version ad's terminal UI was built against."
+  }
+}

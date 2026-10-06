@@ -12,7 +12,8 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolveCodexCommand } from "./app-server.mjs";
+import { CODEX_MISSING, resolveCodexCommand } from "./app-server.mjs";
+import { codexEnv } from "./home.mjs";
 
 // Definitions the engine sends or reads. Add a name here whenever engine
 // code starts depending on a new request/response/notification shape.
@@ -64,6 +65,17 @@ const methodsOf = (schema) =>
     .filter(Boolean)
     .sort();
 
+// method → the name of its params type, for what Codex sends us. Their
+// shapes are tracked too, so the fake server's messages can be checked
+// against the pinned protocol (testkit/protocol-check.mjs).
+const paramsOf = (schema) =>
+  Object.fromEntries(
+    (schema.oneOf ?? schema.anyOf ?? [])
+      .map((o) => [o.properties?.method?.enum?.[0], typeLabel(o.properties?.params)])
+      .filter(([m, t]) => m && t && t !== "any" && /^[A-Z]\w*$/.test(t))
+      .sort(([a], [b]) => a.localeCompare(b)),
+  );
+
 // A stable name for a union variant that survives field additions:
 // discriminator value → single-key object name → title → $ref → enum value.
 function variantTag(v) {
@@ -89,19 +101,47 @@ export function shapeOf(def) {
           seen.set(tag, n);
           if (n > 1) tag = `${tag}#${n}`;
           const props = v.properties ? Object.keys(v.properties).sort() : undefined;
-          return props ? { tag, props } : { tag };
+          if (!props) return { tag };
+          // Variant fields carry their types too: a field changing type inside a
+          // variant (ThreadItem.command string → array) breaks readers.
+          return { tag, props, types: Object.fromEntries(props.map((k) => [k, typeLabel(v.properties[k])])) };
         })
         .sort((a, b) => String(a.tag).localeCompare(String(b.tag))),
     };
   }
   if (def.enum) return { enum: [...def.enum].sort() };
   if (def.properties) {
+    const props = Object.keys(def.properties).sort();
     return {
       required: [...(def.required ?? [])].sort(),
-      props: Object.keys(def.properties).sort(),
+      props,
+      types: Object.fromEntries(props.map((k) => [k, typeLabel(def.properties[k])])),
     };
   }
   return { type: def.type ?? null };
+}
+
+// A short, stable label for a property's type: "string", "string|null",
+// a definition name, "A|null" for an optional reference, "array<T>".
+export function typeLabel(p, depth = 0) {
+  if (!p || p === true) return "any";
+  if (p.$ref) return p.$ref.split("/").pop();
+  if (p.allOf?.length === 1) return typeLabel(p.allOf[0], depth);
+  const variants = p.anyOf ?? p.oneOf;
+  if (variants) return [...new Set(variants.map((v) => typeLabel(v, depth)))].sort().join("|");
+  // Inline enums keep their values; inline objects their fields (two levels),
+  // so a renamed inner key or a dropped enum value shows up in the diff.
+  if (p.enum) return `enum(${[...p.enum].map(String).sort().join("|")})`;
+  if (p.properties && depth < 2) {
+    const keys = Object.keys(p.properties).sort();
+    return `{${keys.map((k) => `${k}:${typeLabel(p.properties[k], depth + 1)}`).join(",")}}`;
+  }
+  const types = Array.isArray(p.type) ? p.type : p.type ? [p.type] : [];
+  if (!types.length) return "any";
+  return types
+    .map((t) => (t === "array" ? `array<${typeLabel(p.items, depth)}>` : t))
+    .sort()
+    .join("|");
 }
 
 // The v2 bundle holds most definitions; a few (approval decisions) only
@@ -119,8 +159,13 @@ function collectDefinitions(schemaDir, read) {
 export function buildSnapshot(schemaDir, codexVersion) {
   const read = (f) => JSON.parse(readFileSync(join(schemaDir, f), "utf8"));
   const defs = collectDefinitions(schemaDir, read);
+  const params = {
+    serverNotifications: paramsOf(read("ServerNotification.json")),
+    serverRequests: paramsOf(read("ServerRequest.json")),
+  };
+  const names = new Set([...TRACKED_DEFINITIONS, ...Object.values(params.serverNotifications), ...Object.values(params.serverRequests)]);
   const definitions = {};
-  for (const name of TRACKED_DEFINITIONS) definitions[name] = shapeOf(defs[name]);
+  for (const name of [...names].sort((a, b) => TRACKED_DEFINITIONS.indexOf(a) - TRACKED_DEFINITIONS.indexOf(b) || a.localeCompare(b))) if (defs[name]) definitions[name] = shapeOf(defs[name]);
   return {
     codexVersion,
     methods: {
@@ -129,6 +174,7 @@ export function buildSnapshot(schemaDir, codexVersion) {
       serverRequests: methodsOf(read("ServerRequest.json")),
       serverNotifications: methodsOf(read("ServerNotification.json")),
     },
+    params,
     definitions,
   };
 }
@@ -137,15 +183,36 @@ export function buildSnapshot(schemaDir, codexVersion) {
 // Defaults to the PINNED binary (empty env: AD_CODEX_BIN is ignored), since
 // the snapshot is labelled with the pinned version.
 export function generateSnapshot({ command = resolveCodexCommand({}), codexVersion } = {}) {
+  if (!command.cmd) throw new Error(CODEX_MISSING);
   const dir = mkdtempSync(join(tmpdir(), "ad-codex-schema-"));
+  // Its own throwaway CODEX_HOME too: Codex's default is the user's ~/.codex.
+  const home = mkdtempSync(join(tmpdir(), "ad-codex-schema-home-"));
   try {
     execFileSync(command.cmd, [...command.prefix, "app-server", "generate-json-schema", "--out", dir], {
       stdio: ["ignore", "ignore", "pipe"],
       windowsHide: true,
+      env: codexEnv({ home }),
     });
     return buildSnapshot(dir, codexVersion);
   } finally {
     rmSync(dir, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+
+// A field that changed type breaks whoever reads or sends it; one that only
+// became nullable is worth knowing but isn't breaking for a reader that copes.
+function typeChanges(where, ta = {}, tb = {}, breaking, info) {
+  for (const [prop, a] of Object.entries(ta ?? {})) {
+    const b = tb?.[prop];
+    if (b === undefined || b === a) continue;
+    const parts = (t) => new Set(t.split("|"));
+    const pa = parts(a);
+    const pb = parts(b);
+    const added = [...pb].filter((x) => !pa.has(x));
+    const removed = [...pa].filter((x) => !pb.has(x));
+    if (!removed.length && added.length === 1 && added[0] === "null") info.push(`${where}.${prop}: now nullable (${a} -> ${b})`);
+    else breaking.push(`${where}.${prop}: type ${a} -> ${b}`);
   }
 }
 
@@ -176,6 +243,8 @@ export function diffSnapshots(oldSnap, newSnap) {
       d.removed.forEach((x) => breaking.push(`${name}.${key}: removed ${x}`));
       d.added.forEach((x) => info.push(`${name}.${key}: added ${x}`));
     }
+    // A field that changed type breaks whoever reads or sends it.
+    typeChanges(name, a.types, b.types, breaking, info);
     const req = setDiff(a.required, b.required);
     req.added.forEach((x) => breaking.push(`${name}: ${x} is now required`));
     req.removed.forEach((x) => info.push(`${name}: ${x} is no longer required`));
@@ -187,6 +256,7 @@ export function diffSnapshots(oldSnap, newSnap) {
       for (const va of a.union ?? []) {
         const vb = (b.union ?? []).find((v) => String(v.tag) === String(va.tag));
         if (!vb) continue;
+        typeChanges(`${name}[${va.tag}]`, va.types, vb.types, breaking, info);
         const pd = setDiff(va.props, vb.props);
         pd.removed.forEach((p) => breaking.push(`${name}[${va.tag}]: removed ${p}`));
         pd.added.forEach((p) => info.push(`${name}[${va.tag}]: added ${p}`));

@@ -62,3 +62,22 @@ test("live checks: skipped without a harness home; report login, hooks, sandbox"
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+test("the version probe runs Codex in a throwaway CODEX_HOME, never ~/.codex", async () => {
+  const { existsSync } = await import("node:fs");
+  const { homedir } = await import("node:os");
+  const { join } = await import("node:path");
+  let seen = null;
+  codexChecks({ env: { ...env, CODEX_HOME: join(homedir(), ".codex") }, run: (_cmd, _args, opts) => { seen = opts.env.CODEX_HOME; return "codex-cli 1.0.0"; } });
+  assert.ok(seen, "CODEX_HOME is set explicitly");
+  assert.notEqual(seen, join(homedir(), ".codex"), "the inherited user home is replaced");
+  assert.match(seen, /ad-codex-version-/);
+  assert.equal(existsSync(seen), false, "the scratch home is removed afterwards");
+});
+
+test("a matching install also reports the tested versions and what changed (compat.json)", () => {
+  const checks = codexChecks({ env, run: () => `codex-cli ${pinnedCodexVersion()}` });
+  const compat = checks.find((c) => c.name === "Codex compatibility");
+  assert.ok(compat, "compat line present");
+  assert.match(compat.note, new RegExp(`tested: .*${pinnedCodexVersion().replace(/\./g, "\.")}`));
+});

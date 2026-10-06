@@ -143,3 +143,38 @@ test("JSON-RPC hygiene: stray responses and unknown notifications get no reply; 
   await done;
   assert.deepEqual(replies.map((m) => [m.id, m.error?.code]), [[5, -32600], [null, -32700]]);
 });
+
+test("one session's prompt ending keeps another running session's edit diff for its permission request", async () => {
+  const { EventEmitter } = await import("node:events");
+  const { createAcpAgent } = await import("../src/harness/acp.mjs");
+  const engine = new EventEmitter();
+  let n = 0;
+  const turns = new Map(); // threadId → resolve
+  engine.startThread = async () => ({ threadId: `t${++n}` });
+  engine.turn = ({ threadId, onEvent }) => {
+    onEvent({ type: "turnStarted", turnId: `turn-${threadId}` });
+    return new Promise((resolve) => turns.set(threadId, resolve));
+  };
+  engine.interrupt = async () => {};
+  engine.close = async () => {};
+  const asked = [];
+  const agent = createAcpAgent({
+    send: () => {},
+    request: async (method, params) => (asked.push(params), { outcome: { outcome: "selected", optionId: "allow_once" } }),
+    engineFactory: async () => ({ engine }),
+    err: { write: () => true },
+  });
+  const a = (await agent.handle("session/new", { cwd: "/a" })).sessionId;
+  const b = (await agent.handle("session/new", { cwd: "/b" })).sessionId;
+  const pa = agent.handle("session/prompt", { sessionId: a, prompt: [{ type: "text", text: "edit" }] });
+  engine.emit("itemStarted", { threadId: a, item: { type: "fileChange", id: "fc-a", changes: [{ path: "a.js", diff: "-x\n+y" }] } });
+  const pb = agent.handle("session/prompt", { sessionId: b, prompt: [{ type: "text", text: "hi" }] });
+  turns.get(b)({ status: "completed" });
+  await pb; // B's prompt ends while A's edit waits for approval
+  assert.equal(await engine.onApproval({ kind: "fileChange", params: { threadId: a, itemId: "fc-a" } }), "accept");
+  assert.equal(asked[0].toolCall.title, "Edit a.js", "A's diff is still there");
+  assert.match(asked[0].toolCall.content[0].content.text, /a\.js\n-x\n\+y/);
+  turns.get(a)({ status: "completed" });
+  await pa;
+  await agent.close();
+});

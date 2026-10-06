@@ -23,10 +23,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node.js ${{ matrix.node }}
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
           cache: npm
@@ -69,3 +69,43 @@ jobs:
               console.log('shape OK', { ours: j.ours, ecc: j.ecc, netNew: j['net-new'].length });
             });
           "
+
+  engine-real:
+    # The real pinned Codex binary against a mock model (runtime/testkit/mock-responses.mjs).
+    # continue-on-error while each platform's sandbox behaviour is being learned (plan S2).
+    name: real engine / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: runtime/package-lock.json
+
+      - name: Install runtime deps
+        working-directory: runtime
+        run: npm ci
+
+      # Ubuntu 24.04 runners block unprivileged user namespaces through AppArmor,
+      # which Codex's bubblewrap sandbox needs (plan S2). Runner VMs are throwaway.
+      - name: Allow user namespaces for the Linux sandbox
+        if: runner.os == 'Linux'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      # engine-real: the protocol; tui-live: the FC3 script, the real ad tui in a pty.
+      - name: Real Codex vs mock model
+        working-directory: runtime
+        env:
+          AD_REAL_ENGINE: "1"
+        run: node --test --test-concurrency=1 --test-force-exit test/engine-real.test.mjs test/tui-live.test.mjs

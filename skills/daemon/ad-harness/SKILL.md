@@ -1,11 +1,11 @@
 ---
 name: ad-harness
-description: "Use when work should be handed to agent-daemon's own agent harness instead of done inline — \"run this in the background\", \"keep working until it's done\", \"loop on this\", \"schedule this every morning\", \"har roz chalao\", \"background mein karwa do\", \"ad run / ad loop / ad schedule\", \"let codex do it\", \"spawn a worker\". Picks the right command (ad run, ad loop, ad schedule, ad sp), sets budgets and the sandbox, and verifies the result yourself afterwards."
+description: "Use when work should be handed to agent-daemon's own agent harness instead of done inline — \"run this in the background\", \"keep working until it's done\", \"loop on this\", \"schedule this every morning\", \"har roz chalao\", \"background mein karwa do\", \"ad run / ad loop / ad schedule\", \"let codex do it\", \"spawn a worker\". Picks the command (ad run, ad loop, ad schedule, ad sp; ad tui for the user), sets budgets and the sandbox, and verifies the result yourself afterwards."
 license: MIT
 metadata:
   author: agent-daemon
   spec: agentskills.io
-  version: "1.0"
+  version: "1.1"
 allowed-tools: Bash, Read
 ---
 
@@ -36,6 +36,7 @@ Don't delegate one-line edits or anything that needs back-and-forth design. Do t
    | iterate until an objective is met | `ad loop "<objective>" --max-iterations N --max-minutes M` |
    | recurring | `ad schedule add "<cron>" run\|loop "<prompt>" --cwd <repo>`, which needs `ad watch` or `ad service install` running |
    | parallel workers on branches | `ad tc` (team create), then `ad sp` (Codex worker by default) |
+   | the user wants to work with the agent themselves, watching and approving | tell them to run `ad tui` (Codex-style terminal UI; `ad tui --last` continues) or `ad codex` (the stock Codex UI on ad's home). Both need an interactive terminal, so you can't drive them from a tool call. Guide: `docs/tui.md` |
 
 3. **Write the prompt as a spec:** the goal, the files involved, how to verify ("`node --test` passes"), and what *not* to touch. For `ad loop`, state a verifiable finish line. The loop stops only when the agent reports `done` + `exit_signal`, or a brake trips.
 4. **Set brakes.** Always pass `--max-iterations` / `--max-minutes` for loops. Default sandbox is `workspace-write`; never pass `--sandbox danger-full-access` unless the user asked for it.
