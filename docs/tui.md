@@ -311,7 +311,7 @@ A Codex command ad doesn't have yet answers "Unknown command … /help lists the
 `/undo` puts back the files the last turn's edits changed, then rewinds the conversation to before that turn. Your prompt comes back in the composer.
 
 **How it works.** In a git repo, while `ad tui` runs, ad takes a snapshot of your working folder before and after each turn.
-- The "before" snapshot is started when you press Enter, so everything you saved before sending is in it. If it isn't ready within 1 s, that turn gets no checkpoint: ad never guesses. (Snapshots while you type only warm git's caches.)
+- The "before" snapshot is started when you press Enter, so everything you saved before sending is in it. Sending doesn't wait for it. If the agent starts an edit before the snapshot is done, that turn gets no checkpoint: ad never guesses. (Snapshots while you type only warm git's caches.)
 - The "after" snapshot is started once the turn has ended.
 - Snapshots are git trees under `refs/ad/checkpoints/<thread>/`. Nothing goes into Codex's session files.
 - ad uses its own index (`.git/ad-checkpoint-index`). Your index, HEAD, branches and stash are never touched.

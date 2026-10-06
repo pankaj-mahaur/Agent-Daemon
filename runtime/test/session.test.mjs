@@ -292,15 +292,19 @@ test("review, shell, goal and revert", async () => {
   });
 });
 
-test("itemCompleted fires for each completed item of the thread, with its turn (for /undo's edit hashes)", async () => {
+test("itemStarted / itemCompleted fire for the thread's items, with their turn (for /undo)", async () => {
   const seen = [];
-  await withSession(() => ({ hooks: { itemCompleted: ({ item }) => seen.push(item) } }), async ({ session }) => {
+  const started = [];
+  await withSession(() => ({ hooks: { itemStarted: ({ item }) => started.push({ ...item }), itemCompleted: ({ item }) => seen.push(item) } }), async ({ session }) => {
     await session.submit("apply-edit").done;
     const fc = seen.find((i) => i.kind === "fileChange");
     assert.ok(fc, "the applied edit");
     assert.equal(fc.status, "completed");
     assert.equal(fc.turnId, session.state.turns.at(-1).id);
     assert.equal(fc.changes[0].path, "src/app.js");
+    const st = started.find((i) => i.kind === "fileChange");
+    assert.equal(st?.status, "inProgress", "itemStarted fires before the edit lands");
+    assert.equal(st.turnId, fc.turnId);
   });
 });
 

@@ -350,7 +350,7 @@ export function createSession({
       case "item.started":
       case "item.completed":
         placeItem({ ...ev.item, streaming: ev.type === "item.started" }, ev);
-        if (root && ev.type === "item.completed") hooks.itemCompleted?.({ item: state.items.get(itemKey(ev.item.id, ev.turnId)), session: api });
+        if (root) (ev.type === "item.completed" ? hooks.itemCompleted : hooks.itemStarted)?.({ item: state.items.get(itemKey(ev.item.id, ev.turnId)), session: api });
         break;
       case "item.delta":
         applyDelta(ev);

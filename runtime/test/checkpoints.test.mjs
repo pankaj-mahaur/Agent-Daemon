@@ -422,3 +422,57 @@ test("a stale lock on ad's private index (git killed at its timeout) doesn't sto
     r.done();
   }
 });
+
+test("an edit named through another path to the repo (8.3 short name, junction, symlink) is still the agent's", async () => {
+  const { symlinkSync } = await import("node:fs");
+  const root = mkdtempSync(join(tmpdir(), "ad-real-"));
+  const link = `${root}-link`;
+  try {
+    symlinkSync(root, link, "junction"); // a junction on Windows (no admin needed), a symlink elsewhere
+    const { cp } = fakeCp();
+    cp.repo = async () => ({ root });
+    const w = checkpointWiring(cp, { cwd: link });
+    const s = fakeSession();
+    await w.hooks.beforeTurn({ input: [] });
+    w.hooks.turnStarted({ turn: { id: "u1" } });
+    // Codex names the files by the other path; one of them doesn't exist (deleted).
+    s.state.items.set("fc", { id: "fc", turnId: "u1", kind: "fileChange", status: "completed", changes: [{ path: join(link, "src", "gone.js") }, { path: "rel.txt" }] });
+    w.hooks.itemCompleted({ item: s.state.items.get("fc") });
+    s.state.turns.push({ id: "u1", status: "completed", itemIds: ["fc"] });
+    await w.hooks.turnCompleted({ turn: { id: "u1" }, session: s });
+    await w.undo(s);
+    assert.deepEqual(cp.lastRestore.agentPaths.sort(), ["rel.txt", "src/gone.js"]);
+  } finally {
+    rmSync(link, { recursive: false, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the prompt never waits for the 'before'; it counts only if done before the agent's first edit started", async () => {
+  for (const editFirst of [true, false]) {
+    const { cp, recorded, release } = fakeCp({ slowBefore: true });
+    const w = checkpointWiring(cp, { cwd: "/repo", waitMs: 2000 });
+    const s = fakeSession();
+    let sent = false;
+    await Promise.race([w.hooks.beforeTurn({ input: [] }).then(() => (sent = true)), new Promise((r) => setTimeout(r, 200))]);
+    assert.ok(sent, "sending doesn't wait for a slow snapshot");
+    w.hooks.turnStarted({ turn: { id: "u1" } });
+    const fc = { id: "fc", turnId: "u1", kind: "fileChange", status: "inProgress", changes: [{ path: "a.js" }] };
+    s.state.items.set("fc", fc);
+    if (editFirst) w.hooks.itemStarted({ item: fc });
+    release({ tree: "before-tree", skipped: [] });
+    await new Promise((r) => setTimeout(r, 10));
+    if (!editFirst) w.hooks.itemStarted({ item: fc });
+    fc.status = "completed";
+    w.hooks.itemCompleted({ item: fc });
+    s.state.turns.push({ id: "u1", status: "completed", itemIds: ["fc"] });
+    await w.hooks.turnCompleted({ turn: { id: "u1" }, session: s });
+    if (editFirst) {
+      assert.deepEqual(recorded, [], "an edit that may be in the 'before' leaves the turn without a checkpoint");
+      assert.match((await w.undo(s)).error, /no checkpoint \(the agent's first edit started before the snapshot was done\)/);
+    } else {
+      assert.equal(recorded.length, 1, "done before the first edit: the checkpoint counts");
+      assert.equal(recorded[0].before, "before-tree");
+    }
+  }
+});

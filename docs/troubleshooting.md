@@ -478,7 +478,7 @@ With any of these, nothing is undone.
 
 **Other `/undo` messages:**
 
-- `The last turn has no checkpoint (…)`: the snapshot started when you sent the prompt wasn't ready within 1 s (a very large working folder), snapshots fail in this repo (git's message follows), or the turn ran before `ad tui` started.
+- `The last turn has no checkpoint (…)`: the agent's first edit started before the snapshot taken when you sent the prompt was done (a very large working folder, a busy machine), snapshots fail in this repo (git's message follows), or the turn ran before `ad tui` started.
 - `Not a git repo`: checkpoints need a git repo.
 - `A turn started meanwhile`: a prompt was sent while `/undo` was checking. Run `/undo` again once that turn finishes.
 - Ignored files, submodule contents and LFS files are never restored. With git older than 2.40, or with `.git/info/attributes` or `core.attributesFile` set, files with eol rules may come back normalized.

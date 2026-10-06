@@ -1270,4 +1270,7 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
   - **Docs:** Codex 0.160's exec approval offers `y` / `p` / Esc (no `n`); the first sandboxed action in a fresh Codex home on Windows takes ~35 s once (troubleshooting #29).
   - **Flip:** bare `ad` opens the TUI (`TUI_IS_DEFAULT = true`); `AD_TUI=0` opts out.
 - **v4.16** (2026-10-06): Part 12 analysed; the migration is deferred, and ACP's per-session diff defect is fixed.
+- **v4.17** (2026-10-06): two `/undo` fixes from the live runs (CI on Windows, and this machine under load):
+  - **Edit paths by another name:** Codex named the files by the folder's 8.3 short name (`C:\Users\RUNNER~1\…`) while git names the repo by its long path, so every agent edit looked outside the repo and `/undo` refused it. Both sides are now resolved to real paths (also junctions, `subst` drives, symlinks).
+  - **No wait at send:** the "before" snapshot was awaited up to 1 s; on a busy machine it took longer, and turns got no checkpoint. Now sending never waits, and the checkpoint counts only if the snapshot was done before the agent's first edit started (a new `itemStarted` session hook). Losing that race means no checkpoint, never a wrong one.
   - **Defensive, not reproduced live:** SIGINT/SIGBREAK are ignored for 1.5 s after a handoff (`/codex`, the editor), so an extra Ctrl+C landing before raw mode is back can't quit ad.

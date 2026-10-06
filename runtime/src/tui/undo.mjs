@@ -1,25 +1,38 @@
 // Wires checkpoints (harness/checkpoints.mjs) into a session and the app
 // (plan Part 10). A turn's "before" is a snapshot started when the prompt is
-// sent (the typing snapshot only warms git's caches), ready within `waitMs`;
-// otherwise that turn has no checkpoint, never an older guess. Its "after" is
-// a snapshot started after it ended. /undo undoes only the last finished
+// sent (the typing snapshot only warms git's caches). The prompt doesn't wait
+// for it: the checkpoint counts only if the snapshot was done before the
+// agent's first edit started; otherwise that turn has none, never a guess.
+// Its "after" is a snapshot started after it ended. /undo undoes only the last finished
 // turn, and only the files the agent's applied edits reported, as those edits
 // left them: each is hashed when its edit completes, so a change by the user
 // (or a command) during the turn is a conflict, not undone with the turn.
 
+import { realpathSync } from "node:fs";
 import path from "node:path";
 import { UNDO_LIMITS } from "../harness/checkpoints.mjs";
+
+// The real path, in its true case, of a file that may no longer exist (a
+// deleted file: its nearest existing folder's real path, plus the rest).
+function realPath(p) {
+  try {
+    return realpathSync.native(p);
+  } catch {
+    const dir = path.dirname(p);
+    return dir === p ? p : path.join(realPath(dir), path.basename(p));
+  }
+}
 
 const unwrapPrivate = (t) => {
   const m = /^<private>([\s\S]*)<\/private>$/.exec(String(t ?? ""));
   return m ? m[1] : t;
 };
 
-export function checkpointWiring(cp, { cwd = process.cwd(), waitMs = 1000, typingEveryMs = 5000, now = () => Date.now() } = {}) {
-  let pendingBefore = null;
+export function checkpointWiring(cp, { cwd = process.cwd(), waitMs = 60_000, typingEveryMs = 5000, now = () => Date.now() } = {}) {
+  let pendingBefore = null; // {promise, done, raced}: the next turn's "before"
   let undoing = null; // a running /undo: a new turn waits for it
   let lastTyping = -Infinity;
-  const befores = new Map(); // turnId → before tree
+  const befores = new Map(); // turnId → its pendingBefore
   const recorded = new Map(); // turnId → {skipped, agentBlobs}
   const written = new Map(); // turnId → [promise of {path: blob}] per applied edit, in order
   let hashing = Promise.resolve(); // one hash run at a time, in edit order
@@ -30,15 +43,28 @@ export function checkpointWiring(cp, { cwd = process.cwd(), waitMs = 1000, typin
     async beforeTurn({ input }) {
       if (undoing) await undoing.catch(() => {});
       // Started now, when the prompt is sent: anything the user saved before
-      // pressing Enter is in it, so /undo can't take it away.
-      const snap = await cp.beforeSnapshot({ since: now(), waitMs }).catch(() => null);
-      pendingBefore = snap ? { tree: snap.tree, skipped: snap.skipped ?? [] } : null;
+      // pressing Enter is in it, so /undo can't take it away. Not awaited.
+      const entry = { done: false, raced: false };
+      entry.promise = cp
+        .beforeSnapshot({ since: now(), waitMs })
+        .catch(() => null)
+        .then((snap) => {
+          entry.done = true;
+          return snap;
+        });
+      pendingBefore = entry;
       return input;
     },
     turnStarted({ turn }) {
       if (pendingBefore) befores.set(turn.id, pendingBefore);
-      else missing.set(turn.id, cp.lastError ? `snapshots fail here: ${cp.lastError}` : "the snapshot before it wasn't ready in time");
+      else missing.set(turn.id, "no snapshot was started for it");
       pendingBefore = null;
+    },
+    /** The agent starts an edit: a "before" not done by now may hold it, so it can't count. */
+    itemStarted({ item }) {
+      if (item?.kind !== "fileChange" || !item.turnId) return;
+      const b = befores.get(item.turnId);
+      if (b && !b.done) b.raced = true;
     },
     /** An applied edit: hash its files now, as the agent left them. */
     itemCompleted({ item }) {
@@ -60,6 +86,9 @@ export function checkpointWiring(cp, { cwd = process.cwd(), waitMs = 1000, typin
         // Started after the turn ended (not one still running from before it).
         const after = await cp.freshSnapshot(ended).catch(() => null);
         if (!before) return;
+        const snap = await before.promise;
+        if (!snap) return void missing.set(turn.id, cp.lastError ? `snapshots fail here: ${cp.lastError}` : "the snapshot before it wasn't ready in time");
+        if (before.raced) return void missing.set(turn.id, "the agent's first edit started before the snapshot was done");
         if (!after || !threadId) return void missing.set(turn.id, cp.lastError ? `snapshots fail here: ${cp.lastError}` : "the snapshot after it failed");
         // A hash that failed is left out: that path is then a conflict.
         const agentBlobs = {};
@@ -71,8 +100,8 @@ export function checkpointWiring(cp, { cwd = process.cwd(), waitMs = 1000, typin
           }
         }
         // What either snapshot left out was never captured on that side.
-        const skipped = [...new Set([...(before.skipped ?? []), ...(after.skipped ?? [])])];
-        if (await cp.record(threadId, turn.id, { before: before.tree, after: after.tree }).catch(() => false)) recorded.set(turn.id, { skipped, agentBlobs });
+        const skipped = [...new Set([...(snap.skipped ?? []), ...(after.skipped ?? [])])];
+        if (await cp.record(threadId, turn.id, { before: snap.tree, after: after.tree }).catch(() => false)) recorded.set(turn.id, { skipped, agentBlobs });
       })();
       job.finally(() => written.delete(turn.id));
       recording.set(turn.id, job);
@@ -84,9 +113,12 @@ export function checkpointWiring(cp, { cwd = process.cwd(), waitMs = 1000, typin
   // An edit's files, relative to the repo root, "/"-separated.
   function relPaths(item, root) {
     const out = [];
+    const top = realPath(root);
     for (const c of item.changes ?? []) {
       for (const p of [c.path, c.movePath].filter(Boolean)) {
-        const rel = path.relative(root, path.resolve(cwd, p)).split(path.sep).join("/");
+        // Both real: Codex may name the folder by an 8.3 short name, a junction
+        // or a subst drive (C:\Users\RUNNER~1\…) while git names it by its long path.
+        const rel = path.relative(top, realPath(path.resolve(cwd, p))).split(path.sep).join("/");
         if (rel && rel !== ".." && !rel.startsWith("../") && !path.isAbsolute(rel)) out.push(rel);
       }
     }

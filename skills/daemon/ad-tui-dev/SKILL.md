@@ -30,7 +30,7 @@ All paths under `runtime/`.
 | `src/tui/app.mjs` | the app: input → intents, session events → frames, scrollback commits, keys, `SLASH_COMMANDS` (each marked `source: "codex"` or `"ad"`), `slashCollisions` |
 | `src/tui/commands.mjs` | Part 8 renderers: `/mcp`, `/hooks`, `/skills`, `/usage`, `/terminal-setup`, transcript pager, `/export` markdown, `/copy` clipboard, image paths |
 | `src/tui/ad-layer.mjs` | Part 9: `/memory`, learned rows, `/proposals`, `/loop`, `/team`, `/schedule`, scheduler warning |
-| `src/tui/undo.mjs` | Part 10 wiring: "before" started at Enter (1 s wait), "after" after the turn, applied edits only, `/undo` |
+| `src/tui/undo.mjs` | Part 10 wiring: "before" started at Enter (not awaited; it counts only if done before the first edit started), "after" after the turn, applied edits only, edit paths resolved to real paths, `/undo` |
 | `src/tui/history.mjs` | prompt history JSONL (`~/.agent-daemon/tui/history.jsonl`) |
 | `src/tui/init-prompt.mjs` | Codex's `/init` prompt, vendored (re-copy on Codex upgrades) |
 | `src/tui/preview.mjs` | `ad tui --preview`, the Part 2 walking skeleton |

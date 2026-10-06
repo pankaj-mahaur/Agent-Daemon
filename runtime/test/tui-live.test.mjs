@@ -160,7 +160,8 @@ test("FC3 live script: ad tui on the real Codex binary, end to end", { skip, tim
     const retries = () => t.count(/retry without sandbox\?/g);
     const [n0, r0] = [done(), retries()];
     t.type(`${prompt}\r`);
-    await t.until(() => done() > n0 || (retries() > r0 && /No, and stop/.test(t.screen())), what);
+    // Up to 3 min: the sandbox setup takes longer on a busy machine.
+    await t.until(() => done() > n0 || (retries() > r0 && /No, and stop/.test(t.screen())), what, 180_000);
     if (done() === n0) {
       await settle(600);
       t.type("y");
