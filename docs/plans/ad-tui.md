@@ -43,7 +43,7 @@
 > 1. **FC1:** live use of `ad tui --preview`. Superseded by FC3, so it can be skipped.
 > 2. **FC2, FC3, FC4: automated (v4.15, user's go-ahead 2026-10-06).** `runtime/test/tui-live.test.mjs` (`AD_REAL_ENGINE=1`, also in CI on Windows, macOS and Linux) runs the whole FC3 script and FC4 on the real `ad tui` in a real pty (ConPTY on Windows) with the real pinned Codex and a mock model. Optional for the user: a look at the app in Zed and Windows Terminal.
 > 3. **Narrowing ghosts:** run `node runtime/scripts/tui-probe.mjs screen` and `screen --bottom` in each terminal, and share the logs and screenshots. The compensation lands after that.
-> 4. **Bare `ad` flipped** to the TUI (v4.15, `TUI_IS_DEFAULT = true`). **v2.1.0 prepared** on `feat/tui` (version, lockfile, badge, CHANGELOG section; PR #9 already merged). Still the user's: merge PR #10, then the tag and the GitHub release.
+> 4. **Bare `ad` flipped** to the TUI (v4.15, `TUI_IS_DEFAULT = true`). **v2.1.0 released** 2026-10-06 (user's go-ahead): PR #10 merged (`68cc98f`), CI green on `main`, tag `v2.1.0`, GitHub release.
 > 5. **Part 12 (deferred):** if wanted later, verify ACP live in Zed first, then design the multi-session hub (Part 12).
 >
 > **Next:** waiting on the user (above). No plan part is left that can be built without them.
