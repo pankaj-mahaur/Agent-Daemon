@@ -530,7 +530,7 @@ Other choices: `nvim`, `vim`, `nano`, or Notepad++ with `-multiInst -nosession`.
 
 **Cause:** PowerShell 7 installed from the Microsoft Store. Codex runs commands in the first `pwsh` on PATH, and the Windows sandbox can't start a Store (MSIX) app (access denied).
 
-**Fix:** since 2.1.1, ad leaves the WindowsApps folders out of its engine's PATH when the Store PowerShell comes first, so commands run in Windows PowerShell 5.1 (or a PowerShell 7 installed from the MSI, if there is one), inside the sandbox. Your own shell and PATH are unchanged. To have the agent use PowerShell 7, install it from the [MSI](https://learn.microsoft.com/powershell/scripting/install/installing-powershell-on-windows) as well.
+**Fix:** since v2.1.1, ad leaves the WindowsApps folders out of its engine's PATH when the Store PowerShell comes first, so commands run in Windows PowerShell 5.1 (or a PowerShell 7 installed from the MSI, if there is one), inside the sandbox. Your own shell and PATH are unchanged. To have the agent use PowerShell 7, install it from the [MSI](https://learn.microsoft.com/powershell/scripting/install/installing-powershell-on-windows) as well.
 
 ---
 
