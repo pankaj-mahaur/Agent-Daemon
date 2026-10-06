@@ -77,7 +77,7 @@ A Codex-style terminal UI on ad's own Codex home. History goes into your termina
 - **Keys:** Enter sends, and steers a running turn. Tab queues a prompt for after the turn. Esc interrupts. The newline key depends on the terminal (Shift+Enter in Zed, Ctrl+Enter in Windows Terminal, Ctrl+J or `\` + Enter anywhere). `?` shows every shortcut.
 - **Approvals** list what Codex offers. Keys pressed in the first 400 ms are ignored, so type-ahead never approves, and hidden characters show as `<U+…>`.
 - **Commands:** Codex's (`/new`, `/resume`, `/model`, `/review`, `/diff`, `/compact`, …) keep Codex's meaning. ad adds `/undo` (put back the files the last turn changed), `/memory`, `/remember`, `/private`, `/loop`, `/team`, `/schedule`, `/codex` and `/ad <command>`.
-- **Bare `ad`** still prints the help. `AD_TUI=1` makes it open the TUI now; once the TUI is the default, `AD_TUI=0` turns that off.
+- **Bare `ad`** opens the TUI (where the terminal can show it). `AD_TUI=0` turns that off, and bare `ad` prints the help.
 - **Requirements:** an interactive terminal, and on Windows Node 22.17+ or 24.2+. Otherwise use `ad chat`.
 
 Keys, commands, `/undo`, terminals and the files it writes: **[tui.md](tui.md)**. `ad tui --preview` still runs the earlier walking skeleton.

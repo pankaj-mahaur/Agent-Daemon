@@ -24,7 +24,7 @@ All paths under `runtime/`.
 | Path | What |
 |---|---|
 | `src/cli.mjs` | thin launcher: routes `tui`, `codex` and bare `ad` / `ad --last` before loading `cli-full.mjs` (the rest of the CLI). Keep it light |
-| `src/tui/flip.mjs` | bare `ad` → TUI (D7). `TUI_IS_DEFAULT` stays `false` until the user's FC3 sign-off; `AD_TUI=1` opts in, `AD_TUI=0` opts out after the flip; the one-time `ad chat` hint |
+| `src/tui/flip.mjs` | bare `ad` → TUI (D7). `TUI_IS_DEFAULT` is `true` (flipped after FC3); `AD_TUI=0` opts out; the one-time `ad chat` hint |
 | `src/tui/preflight.mjs` | why the TUI can't run here (TTY, `TERM=dumb`, Node on Windows, mintty), with a working alternative |
 | `src/tui/main.mjs` | `cmdTui`: preflight → terminal → engine (sign-in panel) → folder trust → session + checkpoints → header and "since last time" → app → exit hint. Builds `actions` (file search, git diff, editor, handoffs to `ad …` and `/codex`) |
 | `src/tui/app.mjs` | the app: input → intents, session events → frames, scrollback commits, keys, `SLASH_COMMANDS` (each marked `source: "codex"` or `"ad"`), `slashCollisions` |
@@ -113,7 +113,7 @@ All paths under `runtime/`.
 
 ### Example 1: continuing after a break
 
-The status says Parts 0–11 are built and FC3 is pending (user). Don't flip `TUI_IS_DEFAULT` yourself. Pick up what is open without the user (a backlog item, a review finding), or prepare the live script in `docs/manual-test.md` section 6 for the user to run in Windows Terminal, Zed and VS Code. Once the user signs off, set `TUI_IS_DEFAULT = true` in `src/tui/flip.mjs`, update `docs/tui.md` ("Bare `ad`") and the README, and record it in the plan.
+The status says Parts 0–11 are built, FC2–FC4 run automated in `test/tui-live.test.mjs`, and bare `ad` opens the TUI. Read the plan's status block for what still waits for the user, pick up what is open without them (a backlog item, a review finding), and run `AD_REAL_ENGINE=1 node --test test/tui-live.test.mjs` after any change to the app, session or views.
 
 ### Example 2: a renderer bug report
 
@@ -122,7 +122,7 @@ The status says Parts 0–11 are built and FC3 is pending (user). Don't flip `TU
 ## Anti-patterns
 
 - **Starting the real Codex without `codexEnv()`,** or reading or writing `~/.codex`.
-- **Flipping bare `ad` to the TUI before the user signs off at FC3** (`TUI_IS_DEFAULT` in `src/tui/flip.mjs`).
+- **Changing what bare `ad` opens** (`TUI_IS_DEFAULT` in `src/tui/flip.mjs`) without the user.
 - **Teaching the fake a message the real Codex can't send.** It must pass `protocol-check`.
 - **Adding a slash command that takes a Codex name** for something else, or a key without updating the `?` overlay and `docs/tui.md`.
 - **Reaching for an experimental protocol method** because it's convenient.

@@ -43,7 +43,7 @@
 > 1. **FC1:** live use of `ad tui --preview`. Superseded by FC3, so it can be skipped.
 > 2. **FC2, FC3, FC4: automated (v4.15, user's go-ahead 2026-10-06).** `runtime/test/tui-live.test.mjs` (`AD_REAL_ENGINE=1`, also in CI on Windows, macOS and Linux) runs the whole FC3 script and FC4 on the real `ad tui` in a real pty (ConPTY on Windows) with the real pinned Codex and a mock model. Optional for the user: a look at the app in Zed and Windows Terminal.
 > 3. **Narrowing ghosts:** run `node runtime/scripts/tui-probe.mjs screen` and `screen --bottom` in each terminal, and share the logs and screenshots. The compensation lands after that.
-> 4. **After FC3:** flip bare `ad`, merge `feat/tui` (and PR #9), then release v2.1.0.
+> 4. **Bare `ad` flipped** to the TUI (v4.15, `TUI_IS_DEFAULT = true`). Still the user's: merge `feat/tui` (and PR #9), then release v2.1.0.
 > 5. **Part 12:** verify ACP live in Zed first.
 >
 > **Next:** waiting on the user (above). No plan part is left that can be built without them.
@@ -1259,4 +1259,5 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
   - **`/undo` after a quick save:** the "after" snapshot could read the user's save made right after the turn, and the unforceable "changed during the turn" left no way forward. The agent's per-edit hashes are now the reference: any later change is "changed since the agent's edit", which `force` overrides.
   - **`/private` prompts** showed with the raw `<private>` wrapper: now as typed, marked "(private)".
   - **Docs:** Codex 0.160's exec approval offers `y` / `p` / Esc (no `n`); the first sandboxed action in a fresh Codex home on Windows takes ~35 s once (troubleshooting #29).
+  - **Flip:** bare `ad` opens the TUI (`TUI_IS_DEFAULT = true`); `AD_TUI=0` opts out.
   - **Defensive, not reproduced live:** SIGINT/SIGBREAK are ignored for 1.5 s after a handoff (`/codex`, the editor), so an extra Ctrl+C landing before raw mode is back can't quit ad.

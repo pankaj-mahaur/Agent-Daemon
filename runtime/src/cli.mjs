@@ -75,9 +75,8 @@ async function launch() {
     const { cmdCodex } = await import("./harness/codex-ui.mjs");
     return cmdCodex(rest);
   }
-  // Bare `ad` (and `ad --last`) open the TUI once it is the default (FC3),
-  // or now with AD_TUI=1; otherwise the help, with the reason when the TUI
-  // was wanted but can't run here.
+  // Bare `ad` (and `ad --last`) open the TUI unless AD_TUI=0; otherwise the
+  // help, with the reason when the TUI was wanted but can't run here.
   const bare = argv.length === 0 || (argv.length === 1 && argv[0] === "--last");
   if (bare) {
     const choice = bareAdChoice({ env: process.env, isDefault: TUI_IS_DEFAULT });

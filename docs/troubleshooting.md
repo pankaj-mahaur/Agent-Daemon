@@ -406,7 +406,7 @@ Quit with `qqq`, or press Ctrl+C three times. Results are saved to `~/.agent-dae
 
 ## 23. `ad tui` says it needs an interactive terminal or Node 22.17+
 
-**Symptom:** `ad tui` (or bare `ad` with `AD_TUI=1`) exits at once with one of:
+**Symptom:** `ad tui` (or bare `ad`) exits at once with one of:
 
 - `ad tui needs an interactive terminal. Use ad chat for pipes and scripts.`
 - `This terminal (TERM=dumb) can't show the UI. Use ad chat.`

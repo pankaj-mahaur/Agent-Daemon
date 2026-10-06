@@ -45,7 +45,7 @@ A conversation is open in one `ad` at a time. Resuming one that another `ad` has
 
 On exit, ad prints how to continue: `ad tui --resume <id>`, with the tokens used.
 
-**Bare `ad`.** For now, bare `ad` still prints the help. Set `AD_TUI=1` to make bare `ad` (and `ad --last`) open the TUI today. Once the TUI becomes the default, bare `ad` opens it whenever the terminal can show it, and `AD_TUI=0` turns that off. If the TUI was wanted but can't run, bare `ad` prints the reason and the help instead.
+**Bare `ad`** (and `ad --last`) opens the TUI whenever the terminal can show it. `AD_TUI=0` turns that off, so bare `ad` prints the help. If the TUI can't run here, bare `ad` prints the reason and the help instead. `ad chat` stays the plain line mode.
 
 **Requirements.** An interactive terminal (stdin and stdout are TTYs), `TERM` not `dumb`, and on Windows Node 22.17+ or 24.2+ (not 23.x or 24.0–24.1). Otherwise `ad tui` exits with the reason and a command that works:
 

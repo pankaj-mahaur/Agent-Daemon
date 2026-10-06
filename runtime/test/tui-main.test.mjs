@@ -208,11 +208,11 @@ test("syncSkills follows a linked skill folder; setup refreshes the mirror on ev
   }
 });
 
-test("bare ad: help until the TUI is the default (FC3) or AD_TUI=1; then the TUI where it can run, else a reason", async () => {
+test("bare ad: the TUI by default where it can run (AD_TUI=0: help), else a reason and the help", async () => {
   const { bareAdChoice, chatHintOnce, TUI_IS_DEFAULT } = await import("../src/tui/flip.mjs");
   const tty = { isTTY: true };
   const ok = { stdin: tty, stdout: tty, platform: "linux", version: "22.17.0" };
-  assert.equal(TUI_IS_DEFAULT, false, "flips only after the user's FC3 sign-off");
+  assert.equal(TUI_IS_DEFAULT, true, "flipped after FC3");
   assert.deepEqual(bareAdChoice({ ...ok, env: {}, isDefault: false }), { tui: false });
   assert.deepEqual(bareAdChoice({ ...ok, env: { AD_TUI: "1" }, isDefault: false }), { tui: true });
   assert.deepEqual(bareAdChoice({ ...ok, env: {}, isDefault: true }), { tui: true });
@@ -241,7 +241,12 @@ test("the launcher routes tui before the full CLI and passes everything else thr
   const bare = run([], { AD_TUI: "1" });
   assert.match(bare.stderr, /interactive terminal/, "the reason first");
   assert.match(bare.stdout, /Usage:/, "then the help");
-  assert.match(run([]).stdout, /Usage:/);
+  const def = run([]);
+  assert.match(def.stderr, /interactive terminal/, "the TUI is the default: why it can't run here");
+  assert.match(def.stdout, /Usage:/);
+  const off = run([], { AD_TUI: "0" });
+  assert.equal(off.stderr, "", "AD_TUI=0: just the help");
+  assert.match(off.stdout, /Usage:/);
   assert.match(run(["tui", "--help"]).stdout, /Usage: ad tui/);
   // A mistyped flag isn't silently sent as the first prompt (losing --sandbox read-only).
   const typo = run(["tui", "--sandbx", "read-only", "fix", "it"]);

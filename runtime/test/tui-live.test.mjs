@@ -152,6 +152,22 @@ test("FC3 live script: ad tui on the real Codex binary, end to end", { skip, tim
   const mock = await startMockResponses({ script: liveScript });
   const w = world(mock.url);
   let t;
+  // A patch turn in Auto. Where Codex's sandbox can't run the edit (GitHub's
+  // Windows runners), Codex asks to retry without it: that's approved too.
+  // The first sandboxed action in a fresh Codex home sets up the Windows sandbox (~35 s, once).
+  const patchTurn = async (prompt, what) => {
+    const done = () => t.count(/done after call-patch/g);
+    const retries = () => t.count(/retry without sandbox\?/g);
+    const [n0, r0] = [done(), retries()];
+    t.type(`${prompt}\r`);
+    await t.until(() => done() > n0 || (retries() > r0 && /No, and stop/.test(t.screen())), what);
+    if (done() === n0) {
+      await settle(600);
+      t.type("y");
+      await t.until(() => done() > n0, `${what}, outside the sandbox`);
+    }
+    await t.until(() => t.idle(), `${what}: its end`);
+  };
   try {
     // 1. First run: trust, then the header card.
     t = await start(w);
@@ -188,11 +204,7 @@ test("FC3 live script: ad tui on the real Codex binary, end to end", { skip, tim
     await t.until(() => t.idle(), "the turn's end");
 
     // 4a. A patch in Auto (workspace-write) applies without asking; /undo puts it back.
-    n = t.count(/done after call-patch/g);
-    t.type("PATCH please\r");
-    await t.until((s) => t.count(/done after call-patch/g, s) > n, "the patch turn");
-    // The first sandboxed action in a fresh Codex home sets up the Windows sandbox (~35 s, once).
-    await t.until(() => t.idle(), "the patch turn's end");
+    await patchTurn("PATCH please", "the patch turn");
     await t.until(() => existsSync(join(w.cwd, "hello.txt")), "hello.txt written");
     t.type("/undo\r");
     await t.until(/Undid the last turn: 1 file put back/, "the undo");
@@ -209,7 +221,7 @@ test("FC3 live script: ad tui on the real Codex binary, end to end", { skip, tim
     const asks = t.count(/Apply file changes\?/g);
     t.type("PATCH again\r");
     await t.until((s) => t.count(/Apply file changes\?/g, s) > asks && /4\. No, and stop/.test(t.screen()), "the patch approval");
-    assert.match(t.screen(), /hello\.txt \(\+1 -0\)[\s\S]*\+ hello from the mock/, "the diff in the box");
+    assert.match(t.screen(), /hello\.txt\s+\(\+1 -0\)[\s\S]*\+ hello from the mock/, "the diff in the box");
     await settle(600);
     t.type("y");
     await t.until((s) => t.count(/done after call-patch/g, s) > n, "the approved patch turn");
@@ -260,11 +272,8 @@ test("FC3 live script: ad tui on the real Codex binary, end to end", { skip, tim
     await settle();
 
     // /undo refuses a file the user changed after the turn; force puts it back.
-    n = t.count(/done after call-patch/g);
     rmSync(join(w.cwd, "hello.txt"));
-    t.type("PATCH once more\r");
-    await t.until((s) => t.count(/done after call-patch/g, s) > n, "the third patch");
-    await t.until(() => t.idle(), "its end");
+    await patchTurn("PATCH once more", "the third patch");
     writeFileSync(join(w.cwd, "hello.txt"), "the user's own words\n");
     t.type("/undo\r");
     await t.until(/Not undone: hello\.txt \(changed since the agent's edit\)/, "the refusal");

@@ -1,13 +1,13 @@
-// When bare `ad` opens the terminal UI (plan D7). The switch flips only after
-// the user signs off at FC3; until then AD_TUI=1 opts in.
+// When bare `ad` opens the terminal UI (plan D7): by default where the
+// terminal can show it (flipped 2026-10-06, after FC3); AD_TUI=0 opts out.
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { preflight } from "./preflight.mjs";
 
-/** FC3 (pending, user): set to true when the user signs off the live script. */
-export const TUI_IS_DEFAULT = false;
+/** Bare `ad` opens the TUI (FC3 passed: the live script, automated in test/tui-live.test.mjs). */
+export const TUI_IS_DEFAULT = true;
 
 /**
  * {tui: true} when bare `ad` should open the TUI here, else {tui: false,

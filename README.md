@@ -147,7 +147,7 @@ ad sandbox setup --elevated      # Windows: stronger command sandbox (one UAC pr
 
 **Subscriptions.** ChatGPT uses Codex's own login. Claude Pro/Max and Google AI Pro/Ultra logins are **never** reused by the harness, because their terms forbid it and it has been enforced. Use API keys or OpenRouter instead. `ad agy` can hand a prompt to *your own* Antigravity CLI (opt-in, `--accept-risk`).
 
-**`ad tui`** is a Codex-style terminal UI on the same engine: history in your terminal's scrollback, approvals with the full command, steer and queue while a turn runs, `/undo` for the files a turn changed, and ad's memory, loops and schedules as slash commands. `/codex` (or `ad codex`) opens the stock Codex UI on the same conversation. Bare `ad` opens it with `AD_TUI=1`. Guide: [docs/tui.md](docs/tui.md).
+**`ad tui`** is a Codex-style terminal UI on the same engine: history in your terminal's scrollback, approvals with the full command, steer and queue while a turn runs, `/undo` for the files a turn changed, and ad's memory, loops and schedules as slash commands. `/codex` (or `ad codex`) opens the stock Codex UI on the same conversation. Bare `ad` opens it too (`AD_TUI=0` turns that off). Guide: [docs/tui.md](docs/tui.md).
 
 Full guide: [docs/harness.md](docs/harness.md).
 
