@@ -10,6 +10,7 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 - `ad tui`: "Learned:" rows show during the session, and `/memory` lists what was captured but not yet saved.
 - `ad tui`: `/undo` compares with what the agent's edit wrote, so a file you saved right after the turn is "changed since the agent's edit", which `/undo force` can override.
 - `ad tui`: `/private` prompts show as typed, marked "(private)".
+- `ad acp`: with two sessions open, one prompt ending no longer drops the other's edit diff from its permission request.
 
 - The Windows one-liner installer works in Windows PowerShell 5.1 again. 5.1 stripped the quotes inside `node -p '…split(".")…'`, so the Node check always read version 0 and stopped with "Node.js >=22 required". A failing step now stops the script with `throw` instead of `exit`, which used to close the window under `irm | iex`.
 - ad never runs Codex in your own Codex home:

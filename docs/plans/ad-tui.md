@@ -1,6 +1,6 @@
 # Plan — `ad`: a Codex-style terminal UI with agent-daemon's powers
 
-> Status: **final v4.15** (2026-10-06; v4 on 2026-10-04 after three review rounds). Changes from here on need a revision-log entry.
+> Status: **final v4.16** (2026-10-06; v4 on 2026-10-04 after three review rounds). Changes from here on need a revision-log entry.
 > Progress: **Part 0** — code done and reviewed twice:
 > - Codex 0.160.0 pinned.
 > - Isolation guard in place (see "Your own Codex is never touched").
@@ -36,7 +36,7 @@
 > - **Part 10** (checkpoints and `/undo`) built (v4.12).
 > - **Part 11** built where it doesn't need the user (v4.13): the thin launcher, `ad tui "<prompt>"`, the bare-`ad` flip coded but gated (`TUI_IS_DEFAULT = false`; `AD_TUI=1` opts in now), `docs/tui.md` and the docs and skills updates.
 >   - **Pending (user):** FC3 sign-off, then set `TUI_IS_DEFAULT = true` (`runtime/src/tui/flip.mjs`). Then the v2.1.0 release: version bump, CHANGELOG section, tag, GitHub release.
-> - **Part 12** is **pending (user)** by design: the plan moves ACP, chat and web onto the controller only after ACP is verified live in Zed.
+> - **Part 12** analysed (v4.16): the one real defect is fixed (ACP's per-session diffs); the migration itself is **deferred** (see Part 12: little duplication, and the controller's one-session-per-engine and offered-options rules would change what Zed sees).
 > - **Part 13** (fullscreen and inline reflow) is not started: it is built only if the user asks for it.
 >
 > **Everything that waits for the user, in one list:**
@@ -44,7 +44,7 @@
 > 2. **FC2, FC3, FC4: automated (v4.15, user's go-ahead 2026-10-06).** `runtime/test/tui-live.test.mjs` (`AD_REAL_ENGINE=1`, also in CI on Windows, macOS and Linux) runs the whole FC3 script and FC4 on the real `ad tui` in a real pty (ConPTY on Windows) with the real pinned Codex and a mock model. Optional for the user: a look at the app in Zed and Windows Terminal.
 > 3. **Narrowing ghosts:** run `node runtime/scripts/tui-probe.mjs screen` and `screen --bottom` in each terminal, and share the logs and screenshots. The compensation lands after that.
 > 4. **Bare `ad` flipped** to the TUI (v4.15, `TUI_IS_DEFAULT = true`). Still the user's: merge `feat/tui` (and PR #9), then release v2.1.0.
-> 5. **Part 12:** verify ACP live in Zed first.
+> 5. **Part 12 (deferred):** if wanted later, verify ACP live in Zed first, then design the multi-session hub (Part 12).
 >
 > **Next:** waiting on the user (above). No plan part is left that can be built without them.
 > Research: [Codex TUI + app-server](../research/codex-tui-and-app-server.md) · [terminal engineering](../research/terminal-engineering.md) · [harness landscape](../research/harness-landscape.md).
@@ -1070,6 +1070,15 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
 ### Part 12 — ACP, chat and web onto the controller
 - After ACP is verified live in Zed. Remove the duplicated turn, approval and fileChange logic. Behaviour and tests stay unchanged.
 - **Done when:** the existing ACP, chat and web tests pass unchanged and the live checks repeat.
+- **Analysed 2026-10-06 (v4.16); migration deferred, one defect fixed.**
+  - **Duplication is small:** about 40-55 lines per module (fileChange tracking, turn bookkeeping, approval words). The rest is front-end specific (JSON-RPC peer, HTTP/SSE and its security, readline and script mode) and stays either way.
+  - **The controller doesn't fit ACP as is:**
+    - one session per engine (ACP runs N sessions on one engine and the tests assert one start);
+    - answers are checked against the options Codex offered, so "a" / "Always allow" (`acceptForSession`) would become a decline when Codex sends no `availableDecisions` (it would break chat's "a answers accept-for-session" test);
+    - no raw event stream, normalized items, a private `ensureThread`, thread locks, user-input and elicitation that now reach the front end, and a crash surfacing as a failed turn instead of JSON-RPC -32603.
+    - Each is a change Zed would see; "behaviour unchanged" and "on the controller" pull against each other.
+  - **Fixed now:** ACP's file-change map was shared by all sessions and cleared when any prompt ended, so a second session finishing dropped a running session's diff from its permission request. It is now cleared per session (`test/harness-acp.test.mjs`, mutation-checked).
+  - **If wanted later:** chat first (one thread, the best tests; write the baselines listed in the analysis), web next, ACP last after a live Zed check and a multi-session hub designed as its own part.
 
 ### Part 13 — Fullscreen mode + inline reflow
 - **Fullscreen:** `/tui fullscreen|inline`, persisted; an owned transcript on the alternate screen (keyboard scrolling; mouse where the platform delivers it; search; auto-follow that pauses with an "N new" chip; dump to scrollback on exit).
@@ -1260,4 +1269,5 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
   - **`/private` prompts** showed with the raw `<private>` wrapper: now as typed, marked "(private)".
   - **Docs:** Codex 0.160's exec approval offers `y` / `p` / Esc (no `n`); the first sandboxed action in a fresh Codex home on Windows takes ~35 s once (troubleshooting #29).
   - **Flip:** bare `ad` opens the TUI (`TUI_IS_DEFAULT = true`); `AD_TUI=0` opts out.
+- **v4.16** (2026-10-06): Part 12 analysed; the migration is deferred, and ACP's per-session diff defect is fixed.
   - **Defensive, not reproduced live:** SIGINT/SIGBREAK are ignored for 1.5 s after a handoff (`/codex`, the editor), so an extra Ctrl+C landing before raw mode is back can't quit ad.
