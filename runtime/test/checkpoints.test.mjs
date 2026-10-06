@@ -26,7 +26,8 @@ function repo({ attributes = null } = {}) {
   writeFileSync(join(dir, "old name.txt"), "renamed later");
   git("add", ".");
   git("commit", "-qm", "init");
-  return { dir, git, done: () => rmSync(dir, { recursive: true, force: true }) };
+  // Retries: a git still finishing in the repo (a snapshot) can make the first rmdir fail (ENOTEMPTY).
+  return { dir, git, done: () => rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }) };
 }
 
 const file = (dir, f) => readFileSync(join(dir, f), "utf8");
