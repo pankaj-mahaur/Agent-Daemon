@@ -242,4 +242,12 @@ test("the launcher routes tui before the full CLI and passes everything else thr
   assert.match(bare.stderr, /interactive terminal/, "the reason first");
   assert.match(bare.stdout, /Usage:/, "then the help");
   assert.match(run([]).stdout, /Usage:/);
+  assert.match(run(["tui", "--help"]).stdout, /Usage: ad tui/);
+  // A mistyped flag isn't silently sent as the first prompt (losing --sandbox read-only).
+  const typo = run(["tui", "--sandbx", "read-only", "fix", "it"]);
+  assert.equal(typo.status, 2);
+  assert.match(typo.stderr, /Unknown option '--sandbx'/);
+  const bad = run(["tui", "--sandbox", "readonly"]);
+  assert.equal(bad.status, 2);
+  assert.match(bad.stderr, /--sandbox must be one of read-only/);
 });

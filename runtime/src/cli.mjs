@@ -17,20 +17,49 @@ const version = () => {
   }
 };
 
+const TUI_USAGE = `Usage: ad tui ["<first prompt>"] [options]
+  --cwd <dir>          the folder to work in (default: this one)
+  --model <name>       the model to start with
+  --sandbox <mode>     read-only | workspace-write (default) | danger-full-access
+  --resume <thread-id> continue a conversation;  --last  the newest one here
+  --preview            the Part 2 walking skeleton instead
+Guide: docs/tui.md`;
+const SANDBOX_MODES = ["read-only", "workspace-write", "danger-full-access"];
+
 async function tui(args) {
-  const { values, positionals } = parseArgs({
-    args,
-    options: {
-      cwd: { type: "string" },
-      model: { type: "string" },
-      sandbox: { type: "string" },
-      resume: { type: "string" },
-      last: { type: "boolean" },
-      preview: { type: "boolean" },
-    },
-    allowPositionals: true,
-    strict: false,
-  });
+  if (args.includes("--help") || args.includes("-h")) {
+    process.stdout.write(`${TUI_USAGE}\n`);
+    return 0;
+  }
+  if (args.includes("--version") || args.includes("-v")) {
+    process.stdout.write(`${version()}\n`);
+    return 0;
+  }
+  let parsed;
+  try {
+    // Strict: a mistyped flag (--sandbx read-only) must not silently become the first prompt.
+    parsed = parseArgs({
+      args,
+      options: {
+        cwd: { type: "string" },
+        model: { type: "string" },
+        sandbox: { type: "string" },
+        resume: { type: "string" },
+        last: { type: "boolean" },
+        preview: { type: "boolean" },
+      },
+      allowPositionals: true,
+      strict: true,
+    });
+  } catch (err) {
+    process.stderr.write(`ad tui: ${err.message}\n\n${TUI_USAGE}\n`);
+    return 2;
+  }
+  const { values, positionals } = parsed;
+  if (values.sandbox !== undefined && !SANDBOX_MODES.includes(values.sandbox)) {
+    process.stderr.write(`ad tui: --sandbox must be one of ${SANDBOX_MODES.join(", ")} (got "${values.sandbox}")\n`);
+    return 2;
+  }
   if (values.preview) {
     const { cmdTuiPreview } = await import("./tui/preview.mjs");
     return cmdTuiPreview({ cwd: values.cwd || process.cwd(), model: values.model, sandbox: values.sandbox, clientVersion: version() });
@@ -59,5 +88,11 @@ async function launch() {
   return undefined;
 }
 
-const code = await launch();
+let code;
+try {
+  code = await launch();
+} catch (err) {
+  process.stderr.write(`agent-daemon: ${err?.message ?? err}\n`);
+  code = 1;
+}
 if (code !== undefined) process.exit(code || 0);

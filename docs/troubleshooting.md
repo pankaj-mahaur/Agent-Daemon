@@ -465,6 +465,7 @@ make the window narrower, then wider, quit with `qqq`, and attach `~/.agent-daem
 - `changed since the turn`: you (or another tool) edited it after the turn. Undoing would throw that away.
 - `not changed by the agent's edits`: it changed during the turn some other way, for example through a command the agent ran (`npm install`, a formatter, `sed`) or your editor.
 - `a folder is there now`: a folder stands where the file was.
+- `not in the checkpoint`: the agent edited a file the snapshots leave out (untracked and over 2 MB, or in a heavy folder like `build/` or `node_modules/`). There is nothing to put back; `force` doesn't change that.
 
 With any of these, nothing is undone.
 
@@ -476,9 +477,10 @@ With any of these, nothing is undone.
 
 **Other `/undo` messages:**
 
-- `The last turn has no checkpoint (…)`: the snapshot before the turn wasn't ready within 150 ms, snapshots fail in this repo (git's message follows), or the turn ran before `ad tui` started. Start typing a moment before sending, so the snapshot is ready.
+- `The last turn has no checkpoint (…)`: the snapshot started when you sent the prompt wasn't ready within 1 s (a very large working folder), snapshots fail in this repo (git's message follows), or the turn ran before `ad tui` started.
 - `Not a git repo`: checkpoints need a git repo.
-- Ignored files, submodule contents and LFS files are never restored. With git older than 2.40, files with `.gitattributes` eol rules may come back normalized.
+- `A turn started meanwhile`: a prompt was sent while `/undo` was checking. Run `/undo` again once that turn finishes.
+- Ignored files, submodule contents and LFS files are never restored. With git older than 2.40, or with `.git/info/attributes` or `core.attributesFile` set, files with eol rules may come back normalized.
 
 ---
 

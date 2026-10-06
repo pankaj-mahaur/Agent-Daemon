@@ -160,7 +160,7 @@ export function createAdLayer({ cwd, home = homedir(), memory = null, cli = null
       if (!loop.child) return [];
       // The loop prints its thread id ("ad loop — thread <id>") into our log: that names its file.
       if (!loop.file && loop.logPath && existsSync(loop.logPath)) {
-        const text = readFileSync(loop.logPath, "utf8").slice(loop.logOffset ?? 0);
+        const text = readFileSync(loop.logPath).subarray(loop.logOffset ?? 0).toString("utf8"); // the offset is in bytes
         const m = /thread (\S+)/.exec(text);
         if (m) loop.file = path.join(loopsDir, `${m[1]}.jsonl`);
       }

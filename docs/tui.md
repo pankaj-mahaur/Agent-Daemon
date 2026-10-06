@@ -311,7 +311,8 @@ A Codex command ad doesn't have yet answers "Unknown command … /help lists the
 `/undo` puts back the files the last turn's edits changed, then rewinds the conversation to before that turn. Your prompt comes back in the composer.
 
 **How it works.** In a git repo, while `ad tui` runs, ad takes a snapshot of your working folder before and after each turn.
-- The "before" snapshot is taken when you start typing (at most every 5 s). It must be from after the previous turn ended and be ready within 150 ms of sending; otherwise that turn gets no checkpoint. ad never guesses.
+- The "before" snapshot is started when you press Enter, so everything you saved before sending is in it. If it isn't ready within 1 s, that turn gets no checkpoint: ad never guesses. (Snapshots while you type only warm git's caches.)
+- The "after" snapshot is started once the turn has ended.
 - Snapshots are git trees under `refs/ad/checkpoints/<thread>/`. Nothing goes into Codex's session files.
 - ad uses its own index (`.git/ad-checkpoint-index`). Your index, HEAD, branches and stash are never touched.
 - `.gitignore` is respected. Untracked files over 2 MB and heavy folders (`node_modules`, `.venv`, `dist`, `build`, `target`, …) are skipped.
@@ -324,6 +325,7 @@ A Codex command ad doesn't have yet answers "Unknown command … /help lists the
 | `not changed by the agent's edits` | the file changed during the turn some other way: a command the agent ran, your editor, another tool |
 | `changed since the turn` | the file changed after the turn ended |
 | `a folder is there now` | a folder stands where the file was |
+| `not in the checkpoint` | the agent edited a file the snapshots leave out (over 2 MB, or in a heavy folder): there is nothing to put back |
 
 With any conflict, `/undo` changes nothing and lists them:
 
@@ -331,14 +333,14 @@ With any conflict, `/undo` changes nothing and lists them:
 Not undone: src/app.js (changed since the turn). /undo force puts back the rest (folders are never touched).
 ```
 
-`/undo force` overrides "changed since the turn": those files are put back too, overwriting later edits to them. Even forced, `/undo` never touches a file the agent's edits didn't report, and never removes or replaces a folder; those are reported as left alone.
+`/undo force` overrides "changed since the turn": those files are put back too, overwriting later edits to them. Even forced, `/undo` never touches a file the agent's edits didn't report or the checkpoint doesn't hold, and never removes or replaces a folder; those are reported as left alone. Only edits that were applied count: a patch you declined isn't the agent's change.
 
 **When there is no checkpoint,** `/undo` says why: the snapshot before the turn wasn't ready in time, snapshots fail in this repo (with git's message), or the turn ran before `ad tui` started.
 
 **Limits.**
 - Only turns that ran in `ad tui`, in a git repo, can be undone. Outside a git repo `/undo` says it isn't available.
 - Ignored files, submodule contents and LFS files are not restored.
-- Restores are byte for byte with git 2.40 or later. With older git, files with `.gitattributes` eol rules may come back normalized, and `/undo` says so.
+- Restores are byte for byte with git 2.40 or later. With older git, or with `.git/info/attributes` or `core.attributesFile` set, files with eol rules may come back normalized, and `/undo` says so.
 - Wait for the turn to finish (or Esc) before `/undo`.
 
 To drop every checkpoint in a repo:

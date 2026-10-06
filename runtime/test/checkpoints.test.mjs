@@ -92,6 +92,11 @@ test("byte for byte under .gitattributes text=auto too (git 2.40+)", async () =>
     const res = await cp.restore("t", "u", { agentPaths: ["win.txt"] });
     if (!res.byteExact) return; // git older than 2.40: documented limit
     assert.equal(file(r.dir, "win.txt"), "a\r\nb\r\n");
+    // --attr-source doesn't cover .git/info/attributes: then it isn't promised.
+    writeFileSync(join(r.dir, ".git", "info", "attributes"), "* text=auto\n");
+    const cp2 = createCheckpoints({ cwd: r.dir });
+    await turn(cp2, "t", "v", () => writeFileSync(join(r.dir, "win.txt"), "again\r\n"));
+    assert.equal((await cp2.plan("t", "v", { agentPaths: ["win.txt"] })).byteExact, false);
   } finally {
     r.done();
   }
@@ -182,8 +187,10 @@ function fakeCp({ slowBefore = false } = {}) {
   const cp = {
     lastError: null,
     repo: async () => ({ root: "/repo" }),
-    snapshot: async () => ({ tree: "after-tree" }),
-    beforeSnapshot: async ({ waitMs }) => (slowBefore ? Promise.race([slow, new Promise((r) => setTimeout(() => r(null), waitMs))]) : { tree: "before-tree" }),
+    calls: [],
+    snapshot: async () => ({ tree: "typing-tree" }),
+    freshSnapshot: async (since) => (cp.calls.push(["fresh", since]), { tree: "after-tree" }),
+    beforeSnapshot: async ({ since, waitMs }) => (cp.calls.push(["before", since]), slowBefore ? Promise.race([slow, new Promise((r) => setTimeout(() => r(null), waitMs))]) : { tree: "before-tree", skipped: ["big.bin"] }),
     record: async (thread, turn, trees) => (recorded.push({ thread, turn, ...trees }), true),
     restore: async (thread, turnId, opts) => (cp.lastRestore = { turnId, ...opts }, { restored: 1, paths: [], conflicts: [] }),
   };
@@ -209,20 +216,27 @@ test("a late 'before' means no checkpoint for that turn, never the previous turn
 
 test("/undo waits for the last turn's checkpoint, undoes only that turn, and only the agent's reported files", async () => {
   const { cp, recorded } = fakeCp();
-  const w = checkpointWiring(cp, { cwd: "/repo" });
+  let clock = 1000;
+  const w = checkpointWiring(cp, { cwd: "/repo", now: () => (clock += 10) });
   const s = fakeSession();
   for (const id of ["u1", "u2"]) {
+    const sent = clock;
     await w.hooks.beforeTurn({ input: [] });
+    assert.ok(cp.calls.at(-1)[1] > sent, "the 'before' is a snapshot from the moment the prompt is sent");
     w.hooks.turnStarted({ turn: { id } });
-    s.state.items.set(`fc-${id}`, { id: `fc-${id}`, kind: "fileChange", changes: [{ path: `src/${id}.js` }, { path: "/repo/abs.txt", movePath: "/repo/moved.txt" }] });
+    s.state.items.set(`fc-${id}`, { id: `fc-${id}`, kind: "fileChange", status: "completed", changes: [{ path: `src/${id}.js` }, { path: "/repo/abs.txt", movePath: "/repo/moved.txt" }] });
+    // A patch the user declined isn't the agent's change.
+    s.state.items.set(`fcd-${id}`, { id: `fcd-${id}`, kind: "fileChange", status: "declined", changes: [{ path: "declined.txt" }] });
     s.state.items.set(`um-${id}`, { id: `um-${id}`, kind: "userMessage", text: "<private>secret prompt</private>" });
-    s.state.turns.push({ id, status: "completed", itemIds: [`um-${id}`, `fc-${id}`] });
+    s.state.turns.push({ id, status: "completed", itemIds: [`um-${id}`, `fc-${id}`, `fcd-${id}`] });
     w.hooks.turnCompleted({ turn: { id }, session: s }); // not awaited, as the session does
   }
   const r = await w.undo(s); // right away: must wait for u2's recording, not fall back to u1
   assert.equal(recorded.length, 2);
   assert.equal(cp.lastRestore.turnId, "u2");
   assert.deepEqual(cp.lastRestore.agentPaths.sort(), ["abs.txt", "moved.txt", "src/u2.js"]);
+  assert.deepEqual(cp.lastRestore.skipped, ["big.bin"], "what the 'before' left out goes along");
+  assert.ok(cp.calls.some((c) => c[0] === "fresh"), "the 'after' is a fresh snapshot");
   assert.equal(s.state.reverted, "u2");
   assert.equal(r.prompt, "secret prompt", "the <private> wrapper isn't put back twice");
   assert.match((await w.undo(s)).error, /no checkpoint/, "once undone, that turn can't be undone again");
@@ -267,6 +281,47 @@ test("a turn's 'before' is never a snapshot from before the previous turn ended"
     assert.notEqual(before.tree, early.tree, "a fresh snapshot, not the stale one");
     assert.equal(execFileSync("git", ["cat-file", "-p", `${before.tree}:crlf.txt`], { cwd: r.dir, encoding: "utf8" }), "the previous turn's edit\n");
     assert.equal((await cp.beforeSnapshot({ since: 2_000, waitMs: 10 })).tree, before.tree, "and that one is reused while still recent");
+  } finally {
+    r.done();
+  }
+});
+
+test("what checkpoints leave out can't be undone: a big file, a heavy folder, a file that grew too big", async () => {
+  const r = repo();
+  try {
+    writeFileSync(join(r.dir, "notes.txt"), "OLD small notes");
+    mkdirSync(join(r.dir, "build"));
+    writeFileSync(join(r.dir, "build", "config.js"), "tracked in a heavy folder");
+    r.git("add", "build/config.js");
+    r.git("commit", "-qm", "build");
+    const cp = createCheckpoints({ cwd: r.dir, maxUntrackedBytes: 1000 });
+    await cp.snapshot(); // notes.txt is small here, so the private index holds it
+    writeFileSync(join(r.dir, "notes.txt"), "N".repeat(5000)); // the user's notes grow past the limit
+    writeFileSync(join(r.dir, "data.json"), "D".repeat(5000)); // a big untracked file
+    const before = await cp.snapshot();
+    assert.deepEqual(before.skipped.sort(), ["data.json", "notes.txt"]);
+    writeFileSync(join(r.dir, "data.json"), "{}"); // the agent rewrites it small
+    writeFileSync(join(r.dir, "notes.txt"), "agent");
+    writeFileSync(join(r.dir, "build", "config.js"), "agent edit");
+    const after = await cp.snapshot();
+    await cp.record("t", "u", { before: before.tree, after: after.tree });
+    const agentPaths = ["data.json", "notes.txt", "build/config.js"];
+    const plan = await cp.plan("t", "u", { agentPaths, skipped: before.skipped });
+    assert.deepEqual(plan.conflicts.map((c) => [c.path, c.why]).sort(), [["build/config.js", "not in the checkpoint"], ["data.json", "not in the checkpoint"], ["notes.txt", "not in the checkpoint"]]);
+    const forced = await cp.restore("t", "u", { force: true, agentPaths, skipped: before.skipped });
+    assert.equal(forced.restored, 0);
+    assert.equal(file(r.dir, "data.json"), "{}", "never deleted");
+    assert.equal(file(r.dir, "notes.txt"), "agent", "never put back to a stale copy");
+    // What is left out is out of the tree too (no stale copy from an older snapshot).
+    assert.equal(r.git("ls-tree", "--name-only", before.tree, "notes.txt").trim(), "");
+    // The agent deleting a big file it never saw: nothing to put back, and /undo says so.
+    writeFileSync(join(r.dir, "huge.log"), "H".repeat(5000));
+    const b2 = await cp.snapshot();
+    rmSync(join(r.dir, "huge.log"));
+    const a2 = await cp.snapshot();
+    await cp.record("t", "u2", { before: b2.tree, after: a2.tree });
+    const p2 = await cp.plan("t", "u2", { agentPaths: ["huge.log"], skipped: b2.skipped });
+    assert.deepEqual(p2.conflicts.map((c) => [c.path, c.why]), [["huge.log", "not in the checkpoint"]]);
   } finally {
     r.done();
   }

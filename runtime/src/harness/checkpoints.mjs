@@ -15,15 +15,16 @@
 //     index, HEAD, branches and stash are never touched;
 //   - respect .gitignore, skip untracked files over a size limit and the
 //     usual heavy folders, and keep only the last N turns per thread;
-//   - are taken off the turn's critical path: when the user starts typing
-//     and when a turn ends. A turn only uses a snapshot taken after the
-//     previous turn ended; one that isn't ready 150 ms in means no
-//     checkpoint for that turn, never a guess.
+//   - a turn's "before" is started when the prompt is sent (typing-time
+//     snapshots only warm git's caches); one that isn't ready in time means
+//     no checkpoint for that turn, never a guess. Its "after" is started
+//     after the turn ended.
 //
 // Undo is conservative: it puts back only what the agent's own edits
 // changed. A path the agent didn't report editing, one changed since the
-// turn, or a directory standing where a file was, is a conflict, and
-// nothing is undone (force skips conflicts but never removes a directory).
+// turn, one the snapshots left out, or a directory standing where a file
+// was, is a conflict, and nothing is undone (force overrides only "changed
+// since the turn").
 
 import { spawn } from "node:child_process";
 import { existsSync, lstatSync, rmSync } from "node:fs";
@@ -37,6 +38,7 @@ const EXACT = ["-c", "core.autocrlf=false", "-c", "core.eol=lf", "-c", "core.saf
 const HEAVY_DIRS = ["node_modules", ".venv", "venv", "__pycache__", ".next", "dist", "build", "target", ".gradle", ".turbo", ".cache"];
 const HEAVY_SPECS = HEAVY_DIRS.map((d) => `:(exclude,glob)**/${d}/**`);
 const MAX_REFS = 400; // all threads together: about 200 turns
+const FOLDS_CASE = process.platform === "win32" || process.platform === "darwin";
 
 /** Runs git; never throws for a non-zero exit. */
 export function runGit(args, { cwd, env = {}, input = null, timeoutMs = 60_000 } = {}) {
@@ -99,7 +101,11 @@ export function createCheckpoints({ cwd, git = runGit, maxUntrackedBytes = 2 * 1
     const empty = (await git(["hash-object", "-t", "tree", "--stdin"], { cwd: root, input: "" })).stdout.trim();
     const probe = empty ? await git([`--attr-source=${empty}`, "rev-parse", "--git-dir"], { cwd: root }) : { code: 1 };
     const exact = probe.code === 0 ? [`--attr-source=${empty}`, ...EXACT] : EXACT;
-    info = { root, index, exact, byteExact: probe.code === 0 };
+    // --attr-source doesn't cover .git/info/attributes or a global attributes file.
+    const infoAttr = path.resolve(root, (await git(["rev-parse", "--git-path", "info/attributes"], { cwd: root })).stdout.trim());
+    const globalAttr = (await git(["config", "core.attributesFile"], { cwd: root })).stdout.trim();
+    const extraAttr = (existsSync(infoAttr) && lstatOrNull(infoAttr)?.size > 0) || Boolean(globalAttr);
+    info = { root, index, exact, byteExact: probe.code === 0 && !extraAttr };
     return info;
   }
 
@@ -125,6 +131,18 @@ export function createCheckpoints({ cwd, git = runGit, maxUntrackedBytes = 2 * 1
     // The private index is never seeded from the user's: its blobs were made
     // under the user's eol filters, and restores would not be byte for byte.
     const big = await bigUntracked(r.root);
+    // What is left out must leave the private index too: an old entry would
+    // otherwise stay in every later tree and be "restored" stale.
+    if (existsSync(r.index)) {
+      const out = [...HEAVY_DIRS.map((d) => `:(glob)**/${d}/**`), ...big.map((f) => `:(literal)${f}`)];
+      // -f: an entry that differs from both HEAD and the file (it grew too big
+      // since) is otherwise refused. --cached: only the private index changes.
+      const rm = await g(["rm", "--cached", "-f", "-r", "-q", "--ignore-unmatch", "--pathspec-from-file=-", "--pathspec-file-nul"], { cwd: r.root, env, input: out.join("\0") });
+      if (rm.code !== 0) {
+        lastError = firstLine(rm.stderr) || "git rm --cached failed";
+        return null;
+      }
+    }
     const specs = [".", ...HEAVY_SPECS, ...big.map((f) => `:(exclude,literal)${f}`)];
     const add = await g([...r.exact, "-c", "gc.auto=0", "add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul"], { cwd: r.root, env, input: specs.join("\0") });
     if (add.code !== 0) {
@@ -174,6 +192,12 @@ export function createCheckpoints({ cwd, git = runGit, maxUntrackedBytes = 2 * 1
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  /** A snapshot started at or after `since` (waits for an older one in flight first). */
+  async function freshSnapshot(since) {
+    if (inFlight && inFlight.startedAt < since) await inFlight.promise.catch(() => null);
+    return inFlight && inFlight.startedAt >= since ? inFlight.promise : snapshot();
   }
 
   /** Records a turn's before/after trees in one update-ref, then prunes old turns. */
@@ -252,17 +276,34 @@ export function createCheckpoints({ cwd, git = runGit, maxUntrackedBytes = 2 * 1
    * turn's diff shows (the user's editor, another agent, a command) is a
    * conflict rather than something to undo blindly.
    */
-  async function plan(threadId, turnId, { agentPaths = null } = {}) {
+  async function plan(threadId, turnId, { agentPaths = null, skipped = [] } = {}) {
     const r = await repo();
     if (!r) return { error: "Not a git repo: /undo isn't available here." };
     const t = (await list(threadId)).filter((x) => x.turnId === safeRefPart(turnId)).at(-1);
     if (!t?.before || !t?.after) return { error: "No checkpoint for that turn." };
     const paths = await changes(t.before, t.after);
-    const reported = agentPaths ? new Set(agentPaths.map((p) => p.toLowerCase())) : null;
+    const key = (p) => (FOLDS_CASE ? p.toLowerCase() : p);
+    const reported = agentPaths ? new Set(agentPaths.map(key)) : null;
+    const left = new Set(skipped.map(key));
     const conflicts = [];
+    // The agent edited something the checkpoints left out (too big, a heavy
+    // folder): there is nothing to put back, so it can't be undone.
+    if (reported) {
+      const inDiff = new Set(paths.map((c) => key(c.path)));
+      for (const a of agentPaths) {
+        if (inDiff.has(key(a))) continue;
+        const was = await blobIn(t.before, a);
+        const now_ = await workBlob(r.root, a, r.exact);
+        if (left.has(key(a)) || was !== now_) conflicts.push({ path: a, why: "not in the checkpoint" });
+      }
+    }
     for (const c of paths) {
-      if (reported && !reported.has(c.path.toLowerCase())) {
+      if (reported && !reported.has(key(c.path))) {
         conflicts.push({ path: c.path, why: "not changed by the agent's edits" });
+        continue;
+      }
+      if (left.has(key(c.path))) {
+        conflicts.push({ path: c.path, why: "not in the checkpoint" });
         continue;
       }
       const expected = c.status === "D" ? null : await blobIn(t.after, c.path);
@@ -279,8 +320,8 @@ export function createCheckpoints({ cwd, git = runGit, maxUntrackedBytes = 2 * 1
    * a path the agent's edits didn't report is never touched, and a directory
    * is never removed or replaced.
    */
-  async function restore(threadId, turnId, { force = false, agentPaths = null } = {}) {
-    const p = await plan(threadId, turnId, { agentPaths });
+  async function restore(threadId, turnId, { force = false, agentPaths = null, skipped = [] } = {}) {
+    const p = await plan(threadId, turnId, { agentPaths, skipped });
     if (p.error) return p;
     if (p.conflicts.length && !force) {
       const list = p.conflicts.slice(0, 5).map((c) => `${c.path} (${c.why})`).join(", ");
@@ -288,7 +329,8 @@ export function createCheckpoints({ cwd, git = runGit, maxUntrackedBytes = 2 * 1
     }
     const r = await repo();
     const isDir = (rel) => lstatOrNull(path.join(r.root, rel))?.isDirectory() === true;
-    const notOurs = new Set(p.conflicts.filter((c) => c.why === "not changed by the agent's edits").map((c) => c.path));
+    // Even forced: never a path that isn't the agent's, nor one the checkpoint doesn't hold.
+    const notOurs = new Set(p.conflicts.filter((c) => c.why !== "changed since the turn" && c.why !== "a folder is there now").map((c) => c.path));
     const todo = p.paths.filter((c) => !isDir(c.path) && !notOurs.has(c.path));
     const back = todo.filter((c) => c.status !== "A").map((c) => c.path);
     if (back.length) {
@@ -303,6 +345,7 @@ export function createCheckpoints({ cwd, git = runGit, maxUntrackedBytes = 2 * 1
     repo,
     snapshot,
     beforeSnapshot,
+    freshSnapshot,
     record,
     list,
     plan,

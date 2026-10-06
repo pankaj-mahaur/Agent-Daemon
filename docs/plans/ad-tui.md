@@ -1,6 +1,6 @@
 # Plan — `ad`: a Codex-style terminal UI with agent-daemon's powers
 
-> Status: **final v4.13** (2026-10-06; v4 on 2026-10-04 after three review rounds). Changes from here on need a revision-log entry.
+> Status: **final v4.14** (2026-10-06; v4 on 2026-10-04 after three review rounds). Changes from here on need a revision-log entry.
 > Progress: **Part 0** — code done and reviewed twice:
 > - Codex 0.160.0 pinned.
 > - Isolation guard in place (see "Your own Codex is never touched").
@@ -1037,7 +1037,15 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
       - Besides the 20 turns kept per thread, there is a cap of about 200 turns over all threads.
       - Snapshot failures (for example a nested repo with no commits) are reported.
     - **Smaller fixes:** `/undo` strips the `<private>` wrapper from the prompt it puts back.
-    - **Accepted:** an edit the user makes between their last keystroke's snapshot and pressing Enter, to a file the agent then edits, isn't preserved by `/undo`.
+    - ~~**Accepted:** an edit the user makes between their last keystroke's snapshot and pressing Enter isn't preserved.~~ Fixed in the final re-review below.
+  - **Final re-review (with Part 11): 1 high, 4 medium. All fixed; 17 new guards mutation-checked.**
+    - **"Before" at Enter:** a turn's "before" is a snapshot *started* when the prompt is sent (`beforeSnapshot({since: now()})`, 1 s wait); the typing snapshot only warms caches. The "after" is `freshSnapshot(ended)`, never one still running from inside the turn.
+    - **What snapshots leave out can't be undone (high):** an agent edit to a skipped big file or a heavy-folder file is the conflict `not in the checkpoint`, never "restored" or deleted, even forced. Skipped paths are also removed from the private index (`git rm --cached -f`; without `-f` git refused an entry that grew too big, and that was silent: now a failure is reported).
+    - **Applied edits only:** only `fileChange` items with `status: "completed"` count; a declined patch isn't the agent's change. A path like `..notes` is no longer mistaken for one outside the repo.
+    - **Races:** `/undo` is serialized with the next turn (a turn waits for a running undo; undo re-checks that no turn started). Case-insensitive path compares only on win32/darwin.
+    - **Honest byte-exact:** `.git/info/attributes` or `core.attributesFile` turn off the byte-for-byte promise, and the message says why.
+    - **Launcher:** `ad tui` parses strictly (a mistyped flag exits 2 with usage instead of becoming the prompt), validates `--sandbox`, has `--help` and `--version`, and reports launch errors cleanly.
+    - **Loop log:** the new loop's thread id is read from the log by byte offset (multi-byte text before it no longer hides it).
 
 ### Part 11 — Flip bare `ad`, docs, verification, release
 - **Flip:** after FC3, apply D7, and add `ad --last`. `ad chat` shows a one-time hint.
@@ -1241,3 +1249,4 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
   - **Flip:** `tui/flip.mjs` holds `TUI_IS_DEFAULT`, `bareAdChoice` and `chatHintOnce`.
   - **Code moves and additions:** `tui/preflight.mjs`, and `app.send()` for `ad tui "<prompt>"`.
   - **Status:** Parts 12 and 13 are parked: Part 12 on a live ACP check, Part 13 on the user asking for it.
+- **v4.14** (2026-10-06): the final re-review of Parts 10-11 (see Part 10): "before" at Enter, `not in the checkpoint`, applied edits only, strict `ad tui` flags.

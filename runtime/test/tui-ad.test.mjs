@@ -98,6 +98,9 @@ test("loop: starts ad loop in the background, tails its log, STOP stops it; its 
   try {
     const f = fakeLoopSpawn(cwd);
     const ad = createAdLayer({ cwd, home: cwd, cli: "/ad/cli.mjs", spawnFn: f.spawnFn });
+    // An older run's log, with multi-byte text: the new run is found by byte offset.
+    mkdirSync(join(cwd, ".agent-daemon"), { recursive: true });
+    writeFileSync(join(cwd, ".agent-daemon", "loop-tui.log"), `ad loop — thread old-1 ${"✓".repeat(10)}\n`);
     assert.match(ad.loop.start("").error, /objective/);
     assert.deepEqual(ad.loop.start("make the docs build"), { ok: true });
     const c = f.calls[0];
