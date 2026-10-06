@@ -13,6 +13,8 @@ Skills evolve too: [GEPA](runtime/src/digest/gepa/README.md) (Genetic-Pareto Pro
 
 > **v1.0.0** is the stable Claude Code memory runtime (hooks, memory, skills, GEPA, teams). See [CHANGELOG.md](CHANGELOG.md).
 
+> **v2.1.0 — `ad` is a Codex-style terminal UI.** Type `ad` in any project: the Codex look and keys, plus what ad adds: project memory you can see ("Learned:" rows, `/memory`), `/undo` for the files the last turn changed (only the agent's own edits; it refuses rather than guess), background `/loop`s, schedules and teams. See [Terminal UI](#terminal-ui-ad) and the [release notes](https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v2.1.0).
+
 > **v2.0.0 — Agent Daemon is now its own agent harness** on the OpenAI Codex engine: `ad chat`, `ad run`, `ad loop`, `ad schedule`, `ad web`, `ad acp`, with memory, hooks and skills wired in. See [Agent harness](#agent-harness-codex-engine). Want the Claude Code–only v1? See [Versions](#versions-v1-vs-v2).
 
 ## Quick start
@@ -29,7 +31,7 @@ irm https://raw.githubusercontent.com/pankaj-mahaur/Agent-Daemon/main/install.ps
 curl -fsSL https://raw.githubusercontent.com/pankaj-mahaur/Agent-Daemon/main/install.sh | bash
 ```
 
-Both are idempotent (re-run = `git pull` + relink) and clone to `~/.agent-daemon-src` (override with `AGENT_DAEMON_DIR`). They verify Node >=22 (on Windows they also warn below 22.17, which the coming terminal UI needs), skip test-only packages, run `ad doctor`, and print the next step. Pin a release with `AD_VERSION` (e.g. `AD_VERSION=v1.0.0`, see [Versions](#versions-v1-vs-v2)). Then, in any project:
+Both are idempotent (re-run = `git pull` + relink) and clone to `~/.agent-daemon-src` (override with `AGENT_DAEMON_DIR`). They verify Node >=22 (on Windows they also warn below 22.17, which the terminal UI needs), skip test-only packages, run `ad doctor`, and print the next step. Pin a release with `AD_VERSION` (e.g. `AD_VERSION=v1.0.0`, see [Versions](#versions-v1-vs-v2)). Then, in any project:
 
 ```bash
 cd /path/to/your/project
@@ -42,6 +44,8 @@ ad init --plan                       # preview without applying
 ```
 
 Then open Claude Code — prioritized context and prompt-time retrieval load automatically. Explicit corrections are captured locally; session-close digest blocks add richer memory.
+
+Or let ad run the agent itself: `ad auth login chatgpt` once, then `ad` opens the [terminal UI](#terminal-ui-ad) in the project.
 
 <details>
 <summary><strong>Manual install</strong> (piping a script to a shell is sensitive — here's exactly what the one-liner does)</summary>
@@ -121,7 +125,8 @@ ad auth login openai             # or an OpenAI API key (hidden prompt / stdin)
 ad auth login openrouter --model anthropic/<model>   # Claude, Gemini, … via one OpenRouter key
 ad auth status
 
-ad tui                           # Codex-style terminal UI (early); docs/tui.md
+ad                               # Codex-style terminal UI (= ad tui); docs/tui.md
+ad tui "fix the failing test"    # the same, sending a first prompt; --last / --resume <id>
 ad codex                         # the stock Codex UI, on the harness home
 ad chat                          # plain line mode; approve commands/edits with y / a / n
 ad run "fix the failing test"    # one non-interactive turn (approvals declined)
@@ -147,8 +152,6 @@ ad sandbox setup --elevated      # Windows: stronger command sandbox (one UAC pr
 
 **Subscriptions.** ChatGPT uses Codex's own login. Claude Pro/Max and Google AI Pro/Ultra logins are **never** reused by the harness, because their terms forbid it and it has been enforced. Use API keys or OpenRouter instead. `ad agy` can hand a prompt to *your own* Antigravity CLI (opt-in, `--accept-risk`).
 
-**`ad tui`** is a Codex-style terminal UI on the same engine: history in your terminal's scrollback, approvals with the full command, steer and queue while a turn runs, `/undo` for the files a turn changed, and ad's memory, loops and schedules as slash commands. `/codex` (or `ad codex`) opens the stock Codex UI on the same conversation. Bare `ad` opens it too (`AD_TUI=0` turns that off). Guide: [docs/tui.md](docs/tui.md).
-
 Full guide: [docs/harness.md](docs/harness.md).
 
 **Staying current with Codex.** The engine is pinned exactly.
@@ -160,6 +163,16 @@ Full guide: [docs/harness.md](docs/harness.md).
 Design and decisions: [docs/plans/codex-harness.md](docs/plans/codex-harness.md).
 
 **Your own Codex stays yours.** The harness runs a separate pinned copy of Codex in its own home. It refuses to run in `~/.codex` (or a `CODEX_HOME` you set), and never passes your `CODEX_*` variables to its engine. The optional `ad watch` daemon reads `~/.codex/sessions` to learn from your own sessions, and writes nothing there.
+
+### Terminal UI (`ad`)
+
+Bare `ad` (or `ad tui`) opens a Codex-style terminal UI on the same engine. `AD_TUI=0` turns that off, so bare `ad` prints the help; `ad chat` stays the plain line mode.
+- **Codex's reflexes:** history in your terminal's own scrollback, approvals showing the full command or diff (keys pressed in the first 400 ms are ignored), steer (Enter) and queue (Tab) while a turn runs, Esc to interrupt, Esc Esc to rewind, Ctrl+T for the transcript, `/model`, `/review`, `/resume`, `/permissions` and the rest of Codex's commands.
+- **What ad adds:** "Learned:" rows after a turn and `/memory`; `/private`; `/undo`, which puts back the files the last turn's edits changed and rewinds it, but never touches your own work (a save of yours during or after the turn is a conflict, not undone); `/loop` in the background; `/team`, `/schedule`, `/tools`.
+- **`/codex`** (or `ad codex`) opens the stock Codex UI on the same conversation.
+- **Tested live:** CI runs the whole manual script on the real `ad tui`, in a real pseudo-terminal with the real pinned Codex, on Linux, macOS and Windows (`runtime/test/tui-live.test.mjs`).
+
+Guide: [docs/tui.md](docs/tui.md). Needs an interactive terminal; on Windows, Node 22.17+.
 
 ## Versions: v1 vs v2
 
@@ -184,6 +197,7 @@ Re-run the one-liner without `AD_VERSION` to move back to `main`.
 - New commands: `ad auth`, `ad tui` (terminal UI), `ad codex` (the stock Codex UI on the harness home), `ad chat`, `ad run`, `ad loop`, `ad schedule`, `ad web`, `ad acp`, `ad tools`, `ad sandbox`, `ad agy`. The ones that run the agent need a login first (`ad auth login chatgpt` / `openai` / `openrouter`).
 - Digest/extract and GEPA LLM calls take `--llm claude|codex|auto` (`AD_LLM_BACKEND`). The default `auto` uses Claude and falls back to Codex when `claude` isn't installed.
 - `ad doctor` adds Codex engine checks. The login, hook and sandbox checks are skipped until the harness home exists.
+- Since 2.1, bare `ad` opens the terminal UI instead of the help. Set `AD_TUI=0` to keep the old behaviour.
 
 ## Daily workflow
 
@@ -430,6 +444,7 @@ All commands work with both `ad` (short) and `agent-daemon` (full). Short aliase
 ```bash
 # Harness (Codex engine) — see "Agent harness" above
 ad auth login chatgpt|openai|openrouter   # ad auth use / status / logout
+ad [--last]                                    # terminal UI (AD_TUI=0: help instead)
 ad tui ["<prompt>"] [--last | --resume <id>]   # terminal UI (docs/tui.md); ad codex = stock Codex UI
 ad chat | ad run "<prompt>" | ad loop "<objective>"
 ad schedule add|list|remove|enable|disable|run|tick
