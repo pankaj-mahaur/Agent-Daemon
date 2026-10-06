@@ -1,16 +1,17 @@
 // Wires checkpoints (harness/checkpoints.mjs) into a session and the app
 // (plan Part 10). A turn's "before" is a snapshot started when the prompt is
-// sent (the typing snapshot only warms git's caches). The prompt doesn't wait
-// for it: the checkpoint counts only if the snapshot was done before the
-// agent's first edit started; otherwise that turn has none, never a guess.
-// Its "after" is a snapshot started after it ended. /undo undoes only the last finished
+// sent and finished before the turn starts, so nothing the agent does can be
+// in it (the typing snapshot only warms git's caches). Not ready within
+// `waitMs`: that turn has no checkpoint, never a guess. Its "after" is a
+// snapshot started after it ended. /undo undoes only the last finished
 // turn, and only the files the agent's applied edits reported, as those edits
 // left them: each is hashed when its edit completes, so a change by the user
 // (or a command) during the turn is a conflict, not undone with the turn.
 
 import { realpathSync } from "node:fs";
 import path from "node:path";
-import { UNDO_LIMITS } from "../harness/checkpoints.mjs";
+import { FORCEABLE, UNDO_LIMITS } from "../harness/checkpoints.mjs";
+import { diffStats } from "./view/cells.mjs";
 
 // The real path, in its true case, of a file that may no longer exist (a
 // deleted file: its nearest existing folder's real path, plus the rest).
@@ -28,13 +29,14 @@ const unwrapPrivate = (t) => {
   return m ? m[1] : t;
 };
 
-export function checkpointWiring(cp, { cwd = process.cwd(), waitMs = 60_000, typingEveryMs = 5000, now = () => Date.now() } = {}) {
-  let pendingBefore = null; // {promise, done, raced}: the next turn's "before"
+export function checkpointWiring(cp, { cwd = process.cwd(), waitMs = 10_000, typingEveryMs = 5000, now = () => Date.now() } = {}) {
+  let pendingBefore = null; // {snap}: the "before" of the turn this prompt starts
   let undoing = null; // a running /undo: a new turn waits for it
   let lastTyping = -Infinity;
-  const befores = new Map(); // turnId → its pendingBefore
+  const befores = new Map(); // turnId → its "before" snapshot
   const recorded = new Map(); // turnId → {skipped, agentBlobs}
   const written = new Map(); // turnId → [promise of {path: blob}] per applied edit, in order
+  const lineCounts = new Map(); // turnId → {path: {added, removed}} summed over the agent's applied diffs
   let hashing = Promise.resolve(); // one hash run at a time, in edit order
   const missing = new Map(); // turnId → why there is none
   const recording = new Map(); // turnId → promise of the after snapshot + record
@@ -43,35 +45,31 @@ export function checkpointWiring(cp, { cwd = process.cwd(), waitMs = 60_000, typ
     async beforeTurn({ input }) {
       if (undoing) await undoing.catch(() => {});
       // Started now, when the prompt is sent: anything the user saved before
-      // pressing Enter is in it, so /undo can't take it away. Not awaited.
-      const entry = { done: false, raced: false };
-      entry.promise = cp
-        .beforeSnapshot({ since: now(), waitMs })
-        .catch(() => null)
-        .then((snap) => {
-          entry.done = true;
-          return snap;
-        });
-      pendingBefore = entry;
+      // pressing Enter is in it. Awaited: the turn starts only after it, so no
+      // command or edit of the agent's can be in it.
+      const snap = await cp.beforeSnapshot({ since: now(), waitMs }).catch(() => null);
+      pendingBefore = { snap };
       return input;
     },
     turnStarted({ turn }) {
-      if (pendingBefore) befores.set(turn.id, pendingBefore);
-      else missing.set(turn.id, "no snapshot was started for it");
+      if (pendingBefore?.snap) befores.set(turn.id, pendingBefore.snap);
+      else missing.set(turn.id, !pendingBefore ? "it wasn't started from a prompt here" : cp.lastError ? `snapshots fail here: ${cp.lastError}` : "the snapshot before it wasn't ready in time");
       pendingBefore = null;
     },
-    /** The agent starts an edit: a "before" not done by now may hold it, so it can't count. */
-    itemStarted({ item }) {
-      if (item?.kind !== "fileChange" || !item.turnId) return;
-      const b = befores.get(item.turnId);
-      if (b && !b.done) b.raced = true;
+    /** The prompt's turn/start failed: its "before" must not go to a turn the server starts later (a review, a goal). */
+    turnStartFailed() {
+      pendingBefore = null;
     },
     /** An applied edit: hash its files now, as the agent left them. */
     itemCompleted({ item }) {
       if (item?.kind !== "fileChange" || item.status !== "completed" || !item.turnId) return;
+      const counts = lineCounts.get(item.turnId) ?? {};
+      lineCounts.set(item.turnId, counts);
       const run = hashing.then(async () => {
         const r = await cp.repo();
-        return r ? cp.hashPaths(relPaths(item, r.root)) : {};
+        if (!r) return {};
+        countLines(item, r.root, counts);
+        return cp.hashPaths(relPaths(item, r.root));
       });
       hashing = run.catch(() => {});
       if (!written.has(item.turnId)) written.set(item.turnId, []);
@@ -86,9 +84,6 @@ export function checkpointWiring(cp, { cwd = process.cwd(), waitMs = 60_000, typ
         // Started after the turn ended (not one still running from before it).
         const after = await cp.freshSnapshot(ended).catch(() => null);
         if (!before) return;
-        const snap = await before.promise;
-        if (!snap) return void missing.set(turn.id, cp.lastError ? `snapshots fail here: ${cp.lastError}` : "the snapshot before it wasn't ready in time");
-        if (before.raced) return void missing.set(turn.id, "the agent's first edit started before the snapshot was done");
         if (!after || !threadId) return void missing.set(turn.id, cp.lastError ? `snapshots fail here: ${cp.lastError}` : "the snapshot after it failed");
         // A hash that failed is left out: that path is then a conflict.
         const agentBlobs = {};
@@ -100,15 +95,36 @@ export function checkpointWiring(cp, { cwd = process.cwd(), waitMs = 60_000, typ
           }
         }
         // What either snapshot left out was never captured on that side.
-        const skipped = [...new Set([...(snap.skipped ?? []), ...(after.skipped ?? [])])];
-        if (await cp.record(threadId, turn.id, { before: snap.tree, after: after.tree }).catch(() => false)) recorded.set(turn.id, { skipped, agentBlobs });
+        const skipped = [...new Set([...(before.skipped ?? []), ...(after.skipped ?? [])])];
+        const agentLines = Object.fromEntries(Object.entries(lineCounts.get(turn.id) ?? {}).filter(([, n]) => !n.unchecked));
+        if (await cp.record(threadId, turn.id, { before: before.tree, after: after.tree }).catch(() => false)) recorded.set(turn.id, { skipped, agentBlobs, agentLines });
       })();
-      job.finally(() => written.delete(turn.id));
+      job.finally(() => {
+        written.delete(turn.id);
+        lineCounts.delete(turn.id);
+      });
       recording.set(turn.id, job);
       job.finally(() => recording.delete(turn.id));
       return job;
     },
   };
+
+  // Adds an applied edit's +/- lines per file to `counts` (repo-relative).
+  // A move can't be compared with git's per-path counts: those paths aren't checked.
+  function countLines(item, root, counts) {
+    for (const c of item.changes ?? []) {
+      const [p] = relPaths({ changes: [{ path: c.path }] }, root);
+      if (!p) continue;
+      const to = c.movePath ?? c.kind?.move_path;
+      if (to) {
+        for (const q of [p, ...relPaths({ changes: [{ path: to }] }, root)]) counts[q] = { unchecked: true };
+        continue;
+      }
+      if (counts[p]?.unchecked) continue;
+      const st = diffStats(c);
+      counts[p] = { added: (counts[p]?.added ?? 0) + st.added, removed: (counts[p]?.removed ?? 0) + st.removed };
+    }
+  }
 
   // An edit's files, relative to the repo root, "/"-separated.
   function relPaths(item, root) {
@@ -126,16 +142,21 @@ export function checkpointWiring(cp, { cwd = process.cwd(), waitMs = 60_000, typ
   }
 
   // Files the turn's edits reported.
+  // Files the turn's applied edits reported in this repo, and how many were outside it.
   async function agentPaths(session, turn) {
     const r = await cp.repo();
     const out = [];
+    let outside = 0;
     for (const id of turn.itemIds) {
       const it = session.state.items.get(id);
       // Only edits that were applied: a declined or failed patch isn't the agent's change.
       if (it?.kind !== "fileChange" || it.status !== "completed") continue;
-      out.push(...relPaths(it, r.root));
+      const named = (it.changes ?? []).flatMap((c) => [c.path, c.movePath].filter(Boolean)).length;
+      const inside = relPaths(it, r.root);
+      outside += named - inside.length;
+      out.push(...inside);
     }
-    return out;
+    return { paths: out, outside };
   }
 
   return {
@@ -166,9 +187,12 @@ export function checkpointWiring(cp, { cwd = process.cwd(), waitMs = 60_000, typ
       if (!target) return { error: "Nothing to undo yet." };
       if (!recorded.has(target.id)) return { error: `The last turn has no checkpoint (${missing.get(target.id) ?? "it ran before checkpoints were on"}), so /undo can't put its files back.` };
       if (st.activeTurnId || st.starting) return { error: "A turn started meanwhile: /undo again once it finishes." };
-      const { skipped: left, agentBlobs } = recorded.get(target.id);
-      const r = await cp.restore(st.thread.id, target.id, { force, agentPaths: await agentPaths(session, target), skipped: left, agentBlobs });
-      if (r.error) return { error: r.conflicts?.length && !force ? `${r.error} /undo force puts the agent's files back anyway, discarding the changes made after its edit; the rest are never touched.` : r.error };
+      const { skipped: left, agentBlobs, agentLines } = recorded.get(target.id);
+      const { paths, outside } = await agentPaths(session, target);
+      const r = await cp.restore(st.thread.id, target.id, { force, agentPaths: paths, skipped: left, agentBlobs, agentLines });
+      // The force hint only where force can do something.
+      const forceable = !force && (r.conflicts ?? []).some((c) => FORCEABLE.has(c.why) && c.why !== "a folder is there now");
+      if (r.error) return { error: forceable ? `${r.error} /undo force puts the agent's files back anyway, discarding the changes made after its edit; the rest are never touched.` : r.error };
       const um = target.itemIds.map((id) => st.items.get(id)).find((i) => i?.kind === "userMessage");
       recorded.delete(target.id);
       try {
@@ -177,7 +201,7 @@ export function checkpointWiring(cp, { cwd = process.cwd(), waitMs = 60_000, typ
         return { error: `Files put back (${r.restored}), but the conversation couldn't be rewound: ${err?.message ?? err}. Esc Esc rewinds it.` };
       }
       const n = r.restored;
-      const skipped = r.skipped ? ` ${r.skipped} left alone (not the agent's edit, not in the checkpoint, or a folder is there now).` : "";
+      const skipped = `${r.skipped ? ` ${r.skipped} left alone (not the agent's edit, not in the checkpoint, or a folder is there now).` : ""}${outside ? ` ${outside} edit${outside === 1 ? " outside this repo wasn't" : "s outside this repo weren't"} touched.` : ""}`;
       const exact = r.byteExact ? "" : " Git can't skip every attributes file here (git older than 2.40, .git/info/attributes or core.attributesFile): files with eol rules may come back normalized.";
       return { message: `Undid the last turn: ${n} file${n === 1 ? "" : "s"} put back.${skipped} ${UNDO_LIMITS}${exact}`, prompt: um ? unwrapPrivate(um.text) : null };
   }

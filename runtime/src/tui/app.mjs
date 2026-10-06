@@ -117,7 +117,9 @@ export function createApp({
   const height = () => Math.max(4, io.size().rows);
 
   // What is already in the scrollback.
-  let committed = new Set(); // item ids
+  let committed = new Set(); // shownKey(item)s
+  // An item as shown, per turn: an id a later turn reuses (after a rewind) is a new item.
+  const shownKey = (it) => (it.turnId ? `${it.turnId}|${it.id}` : it.id);
   let streams = new Map(); // agentMessage id → {md, fed}
   let echoesShown = new Set(); // clientUserMessageIds committed as typed
   let turnsSeen = new Map(); // turnId → status reported
@@ -192,20 +194,20 @@ export function createApp({
    * as it goes); what is left is drawn live.
    */
   function flush() {
-    const items = rootItems().filter((it) => !committed.has(it.id));
+    const items = rootItems().filter((it) => !committed.has(shownKey(it)));
     for (let i = 0; i < items.length; i++) {
       const it = items[i];
       if (it.kind === "userMessage") {
-        committed.add(it.id);
+        committed.add(shownKey(it));
         if (it.clientId && echoesShown.has(it.clientId)) continue;
         commitCell(renderCell(it, { width: width() }));
         continue;
       }
       if (it.kind === "agentMessage") {
-        let s = streams.get(it.id);
+        let s = streams.get(shownKey(it));
         if (!s) {
           s = { md: createMarkdownStream({ width: width() - 2 }), fed: 0, started: false };
-          streams.set(it.id, s);
+          streams.set(shownKey(it), s);
         }
         const text = String(it.text ?? "");
         const fresh = s.md.push(text.slice(s.fed));
@@ -219,8 +221,8 @@ export function createApp({
           s.started = true;
         }
         if (live) return items.slice(i);
-        committed.add(it.id);
-        streams.delete(it.id);
+        committed.add(shownKey(it));
+        streams.delete(shownKey(it));
         continue;
       }
       if (isExploring(it)) {
@@ -231,12 +233,12 @@ export function createApp({
         // A run of exploring commands is one cell: it ends at the next other item or the turn's end.
         if (!settled || (j === items.length && turnActive())) return items.slice(i);
         commitCell(renderExploring(group.map(settledView), { width: width() }));
-        for (const g of group) committed.add(g.id);
+        for (const g of group) committed.add(shownKey(g));
         i = j - 1;
         continue;
       }
       if (open(it)) return items.slice(i);
-      committed.add(it.id);
+      committed.add(shownKey(it));
       commitCell(renderCell(settledView(it), { width: width() }));
     }
     return [];
@@ -359,7 +361,7 @@ export function createApp({
     for (let i = 0; i < pending.length; i++) {
       const it = pending[i];
       if (it.kind === "agentMessage") {
-        const s = streams.get(it.id);
+        const s = streams.get(shownKey(it));
         if (!s) {
           out.push(...renderCell(it, { width: w }));
           continue;

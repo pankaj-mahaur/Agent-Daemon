@@ -331,6 +331,8 @@ async function onRequest({ id, method, params }) {
       return send({ id, result: { thread: { id: params.threadId }, model: "fake-model", modelProvider: "fake" } });
     case "turn/start": {
       const threadId = params.threadId;
+      // A turn/start Codex rejects (as for a bad input or a thread it lost).
+      if ((params.input?.[0]?.text ?? "") === "reject-start") return send({ id, error: { code: -32600, message: "turn/start rejected" } });
       const turn = { id: `turn-${RUN}-${++turnSeq}`, status: "inProgress", items: [] };
       const text = params.input?.[0]?.text ?? "";
       turnsOf(threadId).push({ id: turn.id, status: "inProgress", items: [] });

@@ -581,6 +581,7 @@ export function createSession({
         return { turnId };
       } catch (err) {
         if (!stale(e)) state.echoes.delete(cid);
+        hooks.turnStartFailed?.({ error: err, session: api });
         throw err;
       } finally {
         if (!stale(e)) {

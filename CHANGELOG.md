@@ -15,7 +15,7 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 - `ad tui`: `/undo` compares with what the agent's edit wrote, so a file you saved right after the turn is "changed since the agent's edit", which `/undo force` can override.
 - `ad tui`: `/private` prompts show as typed, marked "(private)".
 - `ad tui`: `/undo` recognizes the agent's edits when Codex names the folder differently from git (an 8.3 short name like `RUNNER~1`, a junction, a `subst` drive).
-- `ad tui`: sending a prompt never waits for the `/undo` snapshot; a turn gets no checkpoint only if the agent edits before the snapshot is done.
+- `ad tui`: `/undo` keeps a checkpoint on a busy machine (the snapshot taken at send may take up to 10 s), and never undoes a save of yours made during the turn to a file the agent also edited ("changed during the turn").
 - `ad acp`: with two sessions open, one prompt ending no longer drops the other's edit diff from its permission request.
 
 - The Windows one-liner installer works in Windows PowerShell 5.1 again. 5.1 stripped the quotes inside `node -p '…split(".")…'`, so the Node check always read version 0 and stopped with "Node.js >=22 required". A failing step now stops the script with `throw` instead of `exit`, which used to close the window under `irm | iex`.

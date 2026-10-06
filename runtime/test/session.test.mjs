@@ -308,6 +308,17 @@ test("itemStarted / itemCompleted fire for the thread's items, with their turn (
   });
 });
 
+test("turnStartFailed fires when turn/start fails (so a prepared 'before' isn't left for a later turn)", async () => {
+  const failed = [];
+  await withSession(() => ({ hooks: { turnStartFailed: ({ error }) => failed.push(error.message) } }), async ({ session }) => {
+    await assert.rejects(session.submit("reject-start").accepted, /turn\/start rejected/);
+    assert.equal(failed.length, 1);
+    assert.match(failed[0], /turn\/start rejected/);
+    await session.submit("same-id ok").done;
+    assert.equal(failed.length, 1, "not for a turn that starts");
+  });
+});
+
 test("an item id a later turn reuses is a new item there: no merging, nothing hidden", async () => {
   await withSession(() => ({}), async ({ session }) => {
     await session.submit("same-id one").done;

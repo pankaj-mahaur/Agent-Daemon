@@ -311,11 +311,11 @@ A Codex command ad doesn't have yet answers "Unknown command … /help lists the
 `/undo` puts back the files the last turn's edits changed, then rewinds the conversation to before that turn. Your prompt comes back in the composer.
 
 **How it works.** In a git repo, while `ad tui` runs, ad takes a snapshot of your working folder before and after each turn.
-- The "before" snapshot is started when you press Enter, so everything you saved before sending is in it. Sending doesn't wait for it. If the agent starts an edit before the snapshot is done, that turn gets no checkpoint: ad never guesses. (Snapshots while you type only warm git's caches.)
+- The "before" snapshot is started when you press Enter, so everything you saved before sending is in it. The turn starts once it is done (usually well under a second; up to 10 s on a very large folder or a busy machine), so nothing the agent does can be in it. Not done in 10 s: that turn gets no checkpoint, ad never guesses. (Snapshots while you type only warm git's caches.)
 - The "after" snapshot is started once the turn has ended.
 - Snapshots are git trees under `refs/ad/checkpoints/<thread>/`. Nothing goes into Codex's session files.
 - ad uses its own index (`.git/ad-checkpoint-index`). Your index, HEAD, branches and stash are never touched.
-- `.gitignore` is respected. Untracked files over 2 MB and heavy folders (`node_modules`, `.venv`, `dist`, `build`, `target`, …) are skipped.
+- `.gitignore` is respected. Untracked files over 2 MB and heavy folders (`node_modules`, `.venv`, `dist`, `build`, `target`, …) are skipped, and so is ad's own `.agent-daemon/` (its hooks write there during every turn).
 - The last 20 turns per conversation are kept, and about 200 turns over all conversations.
 
 **What it undoes.** Only the last finished turn, and only the files the agent's own edits reported. Anything else that changed during the turn is a conflict, not something to undo blindly:
@@ -323,6 +323,7 @@ A Codex command ad doesn't have yet answers "Unknown command … /help lists the
 | Conflict | Means |
 |---|---|
 | `not changed by the agent's edits` | the file changed during the turn some other way: a command the agent ran, your editor, another tool |
+| `changed during the turn` | more of the file changed during the turn than the agent's own edits account for: you saved it (or a command changed it) before or between the agent's edits. `force` doesn't override this: your change would go too |
 | `changed since the agent's edit` | the agent edited it, and it changed after that: you, your editor's format-on-save, a formatter the agent ran, during the turn or after it. Each edit is hashed as it lands |
 | `a folder is there now` | a folder stands where the file was |
 | `a file is where its folder was` | a file (or symlink) now stands where one of the path's folders was |

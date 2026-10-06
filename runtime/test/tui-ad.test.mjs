@@ -206,7 +206,7 @@ async function withApp(fn, ad) {
     throw new Error(`timed out waiting for ${what}:\n${scr.lines().join("\n")}`);
   };
   try {
-    await fn({ app, type: (s) => decoder.feed(s), until, committed, engine, screen: () => scr.lines().join("\n"), root });
+    await fn({ app, type: (s) => decoder.feed(s), until, committed, engine, session, screen: () => scr.lines().join("\n"), root });
   } finally {
     app.dispose();
     renderer.dispose();
@@ -248,4 +248,14 @@ test("in the app: /memory, /private wraps prompts, learned rows after a turn, /l
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
+});
+
+test("a reply whose id a rewound turn used still shows", async () => {
+  await withApp(async ({ type, until, committed, session }) => {
+    type("same-id one\r");
+    await until(() => /reply to same-id one/.test(committed()), "the first reply");
+    await session.revert(session.state.turns.at(-1).id); // Esc Esc or /undo rewinds that turn
+    type("same-id two\r");
+    await until(() => /reply to same-id two/.test(committed()), "the reply reusing the id");
+  });
 });

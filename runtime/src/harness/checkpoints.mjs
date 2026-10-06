@@ -35,13 +35,15 @@ export const CHECKPOINT_REF = "refs/ad/checkpoints";
 // Snapshots, comparisons and restores all see bytes as they are on disk (no
 // eol conversion); with git 2.40+ the repo's .gitattributes are ignored too.
 const EXACT = ["-c", "core.autocrlf=false", "-c", "core.eol=lf", "-c", "core.safecrlf=false"];
-const HEAVY_DIRS = ["node_modules", ".venv", "venv", "__pycache__", ".next", "dist", "build", "target", ".gradle", ".turbo", ".cache"];
+// Never snapshotted: heavy folders, and ad's own state (its hooks write
+// .agent-daemon/ during every turn; that is never the agent's work to undo).
+const HEAVY_DIRS = ["node_modules", ".venv", "venv", "__pycache__", ".next", "dist", "build", "target", ".gradle", ".turbo", ".cache", ".agent-daemon"];
 const HEAVY_SPECS = HEAVY_DIRS.map((d) => `:(exclude,glob)**/${d}/**`);
 const MAX_REFS = 400; // all threads together: about 200 turns
 const STALE_LOCK_MS = 5 * 60_000;
 // Conflicts `force` overrides: later changes to the agent's own files ("a
 // folder is there now" is listed so it is reported, but a folder is never touched).
-const FORCEABLE = new Set(["changed since the turn", "changed since the agent's edit", "a folder is there now"]);
+export const FORCEABLE = new Set(["changed since the turn", "changed since the agent's edit", "a folder is there now"]);
 const FOLDS_CASE =process.platform === "win32" || process.platform === "darwin";
 
 /** Runs git; never throws for a non-zero exit. */
@@ -265,6 +267,17 @@ export function createCheckpoints({ cwd, git = runGit, maxUntrackedBytes = 2 * 1
     return out;
   }
 
+  /** Lines each path gained and lost between two trees: {path: {added, removed}} (null counts: binary). */
+  async function numstat(before, after) {
+    const d = await g(["diff-tree", "-r", "-z", "--no-renames", "--numstat", before, after]);
+    const out = new Map();
+    for (const rec of d.stdout.split("\0")) {
+      const m = /^(-|\d+)\t(-|\d+)\t([\s\S]+)$/.exec(rec.replace(/^\n/, ""));
+      if (m) out.set(m[3], { added: m[1] === "-" ? null : Number(m[1]), removed: m[2] === "-" ? null : Number(m[2]) });
+    }
+    return out;
+  }
+
   async function blobIn(tree, p) {
     const r = await g(["rev-parse", "--verify", "--quiet", `${tree}:${p}`]);
     return r.code === 0 ? r.stdout.trim() : null;
@@ -323,7 +336,7 @@ export function createCheckpoints({ cwd, git = runGit, maxUntrackedBytes = 2 * 1
    * turn's diff shows (the user's editor, another agent, a command) is a
    * conflict rather than something to undo blindly.
    */
-  async function plan(threadId, turnId, { agentPaths = null, skipped = [], agentBlobs = null } = {}) {
+  async function plan(threadId, turnId, { agentPaths = null, skipped = [], agentBlobs = null, agentLines = null } = {}) {
     const r = await repo();
     if (!r) return { error: "Not a git repo: /undo isn't available here." };
     const t = (await list(threadId)).filter((x) => x.turnId === safeRefPart(turnId)).at(-1);
@@ -333,6 +346,8 @@ export function createCheckpoints({ cwd, git = runGit, maxUntrackedBytes = 2 * 1
     const reported = agentPaths ? new Set(agentPaths.map(key)) : null;
     const left = new Set(skipped.map(key));
     const blobs = agentBlobs ? new Map(Object.entries(agentBlobs).map(([p, b]) => [key(p), b])) : null;
+    const lines = agentLines ? new Map(Object.entries(agentLines).map(([p, n]) => [key(p), n])) : null;
+    const counted = lines ? await numstat(t.before, t.after) : null;
     const conflicts = [];
     // The agent edited something the checkpoints left out (too big, a heavy
     // folder): there is nothing to put back, so it can't be undone.
@@ -356,6 +371,17 @@ export function createCheckpoints({ cwd, git = runGit, maxUntrackedBytes = 2 * 1
         conflicts.push({ path: c.path, why: "not in the checkpoint" });
         continue;
       }
+      // More lines changed than the agent's own diffs account for: someone
+      // else (the user's save, a command) changed it during the turn, before
+      // or between the agent's edits. Undoing would take that away too.
+      const mine = lines?.get(key(c.path));
+      if (mine) {
+        const n = counted.get(c.path);
+        if (!n || n.added === null || n.added > mine.added || n.removed > mine.removed) {
+          conflicts.push({ path: c.path, why: "changed during the turn" });
+          continue;
+        }
+      }
       if (brokenParent(r.root, c.path)) {
         conflicts.push({ path: c.path, why: "a file is where its folder was" });
         continue;
@@ -378,8 +404,8 @@ export function createCheckpoints({ cwd, git = runGit, maxUntrackedBytes = 2 * 1
    * a path the agent's edits didn't report is never touched, and a directory
    * is never removed or replaced.
    */
-  async function restore(threadId, turnId, { force = false, agentPaths = null, skipped = [], agentBlobs = null } = {}) {
-    const p = await plan(threadId, turnId, { agentPaths, skipped, agentBlobs });
+  async function restore(threadId, turnId, { force = false, agentPaths = null, skipped = [], agentBlobs = null, agentLines = null } = {}) {
+    const p = await plan(threadId, turnId, { agentPaths, skipped, agentBlobs, agentLines });
     if (p.error) return p;
     if (p.conflicts.length && !force) {
       const list = p.conflicts.slice(0, 5).map((c) => `${c.path} (${c.why})`).join(", ");

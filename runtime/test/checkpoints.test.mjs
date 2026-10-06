@@ -58,6 +58,10 @@ test("a turn's changes come back byte for byte; big untracked files and heavy fo
       writeFileSync(join(r.dir, "big.bin"), Buffer.alloc(5000));
       mkdirSync(join(r.dir, "node_modules", "x"), { recursive: true });
       writeFileSync(join(r.dir, "node_modules", "x", "i.js"), "module");
+      // ad's own hooks write the project's .agent-daemon/ during every turn: never part of it.
+      mkdirSync(join(r.dir, ".agent-daemon", "telemetry"), { recursive: true });
+      writeFileSync(join(r.dir, ".agent-daemon", "telemetry", "session-start.jsonl"), "{}\n");
+      writeFileSync(join(r.dir, ".agent-daemon", "last-digest-sweep.flag"), "now");
     });
     assert.deepEqual(after.skipped, ["big.bin"]);
     const agentPaths = ["crlf.txt", "new file.txt", "with space.txt", "old name.txt", "new name.txt"];
@@ -73,6 +77,7 @@ test("a turn's changes come back byte for byte; big untracked files and heavy fo
     assert.ok(!existsSync(join(r.dir, "new name.txt")));
     assert.ok(existsSync(join(r.dir, "big.bin")), "skipped files are left alone");
     assert.ok(existsSync(join(r.dir, "node_modules", "x", "i.js")));
+    assert.equal(file(r.dir, ".agent-daemon/last-digest-sweep.flag"), "now", "ad's own state is left alone");
     assert.deepEqual(readFileSync(join(r.dir, ".git", "index")), userIndex, "the user's index is untouched");
     assert.equal(r.git("rev-parse", "HEAD"), head);
     assert.equal(r.git("stash", "list"), stash);
@@ -198,6 +203,9 @@ function fakeCp({ slowBefore = false } = {}) {
   return { cp, recorded, release };
 }
 
+// The session while the prompt's turn/start runs.
+const STARTING = { state: { starting: true } };
+
 function fakeSession() {
   const st = { thread: { id: "t" }, turns: [], items: new Map(), activeTurnId: null, starting: false };
   return { state: st, revert: async (id) => (st.reverted = id) };
@@ -208,7 +216,7 @@ test("a late 'before' means no checkpoint for that turn, never the previous turn
   const w = checkpointWiring(cp, { cwd: "/repo", waitMs: 20 });
   const s = fakeSession();
   await w.hooks.beforeTurn({ input: [] });
-  w.hooks.turnStarted({ turn: { id: "u1" } });
+  w.hooks.turnStarted({ turn: { id: "u1" }, session: STARTING });
   await w.hooks.turnCompleted({ turn: { id: "u1" }, session: s });
   assert.deepEqual(recorded, []);
   s.state.turns.push({ id: "u1", status: "completed", itemIds: [] });
@@ -224,7 +232,7 @@ test("/undo waits for the last turn's checkpoint, undoes only that turn, and onl
     const sent = clock;
     await w.hooks.beforeTurn({ input: [] });
     assert.ok(cp.calls.at(-1)[1] > sent, "the 'before' is a snapshot from the moment the prompt is sent");
-    w.hooks.turnStarted({ turn: { id } });
+    w.hooks.turnStarted({ turn: { id }, session: STARTING });
     s.state.items.set(`fc-${id}`, { id: `fc-${id}`, turnId: id, kind: "fileChange", status: "completed", changes: [{ path: `src/${id}.js` }, { path: "/repo/abs.txt", movePath: "/repo/moved.txt" }] });
     // A patch the user declined isn't the agent's change.
     s.state.items.set(`fcd-${id}`, { id: `fcd-${id}`, turnId: id, kind: "fileChange", status: "declined", changes: [{ path: "declined.txt" }] });
@@ -434,7 +442,7 @@ test("an edit named through another path to the repo (8.3 short name, junction, 
     const w = checkpointWiring(cp, { cwd: link });
     const s = fakeSession();
     await w.hooks.beforeTurn({ input: [] });
-    w.hooks.turnStarted({ turn: { id: "u1" } });
+    w.hooks.turnStarted({ turn: { id: "u1" }, session: STARTING });
     // Codex names the files by the other path; one of them doesn't exist (deleted).
     s.state.items.set("fc", { id: "fc", turnId: "u1", kind: "fileChange", status: "completed", changes: [{ path: join(link, "src", "gone.js") }, { path: "rel.txt" }] });
     w.hooks.itemCompleted({ item: s.state.items.get("fc") });
@@ -448,31 +456,106 @@ test("an edit named through another path to the repo (8.3 short name, junction, 
   }
 });
 
-test("the prompt never waits for the 'before'; it counts only if done before the agent's first edit started", async () => {
-  for (const editFirst of [true, false]) {
-    const { cp, recorded, release } = fakeCp({ slowBefore: true });
-    const w = checkpointWiring(cp, { cwd: "/repo", waitMs: 2000 });
-    const s = fakeSession();
-    let sent = false;
-    await Promise.race([w.hooks.beforeTurn({ input: [] }).then(() => (sent = true)), new Promise((r) => setTimeout(r, 200))]);
-    assert.ok(sent, "sending doesn't wait for a slow snapshot");
-    w.hooks.turnStarted({ turn: { id: "u1" } });
-    const fc = { id: "fc", turnId: "u1", kind: "fileChange", status: "inProgress", changes: [{ path: "a.js" }] };
-    s.state.items.set("fc", fc);
-    if (editFirst) w.hooks.itemStarted({ item: fc });
-    release({ tree: "before-tree", skipped: [] });
-    await new Promise((r) => setTimeout(r, 10));
-    if (!editFirst) w.hooks.itemStarted({ item: fc });
-    fc.status = "completed";
-    w.hooks.itemCompleted({ item: fc });
-    s.state.turns.push({ id: "u1", status: "completed", itemIds: ["fc"] });
-    await w.hooks.turnCompleted({ turn: { id: "u1" }, session: s });
-    if (editFirst) {
-      assert.deepEqual(recorded, [], "an edit that may be in the 'before' leaves the turn without a checkpoint");
-      assert.match((await w.undo(s)).error, /no checkpoint \(the agent's first edit started before the snapshot was done\)/);
-    } else {
-      assert.equal(recorded.length, 1, "done before the first edit: the checkpoint counts");
-      assert.equal(recorded[0].before, "before-tree");
-    }
+test("the turn starts only after its 'before' is done; a turn the server starts on its own never takes it", async () => {
+  const { cp, recorded, release } = fakeCp({ slowBefore: true });
+  const w = checkpointWiring(cp, { cwd: "/repo", waitMs: 2000 });
+  const s = fakeSession();
+  let sent = false;
+  const sending = w.hooks.beforeTurn({ input: [] }).then(() => (sent = true));
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal(sent, false, "turn/start waits for the snapshot: nothing the agent does can be in it");
+  release({ tree: "before-tree", skipped: [] });
+  await sending;
+  // The prompt's turn/start failed; later the server starts a turn on its own (a review, a goal).
+  w.hooks.turnStartFailed({ error: new Error("engine gone") });
+  w.hooks.turnStarted({ turn: { id: "server" } });
+  s.state.turns.push({ id: "server", status: "completed", itemIds: [] });
+  await w.hooks.turnCompleted({ turn: { id: "server" }, session: s });
+  assert.deepEqual(recorded, [], "no older 'before' for it");
+  assert.match((await w.undo(s)).error, /no checkpoint \(it wasn't started from a prompt here\)/);
+});
+
+test("a save of the user's during the turn, before or between the agent's edits to that file, is never undone with it", async () => {
+  const r = repo();
+  try {
+    const cp = createCheckpoints({ cwd: r.dir });
+    const f = "with space.txt"; // committed as "keep"
+    const before = await cp.snapshot();
+    writeFileSync(join(r.dir, f), "keep\nthe user's line\n"); // the user saves, mid-turn
+    writeFileSync(join(r.dir, f), "keep\nthe user's line\nthe agent's line\n"); // then the agent's edit (+1)
+    const agentBlobs = await cp.hashPaths([f]);
+    const after = await cp.snapshot();
+    await cp.record("t", "u", { before: before.tree, after: after.tree });
+    const agentLines = { [f]: { added: 1, removed: 0 } }; // what the agent's own diff did
+    const p = await cp.plan("t", "u", { agentPaths: [f], agentBlobs, agentLines });
+    assert.deepEqual(p.conflicts, [{ path: f, why: "changed during the turn" }]);
+    const forced = await cp.restore("t", "u", { force: true, agentPaths: [f], agentBlobs, agentLines });
+    assert.equal(forced.restored, 0, "not even forced: the user's line would go");
+    assert.equal(file(r.dir, f), "keep\nthe user's line\nthe agent's line\n");
+
+    // The user deleted a line during the turn; the agent only added one: also caught.
+    writeFileSync(join(r.dir, "crlf.txt"), "one\ntwo\nthree\n");
+    const b3 = await cp.snapshot();
+    writeFileSync(join(r.dir, "crlf.txt"), "one\nthree\n"); // the user's deletion
+    writeFileSync(join(r.dir, "crlf.txt"), "one\nthree\nagent\n"); // the agent's +1
+    const blobs3 = await cp.hashPaths(["crlf.txt"]);
+    const a3 = await cp.snapshot();
+    await cp.record("t", "u3", { before: b3.tree, after: a3.tree });
+    const p3 = await cp.plan("t", "u3", { agentPaths: ["crlf.txt"], agentBlobs: blobs3, agentLines: { "crlf.txt": { added: 1, removed: 0 } } });
+    assert.deepEqual(p3.conflicts, [{ path: "crlf.txt", why: "changed during the turn" }]);
+
+    // The agent's edit alone (+1 here too) is undone.
+    const b2 = await cp.snapshot();
+    writeFileSync(join(r.dir, "old name.txt"), "renamed later\nagent\n");
+    const blobs2 = await cp.hashPaths(["old name.txt"]);
+    const a2 = await cp.snapshot();
+    await cp.record("t", "u2", { before: b2.tree, after: a2.tree });
+    const ok = await cp.restore("t", "u2", { agentPaths: ["old name.txt"], agentBlobs: blobs2, agentLines: { "old name.txt": { added: 2, removed: 1 } } }); // "renamed later" had no final newline
+    assert.equal(ok.restored, 1, ok.error);
+    assert.equal(file(r.dir, "old name.txt"), "renamed later");
+  } finally {
+    r.done();
   }
+});
+
+test("the agent's applied diffs are counted per file for that check; a move isn't checked", async () => {
+  const { cp } = fakeCp();
+  const w = checkpointWiring(cp, { cwd: "/repo" });
+  const s = fakeSession();
+  await w.hooks.beforeTurn({ input: [] });
+  w.hooks.turnStarted({ turn: { id: "u1" }, session: STARTING });
+  const edit = (id, changes) => {
+    const it = { id, turnId: "u1", kind: "fileChange", status: "completed", changes };
+    s.state.items.set(id, it);
+    w.hooks.itemCompleted({ item: it });
+  };
+  edit("e1", [{ path: "a.js", kind: "update", diff: "@@ -1 +1,2 @@\n-x\n+y\n+z" }]);
+  edit("e2", [{ path: "a.js", kind: "update", diff: "@@ -2 +2 @@\n-z\n+w" }, { path: "new.txt", kind: "add", diff: "one\ntwo\n" }]);
+  edit("e3", [{ path: "old.js", movePath: "moved.js", kind: "update", diff: "@@ -1 +1 @@\n-a\n+b" }]);
+  s.state.turns.push({ id: "u1", status: "completed", itemIds: ["e1", "e2", "e3"] });
+  await w.hooks.turnCompleted({ turn: { id: "u1" }, session: s });
+  await w.undo(s);
+  assert.deepEqual(cp.lastRestore.agentLines, { "a.js": { added: 3, removed: 2 }, "new.txt": { added: 2, removed: 0 } });
+});
+
+test("/undo says when edits outside the repo weren't touched, and offers force only where it can do something", async () => {
+  const { cp } = fakeCp();
+  const w = checkpointWiring(cp, { cwd: "/repo" });
+  const s = fakeSession();
+  const turn = async (id, paths) => {
+    await w.hooks.beforeTurn({ input: [] });
+    w.hooks.turnStarted({ turn: { id }, session: STARTING });
+    const it = { id: `fc-${id}`, turnId: id, kind: "fileChange", status: "completed", changes: paths.map((p) => ({ path: p, kind: "update", diff: "" })) };
+    s.state.items.set(it.id, it);
+    w.hooks.itemCompleted({ item: it });
+    s.state.turns.push({ id, status: "completed", itemIds: [it.id] });
+    await w.hooks.turnCompleted({ turn: { id }, session: s });
+  };
+  await turn("u1", ["a.js", "/elsewhere/notes.txt"]);
+  assert.match((await w.undo(s)).message, /1 file put back\. 1 edit outside this repo wasn't touched\./);
+  await turn("u2", ["a.js"]);
+  cp.restore = async () => ({ error: "Not undone: a.js (changed during the turn).", conflicts: [{ path: "a.js", why: "changed during the turn" }] });
+  assert.doesNotMatch((await w.undo(s)).error, /force/, "force can't help there");
+  cp.restore = async () => ({ error: "Not undone: a.js (changed since the agent's edit).", conflicts: [{ path: "a.js", why: "changed since the agent's edit" }] });
+  assert.match((await w.undo(s)).error, /\/undo force puts the agent's files back anyway/);
 });

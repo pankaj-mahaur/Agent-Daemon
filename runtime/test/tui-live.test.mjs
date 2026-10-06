@@ -144,6 +144,11 @@ function liveScript(body) {
   {
     if (text.includes("STEERED")) return [ev.created(), ev.message("steer received"), ev.completed()];
     if (text.includes("QUEUED")) return [ev.created(), ev.message("queue ran"), ev.completed()];
+    if (text.includes("EDITMATH")) {
+      // An Update File patch: Codex's own diff of it must match git's line counts.
+      const patch = "*** Begin Patch\n*** Update File: math.js\n@@\n export const add = (a, b) => a + b;\n+export const sub = (a, b) => a - b;\n*** End Patch";
+      return [ev.created(), ev.functionCall("call-patch", "exec_command", { cmd: `apply_patch <<'EOF'\n${patch}\nEOF\n` }), ev.completed()];
+    }
   }
   return defaultScript(body);
 }
@@ -211,6 +216,17 @@ test("FC3 live script: ad tui on the real Codex binary, end to end", { skip, tim
     await t.until(/Undid the last turn: 1 file put back/, "the undo");
     assert.ok(!existsSync(join(w.cwd, "hello.txt")), "the agent's file is gone again");
     await t.until(/PATCH please\s*$/m, "the prompt back in the composer");
+    t.type("\x7f".repeat(20));
+
+    // 4a'. An edit of a committed file: /undo puts it back (Codex's diff counts match git's).
+    const math = readFileSync(join(w.cwd, "math.js"), "utf8");
+    await patchTurn("EDITMATH please", "the math.js edit");
+    assert.match(readFileSync(join(w.cwd, "math.js"), "utf8"), /export const sub/);
+    const undone0 = t.count(/Undid the last turn: 1 file put back/g);
+    t.type("/undo\r");
+    await t.until((s) => t.count(/Undid the last turn: 1 file put back/g, s) > undone0 || /Not undone: math\.js/.test(s), "the undo of the edit");
+    assert.equal(readFileSync(join(w.cwd, "math.js"), "utf8"), math, "math.js is back, byte for byte");
+    await t.until(/EDITMATH please\s*$/m, "the prompt back in the composer");
     t.type("\x7f".repeat(20));
 
     // 4b. Read only: the patch asks first; `y` approves and the file changes.

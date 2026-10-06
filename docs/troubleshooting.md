@@ -462,6 +462,7 @@ make the window narrower, then wider, quit with `qqq`, and attach `~/.agent-daem
 
 **Cause:** `/undo` only puts back what the agent's own edits changed in the last turn, and only when nothing else touched those files. Each listed file says why it was refused:
 
+- `changed during the turn`: more of it changed during the turn than the agent's own edits account for (you saved it, or a command changed it, before or between the agent's edits). `force` doesn't override this: your change would be lost.
 - `changed since the agent's edit`: the agent edited it, and it changed after that: you, your editor's format-on-save, or a formatter the agent ran, during the turn or after it. Undoing would throw that away; `force` does exactly that.
 - `not changed by the agent's edits`: it changed during the turn some other way, for example through a command the agent ran (`npm install`, a formatter, `sed`) or your editor.
 - `a folder is there now`: a folder stands where the file was.
@@ -478,7 +479,8 @@ With any of these, nothing is undone.
 
 **Other `/undo` messages:**
 
-- `The last turn has no checkpoint (…)`: the agent's first edit started before the snapshot taken when you sent the prompt was done (a very large working folder, a busy machine), snapshots fail in this repo (git's message follows), or the turn ran before `ad tui` started.
+- `The last turn has no checkpoint (…)`: the snapshot taken when you sent the prompt wasn't done within 10 s (a very large working folder), snapshots fail in this repo (git's message follows), the turn was started by Codex itself (a review, a goal) rather than a prompt here, or it ran before `ad tui` started.
+- `… edit(s) outside this repo weren't touched`: the agent edited files outside the repo `ad tui` runs in; `/undo` only covers this repo.
 - `Not a git repo`: checkpoints need a git repo.
 - `A turn started meanwhile`: a prompt was sent while `/undo` was checking. Run `/undo` again once that turn finishes.
 - Ignored files, submodule contents and LFS files are never restored. With git older than 2.40, or with `.git/info/attributes` or `core.attributesFile` set, files with eol rules may come back normalized.
