@@ -318,7 +318,7 @@ export function createApp({
     if (!modal && head) {
       pager = null; // the request comes first
       lastCtrlC = -Infinity; // a Ctrl+C meant for the new prompt must not quit
-      const diff = head.kind === "approval-patch" ? (st.items.get(head.itemId)?.changes ?? null) : null;
+      const diff = head.kind === "approval-patch" ? ((session.itemFor?.(head.itemId, head.turnId) ?? st.items.get(head.itemId))?.changes ?? null) : null;
       const view = createRequestModal(head, { now, armMs, diff });
       if (!view) {
         // Nothing here can answer it (a tool call): decline, and say how to get it.

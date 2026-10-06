@@ -304,6 +304,21 @@ test("itemCompleted fires for each completed item of the thread, with its turn (
   });
 });
 
+test("an item id a later turn reuses is a new item there: no merging, nothing hidden", async () => {
+  await withSession(() => ({}), async ({ session }) => {
+    await session.submit("same-id one").done;
+    await session.submit("same-id two").done;
+    const [t1, t2] = session.state.turns.slice(-2);
+    const msg = (t) => t.itemIds.map((id) => session.state.items.get(id)).find((i) => i?.kind === "agentMessage");
+    assert.equal(msg(t1).text, "reply to same-id one", "the first turn's item is untouched");
+    assert.equal(msg(t2).text, "reply to same-id two", "the delta didn't append to the old text");
+    assert.notEqual(msg(t1).id, msg(t2).id, "two items, two keys");
+    assert.equal(msg(t2).turnId, t2.id);
+    assert.equal(session.itemFor("msg-same", t2.id), msg(t2), "Codex's id within its turn finds it");
+    assert.equal(session.itemFor("msg-same", t1.id), msg(t1));
+  });
+});
+
 test("resume loads the thread's history in order, with full items", async () => {
   await withSession(none, async ({ session, engine, root, lockDir }) => {
     const a = session.submit("early-complete");

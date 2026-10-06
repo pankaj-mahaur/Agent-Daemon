@@ -67,13 +67,13 @@ node --test            # expect: 1 failing test (the bug the agent will fix in s
 
 Run this in each terminal you use: Windows Terminal, Zed and the VS Code terminal. Stay in the scratch project from step 0, never a real repo. Start with `git checkout math.js` so the bug is back.
 
-**Live script** (the FC3 sign-off):
+**Live script** (the FC3 sign-off). It also runs automated, on the real Codex with a mock model: `cd runtime && AD_REAL_ENGINE=1 node --test test/tui-live.test.mjs` (about two minutes; the first run on Windows adds ~35 s once).
 
 | # | Do | Expect | If not |
 |---|---|---|---|
 | 1 | `ad tui` | the sign-in panel if needed, then "Do you trust …?" on the first run (answer Yes), then the header card: version, Codex version, model, directory with `git: <branch>`, memory, sandbox | [troubleshooting #23](troubleshooting.md#23-ad-tui-says-it-needs-an-interactive-terminal-or-node-2217) |
 | 2 | **Ask:** *"What does math.js do? Don't change anything."* | Explored / Ran rows, a streamed answer, "Worked for Ns"; `ctx N%` in the footer | — |
-| 3 | `/permissions` → **Read only**. Then: *"Run `echo hi > hello.txt` in the shell."* | **exec approval:** a box with the full command. `y` within 400 ms of it opening does nothing; `n` declines at once and the agent carries on | — |
+| 3 | `/permissions` → **Read only**. Then: *"Run `echo hi > hello.txt` in the shell."* | **exec approval:** a box with the full command and the choices Codex offers (`y`, `p` for "don't ask again", Esc = "No, and stop"; `n` when Codex offers "No, and tell Codex what to do instead"). `y` within 400 ms of it opening does nothing; Esc declines and ends the turn | — |
 | 4 | Still Read only: *"Fix the bug in math.js."* | **patch approval:** a box with the diff of `math.js`. `y` → "approved", and the file changes. Then `/permissions` → **Auto** | — |
 | 5 | **Steer:** ask *"Explain node:test in 40 lines."*, and while it runs type *"make it 5 lines"* + Enter | the footer reads `enter steer`; your text joins the running turn and the answer follows it | — |
 | 6 | **Queue:** while a turn runs, type *"now run node --test"* + Tab | `↳ queued: now run node --test` under the status line. Tab on an empty prompt pulls it back; Tab again queues it. It runs when the turn ends | — |

@@ -307,8 +307,12 @@ export function renderCell(item, { width = 80 } = {}) {
 function cellLines(item, width) {
   const done = !item.streaming;
   switch (item.kind) {
-    case "userMessage":
-      return wrapPrefixed([{ text: clean(item.text) }], width, [{ text: "\u{203a} ", style: S.user }], [{ text: "  " }]);
+    case "userMessage": {
+      // A /private prompt shows as typed, marked private (the model sees the wrapper).
+      const priv = /^<private>([\s\S]*)<\/private>$/.exec(String(item.text ?? ""));
+      const body = [{ text: clean(priv ? priv[1] : item.text) }, ...(priv ? [{ text: "  (private)", style: S.dim }] : [])];
+      return wrapPrefixed(body, width, [{ text: "\u{203a} ", style: S.user }], [{ text: "  " }]);
+    }
     case "agentMessage":
       return mdCell(item.text ?? "", width);
     case "reasoning": {

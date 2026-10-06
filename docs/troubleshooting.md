@@ -458,13 +458,12 @@ make the window narrower, then wider, quit with `qqq`, and attach `~/.agent-daem
 
 ## 26. `/undo` refuses: `Not undone`
 
-**Symptom:** `/undo` says `Not undone: <file> (<why>), …. /undo force overrides "changed since the turn" only; the rest are never touched (…).`
+**Symptom:** `/undo` says `Not undone: <file> (<why>), …. /undo force puts the agent's files back anyway, discarding the changes made after its edit; the rest are never touched.`
 
 **Cause:** `/undo` only puts back what the agent's own edits changed in the last turn, and only when nothing else touched those files. Each listed file says why it was refused:
 
-- `changed since the turn`: you (or another tool) edited it after the turn. Undoing would throw that away.
+- `changed since the agent's edit`: the agent edited it, and it changed after that: you, your editor's format-on-save, or a formatter the agent ran, during the turn or after it. Undoing would throw that away; `force` does exactly that.
 - `not changed by the agent's edits`: it changed during the turn some other way, for example through a command the agent ran (`npm install`, a formatter, `sed`) or your editor.
-- `changed during the turn`: the agent edited it, but by the turn's end someone else had changed it too (you, your editor's format-on-save, or a command the agent ran). Undoing would throw that change away. `force` doesn't override this.
 - `a folder is there now`: a folder stands where the file was.
 - `a file is where its folder was`: a file or symlink now stands where one of the path's folders was. `force` doesn't override this.
 - `not in the checkpoint`: the agent edited a file the snapshots leave out (untracked and over 2 MB, or in a heavy folder like `build/` or `node_modules/`). There is nothing to put back; `force` doesn't change that.
@@ -474,7 +473,7 @@ With any of these, nothing is undone.
 **Fix:**
 
 - Look at the files first (`/diff`, or `git diff`).
-- If later edits to the agent's files can go, `/undo force` puts those files back too. Even forced, files the agent's edits didn't report are never touched, and folders are never removed or replaced; those are reported as left alone.
+- If later changes to the agent's files can go, `/undo force` puts those files back too. Even forced, files the agent's edits didn't report are never touched, and folders are never removed or replaced; those are reported as left alone.
 - If you want to keep them, fix the files by hand. Esc Esc rewinds just the conversation and leaves the files alone.
 
 **Other `/undo` messages:**
@@ -514,6 +513,14 @@ $env:EDITOR = "code --wait"                  # PowerShell (this session)
 ```
 
 Other choices: `nvim`, `vim`, `nano`, or Notepad++ with `-multiInst -nosession`. A full path with spaces works without quotes when there are no arguments; with arguments, quote the path (`"C:\Program Files\Notepad++\notepad++.exe" -multiInst -nosession`).
+
+## 29. Windows: the first command or edit after installing takes ~35 s
+
+**Symptom:** right after installing (or with a fresh `~/.agent-daemon/codex-home`), the agent's first command or file edit sits on "Thinking" for about half a minute. Later ones take a second or two.
+
+**Cause:** Codex sets up its Windows sandbox for ad's Codex home on the first sandboxed action. It happens once per Codex home, not per project folder.
+
+**Fix:** nothing to do; wait it out once. A command you approve to run outside the sandbox doesn't pay it.
 
 ---
 

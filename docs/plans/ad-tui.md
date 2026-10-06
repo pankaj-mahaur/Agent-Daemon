@@ -1,6 +1,6 @@
 # Plan — `ad`: a Codex-style terminal UI with agent-daemon's powers
 
-> Status: **final v4.14** (2026-10-06; v4 on 2026-10-04 after three review rounds). Changes from here on need a revision-log entry.
+> Status: **final v4.15** (2026-10-06; v4 on 2026-10-04 after three review rounds). Changes from here on need a revision-log entry.
 > Progress: **Part 0** — code done and reviewed twice:
 > - Codex 0.160.0 pinned.
 > - Isolation guard in place (see "Your own Codex is never touched").
@@ -41,14 +41,10 @@
 >
 > **Everything that waits for the user, in one list:**
 > 1. **FC1:** live use of `ad tui --preview`. Superseded by FC3, so it can be skipped.
-> 2. **FC2:** look at the goldens in `runtime/test/golden/tui/`, then at the live app.
-> 3. **FC3:** the live script on Windows Terminal, Zed and VS Code: ask, exec approval, patch approval, steer, queue, interrupt, `/codex` and back, quit, `ad tui --last`. See `docs/manual-test.md`.
->    - Part 8's live checks run with it.
->    - Also check that `codex resume <id> --no-daemon` works interactively (S3).
-> 4. **FC4:** Part 9 live: `/memory`, `/private`, `/loop`, `/team`, `/schedule`.
-> 5. **Narrowing ghosts:** run `node runtime/scripts/tui-probe.mjs screen` and `screen --bottom` in each terminal, and share the logs and screenshots. The compensation lands after that.
-> 6. **After FC3:** flip bare `ad`, merge `feat/tui` (and PR #9), then release v2.1.0.
-> 7. **Part 12:** verify ACP live in Zed first.
+> 2. **FC2, FC3, FC4: automated (v4.15, user's go-ahead 2026-10-06).** `runtime/test/tui-live.test.mjs` (`AD_REAL_ENGINE=1`, also in CI on Windows, macOS and Linux) runs the whole FC3 script and FC4 on the real `ad tui` in a real pty (ConPTY on Windows) with the real pinned Codex and a mock model. Optional for the user: a look at the app in Zed and Windows Terminal.
+> 3. **Narrowing ghosts:** run `node runtime/scripts/tui-probe.mjs screen` and `screen --bottom` in each terminal, and share the logs and screenshots. The compensation lands after that.
+> 4. **After FC3:** flip bare `ad`, merge `feat/tui` (and PR #9), then release v2.1.0.
+> 5. **Part 12:** verify ACP live in Zed first.
 >
 > **Next:** waiting on the user (above). No plan part is left that can be built without them.
 > Research: [Codex TUI + app-server](../research/codex-tui-and-app-server.md) · [terminal engineering](../research/terminal-engineering.md) · [harness landscape](../research/harness-landscape.md).
@@ -1257,3 +1253,10 @@ Build order: 0 → 1 → 2 (FC1) → 3 → 4 → 5 (FC2) → 6 (FC3) → 7 → 8
   - **Code moves and additions:** `tui/preflight.mjs`, and `app.send()` for `ad tui "<prompt>"`.
   - **Status:** Parts 12 and 13 are parked: Part 12 on a live ACP check, Part 13 on the user asking for it.
 - **v4.14** (2026-10-06): the final re-review of Parts 10-11 (see Part 10): "before" at Enter, `not in the checkpoint`, applied edits only, strict `ad tui` flags.
+- **v4.15** (2026-10-06): FC2-FC4 automated as live tests (the user: "tum karlo"). `test/tui-live.test.mjs`: the real `ad tui` in node-pty + xterm.js headless, the real pinned Codex, a mock model, all in temp homes. What the live runs found, all fixed:
+  - **Items whose id a later turn reuses** (some providers do: `msg-1`, `call_0`) merged into the earlier item and never showed: an approved command's row and the answer after it were missing. The session now keys such an item `<id>@<turn>` (`itemFor(id, turnId)` resolves Codex's ids).
+  - **"Learned:" rows never showed during a session:** ad's hooks write the project's learning journal, which reaches memory only at the next start. The rows and `/memory` now include this session's captured entries.
+  - **`/undo` after a quick save:** the "after" snapshot could read the user's save made right after the turn, and the unforceable "changed during the turn" left no way forward. The agent's per-edit hashes are now the reference: any later change is "changed since the agent's edit", which `force` overrides.
+  - **`/private` prompts** showed with the raw `<private>` wrapper: now as typed, marked "(private)".
+  - **Docs:** Codex 0.160's exec approval offers `y` / `p` / Esc (no `n`); the first sandboxed action in a fresh Codex home on Windows takes ~35 s once (troubleshooting #29).
+  - **Defensive, not reproduced live:** SIGINT/SIGBREAK are ignored for 1.5 s after a handoff (`/codex`, the editor), so an extra Ctrl+C landing before raw mode is back can't quit ad.

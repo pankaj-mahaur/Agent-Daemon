@@ -324,7 +324,8 @@ test("restore alone unhooks process listeners (no leak across sessions)", async 
 
 test("Ctrl+C / Ctrl+Break during a handoff belong to the child; SIGTERM still restores", async () => {
   const t = fakeTerminal();
-  const { io } = make(t);
+  let clock = 1000;
+  const { io } = make(t, { now: () => clock });
   await io.enter();
   await io.handoff(async () => {
     t.proc.emit("SIGINT", "SIGINT");
@@ -332,6 +333,11 @@ test("Ctrl+C / Ctrl+Break during a handoff belong to the child; SIGTERM still re
   });
   assert.deepEqual(t.proc.exits, [], "ad keeps running");
   assert.equal(io.entered, true);
+  // One Ctrl+C more than the child needed, landing as it exits: still the child's.
+  clock += 1000;
+  t.proc.emit("SIGINT", "SIGINT");
+  assert.deepEqual(t.proc.exits, [], "a Ctrl+C right after the handoff doesn't quit ad");
+  clock += 1000;
   t.proc.emit("SIGINT", "SIGINT");
   assert.deepEqual(t.proc.exits, [130], "outside a handoff SIGINT still quits cleanly");
 

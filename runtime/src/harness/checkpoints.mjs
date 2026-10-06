@@ -39,6 +39,9 @@ const HEAVY_DIRS = ["node_modules", ".venv", "venv", "__pycache__", ".next", "di
 const HEAVY_SPECS = HEAVY_DIRS.map((d) => `:(exclude,glob)**/${d}/**`);
 const MAX_REFS = 400; // all threads together: about 200 turns
 const STALE_LOCK_MS = 5 * 60_000;
+// Conflicts `force` overrides: later changes to the agent's own files ("a
+// folder is there now" is listed so it is reported, but a folder is never touched).
+const FORCEABLE = new Set(["changed since the turn", "changed since the agent's edit", "a folder is there now"]);
 const FOLDS_CASE =process.platform === "win32" || process.platform === "darwin";
 
 /** Runs git; never throws for a non-zero exit. */
@@ -353,27 +356,25 @@ export function createCheckpoints({ cwd, git = runGit, maxUntrackedBytes = 2 * 1
         conflicts.push({ path: c.path, why: "not in the checkpoint" });
         continue;
       }
-      const expected = c.status === "D" ? null : await blobIn(t.after, c.path);
-      // The turn's result must be what the agent's edits wrote: an edit by
-      // the user (or a command) during the turn is folded into "after" too.
-      if (blobs && (!blobs.has(key(c.path)) || blobs.get(key(c.path)) !== expected)) {
-        conflicts.push({ path: c.path, why: "changed during the turn" });
-        continue;
-      }
       if (brokenParent(r.root, c.path)) {
         conflicts.push({ path: c.path, why: "a file is where its folder was" });
         continue;
       }
       const current = await workBlob(r.root, c.path, r.exact);
       if (current === "<directory>") conflicts.push({ path: c.path, why: "a folder is there now" });
-      else if (current !== expected) conflicts.push({ path: c.path, why: "changed since the turn" });
+      else if (blobs) {
+        // What the agent's last edit wrote, hashed as it landed: any change
+        // after it (the user's, a formatter's), during the turn or since, is
+        // one. "after" can't tell: it may be read after the user's next save.
+        if (!blobs.has(key(c.path)) || current !== blobs.get(key(c.path))) conflicts.push({ path: c.path, why: "changed since the agent's edit" });
+      } else if (current !== (c.status === "D" ? null : await blobIn(t.after, c.path))) conflicts.push({ path: c.path, why: "changed since the turn" });
     }
     return { before: t.before, after: t.after, paths, conflicts, byteExact: r.byteExact };
   }
 
   /**
    * Puts back what the turn changed. With conflicts nothing is done, unless
-   * `force`: then files changed since the turn are put back too. Even forced,
+   * `force`: then the agent's files changed since its edit are put back too. Even forced,
    * a path the agent's edits didn't report is never touched, and a directory
    * is never removed or replaced.
    */
@@ -387,7 +388,7 @@ export function createCheckpoints({ cwd, git = runGit, maxUntrackedBytes = 2 * 1
     const r = await repo();
     const isDir = (rel) => lstatOrNull(path.join(r.root, rel))?.isDirectory() === true;
     // Even forced: never a path that isn't the agent's, nor one the checkpoint doesn't hold.
-    const notOurs = new Set(p.conflicts.filter((c) => c.why !== "changed since the turn" && c.why !== "a folder is there now").map((c) => c.path));
+    const notOurs = new Set(p.conflicts.filter((c) => !FORCEABLE.has(c.why)).map((c) => c.path));
     const todo = p.paths.filter((c) => !isDir(c.path) && !notOurs.has(c.path));
     const back = todo.filter((c) => c.status !== "A").map((c) => c.path);
     if (back.length) {

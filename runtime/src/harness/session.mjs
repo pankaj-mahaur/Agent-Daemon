@@ -255,12 +255,27 @@ export function createSession({
     for (const it of state.items.values()) if (it.turnId === t.id && it.threadId === state.thread?.id && !t.itemIds.includes(it.id)) t.itemIds.push(it.id);
   }
 
+  // Some providers reuse item ids across turns ("msg-1", "call_0"): an item
+  // of a later turn gets its own key (`<id>@<turn>`), so it neither merges
+  // into the earlier one nor hides behind it as already shown.
+  let itemKeys = new Map(); // "<turnId>\0<codex item id>" → key in state.items
+  function itemKey(id, turnId, { create = true } = {}) {
+    if (!turnId) return id;
+    const k = `${turnId}\0${id}`;
+    if (itemKeys.has(k)) return itemKeys.get(k);
+    const prev = state.items.get(id);
+    const key = prev?.turnId && prev.turnId !== turnId ? `${id}@${turnId}` : id;
+    if (create) itemKeys.set(k, key);
+    return key;
+  }
+
   function placeItem(item, ev) {
-    const prev = state.items.get(item.id);
-    state.items.set(item.id, { ...prev, ...item, threadId: ev.threadId, turnId: ev.turnId ?? prev?.turnId ?? null, at: ev.at ?? prev?.at ?? null });
+    const key = itemKey(item.id, ev.turnId);
+    const prev = state.items.get(key);
+    state.items.set(key, { ...prev, ...item, id: key, threadId: ev.threadId, turnId: ev.turnId ?? prev?.turnId ?? null, at: ev.at ?? prev?.at ?? null });
     // Only into a turn we know: a user shell command (!cmd) has items but no turn.
     const t = ev.threadId === state.thread?.id ? state.turns.find((x) => x.id === ev.turnId) : null;
-    if (t && !t.itemIds.includes(item.id)) t.itemIds.push(item.id);
+    if (t && !t.itemIds.includes(key)) t.itemIds.push(key);
     // Codex's copy of a prompt replaces the local echo.
     if (item.kind === "userMessage" && item.clientId && state.echoes.delete(item.clientId)) change("echoes");
   }
@@ -268,7 +283,8 @@ export function createSession({
   const DELTA_TARGET = { text: "agentMessage", plan: "plan", reasoning: "reasoning", reasoningPart: "reasoning", reasoningRaw: "reasoning", output: "commandExecution", terminal: "commandExecution", progress: "mcpToolCall", patch: "fileChange" };
 
   function applyDelta(ev) {
-    const cur = state.items.get(ev.itemId) ?? { id: ev.itemId, kind: DELTA_TARGET[ev.kind] ?? "unknown", streaming: true };
+    const key = itemKey(ev.itemId, ev.turnId);
+    const cur = state.items.get(key) ?? { id: key, kind: DELTA_TARGET[ev.kind] ?? "unknown", streaming: true };
     const next = { ...cur };
     if (ev.kind === "text" || ev.kind === "plan") next.text = (cur.text ?? "") + ev.delta;
     else if (ev.kind === "reasoning") next.summaryText = (cur.summaryText ?? "") + ev.delta;
@@ -334,7 +350,7 @@ export function createSession({
       case "item.started":
       case "item.completed":
         placeItem({ ...ev.item, streaming: ev.type === "item.started" }, ev);
-        if (root && ev.type === "item.completed") hooks.itemCompleted?.({ item: state.items.get(ev.item.id), session: api });
+        if (root && ev.type === "item.completed") hooks.itemCompleted?.({ item: state.items.get(itemKey(ev.item.id, ev.turnId)), session: api });
         break;
       case "item.delta":
         applyDelta(ev);
@@ -504,6 +520,7 @@ export function createSession({
     state.thread = null;
     state.turns = [];
     state.items = new Map();
+    itemKeys = new Map();
     state.echoes = new Map();
     state.activeTurnId = null;
     state.starting = false;
@@ -704,6 +721,8 @@ export function createSession({
 
   const api = {
     state,
+    /** The item a request or event names (Codex's id within its turn). */
+    itemFor: (id, turnId) => state.items.get(itemKey(id, turnId, { create: false })),
     on: (event, fn) => (emitter.on(event, fn), () => emitter.off(event, fn)),
     get engine() {
       return eng;
@@ -777,6 +796,7 @@ export function createSession({
         const gone = new Set(state.turns.slice(i).map((t) => t.id));
         state.turns = state.turns.slice(0, i);
         for (const [id, it] of state.items) if (gone.has(it.turnId)) state.items.delete(id);
+        for (const [k, key] of itemKeys) if (!state.items.has(key)) itemKeys.delete(k);
       }
       change("revert");
     },

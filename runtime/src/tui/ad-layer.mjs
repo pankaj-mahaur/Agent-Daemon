@@ -13,6 +13,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import { journalPath } from "../hooks/journal.mjs";
 import { sanitize } from "./terminal/sanitize.mjs";
 
 const clean = (t) => sanitize(String(t ?? ""), "transcript").replace(/\s*\n\s*/g, " ").replace(/\t/g, " ");
@@ -31,6 +32,28 @@ export function createAdLayer({ cwd, home = homedir(), memory = null, cli = null
 
   const row = (l) => `#${l.id} [${clean(l.category)}] ${short(l.text)}`;
 
+  // What ad's hooks captured but hasn't saved yet: the project's learning
+  // journal, drained into memory when ad (or Claude Code) next starts.
+  function pending() {
+    let raw = "";
+    try {
+      raw = readFileSync(journalPath(cwd), "utf8");
+    } catch {
+      return [];
+    }
+    const out = [];
+    for (const line of raw.split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      try {
+        const e = JSON.parse(line);
+        if (e && typeof e.text === "string" && e.text.trim()) out.push(e);
+      } catch {
+        // a line still being written
+      }
+    }
+    return out;
+  }
+
   async function memoryCmd(sub = "", arg = "") {
     if (!memory) return ["ad memory isn't available here."];
     const s = String(sub).toLowerCase();
@@ -41,7 +64,10 @@ export function createAdLayer({ cwd, home = homedir(), memory = null, cli = null
     }
     if (s === "recent") {
       const rows = await memory.listRecentLearnings({ limit: 10, projectSlug: slug });
-      return rows.length ? ["Recent learnings:", ...rows.map(row)] : ["No learnings yet for this project."];
+      const waiting = pending().slice(-10).reverse();
+      const out = rows.length ? ["Recent learnings:", ...rows.map(row)] : [];
+      if (waiting.length) out.push("Captured, saved to memory when ad next starts:", ...waiting.map((e) => `  [${clean(e.type ?? "note")}] ${short(e.text)}`));
+      return out.length ? out : ["No learnings yet for this project."];
     }
     if (s === "forget") {
       const id = Number(String(arg).replace(/^#/, ""));
@@ -61,19 +87,31 @@ export function createAdLayer({ cwd, home = homedir(), memory = null, cli = null
     }
     const st = await memory.stats();
     if (!st.driver) return ["ad memory isn't set up (ad doctor)."];
-    return [`ad memory: ${st.counts.learnings} learnings, ${st.counts.sessions} sessions.`, "/memory search <words> \u{b7} /memory recent \u{b7} /memory forget <id> \u{b7} /memory profile", "(Codex's own /memories is separate.)"];
+    const waiting = pending().length;
+    return [`ad memory: ${st.counts.learnings} learnings, ${st.counts.sessions} sessions${waiting ? `, ${waiting} captured (saved when ad next starts)` : ""}.`, "/memory search <words> \u{b7} /memory recent \u{b7} /memory forget <id> \u{b7} /memory profile", "(Codex's own /memories is separate.)"];
   }
 
-  /** Learnings recorded for this thread since `sinceIso` (the "learned" row). */
+  /** Learnings recorded for this thread since `sinceIso` (the "learned" row): saved ones and captured ones. */
   async function learnedSince(threadId, sinceIso) {
-    if (!memory || !threadId) return [];
-    const handle = await memory.db();
-    if (!handle) return [];
-    try {
-      return handle.all("SELECT id, text FROM learnings WHERE session_id = ? AND created_at > ? AND status = 'active' ORDER BY id", [threadId, sinceIso]);
-    } catch {
-      return [];
+    if (!threadId) return [];
+    let rows = [];
+    const handle = memory ? await memory.db() : null;
+    if (handle) {
+      try {
+        rows = handle.all("SELECT id, text FROM learnings WHERE session_id = ? AND created_at > ? AND status = 'active' ORDER BY id", [threadId, sinceIso]);
+      } catch {
+        rows = [];
+      }
     }
+    // The hooks write the journal during the turn; memory gets it only at the next start.
+    const since = Date.parse(`${String(sinceIso).replace(" ", "T")}Z`);
+    const seen = new Set(rows.map((r) => r.text));
+    for (const e of pending()) {
+      if (e.sessionId !== threadId || !(Date.parse(e.ts) > since) || seen.has(e.text)) continue;
+      seen.add(e.text);
+      rows.push({ id: `journal:${e.ts}:${e.text}`, text: e.text });
+    }
+    return rows;
   }
 
   /* ------------------------------------------------------------ */

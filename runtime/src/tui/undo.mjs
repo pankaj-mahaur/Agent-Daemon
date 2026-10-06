@@ -136,7 +136,7 @@ export function checkpointWiring(cp, { cwd = process.cwd(), waitMs = 1000, typin
       if (st.activeTurnId || st.starting) return { error: "A turn started meanwhile: /undo again once it finishes." };
       const { skipped: left, agentBlobs } = recorded.get(target.id);
       const r = await cp.restore(st.thread.id, target.id, { force, agentPaths: await agentPaths(session, target), skipped: left, agentBlobs });
-      if (r.error) return { error: r.conflicts?.length && !force ? `${r.error} /undo force overrides "changed since the turn" only; the rest are never touched (for "changed during the turn": you, a formatter or a command changed a file after the agent's edit).` : r.error };
+      if (r.error) return { error: r.conflicts?.length && !force ? `${r.error} /undo force puts the agent's files back anyway, discarding the changes made after its edit; the rest are never touched.` : r.error };
       const um = target.itemIds.map((id) => st.items.get(id)).find((i) => i?.kind === "userMessage");
       recorded.delete(target.id);
       try {

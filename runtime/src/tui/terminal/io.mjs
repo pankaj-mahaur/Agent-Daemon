@@ -52,6 +52,8 @@ export function createIo({
   queryTimeoutMs = 300,
   drainTimeoutMs = 100,
   staleCprGraceMs = 2000,
+  handoffGraceMs = 1500,
+  now = () => Date.now(),
   errSink = (err) => process.stderr.write(`${err?.stack ?? err}\n`),
   decoderOptions = {},
 } = {}) {
@@ -74,6 +76,7 @@ export function createIo({
   let restored = true;
   let procHooked = false;
   let away = false; // the terminal belongs to a child (handoff) or we are stopped
+  let backAt = -Infinity; // when the last handoff ended
 
   const decoder = createInputDecoder({
     escTimeoutMs: env.SSH_CONNECTION ? 100 : 30,
@@ -141,7 +144,9 @@ export function createIo({
   function onSignal(sig) {
     // While a child has the terminal in cooked mode, Ctrl+C / Ctrl+Break go to
     // the whole foreground group: they are the child's, not a reason to quit.
-    if (away && (sig === "SIGINT" || sig === "SIGBREAK")) return;
+    // Just after one, too: a Ctrl+C pressed once more than the child needed
+    // can land before raw mode is back (Windows: a console-wide Ctrl+C event).
+    if ((away || now() - backAt < handoffGraceMs) && (sig === "SIGINT" || sig === "SIGBREAK")) return;
     restore();
     proc.exit(128 + ({ SIGHUP: 1, SIGINT: 2, SIGTERM: 15, SIGBREAK: 21 }[sig] ?? 1));
   }
@@ -283,6 +288,7 @@ export function createIo({
       return await fn();
     } finally {
       away = false;
+      backAt = now();
       // Closed or restored meanwhile: stay restored.
       if (entered && !restored) {
         // libuv#5156: Windows needs an off→on cycle to re-establish VT input.

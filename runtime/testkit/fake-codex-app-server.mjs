@@ -159,6 +159,13 @@ async function runScriptedTurn(threadId, turn, params) {
     agentMessage(threadId, turn.id, `two[${a.result.decision},${b.result.decision}]`);
     return complete(threadId, turn);
   }
+  // Some providers reuse item ids across turns: the same id every time.
+  if (text.startsWith("same-id")) {
+    notify("item/started", { threadId, turnId: turn.id, item: { type: "agentMessage", id: "msg-same", text: "" } });
+    notify("item/agentMessage/delta", { threadId, turnId: turn.id, itemId: "msg-same", delta: `reply to ${text}` });
+    notify("item/completed", { threadId, turnId: turn.id, item: { type: "agentMessage", id: "msg-same", text: `reply to ${text}` } });
+    return complete(threadId, turn);
+  }
   if (text === "apply-edit") {
     const item = { type: "fileChange", id: "fc-applied", changes: [{ path: "src/app.js", kind: { type: "update" }, diff: "-a\n+b" }] };
     notify("item/started", { threadId, turnId: turn.id, item: { ...item, status: "inProgress" } });

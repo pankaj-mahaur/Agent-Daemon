@@ -343,10 +343,15 @@ test("the user's edits during the turn, a file where a folder was, a deleted hea
     const after = await cp.snapshot();
     await cp.record("t", "u", { before: before.tree, after: after.tree });
     const p1 = await cp.plan("t", "u", { agentPaths: ["with space.txt"], agentBlobs });
-    assert.deepEqual(p1.conflicts, [{ path: "with space.txt", why: "changed during the turn" }]);
+    assert.deepEqual(p1.conflicts, [{ path: "with space.txt", why: "changed since the agent's edit" }]);
+    const n1 = await cp.restore("t", "u", { agentPaths: ["with space.txt"], agentBlobs });
+    assert.match(n1.error, /Not undone: with space\.txt \(changed since the agent's edit\)/);
+    assert.equal(file(r.dir, "with space.txt"), "agent\nthe user's line", "never silently");
+    // The same when the "after" snapshot is read only after the user's save.
+    // Forced, it is the user's choice: the turn's file comes back.
     const f1 = await cp.restore("t", "u", { force: true, agentPaths: ["with space.txt"], agentBlobs });
-    assert.equal(f1.restored, 0, "not even forced");
-    assert.equal(file(r.dir, "with space.txt"), "agent\nthe user's line");
+    assert.equal(f1.restored, 1);
+    assert.equal(file(r.dir, "with space.txt"), "keep");
     // Without the user's line, the same undo goes through.
     writeFileSync(join(r.dir, "old name.txt"), "agent only");
     const b2 = await cp.snapshot();

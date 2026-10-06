@@ -49,7 +49,7 @@ All paths under `runtime/`.
 
 ## Tests and goldens
 
-- **TUI tests** (`runtime/test/`): `tui-input`, `tui-io`, `tui-detect`, `tui-width`, `tui-text`, `tui-sanitize`, `tui-renderer` (terminal layer); `tui-composer`, `tui-markdown`, `tui-cells`, `tui-chrome`, `tui-modals` (views); `tui-app`, `tui-main`, `tui-parity`, `tui-ad`, `tui-hardening`, `tui-resilience`, `tui-preview`, `tui-pty-smoke`. Also `session`, `checkpoints`, `codex-events`, `codex-protocol-snapshot` and `engine-real` (`AD_REAL_ENGINE=1`).
+- **TUI tests** (`runtime/test/`): `tui-input`, `tui-io`, `tui-detect`, `tui-width`, `tui-text`, `tui-sanitize`, `tui-renderer` (terminal layer); `tui-composer`, `tui-markdown`, `tui-cells`, `tui-chrome`, `tui-modals` (views); `tui-app`, `tui-main`, `tui-parity`, `tui-ad`, `tui-hardening`, `tui-resilience`, `tui-preview`, `tui-pty-smoke`. Also `session`, `checkpoints`, `codex-events`, `codex-protocol-snapshot`, `engine-real` and `tui-live` (both `AD_REAL_ENGINE=1`; `tui-live` is the FC3/FC4 script on the real `ad tui` in a pty: run it after any app, session or view change).
 - **Goldens:** `test/golden/tui/` holds `wrap-{20,40,79}`, `{cells,chrome,markdown,modals,parity}-{40,80,120}` and `modals-small`. They are LF on every platform. After an intended change, run with `AD_UPDATE_GOLDEN=1`, then read the golden diff line by line before committing.
 - **Fixtures:** `test/fixtures/tui/s1-keys.json` (real key bytes from Windows Terminal and Zed).
 - **The fake must stay honest:** every message `fake-codex-app-server.mjs` sends in the main scenarios must pass `protocol-check` (`tui-resilience` enforces it). When you add a fake message, give it the real shape (full `Thread` objects, `startedAtMs`, the approval's `itemId`, …), not just the fields ad reads.

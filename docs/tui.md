@@ -323,8 +323,7 @@ A Codex command ad doesn't have yet answers "Unknown command … /help lists the
 | Conflict | Means |
 |---|---|
 | `not changed by the agent's edits` | the file changed during the turn some other way: a command the agent ran, your editor, another tool |
-| `changed during the turn` | the agent edited it, but at the turn's end it wasn't what the agent's edit wrote: you (or a command) changed it too. Each edit is hashed as it completes |
-| `changed since the turn` | the file changed after the turn ended |
+| `changed since the agent's edit` | the agent edited it, and it changed after that: you, your editor's format-on-save, a formatter the agent ran, during the turn or after it. Each edit is hashed as it lands |
 | `a folder is there now` | a folder stands where the file was |
 | `a file is where its folder was` | a file (or symlink) now stands where one of the path's folders was |
 | `not in the checkpoint` | the agent edited a file the snapshots leave out (over 2 MB, or in a heavy folder): there is nothing to put back |
@@ -332,10 +331,10 @@ A Codex command ad doesn't have yet answers "Unknown command … /help lists the
 With any conflict, `/undo` changes nothing and lists them:
 
 ```
-Not undone: src/app.js (changed since the turn). /undo force puts back the rest (folders are never touched).
+Not undone: src/app.js (changed since the agent's edit). /undo force puts the agent's files back anyway, discarding the changes made after its edit; the rest are never touched.
 ```
 
-`/undo force` overrides "changed since the turn" only: those files are put back too, overwriting later edits to them. Every other conflict stays: forced or not, `/undo` never touches those files and never removes or replaces a folder; they are reported as left alone. A formatter the agent runs on a file it just edited (`prettier --write`, `cargo fmt`) also makes that file "changed during the turn": the file stays as it is, and with force the turn's other files are still put back. Only edits that were applied count: a patch you declined isn't the agent's change.
+`/undo force` overrides "changed since the agent's edit" only: those files are put back too, discarding what changed after the agent's edit (yours or a formatter's). Every other conflict stays: forced or not, `/undo` never touches those files and never removes or replaces a folder; they are reported as left alone. Only edits that were applied count: a patch you declined isn't the agent's change.
 
 **When there is no checkpoint,** `/undo` says why: the snapshot before the turn wasn't ready in time, snapshots fail in this repo (with git's message), or the turn ran before `ad tui` started.
 
@@ -359,10 +358,10 @@ Esc Esc rewinds the conversation only; `/undo` rewinds the conversation **and** 
 ## ad's own features
 
 - **Memory in.** ad's hooks run as in every harness session. When they recall learnings for your prompt, a row says "Recalled N learnings". The header shows how many learnings ad has.
-- **Memory out.** After a turn, a "Learned:" row shows what ad recorded from it.
+- **Memory out.** After a turn, a "Learned:" row shows what ad recorded from it. What the hooks capture is saved to memory when ad next starts; until then `/memory` lists it as captured.
 - **`/remember <text>`** saves a note straight to the project's memory.
 - **`/memory`** summarizes the store. `search <words>` and `recent` list learnings with their `#id`. `forget <id>` archives one of this project's (or global) learnings: it is never deleted, just no longer recalled. `profile` shows what ad knows about how you work.
-- **`/private`** wraps every prompt in `<private>…</private>` until you turn it off. ad's extractors drop private text, so nothing in it is learned. The footer shows `private`.
+- **`/private`** wraps every prompt in `<private>…</private>` until you turn it off. ad's extractors drop private text, so nothing in it is learned. The footer shows `private`, and the transcript shows each such prompt as typed, marked "(private)".
 - **Guards.** When one of ad's guard hooks blocks a command, a row says why.
 - **`/proposals`** lists skill changes ad proposes (`.agent-daemon/proposed/`). Review them with `/ad review`.
 - **`/loop "<objective>"`** starts `ad loop` in the background, with its own engine and all of `ad loop`'s brakes (and on Windows its sandbox check). The TUI shows one row per iteration, a `loop N` chip, and a row when it ends. `/loop` alone shows its state. `/loop stop` writes `.agent-daemon/STOP`, so it stops after its current turn; ad removes that STOP file once the loop has ended. The loop keeps working if you quit the TUI. A STOP file you wrote yourself (here or in `~/.agent-daemon/`) is respected, and refuses a new `/loop`. Its output goes to `.agent-daemon/loop-tui.log`.
@@ -433,6 +432,7 @@ Everything else (conversations, logs, login) is Codex's own, in ad's Codex home;
 | `/undo` refuses: "Not undone: …" | [#26](troubleshooting.md#26-undo-refuses-not-undone) |
 | "Codex stopped (exit N)" | [#27](troubleshooting.md#27-ad-tui-codex-stopped-exit-n) |
 | Ctrl+G returns at once | [#28](troubleshooting.md#28-ad-tui-the-editor-ctrlg-returned-at-once) |
+| Windows: the first command or edit takes ~35 s | [#29](troubleshooting.md#29-windows-the-first-command-or-edit-after-installing-takes-35-s) |
 | keys or paste behave oddly | [#22](troubleshooting.md#22-keys-or-paste-behave-oddly-in-a-terminal) |
 | not signed in, sandbox, hooks, "Access is denied" | [harness.md](harness.md#when-something-goes-wrong), troubleshooting #14–21 |
 

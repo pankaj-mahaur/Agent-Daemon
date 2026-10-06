@@ -133,7 +133,7 @@ jobs:
         run: |
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           set +e
-          AD_REAL_ENGINE=1 node --test --test-concurrency=1 --test-force-exit --test-reporter=tap test/engine-real.test.mjs > "$RUNNER_TEMP/real.tap" 2>&1
+          AD_REAL_ENGINE=1 node --test --test-concurrency=1 --test-force-exit --test-reporter=tap test/engine-real.test.mjs test/tui-live.test.mjs > "$RUNNER_TEMP/real.tap" 2>&1
           code=$?
           set -e
           # The failing tests by name, for the PR body.

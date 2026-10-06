@@ -62,6 +62,34 @@ test("memory: search, recent, forget (archived, not deleted), profile, summary; 
   }
 });
 
+test("learned rows and /memory include what the hooks captured this session (the journal, saved at the next start)", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "ad-journal-"));
+  try {
+    const memory = fakeMemory();
+    const ad = createAdLayer({ cwd, memory });
+    mkdirSync(join(cwd, ".agent-daemon"), { recursive: true });
+    const entry = (ts, sessionId, text, type = "correction") => JSON.stringify({ ts, type, text, sessionId });
+    writeFileSync(join(cwd, ".agent-daemon", "learning-journal.jsonl"), [
+      entry("2026-10-06T10:00:05.000Z", "thread-1", "pnpm, not npm"),
+      entry("2026-10-06T10:00:06.000Z", "thread-1", "login.spec uses fake timers"), // also saved: shown once
+      entry("2026-10-06T09:59:00.000Z", "thread-1", "from an earlier turn"),
+      entry("2026-10-06T10:00:07.000Z", "thread-2", "another conversation's"),
+      "{\"ts\":\"2026-10-06T10:00:08", // a line still being written
+    ].join("\n"));
+    const rows = await ad.learnedSince("thread-1", "2026-10-06 10:00:00");
+    assert.deepEqual(rows.map((r) => r.text), ["login.spec uses fake timers", "pnpm, not npm"]);
+    assert.equal(new Set(rows.map((r) => r.id)).size, 2, "distinct ids, so each row shows once");
+    const recent = (await ad.memory("recent")).join("\n");
+    assert.match(recent, /#9 \[pattern\] run tests first/);
+    assert.match(recent, /Captured, saved to memory when ad next starts:\n {2}\[correction\] another conversation's/);
+    assert.match((await ad.memory(""))[0], /142 learnings, 9 sessions, 4 captured \(saved when ad next starts\)/);
+    // Without memory at all, the captured ones still show after a turn.
+    assert.deepEqual((await createAdLayer({ cwd }).learnedSince("thread-2", "2026-10-06 10:00:00")).map((r) => r.text), ["another conversation's"]);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test("proposals list what waits in .agent-daemon/proposed", () => {
   const cwd = mkdtempSync(join(tmpdir(), "ad-prop-"));
   try {
@@ -205,6 +233,8 @@ test("in the app: /memory, /private wraps prompts, learned rows after a turn, /l
       await until(() => /Learned: login\.spec uses fake timers/.test(committed()), "the learned row");
       const st = await engine.server.request("debug/state", {});
       assert.equal(st.lastParams["turn/start"].input[0].text, "<private>hello</private>");
+      assert.match(committed(), /› hello {2}\(private\)/, "shown as typed, marked private");
+      assert.doesNotMatch(committed(), /› <private>/);
       type("/loop fix the docs\r");
       await until(() => /Loop: started: fix the docs/.test(committed()), "loop started");
       f.iterate(1, "links fixed");
