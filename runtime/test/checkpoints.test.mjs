@@ -475,50 +475,86 @@ test("the turn starts only after its 'before' is done; a turn the server starts 
   assert.match((await w.undo(s)).error, /no checkpoint \(it wasn't started from a prompt here\)/);
 });
 
+// The agent's edit of `file` to `content`, as the wiring records it: its diff's counts, and the blob it left.
+async function agentEdit(r, cp, file_, content, added, removed, { src = file_ } = {}) {
+  if (src !== file_) rmSync(join(r.dir, src));
+  if (content === null) rmSync(join(r.dir, file_));
+  else writeFileSync(join(r.dir, file_), content);
+  const hashes = await cp.hashPaths([file_]);
+  return { src, dst: file_, added, removed, blob: content === null ? null : hashes[file_] };
+}
+
+async function turnWith(r, cp, id, body) {
+  const before = await cp.snapshot();
+  const agentChain = await body();
+  const after = await cp.snapshot();
+  await cp.record("t", id, { before: before.tree, after: after.tree });
+  const paths = [...new Set(agentChain.flatMap((e) => [e.src, e.dst]))];
+  const agentBlobs = await cp.hashPaths(paths);
+  return { agentPaths: paths, agentBlobs, agentChain };
+}
+
 test("a save of the user's during the turn, before or between the agent's edits to that file, is never undone with it", async () => {
   const r = repo();
   try {
     const cp = createCheckpoints({ cwd: r.dir });
     const f = "with space.txt"; // committed as "keep"
-    const before = await cp.snapshot();
-    writeFileSync(join(r.dir, f), "keep\nthe user's line\n"); // the user saves, mid-turn
-    writeFileSync(join(r.dir, f), "keep\nthe user's line\nthe agent's line\n"); // then the agent's edit (+1)
-    const agentBlobs = await cp.hashPaths([f]);
-    const after = await cp.snapshot();
-    await cp.record("t", "u", { before: before.tree, after: after.tree });
-    const agentLines = { [f]: { added: 1, removed: 0 } }; // what the agent's own diff did
-    const p = await cp.plan("t", "u", { agentPaths: [f], agentBlobs, agentLines });
-    assert.deepEqual(p.conflicts, [{ path: f, why: "changed during the turn" }]);
-    const forced = await cp.restore("t", "u", { force: true, agentPaths: [f], agentBlobs, agentLines });
-    assert.equal(forced.restored, 0, "not even forced: the user's line would go");
+    // The user saves, then the agent's one edit (+1).
+    let o = await turnWith(r, cp, "u1", async () => {
+      writeFileSync(join(r.dir, f), "keep\nthe user's line\n");
+      return [await agentEdit(r, cp, f, "keep\nthe user's line\nthe agent's line\n", 1, 0)];
+    });
+    assert.deepEqual((await cp.plan("t", "u1", o)).conflicts, [{ path: f, why: "changed during the turn" }]);
+    assert.equal((await cp.restore("t", "u1", { ...o, force: true })).restored, 0, "not even forced: the user's line would go");
     assert.equal(file(r.dir, f), "keep\nthe user's line\nthe agent's line\n");
 
-    // The user deleted a line during the turn; the agent only added one: also caught.
-    writeFileSync(join(r.dir, "crlf.txt"), "one\ntwo\nthree\n");
-    const b3 = await cp.snapshot();
-    writeFileSync(join(r.dir, "crlf.txt"), "one\nthree\n"); // the user's deletion
-    writeFileSync(join(r.dir, "crlf.txt"), "one\nthree\nagent\n"); // the agent's +1
-    const blobs3 = await cp.hashPaths(["crlf.txt"]);
-    const a3 = await cp.snapshot();
-    await cp.record("t", "u3", { before: b3.tree, after: a3.tree });
-    const p3 = await cp.plan("t", "u3", { agentPaths: ["crlf.txt"], agentBlobs: blobs3, agentLines: { "crlf.txt": { added: 1, removed: 0 } } });
-    assert.deepEqual(p3.conflicts, [{ path: "crlf.txt", why: "changed during the turn" }]);
+    // K: the agent changes l2 to DBG, the user saves line 1, the agent changes DBG back: +2/-2 overall, net +1/-1.
+    writeFileSync(join(r.dir, "k.txt"), "l1\nl2\nl3\n");
+    o = await turnWith(r, cp, "uK", async () => [
+      await agentEdit(r, cp, "k.txt", "l1\nDBG\nl3\n", 1, 1),
+      (writeFileSync(join(r.dir, "k.txt"), "USER\nDBG\nl3\n"), await agentEdit(r, cp, "k.txt", "USER\nl2\nl3\n", 1, 1)),
+    ]);
+    assert.deepEqual((await cp.plan("t", "uK", o)).conflicts, [{ path: "k.txt", why: "changed during the turn" }]);
 
-    // The agent's edit alone (+1 here too) is undone.
-    const b2 = await cp.snapshot();
-    writeFileSync(join(r.dir, "old name.txt"), "renamed later\nagent\n");
-    const blobs2 = await cp.hashPaths(["old name.txt"]);
-    const a2 = await cp.snapshot();
-    await cp.record("t", "u2", { before: b2.tree, after: a2.tree });
-    const ok = await cp.restore("t", "u2", { agentPaths: ["old name.txt"], agentBlobs: blobs2, agentLines: { "old name.txt": { added: 2, removed: 1 } } }); // "renamed later" had no final newline
-    assert.equal(ok.restored, 1, ok.error);
-    assert.equal(file(r.dir, "old name.txt"), "renamed later");
+    // B: the agent adds a block, the user changes another line, the agent rewrites its block.
+    writeFileSync(join(r.dir, "b.txt"), "top\nmid\nend\n");
+    o = await turnWith(r, cp, "uB", async () => [
+      await agentEdit(r, cp, "b.txt", "top\nmid\nend\na\nb\nc\n", 3, 0),
+      (writeFileSync(join(r.dir, "b.txt"), "TOP!\nmid\nend\na\nb\nc\n"), await agentEdit(r, cp, "b.txt", "TOP!\nmid\nend\nx\ny\nz\n", 3, 3)),
+    ]);
+    assert.deepEqual((await cp.plan("t", "uB", o)).conflicts, [{ path: "b.txt", why: "changed during the turn" }]);
+
+    // A move after the user's save of the source.
+    writeFileSync(join(r.dir, "src.txt"), "s1\n");
+    o = await turnWith(r, cp, "uM", async () => {
+      writeFileSync(join(r.dir, "src.txt"), "s1\nthe user's\n");
+      return [await agentEdit(r, cp, "dst.txt", "s1\nthe user's\n", 0, 0, { src: "src.txt" })];
+    });
+    assert.ok((await cp.plan("t", "uM", o)).conflicts.some((c) => c.why === "changed during the turn"), "a move doesn't hide it");
+
+    // Clean: several edits of the agent's own, a clean move, a binary file: all undone.
+    writeFileSync(join(r.dir, "m.txt"), "one\n");
+    writeFileSync(join(r.dir, "bin.dat"), "a\0b\n");
+    writeFileSync(join(r.dir, "mv.txt"), "moving\n");
+    o = await turnWith(r, cp, "uC", async () => [
+      await agentEdit(r, cp, "m.txt", "one\ntwo\n", 1, 0),
+      await agentEdit(r, cp, "m.txt", "one\nTWO\nthree\n", 2, 1),
+      await agentEdit(r, cp, "bin.dat", "a\0B\n", 1, 1),
+      await agentEdit(r, cp, "moved.txt", "moving\n", 0, 0, { src: "mv.txt" }),
+      await agentEdit(r, cp, "mv.txt", "fresh\n", 1, 0), // a new file where the moved one was
+    ]);
+    const ok = await cp.restore("t", "uC", o);
+    assert.equal(ok.error, undefined, ok.error);
+    assert.equal(file(r.dir, "m.txt"), "one\n");
+    assert.equal(file(r.dir, "bin.dat"), "a\0b\n", "binary: compared as text, not refused");
+    assert.equal(file(r.dir, "mv.txt"), "moving\n");
+    assert.ok(!existsSync(join(r.dir, "moved.txt")));
   } finally {
     r.done();
   }
 });
 
-test("the agent's applied diffs are counted per file for that check; a move isn't checked", async () => {
+test("the wiring records each applied edit in order for that check: its paths, its diff's counts, its result", async () => {
   const { cp } = fakeCp();
   const w = checkpointWiring(cp, { cwd: "/repo" });
   const s = fakeSession();
@@ -530,12 +566,18 @@ test("the agent's applied diffs are counted per file for that check; a move isn'
     w.hooks.itemCompleted({ item: it });
   };
   edit("e1", [{ path: "a.js", kind: "update", diff: "@@ -1 +1,2 @@\n-x\n+y\n+z" }]);
-  edit("e2", [{ path: "a.js", kind: "update", diff: "@@ -2 +2 @@\n-z\n+w" }, { path: "new.txt", kind: "add", diff: "one\ntwo\n" }]);
+  edit("e2", [{ path: "a.js", kind: "update", diff: "@@ -2 +2 @@\n-z\n+w" }, { path: "new.txt", kind: "add", diff: "one\ntwo\n" }, { path: "gone.txt", kind: "delete", diff: "x\n" }]);
   edit("e3", [{ path: "old.js", movePath: "moved.js", kind: "update", diff: "@@ -1 +1 @@\n-a\n+b" }]);
   s.state.turns.push({ id: "u1", status: "completed", itemIds: ["e1", "e2", "e3"] });
   await w.hooks.turnCompleted({ turn: { id: "u1" }, session: s });
   await w.undo(s);
-  assert.deepEqual(cp.lastRestore.agentLines, { "a.js": { added: 3, removed: 2 }, "new.txt": { added: 2, removed: 0 } });
+  assert.deepEqual(cp.lastRestore.agentChain, [
+    { src: "a.js", dst: "a.js", added: 2, removed: 1, blob: "blob:a.js" },
+    { src: "a.js", dst: "a.js", added: 1, removed: 1, blob: "blob:a.js" },
+    { src: "new.txt", dst: "new.txt", added: 2, removed: 0, blob: "blob:new.txt" },
+    { src: "gone.txt", dst: "gone.txt", added: 0, removed: 1, blob: null },
+    { src: "old.js", dst: "moved.js", added: 1, removed: 1, blob: "blob:moved.js" },
+  ]);
 });
 
 test("/undo says when edits outside the repo weren't touched, and offers force only where it can do something", async () => {
@@ -558,4 +600,22 @@ test("/undo says when edits outside the repo weren't touched, and offers force o
   assert.doesNotMatch((await w.undo(s)).error, /force/, "force can't help there");
   cp.restore = async () => ({ error: "Not undone: a.js (changed since the agent's edit).", conflicts: [{ path: "a.js", why: "changed since the agent's edit" }] });
   assert.match((await w.undo(s)).error, /\/undo force puts the agent's files back anyway/);
+});
+
+test("an edit whose result couldn't be read leaves the turn without a checkpoint", async () => {
+  const { cp, recorded } = fakeCp();
+  cp.hashPaths = async () => {
+    throw new Error("git hash-object failed");
+  };
+  const w = checkpointWiring(cp, { cwd: "/repo" });
+  const s = fakeSession();
+  await w.hooks.beforeTurn({ input: [] });
+  w.hooks.turnStarted({ turn: { id: "u1" }, session: STARTING });
+  const it = { id: "fc", turnId: "u1", kind: "fileChange", status: "completed", changes: [{ path: "a.js", kind: "update", diff: "@@ -1 +1 @@\n-a\n+b" }] };
+  s.state.items.set("fc", it);
+  w.hooks.itemCompleted({ item: it });
+  s.state.turns.push({ id: "u1", status: "completed", itemIds: ["fc"] });
+  await w.hooks.turnCompleted({ turn: { id: "u1" }, session: s });
+  assert.deepEqual(recorded, []);
+  assert.match((await w.undo(s)).error, /no checkpoint \(an edit's result couldn't be read\)/);
 });

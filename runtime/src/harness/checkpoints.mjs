@@ -267,15 +267,26 @@ export function createCheckpoints({ cwd, git = runGit, maxUntrackedBytes = 2 * 1
     return out;
   }
 
-  /** Lines each path gained and lost between two trees: {path: {added, removed}} (null counts: binary). */
-  async function numstat(before, after) {
-    const d = await g(["diff-tree", "-r", "-z", "--no-renames", "--numstat", before, after]);
-    const out = new Map();
-    for (const rec of d.stdout.split("\0")) {
-      const m = /^(-|\d+)\t(-|\d+)\t([\s\S]+)$/.exec(rec.replace(/^\n/, ""));
-      if (m) out.set(m[3], { added: m[1] === "-" ? null : Number(m[1]), removed: m[2] === "-" ? null : Number(m[2]) });
+  /** Lines gained and lost from blob `a` to blob `b` (null: no file); null when git can't tell. */
+  let emptyBlob = null;
+  async function blobNumstat(a, b) {
+    if (a === b) return { added: 0, removed: 0 };
+    if ([a, b].some((x) => typeof x === "string" && x.startsWith("<"))) return null; // a folder, unreadable
+    emptyBlob ??= (await g(["hash-object", "-w", "--stdin"], { input: "" })).stdout.trim();
+    // The patch, not --numstat: --text applies to it (a file with a NUL byte or a
+    // -diff attribute still counts by lines, as the agent's diff does).
+    const d = await g(["diff", "--text", "--minimal", "--unified=0", "--no-color", "--no-ext-diff", a ?? emptyBlob, b ?? emptyBlob]);
+    if (d.code !== 0) return null;
+    let added = 0;
+    let removed = 0;
+    let inHunk = false;
+    for (const line of d.stdout.split("\n")) {
+      if (line.startsWith("@@")) inHunk = true;
+      else if (inHunk && line.startsWith("+")) added++;
+      else if (inHunk && line.startsWith("-")) removed++;
     }
-    return out;
+    // Different blobs and no hunk ("Binary files differ"): can't tell, so not a fit.
+    return inHunk ? { added, removed } : null;
   }
 
   async function blobIn(tree, p) {
@@ -305,7 +316,8 @@ export function createCheckpoints({ cwd, git = runGit, maxUntrackedBytes = 2 * 1
     }
     // One git for all of them: the window in which a save counts as the agent's stays small.
     if (files.length) {
-      const res = await g([...r.exact, "hash-object", "--stdin-paths"], { cwd: r.root, input: `${files.join("\n")}\n` });
+      // -w: kept, so each edit's result can be compared with the next one's.
+      const res = await g([...r.exact, "hash-object", "-w", "--stdin-paths"], { cwd: r.root, input: `${files.join("\n")}\n` });
       const ids = res.code === 0 ? res.stdout.trim().split("\n") : [];
       // A miscount (a path with a newline) leaves them unreadable: then they are conflicts.
       files.forEach((p, i) => (out[p] = ids.length === files.length ? ids[i] : "<unreadable>"));
@@ -336,7 +348,7 @@ export function createCheckpoints({ cwd, git = runGit, maxUntrackedBytes = 2 * 1
    * turn's diff shows (the user's editor, another agent, a command) is a
    * conflict rather than something to undo blindly.
    */
-  async function plan(threadId, turnId, { agentPaths = null, skipped = [], agentBlobs = null, agentLines = null } = {}) {
+  async function plan(threadId, turnId, { agentPaths = null, skipped = [], agentBlobs = null, agentChain = null } = {}) {
     const r = await repo();
     if (!r) return { error: "Not a git repo: /undo isn't available here." };
     const t = (await list(threadId)).filter((x) => x.turnId === safeRefPart(turnId)).at(-1);
@@ -346,9 +358,22 @@ export function createCheckpoints({ cwd, git = runGit, maxUntrackedBytes = 2 * 1
     const reported = agentPaths ? new Set(agentPaths.map(key)) : null;
     const left = new Set(skipped.map(key));
     const blobs = agentBlobs ? new Map(Object.entries(agentBlobs).map(([p, b]) => [key(p), b])) : null;
-    const lines = agentLines ? new Map(Object.entries(agentLines).map(([p, n]) => [key(p), n])) : null;
-    const counted = lines ? await numstat(t.before, t.after) : null;
     const conflicts = [];
+    // Each of the agent's edits must account for every line that changed
+    // since the one before it (the turn's "before" for the first): more means
+    // someone else (the user's save, a command) changed that file during the
+    // turn, before or between the agent's edits, and undoing would take it too.
+    const tainted = new Set();
+    if (agentChain) {
+      const last = new Map(); // key(path) → blob the agent's latest edit left (null: gone)
+      for (const e of agentChain) {
+        const from = last.has(key(e.src)) ? last.get(key(e.src)) : await blobIn(t.before, e.src);
+        const n = await blobNumstat(from, e.blob);
+        if (!n || n.added > e.added || n.removed > e.removed) for (const p of [e.src, e.dst]) tainted.add(key(p));
+        if (e.src !== e.dst) last.set(key(e.src), null);
+        last.set(key(e.dst), e.blob);
+      }
+    }
     // The agent edited something the checkpoints left out (too big, a heavy
     // folder): there is nothing to put back, so it can't be undone.
     if (reported) {
@@ -371,16 +396,9 @@ export function createCheckpoints({ cwd, git = runGit, maxUntrackedBytes = 2 * 1
         conflicts.push({ path: c.path, why: "not in the checkpoint" });
         continue;
       }
-      // More lines changed than the agent's own diffs account for: someone
-      // else (the user's save, a command) changed it during the turn, before
-      // or between the agent's edits. Undoing would take that away too.
-      const mine = lines?.get(key(c.path));
-      if (mine) {
-        const n = counted.get(c.path);
-        if (!n || n.added === null || n.added > mine.added || n.removed > mine.removed) {
-          conflicts.push({ path: c.path, why: "changed during the turn" });
-          continue;
-        }
+      if (tainted.has(key(c.path))) {
+        conflicts.push({ path: c.path, why: "changed during the turn" });
+        continue;
       }
       if (brokenParent(r.root, c.path)) {
         conflicts.push({ path: c.path, why: "a file is where its folder was" });
@@ -404,8 +422,8 @@ export function createCheckpoints({ cwd, git = runGit, maxUntrackedBytes = 2 * 1
    * a path the agent's edits didn't report is never touched, and a directory
    * is never removed or replaced.
    */
-  async function restore(threadId, turnId, { force = false, agentPaths = null, skipped = [], agentBlobs = null, agentLines = null } = {}) {
-    const p = await plan(threadId, turnId, { agentPaths, skipped, agentBlobs, agentLines });
+  async function restore(threadId, turnId, { force = false, agentPaths = null, skipped = [], agentBlobs = null, agentChain = null } = {}) {
+    const p = await plan(threadId, turnId, { agentPaths, skipped, agentBlobs, agentChain });
     if (p.error) return p;
     if (p.conflicts.length && !force) {
       const list = p.conflicts.slice(0, 5).map((c) => `${c.path} (${c.why})`).join(", ");

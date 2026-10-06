@@ -36,7 +36,6 @@ export function checkpointWiring(cp, { cwd = process.cwd(), waitMs = 10_000, typ
   const befores = new Map(); // turnId → its "before" snapshot
   const recorded = new Map(); // turnId → {skipped, agentBlobs}
   const written = new Map(); // turnId → [promise of {path: blob}] per applied edit, in order
-  const lineCounts = new Map(); // turnId → {path: {added, removed}} summed over the agent's applied diffs
   let hashing = Promise.resolve(); // one hash run at a time, in edit order
   const missing = new Map(); // turnId → why there is none
   const recording = new Map(); // turnId → promise of the after snapshot + record
@@ -63,13 +62,9 @@ export function checkpointWiring(cp, { cwd = process.cwd(), waitMs = 10_000, typ
     /** An applied edit: hash its files now, as the agent left them. */
     itemCompleted({ item }) {
       if (item?.kind !== "fileChange" || item.status !== "completed" || !item.turnId) return;
-      const counts = lineCounts.get(item.turnId) ?? {};
-      lineCounts.set(item.turnId, counts);
       const run = hashing.then(async () => {
         const r = await cp.repo();
-        if (!r) return {};
-        countLines(item, r.root, counts);
-        return cp.hashPaths(relPaths(item, r.root));
+        return r ? editResult(item, r.root) : { hashes: {}, chain: [] };
       });
       hashing = run.catch(() => {});
       if (!written.has(item.turnId)) written.set(item.turnId, []);
@@ -87,7 +82,9 @@ export function checkpointWiring(cp, { cwd = process.cwd(), waitMs = 10_000, typ
         if (!after || !threadId) return void missing.set(turn.id, cp.lastError ? `snapshots fail here: ${cp.lastError}` : "the snapshot after it failed");
         // A hash that failed is left out: that path is then a conflict.
         const agentBlobs = {};
-        for (const hashes of await Promise.all((written.get(turn.id) ?? []).map((w) => w.catch(() => ({}))))) {
+        const agentChain = [];
+        for (const { hashes = {}, chain = [] } of await Promise.all((written.get(turn.id) ?? []).map((w) => w.catch(() => ({ chain: [{ src: null }] }))))) {
+          agentChain.push(...chain);
           // Re-inserted, so the latest edit comes last (and wins when case is folded).
           for (const [p, blob] of Object.entries(hashes)) {
             delete agentBlobs[p];
@@ -96,34 +93,31 @@ export function checkpointWiring(cp, { cwd = process.cwd(), waitMs = 10_000, typ
         }
         // What either snapshot left out was never captured on that side.
         const skipped = [...new Set([...(before.skipped ?? []), ...(after.skipped ?? [])])];
-        const agentLines = Object.fromEntries(Object.entries(lineCounts.get(turn.id) ?? {}).filter(([, n]) => !n.unchecked));
-        if (await cp.record(threadId, turn.id, { before: before.tree, after: after.tree }).catch(() => false)) recorded.set(turn.id, { skipped, agentBlobs, agentLines });
+        // An edit whose result couldn't be read breaks the chain: no checkpoint rather than a guess.
+        if (agentChain.some((e) => !e.src)) return void missing.set(turn.id, "an edit's result couldn't be read");
+        if (await cp.record(threadId, turn.id, { before: before.tree, after: after.tree }).catch(() => false)) recorded.set(turn.id, { skipped, agentBlobs, agentChain });
       })();
-      job.finally(() => {
-        written.delete(turn.id);
-        lineCounts.delete(turn.id);
-      });
+      job.finally(() => written.delete(turn.id));
       recording.set(turn.id, job);
       job.finally(() => recording.delete(turn.id));
       return job;
     },
   };
 
-  // Adds an applied edit's +/- lines per file to `counts` (repo-relative).
-  // A move can't be compared with git's per-path counts: those paths aren't checked.
-  function countLines(item, root, counts) {
+  // An applied edit as it landed: each file's blob (hashed now), and per change
+  // {src, dst, added, removed, blob}: what its diff says it did, for the chain check.
+  async function editResult(item, root) {
+    const changes = [];
     for (const c of item.changes ?? []) {
-      const [p] = relPaths({ changes: [{ path: c.path }] }, root);
-      if (!p) continue;
+      const [src] = relPaths({ changes: [{ path: c.path }] }, root);
       const to = c.movePath ?? c.kind?.move_path;
-      if (to) {
-        for (const q of [p, ...relPaths({ changes: [{ path: to }] }, root)]) counts[q] = { unchecked: true };
-        continue;
-      }
-      if (counts[p]?.unchecked) continue;
-      const st = diffStats(c);
-      counts[p] = { added: (counts[p]?.added ?? 0) + st.added, removed: (counts[p]?.removed ?? 0) + st.removed };
+      const [dst] = to ? relPaths({ changes: [{ path: to }] }, root) : [src];
+      if (!src || !dst) continue; // outside the repo
+      changes.push({ src, dst, ...diffStats(c), kind: c.kind });
     }
+    const hashes = await cp.hashPaths([...new Set(changes.flatMap((c) => [c.src, c.dst]))]);
+    const chain = changes.map(({ src, dst, added, removed, kind }) => ({ src, dst, added, removed, blob: kind === "delete" ? null : (hashes[dst] ?? null) }));
+    return { hashes, chain };
   }
 
   // An edit's files, relative to the repo root, "/"-separated.
@@ -187,9 +181,9 @@ export function checkpointWiring(cp, { cwd = process.cwd(), waitMs = 10_000, typ
       if (!target) return { error: "Nothing to undo yet." };
       if (!recorded.has(target.id)) return { error: `The last turn has no checkpoint (${missing.get(target.id) ?? "it ran before checkpoints were on"}), so /undo can't put its files back.` };
       if (st.activeTurnId || st.starting) return { error: "A turn started meanwhile: /undo again once it finishes." };
-      const { skipped: left, agentBlobs, agentLines } = recorded.get(target.id);
+      const { skipped: left, agentBlobs, agentChain } = recorded.get(target.id);
       const { paths, outside } = await agentPaths(session, target);
-      const r = await cp.restore(st.thread.id, target.id, { force, agentPaths: paths, skipped: left, agentBlobs, agentLines });
+      const r = await cp.restore(st.thread.id, target.id, { force, agentPaths: paths, skipped: left, agentBlobs, agentChain });
       // The force hint only where force can do something.
       const forceable = !force && (r.conflicts ?? []).some((c) => FORCEABLE.has(c.why) && c.why !== "a folder is there now");
       if (r.error) return { error: forceable ? `${r.error} /undo force puts the agent's files back anyway, discarding the changes made after its edit; the rest are never touched.` : r.error };
