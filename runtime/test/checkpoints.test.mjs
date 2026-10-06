@@ -20,6 +20,8 @@ function repo({ attributes = null } = {}) {
   git("config", "user.email", "t@example.com");
   git("config", "user.name", "t");
   git("config", "commit.gpgsign", "false");
+  // No background auto-gc (a big commit starts one on Linux): it would still be writing when the test removes the repo.
+  git("config", "gc.auto", "0");
   if (attributes) writeFileSync(join(dir, ".gitattributes"), attributes);
   writeFileSync(join(dir, "crlf.txt"), "one\r\ntwo\r\n");
   writeFileSync(join(dir, "with space.txt"), "keep");
