@@ -116,6 +116,7 @@ export function codexEnv({ home, base = process.env, extra = {}, cwd = process.c
   return { ...dropCodexVars(base), ...dropCodexVars(extra), CODEX_HOME: full, AD_ENGINE_HOME: canonicalPath(full) };
 }
 
+
 export const MANAGED_MARKER = ".agent-daemon-managed";
 
 // True only for a folder Agent Daemon created. A pre-existing CODEX_HOME

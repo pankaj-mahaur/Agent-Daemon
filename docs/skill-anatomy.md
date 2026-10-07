@@ -1,6 +1,6 @@
 # Skill Anatomy
 
-How Claude Code skills work, and how to create your own. The same skill folders (`~/.claude/skills/` and the project's `.claude/skills/`) are also registered as Codex skills for the agent harness (`ad chat`, `ad run`, `ad loop`).
+How Claude Code skills work, and how to create your own. The same skill folders (`~/.claude/skills/` and the project's `.claude/skills/`) are also registered as Codex skills for the agent harness (`ad` / `ad tui`, `ad chat`, `ad run`, `ad loop`); in `ad tui`, `/skills` lists what Codex sees. `ad codex` (the stock Codex UI) reads skills only from its home, so it sees a mirror of `~/.claude/skills/` but not the project's `.claude/skills/`.
 
 ## What is a Skill?
 
@@ -64,7 +64,7 @@ Available in all projects. Good for general-purpose skills like `graphify`, `qmd
 
 ### Project-Local Skills (`.claude/skills/`)
 
-Available only in the project where they're installed. Good for project-specific audit skills or review playbooks. The harness picks them up too when it runs in that project.
+Available only in the project where they're installed. Good for project-specific audit skills or review playbooks. The harness picks them up too when it runs in that project (except `ad codex`, see above).
 
 ```
 your-project/

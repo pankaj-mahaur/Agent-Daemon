@@ -224,7 +224,7 @@ export function checkpointWiring(cp, { cwd = process.cwd(), waitMs = 10_000, typ
         return { error: `Files put back (${r.restored}), but the conversation couldn't be rewound: ${err?.message ?? err}. Esc Esc rewinds it.` };
       }
       const n = r.restored;
-      const skipped = `${r.skipped ? ` ${r.skipped} left alone (not the agent's edit, not in the checkpoint, or a folder is there now).` : ""}${outside ? ` ${outside} edit${outside === 1 ? " outside this repo wasn't" : "s outside this repo weren't"} touched.` : ""}`;
+      const skipped = `${r.skipped ? ` ${r.skipped} left alone (not the agent's edit, changed during the turn, not in the checkpoint, or a folder or file stands in the way).` : ""}${outside ? ` ${outside} edit${outside === 1 ? " outside this repo wasn't" : "s outside this repo weren't"} touched.` : ""}`;
       const exact = r.byteExact ? "" : " Git can't skip every attributes file here (git older than 2.40, .git/info/attributes or core.attributesFile): files with eol rules may come back normalized.";
       return { message: `Undid the last turn: ${n} file${n === 1 ? "" : "s"} put back.${skipped} ${UNDO_LIMITS}${exact}`, prompt: um ? unwrapPrivate(um.text) : null };
   }

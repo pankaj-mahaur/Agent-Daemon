@@ -99,7 +99,7 @@ Flags:
 
 The watcher:
 
-1. Monitors `~/.claude/projects/**/*.jsonl` (Claude Code), `~/.cursor/sessions` (Cursor), `~/.codex/sessions/**/*.jsonl` (Codex) and `~/.agent-daemon/codex-home/sessions` (the `ad chat` / `ad run` harness; opt out with `"harnessSessions": false`)
+1. Monitors `~/.claude/projects/**/*.jsonl` (Claude Code), `~/.cursor/sessions` (Cursor), `~/.codex/sessions/**/*.jsonl` (Codex) and `~/.agent-daemon/codex-home/sessions` (the harness: `ad` / `ad tui`, `ad chat`, `ad run`, `ad loop`; opt out with `"harnessSessions": false`)
 2. Waits for a file to be "stable" — no writes for ~30 seconds, size unchanged across two 5-second polls
 3. Reads the `cwd` field from inside the transcript so memory lands in the right project
 4. Fires `ad digest` with the right transcript + cwd
@@ -232,7 +232,7 @@ ad doctor --tokens
 
 ## Reviewing high-risk learnings (`ad status`)
 
-Low-confidence or large diffs land in `.agent-daemon/proposals/` instead of being auto-applied. Review them:
+Low-confidence or large diffs land in `.agent-daemon/proposed/` instead of being auto-applied. Review them:
 
 ```sh
 ad status        # list queued proposals
@@ -247,7 +247,19 @@ ad review        # interactive accept / reject
 
 For `ad digest-latest`, run it from each project's root.
 
-**Harness sessions:** `ad digest-latest` only searches `~/.claude/projects`, so it never finds `ad chat` / `ad run` sessions. Those are digested by the harness's SessionEnd hook or by `ad watch`. Manual fallback: `ad digest --transcript ~/.agent-daemon/codex-home/sessions/<…>/rollout-*.jsonl --cwd <project>`.
+**Harness sessions:** `ad digest-latest` only searches `~/.claude/projects`, so it never finds `ad` / `ad tui`, `ad chat` or `ad run` sessions. Those are digested by the harness's SessionEnd hook or by `ad watch`. Manual fallback: `ad digest --transcript ~/.agent-daemon/codex-home/sessions/<…>/rollout-*.jsonl --cwd <project>`.
+
+---
+
+## When ad runs the agent (`ad`)
+
+The same memory works when ad runs the agent itself, in the terminal UI (`ad`, see [tui.md](tui.md)):
+
+- **Capture is the same.** The harness runs the same prompt hooks, so corrections and `"remember: X"` notes go into the learning journal, and a "Learned:" row shows them after the turn. They are saved to memory when ad next starts.
+- **`/remember <text>`** saves a note straight to the project's memory; **`/memory`** searches it, lists recent learnings, and forgets one by `#id`.
+- **`/private`** wraps your prompts in `<private>` until you turn it off, so nothing in them is learned.
+- **`/proposals`** lists queued skill changes; review them with `/ad review`.
+- **Digest:** the harness's SessionEnd hook starts a digest in the background; `ad watch` also picks up harness transcripts.
 
 ---
 
@@ -269,4 +281,5 @@ For `ad digest-latest`, run it from each project's root.
 - [Architecture](./architecture.md) — how the digest pipeline works internally
 - [Troubleshooting](./troubleshooting.md) — common failures and fixes
 - [Installation](./installation-guide.md) — first-time setup
-- [Manual test checklist](./manual-test.md) — end-to-end checklist (Claude Code mode + harness)
+- [Terminal UI](./tui.md) and [agent harness](./harness.md) — when ad runs the agent itself
+- [Manual test checklist](./manual-test.md) — end-to-end checklist (Claude Code mode + harness + terminal UI)

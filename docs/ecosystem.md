@@ -47,7 +47,7 @@ The schema is idempotent (`CREATE TABLE IF NOT EXISTS` everywhere), uses WAL jou
 
 ### 3. Self-evolution via GEPA
 
-Both projects use [GEPA — Genetic-Pareto Prompt Evolution](https://arxiv.org/abs/...) (Agrawal et al., ICLR 2026 oral) for skill self-improvement. Our implementation in [runtime/src/digest/gepa/](../runtime/src/digest/gepa/) ports the algorithm to Node + headless `claude` or Codex-engine calls (`--llm`), while Hermes's [hermes-agent-self-evolution](https://github.com/NousResearch/hermes-agent-self-evolution) runs it in Python with DSPy.
+Both projects use GEPA (Genetic-Pareto prompt evolution; [*GEPA: Reflective Prompt Evolution Can Outperform Reinforcement Learning*](https://arxiv.org/abs/2507.19457), Agrawal et al., ICLR 2026 oral) for skill self-improvement. Our implementation in [runtime/src/digest/gepa/](../runtime/src/digest/gepa/) ports the algorithm to Node + headless `claude` or Codex-engine calls (`--llm`), while Hermes's [hermes-agent-self-evolution](https://github.com/NousResearch/hermes-agent-self-evolution) runs it in Python with DSPy.
 
 The five stages — sample → reflect → generate → evaluate → Pareto-select — are identical. Either implementation can produce candidates against either skill library because the input format (SKILL.md) is the same.
 
@@ -57,7 +57,7 @@ The five stages — sample → reflect → generate → evaluate → Pareto-sele
 
 | Dimension | Hermes Agent | agent-daemon |
 |---|---|---|
-| **Agent loop** | Owns it (Hermes IS the agent) | Layers on Claude Code / Cursor, and since v2 ships its own harness on the Codex engine (`ad chat`, `ad run`, `ad loop`) |
+| **Agent loop** | Owns it (Hermes IS the agent) | Layers on Claude Code / Cursor, and since v2 ships its own harness on the Codex engine (the `ad` terminal UI, `ad chat`, `ad run`, `ad loop`) |
 | **Trigger** | Internal task lifecycle | Claude Code hooks (`SessionStart` / `SessionEnd` / `PreCompact`), the same hooks inside the Codex harness, + cross-agent fswatch (`ad watch`) |
 | **Stack** | Python | Node ESM, few dependencies (incl. the pinned `@openai/codex` engine) |
 | **Distillation engine** | OpenAI-compatible API (Anthropic / Gemini / OpenRouter / TokenMix) | Headless `claude` CLI or the Codex engine (`--llm`) |
@@ -110,7 +110,7 @@ If you want our constitution active in Hermes too, copy the `constitution/` cont
 - You're writing tasks broader than coding (research, scheduling, comms, automation)
 
 **Use agent-daemon if:**
-- You're primarily coding in Claude Code or Cursor, or want a local Codex-based agent (`ad chat`, `ad loop`, `ad schedule`)
+- You're primarily coding in Claude Code or Cursor, or want a local Codex-based agent (the `ad` terminal UI, `ad loop`, `ad schedule`)
 - You want hard guardrails (the constitution)
 - You want skills + memory specifically for software engineering disciplines
 - You want to keep using your existing agent — agent-daemon is a layer first; the harness is optional

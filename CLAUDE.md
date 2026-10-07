@@ -19,3 +19,7 @@ Proportionality rule (always on): trivial requests (`hey`, a quick question, a o
 
 **Session close** ("bye", "session khatam", "done for today", "wrapping up") is a mandatory 3-step protocol — see the Session-close section of `AD-INSTRUCTIONS.md`.
 <!-- agent-daemon:end -->
+
+## This repo: before every push
+
+Before any commit, push, PR, merge or release, run the `ad-pre-push` skill (`.claude/skills/ad-pre-push/SKILL.md`) without being asked: sync the docs and CHANGELOG with the code, update the skills that encode the change, record what was learned, check that nothing personal or internal is pushed, then verify (`node runtime/scripts/check-doc-links.mjs`, `npm test`).

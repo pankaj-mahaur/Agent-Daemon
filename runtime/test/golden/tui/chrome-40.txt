@@ -3,7 +3,7 @@
 │ >_ Agent Daemon (v2.1.0) · on Cod… │
 │                                    │
 │ model:     gpt-5.x-codex medium ·… │
-│ directory: D:\…\DriveYO · git: dev │
+│ directory: D:\Program Files\work\… │
 │ memory:    142 learnings…  /memory │
 │ sandbox:   workspace-write · asks… │
 ╰────────────────────────────────────╯

@@ -110,7 +110,7 @@ Check if `~/.agent-daemon/user.md` exists and contains `{{` placeholders.
 
 - If **already populated** (no placeholders) → skip entirely
 - If **has placeholders** → ask the user these 3 questions in ONE message:
-  1. "What's your name and role?" (e.g., "Pankaj, full-stack developer")
+  1. "What's your name and role?" (e.g., "Asha, full-stack developer")
   2. "Any strong preferences for how I work?" (e.g., "be terse", "always show diffs", "Hindi-English mix is fine")
   3. "Anything I should never do?" (e.g., "don't auto-commit", "don't touch production files")
 

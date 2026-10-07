@@ -4,7 +4,7 @@ This project uses [agent-daemon](https://github.com/pankaj-mahaur/Agent-Daemon) 
 
 ## Getting Started
 
-1. **Scaffold:** `ad init` — creates `.agent-daemon/memory/` templates + AGENTS.md
+1. **Scaffold:** `ad init` — creates `.agent-daemon/memory/` templates, `AD-INSTRUCTIONS.md` (the operating manual) and a managed section in `CLAUDE.md`
 2. **Bootstrap:** Tell Claude "bootstrap the daemon memory" — reads your project and populates memory with real context
 3. **Verify:** `ad doctor` — confirms everything is wired up
 
@@ -15,13 +15,14 @@ The digest pipeline keeps memory updated automatically after bootstrapping.
 
 | Command | Alias | What it does |
 |---------|-------|-------------|
-| `ad doctor` | | Verify install — hooks, PATH, settings |
+| `ad doctor` | | Verify install — hooks, PATH, settings, harness login and sandbox |
 | `ad init` | | Scaffold .agent-daemon/ in this project |
+| `ad` | | Open the terminal UI (ad's own agent harness on the Codex engine; signs in on first run) |
 | `ad team list-templates` | `ad tt` | Show available team templates |
 | `ad team create --template <name> --task "..."` | `ad tc` | Create a team with roles + task graph |
 | `ad team status --team <id>` | `ad ts` | Kanban board — tasks, agents, progress |
 | `ad team inbox --team <id> --agent <name>` | `ad ti` | Read completion messages |
-| `ad spawn --team <id> --role <role> --task "..." --cwd .` | `ad sp` | Launch agent in isolated worktree |
+| `ad spawn --team <id> --role <role> --task "..." --cwd .` | `ad sp` | Launch a worker in an isolated worktree (a sandboxed Codex worker by default; `--engine claude` for headless `claude`) |
 | `ad team delete --team <id>` | `ad td` | Remove a team |
 | `ad team cleanup` | `ad tu` | Prune stale worktrees |
 
@@ -54,6 +55,10 @@ Stay single-agent for: quick fixes, single-file changes, questions, reviews of s
 ## Rules
 
 - **Always ask before spawning** — Never create teams or spawn agents without showing the plan and getting user approval first.
-- **Leader = your session** — You (Claude) are the team lead. Workers run in background worktrees.
+- **Leader = your session** — You (the agent in this session) are the team lead. Workers run in background worktrees.
 - **Isolation** — Each agent works on its own git branch. Changes don't touch the user's working branch until explicitly merged.
 - **Review before merge** — Always let the user review agent output before merging branches.
+
+## Before every push
+
+Keep the docs, CHANGELOG and `skills/daemon/*` in step with the code, and push nothing personal or internal (see `.gitignore`). The full checklist is `.claude/skills/ad-pre-push/SKILL.md`; verify with `node runtime/scripts/check-doc-links.mjs` and `cd runtime && npm test`.

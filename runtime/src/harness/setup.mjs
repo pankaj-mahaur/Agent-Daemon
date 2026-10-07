@@ -158,6 +158,11 @@ export async function ensureHarnessSetup(engine, { cwd = process.cwd(), profile 
     const edits = Object.entries(want)
       .filter(([k, v]) => JSON.stringify(current[k]) !== JSON.stringify(v))
       .map(([k, v]) => [`mcp_servers.${MEMORY_SERVER_ID}.${k}`, v]);
+    // ad's own memory tools (reads, plus feedback into ad's memory) run without
+    // asking each time; a mode the user chose for this server is kept.
+    if (current.default_tools_approval_mode == null || current.default_tools_approval_mode === "auto") {
+      edits.push([`mcp_servers.${MEMORY_SERVER_ID}.default_tools_approval_mode`, "approve"]);
+    }
     for (const key of PROVIDER_ENV_KEYS) {
       if (config.shell_environment_policy?.filters?.[key] !== "exclude") edits.push([`shell_environment_policy.filters.${key}`, "exclude"]);
     }

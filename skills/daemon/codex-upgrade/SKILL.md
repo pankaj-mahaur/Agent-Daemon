@@ -5,7 +5,7 @@ license: MIT
 metadata:
   author: agent-daemon
   spec: agentskills.io
-  version: "1.0"
+  version: "1.1"
   kind: flow
 allowed-tools: Bash, Read, Grep, Edit
 ---
@@ -34,11 +34,11 @@ The harness pins `@openai/codex` exactly (`runtime/package.json`). Each upgrade 
    node --test test/codex-events.test.mjs        # every new notification needs a handler or an ignore reason
    node scripts/codex-slash.mjs                  # Codex's slash names at the new tag (needs gh)
    node --test test/tui-resilience.test.mjs      # slash collisions, compat.json, fake-vs-protocol, future fixture
-   AD_REAL_ENGINE=1 node --test --test-concurrency=1 --test-force-exit test/engine-real.test.mjs
+   AD_REAL_ENGINE=1 node --test --test-concurrency=1 --test-force-exit test/engine-real.test.mjs test/tui-live.test.mjs
    ```
    - `--check` exits 1 if the committed snapshot doesn't match the pinned binary.
-   - The last line runs the **real** new Codex against a mock model (`testkit/mock-responses.mjs`; no login, throwaway homes). It covers a streamed turn, an escalation approval, a patch, and the error classes the code relies on. A behaviour change shows up here even when the schema didn't change.
-   - The PR's CI runs the same suite in its `engine-real` job on Linux, macOS and Windows; read those results too. The bot's PR body lists real-engine failures by name (label `real-engine-failing`).
+   - The last line runs the **real** new Codex against a mock model (`testkit/mock-responses.mjs`; no login, throwaway homes): `engine-real` covers a streamed turn, an escalation approval, a patch and the error classes the code relies on; `tui-live` runs the real `ad tui` in a pseudo-terminal through the manual test's terminal UI script and ad's own TUI features. A behaviour change shows up here even when the schema didn't change.
+   - The workflow's own run is on Linux; the PR's CI (`test.yml`, all three OSes, `engine-real` job) only runs when the `CODEX_UPGRADE_TOKEN` secret is set. That job is non-blocking: read its result, not the run's colour. The bot's PR body lists real-engine failures by name (label `real-engine-failing`).
    - **`compat.json`** (`runtime/src/engine/codex/compat.json`): write the one-line, user-facing "what changed" note for the new version. `/status` and `ad doctor` show it.
    - **A slash collision** (test names it) means Codex now has a command ad uses for something else: rename ad's, or mark it `source: "codex"` if it now means the same.
    - **`/init`**: re-copy Codex's prompt into `runtime/src/tui/init-prompt.mjs` from `codex-rs/tui/assets/prompt_for_init_command.md` at the new tag.
@@ -65,7 +65,16 @@ The harness pins `@openai/codex` exactly (`runtime/package.json`). Each upgrade 
 
 ## Known gotchas (check these first)
 
-- **Store pwsh.** `...\Microsoft\WindowsApps\pwsh.exe` is an app alias; the sandbox's restricted token can't launch it (`CreateProcessAsUserW failed: 5`). `withoutStoreAliases()` in `app-server.mjs` strips `WindowsApps` from the engine PATH. If commands are denied again, check whether Codex changed how it picks a shell.
+- **Store pwsh.** Codex runs commands in the first `pwsh.exe` on PATH. The Store's PowerShell is an app alias (`...\Microsoft\WindowsApps\pwsh.exe`) and an MSIX package (`C:\Program Files\WindowsApps\Microsoft.PowerShell_…`, which PowerShell 7 puts first on its children's PATH); the sandbox's restricted token can launch neither (`CreateProcessAsUserW failed: 5` / `-1073283067`). `withoutStoreAliases()` in `app-server.mjs` drops every PATH entry with a `WindowsApps` segment (2.0.1 dropped only the alias folder, so starting ad *from* Store PowerShell still broke until 2.1.1). If commands are denied again, check whether Codex changed how it picks a shell.
+- **Codex behaviours ad depends on** (re-check on a bump; the live tests exercise each):
+  - item ids can repeat across turns with some providers (`msg-1`, `call_0`): the session keys them per turn;
+  - the `turn/start` response can arrive before the `turn/started` notification;
+  - `item/started` for a patch is not ordered before its disk write;
+  - a real exec approval offers `accept`, an `acceptWithExecpolicyAmendment` ("don't ask again for …", key `p`) and `cancel` (Esc, ends the turn); `decline` (`n`) appears for patch approvals;
+  - MCP tool approval per server: `default_tools_approval_mode` = `auto` | `prompt` | `writes` | `approve` (ad sets `approve` on its memory server);
+  - Codex's diff of an applied patch matches git's line counts (the `/undo` chain check relies on it: a mismatch shows as a false "changed during the turn" in the live test's EDITMATH step);
+  - the first sandboxed action in a fresh Codex home sets up the Windows sandbox (~35 s, once);
+  - with the mock provider, "Model metadata for `mock-model` not found" warnings are expected.
 - **`spawn EPERM` in the unelevated sandbox.** Node can't start child processes there, so `node --test` fails inside the agent's shell. That's expected with `windows.sandbox = "unelevated"`, not a regression.
 - **Thread config overrides need dotted keys** (`"features.hooks": false`, `"mcp_servers.<id>.enabled": false`). Nested objects and the app-server `--disable` / `-c` flags were silently ignored in 0.159 (unchanged through 0.160). Re-verify if a smoke shows hooks or MCP servers running when they should be off.
 - **A new server notification** fails `codex-events.test.mjs` by name until it has a handler in `engine/codex/events.mjs` or a reason in `surface.mjs`. The real-engine test "the events adapter understands everything the real Codex sends" catches one that the regenerated list misses.
@@ -86,7 +95,7 @@ Diff says `thread/compact/start` was removed. `grep -rn "thread/compact" runtime
 
 ## Anti-patterns
 
-- **Merging on a green bot PR alone.** CI never runs the Windows sandbox; skipping step 3 is how the Store-pwsh break shipped in 2.0.0.
+- **Merging on a green bot PR alone.** CI has no real login and GitHub's Windows runners can't run Codex's sandbox; skipping step 3 is how the Store-pwsh break shipped in 2.0.0, and why the package-folder case was only found by a real session in 2.1.0.
 - **Smoke-testing with cwd = the repo.** It pollutes `.agent-daemon/learning-journal.jsonl` with the test prompt.
 - **Trusting the agent's "tests pass".** Run the test yourself after the turn.
 - **Upgrading the user's own `~/.codex`.** The harness has its own `CODEX_HOME`; never touch `~/.codex`.

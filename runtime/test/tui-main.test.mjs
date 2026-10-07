@@ -244,6 +244,14 @@ test("the launcher routes tui before the full CLI and passes everything else thr
   const def = run([]);
   assert.match(def.stderr, /interactive terminal/, "the TUI is the default: why it can't run here");
   assert.match(def.stdout, /Usage:/);
+  // `ad --last` when the TUI can't open: what to do instead, never "unknown command".
+  const lastOff = run(["--last"], { AD_TUI: "0" });
+  assert.equal(lastOff.status, 2);
+  assert.match(lastOff.stderr, /`ad tui --last` reopens the last conversation/);
+  assert.doesNotMatch(lastOff.stderr + lastOff.stdout, /unknown command/);
+  const lastHere = run(["--last"]);
+  assert.equal(lastHere.status, 2);
+  assert.match(lastHere.stderr, /interactive terminal[\s\S]*use `ad chat` and \/resume/);
   const off = run([], { AD_TUI: "0" });
   assert.equal(off.stderr, "", "AD_TUI=0: just the help");
   assert.match(off.stdout, /Usage:/);

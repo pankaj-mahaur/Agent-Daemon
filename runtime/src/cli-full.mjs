@@ -101,9 +101,9 @@ Commands:
 Harness (Codex engine):
   chat                   Interactive agent session (approve commands/edits as they come; /help inside)
                          --cwd <dir>  --model <name>  --sandbox <mode>  --resume <thread-id>
-  tui                    The terminal UI (Codex-style, inline; early: see docs/harness.md)
+  tui                    The terminal UI (Codex-style, inline; bare "ad" opens it): see docs/tui.md
                          --cwd <dir>  --model <name>  --sandbox <mode>  --resume <thread-id>  --last
-                         --preview            the Part 2 walking skeleton instead
+                         --preview            a minimal preview UI on the same engine instead
   codex [args…]          The pinned stock Codex UI on ad's own Codex home (never ~/.codex)
   loop "<objective>"     Autonomous loop until done (dual exit, circuit breaker, budgets, STOP file)
                          --max-iterations 20  --max-minutes 60  --max-tokens <n>  --resume <thread-id>

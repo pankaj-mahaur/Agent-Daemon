@@ -5,13 +5,13 @@ license: MIT
 metadata:
   author: agent-daemon
   spec: agentskills.io
-  version: "1.1"
+  version: "1.2"
 allowed-tools: Bash, Read, Edit, Write, Grep, Glob, Agent
 ---
 
 # Work on the `ad` terminal UI
 
-The TUI (`ad tui`, later bare `ad` → a Codex-style terminal UI on the pinned Codex engine) is built from a final, reviewed plan, one part at a time. This skill puts the plan's state and its hard-won rules in front of you before you touch code, so a new session continues the work instead of re-deriving it. User docs: `docs/tui.md`.
+The TUI (`ad tui` and bare `ad`: a Codex-style terminal UI on the pinned Codex engine, released in 2.1.0) was built from a reviewed plan, one part at a time. This skill puts its hard-won rules in front of you before you touch code, so a new session continues the work instead of re-deriving it. User docs: `docs/tui.md`. Design and the `/undo` safety model: `docs/tui-architecture.md`. Tests: `docs/testing.md`. The maintainer's working plan (`docs/plans/ad-tui.md`) and research notes (`docs/research/`) are local-only, not in the public repo: read them when present.
 
 ## When to use
 
@@ -33,7 +33,7 @@ All paths under `runtime/`.
 | `src/tui/undo.mjs` | Part 10 wiring: "before" started at Enter and awaited (10 s cap) so no agent action can be in it, "after" after the turn, applied edits only (hashed + line-counted per file), edit paths resolved to real paths, `/undo` |
 | `src/tui/history.mjs` | prompt history JSONL (`~/.agent-daemon/tui/history.jsonl`) |
 | `src/tui/init-prompt.mjs` | Codex's `/init` prompt, vendored (re-copy on Codex upgrades) |
-| `src/tui/preview.mjs` | `ad tui --preview`, the Part 2 walking skeleton |
+| `src/tui/preview.mjs` | `ad tui --preview`, a minimal preview UI on the same engine (the first walking skeleton) |
 | `src/tui/codex-slash.json` | Codex's slash names at the pinned tag (`scripts/codex-slash.mjs`) |
 | `src/tui/terminal/` | `io` (raw mode, caps, handoff, restore), `input` (bytes → key/text/paste events), `renderer` (inline), `sanitize`, `text` (spans, SGR, wrap), `width` + `width-table` (generated), `detect` (terminal name, reflow model, width profile) |
 | `src/tui/view/` | pure views: `composer`, `markdown` (streaming), `cells` (items, diffs, ad rows), `chrome` (header, status, footer, shortcuts, picker), `modals` (approvals with arming, questions, forms) |
@@ -59,7 +59,7 @@ All paths under `runtime/`.
 ## Procedure
 
 1. **Load the state.**
-   - Read the status block at the top of `docs/plans/ad-tui.md`, the part you're on, and the **Interfaces** section.
+   - Read `docs/tui-architecture.md` (layers, invariants, decisions); when present locally, the status block of `docs/plans/ad-tui.md`.
    - Read `.agent-daemon/memory/activeContext.md`.
    - Check `git status -sb`: work happens on `feat/tui`, never on main.
 2. **Follow the plan's loop** for the (sub-)part, and finish its Done-when. Interfaces are fixed; changing one needs a revision-log entry. If the plan and the code disagree, verify against the code and fix whichever is wrong.
@@ -68,7 +68,7 @@ All paths under `runtime/`.
    - Tests use temp homes, a `source: "test-double"` fake, or the real-engine suite (`AD_REAL_ENGINE=1`).
    - Never use `~/.codex` or the user's global `codex`.
    - Elevated Windows sandbox setup is machine-wide: ask first.
-4. **Renderer rules** (inline mode; why: `docs/research/terminal-engineering.md`):
+4. **Renderer rules** (inline mode; why: `docs/tui-architecture.md`):
    - **Live region:**
      - never `2J` or `3J`;
      - live rows are drawn with autowrap off (`?7l`) and are at most `cols − 1` wide;
@@ -98,14 +98,28 @@ All paths under `runtime/`.
 6. **Protocol facts:**
    - Stable surface only (`experimentalApi` stays false).
    - Errors are -32600 with distinct messages; -32601 only means an operation is unsupported.
-   - `availableDecisions` leaks through on exec approvals only. Codex's fallback applies otherwise.
-   - Details: `docs/research/codex-tui-and-app-server.md`.
-7. **Before every commit:**
+   - `availableDecisions` leaks through on exec approvals only. Codex's fallback applies otherwise. A real exec approval offers `y` / `p` ("don't ask again for commands starting with …") / Esc ("No, and stop": declines and ends the turn); `n` only when Codex offers "No, and tell Codex what to do instead" (patch approvals).
+   - **Item ids are not unique across turns** with some providers (`msg-1`, `call_0`): the session keys a later turn's item `<id>@<turn>`, the app keys shown items per turn, and requests resolve Codex's id with `session.itemFor(id, turnId)`.
+   - **The `turn/start` response can arrive before the `turn/started` notification:** never rely on `state.starting` inside `turnStarted`.
+   - **`item/started` is not ordered before the disk write** of a patch: nothing safety-related may depend on that race.
+   - Codex's own diff of an applied patch matches git's line counts (verified live for Update File).
+   - MCP tool approval per server: `default_tools_approval_mode` = `auto` | `prompt` | `writes` | `approve` (and per-tool `approval_mode`).
+   - Codex runs commands in the first `pwsh` on PATH (PowerShell 7 adds its own folder to its children's PATH); the Windows sandbox can't start a Store (MSIX) app, so `withoutStoreAliases()` (`engine/codex/app-server.mjs`) drops every PATH entry with a `WindowsApps` segment at every Codex spawn, always on Windows (the alias folder and the Store package folders).
+   - The first sandboxed action in a fresh Codex home sets up the Windows sandbox: about 35 s once (longer on a busy machine).
+   - Details, when present locally: `docs/research/codex-tui-and-app-server.md`.
+6a. **`/undo` invariants** (`docs/tui-architecture.md#undo-the-safety-model`): it never destroys or reverts the user's work on its own (only `/undo force` discards changes made after the agent's edit, and only those), and refuses rather than guesses.
+   - The "before" snapshot is awaited before `turn/start` (10 s cap): never let it race the agent.
+   - Every applied edit is hashed when it completes and its own diff lines recorded; the chain check compares the **lines** each step changed with that edit's own lines (summed or per-edit counts were both broken by review).
+   - Paths go through `realPath()` (8.3 names, junctions, `subst`); ad's own `.agent-daemon/`, heavy folders, ignored and big files are never snapshotted; restores use a scratch index (never the user's `index.lock`).
+   - Only the "changed since…" conflicts are forceable; a file moved in from outside the repo is "not in the checkpoint", never deleted.
+   - Prove each case on a real temp repo in `test/checkpoints.test.mjs`, and mutation-check it.
+6b. **Live tests** (`test/tui-live.test.mjs`, practices in `docs/testing.md`): wait for state not time, count occurrences instead of matching once (the scrollback keeps old text), wait for the idle footer before the next prompt, close every pty in `finally`, approve "retry without sandbox?" on runners that can't sandbox. Reproduce a user's live transcript in a temp home (same shell, same PATH) before fixing it.
+7. **Before every commit:** run the project's `ad-pre-push` skill (docs, CHANGELOG, skills, learnings, hygiene, link check). In particular:
    - `cd runtime && node --test`;
    - the goldens (UI changes) and a mutation check of each new guard;
    - the real-engine suite when engine code changed;
    - `npm run lint:skills` when skills changed;
-   - `docs/tui.md` (and `docs/troubleshooting.md` #22–28) when keys, commands, messages or files changed: the docs must match the code;
+   - `docs/tui.md` (and `docs/troubleshooting.md` #22–30) when keys, commands, messages or files changed: the docs must match the code;
    - read the `git diff` (scripted edits have corrupted files before).
    - Commit by file name. Push only with the user's OK.
 
@@ -128,3 +142,6 @@ The status says Parts 0–11 are built, FC2–FC4 run automated in `test/tui-liv
 - **Reaching for an experimental protocol method** because it's convenient.
 - **Editing files that contain backslashes or `$` through shell heredocs.** Use the Write/Edit tools, and give `replace()` a function.
 - **Moving to the next part with a red test or an open medium-or-worse finding** (see `big-feature-flow`).
+- **Basing a safety check on a timing race or on totals.** `/undo` went through "awaited 1 s" (busy machines lost checkpoints), "not awaited, race the first edit" (commands slipped into the 'before'), "summed counts" and "per-edit counts" (user changes hid) before the awaited snapshot + per-line chain held up under review.
+- **Trusting a green CI run without reading the real-engine job** (it may fail without failing the run).
+- **Personal names, paths or client projects in tests, goldens or examples** (use `shop-app`, `work`, `Sam`).

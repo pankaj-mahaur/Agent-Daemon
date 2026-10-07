@@ -1,6 +1,6 @@
 # Agent harness guide
 
-Since v2, agent-daemon runs agents itself. The engine is [OpenAI Codex](https://github.com/openai/codex): the daemon drives a pinned `codex app-server` over JSON-RPC, in its own Codex home, with the daemon's memory, hooks and skills wired in. This guide covers everyday use. The design and its decisions are in [plans/codex-harness.md](plans/codex-harness.md).
+Since v2, agent-daemon runs agents itself. The engine is [OpenAI Codex](https://github.com/openai/codex): the daemon drives a pinned `codex app-server` over JSON-RPC, in its own Codex home, with the daemon's memory, hooks and skills wired in. This guide covers everyday use. The design and its decisions are in [harness-design.md](harness-design.md).
 
 - [Setup](#setup)
 - [Commands](#commands)
@@ -63,24 +63,24 @@ When the agent wants to run something outside its sandbox or edit outside the wo
 | `/status` | login, model, folder, thread |
 | `/exit` | quit |
 
-### `ad tui`: the terminal UI (early)
+### `ad` / `ad tui`: the terminal UI
 
 ```bash
-ad tui                           # in the current folder
+ad                               # in the current folder (same as ad tui)
 ad tui "<prompt>"                # and send a first prompt
-ad tui --last                    # continue the newest conversation here
+ad tui --last                    # continue the newest conversation here (ad --last too)
 ad tui --resume <thread-id>      # continue a given one
 ```
 
-A Codex-style terminal UI on ad's own Codex home. History goes into your terminal's scrollback; only the bottom of the screen is redrawn. It is new: expect rough edges, and use `ad chat` if something gets in the way.
+A Codex-style terminal UI on ad's own Codex home. History goes into your terminal's scrollback; only the bottom of the screen is redrawn. If something gets in the way, `ad chat` is the plain line mode.
 - **First run:** a sign-in panel if ad isn't signed in (it runs `ad auth login …` for you), then a one-time trust question per folder.
 - **Keys:** Enter sends, and steers a running turn. Tab queues a prompt for after the turn. Esc interrupts. The newline key depends on the terminal (Shift+Enter in Zed, Ctrl+Enter in Windows Terminal, Ctrl+J or `\` + Enter anywhere). `?` shows every shortcut.
-- **Approvals** list what Codex offers. Keys pressed in the first 400 ms are ignored, so type-ahead never approves, and hidden characters show as `<U+…>`.
-- **Commands:** Codex's (`/new`, `/resume`, `/model`, `/review`, `/diff`, `/compact`, …) keep Codex's meaning. ad adds `/undo` (put back the files the last turn changed), `/memory`, `/remember`, `/private`, `/loop`, `/team`, `/schedule`, `/codex` and `/ad <command>`.
-- **Bare `ad`** opens the TUI (where the terminal can show it). `AD_TUI=0` turns that off, and bare `ad` prints the help.
-- **Requirements:** an interactive terminal, and on Windows Node 22.17+ or 24.2+. Otherwise use `ad chat`.
+- **Approvals** list what Codex offers. An answer that grants something is taken only 400 ms after the box opens, so type-ahead never approves, and hidden characters show as `<U+…>`.
+- **Commands:** Codex's (`/new`, `/resume`, `/model`, `/review`, `/diff`, `/compact`, …) keep Codex's meaning. ad adds `/undo` (put back the files the last turn changed), `/memory`, `/remember`, `/private`, `/proposals`, `/loop`, `/team`, `/schedule`, `/tools`, `/image`, `/login`, `/codex` and `/ad <command>`.
+- **Bare `ad`** opens the TUI where the terminal can show it. `AD_TUI=0` turns that off: bare `ad` prints the help, and `ad --last` points you at `ad tui --last`.
+- **Requirements:** an interactive terminal, and on Windows Node 22.17+ or 24.2+. Otherwise use `ad chat` (with `/resume` to continue a conversation).
 
-Keys, commands, `/undo`, terminals and the files it writes: **[tui.md](tui.md)**. `ad tui --preview` still runs the earlier walking skeleton.
+Keys, commands, `/undo`, terminals and the files it writes: **[tui.md](tui.md)**.
 
 ### `ad codex`: the stock Codex UI on ad's home
 
@@ -91,9 +91,9 @@ ad codex resume --last           # any codex arguments
 
 The pinned Codex, with `CODEX_HOME` set to ad's home (never `~/.codex`) and `--no-daemon`, so it never talks to your own Codex. Your `~/.claude/skills` are mirrored into the home's `skills/` folder first; folders you put there yourself are never touched. Project `.claude/skills` aren't visible in `ad codex`. Inside `ad tui`, `/codex` opens it on the same conversation and returns to `ad` afterwards ([tui.md](tui.md#ad-codex-and-codex)).
 
-### `ad tui --preview`: the walking skeleton
+### `ad tui --preview`: the minimal preview
 
-This is the earlier preview of the Codex-style terminal UI. History stays in your terminal's own scrollback, so scrolling, selecting and copying work as usual. Only the bottom few lines (the composer and the footer) are redrawn.
+A minimal, earlier preview of the terminal UI, on the same engine: plain streamed text instead of the full UI. History stays in your terminal's own scrollback, so scrolling, selecting and copying work as usual. Only the bottom few lines (the composer and the footer) are redrawn.
 - **Keys:**
   - Enter sends.
   - The newline key depends on the terminal: Shift+Enter in Zed, Ctrl+Enter in Windows Terminal, Ctrl+J anywhere.
@@ -201,7 +201,8 @@ Unattended runs also switch off every MCP server except the daemon's memory, and
 Every harness run gets the same daemon features as a Claude Code session:
 
 - **Memory in:** the SessionStart hook injects project memory and recent learnings, and each prompt recalls relevant learnings.
-- **Memory out:** corrections you type are captured, and SessionEnd starts a digest in the background. The agent can also query memory mid-turn through the `agent-daemon-memory` MCP server.
+- **Memory out:** corrections you type are captured, and SessionEnd starts a digest in the background.
+- **Memory on demand:** the agent can query memory mid-turn through the `agent-daemon-memory` MCP server, which ad registers in its Codex home. Its tools read ad's memory and record usefulness feedback into it, and they run without an approval prompt (`default_tools_approval_mode = "approve"`). A mode you set for that server yourself is kept.
 - **Guards:** the PreToolUse hooks from your install profile (for example blocking `--no-verify`) run on the agent's commands.
 - **Skills:** `~/.claude/skills/` and the project's `.claude/skills/` are registered as Codex skills.
 - **Instructions:** the constitution is added to the harness's `AGENTS.md` (a managed block; your own text there is kept).
@@ -213,7 +214,7 @@ Loop and worker prompts are marked as non-user (`AD_WORKER=1`), so they never en
 ## Windows
 
 - **Sandbox.** `ad sandbox status` shows readiness. The default is unelevated, and its sandbox identity is kept per Codex home, so it is separate from your own Codex. `ad sandbox setup --elevated` is stronger (one UAC prompt), but it is **machine-wide**: it creates Windows sandbox accounts and rules that your own Codex uses too.
-- **PowerShell from the Microsoft Store** can't be launched by the sandbox. Since 2.0.1 the harness keeps `WindowsApps` off the engine's PATH, so Codex uses an installed pwsh 7 or `powershell.exe`.
+- **PowerShell from the Microsoft Store** can't be started by the sandbox. On Windows, every Codex that ad starts (including `ad codex`) gets a PATH without any `WindowsApps` folder: neither the per-user app-alias folder nor the Store package folder that PowerShell 7 puts first when you start ad from it. Codex then runs commands, sandboxed, in a PowerShell 7 installed from the MSI or in Windows PowerShell 5.1. Store app aliases (`winget`, the `python` stub) aren't on the agent's PATH either. Fixed in 2.0.1 for the alias folder, completed in 2.1.1 for the package folder; see [troubleshooting #16](troubleshooting.md#16-harness-on-windows-every-agent-command-fails-access-is-denied-or-createprocessasuserw-failed).
 - **`node --test` fails with `spawn EPERM`** in the unelevated sandbox, because Node can't start child processes there. The agent can run test files directly (`node file.test.js`). `--elevated` may lift this, but that's untested.
 
 ---
@@ -231,7 +232,7 @@ Loop and worker prompts are marked as non-user (`AD_WORKER=1`), so they never en
 
 | Variable | Effect |
 |---|---|
-| `AD_TUI` | `1`: bare `ad` opens the terminal UI now. `0`: it never does (once the TUI is the default) |
+| `AD_TUI` | `0`: bare `ad` prints the help instead of opening the terminal UI (`ad tui` still opens it). `1`: the default behaviour |
 | `AD_CODEX_HOME` | use another harness Codex home (never your own `~/.codex` or `CODEX_HOME`: refused) |
 | `AD_CODEX_BIN` | run a specific `codex` binary instead of the pinned one (testing) |
 | `CODEX_*` (yours) | not passed to the harness's Codex, so they can't point it at your own state; `CODEX_CA_CERTIFICATE` is kept |
@@ -247,5 +248,5 @@ Loop and worker prompts are marked as non-user (`AD_WORKER=1`), so they never en
 
 1. `ad doctor`: engine version, login, hooks trusted, Windows sandbox.
 2. `ad auth status` and `ad sandbox status`.
-3. [troubleshooting.md](troubleshooting.md), entries 14–22 (harness) and 23–28 (`ad tui`).
+3. [troubleshooting.md](troubleshooting.md): entries 14–21 (harness, including the Windows sandbox and Store PowerShell in #16), 22–28 (`ad tui`) and 29 (a slow first command on Windows).
 4. Codex's own log: `logs_2.sqlite` in the harness home (table `logs`). The [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill shows how to read it.

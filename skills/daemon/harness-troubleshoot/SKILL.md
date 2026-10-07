@@ -5,7 +5,7 @@ license: MIT
 metadata:
   author: agent-daemon
   spec: agentskills.io
-  version: "1.1"
+  version: "1.2"
 allowed-tools: Bash, Read, Grep
 ---
 
@@ -45,7 +45,9 @@ Any harness command errors out, hangs, or finishes without doing the work ("my s
 
 | Symptom / log line | Cause | Fix |
 |---|---|---|
-| `CreateProcessAsUserW failed: 5 (Access is denied.)` for `...\WindowsApps\pwsh.exe` | Store PowerShell is an app alias the sandbox can't launch | upgrade to agent-daemon ≥ 2.0.1 |
+| `CreateProcessAsUserW failed: 5 (Access is denied.)` or `-1073283067` for a `pwsh.exe` under `...\WindowsApps\...` (every command then asks to run outside the sandbox) | PowerShell 7 from the Microsoft Store: the sandbox can't start a Store (MSIX) app. 2.0.1 dropped only the alias folder from the engine's PATH; started *from* Store PowerShell 7, its package folder `C:\Program Files\WindowsApps\Microsoft.PowerShell_…` still came first | upgrade to agent-daemon ≥ 2.1.1 (`withoutStoreAliases` drops every WindowsApps entry); to reproduce, run the harness from that PowerShell with a temp `AD_CODEX_HOME` and a `SHELL` prompt against the mock model |
+| `agent-daemon-memory: Allow the agent-daemon-memory MCP server to run tool "memory_search"?` on every recall | before 2.1.1 the memory server kept Codex's default approval mode, or the user set `prompt` | upgrade (setup sets `default_tools_approval_mode = "approve"` unless the user chose a mode); valid modes: `auto`, `prompt`, `writes`, `approve` |
+| the first command or edit after installing sits on "Thinking" for ~35 s (Windows) | Codex sets up its sandbox for the harness home on the first sandboxed action, once | nothing to do (#29) |
 | `spawn EPERM` from `node --test`, npm scripts or anything that starts child processes | the unelevated Windows sandbox blocks Node child processes | run test files directly (`node x.test.js`), or try `ad sandbox setup --elevated` (untested) |
 | `Windows sandbox is …; unattended runs need it` | sandbox not set up | `ad sandbox setup` |
 | hooks never fire / no memory injected | hooks untrusted, or `features.hooks` off for that thread | `ad doctor`; unattended threads only switch off non-memory MCP servers, not hooks |
@@ -58,14 +60,14 @@ Any harness command errors out, hangs, or finishes without doing the work ("my s
 
 ### `ad tui` and `ad codex`
 
-The terminal UI runs the same engine in the same home, so steps 1–5 apply. These are its own symptoms; details in `docs/troubleshooting.md` #23–28 and `docs/tui.md`.
+The terminal UI runs the same engine in the same home, so steps 1–5 apply. These are its own symptoms; details in `docs/troubleshooting.md` #22–29 and `docs/tui.md`.
 
 | Symptom | Cause | Fix |
 |---|---|---|
 | `ad tui needs an interactive terminal`, `needs Node 22.17+ or 24.2+ on Windows`, mintty, `TERM=dumb` (#23) | a pipe or script, old Node on Windows (no VT input), or Git Bash's window | a real terminal; upgrade Node within 22.x; `winpty ad tui`; or `ad chat` |
 | Shift+Enter sends (#24) | Windows Terminal 1.24 and VS Code send it as Enter | Ctrl+Enter (Windows Terminal), Ctrl+J or `\` + Enter anywhere; `/terminal-setup` prints the binding |
 | ghost copies of the bottom lines after narrowing the window (#25) | known: some terminals move the cursor further than the re-wrap; ad errs towards never erasing history | Ctrl+L redraws. Ask for `node runtime/scripts/tui-probe.mjs screen --bottom` (narrow, then widen), its log and a screenshot |
-| `/undo` says `Not undone: <file> (<why>)` (#26) | the file changed after the turn; or during it by something other than the agent's edits (a command, the user's editor), also on top of an agent edit ("changed during the turn"); or a folder/file now stands in the way; or the snapshots never held it | look at the diff first; `/undo force` overrides "changed since the turn" only (never files the agent didn't edit, never folders) |
+| `/undo` says `Not undone: <file> (<why>)` (#26) | the file changed after the turn; or during it by something other than the agent's edits (a command, the user's editor), also on top of an agent edit ("changed during the turn"); or a folder/file now stands in the way; or the snapshots never held it | look at the diff first; `/undo force` overrides only the "changed since…" kinds (a save after the agent's edit), never "changed during the turn", files the agent didn't edit, folders, or what the snapshots never held |
 | `/undo`: `The last turn has no checkpoint (…)` (#26) | the "before" snapshot (taken at Enter) wasn't done within 10 s, git fails in this repo, the turn was started by Codex itself (review, goal), or it predates `ad tui` | nothing to undo for that turn; fix the git error if one is shown |
 | `Codex stopped (exit N). Your text is kept. Enter restarts and resumes.` (#27) | the engine exited and the 3 automatic restarts failed | Enter retries; else `/quit`, `ad doctor`, `ad tui --last`. The reason is in `logs_2.sqlite` (step 5) |
 | Ctrl+G: `The editor returned at once without waiting` (#28) | the editor opened the file in a running window and exited | `EDITOR="code --wait"` or another editor that waits |
@@ -78,7 +80,7 @@ Reproduce TUI problems with `ad tui` in a scratch folder. Never use the user's o
 
 ### Example 1: "ad run did nothing"
 
-The agent says its shell was denied. Step 5 shows `CreateProcessAsUserW failed: 5` on `WindowsApps\pwsh.exe`. `ad --version` says 2.0.0 → upgrade (re-run the one-liner), then re-run the step 4 probe.
+The agent says its shell was denied, and every command asks to run outside the sandbox. Step 5 shows `CreateProcessAsUserW failed` on a `pwsh.exe` under `WindowsApps`. `ad --version` says older than 2.1.1 → upgrade (re-run the one-liner), then re-run the step 4 probe from the same PowerShell.
 
 ### Example 2: "tests won't run inside the agent"
 

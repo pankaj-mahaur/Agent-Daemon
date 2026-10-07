@@ -8,8 +8,9 @@ Thumbs.db
 graphify-out/
 *.log
 
-# Claude Code session artifacts (worktrees, logs)
-.claude/
+# Claude Code session artifacts (worktrees, local settings) — the project skills are shared
+.claude/*
+!.claude/skills/
 
 # agent-daemon runtime state (per-machine)
 .agent-daemon/
@@ -33,3 +34,10 @@ FUTURE-*-PLAN.md
 docs/onboarding.html
 hello-world.js
 
+
+# Maintainer's working notes — kept locally, not in the public repo.
+# (Public design docs: docs/tui-architecture.md, docs/harness-design.md, docs/testing.md.)
+docs/plans/
+docs/research/
+.out-of-scope/
+docs/manual-test-v0.2.0.md

@@ -22,7 +22,7 @@ const TUI_USAGE = `Usage: ad tui ["<first prompt>"] [options]
   --model <name>       the model to start with
   --sandbox <mode>     read-only | workspace-write (default) | danger-full-access
   --resume <thread-id> continue a conversation;  --last  the newest one here
-  --preview            the Part 2 walking skeleton instead
+  --preview            a minimal preview UI on the same engine instead
 Guide: docs/tui.md`;
 const SANDBOX_MODES = ["read-only", "workspace-write", "danger-full-access"];
 
@@ -81,6 +81,16 @@ async function launch() {
   if (bare) {
     const choice = bareAdChoice({ env: process.env, isDefault: TUI_IS_DEFAULT });
     if (choice.tui) return tui(argv);
+    // `ad --last` means "reopen the last conversation in the terminal UI": say
+    // what to do instead of falling through to "unknown command".
+    if (argv[0] === "--last") {
+      process.stderr.write(
+        choice.reason
+          ? `${choice.reason}\n\`ad --last\` reopens the last conversation in the terminal UI; here, use \`ad chat\` and /resume.\n`
+          : "The terminal UI is turned off (AD_TUI=0). `ad tui --last` reopens the last conversation in it anyway.\n",
+      );
+      return 2;
+    }
     if (choice.reason) process.stderr.write(`${choice.reason}\n\n`);
   }
   await import("./cli-full.mjs"); // runs the command and exits

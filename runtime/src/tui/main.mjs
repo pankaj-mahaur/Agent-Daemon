@@ -299,7 +299,7 @@ export async function cmdTui(opts = {}) {
         intro: [[{ text: "ad isn't signed in to Codex yet.", style: { bold: true } }]],
         items: [
           { label: "ChatGPT", hint: "sign in with your ChatGPT plan (browser)", value: ["auth", "login", "chatgpt"] },
-          { label: "OpenAI API key", hint: "stored in ad's secret store", value: ["auth", "login", "openai"] },
+          { label: "OpenAI API key", hint: "kept by Codex in ad's own Codex home", value: ["auth", "login", "openai"] },
           { label: "OpenRouter", hint: "API key + model", value: ["auth", "login", "openrouter"] },
         ],
       });
@@ -360,11 +360,18 @@ export async function cmdTui(opts = {}) {
       // memory is optional
     }
     const codexVersion = pinnedCodexVersion() ?? "?";
+    // No model configured: name the one Codex will use (its default), not "default".
+    let modelName = config.model ?? opts.model ?? null;
+    if (!modelName) {
+      const listed = await Promise.race([engine.server.request("model/list", {}).catch(() => null), new Promise((r) => setTimeout(() => r(null), 2000).unref?.())]);
+      const def = listed?.data?.find((m) => m.isDefault);
+      modelName = def?.model ?? def?.id ?? "default";
+    }
     const header = renderHeader(
       {
         title: `>_ Agent Daemon (v${opts.clientVersion ?? "?"}) \u{b7} on Codex ${codexVersion} (tested)`,
         rows: [
-          { label: "model", value: `${config.model ?? opts.model ?? "default"}${config.model_reasoning_effort ? ` ${config.model_reasoning_effort}` : ""} \u{b7} ${acct}`, hint: "/model to change" },
+          { label: "model", value: `${modelName}${config.model_reasoning_effort ? ` ${config.model_reasoning_effort}` : ""} \u{b7} ${acct}`, hint: "/model to change" },
           { label: "directory", value: `${cwd}${branch ? ` \u{b7} git: ${branch}` : ""}`, path: true },
           { label: "memory", value: memoryLine, hint: "/memory" },
           { label: "sandbox", value: `${st.config.sandbox} \u{b7} ${st.config.approvalPolicy === "never" ? "never asks" : "asks first"}` },

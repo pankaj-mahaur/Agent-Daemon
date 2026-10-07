@@ -13,8 +13,8 @@ const key = (name, mods = {}) => ({ type: "key", name, ctrl: false, alt: false, 
 const HEADER = {
   title: ">_ Agent Daemon (v2.1.0) \u{b7} on Codex 0.160.0 (tested)",
   rows: [
-    { label: "model", value: "gpt-5.x-codex medium \u{b7} ChatGPT Go", hint: "/model to change" },
-    { label: "directory", value: "D:\\Program Files\\my-projects\\DriveYO \u{b7} git: dev", path: true },
+    { label: "model", value: "gpt-5.x-codex medium \u{b7} ChatGPT Plus", hint: "/model to change" },
+    { label: "directory", value: "D:\\Program Files\\work\\shop-app \u{b7} git: dev", path: true },
     { label: "memory", value: "142 learnings \u{b7} profile loaded", hint: "/memory" },
     { label: "sandbox", value: "workspace-write \u{b7} asks first \u{b7} Windows sandbox ready" },
   ],
@@ -52,7 +52,7 @@ test("the header box is closed and fits; under 40 columns it is one line", () =>
 });
 
 test("shortenPath keeps the drive and the last folders", () => {
-  assert.equal(shortenPath("D:\\Program Files\\my-projects\\DriveYO", 25), "D:\\\u{2026}\\my-projects\\DriveYO");
+  assert.equal(shortenPath("D:\\Program Files\\work\\shop-app", 25), "D:\\\u{2026}\\work\\shop-app");
   assert.equal(shortenPath("/home/me/src/app", 40), "/home/me/src/app");
   assert.equal(shortenPath("/home/me/src/app", 10), "/\u{2026}/src/app");
   assert.equal(shortenPath("/home/me/src/app", 7), "/\u{2026}/app");

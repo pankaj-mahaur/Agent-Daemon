@@ -29,14 +29,16 @@ All tests should pass (`# fail 0`).
 ## Project layout (the 60-second tour)
 
 ```
-runtime/src/cli.mjs              ← Entry point, command dispatcher
+runtime/src/cli.mjs              ← Launcher: routes the terminal UI and `ad codex`, loads cli-full.mjs for the rest
+runtime/src/cli-full.mjs         ← Help text + command dispatcher
 runtime/src/digest/digest.mjs    ← Pipeline orchestrator (read first)
 runtime/src/hooks/*.mjs          ← One file per hook handler
-runtime/src/adapters/*.mjs       ← Transcript parsers (claude-code, codex, cursor)
+runtime/src/adapters/*.mjs       ← Transcript parsers (claude-code, codex, cursor, cline)
 runtime/src/memory/episodic.mjs  ← SQLite wrapper
 runtime/src/orchestration/       ← Multi-agent team layer (Codex + claude workers)
 runtime/src/engine/codex/        ← Codex app-server driver (the harness engine)
-runtime/src/harness/             ← ad chat / run / loop / schedule / web / acp / auth / sandbox
+runtime/src/harness/             ← ad chat / run / loop / schedule / web / acp / auth / sandbox / codex, session controller, /undo checkpoints
+runtime/src/tui/                 ← ad tui: terminal/ layer, view/ components, app, /undo wiring
 runtime/test/*.test.mjs          ← node:test suite
 
 constitution/                    ← Loaded into every session
@@ -84,16 +86,18 @@ Read [`docs/architecture.md`](./architecture.md) for the full picture.
 ## Adding a new command
 
 1. **Define what it does in one sentence.** If you can't, the command is too big.
-2. **Add an entry to the help banner** in `cli.mjs`
-3. **Add a `case "<name>":` in the dispatcher** at the bottom of `cli.mjs`
-4. **Implement the handler** — either inline in `cli.mjs` (if < 50 lines) or in its own module
+2. **Add an entry to the help banner** (`HELP`) in `cli-full.mjs`
+3. **Add a `case "<name>":` in the dispatcher** (the `switch (command)` in `cli-full.mjs`)
+4. **Implement the handler** — either inline in `cli-full.mjs` (if < 50 lines) or in its own module
 5. **Add at least one test** in `runtime/test/<name>.test.mjs`
-6. **Document it** in `docs/workflow.md` if user-facing
+6. **Document it** in `docs/workflow.md` (Claude Code mode) or `docs/harness.md` (harness) if user-facing
+
+`cli.mjs` itself stays a small launcher: only commands that must start before the full command module loads (the terminal UI, `ad codex`) are routed there.
 
 Example skeleton:
 
 ```js
-// in cli.mjs
+// in cli-full.mjs
 async function cmdHello(opts) {
   console.log(`hello, ${opts.cwd}`);
   return 0;
@@ -119,7 +123,7 @@ test("hello command exits 0", async () => {
 
 1. **Decide which event**: `PreToolUse`, `PostToolUse`, `SessionStart`, `SessionEnd`, `UserPromptSubmit`, `PreCompact`, `Stop`
 2. **Create the handler** at `runtime/src/hooks/<event>-<name>.mjs`. Use [`io.mjs`](../runtime/src/hooks/io.mjs) for stdin/stdout protocol.
-3. **Wire it into `cli.mjs`**'s hook dispatcher
+3. **Wire it into the hook dispatcher** (`cmdHook` in `cli-full.mjs`)
 4. **Create a JSON snippet** at `hooks/<event>-<name>.json` so users can copy-paste
 5. **Add to a profile** in `runtime/profiles/profiles.json` if it's part of `developer` or `security`
 6. **Test it** with a subprocess test (see `runtime/test/hooks.test.mjs` for the pattern)
@@ -184,15 +188,17 @@ npm test
 
 For subprocess tests (CLI commands, hook handlers), see [`runtime/test/hooks.test.mjs`](../runtime/test/hooks.test.mjs) for the established pattern.
 
+The full map of test layers, the live terminal UI tests and CI is in [testing.md](testing.md). The test tools (`@xterm/headless`, `@lydell/node-pty`) are devDependencies: install with plain `npm install` (or `npm ci`), not `--omit=dev`.
+
 Harness tests come in two kinds:
 
 - **Fake engine (default).** Most harness tests drive the scripted fake app-server in [`runtime/testkit/fake-codex-app-server.mjs`](../runtime/testkit/fake-codex-app-server.mjs): fast, and good for crashes and odd traffic. A test that builds `CodexAppServer` around the fake directly marks the command `source: "test-double"`.
   - **The fake speaks the pinned protocol.** `test/tui-resilience.test.mjs` checks its messages with [`runtime/testkit/protocol-check.mjs`](../runtime/testkit/protocol-check.mjs) (required fields, enums, variants from the snapshot). A new scenario must keep passing it. The `future` scenario is the deliberate exception: a synthetic newer Codex.
-- **Real engine (opt-in).** [`runtime/test/engine-real.test.mjs`](../runtime/test/engine-real.test.mjs) runs the pinned Codex binary against [`runtime/testkit/mock-responses.mjs`](../runtime/testkit/mock-responses.mjs), a scripted stand-in for the Responses API. No login and no network are needed. It catches behaviour changes in a Codex release that a protocol snapshot can't. CI's `engine-real` job runs it on Linux, macOS and Windows.
+- **Real engine (opt-in).** [`runtime/test/engine-real.test.mjs`](../runtime/test/engine-real.test.mjs) runs the pinned Codex binary against [`runtime/testkit/mock-responses.mjs`](../runtime/testkit/mock-responses.mjs), a scripted stand-in for the Responses API. No login and no network are needed. It catches behaviour changes in a Codex release that a protocol snapshot can't. [`runtime/test/tui-live.test.mjs`](../runtime/test/tui-live.test.mjs) goes one step further: the real `ad tui` in a pseudo-terminal, on the real Codex and the mock model, running the manual test's terminal UI script and ad's own TUI features. CI's `engine-real` job runs both on Linux, macOS and Windows.
 
   ```sh
   cd runtime
-  AD_REAL_ENGINE=1 node --test --test-concurrency=1 --test-force-exit test/engine-real.test.mjs
+  AD_REAL_ENGINE=1 node --test --test-concurrency=1 --test-force-exit test/engine-real.test.mjs test/tui-live.test.mjs
   ```
 
 **Golden files.** Terminal UI output is compared byte for byte with files under `runtime/test/golden/` (kept LF by `.gitattributes`) through `assertGolden()` in [`runtime/testkit/golden.mjs`](../runtime/testkit/golden.mjs). After an intended change, rewrite them and review the diff before committing:
@@ -207,9 +213,13 @@ git diff test/golden
 
 **Width table.** `runtime/src/tui/terminal/width-table.mjs` is generated: `node runtime/scripts/gen-width-tables.mjs [version]` (pinned to Unicode 16.0.0). Bump it on purpose and re-run the width tests.
 
-**Never start the real Codex outside an isolated home.** Every spawn site builds its environment with `codexEnv()` (`runtime/src/engine/codex/home.mjs`). That refuses the user's own `~/.codex` and their `CODEX_HOME`, and drops their `CODEX_*` variables. A test fails when a new file resolves the Codex binary without it. Tests use temp homes.
+**Never start the real Codex outside an isolated home.** Every spawn site builds its environment with `codexEnv()` (`runtime/src/engine/codex/home.mjs`). That refuses the user's own `~/.codex` and their `CODEX_HOME`, and drops their `CODEX_*` variables. On Windows the spawn also goes through `withoutStoreAliases()` (`runtime/src/engine/codex/app-server.mjs`), which drops every `WindowsApps` entry from PATH. A test fails when a new file resolves the Codex binary without `codexEnv()`. Tests use temp homes.
 
-CI has no real login and no Windows sandbox. Before merging an engine bump, do a live `ad run` smoke on Windows in a scratch directory; the [`codex-upgrade`](../skills/daemon/codex-upgrade/SKILL.md) skill has the steps.
+**Bumping the Codex pin.** `test/tui-resilience.test.mjs` checks two files against the pin in `runtime/package.json`:
+- `runtime/src/tui/codex-slash.json` (Codex's slash-command names at the pinned tag; regenerate with `node runtime/scripts/codex-slash.mjs`), so ad's own commands never collide with Codex's;
+- `runtime/src/engine/codex/compat.json`, which must list the pin as tested, with a user-facing "what changed" note. `AD_COMPAT_NOTE_PENDING=1` lets the upgrade bot's run pass until a person writes it.
+
+CI has no real login and no working Windows sandbox. Before merging an engine bump, run the live `ad run` and `ad tui` smokes on Windows in a scratch directory; the [`codex-upgrade`](../skills/daemon/codex-upgrade/SKILL.md) skill has the steps.
 
 ---
 
@@ -243,7 +253,8 @@ Body should explain **why**, not what. The diff shows what.
 - Name your branch `feat/<thing>` or `fix/<thing>`
 - Open PRs early as drafts if you want feedback
 - Squash-merge into `main` (we prefer linear history)
-- Every PR must pass CI: `npm test` + `npm run lint:skills` on Ubuntu / macOS / Windows × Node 22. The `engine-real` job (real Codex vs a mock model) runs alongside; it is `continue-on-error` while each platform's sandbox behaviour is being recorded.
+- Every PR to `main` must pass CI: `npm test` + the skill linter on Ubuntu / macOS / Windows × Node 22. The `engine-real` job (real Codex vs a mock model, plus the live terminal UI tests) runs alongside; it is non-blocking (`continue-on-error`) while each platform's sandbox behaviour is being recorded, so read its result.
+- Before pushing, check the doc links: `node runtime/scripts/check-doc-links.mjs` (every relative link must point at a file git tracks).
 
 ---
 
@@ -254,7 +265,7 @@ Body should explain **why**, not what. The diff shows what.
 - Update `CHANGELOG.md` with the new section
 - Tag the release after merge: `git tag -a vX.Y.Z -m "…" && git push origin vX.Y.Z`
 - v1 bug fixes go to the `release/v1` branch (tags `v1.x.y`)
-- `runtime/src/cli.mjs` reads version from `package.json` — no separate update needed
+- `runtime/src/cli.mjs` and `runtime/src/cli-full.mjs` read the version from `package.json` — no separate update needed
 
 ---
 
@@ -290,7 +301,7 @@ node runtime/scripts/tui-probe.mjs keys     # keys and pastes as raw bytes
 node runtime/scripts/tui-probe.mjs screen   # wrapping, autowrap-off, sync output, resize reflow
 ```
 
-Logs land in `~/.agent-daemon/logs/tui-probe-*.log`. The plan and research behind the terminal UI are in [plans/ad-tui.md](plans/ad-tui.md) and [research/](research/).
+Logs land in `~/.agent-daemon/logs/tui-probe-*.log`. How the terminal UI is built, and why: [tui-architecture.md](tui-architecture.md). How it is tested: [testing.md](testing.md).
 
 ### Edit files that contain backslashes or `$`
 

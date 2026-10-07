@@ -1,6 +1,6 @@
 # Manual test checklist
 
-An end-to-end check of an install: Claude Code mode first, then the agent harness. Each step says what to run, what you should see, and where to look if it fails. Work in a **throwaway project**, not in a real repo: steps 2 and 4 write test learnings into that project's memory.
+An end-to-end check of an install: Claude Code mode first, then the agent harness and its terminal UI. Each step says what to run, what you should see, and where to look if it fails. Work in a **throwaway project**, not in a real repo: steps 2, 4 and 6 write test learnings into that project's memory.
 
 Commands are shown in bash. They also work in PowerShell unless noted.
 
@@ -47,7 +47,7 @@ node --test            # expect: 1 failing test (the bug the agent will fix in s
 
 | Run | Expect | If not |
 |---|---|---|
-| `ad run "The test in math.test.js fails. Fix the bug in math.js."` | the agent shows its commands, edits `math.js`, ends with a summary | [troubleshooting #16](troubleshooting.md#16-harness-on-windows-every-agent-command-fails-with-access-is-denied) if every command is denied |
+| `ad run "The test in math.test.js fails. Fix the bug in math.js."` | the agent shows its commands, edits `math.js`, ends with a summary | [troubleshooting #16](troubleshooting.md#16-harness-on-windows-every-agent-command-fails-access-is-denied-or-createprocessasuserw-failed) if every command is denied or fails with `CreateProcessAsUserW failed` |
 | `node --test` (you, not the agent) | 1 passing test | read the agent's summary; re-run with `ad chat` |
 | `git checkout math.js && ad loop "make the test in math.test.js pass" --max-iterations 3` | 1–2 iterations, then `stopped: objective done`; a log in `.agent-daemon/loops/` | exit code 3 = a brake stopped it (see its reason) |
 | `touch .agent-daemon/STOP && ad loop "anything"` | refuses to start: STOP file exists. Then `rm .agent-daemon/STOP` | — |
@@ -67,7 +67,7 @@ node --test            # expect: 1 failing test (the bug the agent will fix in s
 
 Run this in each terminal you use: Windows Terminal, Zed and the VS Code terminal. Stay in the scratch project from step 0, never a real repo. Start with `git checkout math.js` so the bug is back.
 
-**Live script** (the FC3 sign-off). It also runs automated, on the real Codex with a mock model: `cd runtime && AD_REAL_ENGINE=1 node --test test/tui-live.test.mjs` (about two minutes; the first run on Windows adds ~35 s once).
+**Live script** (the FC3 sign-off). It also runs automated, on the real Codex with a mock model, together with checks of ad's own TUI features: `cd runtime && AD_REAL_ENGINE=1 node --test --test-concurrency=1 --test-force-exit test/tui-live.test.mjs` (a few minutes; the first run on Windows adds ~35 s once). It needs the devDependencies, which the one-liner skips: run `npm install` in `runtime/` first.
 
 | # | Do | Expect | If not |
 |---|---|---|---|
@@ -87,17 +87,19 @@ Run this in each terminal you use: Windows Terminal, Zed and the VS Code termina
 | Do | Expect | If not |
 |---|---|---|
 | Type, then send *"Add a subtract function to math.js."*; when it is done, `/undo` | "Undid the last turn: 1 file put back …"; the prompt is back in the composer; `git diff math.js` shows no `subtract` | — |
-| Ask the same again, edit `math.js` yourself, then `/undo` | "Not undone: math.js (changed since the turn). /undo force overrides …"; nothing changed. `/undo force` puts it back | [troubleshooting #26](troubleshooting.md#26-undo-refuses-not-undone) |
+| Ask the same again, edit `math.js` yourself, then `/undo` | "Not undone: math.js (changed since the agent's edit). /undo force puts the agent's files back anyway, discarding the changes made after its edit; the rest are never touched."; nothing changed. `/undo force` puts it back | [troubleshooting #26](troubleshooting.md#26-undo-refuses-not-undone) |
 | Esc Esc on an empty prompt while idle | "Esc again to rewind…", then a "Rewind to" picker. Pick one: "Rewound to before … Files on disk weren't changed.", and that prompt is back in the composer | — |
 | Ctrl+T | the whole transcript in a pager (↑ ↓ PgUp PgDn); Esc closes it and the scrollback is unchanged | — |
 | `?`, then `/terminal-setup` | the shortcuts with the newline key for this terminal; advice for this terminal | [troubleshooting #24](troubleshooting.md#24-ad-tui-shiftenter-sends-instead-of-adding-a-newline) |
 | Make the window narrower, then wider, while `ad tui` runs | no stray copies of the bottom lines; if there are, Ctrl+L redraws | [troubleshooting #25](troubleshooting.md#25-ghost-copies-of-the-bottom-lines-after-narrowing-the-window) |
+| `/remember tests use node:test`, then `/memory recent` | a "Learned:" row, then the note listed with its `#id` | `/ad doctor` |
+| `/private`, send *"What does math.js export?"*, then `/private` again | "Private: your prompts are wrapped in <private> …"; the prompt shows as typed, marked "(private)"; then "Private is off." | — |
 
 **Terminal probes** (from the repo). They change nothing but the terminal's modes, which they restore on exit.
 
 | Run | Expect | If not |
 |---|---|---|
-| `node runtime/scripts/tui-probe.mjs keys`, press a few keys and paste two lines, then `qqq` | each key named. On Windows with Node 22.17+ the paste shows as one `PASTE (… line breaks)` row | [troubleshooting #22](troubleshooting.md#22-keys-or-paste-behave-oddly-in-a-terminal) |
+| `node runtime/scripts/tui-probe.mjs keys`, press a few keys and paste two lines, then `qqq` | each key named. On Windows with Node 22.17+ or 24.2+ the paste shows as one `PASTE (… line breaks)` row | [troubleshooting #22](troubleshooting.md#22-keys-or-paste-behave-oddly-in-a-terminal) |
 | `node runtime/scripts/tui-probe.mjs screen --bottom`, make the window narrower then wider, then `qqq` | wrap and autowrap verdicts, plus one line per resize | attach `~/.agent-daemon/logs/tui-probe-screen-*.log` and a screenshot to an issue |
 
 ## 7. Clean up

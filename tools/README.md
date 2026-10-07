@@ -28,7 +28,7 @@ tools/<tool-name>/
 Scaffolded — content coming in subsequent passes. Initial candidates:
 
 - `repo-summary` — one-shot repo introspection (lang/framework detection, key files list, commit summary). Output: JSON for agent consumption.
-- `find-utility` — grep-based "does this project already have a `<concept>` helper?" search. Used by [skills/implement-feature](../skills/implement-feature/SKILL.md) Phase 0.
+- `find-utility` — grep-based "does this project already have a `<concept>` helper?" search. Used by [skills/implement-feature](../skills/engineering/implement-feature/SKILL.md) Phase 0.
 - `migration-head` — print the current and pending migration heads across Alembic / Django / Prisma / Knex / Flyway in one command.
 - `cache-keys` — list all `cache.set` / `cache.get` call sites grouped by key prefix.
 - `dead-export` — find exported symbols with zero importers (TypeScript / Python / Go).
