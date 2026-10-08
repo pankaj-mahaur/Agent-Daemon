@@ -209,7 +209,8 @@ test("slash commands: the popup completes, /status reports, /new resets, unknown
     type("\r");
     await until(() => /Status/.test(text()) && /sandbox/.test(text()), "the status report");
     type("fail-turn\r");
-    await until(() => session.state.thread, "a thread");
+    // /new waits for the task to end (Codex's rule), so wait for the turn too.
+    await until(() => /The turn failed/.test(text()) && !session.state.activeTurnId && !session.state.starting, "a thread, its turn over");
     type("/new\r");
     await until(() => !session.state.thread && /New conversation/.test(text()), "a new conversation");
     type("/nope\r");
@@ -219,6 +220,35 @@ test("slash commands: the popup completes, /status reports, /new resets, unknown
     assert.match(text(), /Shortcuts/);
     type("\x1b");
     await until(() => !app.state.overlay, "closed");
+  });
+});
+
+test("Codex commands ad doesn't run never reach the model; busy ones wait, and the draft stays", async () => {
+  await withApp(async ({ app, type, until, text, session, engine }) => {
+    const sent = async () => {
+      const st = await engine.server.request("debug/state", {});
+      return st.calls.filter((c) => c === "turn/start" || c === "turn/steer").length;
+    };
+    type("/plan fix the bug\r");
+    await until(() => /\/plan isn't in ad yet\. \/codex opens the stock Codex UI/.test(text()), "the answer");
+    assert.equal(app.state.composer, "/plan fix the bug", "the draft goes back into the composer");
+    assert.equal(await sent(), 0);
+    type("\x15/clean\r"); // an alias answers under the name typed
+    await until(() => /\/clean isn't in ad yet/.test(text()), "the alias answer");
+    type("\x15/MENTION\r");
+    await until(() => /Type @ in the prompt to mention a file/.test(text()), "a custom answer, any case");
+    type("\x15hang\r");
+    await until(() => session.state.activeTurnId, "the running turn");
+    const before = await sent();
+    type("/new\r");
+    await until(() => /'\/new' is disabled while a task is in progress\./.test(text()), "the busy answer");
+    assert.equal(app.state.composer, "/new");
+    type("\x15/side what about tests?\r");
+    await until(() => /\/side isn't in ad yet/.test(text()), "not steered into the turn");
+    assert.equal(await sent(), before, "nothing was steered into the running turn");
+    assert.ok(session.state.thread, "the conversation is untouched");
+    type("\x15/status\r"); // allowed during a task, as in Codex
+    await until(() => /sandbox/.test(text()), "the status report mid-turn");
   });
 });
 

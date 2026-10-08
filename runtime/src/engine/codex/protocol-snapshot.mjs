@@ -59,6 +59,48 @@ export const TRACKED_DEFINITIONS = [
   "ThreadListResponse",
 ];
 
+// Every method ad sends (a test checks this list against the request("…")
+// calls in src/). Their params types, and every type those reference, are
+// tracked too, so the fake app-server can check ad's own requests against the
+// pinned protocol (testkit/protocol-check.mjs), not only what Codex sends.
+export const SENT_METHODS = [
+  "account/login/cancel",
+  "account/login/start",
+  "account/logout",
+  "account/rateLimits/read",
+  "account/read",
+  "account/usage/read",
+  "config/batchWrite",
+  "config/mcpServer/reload",
+  "config/read",
+  "config/value/write",
+  "fuzzyFileSearch",
+  "hooks/list",
+  "initialize",
+  "mcpServerStatus/list",
+  "model/list",
+  "review/start",
+  "skills/extraRoots/set",
+  "skills/list",
+  "thread/compact/start",
+  "thread/fork",
+  "thread/goal/clear",
+  "thread/goal/set",
+  "thread/list",
+  "thread/name/set",
+  "thread/resume",
+  "thread/revert",
+  "thread/shellCommand",
+  "thread/start",
+  "thread/turns/list",
+  "thread/unsubscribe",
+  "turn/interrupt",
+  "turn/start",
+  "turn/steer",
+  "windowsSandbox/readiness",
+  "windowsSandbox/setupStart",
+];
+
 const methodsOf = (schema) =>
   (schema.oneOf ?? schema.anyOf ?? [])
     .map((o) => o.properties?.method?.enum?.[0])
@@ -156,14 +198,37 @@ function collectDefinitions(schemaDir, read) {
   return defs;
 }
 
+// The definitions reachable from `roots` through $refs (the roots included).
+function referenced(roots, defs) {
+  const seen = new Set();
+  const walk = (node) => {
+    if (!node || typeof node !== "object") return;
+    if (typeof node.$ref === "string") visit(node.$ref.split("/").pop());
+    for (const v of Object.values(node)) walk(v);
+  };
+  const visit = (name) => {
+    if (seen.has(name) || !defs[name]) return;
+    seen.add(name);
+    walk(defs[name]);
+  };
+  roots.forEach(visit);
+  return seen;
+}
+
 export function buildSnapshot(schemaDir, codexVersion) {
   const read = (f) => JSON.parse(readFileSync(join(schemaDir, f), "utf8"));
   const defs = collectDefinitions(schemaDir, read);
   const params = {
+    clientRequests: Object.fromEntries(Object.entries(paramsOf(read("ClientRequest.json"))).filter(([m]) => SENT_METHODS.includes(m))),
     serverNotifications: paramsOf(read("ServerNotification.json")),
     serverRequests: paramsOf(read("ServerRequest.json")),
   };
-  const names = new Set([...TRACKED_DEFINITIONS, ...Object.values(params.serverNotifications), ...Object.values(params.serverRequests)]);
+  const names = new Set([
+    ...TRACKED_DEFINITIONS,
+    ...Object.values(params.serverNotifications),
+    ...Object.values(params.serverRequests),
+    ...referenced(Object.values(params.clientRequests), defs),
+  ]);
   const definitions = {};
   for (const name of [...names].sort((a, b) => TRACKED_DEFINITIONS.indexOf(a) - TRACKED_DEFINITIONS.indexOf(b) || a.localeCompare(b))) if (defs[name]) definitions[name] = shapeOf(defs[name]);
   return {

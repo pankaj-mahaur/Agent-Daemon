@@ -108,3 +108,35 @@ test("diffSnapshots: a field that only became nullable is info, not breaking", (
   assert.deepEqual(d.breaking, []);
   assert.ok(d.info.some((x) => /P\.cwd: now nullable/.test(x)), JSON.stringify(d));
 });
+
+test("SENT_METHODS lists exactly the methods ad's code sends, and each is on the pinned stable surface", async () => {
+  const { readdirSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { SENT_METHODS } = await import("../src/engine/codex/protocol-snapshot.mjs");
+  const { fileURLToPath } = await import("node:url");
+  const root = fileURLToPath(new URL("../src/", import.meta.url));
+  const sent = new Set();
+  const walk = (dir) => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.name.endsWith(".mjs")) for (const m of readFileSync(p, "utf8").matchAll(/\.request\(\s*"([a-zA-Z]+(?:\/[a-zA-Z]+)*)"/g)) sent.add(m[1]);
+    }
+  };
+  walk(root);
+  assert.deepEqual([...sent].sort(), [...SENT_METHODS].sort(), "add a new request method to SENT_METHODS (and regenerate the snapshot)");
+  for (const m of SENT_METHODS) assert.ok(committed.methods.clientRequests.includes(m), `${m} isn't on the pinned stable surface`);
+});
+
+test("checkRequest: stable methods and fields only, unless allowlisted; shapes checked", async () => {
+  const { checkRequest } = await import("../testkit/protocol-check.mjs");
+  assert.deepEqual(checkRequest({ method: "thread/list", params: { limit: 5, cwd: ["/a", "/b"] } }), []);
+  assert.match(checkRequest({ method: "collaborationMode/list", params: {} })[0], /not a request the pinned Codex accepts/);
+  assert.deepEqual(checkRequest({ method: "collaborationMode/list", params: {} }, { allow: { methods: ["collaborationMode/list"], fields: {} } }), []);
+  assert.match(checkRequest({ method: "turn/start", params: { threadId: "t", input: [], collaborationMode: {} } }).join(), /collaborationMode is not a field of TurnStartParams/);
+  assert.deepEqual(checkRequest({ method: "turn/start", params: { threadId: "t", input: [], collaborationMode: {} } }, { allow: { methods: [], fields: { "turn/start": ["collaborationMode"] } } }), []);
+  assert.match(checkRequest({ method: "turn/start", params: { input: [] } }).join(), /missing required threadId/);
+  // Union params are checked by their variant too.
+  assert.deepEqual(checkRequest({ method: "account/login/start", params: { type: "apiKey", apiKey: "sk-test" } }), []);
+  assert.match(checkRequest({ method: "account/login/start", params: { type: "password" } }).join(), /unknown variant/);
+});

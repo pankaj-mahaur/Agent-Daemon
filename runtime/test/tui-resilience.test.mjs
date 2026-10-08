@@ -11,8 +11,8 @@ import { fileURLToPath } from "node:url";
 import { createEngine } from "../src/engine/index.mjs";
 import { createSession } from "../src/harness/session.mjs";
 import { codexCompat } from "../src/engine/codex/doctor.mjs";
-import { parseSlashCommands } from "../scripts/codex-slash.mjs";
-import { SLASH_COMMANDS, slashCollisions } from "../src/tui/app.mjs";
+import { parseSlashCommands, parseSlashMeta } from "../scripts/codex-slash.mjs";
+import { NOT_IN_AD, SLASH_COMMANDS, notInAd, slashCollisions } from "../src/tui/app.mjs";
 import { renderCell } from "../src/tui/view/cells.mjs";
 import { checkMessage } from "../testkit/protocol-check.mjs";
 
@@ -95,6 +95,102 @@ test("slash names: ad's own never collide with Codex's; mirrored ones stay Codex
   assert.deepEqual(slashCollisions(SLASH_COMMANDS, [...CODEX_SLASH.names, "remember"]), ["/remember is ad's own but Codex now has it too"]);
   assert.deepEqual(slashCollisions(SLASH_COMMANDS, CODEX_SLASH.names.filter((n) => n !== "diff")), ["/diff mirrors Codex but Codex no longer has it"]);
   assert.equal(CODEX_SLASH.tag, `rust-v${PKG.dependencies["@openai/codex"]}`, "regenerate codex-slash.json for the pinned Codex");
+});
+
+test("every Codex command has a decision in ad: it runs, or ad says why not (never sent to the model)", () => {
+  const mirrored = new Set(SLASH_COMMANDS.filter((c) => c.source === "codex").map((c) => c.name));
+  for (const c of CODEX_SLASH.commands) {
+    const decided = mirrored.has(c.name) + (c.name in NOT_IN_AD);
+    assert.equal(decided, 1, `/${c.name}: ${decided ? "both run and answered" : "no decision (run it, or add it to NOT_IN_AD)"}`);
+  }
+  const codexNames = new Set(CODEX_SLASH.commands.map((c) => c.name));
+  for (const k of Object.keys(NOT_IN_AD)) assert.ok(codexNames.has(k), `NOT_IN_AD has /${k}, which isn't a Codex command`);
+  for (const c of CODEX_SLASH.commands) {
+    for (const n of [c.name, ...c.aliases]) {
+      const said = notInAd(n);
+      if (mirrored.has(c.name)) assert.equal(said, null, `/${n} runs in ad`);
+      else assert.ok(said && said.length > 10, `/${n} has an answer`);
+    }
+  }
+  assert.equal(notInAd("plan"), "/plan isn't in ad yet. /codex opens the stock Codex UI on this conversation.");
+  assert.match(notInAd("clean"), /^\/clean isn't in ad yet\. \(The stock UI's \/stop/);
+  assert.equal(notInAd("remember"), null, "ad's own commands aren't Codex's");
+});
+
+test("parseSlashMeta: descriptions, inline args, busy rules, side allowlist, visibility, popup", () => {
+  const rs = `pub enum SlashCommand {
+    Model,
+    #[strum(to_string = "pwd", serialize = "cwd")]
+    Pwd,
+    Side,
+    Btw,
+    App,
+    Rollout,
+    Quit,
+    DebugConfig,
+    Apps,
+    Bb, Cc,
+}
+impl SlashCommand {
+    pub fn description(self) -> &'static str {
+        match self {
+            SlashCommand::Model => "choose a model",
+            SlashCommand::Pwd => {
+                "show the \\"current\\" directory"
+            }
+            SlashCommand::Side | SlashCommand::Btw => "a side chat",
+            SlashCommand::App => "desktop",
+            SlashCommand::Rollout => "path",
+            SlashCommand::Quit => "exit",
+            SlashCommand::DebugConfig => "layers",
+            SlashCommand::Apps => "apps",
+            SlashCommand::Bb | SlashCommand::Cc => "x",
+        }
+    }
+    pub fn supports_inline_args(self) -> bool {
+        matches!(self, SlashCommand::Pwd | SlashCommand::Side | SlashCommand::Btw)
+    }
+    pub fn available_in_side_conversation(self) -> bool {
+        matches!(self, SlashCommand::Pwd)
+    }
+    pub fn available_during_task(self) -> bool {
+        match self {
+            SlashCommand::Model | SlashCommand::Bb => false,
+            SlashCommand::Pwd
+            | SlashCommand::Side
+            | SlashCommand::Btw => true,
+            SlashCommand::App | SlashCommand::Rollout | SlashCommand::Quit | SlashCommand::DebugConfig | SlashCommand::Apps | SlashCommand::Cc => true,
+        }
+    }
+    fn is_visible(self) -> bool {
+        match self {
+            SlashCommand::App => cfg!(any(target_os = "macos", target_os = "windows")),
+            SlashCommand::Rollout => cfg!(debug_assertions),
+            _ => true,
+        }
+    }
+}`;
+  const popup = `const ALIAS_COMMANDS: &[SlashCommand] = &[SlashCommand::Quit, SlashCommand::Btw];
+    .filter_map(|command| match command {
+        SlashCommandItem::Builtin(cmd) => (!cmd.command().starts_with("debug")
+            && cmd != SlashCommand::Apps)`;
+  const many = rs.replace("    Bb, Cc,\n", ["Bb", "Cc", "Dd"].map((v) => `    ${v},\n`).join("")).replace("SlashCommand::Bb | SlashCommand::Cc =>", "SlashCommand::Bb | SlashCommand::Cc | SlashCommand::Dd =>").replace("| SlashCommand::Cc => true", "| SlashCommand::Cc | SlashCommand::Dd => true");
+  const meta = Object.fromEntries(parseSlashMeta(many, popup).map((c) => [c.name, c]));
+  assert.deepEqual(meta.pwd, { name: "pwd", aliases: ["cwd"], desc: 'show the "current" directory', args: true, duringTask: true, sideAllowed: true, visible: "always", popup: "shown" });
+  assert.equal(meta.model.duringTask, false);
+  assert.equal(meta.btw.desc, "a side chat");
+  assert.equal(meta.btw.popup, "unfiltered");
+  assert.equal(meta.quit.popup, "unfiltered");
+  assert.equal(meta["debug-config"].popup, "hidden");
+  assert.equal(meta.apps.popup, "hidden");
+  assert.equal(meta.app.visible, "os:macos,windows");
+  assert.equal(meta.rollout.visible, "debug");
+  // Shapes the parser can't read fail loudly, so the upgrade PR can't silently drop a rule.
+  assert.throws(() => parseSlashMeta(many.replace("SlashCommand::Model | SlashCommand::Bb => false,", "SlashCommand::Bb => false,"), popup), /available_during_task doesn't cover SlashCommand::Model/);
+  assert.throws(() => parseSlashMeta(many.replace('cfg!(debug_assertions)', 'feature_on()'), popup), /unknown expression/);
+  assert.throws(() => parseSlashMeta(many, popup.replace("ALIAS_COMMANDS", "ALIASES")), /ALIAS_COMMANDS not found/);
+  // The committed list carries the metadata for every command.
+  assert.ok(CODEX_SLASH.commands.length >= 60 && CODEX_SLASH.commands.every((c) => typeof c.duringTask === "boolean" && c.popup));
 });
 
 test("parseSlashCommands: kebab-case names and strum renames", () => {

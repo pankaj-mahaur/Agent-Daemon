@@ -295,7 +295,7 @@ Model, effort and permission changes apply from the next turn.
 | `/help` | what you can do here: every command and shortcut |
 | `/terminal-setup` | how to make Shift+Enter add a newline in this terminal |
 
-A Codex command ad doesn't have yet answers "Unknown command … /help lists them"; `/codex` runs the stock UI, which has it.
+A Codex command ad doesn't have yet is never sent to the model as a prompt. It answers in one line why ("/plan isn't in ad yet. /codex opens the stock Codex UI on this conversation."), and what you typed stays in the prompt. Where the stock UI can't help either (`/ide`, `/app`, `/daemon`, `/ps`, `/stop`), the answer says so instead. Codex's commands keep Codex's rules: the ones Codex disables while a task runs (`/new`, `/fork`, `/compact`, `/init`, `/export`, `/review`, `/logout`, …) answer "'/new' is disabled while a task is in progress.", and the draft stays. Codex's aliases work (`/cwd`, `/clean`, `/pet`), and `/quit` shows in the popup only once you type it.
 
 ---
 
@@ -393,7 +393,7 @@ ad codex resume --last           # any codex arguments
 
 Codex reads skills only from its home, so your `~/.claude/skills` are mirrored into the home's `skills/` folder first. Only folders ad created there are ever replaced or removed. Project `.claude/skills` aren't visible in `ad codex`.
 
-**`/codex`** inside `ad tui` opens the stock UI on the **same conversation**. ad lets go of the conversation meanwhile (one writer at a time), and resumes it when you quit the stock UI. What was already in the scrollback stays; only the new turns show. Use it for a Codex feature ad doesn't have yet.
+**`/codex`** inside `ad tui` opens the stock UI on the **same conversation**. ad lets go of the conversation first: its engine unloads it (so only the stock UI runs it, and nothing is written twice), and resumes it from disk when you quit the stock UI, with the turns you took there. What was already in the scrollback stays; only the new turns show. Use it for a Codex feature ad doesn't have yet.
 
 ---
 

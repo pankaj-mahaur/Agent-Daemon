@@ -192,3 +192,14 @@ test("a real Codex command never starts without ad's own CODEX_HOME", async () =
   const unmarked = new CodexAppServer({ command: { cmd: process.execPath, prefix: ["-e", "process.exit(97)"] }, env: {} });
   await assert.rejects(unmarked.start(), /without an explicit CODEX_HOME/);
 });
+
+test("the fake rejects requests the pinned stable protocol doesn't accept, as Codex would", async () => {
+  await withServer({}, async (s) => {
+    // An experimental method and an experimental field: not on the allowlist (codex-parity-2 P0).
+    await assert.rejects(s.request("thread/backgroundTerminals/clean", { threadId: "t" }), (e) => e.code === -32600 && /not a request the pinned Codex accepts/.test(e.message));
+    await assert.rejects(s.request("thread/list", { limit: 1, collaborationMode: {} }), (e) => /collaborationMode is not a field of ThreadListParams/.test(e.message));
+    await assert.rejects(s.request("thread/list", { limit: "one" }), (e) => /expected a number/.test(e.message));
+    const ok = await s.request("thread/list", { limit: 1, cwd: "/tmp" });
+    assert.ok(Array.isArray(ok.data));
+  });
+});

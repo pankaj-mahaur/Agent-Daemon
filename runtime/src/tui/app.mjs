@@ -21,6 +21,7 @@ import { INIT_PROMPT } from "./init-prompt.mjs";
 import { existsSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { copyText, exportMarkdown, imagePath, lastAgentText, renderHooks, renderMcp, renderSkills, renderUsage, terminalSetup, transcriptLines } from "./commands.mjs";
+import CODEX_SLASH from "./codex-slash.json" with { type: "json" };
 
 export const FORCE_QUIT_MS = 1500;
 const FRAME_MS = 33;
@@ -72,6 +73,67 @@ export const SLASH_COMMANDS = [
   { name: "quit", source: "codex", desc: "exit ad" },
   { name: "exit", source: "codex", desc: "exit ad" },
 ];
+
+// Codex's commands at the pinned tag, by every spelling (scripts/codex-slash.mjs):
+// what ad mirrors follows Codex's rules (during a task, popup visibility).
+const CODEX_COMMANDS = new Map(CODEX_SLASH.commands.flatMap((c) => [c.name, ...c.aliases].map((n) => [n, c])));
+
+// Codex commands ad doesn't run (yet), and what it says instead: `true` is
+// "not in ad yet, /codex has it"; a string is the whole answer (where the stock
+// UI can't help either, or there's something better to say). Every Codex
+// command is either in SLASH_COMMANDS or here: a test fails when a Codex
+// release adds one, so the upgrade PR has to decide.
+const STOCK_UI = "/codex opens the stock Codex UI on this conversation.";
+const ELSEWHERE = (what) => `(The stock UI's ${what} sees only its own engine, not ad's.)`;
+export const NOT_IN_AD = {
+  ide: "/ide reads your editor's selection over Codex's private IDE link, which ad doesn't have.",
+  keymap: true,
+  vim: true,
+  "setup-default-sandbox": "/setup-default-sandbox isn't in ad yet. `ad sandbox setup --elevated` sets up the elevated sandbox (machine-wide: it also affects your own Codex).",
+  experimental: true,
+  approve: true,
+  memories: `/memories (Codex's own memories) isn't in ad yet; ad's memory is /memory. ${STOCK_UI}`,
+  import: true,
+  archive: true,
+  delete: true,
+  worktree: true,
+  app: "/app opens the Codex Desktop app, which uses your own Codex home, not ad's, so it can't continue this conversation.",
+  recap: true,
+  plan: true,
+  voice: true,
+  agents: true,
+  side: true,
+  btw: true,
+  tui: "/tui chooses the stock Codex UI's mode; ad has only its inline mode so far.",
+  mention: "Type @ in the prompt to mention a file.",
+  daemon: "/daemon manages Codex's background server; ad runs its own engine and never uses it.",
+  cd: true,
+  pwd: true,
+  "debug-config": true,
+  title: true,
+  statusline: true,
+  theme: true,
+  pets: "ad doesn't draw terminal pets (they need Kitty or Sixel images).",
+  apps: true,
+  plugins: true,
+  feedback: "For ad problems: https://github.com/pankaj-mahaur/Agent-Daemon/issues. The stock UI's /feedback (in /codex) uploads this whole conversation to OpenAI, including ad's memory context and /private prompts.",
+  rollout: true,
+  ps: `/ps isn't in ad yet. ${ELSEWHERE("/ps")}`,
+  stop: `/stop isn't in ad yet. ${ELSEWHERE("/stop")}`,
+  clear: "/clear isn't in ad yet; /new starts a new conversation (and keeps the scrollback).",
+  "test-approval": "/test-approval is a Codex debug command.",
+  subagents: true,
+  "debug-m-drop": "/debug-m-drop is a Codex debug command.",
+  "debug-m-update": "/debug-m-update is a Codex debug command.",
+};
+
+/** What ad says for a Codex command it doesn't run, by any of its spellings. */
+export function notInAd(name) {
+  const c = CODEX_COMMANDS.get(name);
+  const said = c && NOT_IN_AD[c.name];
+  if (said === undefined) return null;
+  return said === true ? `/${name} isn't in ad yet. ${STOCK_UI}` : said.replace(`/${c.name}`, `/${name}`);
+}
 
 const PERMISSION_PRESETS = [
   { label: "Read only", hint: "asks before any change", value: { sandboxPolicy: { type: "readOnly" }, approvalPolicy: "on-request" } },
@@ -476,7 +538,9 @@ export function createApp({
     }
     if (tok.kind === "command") {
       const q = tok.text.slice(1).toLowerCase();
-      const items = SLASH_COMMANDS.filter((c) => c.name.startsWith(q)).map((c) => ({ label: `/${c.name}`, hint: c.desc, value: c.name }));
+      // Codex hides some of its commands from the popup (debug ones always, aliases like /quit until typed).
+      const hidden = (c) => c.source === "codex" && (CODEX_COMMANDS.get(c.name)?.popup === "hidden" || (CODEX_COMMANDS.get(c.name)?.popup === "unfiltered" && !q));
+      const items = SLASH_COMMANDS.filter((c) => c.name.startsWith(q) && !hidden(c)).map((c) => ({ label: `/${c.name}`, hint: c.desc, value: c.name }));
       popup = items.length ? { kind: "command", view: createPicker({ items, showQuery: false }), tok, onSelect: (name) => composer.replace(tok.start, tok.end, `/${name} `) } : null;
       return;
     }
@@ -568,7 +632,6 @@ export function createApp({
         if (!arg) return info0(st.goal ? `Goal: ${clean(typeof st.goal === "string" ? st.goal : (st.goal.objective ?? JSON.stringify(st.goal)))}` : "No goal. /goal <objective> sets one.");
         return session.setGoal(arg === "clear" ? null : arg).then((g) => info0(g ? "Goal set." : "Goal cleared."), fail);
       case "review":
-        if (turnActive()) return warn("Wait for the turn to finish (or esc), then /review.");
         return session.review().catch(fail);
       case "init":
         return send(INIT_PROMPT, "/init");
@@ -601,7 +664,6 @@ export function createApp({
           })
           .catch(fail);
       case "fork":
-        if (turnActive()) return warn("Wait for the turn to finish (or esc), then /fork.");
         return session.fork().then(() => info0("Forked: you are in the copy now; the original is unchanged."), fail);
       case "rename":
         if (!arg) return warn("/rename <name>");
@@ -921,8 +983,26 @@ export function createApp({
     if (st.engine.state === "crashed") restartEngine(); // the prompt waits in the queue meanwhile
     const t = text.trim();
     const m = /^\/([a-z][\w-]*)(?:\s+([\s\S]*))?$/i.exec(t);
-    // Any failure inside a command (a rejected request, a renderer error) is shown, never left unhandled.
-    if (m && SLASH_COMMANDS.some((c) => c.name === m[1].toLowerCase())) return void Promise.resolve(slash(m[1].toLowerCase(), (m[2] ?? "").trim())).catch(fail);
+    if (m) {
+      const name = m[1].toLowerCase();
+      const codex = CODEX_COMMANDS.get(name);
+      const cmd = SLASH_COMMANDS.find((c) => c.name === name) ?? (codex && SLASH_COMMANDS.find((c) => c.source === "codex" && c.name === codex.name));
+      if (cmd) {
+        // Codex's rule for its commands: some wait for the task to end. The draft stays.
+        if (cmd.source === "codex" && codex && !codex.duringTask && turnActive()) {
+          composer.set(text);
+          return warn(`'/${name}' is disabled while a task is in progress.`);
+        }
+        // Any failure inside a command (a rejected request, a renderer error) is shown, never left unhandled.
+        return void Promise.resolve(slash(cmd.name, (m[2] ?? "").trim())).catch(fail);
+      }
+      // A Codex command ad doesn't run never goes to the model as a prompt, text or not.
+      const said = notInAd(name);
+      if (said) {
+        composer.set(text);
+        return info0(said);
+      }
+    }
     // A one-line "!cmd" runs in the shell; a multi-line paste that starts with "!" (an image link…) is a prompt.
     if (t.startsWith("!") && t.length > 1 && !t.includes("\n")) {
       if (turnActive()) return warn("Wait for the turn to finish (or esc) before running a shell command.");

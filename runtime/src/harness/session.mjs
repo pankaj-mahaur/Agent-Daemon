@@ -826,6 +826,30 @@ export function createSession({
       resetThreadState();
       change("thread");
     },
+    /**
+     * Leaves the thread and has Codex unload it (thread/unsubscribe, then
+     * thread/closed), so another program can take it over: the stock UI on
+     * the same thread (/codex) must not share a live runtime with ad's engine.
+     * → true once Codex closed it (or never had it loaded), false on timeout.
+     */
+    async release(threadId, { timeoutMs = 15_000 } = {}) {
+      if (state.thread?.id === threadId) api.newThread();
+      let off = null;
+      let timer = null;
+      const closed = new Promise((resolve) => {
+        off = eng.subscribe(threadId, (ev) => ev.type === "thread.closed" && resolve(true));
+        timer = setTimeout(() => resolve(false), timeoutMs);
+      });
+      try {
+        const r = await eng.server.request("thread/unsubscribe", { threadId });
+        return r?.status === "notLoaded" ? true : await closed;
+      } catch {
+        return false;
+      } finally {
+        off?.();
+        clearTimeout(timer);
+      }
+    },
     /** Continues an earlier thread, with its history loaded. */
     async resume(threadId) {
       if (closed) throw new Error("session closed");

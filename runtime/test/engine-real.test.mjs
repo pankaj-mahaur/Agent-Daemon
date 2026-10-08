@@ -40,7 +40,7 @@ async function removeWithRetry(dir) {
 }
 
 // One mock + one real app-server per test, in fresh dirs.
-async function withRealEngine(fn) {
+async function withRealEngine(fn, { codexArgs } = {}) {
   const mock = await startMockResponses();
   const home = writeMockCodexHome(mkdtempSync(join(tmpdir(), "ad-real-home-")), { url: mock.url });
   const cwd = mkdtempSync(join(tmpdir(), "ad-real-work-"));
@@ -50,6 +50,7 @@ async function withRealEngine(fn) {
     cwd,
     env: { CODEX_HOME: home },
     clientVersion: "test",
+    codexArgs,
     initTimeoutMs: START_TIMEOUT_MS,
     onServerRequest: async ({ method, params }) => {
       requests.push({ method, params });
@@ -229,4 +230,23 @@ test("folder trust: an upsert of projects keeps other folders, and config/read r
     assert.equal(level(cwd), "trusted", JSON.stringify(config.projects));
     assert.equal(level(other), "untrusted");
   });
+});
+
+test("S8: with thread_unload_delay_secs=0, thread/unsubscribe closes an idle thread at once, and a cold resume has its turns", opts, async () => {
+  await withRealEngine(
+    async ({ server, cwd, notes }) => {
+      const { thread } = await server.request("thread/start", { cwd });
+      await runTurn(server, notes, thread.id, "PING");
+      const r = await server.request("thread/unsubscribe", { threadId: thread.id });
+      assert.equal(r.status, "unsubscribed");
+      const end = Date.now() + 15_000;
+      while (!notes.some((n) => n.method === "thread/closed" && n.params.threadId === thread.id) && Date.now() < end) await new Promise((res) => setTimeout(res, 50));
+      assert.ok(notes.some((n) => n.method === "thread/closed" && n.params.threadId === thread.id), "thread/closed reaches the client that let go of it");
+      const resumed = await server.request("thread/resume", { threadId: thread.id, cwd });
+      assert.equal(resumed.thread.id, thread.id);
+      const { data } = await server.request("thread/turns/list", { threadId: thread.id });
+      assert.ok(data.length >= 1, "the cold resume reads the thread's turns from its rollout");
+    },
+    { codexArgs: ["-c", "thread_unload_delay_secs=0"] },
+  );
 });

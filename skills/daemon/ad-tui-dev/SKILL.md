@@ -34,7 +34,7 @@ All paths under `runtime/`.
 | `src/tui/history.mjs` | prompt history JSONL (`~/.agent-daemon/tui/history.jsonl`) |
 | `src/tui/init-prompt.mjs` | Codex's `/init` prompt, vendored (re-copy on Codex upgrades) |
 | `src/tui/preview.mjs` | `ad tui --preview`, a minimal preview UI on the same engine (the first walking skeleton) |
-| `src/tui/codex-slash.json` | Codex's slash names at the pinned tag (`scripts/codex-slash.mjs`) |
+| `src/tui/codex-slash.json` | Codex's slash commands at the pinned tag with their rules: aliases, inline args, allowed during a task, side-conversation allowlist, visibility, popup (`scripts/codex-slash.mjs --file slash_command.rs --popup command_popup.rs`) |
 | `src/tui/terminal/` | `io` (raw mode, caps, handoff, restore), `input` (bytes → key/text/paste events), `renderer` (inline), `sanitize`, `text` (spans, SGR, wrap), `width` + `width-table` (generated), `detect` (terminal name, reflow model, width profile) |
 | `src/tui/view/` | pure views: `composer`, `markdown` (streaming), `cells` (items, diffs, ad rows), `chrome` (header, status, footer, shortcuts, picker), `modals` (approvals with arming, questions, forms) |
 | `src/harness/session.mjs` | UI-agnostic session controller: submit / steer / queue, requests, restarts, thread locks (`~/.agent-daemon/locks`) |
@@ -54,7 +54,8 @@ All paths under `runtime/`.
 - **Fixtures:** `test/fixtures/tui/s1-keys.json` (real key bytes from Windows Terminal and Zed).
 - **The fake must stay honest:** every message `fake-codex-app-server.mjs` sends in the main scenarios must pass `protocol-check` (`tui-resilience` enforces it). When you add a fake message, give it the real shape (full `Thread` objects, `startedAtMs`, the approval's `itemId`, …), not just the fields ad reads.
 - **Mutation-check every guard.** For each fix or safety check, break it on purpose (delete the line, flip the condition), run the tests, and confirm a named test fails; then restore it. A guard no test catches isn't done. Record the count in the plan ("N guards mutation-checked").
-- **Slash names:** a new command needs `source`, a check against `codex-slash.json` (`slashCollisions`), a row in `docs/tui.md`, and `/help` coverage.
+- **Slash names:** a new command needs `source`, a check against `codex-slash.json` (`slashCollisions`), a row in `docs/tui.md`, and `/help` coverage. Every Codex command is either a `source: "codex"` row in `SLASH_COMMANDS` or an entry in `NOT_IN_AD` (what ad says instead; never sent to the model): implementing one means removing it from `NOT_IN_AD`. Codex's "during a task" rule and popup hiding come from the generated metadata, not by hand.
+- **Requests to Codex:** a new `request("method")` call needs the method in `SENT_METHODS` (`engine/codex/protocol-snapshot.mjs`) and a regenerated snapshot (`node scripts/codex-schema-snapshot.mjs`, pinned binary, temp home). The fake app-server rejects params the stable protocol lacks; an experimental method or field must be on `EXPERIMENTAL_ALLOWLIST` (`engine/codex/surface.mjs`) on purpose.
 
 ## Procedure
 

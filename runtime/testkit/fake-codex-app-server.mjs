@@ -23,6 +23,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
+import { checkRequest } from "./protocol-check.mjs";
 
 const notifications = [];
 const lastParams = {};
@@ -259,6 +260,16 @@ async function runScriptedTurn(threadId, turn, params) {
 async function onRequest({ id, method, params }) {
   lastParams[method] = params;
   calls.push(method);
+  // ad's own requests must fit the pinned stable protocol (or the experimental
+  // allowlist), as the real Codex would insist: rejected like Codex does.
+  if (!/^(debug|test)\//.test(method)) {
+    const problems = checkRequest({ method, params });
+    if (problems.length) {
+      process.stderr.write(`fake app-server: rejected ${problems.join("; ")}
+`);
+      return send({ id, error: { code: -32600, message: `Invalid request: ${problems.join("; ")}` } });
+    }
+  }
   switch (method) {
     case "initialize":
       if (process.env.FAKE_INIT_FAIL === "1") return send({ id, error: { code: -32000, message: "init refused" } });
@@ -431,6 +442,13 @@ async function onRequest({ id, method, params }) {
       return send({ id, result: {} });
     case "thread/goal/set":
       return send({ id, result: { goal: { threadId: params.threadId, objective: params.objective, status: "active", tokensUsed: 0, timeUsedSeconds: 0, createdAt: 0, updatedAt: 0 } } });
+    case "thread/unsubscribe": {
+      // Codex unloads an idle thread with no subscribers (ad runs with
+      // thread_unload_delay_secs=0) and tells every connection.
+      const known = /^thread-/.test(params.threadId);
+      if (known) setTimeout(() => notify("thread/closed", { threadId: params.threadId }), 10);
+      return send({ id, result: { status: known ? "unsubscribed" : "notLoaded" } });
+    }
     case "thread/name/set":
       notify("thread/name/updated", { threadId: params.threadId, threadName: params.name });
       return send({ id, result: {} });

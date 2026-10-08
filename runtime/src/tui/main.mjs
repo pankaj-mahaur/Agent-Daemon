@@ -289,7 +289,8 @@ export async function cmdTui(opts = {}) {
     await renderer.start();
     renderer.frame({ lines: [[{ text: "Starting Codex\u{2026}", style: { dim: true } }]] });
 
-    const start = () => startHarnessEngine({ cwd, home: opts.home, command: opts.command, clientVersion: opts.clientVersion, store: opts.store, err: sink, detached: true });
+    // A thread ad lets go of (thread/unsubscribe) unloads at once, not after Codex's 60 s: /codex hands it over.
+    const start = () => startHarnessEngine({ cwd, home: opts.home, command: opts.command, clientVersion: opts.clientVersion, store: opts.store, err: sink, detached: true, codexArgs: ["-c", "thread_unload_delay_secs=0"] });
     let started = await start();
     while (!started.engine && started.code === 2 && /Not logged in/.test(started.error ?? "")) {
       const choice = await pickOnce({
@@ -433,8 +434,9 @@ export async function cmdTui(opts = {}) {
         return `ad ${sanitize(arg, "transcript")} exited ${code}.`;
       },
       openCodex: async (arg, { threadId }) => {
-        // One writer per thread: ad lets go of it while the stock UI has it.
-        if (threadId) session.newThread();
+        // One runtime per thread: ad's engine unloads it before the stock UI opens it (else both
+        // run it, both append to its rollout, and back here ad's copy misses the stock UI's turns).
+        if (threadId && !(await session.release(threadId))) await session.restartEngine().catch(() => false);
         const code = await handoff(io, renderer, () => runStockCodex({ args: splitArgs(arg), threadId, cwd, home: engine.home, store: opts.store }));
         if (threadId) await session.resume(threadId);
         return `Back from the stock Codex UI (exit ${code}).`;

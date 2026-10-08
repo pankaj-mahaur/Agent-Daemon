@@ -4,6 +4,17 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Fixed
+
+- `ad tui`: a Codex command ad doesn't have yet (`/plan fix the bug`, `/side …`, `/clear`) was sent to the model as a prompt. Now it answers why it isn't in ad (and that `/codex` has it, where the stock UI can help), and what you typed stays in the prompt.
+- `/codex`: ad's engine kept the conversation loaded while the stock UI ran it too, so both wrote to it and, back in ad, the turns taken in the stock UI were missing. ad's engine now unloads the conversation before the stock UI opens it, and resumes it from disk afterwards.
+- `ad tui`: a late reply from the terminal (a colour, a version) could arrive as Alt+], some text and Ctrl+G (which opened the editor). Terminal replies are now recognised and dropped; Alt+] still types.
+
+### Changed
+
+- `ad tui` follows Codex's rules for its commands: those Codex disables while a task runs (`/new`, `/fork`, `/compact`, `/init`, `/export`, `/review`, `/logout`) wait for the turn to end, and keep your draft. Codex's aliases (`/cwd`, `/clean`, `/pet`) are recognised.
+- Tests check every request ad sends against the pinned Codex's stable protocol, not only what Codex sends.
+
 ## [2.1.1] — 2026-10-06
 
 ### Fixed

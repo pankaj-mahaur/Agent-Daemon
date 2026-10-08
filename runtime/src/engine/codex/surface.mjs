@@ -27,3 +27,14 @@ export const IGNORED_NOTIFICATIONS = {
 for (const method of notifications.experimental) IGNORED_NOTIFICATIONS[method] ??= "experimental: never sent without experimentalApi";
 
 export const PINNED_NOTIFICATIONS = notifications;
+
+// The experimental app-server calls ad may make (codex-parity-2 P0): `ad tui`
+// opts into experimentalApi for these only; every other request stays on the
+// stable surface. The fake app-server rejects anything experimental outside
+// this list (testkit/protocol-check.mjs), so a new use has to be added here on
+// purpose. Empty until plan mode and /stop land.
+export const EXPERIMENTAL_ALLOWLIST = {
+  methods: [],
+  // method → params fields that only exist with experimentalApi
+  fields: {},
+};

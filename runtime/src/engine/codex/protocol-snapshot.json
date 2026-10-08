@@ -209,6 +209,38 @@
     ]
   },
   "params": {
+    "clientRequests": {
+      "account/login/cancel": "CancelLoginAccountParams",
+      "account/login/start": "LoginAccountParams",
+      "account/read": "GetAccountParams",
+      "config/batchWrite": "ConfigBatchWriteParams",
+      "config/read": "ConfigReadParams",
+      "config/value/write": "ConfigValueWriteParams",
+      "fuzzyFileSearch": "FuzzyFileSearchParams",
+      "hooks/list": "HooksListParams",
+      "initialize": "InitializeParams",
+      "mcpServerStatus/list": "ListMcpServerStatusParams",
+      "model/list": "ModelListParams",
+      "review/start": "ReviewStartParams",
+      "skills/extraRoots/set": "SkillsExtraRootsSetParams",
+      "skills/list": "SkillsListParams",
+      "thread/compact/start": "ThreadCompactStartParams",
+      "thread/fork": "ThreadForkParams",
+      "thread/goal/clear": "ThreadGoalClearParams",
+      "thread/goal/set": "ThreadGoalSetParams",
+      "thread/list": "ThreadListParams",
+      "thread/name/set": "ThreadSetNameParams",
+      "thread/resume": "ThreadResumeParams",
+      "thread/revert": "ThreadRevertParams",
+      "thread/shellCommand": "ThreadShellCommandParams",
+      "thread/start": "ThreadStartParams",
+      "thread/turns/list": "ThreadTurnsListParams",
+      "thread/unsubscribe": "ThreadUnsubscribeParams",
+      "turn/interrupt": "TurnInterruptParams",
+      "turn/start": "TurnStartParams",
+      "turn/steer": "TurnSteerParams",
+      "windowsSandbox/setupStart": "WindowsSandboxSetupStartParams"
+    },
     "serverNotifications": {
       "account/gatewayOAuth/changed": "GatewayOAuthChangedNotification",
       "account/login/completed": "AccountLoginCompletedNotification",
@@ -308,6 +340,9 @@
     }
   },
   "definitions": {
+    "AbsolutePathBuf": {
+      "type": "string"
+    },
     "AccountLoginCompletedNotification": {
       "required": [
         "success"
@@ -379,6 +414,13 @@
         "reason": "null|string"
       }
     },
+    "ApprovalsReviewer": {
+      "enum": [
+        "auto_review",
+        "guardian_subagent",
+        "user"
+      ]
+    },
     "AttestationGenerateParams": {
       "type": "object"
     },
@@ -400,6 +442,31 @@
         "provider": "string",
         "threadId": "string",
         "turnId": "string"
+      }
+    },
+    "ByteRange": {
+      "required": [
+        "end",
+        "start"
+      ],
+      "props": [
+        "end",
+        "start"
+      ],
+      "types": {
+        "end": "integer",
+        "start": "integer"
+      }
+    },
+    "CancelLoginAccountParams": {
+      "required": [
+        "loginId"
+      ],
+      "props": [
+        "loginId"
+      ],
+      "types": {
+        "loginId": "string"
       }
     },
     "ChatgptAuthTokensRefreshParams": {
@@ -493,6 +560,17 @@
         "startedAtMs": "integer",
         "threadId": "string",
         "turnId": "string"
+      }
+    },
+    "ConfigReadParams": {
+      "required": [],
+      "props": [
+        "cwd",
+        "includeLayers"
+      ],
+      "types": {
+        "cwd": "null|string",
+        "includeLayers": "boolean"
       }
     },
     "ConfigWarningNotification": {
@@ -711,6 +789,80 @@
         "watchId": "string"
       }
     },
+    "FunctionCallOutputBody": {
+      "union": [
+        {
+          "tag": "array"
+        },
+        {
+          "tag": "string"
+        }
+      ]
+    },
+    "FunctionCallOutputContentItem": {
+      "union": [
+        {
+          "tag": "encrypted_content",
+          "props": [
+            "encrypted_content",
+            "type"
+          ],
+          "types": {
+            "encrypted_content": "string",
+            "type": "enum(encrypted_content)"
+          }
+        },
+        {
+          "tag": "input_audio",
+          "props": [
+            "audio_url",
+            "type"
+          ],
+          "types": {
+            "audio_url": "string",
+            "type": "enum(input_audio)"
+          }
+        },
+        {
+          "tag": "input_image",
+          "props": [
+            "detail",
+            "type"
+          ],
+          "types": {
+            "detail": "ImageDetail|null",
+            "type": "enum(input_image)"
+          }
+        },
+        {
+          "tag": "input_text",
+          "props": [
+            "text",
+            "type"
+          ],
+          "types": {
+            "text": "string",
+            "type": "enum(input_text)"
+          }
+        }
+      ]
+    },
+    "FuzzyFileSearchParams": {
+      "required": [
+        "query",
+        "roots"
+      ],
+      "props": [
+        "cancellationToken",
+        "query",
+        "roots"
+      ],
+      "types": {
+        "cancellationToken": "null|string",
+        "query": "string",
+        "roots": "array<string>"
+      }
+    },
     "FuzzyFileSearchSessionCompletedNotification": {
       "required": [
         "sessionId"
@@ -757,6 +909,15 @@
         "status": "GatewayOAuthStatus"
       }
     },
+    "GetAccountParams": {
+      "required": [],
+      "props": [
+        "refreshToken"
+      ],
+      "types": {
+        "refreshToken": "boolean"
+      }
+    },
     "GuardianWarningNotification": {
       "required": [
         "message",
@@ -801,6 +962,33 @@
         "run": "HookRunSummary",
         "threadId": "string",
         "turnId": "null|string"
+      }
+    },
+    "ImageDetail": {
+      "enum": [
+        "auto",
+        "high",
+        "low",
+        "original"
+      ]
+    },
+    "InitializeCapabilities": {
+      "required": [],
+      "props": [
+        "experimentalApi",
+        "explicitGatewayOauth",
+        "extensions",
+        "mcpServerOpenaiFormElicitation",
+        "optOutNotificationMethods",
+        "requestAttestation"
+      ],
+      "types": {
+        "experimentalApi": "boolean",
+        "explicitGatewayOauth": "boolean",
+        "extensions": "null|object",
+        "mcpServerOpenaiFormElicitation": "boolean",
+        "optOutNotificationMethods": "array<string>|null",
+        "requestAttestation": "boolean"
       }
     },
     "ItemGuardianApprovalReviewCompletedNotification": {
@@ -864,6 +1052,29 @@
         "threadId": "string",
         "turnId": "string"
       }
+    },
+    "ListMcpServerStatusParams": {
+      "required": [],
+      "props": [
+        "cursor",
+        "detail",
+        "limit",
+        "serverName",
+        "threadId"
+      ],
+      "types": {
+        "cursor": "null|string",
+        "detail": "McpServerStatusDetail|null",
+        "limit": "integer|null",
+        "serverName": "null|string",
+        "threadId": "null|string"
+      }
+    },
+    "LoginAppBrand": {
+      "enum": [
+        "chatgpt",
+        "codex"
+      ]
     },
     "McpServerElicitationRequestParams": {
       "union": [
@@ -963,6 +1174,12 @@
         "threadId": "null|string"
       }
     },
+    "McpServerStatusDetail": {
+      "enum": [
+        "full",
+        "toolsAndAuthOnly"
+      ]
+    },
     "McpServerStatusUpdatedNotification": {
       "required": [
         "name",
@@ -1001,6 +1218,19 @@
         "message": "string",
         "threadId": "string",
         "turnId": "string"
+      }
+    },
+    "ModelListParams": {
+      "required": [],
+      "props": [
+        "cursor",
+        "includeHidden",
+        "limit"
+      ],
+      "types": {
+        "cursor": "null|string",
+        "includeHidden": "boolean|null",
+        "limit": "integer|null"
       }
     },
     "ModelReroutedNotification": {
@@ -1071,6 +1301,12 @@
         "verifications": "array<ModelVerification>"
       }
     },
+    "NetworkAccess": {
+      "enum": [
+        "enabled",
+        "restricted"
+      ]
+    },
     "PermissionsRequestApprovalParams": {
       "required": [
         "cwd",
@@ -1100,6 +1336,13 @@
         "threadId": "string",
         "turnId": "string"
       }
+    },
+    "Personality": {
+      "enum": [
+        "friendly",
+        "none",
+        "pragmatic"
+      ]
     },
     "PlanDeltaNotification": {
       "required": [
@@ -1180,6 +1423,19 @@
         "changeType": "ProjectChangeType",
         "projectId": "string"
       }
+    },
+    "ReasoningEffort": {
+      "type": "string"
+    },
+    "ReasoningSummary": {
+      "union": [
+        {
+          "tag": "auto|concise|detailed"
+        },
+        {
+          "tag": "none"
+        }
+      ]
     },
     "ReasoningSummaryPartAddedNotification": {
       "required": [
@@ -1266,6 +1522,128 @@
         "status": "RemoteControlConnectionStatus"
       }
     },
+    "ReviewDelivery": {
+      "enum": [
+        "detached",
+        "inline"
+      ]
+    },
+    "ReviewStartParams": {
+      "required": [
+        "target",
+        "threadId"
+      ],
+      "props": [
+        "delivery",
+        "target",
+        "threadId"
+      ],
+      "types": {
+        "delivery": "ReviewDelivery|null",
+        "target": "ReviewTarget",
+        "threadId": "string"
+      }
+    },
+    "ReviewTarget": {
+      "union": [
+        {
+          "tag": "baseBranch",
+          "props": [
+            "branch",
+            "type"
+          ],
+          "types": {
+            "branch": "string",
+            "type": "enum(baseBranch)"
+          }
+        },
+        {
+          "tag": "commit",
+          "props": [
+            "sha",
+            "title",
+            "type"
+          ],
+          "types": {
+            "sha": "string",
+            "title": "null|string",
+            "type": "enum(commit)"
+          }
+        },
+        {
+          "tag": "custom",
+          "props": [
+            "instructions",
+            "type"
+          ],
+          "types": {
+            "instructions": "string",
+            "type": "enum(custom)"
+          }
+        },
+        {
+          "tag": "uncommittedChanges",
+          "props": [
+            "type"
+          ],
+          "types": {
+            "type": "enum(uncommittedChanges)"
+          }
+        }
+      ]
+    },
+    "SandboxPolicy": {
+      "union": [
+        {
+          "tag": "dangerFullAccess",
+          "props": [
+            "type"
+          ],
+          "types": {
+            "type": "enum(dangerFullAccess)"
+          }
+        },
+        {
+          "tag": "externalSandbox",
+          "props": [
+            "networkAccess",
+            "type"
+          ],
+          "types": {
+            "networkAccess": "NetworkAccess",
+            "type": "enum(externalSandbox)"
+          }
+        },
+        {
+          "tag": "readOnly",
+          "props": [
+            "networkAccess",
+            "type"
+          ],
+          "types": {
+            "networkAccess": "boolean",
+            "type": "enum(readOnly)"
+          }
+        },
+        {
+          "tag": "workspaceWrite",
+          "props": [
+            "excludeSlashTmp",
+            "excludeTmpdirEnvVar",
+            "networkAccess",
+            "type",
+            "writableRoots"
+          ],
+          "types": {
+            "excludeSlashTmp": "boolean",
+            "excludeTmpdirEnvVar": "boolean",
+            "networkAccess": "boolean",
+            "type": "enum(workspaceWrite)",
+            "writableRoots": "array<AbsolutePathBuf>"
+          }
+        }
+      ]
+    },
     "ServerRequestResolvedNotification": {
       "required": [
         "requestId",
@@ -1282,6 +1660,23 @@
     },
     "SkillsChangedNotification": {
       "type": "object"
+    },
+    "SkillsListParams": {
+      "required": [],
+      "props": [
+        "cwds",
+        "forceReload"
+      ],
+      "types": {
+        "cwds": "array<string>",
+        "forceReload": "boolean"
+      }
+    },
+    "SortDirection": {
+      "enum": [
+        "asc",
+        "desc"
+      ]
     },
     "StrictReviewRequiredNotification": {
       "required": [
@@ -1321,6 +1716,19 @@
         "stdin": "string",
         "threadId": "string",
         "turnId": "string"
+      }
+    },
+    "TextElement": {
+      "required": [
+        "byteRange"
+      ],
+      "props": [
+        "byteRange",
+        "placeholder"
+      ],
+      "types": {
+        "byteRange": "ByteRange",
+        "placeholder": "null|string"
       }
     },
     "ThreadArchivedNotification": {
@@ -1368,6 +1776,17 @@
         "threadId": "string"
       }
     },
+    "ThreadCompactStartParams": {
+      "required": [
+        "threadId"
+      ],
+      "props": [
+        "threadId"
+      ],
+      "types": {
+        "threadId": "string"
+      }
+    },
     "ThreadDeletedNotification": {
       "required": [
         "threadId"
@@ -1377,6 +1796,45 @@
       ],
       "types": {
         "threadId": "string"
+      }
+    },
+    "ThreadForkParams": {
+      "required": [
+        "threadId"
+      ],
+      "props": [
+        "approvalPolicy",
+        "approvalsReviewer",
+        "baseInstructions",
+        "config",
+        "cwd",
+        "developerInstructions",
+        "ephemeral",
+        "excludeTurns",
+        "lastTurnId",
+        "model",
+        "modelProvider",
+        "sandbox",
+        "serviceTier",
+        "threadId",
+        "threadSource"
+      ],
+      "types": {
+        "approvalPolicy": "AskForApproval|null",
+        "approvalsReviewer": "ApprovalsReviewer|null",
+        "baseInstructions": "null|string",
+        "config": "null|object",
+        "cwd": "null|string",
+        "developerInstructions": "null|string",
+        "ephemeral": "boolean",
+        "excludeTurns": "boolean",
+        "lastTurnId": "null|string",
+        "model": "null|string",
+        "modelProvider": "null|string",
+        "sandbox": "SandboxMode|null",
+        "serviceTier": "null|string",
+        "threadId": "string",
+        "threadSource": "ThreadSource|null"
       }
     },
     "ThreadGoalClearedNotification": {
@@ -1389,6 +1847,44 @@
       "types": {
         "threadId": "string"
       }
+    },
+    "ThreadGoalClearParams": {
+      "required": [
+        "threadId"
+      ],
+      "props": [
+        "threadId"
+      ],
+      "types": {
+        "threadId": "string"
+      }
+    },
+    "ThreadGoalSetParams": {
+      "required": [
+        "threadId"
+      ],
+      "props": [
+        "objective",
+        "status",
+        "threadId",
+        "tokenBudget"
+      ],
+      "types": {
+        "objective": "null|string",
+        "status": "ThreadGoalStatus|null",
+        "threadId": "string",
+        "tokenBudget": "integer|null"
+      }
+    },
+    "ThreadGoalStatus": {
+      "enum": [
+        "active",
+        "blocked",
+        "budgetLimited",
+        "complete",
+        "paused",
+        "usageLimited"
+      ]
     },
     "ThreadGoalUpdatedNotification": {
       "required": [
@@ -1405,6 +1901,16 @@
         "threadId": "string",
         "turnId": "null|string"
       }
+    },
+    "ThreadListCwdFilter": {
+      "union": [
+        {
+          "tag": "array"
+        },
+        {
+          "tag": "string"
+        }
+      ]
     },
     "ThreadNameUpdatedNotification": {
       "required": [
@@ -1619,6 +2125,34 @@
         "threadId": "string"
       }
     },
+    "ThreadRevertParams": {
+      "required": [
+        "beforeTurnId",
+        "threadId"
+      ],
+      "props": [
+        "beforeTurnId",
+        "threadId"
+      ],
+      "types": {
+        "beforeTurnId": "string",
+        "threadId": "string"
+      }
+    },
+    "ThreadSetNameParams": {
+      "required": [
+        "name",
+        "threadId"
+      ],
+      "props": [
+        "name",
+        "threadId"
+      ],
+      "types": {
+        "name": "string",
+        "threadId": "string"
+      }
+    },
     "ThreadSettingsUpdatedNotification": {
       "required": [
         "threadId",
@@ -1633,6 +2167,47 @@
         "threadSettings": "ThreadSettings"
       }
     },
+    "ThreadShellCommandParams": {
+      "required": [
+        "command",
+        "threadId"
+      ],
+      "props": [
+        "command",
+        "threadId",
+        "timeoutMs"
+      ],
+      "types": {
+        "command": "string",
+        "threadId": "string",
+        "timeoutMs": "integer|null"
+      }
+    },
+    "ThreadSortKey": {
+      "enum": [
+        "created_at",
+        "recency_at",
+        "section_position",
+        "updated_at"
+      ]
+    },
+    "ThreadSource": {
+      "type": "string"
+    },
+    "ThreadSourceKind": {
+      "enum": [
+        "appServer",
+        "cli",
+        "exec",
+        "subAgent",
+        "subAgentCompact",
+        "subAgentOther",
+        "subAgentReview",
+        "subAgentThreadSpawn",
+        "unknown",
+        "vscode"
+      ]
+    },
     "ThreadStartedNotification": {
       "required": [
         "thread"
@@ -1643,6 +2218,12 @@
       "types": {
         "thread": "Thread"
       }
+    },
+    "ThreadStartSource": {
+      "enum": [
+        "clear",
+        "startup"
+      ]
     },
     "ThreadStatusChangedNotification": {
       "required": [
@@ -1675,7 +2256,37 @@
         "turnId": "string"
       }
     },
+    "ThreadTurnsListParams": {
+      "required": [
+        "threadId"
+      ],
+      "props": [
+        "cursor",
+        "itemsView",
+        "limit",
+        "sortDirection",
+        "threadId"
+      ],
+      "types": {
+        "cursor": "null|string",
+        "itemsView": "TurnItemsView|null",
+        "limit": "integer|null",
+        "sortDirection": "SortDirection|null",
+        "threadId": "string"
+      }
+    },
     "ThreadUnarchivedNotification": {
+      "required": [
+        "threadId"
+      ],
+      "props": [
+        "threadId"
+      ],
+      "types": {
+        "threadId": "string"
+      }
+    },
+    "ThreadUnsubscribeParams": {
       "required": [
         "threadId"
       ],
@@ -1728,6 +2339,19 @@
         "turnId": "string"
       }
     },
+    "TurnItemsView": {
+      "union": [
+        {
+          "tag": "full"
+        },
+        {
+          "tag": "notLoaded"
+        },
+        {
+          "tag": "summary"
+        }
+      ]
+    },
     "TurnModerationMetadataNotification": {
       "required": [
         "metadata",
@@ -1764,6 +2388,22 @@
         "turnId": "string"
       }
     },
+    "TurnToolOutput": {
+      "required": [
+        "name",
+        "output"
+      ],
+      "props": [
+        "name",
+        "namespace",
+        "output"
+      ],
+      "types": {
+        "name": "string",
+        "namespace": "null|string",
+        "output": "FunctionCallOutputBody"
+      }
+    },
     "WarningNotification": {
       "required": [
         "message"
@@ -1791,6 +2431,25 @@
         "error": "null|string",
         "mode": "WindowsSandboxSetupMode",
         "success": "boolean"
+      }
+    },
+    "WindowsSandboxSetupMode": {
+      "enum": [
+        "elevated",
+        "unelevated"
+      ]
+    },
+    "WindowsSandboxSetupStartParams": {
+      "required": [
+        "mode"
+      ],
+      "props": [
+        "cwd",
+        "mode"
+      ],
+      "types": {
+        "cwd": "AbsolutePathBuf|null",
+        "mode": "WindowsSandboxSetupMode"
       }
     },
     "WindowsWorldWritableWarningNotification": {

@@ -1,11 +1,14 @@
 // Checks a message against the pinned protocol snapshot (plan Part 7): the
-// fake app-server must only send what the real Codex could. Required fields,
-// enum values, union tags and basic types, through every type the snapshot
-// tracks; anything untracked is accepted as is.
+// fake app-server must only send what the real Codex could, and ad must only
+// send what it accepts. Required fields, enum values, union tags and basic
+// types, through every type the snapshot tracks; anything untracked is
+// accepted as is, except unknown top-level fields on ad's requests.
 //
 //   checkMessage({method, params}, {kind: "notification" | "request"}) → [problem…]
+//   checkRequest({method, params}) → [problem…]   (what ad sends)
 
 import { readFileSync } from "node:fs";
+import { EXPERIMENTAL_ALLOWLIST } from "../src/engine/codex/surface.mjs";
 
 const SNAPSHOT = JSON.parse(readFileSync(new URL("../src/engine/codex/protocol-snapshot.json", import.meta.url), "utf8"));
 const DEFS = SNAPSHOT.definitions;
@@ -53,6 +56,8 @@ function checkDef(value, def, where, out) {
   if (def.union) {
     // Tags: a "type" value, "key=value" for another discriminator, a single key, or a bare enum value.
     const matches = (v) => {
+      // A plain-type variant (`string | array<string>`, e.g. ThreadListCwdFilter).
+      if (v.tag === "string" || v.tag === "array") return v.tag === "array" ? Array.isArray(value) : typeof value === "string";
       if (typeof value === "string") return v.tag === value || v.tag.split("|").includes(value);
       if (!value || typeof value !== "object") return false;
       const kv = /^(\w+)=(.*)$/.exec(v.tag);
@@ -84,5 +89,26 @@ export function checkMessage({ method, params }, { kind = "notification" } = {})
   if (!type || !DEFS[type]) return [];
   const out = [];
   checkDef(params ?? {}, DEFS[type], method, out);
+  return out;
+}
+
+/**
+ * A request ad sends: a method of the pinned Codex's stable surface (or on the
+ * experimental allowlist), with no top-level field the stable params type
+ * lacks (an experimental field, a typo) unless allowlisted, and the shape the
+ * snapshot tracks.
+ */
+export function checkRequest({ method, params }, { allow = EXPERIMENTAL_ALLOWLIST } = {}) {
+  if (!SNAPSHOT.methods.clientRequests.includes(method) && !allow.methods.includes(method)) return [`${method}: not a request the pinned Codex accepts on the stable surface`];
+  const type = SNAPSHOT.params.clientRequests?.[method];
+  const def = type && DEFS[type];
+  if (!def) return [];
+  const out = [];
+  // Unknown top-level fields only for object params; a union (LoginAccountParams) is checked by its variant.
+  if (def.props && params && typeof params === "object" && !Array.isArray(params)) {
+    const extra = new Set(allow.fields[method] ?? []);
+    for (const k of Object.keys(params)) if (!def.props.includes(k) && !extra.has(k)) out.push(`${method}: ${k} is not a field of ${type}`);
+  }
+  checkDef(params ?? {}, def, method, out);
   return out;
 }

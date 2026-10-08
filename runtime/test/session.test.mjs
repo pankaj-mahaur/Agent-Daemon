@@ -411,6 +411,24 @@ test("close declines open requests and resolves waiting turns", async () => {
 /* Part 4 re-review: thread switches, close and restart races          */
 /* ------------------------------------------------------------------ */
 
+test("release: ad leaves the thread and waits until Codex has unloaded it (for /codex)", async () => {
+  await withSession(none, async ({ session, engine }) => {
+    await session.submit("fail-turn").done;
+    const id = session.state.thread.id;
+    assert.equal(await session.release(id), true);
+    assert.equal(session.state.thread, null, "ad left the thread");
+    const st = await debugState(engine);
+    assert.deepEqual(st.lastParams["thread/unsubscribe"], { threadId: id });
+    // A thread Codex doesn't have loaded is free already.
+    assert.equal(await session.release("not-loaded"), true);
+    // No thread/closed in time: false, so the caller can fall back (restart ad's engine).
+    await session.submit("fail-turn").done;
+    assert.equal(await session.release(session.state.thread.id, { timeoutMs: 1 }), false);
+    // ad resumes it afterwards as usual.
+    assert.equal(await session.resume(id), id);
+  });
+});
+
 test("newThread during a running turn interrupts it and settles its waiters as abandoned", async () => {
   await withSession(none, async ({ session, engine }) => {
     const a = session.submit("hang");

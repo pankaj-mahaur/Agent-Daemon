@@ -199,6 +199,7 @@ export class Engine extends EventEmitter {
       cwd: this.opts.cwd,
       clientVersion: this.opts.clientVersion,
       detached: this.opts.detached,
+      codexArgs: this.opts.codexArgs,
       env: { ...(this.opts.env ?? {}), CODEX_HOME: this.home },
       onServerRequest: (msg) => this.#onServerRequest(msg),
     });

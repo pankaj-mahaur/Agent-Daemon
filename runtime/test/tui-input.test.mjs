@@ -469,3 +469,66 @@ test("flush emits a pending ESC, half paste or partial sequence", () => {
   assert.deepEqual([...a.events, ...b.events, ...c.events].map(summary), ["escape", "paste:half", "unknown"]);
   assert.equal(c.timers(), 0);
 });
+
+/* ------------------------------------------------------------------ */
+/* Terminal strings: OSC / DCS / APC replies are never keys            */
+/* ------------------------------------------------------------------ */
+
+const rep = (e) => (e.type === "reply" ? `${e.kind}${e.code !== undefined ? e.code : ""}:${e.data}` : summary(e));
+
+test("an OSC reply (BEL or ST, whole or split) is a reply, not Alt+], text and Ctrl+G", () => {
+  const a = harness();
+  a.d.feed("\x1b]11;rgb:1e1e/1e1e/1e1e\x07");
+  assert.deepEqual(a.events.map(rep), ["osc11:rgb:1e1e/1e1e/1e1e"]);
+  const b = harness();
+  b.d.feed("\x1b]11;rgb:1");
+  b.d.feed("e1e/1e1e/1e1e\x1b");
+  b.d.feed("\u{5c}x");
+  assert.deepEqual(b.events.map(rep), ["osc11:rgb:1e1e/1e1e/1e1e", "text:x"]);
+  assert.equal(b.timers(), 0);
+});
+
+test("a late or unasked reply in the middle of typing is swallowed; the typing survives", () => {
+  const h = harness();
+  const ST = "\x1b\u{5c}";
+  h.d.feed(`ab\x1b]10;rgb:ffff/ffff/ffff\x07cd\x1bP>|WezTerm 2026${ST}e\x1b_Gi=1;OK${ST}f`);
+  assert.deepEqual(h.events.map(rep), ["text:ab", "osc10:rgb:ffff/ffff/ffff", "text:cd", "dcs:>|WezTerm 2026", "text:e", "apc:Gi=1;OK", "text:f"]);
+});
+
+test("Alt+], Alt+Shift+P and Alt+_ still type: a lone introducer times out like a lone ESC", () => {
+  const h = harness();
+  h.d.feed("\x1b]");
+  h.tick(29);
+  assert.equal(h.events.length, 0);
+  h.tick(1);
+  h.d.feed("\x1b]x\x1bPx\x1b_x");
+  h.d.feed("\x1bP");
+  h.tick(30);
+  h.d.feed("\x1b_");
+  h.tick(30);
+  assert.deepEqual(h.events.map(rep), ["A-]", "A-]", "text:x", "A-S-p", "text:x", "A-_", "text:x", "A-S-p", "A-_"]);
+  assert.equal(h.timers(), 0);
+});
+
+test("ESC ] with digits waits for the ';', then gives up into keys; an unfinished string is dropped", () => {
+  const h = harness();
+  h.d.feed("\x1b]1");
+  h.tick(499);
+  assert.equal(h.events.length, 0);
+  h.tick(1);
+  assert.deepEqual(h.events.map(rep), ["A-]", "text:1"]);
+  const s = harness();
+  s.d.feed("\x1b]11;rgb:1e1e");
+  s.tick(500);
+  assert.deepEqual(s.events.map(rep), ["unknown"], "never typed into the prompt");
+  const big = harness();
+  big.d.feed(`\x1b]52;c;${"A".repeat(9000)}`);
+  assert.deepEqual(big.events.map(rep), ["unknown"]);
+  assert.equal(big.timers(), 0);
+});
+
+test("a malformed string ends at the next escape sequence, which still decodes; Ctrl+G alone is a key", () => {
+  const h = harness();
+  h.d.feed("\x1b]11;rgb\x1b[A\x07");
+  assert.deepEqual(h.events.map(rep), ["unknown", "up", "C-g"]);
+});
