@@ -22,10 +22,11 @@ import { isNewline } from "../terminal/input.mjs";
 import { graphemeSegments, graphemeWidth, stringWidth } from "../terminal/width.mjs";
 import { sanitize } from "../terminal/sanitize.mjs";
 import { truncate } from "../terminal/text.mjs";
+import { T } from "./theme.mjs";
 
 const TAB_WIDTH = 4;
-const ACCENT = { fg: "cyan", bold: true };
-const DIM = { dim: true };
+const ACCENT = T.accent;
+const DIM = T.dim;
 const isWordChar = (g) => /[\p{L}\p{N}_]/u.test(g);
 // How a segment is drawn: a tab as spaces, a space hidden at a wrap point as nothing.
 const shown = (seg, mask) => (mask ? "\u{2022}" : seg.g === "\t" || seg.hidden ? " ".repeat(seg.w) : seg.g);

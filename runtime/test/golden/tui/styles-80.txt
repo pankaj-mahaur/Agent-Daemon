@@ -1,0 +1,125 @@
+── user ──
+⟦bold,fg=cyan⟧› fix the login test
+── agent ──
+⟦dim⟧• ⟦bold,underline⟧Title
+⟦dim⟧
+⟦dim⟧  ⟦bold⟧Fix
+⟦dim⟧
+⟦dim⟧  Use ⟦bold,fg=cyan⟧refresh() and ⟦italic⟧real timers, ⟦strike⟧not fake. See ⟦underline⟧docs⟦dim⟧ (https://example.com).
+⟦dim⟧
+⟦dim⟧  ▎ a quote
+⟦dim⟧
+⟦dim⟧  • one
+⟦dim⟧
+⟦dim⟧      ⟦fg=cyan⟧const a = 1;
+⟦dim⟧
+⟦dim⟧  ────────────────────────────────────────
+── reasoning ──
+⟦dim⟧• ⟦bold,dim,italic⟧Checking⟦dim,italic⟧ the refresh path.
+── ran ──
+⟦dim⟧• ⟦bold⟧Ran ⟦fg=cyan⟧npm test⟦dim⟧ · 4.2s
+⟦dim⟧  └ ok
+── failed ──
+⟦dim⟧• ⟦bold,fg=red⟧Failed ⟦fg=cyan⟧npm test⟦fg=red⟧ (exit 1)⟦dim⟧ · 900ms
+⟦dim⟧  └ 1 failing
+── declined ──
+⟦dim⟧• ⟦bold,fg=red⟧Declined ⟦fg=cyan⟧rm -rf build
+── edited ──
+⟦dim⟧• ⟦bold⟧Edited src/auth.ts (⟦fg=green⟧+1 ⟦fg=red⟧-1)
+⟦dim⟧    1 - ⟦fg=red⟧old
+⟦dim⟧    1 + ⟦fg=green⟧new
+⟦dim⟧    2   same
+── mcpFail ──
+⟦dim⟧• ⟦bold,fg=red⟧Tool failed ⟦fg=cyan⟧memory.search⟦dim⟧({})
+⟦dim⟧  └ MCP down
+── web ──
+⟦dim⟧• ⟦bold⟧Searched vitest timers
+── agents ──
+⟦dim⟧• ⟦bold⟧Spawned agent
+⟦dim⟧  └ Check signup
+── plan ──
+⟦dim⟧• ⟦bold⟧Updated plan
+⟦dim⟧  └ ⟦dim,italic⟧Small
+⟦dim⟧    ⟦fg=green⟧✔ ⟦dim,strike⟧Reproduce
+⟦dim⟧    ⟦bold,fg=cyan⟧□ Fix
+⟦dim⟧    □ Test
+── notices ──
+⟦dim⟧• info
+⟦fg=yellow⟧⚠ warn
+⟦fg=red⟧■ error
+── ad rows ──
+⟦dim⟧• ⟦bold,dim⟧Recalled ⟦dim⟧3 learnings
+⟦dim⟧• ⟦bold,dim⟧Guard blocked: ⟦dim⟧blocked
+── header ──
+⟦dim⟧╭────────────────────────────────────────────────────────────────────────────╮
+⟦dim⟧│ ⟦bold⟧ad                                                                        ⟦dim⟧ │
+⟦dim⟧│                                                                           ⟦dim⟧ │
+⟦dim⟧│ model:   gpt                                                        ⟦dim⟧/model │
+⟦dim⟧│ sandbox: ⟦fg=yellow⟧none                                                             ⟦dim⟧ │
+⟦dim⟧╰────────────────────────────────────────────────────────────────────────────╯
+── status ──
+⟦bold,fg=cyan⟧• ⟦bold⟧Working⟦dim⟧ (3s · esc to interrupt)
+⟦dim⟧  ↳ queued: later                                                      ⟦dim⟧tab: edit
+── footer ──
+⟦dim⟧  ? shortcuts                                         ⟦dim⟧ctx 40% · ⟦fg=yellow⟧5h 85%⟦dim⟧ · private
+── shortcuts ──
+⟦bold⟧Shortcuts
+⟦bold,fg=cyan⟧  enter        send (steers a running turn)
+⟦bold,fg=cyan⟧  ctrl+j       new line (\ + enter works too)
+⟦bold,fg=cyan⟧  tab          queue for after this turn
+⟦bold,fg=cyan⟧  esc          interrupt the turn
+⟦bold,fg=cyan⟧  ctrl+c       clear, interrupt, then quit
+⟦bold,fg=cyan⟧  ↑ / ↓        history (at the first/last line)
+⟦bold,fg=cyan⟧  ctrl+r       search history
+⟦bold,fg=cyan⟧  @            mention a file
+⟦bold,fg=cyan⟧  /            commands
+⟦bold,fg=cyan⟧  !            run a shell command (unsandboxed)
+⟦bold,fg=cyan⟧  esc esc      rewind to an earlier prompt
+⟦bold,fg=cyan⟧  ctrl+t       the whole transcript
+⟦bold,fg=cyan⟧  ctrl+g       edit the prompt in your editor
+⟦bold,fg=cyan⟧  alt+, alt+.  lower / raise reasoning effort
+⟦bold,fg=cyan⟧  ctrl+l       redraw the screen
+── picker ──
+⟦bold,fg=cyan⟧Pick › ⟦dim⟧type to filter
+⟦bold,fg=cyan⟧› one⟦dim⟧  first
+⟦bold,fg=cyan⟧  two
+── composer ──
+⟦bold,fg=cyan⟧› hello
+── composer empty ──
+⟦bold,fg=cyan⟧› ⟦dim⟧Ask
+── exec approval ──
+⟦bold⟧Run command?
+  ⟦fg=cyan⟧$ npm install
+  ⟦dim⟧in /w
+  ⟦dim⟧Reason: needs network
+
+⟦bold,fg=cyan⟧› ⟦dim⟧1. ⟦bold,fg=cyan⟧Yes  ⟦dim⟧(y)
+⟦bold,fg=cyan⟧  ⟦dim⟧2. Yes, and don't ask again this session  ⟦dim⟧(a)
+⟦bold,fg=cyan⟧  ⟦dim⟧3. No, and tell Codex what to do instead  ⟦bold,fg=cyan⟧(n)
+⟦bold,fg=cyan⟧  ⟦dim⟧4. No, and stop  ⟦bold,fg=cyan⟧(esc)
+── patch approval ──
+⟦bold⟧Apply file changes?
+⟦dim⟧• ⟦bold⟧Edit a.ts (⟦fg=green⟧+1 ⟦fg=red⟧-1)
+⟦dim⟧    1 - ⟦fg=red⟧a
+⟦dim⟧    1 + ⟦fg=green⟧b
+  ⟦dim⟧Reason: fix
+
+⟦bold,fg=cyan⟧› ⟦dim⟧1. ⟦bold,fg=cyan⟧Yes  ⟦dim⟧(y)
+⟦bold,fg=cyan⟧  ⟦dim⟧2. Yes, and don't ask again for these files this session  ⟦dim⟧(a)
+⟦bold,fg=cyan⟧  ⟦dim⟧3. No, and tell Codex what to do instead  ⟦bold,fg=cyan⟧(n)
+⟦bold,fg=cyan⟧  ⟦dim⟧4. No, and stop  ⟦bold,fg=cyan⟧(esc)
+── mcp ──
+⟦bold⟧MCP servers
+  memory                ⟦fg=green⟧ready
+  broken                ⟦fg=red⟧failed
+── hooks ──
+⟦bold⟧Hooks
+                      ⟦fg=red⟧untrusted⟦dim⟧
+── skills ──
+⟦bold⟧Skills (2)
+⟦fg=cyan⟧  debug⟦dim⟧  bugs
+⟦dim⟧  old  off
+── usage ──
+⟦bold⟧Usage
+  5h: 38% used
+⟦fg=yellow⟧  7d: 85% used

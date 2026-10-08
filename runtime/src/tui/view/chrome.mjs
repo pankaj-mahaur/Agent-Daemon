@@ -14,16 +14,17 @@ import { sanitize } from "../terminal/sanitize.mjs";
 import { lineWidth, normalize, truncate } from "../terminal/text.mjs";
 import { stringWidth } from "../terminal/width.mjs";
 import { createComposer } from "./composer.mjs";
+import { T } from "./theme.mjs";
 
 const S = {
-  border: { dim: true },
-  label: { dim: true },
-  hint: { dim: true },
-  title: { bold: true },
-  accent: { fg: "cyan", bold: true },
-  dim: { dim: true },
-  warn: { fg: "yellow" },
-  sel: { fg: "cyan", bold: true },
+  border: T.dim,
+  label: T.dim,
+  hint: T.dim,
+  title: T.bold,
+  accent: T.accent,
+  dim: T.dim,
+  warn: T.warning,
+  sel: T.accent,
 };
 
 const clean = (t) => sanitize(String(t ?? ""), "transcript").replace(/\s*\n\s*/g, " ").replace(/\t/g, " ");

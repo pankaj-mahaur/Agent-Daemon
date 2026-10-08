@@ -20,16 +20,17 @@ import { sanitize } from "../terminal/sanitize.mjs";
 import { normalize, truncate, wrap } from "../terminal/text.mjs";
 import { renderDiff } from "./cells.mjs";
 import { createComposer } from "./composer.mjs";
+import { T } from "./theme.mjs";
 
 export const ARM_MS = 400;
 
 const S = {
-  title: { bold: true },
-  dim: { dim: true },
-  key: { fg: "cyan", bold: true },
-  sel: { fg: "cyan", bold: true },
-  warn: { fg: "yellow" },
-  cmd: { fg: "cyan" },
+  title: T.bold,
+  dim: T.dim,
+  key: T.accent,
+  sel: T.accent,
+  warn: T.warning,
+  cmd: T.code,
 };
 
 const shown = (t) => sanitize(String(t ?? ""), "approval");

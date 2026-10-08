@@ -9,11 +9,12 @@ import path from "node:path";
 import { sanitize } from "./terminal/sanitize.mjs";
 import { truncate } from "./terminal/text.mjs";
 import { renderCell } from "./view/cells.mjs";
+import { T } from "./view/theme.mjs";
 
-const DIM = { dim: true };
-const BOLD = { bold: true };
-const OK = { fg: "green" };
-const BAD = { fg: "red" };
+const DIM = T.dim;
+const BOLD = T.bold;
+const OK = T.success;
+const BAD = T.error;
 const clean = (t) => sanitize(String(t ?? ""), "transcript").replace(/\s*\n\s*/g, " ").replace(/\t/g, " ");
 const row = (width, ...spans) => truncate(spans, width);
 
@@ -48,7 +49,7 @@ export function renderSkills(entries, { width = 80 } = {}) {
   if (!skills.length) return [[{ text: "No skills found.", style: DIM }]];
   const out = [[{ text: `Skills (${skills.length})`, style: BOLD }]];
   for (const s of skills) {
-    out.push(row(width, { text: `  ${clean(s.name)}`, style: s.enabled === false ? DIM : { fg: "cyan" } }, { text: `  ${clean(s.shortDescription ?? s.description ?? "")}`, style: DIM }));
+    out.push(row(width, { text: `  ${clean(s.name)}`, style: s.enabled === false ? DIM : T.code }, { text: `  ${clean(s.shortDescription ?? s.description ?? "")}`, style: DIM }));
   }
   return out;
 }
@@ -66,7 +67,7 @@ export function renderUsage({ rateLimits, usage, tokens } = {}, { width = 80 } =
   const rl = rateLimits?.rateLimits ?? rateLimits;
   for (const w of [rl?.primary, rl?.secondary]) {
     const l = windowLabel(w);
-    if (l) out.push(row(width, { text: `  ${clean(l)}`, style: (w.usedPercent ?? 0) >= 80 ? { fg: "yellow" } : undefined }));
+    if (l) out.push(row(width, { text: `  ${clean(l)}`, style: (w.usedPercent ?? 0) >= 80 ? T.warning : undefined }));
   }
   if (tokens?.total?.total) out.push(row(width, { text: `  this conversation: ${tokens.total.total.toLocaleString("en-US")} tokens` }));
   const s = usage?.summary;

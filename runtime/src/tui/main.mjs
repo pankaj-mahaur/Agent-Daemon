@@ -33,6 +33,7 @@ const DEFAULT_STATE_FILE = path.join(homedir(), ".agent-daemon", "tui", "state.j
 
 export { preflight } from "./preflight.mjs";
 import { preflight } from "./preflight.mjs";
+import { T } from "./view/theme.mjs";
 
 /* ------------------------------------------------------------------ */
 /* Small terminal helpers                                              */
@@ -287,7 +288,7 @@ export async function cmdTui(opts = {}) {
     setWidthProfile(await probeWidthProfile({ io }));
     renderer = createRenderer({ io, caps, depth: colorDepth({ isTTY: true }), reflow: reflowModel(), resizeSource: process.stdout, hyperlinks: terminalName() !== "unknown" });
     await renderer.start();
-    renderer.frame({ lines: [[{ text: "Starting Codex\u{2026}", style: { dim: true } }]] });
+    renderer.frame({ lines: [[{ text: "Starting Codex\u{2026}", style: T.dim }]] });
 
     // A thread ad lets go of (thread/unsubscribe) unloads at once, not after Codex's 60 s: /codex hands it over.
     const start = () => startHarnessEngine({ cwd, home: opts.home, command: opts.command, clientVersion: opts.clientVersion, store: opts.store, err: sink, detached: true, codexArgs: ["-c", "thread_unload_delay_secs=0"] });
@@ -297,7 +298,7 @@ export async function cmdTui(opts = {}) {
         io,
         renderer,
         title: "Sign in",
-        intro: [[{ text: "ad isn't signed in to Codex yet.", style: { bold: true } }]],
+        intro: [[{ text: "ad isn't signed in to Codex yet.", style: T.bold }]],
         items: [
           { label: "ChatGPT", hint: "sign in with your ChatGPT plan (browser)", value: ["auth", "login", "chatgpt"] },
           { label: "OpenAI API key", hint: "kept by Codex in ad's own Codex home", value: ["auth", "login", "openai"] },
@@ -324,7 +325,7 @@ export async function cmdTui(opts = {}) {
         io,
         renderer,
         title: "Trust",
-        intro: [[{ text: `Do you trust ${sanitize(cwd, "transcript")}?`, style: { bold: true } }], [{ text: "Trusted folders may load their own .codex config, hooks and skills.", style: { dim: true } }]],
+        intro: [[{ text: `Do you trust ${sanitize(cwd, "transcript")}?`, style: T.bold }], [{ text: "Trusted folders may load their own .codex config, hooks and skills.", style: T.dim }]],
         items: [
           { label: "Yes, trust this folder", value: "trusted" },
           { label: "No", hint: "ignore its .codex config", value: "untrusted" },
@@ -385,9 +386,9 @@ export async function cmdTui(opts = {}) {
     const key = canonicalPath(cwd);
     const since = await sinceLastTime({ cwd, since: state[key]?.lastSeen ?? Date.now(), home: opts.adHome });
     const intro = [...header];
-    if (since.length) intro.push(truncate([{ text: `  Since last time: ${since.join(" \u{b7} ")}`, style: { dim: true } }], Math.max(10, io.size().cols - 2)));
-    intro.push([], [{ text: "  Try /review \u{b7} /goal \u{b7} /resume \u{b7} /codex = stock Codex UI \u{b7} ? for shortcuts", style: { dim: true } }], []);
-    for (const n of setupNotes.filter(Boolean)) intro.push([{ text: `  ${sanitize(n, "transcript")}`, style: { fg: "yellow" } }]);
+    if (since.length) intro.push(truncate([{ text: `  Since last time: ${since.join(" \u{b7} ")}`, style: T.dim }], Math.max(10, io.size().cols - 2)));
+    intro.push([], [{ text: "  Try /review \u{b7} /goal \u{b7} /resume \u{b7} /codex = stock Codex UI \u{b7} ? for shortcuts", style: T.dim }], []);
+    for (const n of setupNotes.filter(Boolean)) intro.push([{ text: `  ${sanitize(n, "transcript")}`, style: T.warning }]);
 
     if (opts.resume || opts.last) {
       let id = opts.resume;
@@ -395,12 +396,12 @@ export async function cmdTui(opts = {}) {
         const r = await engine.server.request("thread/list", { cwd, limit: 1, modelProviders: [], sourceKinds: ["cli", "vscode", "exec", "appServer"] }).catch(() => null);
         id = r?.data?.[0]?.id ?? null;
       }
-      if (id) await session.resume(id).catch((e) => intro.push([{ text: `  Could not resume: ${sanitize(e.message, "transcript")}`, style: { fg: "yellow" } }]));
+      if (id) await session.resume(id).catch((e) => intro.push([{ text: `  Could not resume: ${sanitize(e.message, "transcript")}`, style: T.warning }]));
     }
 
     const ad = createAdLayer({ cwd, home: opts.adHome ?? homedir(), memory: opts.memory === false ? null : await import("../memory/episodic.mjs").catch(() => null), cli: CLI });
     const overdue = await ad.schedulerWarning().catch(() => null);
-    if (overdue) intro.push(truncate([{ text: `  ${overdue}`, style: { fg: "yellow" } }], Math.max(10, io.size().cols - 2)));
+    if (overdue) intro.push(truncate([{ text: `  ${overdue}`, style: T.warning }], Math.max(10, io.size().cols - 2)));
     let focused = true;
     io.onInput((ev) => {
       if (ev.type === "focus") focused = ev.focused;

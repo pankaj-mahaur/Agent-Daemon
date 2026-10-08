@@ -22,13 +22,14 @@ import { existsSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { copyText, exportMarkdown, imagePath, lastAgentText, renderHooks, renderMcp, renderSkills, renderUsage, terminalSetup, transcriptLines } from "./commands.mjs";
 import CODEX_SLASH from "./codex-slash.json" with { type: "json" };
+import { T } from "./view/theme.mjs";
 
 export const FORCE_QUIT_MS = 1500;
 const FRAME_MS = 33;
 const LIVE_SHARE = 0.6; // at most this much of the screen for streaming cells
 
-const DIM = { dim: true };
-const WARN = { fg: "yellow" };
+const DIM = T.dim;
+const WARN = T.warning;
 
 // source "codex": the same command as Codex's (its name must stay one of
 // Codex's); "ad": ad's own (its name must never be one of Codex's). The
@@ -476,7 +477,7 @@ export function createApp({
       const view = Math.max(1, rows - 2);
       pager.top = Math.max(0, Math.min(pager.top, pager.lines.length - view));
       const where = pager.lines.length ? `Transcript ${pager.top + 1}\u{2013}${Math.min(pager.lines.length, pager.top + view)} of ${pager.lines.length}  ` : "The transcript is empty  ";
-      lines.push(truncate([{ text: where, style: { bold: true } }, { text: "\u{2191}\u{2193} pgup pgdn home end \u{b7} q or esc closes", style: DIM }], w));
+      lines.push(truncate([{ text: where, style: T.bold }, { text: "\u{2191}\u{2193} pgup pgdn home end \u{b7} q or esc closes", style: DIM }], w));
       lines.push(...pager.lines.slice(pager.top, pager.top + view));
       renderer.frame({ lines, cursor: { row: 0, col: 0 } });
       return;
@@ -499,7 +500,7 @@ export function createApp({
       cursor = { row: lines.length - 1, col: 0 };
     } else {
       if (note) lines.push(truncate([{ text: clean(note.text), style: note.level === "warn" || note.level === "error" ? WARN : DIM }], w));
-      if (attachments.length) lines.push(truncate([{ text: `  \u{1f4ce} ${attachments.map((a) => clean(path.basename(a))).join(", ")}`, style: { fg: "cyan" } }], w));
+      if (attachments.length) lines.push(truncate([{ text: `  \u{1f4ce} ${attachments.map((a) => clean(path.basename(a))).join(", ")}`, style: T.code }], w));
       if (lines.length) lines.push([]);
       const top = lines.length;
       const c = composer.render({ width: w, prompt: "\u{203a} ", placeholder: turnActive() ? "Steer the turn, or tab to queue" : "Ask ad to do anything" });
@@ -612,8 +613,8 @@ export function createApp({
     switch (name) {
       case "help":
         return commitCell([
-          [{ text: "Commands", style: { bold: true } }],
-          ...SLASH_COMMANDS.filter((c) => c.name !== "exit").map((c) => truncate([{ text: `  /${c.name.padEnd(12)}`, style: { fg: "cyan" } }, { text: c.desc, style: DIM }], width())),
+          [{ text: "Commands", style: T.bold }],
+          ...SLASH_COMMANDS.filter((c) => c.name !== "exit").map((c) => truncate([{ text: `  /${c.name.padEnd(12)}`, style: T.code }, { text: c.desc, style: DIM }], width())),
           [],
           ...renderShortcuts({ newline }, { width: width() }),
         ]);
@@ -804,7 +805,7 @@ export function createApp({
     const kept = st.notices.filter((n) => n.level !== "info");
     const unknown = Object.entries(session.engine?.unknownCounts?.() ?? {});
     if (!kept.length && !unknown.length) return renderNotice({ level: "info", message: "No warnings in this session." }, { width: width() });
-    const out = [[{ text: "Warnings", style: { bold: true } }]];
+    const out = [[{ text: "Warnings", style: T.bold }]];
     for (const n of kept.slice(-20)) out.push(...renderNotice(n, { width: width() }));
     if (unknown.length) {
       out.push([{ text: "Events this ad doesn't know (a newer Codex?):", style: DIM }]);
@@ -828,7 +829,7 @@ export function createApp({
     const rl = st.rateLimits?.primary;
     if (rl?.usedPercent != null) rows.push(["usage", `${Math.round(rl.usedPercent)}% of the ${rl.windowDurationMins ? `${Math.round(rl.windowDurationMins / 60)}h` : "current"} window`]);
     if (info.compat) rows.push(["codex", info.compat]);
-    return [[{ text: "Status", style: { bold: true } }], ...rows.map(([k, v]) => truncate([{ text: `  ${k.padEnd(13)}`, style: DIM }, { text: clean(v) }], width()))];
+    return [[{ text: "Status", style: T.bold }], ...rows.map(([k, v]) => truncate([{ text: `  ${k.padEnd(13)}`, style: DIM }, { text: clean(v) }], width()))];
   }
 
   // Esc Esc: pick an earlier prompt; the thread is rewound to just before it

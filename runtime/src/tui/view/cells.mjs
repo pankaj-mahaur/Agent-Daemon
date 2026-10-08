@@ -17,21 +17,22 @@ import { sanitize } from "../terminal/sanitize.mjs";
 import { normalize, truncate, wrap } from "../terminal/text.mjs";
 import { stringWidth } from "../terminal/width.mjs";
 import { codeLines, renderMarkdown, wrapPrefixed } from "./markdown.mjs";
+import { T } from "./theme.mjs";
 
 const S = {
-  bullet: { dim: true },
-  head: { bold: true },
-  dim: { dim: true },
-  ok: { fg: "green", bold: true },
-  bad: { fg: "red", bold: true },
-  warn: { fg: "yellow" },
-  err: { fg: "red" },
-  cmd: { fg: "cyan" },
-  user: { fg: "cyan", bold: true },
-  add: { fg: "green" },
-  del: { fg: "red" },
-  hunk: { fg: "cyan", dim: true },
-  italic: { dim: true, italic: true },
+  bullet: T.dim,
+  head: T.bold,
+  dim: T.dim,
+  ok: T.successStrong,
+  bad: T.errorStrong,
+  warn: T.warning,
+  err: T.error,
+  cmd: T.code,
+  user: T.accent,
+  add: T.diffAdd,
+  del: T.diffDel,
+  hunk: T.diffHunk,
+  italic: T.italicDim,
 };
 
 const OUTPUT_TAIL = 5;
@@ -241,8 +242,8 @@ export function renderPlan(steps, { width = 80, explanation = null } = {}) {
   for (const s of steps ?? []) {
     const done = s.status === "completed";
     const mark = done ? "\u{2714} " : s.status === "inProgress" ? "\u{25a1} " : "\u{25a1} ";
-    const style = done ? { dim: true, strike: true } : s.status === "inProgress" ? { fg: "cyan", bold: true } : undefined;
-    lines.push([{ text: mark, style: done ? { fg: "green" } : style }, { text: clean(s.step), style }]);
+    const style = done ? T.done : s.status === "inProgress" ? T.accent : undefined;
+    lines.push([{ text: mark, style: done ? T.success : style }, { text: clean(s.step), style }]);
   }
   out.push(...details(lines, width));
   return out;
@@ -271,7 +272,7 @@ const AD_ROWS = {
 /** One dim line for something ad did (recalled memory, a skill, a guard…). */
 export function renderAdRow(kind, text, { width = 80 } = {}) {
   const label = AD_ROWS[kind] ?? `${clean(kind)}:`;
-  const line = truncate([{ text: "\u{2022} ", style: S.dim }, { text: `${label} `, style: { dim: true, bold: true } }, { text: clean(text).replace(/\s*\n\s*/g, " "), style: S.dim }], width);
+  const line = truncate([{ text: "\u{2022} ", style: S.dim }, { text: `${label} `, style: T.boldDim }, { text: clean(text).replace(/\s*\n\s*/g, " "), style: S.dim }], width);
   return [line];
 }
 

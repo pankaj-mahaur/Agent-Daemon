@@ -24,17 +24,18 @@
 import { sanitize } from "../terminal/sanitize.mjs";
 import { graphemeSegments, graphemeWidth, stringWidth } from "../terminal/width.mjs";
 import { lineWidth, normalize, truncate, wrap } from "../terminal/text.mjs";
+import { T } from "./theme.mjs";
 
 const S = {
-  h1: { bold: true, underline: true },
-  h: { bold: true },
-  code: { fg: "cyan" },
-  block: { fg: "cyan" },
-  quote: { dim: true },
-  bullet: { dim: true },
-  rule: { dim: true },
-  border: { dim: true },
-  url: { dim: true },
+  h1: T.heading,
+  h: T.bold,
+  code: T.code,
+  block: T.code,
+  quote: T.dim,
+  bullet: T.dim,
+  rule: T.dim,
+  border: T.dim,
+  url: T.dim,
 };
 
 /* ------------------------------------------------------------------ */
@@ -751,7 +752,7 @@ export function createMarkdownStream({ width = 80 } = {}) {
       const cut = tail[0].slice(-LIVE_TAIL_CHARS);
       tail[0] = cut.slice(Math.max(0, cut.indexOf(" ") + 1));
     }
-    return [[{ text: "  \u{2026}", style: { dim: true } }], ...renderBlocks(parseBlocks(tail), width)];
+    return [[{ text: "  \u{2026}", style: T.dim }], ...renderBlocks(parseBlocks(tail), width)];
   }
 
   return {
