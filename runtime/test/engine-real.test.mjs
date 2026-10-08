@@ -250,3 +250,25 @@ test("S8: with thread_unload_delay_secs=0, thread/unsubscribe closes an idle thr
     { codexArgs: ["-c", "thread_unload_delay_secs=0"] },
   );
 });
+
+test("S1: Codex's own TUI settings round-trip through config/batchWrite and config/read; wrong types are refused", opts, async () => {
+  await withRealEngine(async ({ server }) => {
+    const write = (edits) => server.request("config/batchWrite", { edits: edits.map(([keyPath, value]) => ({ keyPath, value, mergeStrategy: "replace" })), reloadUserConfig: true });
+    await write([
+      ["tui.status_line", ["model-with-reasoning", "current-dir", "not-a-codex-item"]],
+      ["tui.terminal_title", ["activity", "project-name"]],
+      ["tui.theme", "dracula"],
+      ["tui.vim_mode_default", true],
+    ]);
+    const { config } = await server.request("config/read", {});
+    assert.deepEqual(config.tui?.status_line, ["model-with-reasoning", "current-dir", "not-a-codex-item"], "an id Codex doesn't know is kept (the stock UI only warns)");
+    assert.deepEqual(config.tui?.terminal_title, ["activity", "project-name"]);
+    assert.equal(config.tui?.theme, "dracula");
+    assert.equal(config.tui?.vim_mode_default, true);
+    await write([["tui.status_line", []]]);
+    assert.deepEqual((await server.request("config/read", {})).config.tui?.status_line, [], "[] is kept (status line off)");
+    await assert.rejects(write([["tui.vim_mode_default", "yes"]]), "a value of the wrong type is refused");
+    await write([["tui.status_line", null]]);
+    assert.equal((await server.request("config/read", {})).config.tui?.status_line ?? null, null, "null removes it (back to the default)");
+  });
+});

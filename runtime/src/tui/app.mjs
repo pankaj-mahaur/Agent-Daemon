@@ -164,6 +164,7 @@ export function createApp({
   newline = "ctrl+j",
   history = null,
   actions = {},
+  settings = null, // {codex, ad} from prefs.mjs; null in tests that don't need them
   meters = () => [],
   chips = () => [],
   info = {},

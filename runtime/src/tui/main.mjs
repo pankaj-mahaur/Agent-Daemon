@@ -25,6 +25,7 @@ import { sanitize } from "./terminal/sanitize.mjs";
 import { createApp } from "./app.mjs";
 import { createHistory } from "./history.mjs";
 import { createAdLayer } from "./ad-layer.mjs";
+import { createCodexSettings, createPrefs, DEFAULT_PREFS_FILE } from "./prefs.mjs";
 import { createPicker, newlineHint, renderHeader } from "./view/chrome.mjs";
 import { truncate } from "./terminal/text.mjs";
 
@@ -346,6 +347,9 @@ export async function cmdTui(opts = {}) {
     const undoKit = (await cp.repo().catch(() => null)) ? checkpointWiring(cp, { cwd }) : null;
     session = createSession({ engine, cwd, model: opts.model, sandbox: opts.sandbox, restart, maxRestarts: 3, hooks: undoKit?.hooks ?? {}, ...(opts.lockDir ? { lockDir: opts.lockDir } : {}) });
     await session.init();
+    // Settings: Codex's own (its config.toml in ad's home, shared with /codex) and ad's (prefs.json).
+    const settings = { codex: createCodexSettings({ engine: () => session.engine }), ad: createPrefs({ file: opts.prefsFile ?? DEFAULT_PREFS_FILE }) };
+    await settings.codex.load();
 
     const term = terminalName();
     const newline = newlineHint({ terminal: term, csiU: Boolean(caps.kitty) });
@@ -440,13 +444,14 @@ export async function cmdTui(opts = {}) {
         if (threadId && !(await session.release(threadId))) await session.restartEngine().catch(() => false);
         const code = await handoff(io, renderer, () => runStockCodex({ args: splitArgs(arg), threadId, cwd, home: engine.home, store: opts.store }));
         if (threadId) await session.resume(threadId);
+        await settings.codex.load(); // the stock UI may have changed them
         return `Back from the stock Codex UI (exit ${code}).`;
       },
       hookRows: (run) => hookRows(run, { hooksFile }),
       editText: (text) => handoff(io, renderer, () => editInEditor(text, { run: (cmd, args, verbatim) => runChild(cmd, args, { cwd, windowsVerbatimArguments: Boolean(verbatim) }) })),
     };
 
-    app = createApp({ io, renderer, session, cwd, header: intro, newline, history: createHistory(opts.historyFile ? { file: opts.historyFile } : {}), actions, meters, info: { compat: `${codexVersion} (tested)`, terminal: term } });
+    app = createApp({ io, renderer, session, cwd, header: intro, newline, history: createHistory(opts.historyFile ? { file: opts.historyFile } : {}), actions, settings, meters, info: { compat: `${codexVersion} (tested)`, terminal: term } });
     // `ad tui "<prompt>"`: the first prompt is sent right away.
     if (opts.prompt) app.send(opts.prompt);
     await app.done;

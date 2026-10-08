@@ -405,7 +405,8 @@ Codex reads skills only from its home, so your `~/.claude/skills` are mirrored i
 | `~/.agent-daemon/tui/state.json` | when you last used each folder, for "Since last time" |
 | `~/.agent-daemon/tui/chat-hint-shown` | marks the one-time `ad chat` hint (that bare `ad` opens the TUI) as shown |
 | `~/.agent-daemon/locks/` | conversation locks, so two `ad`s never write one conversation |
-| `~/.agent-daemon/codex-home/config.toml` | folder trust (`projects`), as Codex keeps it |
+| `~/.agent-daemon/tui/prefs.json` | ad's own TUI preferences (owner-only), for what Codex has no setting for |
+| `~/.agent-daemon/codex-home/config.toml` | folder trust (`projects`), as Codex keeps it, and Codex's own TUI settings (`tui.status_line`, `tui.terminal_title`, `tui.theme`, `tui.vim_mode_default`): the stock UI (`/codex`) uses the same ones. `tui.keymap` is read, never written by ad |
 | `~/.agent-daemon/codex-home/skills/` | the mirror of `~/.claude/skills` for `ad codex` |
 | `<repo>/.git/ad-checkpoint-index`, `refs/ad/checkpoints/` | `/undo` snapshots |
 | `<project>/.agent-daemon/loop-tui.log`, `STOP` | `/loop` output, and its stop file |
