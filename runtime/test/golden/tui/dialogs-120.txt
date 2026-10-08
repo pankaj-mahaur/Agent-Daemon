@@ -1,0 +1,33 @@
+── confirm (arming) ──
+Delete this conversation?
+  login fix
+  Cannot be undone. Subagent threads will also be deleted.
+
+› 1. No, keep it  (n)
+  2. Yes, delete it  (y)
+  …
+── confirm (armed) ──
+Delete this conversation?
+  login fix
+  Cannot be undone. Subagent threads will also be deleted.
+
+› 1. No, keep it  (n)
+  2. Yes, delete it  (y)
+  y/n · esc = no
+── confirm (short) ──
+Delete this conversation?
+› 1. No, keep it  (n)
+  2. Yes, delete it  (y)
+  y/n · esc = no
+── checklist ──
+Status line
+› [x] model-with-reasoning  gpt-5.5 high
+  [x] current-dir  ~/work/app
+  [ ] git-branch  main
+  [ ] context-remaining  62% left
+  space toggles · ←→ reorder · enter saves · esc cancels
+── checklist (scrolls) ──
+Title
+› [x] model-with-reasoning  gpt-5.5 high
+  [x] current-dir  ~/work/app
+  space toggles · enter saves · esc cancels

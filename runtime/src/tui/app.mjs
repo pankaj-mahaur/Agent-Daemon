@@ -13,8 +13,8 @@
 import { createComposer } from "./view/composer.mjs";
 import { createMarkdownStream } from "./view/markdown.mjs";
 import { isExploring, renderAdRow, renderCell, renderDiff, renderExploring, renderNotice, renderPlan } from "./view/cells.mjs";
-import { createPicker, renderFooter, renderShortcuts, renderStatus } from "./view/chrome.mjs";
-import { ARM_MS, createRequestModal } from "./view/modals.mjs";
+import { createChecklist, createPicker, renderFooter, renderShortcuts, renderStatus } from "./view/chrome.mjs";
+import { ARM_MS, createConfirm, createRequestModal } from "./view/modals.mjs";
 import { sanitize } from "./terminal/sanitize.mjs";
 import { truncate } from "./terminal/text.mjs";
 import { INIT_PROMPT } from "./init-prompt.mjs";
@@ -191,6 +191,7 @@ export function createApp({
 
   let modal = null; // {id, view}
   let popup = null; // {kind, view, onSelect}
+  let confirm = null; // {view, resolve}: a yes/no question of ad's own (openConfirm)
   let overlay = false; // the ? shortcuts
   let note = null; // one transient line above the composer
   let lastCtrlC = -Infinity;
@@ -493,10 +494,10 @@ export function createApp({
       lines.push(truncate([{ text: `\u{25a0} Codex stopped${code}. Your text is kept. Enter restarts and resumes.`, style: WARN }], w));
     } else if (st.engine.state === "restarting") lines.push(truncate([{ text: "\u{25e6} Restarting Codex\u{2026}", style: DIM }], w));
     let cursor = null;
-    if (modal) {
+    if (modal || confirm) {
       if (lines.length) lines.push([]);
       const budget = Math.max(4, rows - lines.length - 2);
-      lines.push(...modal.view.render({ width: w, height: budget }));
+      lines.push(...(modal ?? confirm).view.render({ width: w, height: budget }));
       cursor = { row: lines.length - 1, col: 0 };
     } else {
       if (note) lines.push(truncate([{ text: clean(note.text), style: note.level === "warn" || note.level === "error" ? WARN : DIM }], w));
@@ -528,6 +529,24 @@ export function createApp({
   function openPicker(kind, items, onSelect, opts = {}) {
     popup = { kind, view: createPicker({ items, ...opts }), onSelect };
     draw();
+  }
+
+  // Options to switch on and reorder: onSave(values) on Enter, onCancel() on Esc
+  // (undo a live preview there), onChange(values) on every change.
+  function openChecklist(kind, items, onSave, { onCancel, onChange, ...opts } = {}) {
+    popup = { kind, view: createChecklist({ items, ...opts, onChange: (v) => (onChange?.(v), drawSoon()) }), onSelect: onSave, onCancel };
+    draw();
+  }
+
+  // A yes/no question ad asks before acting on its own (/archive, /delete…).
+  // → Promise<boolean>. Codex's own requests come first: one that arrives
+  // meanwhile is shown, and the question waits under it.
+  function openConfirm(opts) {
+    confirm?.resolve(false);
+    return new Promise((resolve) => {
+      confirm = { view: createConfirm(opts, { now, armMs }), resolve };
+      draw();
+    });
   }
 
   // @ and / complete from what is being typed in the composer.
@@ -592,8 +611,11 @@ export function createApp({
       return false; // typing goes to the composer
     }
     const r = popup.view.handle(ev);
-    if (r?.cancel) popup = null;
-    else if (r?.select !== undefined) {
+    if (r?.cancel) {
+      const p = popup;
+      popup = null;
+      p.onCancel?.();
+    } else if (r?.select !== undefined) {
       const p = popup;
       popup = null;
       p.onSelect(r.select, r.item);
@@ -1017,6 +1039,8 @@ export function createApp({
     if (quitting) return;
     quitting = true;
     if (modal && !modal.answered) session.resolve(modal.id, null);
+    confirm?.resolve(false);
+    confirm = null;
     quitResolve({ reason });
   }
 
@@ -1074,6 +1098,15 @@ export function createApp({
     if (modal) {
       const r = modal.view.handle(ev);
       if (r && "answer" in r) answer(r.answer);
+      return draw();
+    }
+    if (confirm) {
+      const r = confirm.view.handle(ev);
+      if (r && "answer" in r) {
+        const c = confirm;
+        confirm = null;
+        c.resolve(r.answer);
+      }
       return draw();
     }
     if (overlay && (ev.type === "key" || ev.type === "text")) {
@@ -1195,13 +1228,17 @@ export function createApp({
       commitCell(renderNotice({ level, message: text }, { width: width() }));
       draw();
     },
+    /** Asks a yes/no question (see openConfirm); for commands and tests. */
+    confirm: (opts) => openConfirm(opts),
+    /** Opens a checklist (see openChecklist); for commands and tests. */
+    checklist: (kind, items, onSave, opts) => openChecklist(kind, items, onSave, opts),
     /** Sends a prompt as if typed (ad tui "<prompt>"). */
     send(text) {
       dispatch(String(text ?? ""));
       draw();
     },
     get state() {
-      return { composer: composer.text, modal: modal?.view.kind ?? null, popup: popup?.kind ?? null, overlay, note: note?.text ?? null, committed: committed.size };
+      return { composer: composer.text, modal: modal?.view.kind ?? null, confirm: Boolean(confirm), popup: popup?.kind ?? null, overlay, note: note?.text ?? null, committed: committed.size };
     },
     dispose() {
       clearT(drawTimer);

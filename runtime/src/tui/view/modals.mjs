@@ -6,6 +6,7 @@
 //     .handle(ev)  → {answer} | {changed: true} | null (not ours)
 //     .render({width, height}) → lines (the live region)
 //     .history({width}) → the full request, for the scrollback, when it opens
+//   createConfirm({title, body, yes, no}, {now, armMs}) → a yes/no question ad asks itself
 //
 // Safety:
 //   - Everything the user approves is shown with sanitize(…, "approval"): no
@@ -412,6 +413,44 @@ function createElicitationModal(req, { now, armMs }) {
     },
     history({ width = 80 } = {}) {
       return block(`${shown(form.server ?? "MCP")}: ${shown(form.message)}`, width, S.dim, "");
+    },
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* A question ad asks itself                                           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Yes or no, for a step ad takes on its own (codex-parity-2 1a: /archive,
+ * /delete, /stop…). "No" comes first and is focused; Esc or Ctrl+C is "no"
+ * at once; either answer waits for the arm delay, like an approval, so a key
+ * typed before it opened (or held down) can't answer it.
+ *   createConfirm({title, body, yes, no}, {now, armMs})
+ *     .handle(ev) → {answer: true|false} | {changed: true} | null
+ *     .render({width, height}) → lines
+ */
+export function createConfirm({ title, body = "", yes = "Yes", no = "No" } = {}, { now = () => Date.now(), armMs = ARM_MS } = {}) {
+  const choices = createChoices(
+    [
+      { label: no, key: "n", value: false },
+      { label: yes, key: "y", value: true },
+    ],
+    { now, armMs },
+  );
+  return {
+    kind: "confirm",
+    handle(ev) {
+      if (ev.type === "key" && (ev.name === "escape" || (ev.ctrl && ev.name === "c"))) return { answer: false };
+      return choices.handle(ev);
+    },
+    render({ width = 80, height = 12 } = {}) {
+      const head = [truncate([{ text: oneRow(shown(title)), style: S.title }], width), ...(body ? block(shown(body), width, S.dim) : []), []];
+      const list = choices.render(width);
+      const hint = truncate([{ text: choices.armed() ? "  y/n \u{b7} esc = no" : "  \u{2026}", style: S.dim }], width);
+      // The choices always show; a long body is cut from its end.
+      const room = Math.max(0, height - list.length - 1);
+      return [...head.slice(0, room), ...list, hint];
     },
   };
 }

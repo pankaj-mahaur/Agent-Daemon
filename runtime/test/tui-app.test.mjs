@@ -252,6 +252,41 @@ test("Codex commands ad doesn't run never reach the model; busy ones wait, and t
   });
 });
 
+test("ad's own dialogs in the app: a confirm takes the keys and waits for its arm delay; a checklist saves or cancels", async () => {
+  await withApp(async ({ app, type, until, text }) => {
+    let answer = null;
+    app.confirm({ title: "Archive this conversation?", yes: "Yes, archive" }).then((a) => (answer = a));
+    await until(() => app.state.confirm && /Archive this conversation\?/.test(text()), "the question");
+    type("y"); // typed at once: too soon
+    await sleep(30);
+    assert.equal(answer, null);
+    assert.equal(app.state.composer, "", "the composer didn't get the key");
+    await sleep(80);
+    type("y");
+    await until(() => answer === true, "yes, once armed");
+    assert.equal(app.state.confirm, false);
+    app.confirm({ title: "Delete?" }).then((a) => (answer = a));
+    await until(() => app.state.confirm, "the second question");
+    type("\x1b");
+    await until(() => answer === false, "esc is no");
+
+    let saved = null;
+    let cancelled = false;
+    const previews = [];
+    app.checklist("statusline", [{ label: "model", value: "model", checked: true }, { label: "git-branch", value: "git-branch" }], (v) => (saved = v), { title: "Status line", reorder: true, onChange: (v) => previews.push(v.join(",")), onCancel: () => (cancelled = true) });
+    await until(() => app.state.popup === "statusline", "the checklist");
+    type("\x1b[B ");
+    await until(() => previews.length === 1, "a live preview");
+    type("\r");
+    await until(() => saved, "saved");
+    assert.deepEqual(saved, ["model", "git-branch"]);
+    app.checklist("statusline", [{ label: "model", value: "model" }], () => {}, { onCancel: () => (cancelled = true) });
+    await until(() => app.state.popup === "statusline", "again");
+    type("\x1b");
+    await until(() => cancelled && app.state.popup === null, "cancelled");
+  });
+});
+
 test("/permissions and /model set the next turn's overrides through pickers", async () => {
   await withApp(async ({ app, type, until, text, session, engine }) => {
     type("/permissions\r");

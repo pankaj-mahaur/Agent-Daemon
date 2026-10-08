@@ -9,6 +9,7 @@
 //   newlineHint({terminal, csiU})
 //   renderShortcuts({newline}, {width})
 //   createPicker({items, title, placeholder}) → {handle, render}
+//   createChecklist({items, title, reorder, onChange}) → {handle, render, values}
 
 import { sanitize } from "../terminal/sanitize.mjs";
 import { lineWidth, normalize, truncate } from "../terminal/text.mjs";
@@ -171,6 +172,70 @@ export function renderShortcuts({ newline = "ctrl+j" } = {}, { width = 80 } = {}
     [{ text: "Shortcuts", style: S.title }],
     ...keys.map(([k, what]) => truncate([{ text: `  ${k.padEnd(kw)}`, style: S.accent }, { text: what }], width)),
   ];
+}
+
+/**
+ * A list of options to switch on and off (codex-parity-2 1b: /statusline,
+ * /title…): ↑/↓ move, Space toggles, ←/→ move the current option up or down
+ * the order (with `reorder`), Enter saves, Esc cancels. `onChange(values)`
+ * sees every change, for a live preview.
+ *   items: [{label, hint?, value, checked?}]
+ *   handle(ev) → {select: [values checked, in order]} | {cancel: true} | {changed: true} | null
+ */
+export function createChecklist({ items = [], title = "", reorder = false, onChange = null } = {}) {
+  const list = items.map((it) => ({ ...it, checked: Boolean(it.checked) }));
+  let index = 0;
+  let top = 0;
+  const values = () => list.filter((it) => it.checked).map((it) => it.value);
+  const changed = () => {
+    onChange?.(values());
+    return { changed: true };
+  };
+  return {
+    handle(ev) {
+      if (ev.type !== "key" && ev.type !== "text") return null;
+      if (ev.type === "key" && (ev.name === "escape" || (ev.ctrl && ev.name === "c"))) return { cancel: true };
+      if (ev.type === "key" && ev.name === "enter" && !ev.alt) return { select: values() };
+      if (ev.type === "key" && (ev.name === "up" || ev.name === "down") && !ev.alt) {
+        if (list.length) index = (index + (ev.name === "up" ? -1 : 1) + list.length) % list.length;
+        return { changed: true };
+      }
+      if (reorder && ev.type === "key" && (ev.name === "left" || ev.name === "right")) {
+        const to = index + (ev.name === "left" ? -1 : 1);
+        if (to < 0 || to >= list.length) return { changed: false };
+        [list[index], list[to]] = [list[to], list[index]];
+        index = to;
+        return changed();
+      }
+      if ((ev.type === "key" && ev.name === "space") || (ev.type === "text" && ev.text === " ")) {
+        if (!list[index]) return { changed: false };
+        list[index].checked = !list[index].checked;
+        return changed();
+      }
+      return { changed: false }; // a checklist takes every key while it's open
+    },
+    render({ width = 80, height = 10 } = {}) {
+      const out = [];
+      if (title) out.push(truncate([{ text: clean(title), style: S.title }], width));
+      const hint = truncate([{ text: `  space toggles${reorder ? " \u{b7} \u{2190}\u{2192} reorder" : ""} \u{b7} enter saves \u{b7} esc cancels`, style: S.dim }], width);
+      const rows = Math.max(1, height - out.length - 1);
+      index = Math.min(index, Math.max(0, list.length - 1));
+      if (index < top) top = index;
+      if (index >= top + rows) top = index - rows + 1;
+      for (let i = top; i < Math.min(list.length, top + rows); i++) {
+        const it = list[i];
+        const cur = i === index;
+        const line = [{ text: cur ? "\u{203a} " : "  ", style: S.sel }, { text: it.checked ? "[x] " : "[ ] ", style: it.checked ? S.accent : S.dim }, { text: clean(it.label), style: cur ? S.sel : undefined }];
+        if (it.hint) line.push({ text: `  ${clean(it.hint)}`, style: S.dim });
+        out.push(truncate(line, width));
+      }
+      out.push(hint);
+      return out;
+    },
+    get values() {
+      return values();
+    },
+  };
 }
 
 /**
