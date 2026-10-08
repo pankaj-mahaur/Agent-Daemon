@@ -15,6 +15,7 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 - `ad tui` has Codex's keys for copy (Ctrl+O), raw output (Alt+R) and reasoning effort (Shift+↑ / Shift+↓, besides Alt+. / Alt+,), F2 for the warnings, and Codex's pager keys in the Ctrl+T transcript (`j` `k`, Ctrl+B / Ctrl+F, Ctrl+U / Ctrl+D, Shift+Space).
 - Keys set with the stock UI's `/keymap` (Codex's `tui.keymap`, in ad's Codex home) apply in `ad tui` too, for the actions ad has.
+- `ad tui`: Codex's status line under the prompt (`/statusline` chooses its items, saved as Codex's `tui.status_line`), and the terminal window's title (`/title`, Codex's `tui.terminal_title`): a spinner while a turn runs, "action required" while an approval waits. The context and usage meters moved from the footer into the status line.
 - `ad tui`: Codex's `/clear [name]` (clears the terminal, scrollback included, and starts a new conversation; `clear.keepScrollback` in `~/.agent-daemon/tui/prefs.json` keeps the scrollback), `/archive` and `/delete` (each asks first; `/delete` also drops the conversation's `/undo` snapshots), `/resume archived` (resuming unarchives), and `/pwd` (`/cwd`).
 
 ### Changed

@@ -18,7 +18,7 @@ const FAKE = fileURLToPath(new URL("../testkit/fake-codex-app-server.mjs", impor
 const command = { cmd: process.execPath, prefix: [FAKE] };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function withApp(fn, { cols = 70, rows = 20, actions = {}, armMs = 60, sessionOpts = {}, restartable = false } = {}) {
+async function withApp(fn, { cols = 70, rows = 20, actions = {}, armMs = 60, sessionOpts = {}, restartable = false, settings = null } = {}) {
   const root = mkdtempSync(join(tmpdir(), "ad-app-"));
   const engines = [];
   const make = async () => {
@@ -44,7 +44,7 @@ async function withApp(fn, { cols = 70, rows = 20, actions = {}, armMs = 60, ses
   };
   const committed = () => scrollback.join("\n");
   const bells = [];
-  const app = createApp({ io, renderer, session, cwd: root, header: [[{ text: "HEADER" }]], armMs, actions: { bell: (o) => bells.push(o), ...actions } });
+  const app = createApp({ io, renderer, session, cwd: root, header: [[{ text: "HEADER" }]], armMs, settings, actions: { bell: (o) => bells.push(o), ...actions } });
   const text = () => scr.lines().join("\n");
   const until = async (pred, what, ms = 10000) => {
     const end = Date.now() + ms;
@@ -623,5 +623,116 @@ test("Codex's keys for /copy, /raw and /warnings: Ctrl+O, Alt+R, F2", async () =
       await until(() => /No warnings in this session|Warnings/.test(committed()), "the warnings");
     },
     { actions: { copy: async () => ({ ok: true, via: "stub" }) } },
+  );
+});
+
+// Codex's settings as the app sees them (prefs.mjs's createCodexSettings), in memory.
+function memorySettings(initial = {}) {
+  const store = structuredClone(initial);
+  const at = (k) => k.split(".").reduce((o, x) => o?.[x], store);
+  return {
+    store,
+    codex: {
+      get: at,
+      async set(k, v) {
+        const keys = k.split(".");
+        let o = store;
+        for (const x of keys.slice(0, -1)) o = o[x] ??= {};
+        if (v === null) delete o[keys.at(-1)];
+        else o[keys.at(-1)] = v;
+      },
+    },
+    ad: { get: (_k, d) => d },
+  };
+}
+
+test("status line: Codex's items under the composer; /statusline previews, saves, and keeps ids ad can't show", async () => {
+  const settings = memorySettings({ tui: { status_line: ["model", "pull-request-number", "current-dir"] } });
+  await withApp(
+    async ({ app, type, until, text }) => {
+      type("early-complete\r"); // the model is known once the conversation starts
+      await until(() => /fake-model · \S/.test(text()), "the configured items");
+      type("/statusline\r");
+      await until(() => app.state.popup === "status" && /\[x\] model/.test(text()), "the checklist");
+      type(" "); // model off: the row changes at once (a preview)
+      await until(() => !/fake-model ·/.test(text()), "the preview");
+      type("\r");
+      await until(() => /Status line: current-dir\. Saved for \/codex too\./.test(text()), "saved");
+      assert.deepEqual(settings.store.tui.status_line, ["current-dir", "pull-request-number"], "Codex's item ad can't show is kept");
+      // Esc puts the row back as it was.
+      type("/statusline\r");
+      await until(() => app.state.popup === "status", "again");
+      type("\x1b[B \x1b");
+      await until(() => app.state.popup === null, "cancelled");
+      assert.deepEqual(settings.store.tui.status_line, ["current-dir", "pull-request-number"]);
+      type("/warnings\r");
+      await until(() => /ad doesn't show "pull-request-number"/.test(text()), "the warning about it");
+    },
+    { settings, cols: 100 },
+  );
+});
+
+test("status line: off with [] and under 12 rows", async () => {
+  await withApp(async ({ text }) => {
+    await sleep(100);
+    assert.doesNotMatch(text(), /ctx \d+%/, "[] turns it off");
+  }, { settings: memorySettings({ tui: { status_line: [] } }) });
+  // The default row shows the folder (ad-app-…); at 11 rows it isn't drawn.
+  await withApp(async ({ text, until }) => until(() => /ad-app-/.test(text()), "the row at 20 rows"), { settings: memorySettings() });
+  await withApp(async ({ text }) => {
+    await sleep(100);
+    assert.doesNotMatch(text(), /ad-app-/);
+  }, { rows: 11, settings: memorySettings() });
+});
+
+test("window title: saved first, set by OSC 0, /private keeps the conversation's name out, put back around handoffs", async () => {
+  await withApp(
+    async ({ app, scr, type, until }) => {
+      const titles = () => scr.writes.filter((w) => w.includes("\x1b]0;"));
+      await until(() => titles().length, "a title");
+      assert.ok(titles()[0].startsWith("\x1b[22;0t\x1b]0;"), "the terminal's own title is saved first");
+      type("early-complete\r");
+      await until(() => /Worked for/.test(scr.lines().join("\n")), "a turn");
+      type("/rename early bird\r");
+      await until(() => titles().some((w) => /\x1b\]0;early bird/.test(w)), "the conversation's name in the title");
+      type("/private\r");
+      await until(() => titles().at(-1).includes("\x1b]0;\x07") || !/early/.test(titles().at(-1)), "the name gone in /private");
+      assert.doesNotMatch(titles().at(-1), /early/);
+      app.holdTitle(true);
+      assert.ok(scr.writes.at(-1).endsWith("\x1b]0;\x07\x1b[23;0t"), "put back for a handoff");
+    },
+    { settings: memorySettings({ tui: { terminal_title: ["thread-name"] } }) },
+  );
+});
+
+test("/title saves Codex's tui.terminal_title; [] leaves the title alone", async () => {
+  const settings = memorySettings({ tui: { terminal_title: [] } });
+  await withApp(
+    async ({ app, scr, type, until }) => {
+      await sleep(100);
+      assert.ok(!scr.writes.some((w) => w.includes("\x1b]0;")), "[]: no title written at all");
+      type("/title\r");
+      await until(() => app.state.popup === "title", "the checklist");
+      type(" \r"); // the first item (activity) on
+      await until(() => Array.isArray(settings.store.tui.terminal_title) && settings.store.tui.terminal_title.length === 1, "saved");
+      assert.deepEqual(settings.store.tui.terminal_title, ["activity"]);
+    },
+    { settings },
+  );
+});
+
+test("window title: nothing is written while another program has the terminal", async () => {
+  await withApp(
+    async ({ app, scr, type, until }) => {
+      await until(() => scr.writes.some((w) => w.includes("\x1b]0;")), "a title");
+      app.holdTitle(true);
+      const n = scr.writes.length;
+      type("/rename while away\r");
+      await sleep(400);
+      assert.ok(!scr.writes.slice(n).some((w) => w.includes("\x1b]0;")), "no title during the handoff");
+      app.holdTitle(false);
+      await until(() => scr.writes.slice(n).some((w) => w.includes("\x1b]0;")), "the title again after it");
+    },
+    { settings: memorySettings({ tui: { terminal_title: ["app-name", "thread-name"] } }) },
   );
 });

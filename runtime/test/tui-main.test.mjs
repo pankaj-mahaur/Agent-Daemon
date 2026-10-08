@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, w
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { hookRows, meters, preflight, sinceLastTime, splitArgs, splitUnifiedDiff } from "../src/tui/main.mjs";
+import { hookRows, preflight, sinceLastTime, splitArgs, splitUnifiedDiff } from "../src/tui/main.mjs";
 import { codexArgs, MIRROR_MARKER, MIRRORED_FLAG, runStockCodex, syncSkills } from "../src/harness/codex-ui.mjs";
 import { skillRoots } from "../src/harness/setup.mjs";
 
@@ -61,14 +61,6 @@ test("hookRows: only ad's own hooks; recalled memory, guard blocks, failures", (
   assert.deepEqual(hookRows({ ...run({}), phase: "started" }, { hooksFile }), []);
   // Escapes in hook output never reach the row.
   assert.ok(!/\x1b/.test(hookRows(run({ status: "blocked", entries: [{ kind: "feedback", text: "\x1b[2Jno" }] }), { hooksFile })[0].text));
-});
-
-test("meters: context left and the usage window, amber from 80 % used", () => {
-  assert.deepEqual(meters({ tokens: { last: { total: 85_000 }, contextWindow: 100_000 }, rateLimits: { primary: { usedPercent: 38.4, windowDurationMins: 300 } } }), [
-    { text: "ctx 15%", warn: true },
-    { text: "5h 38%", warn: false },
-  ]);
-  assert.deepEqual(meters({}), []);
 });
 
 test("sinceLastTime: proposals waiting and loops newer than the last visit", async () => {

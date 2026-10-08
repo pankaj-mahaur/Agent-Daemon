@@ -113,15 +113,13 @@ On exit, ad prints how to continue: `ad tui --resume <id>`, with the tokens used
   - Setup warnings (a sandbox that isn't ready, a trust answer that wasn't saved) show in yellow under it. So does "the scheduler isn't running" when an enabled job is more than 5 minutes overdue.
 - **Cells.** Prompts (`›`), answers, commands (Explored, Ran, Failed (exit N), Declined, with the last lines of output), edits (`Edited N files (+A -R)` with a diff), plans, tool calls and notices. A turn ends with "Worked for Ns".
 - **ad rows** are one dim line each, and only when something happens: recalled learnings, a guard that blocked a command, a hook that failed, what ad learned, loop iterations.
-- **Status line** (while a turn runs): what Codex is doing, the time, and `esc to interrupt`. Queued prompts are listed under it; the last one says `tab: edit`.
+- **Activity row** (while a turn runs): what Codex is doing, the time, and `esc to interrupt`. Queued prompts are listed under it; the last one says `tab: edit`.
+- **Status line** (under the prompt, from 12 rows): Codex's status line items, joined with ` · `. By default the model and its reasoning effort, the folder, `ctx N%` (the context left in this conversation) and `5h N%` (how much of the current usage window is used); a percentage turns amber at 80 % used. `/statusline` chooses the items and their order, with Codex's ids (`git-branch`, `branch-changes`, `run-state`, `weekly-limit`, `task-progress`, …); it's saved as Codex's `tui.status_line`, so `/codex` shows the same. When it's too wide, items drop from the end. Under an approval it shows only where the approval doesn't need the room.
 - **Footer.**
   - Left: key hints. Idle: `? shortcuts · @ files · <newline key> newline`. While a turn runs: `enter steer · tab queue · <newline key> newline`.
-  - Right: meters and chips.
-    - `ctx N%` is the context left in this conversation.
-    - `5h N%` is how much of the current usage window is used.
-    - A meter turns amber at 80 % used.
-    - `private` shows while `/private` is on, and `loop N` while a background loop runs.
-  - **When the footer is too narrow**, the key hints go first (from the end), then chips shorten (`loop 3` → `L3`, `private` → `P`), then chips go, and the meters go last.
+  - Right: chips: `private` while `/private` is on, `loop N` while a background loop runs.
+  - **When the footer is too narrow**, the key hints go first (from the end), then chips shorten (`loop 3` → `L3`, `private` → `P`), then chips go.
+- **Window title.** By default a spinner while a turn runs ("action required" while an approval waits), the conversation's name and the project. `/title` chooses the items (Codex's `tui.terminal_title`). The terminal's own title is saved when ad starts and put back when it ends and around `/codex` and the editor. `/private` keeps the conversation's name out of it.
 
 ---
 
@@ -250,6 +248,8 @@ Type `/` to see them with a one-line hint each. Commands marked "Codex" keep Cod
 | `/permissions` | what Codex may do without asking: Read only, Auto (default: edits this folder, asks for the rest), Full access (Codex) |
 | `/login [chatgpt\|openai\|openrouter]` | sign in (ChatGPT, OpenAI key, OpenRouter); Codex restarts with the new login |
 | `/logout` | sign out of Codex in ad's home (Codex) |
+| `/statusline` | choose the status line's items and their order: Space toggles, ← → move, Enter saves, Esc puts it back (Codex) |
+| `/title` | choose what the terminal window's title shows, the same way (Codex) |
 
 Model, effort and permission changes apply from the next turn.
 
@@ -415,7 +415,7 @@ Codex reads skills only from its home, so your `~/.claude/skills` are mirrored i
 | `~/.agent-daemon/tui/chat-hint-shown` | marks the one-time `ad chat` hint (that bare `ad` opens the TUI) as shown |
 | `~/.agent-daemon/locks/` | conversation locks, so two `ad`s never write one conversation |
 | `~/.agent-daemon/tui/prefs.json` | ad's own TUI preferences (owner-only), for what Codex has no setting for: `clear.keepScrollback` |
-| `~/.agent-daemon/codex-home/config.toml` | folder trust (`projects`), as Codex keeps it, and Codex's own TUI settings (`tui.status_line`, `tui.terminal_title`, `tui.theme`, `tui.vim_mode_default`): the stock UI (`/codex`) uses the same ones. `tui.keymap` is read, never written by ad |
+| `~/.agent-daemon/codex-home/config.toml` | folder trust (`projects`), as Codex keeps it, and Codex's own TUI settings (`tui.status_line`, `tui.terminal_title`, `tui.theme`, `tui.vim_mode_default`): the stock UI (`/codex`) uses the same ones, and an item ad can't show stays there (`/warnings` lists it). `tui.keymap` is read, never written by ad |
 | `~/.agent-daemon/codex-home/skills/` | the mirror of `~/.claude/skills` for `ad codex` |
 | `<repo>/.git/ad-checkpoint-index`, `refs/ad/checkpoints/` | `/undo` snapshots |
 | `<project>/.agent-daemon/loop-tui.log`, `STOP` | `/loop` output, and its stop file |

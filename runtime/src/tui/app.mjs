@@ -16,7 +16,7 @@ import { isExploring, renderAdRow, renderCell, renderDiff, renderExploring, rend
 import { createChecklist, createPicker, renderFooter, renderShortcuts, renderStatus } from "./view/chrome.mjs";
 import { ARM_MS, createConfirm, createRequestModal } from "./view/modals.mjs";
 import { sanitize } from "./terminal/sanitize.mjs";
-import { truncate } from "./terminal/text.mjs";
+import { lineWidth, truncate } from "./terminal/text.mjs";
 import { INIT_PROMPT } from "./init-prompt.mjs";
 import { existsSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -24,6 +24,7 @@ import { copyText, exportMarkdown, imagePath, lastAgentText, renderHooks, render
 import CODEX_SLASH from "./codex-slash.json" with { type: "json" };
 import { T } from "./view/theme.mjs";
 import { createKeymap } from "./keymap.mjs";
+import { DEFAULT_STATUS, DEFAULT_TITLE, STATUS_IDS, TITLE_IDS, canonical, statusSegments, titleText, unsupported } from "./status.mjs";
 
 export const FORCE_QUIT_MS = 1500;
 const FRAME_MS = 33;
@@ -73,6 +74,8 @@ export const SLASH_COMMANDS = [
   { name: "hooks", source: "codex", desc: "hooks and whether they are trusted" },
   { name: "skills", source: "codex", desc: "skills Codex can use here" },
   { name: "usage", source: "codex", desc: "usage limits and tokens" },
+  { name: "statusline", source: "codex", desc: "choose what the status line shows" },
+  { name: "title", source: "codex", desc: "choose what the terminal window's title shows" },
   { name: "image", source: "ad", desc: "attach an image file to the next prompt" },
   { name: "undo", source: "ad", desc: "put back the files the last turn changed, and rewind it (/undo force)" },
   { name: "terminal-setup", source: "ad", desc: "how to make Shift+Enter add a newline here" },
@@ -113,8 +116,6 @@ export const NOT_IN_AD = {
   daemon: "/daemon manages Codex's background server; ad runs its own engine and never uses it.",
   cd: true,
   "debug-config": true,
-  title: true,
-  statusline: true,
   theme: true,
   pets: "ad doesn't draw terminal pets (they need Kitty or Sixel images).",
   apps: true,
@@ -167,7 +168,7 @@ export function createApp({
   actions = {},
   settings = null, // {codex, ad} from prefs.mjs; null in tests that don't need them
   keymap = createKeymap(), // keys as Codex's actions, with tui.keymap applied (keymap.mjs)
-  meters = () => [],
+  statusInfo = {}, // {codexVersion, hostname, home} for the status line and the title
   chips = () => [],
   info = {},
   now = () => Date.now(),
@@ -462,8 +463,129 @@ export function createApp({
     if (privateMode) own.push({ full: "private", short: "P" });
     const loop = actions.ad?.loop?.state;
     if (loop?.running) own.push({ full: `loop ${loop.iterations}`, short: `L${loop.iterations}` });
-    return renderFooter({ hints, chips: [...chips(), ...own], meters: meters(st) }, { width: width() });
+    return renderFooter({ hints, chips: [...chips(), ...own] }, { width: width() });
   }
+
+  /* -------------------------------------------------------------- */
+  /* Status line and window title (Codex's tui.status_line, tui.terminal_title) */
+  /* -------------------------------------------------------------- */
+
+  let preview = { status: null, title: null }; // a checklist's live preview
+  let git = { root: null, branch: null, changes: null };
+  let gitAt = -Infinity;
+  let titleFrame = 0;
+  let titleShown = null; // what the window title says now (null: never set)
+  let titleAt = -Infinity;
+  let titleTimer = null;
+  let titleHeld = false; // another program has the terminal (a handoff)
+  const statusIds = () => preview.status ?? settings?.codex?.get("tui.status_line");
+  const titleIds = () => preview.title ?? settings?.codex?.get("tui.terminal_title");
+  function statusCtx() {
+    const c = st.config;
+    return {
+      app: "ad",
+      model: c.model,
+      effort: c.effort,
+      cwd,
+      home: statusInfo.home,
+      project: path.basename(git.root ?? cwd),
+      hostname: statusInfo.hostname,
+      branch: git.branch,
+      changes: git.changes,
+      running: turnActive(),
+      waiting: Boolean(modal || confirm),
+      sandbox: c.sandbox,
+      approvalPolicy: c.approvalPolicy,
+      tokens: st.tokens,
+      rateLimits: st.rateLimits,
+      codexVersion: statusInfo.codexVersion,
+      threadId: st.thread?.id,
+      // A /private conversation's name never reaches the window title or the status line.
+      threadName: privateMode ? null : st.thread?.name || st.thread?.preview,
+      plan: st.plan,
+      frame: titleFrame,
+    };
+  }
+  function statusRow(w) {
+    const segs = statusSegments(statusIds(), statusCtx());
+    if (!segs.length) return null;
+    // Items drop from the end until the row fits; the last one left is cut.
+    const sep = " \u{b7} ";
+    const row = (k) => [{ text: "  " }, ...segs.slice(0, k).flatMap((s, i) => [...(i ? [{ text: sep, style: DIM }] : []), { text: s.text, style: s.warn ? WARN : DIM }])];
+    let n = segs.length;
+    while (n > 1 && lineWidth(row(n)) > w) n--;
+    return truncate(row(n), w);
+  }
+  // Git's facts for the status line and title: at start, after each turn, and
+  // at most every 30 s while idle; only when an item needs them.
+  function refreshGit(force = false) {
+    const needs = [...(statusIds() ?? []), ...(titleIds() ?? [])].map(canonical).some((id) => ["git-branch", "branch-changes", "project-name"].includes(id));
+    const wanted = needs || statusIds() === undefined || titleIds() === undefined; // the defaults show the project
+    if (!wanted || !actions.gitInfo || (!force && now() - gitAt < 30_000)) return;
+    gitAt = now();
+    Promise.resolve(actions.gitInfo())
+      .then((g) => {
+        if (g) git = g;
+        drawSoon();
+      })
+      .catch(() => {});
+  }
+  // The window title, at most 4 changes a second, only when it changes; [] leaves the title alone.
+  function syncTitle() {
+    if (titleHeld) return;
+    const ids = titleIds();
+    if (Array.isArray(ids) && !ids.length) return;
+    const text = titleText(ids, statusCtx());
+    if (text === titleShown) return;
+    const wait = titleAt + 250 - now();
+    if (wait > 0) {
+      titleTimer ??= setT(() => {
+        titleTimer = null;
+        syncTitle();
+      }, wait);
+      return;
+    }
+    // The terminal's own title is saved first (XTWINOPS 22) and put back on exit (23).
+    io.write(`${titleShown === null ? "\x1b[22;0t" : ""}\x1b]0;${text}\x07`);
+    titleShown = text;
+    titleAt = now();
+  }
+  function restoreTitle() {
+    clearT(titleTimer);
+    titleTimer = null;
+    if (titleShown === null) return;
+    io.write("\x1b]0;\x07\x1b[23;0t");
+    titleShown = null;
+  }
+  // /statusline and /title: a checklist of Codex's items (with what each shows now), live preview, saved to Codex's config.
+  function pickItems(kind) {
+    const isTitle = kind === "title";
+    const key = isTitle ? "tui.terminal_title" : "tui.status_line";
+    if (!settings?.codex) return warn("Settings aren't available here.");
+    const current = (isTitle ? titleIds() : statusIds()) ?? null;
+    const chosen = (current ?? (isTitle ? DEFAULT_TITLE : DEFAULT_STATUS)).map(canonical);
+    const all = isTitle ? TITLE_IDS : STATUS_IDS;
+    const keep = unsupported(current, kind); // Codex's items ad can't show stay in the setting
+    const ctx = statusCtx();
+    const now_ = (id) => (isTitle ? titleText([id], ctx) : statusSegments([id], ctx)[0]?.text) || "";
+    const order = [...chosen.filter((id) => all.includes(id)), ...all.filter((id) => !chosen.includes(id))];
+    openChecklist(
+      kind,
+      order.map((id) => ({ label: id, hint: now_(id), value: id, checked: chosen.includes(id) })),
+      async (values) => {
+        preview = { ...preview, [kind]: null };
+        try {
+          await settings.codex.set(key, [...values, ...keep]);
+          info0(`${isTitle ? "Title" : "Status line"}: ${values.length ? values.join(", ") : "off"}. Saved for /codex too.`);
+        } catch (err) {
+          fail(err);
+        }
+        drawSoon();
+      },
+      { title: isTitle ? "Terminal title" : "Status line", reorder: true, onChange: (v) => (preview = { ...preview, [kind]: v }), onCancel: () => (preview = { ...preview, [kind]: null }) },
+    );
+  }
+
 
   function draw() {
     clearT(drawTimer);
@@ -497,11 +619,15 @@ export function createApp({
       lines.push(truncate([{ text: `\u{25a0} Codex stopped${code}. Your text is kept. Enter restarts and resumes.`, style: WARN }], w));
     } else if (st.engine.state === "restarting") lines.push(truncate([{ text: "\u{25e6} Restarting Codex\u{2026}", style: DIM }], w));
     let cursor = null;
+    // The status line: from 12 rows; under a modal only in room the modal doesn't need.
+    const status = rows >= 12 ? statusRow(w) : null;
     if (modal || confirm) {
       if (lines.length) lines.push([]);
       const budget = Math.max(4, rows - lines.length - 2);
-      lines.push(...(modal ?? confirm).view.render({ width: w, height: budget }));
+      const box = (modal ?? confirm).view.render({ width: w, height: budget });
+      lines.push(...box);
       cursor = { row: lines.length - 1, col: 0 };
+      if (status && box.length < budget) lines.push(status);
     } else {
       if (note) lines.push(truncate([{ text: clean(note.text), style: note.level === "warn" || note.level === "error" ? WARN : DIM }], w));
       if (attachments.length) lines.push(truncate([{ text: `  \u{1f4ce} ${attachments.map((a) => clean(path.basename(a))).join(", ")}`, style: T.code }], w));
@@ -512,8 +638,12 @@ export function createApp({
       cursor = { row: top + c.cursor.row, col: c.cursor.col };
       if (popup) lines.push(...popup.view.render({ width: w, height: Math.min(10, Math.max(3, rows - lines.length - 1)) }));
       else if (overlay) lines.push(...renderShortcuts({ newline, keymap }, { width: w }));
-      else if (rows >= 10) lines.push(footer());
+      else {
+        if (status) lines.push(status);
+        if (rows >= 10) lines.push(footer());
+      }
     }
+    syncTitle();
     // The live region never takes the whole screen.
     const max = Math.max(1, rows - 1);
     const cut = lines.length > max ? lines.length - max : 0;
@@ -676,6 +806,10 @@ export function createApp({
         await actions.forgetCheckpoints?.(id)?.catch?.(() => {});
         return info0("Deleted.");
       }
+      case "statusline":
+        return pickItems("status");
+      case "title":
+        return pickItems("title");
       case "pwd":
         return arg ? warn("Usage: /pwd") : info0(`Current working directory: ${clean(cwd)}`);
       case "quit":
@@ -860,7 +994,11 @@ export function createApp({
   function warningsReport() {
     const kept = st.notices.filter((n) => n.level !== "info");
     const unknown = Object.entries(session.engine?.unknownCounts?.() ?? {});
-    const unused = keymap.warnings ?? [];
+    const unused = [
+      ...(keymap.warnings ?? []),
+      ...unsupported(settings?.codex?.get("tui.status_line"), "status").map((id) => `tui.status_line: ad doesn't show "${id}" (the stock UI may)`),
+      ...unsupported(settings?.codex?.get("tui.terminal_title"), "title").map((id) => `tui.terminal_title: ad doesn't show "${id}" (the stock UI may)`),
+    ];
     if (!kept.length && !unknown.length && !unused.length) return renderNotice({ level: "info", message: "No warnings in this session." }, { width: width() });
     const out = [[{ text: "Warnings", style: T.bold }]];
     for (const n of kept.slice(-20)) out.push(...renderNotice(n, { width: width() }));
@@ -1082,6 +1220,7 @@ export function createApp({
   function quit(reason = "quit") {
     if (quitting) return;
     quitting = true;
+    restoreTitle();
     if (modal && !modal.answered) session.resolve(modal.id, null);
     confirm?.resolve(false);
     confirm = null;
@@ -1270,6 +1409,7 @@ export function createApp({
     // A resumed conversation's turns are history, not news: never reported as just ended.
     if (what === "thread" && st.thread) for (const t of st.turns) if (t.status !== "inProgress" && !turnsSeen.has(t.id)) turnsSeen.set(t.id, t.status);
     if ((what === "turn" || what === "starting" || what === "turn.started") && st.activeTurnId) turnStartedAt ??= now();
+    if (what === "turn" && !st.activeTurnId) refreshGit(true);
     drawSoon();
   });
   const offHook = session.on("hook", (run) => {
@@ -1280,11 +1420,14 @@ export function createApp({
   const offResize = renderer.onResize?.(() => draw()) ?? (() => {});
   ticker = setI(() => {
     pollLoop();
+    if (turnActive()) titleFrame++;
+    else refreshGit();
     if (turnActive() || modal || loopWasRunning) draw();
   }, 1000);
   ticker.unref?.();
 
   commit(header);
+  refreshGit(true);
   draw();
 
   return {
@@ -1307,7 +1450,14 @@ export function createApp({
     get state() {
       return { composer: composer.text, modal: modal?.view.kind ?? null, confirm: Boolean(confirm), pager: Boolean(pager), popup: popup?.kind ?? null, overlay, note: note?.text ?? null, committed: committed.size };
     },
+    /** Around a handoff (/codex, the editor): the title goes back to the terminal's, then ours again. */
+    holdTitle(hold) {
+      titleHeld = Boolean(hold);
+      if (hold) restoreTitle();
+      else draw();
+    },
     dispose() {
+      restoreTitle();
       clearT(drawTimer);
       clearT(searchTimer);
       clearI(ticker);
