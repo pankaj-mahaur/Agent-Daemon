@@ -397,6 +397,22 @@ test("FC4 live: ad's own features in ad tui on the real Codex binary", { skip, t
     await t.until(/Loop: finished after \d+ iterations?/, "the loop's end", 120_000);
     assert.ok(mock.requests.some((r) => /Objective:\s*PING loop objective/.test(r.text)), "the loop prompted the model");
 
+    // /clear (Codex's): the screen and the scrollback go; a new, named conversation starts.
+    await run("/clear tidy", /New conversation: tidy\./, "cleared");
+    assert.doesNotMatch(t.text(), /Learned: pnpm/, "the scrollback from before /clear is gone (ED3 reached the terminal)");
+    // /archive asks first; /resume archived brings it back.
+    await run("PING archive me", /pong/, "a turn to archive");
+    t.type("/archive\r");
+    await t.until(/Archive this conversation\?/, "the question");
+    await settle(600); // past the arm delay
+    t.type("y");
+    await t.until(/Archived\. \/resume archived brings it back\./, "archived");
+    await t.until(() => t.idle(), "idle after /archive");
+    t.type("/resume archived\r");
+    await t.until(/Resume an archived conversation/, "the archived list");
+    t.type("\r");
+    await t.until(/Unarchived and resumed\./, "unarchived and resumed");
+
     t.type("\x03");
     await settle(200);
     t.type("\x03");

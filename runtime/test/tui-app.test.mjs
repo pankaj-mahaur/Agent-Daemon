@@ -384,6 +384,70 @@ test("key routing table: the topmost layer takes Esc, Ctrl+C, Tab, Shift+Tab, En
   }
 });
 
+test("/clear, /archive, /resume archived, /delete and /pwd", async () => {
+  const forgotten = [];
+  await withApp(
+    async ({ app, type, until, text, session, engine }) => {
+      const debug = () => engine.server.request("debug/state", {});
+      type("/pwd\r");
+      await until(() => /Current working directory:\s+\S/.test(text()), "/pwd"); // a long temp path wraps
+      type("/pwd now\r");
+      await until(() => /Usage: \/pwd/.test(text()), "its usage");
+      type("\x15/archive\r");
+      await until(() => /Nothing to archive yet/.test(text()), "nothing to archive");
+      type("early-complete\r");
+      await until(() => /Worked for/.test(text()), "a turn");
+      const first = session.state.thread.id;
+
+      // /clear: the screen and scrollback go; a new, named conversation starts.
+      type("/clear login fix\r");
+      await until(() => /New conversation: login fix\. The one before: \/resume, or ad tui --resume/.test(text()), "cleared");
+      assert.doesNotMatch(text(), /Worked for|early/, "the old scrollback is gone");
+      assert.match(text(), /HEADER/, "the header again");
+      assert.equal(session.state.thread.name, "login fix");
+      assert.notEqual(session.state.thread.id, first);
+      assert.equal((await debug()).lastParams["thread/start"].sessionStartSource, "clear");
+
+      // /archive asks first; "y" before the arm delay is ignored.
+      type("/archive\r");
+      await until(() => app.state.confirm, "the question");
+      type("n");
+      await sleep(10);
+      assert.ok(app.state.confirm, "too soon");
+      await sleep(80);
+      type("y");
+      await until(() => /Archived\. \/resume archived brings it back\./.test(text()), "archived");
+      assert.ok((await debug()).calls.includes("thread/archive"));
+      assert.equal(session.state.thread, null);
+
+      // /resume archived unarchives and resumes.
+      type("/resume archived\r");
+      await until(() => app.state.popup === "resume" && /an archived one/.test(text()), "the archived list");
+      type("\r");
+      await until(() => /Unarchived and resumed\./.test(text()), "resumed");
+      assert.equal(session.state.thread.id, "thread-archived");
+      assert.ok((await debug()).calls.includes("thread/unarchive"));
+
+      // /delete: "no" keeps it; "yes" deletes it and its /undo snapshots.
+      type("/delete\r");
+      await until(() => app.state.confirm && /Cannot be undone/.test(text()), "the question");
+      await sleep(80);
+      type("n");
+      await until(() => /Kept\./.test(text()), "kept");
+      assert.equal(session.state.thread.id, "thread-archived");
+      type("/delete\r");
+      await until(() => app.state.confirm, "asked again");
+      await sleep(80);
+      type("y");
+      await until(() => /Deleted\./.test(text()), "deleted");
+      assert.deepEqual(forgotten, ["thread-archived"]);
+      assert.equal(session.state.thread, null);
+    },
+    // Wide enough that the long answers (a temp path, a resume hint) stay on one row.
+    { cols: 160, actions: { forgetCheckpoints: async (id) => forgotten.push(id) } },
+  );
+});
+
 test("/permissions and /model set the next turn's overrides through pickers", async () => {
   await withApp(async ({ app, type, until, text, session, engine }) => {
     type("/permissions\r");

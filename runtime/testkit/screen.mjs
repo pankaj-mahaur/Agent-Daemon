@@ -171,8 +171,14 @@ export function modelScreen({ cols = 40, rows = 10, sync = true, cprDelayMs = 0 
           x = Math.min(C - 1, (nums[1] ?? 1) - 1);
         } else if (final === "K") screen[y].length = Math.min(screen[y].length, x);
         else if (final === "J") {
-          screen[y].length = Math.min(screen[y].length, x);
-          for (let k = y + 1; k < R; k++) screen[k] = blankRow();
+          // ED0 (to the end), ED2 (the whole screen), ED3 (the scrollback, /clear).
+          const mode = nums[0] ?? 0;
+          if (mode === 2) for (let k = 0; k < R; k++) screen[k] = blankRow();
+          else if (mode === 3) scroll.length = 0;
+          else {
+            screen[y].length = Math.min(screen[y].length, x);
+            for (let k = y + 1; k < R; k++) screen[k] = blankRow();
+          }
         } else if (final === "n" && n === 6) replies.push({ row: y + 1, col: x + 1 });
         continue;
       }

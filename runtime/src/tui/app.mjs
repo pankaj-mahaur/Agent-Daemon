@@ -38,7 +38,11 @@ const WARN = T.warning;
 export const SLASH_COMMANDS = [
   { name: "help", source: "ad", desc: "what you can do here" },
   { name: "new", source: "codex", desc: "start a new conversation" },
-  { name: "resume", source: "codex", desc: "continue an earlier conversation" },
+  { name: "resume", source: "codex", desc: "continue an earlier conversation (/resume archived)" },
+  { name: "clear", source: "codex", desc: "clear the terminal and start a new conversation" },
+  { name: "archive", source: "codex", desc: "archive this conversation (/resume archived brings it back)" },
+  { name: "delete", source: "codex", desc: "delete this conversation for good" },
+  { name: "pwd", source: "codex", desc: "show the current working directory" },
   { name: "model", source: "codex", desc: "choose the model and reasoning effort" },
   { name: "permissions", source: "codex", desc: "what Codex may do without asking" },
   { name: "status", source: "codex", desc: "account, model, sandbox, tokens, limits" },
@@ -96,8 +100,6 @@ export const NOT_IN_AD = {
   approve: true,
   memories: `/memories (Codex's own memories) isn't in ad yet; ad's memory is /memory. ${STOCK_UI}`,
   import: true,
-  archive: true,
-  delete: true,
   worktree: true,
   app: "/app opens the Codex Desktop app, which uses your own Codex home, not ad's, so it can't continue this conversation.",
   recap: true,
@@ -110,7 +112,6 @@ export const NOT_IN_AD = {
   mention: "Type @ in the prompt to mention a file.",
   daemon: "/daemon manages Codex's background server; ad runs its own engine and never uses it.",
   cd: true,
-  pwd: true,
   "debug-config": true,
   title: true,
   statusline: true,
@@ -122,7 +123,6 @@ export const NOT_IN_AD = {
   rollout: true,
   ps: `/ps isn't in ad yet. ${ELSEWHERE("/ps")}`,
   stop: `/stop isn't in ad yet. ${ELSEWHERE("/stop")}`,
-  clear: "/clear isn't in ad yet; /new starts a new conversation (and keeps the scrollback).",
   "test-approval": "/test-approval is a Codex debug command.",
   subagents: true,
   "debug-m-drop": "/debug-m-drop is a Codex debug command.",
@@ -648,6 +648,36 @@ export function createApp({
         session.newThread();
         resetThreadView();
         return info0("New conversation.");
+      case "clear": {
+        // Codex's /clear: clear the terminal, scrollback too, and start a new
+        // conversation (named, if a name follows). The old one stays resumable.
+        // clear.keepScrollback in prefs.json keeps the scrollback (a divider instead).
+        const old = st.thread?.id ?? null;
+        session.newThread();
+        resetThreadView();
+        const keep = settings?.ad?.get("clear.keepScrollback", false);
+        if (keep || !renderer.clear?.(header)) commit([[{ text: "─".repeat(Math.min(60, width())), style: DIM }]]);
+        await session.startThread({ sessionStartSource: "clear", name: arg || undefined });
+        return info0(old ? `New conversation${arg ? `: ${clean(arg)}` : ""}. The one before: /resume, or ad tui --resume ${old}` : "New conversation.");
+      }
+      case "archive": {
+        if (!st.thread) return info0("Nothing to archive yet: this conversation hasn't started.");
+        if (!(await openConfirm({ title: "Archive this conversation?", body: clean(st.thread.name || st.thread.preview || st.thread.id), yes: "Yes, archive", no: "No, don't archive" }))) return info0("Not archived.");
+        await session.archive();
+        resetThreadView();
+        return info0("Archived. /resume archived brings it back.");
+      }
+      case "delete": {
+        if (!st.thread) return info0("Nothing to delete yet: this conversation hasn't started.");
+        const t = st.thread;
+        if (!(await openConfirm({ title: "Delete this conversation?", body: `${clean(t.name || t.preview || t.id)}\nCannot be undone. Subagent threads will also be deleted. ad's memory from it is kept.`, yes: "Yes, delete it", no: "No, keep it" }))) return info0("Kept.");
+        const id = await session.deleteThread();
+        resetThreadView();
+        await actions.forgetCheckpoints?.(id)?.catch?.(() => {});
+        return info0("Deleted.");
+      }
+      case "pwd":
+        return arg ? warn("Usage: /pwd") : info0(`Current working directory: ${clean(cwd)}`);
       case "quit":
       case "exit":
         return quit("command");
@@ -675,7 +705,7 @@ export function createApp({
           info0(`Permissions: ${item.label} (from the next turn${turnActive() ? "; the running turn keeps asking as before" : ""}).`);
         });
       case "resume":
-        return pickThread();
+        return pickThread({ archived: arg === "archived" });
       case "logout":
         return Promise.resolve(session.engine.logout())
           .then(() => warn("Signed out. /login to sign in again."))
@@ -934,30 +964,35 @@ export function createApp({
     });
   }
 
-  async function pickThread() {
+  // /resume: this folder's conversations, or the archived ones (resuming one unarchives it).
+  async function pickThread({ archived = false } = {}) {
     let threads = [];
     try {
-      const r = await session.engine.server.request("thread/list", { cwd, limit: 30, modelProviders: [], sourceKinds: ["cli", "vscode", "exec", "appServer"] });
+      const r = await session.engine.server.request("thread/list", { cwd, limit: 30, modelProviders: [], sourceKinds: ["cli", "vscode", "exec", "appServer"], ...(archived ? { archived: true } : {}) });
       threads = (r?.data ?? []).filter((t) => t.id !== st.thread?.id);
     } catch (err) {
       return fail(err);
     }
-    if (!threads.length) return info0("No earlier conversations in this folder.");
+    if (!threads.length) return info0(archived ? "No archived conversations in this folder." : "No earlier conversations in this folder. /resume archived lists the archived ones.");
+    const ARCHIVED = Symbol("archived");
+    const items = threads.map((t) => ({ label: clean(t.name || t.preview || t.id).slice(0, 200), hint: t.updatedAt ? new Date(t.updatedAt * 1000).toLocaleString() : "", value: t.id }));
+    if (!archived) items.push({ label: "Archived conversations" + String.fromCodePoint(0x2026), hint: "the ones /archive put away", value: ARCHIVED });
     openPicker(
       "resume",
-      threads.map((t) => ({ label: clean(t.name || t.preview || t.id).slice(0, 200), hint: t.updatedAt ? new Date(t.updatedAt * 1000).toLocaleString() : "", value: t.id })),
+      items,
       (id) => {
+        if (id === ARCHIVED) return void pickThread({ archived: true }).catch(fail);
         // The view isn't reset: the resumed thread's items are new ids, and if
         // resume fails (locked elsewhere) what is in the scrollback stays committed.
-        session
-          .resume(id)
+        Promise.resolve(archived && session.engine.server.request("thread/unarchive", { threadId: id }))
+          .then(() => session.resume(id))
           .then(() => {
-            info0("Resumed.");
+            info0(archived ? "Unarchived and resumed." : "Resumed.");
             draw();
           })
           .catch(fail);
       },
-      { title: "Resume" },
+      { title: archived ? "Resume an archived conversation" : "Resume" },
     );
   }
 

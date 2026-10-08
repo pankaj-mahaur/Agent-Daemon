@@ -470,7 +470,18 @@ async function onRequest({ id, method, params }) {
     case "model/list":
       return send({ id, result: { data: [{ id: "fake-model", model: "fake-model", displayName: "Fake model", description: "for tests", hidden: false, supportedReasoningEfforts: [{ reasoningEffort: "low" }, { reasoningEffort: "high" }], defaultReasoningEffort: "low", isDefault: true }], nextCursor: null } });
     case "thread/list":
+      if (params?.archived) return send({ id, result: { data: [{ id: "thread-archived", preview: "an archived one", cwd: params?.cwd ?? "", updatedAt: 2 }] } });
       return send({ id, result: { data: [{ id: "thread-old", preview: "fix the\nflaky test", cwd: params?.cwd ?? "", updatedAt: 1 }] } });
+    case "thread/archive":
+      notify("thread/archived", { threadId: params.threadId });
+      return send({ id, result: {} });
+    case "thread/unarchive":
+      notify("thread/unarchived", { threadId: params.threadId });
+      return send({ id, result: { thread: { id: params.threadId } } });
+    case "thread/delete":
+      if (params.threadId === "thread-locked") return send({ id, error: { code: -32600, message: "Invalid request: thread is running" } });
+      notify("thread/deleted", { threadId: params.threadId });
+      return send({ id, result: {} });
     case "test/fail":
       return send({ id, error: { code: -32000, message: "boom", data: { why: "scripted" } } });
     case "test/crash":

@@ -613,3 +613,71 @@ for (const [name, make, reflow] of SCREENS) {
 test("plain helper sanity", () => {
   assert.equal(plain([{ text: "a" }, { text: "b" }]), "ab");
 });
+
+/* ------------------------------------------------------------------ */
+/* clear(): /clear, the one sanctioned wipe (codex-parity-2 Part 2)    */
+/* ------------------------------------------------------------------ */
+
+for (const [name, make, reflow] of SCREENS) {
+  test(`${name}: clear() wipes the screen and the scrollback, then starts over with the header`, async () => {
+    const { scr, r } = await setup(make, reflow);
+    r.commit(["old one", "old two"]);
+    r.frame({ lines: ["> composer", "  footer"], cursor: { row: 0, col: 2 } });
+    await scr.settle();
+    assert.equal(r.clear(["HEADER"]), true);
+    await scr.settle();
+    assert.deepEqual(scr.lines(), ["HEADER", "> composer", "  footer"], "nothing from before, scrollback included");
+    assert.equal(scr.cursor().col, 2);
+    r.commit(["new history"]);
+    await scr.settle();
+    assert.deepEqual(scr.lines(), ["HEADER", "new history", "> composer", "  footer"]);
+    // Codex's own bytes.
+    assert.ok(scr.writes.some((w) => w.includes("\x1b[r\x1b[0m\x1b[H\x1b[2J\x1b[3J\x1b[H")));
+  });
+
+  test(`${name}: clear() during a pending resize: the UI stays live and lays out again`, async () => {
+    const { scr, r } = await setup(make, reflow);
+    r.frame({ lines: ["> composer"] });
+    await scr.settle();
+    let relayouts = 0;
+    r.onResize(() => relayouts++);
+    scr.resize(30, 10);
+    assert.equal(r.state.paused, true, "a resize is waiting");
+    assert.equal(r.clear(["H"]), true);
+    assert.equal(r.state.paused, false, "not frozen");
+    assert.equal(relayouts, 1, "laid out again at the new width");
+    r.frame({ lines: ["> again"] });
+    await wait(150); // past the resize's quiet time: its timer is gone
+    await scr.settle();
+    assert.deepEqual(scr.lines(), ["H", "> again"]);
+    assert.equal(relayouts, 1);
+  });
+
+  test(`${name}: clear() while a re-anchor waits for its cursor report: the late report draws nothing`, async () => {
+    const { scr, r } = await setup((o) => make({ ...o, cprDelayMs: 60 }), reflow);
+    // History first, so the cursor the late report describes is far below where it is after the clear.
+    r.commit(["one", "two", "three", "four", "five"]);
+    r.frame({ lines: ["> composer"] });
+    await scr.settle();
+    const redraw = r.redraw(); // waits ~60 ms for CPR
+    assert.equal(r.clear(["H"]), true);
+    await redraw;
+    await wait(20);
+    await scr.settle();
+    assert.deepEqual(scr.lines(), ["H", "> composer"]);
+    assert.equal(r.state.paused, false);
+  });
+}
+
+test("clear() does nothing before start, while suspended, or after dispose", async () => {
+  const scr = modelScreen({ cols: 40, rows: 10 });
+  const r = createRenderer({ io: scr.io, reflow: "none" });
+  assert.equal(r.clear(["H"]), false, "not started");
+  await r.start();
+  r.suspend();
+  assert.equal(r.clear(["H"]), false, "suspended for a handoff");
+  await r.resume();
+  r.dispose();
+  assert.equal(r.clear(["H"]), false, "disposed");
+  assert.ok(!scr.writes.some((w) => w.includes("\x1b[3J")));
+});

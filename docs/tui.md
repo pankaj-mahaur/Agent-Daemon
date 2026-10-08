@@ -230,8 +230,12 @@ Type `/` to see them with a one-line hint each. Commands marked "Codex" keep Cod
 
 | Command | What it does |
 |---|---|
-| `/new` | start a new conversation (Codex) |
-| `/resume` | continue an earlier conversation (Codex) |
+| `/new` | start a new conversation (Codex). The scrollback stays |
+| `/clear [name]` | clear the terminal, **scrollback included**, and start a new conversation, named if you give a name (Codex). The one before stays resumable. To keep the scrollback, set `"clear.keepScrollback": true` in `~/.agent-daemon/tui/prefs.json` |
+| `/resume` | continue an earlier conversation in this folder (Codex). `/resume archived` (or the last entry of the list) shows the archived ones; resuming one unarchives it |
+| `/archive` | archive this conversation, after asking (Codex). ad stays open on a new one; `/resume archived` brings it back |
+| `/delete` | delete this conversation for good, its subagents too, after asking (Codex). Its `/undo` snapshots go with it; ad's memory from it is kept |
+| `/pwd` | show the current working directory (Codex; `/cwd` too) |
 | `/fork` | continue in a copy of this conversation (Codex) |
 | `/rename <name>` | name this conversation (Codex) |
 | `/compact` | summarize the conversation to free context (Codex) |
@@ -410,7 +414,7 @@ Codex reads skills only from its home, so your `~/.claude/skills` are mirrored i
 | `~/.agent-daemon/tui/state.json` | when you last used each folder, for "Since last time" |
 | `~/.agent-daemon/tui/chat-hint-shown` | marks the one-time `ad chat` hint (that bare `ad` opens the TUI) as shown |
 | `~/.agent-daemon/locks/` | conversation locks, so two `ad`s never write one conversation |
-| `~/.agent-daemon/tui/prefs.json` | ad's own TUI preferences (owner-only), for what Codex has no setting for |
+| `~/.agent-daemon/tui/prefs.json` | ad's own TUI preferences (owner-only), for what Codex has no setting for: `clear.keepScrollback` |
 | `~/.agent-daemon/codex-home/config.toml` | folder trust (`projects`), as Codex keeps it, and Codex's own TUI settings (`tui.status_line`, `tui.terminal_title`, `tui.theme`, `tui.vim_mode_default`): the stock UI (`/codex`) uses the same ones. `tui.keymap` is read, never written by ad |
 | `~/.agent-daemon/codex-home/skills/` | the mirror of `~/.claude/skills` for `ad codex` |
 | `<repo>/.git/ad-checkpoint-index`, `refs/ad/checkpoints/` | `/undo` snapshots |

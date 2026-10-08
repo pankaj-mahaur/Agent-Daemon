@@ -224,7 +224,9 @@
       "review/start": "ReviewStartParams",
       "skills/extraRoots/set": "SkillsExtraRootsSetParams",
       "skills/list": "SkillsListParams",
+      "thread/archive": "ThreadArchiveParams",
       "thread/compact/start": "ThreadCompactStartParams",
+      "thread/delete": "ThreadDeleteParams",
       "thread/fork": "ThreadForkParams",
       "thread/goal/clear": "ThreadGoalClearParams",
       "thread/goal/set": "ThreadGoalSetParams",
@@ -235,6 +237,7 @@
       "thread/shellCommand": "ThreadShellCommandParams",
       "thread/start": "ThreadStartParams",
       "thread/turns/list": "ThreadTurnsListParams",
+      "thread/unarchive": "ThreadUnarchiveParams",
       "thread/unsubscribe": "ThreadUnsubscribeParams",
       "turn/interrupt": "TurnInterruptParams",
       "turn/start": "TurnStartParams",
@@ -1742,6 +1745,17 @@
         "threadId": "string"
       }
     },
+    "ThreadArchiveParams": {
+      "required": [
+        "threadId"
+      ],
+      "props": [
+        "threadId"
+      ],
+      "types": {
+        "threadId": "string"
+      }
+    },
     "ThreadAttachmentUpdatedNotification": {
       "required": [
         "attachmentId",
@@ -1788,6 +1802,17 @@
       }
     },
     "ThreadDeletedNotification": {
+      "required": [
+        "threadId"
+      ],
+      "props": [
+        "threadId"
+      ],
+      "types": {
+        "threadId": "string"
+      }
+    },
+    "ThreadDeleteParams": {
       "required": [
         "threadId"
       ],
@@ -2276,6 +2301,17 @@
       }
     },
     "ThreadUnarchivedNotification": {
+      "required": [
+        "threadId"
+      ],
+      "props": [
+        "threadId"
+      ],
+      "types": {
+        "threadId": "string"
+      }
+    },
+    "ThreadUnarchiveParams": {
       "required": [
         "threadId"
       ],

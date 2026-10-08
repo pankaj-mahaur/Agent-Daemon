@@ -300,8 +300,8 @@ export class Engine extends EventEmitter {
     });
   }
 
-  async startThread({ cwd, model, sandbox = DEFAULT_SANDBOX, approvalPolicy = DEFAULT_APPROVAL_POLICY, ephemeral, developerInstructions, config } = {}) {
-    const r = await this.server.request("thread/start", clean({ cwd, model, sandbox, approvalPolicy, ephemeral, developerInstructions, config }));
+  async startThread({ cwd, model, sandbox = DEFAULT_SANDBOX, approvalPolicy = DEFAULT_APPROVAL_POLICY, ephemeral, developerInstructions, config, sessionStartSource } = {}) {
+    const r = await this.server.request("thread/start", clean({ cwd, model, sandbox, approvalPolicy, ephemeral, developerInstructions, config, sessionStartSource }));
     return { threadId: r.thread.id, model: r.model, modelProvider: r.modelProvider, thread: r.thread };
   }
 

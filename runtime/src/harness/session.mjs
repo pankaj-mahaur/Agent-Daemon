@@ -498,12 +498,12 @@ export function createSession({
 
   // One thread/start at a time; a result that lands after newThread, resume
   // or close is dropped.
-  function ensureThread() {
+  function ensureThread(extra = {}) {
     if (state.thread) return Promise.resolve(state.thread.id);
     if (threadStarting) return threadStarting;
     const e = epoch;
     const p = (async () => {
-      const t = await eng.startThread({ cwd, model: state.config.model ?? undefined, sandbox: state.config.sandbox, approvalPolicy: state.config.approvalPolicy });
+      const t = await eng.startThread({ cwd, model: state.config.model ?? undefined, sandbox: state.config.sandbox, approvalPolicy: state.config.approvalPolicy, ...extra });
       if (stale(e)) throw new Error("the session moved on before the thread started");
       state.config.model ??= t.model ?? null;
       attach(t.threadId, t.thread);
@@ -514,6 +514,16 @@ export function createSession({
     });
     threadStarting = p;
     return p;
+  }
+
+  // Archive or delete: Codex first (nothing changes here if it refuses), then a fresh conversation.
+  async function leaveWith(ask) {
+    const id = state.thread?.id;
+    if (!id) throw new Error("there's no conversation yet");
+    if (state.activeTurnId || state.starting) throw new Error("wait for the turn to finish first");
+    await ask(id);
+    if (state.thread?.id === id) api.newThread();
+    return id;
   }
 
   function resetThreadState() {
@@ -849,6 +859,24 @@ export function createSession({
         off?.();
         clearTimeout(timer);
       }
+    },
+    /**
+     * Starts the conversation now instead of with the first prompt (/clear
+     * names it, and tells Codex it began with a clear). → its id.
+     */
+    async startThread({ sessionStartSource, name } = {}) {
+      if (closed) throw new Error("session closed");
+      const id = await ensureThread(sessionStartSource ? { sessionStartSource } : {});
+      if (name) await api.rename(name);
+      return id;
+    },
+    /** Archives the current conversation (Codex keeps it; /resume can bring it back) and leaves it. → its id. */
+    async archive() {
+      return leaveWith((threadId) => eng.server.request("thread/archive", { threadId }));
+    },
+    /** Deletes the current conversation for good, its subagents' too, and leaves it. → its id. */
+    async deleteThread() {
+      return leaveWith((threadId) => eng.server.request("thread/delete", { threadId }));
     },
     /** Continues an earlier thread, with its history loaded. */
     async resume(threadId) {

@@ -449,6 +449,8 @@ export async function cmdTui(opts = {}) {
         return `Back from the stock Codex UI (exit ${code}).`;
       },
       hookRows: (run) => hookRows(run, { hooksFile }),
+      // /delete: the conversation's /undo snapshots go with it.
+      forgetCheckpoints: (threadId) => (undoKit ? cp.forget(threadId) : Promise.resolve(0)),
       editText: (text) => handoff(io, renderer, () => editInEditor(text, { run: (cmd, args, verbatim) => runChild(cmd, args, { cwd, windowsVerbatimArguments: Boolean(verbatim) }) })),
     };
 
