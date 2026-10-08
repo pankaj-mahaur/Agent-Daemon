@@ -62,6 +62,20 @@ Why not a fullscreen (alternate-screen) UI: it hides the terminal's own scrollba
 - On Windows, Node 22.17+ (or 24.2+) is needed for bracketed paste in raw mode; `preflight.mjs` says so instead of misbehaving.
 - Shift+Enter isn't distinguishable from Enter in some terminals; Ctrl+J always inserts a newline, and `/terminal-setup` explains the per-terminal fix.
 - Every exit path restores the terminal (modes, cursor, colours), including a crash.
+- Terminal replies (OSC, DCS, APC strings) are recognised anywhere in the input and dropped; Alt+], Alt+Shift+P and Alt+_ still type.
+- **Keys are Codex's actions** (`tui/keymap.mjs`): Codex's contexts, action names and key spelling, so `tui.keymap` (set with the stock UI's `/keymap`) means the same in ad. ad reads it and never writes it; a key it can't use (a chord, a clash, one of the prompt's editing keys) is skipped with a note in `/warnings`.
+- **The topmost layer takes the key.** Tested cell by cell (`test/tui-app.test.mjs`, "key routing table"):
+
+| Layer | Esc | Ctrl+C | Tab | Shift+Tab | Enter |
+|---|---|---|---|---|---|
+| Codex's approval or question | declines | declines | — | — | the focused choice, once armed |
+| ad's confirm | no | no | — | — | the focused choice, once armed |
+| Ctrl+T pager | closes | closes | — | — | — |
+| `?` shortcuts | closes | closes | closes, then acts | closes, then acts | closes, then acts |
+| command or file popup | closes | closes | fills in | — | runs or inserts |
+| checklist | cancels (undoes the preview) | cancels | — | — | saves |
+| composer, turn running | interrupts | clears the draft, then interrupts | queues | — (never queues) | steers |
+| composer, idle | rewind (twice, on an empty prompt) | clears the draft, then arms quit | pulls back a queued prompt | — | sends |
 
 ### Handoffs
 

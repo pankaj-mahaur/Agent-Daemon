@@ -188,10 +188,15 @@ Big pastes (more than 5 lines or 1000 characters) show as `[Pasted N lines]` and
 | `@` | complete a file name in this folder |
 | `/` | complete a command; Enter runs the highlighted one, Tab fills it in |
 | `!cmd` | run `cmd` in the shell, **unsandboxed** (like Codex's `!`). One line only; a multi-line paste starting with `!` is a prompt |
-| Ctrl+T | page through the whole transcript (↑ ↓, PgUp, PgDn or Space, Home, End; Esc, `q` or Ctrl+T closes) |
-| Alt+, / Alt+. | lower / raise the reasoning effort for the next turn, through the current model's own levels |
+| Ctrl+T | page through the whole transcript: ↑ ↓ (or `k` `j`), PgUp / Shift+Space / Ctrl+B, PgDn / Space / Ctrl+F, Ctrl+U / Ctrl+D (half a page), Home, End; Esc, `q`, Ctrl+C or Ctrl+T closes |
+| Alt+, / Alt+. | lower / raise the reasoning effort for the next turn, through the current model's own levels (Shift+↓ / Shift+↑ too) |
+| Ctrl+O | copy the last answer (`/copy`) |
+| Alt+R | print the last answer as plain text (`/raw`) |
+| F2 | the warnings (`/warnings`) |
 
 The terminal bell rings when an approval waits, and when a turn ends while the terminal window isn't focused.
+
+**Changing keys.** ad uses Codex's names for the actions it has, so the keys you set in the stock UI's `/keymap` (in `/codex`; they're saved as `tui.keymap` in ad's Codex home) apply in ad too: the transcript, the external editor, copy, raw output, clear, interrupt, reasoning effort, queue, the shortcuts and the pager. ad doesn't change them itself. A key ad can't use there (a chord like `ctrl-x f`, a key that would mean two things, or one of the prompt's editing keys) is skipped, and `/warnings` says why. Shift+Tab never queues.
 
 ---
 

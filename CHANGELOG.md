@@ -9,6 +9,12 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 - `ad tui`: a Codex command ad doesn't have yet (`/plan fix the bug`, `/side …`, `/clear`) was sent to the model as a prompt. Now it answers why it isn't in ad (and that `/codex` has it, where the stock UI can help), and what you typed stays in the prompt.
 - `/codex`: ad's engine kept the conversation loaded while the stock UI ran it too, so both wrote to it and, back in ad, the turns taken in the stock UI were missing. ad's engine now unloads the conversation before the stock UI opens it, and resumes it from disk afterwards.
 - `ad tui`: a late reply from the terminal (a colour, a version) could arrive as Alt+], some text and Ctrl+G (which opened the editor). Terminal replies are now recognised and dropped; Alt+] still types.
+- `ad tui`: Ctrl+C now closes the Ctrl+T pager (it cleared the prompt underneath), and Shift+Tab no longer acts as Tab in the command popup.
+
+### Added
+
+- `ad tui` has Codex's keys for copy (Ctrl+O), raw output (Alt+R) and reasoning effort (Shift+↑ / Shift+↓, besides Alt+. / Alt+,), F2 for the warnings, and Codex's pager keys in the Ctrl+T transcript (`j` `k`, Ctrl+B / Ctrl+F, Ctrl+U / Ctrl+D, Shift+Space).
+- Keys set with the stock UI's `/keymap` (Codex's `tui.keymap`, in ad's Codex home) apply in `ad tui` too, for the actions ad has.
 
 ### Changed
 

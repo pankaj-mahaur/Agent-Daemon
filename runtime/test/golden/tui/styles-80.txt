@@ -78,6 +78,9 @@
 ⟦bold,fg=cyan⟧  ctrl+t       the whole transcript
 ⟦bold,fg=cyan⟧  ctrl+g       edit the prompt in your editor
 ⟦bold,fg=cyan⟧  alt+, alt+.  lower / raise reasoning effort
+⟦bold,fg=cyan⟧  ctrl+o       copy the last answer
+⟦bold,fg=cyan⟧  alt+r        the last answer as plain text
+⟦bold,fg=cyan⟧  f2           warnings
 ⟦bold,fg=cyan⟧  ctrl+l       redraw the screen
 ── picker ──
 ⟦bold,fg=cyan⟧Pick › ⟦dim⟧type to filter

@@ -30,4 +30,7 @@ Shortcuts
   ctrl+t       the whole transcript
   ctrl+g       edit the prompt in your editor
   alt+, alt+.  lower / raise reasoning effort
+  ctrl+o       copy the last answer
+  alt+r        the last answer as plain text
+  f2           warnings
   ctrl+l       redraw the screen

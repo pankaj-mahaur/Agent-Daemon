@@ -23,6 +23,7 @@ import path from "node:path";
 import { copyText, exportMarkdown, imagePath, lastAgentText, renderHooks, renderMcp, renderSkills, renderUsage, terminalSetup, transcriptLines } from "./commands.mjs";
 import CODEX_SLASH from "./codex-slash.json" with { type: "json" };
 import { T } from "./view/theme.mjs";
+import { createKeymap } from "./keymap.mjs";
 
 export const FORCE_QUIT_MS = 1500;
 const FRAME_MS = 33;
@@ -165,6 +166,7 @@ export function createApp({
   history = null,
   actions = {},
   settings = null, // {codex, ad} from prefs.mjs; null in tests that don't need them
+  keymap = createKeymap(), // keys as Codex's actions, with tui.keymap applied (keymap.mjs)
   meters = () => [],
   chips = () => [],
   info = {},
@@ -509,7 +511,7 @@ export function createApp({
       lines.push(...c.lines);
       cursor = { row: top + c.cursor.row, col: c.cursor.col };
       if (popup) lines.push(...popup.view.render({ width: w, height: Math.min(10, Math.max(3, rows - lines.length - 1)) }));
-      else if (overlay) lines.push(...renderShortcuts({ newline }, { width: w }));
+      else if (overlay) lines.push(...renderShortcuts({ newline, keymap }, { width: w }));
       else if (rows >= 10) lines.push(footer());
     }
     // The live region never takes the whole screen.
@@ -583,6 +585,7 @@ export function createApp({
   // Keys for a completion popup: ↑/↓ pick, Tab/Enter accept, Esc closes; typing goes to the composer.
   function popupKey(ev) {
     if (popup.kind === "command" || popup.kind === "mention") {
+      if (ev.type === "key" && ev.name === "tab" && ev.shift) return true; // Shift+Tab does nothing here
       if (ev.type === "key" && ["up", "down", "tab"].includes(ev.name)) {
         const r = popup.view.handle(ev.name === "tab" ? { ...ev, name: "enter" } : ev);
         if (r?.select !== undefined) {
@@ -639,7 +642,7 @@ export function createApp({
           [{ text: "Commands", style: T.bold }],
           ...SLASH_COMMANDS.filter((c) => c.name !== "exit").map((c) => truncate([{ text: `  /${c.name.padEnd(12)}`, style: T.code }, { text: c.desc, style: DIM }], width())),
           [],
-          ...renderShortcuts({ newline }, { width: width() }),
+          ...renderShortcuts({ newline, keymap }, { width: width() }),
         ]);
       case "new":
         session.newThread();
@@ -827,12 +830,17 @@ export function createApp({
   function warningsReport() {
     const kept = st.notices.filter((n) => n.level !== "info");
     const unknown = Object.entries(session.engine?.unknownCounts?.() ?? {});
-    if (!kept.length && !unknown.length) return renderNotice({ level: "info", message: "No warnings in this session." }, { width: width() });
+    const unused = keymap.warnings ?? [];
+    if (!kept.length && !unknown.length && !unused.length) return renderNotice({ level: "info", message: "No warnings in this session." }, { width: width() });
     const out = [[{ text: "Warnings", style: T.bold }]];
     for (const n of kept.slice(-20)) out.push(...renderNotice(n, { width: width() }));
     if (unknown.length) {
       out.push([{ text: "Events this ad doesn't know (a newer Codex?):", style: DIM }]);
       for (const [method, n] of unknown.slice(0, 20)) out.push(truncate([{ text: `  ${clean(method)} ×${n}`, style: DIM }], width()));
+    }
+    if (unused.length) {
+      out.push([{ text: "Settings ad couldn't use:", style: DIM }]);
+      for (const w of unused) out.push(...renderNotice({ level: "warn", message: w }, { width: width() }));
     }
     return out;
   }
@@ -1054,9 +1062,22 @@ export function createApp({
       answer(null);
       return;
     }
+    // The topmost layer takes it: ad's own question (no), the pager, a popup or overlay.
+    if (confirm) {
+      const c = confirm;
+      confirm = null;
+      c.resolve(false);
+      return;
+    }
+    if (pager) {
+      pager = null;
+      return;
+    }
     if (popup || overlay) {
+      const p = popup;
       popup = null;
       overlay = false;
+      p?.onCancel?.(); // a checklist's live preview goes back
       return;
     }
     if (composer.text) {
@@ -1078,21 +1099,23 @@ export function createApp({
       onCtrlC();
       return draw();
     }
-    if (ev.type === "key" && ev.ctrl && ev.name === "l") return void renderer.redraw();
+    if (keymap.is("global", "clear_terminal", ev)) return void renderer.redraw();
     if (pager && !modal) {
       const view = Math.max(1, height() - 2);
-      if (ev.type === "key" && (ev.name === "escape" || (ev.ctrl && ev.name === "t"))) pager = null;
-      else if (ev.type === "text" && ev.text === "q") pager = null;
-      else if (ev.type === "key" && ev.name === "up") pager.top--;
-      else if (ev.type === "key" && ev.name === "down") pager.top++;
-      else if (ev.type === "key" && ev.name === "pageup") pager.top -= view;
-      else if ((ev.type === "key" && (ev.name === "pagedown" || ev.name === "space")) || (ev.type === "text" && ev.text === " ")) pager.top += view;
-      else if (ev.type === "key" && ev.name === "home") pager.top = 0;
-      else if (ev.type === "key" && ev.name === "end") pager.top = Infinity;
+      const k = (action) => keymap.is("pager", action, ev);
+      if ((ev.type === "key" && ev.name === "escape") || k("close") || k("close_transcript")) pager = null;
+      else if (k("scroll_up")) pager.top--;
+      else if (k("scroll_down")) pager.top++;
+      else if (k("page_up")) pager.top -= view;
+      else if (k("page_down")) pager.top += view;
+      else if (k("half_page_up")) pager.top -= Math.ceil(view / 2);
+      else if (k("half_page_down")) pager.top += Math.ceil(view / 2);
+      else if (k("jump_top")) pager.top = 0;
+      else if (k("jump_bottom")) pager.top = Infinity;
       if (pager) pager.top = Math.max(0, Math.min(pager.top, pager.lines.length - view));
       return draw();
     }
-    if (ev.type === "key" && ev.ctrl && ev.name === "t" && !modal) {
+    if (keymap.is("global", "open_transcript", ev) && !modal) {
       pager = { lines: transcriptLines(st, { width: width() }), top: Infinity };
       return draw();
     }
@@ -1128,7 +1151,7 @@ export function createApp({
         return draw();
       }
     }
-    if (ev.type === "key" && ev.ctrl && ev.name === "g" && actions.editText) {
+    if (keymap.is("global", "open_external_editor", ev) && actions.editText) {
       const before = composer.expanded();
       Promise.resolve(actions.editText(before))
         .then((after) => {
@@ -1139,22 +1162,30 @@ export function createApp({
         .catch(fail);
       return;
     }
-    if (ev.type === "key" && ev.alt && (ev.name === "," || ev.name === ".")) {
-      stepEffort(ev.name === "." ? 1 : -1).catch(fail);
+    const up = keymap.is("chat", "increase_reasoning_effort", ev);
+    if (up || keymap.is("chat", "decrease_reasoning_effort", ev)) {
+      stepEffort(up ? 1 : -1).catch(fail);
       return;
     }
+    // Codex's keys for /copy and /raw, and F2 for /warnings.
+    // (straight to the command: a key never restarts a crashed engine, as sending a prompt does)
+    const run = (name) => void Promise.resolve(slash(name, "")).catch(fail).finally(() => draw());
+    if (keymap.is("global", "copy", ev)) return run("copy");
+    if (keymap.is("global", "toggle_raw_output", ev)) return run("raw");
+    if (ev.type === "key" && ev.name === "f2" && !ev.ctrl && !ev.alt && !ev.shift) return run("warnings");
     if (ev.type === "text" || ev.type === "paste") lastCtrlC = -Infinity; // new text: Ctrl+C clears it, not quit
     if ((ev.type === "text" || ev.type === "paste") && !turnActive()) actions.onTyping?.();
-    if (ev.type === "text" && ev.text === "?" && !composer.text) {
+    if (keymap.is("composer", "toggle_shortcuts", ev) && !composer.text) {
       overlay = true;
       return draw();
     }
+    if (keymap.is("chat", "interrupt_turn", ev) && turnActive()) {
+      session.interrupt();
+      note = { level: "warn", text: "Interrupting…" };
+      return draw();
+    }
     if (ev.type === "key" && ev.name === "escape" && !ev.ctrl) {
-      if (turnActive()) {
-        session.interrupt();
-        note = { level: "warn", text: "Interrupting…" };
-        return draw();
-      }
+      if (turnActive()) return draw();
       if (composer.text) return draw();
       if (attachments.length) {
         attachments = [];
@@ -1173,7 +1204,7 @@ export function createApp({
       }
       return draw();
     }
-    if (ev.type === "key" && ev.name === "tab" && !ev.ctrl && !ev.alt) {
+    if (keymap.is("composer", "queue", ev)) {
       if (composer.text.trim() && turnActive()) {
         session.queue(composer.expanded());
         composer.clear();
@@ -1239,7 +1270,7 @@ export function createApp({
       draw();
     },
     get state() {
-      return { composer: composer.text, modal: modal?.view.kind ?? null, confirm: Boolean(confirm), popup: popup?.kind ?? null, overlay, note: note?.text ?? null, committed: committed.size };
+      return { composer: composer.text, modal: modal?.view.kind ?? null, confirm: Boolean(confirm), pager: Boolean(pager), popup: popup?.kind ?? null, overlay, note: note?.text ?? null, committed: committed.size };
     },
     dispose() {
       clearT(drawTimer);

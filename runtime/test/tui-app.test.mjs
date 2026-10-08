@@ -49,7 +49,7 @@ async function withApp(fn, { cols = 70, rows = 20, actions = {}, armMs = 60, ses
   const until = async (pred, what, ms = 10000) => {
     const end = Date.now() + ms;
     while (Date.now() < end) {
-      if (pred()) return;
+      if (await pred()) return;
       await sleep(20);
     }
     throw new Error(`timed out waiting for ${what}:\n${text()}`);
@@ -140,12 +140,12 @@ test("an approval opens as a modal; arming holds early keys; y approves and the 
     assert.match(text(), /Run command\?/);
     type("y"); // too soon: ignored
     assert.equal(session.state.requests.length, 1);
-    await sleep(120);
+    await sleep(600);
     type("y");
     await until(() => /✔ approved/.test(text()), "the answer");
     await until(() => /Worked for/.test(text()), "the turn's end");
     assert.match(text(), /pong/);
-  });
+  }, { armMs: 500 }); // long enough that a loaded machine can't make the first "y" late
 });
 
 test("Esc in an approval declines; Ctrl+C twice quits", async () => {
@@ -285,6 +285,103 @@ test("ad's own dialogs in the app: a confirm takes the keys and waits for its ar
     type("\x1b");
     await until(() => cancelled && app.state.popup === null, "cancelled");
   });
+});
+
+// The key routing table (codex-parity-2 1d; docs/tui-architecture.md): the
+// topmost layer takes the key. Each row opens a layer, presses one key, and
+// checks what happened, so a key can't reach a layer underneath by accident.
+const ESC = "\x1b";
+const KEYS = { esc: ESC, ctrlC: "\x03", tab: "\t", shiftTab: "\x1b[Z", enter: "\r", pgup: "\x1b[5~" };
+const LAYERS = {
+  async idle() {},
+  async text({ type, until, app }) {
+    type("draft");
+    await until(() => app.state.composer === "draft", "typed");
+  },
+  async running({ type, until, session, app }) {
+    type("hang\r");
+    await until(() => session.state.activeTurnId, "a running turn");
+    type("steer me");
+    await until(() => app.state.composer === "steer me", "typed");
+  },
+  async approval({ type, until, app }) {
+    type("needs approval\r");
+    await until(() => app.state.modal, "the approval");
+  },
+  async confirm({ app, until, box }) {
+    app.confirm({ title: "Sure?" }).then((a) => (box.answer = a));
+    await until(() => app.state.confirm, "the question");
+  },
+  async popup({ type, until, app }) {
+    type("/");
+    await until(() => app.state.popup === "command", "the command list");
+  },
+  async checklist({ app, until, box }) {
+    app.checklist("statusline", [{ label: "model", value: "model" }], (v) => (box.saved = v), { onCancel: () => (box.cancelled = true) });
+    await until(() => app.state.popup === "statusline", "the checklist");
+  },
+  async pager({ type, until, app }) {
+    type("\x14"); // Ctrl+T
+    await until(() => app.state.pager, "the pager");
+  },
+  async overlay({ type, until, app }) {
+    type("?");
+    await until(() => app.state.overlay, "the shortcuts");
+  },
+};
+const sent = async (engine, method) => (await engine.server.request("debug/state", {})).calls.filter((c) => c === method).length;
+const ROUTES = [
+  ["idle", "ctrlC", async ({ app }) => assert.match(app.state.note ?? "", /Ctrl\+C again quits/)],
+  ["idle", "shiftTab", async ({ app, engine }) => (assert.equal(app.state.composer, ""), assert.equal(await sent(engine, "turn/start"), 0))],
+  ["idle", "enter", async ({ engine }) => assert.equal(await sent(engine, "turn/start"), 0, "an empty prompt sends nothing")],
+  ["text", "esc", async ({ app }) => assert.equal(app.state.composer, "draft", "Esc doesn't throw the draft away")],
+  ["text", "ctrlC", async ({ app }) => (assert.equal(app.state.composer, ""), assert.doesNotMatch(app.state.note ?? "", /again quits/, "clearing doesn't arm the quit"))],
+  ["text", "shiftTab", async ({ app }) => assert.equal(app.state.composer, "draft")],
+  ["text", "enter", async ({ until, engine }) => until(async () => (await sent(engine, "turn/start")) === 1, "sent")],
+  ["running", "esc", async ({ until, engine }) => until(async () => (await sent(engine, "turn/interrupt")) === 1, "interrupted")],
+  ["running", "ctrlC", async ({ app }) => assert.equal(app.state.composer, "", "the draft goes first; the turn runs on")],
+  ["running", "tab", async ({ until, session }) => until(() => session.state.queue.length === 1, "queued")],
+  ["running", "shiftTab", async ({ app, session }) => (assert.equal(session.state.queue.length, 0, "Shift+Tab never queues"), assert.equal(app.state.composer, "steer me"))],
+  ["running", "enter", async ({ until, engine }) => until(async () => (await sent(engine, "turn/steer")) === 1, "steered")],
+  ["approval", "esc", async ({ until, app }) => until(() => !app.state.modal, "declined")],
+  ["approval", "ctrlC", async ({ until, app }) => until(() => !app.state.modal, "declined")],
+  ["approval", "tab", async ({ app }) => assert.ok(app.state.modal, "still open")],
+  ["approval", "shiftTab", async ({ app }) => assert.ok(app.state.modal, "still open")],
+  ["confirm", "esc", async ({ until, box }) => until(() => box.answer === false, "no")],
+  ["confirm", "ctrlC", async ({ until, box, app }) => (await until(() => box.answer === false, "no"), assert.equal(app.state.confirm, false))],
+  ["confirm", "enter", async ({ app, box }) => (assert.equal(box.answer, undefined, "too soon to answer"), assert.ok(app.state.confirm))],
+  ["confirm", "tab", async ({ app }) => assert.ok(app.state.confirm)],
+  ["popup", "esc", async ({ app }) => (assert.equal(app.state.popup, null), assert.equal(app.state.composer, "/"))],
+  ["popup", "ctrlC", async ({ app }) => (assert.equal(app.state.popup, null), assert.equal(app.state.composer, "/", "closing the popup comes before clearing"))],
+  ["popup", "tab", async ({ app }) => assert.match(app.state.composer, /^\/\w+ $/, "fills the highlighted command")],
+  ["popup", "shiftTab", async ({ app }) => (assert.equal(app.state.composer, "/"), assert.equal(app.state.popup, "command"))],
+  ["checklist", "esc", async ({ app, box }) => (assert.equal(app.state.popup, null), assert.equal(box.cancelled, true))],
+  ["checklist", "ctrlC", async ({ app, box }) => (assert.equal(app.state.popup, null), assert.equal(box.cancelled, true, "Ctrl+C undoes a live preview too"))],
+  ["checklist", "tab", async ({ app, box }) => (assert.equal(app.state.popup, "statusline"), assert.equal(box.saved, undefined))],
+  ["checklist", "enter", async ({ box }) => assert.deepEqual(box.saved, [])],
+  ["pager", "esc", async ({ app }) => assert.equal(app.state.pager, false)],
+  ["pager", "ctrlC", async ({ app }) => (assert.equal(app.state.pager, false), assert.doesNotMatch(app.state.note ?? "", /again quits/))],
+  ["pager", "pgup", async ({ app }) => assert.equal(app.state.pager, true, "it scrolls, and stays open")],
+  ["pager", "tab", async ({ app }) => (assert.equal(app.state.pager, true), assert.equal(app.state.composer, ""))],
+  ["overlay", "esc", async ({ app }) => (assert.equal(app.state.overlay, false), assert.equal(app.state.composer, ""))],
+  ["overlay", "ctrlC", async ({ app }) => assert.equal(app.state.overlay, false)],
+];
+
+test("key routing table: the topmost layer takes Esc, Ctrl+C, Tab, Shift+Tab, Enter and PgUp", async () => {
+  for (const [layer, k, check] of ROUTES) {
+    await withApp(async (h) => {
+      const box = {};
+      await LAYERS[layer]({ ...h, box });
+      h.type(KEYS[k]);
+      await sleep(60);
+      try {
+        await check({ ...h, box });
+      } catch (err) {
+        err.message = `${layer} + ${k}: ${err.message}`;
+        throw err;
+      }
+    }, { armMs: 500 }); // "too soon" stays too soon on a loaded machine
+  }
 });
 
 test("/permissions and /model set the next turn's overrides through pickers", async () => {
@@ -447,4 +544,20 @@ test("/undo: files back and the prompt returns; typing takes the next turn's sna
     await sleep(20);
     assert.match(text(), /\/undo needs a git repo/);
   });
+});
+
+test("Codex's keys for /copy, /raw and /warnings: Ctrl+O, Alt+R, F2", async () => {
+  await withApp(
+    async ({ type, until, committed }) => {
+      type("early-complete\r");
+      await until(() => /Worked for/.test(committed()), "a turn");
+      type("\x0f"); // Ctrl+O
+      await until(() => /Copied the last answer \(stub\)/.test(committed()), "copied");
+      type("\x1br"); // Alt+R
+      await until(() => /^early$/m.test(committed()), "the raw answer");
+      type("\x1bOQ"); // F2
+      await until(() => /No warnings in this session|Warnings/.test(committed()), "the warnings");
+    },
+    { actions: { copy: async () => ({ ok: true, via: "stub" }) } },
+  );
 });

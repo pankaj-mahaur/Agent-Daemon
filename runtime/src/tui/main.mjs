@@ -26,6 +26,7 @@ import { createApp } from "./app.mjs";
 import { createHistory } from "./history.mjs";
 import { createAdLayer } from "./ad-layer.mjs";
 import { createCodexSettings, createPrefs, DEFAULT_PREFS_FILE } from "./prefs.mjs";
+import { createKeymap } from "./keymap.mjs";
 import { createPicker, newlineHint, renderHeader } from "./view/chrome.mjs";
 import { truncate } from "./terminal/text.mjs";
 
@@ -451,7 +452,7 @@ export async function cmdTui(opts = {}) {
       editText: (text) => handoff(io, renderer, () => editInEditor(text, { run: (cmd, args, verbatim) => runChild(cmd, args, { cwd, windowsVerbatimArguments: Boolean(verbatim) }) })),
     };
 
-    app = createApp({ io, renderer, session, cwd, header: intro, newline, history: createHistory(opts.historyFile ? { file: opts.historyFile } : {}), actions, settings, meters, info: { compat: `${codexVersion} (tested)`, terminal: term } });
+    app = createApp({ io, renderer, session, cwd, header: intro, newline, history: createHistory(opts.historyFile ? { file: opts.historyFile } : {}), actions, settings, keymap: createKeymap({ overrides: settings.codex.get("tui.keymap") }), meters, info: { compat: `${codexVersion} (tested)`, terminal: term } });
     // `ad tui "<prompt>"`: the first prompt is sent right away.
     if (opts.prompt) app.send(opts.prompt);
     await app.done;

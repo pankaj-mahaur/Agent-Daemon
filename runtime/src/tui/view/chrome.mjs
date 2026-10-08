@@ -149,12 +149,14 @@ export function renderFooter({ hints = [], chips = [], meters = [] } = {}, { wid
 /* ------------------------------------------------------------------ */
 
 /** The `?` overlay. */
-export function renderShortcuts({ newline = "ctrl+j" } = {}, { width = 80 } = {}) {
+export function renderShortcuts({ newline = "ctrl+j", keymap = null } = {}, { width = 80 } = {}) {
+  // Keys that can be remapped (tui.keymap) come from the keymap; the rest are fixed.
+  const k = (ctx, action, fallback) => (keymap ? keymap.label(ctx, action) : fallback);
   const keys = [
     ["enter", "send (steers a running turn)"],
     [newline, "new line (\\ + enter works too)"],
-    ["tab", "queue for after this turn"],
-    ["esc", "interrupt the turn"],
+    [k("composer", "queue", "tab"), "queue for after this turn"],
+    [k("chat", "interrupt_turn", "esc"), "interrupt the turn"],
     ["ctrl+c", "clear, interrupt, then quit"],
     ["\u{2191} / \u{2193}", "history (at the first/last line)"],
     ["ctrl+r", "search history"],
@@ -162,12 +164,15 @@ export function renderShortcuts({ newline = "ctrl+j" } = {}, { width = 80 } = {}
     ["/", "commands"],
     ["!", "run a shell command (unsandboxed)"],
     ["esc esc", "rewind to an earlier prompt"],
-    ["ctrl+t", "the whole transcript"],
-    ["ctrl+g", "edit the prompt in your editor"],
-    ["alt+, alt+.", "lower / raise reasoning effort"],
-    ["ctrl+l", "redraw the screen"],
-  ];
-  const kw = Math.max(...keys.map(([k]) => stringWidth(k))) + 2;
+    [k("global", "open_transcript", "ctrl+t"), "the whole transcript"],
+    [k("global", "open_external_editor", "ctrl+g"), "edit the prompt in your editor"],
+    [`${k("chat", "decrease_reasoning_effort", "alt+,")} ${k("chat", "increase_reasoning_effort", "alt+.")}`, "lower / raise reasoning effort"],
+    [k("global", "copy", "ctrl+o"), "copy the last answer"],
+    [k("global", "toggle_raw_output", "alt+r"), "the last answer as plain text"],
+    ["f2", "warnings"],
+    [k("global", "clear_terminal", "ctrl+l"), "redraw the screen"],
+  ].filter(([key]) => key.trim()); // an unbound action isn't listed
+  const kw = Math.max(...keys.map(([key]) => stringWidth(key))) + 2;
   return [
     [{ text: "Shortcuts", style: S.title }],
     ...keys.map(([k, what]) => truncate([{ text: `  ${k.padEnd(kw)}`, style: S.accent }, { text: what }], width)),
