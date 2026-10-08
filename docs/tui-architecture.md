@@ -17,11 +17,16 @@ runtime/src/cli.mjs            thin launcher: routes `ad tui` / bare `ad` / `ad 
 runtime/src/tui/
   main.mjs                     cmdTui: preflight, engine start, sign-in and trust prompts, header, wiring
   app.mjs                      the app: what is committed to scrollback, what is live, keys, slash commands
+  keymap.mjs                   keys as Codex's actions (Codex's names and key spelling; tui.keymap read)
+  status.mjs                   the status line and the window title, by Codex's item ids
+  prefs.mjs                    settings: Codex's tui.* in its config.toml (shared with /codex), ad's in prefs.json
+  codex-slash.json             Codex's slash commands and their rules at the pin (generated)
   ad-layer.mjs                 ad's own capabilities: memory, learned rows, /loop, /team, /schedule, proposals
   undo.mjs                     checkpoint wiring for /undo (hooks on the session)
   commands.mjs                 /mcp, /hooks, /skills, /usage, /export, clipboard, image paths, terminal setup
   flip.mjs, preflight.mjs      when bare `ad` opens the TUI; whether this terminal can run it
-  view/                        pure renderers: composer, markdown, cells (items), chrome (header/footer), modals
+  view/                        pure renderers: composer, markdown, cells (items), chrome (header/footer, picker,
+                               checklist), modals (Codex's requests, ad's confirm), theme (every colour)
   terminal/                    io (raw mode, input decoding, handoff), renderer (inline frames), width, sanitize
 runtime/src/harness/
   session.mjs                  the session controller: one thread, turns, queue/steer, approvals, items, restarts
@@ -52,6 +57,9 @@ The UI draws **inline**, like Codex's default mode: finished output is written i
 - **Committed vs live.** An item is committed once it can no longer change (a finished command, a closed message). A streaming answer commits line by line as newlines arrive; only the unfinished tail stays live. Committed lines are never repainted.
 - **Markdown streams safely.** The rendering of the committed lines plus the live tail always equals the rendering of the text so far; tables and an open code fence stay live until complete.
 - **Resizes.** Terminals reflow scrollback behind the program's back. The renderer debounces, re-anchors with a cursor-position query, and never reflows text that has already been committed.
+- **One exception to "history is never erased": `/clear`.** Codex's `/clear` wipes the screen and the scrollback (`ESC[2J ESC[3J`, Codex's own bytes); the renderer's `clear()` drops whatever was pending (queued history, a resize wait, a re-anchor waiting for its cursor report) and starts over with the header.
+- **Colours** come from one module (`view/theme.mjs`); a golden keeps every span's style, so a colour can't change unnoticed.
+- **The status line and the window title** are computed from Codex's item ids (`status.mjs`), from 12 rows. The title is written with OSC 0, at most 4 times a second, only when it changes; the terminal's own title is saved (XTWINOPS 22) and put back (23) on exit and around handoffs, and nothing is written while another program has the terminal. Every value passes `titleSafe` (no escapes, line breaks or invisible format characters).
 - **Untrusted text is sanitized.** Model output and command output can carry escape sequences; they are shown as visible `<U+…>` forms, never sent to the terminal.
 
 Why not a fullscreen (alternate-screen) UI: it hides the terminal's own scrollback, search and copy, and it is what users of Codex's inline mode moved away from. A fullscreen mode is a possible later addition, only on demand.
@@ -81,6 +89,8 @@ Why not a fullscreen (alternate-screen) UI: it hides the terminal's own scrollba
 
 `/codex` (the stock Codex UI on the same conversation), the external editor (Ctrl+G) and `/login` hand the terminal to a child process: input is detached, modes restored, and everything re-entered afterwards. SIGINT/SIGBREAK during (and briefly after) a handoff belong to the child.
 
+For `/codex`, ad's own engine first unloads the conversation (`thread/unsubscribe`, then `thread/closed`; the TUI's engine runs with `thread_unload_delay_secs=0`), so only the stock UI runs it and nothing is written twice; on return ad resumes it from disk, with the turns taken there. If the unload doesn't finish in 15 s, ad restarts its engine instead.
+
 ## Staying working across Codex releases
 
 - **Pinned engine.** `@openai/codex` is pinned exactly in `runtime/package.json`; the TUI only talks to that binary.
@@ -88,7 +98,8 @@ Why not a fullscreen (alternate-screen) UI: it hides the terminal's own scrollba
 - **Snapshot + checks.** A committed protocol snapshot (`engine/codex/protocol-snapshot.json`) records every method and notification the client relies on; the test suite checks the fake server's messages against it.
 - **Generic fallbacks.** An unknown item type renders as a plain row; an unknown notification is ignored; an unknown request is declined with a note.
 - **Weekly upgrade PR.** The `codex-upgrade` workflow bumps the pin, diffs the protocol (removals flagged as breaking), regenerates Codex's slash-command names, and runs the suite and the live TUI tests on the real binary in its own Linux job before opening the PR. The PR's own CI on Linux, macOS and Windows runs only when the repo has a `CODEX_UPGRADE_TOKEN` secret ([testing.md](testing.md#ci)).
-- **Slash-command names.** ad's own commands must never take a name Codex uses; a test checks them against `src/tui/codex-slash.json`, generated from the pinned Codex.
+- **Slash commands.** `src/tui/codex-slash.json` is generated from Codex's own source at the pin (`scripts/codex-slash.mjs`): every command with its aliases, whether it runs during a task, whether it works in a side conversation, and whether the popup hides it. ad's own commands must never take a Codex name, and every Codex command is either run by ad (with Codex's rules) or listed in `NOT_IN_AD` with what ad says instead; a Codex command is never sent to the model. A command Codex adds fails a test in the upgrade PR until ad decides.
+- **Requests checked both ways.** The fake app-server rejects any request of ad's that the pinned stable protocol doesn't accept (an unknown method or field, a wrong type); `SENT_METHODS` lists every method ad sends, checked against the source. Experimental calls must be on `EXPERIMENTAL_ALLOWLIST` (`engine/codex/surface.mjs`, empty today).
 
 ## `/undo`: the safety model
 
@@ -146,5 +157,7 @@ Each layer is tested where it is cheapest, and the whole is tested live. Details
 | Inline mode by default | Keeps the terminal's scrollback, search and copy. |
 | Codex app-server, stable surface only | Codex owns the agent loop, sandbox and login; ad stays a client and survives releases. |
 | Bare `ad` opens the TUI | Flipped in 2.1.0, after the manual test's terminal UI script ran green live on all three OSes. `AD_TUI=0` keeps the old help. |
+| Codex's names and rules for Codex's commands, keys and settings | Codex users aren't surprised; settings and keys are shared with `/codex` (ad never writes `tui.keymap`: the stock UI refuses to start on a keymap conflict ad couldn't check). |
+| `/clear` purges the scrollback | Codex's meaning; `/new` keeps it, and `clear.keepScrollback` in `prefs.json` turns the purge off. |
 | `ad chat`, `ad web`, `ad acp` stay on their own turn loop | Moving them onto the session controller would change what Zed sees over ACP (one session per engine, approvals checked against offered options) for little shared code. Revisit with a multi-session design if needed. |
 | Windows sandbox and Store PowerShell | The Windows sandbox can't start a Store (MSIX) app, and Codex runs commands in the first `pwsh` on PATH. On Windows, every Codex spawn drops every `WindowsApps` entry from PATH (the app-alias folder and the Store package folders), so Codex uses an MSI PowerShell 7 or Windows PowerShell 5.1, inside the sandbox. |

@@ -25,11 +25,15 @@ Install with `npm ci` (or `npm install`) in `runtime/`, devDependencies included
 | `/undo` on real git repos | `test/checkpoints.test.mjs` | snapshots, restores byte for byte, every conflict kind, adversarial cases |
 | Real Codex, protocol level | `test/engine-real.test.mjs` + `testkit/mock-responses.mjs` | what a Codex release actually sends for a turn, an approval, a patch |
 | Real Codex, real terminal | `test/tui-live.test.mjs` | the terminal UI script of the manual test (section 6) and ad's own features, on the real `ad tui` |
+| Keys, styles, settings | `test/tui-keymap`, `tui-styles`, `tui-dialogs`, `tui-prefs`, `tui-status` | Codex's key spelling and `tui.keymap` overrides; a golden that keeps every span's style (and no colour outside `view/theme.mjs`); the confirm and checklist; settings files; status-line and title items, `titleSafe` |
+| The key routing table | `test/tui-app.test.mjs` ("key routing table") | for each layer (approval, ad's confirm, pager, shortcuts, popup, checklist, composer idle or running), what Esc, Ctrl+C, Tab, Shift+Tab, Enter and PgUp do |
 | Codex pin bookkeeping | `test/tui-resilience.test.mjs` | ad's slash commands don't collide with Codex's (`src/tui/codex-slash.json` must match the pinned tag); `src/engine/codex/compat.json` lists the pin as tested, with a "what changed" note (`AD_COMPAT_NOTE_PENDING=1` lets the upgrade bot's run pass until a person writes it) |
 
 ### The fake engine speaks the pinned protocol
 
 `testkit/fake-codex-app-server.mjs` is a scripted `codex app-server`: a prompt's text picks a scenario (`edit-file`, `two-approvals`, `hang`, `subagent`, `same-id …`, `reject-start`, …). Its messages are checked against the committed protocol snapshot by `testkit/protocol-check.mjs`, so it can't teach the client a message the real Codex can't send. A new scenario must keep passing that check (the `future` scenario, a synthetic newer Codex, is the one deliberate exception).
+
+It also checks ad's own requests (`checkRequest`): a method the pinned stable protocol doesn't have, a top-level field its params type lacks, or a wrong type is rejected with -32600, as Codex would. A new `request("method")` in `src/` needs the method in `SENT_METHODS` (`engine/codex/protocol-snapshot.mjs`) and a regenerated snapshot (`node scripts/codex-schema-snapshot.mjs`, pinned binary, temp home); a test compares the list with the source.
 
 ### The mock model
 
@@ -51,6 +55,7 @@ Install with `npm ci` (or `npm install`) in `runtime/`, devDependencies included
 - Wait for the footer to be idle (`t.idle()`: shows "? shortcuts", no "esc to interrupt") before typing the next prompt; otherwise Enter steers it into the running turn.
 - Match long paths with `\s+` between words: a long temp path wraps differently on each OS.
 - Close every pseudo-terminal in `finally` (`launched`); an open ConPTY keeps node alive.
+- An `/archive` or `/delete` step waits past the confirm's arm delay (400 ms) before answering.
 - Some runners can't run Codex's sandbox (GitHub's Windows runners): Codex then asks "retry without sandbox?", which `patchTurn` approves.
 - The first sandboxed action in a fresh Codex home sets up the Windows sandbox (about 35 s, longer on a busy machine): give it minutes, not seconds.
 
@@ -83,3 +88,7 @@ The real-engine job is non-blocking (`continue-on-error`): **read its result**, 
 | Strings with `\` or `$` mangled in an edit | bash heredocs and `node -e` eat backslashes | edit with an editor tool or a script file; build escape bytes with `"\x1b"` |
 | Windows: every command fails with `CreateProcessAsUserW failed` | PowerShell 7 from the Store; the sandbox can't start MSIX apps | handled by the engine's PATH: `withoutStoreAliases()` drops every `WindowsApps` entry ([troubleshooting #16](troubleshooting.md#16-harness-on-windows-every-agent-command-fails-access-is-denied-or-createprocessasuserw-failed)) |
 | A live step times out after a patch | the first sandboxed action set up the Windows sandbox | allow minutes for the first one |
+| A screen regex fails only in the full suite | a long temp path or hint wraps at the test's width | match with `\s+` between words, or give the test more columns |
+| A test passes alone, fails under load | a short real-time wait (a 50 ms terminal-query timeout, an arm delay of 60 ms that has passed before the "too soon" key) | give waits that only end early on success a generous cap; use a long arm delay where "too soon" is asserted |
+| `until(async () => …)` returns at once | an async predicate is a truthy Promise | the helper awaits the predicate's result |
+| A guard's mutation isn't caught | the test's setup makes the old and new behaviour look alike (a cursor that is on the same row either way) | change the setup until the mutation fails the test |

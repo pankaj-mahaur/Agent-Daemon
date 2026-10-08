@@ -22,6 +22,7 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 - `ad tui` follows Codex's rules for its commands: those Codex disables while a task runs (`/new`, `/fork`, `/compact`, `/init`, `/export`, `/review`, `/logout`) wait for the turn to end, and keep your draft. Codex's aliases (`/cwd`, `/clean`, `/pet`) are recognised.
 - Tests check every request ad sends against the pinned Codex's stable protocol, not only what Codex sends.
+- New docs: [Codex commands in ad](docs/codex-parity.md) lists every Codex slash command (works in ad, or why not yet), the keys and the settings shared with the stock UI; troubleshooting entries for `/keymap` keys, `/clear` and the window title; contributing has the steps for adding a terminal UI command.
 
 ## [2.1.1] — 2026-10-06
 

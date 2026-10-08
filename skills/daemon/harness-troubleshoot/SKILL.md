@@ -73,6 +73,11 @@ The terminal UI runs the same engine in the same home, so steps 1–5 apply. The
 | Ctrl+G: `The editor returned at once without waiting` (#28) | the editor opened the file in a running window and exited | `EDITOR="code --wait"` or another editor that waits |
 | `thread … is open in another ad (pid N)` | one `ad` per conversation (locks in `~/.agent-daemon/locks`) | close the other `ad tui`; a crashed one's lock is taken over once its process is gone |
 | "This needs the stock UI: /codex" | a Codex request ad doesn't handle yet | `/codex` opens the stock UI on the same conversation; `ad codex` runs it standalone on ad's home with `--no-daemon` |
+| `/x isn't in ad yet.` | a Codex slash command ad doesn't run yet (never sent to the model) | `/codex` where the answer says so; `docs/codex-parity.md` lists every command |
+| `'/x' is disabled while a task is in progress.` | Codex's rule for that command | wait for the turn or Esc; the draft stays |
+| keys set in `/codex` → `/keymap` don't work in ad (#30) | ad applies `tui.keymap` only to its own actions and skips chords, clashes and the prompt's editing keys | `/warnings` (F2) says which and why |
+| `/clear` wiped the scrollback (#31) | Codex's `/clear` does | `/new` keeps it; `"clear.keepScrollback": true` in `~/.agent-daemon/tui/prefs.json` |
+| window title still ad's after exit (#32) | no title stack in the terminal, or a crash | new tab, or `/title` with every item off |
 
 Reproduce TUI problems with `ad tui` in a scratch folder. Never use the user's own `codex` or `~/.codex`.
 

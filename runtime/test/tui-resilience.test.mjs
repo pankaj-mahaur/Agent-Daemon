@@ -227,3 +227,17 @@ test("the protocol check itself catches missing fields, bad enums, unknown varia
   assert.deepEqual(checkMessage({ method: "thread/hologram/updated", params: {} }), ["thread/hologram/updated: not a notification the pinned Codex sends"]);
   assert.deepEqual(checkMessage({ method: "item/teleport/requestApproval", params: {} }, { kind: "request" }), ["item/teleport/requestApproval: not a request the pinned Codex sends"]);
 });
+
+test("docs/codex-parity.md lists every Codex command, and says 'yes' exactly for the ones ad runs", () => {
+  const doc = readFileSync(new URL("../../docs/codex-parity.md", import.meta.url), "utf8");
+  const rows = new Map();
+  for (const line of doc.split(/\r?\n/)) {
+    const m = /^\| (`\/[^|]+) \| (yes|no|not yet) \|/.exec(line);
+    if (m) for (const n of m[1].match(/\/[\w-]+/g)) rows.set(n.slice(1), m[2]);
+  }
+  const runs = new Set(SLASH_COMMANDS.filter((c) => c.source === "codex").map((c) => c.name));
+  for (const c of CODEX_SLASH.commands) {
+    for (const n of [c.name, ...c.aliases]) assert.ok(rows.has(n), `docs/codex-parity.md has no row for /${n}`);
+    assert.equal(rows.get(c.name) === "yes", runs.has(c.name), `/${c.name}: the doc says "${rows.get(c.name)}"`);
+  }
+});

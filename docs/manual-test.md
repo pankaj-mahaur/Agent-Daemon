@@ -72,7 +72,7 @@ Run this in each terminal you use: Windows Terminal, Zed and the VS Code termina
 | # | Do | Expect | If not |
 |---|---|---|---|
 | 1 | `ad tui` | the sign-in panel if needed, then "Do you trust …?" on the first run (answer Yes), then the header card: version, Codex version, model, directory with `git: <branch>`, memory, sandbox | [troubleshooting #23](troubleshooting.md#23-ad-tui-says-it-needs-an-interactive-terminal-or-node-2217) |
-| 2 | **Ask:** *"What does math.js do? Don't change anything."* | Explored / Ran rows, a streamed answer, "Worked for Ns"; `ctx N%` in the footer | — |
+| 2 | **Ask:** *"What does math.js do? Don't change anything."* | Explored / Ran rows, a streamed answer, "Worked for Ns"; the status line under the prompt shows the model, the folder and `ctx N%` | — |
 | 3 | `/permissions` → **Read only**. Then: *"Run `echo hi > hello.txt` in the shell."* | **exec approval:** a box with the full command and the choices Codex offers (`y`, `p` for "don't ask again", Esc = "No, and stop"; `n` when Codex offers "No, and tell Codex what to do instead"). `y` within 400 ms of it opening does nothing; Esc declines and ends the turn | — |
 | 4 | Still Read only: *"Fix the bug in math.js."* | **patch approval:** a box with the diff of `math.js`. `y` → "approved", and the file changes. Then `/permissions` → **Auto** | — |
 | 5 | **Steer:** ask *"Explain node:test in 40 lines."*, and while it runs type *"make it 5 lines"* + Enter | the footer reads `enter steer`; your text joins the running turn and the answer follows it | — |
@@ -93,6 +93,12 @@ Run this in each terminal you use: Windows Terminal, Zed and the VS Code termina
 | `?`, then `/terminal-setup` | the shortcuts with the newline key for this terminal; advice for this terminal | [troubleshooting #24](troubleshooting.md#24-ad-tui-shiftenter-sends-instead-of-adding-a-newline) |
 | Make the window narrower, then wider, while `ad tui` runs | no stray copies of the bottom lines; if there are, Ctrl+L redraws | [troubleshooting #25](troubleshooting.md#25-ghost-copies-of-the-bottom-lines-after-narrowing-the-window) |
 | `/remember tests use node:test`, then `/memory recent` | a "Learned:" row, then the note listed with its `#id` | `/ad doctor` |
+| `/plan fix the bug` | "/plan isn't in ad yet. /codex opens the stock Codex UI on this conversation.", and the text stays in the prompt; nothing is sent | — |
+| `/statusline`, Space on an item, Esc; then again, Space, Enter | the status line changes as you toggle; Esc puts it back; Enter saves ("Saved for /codex too") | — |
+| `/title`, turn on `activity`, Enter; send a prompt | the window or tab title shows a spinner while the turn runs; after quitting, the terminal's own title is back | — |
+| `/clear test` | the screen and scrollback are cleared; "New conversation: test. The one before: /resume …" | — |
+| `/archive` (wait a moment, then `y`), then `/resume archived` and Enter | "Archived. /resume archived brings it back.", then "Unarchived and resumed." | — |
+| Ctrl+O, Alt+R, F2 | the last answer copied; printed as plain text; the warnings | — |
 | `/private`, send *"What does math.js export?"*, then `/private` again | "Private: your prompts are wrapped in <private> …"; the prompt shows as typed, marked "(private)"; then "Private is off." | — |
 
 **Terminal probes** (from the repo). They change nothing but the terminal's modes, which they restore on exit.

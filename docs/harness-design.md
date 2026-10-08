@@ -30,7 +30,7 @@ The user's own Codex (a global install, `~/.codex`, its daemon) must never be af
 - The engine never sees the user's `CODEX_*` environment variables.
 - Only the pinned binary is used, never a `codex` on PATH.
 - Credentials stay in the harness home (`cli_auth_credentials_store = "file"`), so ad's login never collides with the user's own.
-- `ad codex` / `/codex` open the stock Codex UI on ad's home with `--no-daemon`.
+- `ad codex` / `/codex` open the stock Codex UI on ad's home with `--no-daemon`. Before `/codex` opens it on the same conversation, ad's engine unloads that conversation (`thread/unsubscribe` with `thread_unload_delay_secs=0`, then `thread/closed`), so two runtimes never write it.
 
 **Windows note.** The engine's environment is otherwise the user's, with one exception: on Windows, every PATH entry with a `WindowsApps` segment is left out, at every Codex spawn (`withoutStoreAliases()` in `runtime/src/engine/codex/app-server.mjs`, also used by `ad codex`). That covers the per-user app-alias folder (`…\Microsoft\WindowsApps`) and the Store package folders (`C:\Program Files\WindowsApps\Microsoft.PowerShell_…`, which PowerShell 7 puts first on its children's PATH). Codex runs commands in the first `pwsh` on PATH, and the Windows sandbox can't start a Store (MSIX) app, so with those entries every sandboxed command failed. Without them Codex uses an MSI-installed PowerShell 7 or Windows PowerShell 5.1, inside the sandbox. Store app aliases (`winget`, the `python` stub) are not on the agent's PATH either.
 
@@ -72,7 +72,7 @@ The user's own Codex (a global install, `~/.codex`, its daemon) must never be af
 Codex ships several releases a week, with no protocol changelog and no deprecation window.
 
 1. The engine is **pinned exactly**.
-2. A committed **protocol snapshot** (`runtime/src/engine/codex/protocol-snapshot.json`) lists the methods, notifications and parameter types ad relies on; the fake app-server used in tests is checked against it.
+2. A committed **protocol snapshot** (`runtime/src/engine/codex/protocol-snapshot.json`) lists the methods, notifications and parameter types ad relies on. The fake app-server used in tests is checked against it both ways: what it sends must be something Codex could send, and every request ad sends (`SENT_METHODS`, checked against the source) must fit the stable protocol, or be on the experimental allowlist (empty today).
 3. The weekly **`codex-upgrade` workflow** (`.github/workflows/codex-upgrade.yml`) bumps the pin, regenerates the snapshot, Codex's slash-command names (`runtime/src/tui/codex-slash.json`) and `runtime/src/engine/codex/compat.json`, and flags removals as breaking. In its own Linux job it runs the suite and the real pinned Codex against a mock model (`engine-real` and the live terminal UI tests), then opens a PR with the results. The PR's own CI (the suite and the real-engine job on Linux, macOS and Windows) runs only when the repo has a `CODEX_UPGRADE_TOKEN` secret, because PRs opened with the default token don't trigger other workflows.
 4. Unknown items and notifications degrade to plain rows or are ignored; they never crash a front end. `/warnings` in `ad tui` lists the ones this ad doesn't know.
 5. CI has no real login and no working Windows sandbox, so before merging an upgrade, run the live `ad run` and `ad tui` smokes on Windows in a scratch folder (the `codex-upgrade` skill has the steps; see also [manual-test.md](manual-test.md)).

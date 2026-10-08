@@ -456,6 +456,10 @@ Everything else (conversations, logs, login) is Codex's own, in ad's Codex home;
 | Windows: the first command or edit takes ~35 s | [#29](troubleshooting.md#29-windows-the-first-command-or-edit-after-installing-takes-35-s) |
 | Windows: every command fails with `CreateProcessAsUserW failed` or "Access is denied" | [#16](troubleshooting.md#16-harness-on-windows-every-agent-command-fails-access-is-denied-or-createprocessasuserw-failed) |
 | keys or paste behave oddly | [#22](troubleshooting.md#22-keys-or-paste-behave-oddly-in-a-terminal) |
+| keys set in `/codex` → `/keymap` don't work in ad | [#30](troubleshooting.md#30-ad-tui-keys-set-with-the-stock-uis-keymap-dont-work-in-ad) |
+| `/clear` wiped the scrollback | [#31](troubleshooting.md#31-ad-tui-clear-wiped-my-scrollback) |
+| the window title still says ad's after it ended | [#32](troubleshooting.md#32-the-terminals-title-still-says-ads-after-ad-ended) |
+| a Codex command says "isn't in ad yet" | [codex-parity.md](codex-parity.md) |
 | not signed in, sandbox, hooks, your own Codex home refused | [harness.md](harness.md#when-something-goes-wrong), troubleshooting #14–21 |
 
 `/warnings` lists the notices of this session and any events this ad doesn't know (a newer Codex). `/status` shows the Codex version ad was tested with. `ad doctor` checks the engine, login, hooks and sandbox.

@@ -542,6 +542,30 @@ Other choices: `nvim`, `vim`, `nano`, or Notepad++ with `-multiInst -nosession`.
 
 **Fix:** nothing to do; wait it out once. A command you approve to run outside the sandbox doesn't pay it.
 
+## 30. `ad tui`: keys set with the stock UI's `/keymap` don't work in ad
+
+**Symptom:** you changed a key in `/codex` → `/keymap`, and ad still uses the old one (or the key does nothing).
+
+**Cause:** ad applies `tui.keymap` only to the actions it has (the transcript, the editor, copy, raw output, clear, interrupt, reasoning effort, queue, the shortcuts, the pager). It skips a key it can't use: a two-key chord (`ctrl-x f`), a key that would mean two things, or one of the prompt's editing keys (Enter, Ctrl+A/E/K/U/W/Y, Ctrl+R, the arrows).
+
+**Fix:** `/warnings` (or F2) lists what was skipped and why. Pick another key in `/keymap`, then restart ad (it reads the keymap at start and after `/codex`). See [codex-parity.md](codex-parity.md#keys).
+
+## 31. `ad tui`: `/clear` wiped my scrollback
+
+**Symptom:** after `/clear`, the terminal's scrollback (and what was above ad) is gone.
+
+**Cause:** that is Codex's `/clear`: it clears the terminal, scrollback included, and starts a new conversation. The old conversation is kept; `/resume` brings it back.
+
+**Fix:** use `/new` to start fresh and keep the scrollback, or set `"clear.keepScrollback": true` in `~/.agent-daemon/tui/prefs.json` so `/clear` keeps it too (it draws a divider instead).
+
+## 32. The terminal's title still says ad's after ad ended
+
+**Symptom:** the window or tab title shows a spinner, a conversation name or "action required" after ad exited.
+
+**Cause:** ad saves the terminal's title when it first sets one and puts it back on exit, through the terminal's title stack. A terminal without that stack, or a crash, leaves ad's last title (ad sets an empty title before putting it back, so most terminals show their default).
+
+**Fix:** open a new tab, or set the title yourself (PowerShell: `$Host.UI.RawUI.WindowTitle = "..."`). To keep ad off the title, run `/title` and turn every item off (`tui.terminal_title = []`).
+
 ---
 
 For harness problems, the [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill walks through login → hooks → sandbox → Codex's own log. See also [harness.md](harness.md) and, for the terminal UI, [tui.md](tui.md).

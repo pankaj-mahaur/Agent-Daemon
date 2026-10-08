@@ -119,6 +119,16 @@ test("hello command exits 0", async () => {
 
 ---
 
+## Adding a slash command to the terminal UI
+
+1. **Codex has it?** Check `runtime/src/tui/codex-slash.json` (generated from Codex's source at the pin). A Codex command keeps Codex's name and meaning: add a `source: "codex"` row to `SLASH_COMMANDS` in `runtime/src/tui/app.mjs` and remove it from `NOT_IN_AD`. Codex's "during a task" rule and popup hiding come from the generated file.
+2. **ad's own?** A `source: "ad"` row with a name Codex doesn't use (a test fails on a clash).
+3. **A `case` in `slash()`.** Ask before anything destructive with `openConfirm`; a list of options is `openChecklist` or `openPicker`.
+4. **A key?** Make it an action in `runtime/src/tui/keymap.mjs` with Codex's action name and default keys, checked with `keymap.is(ctx, action, ev)`; name the key in `docs/tui.md` (a test checks every default key is there) and add a cell to the key routing table test if a layer is involved.
+5. **A new request to Codex?** Add the method to `SENT_METHODS` and regenerate the snapshot (see [testing.md](testing.md#the-fake-engine-speaks-the-pinned-protocol)).
+6. **Tests:** the app flow on the fake app-server (`test/tui-app.test.mjs`), plus a live step in `test/tui-live.test.mjs` when it has a runtime effect.
+7. **Docs:** a row in `docs/tui.md` and in `docs/codex-parity.md` for a Codex command (a test checks the parity table).
+
 ## Adding a new hook
 
 1. **Decide which event**: `PreToolUse`, `PostToolUse`, `SessionStart`, `SessionEnd`, `UserPromptSubmit`, `PreCompact`, `Stop`
