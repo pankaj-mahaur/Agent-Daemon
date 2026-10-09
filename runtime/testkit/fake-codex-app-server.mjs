@@ -485,6 +485,9 @@ async function onRequest({ id, method, params }) {
       send({ id, result: { turn } });
       return runScriptedTurn(threadId, turn, params);
     }
+    case "thread/inject_items":
+      // Kept for tests (debug/state lastParams); the fake model doesn't read history.
+      return send({ id, result: {} });
     case "thread/backgroundTerminals/clean": {
       send({ id, result: {} });
       for (const t of terminals.get(params.threadId) ?? []) {

@@ -1043,3 +1043,43 @@ test("changeDir (review): a thread with nothing in it yet (/clear) isn't forked;
     assert.equal(st.lastParams["thread/start"].cwd, other);
   });
 });
+
+/* ------------------------------------------------------------------ */
+/* Side conversations (codex-parity-2 Part 7)                          */
+/* ------------------------------------------------------------------ */
+
+test("openSide: an ephemeral, read-only fork with Codex's side texts; its events stay apart; closing lets it go", async () => {
+  await withModes(none, async ({ session, engine, lockDir }) => {
+    await session.modesReady;
+    await assert.rejects(session.openSide(), /'\/side' is unavailable until the main thread is ready\./);
+    await session.submit("fail-turn").done;
+    session.setMode("plan");
+    const side = await session.openSide();
+    const st = await debugState(engine);
+    const fork = st.lastParams["thread/fork"];
+    assert.deepEqual(
+      { ephemeral: fork.ephemeral, excludeTurns: fork.excludeTurns, sandbox: fork.sandbox, approvalPolicy: fork.approvalPolicy, config: fork.config },
+      { ephemeral: true, excludeTurns: true, sandbox: "read-only", approvalPolicy: "never", config: { "features.hooks": false } },
+    );
+    const inj = st.lastParams["thread/inject_items"];
+    assert.equal(inj.threadId, side.state.thread.id);
+    assert.deepEqual(inj.items.map((i) => i.role), ["developer", "user"]);
+    assert.match(inj.items[1].content[0].text, /^Side conversation boundary\./);
+    assert.equal(readdirSync(lockDir).length, 1, "the ephemeral fork takes no lock");
+    // A side turn: Default mode even though main is in Plan; its request is declined; main untouched.
+    const mainItems = session.state.items.size;
+    const r = await side.submit("plain question").done;
+    assert.equal(r.status, "completed");
+    const turnStart = (await debugState(engine)).lastParams["turn/start"];
+    assert.equal(turnStart.threadId, side.state.thread.id);
+    assert.equal(turnStart.collaborationMode.mode, "default");
+    assert.ok([...side.state.items.values()].some((i) => i.kind === "agentMessage" && /pong\[decline\]/.test(i.text)), "side requests are declined");
+    assert.equal(session.state.items.size, mainItems, "nothing of the side reached the main conversation");
+    assert.equal(session.state.requests.length, 0);
+    const sideId = side.state.thread.id;
+    side.close();
+    await sleep(50);
+    assert.equal((await debugState(engine)).lastParams["thread/unsubscribe"]?.threadId, sideId);
+    assert.ok(session.state.thread, "main goes on");
+  });
+});

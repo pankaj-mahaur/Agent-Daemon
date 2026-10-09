@@ -93,6 +93,7 @@ export const SENT_METHODS = [
   "thread/fork",
   "thread/goal/clear",
   "thread/goal/set",
+  "thread/inject_items",
   "thread/list",
   "thread/name/set",
   "thread/resume",

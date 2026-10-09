@@ -141,7 +141,7 @@ test("SENT_METHODS lists exactly the stable methods ad's code sends; the rest ar
     for (const e of readdirSync(dir, { withFileTypes: true })) {
       const p = join(dir, e.name);
       if (e.isDirectory()) walk(p);
-      else if (e.name.endsWith(".mjs")) for (const m of readFileSync(p, "utf8").matchAll(/\.request\(\s*"([a-zA-Z]+(?:\/[a-zA-Z]+)*)"/g)) sent.add(m[1]);
+      else if (e.name.endsWith(".mjs")) for (const m of readFileSync(p, "utf8").matchAll(/\.request\(\s*"([a-zA-Z_]+(?:\/[a-zA-Z_]+)*)"/g)) sent.add(m[1]);
     }
   };
   walk(root);

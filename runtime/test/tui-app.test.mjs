@@ -235,8 +235,8 @@ test("Codex commands ad doesn't run never reach the model; busy ones wait, and t
     await until(() => /\/recap isn't in ad yet\. \/codex opens the stock Codex UI/.test(text()), "the answer");
     assert.equal(app.state.composer, "/recap the bug", "the draft goes back into the composer");
     assert.equal(await sent(), 0);
-    type("\x15/btw\r"); // an alias answers under the name typed
-    await until(() => /\/btw isn't in ad yet/.test(text()), "the alias answer");
+    type("\x15/pet\r"); // an alias answers as its command does
+    await until(() => /ad doesn't draw terminal pets/.test(text()), "the alias answer");
     type("\x15/MENTION\r");
     await until(() => /Type @ in the prompt to mention a file/.test(text()), "a custom answer, any case");
     type("\x15hang\r");
@@ -245,8 +245,8 @@ test("Codex commands ad doesn't run never reach the model; busy ones wait, and t
     type("/new\r");
     await until(() => /'\/new' is disabled while a task is in progress\./.test(text()), "the busy answer");
     assert.equal(app.state.composer, "/new");
-    type("\x15/side what about tests?\r");
-    await until(() => /\/side isn't in ad yet/.test(text()), "not steered into the turn");
+    type("\x15/vim what about tests?\r");
+    await until(() => /\/vim isn't in ad yet/.test(text()), "not steered into the turn");
     assert.equal(await sent(), before, "nothing was steered into the running turn");
     assert.ok(session.state.thread, "the conversation is untouched");
     type("\x15/status\r"); // allowed during a task, as in Codex
@@ -959,4 +959,56 @@ test("/cd (review): a prompt sent while the folder is changing waits, its text k
     type("\x1b");
     await until(() => /Not changed\./.test(committed()), "cancelled");
   }, { modes: true, cols: 120, rows: 30 });
+});
+
+test("/side: a panel on an ephemeral fork; Ctrl+/ switches prompts; only side commands; Ctrl+C closes it into the scrollback", async () => {
+  await withApp(async ({ app, type, until, text, committed, session, engine }) => {
+    const debug = () => engine.server.request("debug/state", {});
+    type("/side\r");
+    await until(() => /'\/side' is unavailable until the main thread is ready\./.test(committed()), "too early");
+    type("fail-turn\r");
+    await until(() => !session.state.activeTurnId && session.state.turns.length === 1, "a main turn");
+    const main = session.state.thread.id;
+    type("/btw what is this?\r");
+    await until(() => /Side from main thread · ctrl\+\/ to switch · ctrl\+c to close/.test(text()), "the panel");
+    await until(async () => (await debug()).lastParams["turn/start"]?.threadId !== main, "the side question, on the fork");
+    const sideId = (await debug()).lastParams["turn/start"].threadId;
+    await until(() => /pong\[decline\]/.test(text()), "the side answer in the panel");
+    assert.doesNotMatch(committed(), /pong\[decline\]/, "nothing of the side in the scrollback yet");
+    // Only Codex's side commands; no shell.
+    type("/model\r");
+    await until(() => /'\/model' is unavailable in side conversations\. Press Ctrl\+C to return to the main thread first\./.test(committed()), "/model refused");
+    type("\x15!ls\r");
+    await until(() => /Shell commands are unavailable in side conversations\./.test(committed()), "! refused");
+    type("\x15/side\r");
+    await until(() => /A side conversation is already open\./.test(committed()), "one at a time");
+    // Ctrl+/ (0x1f): Enter goes to the main conversation again.
+    type("\x15\x1f");
+    type("fail-turn\r");
+    await until(async () => (await debug()).lastParams["turn/start"].threadId === main && session.state.turns.length === 2, "a main prompt");
+    type("\x1b[47;5u"); // Ctrl+/ as CSI u: back to the side
+    await sleep(60);
+    type("\x03"); // empty prompt: closes the side
+    await until(() => !/Side from main thread/.test(text()), "closed");
+    assert.match(committed(), /Side conversation[\s\S]*what is this\?[\s\S]*pong\[decline\]/);
+    await until(async () => (await debug()).lastParams["thread/unsubscribe"]?.threadId === sideId, "the fork let go");
+    assert.equal(session.state.thread.id, main);
+  }, { modes: true, cols: 100, rows: 30 });
+});
+
+test("/side while main runs: main's approval comes first and hides the panel; the panel fits small terminals", async () => {
+  await withApp(async ({ app, type, until, text, session, scr }) => {
+    type("fail-turn\r");
+    await until(() => !session.state.activeTurnId && session.state.turns.length === 1, "a main turn");
+    type("/side\r");
+    await until(() => /Side from main thread/.test(text()), "the panel");
+    type("\x1f"); // to main
+    type("needs approval\r");
+    await until(() => app.state.modal, "main's approval");
+    assert.doesNotMatch(scr.lines().join("\n"), /Side from main thread/, "hidden under the approval");
+    type("\x1b"); // declined
+    await until(() => !app.state.modal && /Side from main thread · main (finished|interrupted)/.test(text()), "the panel back, with main's state");
+    const screen = scr.visible().join("\n");
+    assert.match(screen, /Side from main thread[\s\S]*› /, "on a 12-row screen: the panel row and, below it, the prompt");
+  }, { modes: true, cols: 100, rows: 12 });
 });

@@ -189,6 +189,7 @@ Big pastes (more than 5 lines or 1000 characters) show as `[Pasted N lines]` and
 | Ctrl+T | page through the whole transcript: ↑ ↓ (or `k` `j`), PgUp / Shift+Space / Ctrl+B, PgDn / Space / Ctrl+F, Ctrl+U / Ctrl+D (half a page), Home, End; Esc, `q`, Ctrl+C or Ctrl+T closes |
 | Alt+, / Alt+. | lower / raise the reasoning effort for the next turn, through the current model's own levels (Shift+↓ / Shift+↑ too) |
 | Shift+Tab | switch between Plan and Default mode ([Plan mode](#plan-mode)); not while a turn runs |
+| Ctrl+/ | with a [side conversation](#side-conversations) open: move between its prompt and the main one |
 | Ctrl+O | copy the last answer (`/copy`) |
 | Alt+R | print the last answer as plain text (`/raw`) |
 | F2 | the warnings (`/warnings`) |
@@ -260,6 +261,7 @@ Model, effort and permission changes apply from the next turn.
 | Command | What it does |
 |---|---|
 | `/goal [<objective>\|clear]` | set a goal for this conversation (`/goal clear`); alone, shows it (Codex) |
+| `/side [question]` | a side conversation in an ephemeral fork, in a panel; works while a turn runs (Codex; `/btw` too). See [Side conversations](#side-conversations) |
 | `/plan [prompt]` | switch to Plan mode; with a prompt, send it there (Codex). See [Plan mode](#plan-mode) |
 | `/review` | review your uncommitted changes (Codex) |
 | `/ps` | list the background terminals and their last output lines (Codex). See [Background terminals](#background-terminals) |
@@ -328,6 +330,15 @@ Codex's own plan mode: the model explores without changing anything, asks you wh
 - **Settings.** Plan mode's reasoning effort is Codex's `plan_mode_reasoning_effort` (else medium, Codex's default); Default keeps your own model and effort. ad and `/codex` share the mode: a conversation left in Plan in the stock UI resumes in Plan here. A new conversation starts in Default.
 - **Limits.** Like Codex, Plan mode is instructions to the model, not a sandbox: a model that edits anyway isn't stopped. For a hard stop, also set `/permissions` to read-only. Plan mode uses part of Codex's experimental app-server API (only `ad tui` uses it, only for this and `/stop`); if Codex can't list its modes, `/plan` answers "Plan mode unavailable right now." ([troubleshooting #33](troubleshooting.md#33-ad-tui-plan-says-plan-mode-unavailable-right-now)).
 - **Memory.** The clear-context message is written by the client, not by you: ad's memory hooks skip it, so the model's plan is never learned as your words.
+
+## Side conversations
+
+`/side` (or `/btw`) asks something on the side without disturbing the main conversation, as in Codex: it works while a turn runs, and nothing from it goes back.
+
+- **What it is.** An ephemeral fork of the conversation: the model sees the history as reference, gets Codex's side-conversation instructions, and answers. It runs **read-only, with no approvals and no ad hooks** (Codex's own side conversations keep the main one's permissions; ad's are read-only). It is never saved, so `/resume` doesn't list it.
+- **The panel.** It opens under the main conversation's status, with **Side from main thread · <main's state> · ctrl+/ to switch · ctrl+c to close**. The main conversation keeps going above it (its finished output still goes into the scrollback); its approvals come first and hide the panel until answered.
+- **Keys.** Enter sends to the side; Esc interrupts only the side's turn; Ctrl+/ moves between the side prompt and the main one; Ctrl+C on an empty prompt closes it. Only Codex's side commands work there (`/copy` copies the side's last answer, `/status`, `/diff`, `/pwd`…); `!` shell commands don't.
+- **Closing.** The side transcript goes into the scrollback as one block ("Side conversation"), and the fork ends. A new conversation, `/resume` or an engine restart closes it too. One at a time: `/side` from the main prompt goes back to the open one.
 
 ## Background terminals
 

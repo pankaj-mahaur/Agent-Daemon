@@ -72,6 +72,12 @@ export function defaultScript(body) {
   return [ev.created(), ev.reasoning("**Thinking** about the reply"), ev.messageAdded(), ev.textDelta("po"), ev.textDelta("ng"), ev.message("pong"), ev.completed()];
 }
 
+// Every text of one role's messages in a request, in order (history included).
+export function roleTexts(body, role) {
+  const input = Array.isArray(body?.input) ? body.input : [];
+  return input.filter((i) => i?.type === "message" && i.role === role).map((i) => (i.content ?? []).map((c) => String(c.text ?? "")).join(""));
+}
+
 // The collaboration mode the model was told about last ("plan" | "default"),
 // from Codex's <collaboration_mode> developer block; null when there is none.
 export function collaborationModeSeen(body) {
@@ -102,7 +108,7 @@ export async function startMockResponses({ script = defaultScript } = {}) {
         res.writeHead(400, { "content-type": "application/json" }).end(JSON.stringify({ error: { message: "mock: request body is not JSON" } }));
         return;
       }
-      requests.push({ path: req.url, model: body.model, tools: (body.tools ?? []).map((t) => t.name ?? t.type), text: lastUserText(body), mode: collaborationModeSeen(body) });
+      requests.push({ path: req.url, model: body.model, tools: (body.tools ?? []).map((t) => t.name ?? t.type), text: lastUserText(body), mode: collaborationModeSeen(body), userTexts: roleTexts(body, "user"), developerTexts: roleTexts(body, "developer") });
       if (!/\/responses$/.test(req.url ?? "")) {
         res.writeHead(404).end();
         return;

@@ -13,6 +13,7 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 ### Added
 
+- `ad tui` has Codex's side conversations: `/side [question]` (or `/btw`) opens an ephemeral fork in a panel under the main conversation, also while a turn runs; Ctrl+/ moves between the two prompts, Ctrl+C closes it and its transcript stays in the scrollback; nothing merges back. ad's side runs read-only with no approvals and no hooks. See [Side conversations](docs/tui.md#side-conversations).
 - `ad tui` has Codex's `/cd [folder]`: the conversation is forked into the folder and continues there (edits, commands, `@` files, the status line's git facts, ad's memory and `/undo` follow it). A folder you haven't trusted yet is asked about first.
 - `ad tui` has Codex's background terminals: a long-running command the model starts (a dev server, a watcher) no longer holds back the transcript; the footer counts them, `/ps` lists them with their last output lines, and `/stop` (`/clean`) stops them all. See [Background terminals](docs/tui.md#background-terminals).
 - `ad tui` has Codex's plan mode: `/plan` (or Shift+Tab) switches to it and `/plan <prompt>` sends a prompt there; the model explores without editing and ends with a **Proposed Plan**, and ad asks "Implement this plan?" with Codex's choices (implement here, implement in a fresh conversation, or keep planning). The footer shows **Plan mode** and the prompt turns magenta. It shares the mode with `/codex` and uses Codex's `plan_mode_reasoning_effort`. See [Plan mode](docs/tui.md#plan-mode).

@@ -20,6 +20,7 @@ export const DEFAULT_KEYMAP = Object.freeze({
     copy: ["ctrl-o"], // /copy
     clear_terminal: ["ctrl-l"], // ad redraws (Codex clears)
     toggle_raw_output: ["alt-r"], // /raw
+    toggle_side_conversation: ["ctrl-/"], // focus between a /side panel and the main prompt
   },
   chat: {
     interrupt_turn: ["esc"],

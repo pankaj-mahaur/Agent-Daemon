@@ -43,7 +43,7 @@ Codex's own rules come with the commands:
 | `/voice` | not yet | yes | voice; in `/codex` |
 | `/goal` | yes | yes | set a goal for this conversation (`/goal clear`) |
 | `/agents` | not yet | yes | Codex's agent command center; in `/codex` |
-| `/side`, `/btw` | not yet | yes | a side conversation in an ephemeral fork; in `/codex` |
+| `/side`, `/btw` | yes | yes | a side conversation in an ephemeral fork, in a panel under the main one; nothing merges back. See [Side conversations](tui.md#side-conversations) |
 | `/copy` | yes | yes | copy the last answer to the clipboard |
 | `/export` | yes | no | save the conversation as markdown in this folder |
 | `/raw` | yes | yes | print the last answer as plain text (for selecting) |

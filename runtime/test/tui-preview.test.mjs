@@ -161,10 +161,13 @@ test("preview app: n declines; letters typed during an approval never reach the 
 });
 
 test("preview app: Esc interrupts a running turn", async () => {
-  await withApp(async ({ app, scr, type, until }) => {
+  await withApp(async ({ app, scr, type, until, engine }) => {
     type("hang\r");
     await until(() => app.state.busy && scr.lines().some((l) => l.includes("Working (")), "the working row");
-    await new Promise((r) => setTimeout(r, 100)); // let turn/start answer
+    // Esc before Codex accepted the turn only asks to wait; on a loaded machine
+    // 100 ms wasn't enough, so wait for the turn itself, then let it answer.
+    for (let i = 0; i < 200 && !(await engine.server.request("debug/state", {})).calls.includes("turn/start"); i++) await new Promise((r) => setTimeout(r, 25));
+    await new Promise((r) => setTimeout(r, 100));
     type("\x1b");
     await until(() => !app.state.busy, "the turn to stop");
     assert.ok(scr.lines().some((l) => /interrupted/.test(l)), JSON.stringify(scr.lines()));

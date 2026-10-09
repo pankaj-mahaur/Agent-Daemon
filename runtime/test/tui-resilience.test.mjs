@@ -115,7 +115,8 @@ test("every Codex command has a decision in ad: it runs, or ad says why not (nev
   assert.equal(notInAd("recap"), "/recap isn't in ad yet. /codex opens the stock Codex UI on this conversation.");
   assert.equal(notInAd("plan"), null, "ad runs /plan (Part 4)");
   assert.equal(notInAd("clean"), null, "ad runs /stop, and its alias /clean (Part 5)");
-  assert.match(notInAd("btw"), /^\/btw isn't in ad yet\./, "an alias answers under the name typed");
+  assert.equal(notInAd("pet"), notInAd("pets"), "an alias answers as its command does");
+  assert.equal(notInAd("btw"), null, "ad runs /side, and its alias /btw (Part 7)");
   assert.equal(notInAd("remember"), null, "ad's own commands aren't Codex's");
 });
 

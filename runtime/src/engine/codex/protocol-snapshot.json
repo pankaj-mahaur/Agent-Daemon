@@ -230,6 +230,7 @@
       "thread/fork": "ThreadForkParams",
       "thread/goal/clear": "ThreadGoalClearParams",
       "thread/goal/set": "ThreadGoalSetParams",
+      "thread/inject_items": "ThreadInjectItemsParams",
       "thread/list": "ThreadListParams",
       "thread/name/set": "ThreadSetNameParams",
       "thread/resume": "ThreadResumeParams",
@@ -2056,6 +2057,20 @@
         "goal": "ThreadGoal",
         "threadId": "string",
         "turnId": "null|string"
+      }
+    },
+    "ThreadInjectItemsParams": {
+      "required": [
+        "items",
+        "threadId"
+      ],
+      "props": [
+        "items",
+        "threadId"
+      ],
+      "types": {
+        "items": "array<any>",
+        "threadId": "string"
       }
     },
     "ThreadListCwdFilter": {

@@ -606,3 +606,50 @@ test("Part 6 live: /cd forks the conversation into another folder, and the next 
     await removeWithRetry(w.root);
   }
 });
+
+// codex-parity-2 Part 7: /side on the real Codex, while a main turn runs.
+test("Part 7 live: a side question while the main turn runs; the side runs without ad's hooks; nothing merges back", { skip, timeout: 10 * 60_000 }, async () => {
+  const mock = await startMockResponses({ script: liveScript });
+  const w = world(mock.url);
+  const journal = join(w.cwd, ".agent-daemon", "learning-journal.jsonl");
+  const journalText = () => (existsSync(journal) ? readFileSync(journal, "utf8") : "");
+  let t;
+  try {
+    t = await start(w);
+    t.type("PING first\r");
+    await t.until(/pong/, "a first turn");
+    await t.until(() => t.idle(), "idle");
+    t.type("HOLD main\r");
+    await t.until(/waiting/, "the main turn, held");
+    t.type("/side Actually, we use pnpm here, not npm.\r");
+    await t.until(/Side from main thread/, "the panel");
+    await t.until(() => mock.requests.some((r) => r.text === "Actually, we use pnpm here, not npm."), "the side question at the model");
+    const asked = mock.requests.find((r) => r.text === "Actually, we use pnpm here, not npm.");
+    assert.ok(asked.userTexts.includes("PING first"), "the side sees the main history");
+    assert.ok(asked.userTexts.some((x) => x.startsWith("Side conversation boundary.")), "Codex's boundary");
+    assert.ok(asked.developerTexts.some((x) => x.includes("You are in a side conversation, not the main thread.")), "Codex's side instructions");
+    await t.until((s) => (s.match(/pong/g) ?? []).length >= 2, "the side answer");
+    mock.release();
+    await t.until(/waiting, released/, "the main turn going on");
+    t.type("\x03"); // empty prompt in the side: closes it
+    await t.until((s) => /Side conversation/.test(s) && !/Side from main thread/.test(t.screen()), "closed into the scrollback");
+    await settle(2000); // hooks run after a prompt; give them time
+    assert.doesNotMatch(journalText(), /pnpm/, "the side ran without ad's hooks");
+    // The same words in the main conversation are captured (the hooks work there).
+    await t.until(() => t.idle(), "idle");
+    t.type("Actually, we use pnpm here, not npm.\r");
+    await t.until(() => /pnpm/.test(journalText()), "captured in the main conversation", 60_000);
+
+    t.type("\x03");
+    await settle(200);
+    t.type("\x03");
+    assert.equal((await t.exit).exitCode, 0);
+  } catch (err) {
+    err.message += `\n--- model requests ---\n${mock.requests.map((r) => JSON.stringify(r.text)).join("\n")}`;
+    throw err;
+  } finally {
+    for (const k of launched.splice(0)) k();
+    await mock.close();
+    await removeWithRetry(w.root);
+  }
+});
