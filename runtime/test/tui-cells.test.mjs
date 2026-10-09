@@ -41,6 +41,9 @@ const SAMPLES = {
   compact: { kind: "contextCompaction" },
   agents: { kind: "collabAgentToolCall", tool: "spawnAgent", receiverThreadIds: ["t2"], prompt: "Check the signup flow for the same timer bug" },
   unknown: { kind: "unknown", type: "futureThing" },
+  proposedPlan: { kind: "plan", text: "# Fix the login test\n\n## Summary\nUse real timers in `login.spec.ts` so the token refresh fires.\n\n- switch the test to real timers\n- add a retry around `refresh()`" },
+  proposedPlanStreaming: { kind: "plan", streaming: true, text: "# Fix the" },
+  proposedPlanEmpty: { kind: "plan", text: "" },
 };
 
 function sheet(width) {

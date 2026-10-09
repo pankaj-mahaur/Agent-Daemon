@@ -320,8 +320,12 @@ function cellLines(item, width) {
       const text = item.summaryText ?? (item.summary ?? []).join("\n\n");
       return text.trim() ? capLines(mdCell(text, width, { style: S.italic }), TEXT_LINES) : [];
     }
-    case "plan":
-      return mdCell(item.text ?? "", width);
+    case "plan": {
+      // Codex's proposed plan (Plan mode): a titled block, the plan indented 2 (foreground colours only).
+      const text = String(item.text ?? "");
+      const body = text.trim() ? renderMarkdown(text, { width: Math.max(1, width - 4) }) : [[{ text: "(empty)", style: S.italic }]];
+      return [normalize([{ text: "\u{2022} ", style: S.bullet }, { text: "Proposed Plan", style: S.head }]), [], ...body.map((l) => normalize([{ text: "  " }, ...l]))];
+    }
     case "commandExecution":
       return isExploring(item) ? renderExploring([item], { width }) : renderCommand(item, width);
     case "fileChange": {

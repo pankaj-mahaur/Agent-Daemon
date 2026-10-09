@@ -14,6 +14,8 @@
   ? shortcuts · @ files · ctrl+j newline                       ctx 100% · 5h 34%
 ── footer busy ──
   enter steer · tab queue · ctrl+j newline          ctx 91% · 5h 38% · loop 3/20
+── footer plan mode ──
+  ? shortcuts · @ files       ctx 100% · 5h 34% · Plan mode (shift+tab to cycle)
 ── shortcuts ──
 Shortcuts
   enter        send (steers a running turn)

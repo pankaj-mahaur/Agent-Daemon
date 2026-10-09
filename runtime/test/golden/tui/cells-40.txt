@@ -83,6 +83,26 @@
     timer bug
 ── unknown ──
 • (not shown: futureThing item)
+── proposedPlan ──
+• Proposed Plan
+
+  Fix the login test
+
+  Summary
+
+  Use real timers in login.spec.ts so
+  the token refresh fires.
+
+  • switch the test to real timers
+  • add a retry around refresh()
+── proposedPlanStreaming ──
+• Proposed Plan
+
+  Fix the
+── proposedPlanEmpty ──
+• Proposed Plan
+
+  (empty)
 ── plan ──
 • Updated plan
   └ Small fix

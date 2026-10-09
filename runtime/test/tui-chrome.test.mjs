@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { assertGolden } from "../testkit/golden.mjs";
 import { createPicker, newlineHint, renderFooter, renderHeader, renderShortcuts, renderStatus, shortenPath } from "../src/tui/view/chrome.mjs";
 import { lineWidth } from "../src/tui/terminal/text.mjs";
+import { T } from "../src/tui/view/theme.mjs";
 
 const text = (lines) => lines.map((l) => l.map((s) => s.text).join("").replace(/ +$/, "")).join("\n");
 const key = (name, mods = {}) => ({ type: "key", name, ctrl: false, alt: false, shift: false, ...mods });
@@ -28,6 +29,7 @@ function sheet(width) {
   out.push("── status ──", text(renderStatus({ label: "Checking token refresh", elapsedMs: 14_000, queued: ["also run the signup test"] }, { width })));
   out.push("── footer idle ──", text([renderFooter(IDLE, { width })]));
   out.push("── footer busy ──", text([renderFooter(BUSY, { width })]));
+  out.push("── footer plan mode ──", text([renderFooter({ ...IDLE, chips: [{ full: "Plan mode (shift+tab to cycle)", short: "Plan mode", style: T.planMode }] }, { width })]));
   out.push("── shortcuts ──", text(renderShortcuts({ newline: "ctrl+enter" }, { width })));
   return out.join("\n");
 }
