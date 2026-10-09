@@ -22,12 +22,12 @@ const until = async (pred, what, ms = 10000) => {
   throw new Error(`timed out waiting for ${what}`);
 };
 
-async function withSession(opts, fn) {
+async function withSession(opts, fn, { engineOpts = {} } = {}) {
   const root = mkdtempSync(join(tmpdir(), "ad-session-"));
   const lockDir = join(root, "locks");
   const engines = [];
   const make = async () => {
-    const e = await createEngine({ home: join(root, "home"), command });
+    const e = await createEngine({ home: join(root, "home"), command, ...engineOpts });
     engines.push(e);
     return e;
   };
@@ -742,5 +742,128 @@ test("a crash also settles items that have no turn (a running ! command)", async
     const it = session.state.items.get("sh-x");
     assert.equal(it.streaming, false);
     assert.equal(it.status, "failed");
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Collaboration modes (Codex's plan mode, codex-parity-2 Part 4)      */
+/* ------------------------------------------------------------------ */
+
+const withModes = (opts, fn, extra = {}) => withSession((make) => ({ modes: true, ...opts(make) }), fn, { engineOpts: { experimental: true, ...(extra.env ? { env: extra.env } : {}) } });
+const turnMask = async (engine) => (await debugState(engine)).lastParams["turn/start"].collaborationMode;
+
+test("modes: presets load at start; every turn/start carries the mask; Default has the user's model and effort", async () => {
+  await withModes(none, async ({ session, engine }) => {
+    await session.modesReady;
+    assert.deepEqual(session.state.mode.presets.map((p) => [p.name, p.mode, p.effort]), [["Plan", "plan", "medium"], ["Default", "default", null]]);
+    assert.equal(session.state.mode.kind, "default");
+    session.setNextTurn({ model: "m-user", effort: "high" });
+    await session.submit("fail-turn").done;
+    assert.deepEqual(await turnMask(engine), { mode: "default", settings: { model: "m-user", reasoning_effort: "high", developer_instructions: null } });
+  });
+});
+
+test("modes: Plan uses plan_mode_reasoning_effort, else the preset's; switching tells the thread and says when the effort changes", async () => {
+  let planEffort = null;
+  await withModes(() => ({ planEffort: () => planEffort }), async ({ session, engine }) => {
+    await session.modesReady;
+    session.setNextTurn({ model: "m-user", effort: "low" });
+    await session.submit("fail-turn").done;
+    assert.deepEqual(session.setMode("plan"), { ok: true });
+    await sleep(50);
+    const st = await debugState(engine);
+    assert.deepEqual(st.lastParams["thread/settings/update"], { threadId: session.state.thread.id, collaborationMode: { mode: "plan", settings: { model: "m-user", reasoning_effort: "medium", developer_instructions: null } } });
+    assert.ok(session.state.notices.some((n) => n.message === "Model changed to m-user medium for Plan mode."), JSON.stringify(session.state.notices));
+    planEffort = "xhigh";
+    await session.submit("fail-turn").done;
+    assert.equal((await turnMask(engine)).settings.reasoning_effort, "xhigh");
+    // Back to Default: the user's own effort, never the plan turn's.
+    session.setMode("default");
+    await session.submit("fail-turn").done;
+    assert.deepEqual((await turnMask(engine)).settings, { model: "m-user", reasoning_effort: "low", developer_instructions: null });
+    assert.equal(session.state.config.effort, "low");
+  });
+});
+
+test("modes: before a thread exists a switch is local; the first turn carries it", async () => {
+  await withModes(none, async ({ session, engine }) => {
+    await session.modesReady;
+    assert.equal(session.cycleMode().ok, true, "Shift+Tab: Plan is first");
+    assert.equal(session.state.mode.kind, "plan");
+    await session.submit("fail-turn").done;
+    const st = await debugState(engine);
+    assert.equal(st.lastParams["thread/settings/update"], undefined);
+    assert.equal(st.lastParams["turn/start"].collaborationMode.mode, "plan");
+    assert.equal(session.cycleMode().ok, true);
+    assert.equal(session.state.mode.kind, "default", "cycles back in Codex's order");
+  });
+});
+
+test("modes: thread/settings/updated (here, /codex or a turn's mask) drives the mode; resume restores it; a new conversation starts in Default", async () => {
+  await withModes(none, async ({ session, engine }) => {
+    await session.modesReady;
+    await session.submit("fail-turn").done;
+    const id = session.state.thread.id;
+    // As if the stock UI had switched the thread to Plan.
+    await engine.server.request("thread/settings/update", { threadId: id, collaborationMode: { mode: "plan", settings: { model: "fake-model", reasoning_effort: "medium", developer_instructions: null } } });
+    await until(() => session.state.mode.kind === "plan", "the mode from thread/settings/updated");
+    session.newThread();
+    assert.equal(session.state.mode.kind, "default");
+    await session.resume(id);
+    assert.equal(session.state.mode.kind, "plan", "resume reports the thread's mode");
+  });
+});
+
+test("modes: the mask goes with a queued prompt and with the re-sent prompt after an engine restart", async () => {
+  await withModes(
+    (make) => ({ restart: async () => { await sleep(200); return make(); } }),
+    async ({ session, engine, engines }) => {
+      await session.modesReady;
+      session.setMode("plan");
+      await session.review({ type: "custom", instructions: "hang" });
+      await until(() => session.state.activeTurnId, "the review turn");
+      const q = session.submit("fail-turn");
+      assert.equal((await q.accepted).queued, true, "a review can't be steered: queued");
+      await session.interrupt();
+      await until(() => session.state.queue.length === 0 && session.state.turns.length === 2, "the queued prompt");
+      assert.equal((await turnMask(engine)).mode, "plan");
+      engine.server.request("test/crash", {}).catch(() => {});
+      await until(() => session.state.engine.state === "restarting", "restarting");
+      const s = session.submit("fail-turn");
+      assert.equal((await s.accepted).queued, true);
+      await until(() => session.state.engine.state === "ready" && session.state.queue.length === 0, "the queue after the restart");
+      await sleep(100);
+      assert.equal((await turnMask(engines[1])).mode, "plan", "still Plan on the new engine");
+      assert.ok((await debugState(engines[1])).calls.includes("collaborationMode/list"), "presets asked again");
+    },
+  );
+});
+
+test("modes: Codex without presets → unavailable, with a notice; a slow list gives up after 2 s", async () => {
+  await withModes(none, async ({ session, engine }) => {
+    await session.modesReady;
+    assert.deepEqual(session.state.mode.presets, []);
+    assert.ok(session.state.notices.some((n) => n.code === "modes.unavailable"));
+    assert.deepEqual(session.setMode("plan"), { ok: false, message: "Plan mode unavailable right now." });
+    assert.deepEqual(session.cycleMode(), { ok: false, message: "Plan mode unavailable right now." });
+    await session.submit("fail-turn").done;
+    assert.equal(await turnMask(engine), undefined, "no mask without presets");
+  }, { env: { FAKE_NO_MODES: "1" } });
+  await withModes(none, async ({ session }) => {
+    const t = Date.now();
+    await session.modesReady;
+    assert.ok(Date.now() - t >= 1500, "Codex's 2 s wait");
+    assert.deepEqual(session.state.mode.presets, []);
+  }, { env: { FAKE_MODES_SLOW: "1" } });
+});
+
+test("modes off (every front end but ad tui): no list, no mask, stable requests only", async () => {
+  await withSession(none, async ({ session, engine }) => {
+    await session.modesReady;
+    assert.equal(session.state.mode.presets, null);
+    await session.submit("fail-turn").done;
+    const st = await debugState(engine);
+    assert.ok(!st.calls.includes("collaborationMode/list"));
+    assert.equal(st.lastParams["turn/start"].collaborationMode, undefined);
   });
 });

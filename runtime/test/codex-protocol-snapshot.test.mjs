@@ -129,10 +129,11 @@ test("diffSnapshots: a field that only became nullable is info, not breaking", (
   assert.ok(d.info.some((x) => /P\.cwd: now nullable/.test(x)), JSON.stringify(d));
 });
 
-test("SENT_METHODS lists exactly the methods ad's code sends, and each is on the pinned stable surface", async () => {
+test("SENT_METHODS lists exactly the stable methods ad's code sends; the rest are on the experimental allowlist", async () => {
   const { readdirSync } = await import("node:fs");
   const { join } = await import("node:path");
   const { SENT_METHODS } = await import("../src/engine/codex/protocol-snapshot.mjs");
+  const { EXPERIMENTAL_ALLOWLIST } = await import("../src/engine/codex/surface.mjs");
   const { fileURLToPath } = await import("node:url");
   const root = fileURLToPath(new URL("../src/", import.meta.url));
   const sent = new Set();
@@ -144,7 +145,9 @@ test("SENT_METHODS lists exactly the methods ad's code sends, and each is on the
     }
   };
   walk(root);
-  assert.deepEqual([...sent].sort(), [...SENT_METHODS].sort(), "add a new request method to SENT_METHODS (and regenerate the snapshot)");
+  const experimental = [...sent].filter((m) => EXPERIMENTAL_ALLOWLIST.methods.includes(m));
+  for (const m of experimental) assert.ok(committed.experimental.methods.includes(m), `${m} isn't in the snapshot's experimental section`);
+  assert.deepEqual([...sent].filter((m) => !experimental.includes(m)).sort(), [...SENT_METHODS].sort(), "add a new request method to SENT_METHODS (and regenerate the snapshot)");
   for (const m of SENT_METHODS) assert.ok(committed.methods.clientRequests.includes(m), `${m} isn't on the pinned stable surface`);
 });
 

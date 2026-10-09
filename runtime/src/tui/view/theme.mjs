@@ -25,6 +25,8 @@ export const T = deepFreeze({
   error: { fg: "red" },
   errorStrong: { fg: "red", bold: true },
   warning: { fg: "yellow" },
+  // Codex's plan mode: the footer's mode chip and the prompt.
+  planMode: { fg: "magenta" },
   diffAdd: { fg: "green" },
   diffDel: { fg: "red" },
   diffHunk: { fg: "cyan", dim: true },

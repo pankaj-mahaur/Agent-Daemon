@@ -3,7 +3,7 @@
 //
 //   createComposer({history, pasteLines, pasteChars, mask})
 //     .handle(ev) → {submit: text} | {changed} | {cancel: true} | null (not ours)
-//     .render({width, prompt, placeholder}) → {lines, cursor: {row, col}}
+//     .render({width, prompt, promptStyle, placeholder}) → {lines, cursor: {row, col}}
 //
 // Keys:
 //   - Graphemes are the cursor unit. ←/→ by grapheme; Ctrl/Alt+←/→ and
@@ -354,7 +354,7 @@ export function createComposer({ history = null, pasteLines = 5, pasteChars = 10
     set(text.slice(0, start) + v + text.slice(end), start + v.length);
   }
 
-  function render({ width = 80, prompt = "\u{203a} ", placeholder = "" } = {}) {
+  function render({ width = 80, prompt = "\u{203a} ", promptStyle = ACCENT, placeholder = "" } = {}) {
     const pw = stringWidth(prompt);
     // One cell stays free so a cursor after a full row never wraps the terminal.
     room = Math.max(1, width - pw - 1);
@@ -370,7 +370,7 @@ export function createComposer({ history = null, pasteLines = 5, pasteChars = 10
     }
     const r = rows();
     const lines = r.map((row, i) => [
-      { text: i === 0 ? prompt : " ".repeat(pw), style: ACCENT },
+      { text: i === 0 ? prompt : " ".repeat(pw), style: promptStyle },
       { text: row.segs.map((s) => shown(s, mask)).join("") },
     ]);
     if (!text && placeholder) lines[0].push({ text: placeholder, style: DIM });

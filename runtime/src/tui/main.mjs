@@ -332,7 +332,8 @@ export async function cmdTui(opts = {}) {
     const { checkpointWiring } = await import("./undo.mjs");
     const cp = createCheckpoints({ cwd });
     const undoKit = (await cp.repo().catch(() => null)) ? checkpointWiring(cp, { cwd }) : null;
-    session = createSession({ engine, cwd, model: opts.model, sandbox: opts.sandbox, restart, maxRestarts: 3, hooks: undoKit?.hooks ?? {}, ...(opts.lockDir ? { lockDir: opts.lockDir } : {}) });
+    // modes: Codex's plan mode, on the experimental allowlist this engine opted into (codex-parity-2 P0).
+    session = createSession({ engine, cwd, model: opts.model, sandbox: opts.sandbox, restart, maxRestarts: 3, hooks: undoKit?.hooks ?? {}, modes: true, planEffort: () => settings?.codex?.get("plan_mode_reasoning_effort") ?? null, ...(opts.lockDir ? { lockDir: opts.lockDir } : {}) });
     await session.init();
     // Settings: Codex's own (its config.toml in ad's home, shared with /codex) and ad's (prefs.json).
     const settings = { codex: createCodexSettings({ engine: () => session.engine }), ad: createPrefs({ file: opts.prefsFile ?? DEFAULT_PREFS_FILE }) };

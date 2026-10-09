@@ -18,16 +18,18 @@ const FAKE = fileURLToPath(new URL("../testkit/fake-codex-app-server.mjs", impor
 const command = { cmd: process.execPath, prefix: [FAKE] };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function withApp(fn, { cols = 70, rows = 20, actions = {}, armMs = 60, sessionOpts = {}, restartable = false, settings = null } = {}) {
+async function withApp(fn, { cols = 70, rows = 20, actions = {}, armMs = 60, sessionOpts = {}, restartable = false, settings = null, modes = false, env = null } = {}) {
   const root = mkdtempSync(join(tmpdir(), "ad-app-"));
   const engines = [];
   const make = async () => {
-    const e = await createEngine({ home: join(root, "home"), command });
+    // modes: as ad tui runs it, on the experimental allowlist with Codex's collaboration modes.
+    const e = await createEngine({ home: join(root, "home"), command, ...(modes ? { experimental: true } : {}), ...(env ? { env } : {}) });
     engines.push(e);
     return e;
   };
   const engine = await make();
-  const session = createSession({ engine, cwd: root, lockDir: join(root, "locks"), ...(restartable ? { restart: make } : {}), ...sessionOpts });
+  const session = createSession({ engine, cwd: root, lockDir: join(root, "locks"), ...(restartable ? { restart: make } : {}), modes, ...sessionOpts });
+  await session.modesReady;
   const scr = modelScreen({ cols, rows });
   const listeners = new Set();
   const io = { ...scr.io, onInput: (f) => (listeners.add(f), () => listeners.delete(f)) };
@@ -229,9 +231,9 @@ test("Codex commands ad doesn't run never reach the model; busy ones wait, and t
       const st = await engine.server.request("debug/state", {});
       return st.calls.filter((c) => c === "turn/start" || c === "turn/steer").length;
     };
-    type("/plan fix the bug\r");
-    await until(() => /\/plan isn't in ad yet\. \/codex opens the stock Codex UI/.test(text()), "the answer");
-    assert.equal(app.state.composer, "/plan fix the bug", "the draft goes back into the composer");
+    type("/recap the bug\r");
+    await until(() => /\/recap isn't in ad yet\. \/codex opens the stock Codex UI/.test(text()), "the answer");
+    assert.equal(app.state.composer, "/recap the bug", "the draft goes back into the composer");
     assert.equal(await sent(), 0);
     type("\x15/clean\r"); // an alias answers under the name typed
     await until(() => /\/clean isn't in ad yet/.test(text()), "the alias answer");
@@ -332,21 +334,21 @@ const LAYERS = {
 const sent = async (engine, method) => (await engine.server.request("debug/state", {})).calls.filter((c) => c === method).length;
 const ROUTES = [
   ["idle", "ctrlC", async ({ app }) => assert.match(app.state.note ?? "", /Ctrl\+C again quits/)],
-  ["idle", "shiftTab", async ({ app, engine }) => (assert.equal(app.state.composer, ""), assert.equal(await sent(engine, "turn/start"), 0))],
+  ["idle", "shiftTab", async ({ app, engine, session }) => (assert.equal(app.state.composer, ""), assert.equal(await sent(engine, "turn/start"), 0), assert.equal(session.state.mode.kind, "plan", "Codex's mode cycle"))],
   ["idle", "enter", async ({ engine }) => assert.equal(await sent(engine, "turn/start"), 0, "an empty prompt sends nothing")],
   ["text", "esc", async ({ app }) => assert.equal(app.state.composer, "draft", "Esc doesn't throw the draft away")],
   ["text", "ctrlC", async ({ app }) => (assert.equal(app.state.composer, ""), assert.doesNotMatch(app.state.note ?? "", /again quits/, "clearing doesn't arm the quit"))],
-  ["text", "shiftTab", async ({ app }) => assert.equal(app.state.composer, "draft")],
+  ["text", "shiftTab", async ({ app, session }) => (assert.equal(app.state.composer, "draft"), assert.equal(session.state.mode.kind, "plan", "the draft stays; the mode changes"))],
   ["text", "enter", async ({ until, engine }) => until(async () => (await sent(engine, "turn/start")) === 1, "sent")],
   ["running", "esc", async ({ until, engine }) => until(async () => (await sent(engine, "turn/interrupt")) === 1, "interrupted")],
   ["running", "ctrlC", async ({ app }) => assert.equal(app.state.composer, "", "the draft goes first; the turn runs on")],
   ["running", "tab", async ({ until, session }) => until(() => session.state.queue.length === 1, "queued")],
-  ["running", "shiftTab", async ({ app, session }) => (assert.equal(session.state.queue.length, 0, "Shift+Tab never queues"), assert.equal(app.state.composer, "steer me"))],
+  ["running", "shiftTab", async ({ app, session }) => (assert.equal(session.state.queue.length, 0, "Shift+Tab never queues"), assert.equal(app.state.composer, "steer me"), assert.equal(session.state.mode.kind, "default", "no switch during a task"))],
   ["running", "enter", async ({ until, engine }) => until(async () => (await sent(engine, "turn/steer")) === 1, "steered")],
   ["approval", "esc", async ({ until, app }) => until(() => !app.state.modal, "declined")],
   ["approval", "ctrlC", async ({ until, app }) => until(() => !app.state.modal, "declined")],
   ["approval", "tab", async ({ app }) => assert.ok(app.state.modal, "still open")],
-  ["approval", "shiftTab", async ({ app }) => assert.ok(app.state.modal, "still open")],
+  ["approval", "shiftTab", async ({ app, session }) => (assert.ok(app.state.modal, "still open"), assert.equal(session.state.mode.kind, "default"))],
   ["confirm", "esc", async ({ until, box }) => until(() => box.answer === false, "no")],
   ["confirm", "ctrlC", async ({ until, box, app }) => (await until(() => box.answer === false, "no"), assert.equal(app.state.confirm, false))],
   ["confirm", "enter", async ({ app, box }) => (assert.equal(box.answer, undefined, "too soon to answer"), assert.ok(app.state.confirm))],
@@ -354,7 +356,7 @@ const ROUTES = [
   ["popup", "esc", async ({ app }) => (assert.equal(app.state.popup, null), assert.equal(app.state.composer, "/"))],
   ["popup", "ctrlC", async ({ app }) => (assert.equal(app.state.popup, null), assert.equal(app.state.composer, "/", "closing the popup comes before clearing"))],
   ["popup", "tab", async ({ app }) => assert.match(app.state.composer, /^\/\w+ $/, "fills the highlighted command")],
-  ["popup", "shiftTab", async ({ app }) => (assert.equal(app.state.composer, "/"), assert.equal(app.state.popup, "command"))],
+  ["popup", "shiftTab", async ({ app, session }) => (assert.equal(app.state.composer, "/"), assert.equal(app.state.popup, "command"), assert.equal(session.state.mode.kind, "default", "not with a popup open"))],
   ["checklist", "esc", async ({ app, box }) => (assert.equal(app.state.popup, null), assert.equal(box.cancelled, true))],
   ["checklist", "ctrlC", async ({ app, box }) => (assert.equal(app.state.popup, null), assert.equal(box.cancelled, true, "Ctrl+C undoes a live preview too"))],
   ["checklist", "tab", async ({ app, box }) => (assert.equal(app.state.popup, "statusline"), assert.equal(box.saved, undefined))],
@@ -380,8 +382,36 @@ test("key routing table: the topmost layer takes Esc, Ctrl+C, Tab, Shift+Tab, En
         err.message = `${layer} + ${k}: ${err.message}`;
         throw err;
       }
-    }, { armMs: 500 }); // "too soon" stays too soon on a loaded machine
+    }, { armMs: 500, modes: true }); // "too soon" stays too soon on a loaded machine
   }
+});
+
+test("/plan and Shift+Tab: Codex's plan mode, its footer chip and prompt colour, /plan <prompt>, and the unavailable answer", async () => {
+  await withApp(async ({ type, until, text, session, engine }) => {
+    const debug = () => engine.server.request("debug/state", {});
+    assert.doesNotMatch(text(), /Plan mode/);
+    type("/plan\r");
+    await until(() => session.state.mode.kind === "plan" && /Plan mode \(shift\+tab to cycle\)/.test(text()), "the plan chip");
+    type("\x1b[Z"); // Shift+Tab
+    await until(() => session.state.mode.kind === "default" && !/Plan mode/.test(text()), "back to Default");
+    type("/plan fail-turn\r");
+    await until(async () => (await debug()).lastParams["turn/start"]?.collaborationMode?.mode === "plan", "the prompt, sent in Plan mode");
+    assert.equal((await debug()).lastParams["turn/start"].input[0].text, "fail-turn");
+    await until(() => !session.state.activeTurnId && !session.state.starting, "the turn's end");
+    type("/plan\r"); // already in Plan: nothing to do, nothing sent
+    await sleep(50);
+    assert.equal(session.state.mode.kind, "plan");
+  }, { modes: true, cols: 90 });
+  // Codex without presets: /plan <text> goes back into the composer, with Codex's answer.
+  await withApp(async ({ app, type, until, text, engine }) => {
+    type("/plan fix the bug\r");
+    await until(() => /Plan mode unavailable right now\./.test(text()), "the answer");
+    assert.equal(app.state.composer, "/plan fix the bug");
+    assert.ok(!(await engine.server.request("debug/state", {})).calls.includes("turn/start"), "never sent to the model");
+    type("\x15\x1b[Z");
+    await sleep(60);
+    assert.match(text(), /Plan mode unavailable right now\./);
+  }, { modes: true, env: { FAKE_NO_MODES: "1" } });
 });
 
 test("/clear, /archive, /resume archived, /delete and /pwd", async () => {

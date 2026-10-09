@@ -112,7 +112,8 @@ test("every Codex command has a decision in ad: it runs, or ad says why not (nev
       else assert.ok(said && said.length > 10, `/${n} has an answer`);
     }
   }
-  assert.equal(notInAd("plan"), "/plan isn't in ad yet. /codex opens the stock Codex UI on this conversation.");
+  assert.equal(notInAd("recap"), "/recap isn't in ad yet. /codex opens the stock Codex UI on this conversation.");
+  assert.equal(notInAd("plan"), null, "ad runs /plan (Part 4)");
   assert.match(notInAd("clean"), /^\/clean isn't in ad yet\. \(The stock UI's \/stop/);
   assert.equal(notInAd("remember"), null, "ad's own commands aren't Codex's");
 });

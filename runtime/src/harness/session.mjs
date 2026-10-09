@@ -150,6 +150,11 @@ export function createSession({
   lockDir = DEFAULT_LOCK_DIR,
   restart = null,
   maxRestarts = 3,
+  // Codex's collaboration modes (plan mode, codex-parity-2 Part 4): only a
+  // front end whose engine opted into the experimental allowlist turns them on.
+  modes = false,
+  // Codex's plan_mode_reasoning_effort, read when a Plan mask is built.
+  planEffort = () => null,
 } = {}) {
   let eng = engine;
   const emitter = new EventEmitter();
@@ -171,6 +176,8 @@ export function createSession({
     plan: null,
     diff: null,
     rateLimits: null,
+    // presets: null until Codex answers, [] when it has none (plan mode unavailable).
+    mode: { kind: "default", presets: null },
     notices: [],
     engine: { state: "ready", exitCode: null, restarts: 0 },
   };
@@ -300,6 +307,10 @@ export function createSession({
   function onThreadEvent(ev) {
     const root = ev.threadId === state.thread?.id;
     switch (ev.type) {
+      case "thread.settings":
+        // The thread's mode as Codex has it (a switch here, in /codex, or a turn's mask).
+        if (root && ev.collaborationMode?.mode) state.mode = { ...state.mode, kind: ev.collaborationMode.mode };
+        break;
       case "thread.started":
         if (root) state.thread = { ...state.thread, ...ev.thread };
         else if (ev.thread?.parentThreadId) state.agents.set(ev.thread.id, { label: ev.thread.agentNickname ?? ev.thread.agentRole ?? null, parentThreadId: ev.thread.parentThreadId });
@@ -453,6 +464,7 @@ export function createSession({
         }
         // Overrides go again on the next turn, in case Codex lost them.
         nextTurn = { ...sticky, ...nextTurn };
+        loadModes();
         // Ready only once the thread is back: a prompt sent now goes to the right place.
         state.engine = { state: "ready", exitCode: null, restarts: state.engine.restarts };
         notice("info", "engine.restarted", "Codex restarted; the conversation continues.");
@@ -573,7 +585,8 @@ export function createSession({
         if (hooks.beforeTurn) inp = toInput((await hooks.beforeTurn({ input: inp, session: api })) ?? inp);
         if (stale(e)) throw new Error("the session moved on before the turn started");
         const o = takeNextTurn();
-        const { turnId } = await eng.startTurn({ threadId, input: inp, clientUserMessageId: cid, ...o });
+        const mask = modes ? modeMask() : null;
+        const { turnId } = await eng.startTurn({ threadId, input: inp, clientUserMessageId: cid, ...o, ...(mask ? { collaborationMode: mask } : {}) });
         if (stale(e)) {
           // Started on a thread this session has left: stop it.
           eng.interrupt(threadId, turnId).catch(() => {});
@@ -702,6 +715,62 @@ export function createSession({
     return true;
   }
 
+  /* -------------------------------------------------------------- */
+  /* Collaboration modes (Codex's plan mode)                        */
+  /* -------------------------------------------------------------- */
+
+  // Asks Codex for its presets: at start and after an engine restart.
+  function loadModes() {
+    if (!modes || typeof eng.listCollaborationModes !== "function") return Promise.resolve();
+    const asked = eng;
+    return asked.listCollaborationModes().then(
+      (presets) => {
+        if (eng === asked && !closed) state.mode = { ...state.mode, presets };
+      },
+      (err) => {
+        if (eng !== asked || closed) return;
+        state.mode = { ...state.mode, presets: [] };
+        notice("warn", "modes.unavailable", `Plan mode is unavailable: Codex didn't list its modes (${err.message}).`);
+      },
+    ).finally(() => change("mode"));
+  }
+
+  const MODE_NAMES = { plan: "Plan", default: "Default" };
+  const modeName = (kind) => state.mode.presets?.find((p) => p.mode === kind)?.name ?? MODE_NAMES[kind] ?? kind;
+
+  // The mask every turn/start carries, as Codex's TUI sends it: the user's
+  // own model and effort in Default (never values read back after a plan
+  // turn), plan_mode_reasoning_effort (else the preset's) in Plan, and no
+  // developer instructions, so Codex uses its built-in ones.
+  function modeMask(kind = state.mode.kind) {
+    const preset = state.mode.presets?.find((p) => p.mode === kind);
+    const model = preset?.model ?? state.config.model;
+    if (!preset || !model) return null;
+    const effort = kind === "plan" ? (planEffort() ?? preset.effort ?? state.config.effort) : state.config.effort;
+    return { mode: kind, settings: { model, reasoning_effort: effort ?? null, developer_instructions: null } };
+  }
+
+  function setMode(kind) {
+    if (!state.mode.presets?.some((p) => p.mode === kind)) return { ok: false, message: kind === "plan" ? "Plan mode unavailable right now." : "Default mode unavailable" };
+    if (kind === state.mode.kind) return { ok: true };
+    const before = modeMask();
+    state.mode = { ...state.mode, kind };
+    const after = modeMask();
+    if (before && after && (before.settings.model !== after.settings.model || before.settings.reasoning_effort !== after.settings.reasoning_effort)) {
+      const effort = after.settings.model.startsWith("codex-auto-") ? "" : ` ${after.settings.reasoning_effort ?? "default"}`;
+      notice("info", "mode.model", `Model changed to ${after.settings.model}${effort} for ${modeName(kind)} mode.`);
+    }
+    // The thread learns it now (and /codex shows it); every turn/start carries it anyway.
+    if (state.thread && after) {
+      const threadId = state.thread.id;
+      eng.updateThreadSettings(threadId, { collaborationMode: after }).catch((err) => {
+        if (state.thread?.id === threadId) notice("warn", "mode.notUpdated", `Codex didn't take the mode change yet (${err.message}); the next prompt carries it.`);
+      });
+    }
+    change("mode");
+    return { ok: true };
+  }
+
   function setNextTurn(o = {}) {
     for (const k of ["model", "effort", "approvalPolicy", "sandboxPolicy"]) if (o[k] !== undefined) nextTurn[k] = sticky[k] = o[k];
     if (o.model !== undefined) state.config.model = o.model;
@@ -778,6 +847,18 @@ export function createSession({
     interrupt,
     resolve,
     setNextTurn,
+    /** Switches Codex's collaboration mode ("plan" | "default") → {ok, message?}. Callers check busy rules. */
+    setMode,
+    /** The next preset in Codex's order (Shift+Tab) → {ok, message?}. */
+    cycleMode() {
+      const kinds = (state.mode.presets ?? []).map((p) => p.mode);
+      if (!kinds.length) return { ok: false, message: "Plan mode unavailable right now." };
+      return setMode(kinds[(kinds.indexOf(state.mode.kind) + 1) % kinds.length]);
+    },
+    /** The mask a turn would carry now (null without presets). */
+    modeMask,
+    /** Resolves once Codex's mode presets are in (or failed). */
+    modesReady: null,
     async review(target = { type: "uncommittedChanges" }) {
       const threadId = await ensureThread();
       return eng.server.request("review/start", { threadId, target });
@@ -834,6 +915,8 @@ export function createSession({
     newThread() {
       detach();
       resetThreadState();
+      // A new conversation starts in Default, as in Codex.
+      state.mode = { ...state.mode, kind: "default" };
       change("thread");
     },
     /**
@@ -896,6 +979,8 @@ export function createSession({
         throw err;
       }
       state.config.model = t.model ?? state.config.model;
+      // The mode the thread is in (a plan left in /codex stays a plan).
+      state.mode = { ...state.mode, kind: t.collaborationMode?.mode ?? "default" };
       releaseLock = release;
       state.thread = { ...(t.thread ?? {}), id: t.threadId };
       unsubThread = eng.subscribe(t.threadId, onThreadEvent);
@@ -916,5 +1001,6 @@ export function createSession({
   };
 
   wire();
+  api.modesReady = loadModes();
   return api;
 }

@@ -48,6 +48,7 @@ export const SLASH_COMMANDS = [
   { name: "permissions", source: "codex", desc: "what Codex may do without asking" },
   { name: "status", source: "codex", desc: "account, model, sandbox, tokens, limits" },
   { name: "goal", source: "codex", desc: "set a goal for this conversation (/goal clear)" },
+  { name: "plan", source: "codex", desc: "switch to Plan mode (/plan <prompt> sends it there)" },
   { name: "review", source: "codex", desc: "review your uncommitted changes" },
   { name: "diff", source: "codex", desc: "show git changes, untracked files included" },
   { name: "compact", source: "codex", desc: "summarize the conversation to free context" },
@@ -106,7 +107,6 @@ export const NOT_IN_AD = {
   worktree: true,
   app: "/app opens the Codex Desktop app, which uses your own Codex home, not ad's, so it can't continue this conversation.",
   recap: true,
-  plan: true,
   voice: true,
   agents: true,
   side: true,
@@ -460,10 +460,12 @@ export function createApp({
     const running = turnActive();
     const hints = running ? ["enter steer", "tab queue", `${newline} newline`] : ["? shortcuts", "@ files", `${newline} newline`];
     const own = [];
+    // Codex's mode indicator, first so it's the last to go when the footer is narrow.
+    const mode = st.mode?.kind === "plan" ? [{ full: "Plan mode (shift+tab to cycle)", short: "Plan mode", style: T.planMode }] : [];
     if (privateMode) own.push({ full: "private", short: "P" });
     const loop = actions.ad?.loop?.state;
     if (loop?.running) own.push({ full: `loop ${loop.iterations}`, short: `L${loop.iterations}` });
-    return renderFooter({ hints, chips: [...chips(), ...own] }, { width: width() });
+    return renderFooter({ hints, chips: [...mode, ...chips(), ...own] }, { width: width() });
   }
 
   /* -------------------------------------------------------------- */
@@ -633,7 +635,7 @@ export function createApp({
       if (attachments.length) lines.push(truncate([{ text: `  \u{1f4ce} ${attachments.map((a) => clean(path.basename(a))).join(", ")}`, style: T.code }], w));
       if (lines.length) lines.push([]);
       const top = lines.length;
-      const c = composer.render({ width: w, prompt: "\u{203a} ", placeholder: turnActive() ? "Steer the turn, or tab to queue" : "Ask ad to do anything" });
+      const c = composer.render({ width: w, prompt: "\u{203a} ", promptStyle: st.mode?.kind === "plan" ? T.planMode : undefined, placeholder: turnActive() ? "Steer the turn, or tab to queue" : "Ask ad to do anything" });
       lines.push(...c.lines);
       cursor = { row: top + c.cursor.row, col: c.cursor.col };
       if (popup) lines.push(...popup.view.render({ width: w, height: Math.min(10, Math.max(3, rows - lines.length - 1)) }));
@@ -856,6 +858,16 @@ export function createApp({
           .catch(fail);
       case "fork":
         return session.fork().then(() => info0("Forked: you are in the copy now; the original is unchanged."), fail);
+      case "plan": {
+        // Codex's /plan: switch, then send the text there; unavailable, the text goes back to the composer.
+        const r = session.setMode("plan");
+        if (!r.ok) {
+          if (arg) composer.set(`/plan ${arg}`);
+          return info0(r.message);
+        }
+        if (arg) send(arg);
+        return;
+      }
       case "rename":
         if (!arg) return warn("/rename <name>");
         return session.rename(arg).then((n) => info0(`Named: ${clean(n)}`), fail);
@@ -1375,6 +1387,14 @@ export function createApp({
       } else {
         lastEsc = t;
         note = st.thread ? { level: "info", text: "Esc again to rewind to an earlier prompt." } : null;
+      }
+      return draw();
+    }
+    // Shift+Tab: Codex's fixed key for the next collaboration mode (Plan ↔ Default), only with no task running.
+    if (ev.type === "key" && ev.name === "tab" && ev.shift && !ev.ctrl && !ev.alt) {
+      if (!turnActive()) {
+        const r = session.cycleMode();
+        if (!r.ok) info0(r.message);
       }
       return draw();
     }

@@ -116,18 +116,18 @@ export function newlineHint({ terminal = "unknown", csiU = false } = {}) {
 }
 
 /**
- * hints: ["? shortcuts", …] on the left; chips [{full, short}] and meters
+ * hints: ["? shortcuts", …] on the left; chips [{full, short, style?}] and meters
  * [{text, warn}] on the right. Too wide: hints go first (from the end), then
  * chips shorten, then chips go, and meters last.
  */
 export function renderFooter({ hints = [], chips = [], meters = [] } = {}, { width = 80 } = {}) {
   let h = hints.map(clean);
-  let c = chips.map((x) => ({ text: clean(x.full), short: clean(x.short ?? x.full) }));
+  let c = chips.map((x) => ({ text: clean(x.full), short: clean(x.short ?? x.full), style: x.style ?? S.dim }));
   let m = meters.map((x) => ({ text: clean(x.text), warn: !!x.warn }));
   const build = () => {
     const left = h.length ? [{ text: `  ${h.join(" \u{b7} ")}`, style: S.dim }] : [];
     const right = [];
-    [...m.map((x) => ({ text: x.text, style: x.warn ? S.warn : S.dim })), ...c.map((x) => ({ text: x.text, style: S.dim }))].forEach((x, i) => {
+    [...m.map((x) => ({ text: x.text, style: x.warn ? S.warn : S.dim })), ...c.map((x) => ({ text: x.text, style: x.style }))].forEach((x, i) => {
       if (i) right.push({ text: " \u{b7} ", style: S.dim });
       right.push(x);
     });

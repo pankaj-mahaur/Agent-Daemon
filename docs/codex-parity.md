@@ -38,7 +38,7 @@ Codex's own rules come with the commands:
 | `/init` | yes | no | create an AGENTS.md for this repo (Codex's prompt) |
 | `/compact` | yes | no | summarize the conversation to free context |
 | `/recap` | not yet | no | a short summary of the conversation; in `/codex` |
-| `/plan` | not yet | no | Plan mode; in `/codex` |
+| `/plan` | yes | no | Plan mode: Codex's own (the model explores read-only and proposes a plan); `/plan <prompt>` sends the prompt there. Shift+Tab switches between Plan and Default. See [Plan mode](tui.md#plan-mode) |
 | `/voice` | not yet | yes | voice; in `/codex` |
 | `/goal` | yes | yes | set a goal for this conversation (`/goal clear`) |
 | `/agents` | not yet | yes | Codex's agent command center; in `/codex` |

@@ -48,7 +48,7 @@ export const DEFAULT_KEYMAP = Object.freeze({
 const TOGETHER = [["global", "chat", "composer"], ["global", "pager"]];
 // Keys the composer itself uses for editing (not remappable in ad yet), and
 // ad's own fixed keys: an override can't take them in the main contexts.
-export const RESERVED = ["enter", "ctrl-j", "ctrl-a", "ctrl-e", "ctrl-b", "ctrl-f", "ctrl-k", "ctrl-u", "ctrl-w", "ctrl-y", "ctrl-r", "ctrl-c", "alt-b", "alt-f", "up", "down", "left", "right", "home", "end", "backspace", "delete", "f2"];
+export const RESERVED = ["shift-tab", "enter", "ctrl-j", "ctrl-a", "ctrl-e", "ctrl-b", "ctrl-f", "ctrl-k", "ctrl-u", "ctrl-w", "ctrl-y", "ctrl-r", "ctrl-c", "alt-b", "alt-f", "up", "down", "left", "right", "home", "end", "backspace", "delete", "f2"];
 // A context without its own binding for an action falls back to global's (Codex's rule).
 const FALLBACK = "global";
 

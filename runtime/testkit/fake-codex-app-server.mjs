@@ -11,11 +11,16 @@
 //   "slow-start"      → turn/start answers only after 300 ms, then hangs
 //   "subagent"        → a child thread (parentThreadId) streams and asks an approval
 //   "user-input"      → item/tool/requestUserInput; "elicitation" → an MCP form
+//   "plan-reply"      → a message plus a proposed plan (item/plan/delta + a plan item)
 //   "resolved-elsewhere" / "revert-pending" → an approval that serverRequest/resolved
 //                        or thread/reverted ends while it is open
 //   (outputSchema)    → final agent message is JSON `{"answer":42}`
 //   anything else     → "po"+"ng", an `error` notification, a command
 //                        approval, then "[<decision>]"
+// Collaboration modes (experimental, ad tui only): collaborationMode/list
+// answers Plan + Default (FAKE_NO_MODES=1: an error; FAKE_MODES_SLOW=1: no
+// answer), and a thread's mode changes through thread/settings/update or a
+// turn/start mask, reported with thread/settings/updated and on resume.
 // Env FAKE_INIT_FAIL=1 makes initialize return an error; FAKE_LOGGED_OUT=1
 // starts with no account. config/read + config/batchWrite keep config in
 // memory; logins complete ~20 ms after account/login/start.
@@ -94,6 +99,30 @@ function complete_(msg) {
 const send = (msg) => process.stdout.write(JSON.stringify(msg.method ? complete_(msg) : msg) + "\n");
 const notify = (method, params) => send({ method, params });
 
+// Collaboration modes per thread, as Codex keeps them (developer instructions filled in).
+const threadModes = new Map(); // threadId → CollaborationMode
+let optedOut = new Set();
+const withInstructions = (cm) => ({ mode: cm.mode, settings: { ...cm.settings, developer_instructions: cm.settings?.developer_instructions ?? (cm.mode === "plan" ? "# Plan Mode (fake)" : "") } });
+function setThreadMode(threadId, cm) {
+  const before = threadModes.get(threadId);
+  const next = withInstructions(cm);
+  threadModes.set(threadId, next);
+  if (JSON.stringify(before) === JSON.stringify(next) || !experimentalApi || optedOut.has("thread/settings/updated")) return;
+  notify("thread/settings/updated", {
+    threadId,
+    threadSettings: {
+      approvalPolicy: "on-request",
+      approvalsReviewer: "user",
+      collaborationMode: next,
+      cwd: process.cwd(),
+      model: next.settings.model,
+      modelProvider: "fake",
+      effort: next.settings.reasoning_effort ?? null,
+      sandboxPolicy: { type: "readOnly", networkAccess: false },
+    },
+  });
+}
+
 const requestThreads = new Map(); // server request id → threadId
 function askClient(method, params) {
   const id = `srv-${++serverReqId}`;
@@ -129,6 +158,21 @@ const userMessage = (threadId, turnId, text, clientId, id = `um-${turnId}`) => {
 async function runScriptedTurn(threadId, turn, params) {
   const text = params.input?.[0]?.text ?? "";
   notify("turn/started", { threadId, turn });
+  if (text === "plan-reply") {
+    // Codex cuts the <proposed_plan> block out of the message and streams it as a plan item.
+    const msg = { type: "agentMessage", id: `msg-${turn.id}`, text: "" };
+    notify("item/started", { threadId, turnId: turn.id, item: msg });
+    notify("item/agentMessage/delta", { threadId, turnId: turn.id, itemId: msg.id, delta: "Looked around.\n" });
+    const plan = { type: "plan", id: `${turn.id}-plan`, text: "" };
+    notify("item/started", { threadId, turnId: turn.id, item: plan });
+    const body = "# Add hello\n\n- write `hello.txt`\n- test it\n";
+    for (const delta of [body.slice(0, 12), body.slice(12)]) notify("item/plan/delta", { threadId, turnId: turn.id, itemId: plan.id, delta });
+    const done = { ...plan, text: body };
+    recordItem(threadId, turn.id, done);
+    notify("item/completed", { threadId, turnId: turn.id, item: done });
+    agentMessage(threadId, turn.id, "Looked around.\n");
+    return complete(threadId, turn);
+  }
   if (text === "hang") return hung.set(turn.id, { threadId, turn });
   if (text === "fail-turn") return complete(threadId, turn, { status: "failed", error: { message: "model refused" } });
   if (params.outputSchema) {
@@ -277,7 +321,16 @@ async function onRequest({ id, method, params }) {
     case "initialize":
       experimentalApi = params?.capabilities?.experimentalApi === true;
       if (process.env.FAKE_INIT_FAIL === "1") return send({ id, error: { code: -32000, message: "init refused" } });
+      optedOut = new Set(params?.capabilities?.optOutNotificationMethods ?? []);
       return send({ id, result: { userAgent: `fake/${params.clientInfo.name}`, platformOs: process.platform, codexHome: process.env.CODEX_HOME } });
+    case "collaborationMode/list":
+      if (process.env.FAKE_NO_MODES === "1") return send({ id, error: { code: -32603, message: "no modes here" } });
+      if (process.env.FAKE_MODES_SLOW === "1") return;
+      return send({ id, result: { data: [{ name: "Plan", mode: "plan", model: null, reasoning_effort: "medium" }, { name: "Default", mode: "default", model: null, reasoning_effort: null }] } });
+    case "thread/settings/update":
+      send({ id, result: {} });
+      if (params.collaborationMode) setThreadMode(params.threadId, params.collaborationMode);
+      return;
     case "debug/state":
       return send({ id, result: { notifications, lastParams, calls, env: { CODEX_HOME: process.env.CODEX_HOME, hasOpenRouterKey: Boolean(process.env.OPENROUTER_API_KEY) } } });
     case "account/read":
@@ -343,13 +396,15 @@ async function onRequest({ id, method, params }) {
     case "thread/start":
       return send({ id, result: { thread: { id: `thread-${++threadSeq}` }, model: params?.model ?? "fake-model", modelProvider: "fake" } });
     case "thread/resume":
-      return send({ id, result: { thread: { id: params.threadId }, model: "fake-model", modelProvider: "fake" } });
+      return send({ id, result: { thread: { id: params.threadId }, model: "fake-model", modelProvider: "fake", ...(threadModes.has(params.threadId) ? { collaborationMode: threadModes.get(params.threadId) } : {}) } });
     case "turn/start": {
       const threadId = params.threadId;
       // A turn/start Codex rejects (as for a bad input or a thread it lost).
       if ((params.input?.[0]?.text ?? "") === "reject-start") return send({ id, error: { code: -32600, message: "turn/start rejected" } });
       const turn = { id: `turn-${RUN}-${++turnSeq}`, status: "inProgress", items: [] };
       const text = params.input?.[0]?.text ?? "";
+      // A mask that differs from the thread's mode changes it, as in Codex.
+      if (params.collaborationMode) setThreadMode(threadId, params.collaborationMode);
       turnsOf(threadId).push({ id: turn.id, status: "inProgress", items: [] });
       // Codex echoes the prompt as the turn begins (here even before turn/start answers).
       if (params.clientUserMessageId) userMessage(threadId, turn.id, text, params.clientUserMessageId);

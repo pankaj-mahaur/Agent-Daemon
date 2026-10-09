@@ -11,7 +11,7 @@ import { resolve } from "node:path";
 import { CodexAppServer } from "./codex/app-server.mjs";
 import { APPROVAL_METHODS, approvalResponse } from "./codex/approvals.mjs";
 import { defaultCodexHome, ensureCodexHome } from "./codex/home.mjs";
-import { adaptNotification, classifyRequest, elicitationResponse } from "./codex/events.mjs";
+import { adaptNotification, classifyRequest, collaborationMode, elicitationResponse } from "./codex/events.mjs";
 import { experimentalCapabilities } from "./codex/surface.mjs";
 
 // Harness defaults (user-approved): writes only inside the workspace, asks
@@ -310,7 +310,22 @@ export class Engine extends EventEmitter {
 
   async resumeThread(threadId, overrides = {}) {
     const r = await this.server.request("thread/resume", clean({ threadId, ...overrides }));
-    return { threadId: r.thread.id, model: r.model, modelProvider: r.modelProvider, thread: r.thread };
+    return { threadId: r.thread.id, model: r.model, modelProvider: r.modelProvider, thread: r.thread, collaborationMode: collaborationMode(r.collaborationMode) };
+  }
+
+  /**
+   * Codex's collaboration-mode presets ([{name, mode, model, effort}], in its
+   * order). Codex's own TUI waits 2 s for them. Experimental: only an engine
+   * started with experimental: true.
+   */
+  async listCollaborationModes({ timeoutMs = 2000 } = {}) {
+    const r = await this.server.request("collaborationMode/list", {}, { timeoutMs });
+    return (r?.data ?? []).filter((m) => typeof m?.mode === "string").map((m) => ({ name: m.name ?? m.mode, mode: m.mode, model: m.model ?? null, effort: m.reasoning_effort ?? null }));
+  }
+
+  /** Changes a thread's settings for its next turns (experimental; ad sends only collaborationMode). */
+  updateThreadSettings(threadId, settings) {
+    return this.server.request("thread/settings/update", { threadId, ...settings });
   }
 
   // Run one turn to completion. onEvent receives normalized events for THIS
