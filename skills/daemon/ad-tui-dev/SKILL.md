@@ -100,7 +100,9 @@ All paths under `runtime/`.
    - The kitty keyboard protocol arrives in Windows Terminal 1.25.
    - When in doubt, run `node runtime/scripts/tui-probe.mjs keys|screen` and read `~/.agent-daemon/logs/tui-probe-*.log`.
 6. **Protocol facts:**
-   - Stable surface only (`experimentalApi` stays false).
+   - Stable surface, except `EXPERIMENTAL_ALLOWLIST` (`engine/codex/surface.mjs`): only the TUI's engine sends `experimentalApi: true` (`experimentalCapabilities()`, which also opts out of every experimental notification ad doesn't handle). A new experimental use needs the user's OK, the allowlist, a regenerated snapshot (its `experimental` section) and a real-engine test.
+   - **Plan mode** (Codex's collaboration modes): the session owns it (`state.mode`, `setMode`, `cycleMode`, `modeMask`); every `turn/start` gets the mask in `startTurn` only, so no turn path can miss it. Default's mask carries the user's own model/effort (never values read back after a plan turn); `thread/settings/updated` and the resume response set the mode; `newThread()` resets to Default. "Implement this plan?" opens from `draw()` via `maybeOfferPlan()` in a microtask (opening a dialog redraws), never over a draft, a popup or a request.
+   - Prompts the client writes (Codex's clear-context plan hand-off) must be skipped by ad's prompt hooks: `hooks/generated-prompts.mjs`.
    - Errors are -32600 with distinct messages; -32601 only means an operation is unsupported.
    - `availableDecisions` leaks through on exec approvals only. Codex's fallback applies otherwise. A real exec approval offers `y` / `p` ("don't ask again for commands starting with …") / Esc ("No, and stop": declines and ends the turn); `n` only when Codex offers "No, and tell Codex what to do instead" (patch approvals).
    - **Item ids are not unique across turns** with some providers (`msg-1`, `call_0`): the session keys a later turn's item `<id>@<turn>`, the app keys shown items per turn, and requests resolve Codex's id with `session.itemFor(id, turnId)`.

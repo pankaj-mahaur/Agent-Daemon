@@ -13,6 +13,7 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 ### Added
 
+- `ad tui` has Codex's plan mode: `/plan` (or Shift+Tab) switches to it and `/plan <prompt>` sends a prompt there; the model explores without editing and ends with a **Proposed Plan**, and ad asks "Implement this plan?" with Codex's choices (implement here, implement in a fresh conversation, or keep planning). The footer shows **Plan mode** and the prompt turns magenta. It shares the mode with `/codex` and uses Codex's `plan_mode_reasoning_effort`. See [Plan mode](docs/tui.md#plan-mode).
 - `ad tui` has Codex's keys for copy (Ctrl+O), raw output (Alt+R) and reasoning effort (Shift+↑ / Shift+↓, besides Alt+. / Alt+,), F2 for the warnings, and Codex's pager keys in the Ctrl+T transcript (`j` `k`, Ctrl+B / Ctrl+F, Ctrl+U / Ctrl+D, Shift+Space).
 - Keys set with the stock UI's `/keymap` (Codex's `tui.keymap`, in ad's Codex home) apply in `ad tui` too, for the actions ad has.
 - `ad tui`: Codex's status line under the prompt (`/statusline` chooses its items, saved as Codex's `tui.status_line`), and the terminal window's title (`/title`, Codex's `tui.terminal_title`): a spinner while a turn runs, "action required" while an approval waits. The context and usage meters moved from the footer into the status line.
@@ -20,6 +21,9 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 ### Changed
 
+- `ad tui`: the model's checklists (Codex's `update_plan`) now go into the scrollback as **Updated Plan** each time they change, as in Codex, instead of showing only while the turn runs.
+- `ad tui` now opts into a small part of Codex's experimental app-server API, for plan mode (and `/stop` later): the methods are on an allowlist, every other experimental notification is turned off, and tests and the Codex upgrade check refuse anything else. `ad chat`, `ad web`, `ad acp`, `ad run` and `ad loop` stay on the stable API.
+- ad's prompt hooks skip the message Codex's "clear context and implement" writes (a fixed text plus the model's plan), so it isn't recorded as something you said.
 - `ad tui` follows Codex's rules for its commands: those Codex disables while a task runs (`/new`, `/fork`, `/compact`, `/init`, `/export`, `/review`, `/logout`) wait for the turn to end, and keep your draft. Codex's aliases (`/cwd`, `/clean`, `/pet`) are recognised.
 - Tests check every request ad sends against the pinned Codex's stable protocol, not only what Codex sends.
 - New docs: [Codex commands in ad](docs/codex-parity.md) lists every Codex slash command (works in ad, or why not yet), the keys and the settings shared with the stock UI; troubleshooting entries for `/keymap` keys, `/clear` and the window title; contributing has the steps for adding a terminal UI command.

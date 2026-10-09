@@ -78,6 +78,7 @@ The terminal UI runs the same engine in the same home, so steps 1–5 apply. The
 | keys set in `/codex` → `/keymap` don't work in ad (#30) | ad applies `tui.keymap` only to its own actions and skips chords, clashes and the prompt's editing keys | `/warnings` (F2) says which and why |
 | `/clear` wiped the scrollback (#31) | Codex's `/clear` does | `/new` keeps it; `"clear.keepScrollback": true` in `~/.agent-daemon/tui/prefs.json` |
 | window title still ad's after exit (#32) | no title stack in the terminal, or a crash | new tab, or `/title` with every item off |
+| `/plan`: "Plan mode unavailable right now." (#33) | Codex didn't list its collaboration modes within 2 s of the engine starting (slow start, antivirus), or a Codex build changed the experimental call | restart `ad`; check the Codex version in `ad doctor`; `/codex` has the stock UI's `/plan` |
 
 Reproduce TUI problems with `ad tui` in a scratch folder. Never use the user's own `codex` or `~/.codex`.
 

@@ -6,6 +6,7 @@ Codex's own rules come with the commands:
 
 - **During a task.** The commands Codex disables while a turn runs (`/new`, `/fork`, `/compact`, `/init`, `/export`, `/review`, `/logout`, `/clear`, …) answer `'/new' is disabled while a task is in progress.` in `ad` too, and your draft stays. Esc interrupts the turn first.
 - **Aliases.** `/cwd` is `/pwd`, `/clean` is `/stop`, `/pet` is `/pets`, `/btw` is `/side`, `/quit` is `/exit`. Codex hides `/quit` and `/btw` in the popup until you type them, and the debug commands always; `ad` does the same.
+- **Plan mode** is Codex's own: `/plan`, Shift+Tab, the proposed plan and "Implement this plan?" with Codex's choices. It runs on a small part of Codex's experimental app-server API that only `ad tui` opts into (see [Plan mode](tui.md#plan-mode)).
 - **The list is generated** from Codex's source at the pinned version (`runtime/scripts/codex-slash.mjs`). When a Codex release adds a command, a test fails in the upgrade pull request until `ad` decides what to do with it.
 
 ## Every command

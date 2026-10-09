@@ -566,6 +566,14 @@ Other choices: `nvim`, `vim`, `nano`, or Notepad++ with `-multiInst -nosession`.
 
 **Fix:** open a new tab, or set the title yourself (PowerShell: `$Host.UI.RawUI.WindowTitle = "..."`). To keep ad off the title, run `/title` and turn every item off (`tui.terminal_title = []`).
 
+## 33. `ad tui`: `/plan` says "Plan mode unavailable right now."
+
+**Symptom:** `/plan` or Shift+Tab answers "Plan mode unavailable right now.", and `/warnings` may say "Plan mode is unavailable: Codex didn't list its modes (…)".
+
+**Cause:** Plan mode is Codex's collaboration mode, part of Codex's experimental app-server API. ad asks Codex for its modes when the engine starts and waits 2 s, as Codex's own UI does. A slow start (a busy machine, antivirus scanning a freshly installed Codex) or a Codex build that changed or dropped the call leaves ad with none.
+
+**Fix:** quit and start `ad` again (the modes are asked for again, and after every engine restart). If it keeps happening, check `ad doctor` for the Codex version: ad is tested with the pinned one, and `/codex` opens the stock UI, whose `/plan` works on the same conversation.
+
 ---
 
 For harness problems, the [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill walks through login → hooks → sandbox → Codex's own log. See also [harness.md](harness.md) and, for the terminal UI, [tui.md](tui.md).

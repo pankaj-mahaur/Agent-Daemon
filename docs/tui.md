@@ -111,7 +111,7 @@ On exit, ad prints how to continue: `ad tui --resume <id>`, with the tokens used
 - **Header.** Shown once at the start, then it scrolls into history like everything else. Under 40 columns it is one line.
   - **Since last time** lists, for this folder, loops that ran, scheduled jobs that ran or failed, and skill proposals waiting for review. It appears only when there is something new since your last visit.
   - Setup warnings (a sandbox that isn't ready, a trust answer that wasn't saved) show in yellow under it. So does "the scheduler isn't running" when an enabled job is more than 5 minutes overdue.
-- **Cells.** Prompts (`›`), answers, commands (Explored, Ran, Failed (exit N), Declined, with the last lines of output), edits (`Edited N files (+A -R)` with a diff), plans, tool calls and notices. A turn ends with "Worked for Ns".
+- **Cells.** Prompts (`›`), answers, commands (Explored, Ran, Failed (exit N), Declined, with the last lines of output), edits (`Edited N files (+A -R)` with a diff), the model's checklists (**Updated Plan**, each time it changes them), proposed plans ([Plan mode](#plan-mode)), tool calls and notices. A turn ends with "Worked for Ns".
 - **ad rows** are one dim line each, and only when something happens: recalled learnings, a guard that blocked a command, a hook that failed, what ad learned, loop iterations.
 - **Activity row** (while a turn runs): what Codex is doing, the time, and `esc to interrupt`. Queued prompts are listed under it; the last one says `tab: edit`.
 - **Status line** (under the prompt, from 12 rows): Codex's status line items, joined with ` · `. By default the model and its reasoning effort, the folder, `ctx N%` (the context left in this conversation) and `5h N%` (how much of the current usage window is used); a percentage turns amber at 80 % used. `/statusline` chooses the items and their order, with Codex's ids (`git-branch`, `branch-changes`, `run-state`, `weekly-limit`, `task-progress`, …); it's saved as Codex's `tui.status_line`, so `/codex` shows the same. When it's too wide, items drop from the end. Under an approval it shows only where the approval doesn't need the room.
@@ -188,13 +188,14 @@ Big pastes (more than 5 lines or 1000 characters) show as `[Pasted N lines]` and
 | `!cmd` | run `cmd` in the shell, **unsandboxed** (like Codex's `!`). One line only; a multi-line paste starting with `!` is a prompt |
 | Ctrl+T | page through the whole transcript: ↑ ↓ (or `k` `j`), PgUp / Shift+Space / Ctrl+B, PgDn / Space / Ctrl+F, Ctrl+U / Ctrl+D (half a page), Home, End; Esc, `q`, Ctrl+C or Ctrl+T closes |
 | Alt+, / Alt+. | lower / raise the reasoning effort for the next turn, through the current model's own levels (Shift+↓ / Shift+↑ too) |
+| Shift+Tab | switch between Plan and Default mode ([Plan mode](#plan-mode)); not while a turn runs |
 | Ctrl+O | copy the last answer (`/copy`) |
 | Alt+R | print the last answer as plain text (`/raw`) |
 | F2 | the warnings (`/warnings`) |
 
 The terminal bell rings when an approval waits, and when a turn ends while the terminal window isn't focused.
 
-**Changing keys.** ad uses Codex's names for the actions it has, so the keys you set in the stock UI's `/keymap` (in `/codex`; they're saved as `tui.keymap` in ad's Codex home) apply in ad too: the transcript, the external editor, copy, raw output, clear, interrupt, reasoning effort, queue, the shortcuts and the pager. ad doesn't change them itself. A key ad can't use there (a chord like `ctrl-x f`, a key that would mean two things, or one of the prompt's editing keys) is skipped, and `/warnings` says why. Shift+Tab never queues.
+**Changing keys.** ad uses Codex's names for the actions it has, so the keys you set in the stock UI's `/keymap` (in `/codex`; they're saved as `tui.keymap` in ad's Codex home) apply in ad too: the transcript, the external editor, copy, raw output, clear, interrupt, reasoning effort, queue, the shortcuts and the pager. ad doesn't change them itself. A key ad can't use there (a chord like `ctrl-x f`, a key that would mean two things, or one of the prompt's editing keys) is skipped, and `/warnings` says why. Shift+Tab never queues: it switches [Plan mode](#plan-mode), a fixed key in Codex too.
 
 ---
 
@@ -258,6 +259,7 @@ Model, effort and permission changes apply from the next turn.
 | Command | What it does |
 |---|---|
 | `/goal [<objective>\|clear]` | set a goal for this conversation (`/goal clear`); alone, shows it (Codex) |
+| `/plan [prompt]` | switch to Plan mode; with a prompt, send it there (Codex). See [Plan mode](#plan-mode) |
 | `/review` | review your uncommitted changes (Codex) |
 | `/diff` | show git changes, untracked files included (Codex) |
 | `/init` | create an AGENTS.md for this repo, with Codex's own prompt (Codex) |
@@ -304,9 +306,25 @@ Model, effort and permission changes apply from the next turn.
 | `/help` | what you can do here: every command and shortcut |
 | `/terminal-setup` | how to make Shift+Enter add a newline in this terminal |
 
-A Codex command ad doesn't have yet is never sent to the model as a prompt. It answers in one line why ("/plan isn't in ad yet. /codex opens the stock Codex UI on this conversation."), and what you typed stays in the prompt. Where the stock UI can't help either (`/ide`, `/app`, `/daemon`, `/ps`, `/stop`), the answer says so instead. Codex's commands keep Codex's rules: the ones Codex disables while a task runs (`/new`, `/fork`, `/compact`, `/init`, `/export`, `/review`, `/logout`, …) answer "'/new' is disabled while a task is in progress.", and the draft stays. Codex's aliases work (`/cwd`, `/clean`, `/pet`), and `/quit` shows in the popup only once you type it.
+A Codex command ad doesn't have yet is never sent to the model as a prompt. It answers in one line why ("/recap isn't in ad yet. /codex opens the stock Codex UI on this conversation."), and what you typed stays in the prompt. Where the stock UI can't help either (`/ide`, `/app`, `/daemon`, `/ps`, `/stop`), the answer says so instead. Codex's commands keep Codex's rules: the ones Codex disables while a task runs (`/new`, `/fork`, `/compact`, `/init`, `/export`, `/review`, `/logout`, …) answer "'/new' is disabled while a task is in progress.", and the draft stays. Codex's aliases work (`/cwd`, `/clean`, `/pet`), and `/quit` shows in the popup only once you type it.
 
 ---
+
+## Plan mode
+
+Codex's own plan mode: the model explores without changing anything, asks you what it can't find out, and ends with a plan you can implement.
+
+- **Switching.** `/plan` switches to Plan mode; `/plan <prompt>` switches and sends the prompt there. Shift+Tab switches between Plan and Default. Neither works while a turn runs (as in Codex). In Plan mode the footer shows **Plan mode (shift+tab to cycle)** and the prompt turns magenta.
+- **What the model does.** It gets Codex's plan-mode instructions: read and search but don't edit, ask questions (they come up in the usual question dialog), and end with one **Proposed Plan**, shown as its own block.
+- **Implement this plan?** When a plan arrives and nothing else waits, ad asks, with Codex's choices:
+  1. **Yes, implement this plan**: switches to Default and sends "Implement the plan.".
+  2. **Yes, clear context and implement**: a new conversation in Default whose first message is the plan (the choice shows how much context the current one uses). The scrollback stays.
+  3. **No, stay in Plan mode** (or Esc): keep refining it.
+
+  If you're typing when the plan arrives, your draft stays: ad says "A plan is ready: clear the prompt to choose." and asks once the prompt is empty. A queued prompt runs instead of the question.
+- **Settings.** Plan mode's reasoning effort is Codex's `plan_mode_reasoning_effort` (else medium, Codex's default); Default keeps your own model and effort. ad and `/codex` share the mode: a conversation left in Plan in the stock UI resumes in Plan here. A new conversation starts in Default.
+- **Limits.** Like Codex, Plan mode is instructions to the model, not a sandbox: a model that edits anyway isn't stopped. For a hard stop, also set `/permissions` to read-only. Plan mode uses part of Codex's experimental app-server API (only `ad tui` uses it, only for this and `/stop`); if Codex can't list its modes, `/plan` answers "Plan mode unavailable right now." ([troubleshooting #33](troubleshooting.md#33-ad-tui-plan-says-plan-mode-unavailable-right-now)).
+- **Memory.** The clear-context message is written by the client, not by you: ad's memory hooks skip it, so the model's plan is never learned as your words.
 
 ## Images
 
@@ -459,6 +477,7 @@ Everything else (conversations, logs, login) is Codex's own, in ad's Codex home;
 | keys set in `/codex` → `/keymap` don't work in ad | [#30](troubleshooting.md#30-ad-tui-keys-set-with-the-stock-uis-keymap-dont-work-in-ad) |
 | `/clear` wiped the scrollback | [#31](troubleshooting.md#31-ad-tui-clear-wiped-my-scrollback) |
 | the window title still says ad's after it ended | [#32](troubleshooting.md#32-the-terminals-title-still-says-ads-after-ad-ended) |
+| `/plan` says "Plan mode unavailable right now." | [#33](troubleshooting.md#33-ad-tui-plan-says-plan-mode-unavailable-right-now) |
 | a Codex command says "isn't in ad yet" | [codex-parity.md](codex-parity.md) |
 | not signed in, sandbox, hooks, your own Codex home refused | [harness.md](harness.md#when-something-goes-wrong), troubleshooting #14–21 |
 

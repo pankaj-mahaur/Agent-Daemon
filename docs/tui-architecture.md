@@ -94,12 +94,12 @@ For `/codex`, ad's own engine first unloads the conversation (`thread/unsubscrib
 ## Staying working across Codex releases
 
 - **Pinned engine.** `@openai/codex` is pinned exactly in `runtime/package.json`; the TUI only talks to that binary.
-- **Stable protocol surface only.** No experimental methods or fields.
+- **Stable protocol surface, plus an allowlist.** No experimental methods or fields, except the allowlist `ad tui` opts into (`EXPERIMENTAL_ALLOWLIST`: Codex's collaboration modes for plan mode, `thread/backgroundTerminals/clean`); every other experimental notification is opted out at `initialize`. The session asks for the mode presets at start and after a restart, and every `turn/start` carries the mode's mask from one place (`startTurn`), so submit, the queue, a steer that falls back and the re-send after a restart all agree.
 - **Snapshot + checks.** A committed protocol snapshot (`engine/codex/protocol-snapshot.json`) records every method and notification the client relies on; the test suite checks the fake server's messages against it.
 - **Generic fallbacks.** An unknown item type renders as a plain row; an unknown notification is ignored; an unknown request is declined with a note.
 - **Weekly upgrade PR.** The `codex-upgrade` workflow bumps the pin, diffs the protocol (removals flagged as breaking), regenerates Codex's slash-command names, and runs the suite and the live TUI tests on the real binary in its own Linux job before opening the PR. The PR's own CI on Linux, macOS and Windows runs only when the repo has a `CODEX_UPGRADE_TOKEN` secret ([testing.md](testing.md#ci)).
 - **Slash commands.** `src/tui/codex-slash.json` is generated from Codex's own source at the pin (`scripts/codex-slash.mjs`): every command with its aliases, whether it runs during a task, whether it works in a side conversation, and whether the popup hides it. ad's own commands must never take a Codex name, and every Codex command is either run by ad (with Codex's rules) or listed in `NOT_IN_AD` with what ad says instead; a Codex command is never sent to the model. A command Codex adds fails a test in the upgrade PR until ad decides.
-- **Requests checked both ways.** The fake app-server rejects any request of ad's that the pinned stable protocol doesn't accept (an unknown method or field, a wrong type); `SENT_METHODS` lists every method ad sends, checked against the source. Experimental calls must be on `EXPERIMENTAL_ALLOWLIST` (`engine/codex/surface.mjs`, empty today).
+- **Requests checked both ways.** The fake app-server rejects any request of ad's that the pinned stable protocol doesn't accept (an unknown method or field, a wrong type); `SENT_METHODS` lists every method ad sends, checked against the source. Experimental calls must be on `EXPERIMENTAL_ALLOWLIST` (`engine/codex/surface.mjs`), and the fake refuses them without the opt-in.
 
 ## `/undo`: the safety model
 
@@ -155,7 +155,7 @@ Each layer is tested where it is cheapest, and the whole is tested live. Details
 |---|---|
 | Own zero-dependency renderer | Ink and similar libraries repaint whole frames and fight inline scrollback; a small renderer that only redraws the live region is simpler to make correct on Windows. |
 | Inline mode by default | Keeps the terminal's scrollback, search and copy. |
-| Codex app-server, stable surface only | Codex owns the agent loop, sandbox and login; ad stays a client and survives releases. |
+| Codex app-server, stable surface (plus a small experimental allowlist for `ad tui`) | Codex owns the agent loop, sandbox and login; ad stays a client and survives releases. |
 | Bare `ad` opens the TUI | Flipped in 2.1.0, after the manual test's terminal UI script ran green live on all three OSes. `AD_TUI=0` keeps the old help. |
 | Codex's names and rules for Codex's commands, keys and settings | Codex users aren't surprised; settings and keys are shared with `/codex` (ad never writes `tui.keymap`: the stock UI refuses to start on a keymap conflict ad couldn't check). |
 | `/clear` purges the scrollback | Codex's meaning; `/new` keeps it, and `clear.keepScrollback` in `prefs.json` turns the purge off. |

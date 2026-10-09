@@ -18,7 +18,7 @@ ad drives a pinned `codex app-server` over JSON-RPC on stdio. Codex owns the age
 
 ## Hard rules
 
-- **Never fork Codex.** Drive the pinned binary over its app-server protocol, stable surface only (no experimental methods or fields).
+- **Never fork Codex.** Drive the pinned binary over its app-server protocol, stable surface only, with one exception: `ad tui` opts into Codex's experimental API for an allowlist (`EXPERIMENTAL_ALLOWLIST` in `runtime/src/engine/codex/surface.mjs`: Codex's collaboration modes for plan mode, and cleaning background terminals for `/stop`), and opts out of every other experimental notification. Every other front end stays stable-only.
 - **Never reuse Claude or Google subscription logins.** Their terms forbid it and it has been enforced. ChatGPT uses Codex's own login; other models go through API keys or OpenRouter. `ad agy` only hands a prompt to the user's own Antigravity CLI (opt-in).
 - **Minimal dependencies.** Codex is a pinned engine binary (`@openai/codex` in `runtime/package.json`); ad's own code stays Node built-ins plus a handful of packages.
 
@@ -72,7 +72,7 @@ The user's own Codex (a global install, `~/.codex`, its daemon) must never be af
 Codex ships several releases a week, with no protocol changelog and no deprecation window.
 
 1. The engine is **pinned exactly**.
-2. A committed **protocol snapshot** (`runtime/src/engine/codex/protocol-snapshot.json`) lists the methods, notifications and parameter types ad relies on. The fake app-server used in tests is checked against it both ways: what it sends must be something Codex could send, and every request ad sends (`SENT_METHODS`, checked against the source) must fit the stable protocol, or be on the experimental allowlist (empty today).
+2. A committed **protocol snapshot** (`runtime/src/engine/codex/protocol-snapshot.json`) lists the methods, notifications and parameter types ad relies on. The fake app-server used in tests is checked against it both ways: what it sends must be something Codex could send, and every request ad sends (`SENT_METHODS`, checked against the source) must fit the stable protocol, or be on the experimental allowlist. The snapshot also records the allowlisted experimental shapes (from `generate-json-schema --experimental`), and the fake refuses them on a connection that didn't opt in, as Codex does.
 3. The weekly **`codex-upgrade` workflow** (`.github/workflows/codex-upgrade.yml`) bumps the pin, regenerates the snapshot, Codex's slash-command names (`runtime/src/tui/codex-slash.json`) and `runtime/src/engine/codex/compat.json`, and flags removals as breaking. In its own Linux job it runs the suite and the real pinned Codex against a mock model (`engine-real` and the live terminal UI tests), then opens a PR with the results. The PR's own CI (the suite and the real-engine job on Linux, macOS and Windows) runs only when the repo has a `CODEX_UPGRADE_TOKEN` secret, because PRs opened with the default token don't trigger other workflows.
 4. Unknown items and notifications degrade to plain rows or are ignored; they never crash a front end. `/warnings` in `ad tui` lists the ones this ad doesn't know.
 5. CI has no real login and no working Windows sandbox, so before merging an upgrade, run the live `ad run` and `ad tui` smokes on Windows in a scratch folder (the `codex-upgrade` skill has the steps; see also [manual-test.md](manual-test.md)).
