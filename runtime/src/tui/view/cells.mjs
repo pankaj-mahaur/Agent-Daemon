@@ -236,9 +236,10 @@ export function renderDiff(changes, { width = 80, maxLines = DIFF_LINES, verb = 
 /* ------------------------------------------------------------------ */
 
 export function renderPlan(steps, { width = 80, explanation = null } = {}) {
-  const out = header("\u{2022}", [{ text: "Updated plan", style: S.head }], width);
+  const out = header("\u{2022}", [{ text: "Updated Plan", style: S.head }], width);
   const lines = [];
   if (explanation) lines.push([{ text: clean(explanation), style: S.italic }]);
+  if (!steps?.length) lines.push([{ text: "(no steps provided)", style: S.italic }]);
   for (const s of steps ?? []) {
     const done = s.status === "completed";
     const mark = done ? "\u{2714} " : s.status === "inProgress" ? "\u{25a1} " : "\u{25a1} ";

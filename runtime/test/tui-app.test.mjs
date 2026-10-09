@@ -766,3 +766,86 @@ test("window title: nothing is written while another program has the terminal", 
     { settings: memorySettings({ tui: { terminal_title: ["app-name", "thread-name"] } }) },
   );
 });
+
+test("Implement this plan?: after a Plan turn with a proposed plan; implement here sends Codex's message in Default", async () => {
+  await withApp(async ({ app, type, until, text, session, engine, bells, committed }) => {
+    const debug = () => engine.server.request("debug/state", {});
+    type("/plan plan-reply\r");
+    await until(() => app.state.confirm && /Implement this plan\?/.test(text()), "the choice");
+    assert.match(committed(), /• Proposed Plan/);
+    assert.match(text(), /Yes, implement this plan/);
+    assert.match(text(), /Yes, clear context and implement/);
+    assert.match(text(), /No, stay in Plan mode/);
+    assert.ok(bells.length >= 1, "a bell");
+    type("1"); // too soon: armed choices wait
+    await sleep(30);
+    assert.ok(app.state.confirm, "still open");
+    await sleep(120);
+    type("1");
+    await until(async () => (await debug()).lastParams["turn/start"]?.input?.[0]?.text === "Implement the plan.", "Codex's message");
+    const st = await debug();
+    assert.equal(st.lastParams["turn/start"].collaborationMode.mode, "default");
+    assert.equal(session.state.mode.kind, "default");
+    assert.equal(st.lastParams["thread/settings/update"].collaborationMode.mode, "default");
+  }, { modes: true, cols: 90, rows: 30 });
+});
+
+test("Implement this plan?: clear context starts a new conversation with Codex's prefix and the plan; stay keeps planning", async () => {
+  await withApp(async ({ app, type, until, text, session, engine }) => {
+    const debug = () => engine.server.request("debug/state", {});
+    type("/plan plan-reply\r");
+    await until(() => app.state.confirm, "the choice");
+    const first = session.state.thread.id;
+    await sleep(120);
+    type("2");
+    await until(async () => (await debug()).lastParams["turn/start"]?.input?.[0]?.text?.startsWith("A previous agent produced the plan below"), "the hand-off");
+    const st = await debug();
+    assert.notEqual(session.state.thread.id, first, "a new conversation");
+    assert.equal(st.lastParams["turn/start"].collaborationMode.mode, "default");
+    assert.match(st.lastParams["turn/start"].input[0].text, /carry the work through implementation and verification\.\n\n# Add hello\n/);
+    // Back in Plan, then "No, stay in Plan mode" (Esc): nothing sent.
+    await until(() => app.state.modal, "the fake's approval in the hand-off turn");
+    type("\x1b"); // declined
+    await until(() => !session.state.activeTurnId && !session.state.starting, "the hand-off turn's end");
+    type("/plan plan-reply\r");
+    await until(() => app.state.confirm, "the second choice");
+    const before = (await debug()).calls.filter((c) => c === "turn/start").length;
+    type("\x1b");
+    await until(() => !app.state.confirm, "closed");
+    await sleep(80);
+    assert.equal((await debug()).calls.filter((c) => c === "turn/start").length, before);
+    assert.equal(session.state.mode.kind, "plan");
+  }, { modes: true, cols: 90, rows: 30 });
+});
+
+test("Implement this plan?: waits for an empty prompt (the draft stays), and never comes after a queued prompt or in Default", async () => {
+  await withApp(async ({ app, type, until, text, session }) => {
+    type("/plan plan-reply\r");
+    type("my draft");
+    await until(() => /A plan is ready: clear the prompt to choose\./.test(text()), "the note");
+    assert.equal(app.state.confirm, false);
+    assert.equal(app.state.composer, "my draft");
+    type("\x15"); // Ctrl+U clears the prompt
+    await until(() => app.state.confirm, "the choice, once the prompt is empty");
+    type("\x1b");
+    await until(() => !app.state.confirm, "closed");
+    // A Default turn with a plan item: no choice.
+    type("\x1b[Z");
+    await until(() => session.state.mode.kind === "default", "Default");
+    type("plan-reply\r");
+    await until(() => session.state.turns.length === 2 && session.state.turns[1].status === "completed", "the Default turn");
+    await sleep(80);
+    assert.equal(app.state.confirm, false, "only Plan mode offers it");
+  }, { modes: true, cols: 90, rows: 30 });
+});
+
+test("update_plan checklists go into the scrollback as Codex's 'Updated Plan' cells, one per update", async () => {
+  await withApp(async ({ type, until, committed, session }) => {
+    type("checklist\r");
+    await until(() => session.state.turns[0]?.status === "completed" && /working on it/.test(committed()), "the turn");
+    const out = committed();
+    assert.equal(out.match(/Updated Plan/g)?.length, 2, out);
+    assert.match(out, /Small fix/);
+    assert.ok(out.indexOf("Updated Plan") < out.indexOf("working on it"), "in the order they came");
+  }, { cols: 90, rows: 30 });
+});

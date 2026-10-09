@@ -104,7 +104,7 @@
 
   (empty)
 ── plan ──
-• Updated plan
+• Updated Plan
   └ Small fix
     ✔ Reproduce
     □ Fix timers

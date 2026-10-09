@@ -19,6 +19,20 @@ Delete this conversation?
 › 1. No, keep it  (n)
   2. Yes, delete it  (y)
   y/n · esc = no
+── choice (arming) ──
+Implement this plan?
+
+› 1. Yes, implement this plan  Switch to Default and start coding
+  2. Yes, clear context and implement  Start a fresh thread (current context: 62% used)
+  3. No, stay in Plan mode  Continue planning with the model
+  …
+── choice (armed) ──
+Implement this plan?
+
+› 1. Yes, implement this plan  Switch to Default and start coding
+  2. Yes, clear context and implement  Start a fresh thread (current context: 62% used)
+  3. No, stay in Plan mode  Continue planning with the model
+  1-3 or enter to choose · esc = No, stay in Plan mode
 ── checklist ──
 Status line
 › [x] model-with-reasoning  gpt-5.5 high

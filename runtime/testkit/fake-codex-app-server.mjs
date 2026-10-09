@@ -12,6 +12,7 @@
 //   "subagent"        → a child thread (parentThreadId) streams and asks an approval
 //   "user-input"      → item/tool/requestUserInput; "elicitation" → an MCP form
 //   "plan-reply"      → a message plus a proposed plan (item/plan/delta + a plan item)
+//   "checklist"       → two update_plan checklists (turn/plan/updated), then a message
 //   "resolved-elsewhere" / "revert-pending" → an approval that serverRequest/resolved
 //                        or thread/reverted ends while it is open
 //   (outputSchema)    → final agent message is JSON `{"answer":42}`
@@ -158,6 +159,12 @@ const userMessage = (threadId, turnId, text, clientId, id = `um-${turnId}`) => {
 async function runScriptedTurn(threadId, turn, params) {
   const text = params.input?.[0]?.text ?? "";
   notify("turn/started", { threadId, turn });
+  if (text === "checklist") {
+    notify("turn/plan/updated", { threadId, turnId: turn.id, explanation: "Small fix", plan: [{ step: "Reproduce", status: "inProgress" }, { step: "Fix timers", status: "pending" }] });
+    notify("turn/plan/updated", { threadId, turnId: turn.id, explanation: null, plan: [{ step: "Reproduce", status: "completed" }, { step: "Fix timers", status: "inProgress" }] });
+    agentMessage(threadId, turn.id, "working on it");
+    return complete(threadId, turn);
+  }
   if (text === "plan-reply") {
     // Codex cuts the <proposed_plan> block out of the message and streams it as a plan item.
     const msg = { type: "agentMessage", id: `msg-${turn.id}`, text: "" };

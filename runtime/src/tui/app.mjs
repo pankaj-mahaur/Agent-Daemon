@@ -14,7 +14,8 @@ import { createComposer } from "./view/composer.mjs";
 import { createMarkdownStream } from "./view/markdown.mjs";
 import { isExploring, renderAdRow, renderCell, renderDiff, renderExploring, renderNotice, renderPlan } from "./view/cells.mjs";
 import { createChecklist, createPicker, renderFooter, renderShortcuts, renderStatus } from "./view/chrome.mjs";
-import { ARM_MS, createConfirm, createRequestModal } from "./view/modals.mjs";
+import { ARM_MS, createChoice, createConfirm, createRequestModal } from "./view/modals.mjs";
+import { CODEX_PLAN_CLEAR_CONTEXT_PREFIX } from "../hooks/generated-prompts.mjs";
 import { sanitize } from "./terminal/sanitize.mjs";
 import { lineWidth, truncate } from "./terminal/text.mjs";
 import { INIT_PROMPT } from "./init-prompt.mjs";
@@ -24,7 +25,7 @@ import { copyText, exportMarkdown, imagePath, lastAgentText, renderHooks, render
 import CODEX_SLASH from "./codex-slash.json" with { type: "json" };
 import { T } from "./view/theme.mjs";
 import { createKeymap } from "./keymap.mjs";
-import { DEFAULT_STATUS, DEFAULT_TITLE, STATUS_IDS, TITLE_IDS, canonical, statusSegments, titleText, unsupported } from "./status.mjs";
+import { DEFAULT_STATUS, DEFAULT_TITLE, STATUS_IDS, TITLE_IDS, canonical, contextUsedLabel, statusSegments, titleText, unsupported } from "./status.mjs";
 
 export const FORCE_QUIT_MS = 1500;
 const FRAME_MS = 33;
@@ -95,6 +96,10 @@ const CODEX_COMMANDS = new Map(CODEX_SLASH.commands.flatMap((c) => [c.name, ...c
 // release adds one, so the upgrade PR has to decide.
 const STOCK_UI = "/codex opens the stock Codex UI on this conversation.";
 const ELSEWHERE = (what) => `(The stock UI's ${what} sees only its own engine, not ad's.)`;
+// Codex's "Implement this plan?" (tui/src/chatwidget/plan_implementation.rs at the pinned tag).
+export const PLAN_IMPLEMENTATION_CODING_MESSAGE = "Implement the plan.";
+export const PLAN_IMPLEMENTATION_CLEAR_CONTEXT_PREFIX = CODEX_PLAN_CLEAR_CONTEXT_PREFIX; // ad's prompt hooks skip it
+
 export const NOT_IN_AD = {
   ide: "/ide reads your editor's selection over Codex's private IDE link, which ad doesn't have.",
   keymap: true,
@@ -195,7 +200,8 @@ export function createApp({
 
   let modal = null; // {id, view}
   let popup = null; // {kind, view, onSelect}
-  let confirm = null; // {view, resolve}: a yes/no question of ad's own (openConfirm)
+  let confirm = null; // {view, resolve}: a question of ad's own (openConfirm, openChoice)
+  let planReady = null; // {turnId, text}: a Plan-mode turn proposed a plan; "Implement this plan?" opens when nothing is in the way
   let overlay = false; // the ? shortcuts
   let note = null; // one transient line above the composer
   let lastCtrlC = -Infinity;
@@ -322,6 +328,7 @@ export function createApp({
       if (turnsSeen.get(t.id) === t.status) continue;
       turnsSeen.set(t.id, t.status);
       actions.bell?.({ unfocusedOnly: true });
+      notePlan(t);
       showLearned(turnStarts.get(t.id) ?? turnStartedAt);
       if (t.status === "failed" && t.error) commitCell(renderNotice({ level: "error", message: `The turn failed: ${t.error.message ?? "unknown error"}` }, { width: width() }));
       else if (t.status === "interrupted") commitCell(renderNotice({ level: "warn", message: "Interrupted. Tell Codex what to do differently." }, { width: width() }));
@@ -336,6 +343,15 @@ export function createApp({
         turnStartedAt = null;
       }
     }
+  }
+
+  // Every checklist the model sets (update_plan → turn/plan/updated) goes into
+  // the scrollback as Codex's "Updated Plan" cell, once per update.
+  let planShown = null;
+  function reportPlanUpdates() {
+    if (!st.plan || st.plan === planShown) return;
+    planShown = st.plan;
+    commitCell(renderPlan(st.plan.steps, { width: width(), explanation: st.plan.explanation }));
   }
 
   // "Learned:" rows for what ad's hooks recorded during the turn (keyed by thread id).
@@ -594,9 +610,11 @@ export function createApp({
     drawTimer = null;
     if (quitting) return;
     const pending = flush();
+    reportPlanUpdates();
     reportNotices();
     reportTurns();
     syncModal();
+    maybeOfferPlan();
     const w = width();
     const rows = height();
     const lines = [];
@@ -614,7 +632,6 @@ export function createApp({
     const cap = Math.max(3, Math.floor(rows * LIVE_SHARE));
     if (live.length > cap) live = [[{ text: `  \u{2026} ${live.length - cap + 1} more lines above`, style: DIM }], ...live.slice(-(cap - 1))];
     lines.push(...live);
-    if (st.plan && turnActive()) lines.push(...renderPlan(st.plan.steps, { width: w, explanation: st.plan.explanation }));
     lines.push(...statusLines());
     if (st.engine.state === "crashed") {
       const code = Number.isInteger(st.engine.exitCode) ? ` (exit ${st.engine.exitCode})` : "";
@@ -671,6 +688,74 @@ export function createApp({
   function openChecklist(kind, items, onSave, { onCancel, onChange, ...opts } = {}) {
     popup = { kind, view: createChecklist({ items, ...opts, onChange: (v) => (onChange?.(v), drawSoon()) }), onSelect: onSave, onCancel };
     draw();
+  }
+
+  /* -------------------------------------------------------------- */
+  /* "Implement this plan?" (Codex's plan mode, codex-parity-2 4e)     */
+  /* -------------------------------------------------------------- */
+
+  // A completed Plan-mode turn with a proposed plan: remembered until the choice can open.
+  function notePlan(t) {
+    if (t.status !== "completed" || st.mode?.kind !== "plan") return;
+    const ids = new Set(t.itemIds ?? []);
+    const plan = [...st.items.values()].findLast((i) => i.kind === "plan" && (i.turnId === t.id || ids.has(i.id)) && String(i.text ?? "").trim());
+    if (plan) planReady = { turnId: t.id, threadId: st.thread?.id ?? null, text: String(plan.text) };
+  }
+
+  // Codex opens the choice only with nothing queued and nothing open; ad also
+  // waits for an empty prompt (a draft is never thrown away) and says so.
+  function maybeOfferPlan() {
+    if (!planReady) return;
+    if (st.mode?.kind !== "plan" || st.thread?.id !== planReady.threadId || turnActive() || st.queue.length) {
+      planReady = null; // the moment passed: a new turn, a queued prompt, another mode or conversation
+      return;
+    }
+    if (modal || confirm || pager || st.requests.length) return;
+    if (composer.text.trim() || popup || overlay) {
+      if (!note || note.plan) note = { level: "info", text: "A plan is ready: clear the prompt to choose.", plan: true };
+      return;
+    }
+    if (note?.plan) note = null;
+    const plan = planReady;
+    planReady = null;
+    // Outside the draw that noticed it: opening the choice draws again.
+    queueMicrotask(() => void choosePlan(plan).catch(fail));
+  }
+
+  async function choosePlan(plan) {
+    const hasDefault = st.mode?.presets?.some((p) => p.mode === "default");
+    const used = contextUsedLabel(st.tokens);
+    const options = [
+      ...(hasDefault
+        ? [
+            { label: "Yes, implement this plan", hint: "Switch to Default and start coding", value: "implement" },
+            { label: "Yes, clear context and implement", hint: used ? `Start a fresh thread (current context: ${used})` : "Fresh thread with this plan", value: "clear" },
+          ]
+        : []),
+      { label: "No, stay in Plan mode", hint: hasDefault ? "Continue planning with the model" : "Default mode unavailable", value: "stay", safe: true },
+    ];
+    const answer = await openChoice({ title: "Implement this plan?", options });
+    if (answer === "implement") {
+      if (!session.setMode("default").ok) return warn("Default mode unavailable");
+      return send(PLAN_IMPLEMENTATION_CODING_MESSAGE);
+    }
+    if (answer === "clear") {
+      // A fresh conversation in Default whose first message is Codex's prefix and the plan.
+      // The scrollback stays (a divider), unlike /clear.
+      session.newThread();
+      resetThreadView();
+      commit([[{ text: "\u{2500}".repeat(Math.min(60, width())), style: DIM }]]);
+      return send(`${PLAN_IMPLEMENTATION_CLEAR_CONTEXT_PREFIX}\n\n${plan.text}`);
+    }
+  }
+
+  // One of a few answers (Codex's selection views) → the chosen value, or the safe one on Esc.
+  function openChoice(opts) {
+    confirm?.resolve(false);
+    return new Promise((resolve) => {
+      confirm = { view: createChoice(opts, { now, armMs }), resolve };
+      draw();
+    });
   }
 
   // A yes/no question ad asks before acting on its own (/archive, /delete…).
@@ -1430,6 +1515,11 @@ export function createApp({
     if (what === "thread" && st.thread) for (const t of st.turns) if (t.status !== "inProgress" && !turnsSeen.has(t.id)) turnsSeen.set(t.id, t.status);
     if ((what === "turn" || what === "starting" || what === "turn.started") && st.activeTurnId) turnStartedAt ??= now();
     if (what === "turn" && !st.activeTurnId) refreshGit(true);
+    // Each checklist as it comes (several can land before the next draw), after what finished before it.
+    if (what === "turn.plan") {
+      flush();
+      reportPlanUpdates();
+    }
     drawSoon();
   });
   const offHook = session.on("hook", (run) => {

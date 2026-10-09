@@ -23,6 +23,7 @@ import { readStdinJson, passthrough } from "./io.mjs";
 import { extractFromText } from "./extractors.mjs";
 import { appendLearnings } from "./journal.mjs";
 import { markRecentSkillFailure } from "../memory/episodic.mjs";
+import { isGeneratedPrompt } from "./generated-prompts.mjs";
 
 // 1 MB: Claude turns fit in 64 KB, but Codex rollouts can put >64 KB of
 // tool output / injected context between the last assistant message and
@@ -34,6 +35,11 @@ export async function userPromptExtract() {
     const input = await readStdinJson();
     // Team workers (AD_WORKER=1) are prompted by the leader, not the user.
     if (process.env.AD_WORKER === "1") {
+      passthrough();
+      return 0;
+    }
+    // A prompt the client wrote (Codex's plan hand-off) isn't the user's words.
+    if (isGeneratedPrompt(input.prompt)) {
       passthrough();
       return 0;
     }

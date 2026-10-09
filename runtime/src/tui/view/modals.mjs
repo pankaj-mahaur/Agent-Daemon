@@ -18,7 +18,7 @@
 //     the whole request is also in the scrollback.
 
 import { sanitize } from "../terminal/sanitize.mjs";
-import { normalize, truncate, wrap } from "../terminal/text.mjs";
+import { lineWidth, normalize, truncate, wrap } from "../terminal/text.mjs";
 import { renderDiff } from "./cells.mjs";
 import { createComposer } from "./composer.mjs";
 import { T } from "./theme.mjs";
@@ -449,6 +449,44 @@ export function createConfirm({ title, body = "", yes = "Yes", no = "No" } = {},
       const list = choices.render(width);
       const hint = truncate([{ text: choices.armed() ? "  y/n \u{b7} esc = no" : "  \u{2026}", style: S.dim }], width);
       // The choices always show; a long body is cut from its end.
+      const room = Math.max(0, height - list.length - 1);
+      return [...head.slice(0, room), ...list, hint];
+    },
+  };
+}
+
+/**
+ * One of a few answers to a question ad asks on its own (Codex's selection
+ * views: "Implement this plan?"). Numbers, arrows and Enter pick; Esc or
+ * Ctrl+C is the last `safe` option at once; any other answer waits for the
+ * arm delay, as an approval does.
+ *   createChoice({title, body, options: [{label, hint, value, safe}]}, {now, armMs})
+ *     .handle(ev) → {answer: value} | {changed: true} | null
+ *     .render({width, height}) → lines
+ */
+export function createChoice({ title, body = "", options = [] } = {}, { now = () => Date.now(), armMs = ARM_MS } = {}) {
+  const choices = createChoices(options.map((o) => ({ label: o.label, hint: o.hint, value: o.value, safe: !!o.safe })), { now, armMs });
+  const out = options.findLast((o) => o.safe);
+  return {
+    kind: "choice",
+    handle(ev) {
+      if (out && ev.type === "key" && (ev.name === "escape" || (ev.ctrl && ev.name === "c"))) return { answer: out.value };
+      return choices.handle(ev);
+    },
+    render({ width = 80, height = 12 } = {}) {
+      const head = [truncate([{ text: oneRow(shown(title)), style: S.title }], width), ...(body ? block(shown(body), width, S.dim) : []), []];
+      // Hints beside their labels when they all fit; else each under its label, wrapped (as Codex's descriptions do).
+      const rows = options.map((o, i) => {
+        const cur = i === choices.index;
+        const label = [{ text: cur ? "\u{203a} " : "  ", style: S.sel }, { text: `${i + 1}. `, style: S.dim }, { text: oneRow(shown(o.label)), style: cur ? S.sel : undefined }];
+        return { label, hint: o.hint ? oneRow(shown(o.hint)) : "" };
+      });
+      const beside = (r) => (r.hint ? [...r.label, { text: `  ${r.hint}`, style: S.dim }] : r.label);
+      const under = rows.some((r) => lineWidth(beside(r)) > width);
+      const list = rows.flatMap((r) =>
+        !under ? [normalize(beside(r))] : [truncate(r.label, width), ...(r.hint ? wrap([{ text: r.hint, style: S.dim }], Math.max(1, width - 5)).map((l) => normalize([{ text: "     " }, ...l])) : [])],
+      );
+      const hint = truncate([{ text: choices.armed() ? `  1-${options.length} or enter to choose${out ? ` \u{b7} esc = ${oneRow(out.label)}` : ""}` : "  \u{2026}", style: S.dim }], width);
       const room = Math.max(0, height - list.length - 1);
       return [...head.slice(0, room), ...list, hint];
     },

@@ -29,6 +29,18 @@ function contextUsed(t) {
   if (!t?.contextWindow || !t.last) return null;
   return Math.min(100, (t.last.total / t.contextWindow) * 100);
 }
+/**
+ * How much of the context window is used, as Codex words it for "clear
+ * context and implement": "89% used", else "123K used", else null (a fresh
+ * or unknown context, so the choice doesn't sound urgent without evidence).
+ */
+export function contextUsedLabel(t) {
+  const u = contextUsed(t);
+  if (u != null && Math.round(u) > 0) return `${Math.round(u)}% used`;
+  const used = t?.last?.total ?? 0;
+  return used > 0 ? `${used >= 1000 ? `${Math.round(used / 1000)}K` : used} used` : null;
+}
+
 function limit(w, fallback) {
   if (w?.usedPercent == null) return null;
   const label = w.windowDurationMins ? (w.windowDurationMins >= 7 * 24 * 60 ? "wk" : `${Math.round(w.windowDurationMins / 60)}h`) : fallback;

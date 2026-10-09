@@ -38,7 +38,7 @@
 ⟦dim⟧• ⟦bold⟧Spawned agent
 ⟦dim⟧  └ Check signup
 ── plan ──
-⟦dim⟧• ⟦bold⟧Updated plan
+⟦dim⟧• ⟦bold⟧Updated Plan
 ⟦dim⟧  └ ⟦dim,italic⟧Small
 ⟦dim⟧    ⟦fg=green⟧✔ ⟦dim,strike⟧Reproduce
 ⟦dim⟧    ⟦bold,fg=cyan⟧□ Fix

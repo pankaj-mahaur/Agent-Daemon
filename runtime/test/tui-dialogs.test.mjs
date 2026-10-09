@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { assertGolden } from "../testkit/golden.mjs";
-import { createConfirm } from "../src/tui/view/modals.mjs";
+import { createChoice, createConfirm } from "../src/tui/view/modals.mjs";
 import { createChecklist } from "../src/tui/view/chrome.mjs";
 import { lineWidth } from "../src/tui/terminal/text.mjs";
 
@@ -18,12 +18,34 @@ function clock(start = 0) {
 }
 
 const CONFIRM = { title: "Delete this conversation?", body: "login fix\nCannot be undone. Subagent threads will also be deleted.", yes: "Yes, delete it", no: "No, keep it" };
+// Codex's "Implement this plan?" (Plan mode).
+const PLAN_CHOICE = {
+  title: "Implement this plan?",
+  options: [
+    { label: "Yes, implement this plan", hint: "Switch to Default and start coding", value: "implement" },
+    { label: "Yes, clear context and implement", hint: "Start a fresh thread (current context: 62% used)", value: "clear" },
+    { label: "No, stay in Plan mode", hint: "Continue planning with the model", value: "stay", safe: true },
+  ],
+};
 const ITEMS = [
   { label: "model-with-reasoning", hint: "gpt-5.5 high", value: "model-with-reasoning", checked: true },
   { label: "current-dir", hint: "~/work/app", value: "current-dir", checked: true },
   { label: "git-branch", hint: "main", value: "git-branch" },
   { label: "context-remaining", hint: "62% left", value: "context-remaining" },
 ];
+
+test("choice: numbers and Enter pick once armed; the safe option answers at once, and Esc is the safe option", () => {
+  const c = clock();
+  const d = createChoice(PLAN_CHOICE, { now: c.now, armMs: 400 });
+  assert.deepEqual(d.handle(chr("1")), { changed: true }, "too soon");
+  c.advance(400);
+  assert.deepEqual(d.handle(chr("2")), { answer: "clear" });
+  assert.deepEqual(createChoice(PLAN_CHOICE, { now: c.now, armMs: 400 }).handle(chr("3")), { answer: "stay" }, "staying grants nothing: no wait");
+  assert.deepEqual(createChoice(PLAN_CHOICE, { now: c.now, armMs: 400 }).handle(key("escape")), { answer: "stay" });
+  const e = createChoice(PLAN_CHOICE, { now: c.now, armMs: 400 });
+  c.advance(400);
+  assert.deepEqual(e.handle(key("enter")), { answer: "implement" }, "the first option is focused");
+});
 
 test("confirm: no answer until armed (type-ahead, a held key); Esc is no at once", () => {
   const c = clock();
@@ -74,6 +96,10 @@ function sheet(width) {
   c.advance(500);
   out.push("── confirm (armed) ──", text(armed.render({ width, height: 12 })));
   out.push("── confirm (short) ──", text(armed.render({ width, height: 4 })));
+  const choice = createChoice(PLAN_CHOICE, { now: c.now });
+  out.push("── choice (arming) ──", text(choice.render({ width, height: 12 })));
+  c.advance(500);
+  out.push("── choice (armed) ──", text(choice.render({ width, height: 12 })));
   out.push("── checklist ──", text(createChecklist({ items: ITEMS, title: "Status line", reorder: true }).render({ width, height: 10 })));
   out.push("── checklist (scrolls) ──", text(createChecklist({ items: ITEMS, title: "Title" }).render({ width, height: 4 })));
   return out.join("\n");
