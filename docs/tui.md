@@ -261,6 +261,8 @@ Model, effort and permission changes apply from the next turn.
 | `/goal [<objective>\|clear]` | set a goal for this conversation (`/goal clear`); alone, shows it (Codex) |
 | `/plan [prompt]` | switch to Plan mode; with a prompt, send it there (Codex). See [Plan mode](#plan-mode) |
 | `/review` | review your uncommitted changes (Codex) |
+| `/ps` | list the background terminals and their last output lines (Codex). See [Background terminals](#background-terminals) |
+| `/stop` | stop all background terminals (Codex; `/clean` too) |
 | `/diff` | show git changes, untracked files included (Codex) |
 | `/init` | create an AGENTS.md for this repo, with Codex's own prompt (Codex) |
 | `/image <path>` | attach an image file to the next prompt |
@@ -306,7 +308,7 @@ Model, effort and permission changes apply from the next turn.
 | `/help` | what you can do here: every command and shortcut |
 | `/terminal-setup` | how to make Shift+Enter add a newline in this terminal |
 
-A Codex command ad doesn't have yet is never sent to the model as a prompt. It answers in one line why ("/recap isn't in ad yet. /codex opens the stock Codex UI on this conversation."), and what you typed stays in the prompt. Where the stock UI can't help either (`/ide`, `/app`, `/daemon`, `/ps`, `/stop`), the answer says so instead. Codex's commands keep Codex's rules: the ones Codex disables while a task runs (`/new`, `/fork`, `/compact`, `/init`, `/export`, `/review`, `/logout`, …) answer "'/new' is disabled while a task is in progress.", and the draft stays. Codex's aliases work (`/cwd`, `/clean`, `/pet`), and `/quit` shows in the popup only once you type it.
+A Codex command ad doesn't have yet is never sent to the model as a prompt. It answers in one line why ("/recap isn't in ad yet. /codex opens the stock Codex UI on this conversation."), and what you typed stays in the prompt. Where the stock UI can't help either (`/ide`, `/app`, `/daemon`), the answer says so instead. Codex's commands keep Codex's rules: the ones Codex disables while a task runs (`/new`, `/fork`, `/compact`, `/init`, `/export`, `/review`, `/logout`, …) answer "'/new' is disabled while a task is in progress.", and the draft stays. Codex's aliases work (`/cwd`, `/clean` for `/stop`, `/pet`), and `/quit` shows in the popup only once you type it.
 
 ---
 
@@ -325,6 +327,15 @@ Codex's own plan mode: the model explores without changing anything, asks you wh
 - **Settings.** Plan mode's reasoning effort is Codex's `plan_mode_reasoning_effort` (else medium, Codex's default); Default keeps your own model and effort. ad and `/codex` share the mode: a conversation left in Plan in the stock UI resumes in Plan here. A new conversation starts in Default.
 - **Limits.** Like Codex, Plan mode is instructions to the model, not a sandbox: a model that edits anyway isn't stopped. For a hard stop, also set `/permissions` to read-only. Plan mode uses part of Codex's experimental app-server API (only `ad tui` uses it, only for this and `/stop`); if Codex can't list its modes, `/plan` answers "Plan mode unavailable right now." ([troubleshooting #33](troubleshooting.md#33-ad-tui-plan-says-plan-mode-unavailable-right-now)).
 - **Memory.** The clear-context message is written by the client, not by you: ad's memory hooks skip it, so the model's plan is never learned as your words.
+
+## Background terminals
+
+A command the model starts that keeps running, such as a dev server or a watcher, becomes a **background terminal**, as in Codex. It doesn't hold up the conversation: what the model says after starting it goes into the scrollback at once, and the turn can end while it runs.
+
+- The footer says **N background terminal(s) running · /ps to view · /stop to close**.
+- `/ps` lists them with their last 3 output lines (16 at most, then "... and N more running").
+- `/stop` (or `/clean`) stops them all: "Stopping all background terminals.". Both work while a turn runs.
+- They belong to ad's engine: a new conversation, `/resume` or an engine restart leaves them behind (Codex ends them with its engine), and the stock UI in `/codex` doesn't see them.
 
 ## Images
 

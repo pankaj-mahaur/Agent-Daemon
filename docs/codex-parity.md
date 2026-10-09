@@ -68,8 +68,8 @@ Codex's own rules come with the commands:
 | `/quit`, `/exit` | yes | yes | exit `ad` |
 | `/feedback` | no | yes | for `ad` problems, open an issue on the `ad` repository; the stock UI's `/feedback` uploads the whole conversation to OpenAI, `ad`'s memory context and `/private` prompts included |
 | `/rollout` | not yet | yes | the conversation's rollout file; in `/codex` |
-| `/ps` | not yet | yes | background terminals; the stock UI's `/ps` sees only its own engine, not `ad`'s |
-| `/stop`, `/clean` | not yet | yes | stop background terminals; the stock UI's `/stop` sees only its own engine, not `ad`'s |
+| `/ps` | yes | yes | the background terminals Codex runs for this conversation (a dev server, a watcher), with their last output lines. See [Background terminals](tui.md#background-terminals) |
+| `/stop`, `/clean` | yes | yes | stop all background terminals (Codex's experimental call, which only `ad tui` makes) |
 | `/clear` | yes | no | clear the terminal (scrollback too) and start a new conversation |
 | `/test-approval` | no | yes | a Codex debug command |
 | `/subagents` | not yet | yes | switch between subagents; in `/codex` |
