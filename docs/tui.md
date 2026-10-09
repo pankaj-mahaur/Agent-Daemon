@@ -235,6 +235,7 @@ Type `/` to see them with a one-line hint each. Commands marked "Codex" keep Cod
 | `/archive` | archive this conversation, after asking (Codex). ad stays open on a new one; `/resume archived` brings it back |
 | `/delete` | delete this conversation for good, its subagents too, after asking (Codex). Its `/undo` snapshots go with it; ad's memory from it is kept |
 | `/pwd` | show the current working directory (Codex; `/cwd` too) |
+| `/cd [folder]` | continue in another folder (Codex): the conversation is forked there, and from then on everything works in it (edits, commands, `@` files, git facts, ad's memory, `/undo`). Alone, it goes home. A folder you haven't trusted yet is asked about first. Not while a turn runs, prompts are queued or background terminals run; never into a Codex home. `/undo` can't undo turns from before the change |
 | `/fork` | continue in a copy of this conversation (Codex) |
 | `/rename <name>` | name this conversation (Codex) |
 | `/compact` | summarize the conversation to free context (Codex) |

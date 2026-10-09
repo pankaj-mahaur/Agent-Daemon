@@ -557,3 +557,52 @@ test("Part 5 live: a background terminal outlives the turn; /ps lists it and /st
     await removeWithRetry(w.root);
   }
 });
+
+// codex-parity-2 Part 6: /cd on the real Codex.
+test("Part 6 live: /cd forks the conversation into another folder, and the next edit lands there", { skip, timeout: 10 * 60_000 }, async () => {
+  const mock = await startMockResponses({ script: liveScript });
+  const w = world(mock.url);
+  const sub = join(w.cwd, "sub");
+  mkdirSync(sub);
+  let t;
+  try {
+    t = await start(w);
+    t.type("PING first\r");
+    await t.until(/pong/, "a first turn");
+    await t.until(() => t.idle(), "idle");
+    t.type("/cd sub\r");
+    await t.until(/Do you trust .*sub\?/, "the trust question");
+    await settle(600);
+    t.type("1");
+    await t.until(/Working directory changed to: .*sub/, "changed");
+    // The patch turn; outside the sandbox where CI's Windows runners need it.
+    const done = () => t.count(/done after call-patch/g);
+    t.type("PATCH please\r");
+    const end = Date.now() + 180_000;
+    while (done() === 0) {
+      if (Date.now() > end) throw new Error(`no patch\n${t.text().slice(-2000)}`);
+      if (/retry without sandbox\?|Apply file changes\?/.test(t.screen()) && /\(y\)|No, and stop/.test(t.screen())) {
+        await settle(600);
+        t.type("y");
+      }
+      await settle(300);
+    }
+    await t.until(() => t.idle(), "idle after the patch");
+    assert.ok(existsSync(join(sub, "hello.txt")), "the edit landed in the new folder");
+    assert.ok(!existsSync(join(w.cwd, "hello.txt")), "not in the old one");
+    t.type("/pwd\r");
+    await t.until(/Current working directory: .*sub/, "/pwd");
+
+    t.type("\x03");
+    await settle(200);
+    t.type("\x03");
+    assert.equal((await t.exit).exitCode, 0);
+  } catch (err) {
+    err.message += `\n--- model requests ---\n${mock.requests.map((r) => JSON.stringify(r.text)).join("\n")}`;
+    throw err;
+  } finally {
+    for (const k of launched.splice(0)) k();
+    await mock.close();
+    await removeWithRetry(w.root);
+  }
+});

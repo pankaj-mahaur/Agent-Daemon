@@ -146,7 +146,7 @@ export function createSession({
   model,
   sandbox = DEFAULT_SANDBOX,
   approvalPolicy = DEFAULT_APPROVAL_POLICY,
-  hooks = {},
+  hooks: initialHooks = {},
   lockDir = DEFAULT_LOCK_DIR,
   restart = null,
   maxRestarts = 3,
@@ -186,6 +186,8 @@ export function createSession({
     notices: [],
     engine: { state: "ready", exitCode: null, restarts: 0 },
   };
+  // Front-end hooks (/undo's checkpoints); /cd swaps them for the new folder's.
+  let hooks = initialHooks;
   let nextTurn = {};
   // Every override so far: a new or resumed thread gets them on its first turn.
   let sticky = {};
@@ -493,7 +495,7 @@ export function createSession({
         if (state.thread) {
           const id = state.thread.id;
           try {
-            await eng.resumeThread(id, { cwd, sandbox: state.config.sandbox, approvalPolicy: state.config.approvalPolicy, excludeTurns: true });
+            await eng.resumeThread(id, { cwd: state.config.cwd, sandbox: state.config.sandbox, approvalPolicy: state.config.approvalPolicy, excludeTurns: true });
           } catch (err) {
             if (closed) return void (await eng.close?.());
             if (eng.server?.exitError) {
@@ -564,7 +566,7 @@ export function createSession({
     if (threadStarting) return threadStarting;
     const e = epoch;
     const p = (async () => {
-      const t = await eng.startThread({ cwd, model: state.config.model ?? undefined, sandbox: state.config.sandbox, approvalPolicy: state.config.approvalPolicy, ...extra });
+      const t = await eng.startThread({ cwd: state.config.cwd, model: state.config.model ?? undefined, sandbox: state.config.sandbox, approvalPolicy: state.config.approvalPolicy, ...extra });
       if (stale(e)) throw new Error("the session moved on before the thread started");
       state.config.model ??= t.model ?? null;
       attach(t.threadId, t.thread);
@@ -984,6 +986,40 @@ export function createSession({
       if (!id) throw new Error("Codex didn't return the new thread");
       return api.resume(id);
     },
+    /**
+     * Codex's /cd: the conversation continues in another folder. With a thread,
+     * Codex forks it there (the fork keeps the history; ad doesn't load it again,
+     * it's on screen) and ad moves to the fork; without one, the next thread
+     * starts there. Every later thread start, resume and engine restart uses
+     * the new folder. → the new thread's id, or null.
+     */
+    async changeDir(dir) {
+      if (closed) throw new Error("session closed");
+      if (state.activeTurnId || state.starting || state.queue.length || threadStarting) throw new Error("Changing directories requires an idle primary session without queued input.");
+      const from = state.thread;
+      if (!from) {
+        state.config.cwd = dir;
+        change("config");
+        return null;
+      }
+      const e = epoch;
+      const r = await eng.server.request("thread/fork", { threadId: from.id, cwd: dir, sandbox: state.config.sandbox, approvalPolicy: state.config.approvalPolicy, excludeTurns: true });
+      if (stale(e)) throw new Error("the session moved on before the folder changed");
+      const id = r?.thread?.id;
+      if (!id) throw new Error("Codex didn't return the new thread");
+      const kind = state.mode.kind; // the fork keeps the thread's mode
+      detach();
+      resetThreadState();
+      state.mode = { ...state.mode, kind };
+      state.config.cwd = dir;
+      attach(id, r.thread);
+      change("thread");
+      return id;
+    },
+    /** Replaces the front end's hooks (/cd: /undo's checkpoints for the new folder). */
+    setHooks(h = {}) {
+      hooks = h;
+    },
     /** Leaves the current thread; the next prompt starts a new one. */
     newThread() {
       detach();
@@ -1045,7 +1081,7 @@ export function createSession({
       const e = epoch;
       let t;
       try {
-        t = await eng.resumeThread(threadId, { cwd, sandbox: state.config.sandbox, approvalPolicy: state.config.approvalPolicy, excludeTurns: true });
+        t = await eng.resumeThread(threadId, { cwd: state.config.cwd, sandbox: state.config.sandbox, approvalPolicy: state.config.approvalPolicy, excludeTurns: true });
         if (stale(e)) throw new Error("the session moved on before the thread resumed");
       } catch (err) {
         release();

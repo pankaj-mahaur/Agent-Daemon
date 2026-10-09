@@ -53,7 +53,7 @@ Codex's own rules come with the commands:
 | `/status` | yes | yes | account, model, sandbox, tokens, limits |
 | `/daemon` | no | yes | it manages Codex's background server; `ad` runs its own engine and never uses it |
 | `/warnings` | yes | yes | notices kept from this session, unknown events, settings `ad` couldn't use |
-| `/cd` | not yet | no | change the working directory; in `/codex` |
+| `/cd` | yes | no | continue the conversation in another folder (Codex forks it there); asks first if the folder isn't trusted yet |
 | `/pwd`, `/cwd` | yes | yes | show the current working directory |
 | `/usage` | yes | yes | usage limits and tokens |
 | `/debug-config` | not yet | yes | config layers, for debugging; in `/codex` |

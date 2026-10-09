@@ -967,3 +967,64 @@ test("background terminals (review): an item id reused across turns ends the rig
     assert.equal(session.state.terminals.size, 0, "forgotten anyway, as Codex does");
   });
 });
+
+/* ------------------------------------------------------------------ */
+/* /cd: a mutable folder (codex-parity-2 Part 6)                       */
+/* ------------------------------------------------------------------ */
+
+test("changeDir: forks the thread into the folder; the next turn, /new, a resume and an engine restart all use it", async () => {
+  await withSession(
+    (make) => ({ restart: async () => { await sleep(100); return make(); } }),
+    async ({ session, engine, engines, root, lockDir }) => {
+      const other = join(root, "other");
+      mkdirSync(other);
+      await session.submit("fail-turn").done;
+      const first = session.state.thread.id;
+      const id = await session.changeDir(other);
+      assert.notEqual(id, first);
+      const st = await debugState(engine);
+      assert.deepEqual({ threadId: st.lastParams["thread/fork"].threadId, cwd: st.lastParams["thread/fork"].cwd, excludeTurns: st.lastParams["thread/fork"].excludeTurns }, { threadId: first, cwd: other, excludeTurns: true });
+      assert.equal(session.state.config.cwd, other);
+      assert.equal(session.state.items.size, 0, "the fork's history isn't loaded again: it's on screen");
+      assert.equal(readdirSync(lockDir).length, 1, "the lock moved to the fork");
+      await session.submit("fail-turn").done;
+      assert.equal((await debugState(engine)).lastParams["turn/start"].threadId, id);
+      // An engine restart resumes the fork in the new folder.
+      engine.server.request("test/crash", {}).catch(() => {});
+      await until(() => session.state.engine.state === "ready" && engines.length === 2, "the restart");
+      assert.equal((await debugState(engines[1])).lastParams["thread/resume"].cwd, other);
+      // A new conversation starts there; a resume goes there too.
+      session.newThread();
+      await session.submit("fail-turn").done;
+      assert.equal((await debugState(engines[1])).lastParams["thread/start"].cwd, other);
+      await session.resume(first);
+      assert.equal((await debugState(engines[1])).lastParams["thread/resume"].cwd, other);
+    },
+  );
+});
+
+test("changeDir: without a thread only the folder changes; busy or queued, it's refused", async () => {
+  await withSession(none, async ({ session, engine, root }) => {
+    const other = join(root, "other");
+    mkdirSync(other);
+    assert.equal(await session.changeDir(other), null);
+    await session.submit("fail-turn").done;
+    const st = await debugState(engine);
+    assert.equal(st.lastParams["thread/start"].cwd, other);
+    assert.ok(!st.calls.includes("thread/fork"));
+    session.submit("hang");
+    await until(() => session.state.activeTurnId, "a running turn");
+    await assert.rejects(session.changeDir(root), /requires an idle primary session without queued input/);
+    await session.interrupt();
+  });
+});
+
+test("setHooks: /cd swaps the front end's hooks", async () => {
+  const seen = [];
+  await withSession(() => ({ hooks: { beforeTurn: () => void seen.push("old") } }), async ({ session }) => {
+    await session.submit("fail-turn").done;
+    session.setHooks({ beforeTurn: () => void seen.push("new") });
+    await session.submit("fail-turn").done;
+    assert.deepEqual(seen, ["old", "new"]);
+  });
+});

@@ -256,7 +256,8 @@ export function hookRows(run, { hooksFile }) {
 export async function cmdTui(opts = {}) {
   const err = opts.stderr ?? process.stderr;
   const out = opts.stdout ?? process.stdout;
-  const cwd = path.resolve(opts.cwd ?? process.cwd());
+  // The folder ad works in; /cd changes it (every helper below reads it when used).
+  let cwd = path.resolve(opts.cwd ?? process.cwd());
   const why = preflight();
   if (why) {
     err.write(`${why}\n`);
@@ -330,8 +331,8 @@ export async function cmdTui(opts = {}) {
     // Checkpoints for /undo, in a git repo only (plan Part 10).
     const { createCheckpoints } = await import("../harness/checkpoints.mjs");
     const { checkpointWiring } = await import("./undo.mjs");
-    const cp = createCheckpoints({ cwd });
-    const undoKit = (await cp.repo().catch(() => null)) ? checkpointWiring(cp, { cwd }) : null;
+    let cp = createCheckpoints({ cwd });
+    let undoKit = (await cp.repo().catch(() => null)) ? checkpointWiring(cp, { cwd }) : null;
     // Settings: Codex's own (its config.toml in ad's home, shared with /codex) and ad's (prefs.json).
     const settings = { codex: createCodexSettings({ engine: () => session.engine }), ad: createPrefs({ file: opts.prefsFile ?? DEFAULT_PREFS_FILE }) };
     // modes: Codex's plan mode, on the experimental allowlist this engine opted into (codex-parity-2 P0).
@@ -392,7 +393,8 @@ export async function cmdTui(opts = {}) {
       if (id) await session.resume(id).catch((e) => intro.push([{ text: `  Could not resume: ${sanitize(e.message, "transcript")}`, style: T.warning }]));
     }
 
-    const ad = createAdLayer({ cwd, home: opts.adHome ?? homedir(), memory: opts.memory === false ? null : await import("../memory/episodic.mjs").catch(() => null), cli: CLI });
+    const adMemory = opts.memory === false ? null : await import("../memory/episodic.mjs").catch(() => null);
+    let ad = createAdLayer({ cwd, home: opts.adHome ?? homedir(), memory: adMemory, cli: CLI });
     const overdue = await ad.schedulerWarning().catch(() => null);
     if (overdue) intro.push(truncate([{ text: `  ${overdue}`, style: T.warning }], Math.max(10, io.size().cols - 2)));
     let focused = true;
@@ -415,6 +417,21 @@ export async function cmdTui(opts = {}) {
       },
       ad,
       ...(undoKit ? { undo: (o) => undoKit.undo(session, o), onTyping: () => undoKit.onTyping() } : {}),
+      // /cd: ad's memory project and /undo's checkpoints follow the new folder.
+      setCwd: async (dir) => {
+        cwd = dir;
+        actions.ad = ad = createAdLayer({ cwd, home: opts.adHome ?? homedir(), memory: adMemory, cli: CLI });
+        cp = createCheckpoints({ cwd });
+        undoKit = (await cp.repo().catch(() => null)) ? checkpointWiring(cp, { cwd }) : null;
+        session.setHooks(undoKit?.hooks ?? {});
+        if (undoKit) {
+          actions.undo = (o) => undoKit.undo(session, o);
+          actions.onTyping = () => undoKit.onTyping();
+        } else {
+          delete actions.undo;
+          delete actions.onTyping;
+        }
+      },
       login: async (arg) => {
         const code = await handoff(io, renderer, () => runChild(process.execPath, [CLI, "auth", "login", ...splitArgs(arg || "chatgpt")], { cwd }), app);
         if (code !== 0) return `Sign-in didn't finish (exit ${code}). Nothing changed.`;

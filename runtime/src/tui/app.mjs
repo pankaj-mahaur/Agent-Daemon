@@ -19,7 +19,8 @@ import { CODEX_PLAN_CLEAR_CONTEXT_PREFIX } from "../hooks/generated-prompts.mjs"
 import { sanitize } from "./terminal/sanitize.mjs";
 import { lineWidth, truncate } from "./terminal/text.mjs";
 import { INIT_PROMPT } from "./init-prompt.mjs";
-import { existsSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
 import { copyText, exportMarkdown, imagePath, lastAgentText, renderHooks, renderMcp, renderSkills, renderUsage, terminalSetup, transcriptLines } from "./commands.mjs";
 import CODEX_SLASH from "./codex-slash.json" with { type: "json" };
@@ -45,6 +46,7 @@ export const SLASH_COMMANDS = [
   { name: "archive", source: "codex", desc: "archive this conversation (/resume archived brings it back)" },
   { name: "delete", source: "codex", desc: "delete this conversation for good" },
   { name: "pwd", source: "codex", desc: "show the current working directory" },
+  { name: "cd", source: "codex", desc: "change the working directory (the conversation continues there)" },
   { name: "model", source: "codex", desc: "choose the model and reasoning effort" },
   { name: "permissions", source: "codex", desc: "what Codex may do without asking" },
   { name: "status", source: "codex", desc: "account, model, sandbox, tokens, limits" },
@@ -120,7 +122,6 @@ export const NOT_IN_AD = {
   tui: "/tui chooses the stock Codex UI's mode; ad has only its inline mode so far.",
   mention: "Type @ in the prompt to mention a file.",
   daemon: "/daemon manages Codex's background server; ad runs its own engine and never uses it.",
-  cd: true,
   "debug-config": true,
   theme: true,
   pets: "ad doesn't draw terminal pets (they need Kitty or Sixel images).",
@@ -779,6 +780,57 @@ export function createApp({
     }
   }
 
+  // Codex's /cd (app/event_dispatch.rs, app/working_directory.rs at the pinned tag):
+  // the folder resolves against the current one ("~" alone or first is home),
+  // must be a folder, the session idle with nothing queued and no background
+  // terminal; an untrusted folder is asked about first. Then the conversation
+  // forks into it.
+  async function changeDir(arg) {
+    const BUSY = "Changing directories requires an idle primary session without queued input.";
+    if (turnActive() || st.queue.length || st.terminals?.size) return warn(BUSY);
+    const raw = arg || "~";
+    const dir = path.resolve(cwd, raw === "~" || /^~[\\/]/.test(raw) ? path.join(homedir(), raw.slice(1)) : raw);
+    let stat;
+    try {
+      stat = statSync(dir);
+    } catch (err) {
+      return warn(`Cannot access directory ${clean(dir)}: ${err.code ?? err.message}`);
+    }
+    if (!stat.isDirectory()) return warn(`Not a directory: ${clean(dir)}`);
+    // Never into a Codex home: your own Codex's, or ad's.
+    const real = (p) => {
+      try {
+        return realpathSync(p).toLowerCase();
+      } catch {
+        return path.resolve(p).toLowerCase();
+      }
+    };
+    const homes = [path.join(homedir(), ".codex"), session.engine?.home].filter(Boolean).map(real);
+    if (homes.some((h) => real(dir) === h || real(dir).startsWith(h + path.sep))) return warn(`ad doesn't work inside a Codex home: ${clean(dir)}`);
+    if (actions.ad?.loop?.state?.running) return warn("An ad loop is working in this folder: /loop stop first.");
+    // Trust, as on ad's first start in a folder (kept in ad's Codex home).
+    const config = await session.engine.readConfig().catch(() => ({}));
+    const known = Object.keys(config.projects ?? {}).some((k) => real(k) === real(dir));
+    if (!known && real(dir) !== real(homedir())) {
+      const trust = await openChoice({
+        title: `Do you trust ${clean(dir)}?`,
+        body: "Trusted folders may load their own .codex config, hooks and skills.",
+        options: [
+          { label: "Yes, trust this folder", value: "trusted" },
+          { label: "No", hint: "ignore its .codex config", value: "untrusted" },
+          { label: "Cancel", hint: "stay here", value: null, safe: true },
+        ],
+      });
+      if (!trust) return info0("Not changed.");
+      await session.engine.writeConfig([["projects", { [dir]: { trust_level: trust } }, "upsert"]]);
+    }
+    await session.changeDir(dir);
+    cwd = dir;
+    await actions.setCwd?.(dir);
+    refreshGit(true);
+    return info0(`Working directory changed to: ${clean(dir)}`);
+  }
+
   // One of a few answers (Codex's selection views) → the chosen value, or the safe one on Esc.
   function openChoice(opts) {
     confirm?.resolve(false);
@@ -927,6 +979,8 @@ export function createApp({
         return pickItems("status");
       case "title":
         return pickItems("title");
+      case "cd":
+        return changeDir(arg);
       case "pwd":
         return arg ? warn("Usage: /pwd") : info0(`Current working directory: ${clean(cwd)}`);
       case "quit":

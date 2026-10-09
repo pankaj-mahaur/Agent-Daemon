@@ -3,7 +3,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -902,4 +902,45 @@ test("background terminals (review): Esc on a turn with a command still running 
     await until(() => /Running .*npm run dev:0/.test(committed()), "its cell in the scrollback");
     assert.equal(session.state.terminals.size, 1, "Esc interrupts the turn, not the command (Codex)");
   }, { modes: true, cols: 100, rows: 30 });
+});
+
+test("/cd: Codex's checks and texts, the trust question, and the conversation forked into the folder", async () => {
+  await withApp(async ({ app, type, until, committed, session, engine, root }) => {
+    const debug = () => engine.server.request("debug/state", {});
+    const other = join(root, "shop-app");
+    mkdirSync(other);
+    writeFileSync(join(root, "notes.txt"), "x");
+    type("/cd nowhere\r");
+    await until(() => /Cannot access directory .*nowhere: ENOENT/.test(committed()), "the missing folder");
+    type("/cd notes.txt\r");
+    await until(() => /Not a directory: .*notes\.txt/.test(committed()), "a file");
+    type(`/cd ${session.engine.home}\r`);
+    await until(() => /ad doesn't work inside a Codex home/.test(committed()), "ad's Codex home");
+    type("fail-turn\r");
+    await until(() => !session.state.activeTurnId && session.state.turns.length === 1, "a turn first");
+    const first = session.state.thread.id;
+    // An untrusted folder is asked about; Cancel stays.
+    type("/cd shop-app\r");
+    await until(() => app.state.confirm, "the trust question");
+    type("\x1b");
+    await until(() => /Not changed\./.test(committed()), "cancelled");
+    assert.equal(session.state.thread.id, first);
+    type("/cd shop-app\r");
+    await until(() => app.state.confirm, "the trust question again");
+    await sleep(120);
+    type("1");
+    await until(() => /Working directory changed to: .*shop-app/.test(committed()), "changed");
+    assert.notEqual(session.state.thread.id, first, "a fork");
+    const st = await debug();
+    assert.equal(st.lastParams["thread/fork"].cwd, other);
+    const projects = (await session.engine.readConfig()).projects ?? {};
+    assert.ok(Object.entries(projects).some(([k, v]) => k === other && v.trust_level === "trusted"), JSON.stringify(projects));
+    type("/pwd\r");
+    await until(() => new RegExp(`Current working directory: .*shop-app`).test(committed()), "/pwd");
+    // Busy: Codex's refusal, the draft kept.
+    type("hang\r");
+    await until(() => session.state.activeTurnId, "a running turn");
+    type("/cd ..\r");
+    await until(() => /'\/cd' is disabled while a task is in progress\./.test(committed()), "busy");
+  }, { modes: true, cols: 120, rows: 30 });
 });
