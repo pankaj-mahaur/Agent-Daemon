@@ -33,6 +33,7 @@ import { mkdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } 
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_APPROVAL_POLICY, DEFAULT_SANDBOX } from "../engine/index.mjs";
+import { canonicalPath } from "../engine/codex/home.mjs";
 
 export const DEFAULT_LOCK_DIR = join(homedir(), ".agent-daemon", "locks");
 const NOTICE_CAP = 50;
@@ -997,16 +998,30 @@ export function createSession({
       if (closed) throw new Error("session closed");
       if (state.activeTurnId || state.starting || state.queue.length || threadStarting) throw new Error("Changing directories requires an idle primary session without queued input.");
       const from = state.thread;
-      if (!from) {
+      // No thread, or one with nothing in it yet (/clear, /new): Codex hasn't saved
+      // it, so there is nothing to fork; like Codex, the next thread starts there.
+      if (!from || !state.turns.length) {
+        if (from) {
+          detach();
+          resetThreadState();
+        }
         state.config.cwd = dir;
-        change("config");
+        change(from ? "thread" : "config");
         return null;
       }
       const e = epoch;
       const r = await eng.server.request("thread/fork", { threadId: from.id, cwd: dir, sandbox: state.config.sandbox, approvalPolicy: state.config.approvalPolicy, excludeTurns: true });
-      if (stale(e)) throw new Error("the session moved on before the folder changed");
       const id = r?.thread?.id;
       if (!id) throw new Error("Codex didn't return the new thread");
+      // A fork nobody uses (the session moved on, a prompt started meanwhile, or
+      // Codex put it somewhere else) is let go, not left loaded.
+      const drop = (why) => {
+        eng.server.request("thread/unsubscribe", { threadId: id }).catch(() => {});
+        throw new Error(why);
+      };
+      if (stale(e)) drop("the session moved on before the folder changed");
+      if (state.activeTurnId || state.starting || state.queue.length) drop("Changing directories requires an idle primary session without queued input.");
+      if (r.cwd && canonicalPath(r.cwd) !== canonicalPath(dir)) drop("Requested directory or permissions not applied.");
       const kind = state.mode.kind; // the fork keeps the thread's mode
       detach();
       resetThreadState();

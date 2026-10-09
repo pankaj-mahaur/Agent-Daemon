@@ -1028,3 +1028,18 @@ test("setHooks: /cd swaps the front end's hooks", async () => {
     assert.deepEqual(seen, ["old", "new"]);
   });
 });
+
+test("changeDir (review): a thread with nothing in it yet (/clear) isn't forked; the next thread starts in the folder", async () => {
+  await withSession(none, async ({ session, engine, root }) => {
+    const other = join(root, "other");
+    mkdirSync(other);
+    await session.startThread({ sessionStartSource: "clear" });
+    assert.ok(session.state.thread);
+    assert.equal(await session.changeDir(other), null);
+    assert.equal(session.state.thread, null);
+    await session.submit("fail-turn").done;
+    const st = await debugState(engine);
+    assert.ok(!st.calls.includes("thread/fork"), "Codex hasn't saved an empty thread: nothing to fork");
+    assert.equal(st.lastParams["thread/start"].cwd, other);
+  });
+});

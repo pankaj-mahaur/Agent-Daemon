@@ -36,6 +36,7 @@ const DEFAULT_STATE_FILE = path.join(homedir(), ".agent-daemon", "tui", "state.j
 export { preflight } from "./preflight.mjs";
 import { preflight } from "./preflight.mjs";
 import { T } from "./view/theme.mjs";
+import { skillRoots } from "../harness/setup.mjs";
 
 /* ------------------------------------------------------------------ */
 /* Small terminal helpers                                              */
@@ -258,6 +259,8 @@ export async function cmdTui(opts = {}) {
   const out = opts.stdout ?? process.stdout;
   // The folder ad works in; /cd changes it (every helper below reads it when used).
   let cwd = path.resolve(opts.cwd ?? process.cwd());
+  // A relative --home means relative to where ad started, also after /cd.
+  if (opts.home) opts = { ...opts, home: path.resolve(cwd, opts.home) };
   const why = preflight();
   if (why) {
     err.write(`${why}\n`);
@@ -431,6 +434,10 @@ export async function cmdTui(opts = {}) {
           delete actions.undo;
           delete actions.onTyping;
         }
+        // The project's own skills (<folder>/.claude/skills) are the new folder's now.
+        await session.engine.setSkillRoots(skillRoots({ cwd, engineHome: session.engine.home })).catch((e) => {
+          throw new Error(`Skills weren't reloaded for the new folder: ${e.message}`);
+        });
       },
       login: async (arg) => {
         const code = await handoff(io, renderer, () => runChild(process.execPath, [CLI, "auth", "login", ...splitArgs(arg || "chatgpt")], { cwd }), app);

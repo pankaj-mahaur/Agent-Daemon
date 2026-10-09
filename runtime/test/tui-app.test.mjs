@@ -944,3 +944,19 @@ test("/cd: Codex's checks and texts, the trust question, and the conversation fo
     await until(() => /'\/cd' is disabled while a task is in progress\./.test(committed()), "busy");
   }, { modes: true, cols: 120, rows: 30 });
 });
+
+test("/cd (review): a prompt sent while the folder is changing waits, its text kept", async () => {
+  await withApp(async ({ app, type, until, committed, session, root }) => {
+    mkdirSync(join(root, "marketing-site"));
+    type("fail-turn\r");
+    await until(() => !session.state.activeTurnId && session.state.turns.length === 1, "a turn first");
+    type("/cd marketing-site\r");
+    await until(() => app.state.confirm, "the trust question (the change is under way)");
+    app.send("fail-turn");
+    await until(() => /Changing directories: send it once that's done\./.test(committed()), "refused");
+    assert.equal(app.state.composer, "fail-turn", "kept");
+    assert.equal(session.state.turns.length, 1, "nothing sent to the old folder");
+    type("\x1b");
+    await until(() => /Not changed\./.test(committed()), "cancelled");
+  }, { modes: true, cols: 120, rows: 30 });
+});

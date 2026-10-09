@@ -21,6 +21,7 @@ import { lineWidth, truncate } from "./terminal/text.mjs";
 import { INIT_PROMPT } from "./init-prompt.mjs";
 import { existsSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
+import { canonicalPath } from "../engine/codex/home.mjs";
 import path from "node:path";
 import { copyText, exportMarkdown, imagePath, lastAgentText, renderHooks, renderMcp, renderSkills, renderUsage, terminalSetup, transcriptLines } from "./commands.mjs";
 import CODEX_SLASH from "./codex-slash.json" with { type: "json" };
@@ -787,7 +788,16 @@ export function createApp({
   // forks into it.
   async function changeDir(arg) {
     const BUSY = "Changing directories requires an idle primary session without queued input.";
-    if (turnActive() || st.queue.length || st.terminals?.size) return warn(BUSY);
+    if (changingDir || turnActive() || st.queue.length || st.terminals?.size) return warn(BUSY);
+    changingDir = true;
+    try {
+      return await changeDirNow(arg);
+    } finally {
+      changingDir = false;
+    }
+  }
+
+  async function changeDirNow(arg) {
     const raw = arg || "~";
     const dir = path.resolve(cwd, raw === "~" || /^~[\\/]/.test(raw) ? path.join(homedir(), raw.slice(1)) : raw);
     let stat;
@@ -797,14 +807,8 @@ export function createApp({
       return warn(`Cannot access directory ${clean(dir)}: ${err.code ?? err.message}`);
     }
     if (!stat.isDirectory()) return warn(`Not a directory: ${clean(dir)}`);
-    // Never into a Codex home: your own Codex's, or ad's.
-    const real = (p) => {
-      try {
-        return realpathSync(p).toLowerCase();
-      } catch {
-        return path.resolve(p).toLowerCase();
-      }
-    };
+    // Never into a Codex home: your own Codex's, or ad's (compared as Codex's home check does).
+    const real = (p) => canonicalPath(p);
     const homes = [path.join(homedir(), ".codex"), session.engine?.home].filter(Boolean).map(real);
     if (homes.some((h) => real(dir) === h || real(dir).startsWith(h + path.sep))) return warn(`ad doesn't work inside a Codex home: ${clean(dir)}`);
     if (actions.ad?.loop?.state?.running) return warn("An ad loop is working in this folder: /loop stop first.");
@@ -826,10 +830,12 @@ export function createApp({
     }
     await session.changeDir(dir);
     cwd = dir;
-    await actions.setCwd?.(dir);
+    await Promise.resolve(actions.setCwd?.(dir)).catch((err) => warn(err.message));
     refreshGit(true);
     return info0(`Working directory changed to: ${clean(dir)}`);
   }
+
+  let changingDir = false; // a /cd on its way: prompts wait (they'd go to the old folder)
 
   // One of a few answers (Codex's selection views) → the chosen value, or the safe one on Esc.
   function openChoice(opts) {
@@ -1327,6 +1333,10 @@ export function createApp({
   /* -------------------------------------------------------------- */
 
   function send(text, shown = null) {
+    if (changingDir) {
+      if (!composer.text) composer.set(text);
+      return warn("Changing directories: send it once that's done.");
+    }
     turnStartedAt ??= now();
     try {
       const images = attachments;
