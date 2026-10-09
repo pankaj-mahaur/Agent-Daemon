@@ -337,7 +337,7 @@ Codex's own plan mode: the model explores without changing anything, asks you wh
 
 - **What it is.** An ephemeral fork of the conversation: the model sees the history as reference, gets Codex's side-conversation instructions, and answers. It runs **read-only, with no approvals and no ad hooks** (Codex's own side conversations keep the main one's permissions; ad's are read-only). It is never saved, so `/resume` doesn't list it.
 - **The panel.** It opens under the main conversation's status, with **Side from main thread · <main's state> · ctrl+/ to switch · ctrl+c to close**. The main conversation keeps going above it (its finished output still goes into the scrollback); its approvals come first and hide the panel until answered.
-- **Keys.** Enter sends to the side; Esc interrupts only the side's turn; Ctrl+/ moves between the side prompt and the main one; Ctrl+C on an empty prompt closes it. Only Codex's side commands work there (`/copy` copies the side's last answer, `/status`, `/diff`, `/pwd`…); `!` shell commands don't.
+- **Keys.** Enter sends to the side; Esc interrupts only the side's turn; Ctrl+/ moves between the side prompt and the main one; Ctrl+C on an empty prompt closes it. Only Codex's side commands work there (`/copy` copies the side's last answer, `/status`, `/diff`, `/pwd`…); `!` shell commands don't. Images can't be attached to a side question. The side's failures and queued prompts show in the panel.
 - **Closing.** The side transcript goes into the scrollback as one block ("Side conversation"), and the fork ends. A new conversation, `/resume` or an engine restart closes it too. One at a time: `/side` from the main prompt goes back to the open one.
 
 ## Background terminals

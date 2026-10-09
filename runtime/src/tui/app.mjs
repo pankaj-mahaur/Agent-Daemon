@@ -659,7 +659,7 @@ export function createApp({
       renderer.frame({ lines, cursor: { row: 0, col: 0 } });
       return;
     }
-    let live = side ? [] : liveItems(pending); // with a side panel, main shows only its status rows
+    let live = side?.focus === "side" ? [] : liveItems(pending); // a focused side panel: main shows only its status rows
     const cap = Math.max(3, Math.floor(rows * LIVE_SHARE));
     if (live.length > cap) live = [[{ text: `  \u{2026} ${live.length - cap + 1} more lines above`, style: DIM }], ...live.slice(-(cap - 1))];
     lines.push(...live);
@@ -842,7 +842,8 @@ export function createApp({
   /* Side conversations (Codex's /side, codex-parity-2 Part 7)         */
   /* -------------------------------------------------------------- */
 
-  let side = null; // {session, focus: "side" | "main", mainStatus, off}
+  let side = null; // {session, focus: "side" | "main", mainStatus, noticesSeen, off}
+  let sideOpening = false; // a /side whose fork is on its way
 
   const sideItems = (s) => [...s.items.values()].filter((it) => it.threadId === s.thread?.id || it.threadId == null);
   const reviewRunning = () => {
@@ -867,6 +868,12 @@ export function createApp({
     if (!body.length) body.push([{ text: "  Ask a side question; nothing here goes back to the main conversation.", style: DIM }]);
     const budget = Math.max(3, rows < 16 ? rows - 8 : Math.floor(rows / 2));
     const shown = body.length > budget ? [[{ text: `  \u{2026} ${body.length - budget + 1} more lines above`, style: DIM }], ...body.slice(-(budget - 1))] : body;
+    // What the main transcript would say about a turn or a notice, said in the panel.
+    const last = s.turns.at(-1);
+    if (last?.status === "failed" && last.error) body.push(...renderNotice({ level: "error", message: `The turn failed: ${last.error.message ?? "unknown error"}` }, { width: w }));
+    else if (last?.status === "interrupted") body.push(...renderNotice({ level: "warn", message: "Interrupted." }, { width: w }));
+    for (const n of s.notices.slice(side.noticesSeen ?? 0)) if (n.level !== "info") body.push(...renderNotice(n, { width: w }));
+    for (const q of s.queue) body.push(truncate([{ text: `  \u{21b3} queued: ${clean(q.text)}`, style: DIM }], w));
     const working = s.activeTurnId || s.starting ? [truncate([{ text: "\u{25e6} Working (esc to interrupt)", style: DIM }], w)] : [];
     const head = truncate([{ text: sideLabel(), style: side.focus === "side" ? T.accent : DIM }], w);
     return [[], head, ...shown, ...working];
@@ -879,9 +886,10 @@ export function createApp({
     side = null;
     s.off?.();
     const items = sideItems(s.session.state);
-    if (items.length) {
+    if (items.length || s.session.state.echoes.size) {
       const lines = [[{ text: "Side conversation", style: T.bold }]];
       for (const it of items) lines.push(...renderCell(it.streaming || it.status === "inProgress" ? { ...it, streaming: false, incomplete: true } : it, { width: width() }));
+      for (const [, text] of s.session.state.echoes) lines.push(...renderCell({ kind: "userMessage", text }, { width: width() }));
       commitCell(lines);
     }
     s.session.close(); // interrupts a running side turn and lets the fork go
@@ -1093,14 +1101,32 @@ export function createApp({
         return info0("Stopping all background terminals.");
       case "btw":
       case "side": {
-        // Codex's /side (/btw): one at a time; from the main prompt it focuses the open one.
-        if (side) {
-          side.focus = "side";
-          return draw();
+        // Codex's /side (/btw): one at a time. What was typed comes back when it can't open.
+        const typed = `/${name} ${arg}`.trim();
+        if (side || sideOpening) {
+          if (side) side.focus = "side";
+          if (arg) composer.set(typed);
+          return warn("A side conversation is already open. Press ctrl + c to return before starting another.");
         }
         if (reviewRunning()) return warn("'/side' is unavailable while code review is running.");
-        const s = await session.openSide();
-        side = { session: s, focus: "side", mainStatus: null, off: s.on("change", () => drawSoon()) };
+        const before = { thread: st.thread?.id, engine: session.engine };
+        sideOpening = true;
+        let s;
+        try {
+          s = await session.openSide();
+        } catch (err) {
+          if (arg && !composer.text) composer.set(typed);
+          throw err;
+        } finally {
+          sideOpening = false;
+        }
+        // The main conversation or the engine changed meanwhile: this side belongs to neither.
+        if (st.thread?.id !== before.thread || session.engine !== before.engine || st.engine.state !== "ready") {
+          s.close();
+          if (arg && !composer.text) composer.set(typed);
+          return warn("The conversation changed while the side conversation opened: /side again.");
+        }
+        side = { session: s, focus: "side", mainStatus: null, noticesSeen: s.state.notices.length, off: s.on("change", () => drawSoon()) };
         if (arg) send(arg);
         return draw();
       }
@@ -1469,7 +1495,7 @@ export function createApp({
       }
       if (cmd) {
         // Codex's rule for its commands: some wait for the task to end. The draft stays.
-        if (cmd.source === "codex" && codex && !codex.duringTask && turnActive()) {
+        if (cmd.source === "codex" && codex && !codex.duringTask && (side?.focus === "side" ? Boolean(side.session.state.activeTurnId || side.session.state.starting) : turnActive())) {
           composer.set(text);
           return warn(`'/${name}' is disabled while a task is in progress.`);
         }
@@ -1604,7 +1630,7 @@ export function createApp({
     }
     if (side?.focus === "side" && ev.type === "key") {
       // Esc interrupts only the side turn; Tab and Shift+Tab do nothing here.
-      if (ev.name === "escape" && !ev.ctrl && !ev.alt) {
+      if ((ev.name === "escape" && !ev.ctrl && !ev.alt) || keymap.is("chat", "interrupt_turn", ev)) {
         const s = side.session.state;
         if (s.activeTurnId || s.starting) side.session.interrupt().catch(fail);
         return draw();
@@ -1618,6 +1644,10 @@ export function createApp({
     // A pasted or dragged image file path attaches the image.
     if (ev.type === "paste") {
       const img = imagePath(ev.text, cwd, { pasted: true });
+      if (img && side?.focus === "side") {
+        note = { level: "warn", text: "Images can't go to a side conversation: Ctrl+/ to attach it in the main one." };
+        return draw();
+      }
       if (img) {
         attachments.push(img);
         note = { level: "info", text: `Attached ${path.basename(img)} to the next prompt.` };
@@ -1719,6 +1749,7 @@ export function createApp({
     if (what === "turn" && !st.activeTurnId) refreshGit(true);
     // A side conversation belongs to this main thread and this engine.
     if (side && (what === "thread" || (what === "engine" && st.engine.state !== "ready"))) closeSide();
+    if (side && (what === "turn.started" || what === "starting") && turnActive()) side.mainStatus = null;
     if (side && what === "turn" && !st.activeTurnId) {
       const last = st.turns.at(-1)?.status;
       side.mainStatus = last === "failed" ? "main failed" : last === "interrupted" ? "main interrupted" : last === "completed" ? "main finished" : side.mainStatus;

@@ -1083,7 +1083,8 @@ export function createSession({
      */
     async openSide() {
       if (closed) throw new Error("session closed");
-      if (!state.thread || !state.turns.length) throw new Error("'/side' is unavailable until the main thread is ready.");
+      // A thread Codex has saved: one with turns, or a fork (after /cd); an empty new one can't be forked.
+      if (!state.thread || (!state.turns.length && !state.thread.forkedFromId)) throw new Error("'/side' is unavailable until the main thread is ready.");
       const r = await eng.server.request("thread/fork", {
         threadId: state.thread.id,
         ephemeral: true,

@@ -1012,3 +1012,31 @@ test("/side while main runs: main's approval comes first and hides the panel; th
     assert.match(screen, /Side from main thread[\s\S]*› /, "on a 12-row screen: the panel row and, below it, the prompt");
   }, { modes: true, cols: 100, rows: 12 });
 });
+
+test("/side (review): one at a time, the text kept; a failed side turn shows in the panel; no images to the side; /side right after /cd", async () => {
+  await withApp(async ({ app, type, until, text, committed, session, engine, root }) => {
+    const debug = () => engine.server.request("debug/state", {});
+    writeFileSync(join(root, "shot.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    type("fail-turn\r");
+    await until(() => !session.state.activeTurnId && session.state.turns.length === 1, "a main turn");
+    type("/side\r");
+    type("/side again please\r"); // typed while the first is opening, or once it's open
+    await until(() => /Side from main thread/.test(text()), "the panel");
+    await until(() => /A side conversation is already open\./.test(committed()), "one at a time");
+    assert.equal(app.state.composer, "/side again please", "the text is kept");
+    assert.equal((await debug()).calls.filter((c) => c === "thread/fork").length, 1, "one fork");
+    type("\x15fail-turn\r");
+    await until(() => /The turn failed: model refused/.test(text()), "the side's failure, in the panel");
+    type(`\x1b[200~${join(root, "shot.png")}\x1b[201~`);
+    await until(() => /Images can't go to a side conversation/.test(text()), "no image to the side");
+    type("\x03");
+    await until(() => !/Side from main thread/.test(text()), "closed");
+    // After /cd the fork has no turns yet, and /side still opens.
+    mkdirSync(join(root, "sub"));
+    await session.engine.writeConfig([["projects", { [join(root, "sub")]: { trust_level: "trusted" } }, "upsert"]]);
+    type("/cd sub\r");
+    await until(() => /Working directory changed to/.test(committed()), "/cd");
+    type("/side\r");
+    await until(() => /Side from main thread/.test(text()), "the panel after /cd");
+  }, { modes: true, cols: 100, rows: 30 });
+});
