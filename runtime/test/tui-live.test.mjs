@@ -426,3 +426,66 @@ test("FC4 live: ad's own features in ad tui on the real Codex binary", { skip, t
     await removeWithRetry(w.root);
   }
 });
+
+// codex-parity-2 Part 4: Codex's plan mode in ad tui, on the real Codex.
+const PLAN_BODY = ["# Add hello", "", "- write hello.txt"].join("\n");
+function planScript(body) {
+  const text = lastUserText(body);
+  const input = Array.isArray(body?.input) ? body.input : [];
+  const lastUser = input.findLastIndex((i) => i?.type === "message" && i.role === "user");
+  const output = input.slice(lastUser + 1).findLast((i) => i?.type === "function_call_output");
+  if (output) return [ev.created(), ev.message(`done after ${output.call_id}`), ev.completed()];
+  if (text.includes("PLANME")) {
+    const reply = ["Looked around.", "<proposed_plan>", PLAN_BODY, "</proposed_plan>", ""].join("\n");
+    return [ev.created(), ev.messageAdded(), ev.textDelta(reply.slice(0, 30)), ev.textDelta(reply.slice(30)), ev.message(reply), ev.completed()];
+  }
+  if (text === "Implement the plan.") {
+    const patch = ["*** Begin Patch", "*** Add File: hello.txt", "+hello from the plan", "*** End Patch"].join("\n");
+    return [ev.created(), ev.functionCall("call-patch", "exec_command", { cmd: `apply_patch <<'EOF'\n${patch}\nEOF\n` }), ev.completed()];
+  }
+  return defaultScript(body);
+}
+
+test("Part 4 live: /plan, a proposed plan, and 'Yes, implement this plan' on the real Codex binary", { skip, timeout: 10 * 60_000 }, async () => {
+  const mock = await startMockResponses({ script: planScript });
+  const w = world(mock.url);
+  let t;
+  try {
+    t = await start(w);
+    t.type("/plan PLANME\r");
+    await t.until(/Plan mode \(shift\+tab to cycle\)/, "the plan chip");
+    await t.until(/Proposed Plan[\s\S]*Add hello[\s\S]*write hello\.txt/, "the proposed plan cell");
+    await t.until(/Implement this plan\?/, "the choice");
+    const asked = mock.requests.find((r) => r.text === "PLANME");
+    assert.equal(asked?.mode, "plan", "the model was in Codex's Plan mode");
+    await settle(600); // past the arm delay
+    // Where Codex's sandbox can't run the edit (GitHub's Windows runners), Codex asks to retry without it.
+    const done = () => t.count(/done after call-patch/g);
+    const retries = () => t.count(/retry without sandbox\?/g);
+    t.type("1");
+    await t.until(() => done() > 0 || (retries() > 0 && /No, and stop/.test(t.screen())), "the implement turn", 180_000);
+    if (done() === 0) {
+      await settle(600);
+      t.type("y");
+      await t.until(() => done() > 0, "the patch, outside the sandbox");
+    }
+    await t.until(() => t.idle(), "idle after the implement turn");
+    assert.ok(existsSync(join(w.cwd, "hello.txt")), "the plan was implemented");
+    const implement = mock.requests.find((r) => r.text === "Implement the plan.");
+    assert.ok(implement, "Codex's message was sent");
+    assert.notEqual(implement.mode, "plan", "implemented in Default mode");
+    assert.doesNotMatch(t.screen(), /Plan mode/, "the chip is gone");
+
+    t.type("\x03");
+    await settle(200);
+    t.type("\x03");
+    assert.equal((await t.exit).exitCode, 0);
+  } catch (err) {
+    err.message += `\n--- model requests ---\n${mock.requests.map((r) => JSON.stringify([r.text, r.mode])).join("\n")}`;
+    throw err;
+  } finally {
+    for (const k of launched.splice(0)) k();
+    await mock.close();
+    await removeWithRetry(w.root);
+  }
+});
