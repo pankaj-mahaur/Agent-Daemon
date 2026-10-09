@@ -14,7 +14,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CodexAppServer, resolveCodexCommand } from "../src/engine/codex/app-server.mjs";
 import { approvalResponse, isApprovalMethod } from "../src/engine/codex/approvals.mjs";
-import { startMockResponses, writeMockCodexHome } from "../testkit/mock-responses.mjs";
+import { defaultScript, ev, lastUserText, startMockResponses, writeMockCodexHome } from "../testkit/mock-responses.mjs";
+import { adaptNotification as adapt } from "../src/engine/codex/events.mjs";
+import { waitFor } from "../testkit/wait.mjs";
+import { experimentalCapabilities } from "../src/engine/codex/surface.mjs";
 
 const PINNED = resolveCodexCommand({});
 const wanted = process.env.AD_REAL_ENGINE === "1";
@@ -40,8 +43,8 @@ async function removeWithRetry(dir) {
 }
 
 // One mock + one real app-server per test, in fresh dirs.
-async function withRealEngine(fn, { codexArgs } = {}) {
-  const mock = await startMockResponses();
+async function withRealEngine(fn, { codexArgs, capabilities, script } = {}) {
+  const mock = await startMockResponses(script ? { script } : {});
   const home = writeMockCodexHome(mkdtempSync(join(tmpdir(), "ad-real-home-")), { url: mock.url });
   const cwd = mkdtempSync(join(tmpdir(), "ad-real-work-"));
   const requests = [];
@@ -51,6 +54,7 @@ async function withRealEngine(fn, { codexArgs } = {}) {
     env: { CODEX_HOME: home },
     clientVersion: "test",
     codexArgs,
+    capabilities,
     initTimeoutMs: START_TIMEOUT_MS,
     onServerRequest: async ({ method, params }) => {
       requests.push({ method, params });
@@ -73,7 +77,7 @@ async function withRealEngine(fn, { codexArgs } = {}) {
   }
 }
 
-async function runTurn(server, notes, threadId, text) {
+async function runTurn(server, notes, threadId, text, extra = {}) {
   const from = notes.length;
   let timer;
   let listener;
@@ -85,7 +89,7 @@ async function runTurn(server, notes, threadId, text) {
       };
       server.on("notification", listener);
     });
-    await server.request("turn/start", { threadId, input: [{ type: "text", text }] });
+    await server.request("turn/start", { threadId, input: [{ type: "text", text }], ...extra });
     const completed = await done;
     const fresh = notes.slice(from);
     return {
@@ -202,6 +206,42 @@ test("the events adapter understands everything the real Codex sends in a turn",
     const types = new Set(notes.flatMap((n) => adaptNotification(n.method, n.params)).map((e) => e.type));
     for (const t of ["turn.started", "turn.completed", "item.started", "item.completed", "item.delta"]) assert.ok(types.has(t), t);
   });
+});
+
+// codex-parity-2 S0 / Part 4: the experimental allowlist on the real engine.
+const PLAN_BODY = ["# Add hello", "", "- write hello.txt", ""].join("\n");
+const PLAN_REPLY = ["Looked around.", "<proposed_plan>", PLAN_BODY + "</proposed_plan>", ""].join("\n");
+const planScript = (body) => (lastUserText(body).includes("PLAN")
+  ? [ev.created(), ev.messageAdded(), ev.textDelta(PLAN_REPLY.slice(0, 25)), ev.textDelta(PLAN_REPLY.slice(25)), ev.message(PLAN_REPLY), ev.completed()]
+  : defaultScript(body));
+const mask = (mode, effort = null) => ({ mode, settings: { model: "mock-model", reasoning_effort: effort, developer_instructions: null } });
+
+test("plan mode on the allowlist: presets, settings update, a proposed plan item, and the opted-out notifications stay quiet", { skip, timeout: START_TIMEOUT_MS + 2 * TURN_TIMEOUT_MS }, async () => {
+  await withRealEngine(async ({ server, cwd, notes }) => {
+    const list = await server.request("collaborationMode/list", {});
+    assert.deepEqual(list.data.map((m) => [m.name, m.mode]), [["Plan", "plan"], ["Default", "default"]]);
+    assert.equal(list.data[0].reasoning_effort, "medium", "Plan's preset effort");
+    const { thread } = await server.request("thread/start", { cwd });
+    assert.deepEqual(await server.request("thread/settings/update", { threadId: thread.id, collaborationMode: mask("plan", "medium") }), {});
+    const updated = await waitFor(() => notes.find((n) => n.method === "thread/settings/updated"));
+    assert.deepEqual(adapt(updated.method, updated.params)[0].collaborationMode, { mode: "plan", model: "mock-model", effort: "medium" });
+    assert.match(updated.params.threadSettings.collaborationMode.settings.developer_instructions, /Plan Mode/, "a null asks for Codex's own plan.md");
+    const { items } = await runTurn(server, notes, thread.id, "PLAN please", { collaborationMode: mask("plan", "medium") });
+    assert.equal(items.find((i) => i.type === "plan")?.text, PLAN_BODY);
+    assert.equal(items.find((i) => i.type === "agentMessage")?.text, "Looked around.\n", "the plan block isn't in the message");
+    assert.ok(notes.some((n) => n.method === "item/plan/delta"), "the plan streams");
+    // Back to Default through turn/start alone: Codex reports the change too.
+    const from = notes.length;
+    await runTurn(server, notes, thread.id, "Implement the plan.", { collaborationMode: mask("default") });
+    const back = notes.slice(from).find((n) => n.method === "thread/settings/updated");
+    assert.equal(back?.params.threadSettings.collaborationMode.mode, "default");
+    assert.equal((await server.request("thread/resume", { threadId: thread.id })).collaborationMode?.mode, "default", "resume reports the mode");
+    assert.deepEqual(await server.request("thread/backgroundTerminals/clean", { threadId: thread.id }), {});
+    const muted = new Set(experimentalCapabilities().optOutNotificationMethods);
+    assert.deepEqual(notes.filter((n) => muted.has(n.method)).map((n) => n.method), [], "opted-out notifications arrived");
+    const unknown = notes.flatMap((n) => adapt(n.method, n.params)).filter((e) => e.type === "unknown");
+    assert.deepEqual(unknown.map((e) => e.method), [], "a notification Codex sends with experimentalApi that events.mjs doesn't know");
+  }, { capabilities: experimentalCapabilities(), script: planScript });
 });
 
 test("bad requests are classified the way plan D5 expects", { skip, timeout: START_TIMEOUT_MS + 30_000 }, async () => {

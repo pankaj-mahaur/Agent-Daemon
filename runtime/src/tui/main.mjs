@@ -279,7 +279,7 @@ export async function cmdTui(opts = {}) {
     renderer.frame({ lines: [[{ text: "Starting Codex\u{2026}", style: T.dim }]] });
 
     // A thread ad lets go of (thread/unsubscribe) unloads at once, not after Codex's 60 s: /codex hands it over.
-    const start = () => startHarnessEngine({ cwd, home: opts.home, command: opts.command, clientVersion: opts.clientVersion, store: opts.store, err: sink, detached: true, codexArgs: ["-c", "thread_unload_delay_secs=0"] });
+    const start = () => startHarnessEngine({ cwd, home: opts.home, command: opts.command, clientVersion: opts.clientVersion, store: opts.store, err: sink, detached: true, codexArgs: ["-c", "thread_unload_delay_secs=0"], experimental: true });
     let started = await start();
     while (!started.engine && started.code === 2 && /Not logged in/.test(started.error ?? "")) {
       const choice = await pickOnce({

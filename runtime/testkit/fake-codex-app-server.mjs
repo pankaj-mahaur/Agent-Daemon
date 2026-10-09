@@ -257,13 +257,16 @@ async function runScriptedTurn(threadId, turn, params) {
   complete(threadId, turn);
 }
 
+// Whether initialize opted into experimentalApi (only `ad tui` does).
+let experimentalApi = false;
+
 async function onRequest({ id, method, params }) {
   lastParams[method] = params;
   calls.push(method);
   // ad's own requests must fit the pinned stable protocol (or the experimental
   // allowlist), as the real Codex would insist: rejected like Codex does.
   if (!/^(debug|test)\//.test(method)) {
-    const problems = checkRequest({ method, params });
+    const problems = checkRequest({ method, params }, { experimental: method === "initialize" || experimentalApi });
     if (problems.length) {
       process.stderr.write(`fake app-server: rejected ${problems.join("; ")}
 `);
@@ -272,6 +275,7 @@ async function onRequest({ id, method, params }) {
   }
   switch (method) {
     case "initialize":
+      experimentalApi = params?.capabilities?.experimentalApi === true;
       if (process.env.FAKE_INIT_FAIL === "1") return send({ id, error: { code: -32000, message: "init refused" } });
       return send({ id, result: { userAgent: `fake/${params.clientInfo.name}`, platformOs: process.platform, codexHome: process.env.CODEX_HOME } });
     case "debug/state":

@@ -342,6 +342,31 @@
       "mcpServer/elicitation/request": "McpServerElicitationRequestParams"
     }
   },
+  "experimental": {
+    "methods": [
+      "collaborationMode/list",
+      "thread/backgroundTerminals/clean",
+      "thread/settings/update"
+    ],
+    "notifications": [
+      "thread/settings/updated"
+    ],
+    "params": {
+      "clientRequests": {
+        "collaborationMode/list": "CollaborationModeListParams",
+        "thread/backgroundTerminals/clean": "ThreadBackgroundTerminalsCleanParams",
+        "thread/settings/update": "ThreadSettingsUpdateParams"
+      },
+      "serverNotifications": {
+        "thread/settings/updated": "ThreadSettingsUpdatedNotification"
+      }
+    },
+    "fields": {
+      "turn/start": {
+        "collaborationMode": "CollaborationMode|null"
+      }
+    }
+  },
   "definitions": {
     "AbsolutePathBuf": {
       "type": "string"
@@ -383,6 +408,19 @@
       "types": {
         "authMode": "AuthMode|null",
         "planType": "PlanType|null"
+      }
+    },
+    "ActivePermissionProfile": {
+      "required": [
+        "id"
+      ],
+      "props": [
+        "extends",
+        "id"
+      ],
+      "types": {
+        "extends": "null|string",
+        "id": "string"
       }
     },
     "AppListUpdatedNotification": {
@@ -483,6 +521,51 @@
       "types": {
         "previousAccountId": "null|string",
         "reason": "ChatgptAuthTokensRefreshReason"
+      }
+    },
+    "CollaborationMode": {
+      "required": [
+        "mode",
+        "settings"
+      ],
+      "props": [
+        "mode",
+        "settings"
+      ],
+      "types": {
+        "mode": "ModeKind",
+        "settings": "Settings"
+      }
+    },
+    "CollaborationModeListParams": {
+      "type": "object"
+    },
+    "CollaborationModeListResponse": {
+      "required": [
+        "data"
+      ],
+      "props": [
+        "data"
+      ],
+      "types": {
+        "data": "array<CollaborationModeMask>"
+      }
+    },
+    "CollaborationModeMask": {
+      "required": [
+        "name"
+      ],
+      "props": [
+        "mode",
+        "model",
+        "name",
+        "reasoning_effort"
+      ],
+      "types": {
+        "mode": "ModeKind|null",
+        "model": "null|string",
+        "name": "string",
+        "reasoning_effort": "ReasoningEffort|null|null"
       }
     },
     "CommandExecOutputDeltaNotification": {
@@ -1223,6 +1306,12 @@
         "turnId": "string"
       }
     },
+    "ModeKind": {
+      "enum": [
+        "default",
+        "plan"
+      ]
+    },
     "ModelListParams": {
       "required": [],
       "props": [
@@ -1303,6 +1392,22 @@
         "turnId": "string",
         "verifications": "array<ModelVerification>"
       }
+    },
+    "MultiAgentMode": {
+      "union": [
+        {
+          "tag": "custom",
+          "props": [
+            "custom"
+          ],
+          "types": {
+            "custom": "string"
+          }
+        },
+        {
+          "tag": "explicitRequestOnly|proactive"
+        }
+      ]
     },
     "NetworkAccess": {
       "enum": [
@@ -1661,6 +1766,21 @@
         "threadId": "string"
       }
     },
+    "Settings": {
+      "required": [
+        "model"
+      ],
+      "props": [
+        "developer_instructions",
+        "model",
+        "reasoning_effort"
+      ],
+      "types": {
+        "developer_instructions": "null|string",
+        "model": "string",
+        "reasoning_effort": "ReasoningEffort|null"
+      }
+    },
     "SkillsChangedNotification": {
       "type": "object"
     },
@@ -1776,6 +1896,17 @@
         "attachmentType": "string",
         "identityKey": "string",
         "operation": "ThreadAttachmentOperation",
+        "threadId": "string"
+      }
+    },
+    "ThreadBackgroundTerminalsCleanParams": {
+      "required": [
+        "threadId"
+      ],
+      "props": [
+        "threadId"
+      ],
+      "types": {
         "threadId": "string"
       }
     },
@@ -2178,6 +2309,47 @@
         "threadId": "string"
       }
     },
+    "ThreadSettings": {
+      "required": [
+        "approvalPolicy",
+        "approvalsReviewer",
+        "collaborationMode",
+        "cwd",
+        "model",
+        "modelProvider",
+        "sandboxPolicy"
+      ],
+      "props": [
+        "activePermissionProfile",
+        "approvalPolicy",
+        "approvalsReviewer",
+        "collaborationMode",
+        "cwd",
+        "disabledPluginIds",
+        "effort",
+        "model",
+        "modelProvider",
+        "personality",
+        "sandboxPolicy",
+        "serviceTier",
+        "summary"
+      ],
+      "types": {
+        "activePermissionProfile": "ActivePermissionProfile|null",
+        "approvalPolicy": "AskForApproval",
+        "approvalsReviewer": "ApprovalsReviewer",
+        "collaborationMode": "CollaborationMode",
+        "cwd": "AbsolutePathBuf",
+        "disabledPluginIds": "array<string>",
+        "effort": "ReasoningEffort|null",
+        "model": "string",
+        "modelProvider": "string",
+        "personality": "Personality|null",
+        "sandboxPolicy": "SandboxPolicy",
+        "serviceTier": "null|string",
+        "summary": "ReasoningSummary|null"
+      }
+    },
     "ThreadSettingsUpdatedNotification": {
       "required": [
         "threadId",
@@ -2190,6 +2362,43 @@
       "types": {
         "threadId": "string",
         "threadSettings": "ThreadSettings"
+      }
+    },
+    "ThreadSettingsUpdateParams": {
+      "required": [
+        "threadId"
+      ],
+      "props": [
+        "approvalPolicy",
+        "approvalsReviewer",
+        "collaborationMode",
+        "cwd",
+        "disabledPluginIds",
+        "effort",
+        "model",
+        "multiAgentMode",
+        "permissions",
+        "personality",
+        "sandboxPolicy",
+        "serviceTier",
+        "summary",
+        "threadId"
+      ],
+      "types": {
+        "approvalPolicy": "AskForApproval|null",
+        "approvalsReviewer": "ApprovalsReviewer|null",
+        "collaborationMode": "CollaborationMode|null",
+        "cwd": "null|string",
+        "disabledPluginIds": "array<string>|null",
+        "effort": "ReasoningEffort|null",
+        "model": "null|string",
+        "multiAgentMode": "MultiAgentMode|null",
+        "permissions": "null|string",
+        "personality": "Personality|null",
+        "sandboxPolicy": "SandboxPolicy|null",
+        "serviceTier": "null|string",
+        "summary": "ReasoningSummary|null",
+        "threadId": "string"
       }
     },
     "ThreadShellCommandParams": {

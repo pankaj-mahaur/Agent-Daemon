@@ -13,6 +13,16 @@
 
 import { IGNORED_NOTIFICATIONS } from "./surface.mjs";
 
+/**
+ * A thread's collaboration mode → {mode, model, effort} | null. Codex's
+ * developer instructions (its whole plan.md) are left out: ad never shows or
+ * sends them (a null in a mask asks Codex for its built-in ones).
+ */
+export function collaborationMode(cm) {
+  if (!cm || typeof cm !== "object" || typeof cm.mode !== "string") return null;
+  return { mode: cm.mode, model: cm.settings?.model ?? null, effort: cm.settings?.reasoning_effort ?? null };
+}
+
 const base = (type, params, extra = {}) => {
   const ev = { type };
   if (params?.threadId) ev.threadId = params.threadId;
@@ -66,6 +76,8 @@ export const NOTIFICATION_HANDLERS = {
   "thread/reverted": (p) => [base("thread.reverted", p)],
   "skills/changed": (p) => [notice(p, "info", "skills.changed", "Skills changed.")],
   "thread/name/updated": (p) => [base("thread.name", p, { name: p.threadName ?? null })],
+  // Experimental, on the allowlist (codex-parity-2 P0): only ad tui receives it.
+  "thread/settings/updated": (p) => [base("thread.settings", p, { collaborationMode: collaborationMode(p.threadSettings?.collaborationMode), model: p.threadSettings?.model ?? null, effort: p.threadSettings?.effort ?? null })],
   "thread/goal/updated": (p) => [base("thread.goal", p, { goal: p.goal ?? null })],
   "thread/goal/cleared": (p) => [base("thread.goal", p, { goal: null })],
   "thread/tokenUsage/updated": (p) => [base("thread.tokens", p, { usage: tokens(p.tokenUsage) })],

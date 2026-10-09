@@ -96,18 +96,27 @@ export function checkMessage({ method, params }, { kind = "notification" } = {})
  * A request ad sends: a method of the pinned Codex's stable surface (or on the
  * experimental allowlist), with no top-level field the stable params type
  * lacks (an experimental field, a typo) unless allowlisted, and the shape the
- * snapshot tracks.
+ * snapshot tracks. `experimental` is whether the connection opted into
+ * experimentalApi: without it, Codex refuses the allowlisted calls too.
  */
-export function checkRequest({ method, params }, { allow = EXPERIMENTAL_ALLOWLIST } = {}) {
-  if (!SNAPSHOT.methods.clientRequests.includes(method) && !allow.methods.includes(method)) return [`${method}: not a request the pinned Codex accepts on the stable surface`];
-  const type = SNAPSHOT.params.clientRequests?.[method];
+export function checkRequest({ method, params }, { allow = EXPERIMENTAL_ALLOWLIST, experimental = true } = {}) {
+  const exp = SNAPSHOT.experimental ?? { methods: [], params: { clientRequests: {} }, fields: {} };
+  const expMethod = allow.methods.includes(method) && exp.methods.includes(method);
+  if (!SNAPSHOT.methods.clientRequests.includes(method) && !expMethod) return [`${method}: not a request the pinned Codex accepts on the stable surface`];
+  if (expMethod && !experimental) return [`${method} requires experimentalApi capability`];
+  const type = SNAPSHOT.params.clientRequests?.[method] ?? exp.params.clientRequests?.[method];
   const def = type && DEFS[type];
   if (!def) return [];
   const out = [];
   // Unknown top-level fields only for object params; a union (LoginAccountParams) is checked by its variant.
   if (def.props && params && typeof params === "object" && !Array.isArray(params)) {
-    const extra = new Set(allow.fields[method] ?? []);
-    for (const k of Object.keys(params)) if (!def.props.includes(k) && !extra.has(k)) out.push(`${method}: ${k} is not a field of ${type}`);
+    const extra = new Set((allow.fields[method] ?? []).filter((k) => exp.fields?.[method]?.[k]));
+    for (const k of Object.keys(params)) {
+      if (def.props.includes(k)) continue;
+      if (!extra.has(k)) out.push(`${method}: ${k} is not a field of ${type}`);
+      else if (!experimental) out.push(`${method}.${k} requires experimentalApi capability`);
+      else checkLabel(params[k], exp.fields[method][k], `${method}.${k}`, out);
+    }
   }
   checkDef(params ?? {}, def, method, out);
   return out;

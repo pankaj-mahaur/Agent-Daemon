@@ -35,6 +35,20 @@ test("engine runs Codex with CODEX_HOME set to the harness home", async () => {
   });
 });
 
+test("only an engine started with experimental: true opts into the allowlist, muting the other experimental notifications", async () => {
+  await withEngine({}, async (engine) => {
+    const { lastParams } = await engine.server.request("debug/state");
+    assert.equal(lastParams.initialize.capabilities, undefined, "stable-only by default");
+  });
+  await withEngine({ experimental: true }, async (engine) => {
+    const { lastParams } = await engine.server.request("debug/state");
+    const caps = lastParams.initialize.capabilities;
+    assert.equal(caps.experimentalApi, true);
+    assert.ok(caps.optOutNotificationMethods.includes("thread/queue/changed"));
+    assert.ok(!caps.optOutNotificationMethods.includes("thread/settings/updated"));
+  });
+});
+
 test("startThread sends the approved safe defaults", async () => {
   await withEngine({}, async (engine) => {
     const { threadId } = await engine.startThread({ cwd: "/work" });

@@ -12,6 +12,7 @@ import { CodexAppServer } from "./codex/app-server.mjs";
 import { APPROVAL_METHODS, approvalResponse } from "./codex/approvals.mjs";
 import { defaultCodexHome, ensureCodexHome } from "./codex/home.mjs";
 import { adaptNotification, classifyRequest, elicitationResponse } from "./codex/events.mjs";
+import { experimentalCapabilities } from "./codex/surface.mjs";
 
 // Harness defaults (user-approved): writes only inside the workspace, asks
 // before anything riskier.
@@ -200,6 +201,8 @@ export class Engine extends EventEmitter {
       clientVersion: this.opts.clientVersion,
       detached: this.opts.detached,
       codexArgs: this.opts.codexArgs,
+      // Only the terminal UI opts into the experimental allowlist (codex-parity-2 P0).
+      capabilities: this.opts.experimental ? experimentalCapabilities() : undefined,
       env: { ...(this.opts.env ?? {}), CODEX_HOME: this.home },
       onServerRequest: (msg) => this.#onServerRequest(msg),
     });

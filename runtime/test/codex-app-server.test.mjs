@@ -193,10 +193,21 @@ test("a real Codex command never starts without ad's own CODEX_HOME", async () =
   await assert.rejects(unmarked.start(), /without an explicit CODEX_HOME/);
 });
 
+test("with experimentalApi, the fake accepts the allowlist and checks its shapes, and still refuses the rest", async () => {
+  await withServer({ capabilities: { experimentalApi: true } }, async (s) => {
+    await assert.rejects(s.request("thread/backgroundTerminals/list", { threadId: "t" }), (e) => /not a request the pinned Codex accepts/.test(e.message));
+    await assert.rejects(s.request("turn/start", { threadId: "t", input: [], environments: [] }), (e) => /environments is not a field of TurnStartParams/.test(e.message));
+    await assert.rejects(s.request("turn/start", { threadId: "t", input: [], collaborationMode: { mode: "chat", settings: { model: "m" } } }), (e) => /"chat" is not one of/.test(e.message));
+    await assert.rejects(s.request("thread/settings/update", { collaborationMode: null }), (e) => /missing required threadId/.test(e.message));
+  });
+});
+
 test("the fake rejects requests the pinned stable protocol doesn't accept, as Codex would", async () => {
   await withServer({}, async (s) => {
-    // An experimental method and an experimental field: not on the allowlist (codex-parity-2 P0).
-    await assert.rejects(s.request("thread/backgroundTerminals/clean", { threadId: "t" }), (e) => e.code === -32600 && /not a request the pinned Codex accepts/.test(e.message));
+    // Experimental methods and fields: refused off the allowlist (codex-parity-2 P0), and on it without the opt-in.
+    await assert.rejects(s.request("thread/backgroundTerminals/list", { threadId: "t" }), (e) => e.code === -32600 && /not a request the pinned Codex accepts/.test(e.message));
+    await assert.rejects(s.request("thread/backgroundTerminals/clean", { threadId: "t" }), (e) => e.code === -32600 && /requires experimentalApi capability/.test(e.message));
+    await assert.rejects(s.request("turn/start", { threadId: "t", input: [], collaborationMode: { mode: "plan", settings: { model: "m" } } }), (e) => /turn\/start\.collaborationMode requires experimentalApi/.test(e.message));
     await assert.rejects(s.request("thread/list", { limit: 1, collaborationMode: {} }), (e) => /collaborationMode is not a field of ThreadListParams/.test(e.message));
     await assert.rejects(s.request("thread/list", { limit: "one" }), (e) => /expected a number/.test(e.message));
     const ok = await s.request("thread/list", { limit: 1, cwd: "/tmp" });

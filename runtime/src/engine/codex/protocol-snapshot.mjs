@@ -14,6 +14,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CODEX_MISSING, resolveCodexCommand } from "./app-server.mjs";
 import { codexEnv } from "./home.mjs";
+import { EXPERIMENTAL_ALLOWLIST } from "./surface.mjs";
+
+// Responses of allowlisted experimental methods ad reads (codex-parity-2 P0);
+// their params, fields and notifications are found from EXPERIMENTAL_ALLOWLIST.
+export const EXPERIMENTAL_TRACKED = ["CollaborationModeListResponse"];
 
 // Definitions the engine sends or reads. Add a name here whenever engine
 // code starts depending on a new request/response/notification shape.
@@ -218,9 +223,42 @@ function referenced(roots, defs) {
   return seen;
 }
 
-export function buildSnapshot(schemaDir, codexVersion) {
+// The allowlisted experimental surface (codex-parity-2 P0), from a schema
+// generated with --experimental: the methods, notifications and fields ad
+// uses, their params types, and the definitions they reach.
+function experimentalPart(expDir) {
+  const read = (f) => JSON.parse(readFileSync(join(expDir, f), "utf8"));
+  const defs = collectDefinitions(expDir, read);
+  const requests = paramsOf(read("ClientRequest.json"));
+  const notes = paramsOf(read("ServerNotification.json"));
+  const allClient = methodsOf(read("ClientRequest.json"));
+  const allNotes = methodsOf(read("ServerNotification.json"));
+  const fieldTypes = {};
+  for (const [method, fields] of Object.entries(EXPERIMENTAL_ALLOWLIST.fields)) {
+    const def = defs[requests[method]];
+    fieldTypes[method] = Object.fromEntries(fields.filter((k) => def?.properties?.[k]).map((k) => [k, typeLabel(def.properties[k])]));
+  }
+  const part = {
+    methods: EXPERIMENTAL_ALLOWLIST.methods.filter((m) => allClient.includes(m)).sort(),
+    notifications: EXPERIMENTAL_ALLOWLIST.notifications.filter((m) => allNotes.includes(m)).sort(),
+    params: {
+      clientRequests: Object.fromEntries(EXPERIMENTAL_ALLOWLIST.methods.filter((m) => requests[m]).sort().map((m) => [m, requests[m]])),
+      serverNotifications: Object.fromEntries(EXPERIMENTAL_ALLOWLIST.notifications.filter((m) => notes[m]).sort().map((m) => [m, notes[m]])),
+    },
+    fields: fieldTypes,
+  };
+  const roots = [...Object.values(part.params.clientRequests), ...Object.values(part.params.serverNotifications), ...EXPERIMENTAL_TRACKED];
+  for (const types of Object.values(fieldTypes)) for (const label of Object.values(types)) roots.push(...label.split("|").filter((t) => /^[A-Z]\w*$/.test(t)));
+  return { part, defs, names: referenced(roots, defs) };
+}
+
+export function buildSnapshot(schemaDir, codexVersion, expDir = null) {
   const read = (f) => JSON.parse(readFileSync(join(schemaDir, f), "utf8"));
   const defs = collectDefinitions(schemaDir, read);
+  const exp = expDir ? experimentalPart(expDir) : null;
+  // Experimental-only definitions come from the experimental schema; a stable
+  // definition keeps its stable shape (what the other front ends see).
+  if (exp) for (const name of exp.names) defs[name] ??= exp.defs[name];
   const params = {
     clientRequests: Object.fromEntries(Object.entries(paramsOf(read("ClientRequest.json"))).filter(([m]) => SENT_METHODS.includes(m))),
     serverNotifications: paramsOf(read("ServerNotification.json")),
@@ -231,6 +269,7 @@ export function buildSnapshot(schemaDir, codexVersion) {
     ...Object.values(params.serverNotifications),
     ...Object.values(params.serverRequests),
     ...referenced(Object.values(params.clientRequests), defs),
+    ...(exp?.names ?? []),
   ]);
   const definitions = {};
   for (const name of [...names].sort((a, b) => TRACKED_DEFINITIONS.indexOf(a) - TRACKED_DEFINITIONS.indexOf(b) || a.localeCompare(b))) if (defs[name]) definitions[name] = shapeOf(defs[name]);
@@ -243,6 +282,7 @@ export function buildSnapshot(schemaDir, codexVersion) {
       serverNotifications: methodsOf(read("ServerNotification.json")),
     },
     params,
+    ...(exp ? { experimental: exp.part } : {}),
     definitions,
   };
 }
@@ -253,17 +293,22 @@ export function buildSnapshot(schemaDir, codexVersion) {
 export function generateSnapshot({ command = resolveCodexCommand({}), codexVersion } = {}) {
   if (!command.cmd) throw new Error(CODEX_MISSING);
   const dir = mkdtempSync(join(tmpdir(), "ad-codex-schema-"));
+  const expDir = mkdtempSync(join(tmpdir(), "ad-codex-schema-exp-"));
   // Its own throwaway CODEX_HOME too: Codex's default is the user's ~/.codex.
   const home = mkdtempSync(join(tmpdir(), "ad-codex-schema-home-"));
   try {
-    execFileSync(command.cmd, [...command.prefix, "app-server", "generate-json-schema", "--out", dir], {
-      stdio: ["ignore", "ignore", "pipe"],
-      windowsHide: true,
-      env: codexEnv({ home }),
-    });
-    return buildSnapshot(dir, codexVersion);
+    const generate = (out, extra = []) =>
+      execFileSync(command.cmd, [...command.prefix, "app-server", "generate-json-schema", "--out", out, ...extra], {
+        stdio: ["ignore", "ignore", "pipe"],
+        windowsHide: true,
+        env: codexEnv({ home }),
+      });
+    generate(dir);
+    generate(expDir, ["--experimental"]);
+    return buildSnapshot(dir, codexVersion, expDir);
   } finally {
     rmSync(dir, { recursive: true, force: true });
+    rmSync(expDir, { recursive: true, force: true });
     rmSync(home, { recursive: true, force: true });
   }
 }
@@ -299,6 +344,21 @@ export function diffSnapshots(oldSnap, newSnap) {
     const d = setDiff(oldSnap.methods[group], newSnap.methods[group]);
     d.removed.forEach((m) => breaking.push(`${group}: removed ${m}`));
     d.added.forEach((m) => info.push(`${group}: added ${m}`));
+  }
+  // The allowlisted experimental surface: a method, notification or field
+  // gone (or a field changing type) breaks plan mode or /stop.
+  const oe = oldSnap.experimental ?? {};
+  const ne = newSnap.experimental ?? {};
+  for (const group of ["methods", "notifications"]) {
+    const d = setDiff(oe[group], ne[group]);
+    d.removed.forEach((m) => breaking.push(`experimental ${group}: removed ${m}`));
+    d.added.forEach((m) => info.push(`experimental ${group}: added ${m}`));
+  }
+  for (const method of Object.keys({ ...oe.fields, ...ne.fields })) {
+    const d = setDiff(Object.keys(oe.fields?.[method] ?? {}), Object.keys(ne.fields?.[method] ?? {}));
+    d.removed.forEach((k) => breaking.push(`experimental ${method}.${k}: removed`));
+    d.added.forEach((k) => info.push(`experimental ${method}.${k}: added`));
+    typeChanges(`experimental ${method}`, oe.fields?.[method], ne.fields?.[method], breaking, info);
   }
   for (const name of Object.keys({ ...oldSnap.definitions, ...newSnap.definitions })) {
     const a = oldSnap.definitions[name];
