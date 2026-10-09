@@ -13,6 +13,9 @@
 //   "user-input"      → item/tool/requestUserInput; "elicitation" → an MCP form
 //   "plan-reply"      → a message plus a proposed plan (item/plan/delta + a plan item)
 //   "checklist"       → two update_plan checklists (turn/plan/updated), then a message
+//   "bg-terminal"     → a background terminal (unified exec, processId 4242) that outlives
+//                        the turn, then "after the server" committed in the same turn;
+//                        it ticks until thread/backgroundTerminals/clean ends it
 //   "resolved-elsewhere" / "revert-pending" → an approval that serverRequest/resolved
 //                        or thread/reverted ends while it is open
 //   (outputSchema)    → final agent message is JSON `{"answer":42}`
@@ -124,6 +127,20 @@ function setThreadMode(threadId, cm) {
   });
 }
 
+// Background terminals per thread, as Codex's unified exec keeps them: running
+// past the turn, ended by thread/backgroundTerminals/clean (item/completed, failed, exit -1).
+const terminals = new Map(); // threadId → [{item, turnId, timer}]
+function startTerminal(threadId, turnId, n) {
+  const item = { type: "commandExecution", id: `bg-${turnId}-${n}`, command: `/bin/bash -lc 'npm run dev:${n}'`, cwd: process.cwd(), processId: String(4242 + n), source: "unifiedExecStartup", status: "inProgress", commandActions: [{ type: "unknown", command: `npm run dev:${n}` }], aggregatedOutput: null, exitCode: null, durationMs: null };
+  notify("item/started", { threadId, turnId, item });
+  let tick = 0;
+  const say = (text) => notify("item/commandExecution/outputDelta", { threadId, turnId, itemId: item.id, delta: text });
+  say("ready on :3000\n");
+  const timer = setInterval(() => say(`tick ${++tick}\n`), 40);
+  timer.unref?.();
+  (terminals.get(threadId) ?? terminals.set(threadId, []).get(threadId)).push({ item, turnId, timer });
+}
+
 const requestThreads = new Map(); // server request id → threadId
 function askClient(method, params) {
   const id = `srv-${++serverReqId}`;
@@ -159,6 +176,13 @@ const userMessage = (threadId, turnId, text, clientId, id = `um-${turnId}`) => {
 async function runScriptedTurn(threadId, turn, params) {
   const text = params.input?.[0]?.text ?? "";
   notify("turn/started", { threadId, turn });
+  if (text === "bg-terminal" || text === "bg-terminals-20") {
+    const n = text === "bg-terminal" ? 1 : 20;
+    for (let i = 0; i < n; i++) startTerminal(threadId, turn.id, i);
+    await new Promise((r) => setTimeout(r, 120));
+    agentMessage(threadId, turn.id, "after the server");
+    return complete(threadId, turn);
+  }
   if (text === "checklist") {
     notify("turn/plan/updated", { threadId, turnId: turn.id, explanation: "Small fix", plan: [{ step: "Reproduce", status: "inProgress" }, { step: "Fix timers", status: "pending" }] });
     notify("turn/plan/updated", { threadId, turnId: turn.id, explanation: null, plan: [{ step: "Reproduce", status: "completed" }, { step: "Fix timers", status: "inProgress" }] });
@@ -438,6 +462,15 @@ async function onRequest({ id, method, params }) {
       }
       send({ id, result: { turn } });
       return runScriptedTurn(threadId, turn, params);
+    }
+    case "thread/backgroundTerminals/clean": {
+      send({ id, result: {} });
+      for (const t of terminals.get(params.threadId) ?? []) {
+        clearInterval(t.timer);
+        notify("item/completed", { threadId: params.threadId, turnId: t.turnId, item: { ...t.item, status: "failed", exitCode: -1 } });
+      }
+      terminals.delete(params.threadId);
+      return;
     }
     case "thread/compact/start":
       send({ id, result: {} });

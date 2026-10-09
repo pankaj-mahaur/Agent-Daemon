@@ -489,3 +489,71 @@ test("Part 4 live: /plan, a proposed plan, and 'Yes, implement this plan' on the
     await removeWithRetry(w.root);
   }
 });
+
+// codex-parity-2 Part 5: background terminals in ad tui, on the real Codex.
+function bgScript(body) {
+  const text = lastUserText(body);
+  const input = Array.isArray(body?.input) ? body.input : [];
+  const lastUser = input.findLastIndex((i) => i?.type === "message" && i.role === "user");
+  const output = input.slice(lastUser + 1).findLast((i) => i?.type === "function_call_output");
+  if (output) return [ev.created(), ev.message(`server is up (${output.call_id})`), ev.completed()];
+  if (text.includes("BGSTART")) return [ev.created(), ev.functionCall("call-bg", "exec_command", { cmd: "node bg.js", yield_time_ms: 1500 }), ev.completed()];
+  return defaultScript(body);
+}
+
+test("Part 5 live: a background terminal outlives the turn; /ps lists it and /stop ends the process", { skip, timeout: 10 * 60_000 }, async () => {
+  const mock = await startMockResponses({ script: bgScript });
+  const w = world(mock.url);
+  const pidFile = join(w.cwd, "bg.pid");
+  writeFileSync(join(w.cwd, "bg.js"), `require("fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));\nconsole.log("listening");\nsetInterval(() => console.log("tick " + Date.now()), 300);\n`);
+  const alive = (pid) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  let t;
+  let pid = null;
+  try {
+    t = await start(w);
+    t.type("BGSTART\r");
+    // Approvals (or a retry outside the sandbox on CI's Windows runners) are approved.
+    const end = Date.now() + 180_000;
+    while (!/server is up/.test(t.text())) {
+      if (Date.now() > end) throw new Error(`no answer after the background start\n${t.text().slice(-2000)}`);
+      if (/Run command\?|retry without sandbox\?/.test(t.screen()) && /\(y\)|No, and stop/.test(t.screen())) {
+        await settle(600);
+        t.type("y");
+      }
+      await settle(300);
+    }
+    await t.until(() => t.idle(), "the turn's end");
+    await t.until(() => existsSync(pidFile), "the script's pid");
+    pid = Number(readFileSync(pidFile, "utf8"));
+    assert.ok(alive(pid), "the background process outlives the turn");
+    await t.until(/1 background terminal running · \/ps to view · \/stop to close/, "the footer");
+    t.type("/ps\r");
+    await t.until(/Background terminals[\s\S]*node bg\.js[\s\S]*↳ /, "/ps");
+    t.type("/stop\r");
+    await t.until(/Stopping all background terminals\./, "/stop");
+    const gone = Date.now() + 15_000;
+    while (alive(pid) && Date.now() < gone) await settle(200);
+    assert.equal(alive(pid), false, "the process ended");
+    await t.until(() => !/background terminal running/.test(t.screen()), "the footer cleared");
+
+    t.type("\x03");
+    await settle(200);
+    t.type("\x03");
+    assert.equal((await t.exit).exitCode, 0);
+  } catch (err) {
+    err.message += `\n--- model requests ---\n${mock.requests.map((r) => JSON.stringify(r.text)).join("\n")}`;
+    throw err;
+  } finally {
+    if (pid && alive(pid)) process.kill(pid);
+    for (const k of launched.splice(0)) k();
+    await mock.close();
+    await removeWithRetry(w.root);
+  }
+});

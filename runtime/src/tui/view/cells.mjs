@@ -14,7 +14,7 @@
 // floods the scrollback.
 
 import { sanitize } from "../terminal/sanitize.mjs";
-import { normalize, truncate, wrap } from "../terminal/text.mjs";
+import { lineWidth, normalize, truncate, wrap } from "../terminal/text.mjs";
 import { stringWidth } from "../terminal/width.mjs";
 import { codeLines, renderMarkdown, wrapPrefixed } from "./markdown.mjs";
 import { T } from "./theme.mjs";
@@ -248,6 +248,41 @@ export function renderPlan(steps, { width = 80, explanation = null } = {}) {
   }
   out.push(...details(lines, width));
   return out;
+}
+
+// What a background terminal runs, without the shell wrapper Codex adds
+// (`bash -lc '…'`, `powershell.exe -Command '…'`): its parsed command when
+// Codex gives one, else the unwrapped string.
+export function terminalCommand(t) {
+  const parsed = (t?.actions ?? []).length === 1 ? t.actions[0]?.command : null;
+  if (parsed) return String(parsed);
+  const cmd = String(t?.command ?? "");
+  const m = /^\s*(?:"[^"]*"|\S+)\s+(?:-lc|-c|-Command|-NoProfile\s+-Command)\s+(['"])([\s\S]*)\1\s*$/i.exec(cmd);
+  return m ? m[2] : cmd;
+}
+
+/**
+ * Codex's /ps (history_cell/exec.rs): "Background terminals", each command
+ * (80 characters at most, " [...]" when cut) with its last lines, 16 at most
+ * then "... and N more running".
+ */
+export function renderBackgroundTerminals(terminals, { width = 80 } = {}) {
+  const w = Math.max(4, width);
+  const out = [[{ text: "Background terminals", style: S.head }], []];
+  if (!terminals.length) return [...out, [{ text: "  \u{2022} No background terminals running.", style: S.italic }]];
+  // Codex's cut: what fits, then " [...]" (also when the command was longer than 80).
+  const cut = (text, room, style, cutAlready = false) => {
+    const one = clean(text).replace(/\r?\n/g, "\u{21b5}");
+    if (!cutAlready && lineWidth([{ text: one }]) <= room) return [{ text: one, style }];
+    return [...truncate([{ text: one, style }], Math.max(1, room - 6), ""), { text: " [...]", style: S.dim }];
+  };
+  for (const t of terminals.slice(0, 16)) {
+    const cmd = [...terminalCommand(t)];
+    out.push(normalize([{ text: "  \u{2022} ", style: S.dim }, ...cut(cmd.slice(0, 80).join(""), w - 4, S.cmd, cmd.length > 80)]));
+    (t.lines ?? []).forEach((l, i) => out.push(normalize([{ text: i === 0 ? "    \u{21b3} " : "      ", style: S.dim }, ...cut(l, w - 6, S.dim)])));
+  }
+  if (terminals.length > 16) out.push([{ text: `  \u{2022} ... and ${terminals.length - 16} more running`, style: S.dim }]);
+  return out.map((l) => truncate(l, w));
 }
 
 const NOTICE = {

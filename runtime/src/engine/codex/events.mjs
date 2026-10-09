@@ -243,6 +243,7 @@ const ITEM_NORMALIZERS = {
     output: i.aggregatedOutput ?? null,
     actions: i.commandActions ?? [],
     source: i.source ?? null,
+    processId: i.processId ?? null,
   }),
   fileChange: (i) => ({ changes: (i.changes ?? []).map(fileChange), status: i.status ?? null }),
   mcpToolCall: (i) => ({

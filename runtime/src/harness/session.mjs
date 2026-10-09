@@ -179,6 +179,8 @@ export function createSession({
     plan: null,
     diff: null,
     rateLimits: null,
+    // Background terminals (Codex's unified exec, /ps): key (Codex's processId) → {key, itemId, command, actions, lines}.
+    terminals: new Map(),
     // presets: null until Codex answers, [] when it has none (plan mode unavailable).
     mode: { kind: "default", presets: null },
     notices: [],
@@ -307,8 +309,39 @@ export function createSession({
     placeItem(next, ev);
   }
 
+  // Codex's background terminals (codex-parity-2 Part 5), as its TUI tracks
+  // them: a command started through unified exec is one until it ends (Codex
+  // completes it only when the process exits, possibly long after the turn),
+  // with its last 3 non-empty output lines.
+  const MAX_TERMINAL_LINES = 3;
+  function trackTerminal(ev) {
+    const it = ev.item;
+    if (ev.type === "item.started" && it?.kind === "commandExecution" && it.source === "unifiedExecStartup") {
+      const key = it.processId ?? it.id;
+      state.terminals.set(key, { key, itemId: it.id, command: it.command, actions: it.actions ?? [], lines: [] });
+      return true;
+    }
+    if (ev.type === "item.completed" && it?.kind === "commandExecution") {
+      for (const [key, t] of state.terminals) {
+        if (key === (it.processId ?? it.id) || t.itemId === it.id) {
+          state.terminals.delete(key);
+          return true;
+        }
+      }
+    }
+    if (ev.type === "item.delta" && ev.kind === "output") {
+      const t = [...state.terminals.values()].findLast((x) => x.itemId === ev.itemId);
+      if (!t) return false;
+      const fresh = String(ev.delta ?? "").split(/\r?\n/).map((l) => l.trimEnd()).filter(Boolean);
+      if (fresh.length) t.lines = [...t.lines, ...fresh].slice(-MAX_TERMINAL_LINES);
+      return fresh.length > 0;
+    }
+    return false;
+  }
+
   function onThreadEvent(ev) {
     const root = ev.threadId === state.thread?.id;
+    if (root && trackTerminal(ev)) change("terminals");
     switch (ev.type) {
       case "thread.settings": {
         // The thread's mode as Codex has it (a switch here, in /codex, or a turn's mask).
@@ -477,6 +510,7 @@ export function createSession({
         }
         // Overrides go again on the next turn, in case Codex lost them.
         nextTurn = { ...sticky, ...nextTurn };
+        state.terminals = new Map(); // they ended with the engine that ran them
         loadModes();
         // Ready only once the thread is back: a prompt sent now goes to the right place.
         state.engine = { state: "ready", exitCode: null, restarts: state.engine.restarts };
@@ -553,6 +587,7 @@ export function createSession({
 
   function resetThreadState() {
     modeEchoes = [];
+    state.terminals = new Map();
     state.thread = null;
     state.turns = [];
     state.items = new Map();
@@ -879,6 +914,16 @@ export function createSession({
     },
     /** The mask a turn would carry now (null without presets). */
     modeMask,
+    /**
+     * Ends every background terminal of this conversation (Codex's /stop,
+     * thread/backgroundTerminals/clean), then forgets them, as Codex does.
+     */
+    async stopTerminals() {
+      const threadId = state.thread?.id;
+      if (threadId) await eng.cleanBackgroundTerminals(threadId);
+      state.terminals = new Map();
+      change("terminals");
+    },
     /** Resolves once Codex's mode presets are in (or failed). */
     modesReady: null,
     async review(target = { type: "uncommittedChanges" }) {

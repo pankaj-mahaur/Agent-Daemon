@@ -323,6 +323,11 @@ export class Engine extends EventEmitter {
     return (r?.data ?? []).filter((m) => typeof m?.mode === "string").map((m) => ({ name: m.name ?? m.mode, mode: m.mode, model: m.model ?? null, effort: m.reasoning_effort ?? null }));
   }
 
+  /** Ends every background terminal of a thread (experimental; /stop). */
+  cleanBackgroundTerminals(threadId) {
+    return this.server.request("thread/backgroundTerminals/clean", { threadId });
+  }
+
   /** Changes a thread's settings for its next turns (experimental; ad sends only collaborationMode). */
   updateThreadSettings(threadId, settings) {
     return this.server.request("thread/settings/update", { threadId, ...settings });

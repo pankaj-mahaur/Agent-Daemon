@@ -916,3 +916,35 @@ test("modes (review #4): a restart whose engine has no presets leaves Plan for D
     },
   );
 });
+
+/* ------------------------------------------------------------------ */
+/* Background terminals (Codex's unified exec, codex-parity-2 Part 5)  */
+/* ------------------------------------------------------------------ */
+
+test("background terminals: tracked by Codex's processId past the turn, last 3 lines; stopTerminals cleans them", async () => {
+  await withModes(none, async ({ session, engine }) => {
+    await session.submit("bg-terminal").done;
+    assert.equal(session.state.terminals.size, 1, "it outlives the turn");
+    const t = session.state.terminals.get("4242");
+    assert.equal(t.command, "/bin/bash -lc 'npm run dev:0'");
+    await until(() => t.lines.length === 3 && /^tick/.test(t.lines[2]), "a few ticks");
+    assert.ok(t.lines.every((l) => l && !/\n/.test(l)), "non-empty single lines");
+    await session.stopTerminals();
+    assert.equal(session.state.terminals.size, 0);
+    assert.ok((await debugState(engine)).calls.includes("thread/backgroundTerminals/clean"));
+    await sleep(100);
+    assert.equal(session.state.terminals.size, 0, "Codex's late item/completed doesn't bring it back");
+  });
+});
+
+test("background terminals: a new conversation and a resume forget them", async () => {
+  await withModes(none, async ({ session }) => {
+    await session.submit("bg-terminal").done;
+    const id = session.state.thread.id;
+    assert.equal(session.state.terminals.size, 1);
+    session.newThread();
+    assert.equal(session.state.terminals.size, 0);
+    await session.resume(id);
+    assert.equal(session.state.terminals.size, 0);
+  });
+});

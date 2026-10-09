@@ -235,8 +235,8 @@ test("Codex commands ad doesn't run never reach the model; busy ones wait, and t
     await until(() => /\/recap isn't in ad yet\. \/codex opens the stock Codex UI/.test(text()), "the answer");
     assert.equal(app.state.composer, "/recap the bug", "the draft goes back into the composer");
     assert.equal(await sent(), 0);
-    type("\x15/clean\r"); // an alias answers under the name typed
-    await until(() => /\/clean isn't in ad yet/.test(text()), "the alias answer");
+    type("\x15/btw\r"); // an alias answers under the name typed
+    await until(() => /\/btw isn't in ad yet/.test(text()), "the alias answer");
     type("\x15/MENTION\r");
     await until(() => /Type @ in the prompt to mention a file/.test(text()), "a custom answer, any case");
     type("\x15hang\r");
@@ -866,4 +866,28 @@ test("plan mode (review #3, #6): the 'plan is ready' note goes with the plan; Sh
     await until(() => !app.state.overlay, "closed");
     assert.equal(session.state.mode.kind, "default", "closing the overlay didn't switch modes");
   }, { modes: true, cols: 90, rows: 30 });
+});
+
+test("background terminals: output after one is committed during the turn; the footer, /ps (16 at most) and /stop are Codex's", async () => {
+  await withApp(async ({ app, type, until, text, session, engine, committed }) => {
+    type("bg-terminal\r");
+    await until(() => /after the server/.test(committed()), "what came after the server, in the scrollback");
+    await until(() => !session.state.activeTurnId, "the turn's end");
+    await until(() => /1 background terminal running · \/ps to view · \/stop to close/.test(text()), "the footer");
+    assert.doesNotMatch(committed(), /npm run dev/, "a background terminal isn't drawn in the transcript");
+    type("/ps\r");
+    await until(() => /Background terminals[\s\S]*• npm run dev:0[\s\S]*↳ /.test(committed()), "/ps");
+    type("/stop\r");
+    await until(() => /Stopping all background terminals\./.test(committed()), "/stop");
+    assert.ok((await engine.server.request("debug/state", {})).calls.includes("thread/backgroundTerminals/clean"));
+    await until(() => !/background terminal running/.test(text()), "the footer cleared");
+    type("/ps\r");
+    await until(() => /No background terminals running\./.test(committed()), "none left");
+    type("/clean\r"); // Codex's alias
+    await until(() => committed().match(/Stopping all background terminals\./g)?.length === 2, "the alias");
+    type("bg-terminals-20\r");
+    await until(() => session.state.terminals.size === 20 && !session.state.activeTurnId, "twenty");
+    type("/ps\r");
+    await until(() => /\.\.\. and 4 more running/.test(committed()), "Codex's cap of 16");
+  }, { modes: true, cols: 100, rows: 30 });
 });

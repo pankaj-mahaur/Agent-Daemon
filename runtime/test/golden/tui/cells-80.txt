@@ -98,6 +98,18 @@
 • Proposed Plan
 
   (empty)
+── /ps ──
+Background terminals
+
+  • npm run dev
+    ↳ ready on :3000
+      GET / 200
+      GET /api/login 401
+  • node xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx [...]
+── /ps (none) ──
+Background terminals
+
+  • No background terminals running.
 ── plan ──
 • Updated Plan
   └ Small fix

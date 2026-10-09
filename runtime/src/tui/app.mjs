@@ -12,7 +12,7 @@
 
 import { createComposer } from "./view/composer.mjs";
 import { createMarkdownStream } from "./view/markdown.mjs";
-import { isExploring, renderAdRow, renderCell, renderDiff, renderExploring, renderNotice, renderPlan } from "./view/cells.mjs";
+import { isExploring, renderAdRow, renderBackgroundTerminals, renderCell, renderDiff, renderExploring, renderNotice, renderPlan } from "./view/cells.mjs";
 import { createChecklist, createPicker, renderFooter, renderShortcuts, renderStatus } from "./view/chrome.mjs";
 import { ARM_MS, createChoice, createConfirm, createRequestModal } from "./view/modals.mjs";
 import { CODEX_PLAN_CLEAR_CONTEXT_PREFIX } from "../hooks/generated-prompts.mjs";
@@ -50,6 +50,8 @@ export const SLASH_COMMANDS = [
   { name: "status", source: "codex", desc: "account, model, sandbox, tokens, limits" },
   { name: "goal", source: "codex", desc: "set a goal for this conversation (/goal clear)" },
   { name: "plan", source: "codex", desc: "switch to Plan mode (/plan <prompt> sends it there)" },
+  { name: "ps", source: "codex", desc: "list background terminals" },
+  { name: "stop", source: "codex", desc: "stop all background terminals (/clean)" },
   { name: "review", source: "codex", desc: "review your uncommitted changes" },
   { name: "diff", source: "codex", desc: "show git changes, untracked files included" },
   { name: "compact", source: "codex", desc: "summarize the conversation to free context" },
@@ -95,7 +97,6 @@ const CODEX_COMMANDS = new Map(CODEX_SLASH.commands.flatMap((c) => [c.name, ...c
 // command is either in SLASH_COMMANDS or here: a test fails when a Codex
 // release adds one, so the upgrade PR has to decide.
 const STOCK_UI = "/codex opens the stock Codex UI on this conversation.";
-const ELSEWHERE = (what) => `(The stock UI's ${what} sees only its own engine, not ad's.)`;
 // Codex's "Implement this plan?" (tui/src/chatwidget/plan_implementation.rs at the pinned tag).
 export const PLAN_IMPLEMENTATION_CODING_MESSAGE = "Implement the plan.";
 export const PLAN_IMPLEMENTATION_CLEAR_CONTEXT_PREFIX = CODEX_PLAN_CLEAR_CONTEXT_PREFIX; // ad's prompt hooks skip it
@@ -127,8 +128,6 @@ export const NOT_IN_AD = {
   plugins: true,
   feedback: "For ad problems: https://github.com/pankaj-mahaur/Agent-Daemon/issues. The stock UI's /feedback (in /codex) uploads this whole conversation to OpenAI, including ad's memory context and /private prompts.",
   rollout: true,
-  ps: `/ps isn't in ad yet. ${ELSEWHERE("/ps")}`,
-  stop: `/stop isn't in ad yet. ${ELSEWHERE("/stop")}`,
   "test-approval": "/test-approval is a Codex debug command.",
   subagents: true,
   "debug-m-drop": "/debug-m-drop is a Codex debug command.",
@@ -260,6 +259,8 @@ export function createApp({
     return st.engine.state !== "ready" && st.engine.state !== "restarting";
   }
   const open = (it) => (it.streaming || it.status === "inProgress") && !turnOver(it);
+  // A command Codex runs through unified exec that is still running: it may outlive the turn (a dev server).
+  const backgroundTerminal = (it) => it.kind === "commandExecution" && it.source === "unifiedExecStartup" && it.status === "inProgress" && !isExploring(it);
   const settledView = (it) => (it.streaming || it.status === "inProgress" ? { ...it, streaming: false, incomplete: true } : it);
 
   /**
@@ -269,8 +270,17 @@ export function createApp({
    */
   function flush() {
     const items = rootItems().filter((it) => !committed.has(shownKey(it)));
+    // Running background terminals: drawn live, never holding back what comes after them.
+    const waiting = [];
     for (let i = 0; i < items.length; i++) {
       const it = items[i];
+      if (backgroundTerminal(it)) {
+        // Codex's rule: once the turn is over a background terminal lives in /ps
+        // and the footer, not the transcript (and its end isn't drawn either).
+        if (turnOver(it)) committed.add(shownKey(it));
+        else waiting.push(it);
+        continue;
+      }
       if (it.kind === "userMessage") {
         committed.add(shownKey(it));
         if (it.clientId && echoesShown.has(it.clientId)) continue;
@@ -295,7 +305,7 @@ export function createApp({
           else commit(lines);
           s.started = true;
         }
-        if (live) return items.slice(i);
+        if (live) return [...waiting, ...items.slice(i)];
         committed.add(shownKey(it));
         streams.delete(shownKey(it));
         continue;
@@ -306,17 +316,17 @@ export function createApp({
         const group = items.slice(i, j);
         const settled = group.every((g) => !open(g));
         // A run of exploring commands is one cell: it ends at the next other item or the turn's end.
-        if (!settled || (j === items.length && turnActive())) return items.slice(i);
+        if (!settled || (j === items.length && turnActive())) return [...waiting, ...items.slice(i)];
         commitCell(renderExploring(group.map(settledView), { width: width() }));
         for (const g of group) committed.add(shownKey(g));
         i = j - 1;
         continue;
       }
-      if (open(it)) return items.slice(i);
+      if (open(it)) return [...waiting, ...items.slice(i)];
       committed.add(shownKey(it));
       commitCell(renderCell(settledView(it), { width: width() }));
     }
-    return [];
+    return waiting;
   }
 
   function reportTurns() {
@@ -478,6 +488,9 @@ export function createApp({
     const own = [];
     // Codex's mode indicator, first so it's the last to go when the footer is narrow.
     const mode = st.mode?.kind === "plan" ? [{ full: "Plan mode (shift+tab to cycle)", short: "Plan mode", style: T.planMode }] : [];
+    // Codex's unified-exec footer: how many background terminals run, and how to see or stop them.
+    const n = st.terminals?.size ?? 0;
+    if (n) own.unshift({ full: `${n} background terminal${n === 1 ? "" : "s"} running \u{b7} /ps to view \u{b7} /stop to close`, short: `${n} background terminal${n === 1 ? "" : "s"}` });
     if (privateMode) own.push({ full: "private", short: "P" });
     const loop = actions.ad?.loop?.state;
     if (loop?.running) own.push({ full: `loop ${loop.iterations}`, short: `L${loop.iterations}` });
@@ -944,6 +957,13 @@ export function createApp({
           .catch(fail);
       case "fork":
         return session.fork().then(() => info0("Forked: you are in the copy now; the original is unchanged."), fail);
+      case "ps":
+        // Codex's /ps: the background terminals of this conversation, with their last lines.
+        return commitCell([[{ text: "/ps", style: DIM }], ...renderBackgroundTerminals([...st.terminals.values()], { width: width() })]);
+      case "stop":
+        // Codex's /stop (/clean): ends them all (thread/backgroundTerminals/clean).
+        await session.stopTerminals();
+        return info0("Stopping all background terminals.");
       case "plan": {
         // Codex's /plan: switch, then send the text there; unavailable, the text goes back to the composer.
         const r = session.setMode("plan");

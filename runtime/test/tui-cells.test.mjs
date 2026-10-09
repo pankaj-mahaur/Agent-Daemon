@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { assertGolden } from "../testkit/golden.mjs";
-import { diffStats, isExploring, renderAdRow, renderCell, renderDiff, renderExploring, renderNotice, renderPlan } from "../src/tui/view/cells.mjs";
+import { diffStats, isExploring, renderAdRow, renderBackgroundTerminals, renderCell, renderDiff, renderExploring, renderNotice, renderPlan } from "../src/tui/view/cells.mjs";
 import { lineWidth } from "../src/tui/terminal/text.mjs";
 
 const text = (lines) => lines.map((l) => l.map((s) => s.text).join("").replace(/ +$/, "")).join("\n");
@@ -51,6 +51,9 @@ function sheet(width) {
   for (const [name, item] of Object.entries(SAMPLES)) {
     out.push(`── ${name} ──`, text(renderCell(item, { width })));
   }
+  const bg = [{ command: "/bin/bash -lc 'npm run dev'", actions: [{ type: "unknown", command: "npm run dev" }], lines: ["ready on :3000", "GET / 200", "GET /api/login 401"] }, { command: `powershell.exe -Command 'node ${"x".repeat(90)}.js'`, actions: [], lines: [] }];
+  out.push("── /ps ──", text(renderBackgroundTerminals(bg, { width })));
+  out.push("── /ps (none) ──", text(renderBackgroundTerminals([], { width })));
   out.push("── plan ──", text(renderPlan([{ step: "Reproduce", status: "completed" }, { step: "Fix timers", status: "inProgress" }, { step: "Run the suite", status: "pending" }], { width, explanation: "Small fix" })));
   out.push("── notices ──", text([...renderNotice({ level: "info", message: "Codex restarted; the conversation continues." }, { width }), ...renderNotice({ level: "warn", message: "Usage at 85%" }, { width }), ...renderNotice({ level: "error", message: "Codex stopped (exit 3). Your text is kept." }, { width })]));
   out.push("── ad rows ──", text([...renderAdRow("recalled", '3 learnings: "login.spec uses fake timers" +2', { width }), ...renderAdRow("skill", "debug-triage", { width }), ...renderAdRow("guard", "rm -rf / blocked", { width })]));
