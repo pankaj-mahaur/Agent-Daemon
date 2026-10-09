@@ -16,6 +16,10 @@
 //   "bg-terminal"     → a background terminal (unified exec, processId 4242) that outlives
 //                        the turn, then "after the server" committed in the same turn;
 //                        it ticks until thread/backgroundTerminals/clean ends it
+//   "bg-hang"         → a command still running when the turn hangs (Esc interrupts the turn,
+//                        not the command, as in Codex)
+//   "bg-call0" / "quick-call0" → a background terminal, then (next turn) a quick command,
+//                        both with the item id "call_0" (providers that reuse ids)
 //   "resolved-elsewhere" / "revert-pending" → an approval that serverRequest/resolved
 //                        or thread/reverted ends while it is open
 //   (outputSchema)    → final agent message is JSON `{"answer":42}`
@@ -130,8 +134,9 @@ function setThreadMode(threadId, cm) {
 // Background terminals per thread, as Codex's unified exec keeps them: running
 // past the turn, ended by thread/backgroundTerminals/clean (item/completed, failed, exit -1).
 const terminals = new Map(); // threadId → [{item, turnId, timer}]
-function startTerminal(threadId, turnId, n) {
-  const item = { type: "commandExecution", id: `bg-${turnId}-${n}`, command: `/bin/bash -lc 'npm run dev:${n}'`, cwd: process.cwd(), processId: String(4242 + n), source: "unifiedExecStartup", status: "inProgress", commandActions: [{ type: "unknown", command: `npm run dev:${n}` }], aggregatedOutput: null, exitCode: null, durationMs: null };
+let terminalSeq = 0;
+function startTerminal(threadId, turnId, n, id = null) {
+  const item = { type: "commandExecution", id: id ?? `bg-${turnId}-${n}`, command: `/bin/bash -lc 'npm run dev:${n}'`, cwd: process.cwd(), processId: String(4242 + (id ? 100 + terminalSeq++ : n)), source: "unifiedExecStartup", status: "inProgress", commandActions: [{ type: "unknown", command: `npm run dev:${n}` }], aggregatedOutput: null, exitCode: null, durationMs: null };
   notify("item/started", { threadId, turnId, item });
   let tick = 0;
   const say = (text) => notify("item/commandExecution/outputDelta", { threadId, turnId, itemId: item.id, delta: text });
@@ -176,6 +181,23 @@ const userMessage = (threadId, turnId, text, clientId, id = `um-${turnId}`) => {
 async function runScriptedTurn(threadId, turn, params) {
   const text = params.input?.[0]?.text ?? "";
   notify("turn/started", { threadId, turn });
+  if (text === "bg-hang") {
+    startTerminal(threadId, turn.id, 0);
+    return hung.set(turn.id, { threadId, turn });
+  }
+  if (text === "bg-call0") {
+    startTerminal(threadId, turn.id, 0, "call_0");
+    agentMessage(threadId, turn.id, "server started");
+    return complete(threadId, turn);
+  }
+  if (text === "quick-call0") {
+    const item = { type: "commandExecution", id: "call_0", command: "/bin/bash -lc 'npm test'", cwd: process.cwd(), processId: "9001", source: "unifiedExecStartup", status: "inProgress", commandActions: [{ type: "unknown", command: "npm test" }], aggregatedOutput: null, exitCode: null, durationMs: null };
+    notify("item/started", { threadId, turnId: turn.id, item });
+    notify("item/commandExecution/outputDelta", { threadId, turnId: turn.id, itemId: "call_0", delta: "1 passing\n" });
+    notify("item/completed", { threadId, turnId: turn.id, item: { ...item, status: "completed", exitCode: 0, aggregatedOutput: "1 passing\n", durationMs: 50 } });
+    agentMessage(threadId, turn.id, "tests pass");
+    return complete(threadId, turn);
+  }
   if (text === "bg-terminal" || text === "bg-terminals-20") {
     const n = text === "bg-terminal" ? 1 : 20;
     for (let i = 0; i < n; i++) startTerminal(threadId, turn.id, i);

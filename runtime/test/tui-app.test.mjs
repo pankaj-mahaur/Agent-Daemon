@@ -874,7 +874,8 @@ test("background terminals: output after one is committed during the turn; the f
     await until(() => /after the server/.test(committed()), "what came after the server, in the scrollback");
     await until(() => !session.state.activeTurnId, "the turn's end");
     await until(() => /1 background terminal running · \/ps to view · \/stop to close/.test(text()), "the footer");
-    assert.doesNotMatch(committed(), /npm run dev/, "a background terminal isn't drawn in the transcript");
+    // As in Codex: its cell goes in as it is (running) once something follows, and holds nothing back.
+    assert.match(committed(), /Running .*npm run dev:0[\s\S]*after the server/);
     type("/ps\r");
     await until(() => /Background terminals[\s\S]*• npm run dev:0[\s\S]*↳ /.test(committed()), "/ps");
     type("/stop\r");
@@ -889,5 +890,16 @@ test("background terminals: output after one is committed during the turn; the f
     await until(() => session.state.terminals.size === 20 && !session.state.activeTurnId, "twenty");
     type("/ps\r");
     await until(() => /\.\.\. and 4 more running/.test(committed()), "Codex's cap of 16");
+  }, { modes: true, cols: 100, rows: 30 });
+});
+
+test("background terminals (review): Esc on a turn with a command still running keeps its cell; the process stays in /ps", async () => {
+  await withApp(async ({ type, until, session, committed }) => {
+    type("bg-hang\r");
+    await until(() => session.state.terminals.size === 1 && session.state.activeTurnId, "the running command");
+    type("\x1b");
+    await until(() => session.state.turns[0]?.status === "interrupted", "interrupted");
+    await until(() => /Running .*npm run dev:0/.test(committed()), "its cell in the scrollback");
+    assert.equal(session.state.terminals.size, 1, "Esc interrupts the turn, not the command (Codex)");
   }, { modes: true, cols: 100, rows: 30 });
 });

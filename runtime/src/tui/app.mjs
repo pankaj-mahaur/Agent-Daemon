@@ -259,8 +259,10 @@ export function createApp({
     return st.engine.state !== "ready" && st.engine.state !== "restarting";
   }
   const open = (it) => (it.streaming || it.status === "inProgress") && !turnOver(it);
-  // A command Codex runs through unified exec that is still running: it may outlive the turn (a dev server).
+  // A command Codex runs through unified exec that is still running (every exec_command is one
+  // while it runs; a dev server stays one after the turn).
   const backgroundTerminal = (it) => it.kind === "commandExecution" && it.source === "unifiedExecStartup" && it.status === "inProgress" && !isExploring(it);
+  const runningShown = new Set(); // shownKeys committed while still running: their end is drawn too (during a task)
   const settledView = (it) => (it.streaming || it.status === "inProgress" ? { ...it, streaming: false, incomplete: true } : it);
 
   /**
@@ -270,15 +272,18 @@ export function createApp({
    */
   function flush() {
     const items = rootItems().filter((it) => !committed.has(shownKey(it)));
-    // Running background terminals: drawn live, never holding back what comes after them.
-    const waiting = [];
+    lateEnds();
     for (let i = 0; i < items.length; i++) {
       const it = items[i];
-      if (backgroundTerminal(it)) {
-        // Codex's rule: once the turn is over a background terminal lives in /ps
-        // and the footer, not the transcript (and its end isn't drawn either).
-        if (turnOver(it)) committed.add(shownKey(it));
-        else waiting.push(it);
+      // Codex's rule for a command still running: it never holds back what comes
+      // after it. Once something follows (or its turn is over) its cell goes into
+      // the scrollback as it is: "Running" while the process lives (a background
+      // terminal, see /ps), else stopped.
+      if (backgroundTerminal(it) && (i < items.length - 1 || turnOver(it))) {
+        const running = [...(st.terminals?.values() ?? [])].some((t) => t.itemId === it.id && t.turnId === it.turnId);
+        committed.add(shownKey(it));
+        if (running) runningShown.add(shownKey(it));
+        commitCell(renderCell(running ? { ...it, streaming: false } : settledView(it), { width: width() }));
         continue;
       }
       if (it.kind === "userMessage") {
@@ -305,7 +310,7 @@ export function createApp({
           else commit(lines);
           s.started = true;
         }
-        if (live) return [...waiting, ...items.slice(i)];
+        if (live) return items.slice(i);
         committed.add(shownKey(it));
         streams.delete(shownKey(it));
         continue;
@@ -316,17 +321,28 @@ export function createApp({
         const group = items.slice(i, j);
         const settled = group.every((g) => !open(g));
         // A run of exploring commands is one cell: it ends at the next other item or the turn's end.
-        if (!settled || (j === items.length && turnActive())) return [...waiting, ...items.slice(i)];
+        if (!settled || (j === items.length && turnActive())) return items.slice(i);
         commitCell(renderExploring(group.map(settledView), { width: width() }));
         for (const g of group) committed.add(shownKey(g));
         i = j - 1;
         continue;
       }
-      if (open(it)) return [...waiting, ...items.slice(i)];
+      if (open(it)) return items.slice(i);
       committed.add(shownKey(it));
       commitCell(renderCell(settledView(it), { width: width() }));
     }
-    return waiting;
+    return [];
+  }
+
+  // A command whose "Running" cell is already in the scrollback ended: during a
+  // task its end is drawn as its own cell, as Codex's does; after it, only /ps changes.
+  function lateEnds() {
+    for (const key of runningShown) {
+      const it = rootItems().find((x) => shownKey(x) === key);
+      if (!it || it.status === "inProgress") continue;
+      runningShown.delete(key);
+      if (turnActive()) commitCell(renderCell(it, { width: width() }));
+    }
   }
 
   function reportTurns() {

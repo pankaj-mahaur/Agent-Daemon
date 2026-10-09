@@ -318,19 +318,21 @@ export function createSession({
     const it = ev.item;
     if (ev.type === "item.started" && it?.kind === "commandExecution" && it.source === "unifiedExecStartup") {
       const key = it.processId ?? it.id;
-      state.terminals.set(key, { key, itemId: it.id, command: it.command, actions: it.actions ?? [], lines: [] });
+      state.terminals.set(key, { key, itemId: it.id, turnId: ev.turnId ?? null, command: it.command, actions: it.actions ?? [], lines: [] });
       return true;
     }
+    // Codex's key: the processId (the item id only without one, and then within its turn:
+    // some providers reuse ids like call_0 across turns).
     if (ev.type === "item.completed" && it?.kind === "commandExecution") {
-      for (const [key, t] of state.terminals) {
-        if (key === (it.processId ?? it.id) || t.itemId === it.id) {
-          state.terminals.delete(key);
-          return true;
-        }
+      const key = it.processId ?? it.id;
+      const t = state.terminals.get(key);
+      if (t && (it.processId || !ev.turnId || t.turnId === ev.turnId)) {
+        state.terminals.delete(key);
+        return true;
       }
     }
     if (ev.type === "item.delta" && ev.kind === "output") {
-      const t = [...state.terminals.values()].findLast((x) => x.itemId === ev.itemId);
+      const t = [...state.terminals.values()].findLast((x) => x.itemId === ev.itemId && (!ev.turnId || !x.turnId || x.turnId === ev.turnId));
       if (!t) return false;
       const fresh = String(ev.delta ?? "").split(/\r?\n/).map((l) => l.trimEnd()).filter(Boolean);
       if (fresh.length) t.lines = [...t.lines, ...fresh].slice(-MAX_TERMINAL_LINES);
@@ -920,9 +922,13 @@ export function createSession({
      */
     async stopTerminals() {
       const threadId = state.thread?.id;
-      if (threadId) await eng.cleanBackgroundTerminals(threadId);
-      state.terminals = new Map();
-      change("terminals");
+      try {
+        if (threadId) await eng.cleanBackgroundTerminals(threadId);
+      } finally {
+        // Forgotten either way, as Codex does after asking (a failure is still reported).
+        state.terminals = new Map();
+        change("terminals");
+      }
     },
     /** Resolves once Codex's mode presets are in (or failed). */
     modesReady: null,

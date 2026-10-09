@@ -948,3 +948,22 @@ test("background terminals: a new conversation and a resume forget them", async 
     assert.equal(session.state.terminals.size, 0);
   });
 });
+
+test("background terminals (review): an item id reused across turns ends the right one; /stop forgets them even when Codex refuses", async () => {
+  await withModes(none, async ({ session }) => {
+    await session.submit("bg-call0").done;
+    const [server] = [...session.state.terminals.values()];
+    assert.equal(server.itemId, "call_0");
+    await session.submit("quick-call0").done;
+    assert.deepEqual([...session.state.terminals.keys()], [server.key], "the quick command's end didn't take the server with it");
+    await sleep(100);
+    assert.ok(!session.state.terminals.get(server.key).lines.includes("1 passing"), "the other turn's output isn't the server's");
+  });
+  // An engine that didn't opt into the experimental API refuses the clean call.
+  await withSession(none, async ({ session }) => {
+    await session.submit("bg-terminal").done;
+    assert.equal(session.state.terminals.size, 1);
+    await assert.rejects(session.stopTerminals(), /experimentalApi/);
+    assert.equal(session.state.terminals.size, 0, "forgotten anyway, as Codex does");
+  });
+});
