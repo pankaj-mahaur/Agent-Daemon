@@ -849,3 +849,21 @@ test("update_plan checklists go into the scrollback as Codex's 'Updated Plan' ce
     assert.ok(out.indexOf("Updated Plan") < out.indexOf("working on it"), "in the order they came");
   }, { cols: 90, rows: 30 });
 });
+
+test("plan mode (review #3, #6): the 'plan is ready' note goes with the plan; Shift+Tab on the shortcuts only closes them", async () => {
+  await withApp(async ({ app, type, until, text, session }) => {
+    type("/plan plan-reply\r");
+    type("my draft");
+    await until(() => /A plan is ready/.test(text()), "the note");
+    type("\x1b[Z"); // to Default: the plan's moment passed
+    await until(() => session.state.mode.kind === "default", "Default");
+    await sleep(60);
+    assert.doesNotMatch(text(), /A plan is ready/);
+    assert.equal(app.state.composer, "my draft");
+    type("\x15?");
+    await until(() => app.state.overlay, "the shortcuts");
+    type("\x1b[Z");
+    await until(() => !app.state.overlay, "closed");
+    assert.equal(session.state.mode.kind, "default", "closing the overlay didn't switch modes");
+  }, { modes: true, cols: 90, rows: 30 });
+});

@@ -155,6 +155,9 @@ export function createSession({
   modes = false,
   // Codex's plan_mode_reasoning_effort, read when a Plan mask is built.
   planEffort = () => null,
+  // Codex's model_reasoning_effort: Default's effort until the user picks one
+  // (a mask with no effort would drop the configured one).
+  configEffort = () => null,
 } = {}) {
   let eng = engine;
   const emitter = new EventEmitter();
@@ -307,10 +310,20 @@ export function createSession({
   function onThreadEvent(ev) {
     const root = ev.threadId === state.thread?.id;
     switch (ev.type) {
-      case "thread.settings":
+      case "thread.settings": {
         // The thread's mode as Codex has it (a switch here, in /codex, or a turn's mask).
-        if (root && ev.collaborationMode?.mode) state.mode = { ...state.mode, kind: ev.collaborationMode.mode };
+        const kind = ev.collaborationMode?.mode;
+        if (!root || !kind) break;
+        // The echo of a switch ad sent (in order) is not news: quick Shift+Tabs
+        // must not flip the mode back while later switches are on their way.
+        if (modeEchoes[0] === kind) {
+          modeEchoes.shift();
+          break;
+        }
+        modeEchoes = [];
+        state.mode = { ...state.mode, kind };
         break;
+      }
       case "thread.started":
         if (root) state.thread = { ...state.thread, ...ev.thread };
         else if (ev.thread?.parentThreadId) state.agents.set(ev.thread.id, { label: ev.thread.agentNickname ?? ev.thread.agentRole ?? null, parentThreadId: ev.thread.parentThreadId });
@@ -539,6 +552,7 @@ export function createSession({
   }
 
   function resetThreadState() {
+    modeEchoes = [];
     state.thread = null;
     state.turns = [];
     state.items = new Map();
@@ -725,16 +739,19 @@ export function createSession({
     const asked = eng;
     return asked.listCollaborationModes().then(
       (presets) => {
-        if (eng === asked && !closed) state.mode = { ...state.mode, presets };
+        if (eng !== asked || closed) return;
+        state.mode = { kind: presets.some((p) => p.mode === state.mode.kind) ? state.mode.kind : "default", presets };
       },
       (err) => {
         if (eng !== asked || closed) return;
-        state.mode = { ...state.mode, presets: [] };
+        // Without presets ad can't keep a mode it can't send: Default, as the footer then shows.
+        state.mode = { kind: "default", presets: [] };
         notice("warn", "modes.unavailable", `Plan mode is unavailable: Codex didn't list its modes (${err.message}).`);
       },
     ).finally(() => change("mode"));
   }
 
+  let modeEchoes = []; // modes of the thread/settings/update calls whose thread/settings/updated hasn't come back
   const MODE_NAMES = { plan: "Plan", default: "Default" };
   const modeName = (kind) => state.mode.presets?.find((p) => p.mode === kind)?.name ?? MODE_NAMES[kind] ?? kind;
 
@@ -746,7 +763,8 @@ export function createSession({
     const preset = state.mode.presets?.find((p) => p.mode === kind);
     const model = preset?.model ?? state.config.model;
     if (!preset || !model) return null;
-    const effort = kind === "plan" ? (planEffort() ?? preset.effort ?? state.config.effort) : state.config.effort;
+    const own = state.config.effort ?? configEffort() ?? null;
+    const effort = kind === "plan" ? (planEffort() ?? preset.effort ?? own) : own;
     return { mode: kind, settings: { model, reasoning_effort: effort ?? null, developer_instructions: null } };
   }
 
@@ -763,8 +781,12 @@ export function createSession({
     // The thread learns it now (and /codex shows it); every turn/start carries it anyway.
     if (state.thread && after) {
       const threadId = state.thread.id;
+      modeEchoes.push(kind);
       eng.updateThreadSettings(threadId, { collaborationMode: after }).catch((err) => {
-        if (state.thread?.id === threadId) notice("warn", "mode.notUpdated", `Codex didn't take the mode change yet (${err.message}); the next prompt carries it.`);
+        if (state.thread?.id !== threadId) return;
+        const i = modeEchoes.lastIndexOf(kind);
+        if (i >= 0) modeEchoes.splice(i, 1); // no echo will come
+        notice("warn", "mode.notUpdated", `Codex didn't take the mode change yet (${err.message}); the next prompt carries it.`);
       });
     }
     change("mode");

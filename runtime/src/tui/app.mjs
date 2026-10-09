@@ -708,6 +708,7 @@ export function createApp({
     if (!planReady) return;
     if (st.mode?.kind !== "plan" || st.thread?.id !== planReady.threadId || turnActive() || st.queue.length) {
       planReady = null; // the moment passed: a new turn, a queued prompt, another mode or conversation
+      if (note?.plan) note = null;
       return;
     }
     if (modal || confirm || pager || st.requests.length) return;
@@ -1406,7 +1407,8 @@ export function createApp({
     }
     if (overlay && (ev.type === "key" || ev.type === "text")) {
       overlay = false;
-      if (ev.type === "key" && ev.name === "escape") return draw();
+      // Esc and Shift+Tab only close it (Shift+Tab switches modes with nothing open, as in Codex).
+      if (ev.type === "key" && (ev.name === "escape" || (ev.name === "tab" && ev.shift))) return draw();
     }
     if (popup && popupKey(ev)) return draw();
     if (ev.type === "paste-empty") {

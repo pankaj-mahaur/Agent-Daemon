@@ -26,8 +26,8 @@ async function withSession(opts, fn, { engineOpts = {} } = {}) {
   const root = mkdtempSync(join(tmpdir(), "ad-session-"));
   const lockDir = join(root, "locks");
   const engines = [];
-  const make = async () => {
-    const e = await createEngine({ home: join(root, "home"), command, ...engineOpts });
+  const make = async (extra = {}) => {
+    const e = await createEngine({ home: join(root, "home"), command, ...engineOpts, ...extra });
     engines.push(e);
     return e;
   };
@@ -866,4 +866,53 @@ test("modes off (every front end but ad tui): no list, no mask, stable requests 
     assert.ok(!st.calls.includes("collaborationMode/list"));
     assert.equal(st.lastParams["turn/start"].collaborationMode, undefined);
   });
+});
+
+test("modes (review #1): with no effort picked, Default carries Codex's configured model_reasoning_effort, not null", async () => {
+  await withModes(() => ({ configEffort: () => "high" }), async ({ session, engine }) => {
+    await session.modesReady;
+    await session.submit("fail-turn").done;
+    assert.equal((await turnMask(engine)).settings.reasoning_effort, "high", "a null effort would drop the configured one");
+    session.setMode("plan");
+    assert.ok(session.state.notices.some((n) => n.message === "Model changed to fake-model medium for Plan mode."));
+    session.setNextTurn({ effort: "low" }); // the user's own pick wins over the config
+    session.setMode("default");
+    await session.submit("fail-turn").done;
+    assert.equal((await turnMask(engine)).settings.reasoning_effort, "low");
+  });
+  await withModes(() => ({ configEffort: () => "medium" }), async ({ session }) => {
+    await session.modesReady;
+    session.setMode("plan");
+    assert.ok(!session.state.notices.some((n) => n.code === "mode.model"), "no notice when Plan's effort is the configured one");
+  });
+});
+
+test("modes (review #2): the echoes of quick switches never flip the mode back", async () => {
+  await withModes(none, async ({ session }) => {
+    await session.modesReady;
+    await session.submit("fail-turn").done;
+    const seen = [];
+    session.on("change", () => seen.push(session.state.mode.kind));
+    session.setMode("plan");
+    session.setMode("default");
+    session.setMode("plan");
+    const from = seen.length;
+    await sleep(300);
+    assert.deepEqual([...new Set(seen.slice(from))], seen.slice(from).length ? ["plan"] : [], `the mode went: ${seen.join(" ")}`);
+    assert.equal(session.state.mode.kind, "plan");
+  });
+});
+
+test("modes (review #4): a restart whose engine has no presets leaves Plan for Default", async () => {
+  await withModes(
+    (make) => ({ restart: () => make({ env: { FAKE_NO_MODES: "1" } }) }),
+    async ({ session, engine }) => {
+      await session.modesReady;
+      session.setMode("plan");
+      await session.submit("fail-turn").done;
+      engine.server.request("test/crash", {}).catch(() => {});
+      await until(() => session.state.engine.state === "ready" && session.state.mode.presets?.length === 0, "the restart without presets");
+      assert.equal(session.state.mode.kind, "default");
+    },
+  );
 });
