@@ -98,6 +98,17 @@ export function matchKey(ev, k) {
   return Boolean(ev.shift) === k.shift;
 }
 
+/**
+ * A decoded key event in Codex's config spelling ("ctrl-t", "alt-.", "esc",
+ * "page-up"), as /keymap debug shows it; null for what isn't a key.
+ */
+export function eventSpec(ev) {
+  if (ev?.type !== "key" || !ev.name) return null;
+  const back = Object.fromEntries(Object.entries(DECODER).map(([codex, decoder]) => [decoder, codex]));
+  const name = back[ev.name] ?? ev.name;
+  return [ev.ctrl && "ctrl", ev.alt && "alt", ev.shift && name.length > 1 && "shift", name].filter(Boolean).join("-");
+}
+
 /** "ctrl-t" → "ctrl+t", as ad shows keys. */
 export const keyLabel = (spec) => (spec === "-" ? "-" : spec.replace(/-(?=.)/g, "+").replace(/^shift\+\?$/, "?").replace("page+up", "pgup").replace("page+down", "pgdn"));
 
@@ -166,6 +177,10 @@ export function createKeymap({ overrides = null } = {}) {
   for (const [ctx, actions] of Object.entries(map)) parsed[ctx] = Object.fromEntries(Object.entries(actions).map(([a, b]) => [a, b.keys.map(parseKey)]));
   return {
     warnings,
+    /** Every binding: [{ctx, action, keys, custom}], contexts and actions in ad's order. */
+    bindings() {
+      return Object.entries(map).flatMap(([ctx, actions]) => Object.entries(actions).map(([action, b]) => ({ ctx, action, keys: [...b.keys], custom: b.custom })));
+    },
     /** Does `ev` press `action` in `ctx`? */
     is(ctx, action, ev) {
       const ks = parsed[ctx]?.[action];

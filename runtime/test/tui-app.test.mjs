@@ -1040,3 +1040,19 @@ test("/side (review): one at a time, the text kept; a failed side turn shows in 
     await until(() => /Side from main thread/.test(text()), "the panel after /cd");
   }, { modes: true, cols: 100, rows: 30 });
 });
+
+test("/keymap lists the keys; /keymap debug inspects them (Esc included) until Ctrl+C", async () => {
+  await withApp(async ({ app, type, until, text, committed }) => {
+    type("/keymap\r");
+    await until(() => /Keymap[\s\S]*open_transcript\s+ctrl\+t/.test(committed()), "the list");
+    type("/keymap debug\r");
+    await until(() => /Keypress Inspector[\s\S]*Waiting for a keypress\.\.\./.test(text()), "the inspector");
+    type("\x14"); // Ctrl+T: inspected, not opening the transcript
+    await until(() => /Detected: ctrl\+t[\s\S]*Config key: ctrl-t[\s\S]*global\.open_transcript/.test(text()), "Ctrl+T");
+    assert.equal(app.state.pager, false);
+    type("\x1b");
+    await until(() => /Detected: esc[\s\S]*chat\.interrupt_turn/.test(text()), "Esc, inspected");
+    type("\x03");
+    await until(() => !/Keypress Inspector/.test(text()), "closed");
+  }, { cols: 100, rows: 30 });
+});

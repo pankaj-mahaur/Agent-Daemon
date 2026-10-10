@@ -113,3 +113,18 @@ test("docs/tui.md names every default key of every action ad has", () => {
   }
   assert.deepEqual(missing, [], "add these to the Keys section of docs/tui.md");
 });
+
+test("eventSpec and bindings(): what /keymap and its inspector show", async () => {
+  const { eventSpec } = await import("../src/tui/keymap.mjs");
+  const { renderKeymap } = await import("../src/tui/commands.mjs");
+  assert.equal(eventSpec({ type: "key", name: "t", ctrl: true }), "ctrl-t");
+  assert.equal(eventSpec({ type: "key", name: "escape" }), "esc");
+  assert.equal(eventSpec({ type: "key", name: "pageup", shift: true }), "shift-page-up");
+  assert.equal(eventSpec({ type: "text", text: "a" }), null);
+  const km = createKeymap({ overrides: { global: { open_transcript: "ctrl-x" } } });
+  const b = km.bindings().find((x) => x.ctx === "global" && x.action === "open_transcript");
+  assert.deepEqual(b, { ctx: "global", action: "open_transcript", keys: ["ctrl-x"], custom: true });
+  const out = renderKeymap(km, { width: 120, label: (k) => k.replace("-", "+") }).map((l) => l.map((s) => s.text).join("")).join("\n");
+  assert.match(out, /open_transcript\s+ctrl\+x {2}\(yours\)/);
+  assert.match(out, /never writes them/);
+});

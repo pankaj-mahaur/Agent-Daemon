@@ -196,7 +196,7 @@ Big pastes (more than 5 lines or 1000 characters) show as `[Pasted N lines]` and
 
 The terminal bell rings when an approval waits, and when a turn ends while the terminal window isn't focused.
 
-**Changing keys.** ad uses Codex's names for the actions it has, so the keys you set in the stock UI's `/keymap` (in `/codex`; they're saved as `tui.keymap` in ad's Codex home) apply in ad too: the transcript, the external editor, copy, raw output, clear, interrupt, reasoning effort, queue, the shortcuts and the pager. ad doesn't change them itself. A key ad can't use there (a chord like `ctrl-x f`, a key that would mean two things, or one of the prompt's editing keys) is skipped, and `/warnings` says why. Shift+Tab never queues: it switches [Plan mode](#plan-mode), a fixed key in Codex too.
+**Changing keys.** ad uses Codex's names for the actions it has, so the keys you set in the stock UI's `/keymap` (in `/codex`; they're saved as `tui.keymap` in ad's Codex home) apply in ad too: the transcript, the external editor, copy, raw output, clear, interrupt, reasoning effort, queue, the shortcuts and the pager. ad doesn't change them itself. A key ad can't use there (a chord like `ctrl-x f`, a key that would mean two things, or one of the prompt's editing keys) is skipped, and `/warnings` says why. `/keymap` lists the keys in effect (yours marked) and `/keymap debug` shows what your terminal sends for a key and what it does in ad (Ctrl+C closes it). Shift+Tab never queues: it switches [Plan mode](#plan-mode), a fixed key in Codex too.
 
 ---
 

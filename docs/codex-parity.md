@@ -18,7 +18,7 @@ Codex's own rules come with the commands:
 | `/model` | yes | yes | choose the model and reasoning effort |
 | `/ide` | no | yes | Codex reads your editor's selection over its own IDE link, which `ad` doesn't have |
 | `/permissions` | yes | yes | what Codex may do without asking |
-| `/keymap` | not yet | no | remap keys; change them in `/codex`, and `ad` uses them (see [Keys](#keys)) |
+| `/keymap` | yes | no | shows the keys in effect, yours marked; `/keymap debug` is Codex's Keypress Inspector. Keys are changed in `/codex` (the stock UI's `/keymap`), and `ad` uses them (see [Keys](#keys)) |
 | `/vim` | not yet | no | Vim mode for the prompt; in `/codex` |
 | `/setup-default-sandbox` | not yet | no | `ad sandbox setup --elevated` sets up the elevated sandbox (machine-wide: it also affects your own Codex) |
 | `/experimental` | not yet | no | Codex's experimental features; in `/codex` |

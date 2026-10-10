@@ -33,6 +33,41 @@ export function renderMcp(servers, { width = 80 } = {}) {
   return out;
 }
 
+/**
+ * /keymap: the keys in effect by context (ad's defaults with the stock UI's
+ * tui.keymap on top), what was dropped and why, and where they're edited.
+ */
+export function renderKeymap(keymap, { width = 80, label = (k) => k } = {}) {
+  const out = [[{ text: "Keymap", style: BOLD }]];
+  let ctx = null;
+  for (const b of keymap.bindings()) {
+    if (b.ctx !== ctx) {
+      ctx = b.ctx;
+      out.push([{ text: `  ${ctx}`, style: DIM }]);
+    }
+    out.push(row(width, { text: `    ${b.action}`.padEnd(32) }, { text: b.keys.length ? b.keys.map(label).join(", ") : "unbound", style: b.keys.length ? T.code : DIM }, ...(b.custom ? [{ text: "  (yours)", style: DIM }] : [])));
+  }
+  for (const w of keymap.warnings ?? []) out.push(row(width, { text: `  ${clean(w)}`, style: T.warning }));
+  out.push(row(width, { text: "  Keys are set in the stock UI: /codex, then /keymap there (saved as tui.keymap). ad reads them, never writes them. /keymap debug shows what a key sends.", style: DIM }));
+  return out;
+}
+
+/**
+ * /keymap debug, Codex's Keypress Inspector: the last key ad received, its
+ * config spelling and the actions it presses.
+ */
+export function renderKeyInspector(last, { width = 80 } = {}) {
+  const out = [[{ text: "Keypress Inspector", style: BOLD }], [{ text: "Press any key to see what ad receives. Esc is inspected; Ctrl+C closes.", style: DIM }]];
+  if (!last) return [...out, [{ text: "Waiting for a keypress...", style: T.code }], [{ text: "Tip: ad can only inspect keys your terminal sends.", style: DIM }]];
+  out.push(row(width, { text: "Detected: ", style: DIM }, { text: clean(last.label) }));
+  out.push(row(width, { text: "Config key: ", style: DIM }, { text: last.spec ? clean(last.spec) : "unsupported", style: last.spec ? T.code : DIM }));
+  out.push(row(width, { text: "Raw event: ", style: DIM }, { text: JSON.stringify(last.raw ?? "").slice(1, -1) }));
+  out.push([{ text: "Assigned actions:", style: DIM }]);
+  if (!last.actions.length) out.push([{ text: "  none", style: DIM }]);
+  for (const a of last.actions) out.push(row(width, { text: `  ${a}` }));
+  return out;
+}
+
 export function renderHooks(hooks, { width = 80, hooksFile = null } = {}) {
   if (!hooks?.length) return [[{ text: "No hooks.", style: DIM }]];
   const out = [[{ text: "Hooks", style: BOLD }]];

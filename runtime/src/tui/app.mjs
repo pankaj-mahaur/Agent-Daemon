@@ -23,10 +23,10 @@ import { existsSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { canonicalPath } from "../engine/codex/home.mjs";
 import path from "node:path";
-import { copyText, exportMarkdown, imagePath, lastAgentText, renderHooks, renderMcp, renderSkills, renderUsage, terminalSetup, transcriptLines } from "./commands.mjs";
+import { copyText, exportMarkdown, imagePath, lastAgentText, renderHooks, renderKeyInspector, renderKeymap, renderMcp, renderSkills, renderUsage, terminalSetup, transcriptLines } from "./commands.mjs";
 import CODEX_SLASH from "./codex-slash.json" with { type: "json" };
 import { T } from "./view/theme.mjs";
-import { createKeymap } from "./keymap.mjs";
+import { createKeymap, eventSpec, keyLabel } from "./keymap.mjs";
 import { DEFAULT_STATUS, DEFAULT_TITLE, STATUS_IDS, TITLE_IDS, canonical, contextUsedLabel, statusSegments, titleText, unsupported } from "./status.mjs";
 
 export const FORCE_QUIT_MS = 1500;
@@ -47,6 +47,7 @@ export const SLASH_COMMANDS = [
   { name: "archive", source: "codex", desc: "archive this conversation (/resume archived brings it back)" },
   { name: "delete", source: "codex", desc: "delete this conversation for good" },
   { name: "pwd", source: "codex", desc: "show the current working directory" },
+  { name: "keymap", source: "codex", desc: "the keys in effect (/keymap debug shows what a key sends)" },
   { name: "cd", source: "codex", desc: "change the working directory (the conversation continues there)" },
   { name: "model", source: "codex", desc: "choose the model and reasoning effort" },
   { name: "permissions", source: "codex", desc: "what Codex may do without asking" },
@@ -108,7 +109,6 @@ export const PLAN_IMPLEMENTATION_CLEAR_CONTEXT_PREFIX = CODEX_PLAN_CLEAR_CONTEXT
 
 export const NOT_IN_AD = {
   ide: "/ide reads your editor's selection over Codex's private IDE link, which ad doesn't have.",
-  keymap: true,
   vim: true,
   "setup-default-sandbox": "/setup-default-sandbox isn't in ad yet. `ad sandbox setup --elevated` sets up the elevated sandbox (machine-wide: it also affects your own Codex).",
   experimental: true,
@@ -688,6 +688,7 @@ export function createApp({
       lines.push(...c.lines);
       cursor = { row: top + c.cursor.row, col: c.cursor.col };
       if (popup) lines.push(...popup.view.render({ width: w, height: Math.min(10, Math.max(3, rows - lines.length - 1)) }));
+      else if (inspector) lines.push(...renderKeyInspector(inspector.last, { width: w }));
       else if (overlay) lines.push(...renderShortcuts({ newline, keymap }, { width: w }));
       else {
         if (status) lines.push(status);
@@ -844,6 +845,15 @@ export function createApp({
 
   let side = null; // {session, focus: "side" | "main", mainStatus, noticesSeen, off}
   let sideOpening = false; // a /side whose fork is on its way
+  let inspector = null; // /keymap debug: {last}
+
+  // What a key is to ad: its label, config spelling, raw bytes and the actions it presses.
+  function inspectKey(ev) {
+    const asKey = ev.type === "text" && [...ev.text].length === 1 ? { type: "key", name: ev.text.toLowerCase(), shift: ev.text !== ev.text.toLowerCase(), ctrl: false, alt: false, raw: ev.text } : ev;
+    const spec = ev.type === "text" ? ([...ev.text].length === 1 ? ev.text : null) : eventSpec(ev);
+    const actions = keymap.bindings().filter((b) => keymap.is(b.ctx, b.action, asKey)).map((b) => `${b.ctx}.${b.action}`);
+    return { label: spec ? keyLabel(spec) : `text "${ev.text}"`, spec, raw: ev.raw ?? ev.text ?? "", actions };
+  }
 
   const sideItems = (s) => [...s.items.values()].filter((it) => it.threadId === s.thread?.id || it.threadId == null);
   const reviewRunning = () => {
@@ -1046,6 +1056,14 @@ export function createApp({
         return pickItems("title");
       case "cd":
         return changeDir(arg);
+      case "keymap":
+        // Codex's /keymap edits tui.keymap; ad reads it and never writes it (P3), so it shows them.
+        if (arg === "debug") {
+          inspector = { last: null };
+          return draw();
+        }
+        if (arg) return warn("Usage: /keymap [debug]");
+        return commitCell(renderKeymap(keymap, { width: width(), label: keyLabel }));
       case "pwd":
         return arg ? warn("Usage: /pwd") : info0(`Current working directory: ${clean(cwd)}`);
       case "quit":
@@ -1579,6 +1597,12 @@ export function createApp({
 
   function onInput(ev) {
     if (quitting) return;
+    // /keymap debug: every key is shown, not acted on; Ctrl+C closes (Codex's inspector).
+    if (inspector) {
+      if (ev.type === "key" && ev.ctrl && ev.name === "c") inspector = null;
+      else if (ev.type === "key" || ev.type === "text") inspector.last = inspectKey(ev);
+      return draw();
+    }
     if (ev.type === "key" && ev.ctrl && ev.name === "c") {
       onCtrlC();
       return draw();
