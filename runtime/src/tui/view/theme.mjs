@@ -27,6 +27,10 @@ export const T = deepFreeze({
   warning: { fg: "yellow" },
   // Codex's plan mode: the footer's mode chip and the prompt.
   planMode: { fg: "magenta" },
+  // Codex's Vim mode indicator.
+  vimNormal: { fg: "magenta" },
+  vimInsert: { fg: "green" },
+  vimReplace: { fg: "cyan" },
   diffAdd: { fg: "green" },
   diffDel: { fg: "red" },
   diffHunk: { fg: "cyan", dim: true },

@@ -48,6 +48,7 @@ export const SLASH_COMMANDS = [
   { name: "delete", source: "codex", desc: "delete this conversation for good" },
   { name: "pwd", source: "codex", desc: "show the current working directory" },
   { name: "keymap", source: "codex", desc: "the keys in effect (/keymap debug shows what a key sends)" },
+  { name: "vim", source: "codex", desc: "toggle Vim mode for the composer" },
   { name: "cd", source: "codex", desc: "change the working directory (the conversation continues there)" },
   { name: "model", source: "codex", desc: "choose the model and reasoning effort" },
   { name: "permissions", source: "codex", desc: "what Codex may do without asking" },
@@ -109,7 +110,6 @@ export const PLAN_IMPLEMENTATION_CLEAR_CONTEXT_PREFIX = CODEX_PLAN_CLEAR_CONTEXT
 
 export const NOT_IN_AD = {
   ide: "/ide reads your editor's selection over Codex's private IDE link, which ad doesn't have.",
-  vim: true,
   "setup-default-sandbox": "/setup-default-sandbox isn't in ad yet. `ad sandbox setup --elevated` sets up the elevated sandbox (machine-wide: it also affects your own Codex).",
   experimental: true,
   approve: true,
@@ -185,7 +185,9 @@ export function createApp({
   armMs = ARM_MS,
 }) {
   const st = session.state;
-  const composer = createComposer({ history });
+  const composer = createComposer({ history, now });
+  // Codex's tui.vim_mode_default: Vim on from the start, in Insert (as Codex's code does).
+  if (settings?.codex?.get?.("tui.vim_mode_default") === true) composer.setVim(true, { mode: "insert" });
   const width = () => Math.max(10, io.size().cols - 2);
   const height = () => Math.max(4, io.size().rows);
 
@@ -502,10 +504,17 @@ export function createApp({
 
   function footer() {
     const running = turnActive();
-    const hints = running ? ["enter steer", "tab queue", `${newline} newline`] : ["? shortcuts", "@ files", `${newline} newline`];
+    const vim = composer.vim;
+    // Codex's gg chord hint replaces the hints while the second g is awaited.
+    const hints = vim?.hint ? [vim.hint] : running ? ["enter steer", "tab queue", `${newline} newline`] : ["? shortcuts", "@ files", `${newline} newline`];
     const own = [];
     // Codex's mode indicator, first so it's the last to go when the footer is narrow.
     const mode = st.mode?.kind === "plan" ? [{ full: "Plan mode (shift+tab to cycle)", short: "Plan mode", style: T.planMode }] : [];
+    // Codex's Vim indicator comes before the collaboration mode.
+    if (vim) {
+      const name = { normal: "Normal", insert: "Insert", replace: "Replace" }[vim.mode];
+      mode.unshift({ full: `Vim: ${name}`, style: { normal: T.vimNormal, insert: T.vimInsert, replace: T.vimReplace }[vim.mode] });
+    }
     // Codex's unified-exec footer: how many background terminals run, and how to see or stop them.
     const n = st.terminals?.size ?? 0;
     if (n) own.unshift({ full: `${n} background terminal${n === 1 ? "" : "s"} running \u{b7} /ps to view \u{b7} /stop to close`, short: `${n} background terminal${n === 1 ? "" : "s"}` });
@@ -599,6 +608,16 @@ export function createApp({
     titleShown = text;
     titleAt = now();
   }
+  // Codex's cursor in Vim mode: a steady bar in Insert, the terminal's own shape otherwise (DECSCUSR).
+  let cursorShape = null;
+  function syncCursorShape() {
+    const want = composer.vim && !quitting && !titleHeld ? (composer.vim.mode === "insert" ? "bar" : "default") : null;
+    if (want === cursorShape) return;
+    if (want === "bar") io.write("\x1b[6 q");
+    else if (cursorShape === "bar" || want === "default") io.write("\x1b[0 q");
+    cursorShape = want;
+  }
+
   function restoreTitle() {
     clearT(titleTimer);
     titleTimer = null;
@@ -641,6 +660,7 @@ export function createApp({
     drawTimer = null;
     if (quitting) return;
     const pending = flush();
+    syncCursorShape();
     reportPlanUpdates();
     reportNotices();
     reportTurns();
@@ -1056,6 +1076,12 @@ export function createApp({
         return pickItems("title");
       case "cd":
         return changeDir(arg);
+      case "vim": {
+        // Codex's /vim: a toggle for this session; turned on, it starts in Normal.
+        const on = !composer.vim;
+        composer.setVim(on, { mode: "normal" });
+        return info0(on ? "Vim mode enabled." : "Vim mode disabled.");
+      }
       case "keymap":
         // Codex's /keymap edits tui.keymap; ad reads it and never writes it (P3), so it shows them.
         if (arg === "debug") {
@@ -1544,6 +1570,7 @@ export function createApp({
     if (quitting) return;
     quitting = true;
     restoreTitle();
+    syncCursorShape();
     if (modal && !modal.answered) session.resolve(modal.id, null);
     confirm?.resolve(false);
     confirm = null;
@@ -1702,7 +1729,13 @@ export function createApp({
     if (ev.type === "key" && ev.name === "f2" && !ev.ctrl && !ev.alt && !ev.shift) return run("warnings");
     if (ev.type === "text" || ev.type === "paste") lastCtrlC = -Infinity; // new text: Ctrl+C clears it, not quit
     if ((ev.type === "text" || ev.type === "paste") && !turnActive()) actions.onTyping?.();
-    if (keymap.is("composer", "toggle_shortcuts", ev) && !composer.text) {
+    // Vim's Esc comes first: Insert to Normal, or a pending command cancelled (never an interrupt).
+    if (ev.type === "key" && ev.name === "escape" && composer.vim?.wantsEscape()) {
+      composer.handle(ev);
+      return draw();
+    }
+    // In Vim's Normal mode "?" searches backwards; the shortcuts open only from Insert (Codex).
+    if (keymap.is("composer", "toggle_shortcuts", ev) && !composer.text && !(composer.vim && composer.vim.mode !== "insert")) {
       overlay = true;
       return draw();
     }
@@ -1826,8 +1859,10 @@ export function createApp({
     /** Around a handoff (/codex, the editor): the title goes back to the terminal's, then ours again. */
     holdTitle(hold) {
       titleHeld = Boolean(hold);
-      if (hold) restoreTitle();
-      else draw();
+      if (hold) {
+        restoreTitle();
+        syncCursorShape(); // the editor or the stock UI gets the terminal's own cursor
+      } else draw();
     },
     dispose() {
       restoreTitle();

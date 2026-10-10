@@ -245,8 +245,8 @@ test("Codex commands ad doesn't run never reach the model; busy ones wait, and t
     type("/new\r");
     await until(() => /'\/new' is disabled while a task is in progress\./.test(text()), "the busy answer");
     assert.equal(app.state.composer, "/new");
-    type("\x15/vim what about tests?\r");
-    await until(() => /\/vim isn't in ad yet/.test(text()), "not steered into the turn");
+    type("\x15/recap what about tests?\r");
+    await until(() => /\/recap isn't in ad yet/.test(text()), "not steered into the turn");
     assert.equal(await sent(), before, "nothing was steered into the running turn");
     assert.ok(session.state.thread, "the conversation is untouched");
     type("\x15/status\r"); // allowed during a task, as in Codex

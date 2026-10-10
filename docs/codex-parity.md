@@ -19,7 +19,7 @@ Codex's own rules come with the commands:
 | `/ide` | no | yes | Codex reads your editor's selection over its own IDE link, which `ad` doesn't have |
 | `/permissions` | yes | yes | what Codex may do without asking |
 | `/keymap` | yes | no | shows the keys in effect, yours marked; `/keymap debug` is Codex's Keypress Inspector. Keys are changed in `/codex` (the stock UI's `/keymap`), and `ad` uses them (see [Keys](#keys)) |
-| `/vim` | not yet | no | Vim mode for the prompt; in `/codex` |
+| `/vim` | yes | no | Codex's Vim mode for the prompt (Normal, Insert, Replace; its motions, operators, text objects, search, undo and `.`); `tui.vim_mode_default` starts it on |
 | `/setup-default-sandbox` | not yet | no | `ad sandbox setup --elevated` sets up the elevated sandbox (machine-wide: it also affects your own Codex) |
 | `/experimental` | not yet | no | Codex's experimental features; in `/codex` |
 | `/approve` | not yet | yes | approve one retry of a recent auto-review denial; in `/codex` |
