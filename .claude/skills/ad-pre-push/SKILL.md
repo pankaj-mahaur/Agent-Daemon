@@ -87,6 +87,7 @@ node runtime/scripts/check-doc-links.mjs           # every relative doc link poi
 cd runtime && npm test
 AD_REAL_ENGINE=1 node --test --test-concurrency=1 --test-force-exit test/tui-live.test.mjs   # after app/session/view/engine changes
 ```
+- Pushing to a branch with an open PR, opening one, or releasing: run the `ad-ci-readiness` skill too (the CI pipeline mirrored here and in a Linux container, the PR's CI read per test, the release-readiness checklist).
 - Stage files by name (never `git add -A`), never `--no-verify`, commit with the attribution trailer, push the feature branch (never `main` directly). After a PR: bind it, read CI (the real-engine job may fail without failing the run — read its result).
 - Report to the user in one short block: docs updated, skills updated, learnings recorded, hygiene result, verification result, what was pushed.
 

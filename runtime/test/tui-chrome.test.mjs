@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { assertGolden } from "../testkit/golden.mjs";
 import { createPicker, newlineHint, renderFooter, renderHeader, renderShortcuts, renderStatus, shortenPath } from "../src/tui/view/chrome.mjs";
 import { lineWidth } from "../src/tui/terminal/text.mjs";
+import { T } from "../src/tui/view/theme.mjs";
 
 const text = (lines) => lines.map((l) => l.map((s) => s.text).join("").replace(/ +$/, "")).join("\n");
 const key = (name, mods = {}) => ({ type: "key", name, ctrl: false, alt: false, shift: false, ...mods });
@@ -28,6 +29,7 @@ function sheet(width) {
   out.push("── status ──", text(renderStatus({ label: "Checking token refresh", elapsedMs: 14_000, queued: ["also run the signup test"] }, { width })));
   out.push("── footer idle ──", text([renderFooter(IDLE, { width })]));
   out.push("── footer busy ──", text([renderFooter(BUSY, { width })]));
+  out.push("── footer plan mode ──", text([renderFooter({ ...IDLE, chips: [{ full: "Plan mode (shift+tab to cycle)", short: "Plan mode", style: T.planMode }] }, { width })]));
   out.push("── shortcuts ──", text(renderShortcuts({ newline: "ctrl+enter" }, { width })));
   return out.join("\n");
 }
@@ -105,4 +107,17 @@ test("picker: filters by every word, moves, scrolls, picks, closes", () => {
   assert.match(text(p.render({ width: 40 })), /no matches/);
   assert.deepEqual(p.handle(key("enter")), { changed: false });
   assert.deepEqual(p.handle(key("escape")), { cancel: true });
+});
+
+test("picker: only a change to the filter takes the cursor back to the top", () => {
+  const seen = [];
+  const p = createPicker({ items: ["a", "b", "c"].map((v) => ({ label: v, value: v })), onChange: (v) => seen.push(v) });
+  p.handle(key("down"));
+  p.handle(key("down"));
+  p.handle(key("left"));
+  p.handle(key("home"));
+  assert.equal(p.current, "c", "Left and Home leave it where it is");
+  p.handle({ type: "text", text: "a" });
+  assert.equal(p.current, "a");
+  assert.deepEqual(seen, ["b", "c", "a"], "the live preview hears each move once");
 });

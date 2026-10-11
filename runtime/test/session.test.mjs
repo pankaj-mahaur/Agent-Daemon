@@ -22,12 +22,12 @@ const until = async (pred, what, ms = 10000) => {
   throw new Error(`timed out waiting for ${what}`);
 };
 
-async function withSession(opts, fn) {
+async function withSession(opts, fn, { engineOpts = {} } = {}) {
   const root = mkdtempSync(join(tmpdir(), "ad-session-"));
   const lockDir = join(root, "locks");
   const engines = [];
-  const make = async () => {
-    const e = await createEngine({ home: join(root, "home"), command });
+  const make = async (extra = {}) => {
+    const e = await createEngine({ home: join(root, "home"), command, ...engineOpts, ...extra });
     engines.push(e);
     return e;
   };
@@ -411,6 +411,24 @@ test("close declines open requests and resolves waiting turns", async () => {
 /* Part 4 re-review: thread switches, close and restart races          */
 /* ------------------------------------------------------------------ */
 
+test("release: ad leaves the thread and waits until Codex has unloaded it (for /codex)", async () => {
+  await withSession(none, async ({ session, engine }) => {
+    await session.submit("fail-turn").done;
+    const id = session.state.thread.id;
+    assert.equal(await session.release(id), true);
+    assert.equal(session.state.thread, null, "ad left the thread");
+    const st = await debugState(engine);
+    assert.deepEqual(st.lastParams["thread/unsubscribe"], { threadId: id });
+    // A thread Codex doesn't have loaded is free already.
+    assert.equal(await session.release("not-loaded"), true);
+    // No thread/closed in time: false, so the caller can fall back (restart ad's engine).
+    await session.submit("fail-turn").done;
+    assert.equal(await session.release(session.state.thread.id, { timeoutMs: 1 }), false);
+    // ad resumes it afterwards as usual.
+    assert.equal(await session.resume(id), id);
+  });
+});
+
 test("newThread during a running turn interrupts it and settles its waiters as abandoned", async () => {
   await withSession(none, async ({ session, engine }) => {
     const a = session.submit("hang");
@@ -724,5 +742,344 @@ test("a crash also settles items that have no turn (a running ! command)", async
     const it = session.state.items.get("sh-x");
     assert.equal(it.streaming, false);
     assert.equal(it.status, "failed");
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Collaboration modes (Codex's plan mode, codex-parity-2 Part 4)      */
+/* ------------------------------------------------------------------ */
+
+const withModes = (opts, fn, extra = {}) => withSession((make) => ({ modes: true, ...opts(make) }), fn, { engineOpts: { experimental: true, ...(extra.env ? { env: extra.env } : {}) } });
+const turnMask = async (engine) => (await debugState(engine)).lastParams["turn/start"].collaborationMode;
+
+test("modes: presets load at start; every turn/start carries the mask; Default has the user's model and effort", async () => {
+  await withModes(none, async ({ session, engine }) => {
+    await session.modesReady;
+    assert.deepEqual(session.state.mode.presets.map((p) => [p.name, p.mode, p.effort]), [["Plan", "plan", "medium"], ["Default", "default", null]]);
+    assert.equal(session.state.mode.kind, "default");
+    session.setNextTurn({ model: "m-user", effort: "high" });
+    await session.submit("fail-turn").done;
+    assert.deepEqual(await turnMask(engine), { mode: "default", settings: { model: "m-user", reasoning_effort: "high", developer_instructions: null } });
+  });
+});
+
+test("modes: Plan uses plan_mode_reasoning_effort, else the preset's; switching tells the thread and says when the effort changes", async () => {
+  let planEffort = null;
+  await withModes(() => ({ planEffort: () => planEffort }), async ({ session, engine }) => {
+    await session.modesReady;
+    session.setNextTurn({ model: "m-user", effort: "low" });
+    await session.submit("fail-turn").done;
+    assert.deepEqual(session.setMode("plan"), { ok: true });
+    await sleep(50);
+    const st = await debugState(engine);
+    assert.deepEqual(st.lastParams["thread/settings/update"], { threadId: session.state.thread.id, collaborationMode: { mode: "plan", settings: { model: "m-user", reasoning_effort: "medium", developer_instructions: null } } });
+    assert.ok(session.state.notices.some((n) => n.message === "Model changed to m-user medium for Plan mode."), JSON.stringify(session.state.notices));
+    planEffort = "xhigh";
+    await session.submit("fail-turn").done;
+    assert.equal((await turnMask(engine)).settings.reasoning_effort, "xhigh");
+    // Back to Default: the user's own effort, never the plan turn's.
+    session.setMode("default");
+    await session.submit("fail-turn").done;
+    assert.deepEqual((await turnMask(engine)).settings, { model: "m-user", reasoning_effort: "low", developer_instructions: null });
+    assert.equal(session.state.config.effort, "low");
+  });
+});
+
+test("modes: before a thread exists a switch is local; the first turn carries it", async () => {
+  await withModes(none, async ({ session, engine }) => {
+    await session.modesReady;
+    assert.equal(session.cycleMode().ok, true, "Shift+Tab: Plan is first");
+    assert.equal(session.state.mode.kind, "plan");
+    await session.submit("fail-turn").done;
+    const st = await debugState(engine);
+    assert.equal(st.lastParams["thread/settings/update"], undefined);
+    assert.equal(st.lastParams["turn/start"].collaborationMode.mode, "plan");
+    assert.equal(session.cycleMode().ok, true);
+    assert.equal(session.state.mode.kind, "default", "cycles back in Codex's order");
+  });
+});
+
+test("modes: thread/settings/updated (here, /codex or a turn's mask) drives the mode; resume restores it; a new conversation starts in Default", async () => {
+  await withModes(none, async ({ session, engine }) => {
+    await session.modesReady;
+    await session.submit("fail-turn").done;
+    const id = session.state.thread.id;
+    // As if the stock UI had switched the thread to Plan.
+    await engine.server.request("thread/settings/update", { threadId: id, collaborationMode: { mode: "plan", settings: { model: "fake-model", reasoning_effort: "medium", developer_instructions: null } } });
+    await until(() => session.state.mode.kind === "plan", "the mode from thread/settings/updated");
+    session.newThread();
+    assert.equal(session.state.mode.kind, "default");
+    await session.resume(id);
+    assert.equal(session.state.mode.kind, "plan", "resume reports the thread's mode");
+  });
+});
+
+test("modes: the mask goes with a queued prompt and with the re-sent prompt after an engine restart", async () => {
+  await withModes(
+    (make) => ({ restart: async () => { await sleep(200); return make(); } }),
+    async ({ session, engine, engines }) => {
+      await session.modesReady;
+      session.setMode("plan");
+      await session.review({ type: "custom", instructions: "hang" });
+      await until(() => session.state.activeTurnId, "the review turn");
+      const q = session.submit("fail-turn");
+      assert.equal((await q.accepted).queued, true, "a review can't be steered: queued");
+      await session.interrupt();
+      await until(() => session.state.queue.length === 0 && session.state.turns.length === 2, "the queued prompt");
+      assert.equal((await turnMask(engine)).mode, "plan");
+      engine.server.request("test/crash", {}).catch(() => {});
+      await until(() => session.state.engine.state === "restarting", "restarting");
+      const s = session.submit("fail-turn");
+      assert.equal((await s.accepted).queued, true);
+      await until(() => session.state.engine.state === "ready" && session.state.queue.length === 0, "the queue after the restart");
+      await sleep(100);
+      assert.equal((await turnMask(engines[1])).mode, "plan", "still Plan on the new engine");
+      assert.ok((await debugState(engines[1])).calls.includes("collaborationMode/list"), "presets asked again");
+    },
+  );
+});
+
+test("modes: Codex without presets → unavailable, with a notice; a slow list gives up after 2 s", async () => {
+  await withModes(none, async ({ session, engine }) => {
+    await session.modesReady;
+    assert.deepEqual(session.state.mode.presets, []);
+    assert.ok(session.state.notices.some((n) => n.code === "modes.unavailable"));
+    assert.deepEqual(session.setMode("plan"), { ok: false, message: "Plan mode unavailable right now." });
+    assert.deepEqual(session.cycleMode(), { ok: false, message: "Plan mode unavailable right now." });
+    await session.submit("fail-turn").done;
+    assert.equal(await turnMask(engine), undefined, "no mask without presets");
+  }, { env: { FAKE_NO_MODES: "1" } });
+  await withModes(none, async ({ session }) => {
+    const t = Date.now();
+    await session.modesReady;
+    assert.ok(Date.now() - t >= 1500, "Codex's 2 s wait");
+    assert.deepEqual(session.state.mode.presets, []);
+  }, { env: { FAKE_MODES_SLOW: "1" } });
+});
+
+test("modes off (every front end but ad tui): no list, no mask, stable requests only", async () => {
+  await withSession(none, async ({ session, engine }) => {
+    await session.modesReady;
+    assert.equal(session.state.mode.presets, null);
+    await session.submit("fail-turn").done;
+    const st = await debugState(engine);
+    assert.ok(!st.calls.includes("collaborationMode/list"));
+    assert.equal(st.lastParams["turn/start"].collaborationMode, undefined);
+  });
+});
+
+test("modes (review #1): with no effort picked, Default carries Codex's configured model_reasoning_effort, not null", async () => {
+  await withModes(() => ({ configEffort: () => "high" }), async ({ session, engine }) => {
+    await session.modesReady;
+    await session.submit("fail-turn").done;
+    assert.equal((await turnMask(engine)).settings.reasoning_effort, "high", "a null effort would drop the configured one");
+    session.setMode("plan");
+    assert.ok(session.state.notices.some((n) => n.message === "Model changed to fake-model medium for Plan mode."));
+    session.setNextTurn({ effort: "low" }); // the user's own pick wins over the config
+    session.setMode("default");
+    await session.submit("fail-turn").done;
+    assert.equal((await turnMask(engine)).settings.reasoning_effort, "low");
+  });
+  await withModes(() => ({ configEffort: () => "medium" }), async ({ session }) => {
+    await session.modesReady;
+    session.setMode("plan");
+    assert.ok(!session.state.notices.some((n) => n.code === "mode.model"), "no notice when Plan's effort is the configured one");
+  });
+});
+
+test("modes (review #2): the echoes of quick switches never flip the mode back", async () => {
+  await withModes(none, async ({ session }) => {
+    await session.modesReady;
+    await session.submit("fail-turn").done;
+    const seen = [];
+    session.on("change", () => seen.push(session.state.mode.kind));
+    session.setMode("plan");
+    session.setMode("default");
+    session.setMode("plan");
+    const from = seen.length;
+    await sleep(300);
+    assert.deepEqual([...new Set(seen.slice(from))], seen.slice(from).length ? ["plan"] : [], `the mode went: ${seen.join(" ")}`);
+    assert.equal(session.state.mode.kind, "plan");
+  });
+});
+
+test("modes (review #4): a restart whose engine has no presets leaves Plan for Default", async () => {
+  await withModes(
+    (make) => ({ restart: () => make({ env: { FAKE_NO_MODES: "1" } }) }),
+    async ({ session, engine }) => {
+      await session.modesReady;
+      session.setMode("plan");
+      await session.submit("fail-turn").done;
+      engine.server.request("test/crash", {}).catch(() => {});
+      await until(() => session.state.engine.state === "ready" && session.state.mode.presets?.length === 0, "the restart without presets");
+      assert.equal(session.state.mode.kind, "default");
+    },
+  );
+});
+
+/* ------------------------------------------------------------------ */
+/* Background terminals (Codex's unified exec, codex-parity-2 Part 5)  */
+/* ------------------------------------------------------------------ */
+
+test("background terminals: tracked by Codex's processId past the turn, last 3 lines; stopTerminals cleans them", async () => {
+  await withModes(none, async ({ session, engine }) => {
+    await session.submit("bg-terminal").done;
+    assert.equal(session.state.terminals.size, 1, "it outlives the turn");
+    const t = session.state.terminals.get("4242");
+    assert.equal(t.command, "/bin/bash -lc 'npm run dev:0'");
+    await until(() => t.lines.length === 3 && /^tick/.test(t.lines[2]), "a few ticks");
+    assert.ok(t.lines.every((l) => l && !/\n/.test(l)), "non-empty single lines");
+    await session.stopTerminals();
+    assert.equal(session.state.terminals.size, 0);
+    assert.ok((await debugState(engine)).calls.includes("thread/backgroundTerminals/clean"));
+    await sleep(100);
+    assert.equal(session.state.terminals.size, 0, "Codex's late item/completed doesn't bring it back");
+  });
+});
+
+test("background terminals: a new conversation and a resume forget them", async () => {
+  await withModes(none, async ({ session }) => {
+    await session.submit("bg-terminal").done;
+    const id = session.state.thread.id;
+    assert.equal(session.state.terminals.size, 1);
+    session.newThread();
+    assert.equal(session.state.terminals.size, 0);
+    await session.resume(id);
+    assert.equal(session.state.terminals.size, 0);
+  });
+});
+
+test("background terminals (review): an item id reused across turns ends the right one; /stop forgets them even when Codex refuses", async () => {
+  await withModes(none, async ({ session }) => {
+    await session.submit("bg-call0").done;
+    const [server] = [...session.state.terminals.values()];
+    assert.equal(server.itemId, "call_0");
+    await session.submit("quick-call0").done;
+    assert.deepEqual([...session.state.terminals.keys()], [server.key], "the quick command's end didn't take the server with it");
+    await sleep(100);
+    assert.ok(!session.state.terminals.get(server.key).lines.includes("1 passing"), "the other turn's output isn't the server's");
+  });
+  // An engine that didn't opt into the experimental API refuses the clean call.
+  await withSession(none, async ({ session }) => {
+    await session.submit("bg-terminal").done;
+    assert.equal(session.state.terminals.size, 1);
+    await assert.rejects(session.stopTerminals(), /experimentalApi/);
+    assert.equal(session.state.terminals.size, 0, "forgotten anyway, as Codex does");
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* /cd: a mutable folder (codex-parity-2 Part 6)                       */
+/* ------------------------------------------------------------------ */
+
+test("changeDir: forks the thread into the folder; the next turn, /new, a resume and an engine restart all use it", async () => {
+  await withSession(
+    (make) => ({ restart: async () => { await sleep(100); return make(); } }),
+    async ({ session, engine, engines, root, lockDir }) => {
+      const other = join(root, "other");
+      mkdirSync(other);
+      await session.submit("fail-turn").done;
+      const first = session.state.thread.id;
+      const id = await session.changeDir(other);
+      assert.notEqual(id, first);
+      const st = await debugState(engine);
+      assert.deepEqual({ threadId: st.lastParams["thread/fork"].threadId, cwd: st.lastParams["thread/fork"].cwd, excludeTurns: st.lastParams["thread/fork"].excludeTurns }, { threadId: first, cwd: other, excludeTurns: true });
+      assert.equal(session.state.config.cwd, other);
+      assert.equal(session.state.items.size, 0, "the fork's history isn't loaded again: it's on screen");
+      assert.equal(readdirSync(lockDir).length, 1, "the lock moved to the fork");
+      await session.submit("fail-turn").done;
+      assert.equal((await debugState(engine)).lastParams["turn/start"].threadId, id);
+      // An engine restart resumes the fork in the new folder.
+      engine.server.request("test/crash", {}).catch(() => {});
+      await until(() => session.state.engine.state === "ready" && engines.length === 2, "the restart");
+      assert.equal((await debugState(engines[1])).lastParams["thread/resume"].cwd, other);
+      // A new conversation starts there; a resume goes there too.
+      session.newThread();
+      await session.submit("fail-turn").done;
+      assert.equal((await debugState(engines[1])).lastParams["thread/start"].cwd, other);
+      await session.resume(first);
+      assert.equal((await debugState(engines[1])).lastParams["thread/resume"].cwd, other);
+    },
+  );
+});
+
+test("changeDir: without a thread only the folder changes; busy or queued, it's refused", async () => {
+  await withSession(none, async ({ session, engine, root }) => {
+    const other = join(root, "other");
+    mkdirSync(other);
+    assert.equal(await session.changeDir(other), null);
+    await session.submit("fail-turn").done;
+    const st = await debugState(engine);
+    assert.equal(st.lastParams["thread/start"].cwd, other);
+    assert.ok(!st.calls.includes("thread/fork"));
+    session.submit("hang");
+    await until(() => session.state.activeTurnId, "a running turn");
+    await assert.rejects(session.changeDir(root), /requires an idle primary session without queued input/);
+    await session.interrupt();
+  });
+});
+
+test("setHooks: /cd swaps the front end's hooks", async () => {
+  const seen = [];
+  await withSession(() => ({ hooks: { beforeTurn: () => void seen.push("old") } }), async ({ session }) => {
+    await session.submit("fail-turn").done;
+    session.setHooks({ beforeTurn: () => void seen.push("new") });
+    await session.submit("fail-turn").done;
+    assert.deepEqual(seen, ["old", "new"]);
+  });
+});
+
+test("changeDir (review): a thread with nothing in it yet (/clear) isn't forked; the next thread starts in the folder", async () => {
+  await withSession(none, async ({ session, engine, root }) => {
+    const other = join(root, "other");
+    mkdirSync(other);
+    await session.startThread({ sessionStartSource: "clear" });
+    assert.ok(session.state.thread);
+    assert.equal(await session.changeDir(other), null);
+    assert.equal(session.state.thread, null);
+    await session.submit("fail-turn").done;
+    const st = await debugState(engine);
+    assert.ok(!st.calls.includes("thread/fork"), "Codex hasn't saved an empty thread: nothing to fork");
+    assert.equal(st.lastParams["thread/start"].cwd, other);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Side conversations (codex-parity-2 Part 7)                          */
+/* ------------------------------------------------------------------ */
+
+test("openSide: an ephemeral, read-only fork with Codex's side texts; its events stay apart; closing lets it go", async () => {
+  await withModes(none, async ({ session, engine, lockDir }) => {
+    await session.modesReady;
+    await assert.rejects(session.openSide(), /'\/side' is unavailable until the main thread is ready\./);
+    await session.submit("fail-turn").done;
+    session.setMode("plan");
+    const side = await session.openSide();
+    const st = await debugState(engine);
+    const fork = st.lastParams["thread/fork"];
+    assert.deepEqual(
+      { ephemeral: fork.ephemeral, excludeTurns: fork.excludeTurns, sandbox: fork.sandbox, approvalPolicy: fork.approvalPolicy, config: fork.config },
+      { ephemeral: true, excludeTurns: true, sandbox: "read-only", approvalPolicy: "never", config: { "features.hooks": false } },
+    );
+    const inj = st.lastParams["thread/inject_items"];
+    assert.equal(inj.threadId, side.state.thread.id);
+    assert.deepEqual(inj.items.map((i) => i.role), ["developer", "user"]);
+    assert.match(inj.items[1].content[0].text, /^Side conversation boundary\./);
+    assert.equal(readdirSync(lockDir).length, 1, "the ephemeral fork takes no lock");
+    // A side turn: Default mode even though main is in Plan; its request is declined; main untouched.
+    const mainItems = session.state.items.size;
+    const r = await side.submit("plain question").done;
+    assert.equal(r.status, "completed");
+    const turnStart = (await debugState(engine)).lastParams["turn/start"];
+    assert.equal(turnStart.threadId, side.state.thread.id);
+    assert.equal(turnStart.collaborationMode.mode, "default");
+    assert.ok([...side.state.items.values()].some((i) => i.kind === "agentMessage" && /pong\[decline\]/.test(i.text)), "side requests are declined");
+    assert.equal(session.state.items.size, mainItems, "nothing of the side reached the main conversation");
+    assert.equal(session.state.requests.length, 0);
+    const sideId = side.state.thread.id;
+    side.close();
+    await sleep(50);
+    assert.equal((await debugState(engine)).lastParams["thread/unsubscribe"]?.threadId, sideId);
+    assert.ok(session.state.thread, "main goes on");
   });
 });

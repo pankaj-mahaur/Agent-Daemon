@@ -2,7 +2,7 @@
 
 [![test](https://github.com/pankaj-mahaur/Agent-Daemon/actions/workflows/test.yml/badge.svg)](https://github.com/pankaj-mahaur/Agent-Daemon/actions/workflows/test.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![version](https://img.shields.io/badge/version-2.1.1-green.svg)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.2.0-green.svg)](CHANGELOG.md)
 [![harnesses](https://img.shields.io/badge/harnesses-Claude%20Code%20%7C%20Codex%20%7C%20Cursor-purple.svg)](#cross-harness-support)
 
 A **self-improving runtime** for AI coding agents — with **multi-agent orchestration** built in. Wraps Claude Code (and any agent that writes a session transcript) with universal guardrails, persistent memory, and a digest pipeline that distills lessons from every session so the next one is automatically smarter. Since v2 it also runs agents itself, on the OpenAI Codex engine.
@@ -12,6 +12,8 @@ Ships with a full **team coordination layer**: spawn worker agents (sandboxed Co
 Skills evolve too: [GEPA](runtime/src/digest/gepa/README.md) (Genetic-Pareto Prompt Evolution) reads execution traces and proposes Pareto-optimal skill refinements that you accept or reject via `agent-daemon review`.
 
 > **v1.0.0** is the stable Claude Code memory runtime (hooks, memory, skills, GEPA, teams). See [CHANGELOG.md](CHANGELOG.md).
+
+> **v2.2.0 — every Codex command in `ad`.** Each slash command of the pinned Codex works in `ad` with Codex's meaning, or says why not: plan mode (`/plan`, Shift+Tab), background terminals (`/ps`, `/stop`), `/cd`, side conversations (`/side`), Vim mode, syntax highlighting and `/theme`, `/recap`, `/subagents`, `/approve` and more. See [Codex commands in ad](docs/codex-parity.md) and the [release notes](https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v2.2.0).
 
 > **v2.1.0 — `ad` is a Codex-style terminal UI.** Type `ad` in any project: the Codex look and keys, plus what ad adds: project memory you can see ("Learned:" rows, `/memory`), `/undo` for the files the last turn changed (only the agent's own edits; it refuses rather than guess), background `/loop`s, schedules and teams. See [Terminal UI](#terminal-ui-ad) and the [release notes](https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v2.1.0).
 
@@ -168,7 +170,9 @@ Design and decisions: [docs/harness-design.md](docs/harness-design.md).
 ### Terminal UI (`ad`)
 
 Bare `ad` (or `ad tui`) opens a Codex-style terminal UI on the same engine, and `ad --last` reopens the newest conversation in it. `AD_TUI=0` turns that off, so bare `ad` prints the help (`ad tui` still opens the UI); `ad chat` stays the plain line mode.
-- **Codex's reflexes:** history in your terminal's own scrollback, approvals showing the full command or diff (keys pressed in the first 400 ms are ignored), steer (Enter) and queue (Tab) while a turn runs, Esc to interrupt, Esc Esc to rewind, Ctrl+T for the transcript, `/model`, `/review`, `/resume`, `/permissions` and the rest of Codex's commands.
+- **Codex's reflexes:** history in your terminal's own scrollback, approvals showing the full command or diff (keys pressed in the first 400 ms are ignored), steer (Enter) and queue (Tab) while a turn runs, Esc to interrupt, Esc Esc to rewind, Ctrl+T for the transcript, Ctrl+O to copy, `/model`, `/review`, `/resume`, `/permissions`, `/clear`, `/archive`, `/delete`, `/statusline`, `/title` and the rest of Codex's commands, with Codex's rules (some wait for the turn to end). A Codex command ad doesn't have yet answers why instead of going to the model; [codex-parity.md](docs/codex-parity.md) lists every one.
+- **Codex's commands:** plan mode (`/plan`, Shift+Tab), background terminals (`/ps`, `/stop`), `/cd`, side conversations (`/side`, `/btw`), Vim mode (`/vim`), syntax highlighting and `/theme`, `/recap`, `/subagents` (Alt+← / Alt+→), `/approve`, `/keymap`, `/clear`, `/archive`, `/delete` and the rest: [what each does in ad](docs/codex-parity.md).
+- **Shared with the stock UI:** the status line, the window title and the keys you set in `/codex` (Codex's `tui.*` settings in ad's Codex home).
 - **What ad adds:** "Learned:" rows after a turn and `/memory`; `/private`; `/undo`, which puts back the files the last turn's edits changed and rewinds it, and refuses when your own work is in the way (a save of yours during the turn, or after the agent's edit, is a conflict; only `/undo force` discards later changes to the agent's files); `/loop` in the background; `/team`, `/schedule`, `/tools`.
 - **`/codex`** (or `ad codex`) opens the stock Codex UI on the same conversation.
 - **Tested live:** CI's real-engine job (non-blocking) runs the manual test's terminal UI script and ad's own TUI features on the real `ad tui`, in a real pseudo-terminal with the real pinned Codex, on Linux, macOS and Windows (`runtime/test/tui-live.test.mjs`).
@@ -904,6 +908,7 @@ Copy-paste configuration templates:
 
 **Start here:**
 - [Terminal UI](docs/tui.md) — Using `ad` / `ad tui`: keys, commands, `/undo`, terminals
+- [Codex commands in ad](docs/codex-parity.md) — Every Codex slash command: works in ad, or why not yet; keys and settings shared with the stock UI
 - [Agent harness guide](docs/harness.md) — `ad auth`, `ad tui`, `ad codex`, `ad chat/run/loop/schedule/web/acp`, safety model, Windows notes
 - [Workflow](docs/workflow.md) — `ad watch` vs `ad digest-latest`, the ending protocol, decision matrix
 - [Troubleshooting](docs/troubleshooting.md) — Symptoms, causes and fixes (watch, digest, harness, Windows sandbox, terminal UI)

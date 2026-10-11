@@ -14,10 +14,11 @@ import { colorDepth, truncate, wrap } from "./terminal/text.mjs";
 import { sanitize } from "./terminal/sanitize.mjs";
 import { setWidthProfile, stringWidth } from "./terminal/width.mjs";
 import { probeWidthProfile, reflowModel, terminalName } from "./terminal/detect.mjs";
+import { T } from "./view/theme.mjs";
 
-const DIM = { dim: true };
-const ACCENT = { fg: "cyan", bold: true };
-const WARN = { fg: "yellow" };
+const DIM = T.dim;
+const ACCENT = T.accent;
+const WARN = T.warning;
 
 /**
  * Turns streamed text (chunks that may split lines and escape sequences) into
@@ -127,7 +128,7 @@ export function createPreviewApp({ io, renderer, makeSession, header = [], hints
       // The whole request goes into history first, so a long one can be read in
       // full (scroll up) even when the prompt below only shows its start and end.
       transcript.end();
-      renderer.commit([[], ...lines.map((l, i) => [{ text: `  ${l}`, style: i === 0 ? { bold: true } : undefined }])]);
+      renderer.commit([[], ...lines.map((l, i) => [{ text: `  ${l}`, style: i === 0 ? T.bold : undefined }])]);
       approval = { lines, resolve, armedAt: now() };
       draw();
     });
@@ -236,7 +237,7 @@ export function createPreviewApp({ io, renderer, makeSession, header = [], hints
     for (const row of transcript.live()) lines.push(row);
     if (busy && !approval) {
       const secs = Math.floor((now() - turnStarted) / 1000);
-      lines.push([{ text: "\u{25e6} ", style: { fg: "cyan" } }, { text: `Working (${secs}s \u{b7} esc to interrupt)`, style: DIM }]);
+      lines.push([{ text: "\u{25e6} ", style: T.code }, { text: `Working (${secs}s \u{b7} esc to interrupt)`, style: DIM }]);
     }
     if (approval) {
       lines.push([]);

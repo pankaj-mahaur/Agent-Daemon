@@ -25,15 +25,20 @@ Install with `npm ci` (or `npm install`) in `runtime/`, devDependencies included
 | `/undo` on real git repos | `test/checkpoints.test.mjs` | snapshots, restores byte for byte, every conflict kind, adversarial cases |
 | Real Codex, protocol level | `test/engine-real.test.mjs` + `testkit/mock-responses.mjs` | what a Codex release actually sends for a turn, an approval, a patch |
 | Real Codex, real terminal | `test/tui-live.test.mjs` | the terminal UI script of the manual test (section 6) and ad's own features, on the real `ad tui` |
+| Vim, highlighting, recap | `test/tui-vim`, `tui-highlight`, `tui-recap` | Codex's Vim binding table; each language's lexer, hostile input at the caps, a style golden per theme; Codex's recap history budget and strict parse |
+| Keys, styles, settings | `test/tui-keymap`, `tui-styles`, `tui-dialogs`, `tui-prefs`, `tui-status` | Codex's key spelling and `tui.keymap` overrides; a golden that keeps every span's style (and no colour outside `view/theme.mjs`); the confirm and checklist; settings files; status-line and title items, `titleSafe` |
+| The key routing table | `test/tui-app.test.mjs` ("key routing table") | for each layer (approval, ad's confirm, pager, shortcuts, popup, checklist, composer idle or running), what Esc, Ctrl+C, Tab, Shift+Tab, Enter and PgUp do |
 | Codex pin bookkeeping | `test/tui-resilience.test.mjs` | ad's slash commands don't collide with Codex's (`src/tui/codex-slash.json` must match the pinned tag); `src/engine/codex/compat.json` lists the pin as tested, with a "what changed" note (`AD_COMPAT_NOTE_PENDING=1` lets the upgrade bot's run pass until a person writes it) |
 
 ### The fake engine speaks the pinned protocol
 
-`testkit/fake-codex-app-server.mjs` is a scripted `codex app-server`: a prompt's text picks a scenario (`edit-file`, `two-approvals`, `hang`, `subagent`, `same-id …`, `reject-start`, …). Its messages are checked against the committed protocol snapshot by `testkit/protocol-check.mjs`, so it can't teach the client a message the real Codex can't send. A new scenario must keep passing that check (the `future` scenario, a synthetic newer Codex, is the one deliberate exception).
+`testkit/fake-codex-app-server.mjs` is a scripted `codex app-server`: a prompt's text picks a scenario (`edit-file`, `two-approvals`, `hang`, `subagent`, `subagents-2`, `plan-reply`, `bg-terminal`, `auto-review-deny`, `same-id …`, `reject-start`, …; environment knobs such as `FAKE_RECAP`, `FAKE_REQUIREMENTS`, `FAKE_SANDBOX_FAIL`, `FAKE_SANDBOX_DELAY_MS`). Its messages are checked against the committed protocol snapshot by `testkit/protocol-check.mjs`, so it can't teach the client a message the real Codex can't send. A new scenario must keep passing that check (the `future` scenario, a synthetic newer Codex, is the one deliberate exception).
+
+It also checks ad's own requests (`checkRequest`): a method the pinned stable protocol doesn't have, a top-level field its params type lacks, or a wrong type is rejected with -32600, as Codex would. A new `request("method")` in `src/` needs the method in `SENT_METHODS` (`engine/codex/protocol-snapshot.mjs`) and a regenerated snapshot (`node scripts/codex-schema-snapshot.mjs`, pinned binary, temp home); a test compares the list with the source.
 
 ### The mock model
 
-`testkit/mock-responses.mjs` stands in for the OpenAI Responses API. A keyword in the prompt picks the reply: `PING` (a streamed "pong"), `SHELL` / `ESCALATE` (a command, the second asking to leave the sandbox), `PATCH` (an `apply_patch` adding `hello.txt`), `FAIL`, `HOLD` (streams, then waits for `mock.release()`). A test can pass its own script; the live test adds `STEERED`, `QUEUED` and `EDITMATH` (an Update File patch).
+`testkit/mock-responses.mjs` stands in for the OpenAI Responses API. A keyword in the prompt picks the reply: `PING` (a streamed "pong"), and in `tui-live`'s own script `SPAWNONE` (Codex's `spawn_agent`; 0.160 namespaces the agent tools as `multi_agent_v1`, so the call carries `namespace`) and Codex's recap prompt (an answer in its schema), `SHELL` / `ESCALATE` (a command, the second asking to leave the sandbox), `PATCH` (an `apply_patch` adding `hello.txt`), `FAIL`, `HOLD` (streams, then waits for `mock.release()`). A test can pass its own script; the live test adds `STEERED`, `QUEUED` and `EDITMATH` (an Update File patch).
 
 ## The live terminal UI tests
 
@@ -44,6 +49,7 @@ Install with `npm ci` (or `npm install`) in `runtime/`, devDependencies included
 **What it covers.**
 - FC3: header, a streamed answer, exec approval (the 400 ms guard, Esc = "No, and stop", approval), a patch in Auto and `/undo`, an Update File patch and `/undo`, the permissions picker and a read-only patch approval, steer, queue, interrupt, Esc Esc, `/undo` refusing a user's edit and `/undo force`, Ctrl+T, a narrowing resize, `/codex` and back, quit, `ad tui --last`.
 - FC4: `/memory`, `/private` (the model receives the wrapper; the transcript shows the prompt as typed), a correction becoming a "Learned:" row, `/schedule`, `/team`, `/proposals`, `/loop` start and stop.
+- Codex parity: plan mode end to end, a background terminal with `/ps` and `/stop`, `/cd` then an edit, `/side` during a turn, `/vim`, `/theme`, `/recap`, and a real subagent (spawned through Codex) in `/subagents`.
 
 **Writing steps that don't flake.**
 - Wait for state, never for time: `t.until(predicate)`. Sleep only where a person would pause (after Esc, so the next key isn't read as Alt+key).
@@ -51,8 +57,12 @@ Install with `npm ci` (or `npm install`) in `runtime/`, devDependencies included
 - Wait for the footer to be idle (`t.idle()`: shows "? shortcuts", no "esc to interrupt") before typing the next prompt; otherwise Enter steers it into the running turn.
 - Match long paths with `\s+` between words: a long temp path wraps differently on each OS.
 - Close every pseudo-terminal in `finally` (`launched`); an open ConPTY keeps node alive.
+- An `/archive` or `/delete` step waits past the confirm's arm delay (400 ms) before answering.
 - Some runners can't run Codex's sandbox (GitHub's Windows runners): Codex then asks "retry without sandbox?", which `patchTurn` approves.
 - The first sandboxed action in a fresh Codex home sets up the Windows sandbox (about 35 s, longer on a busy machine): give it minutes, not seconds.
+- On GitHub's Windows runner, Codex 0.160's non-admin sandbox refuses a background command (`exec_command` with `yield_time_ms`) outright: "cannot enforce split writable root sets directly; refusing to run unsandboxed", with no "retry without sandbox?". The Part 5 live test skips there on exactly that message; any other failure still fails.
+- On Linux, Codex's sandbox gives a command its own PID namespace: a pid the command writes isn't the host's. Check a background process by what it does (a file it keeps writing), never with `process.kill(pid, 0)`.
+- A test that waits on a file's modification time must set it (`utimesSync`): a fast runner writes two versions in the same millisecond.
 
 ## Keeping tests honest
 
@@ -72,6 +82,8 @@ Install with `npm ci` (or `npm install`) in `runtime/`, devDependencies included
 
 The real-engine job is non-blocking (`continue-on-error`): **read its result**, don't rely on the run's overall status.
 
+Run the same pipeline before pushing, on this machine and in a Linux container, with the project skill [`ad-ci-readiness`](../.claude/skills/ad-ci-readiness/SKILL.md): it also reads a PR's CI test by test and holds the release-readiness checklist.
+
 `.github/workflows/codex-upgrade.yml` runs `npm test` and the same real-engine tests in its own Linux job before it opens the PR that bumps the Codex pin, and puts the results in the PR body. The PR's own `test.yml` run (all three OSes) happens only when the repo has a `CODEX_UPGRADE_TOKEN` secret: PRs opened with the default token don't trigger other workflows.
 
 ## Pitfalls met in practice
@@ -83,3 +95,7 @@ The real-engine job is non-blocking (`continue-on-error`): **read its result**, 
 | Strings with `\` or `$` mangled in an edit | bash heredocs and `node -e` eat backslashes | edit with an editor tool or a script file; build escape bytes with `"\x1b"` |
 | Windows: every command fails with `CreateProcessAsUserW failed` | PowerShell 7 from the Store; the sandbox can't start MSIX apps | handled by the engine's PATH: `withoutStoreAliases()` drops every `WindowsApps` entry ([troubleshooting #16](troubleshooting.md#16-harness-on-windows-every-agent-command-fails-access-is-denied-or-createprocessasuserw-failed)) |
 | A live step times out after a patch | the first sandboxed action set up the Windows sandbox | allow minutes for the first one |
+| A screen regex fails only in the full suite | a long temp path or hint wraps at the test's width | match with `\s+` between words, or give the test more columns |
+| A test passes alone, fails under load | a short real-time wait (a 50 ms terminal-query timeout, an arm delay of 60 ms that has passed before the "too soon" key) | give waits that only end early on success a generous cap; use a long arm delay where "too soon" is asserted |
+| `until(async () => …)` returns at once | an async predicate is a truthy Promise | the helper awaits the predicate's result |
+| A guard's mutation isn't caught | the test's setup makes the old and new behaviour look alike (a cursor that is on the same row either way) | change the setup until the mutation fails the test |

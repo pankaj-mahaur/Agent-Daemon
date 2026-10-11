@@ -542,6 +542,62 @@ Other choices: `nvim`, `vim`, `nano`, or Notepad++ with `-multiInst -nosession`.
 
 **Fix:** nothing to do; wait it out once. A command you approve to run outside the sandbox doesn't pay it.
 
+## 30. `ad tui`: keys set with the stock UI's `/keymap` don't work in ad
+
+**Symptom:** you changed a key in `/codex` → `/keymap`, and ad still uses the old one (or the key does nothing).
+
+**Cause:** ad applies `tui.keymap` only to the actions it has (the transcript, the editor, copy, raw output, clear, interrupt, reasoning effort, queue, the shortcuts, the pager). It skips a key it can't use: a two-key chord (`ctrl-x f`), a key that would mean two things, or one of the prompt's editing keys (Enter, Ctrl+A/E/K/U/W/Y, Ctrl+R, the arrows).
+
+**Fix:** `/warnings` (or F2) lists what was skipped and why. Pick another key in `/keymap`, then restart ad (it reads the keymap at start and after `/codex`). See [codex-parity.md](codex-parity.md#keys).
+
+## 31. `ad tui`: `/clear` wiped my scrollback
+
+**Symptom:** after `/clear`, the terminal's scrollback (and what was above ad) is gone.
+
+**Cause:** that is Codex's `/clear`: it clears the terminal, scrollback included, and starts a new conversation. The old conversation is kept; `/resume` brings it back.
+
+**Fix:** use `/new` to start fresh and keep the scrollback, or set `"clear.keepScrollback": true` in `~/.agent-daemon/tui/prefs.json` so `/clear` keeps it too (it draws a divider instead).
+
+## 32. The terminal's title still says ad's after ad ended
+
+**Symptom:** the window or tab title shows a spinner, a conversation name or "action required" after ad exited.
+
+**Cause:** ad saves the terminal's title when it first sets one and puts it back on exit, through the terminal's title stack. A terminal without that stack, or a crash, leaves ad's last title (ad sets an empty title before putting it back, so most terminals show their default).
+
+**Fix:** open a new tab, or set the title yourself (PowerShell: `$Host.UI.RawUI.WindowTitle = "..."`). To keep ad off the title, run `/title` and turn every item off (`tui.terminal_title = []`).
+
+## 33. `ad tui`: `/plan` says "Plan mode unavailable right now."
+
+**Symptom:** `/plan` or Shift+Tab answers "Plan mode unavailable right now.", and `/warnings` may say "Plan mode is unavailable: Codex didn't list its modes (…)".
+
+**Cause:** Plan mode is Codex's collaboration mode, part of Codex's experimental app-server API. ad asks Codex for its modes when the engine starts and waits 2 s, as Codex's own UI does. A slow start (a busy machine, antivirus scanning a freshly installed Codex) or a Codex build that changed or dropped the call leaves ad with none.
+
+**Fix:** quit and start `ad` again (the modes are asked for again, and after every engine restart). If it keeps happening, check `ad doctor` for the Codex version: ad is tested with the pinned one, and `/codex` opens the stock UI, whose `/plan` works on the same conversation.
+
+## 34. `ad tui`: `/recap` says "Could not generate a recap. Please try again."
+
+**Symptom:** after "Generating conversation recap…", that message, with the reason after it in grey.
+
+**Cause:** `/recap` asks Codex in a temporary thread (read-only, no tools, none of ad's hooks), as Codex's own `/recap` does: it must start within 30 s and answer within 30 s more, in Codex's recap format. A sign-in problem, a model error or a slow model ends it. When no recap appears at all, a prompt you sent meanwhile, or another turn (`/compact`, `/review`), dropped it, as in Codex.
+
+**Fix:** try again while the conversation is idle. Check the sign-in with `/status`. The reason after the message says which of the above it was.
+
+## 35. `ad tui`: `/approve` says "No recent auto-review denials in this thread." or "invalid Guardian denial event"
+
+**Symptom:** `/approve` lists nothing although Codex's auto-review denied something earlier, or the approval is refused.
+
+**Cause:** `/approve` lists the denials of this conversation since ad started (the last 10, as Codex keeps them): a conversation resumed later starts with none, and a subagent's denials aren't on the list. "invalid Guardian denial event" is Codex refusing the approval's format: a Codex version ad wasn't tested with. The denial stays on the list.
+
+**Fix:** for an older denial, ask the model to try again (the retry goes through auto-review). For the refusal, check the Codex version in `ad doctor`, and report it with `/warnings`.
+
+## 36. `ad tui`: `/setup-default-sandbox` refuses or fails
+
+**Symptom:** "… wasn't created by ad, so ad doesn't change its sandbox.", or "Windows sandbox setup failed: …", or "Input disabled until setup completes." while it runs.
+
+**Cause:** it sets up Codex's elevated (admin) Windows sandbox, which is machine-wide (your own Codex uses it too), so Windows asks for administrator approval once. ad changes only a Codex home it created. While setup runs, nothing is sent: prompts, commands and `!` shell commands wait.
+
+**Fix:** approve the Windows prompt. If it is declined or blocked by policy, `ad sandbox setup` sets up the non-admin sandbox instead. For a Codex home ad didn't create, `ad sandbox setup --elevated --force` changes it anyway. On macOS and Linux nothing is needed: Codex uses the OS sandbox.
+
 ---
 
 For harness problems, the [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill walks through login → hooks → sandbox → Codex's own log. See also [harness.md](harness.md) and, for the terminal UI, [tui.md](tui.md).

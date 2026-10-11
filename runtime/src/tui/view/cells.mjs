@@ -14,24 +14,26 @@
 // floods the scrollback.
 
 import { sanitize } from "../terminal/sanitize.mjs";
-import { normalize, truncate, wrap } from "../terminal/text.mjs";
+import { lineWidth, normalize, truncate, wrap } from "../terminal/text.mjs";
 import { stringWidth } from "../terminal/width.mjs";
-import { codeLines, renderMarkdown, wrapPrefixed } from "./markdown.mjs";
+import { codeLines, codeTokenLines, renderMarkdown, wrapPrefixed } from "./markdown.mjs";
+import { highlightLines, languageFor, MAX_CHARS, MAX_LINES } from "./highlight.mjs";
+import { T } from "./theme.mjs";
 
 const S = {
-  bullet: { dim: true },
-  head: { bold: true },
-  dim: { dim: true },
-  ok: { fg: "green", bold: true },
-  bad: { fg: "red", bold: true },
-  warn: { fg: "yellow" },
-  err: { fg: "red" },
-  cmd: { fg: "cyan" },
-  user: { fg: "cyan", bold: true },
-  add: { fg: "green" },
-  del: { fg: "red" },
-  hunk: { fg: "cyan", dim: true },
-  italic: { dim: true, italic: true },
+  bullet: T.dim,
+  head: T.bold,
+  dim: T.dim,
+  ok: T.successStrong,
+  bad: T.errorStrong,
+  warn: T.warning,
+  err: T.error,
+  cmd: T.code,
+  user: T.accent,
+  add: T.diffAdd,
+  del: T.diffDel,
+  hunk: T.diffHunk,
+  italic: T.italicDim,
 };
 
 const OUTPUT_TAIL = 5;
@@ -196,17 +198,42 @@ export function diffStats(change) {
   return { added: rows.filter((r) => r.sign === "+").length, removed: rows.filter((r) => r.sign === "-").length };
 }
 
+// The file's language colours a diff's unchanged lines; changed lines keep the
+// diff colours (foreground only: the scrollback can't be restyled). Each hunk
+// is lexed as the new file reads (unchanged and added lines, so a comment
+// opened in an added line is still a comment; a removed one doesn't count),
+// from a fresh state. → tokens by row index, or null (nothing to colour).
+function contextTokens(change, rows) {
+  const lang = languageFor(change?.movePath ?? change?.path);
+  if (!lang || !rows.some((r) => r.sign === " ") || rows.length > MAX_LINES) return null;
+  let chars = 0;
+  for (const r of rows) chars += r.text.length;
+  if (chars > MAX_CHARS) return null;
+  const tokens = [];
+  let state = {};
+  rows.forEach((r, k) => {
+    if (r.sign === "-") return;
+    if (r.sign !== " " && r.sign !== "+") return void (state = {}); // "⋮": the next hunk
+    const hl = highlightLines(lang, [r.text], state);
+    state = hl.state;
+    if (r.sign === " " && !hl.plain) tokens[k] = hl.lines[0];
+  });
+  return tokens;
+}
+
 // One file's diff as gutter lines: "  12 + text".
 function diffBody(change, width, maxLines, mode) {
   const rows = diffRows(change, mode);
   const nw = Math.max(1, ...rows.map((r) => String(r.n ?? "").length));
+  const hl = contextTokens(change, rows);
   const out = [];
-  for (const r of rows) {
+  rows.forEach((r, k) => {
     const style = r.sign === "+" ? S.add : r.sign === "-" ? S.del : r.sign === " " ? undefined : r.sign === "?" ? S.warn : S.dim;
     const gutter = `${INDENT}${String(r.n ?? "").padStart(nw)} ${r.sign} `;
     const room = Math.max(1, width - stringWidth(gutter));
-    codeLines(r.text, room, style).forEach((l, i) => out.push(normalize([{ text: i === 0 ? gutter : " ".repeat(stringWidth(gutter)), style: S.dim }, ...l])));
-  }
+    const body = hl?.[k] ? codeTokenLines(hl[k], room) : codeLines(r.text, room, style);
+    body.forEach((l, i) => out.push(normalize([{ text: i === 0 ? gutter : " ".repeat(stringWidth(gutter)), style: S.dim }, ...l])));
+  });
   return capLines(out, maxLines);
 }
 
@@ -235,17 +262,53 @@ export function renderDiff(changes, { width = 80, maxLines = DIFF_LINES, verb = 
 /* ------------------------------------------------------------------ */
 
 export function renderPlan(steps, { width = 80, explanation = null } = {}) {
-  const out = header("\u{2022}", [{ text: "Updated plan", style: S.head }], width);
+  const out = header("\u{2022}", [{ text: "Updated Plan", style: S.head }], width);
   const lines = [];
   if (explanation) lines.push([{ text: clean(explanation), style: S.italic }]);
+  if (!steps?.length) lines.push([{ text: "(no steps provided)", style: S.italic }]);
   for (const s of steps ?? []) {
     const done = s.status === "completed";
     const mark = done ? "\u{2714} " : s.status === "inProgress" ? "\u{25a1} " : "\u{25a1} ";
-    const style = done ? { dim: true, strike: true } : s.status === "inProgress" ? { fg: "cyan", bold: true } : undefined;
-    lines.push([{ text: mark, style: done ? { fg: "green" } : style }, { text: clean(s.step), style }]);
+    const style = done ? T.done : s.status === "inProgress" ? T.accent : undefined;
+    lines.push([{ text: mark, style: done ? T.success : style }, { text: clean(s.step), style }]);
   }
   out.push(...details(lines, width));
   return out;
+}
+
+// What a background terminal runs, without the shell wrapper Codex adds
+// (`bash -lc '…'`, `powershell.exe -Command '…'`): its parsed command when
+// Codex gives one, else the unwrapped string.
+export function terminalCommand(t) {
+  const parsed = (t?.actions ?? []).length === 1 ? t.actions[0]?.command : null;
+  if (parsed) return String(parsed);
+  const cmd = String(t?.command ?? "");
+  const m = /^\s*(?:"[^"]*"|\S+)\s+(?:-lc|-c|-Command|-NoProfile\s+-Command)\s+(['"])([\s\S]*)\1\s*$/i.exec(cmd);
+  return m ? m[2] : cmd;
+}
+
+/**
+ * Codex's /ps (history_cell/exec.rs): "Background terminals", each command
+ * (80 characters at most, " [...]" when cut) with its last lines, 16 at most
+ * then "... and N more running".
+ */
+export function renderBackgroundTerminals(terminals, { width = 80 } = {}) {
+  const w = Math.max(4, width);
+  const out = [[{ text: "Background terminals", style: S.head }], []];
+  if (!terminals.length) return [...out, [{ text: "  \u{2022} No background terminals running.", style: S.italic }]];
+  // Codex's cut: what fits, then " [...]" (also when the command was longer than 80).
+  const cut = (text, room, style, cutAlready = false) => {
+    const one = clean(text).replace(/\r?\n/g, "\u{21b5}");
+    if (!cutAlready && lineWidth([{ text: one }]) <= room) return [{ text: one, style }];
+    return [...truncate([{ text: one, style }], Math.max(1, room - 6), ""), { text: " [...]", style: S.dim }];
+  };
+  for (const t of terminals.slice(0, 16)) {
+    const cmd = [...terminalCommand(t)];
+    out.push(normalize([{ text: "  \u{2022} ", style: S.dim }, ...cut(cmd.slice(0, 80).join(""), w - 4, S.cmd, cmd.length > 80)]));
+    (t.lines ?? []).forEach((l, i) => out.push(normalize([{ text: i === 0 ? "    \u{21b3} " : "      ", style: S.dim }, ...cut(l, w - 6, S.dim)])));
+  }
+  if (terminals.length > 16) out.push([{ text: `  \u{2022} ... and ${terminals.length - 16} more running`, style: S.dim }]);
+  return out.map((l) => truncate(l, w));
 }
 
 const NOTICE = {
@@ -256,7 +319,32 @@ const NOTICE = {
 
 export function renderNotice(notice, { width = 80 } = {}) {
   const n = NOTICE[notice?.level] ?? NOTICE.info;
-  return wrapPrefixed([{ text: clean(notice?.message), style: n.style }], width, [{ text: `${n.mark} `, style: n.style }], [{ text: "  " }]);
+  // A hint follows the message after a space, dim (Codex's info cells).
+  const hint = notice?.hint ? [{ text: ` ${clean(notice.hint)}`, style: S.dim }] : [];
+  return wrapPrefixed([{ text: clean(notice?.message), style: n.style }, ...hint], width, [{ text: `${n.mark} `, style: n.style }], [{ text: "  " }]);
+}
+
+/**
+ * Codex's recap cell: "  ↳ Recap: " and the summary with a hanging indent,
+ * then "Next: " and the action when there is one; all italic and dimmed.
+ * Narrower than the prefix: "↳ Recap:" alone, then the text unindented.
+ */
+export function renderRecap({ summary, next }, { width = 80 } = {}) {
+  const body = { ...T.italicDim };
+  const label = { ...T.italicDim, bold: true };
+  const nextLabel = { ...T.accent, italic: true, dim: true };
+  const prefix = [{ text: "  " }, { text: "\u{21b3} ", style: body }, { text: "Recap: ", style: label }];
+  const pw = lineWidth(prefix);
+  const text = (t) => [{ text: clean(t).replace(/\s*\n\s*/g, " "), style: body }];
+  if (width - 2 <= pw) {
+    const out = [[{ text: "\u{21b3} ", style: body }, { text: "Recap:", style: label }], ...wrap(text(summary), Math.max(1, width))];
+    if (next) out.push(...wrap([{ text: "Next: ", style: nextLabel }, ...text(next)], Math.max(1, width)));
+    return out.map((l) => normalize(l));
+  }
+  const indent = [{ text: " ".repeat(pw) }];
+  const out = wrapPrefixed(text(summary), width, prefix, indent);
+  if (next) out.push(...wrapPrefixed([{ text: "Next: ", style: nextLabel }, ...text(next)], width, indent, indent));
+  return out;
 }
 
 const AD_ROWS = {
@@ -271,7 +359,7 @@ const AD_ROWS = {
 /** One dim line for something ad did (recalled memory, a skill, a guard…). */
 export function renderAdRow(kind, text, { width = 80 } = {}) {
   const label = AD_ROWS[kind] ?? `${clean(kind)}:`;
-  const line = truncate([{ text: "\u{2022} ", style: S.dim }, { text: `${label} `, style: { dim: true, bold: true } }, { text: clean(text).replace(/\s*\n\s*/g, " "), style: S.dim }], width);
+  const line = truncate([{ text: "\u{2022} ", style: S.dim }, { text: `${label} `, style: T.boldDim }, { text: clean(text).replace(/\s*\n\s*/g, " "), style: S.dim }], width);
   return [line];
 }
 
@@ -319,8 +407,12 @@ function cellLines(item, width) {
       const text = item.summaryText ?? (item.summary ?? []).join("\n\n");
       return text.trim() ? capLines(mdCell(text, width, { style: S.italic }), TEXT_LINES) : [];
     }
-    case "plan":
-      return mdCell(item.text ?? "", width);
+    case "plan": {
+      // Codex's proposed plan (Plan mode): a titled block, the plan indented 2 (foreground colours only).
+      const text = String(item.text ?? "");
+      const body = text.trim() ? renderMarkdown(text, { width: Math.max(1, width - 4) }) : [[{ text: "(empty)", style: S.italic }]];
+      return [normalize([{ text: "\u{2022} ", style: S.bullet }, { text: "Proposed Plan", style: S.head }]), [], ...body.map((l) => normalize([{ text: "  " }, ...l]))];
+    }
     case "commandExecution":
       return isExploring(item) ? renderExploring([item], { width }) : renderCommand(item, width);
     case "fileChange": {

@@ -3,7 +3,7 @@
 //
 //   createComposer({history, pasteLines, pasteChars, mask})
 //     .handle(ev) → {submit: text} | {changed} | {cancel: true} | null (not ours)
-//     .render({width, prompt, placeholder}) → {lines, cursor: {row, col}}
+//     .render({width, prompt, promptStyle, placeholder}) → {lines, cursor: {row, col}}
 //
 // Keys:
 //   - Graphemes are the cursor unit. ←/→ by grapheme; Ctrl/Alt+←/→ and
@@ -17,15 +17,20 @@
 // A paste of more than `pasteLines` lines (or `pasteChars` characters) shows
 // as "[Pasted N lines]" and expands on submit. With `mask`, the text renders
 // as dots and never reaches the history.
+//
+// setVim(on, {mode}) turns Codex's Vim mode on (view/vim.mjs) for this
+// composer: Normal-mode keys go to it first; Insert typing stays here.
 
 import { isNewline } from "../terminal/input.mjs";
 import { graphemeSegments, graphemeWidth, stringWidth } from "../terminal/width.mjs";
 import { sanitize } from "../terminal/sanitize.mjs";
 import { truncate } from "../terminal/text.mjs";
+import { T } from "./theme.mjs";
+import { createVim } from "./vim.mjs";
 
 const TAB_WIDTH = 4;
-const ACCENT = { fg: "cyan", bold: true };
-const DIM = { dim: true };
+const ACCENT = T.accent;
+const DIM = T.dim;
 const isWordChar = (g) => /[\p{L}\p{N}_]/u.test(g);
 // How a segment is drawn: a tab as spaces, a space hidden at a wrap point as nothing.
 const shown = (seg, mask) => (mask ? "\u{2022}" : seg.g === "\t" || seg.hidden ? " ".repeat(seg.w) : seg.g);
@@ -108,7 +113,7 @@ function offsetAt(row, col) {
   return row.end;
 }
 
-export function createComposer({ history = null, pasteLines = 5, pasteChars = 1000, mask = false } = {}) {
+export function createComposer({ history = null, pasteLines = 5, pasteChars = 1000, mask = false, now = () => Date.now() } = {}) {
   let text = "";
   let cursor = 0; // a code-unit offset on a grapheme boundary
   let kill = "";
@@ -118,6 +123,7 @@ export function createComposer({ history = null, pasteLines = 5, pasteChars = 10
   let search = null; // {query, match} during Ctrl+R
   let room = 78; // text cells per row, from the last render
   let goalCol = null; // the column Up/Down aim for across short rows
+  let vim = null; // Codex's Vim mode, when on
 
   const entries = () => history?.entries() ?? [];
   const rows = () => layout(text, room, mask);
@@ -189,6 +195,7 @@ export function createComposer({ history = null, pasteLines = 5, pasteChars = 10
     pastes.clear();
     histIndex = null;
     goalCol = null;
+    vim?.reset(); // Codex: a new draft starts in Insert, with no undo history
   }
 
   function historyMove(dir) {
@@ -211,13 +218,13 @@ export function createComposer({ history = null, pasteLines = 5, pasteChars = 10
     return true;
   }
 
-  function verticalMove(dir) {
+  function verticalMove(dir, { history: walk = true } = {}) {
     const r = rows();
     const at = rowOf(r, cursor);
     const target = at + dir;
     if (target < 0 || target >= r.length) {
       goalCol = null;
-      return historyMove(dir);
+      return walk ? historyMove(dir) : false;
     }
     goalCol ??= colOf(r[at], cursor);
     cursor = offsetAt(r[target], goalCol);
@@ -260,8 +267,47 @@ export function createComposer({ history = null, pasteLines = 5, pasteChars = 10
     return { changed: false };
   }
 
+  // What Vim needs of the buffer (view/vim.mjs).
+  const core = {
+    get text() {
+      return text;
+    },
+    get cursor() {
+      return cursor;
+    },
+    set(next, at) {
+      histIndex = null;
+      if (next !== text || at !== cursor) goalCol = null;
+      set(next, at);
+    },
+    /** The cursor alone: a recalled history entry stays one (j/k go on walking the history). */
+    place(at) {
+      cursor = Math.max(0, Math.min(at, text.length));
+    },
+    get kill() {
+      return kill;
+    },
+    setKill(k) {
+      kill = k;
+    },
+    vertical: (dir) => verticalMove(dir, { history: false }),
+    history: (dir) => historyMove(dir),
+    get recalled() {
+      return histIndex !== null;
+    },
+    passThrough: (ev) => edit(ev),
+  };
+
   function handle(ev) {
     if (search) return handleSearch(ev);
+    if (vim) {
+      const r = vim.handle(ev);
+      if (r !== undefined) return r;
+    }
+    return edit(ev);
+  }
+
+  function edit(ev) {
     if (ev.type === "text") {
       goalCol = null;
       insert(sanitize(ev.text, "transcript").replace(/\n/g, ""));
@@ -282,7 +328,7 @@ export function createComposer({ history = null, pasteLines = 5, pasteChars = 10
     }
     if (name === "enter" && !alt) {
       // "\" + Enter is a newline everywhere (the FC0 fallback).
-      if (!mask && text.slice(0, cursor).endsWith("\\")) {
+      if (!mask && vim?.mode !== "normal" && text.slice(0, cursor).endsWith("\\")) {
         set(text.slice(0, cursor - 1) + "\n" + text.slice(cursor), cursor);
         return { changed: true };
       }
@@ -337,6 +383,8 @@ export function createComposer({ history = null, pasteLines = 5, pasteChars = 10
   /** The word under the cursor when it starts with `@` (anywhere) or `/` (at the start). */
   function token() {
     if (mask) return null;
+    // In Vim's Normal mode "/" searches: the popups open only from Insert (Codex).
+    if (vim && vim.mode !== "insert") return null;
     const before = text.slice(0, cursor);
     const m = /(?:^|\s)([@/]\S*)$/u.exec(before);
     if (!m) return null;
@@ -353,7 +401,7 @@ export function createComposer({ history = null, pasteLines = 5, pasteChars = 10
     set(text.slice(0, start) + v + text.slice(end), start + v.length);
   }
 
-  function render({ width = 80, prompt = "\u{203a} ", placeholder = "" } = {}) {
+  function render({ width = 80, prompt = "\u{203a} ", promptStyle = ACCENT, placeholder = "" } = {}) {
     const pw = stringWidth(prompt);
     // One cell stays free so a cursor after a full row never wraps the terminal.
     room = Math.max(1, width - pw - 1);
@@ -369,11 +417,17 @@ export function createComposer({ history = null, pasteLines = 5, pasteChars = 10
     }
     const r = rows();
     const lines = r.map((row, i) => [
-      { text: i === 0 ? prompt : " ".repeat(pw), style: ACCENT },
+      { text: i === 0 ? prompt : " ".repeat(pw), style: promptStyle },
       { text: row.segs.map((s) => shown(s, mask)).join("") },
     ]);
     if (!text && placeholder) lines[0].push({ text: placeholder, style: DIM });
     const at = rowOf(r, cursor);
+    // Vim's search query, on its own line under the draft (Codex puts it in the footer row).
+    const vs = vim?.search;
+    if (vs) {
+      lines.push(truncate([{ text: vs.dir, style: T.code }, { text: sanitize(vs.query, "transcript").replace(/\t/g, " ") }], width));
+      return { lines, cursor: { row: lines.length - 1, col: Math.min(width - 1, 1 + stringWidth(vs.query)) } };
+    }
     return { lines, cursor: { row: at, col: Math.min(width - 1, pw + colOf(r[at], cursor)) } };
   }
 
@@ -384,7 +438,19 @@ export function createComposer({ history = null, pasteLines = 5, pasteChars = 10
     token,
     replace,
     clear: reset,
-    set: (t) => set(sanitize(String(t ?? ""), "transcript")),
+    /** Codex's Vim mode on (starting in `mode`) or off; masked composers never have it. */
+    setVim(on, { mode = "normal" } = {}) {
+      vim = on && !mask ? createVim(core, { now, mode }) : null;
+    },
+    get vim() {
+      return vim;
+    },
+    /** Replaces the draft; the cursor goes to `at` (a code-unit offset), else the end. */
+    set: (t, at) => {
+      const next = sanitize(String(t ?? ""), "transcript");
+      set(next, at ?? next.length);
+      vim?.reset({ mode: vim.mode });
+    },
     get text() {
       return text;
     },

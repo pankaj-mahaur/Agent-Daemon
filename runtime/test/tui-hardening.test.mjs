@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync, existsSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../src/tui/app.mjs";
@@ -69,6 +69,9 @@ test("a skill that fails to copy keeps its old mirrored copy", () => {
     syncSkills({ home, from });
     // A broken link inside the skill must not stop the sync or lose the old copy.
     writeFileSync(join(from, "s", "SKILL.md"), "v2");
+    // Newer than the mirror for sure: a fast runner writes both in the same millisecond.
+    const later = new Date(Date.now() + 5000);
+    utimesSync(join(from, "s", "SKILL.md"), later, later);
     try {
       symlinkSync(join(root, "missing"), join(from, "s", "dangling"), "junction");
     } catch {

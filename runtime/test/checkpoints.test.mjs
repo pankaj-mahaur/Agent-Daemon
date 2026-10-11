@@ -154,6 +154,22 @@ test("a folder standing where the turn deleted a file is a conflict, and force n
   }
 });
 
+test("forget drops one conversation's snapshots (/delete) and leaves the others", async () => {
+  const r = repo();
+  try {
+    const cp = createCheckpoints({ cwd: r.dir });
+    const s = await cp.snapshot();
+    for (const id of ["u1", "u2"]) await cp.record("gone", id, { before: s.tree, after: s.tree });
+    await cp.record("kept", "u1", { before: s.tree, after: s.tree });
+    assert.equal(await cp.forget("gone"), 4, "two turns, before and after each");
+    assert.deepEqual(await cp.list("gone"), []);
+    assert.equal((await cp.list("kept")).length, 1);
+    assert.equal(await cp.forget("never-there"), 0);
+  } finally {
+    r.done();
+  }
+});
+
 test("retention keeps the newest turns (in order, not by name); a failing snapshot says why", async () => {
   const r = repo();
   try {

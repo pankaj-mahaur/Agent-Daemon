@@ -25,7 +25,8 @@ export const ev = {
     type: "response.output_item.done",
     item: { type: "reasoning", id, summary: [{ type: "summary_text", text: summary }], encrypted_content: Buffer.from("b".repeat(600)).toString("base64") },
   }),
-  functionCall: (callId, name, args) => ({ type: "response.output_item.done", item: { type: "function_call", call_id: callId, name, arguments: JSON.stringify(args) } }),
+  // A tool in a namespace (Codex 0.160 groups its agent tools as "multi_agent_v1") names it.
+  functionCall: (callId, name, args, namespace) => ({ type: "response.output_item.done", item: { type: "function_call", call_id: callId, name, ...(namespace ? { namespace } : {}), arguments: JSON.stringify(args) } }),
 };
 
 export const sse = (events) => events.map((e) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`).join("");
@@ -72,6 +73,24 @@ export function defaultScript(body) {
   return [ev.created(), ev.reasoning("**Thinking** about the reply"), ev.messageAdded(), ev.textDelta("po"), ev.textDelta("ng"), ev.message("pong"), ev.completed()];
 }
 
+// Every text of one role's messages in a request, in order (history included).
+export function roleTexts(body, role) {
+  const input = Array.isArray(body?.input) ? body.input : [];
+  return input.filter((i) => i?.type === "message" && i.role === role).map((i) => (i.content ?? []).map((c) => String(c.text ?? "")).join(""));
+}
+
+// The collaboration mode the model was told about last ("plan" | "default"),
+// from Codex's <collaboration_mode> developer block; null when there is none.
+export function collaborationModeSeen(body) {
+  const input = Array.isArray(body?.input) ? body.input : [];
+  const blocks = input
+    .filter((i) => i?.type === "message" && i.role === "developer")
+    .flatMap((i) => (i.content ?? []).map((c) => String(c.text ?? "")))
+    .filter((t) => t.includes("<collaboration_mode>"));
+  const last = blocks.at(-1);
+  return last == null ? null : /Plan Mode/.test(last) ? "plan" : "default";
+}
+
 // Start the mock on a random loopback port. `requests` records every call
 // (path, model, tool names, last user text) for assertions.
 export async function startMockResponses({ script = defaultScript } = {}) {
@@ -90,7 +109,7 @@ export async function startMockResponses({ script = defaultScript } = {}) {
         res.writeHead(400, { "content-type": "application/json" }).end(JSON.stringify({ error: { message: "mock: request body is not JSON" } }));
         return;
       }
-      requests.push({ path: req.url, model: body.model, tools: (body.tools ?? []).map((t) => t.name ?? t.type), text: lastUserText(body) });
+      requests.push({ path: req.url, model: body.model, tools: (body.tools ?? []).map((t) => t.name ?? t.type), text: lastUserText(body), mode: collaborationModeSeen(body), userTexts: roleTexts(body, "user"), developerTexts: roleTexts(body, "developer") });
       if (!/\/responses$/.test(req.url ?? "")) {
         res.writeHead(404).end();
         return;

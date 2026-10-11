@@ -16,7 +16,7 @@ import {
   elicitationResponse,
   SILENT_NOTIFICATIONS,
 } from "../src/engine/codex/events.mjs";
-import { IGNORED_NOTIFICATIONS, PINNED_NOTIFICATIONS } from "../src/engine/codex/surface.mjs";
+import { EXPERIMENTAL_ALLOWLIST, experimentalCapabilities, IGNORED_NOTIFICATIONS, PINNED_NOTIFICATIONS } from "../src/engine/codex/surface.mjs";
 import { approvalResponse } from "../src/engine/codex/approvals.mjs";
 import { parseNotifications } from "../scripts/codex-notifications.mjs";
 
@@ -24,7 +24,7 @@ const require = createRequire(import.meta.url);
 
 // Every event type a front end may receive (plan "Interfaces", v4.5 additions marked).
 const EVENT_TYPES = new Set([
-  "thread.started", "thread.status", "thread.name", "thread.goal", "thread.tokens", "thread.compacted",
+  "thread.started", "thread.status", "thread.name", "thread.goal", "thread.settings", "thread.tokens", "thread.compacted",
   "thread.closed", "thread.archived", "thread.unarchived", "thread.deleted", "thread.reverted",
   "turn.started", "turn.completed", "turn.plan", "turn.diff",
   "item.started", "item.completed", "item.delta",
@@ -48,14 +48,27 @@ test("every stable notification is handled or ignored by name, never both", () =
   const missing = PINNED_NOTIFICATIONS.stable.filter((m) => !handled.includes(m) && !ignored.includes(m));
   assert.deepEqual(missing, [], "decide each new notification: a handler in events.mjs or a reason in surface.mjs");
   assert.deepEqual(handled.filter((m) => ignored.includes(m)), []);
-  assert.deepEqual(handled.filter((m) => !PINNED_NOTIFICATIONS.stable.includes(m)), [], "no handler for a method the protocol doesn't have");
+  assert.deepEqual(handled.filter((m) => !PINNED_NOTIFICATIONS.stable.includes(m) && !EXPERIMENTAL_ALLOWLIST.notifications.includes(m)), [], "no handler for a method the protocol doesn't have");
 });
 
-test("experimental notifications are ignored as experimental, and none is handled", () => {
+test("experimental notifications are ignored as experimental and opted out of, except the allowlisted ones, which are handled", () => {
+  const { optOutNotificationMethods } = experimentalCapabilities();
   for (const m of PINNED_NOTIFICATIONS.experimental) {
-    assert.match(IGNORED_NOTIFICATIONS[m], /^experimental/, m);
-    assert.equal(Object.hasOwn(NOTIFICATION_HANDLERS, m), false, m);
+    const allowed = EXPERIMENTAL_ALLOWLIST.notifications.includes(m);
+    if (allowed) assert.equal(Object.hasOwn(IGNORED_NOTIFICATIONS, m), false, m);
+    else assert.match(IGNORED_NOTIFICATIONS[m], /^experimental/, m);
+    assert.equal(Object.hasOwn(NOTIFICATION_HANDLERS, m), allowed, m);
+    assert.equal(optOutNotificationMethods.includes(m), !allowed, m);
   }
+  for (const m of EXPERIMENTAL_ALLOWLIST.notifications) assert.ok(PINNED_NOTIFICATIONS.experimental.includes(m), `${m} is not an experimental notification of the pinned Codex`);
+});
+
+test("thread/settings/updated → thread.settings with the collaboration mode, never Codex's instructions", () => {
+  const threadSettings = { model: "gpt-5.5", effort: "medium", collaborationMode: { mode: "plan", settings: { model: "gpt-5.5", reasoning_effort: "medium", developer_instructions: "# Plan Mode ..." } } };
+  assert.deepEqual(adaptNotification("thread/settings/updated", { threadId: "t1", threadSettings }), [
+    { type: "thread.settings", threadId: "t1", collaborationMode: { mode: "plan", model: "gpt-5.5", effort: "medium" }, model: "gpt-5.5", effort: "medium" },
+  ]);
+  assert.equal(adaptNotification("thread/settings/updated", { threadId: "t1", threadSettings: {} })[0].collaborationMode, null);
 });
 
 test("every ignored notification has a reason and adapts to no events", () => {

@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 import { readStdinJson, passthrough, advise } from "./io.mjs";
 import { recordRouteAdvice } from "../memory/episodic.mjs";
 import { loadRouteMaps, compileEntryRegex } from "../route-map.mjs";
+import { isGeneratedPrompt } from "./generated-prompts.mjs";
 
 // ── Explicit constraint patterns ─────────────────────────────────────────────
 // When the user says these things, we suppress forced-skill advice.
@@ -131,6 +132,8 @@ export async function capabilityRouteAdvice() {
     const sessionId = String(input.session_id || "");
 
     if (!prompt) { passthrough(); return 0; }
+    // A prompt the client wrote (Codex's plan hand-off): no advice, nothing recorded.
+    if (isGeneratedPrompt(prompt)) { passthrough(); return 0; }
 
     // Respect explicit capability constraints.
     if (CAPABILITY_CONSTRAINT_RE.test(prompt)) {

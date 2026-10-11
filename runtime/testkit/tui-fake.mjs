@@ -23,6 +23,7 @@ const code = await cmdTui({
   memory: false,
   historyFile: path.join(root, "history.jsonl"),
   stateFile: path.join(root, "state.json"),
+  prefsFile: path.join(root, "prefs.json"),
   lockDir: path.join(root, "locks"),
   adHome: path.join(root, "ad-home"),
 });

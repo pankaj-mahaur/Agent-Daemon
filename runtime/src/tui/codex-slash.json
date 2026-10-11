@@ -66,5 +66,633 @@
     "subagents",
     "debug-m-drop",
     "debug-m-update"
+  ],
+  "commands": [
+    {
+      "name": "model",
+      "aliases": [],
+      "desc": "choose what model and reasoning effort to use",
+      "args": false,
+      "duringTask": true,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "ide",
+      "aliases": [],
+      "desc": "include current selection, open files, and other context from your IDE",
+      "args": true,
+      "duringTask": true,
+      "sideAllowed": true,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "permissions",
+      "aliases": [],
+      "desc": "choose what Codex is allowed to do",
+      "args": false,
+      "duringTask": true,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "keymap",
+      "aliases": [],
+      "desc": "remap TUI shortcuts",
+      "args": true,
+      "duringTask": false,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "vim",
+      "aliases": [],
+      "desc": "toggle Vim mode for the composer",
+      "args": false,
+      "duringTask": false,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "setup-default-sandbox",
+      "aliases": [],
+      "desc": "set up elevated agent sandbox",
+      "args": false,
+      "duringTask": false,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "experimental",
+      "aliases": [],
+      "desc": "toggle experimental features",
+      "args": false,
+      "duringTask": false,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "approve",
+      "aliases": [],
+      "desc": "approve one retry of a recent auto-review denial",
+      "args": false,
+      "duringTask": true,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "memories",
+      "aliases": [],
+      "desc": "configure memory use and generation",
+      "args": false,
+      "duringTask": false,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "skills",
+      "aliases": [],
+      "desc": "use skills to improve how Codex performs specific tasks",
+      "args": false,
+      "duringTask": true,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "import",
+      "aliases": [],
+      "desc": "import setup, this project, and recent chats from Claude Code",
+      "args": false,
+      "duringTask": false,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "hooks",
+      "aliases": [],
+      "desc": "view and manage lifecycle hooks",
+      "args": false,
+      "duringTask": true,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "review",
+      "aliases": [],
+      "desc": "review my current changes and find issues",
+      "args": true,
+      "duringTask": false,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "rename",
+      "aliases": [],
+      "desc": "rename the current thread",
+      "args": true,
+      "duringTask": true,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "new",
+      "aliases": [],
+      "desc": "start a new chat during a conversation",
+      "args": true,
+      "duringTask": false,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "archive",
+      "aliases": [],
+      "desc": "archive this session",
+      "args": false,
+      "duringTask": false,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "delete",
+      "aliases": [],
+      "desc": "permanently delete this session",
+      "args": false,
+      "duringTask": false,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "resume",
+      "aliases": [],
+      "desc": "resume a saved chat",
+      "args": true,
+      "duringTask": true,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "fork",
+      "aliases": [],
+      "desc": "fork the current chat",
+      "args": true,
+      "duringTask": false,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "worktree",
+      "aliases": [],
+      "desc": "start or continue a conversation in a new worktree",
+      "args": false,
+      "duringTask": false,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "app",
+      "aliases": [],
+      "desc": "continue this session in the Desktop app",
+      "args": false,
+      "duringTask": true,
+      "sideAllowed": false,
+      "visible": "os:macos,windows",
+      "popup": "shown"
+    },
+    {
+      "name": "init",
+      "aliases": [],
+      "desc": "create an AGENTS.md file with instructions for Codex",
+      "args": false,
+      "duringTask": false,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "compact",
+      "aliases": [],
+      "desc": "summarize conversation to prevent hitting the context limit",
+      "args": false,
+      "duringTask": false,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "recap",
+      "aliases": [],
+      "desc": "summarize the current conversation now",
+      "args": false,
+      "duringTask": false,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "plan",
+      "aliases": [],
+      "desc": "switch to Plan mode",
+      "args": true,
+      "duringTask": false,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "voice",
+      "aliases": [],
+      "desc": "start or stop voice; use /voice settings to choose a voice",
+      "args": true,
+      "duringTask": true,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "goal",
+      "aliases": [],
+      "desc": "set or view the goal for a long-running task",
+      "args": true,
+      "duringTask": true,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "agents",
+      "aliases": [],
+      "desc": "open the agent command center",
+      "args": false,
+      "duringTask": true,
+      "sideAllowed": true,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "side",
+      "aliases": [],
+      "desc": "start a side conversation in an ephemeral fork",
+      "args": true,
+      "duringTask": true,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "btw",
+      "aliases": [],
+      "desc": "start a side conversation in an ephemeral fork",
+      "args": true,
+      "duringTask": true,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "unfiltered"
+    },
+    {
+      "name": "copy",
+      "aliases": [],
+      "desc": "copy the last response or part of it",
+      "args": false,
+      "duringTask": true,
+      "sideAllowed": true,
+      "visible": "not-os:android",
+      "popup": "shown"
+    },
+    {
+      "name": "export",
+      "aliases": [],
+      "desc": "export the conversation as markdown",
+      "args": true,
+      "duringTask": false,
+      "sideAllowed": true,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "raw",
+      "aliases": [],
+      "desc": "toggle raw scrollback mode for copy-friendly terminal selection",
+      "args": true,
+      "duringTask": true,
+      "sideAllowed": true,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "tui",
+      "aliases": [],
+      "desc": "choose the TUI mode for the next launch",
+      "args": false,
+      "duringTask": false,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "diff",
+      "aliases": [],
+      "desc": "show git diff (including untracked files)",
+      "args": false,
+      "duringTask": true,
+      "sideAllowed": true,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "mention",
+      "aliases": [],
+      "desc": "mention a file",
+      "args": false,
+      "duringTask": true,
+      "sideAllowed": true,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "status",
+      "aliases": [],
+      "desc": "show current session configuration and token usage",
+      "args": false,
+      "duringTask": true,
+      "sideAllowed": true,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "daemon",
+      "aliases": [],
+      "desc": "Manage the local background server",
+      "args": false,
+      "duringTask": true,
+      "sideAllowed": true,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "warnings",
+      "aliases": [],
+      "desc": "view retained warnings and diagnostic details",
+      "args": false,
+      "duringTask": true,
+      "sideAllowed": true,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "cd",
+      "aliases": [],
+      "desc": "change the current working directory",
+      "args": true,
+      "duringTask": false,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "pwd",
+      "aliases": [
+        "cwd"
+      ],
+      "desc": "show the current working directory",
+      "args": true,
+      "duringTask": true,
+      "sideAllowed": true,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "usage",
+      "aliases": [],
+      "desc": "view account usage or use a usage limit reset",
+      "args": true,
+      "duringTask": true,
+      "sideAllowed": true,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "debug-config",
+      "aliases": [],
+      "desc": "show config layers and requirement sources for debugging",
+      "args": false,
+      "duringTask": true,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "hidden"
+    },
+    {
+      "name": "title",
+      "aliases": [],
+      "desc": "configure which items appear in the terminal title",
+      "args": false,
+      "duringTask": true,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "statusline",
+      "aliases": [],
+      "desc": "configure which items appear in the status line",
+      "args": false,
+      "duringTask": true,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "theme",
+      "aliases": [],
+      "desc": "choose a syntax highlighting theme",
+      "args": false,
+      "duringTask": false,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "pets",
+      "aliases": [
+        "pet"
+      ],
+      "desc": "choose or hide the terminal pet",
+      "args": true,
+      "duringTask": false,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "mcp",
+      "aliases": [],
+      "desc": "list configured MCP tools; use /mcp verbose for details",
+      "args": true,
+      "duringTask": true,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "apps",
+      "aliases": [],
+      "desc": "manage apps",
+      "args": false,
+      "duringTask": true,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "hidden"
+    },
+    {
+      "name": "plugins",
+      "aliases": [],
+      "desc": "browse plugins",
+      "args": false,
+      "duringTask": true,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "logout",
+      "aliases": [],
+      "desc": "log out of Codex",
+      "args": false,
+      "duringTask": false,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "quit",
+      "aliases": [],
+      "desc": "exit Codex",
+      "args": false,
+      "duringTask": true,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "unfiltered"
+    },
+    {
+      "name": "exit",
+      "aliases": [],
+      "desc": "exit Codex",
+      "args": false,
+      "duringTask": true,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "feedback",
+      "aliases": [],
+      "desc": "send logs to maintainers",
+      "args": false,
+      "duringTask": true,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "rollout",
+      "aliases": [],
+      "desc": "print the rollout file path",
+      "args": false,
+      "duringTask": true,
+      "sideAllowed": false,
+      "visible": "debug",
+      "popup": "shown"
+    },
+    {
+      "name": "ps",
+      "aliases": [],
+      "desc": "list background terminals",
+      "args": false,
+      "duringTask": true,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "stop",
+      "aliases": [
+        "clean"
+      ],
+      "desc": "stop all background terminals",
+      "args": false,
+      "duringTask": true,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "clear",
+      "aliases": [],
+      "desc": "clear the terminal and start a new chat",
+      "args": true,
+      "duringTask": false,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "test-approval",
+      "aliases": [],
+      "desc": "test approval request",
+      "args": false,
+      "duringTask": true,
+      "sideAllowed": false,
+      "visible": "debug",
+      "popup": "shown"
+    },
+    {
+      "name": "subagents",
+      "aliases": [],
+      "desc": "switch between this session's subagents",
+      "args": false,
+      "duringTask": true,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "debug-m-drop",
+      "aliases": [],
+      "desc": "DO NOT USE",
+      "args": false,
+      "duringTask": false,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "hidden"
+    },
+    {
+      "name": "debug-m-update",
+      "aliases": [],
+      "desc": "DO NOT USE",
+      "args": false,
+      "duringTask": false,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "hidden"
+    }
   ]
 }

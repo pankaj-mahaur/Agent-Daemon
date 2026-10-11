@@ -4,6 +4,40 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [2.2.0] — 2026-10-11
+
+### Fixed
+
+- `ad tui`: a Codex command ad doesn't have yet (`/plan fix the bug`, `/side …`, `/clear`) was sent to the model as a prompt. Now it answers why it isn't in ad (and that `/codex` has it, where the stock UI can help), and what you typed stays in the prompt.
+- `/codex`: ad's engine kept the conversation loaded while the stock UI ran it too, so both wrote to it and, back in ad, the turns taken in the stock UI were missing. ad's engine now unloads the conversation before the stock UI opens it, and resumes it from disk afterwards.
+- `ad tui`: a late reply from the terminal (a colour, a version) could arrive as Alt+], some text and Ctrl+G (which opened the editor). Terminal replies are now recognised and dropped; Alt+] still types.
+- `ad tui`: Ctrl+C now closes the Ctrl+T pager (it cleared the prompt underneath), and Shift+Tab no longer acts as Tab in the command popup.
+
+### Added
+
+- `ad tui` runs the rest of the Codex commands on its stable surface: `/recap` (Codex's catch-up, from a temporary read-only thread with no tools), `/subagents` (watch each subagent's transcript live; Alt+← / Alt+→), `/approve` (one retry of an action Codex's auto-review denied), `/setup-default-sandbox` (Windows, after a confirm), `/mention`, `/debug-config` (secrets masked), `/rollout`, and Codex's answer for `/agents`. See [Slash commands](docs/tui.md#slash-commands).
+- `ad tui` colours code by language, as Codex does: fenced code blocks in answers and the unchanged lines of edits' diffs (JavaScript/TypeScript, Python, Rust, Go, C/C++/C#/Java, JSON, YAML, TOML, shell, PowerShell, HTML/XML, CSS, SQL, diff), with no new dependency. `/theme` chooses the colours with a live preview: `ansi` (the terminal's own, the default) or Codex's `catppuccin-mocha` / `catppuccin-latte`, saved as Codex's `tui.theme`. See [Syntax highlighting](docs/tui.md#syntax-highlighting).
+- `ad tui` has Codex's Vim mode for the prompt: `/vim` turns it on (and `tui.vim_mode_default` from the start), with Codex's Normal, Insert and Replace modes, motions, `d y c` operators and text objects, search, undo/redo and `.`. The footer shows the mode; the cursor is a bar in Insert. See [Vim mode](docs/tui.md#vim-mode).
+- `ad tui`: `/keymap` shows the keys in effect (yours from the stock UI's `/keymap` marked), and `/keymap debug` is Codex's Keypress Inspector: what your terminal sends for a key and which actions it presses.
+- `ad tui` has Codex's side conversations: `/side [question]` (or `/btw`) opens an ephemeral fork in a panel under the main conversation, also while a turn runs; Ctrl+/ moves between the two prompts, Ctrl+C closes it and its transcript stays in the scrollback; nothing merges back. ad's side runs read-only with no approvals and no hooks. See [Side conversations](docs/tui.md#side-conversations).
+- `ad tui` has Codex's `/cd [folder]`: the conversation is forked into the folder and continues there (edits, commands, `@` files, the status line's git facts, ad's memory and `/undo` follow it). A folder you haven't trusted yet is asked about first.
+- `ad tui` has Codex's background terminals: a long-running command the model starts (a dev server, a watcher) no longer holds back the transcript; the footer counts them, `/ps` lists them with their last output lines, and `/stop` (`/clean`) stops them all. See [Background terminals](docs/tui.md#background-terminals).
+- `ad tui` has Codex's plan mode: `/plan` (or Shift+Tab) switches to it and `/plan <prompt>` sends a prompt there; the model explores without editing and ends with a **Proposed Plan**, and ad asks "Implement this plan?" with Codex's choices (implement here, implement in a fresh conversation, or keep planning). The footer shows **Plan mode** and the prompt turns magenta. It shares the mode with `/codex` and uses Codex's `plan_mode_reasoning_effort`. See [Plan mode](docs/tui.md#plan-mode).
+- `ad tui` has Codex's keys for copy (Ctrl+O), raw output (Alt+R) and reasoning effort (Shift+↑ / Shift+↓, besides Alt+. / Alt+,), F2 for the warnings, and Codex's pager keys in the Ctrl+T transcript (`j` `k`, Ctrl+B / Ctrl+F, Ctrl+U / Ctrl+D, Shift+Space).
+- Keys set with the stock UI's `/keymap` (Codex's `tui.keymap`, in ad's Codex home) apply in `ad tui` too, for the actions ad has.
+- `ad tui`: Codex's status line under the prompt (`/statusline` chooses its items, saved as Codex's `tui.status_line`), and the terminal window's title (`/title`, Codex's `tui.terminal_title`): a spinner while a turn runs, "action required" while an approval waits. The context and usage meters moved from the footer into the status line.
+- `ad tui`: Codex's `/clear [name]` (clears the terminal, scrollback included, and starts a new conversation; `clear.keepScrollback` in `~/.agent-daemon/tui/prefs.json` keeps the scrollback), `/archive` and `/delete` (each asks first; `/delete` also drops the conversation's `/undo` snapshots), `/resume archived` (resuming unarchives), and `/pwd` (`/cwd`).
+
+### Changed
+
+- `ad tui`: the model's checklists (Codex's `update_plan`) now go into the scrollback as **Updated Plan** each time they change, as in Codex, instead of showing only while the turn runs.
+- `ad tui` now opts into a small part of Codex's experimental app-server API, for plan mode (and `/stop` later): the methods are on an allowlist, every other experimental notification is turned off, and tests and the Codex upgrade check refuse anything else. `ad chat`, `ad web`, `ad acp`, `ad run` and `ad loop` stay on the stable API.
+- ad's prompt hooks skip the message Codex's "clear context and implement" writes (a fixed text plus the model's plan), so it isn't recorded as something you said.
+- `ad tui` follows Codex's rules for its commands: those Codex disables while a task runs (`/new`, `/fork`, `/compact`, `/init`, `/export`, `/review`, `/logout`) wait for the turn to end, and keep your draft. Codex's aliases (`/cwd`, `/clean`, `/pet`) are recognised.
+- Tests check every request ad sends against the pinned Codex's stable protocol, not only what Codex sends.
+- For contributors: the doc link check also fails on a section heading that appears twice, and the `ad-ci-readiness` project skill runs the CI pipeline locally (here and in a Linux container) with a release-readiness checklist.
+- New docs: [Codex commands in ad](docs/codex-parity.md) lists every Codex slash command (works in ad, or why not yet), the keys and the settings shared with the stock UI; troubleshooting entries for `/keymap` keys, `/clear` and the window title; contributing has the steps for adding a terminal UI command.
+
 ## [2.1.1] — 2026-10-06
 
 ### Fixed
@@ -421,6 +455,7 @@ Kept in the snapshot but not ported this release: `.codebuddy/`, `.kiro/`, `.tra
 
 Initial public state. Self-improving memory + skills runtime for Claude Code with multi-agent orchestration. 36 skills, 6 lifecycle hooks (SessionStart, SessionEnd, PreCompact, UserPromptSubmit, plus QMD-redirect), constitution layer, digest pipeline, GEPA skill evolution, multi-agent team templates, `ad init` / `ad doctor` / `ad team` / `ad spawn` CLI.
 
+[2.2.0]: https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v2.2.0
 [2.1.1]: https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v2.1.1
 [2.1.0]: https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v2.1.0
 [2.0.2]: https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v2.0.2

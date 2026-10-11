@@ -83,8 +83,40 @@
     timer bug
 ── unknown ──
 • (not shown: futureThing item)
+── proposedPlan ──
+• Proposed Plan
+
+  Fix the login test
+
+  Summary
+
+  Use real timers in login.spec.ts so
+  the token refresh fires.
+
+  • switch the test to real timers
+  • add a retry around refresh()
+── proposedPlanStreaming ──
+• Proposed Plan
+
+  Fix the
+── proposedPlanEmpty ──
+• Proposed Plan
+
+  (empty)
+── /ps ──
+Background terminals
+
+  • npm run dev
+    ↳ ready on :3000
+      GET / 200
+      GET /api/login 401
+  • node xxxxxxxxxxxxxxxxxxxxxxxxx [...]
+── /ps (none) ──
+Background terminals
+
+  • No background terminals running.
 ── plan ──
-• Updated plan
+• Updated Plan
   └ Small fix
     ✔ Reproduce
     □ Fix timers

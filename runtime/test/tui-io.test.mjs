@@ -60,7 +60,8 @@ const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
 
 test("enter: raw mode, paste + kitty push + queries with DA1 last; no kitty → modifyOtherKeys", async () => {
   const t = fakeTerminal();
-  const { io } = make(t);
+  // The fake answers DA1, so this only waits for it: a loaded test run can take longer than 50 ms.
+  const { io } = make(t, { queryTimeoutMs: 5000 });
   const caps = await io.enter();
   assert.deepEqual(t.stdin.raw, [true]);
   const first = t.written[0];
@@ -77,7 +78,8 @@ test("enter: raw mode, paste + kitty push + queries with DA1 last; no kitty → 
 
 test("enter: a kitty reply before DA1 means no modifyOtherKeys", async () => {
   const t = fakeTerminal({ kitty: true });
-  const { io } = make(t);
+  // The fake answers DA1, so this only waits for it: a loaded test run can take longer than 50 ms.
+  const { io } = make(t, { queryTimeoutMs: 5000 });
   const caps = await io.enter();
   assert.equal(caps.kitty, true);
   assert.equal(caps.modifyOtherKeys, false);

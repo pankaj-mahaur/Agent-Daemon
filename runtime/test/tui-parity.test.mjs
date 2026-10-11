@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertGolden } from "../testkit/golden.mjs";
-import { copyText, exportMarkdown, imagePath, lastAgentText, renderHooks, renderMcp, renderSkills, renderUsage, terminalSetup, transcriptLines } from "../src/tui/commands.mjs";
+import { copyText, denialSummary, exportMarkdown, imagePath, lastAgentText, renderDebugConfig, renderHooks, renderMcp, renderSkills, renderUsage, terminalSetup, transcriptLines } from "../src/tui/commands.mjs";
 import { editInEditor, editorCommand } from "../src/tui/main.mjs";
 import { adaptNotification } from "../src/engine/codex/events.mjs";
 import { createEngine } from "../src/engine/index.mjs";
@@ -310,4 +310,48 @@ test("Ctrl+T pages the transcript; Ctrl+G edits in the editor; alt+. raises the 
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// codex-parity-2 Part 10.
+test("/debug-config masks secrets: keys that name one, header and env maps, URL credentials, token-like args; not tui.keymap", () => {
+  const text = (lines) => lines.map((l) => l.map((s) => s.text).join("")).join("\n");
+  const out = text(
+    renderDebugConfig(
+      {
+        layers: [
+          {
+            name: { type: "sessionFlags" },
+            disabledReason: null,
+            config: {
+              model_providers: { p: { base_url: "https://alice:hunter2@example.com/v1", api_key: "sk-123", http_headers: { Authorization: "Bearer sk-x", "X-Team": "blue" }, env_key: "OPENAI_API_KEY" } },
+              mcp_servers: { gh: { command: "gh-mcp", args: ["--pat", "ghp_abc123", "--verbose", "github_pat_xyz"], env: { GITHUB_PAT: "ghp_1", DB_PASS: "pw", LOG: "1" } } },
+              tui: { keymap: { global: { open_transcript: "ctrl-t" } } },
+              model_auto_compact_token_limit: 9000,
+            },
+          },
+        ],
+        requirements: { allowedSandboxModes: ["read-only"], modelProviders: { corp: { bearer_token: "corp-bearer-9" } } },
+      },
+      { width: 200 },
+    ),
+  );
+  for (const secret of ["hunter2", "alice", "sk-123", "sk-x", "ghp_abc123", "github_pat_xyz", "ghp_1", "pw\"", "corp-bearer-9"]) assert.ok(!out.includes(secret), `${secret} is hidden:\n${out}`);
+  assert.match(out, /base_url = "https:\/\/\*\*\*\*@example\.com\/v1"/);
+  assert.match(out, /args = \["--pat", "\*\*\*\*", "--verbose", "\*\*\*\*"\]/);
+  assert.match(out, /env\.LOG = "\*\*\*\*"/, "every value of an env map");
+  assert.match(out, /tui\.keymap\.global\.open_transcript = "ctrl-t"/, "a keymap isn't a key");
+  assert.match(out, /model_auto_compact_token_limit = 9000/, "a token limit stays");
+  assert.match(out, /- allowed_sandbox_modes: read-only/);
+});
+
+test("denialSummary: Codex's words for each kind of denied action", () => {
+  assert.equal(denialSummary({ type: "command", command: "rm -rf build" }), "rm -rf build");
+  assert.equal(denialSummary({ type: "execve", program: "rm", argv: ["rm", "-rf", "my dir"] }), "rm -rf 'my dir'");
+  assert.equal(denialSummary({ type: "applyPatch", files: ["a.js"] }), "apply_patch touching a.js");
+  assert.equal(denialSummary({ type: "applyPatch", files: ["a.js", "b.js"] }), "apply_patch touching 2 files");
+  assert.equal(denialSummary({ type: "networkAccess", target: "https://example.com" }), "network access to https://example.com");
+  assert.equal(denialSummary({ type: "mcpToolCall", server: "docs", toolName: "search", connectorName: null }), "MCP search on docs");
+  assert.equal(denialSummary({ type: "requestPermissions", reason: null }), "permission request");
+  assert.equal(denialSummary({ type: "writeStdin", processId: "7", stdin: "y\n" }), String.raw`send input to terminal 7: "y\n"`, "quoted, as Rust's {:?}");
+  assert.ok(denialSummary({ type: "writeStdin", processId: "7", stdin: "x".repeat(200) }).length <= 80);
 });

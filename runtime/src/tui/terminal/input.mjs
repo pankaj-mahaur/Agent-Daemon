@@ -16,6 +16,8 @@
 //   {type:"reply", kind:"da1", params}
 //   {type:"reply", kind:"decrqm", mode, value}      value: 0 unknown .. 4 permanently reset
 //   {type:"reply", kind:"kitty", flags}
+//   {type:"reply", kind:"osc", code, data}     ESC ] code ; data (BEL or ST)
+//   {type:"reply", kind:"dcs"|"apc", data}     ESC P / ESC _ replies (XTVERSION, XTGETTCAP, Kitty graphics)
 //
 // Keybindings never see paste content. Pasted text is not sanitized here; the
 // composer sanitizes what it inserts.
@@ -41,6 +43,50 @@ const KITTY_FUNCTIONAL = {
 };
 // A CSI longer than this is junk (real ones are a few dozen bytes): dropped.
 const MAX_SEQUENCE = 256;
+// OSC / DCS / APC replies can be longer (a colour, a version, a capability).
+const MAX_STRING = 8192;
+// DCS replies we may get: XTVERSION, XTGETTCAP, DECRQSS. Anything else after
+// ESC P is Alt+Shift+P.
+const DCS_PREFIXES = [">|", "1+r", "0+r", "1$r", "0$r"];
+
+/**
+ * Does `buf` (starting with ESC) open a terminal string (a reply, never keys)?
+ * OSC needs digits then ";" (ESC ] 11;rgb:…), DCS a known reply prefix, APC
+ * "G" (Kitty graphics). → "string" | "wait" (could still become one) | null
+ * (it's an Alt+key).
+ */
+function stringStart(buf) {
+  const next = buf[1];
+  if (next === "]") {
+    const m = /^\x1b\](\d*)(;?)/.exec(buf);
+    if (m[2]) return m[1] ? "string" : null;
+    return buf.length === 2 + m[1].length ? "wait" : null;
+  }
+  if (next === "P") {
+    const rest = buf.slice(2);
+    if (DCS_PREFIXES.some((p) => rest.startsWith(p))) return "string";
+    return DCS_PREFIXES.some((p) => p.startsWith(rest)) ? "wait" : null;
+  }
+  if (next === "_") {
+    if (buf.length === 2) return "wait";
+    return buf[2] === "G" ? "string" : null;
+  }
+  return null;
+}
+
+/** Alt + a printable character, as the decoder reports it everywhere. */
+function altChar(c, raw) {
+  return key(c === " " ? "space" : c.toLowerCase(), raw, { alt: true, shift: c !== c.toLowerCase() });
+}
+
+/** A complete terminal string as a reply event. */
+function stringReply(intro, body) {
+  if (intro === "]") {
+    const m = /^(\d+);([\s\S]*)$/.exec(body);
+    return { type: "reply", kind: "osc", code: Number(m[1]), data: m[2] };
+  }
+  return { type: "reply", kind: intro === "P" ? "dcs" : "apc", data: body };
+}
 
 function mods(param) {
   // xterm/kitty: value = 1 + bits; shift 1, alt 2, ctrl 4, super 8, hyper 16,
@@ -327,6 +373,65 @@ export function createInputDecoder({
           buf = buf.slice(3);
           emit(decodeSs3(seq));
           continue;
+        }
+        // OSC / DCS / APC: a terminal's reply (a late one included), never keys.
+        const opens = next === "]" || next === "P" || next === "_" ? stringStart(buf) : null;
+        if (opens === "wait") {
+          // A lone introducer is Alt+]/Alt+Shift+P/Alt+_ unless more comes as
+          // quickly as an escape sequence would; digits already in (ESC ] 1…)
+          // wait for the rest like an unfinished CSI. Timed out: keys after all.
+          emitText();
+          if (timerKind !== "intro") {
+            arm(buf.length > 2 ? sequenceCapMs : escTimeoutMs, () => {
+              const raw = buf;
+              buf = raw.slice(2);
+              emit(altChar(raw[1], raw.slice(0, 2)));
+              drain();
+            }, "intro");
+          }
+          return;
+        }
+        if (opens === "string") {
+          // Ends at BEL or ST (ESC \); an ESC that starts anything else ends a malformed one.
+          let end = -1;
+          let endLen = 0;
+          let cut = -1;
+          for (let i = 2; i < buf.length; i++) {
+            if (buf[i] === "\x07") {
+              [end, endLen] = [i, 1];
+              break;
+            }
+            if (buf[i] === ESC) {
+              if (i + 1 < buf.length) buf[i + 1] === "\\" ? ([end, endLen] = [i, 2]) : (cut = i);
+              break;
+            }
+          }
+          if (end >= 0 || cut >= 0) {
+            disarm();
+            const at = end >= 0 ? end : cut;
+            const body = buf.slice(2, at);
+            const raw = buf.slice(0, 16);
+            buf = buf.slice(at + endLen);
+            emit(end >= 0 ? stringReply(next, body) : key("unknown", raw));
+            continue;
+          }
+          // Unfinished: wait for the end, at most sequenceCapMs from the start and
+          // MAX_STRING bytes; then it's dropped, never typed.
+          emitText();
+          if (buf.length > MAX_STRING) {
+            disarm();
+            emit(key("unknown", buf.slice(0, 16)));
+            buf = "";
+            return;
+          }
+          if (timerKind !== "string") {
+            arm(sequenceCapMs, () => {
+              const raw = buf;
+              buf = "";
+              emit(key("unknown", raw.slice(0, 16)));
+            }, "string");
+          }
+          return;
         }
         // ESC ESC [ / ESC ESC O: some terminals send Alt+<special key> this way.
         if (next === ESC && (buf[2] === "[" || buf[2] === "O")) {

@@ -119,6 +119,16 @@ test("hello command exits 0", async () => {
 
 ---
 
+## Adding a slash command to the terminal UI
+
+1. **Codex has it?** Check `runtime/src/tui/codex-slash.json` (generated from Codex's source at the pin). A Codex command keeps Codex's name and meaning: add a `source: "codex"` row to `SLASH_COMMANDS` in `runtime/src/tui/app.mjs` and remove it from `NOT_IN_AD`. Codex's "during a task" rule and popup hiding come from the generated file.
+2. **ad's own?** A `source: "ad"` row with a name Codex doesn't use (a test fails on a clash).
+3. **A `case` in `slash()`.** Ask before anything destructive with `openConfirm`; a list of options is `openChecklist` or `openPicker`.
+4. **A key?** Make it an action in `runtime/src/tui/keymap.mjs` with Codex's action name and default keys, checked with `keymap.is(ctx, action, ev)`; name the key in `docs/tui.md` (a test checks every default key is there) and add a cell to the key routing table test if a layer is involved.
+5. **A new request to Codex?** Add the method to `SENT_METHODS` and regenerate the snapshot (see [testing.md](testing.md#the-fake-engine-speaks-the-pinned-protocol)).
+6. **Tests:** the app flow on the fake app-server (`test/tui-app.test.mjs`), plus a live step in `test/tui-live.test.mjs` when it has a runtime effect.
+7. **Docs:** a row in `docs/tui.md` and in `docs/codex-parity.md` for a Codex command (a test checks the parity table).
+
 ## Adding a new hook
 
 1. **Decide which event**: `PreToolUse`, `PostToolUse`, `SessionStart`, `SessionEnd`, `UserPromptSubmit`, `PreCompact`, `Stop`
@@ -254,7 +264,8 @@ Body should explain **why**, not what. The diff shows what.
 - Open PRs early as drafts if you want feedback
 - Squash-merge into `main` (we prefer linear history)
 - Every PR to `main` must pass CI: `npm test` + the skill linter on Ubuntu / macOS / Windows × Node 22. The `engine-real` job (real Codex vs a mock model, plus the live terminal UI tests) runs alongside; it is non-blocking (`continue-on-error`) while each platform's sandbox behaviour is being recorded, so read its result.
-- Before pushing, check the doc links: `node runtime/scripts/check-doc-links.mjs` (every relative link must point at a file git tracks).
+- Before pushing, check the doc links: `node runtime/scripts/check-doc-links.mjs` (every relative link must point at a file git tracks, and no `## ` section appears twice).
+- Before pushing to a PR or releasing, run the CI pipeline locally too: the [`ad-ci-readiness`](../.claude/skills/ad-ci-readiness/SKILL.md) project skill mirrors it on your machine and in a Linux container, and holds the release-readiness checklist.
 
 ---
 

@@ -9,21 +9,23 @@
 //   newlineHint({terminal, csiU})
 //   renderShortcuts({newline}, {width})
 //   createPicker({items, title, placeholder}) → {handle, render}
+//   createChecklist({items, title, reorder, onChange}) → {handle, render, values}
 
 import { sanitize } from "../terminal/sanitize.mjs";
 import { lineWidth, normalize, truncate } from "../terminal/text.mjs";
 import { stringWidth } from "../terminal/width.mjs";
 import { createComposer } from "./composer.mjs";
+import { T } from "./theme.mjs";
 
 const S = {
-  border: { dim: true },
-  label: { dim: true },
-  hint: { dim: true },
-  title: { bold: true },
-  accent: { fg: "cyan", bold: true },
-  dim: { dim: true },
-  warn: { fg: "yellow" },
-  sel: { fg: "cyan", bold: true },
+  border: T.dim,
+  label: T.dim,
+  hint: T.dim,
+  title: T.bold,
+  accent: T.accent,
+  dim: T.dim,
+  warn: T.warning,
+  sel: T.accent,
 };
 
 const clean = (t) => sanitize(String(t ?? ""), "transcript").replace(/\s*\n\s*/g, " ").replace(/\t/g, " ");
@@ -114,18 +116,18 @@ export function newlineHint({ terminal = "unknown", csiU = false } = {}) {
 }
 
 /**
- * hints: ["? shortcuts", …] on the left; chips [{full, short}] and meters
+ * hints: ["? shortcuts", …] on the left; chips [{full, short, style?}] and meters
  * [{text, warn}] on the right. Too wide: hints go first (from the end), then
  * chips shorten, then chips go, and meters last.
  */
 export function renderFooter({ hints = [], chips = [], meters = [] } = {}, { width = 80 } = {}) {
   let h = hints.map(clean);
-  let c = chips.map((x) => ({ text: clean(x.full), short: clean(x.short ?? x.full) }));
+  let c = chips.map((x) => ({ text: clean(x.full), short: clean(x.short ?? x.full), style: x.style ?? S.dim }));
   let m = meters.map((x) => ({ text: clean(x.text), warn: !!x.warn }));
   const build = () => {
     const left = h.length ? [{ text: `  ${h.join(" \u{b7} ")}`, style: S.dim }] : [];
     const right = [];
-    [...m.map((x) => ({ text: x.text, style: x.warn ? S.warn : S.dim })), ...c.map((x) => ({ text: x.text, style: S.dim }))].forEach((x, i) => {
+    [...m.map((x) => ({ text: x.text, style: x.warn ? S.warn : S.dim })), ...c.map((x) => ({ text: x.text, style: x.style }))].forEach((x, i) => {
       if (i) right.push({ text: " \u{b7} ", style: S.dim });
       right.push(x);
     });
@@ -147,12 +149,14 @@ export function renderFooter({ hints = [], chips = [], meters = [] } = {}, { wid
 /* ------------------------------------------------------------------ */
 
 /** The `?` overlay. */
-export function renderShortcuts({ newline = "ctrl+j" } = {}, { width = 80 } = {}) {
+export function renderShortcuts({ newline = "ctrl+j", keymap = null } = {}, { width = 80 } = {}) {
+  // Keys that can be remapped (tui.keymap) come from the keymap; the rest are fixed.
+  const k = (ctx, action, fallback) => (keymap ? keymap.label(ctx, action) : fallback);
   const keys = [
     ["enter", "send (steers a running turn)"],
     [newline, "new line (\\ + enter works too)"],
-    ["tab", "queue for after this turn"],
-    ["esc", "interrupt the turn"],
+    [k("composer", "queue", "tab"), "queue for after this turn"],
+    [k("chat", "interrupt_turn", "esc"), "interrupt the turn"],
     ["ctrl+c", "clear, interrupt, then quit"],
     ["\u{2191} / \u{2193}", "history (at the first/last line)"],
     ["ctrl+r", "search history"],
@@ -160,12 +164,15 @@ export function renderShortcuts({ newline = "ctrl+j" } = {}, { width = 80 } = {}
     ["/", "commands"],
     ["!", "run a shell command (unsandboxed)"],
     ["esc esc", "rewind to an earlier prompt"],
-    ["ctrl+t", "the whole transcript"],
-    ["ctrl+g", "edit the prompt in your editor"],
-    ["alt+, alt+.", "lower / raise reasoning effort"],
-    ["ctrl+l", "redraw the screen"],
-  ];
-  const kw = Math.max(...keys.map(([k]) => stringWidth(k))) + 2;
+    [k("global", "open_transcript", "ctrl+t"), "the whole transcript"],
+    [k("global", "open_external_editor", "ctrl+g"), "edit the prompt in your editor"],
+    [`${k("chat", "decrease_reasoning_effort", "alt+,")} ${k("chat", "increase_reasoning_effort", "alt+.")}`, "lower / raise reasoning effort"],
+    [k("global", "copy", "ctrl+o"), "copy the last answer"],
+    [k("global", "toggle_raw_output", "alt+r"), "the last answer as plain text"],
+    ["f2", "warnings"],
+    [k("global", "clear_terminal", "ctrl+l"), "redraw the screen"],
+  ].filter(([key]) => key.trim()); // an unbound action isn't listed
+  const kw = Math.max(...keys.map(([key]) => stringWidth(key))) + 2;
   return [
     [{ text: "Shortcuts", style: S.title }],
     ...keys.map(([k, what]) => truncate([{ text: `  ${k.padEnd(kw)}`, style: S.accent }, { text: what }], width)),
@@ -173,13 +180,77 @@ export function renderShortcuts({ newline = "ctrl+j" } = {}, { width = 80 } = {}
 }
 
 /**
+ * A list of options to switch on and off (codex-parity-2 1b: /statusline,
+ * /title…): ↑/↓ move, Space toggles, ←/→ move the current option up or down
+ * the order (with `reorder`), Enter saves, Esc cancels. `onChange(values)`
+ * sees every change, for a live preview.
+ *   items: [{label, hint?, value, checked?}]
+ *   handle(ev) → {select: [values checked, in order]} | {cancel: true} | {changed: true} | null
+ */
+export function createChecklist({ items = [], title = "", reorder = false, onChange = null } = {}) {
+  const list = items.map((it) => ({ ...it, checked: Boolean(it.checked) }));
+  let index = 0;
+  let top = 0;
+  const values = () => list.filter((it) => it.checked).map((it) => it.value);
+  const changed = () => {
+    onChange?.(values());
+    return { changed: true };
+  };
+  return {
+    handle(ev) {
+      if (ev.type !== "key" && ev.type !== "text") return null;
+      if (ev.type === "key" && (ev.name === "escape" || (ev.ctrl && ev.name === "c"))) return { cancel: true };
+      if (ev.type === "key" && ev.name === "enter" && !ev.alt) return { select: values() };
+      if (ev.type === "key" && (ev.name === "up" || ev.name === "down") && !ev.alt) {
+        if (list.length) index = (index + (ev.name === "up" ? -1 : 1) + list.length) % list.length;
+        return { changed: true };
+      }
+      if (reorder && ev.type === "key" && (ev.name === "left" || ev.name === "right")) {
+        const to = index + (ev.name === "left" ? -1 : 1);
+        if (to < 0 || to >= list.length) return { changed: false };
+        [list[index], list[to]] = [list[to], list[index]];
+        index = to;
+        return changed();
+      }
+      if ((ev.type === "key" && ev.name === "space") || (ev.type === "text" && ev.text === " ")) {
+        if (!list[index]) return { changed: false };
+        list[index].checked = !list[index].checked;
+        return changed();
+      }
+      return { changed: false }; // a checklist takes every key while it's open
+    },
+    render({ width = 80, height = 10 } = {}) {
+      const out = [];
+      if (title) out.push(truncate([{ text: clean(title), style: S.title }], width));
+      const hint = truncate([{ text: `  space toggles${reorder ? " \u{b7} \u{2190}\u{2192} reorder" : ""} \u{b7} enter saves \u{b7} esc cancels`, style: S.dim }], width);
+      const rows = Math.max(1, height - out.length - 1);
+      index = Math.min(index, Math.max(0, list.length - 1));
+      if (index < top) top = index;
+      if (index >= top + rows) top = index - rows + 1;
+      for (let i = top; i < Math.min(list.length, top + rows); i++) {
+        const it = list[i];
+        const cur = i === index;
+        const line = [{ text: cur ? "\u{203a} " : "  ", style: S.sel }, { text: it.checked ? "[x] " : "[ ] ", style: it.checked ? S.accent : S.dim }, { text: clean(it.label), style: cur ? S.sel : undefined }];
+        if (it.hint) line.push({ text: `  ${clean(it.hint)}`, style: S.dim });
+        out.push(truncate(line, width));
+      }
+      out.push(hint);
+      return out;
+    },
+    get values() {
+      return values();
+    },
+  };
+}
+
+/**
  * A filterable list: typing filters (every word must match, case-folded),
  * ↑/↓ move, Enter picks, Esc closes.
  * items: [{label, hint?, value}]
  */
-export function createPicker({ items = [], title = "", placeholder = "type to filter", showQuery = true } = {}) {
+export function createPicker({ items = [], title = "", placeholder = "type to filter", showQuery = true, initial = null, onChange = null } = {}) {
   const query = createComposer();
-  let index = 0;
+  let index = Math.max(0, items.findIndex((it) => it.value === initial));
   let top = 0;
 
   const filtered = () => {
@@ -194,17 +265,29 @@ export function createPicker({ items = [], title = "", placeholder = "type to fi
     handle(ev) {
       if (ev.type === "key" && (ev.name === "escape" || (ev.ctrl && ev.name === "c"))) return { cancel: true };
       const list = filtered();
+      const was = list[index]?.value;
+      // A live preview (/theme) hears about the item under the cursor.
+      const moved = () => {
+        const now = filtered()[index]?.value;
+        if (now !== was && now !== undefined) onChange?.(now);
+      };
       if (ev.type === "key" && (ev.name === "up" || ev.name === "down")) {
         if (list.length) index = (index + (ev.name === "up" ? -1 : 1) + list.length) % list.length;
+        moved();
         return { changed: true };
       }
       if (ev.type === "key" && (ev.name === "enter" || ev.name === "tab") && !ev.alt) {
         const it = list[index];
         return it ? { select: it.value, item: it } : { changed: false };
       }
+      const typed = query.text;
       const r = query.handle(ev);
-      index = 0;
-      top = 0;
+      // Back to the top only when the filter changed (not on Left, Home...).
+      if (query.text !== typed) {
+        index = 0;
+        top = 0;
+      }
+      moved();
       return r && "submit" in r ? { changed: true } : (r ?? null);
     },
     render({ width = 80, height = 10 } = {}) {
@@ -229,6 +312,10 @@ export function createPicker({ items = [], title = "", placeholder = "type to fi
     },
     get query() {
       return query.text;
+    },
+    /** The value under the cursor. */
+    get current() {
+      return filtered()[index]?.value;
     },
   };
 }

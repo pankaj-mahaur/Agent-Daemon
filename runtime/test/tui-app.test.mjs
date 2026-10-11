@@ -3,7 +3,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,22 +18,24 @@ const FAKE = fileURLToPath(new URL("../testkit/fake-codex-app-server.mjs", impor
 const command = { cmd: process.execPath, prefix: [FAKE] };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function withApp(fn, { cols = 70, rows = 20, actions = {}, armMs = 60, sessionOpts = {}, restartable = false } = {}) {
+async function withApp(fn, { cols = 70, rows = 20, actions = {}, armMs = 60, sessionOpts = {}, restartable = false, settings = null, modes = false, env = null, depth = 0, platform = undefined } = {}) {
   const root = mkdtempSync(join(tmpdir(), "ad-app-"));
   const engines = [];
   const make = async () => {
-    const e = await createEngine({ home: join(root, "home"), command });
+    // modes: as ad tui runs it, on the experimental allowlist with Codex's collaboration modes.
+    const e = await createEngine({ home: join(root, "home"), command, ...(modes ? { experimental: true } : {}), ...(env ? { env } : {}) });
     engines.push(e);
     return e;
   };
   const engine = await make();
-  const session = createSession({ engine, cwd: root, lockDir: join(root, "locks"), ...(restartable ? { restart: make } : {}), ...sessionOpts });
+  const session = createSession({ engine, cwd: root, lockDir: join(root, "locks"), ...(restartable ? { restart: make } : {}), modes, ...sessionOpts });
+  await session.modesReady;
   const scr = modelScreen({ cols, rows });
   const listeners = new Set();
   const io = { ...scr.io, onInput: (f) => (listeners.add(f), () => listeners.delete(f)) };
   const decoder = createInputDecoder({ onEvent: (e) => listeners.forEach((f) => f(e)), escTimeoutMs: 5 });
   const type = (s) => decoder.feed(s);
-  const renderer = createRenderer({ io, reflow: "none" });
+  const renderer = createRenderer({ io, reflow: "none", depth });
   await renderer.start();
   // What went into the scrollback (as opposed to the live region).
   const scrollback = [];
@@ -44,12 +46,12 @@ async function withApp(fn, { cols = 70, rows = 20, actions = {}, armMs = 60, ses
   };
   const committed = () => scrollback.join("\n");
   const bells = [];
-  const app = createApp({ io, renderer, session, cwd: root, header: [[{ text: "HEADER" }]], armMs, actions: { bell: (o) => bells.push(o), ...actions } });
+  const app = createApp({ io, renderer, session, cwd: root, header: [[{ text: "HEADER" }]], armMs, settings, ...(platform ? { platform } : {}), actions: { bell: (o) => bells.push(o), ...actions } });
   const text = () => scr.lines().join("\n");
   const until = async (pred, what, ms = 10000) => {
     const end = Date.now() + ms;
     while (Date.now() < end) {
-      if (pred()) return;
+      if (await pred()) return;
       await sleep(20);
     }
     throw new Error(`timed out waiting for ${what}:\n${text()}`);
@@ -140,12 +142,12 @@ test("an approval opens as a modal; arming holds early keys; y approves and the 
     assert.match(text(), /Run command\?/);
     type("y"); // too soon: ignored
     assert.equal(session.state.requests.length, 1);
-    await sleep(120);
+    await sleep(600);
     type("y");
     await until(() => /✔ approved/.test(text()), "the answer");
     await until(() => /Worked for/.test(text()), "the turn's end");
     assert.match(text(), /pong/);
-  });
+  }, { armMs: 500 }); // long enough that a loaded machine can't make the first "y" late
 });
 
 test("Esc in an approval declines; Ctrl+C twice quits", async () => {
@@ -209,7 +211,8 @@ test("slash commands: the popup completes, /status reports, /new resets, unknown
     type("\r");
     await until(() => /Status/.test(text()) && /sandbox/.test(text()), "the status report");
     type("fail-turn\r");
-    await until(() => session.state.thread, "a thread");
+    // /new waits for the task to end (Codex's rule), so wait for the turn too.
+    await until(() => /The turn failed/.test(text()) && !session.state.activeTurnId && !session.state.starting, "a thread, its turn over");
     type("/new\r");
     await until(() => !session.state.thread && /New conversation/.test(text()), "a new conversation");
     type("/nope\r");
@@ -220,6 +223,259 @@ test("slash commands: the popup completes, /status reports, /new resets, unknown
     type("\x1b");
     await until(() => !app.state.overlay, "closed");
   });
+});
+
+test("Codex commands ad doesn't run never reach the model; busy ones wait, and the draft stays", async () => {
+  await withApp(async ({ app, type, until, text, session, engine }) => {
+    const sent = async () => {
+      const st = await engine.server.request("debug/state", {});
+      return st.calls.filter((c) => c === "turn/start" || c === "turn/steer").length;
+    };
+    type("/import the bug\r");
+    await until(() => /\/import isn't in ad yet\. \/codex opens the stock Codex UI/.test(text()), "the answer");
+    assert.equal(app.state.composer, "/import the bug", "the draft goes back into the composer");
+    assert.equal(await sent(), 0);
+    type("\x15/pet\r"); // an alias answers as its command does
+    await until(() => /ad doesn't draw terminal pets/.test(text()), "the alias answer");
+    type("\x15/DAEMON\r");
+    await until(() => /\/daemon manages Codex's background server/.test(text().replace(/\s+/g, " ")), "a custom answer, any case");
+    type("\x15hang\r");
+    await until(() => session.state.activeTurnId, "the running turn");
+    const before = await sent();
+    type("/new\r");
+    await until(() => /'\/new' is disabled while a task is in progress\./.test(text()), "the busy answer");
+    assert.equal(app.state.composer, "/new");
+    type("\x15/import what about tests?\r");
+    await until(() => /\/import isn't in ad yet/.test(text()), "not steered into the turn");
+    assert.equal(await sent(), before, "nothing was steered into the running turn");
+    assert.ok(session.state.thread, "the conversation is untouched");
+    type("\x15/status\r"); // allowed during a task, as in Codex
+    await until(() => /sandbox/.test(text()), "the status report mid-turn");
+  });
+});
+
+test("ad's own dialogs in the app: a confirm takes the keys and waits for its arm delay; a checklist saves or cancels", async () => {
+  await withApp(async ({ app, type, until, text }) => {
+    let answer = null;
+    app.confirm({ title: "Archive this conversation?", yes: "Yes, archive" }).then((a) => (answer = a));
+    await until(() => app.state.confirm && /Archive this conversation\?/.test(text()), "the question");
+    type("y"); // typed at once: too soon
+    await sleep(30);
+    assert.equal(answer, null);
+    assert.equal(app.state.composer, "", "the composer didn't get the key");
+    await sleep(80);
+    type("y");
+    await until(() => answer === true, "yes, once armed");
+    assert.equal(app.state.confirm, false);
+    app.confirm({ title: "Delete?" }).then((a) => (answer = a));
+    await until(() => app.state.confirm, "the second question");
+    type("\x1b");
+    await until(() => answer === false, "esc is no");
+
+    let saved = null;
+    let cancelled = false;
+    const previews = [];
+    app.checklist("statusline", [{ label: "model", value: "model", checked: true }, { label: "git-branch", value: "git-branch" }], (v) => (saved = v), { title: "Status line", reorder: true, onChange: (v) => previews.push(v.join(",")), onCancel: () => (cancelled = true) });
+    await until(() => app.state.popup === "statusline", "the checklist");
+    type("\x1b[B ");
+    await until(() => previews.length === 1, "a live preview");
+    type("\r");
+    await until(() => saved, "saved");
+    assert.deepEqual(saved, ["model", "git-branch"]);
+    app.checklist("statusline", [{ label: "model", value: "model" }], () => {}, { onCancel: () => (cancelled = true) });
+    await until(() => app.state.popup === "statusline", "again");
+    type("\x1b");
+    await until(() => cancelled && app.state.popup === null, "cancelled");
+  });
+});
+
+// The key routing table (codex-parity-2 1d; docs/tui-architecture.md): the
+// topmost layer takes the key. Each row opens a layer, presses one key, and
+// checks what happened, so a key can't reach a layer underneath by accident.
+const ESC = "\x1b";
+const KEYS = { esc: ESC, ctrlC: "\x03", tab: "\t", shiftTab: "\x1b[Z", enter: "\r", pgup: "\x1b[5~" };
+const LAYERS = {
+  async idle() {},
+  async text({ type, until, app }) {
+    type("draft");
+    await until(() => app.state.composer === "draft", "typed");
+  },
+  async running({ type, until, session, app }) {
+    type("hang\r");
+    await until(() => session.state.activeTurnId, "a running turn");
+    type("steer me");
+    await until(() => app.state.composer === "steer me", "typed");
+  },
+  async approval({ type, until, app }) {
+    type("needs approval\r");
+    await until(() => app.state.modal, "the approval");
+  },
+  async confirm({ app, until, box }) {
+    app.confirm({ title: "Sure?" }).then((a) => (box.answer = a));
+    await until(() => app.state.confirm, "the question");
+  },
+  async popup({ type, until, app }) {
+    type("/");
+    await until(() => app.state.popup === "command", "the command list");
+  },
+  async checklist({ app, until, box }) {
+    app.checklist("statusline", [{ label: "model", value: "model" }], (v) => (box.saved = v), { onCancel: () => (box.cancelled = true) });
+    await until(() => app.state.popup === "statusline", "the checklist");
+  },
+  async pager({ type, until, app }) {
+    type("\x14"); // Ctrl+T
+    await until(() => app.state.pager, "the pager");
+  },
+  async overlay({ type, until, app }) {
+    type("?");
+    await until(() => app.state.overlay, "the shortcuts");
+  },
+};
+const sent = async (engine, method) => (await engine.server.request("debug/state", {})).calls.filter((c) => c === method).length;
+const ROUTES = [
+  ["idle", "ctrlC", async ({ app }) => assert.match(app.state.note ?? "", /Ctrl\+C again quits/)],
+  ["idle", "shiftTab", async ({ app, engine, session }) => (assert.equal(app.state.composer, ""), assert.equal(await sent(engine, "turn/start"), 0), assert.equal(session.state.mode.kind, "plan", "Codex's mode cycle"))],
+  ["idle", "enter", async ({ engine }) => assert.equal(await sent(engine, "turn/start"), 0, "an empty prompt sends nothing")],
+  ["text", "esc", async ({ app }) => assert.equal(app.state.composer, "draft", "Esc doesn't throw the draft away")],
+  ["text", "ctrlC", async ({ app }) => (assert.equal(app.state.composer, ""), assert.doesNotMatch(app.state.note ?? "", /again quits/, "clearing doesn't arm the quit"))],
+  ["text", "shiftTab", async ({ app, session }) => (assert.equal(app.state.composer, "draft"), assert.equal(session.state.mode.kind, "plan", "the draft stays; the mode changes"))],
+  ["text", "enter", async ({ until, engine }) => until(async () => (await sent(engine, "turn/start")) === 1, "sent")],
+  ["running", "esc", async ({ until, engine }) => until(async () => (await sent(engine, "turn/interrupt")) === 1, "interrupted")],
+  ["running", "ctrlC", async ({ app }) => assert.equal(app.state.composer, "", "the draft goes first; the turn runs on")],
+  ["running", "tab", async ({ until, session }) => until(() => session.state.queue.length === 1, "queued")],
+  ["running", "shiftTab", async ({ app, session }) => (assert.equal(session.state.queue.length, 0, "Shift+Tab never queues"), assert.equal(app.state.composer, "steer me"), assert.equal(session.state.mode.kind, "default", "no switch during a task"))],
+  ["running", "enter", async ({ until, engine }) => until(async () => (await sent(engine, "turn/steer")) === 1, "steered")],
+  ["approval", "esc", async ({ until, app }) => until(() => !app.state.modal, "declined")],
+  ["approval", "ctrlC", async ({ until, app }) => until(() => !app.state.modal, "declined")],
+  ["approval", "tab", async ({ app }) => assert.ok(app.state.modal, "still open")],
+  ["approval", "shiftTab", async ({ app, session }) => (assert.ok(app.state.modal, "still open"), assert.equal(session.state.mode.kind, "default"))],
+  ["confirm", "esc", async ({ until, box }) => until(() => box.answer === false, "no")],
+  ["confirm", "ctrlC", async ({ until, box, app }) => (await until(() => box.answer === false, "no"), assert.equal(app.state.confirm, false))],
+  ["confirm", "enter", async ({ app, box }) => (assert.equal(box.answer, undefined, "too soon to answer"), assert.ok(app.state.confirm))],
+  ["confirm", "tab", async ({ app }) => assert.ok(app.state.confirm)],
+  ["popup", "esc", async ({ app }) => (assert.equal(app.state.popup, null), assert.equal(app.state.composer, "/"))],
+  ["popup", "ctrlC", async ({ app }) => (assert.equal(app.state.popup, null), assert.equal(app.state.composer, "/", "closing the popup comes before clearing"))],
+  ["popup", "tab", async ({ app }) => assert.match(app.state.composer, /^\/\w+ $/, "fills the highlighted command")],
+  ["popup", "shiftTab", async ({ app, session }) => (assert.equal(app.state.composer, "/"), assert.equal(app.state.popup, "command"), assert.equal(session.state.mode.kind, "default", "not with a popup open"))],
+  ["checklist", "esc", async ({ app, box }) => (assert.equal(app.state.popup, null), assert.equal(box.cancelled, true))],
+  ["checklist", "ctrlC", async ({ app, box }) => (assert.equal(app.state.popup, null), assert.equal(box.cancelled, true, "Ctrl+C undoes a live preview too"))],
+  ["checklist", "tab", async ({ app, box }) => (assert.equal(app.state.popup, "statusline"), assert.equal(box.saved, undefined))],
+  ["checklist", "enter", async ({ box }) => assert.deepEqual(box.saved, [])],
+  ["pager", "esc", async ({ app }) => assert.equal(app.state.pager, false)],
+  ["pager", "ctrlC", async ({ app }) => (assert.equal(app.state.pager, false), assert.doesNotMatch(app.state.note ?? "", /again quits/))],
+  ["pager", "pgup", async ({ app }) => assert.equal(app.state.pager, true, "it scrolls, and stays open")],
+  ["pager", "tab", async ({ app }) => (assert.equal(app.state.pager, true), assert.equal(app.state.composer, ""))],
+  ["overlay", "esc", async ({ app }) => (assert.equal(app.state.overlay, false), assert.equal(app.state.composer, ""))],
+  ["overlay", "ctrlC", async ({ app }) => assert.equal(app.state.overlay, false)],
+];
+
+test("key routing table: the topmost layer takes Esc, Ctrl+C, Tab, Shift+Tab, Enter and PgUp", async () => {
+  for (const [layer, k, check] of ROUTES) {
+    await withApp(async (h) => {
+      const box = {};
+      await LAYERS[layer]({ ...h, box });
+      h.type(KEYS[k]);
+      await sleep(60);
+      try {
+        await check({ ...h, box });
+      } catch (err) {
+        err.message = `${layer} + ${k}: ${err.message}`;
+        throw err;
+      }
+    }, { armMs: 500, modes: true }); // "too soon" stays too soon on a loaded machine
+  }
+});
+
+test("/plan and Shift+Tab: Codex's plan mode, its footer chip and prompt colour, /plan <prompt>, and the unavailable answer", async () => {
+  await withApp(async ({ type, until, text, session, engine }) => {
+    const debug = () => engine.server.request("debug/state", {});
+    assert.doesNotMatch(text(), /Plan mode/);
+    type("/plan\r");
+    await until(() => session.state.mode.kind === "plan" && /Plan mode \(shift\+tab to cycle\)/.test(text()), "the plan chip");
+    type("\x1b[Z"); // Shift+Tab
+    await until(() => session.state.mode.kind === "default" && !/Plan mode/.test(text()), "back to Default");
+    type("/plan fail-turn\r");
+    await until(async () => (await debug()).lastParams["turn/start"]?.collaborationMode?.mode === "plan", "the prompt, sent in Plan mode");
+    assert.equal((await debug()).lastParams["turn/start"].input[0].text, "fail-turn");
+    await until(() => !session.state.activeTurnId && !session.state.starting, "the turn's end");
+    type("/plan\r"); // already in Plan: nothing to do, nothing sent
+    await sleep(50);
+    assert.equal(session.state.mode.kind, "plan");
+  }, { modes: true, cols: 90 });
+  // Codex without presets: /plan <text> goes back into the composer, with Codex's answer.
+  await withApp(async ({ app, type, until, text, engine }) => {
+    type("/plan fix the bug\r");
+    await until(() => /Plan mode unavailable right now\./.test(text()), "the answer");
+    assert.equal(app.state.composer, "/plan fix the bug");
+    assert.ok(!(await engine.server.request("debug/state", {})).calls.includes("turn/start"), "never sent to the model");
+    type("\x15\x1b[Z");
+    await sleep(60);
+    assert.match(text(), /Plan mode unavailable right now\./);
+  }, { modes: true, env: { FAKE_NO_MODES: "1" } });
+});
+
+test("/clear, /archive, /resume archived, /delete and /pwd", async () => {
+  const forgotten = [];
+  await withApp(
+    async ({ app, type, until, text, session, engine }) => {
+      const debug = () => engine.server.request("debug/state", {});
+      type("/pwd\r");
+      await until(() => /Current working directory:\s+\S/.test(text()), "/pwd"); // a long temp path wraps
+      type("/pwd now\r");
+      await until(() => /Usage: \/pwd/.test(text()), "its usage");
+      type("\x15/archive\r");
+      await until(() => /Nothing to archive yet/.test(text()), "nothing to archive");
+      type("early-complete\r");
+      await until(() => /Worked for/.test(text()), "a turn");
+      const first = session.state.thread.id;
+
+      // /clear: the screen and scrollback go; a new, named conversation starts.
+      type("/clear login fix\r");
+      await until(() => /New conversation: login fix\. The one before: \/resume, or ad tui --resume/.test(text()), "cleared");
+      assert.doesNotMatch(text(), /Worked for|early/, "the old scrollback is gone");
+      assert.match(text(), /HEADER/, "the header again");
+      assert.equal(session.state.thread.name, "login fix");
+      assert.notEqual(session.state.thread.id, first);
+      assert.equal((await debug()).lastParams["thread/start"].sessionStartSource, "clear");
+
+      // /archive asks first; "y" before the arm delay is ignored.
+      type("/archive\r");
+      await until(() => app.state.confirm, "the question");
+      type("n");
+      await sleep(10);
+      assert.ok(app.state.confirm, "too soon");
+      await sleep(80);
+      type("y");
+      await until(() => /Archived\. \/resume archived brings it back\./.test(text()), "archived");
+      assert.ok((await debug()).calls.includes("thread/archive"));
+      assert.equal(session.state.thread, null);
+
+      // /resume archived unarchives and resumes.
+      type("/resume archived\r");
+      await until(() => app.state.popup === "resume" && /an archived one/.test(text()), "the archived list");
+      type("\r");
+      await until(() => /Unarchived and resumed\./.test(text()), "resumed");
+      assert.equal(session.state.thread.id, "thread-archived");
+      assert.ok((await debug()).calls.includes("thread/unarchive"));
+
+      // /delete: "no" keeps it; "yes" deletes it and its /undo snapshots.
+      type("/delete\r");
+      await until(() => app.state.confirm && /Cannot be undone/.test(text()), "the question");
+      await sleep(80);
+      type("n");
+      await until(() => /Kept\./.test(text()), "kept");
+      assert.equal(session.state.thread.id, "thread-archived");
+      type("/delete\r");
+      await until(() => app.state.confirm, "asked again");
+      await sleep(80);
+      type("y");
+      await until(() => /Deleted\./.test(text()), "deleted");
+      assert.deepEqual(forgotten, ["thread-archived"]);
+      assert.equal(session.state.thread, null);
+    },
+    // Wide enough that the long answers (a temp path, a resume hint) stay on one row.
+    { cols: 160, actions: { forgetCheckpoints: async (id) => forgotten.push(id) } },
+  );
 });
 
 test("/permissions and /model set the next turn's overrides through pickers", async () => {
@@ -253,6 +509,362 @@ test("@ opens a file picker from actions.searchFiles; Tab inserts the path", asy
     },
     { actions: { searchFiles: async (q) => ["src/main.mjs", "src/maintain.mjs"].filter((f) => f.includes(q)) } },
   );
+});
+
+test("/mention: Codex's command puts an @ in the prompt and opens the file picker", async () => {
+  await withApp(
+    async ({ app, type, until }) => {
+      type("/mention\r");
+      await until(() => app.state.composer === "@" && app.state.popup === "mention", "the @ and the picker");
+      type("\t");
+      await until(() => app.state.composer === "@src/main.mjs ", "the inserted path");
+    },
+    { actions: { searchFiles: async (q) => ["src/main.mjs", "src/maintain.mjs"].filter((f) => f.includes(q)) } },
+  );
+});
+
+test("/rollout and /agents: Codex's answers; /rollout and /debug-config stay out of the popup but can be typed", async () => {
+  await withApp(
+    async ({ app, type, until, committed }) => {
+      const flat = () => committed().replace(/\s+/g, " ");
+      type("/rollout\r");
+      await until(() => /Rollout path is not available yet\./.test(flat()), "no conversation yet");
+      type("early-complete\r");
+      await until(() => /Worked for/.test(flat()), "a turn");
+      type("/rollout\r");
+      await until(() => /Current rollout path: \/fake\/sessions\/rollout-thread-\d+\.jsonl/.test(flat()), "the path");
+      type("/agents\r");
+      await until(() => flat().includes("Shared agents unavailable This session isn\u{2019}t connected to a shared background server. /subagents"), "the answer");
+      type("/r");
+      await until(() => app.state.popup === "command", "the popup");
+      type("o");
+      await until(() => app.state.popup === null, "nothing listed for /ro (/rollout is hidden)");
+    },
+    { cols: 120 },
+  );
+});
+
+test("/debug-config: config layers lowest first, the session flags' keys with secrets masked, the requirements", async () => {
+  await withApp(
+    async ({ type, until, committed, engine }) => {
+      type("/debug-config\r");
+      await until(() => /Requirements:/.test(committed()), "the cell");
+      const out = committed();
+      assert.match(out, /\/debug-config\n\nConfig layer stack \(lowest precedence first\):\n {2}1\. user \(\/fake\/home\/config\.toml\) \(enabled\)\n {2}2\. project \(\/fake\/work\/\.codex\/config\.toml\) \(disabled\)\n {5}reason: this folder isn't trusted\n {2}3\. session-flags \(enabled\)/);
+      assert.match(out, /- model_providers\.mock\.api_key = "\*\*\*\*"/, "a secret is masked");
+      assert.match(out, /- model_providers\.mock\.base_url = "http:\/\/127\.0\.0\.1:1\/v1"/);
+      assert.match(out, /- thread_unload_delay_secs = 0/);
+      assert.doesNotMatch(out, /sk-fake-secret/);
+      assert.match(out, /Requirements:\n {2}- allowed_sandbox_modes: read-only, workspace-write\n {2}- allow_login_shell: false/);
+      const p = (await engine.server.request("debug/state", {})).lastParams["config/read"];
+      assert.deepEqual(p.includeLayers, true);
+    },
+    { cols: 120, env: { FAKE_REQUIREMENTS: JSON.stringify({ allowedSandboxModes: ["read-only", "workspace-write"], allowLoginShell: false, logDir: null }) } },
+  );
+});
+
+test("/recap: Codex's temporary read-only thread with tools off answers in its schema, then is unsubscribed", async () => {
+  await withApp(
+    async ({ type, until, committed, engine, session }) => {
+      const flat = () => committed().replace(/\s+/g, " ");
+      type("/recap\r");
+      await until(() => /There is no conversation history to recap\./.test(flat()), "nothing yet");
+      type("early-complete\r");
+      await until(() => /Worked for/.test(flat()), "a turn");
+      const main = session.state.thread.id;
+      type("/recap\r");
+      await until(() => /\u{21b3} Recap: Fixing the login bug: the fix is in, tests pass\. Next: Push it\?/u.test(flat()), "the recap");
+      const p = (await engine.server.request("debug/state", {})).lastParams;
+      const start = p["thread/start"];
+      assert.equal(start.ephemeral, true);
+      assert.equal(start.sandbox, "read-only");
+      assert.equal(start.approvalPolicy, "never");
+      assert.equal(start.threadSource, "system");
+      assert.equal(start.config["features.shell_tool"], false);
+      assert.equal(start.config["features.hooks"], false);
+      assert.equal(start.config.default_permissions, ":read-only");
+      assert.deepEqual(p["turn/start"].outputSchema.required, ["summary", "next_action"]);
+      const prompt = p["turn/start"].input[0].text;
+      assert.match(prompt, /^Write a brief catch-up[\s\S]*Conversation:\nUser: early-complete\n\nAssistant: /);
+      assert.equal(p["thread/unsubscribe"].threadId, start && p["turn/start"].threadId, "the temporary thread is let go");
+      assert.equal(session.state.thread.id, main, "the conversation stays the same");
+    },
+    { cols: 100 },
+  );
+});
+
+test("/recap: a bad answer fails as Codex says; a prompt sent meanwhile drops it; one at a time; not during a turn", async () => {
+  await withApp(
+    async ({ type, until, committed, text }) => {
+      const flat = () => committed().replace(/\s+/g, " ");
+      type("early-complete\r");
+      await until(() => /Worked for/.test(flat()), "a turn");
+      type("/recap\r");
+      await until(() => /Could not generate a recap\. Please try again\. The answer wasn't a recap\./.test(flat()), "the failure");
+    },
+    { cols: 100, env: { FAKE_RECAP: '{"summary":"x"}' } },
+  );
+  await withApp(
+    async ({ type, until, committed, text }) => {
+      const flat = () => committed().replace(/\s+/g, " ");
+      type("early-complete\r");
+      await until(() => /Worked for/.test(flat()), "a turn");
+      type("/recap\r");
+      await until(() => /Generating conversation recap\u{2026}/u.test(text()), "loading");
+      type("/recap\r");
+      await until(() => /A recap is already being generated\./.test(flat()), "one at a time");
+      type("hang\r");
+      await until(() => !/Generating conversation recap/.test(text()), "the prompt drops it");
+      type("/recap\r");
+      await until(() => /'\/recap' is disabled while a task is in progress\./.test(flat()), "not during a turn");
+      await new Promise((r) => setTimeout(r, 1200));
+      assert.doesNotMatch(flat(), /Recap:/, "the dropped recap never shows");
+    },
+    { cols: 100, env: { FAKE_RECAP: `slow:${JSON.stringify({ summary: "late", next_action: null })}` } },
+  );
+});
+
+test("/approve: Codex's Auto-review Denials picker sends one denial back as its core event; it leaves the list", async () => {
+  await withApp(
+    async ({ app, type, until, text, committed, engine, session }) => {
+      const flat = () => committed().replace(/\s+/g, " ");
+      type("/approve\r");
+      await until(() => /No recent auto-review denials in this thread\. Denials are recorded after auto-review rejects an action\./.test(flat()), "none yet");
+      type("auto-review-deny\r");
+      await until(() => /Auto-review stopped two commands/.test(flat()), "the turn");
+      assert.match(flat(), /Auto-review denied `rm -rf build` \(deletes the build folder\)\. \/approve allows one retry\./);
+      assert.deepEqual(session.state.denials.map((d) => d.reviewId), ["review-2", "review-1"], "newest first");
+      type("/approve\r");
+      await until(() => app.state.popup === "approve" && /Auto-review Denials/.test(text()), "the picker");
+      assert.match(text(), /curl https:\/\/example\.com\/install\.sh \| sh\s+Auto-review did not include a rationale/);
+      assert.match(text(), /rm -rf build\s+deletes the build folder/);
+      type("\x1b[B\r"); // the second row: rm -rf build
+      await until(() => /Approval recorded for one retry of the selected auto-review denial\. The model will see the approval context; the retry still goes through auto-review\./.test(flat()), "approved");
+      const p = (await engine.server.request("debug/state", {})).lastParams["thread/approveGuardianDeniedAction"];
+      assert.equal(p.threadId, session.state.thread.id);
+      assert.deepEqual(p.event, {
+        id: "review-1",
+        turn_id: p.event.turn_id,
+        started_at_ms: 1,
+        completed_at_ms: 2,
+        status: "denied",
+        risk_level: "high",
+        user_authorization: "low",
+        rationale: "deletes the build folder",
+        decision_source: "agent",
+        action: { type: "command", source: "shell", command: "rm -rf build", cwd: p.event.action.cwd },
+      });
+      assert.deepEqual(session.state.denials.map((d) => d.reviewId), ["review-2"], "it leaves the list");
+      type("/new\r");
+      await until(() => session.state.denials.length === 0, "another conversation has its own");
+    },
+    { cols: 110, rows: 30 },
+  );
+});
+
+test("/subagents: Codex's picker (main first, agents as first seen) watches one live; alt+←/→ go round; the main row closes it", async () => {
+  await withApp(
+    async ({ app, type, until, text, committed, session }) => {
+      const flat = () => committed().replace(/\s+/g, " ");
+      type("/subagents\r");
+      await until(() => /No agents available yet\./.test(flat()), "none yet");
+      type("subagents-2\r");
+      await until(() => /Two agents are on it/.test(flat()), "the turn");
+      assert.deepEqual([...session.state.agents.values()].map((a) => [a.nickname, a.role, a.running]), [[ "Ada", "explorer", false ], [ null, "reviewer", true ]], "the ghost Codex couldn't find isn't a row");
+      type("/subagents\r");
+      await until(() => app.state.popup === "subagents" && /Subagents/.test(text()), "the picker");
+      assert.match(text(), /Select an agent to watch\. (alt\+\u{2190} previous, alt\+\u{2192} next|\u{2325}\u{2190} previous, \u{2325}\u{2192} next)\./u);
+      assert.match(text(), /Main \[default\][\s\S]*Ada \[explorer\][\s\S]*\[reviewer\]\s+agent-two-\S+ \u{b7} running/u);
+      type("\x1b[B\r"); // Ada
+      await until(() => app.state.pager && /Ada \[explorer\] \u{b7} idle \u{b7} 1 of 2/u.test(text()), "watching Ada");
+      assert.match(text(), /Read src\/app\.js: the bug is in login\(\)\./);
+      type("\x1b[1;3C"); // alt+→
+      await until(() => /\[reviewer\] \u{b7} running \u{b7} 2 of 2/u.test(text()) && /Reviewing the diff/.test(text()), "the next one, live");
+      type("\x1b[1;3C"); // alt+→ again: round to the main conversation, which closes the pager
+      await until(() => !app.state.pager, "back to main");
+      type("\x1b[1;3D"); // from an empty prompt, alt+← watches the last
+      await until(() => app.state.pager && /\[reviewer\]/.test(text()), "the last agent");
+      type("\x1b");
+      await until(() => !app.state.pager, "esc closes");
+    },
+    { cols: 110, rows: 30 },
+  );
+});
+
+test("/setup-default-sandbox: Windows only; asks first (machine-wide); sets up the elevated sandbox and Codex's auto permissions", async () => {
+  await withApp(
+    async ({ type, until, committed }) => {
+      type("/setup-default-sandbox\r");
+      await until(() => /only for Windows/.test(committed()), "elsewhere: the OS sandbox");
+    },
+    { platform: "linux" },
+  );
+  await withApp(
+    async ({ app, type, until, text, committed, engine, session }) => {
+      const flat = () => committed().replace(/\s+/g, " ");
+      type("/setup-default-sandbox\r");
+      await until(() => app.state.confirm && /Set up the elevated sandbox\?/.test(text()), "the question");
+      assert.match(text().replace(/\s+/g, " "), /administrator approval[\s\S]*your own Codex uses them too/);
+      await sleep(100);
+      type("n");
+      await until(() => /Kept the current sandbox\./.test(flat()), "no");
+      type("/setup-default-sandbox\r");
+      await until(() => app.state.confirm, "the question again");
+      await sleep(100);
+      type("y");
+      await until(() => /Sandbox ready Codex can now safely edit files and execute commands in your computer/.test(flat()), "ready");
+      const p = (await engine.server.request("debug/state", {})).lastParams["windowsSandbox/setupStart"];
+      assert.equal(p.mode, "elevated");
+      type("/setup-default-sandbox\r");
+      await until(() => /The elevated sandbox is already set up\./.test(flat()), "once is enough");
+      assert.equal(session.state.engine.state, "ready");
+    },
+    { platform: "win32", cols: 100, rows: 30 },
+  );
+  await withApp(
+    async ({ app, type, until, committed }) => {
+      const flat = () => committed().replace(/\s+/g, " ");
+      type("/setup-default-sandbox\r");
+      await until(() => app.state.confirm, "the question");
+      await sleep(100);
+      type("y");
+      await until(() => /Windows sandbox setup failed: denied by policy `ad sandbox setup` sets up the non-admin sandbox instead\./.test(flat()), "the failure");
+    },
+    { platform: "win32", cols: 100, env: { FAKE_SANDBOX_FAIL: "1" } },
+  );
+  await withApp(
+    async ({ type, until, committed }) => {
+      type("/setup-default-sandbox\r");
+      await until(() => /That Windows sandbox option is disallowed by requirements\./.test(committed()), "requirements say no");
+    },
+    { platform: "win32", cols: 100, env: { FAKE_REQUIREMENTS: JSON.stringify({ allowedWindowsSandboxImplementations: ["unelevated"] }) } },
+  );
+});
+
+test("Part 10 review: /approve after an engine restart goes to the new engine; a refused one stays on the list", async () => {
+  await withApp(
+    async ({ app, type, until, committed, engines, session }) => {
+      const flat = () => committed().replace(/\s+/g, " ");
+      type("auto-review-deny\r");
+      await until(() => /Auto-review stopped two commands/.test(flat()), "the denials");
+      engines[0].server.request("test/crash", {}).catch(() => {});
+      await until(() => engines.length === 2 && session.state.engine.state === "ready", "the restart");
+      assert.equal(session.state.denials.length, 2, "kept across the restart");
+      type("/approve\r");
+      await until(() => app.state.popup === "approve", "the picker");
+      type("\r");
+      await until(() => /Approval recorded for one retry/.test(flat()), "approved through the new engine");
+      assert.deepEqual(session.state.denials.map((d) => d.reviewId), ["review-1"]);
+      // Codex refuses one: it stays on the list, and the reason shows.
+      session.state.denials[0].review = { ...session.state.denials[0].review, status: "approved" };
+      type("/approve\r");
+      await until(() => app.state.popup === "approve", "the picker again");
+      type("\r");
+      await until(() => /invalid Guardian denial event: bad status or action/.test(flat()), "the refusal");
+      assert.deepEqual(session.state.denials.map((d) => d.reviewId), ["review-1"], "back on the list");
+    },
+    { restartable: true, cols: 110, rows: 30 },
+  );
+});
+
+test("Part 10 review: a recap is dropped when another turn ran meanwhile; a /private prompt's answer stays out of it", async () => {
+  await withApp(
+    async ({ type, until, committed, text, session }) => {
+      const flat = () => committed().replace(/\s+/g, " ");
+      type("early-complete\r");
+      await until(() => /Worked for/.test(flat()), "a turn");
+      type("/recap\r");
+      await until(() => /Generating conversation recap/.test(text()), "loading");
+      session.submit("early-complete"); // a turn started another way (not a prompt typed here)
+      await until(() => !/Generating conversation recap/.test(text()), "done");
+      await sleep(300);
+      assert.doesNotMatch(flat(), /Recap:/, "stale: dropped");
+    },
+    { cols: 100, env: { FAKE_RECAP: `slow:${JSON.stringify({ summary: "late", next_action: null })}` } },
+  );
+  await withApp(
+    async ({ app, type, until, committed, engine, session }) => {
+      const flat = () => committed().replace(/\s+/g, " ");
+      type("early-complete\r");
+      await until(() => /Worked for/.test(flat()), "a turn");
+      type("/private\r");
+      await until(() => /Private: your prompts are wrapped/.test(flat()), "private on");
+      type("SECRET plan\r");
+      await until(() => app.state.modal, "its approval");
+      await sleep(100);
+      type("y");
+      await until(() => session.state.turns.length === 2 && !session.state.activeTurnId, "the private turn's answer");
+      type("/private\r");
+      await until(() => /Private is off\./.test(flat()), "private off");
+      type("/recap\r");
+      await until(() => /Recap:/.test(flat()), "the recap");
+      const prompt = (await engine.server.request("debug/state", {})).lastParams["turn/start"].input[0].text;
+      assert.match(prompt, /Conversation:\nUser: early-complete\n\nAssistant: early$/, "the private prompt and its answer stay out");
+      assert.doesNotMatch(prompt, /SECRET|pong/);
+    },
+    { cols: 100 },
+  );
+});
+
+test("Part 10 review: /setup-default-sandbox blocks every input while it runs (status kept); never in a Codex home ad didn't make", async () => {
+  await withApp(
+    async ({ app, type, until, text, committed, engine }) => {
+      const flat = () => committed().replace(/\s+/g, " ");
+      type("/setup-default-sandbox\r");
+      await until(() => app.state.confirm, "the question");
+      await sleep(100);
+      type("y");
+      await until(() => /Setting up sandbox\.\.\./.test(text()), "the status");
+      for (const input of ["/compact", "!ls", "hello"]) {
+        type(`${input}\r`);
+        await until(() => app.state.composer === input, `${input} kept in the prompt`);
+        type("\x15");
+      }
+      assert.equal((flat().match(/Input disabled until setup completes\./g) ?? []).length, 3);
+      assert.match(text(), /Setting up sandbox\.\.\./, "the status stays after a key");
+      const calls = (await engine.server.request("debug/state", {})).calls;
+      assert.ok(!calls.includes("thread/compact/start") && !calls.includes("thread/shellCommand") && !calls.includes("turn/start"), "nothing went out");
+      await until(() => /Sandbox ready/.test(flat()), "ready", 15000);
+    },
+    { platform: "win32", cols: 110, rows: 30, env: { FAKE_SANDBOX_DELAY_MS: "1500" } },
+  );
+  const { MANAGED_MARKER } = await import("../src/engine/codex/home.mjs");
+  await withApp(
+    async ({ type, until, committed, engine }) => {
+      rmSync(join(engine.home, MANAGED_MARKER), { force: true });
+      type("/setup-default-sandbox\r");
+      await until(() => /wasn't created by ad, so ad doesn't change its sandbox\. `ad sandbox setup --elevated --force` does it anyway\./.test(committed().replace(/\s+/g, " ")), "refused");
+    },
+    { platform: "win32", cols: 110 },
+  );
+});
+
+test("Part 10 review: watching a long subagent transcript, each frame after the first reuses the drawn cells", async () => {
+  await withApp(
+    async ({ app, type, until, session }) => {
+      session.state.agents.set("agent-long", { label: "Ada", nickname: "Ada", role: "explorer", path: null, running: true, closed: false });
+      for (let i = 0; i < 300; i++) {
+        const id = `long-${i}`;
+        session.state.items.set(id, { id, kind: "agentMessage", threadId: "agent-long", turnId: "t", text: `Step ${i}: read \`src/file${i}.js\`, then:\n\n\`\`\`js\nconst x${i} = await load(${i});\n\`\`\`\n` });
+      }
+      type("\x1b[1;3C"); // alt+→: watch it
+      await until(() => app.state.pager, "the pager");
+      const t0 = performance.now();
+      for (let k = 0; k < 10; k++) type("\x1b[A"); // scroll: a redraw each
+      const per = (performance.now() - t0) / 10;
+      // About 14 ms here with the cache, 130 without it.
+      const budget = process.env.CI ? 120 : 40;
+      assert.ok(per < budget, `${per.toFixed(1)} ms per frame with 300 cells (budget ${budget})`);
+    },
+    { cols: 110, rows: 30 },
+  );
+});
+
+test("Part 10 review: a subagent's denial doesn't point to /approve (the list is the main thread's)", async () => {
+  const { adaptNotification } = await import("../src/engine/codex/events.mjs");
+  const evs = adaptNotification("item/autoApprovalReview/completed", { threadId: "agent-x", turnId: "t", reviewId: "r9", targetItemId: null, startedAtMs: 1, completedAtMs: 2, decisionSource: "agent", review: { status: "denied", riskLevel: "high", userAuthorization: "low", rationale: null }, action: { type: "command", source: "shell", command: "ls", cwd: "/" } });
+  assert.equal(evs.length, 1);
+  assert.equal(evs[0].message, "Auto-review denied `ls`.", "the adapter leaves the /approve hint to the session, which adds it for the main thread only");
 });
 
 test("reasoningHeadline picks the first bold phrase", () => {
@@ -382,4 +994,517 @@ test("/undo: files back and the prompt returns; typing takes the next turn's sna
     await sleep(20);
     assert.match(text(), /\/undo needs a git repo/);
   });
+});
+
+test("Codex's keys for /copy, /raw and /warnings: Ctrl+O, Alt+R, F2", async () => {
+  await withApp(
+    async ({ type, until, committed }) => {
+      type("early-complete\r");
+      await until(() => /Worked for/.test(committed()), "a turn");
+      type("\x0f"); // Ctrl+O
+      await until(() => /Copied the last answer \(stub\)/.test(committed()), "copied");
+      type("\x1br"); // Alt+R
+      await until(() => /^early$/m.test(committed()), "the raw answer");
+      type("\x1bOQ"); // F2
+      await until(() => /No warnings in this session|Warnings/.test(committed()), "the warnings");
+    },
+    { actions: { copy: async () => ({ ok: true, via: "stub" }) } },
+  );
+});
+
+// Codex's settings as the app sees them (prefs.mjs's createCodexSettings), in memory.
+function memorySettings(initial = {}) {
+  const store = structuredClone(initial);
+  const at = (k) => k.split(".").reduce((o, x) => o?.[x], store);
+  return {
+    store,
+    codex: {
+      get: at,
+      async set(k, v) {
+        const keys = k.split(".");
+        let o = store;
+        for (const x of keys.slice(0, -1)) o = o[x] ??= {};
+        if (v === null) delete o[keys.at(-1)];
+        else o[keys.at(-1)] = v;
+      },
+    },
+    ad: { get: (_k, d) => d },
+  };
+}
+
+test("status line: Codex's items under the composer; /statusline previews, saves, and keeps ids ad can't show", async () => {
+  const settings = memorySettings({ tui: { status_line: ["model", "pull-request-number", "current-dir"] } });
+  await withApp(
+    async ({ app, type, until, text }) => {
+      type("early-complete\r"); // the model is known once the conversation starts
+      await until(() => /fake-model · \S/.test(text()), "the configured items");
+      type("/statusline\r");
+      await until(() => app.state.popup === "status" && /\[x\] model/.test(text()), "the checklist");
+      type(" "); // model off: the row changes at once (a preview)
+      await until(() => !/fake-model ·/.test(text()), "the preview");
+      type("\r");
+      await until(() => /Status line: current-dir\. Saved for \/codex too\./.test(text()), "saved");
+      assert.deepEqual(settings.store.tui.status_line, ["current-dir", "pull-request-number"], "Codex's item ad can't show is kept");
+      // Esc puts the row back as it was.
+      type("/statusline\r");
+      await until(() => app.state.popup === "status", "again");
+      type("\x1b[B \x1b");
+      await until(() => app.state.popup === null, "cancelled");
+      assert.deepEqual(settings.store.tui.status_line, ["current-dir", "pull-request-number"]);
+      type("/warnings\r");
+      await until(() => /ad doesn't show "pull-request-number"/.test(text()), "the warning about it");
+    },
+    { settings, cols: 100 },
+  );
+});
+
+test("status line: off with [] and under 12 rows", async () => {
+  await withApp(async ({ text }) => {
+    await sleep(100);
+    assert.doesNotMatch(text(), /ctx \d+%/, "[] turns it off");
+  }, { settings: memorySettings({ tui: { status_line: [] } }) });
+  // The default row shows the folder (ad-app-…); at 11 rows it isn't drawn.
+  await withApp(async ({ text, until }) => until(() => /ad-app-/.test(text()), "the row at 20 rows"), { settings: memorySettings() });
+  await withApp(async ({ text }) => {
+    await sleep(100);
+    assert.doesNotMatch(text(), /ad-app-/);
+  }, { rows: 11, settings: memorySettings() });
+});
+
+test("window title: saved first, set by OSC 0, /private keeps the conversation's name out, put back around handoffs", async () => {
+  await withApp(
+    async ({ app, scr, type, until }) => {
+      const titles = () => scr.writes.filter((w) => w.includes("\x1b]0;"));
+      await until(() => titles().length, "a title");
+      assert.ok(titles()[0].startsWith("\x1b[22;0t\x1b]0;"), "the terminal's own title is saved first");
+      type("early-complete\r");
+      await until(() => /Worked for/.test(scr.lines().join("\n")), "a turn");
+      type("/rename early bird\r");
+      await until(() => titles().some((w) => /\x1b\]0;early bird/.test(w)), "the conversation's name in the title");
+      type("/private\r");
+      await until(() => titles().at(-1).includes("\x1b]0;\x07") || !/early/.test(titles().at(-1)), "the name gone in /private");
+      assert.doesNotMatch(titles().at(-1), /early/);
+      app.holdTitle(true);
+      assert.ok(scr.writes.at(-1).endsWith("\x1b]0;\x07\x1b[23;0t"), "put back for a handoff");
+    },
+    { settings: memorySettings({ tui: { terminal_title: ["thread-name"] } }) },
+  );
+});
+
+test("/title saves Codex's tui.terminal_title; [] leaves the title alone", async () => {
+  const settings = memorySettings({ tui: { terminal_title: [] } });
+  await withApp(
+    async ({ app, scr, type, until }) => {
+      await sleep(100);
+      assert.ok(!scr.writes.some((w) => w.includes("\x1b]0;")), "[]: no title written at all");
+      type("/title\r");
+      await until(() => app.state.popup === "title", "the checklist");
+      type(" \r"); // the first item (activity) on
+      await until(() => Array.isArray(settings.store.tui.terminal_title) && settings.store.tui.terminal_title.length === 1, "saved");
+      assert.deepEqual(settings.store.tui.terminal_title, ["activity"]);
+    },
+    { settings },
+  );
+});
+
+test("window title: nothing is written while another program has the terminal", async () => {
+  await withApp(
+    async ({ app, scr, type, until }) => {
+      await until(() => scr.writes.some((w) => w.includes("\x1b]0;")), "a title");
+      app.holdTitle(true);
+      const n = scr.writes.length;
+      type("/rename while away\r");
+      await sleep(400);
+      assert.ok(!scr.writes.slice(n).some((w) => w.includes("\x1b]0;")), "no title during the handoff");
+      app.holdTitle(false);
+      await until(() => scr.writes.slice(n).some((w) => w.includes("\x1b]0;")), "the title again after it");
+    },
+    { settings: memorySettings({ tui: { terminal_title: ["app-name", "thread-name"] } }) },
+  );
+});
+
+test("Implement this plan?: after a Plan turn with a proposed plan; implement here sends Codex's message in Default", async () => {
+  await withApp(async ({ app, type, until, text, session, engine, bells, committed }) => {
+    const debug = () => engine.server.request("debug/state", {});
+    type("/plan plan-reply\r");
+    await until(() => app.state.confirm && /Implement this plan\?/.test(text()), "the choice");
+    assert.match(committed(), /• Proposed Plan/);
+    assert.match(text(), /Yes, implement this plan/);
+    assert.match(text(), /Yes, clear context and implement/);
+    assert.match(text(), /No, stay in Plan mode/);
+    assert.ok(bells.length >= 1, "a bell");
+    type("1"); // too soon: armed choices wait
+    await sleep(30);
+    assert.ok(app.state.confirm, "still open");
+    await sleep(120);
+    type("1");
+    await until(async () => (await debug()).lastParams["turn/start"]?.input?.[0]?.text === "Implement the plan.", "Codex's message");
+    const st = await debug();
+    assert.equal(st.lastParams["turn/start"].collaborationMode.mode, "default");
+    assert.equal(session.state.mode.kind, "default");
+    assert.equal(st.lastParams["thread/settings/update"].collaborationMode.mode, "default");
+  }, { modes: true, cols: 90, rows: 30 });
+});
+
+test("Implement this plan?: clear context starts a new conversation with Codex's prefix and the plan; stay keeps planning", async () => {
+  await withApp(async ({ app, type, until, text, session, engine }) => {
+    const debug = () => engine.server.request("debug/state", {});
+    type("/plan plan-reply\r");
+    await until(() => app.state.confirm, "the choice");
+    const first = session.state.thread.id;
+    await sleep(120);
+    type("2");
+    await until(async () => (await debug()).lastParams["turn/start"]?.input?.[0]?.text?.startsWith("A previous agent produced the plan below"), "the hand-off");
+    const st = await debug();
+    assert.notEqual(session.state.thread.id, first, "a new conversation");
+    assert.equal(st.lastParams["turn/start"].collaborationMode.mode, "default");
+    assert.match(st.lastParams["turn/start"].input[0].text, /carry the work through implementation and verification\.\n\n# Add hello\n/);
+    // Back in Plan, then "No, stay in Plan mode" (Esc): nothing sent.
+    await until(() => app.state.modal, "the fake's approval in the hand-off turn");
+    type("\x1b"); // declined
+    await until(() => !session.state.activeTurnId && !session.state.starting, "the hand-off turn's end");
+    type("/plan plan-reply\r");
+    await until(() => app.state.confirm, "the second choice");
+    const before = (await debug()).calls.filter((c) => c === "turn/start").length;
+    type("\x1b");
+    await until(() => !app.state.confirm, "closed");
+    await sleep(80);
+    assert.equal((await debug()).calls.filter((c) => c === "turn/start").length, before);
+    assert.equal(session.state.mode.kind, "plan");
+  }, { modes: true, cols: 90, rows: 30 });
+});
+
+test("Implement this plan?: waits for an empty prompt (the draft stays), and never comes after a queued prompt or in Default", async () => {
+  await withApp(async ({ app, type, until, text, session }) => {
+    type("/plan plan-reply\r");
+    type("my draft");
+    await until(() => /A plan is ready: clear the prompt to choose\./.test(text()), "the note");
+    assert.equal(app.state.confirm, false);
+    assert.equal(app.state.composer, "my draft");
+    type("\x15"); // Ctrl+U clears the prompt
+    await until(() => app.state.confirm, "the choice, once the prompt is empty");
+    type("\x1b");
+    await until(() => !app.state.confirm, "closed");
+    // A Default turn with a plan item: no choice.
+    type("\x1b[Z");
+    await until(() => session.state.mode.kind === "default", "Default");
+    type("plan-reply\r");
+    await until(() => session.state.turns.length === 2 && session.state.turns[1].status === "completed", "the Default turn");
+    await sleep(80);
+    assert.equal(app.state.confirm, false, "only Plan mode offers it");
+  }, { modes: true, cols: 90, rows: 30 });
+});
+
+test("update_plan checklists go into the scrollback as Codex's 'Updated Plan' cells, one per update", async () => {
+  await withApp(async ({ type, until, committed, session }) => {
+    type("checklist\r");
+    await until(() => session.state.turns[0]?.status === "completed" && /working on it/.test(committed()), "the turn");
+    const out = committed();
+    assert.equal(out.match(/Updated Plan/g)?.length, 2, out);
+    assert.match(out, /Small fix/);
+    assert.ok(out.indexOf("Updated Plan") < out.indexOf("working on it"), "in the order they came");
+  }, { cols: 90, rows: 30 });
+});
+
+test("plan mode (review #3, #6): the 'plan is ready' note goes with the plan; Shift+Tab on the shortcuts only closes them", async () => {
+  await withApp(async ({ app, type, until, text, session }) => {
+    type("/plan plan-reply\r");
+    type("my draft");
+    await until(() => /A plan is ready/.test(text()), "the note");
+    type("\x1b[Z"); // to Default: the plan's moment passed
+    await until(() => session.state.mode.kind === "default", "Default");
+    await sleep(60);
+    assert.doesNotMatch(text(), /A plan is ready/);
+    assert.equal(app.state.composer, "my draft");
+    type("\x15?");
+    await until(() => app.state.overlay, "the shortcuts");
+    type("\x1b[Z");
+    await until(() => !app.state.overlay, "closed");
+    assert.equal(session.state.mode.kind, "default", "closing the overlay didn't switch modes");
+  }, { modes: true, cols: 90, rows: 30 });
+});
+
+test("background terminals: output after one is committed during the turn; the footer, /ps (16 at most) and /stop are Codex's", async () => {
+  await withApp(async ({ app, type, until, text, session, engine, committed }) => {
+    type("bg-terminal\r");
+    await until(() => /after the server/.test(committed()), "what came after the server, in the scrollback");
+    await until(() => !session.state.activeTurnId, "the turn's end");
+    await until(() => /1 background terminal running · \/ps to view · \/stop to close/.test(text()), "the footer");
+    // As in Codex: its cell goes in as it is (running) once something follows, and holds nothing back.
+    assert.match(committed(), /Running .*npm run dev:0[\s\S]*after the server/);
+    type("/ps\r");
+    await until(() => /Background terminals[\s\S]*• npm run dev:0[\s\S]*↳ /.test(committed()), "/ps");
+    type("/stop\r");
+    await until(() => /Stopping all background terminals\./.test(committed()), "/stop");
+    assert.ok((await engine.server.request("debug/state", {})).calls.includes("thread/backgroundTerminals/clean"));
+    await until(() => !/background terminal running/.test(text()), "the footer cleared");
+    type("/ps\r");
+    await until(() => /No background terminals running\./.test(committed()), "none left");
+    type("/clean\r"); // Codex's alias
+    await until(() => committed().match(/Stopping all background terminals\./g)?.length === 2, "the alias");
+    type("bg-terminals-20\r");
+    await until(() => session.state.terminals.size === 20 && !session.state.activeTurnId, "twenty");
+    type("/ps\r");
+    await until(() => /\.\.\. and 4 more running/.test(committed()), "Codex's cap of 16");
+  }, { modes: true, cols: 100, rows: 30 });
+});
+
+test("background terminals (review): Esc on a turn with a command still running keeps its cell; the process stays in /ps", async () => {
+  await withApp(async ({ type, until, session, committed }) => {
+    type("bg-hang\r");
+    await until(() => session.state.terminals.size === 1 && session.state.activeTurnId, "the running command");
+    type("\x1b");
+    await until(() => session.state.turns[0]?.status === "interrupted", "interrupted");
+    await until(() => /Running .*npm run dev:0/.test(committed()), "its cell in the scrollback");
+    assert.equal(session.state.terminals.size, 1, "Esc interrupts the turn, not the command (Codex)");
+  }, { modes: true, cols: 100, rows: 30 });
+});
+
+test("/cd: Codex's checks and texts, the trust question, and the conversation forked into the folder", async () => {
+  await withApp(async ({ app, type, until, committed, session, engine, root }) => {
+    const debug = () => engine.server.request("debug/state", {});
+    const other = join(root, "shop-app");
+    mkdirSync(other);
+    writeFileSync(join(root, "notes.txt"), "x");
+    type("/cd nowhere\r");
+    await until(() => /Cannot access directory .*nowhere: ENOENT/.test(committed()), "the missing folder");
+    type("/cd notes.txt\r");
+    await until(() => /Not a directory: .*notes\.txt/.test(committed()), "a file");
+    type(`/cd ${session.engine.home}\r`);
+    await until(() => /ad doesn't work inside a Codex home/.test(committed()), "ad's Codex home");
+    type("fail-turn\r");
+    await until(() => !session.state.activeTurnId && session.state.turns.length === 1, "a turn first");
+    const first = session.state.thread.id;
+    // An untrusted folder is asked about; Cancel stays.
+    type("/cd shop-app\r");
+    await until(() => app.state.confirm, "the trust question");
+    type("\x1b");
+    await until(() => /Not changed\./.test(committed()), "cancelled");
+    assert.equal(session.state.thread.id, first);
+    type("/cd shop-app\r");
+    await until(() => app.state.confirm, "the trust question again");
+    await sleep(120);
+    type("1");
+    await until(() => /Working directory changed to: .*shop-app/.test(committed()), "changed");
+    assert.notEqual(session.state.thread.id, first, "a fork");
+    const st = await debug();
+    assert.equal(st.lastParams["thread/fork"].cwd, other);
+    const projects = (await session.engine.readConfig()).projects ?? {};
+    assert.ok(Object.entries(projects).some(([k, v]) => k === other && v.trust_level === "trusted"), JSON.stringify(projects));
+    type("/pwd\r");
+    await until(() => new RegExp(`Current working directory: .*shop-app`).test(committed()), "/pwd");
+    // Busy: Codex's refusal, the draft kept.
+    type("hang\r");
+    await until(() => session.state.activeTurnId, "a running turn");
+    type("/cd ..\r");
+    await until(() => /'\/cd' is disabled while a task is in progress\./.test(committed()), "busy");
+  }, { modes: true, cols: 120, rows: 30 });
+});
+
+test("/cd (review): a prompt sent while the folder is changing waits, its text kept", async () => {
+  await withApp(async ({ app, type, until, committed, session, root }) => {
+    mkdirSync(join(root, "marketing-site"));
+    type("fail-turn\r");
+    await until(() => !session.state.activeTurnId && session.state.turns.length === 1, "a turn first");
+    type("/cd marketing-site\r");
+    await until(() => app.state.confirm, "the trust question (the change is under way)");
+    app.send("fail-turn");
+    await until(() => /Changing directories: send it once that's done\./.test(committed()), "refused");
+    assert.equal(app.state.composer, "fail-turn", "kept");
+    assert.equal(session.state.turns.length, 1, "nothing sent to the old folder");
+    type("\x1b");
+    await until(() => /Not changed\./.test(committed()), "cancelled");
+  }, { modes: true, cols: 120, rows: 30 });
+});
+
+test("/side: a panel on an ephemeral fork; Ctrl+/ switches prompts; only side commands; Ctrl+C closes it into the scrollback", async () => {
+  await withApp(async ({ app, type, until, text, committed, session, engine }) => {
+    const debug = () => engine.server.request("debug/state", {});
+    type("/side\r");
+    await until(() => /'\/side' is unavailable until the main thread is ready\./.test(committed()), "too early");
+    type("fail-turn\r");
+    await until(() => !session.state.activeTurnId && session.state.turns.length === 1, "a main turn");
+    const main = session.state.thread.id;
+    type("/btw what is this?\r");
+    await until(() => /Side from main thread · ctrl\+\/ to switch · ctrl\+c to close/.test(text()), "the panel");
+    await until(async () => (await debug()).lastParams["turn/start"]?.threadId !== main, "the side question, on the fork");
+    const sideId = (await debug()).lastParams["turn/start"].threadId;
+    await until(() => /pong\[decline\]/.test(text()), "the side answer in the panel");
+    assert.doesNotMatch(committed(), /pong\[decline\]/, "nothing of the side in the scrollback yet");
+    // Only Codex's side commands; no shell.
+    type("/model\r");
+    await until(() => /'\/model' is unavailable in side conversations\. Press Ctrl\+C to return to the main thread first\./.test(committed()), "/model refused");
+    type("\x15!ls\r");
+    await until(() => /Shell commands are unavailable in side conversations\./.test(committed()), "! refused");
+    type("\x15/side\r");
+    await until(() => /A side conversation is already open\./.test(committed()), "one at a time");
+    // Ctrl+/ (0x1f): Enter goes to the main conversation again.
+    type("\x15\x1f");
+    type("fail-turn\r");
+    await until(async () => (await debug()).lastParams["turn/start"].threadId === main && session.state.turns.length === 2, "a main prompt");
+    type("\x1b[47;5u"); // Ctrl+/ as CSI u: back to the side
+    await sleep(60);
+    type("\x03"); // empty prompt: closes the side
+    await until(() => !/Side from main thread/.test(text()), "closed");
+    assert.match(committed(), /Side conversation[\s\S]*what is this\?[\s\S]*pong\[decline\]/);
+    await until(async () => (await debug()).lastParams["thread/unsubscribe"]?.threadId === sideId, "the fork let go");
+    assert.equal(session.state.thread.id, main);
+  }, { modes: true, cols: 100, rows: 30 });
+});
+
+test("/side while main runs: main's approval comes first and hides the panel; the panel fits small terminals", async () => {
+  await withApp(async ({ app, type, until, text, session, scr }) => {
+    type("fail-turn\r");
+    await until(() => !session.state.activeTurnId && session.state.turns.length === 1, "a main turn");
+    type("/side\r");
+    await until(() => /Side from main thread/.test(text()), "the panel");
+    type("\x1f"); // to main
+    type("needs approval\r");
+    await until(() => app.state.modal, "main's approval");
+    assert.doesNotMatch(scr.lines().join("\n"), /Side from main thread/, "hidden under the approval");
+    type("\x1b"); // declined
+    await until(() => !app.state.modal && /Side from main thread · main (finished|interrupted)/.test(text()), "the panel back, with main's state");
+    const screen = scr.visible().join("\n");
+    assert.match(screen, /Side from main thread[\s\S]*› /, "on a 12-row screen: the panel row and, below it, the prompt");
+  }, { modes: true, cols: 100, rows: 12 });
+});
+
+test("/side (review): one at a time, the text kept; a failed side turn shows in the panel; no images to the side; /side right after /cd", async () => {
+  await withApp(async ({ app, type, until, text, committed, session, engine, root }) => {
+    const debug = () => engine.server.request("debug/state", {});
+    writeFileSync(join(root, "shot.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    type("fail-turn\r");
+    await until(() => !session.state.activeTurnId && session.state.turns.length === 1, "a main turn");
+    type("/side\r");
+    type("/side again please\r"); // typed while the first is opening, or once it's open
+    await until(() => /Side from main thread/.test(text()), "the panel");
+    await until(() => /A side conversation is already open\./.test(committed()), "one at a time");
+    assert.equal(app.state.composer, "/side again please", "the text is kept");
+    assert.equal((await debug()).calls.filter((c) => c === "thread/fork").length, 1, "one fork");
+    type("\x15fail-turn\r");
+    await until(() => /The turn failed: model refused/.test(text()), "the side's failure, in the panel");
+    type(`\x1b[200~${join(root, "shot.png")}\x1b[201~`);
+    await until(() => /Images can't go to a side conversation/.test(text()), "no image to the side");
+    type("\x03");
+    await until(() => !/Side from main thread/.test(text()), "closed");
+    // After /cd the fork has no turns yet, and /side still opens.
+    mkdirSync(join(root, "sub"));
+    await session.engine.writeConfig([["projects", { [join(root, "sub")]: { trust_level: "trusted" } }, "upsert"]]);
+    type("/cd sub\r");
+    await until(() => /Working directory changed to/.test(committed()), "/cd");
+    type("/side\r");
+    await until(() => /Side from main thread/.test(text()), "the panel after /cd");
+  }, { modes: true, cols: 100, rows: 30 });
+});
+
+test("/keymap lists the keys; /keymap debug inspects them (Esc included) until Ctrl+C", async () => {
+  await withApp(async ({ app, type, until, text, committed }) => {
+    type("/keymap\r");
+    await until(() => /Keymap[\s\S]*open_transcript\s+ctrl\+t/.test(committed()), "the list");
+    type("/keymap debug\r");
+    await until(() => /Keypress Inspector[\s\S]*Waiting for a keypress\.\.\./.test(text()), "the inspector");
+    type("\x14"); // Ctrl+T: inspected, not opening the transcript
+    await until(() => /Detected: ctrl\+t[\s\S]*Config key: ctrl-t[\s\S]*global\.open_transcript/.test(text()), "Ctrl+T");
+    assert.equal(app.state.pager, false);
+    type("\x1b");
+    await until(() => /Detected: esc[\s\S]*chat\.interrupt_turn/.test(text()), "Esc, inspected");
+    type("\x03");
+    await until(() => !/Keypress Inspector/.test(text()), "closed");
+  }, { cols: 100, rows: 30 });
+});
+
+test("/vim in the app: Codex's messages, the footer label, the cursor shape; Esc goes to Normal before it interrupts", async () => {
+  await withApp(async ({ app, type, until, text, committed, session, scr }) => {
+    const writes = () => scr.writes.join("");
+    type("/vim\r");
+    await until(() => /Vim mode enabled\./.test(committed()) && /Vim: Normal/.test(text()), "on, in Normal");
+    assert.ok(writes().includes("\x1b[0 q"), "the terminal's own cursor in Normal");
+    type("ihang");
+    await until(() => /Vim: Insert/.test(text()) && app.state.composer === "hang", "typing in Insert");
+    assert.ok(writes().includes("\x1b[6 q"), "a steady bar in Insert");
+    type("\r");
+    await until(() => session.state.activeTurnId, "the turn");
+    await until(() => /Vim: Insert/.test(text()), "a new draft starts in Insert");
+    type("\x1b"); // Insert → Normal: never an interrupt
+    await until(() => /Vim: Normal/.test(text()), "Normal");
+    assert.ok(session.state.activeTurnId, "the turn still runs");
+    type("\x1b"); // Normal, nothing pending: Codex's Esc (interrupt)
+    await until(() => !session.state.activeTurnId, "interrupted");
+    type("?"); // Normal: a backward search, not the shortcuts
+    await until(() => /^\?$/m.test(scr.visible().join("\n")), "the search line");
+    assert.equal(app.state.overlay, false);
+    type("\x1b"); // cancels the search (alone: Esc and a key together read as Alt+key)
+    await until(() => !/^\?$/m.test(scr.visible().join("\n")), "the search closed");
+    type("i/vim\r");
+    await until(() => /Vim mode disabled\./.test(committed()) && !/Vim: /.test(text()), "off");
+    assert.ok(writes().lastIndexOf("\x1b[0 q") > writes().lastIndexOf("\x1b[6 q"), "the cursor shape is put back");
+  }, { cols: 100, rows: 30 });
+});
+
+test("tui.vim_mode_default starts the prompt in Vim's Insert mode (Codex)", async () => {
+  const settings = { codex: { get: (k) => (k === "tui.vim_mode_default" ? true : undefined) }, ad: { get: (_k, d) => d, set: async () => {} } };
+  await withApp(async ({ until, text }) => {
+    await until(() => /Vim: Insert/.test(text()), "on from the start, in Insert");
+  }, { settings, cols: 100, rows: 30 });
+});
+
+test("vim (review): Esc reaches Vim in a side conversation too; the Keypress Inspector steps aside for an approval", async () => {
+  await withApp(async ({ app, type, until, text, session }) => {
+    type("fail-turn\r");
+    await until(() => !session.state.activeTurnId && session.state.turns.length === 1, "a main turn");
+    type("/vim\r");
+    await until(() => /Vim: Normal/.test(text()), "vim on");
+    type("i/side\r");
+    await until(() => /Side from main thread/.test(text()), "the side panel");
+    type("ix");
+    await until(() => /Vim: Insert/.test(text()), "Insert in the side");
+    await sleep(60);
+    type("\x1b");
+    await until(() => /Vim: Normal/.test(text()), "Esc: Normal, in the side as in main");
+    type("\x03"); // clears the side's draft (Ctrl+U isn't a Normal-mode key)
+    await until(() => app.state.composer === "", "the draft cleared");
+    type("\x03"); // an empty prompt: closes the side
+    await until(() => !/Side from main thread/.test(text()), "side closed");
+    // The inspector, then an approval: the approval takes the keys.
+    type("/keymap debug\r"); // a cleared draft starts in Insert
+    await until(() => /Keypress Inspector/.test(text()), "the inspector");
+    app.send("needs approval");
+    await until(() => app.state.modal, "an approval over it");
+    type("\x1b"); // declines the approval, not inspected
+    await until(() => !app.state.modal, "answered");
+  }, { modes: true, cols: 100, rows: 30 });
+});
+
+test("/theme: Codex's picker with a live preview; Esc puts the old theme back; Enter saves tui.theme; an unknown one is noted", async () => {
+  const { setSyntaxTheme, syntaxTheme } = await import("../src/tui/view/highlight.mjs");
+  const saved = {};
+  const values = { "tui.theme": "dracula" };
+  const settings = { codex: { get: (k) => values[k], set: async (k, v) => ((saved[k] = v), (values[k] = v)) }, ad: { get: (_k, d) => d, set: async () => {} } };
+  try {
+    await withApp(async ({ app, scr, type, until, text, committed }) => {
+      assert.equal(syntaxTheme(), "ansi", "a theme ad doesn't ship: ansi");
+      type("/warnings\r");
+      await until(() => /tui\.theme: ad doesn't ship "dracula"/.test(committed()), "the note");
+      type("/theme\r");
+      await until(() => /Select Syntax Theme[\s\S]*ansi/.test(text()) && /Move up\/down to live preview themes/.test(text()), "the picker and its preview");
+      assert.match(text(), /fn greet\(name: &str\)/, "Codex's preview sample");
+      // Down: previewed at once (#cba6f7 is mocha's keyword colour), in the
+      // preview only: what commits meanwhile keeps the current theme.
+      const from = scr.writes.length;
+      type("\x1b[B");
+      await until(() => scr.writes.slice(from).join("").includes("38;2;203;166;247"), "the preview in catppuccin-mocha");
+      assert.equal(syntaxTheme(), "ansi", "the current theme is kept while previewing");
+      type("\x1b");
+      await until(() => app.state.popup === null && syntaxTheme() === "ansi", "Esc: the old theme");
+      assert.equal(saved["tui.theme"], undefined, "nothing saved");
+      type("/theme\r");
+      await until(() => app.state.popup === "theme", "the picker again");
+      type("\x1b[B\x1b[B\r");
+      await until(() => /Syntax theme: catppuccin-latte\. Saved for \/codex too\./.test(committed()), "saved");
+      assert.equal(saved["tui.theme"], "catppuccin-latte");
+      assert.equal(syntaxTheme(), "catppuccin-latte");
+    }, { settings, cols: 100, rows: 40, depth: 24 });
+  } finally {
+    setSyntaxTheme("ansi");
+  }
 });

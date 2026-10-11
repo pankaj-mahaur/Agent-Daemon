@@ -11,7 +11,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -142,6 +142,10 @@ function liveScript(body) {
   const lastUser = input.findLastIndex((i) => i?.type === "message" && i.role === "user");
   const output = input.slice(lastUser + 1).findLast((i) => i?.type === "function_call_output");  if (output) return [ev.created(), ev.message(`done after ${output.call_id}`), ev.completed()];
   {
+    // Part 10: Codex's recap prompt answers in its schema; a parent spawns a real subagent.
+    if (text.startsWith("Write a brief catch-up")) return [ev.created(), ev.message(JSON.stringify({ summary: "Live recap: the first turn answered pong.", next_action: null })), ev.completed()];
+    if (text.includes("CHILDTASK")) return [ev.created(), ev.message("child read math.js"), ev.completed()];
+    if (text.includes("SPAWNONE")) return [ev.created(), ev.functionCall("call-spawn", "spawn_agent", { message: "CHILDTASK read math.js" }, "multi_agent_v1"), ev.completed()];
     if (text.includes("STEERED")) return [ev.created(), ev.message("steer received"), ev.completed()];
     if (text.includes("QUEUED")) return [ev.created(), ev.message("queue ran"), ev.completed()];
     if (text.includes("EDITMATH")) {
@@ -397,6 +401,22 @@ test("FC4 live: ad's own features in ad tui on the real Codex binary", { skip, t
     await t.until(/Loop: finished after \d+ iterations?/, "the loop's end", 120_000);
     assert.ok(mock.requests.some((r) => /Objective:\s*PING loop objective/.test(r.text)), "the loop prompted the model");
 
+    // /clear (Codex's): the screen and the scrollback go; a new, named conversation starts.
+    await run("/clear tidy", /New conversation: tidy\./, "cleared");
+    assert.doesNotMatch(t.text(), /Learned: pnpm/, "the scrollback from before /clear is gone (ED3 reached the terminal)");
+    // /archive asks first; /resume archived brings it back.
+    await run("PING archive me", /pong/, "a turn to archive");
+    t.type("/archive\r");
+    await t.until(/Archive this conversation\?/, "the question");
+    await settle(600); // past the arm delay
+    t.type("y");
+    await t.until(/Archived\. \/resume archived brings it back\./, "archived");
+    await t.until(() => t.idle(), "idle after /archive");
+    t.type("/resume archived\r");
+    await t.until(/Resume an archived conversation/, "the archived list");
+    t.type("\r");
+    await t.until(/Unarchived and resumed\./, "unarchived and resumed");
+
     t.type("\x03");
     await settle(200);
     t.type("\x03");
@@ -404,6 +424,373 @@ test("FC4 live: ad's own features in ad tui on the real Codex binary", { skip, t
   } catch (err) {
     err.message += `\n--- model requests ---\n${mock.requests.map((r) => JSON.stringify(r.text)).join("\n")}`;
     throw err;
+  } finally {
+    for (const k of launched.splice(0)) k();
+    await mock.close();
+    await removeWithRetry(w.root);
+  }
+});
+
+// codex-parity-2 Part 4: Codex's plan mode in ad tui, on the real Codex.
+const PLAN_BODY = ["# Add hello", "", "- write hello.txt"].join("\n");
+function planScript(body) {
+  const text = lastUserText(body);
+  const input = Array.isArray(body?.input) ? body.input : [];
+  const lastUser = input.findLastIndex((i) => i?.type === "message" && i.role === "user");
+  const output = input.slice(lastUser + 1).findLast((i) => i?.type === "function_call_output");
+  if (output) return [ev.created(), ev.message(`done after ${output.call_id}`), ev.completed()];
+  if (text.includes("PLANME")) {
+    const reply = ["Looked around.", "<proposed_plan>", PLAN_BODY, "</proposed_plan>", ""].join("\n");
+    return [ev.created(), ev.messageAdded(), ev.textDelta(reply.slice(0, 30)), ev.textDelta(reply.slice(30)), ev.message(reply), ev.completed()];
+  }
+  if (text === "Implement the plan.") {
+    const patch = ["*** Begin Patch", "*** Add File: hello.txt", "+hello from the plan", "*** End Patch"].join("\n");
+    return [ev.created(), ev.functionCall("call-patch", "exec_command", { cmd: `apply_patch <<'EOF'\n${patch}\nEOF\n` }), ev.completed()];
+  }
+  return defaultScript(body);
+}
+
+test("Part 4 live: /plan, a proposed plan, and 'Yes, implement this plan' on the real Codex binary", { skip, timeout: 10 * 60_000 }, async () => {
+  const mock = await startMockResponses({ script: planScript });
+  const w = world(mock.url);
+  let t;
+  try {
+    t = await start(w);
+    t.type("/plan PLANME\r");
+    await t.until(/Plan mode \(shift\+tab to cycle\)/, "the plan chip");
+    await t.until(/Proposed Plan[\s\S]*Add hello[\s\S]*write hello\.txt/, "the proposed plan cell");
+    await t.until(/Implement this plan\?/, "the choice");
+    const asked = mock.requests.find((r) => r.text === "PLANME");
+    assert.equal(asked?.mode, "plan", "the model was in Codex's Plan mode");
+    await settle(600); // past the arm delay
+    // Where Codex's sandbox can't run the edit (GitHub's Windows runners), Codex asks to retry without it.
+    const done = () => t.count(/done after call-patch/g);
+    const retries = () => t.count(/retry without sandbox\?/g);
+    t.type("1");
+    await t.until(() => done() > 0 || (retries() > 0 && /No, and stop/.test(t.screen())), "the implement turn", 180_000);
+    if (done() === 0) {
+      await settle(600);
+      t.type("y");
+      await t.until(() => done() > 0, "the patch, outside the sandbox");
+    }
+    await t.until(() => t.idle(), "idle after the implement turn");
+    assert.ok(existsSync(join(w.cwd, "hello.txt")), "the plan was implemented");
+    const implement = mock.requests.find((r) => r.text === "Implement the plan.");
+    assert.ok(implement, "Codex's message was sent");
+    assert.notEqual(implement.mode, "plan", "implemented in Default mode");
+    assert.doesNotMatch(t.screen(), /Plan mode/, "the chip is gone");
+
+    t.type("\x03");
+    await settle(200);
+    t.type("\x03");
+    assert.equal((await t.exit).exitCode, 0);
+  } catch (err) {
+    err.message += `\n--- model requests ---\n${mock.requests.map((r) => JSON.stringify([r.text, r.mode])).join("\n")}`;
+    throw err;
+  } finally {
+    for (const k of launched.splice(0)) k();
+    await mock.close();
+    await removeWithRetry(w.root);
+  }
+});
+
+// codex-parity-2 Part 5: background terminals in ad tui, on the real Codex.
+function bgScript(body) {
+  const text = lastUserText(body);
+  const input = Array.isArray(body?.input) ? body.input : [];
+  const lastUser = input.findLastIndex((i) => i?.type === "message" && i.role === "user");
+  const output = input.slice(lastUser + 1).findLast((i) => i?.type === "function_call_output");
+  // The command's output goes into the reply: on a CI runner whose sandbox refuses it, the screen says why.
+  const said = (o) => String(typeof o?.output === "string" ? o.output : JSON.stringify(o?.output ?? "")).replace(/\s+/g, " ").slice(0, 160);
+  if (output) return [ev.created(), ev.message(`server is up (${output.call_id}): ${said(output)}`), ev.completed()];
+  if (text.includes("BGSTART")) return [ev.created(), ev.functionCall("call-bg", "exec_command", { cmd: "node bg.js", yield_time_ms: 1500 }), ev.completed()];
+  return defaultScript(body);
+}
+
+test("Part 5 live: a background terminal outlives the turn; /ps lists it and /stop ends the process", { skip, timeout: 10 * 60_000 }, async (ctx) => {
+  const mock = await startMockResponses({ script: bgScript });
+  const w = world(mock.url);
+  const pidFile = join(w.cwd, "bg.pid");
+  const logFile = join(w.cwd, "bg.log");
+  // It ticks into a file: "running" is the file growing. (A pid isn't enough: on
+  // Linux Codex's sandbox gives the command its own PID namespace.)
+  writeFileSync(
+    join(w.cwd, "bg.js"),
+    `const fs = require("fs");\nfs.writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));\nconsole.log("listening");\nsetInterval(() => { fs.appendFileSync(${JSON.stringify(logFile)}, "t"); console.log("tick " + Date.now()); }, 300);\n`,
+  );
+  const size = () => (existsSync(logFile) ? statSync(logFile).size : 0);
+  const running = async () => {
+    const before = size();
+    await settle(1200);
+    return size() > before;
+  };
+  // Only where the pid is the host's (not Linux, see above): a last-resort kill in `finally`.
+  const alive = (pid) => {
+    if (process.platform === "linux") return false;
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  let t;
+  let pid = null;
+  try {
+    t = await start(w);
+    t.type("BGSTART\r");
+    // Approvals (or a retry outside the sandbox on CI's Windows runners) are approved.
+    // Up to 5 min: a fresh Codex home sets up the Windows sandbox first (2+ min seen on a busy machine).
+    const end = Date.now() + 300_000;
+    while (!/server is up/.test(t.text())) {
+      if (Date.now() > end) throw new Error(`no answer after the background start\n${t.text().slice(-2000)}`);
+      if (/Run command\?|retry without sandbox\?/.test(t.screen()) && /\(y\)|No, and stop/.test(t.screen())) {
+        await settle(600);
+        t.type("y");
+      }
+      await settle(300);
+    }
+    await t.until(() => t.idle(), "the turn's end");
+    // GitHub's Windows runner: Codex 0.160's non-admin sandbox refuses the
+    // command outright (no "retry without sandbox?"), so there is nothing to
+    // test there. Any other failure still fails.
+    const refused = /cannot enforce split writable root sets/.test(t.text().replace(/\s+/g, " "));
+    if (refused) return void ctx.skip("Codex's unelevated Windows sandbox refused the command on this machine (\"cannot enforce split writable root sets\")");
+    await t.until(() => existsSync(pidFile) && existsSync(logFile), "the script running");
+    pid = Number(readFileSync(pidFile, "utf8"));
+    assert.ok(await running(), "the background process outlives the turn");
+    await t.until(/1 background terminal running · \/ps to view · \/stop to close/, "the footer");
+    t.type("/ps\r");
+    await t.until(/Background terminals[\s\S]*node bg\.js[\s\S]*↳ /, "/ps");
+    t.type("/stop\r");
+    await t.until(/Stopping all background terminals\./, "/stop");
+    const gone = Date.now() + 15_000;
+    let still = await running();
+    while (still && Date.now() < gone) still = await running();
+    assert.equal(still, false, "the process ended");
+    await t.until(() => !/background terminal running/.test(t.screen()), "the footer cleared");
+
+    t.type("\x03");
+    await settle(200);
+    t.type("\x03");
+    assert.equal((await t.exit).exitCode, 0);
+  } catch (err) {
+    err.message += `\n--- model requests ---\n${mock.requests.map((r) => JSON.stringify(r.text)).join("\n")}`;
+    throw err;
+  } finally {
+    if (pid && alive(pid)) process.kill(pid);
+    for (const k of launched.splice(0)) k();
+    await mock.close();
+    await removeWithRetry(w.root);
+  }
+});
+
+// codex-parity-2 Part 6: /cd on the real Codex.
+test("Part 6 live: /cd forks the conversation into another folder, and the next edit lands there", { skip, timeout: 10 * 60_000 }, async () => {
+  const mock = await startMockResponses({ script: liveScript });
+  const w = world(mock.url);
+  const sub = join(w.cwd, "sub");
+  mkdirSync(sub);
+  let t;
+  try {
+    t = await start(w);
+    t.type("PING first\r");
+    await t.until(/pong/, "a first turn");
+    await t.until(() => t.idle(), "idle");
+    t.type("/cd sub\r");
+    await t.until(/Do you trust[\s\S]*sub\?/, "the trust question");
+    await settle(600);
+    t.type("1");
+    await t.until(/Working directory changed to:\s+\S*sub/, "changed"); // a long temp path wraps (macOS: /private/var/…)
+    // The patch turn; outside the sandbox where CI's Windows runners need it.
+    const done = () => t.count(/done after call-patch/g);
+    t.type("PATCH please\r");
+    const end = Date.now() + 180_000;
+    while (done() === 0) {
+      if (Date.now() > end) throw new Error(`no patch\n${t.text().slice(-2000)}`);
+      if (/retry without sandbox\?|Apply file changes\?/.test(t.screen()) && /\(y\)|No, and stop/.test(t.screen())) {
+        await settle(600);
+        t.type("y");
+      }
+      await settle(300);
+    }
+    await t.until(() => t.idle(), "idle after the patch");
+    assert.ok(existsSync(join(sub, "hello.txt")), "the edit landed in the new folder");
+    assert.ok(!existsSync(join(w.cwd, "hello.txt")), "not in the old one");
+    t.type("/pwd\r");
+    await t.until(/Current working directory:\s+\S*sub/, "/pwd");
+
+    t.type("\x03");
+    await settle(200);
+    t.type("\x03");
+    assert.equal((await t.exit).exitCode, 0);
+  } catch (err) {
+    err.message += `\n--- model requests ---\n${mock.requests.map((r) => JSON.stringify(r.text)).join("\n")}`;
+    throw err;
+  } finally {
+    for (const k of launched.splice(0)) k();
+    await mock.close();
+    await removeWithRetry(w.root);
+  }
+});
+
+// codex-parity-2 Part 7: /side on the real Codex, while a main turn runs.
+test("Part 7 live: a side question while the main turn runs; the side runs without ad's hooks; nothing merges back", { skip, timeout: 10 * 60_000 }, async () => {
+  const mock = await startMockResponses({ script: liveScript });
+  const w = world(mock.url);
+  const journal = join(w.cwd, ".agent-daemon", "learning-journal.jsonl");
+  const journalText = () => (existsSync(journal) ? readFileSync(journal, "utf8") : "");
+  let t;
+  try {
+    t = await start(w);
+    t.type("PING first\r");
+    await t.until(/pong/, "a first turn");
+    await t.until(() => t.idle(), "idle");
+    t.type("HOLD main\r");
+    await t.until(/waiting/, "the main turn, held");
+    t.type("/side Actually, we use pnpm here, not npm.\r");
+    await t.until(/Side from main thread/, "the panel");
+    await t.until(() => mock.requests.some((r) => r.text === "Actually, we use pnpm here, not npm."), "the side question at the model");
+    const asked = mock.requests.find((r) => r.text === "Actually, we use pnpm here, not npm.");
+    assert.ok(asked.userTexts.includes("PING first"), "the side sees the main history");
+    assert.ok(asked.userTexts.some((x) => x.startsWith("Side conversation boundary.")), "Codex's boundary");
+    assert.ok(asked.developerTexts.some((x) => x.includes("You are in a side conversation, not the main thread.")), "Codex's side instructions");
+    await t.until((s) => (s.match(/pong/g) ?? []).length >= 2, "the side answer");
+    mock.release();
+    await t.until(/waiting, released/, "the main turn going on");
+    t.type("\x03"); // empty prompt in the side: closes it
+    await t.until((s) => /Side conversation/.test(s) && !/Side from main thread/.test(t.screen()), "closed into the scrollback");
+    await settle(2000); // hooks run after a prompt; give them time
+    assert.doesNotMatch(journalText(), /pnpm/, "the side ran without ad's hooks");
+    // The same words in the main conversation are captured (the hooks work there).
+    await t.until(() => t.idle(), "idle");
+    t.type("Actually, we use pnpm here, not npm.\r");
+    await t.until(() => /pnpm/.test(journalText()), "captured in the main conversation", 60_000);
+
+    t.type("\x03");
+    await settle(200);
+    t.type("\x03");
+    assert.equal((await t.exit).exitCode, 0);
+  } catch (err) {
+    err.message += `\n--- model requests ---\n${mock.requests.map((r) => JSON.stringify(r.text)).join("\n")}`;
+    throw err;
+  } finally {
+    for (const k of launched.splice(0)) k();
+    await mock.close();
+    await removeWithRetry(w.root);
+  }
+});
+
+// codex-parity-2 Part 8: Codex's Vim mode in the real terminal.
+test("Part 8 live: /vim, editing in Normal and Insert, and the prompt that reaches the model", { skip, timeout: 10 * 60_000 }, async () => {
+  const mock = await startMockResponses({ script: liveScript });
+  const w = world(mock.url);
+  let t;
+  try {
+    t = await start(w);
+    t.type("/vim\r");
+    await t.until(/Vim mode enabled\./, "on");
+    await t.until(/Vim: Normal/, "Normal");
+    t.type("iPING vim mode");
+    await t.until(/Vim: Insert/, "Insert");
+    await settle(200);
+    t.type("\x1b"); // alone, so it isn't read as Alt+key
+    await t.until(/Vim: Normal/, "back to Normal");
+    t.type("0wd$"); // line start, next word, delete to the end: "PING " is left
+    await settle(300);
+    t.type("\r");
+    await t.until(/pong/, "the model's answer");
+    const sent = mock.requests.find((r) => r.text?.startsWith("PING"));
+    assert.ok(sent, "the edited prompt reached the model");
+    assert.doesNotMatch(sent.text, /vim|mode/, "the words removed in Normal mode stayed out");
+    await t.until(/Vim: Insert/, "a new draft starts in Insert");
+
+    t.type("\x03");
+    await settle(200);
+    t.type("\x03");
+    assert.equal((await t.exit).exitCode, 0);
+  } catch (err) {
+    err.message += `\n--- model requests ---\n${mock.requests.map((r) => JSON.stringify(r.text)).join("\n")}`;
+    throw err;
+  } finally {
+    for (const k of launched.splice(0)) k();
+    await mock.close();
+    await removeWithRetry(w.root);
+  }
+});
+
+// codex-parity-2 Part 9: syntax highlighting and /theme in the real terminal.
+test("Part 9 live: /theme saves tui.theme through the real Codex, and code is coloured", { skip, timeout: 10 * 60_000 }, async () => {
+  const mock = await startMockResponses({ script: liveScript });
+  const w = world(mock.url);
+  let t;
+  try {
+    t = await start(w);
+    t.type("/theme\r");
+    await t.until(/Select Syntax Theme/, "the picker");
+    await t.until(/Move up\/down to live preview themes/, "the preview");
+    t.type("\x1b[B"); // catppuccin-mocha
+    await settle(200);
+    t.type("\r");
+    await t.until(/Syntax theme: catppuccin-mocha\. Saved for \/codex too\./, "saved");
+    const config = readFileSync(join(w.codexHome, "config.toml"), "utf8");
+    assert.match(config, /theme\s*=\s*"catppuccin-mocha"/, "Codex wrote it to ad's Codex home");
+    // A truecolor keyword colour reaches the terminal (#cba6f7 → 203;166;247, or its 256-colour cube index).
+    t.type("/theme\r");
+    await t.until(() => /Select Syntax Theme/.test(t.screen()), "the picker again");
+    assert.ok(/\x1b\[(?:[0-9;]*;)?38;(?:2;203;166;247|5;\d+)m/.test(t.raw()), "the preview's code is coloured by the theme");
+    t.type("\x1b");
+    await settle(200);
+
+    t.type("\x03");
+    await settle(200);
+    t.type("\x03");
+    assert.equal((await t.exit).exitCode, 0);
+  } finally {
+    for (const k of launched.splice(0)) k();
+    await mock.close();
+    await removeWithRetry(w.root);
+  }
+});
+
+// codex-parity-2 Part 10: /recap and /subagents on the real Codex.
+test("Part 10 live: /recap from a temporary thread with no tools or hooks; /subagents watches a real subagent", { skip, timeout: 10 * 60_000 }, async () => {
+  const mock = await startMockResponses({ script: liveScript });
+  const w = world(mock.url);
+  const journal = join(w.cwd, ".agent-daemon", "learning-journal.jsonl");
+  const journalText = () => (existsSync(journal) ? readFileSync(journal, "utf8") : "");
+  let t;
+  try {
+    t = await start(w);
+    t.type("PING first\r");
+    await t.until(/pong/, "a first turn");
+    await t.until(() => t.idle(), "idle");
+    t.type("/recap\r");
+    await t.until(/Recap: Live recap: the first turn answered pong\./, "the recap");
+    const asked = mock.requests.find((r) => r.text.startsWith("Write a brief catch-up"));
+    assert.ok(asked, "Codex's recap prompt reached the model");
+    assert.match(asked.text, /Conversation:\nUser: PING first\n\nAssistant: pong/);
+    assert.doesNotMatch(journalText(), /Write a brief catch-up/, "ad's hooks never saw the recap's thread");
+
+    // A real subagent: the parent calls Codex's spawn_agent; the child runs its own turn.
+    t.type("SPAWNONE\r");
+    assert.deepEqual(mock.requests.find((r) => r.text.startsWith("Write a brief catch-up")).tools, [], "the recap's thread offers the model no tool");
+    await t.until(/done after call-spawn/, "the parent's turn");
+    await t.until(() => mock.requests.some((r) => r.text.includes("CHILDTASK")), "the child's turn at the model");
+    await t.until(() => t.idle(), "idle");
+    t.type("/subagents\r");
+    await t.until(/Main \[default\]/, "the picker, the main conversation first");
+    t.type("\x1b[B");
+    await settle(200);
+    t.type("\r");
+    await t.until(/child read math\.js/, "the subagent's own transcript");
+    t.type("\x1b");
+    await settle(300);
+
+    t.type("\x03");
+    await settle(200);
+    t.type("\x03");
+    assert.equal((await t.exit).exitCode, 0);
   } finally {
     for (const k of launched.splice(0)) k();
     await mock.close();

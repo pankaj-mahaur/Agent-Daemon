@@ -249,6 +249,13 @@ export function createCheckpoints({ cwd, git = runGit, maxUntrackedBytes = 2 * 1
     return listRefs(`${CHECKPOINT_REF}/${safeRefPart(threadId)}/`);
   }
 
+  /** Drops every snapshot of a conversation (it was deleted). → how many refs went. */
+  async function forget(threadId) {
+    const refs = (await list(threadId)).flatMap((t) => t.refs);
+    if (refs.length) await g(["update-ref", "--stdin"], { input: refs.map((ref) => `delete ${ref}\n`).join("") });
+    return refs.length;
+  }
+
   async function prune(threadId) {
     const old = (await list(threadId)).slice(0, -keep || undefined);
     // And a cap over all threads, so old conversations don't keep trees forever.
@@ -474,6 +481,7 @@ export function createCheckpoints({ cwd, git = runGit, maxUntrackedBytes = 2 * 1
 
   return {
     repo,
+    forget,
     snapshot,
     beforeSnapshot,
     freshSnapshot,

@@ -127,3 +127,26 @@ test("subprocess: a team worker's prompt (AD_WORKER=1) is not captured as the us
   assert.equal(code, 0);
   await assert.rejects(fs.readFile(path.join(cwd, ".agent-daemon", "learning-journal.jsonl"), "utf8"), /ENOENT/);
 });
+
+test("subprocess: Codex's plan hand-off (a prompt the client wrote) is never captured as the user's words", async () => {
+  const { CODEX_PLAN_CLEAR_CONTEXT_PREFIX, isGeneratedPrompt } = await import("../src/hooks/generated-prompts.mjs");
+  const plan = ["# Switch the package manager", "", "- Actually, we use pnpm here, not npm."].join("\n");
+  const handoff = `${CODEX_PLAN_CLEAR_CONTEXT_PREFIX}\n\n${plan}`;
+  assert.equal(isGeneratedPrompt(handoff), true);
+  assert.equal(isGeneratedPrompt(`<private>${handoff}</private>`), true, "a /private wrapper doesn't hide it");
+  assert.equal(isGeneratedPrompt("Implement the plan."), false, "Codex's short hand-off is a real user message");
+  assert.equal(isGeneratedPrompt(plan), false);
+  const run = (cwd, prompt) =>
+    new Promise((resolve) => {
+      const proc = spawn(process.execPath, [CLI, "hook", "user-prompt-extract", "--host", "codex"], { stdio: ["pipe", "ignore", "ignore"] });
+      proc.on("close", resolve);
+      proc.stdin.end(JSON.stringify({ session_id: "p", cwd, prompt, hook_event_name: "UserPromptSubmit" }));
+    });
+  const cwd = await makeTmp();
+  assert.equal(await run(cwd, handoff), 0);
+  await assert.rejects(fs.readFile(path.join(cwd, ".agent-daemon", "learning-journal.jsonl"), "utf8"), /ENOENT/);
+  // The same words typed by the user are a correction.
+  const typed = await makeTmp();
+  assert.equal(await run(typed, "Actually, we use pnpm here, not npm."), 0);
+  assert.match(await fs.readFile(path.join(typed, ".agent-daemon", "learning-journal.jsonl"), "utf8"), /pnpm/);
+});

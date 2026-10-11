@@ -14,7 +14,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CodexAppServer, resolveCodexCommand } from "../src/engine/codex/app-server.mjs";
 import { approvalResponse, isApprovalMethod } from "../src/engine/codex/approvals.mjs";
-import { startMockResponses, writeMockCodexHome } from "../testkit/mock-responses.mjs";
+import { defaultScript, ev, lastUserText, startMockResponses, writeMockCodexHome } from "../testkit/mock-responses.mjs";
+import { adaptNotification as adapt } from "../src/engine/codex/events.mjs";
+import { waitFor } from "../testkit/wait.mjs";
+import { experimentalCapabilities } from "../src/engine/codex/surface.mjs";
 
 const PINNED = resolveCodexCommand({});
 const wanted = process.env.AD_REAL_ENGINE === "1";
@@ -40,8 +43,8 @@ async function removeWithRetry(dir) {
 }
 
 // One mock + one real app-server per test, in fresh dirs.
-async function withRealEngine(fn) {
-  const mock = await startMockResponses();
+async function withRealEngine(fn, { codexArgs, capabilities, script } = {}) {
+  const mock = await startMockResponses(script ? { script } : {});
   const home = writeMockCodexHome(mkdtempSync(join(tmpdir(), "ad-real-home-")), { url: mock.url });
   const cwd = mkdtempSync(join(tmpdir(), "ad-real-work-"));
   const requests = [];
@@ -50,6 +53,8 @@ async function withRealEngine(fn) {
     cwd,
     env: { CODEX_HOME: home },
     clientVersion: "test",
+    codexArgs,
+    capabilities,
     initTimeoutMs: START_TIMEOUT_MS,
     onServerRequest: async ({ method, params }) => {
       requests.push({ method, params });
@@ -72,7 +77,7 @@ async function withRealEngine(fn) {
   }
 }
 
-async function runTurn(server, notes, threadId, text) {
+async function runTurn(server, notes, threadId, text, extra = {}) {
   const from = notes.length;
   let timer;
   let listener;
@@ -84,7 +89,7 @@ async function runTurn(server, notes, threadId, text) {
       };
       server.on("notification", listener);
     });
-    await server.request("turn/start", { threadId, input: [{ type: "text", text }] });
+    await server.request("turn/start", { threadId, input: [{ type: "text", text }], ...extra });
     const completed = await done;
     const fresh = notes.slice(from);
     return {
@@ -203,6 +208,42 @@ test("the events adapter understands everything the real Codex sends in a turn",
   });
 });
 
+// codex-parity-2 S0 / Part 4: the experimental allowlist on the real engine.
+const PLAN_BODY = ["# Add hello", "", "- write hello.txt", ""].join("\n");
+const PLAN_REPLY = ["Looked around.", "<proposed_plan>", PLAN_BODY + "</proposed_plan>", ""].join("\n");
+const planScript = (body) => (lastUserText(body).includes("PLAN")
+  ? [ev.created(), ev.messageAdded(), ev.textDelta(PLAN_REPLY.slice(0, 25)), ev.textDelta(PLAN_REPLY.slice(25)), ev.message(PLAN_REPLY), ev.completed()]
+  : defaultScript(body));
+const mask = (mode, effort = null) => ({ mode, settings: { model: "mock-model", reasoning_effort: effort, developer_instructions: null } });
+
+test("plan mode on the allowlist: presets, settings update, a proposed plan item, and the opted-out notifications stay quiet", { skip, timeout: START_TIMEOUT_MS + 2 * TURN_TIMEOUT_MS }, async () => {
+  await withRealEngine(async ({ server, cwd, notes }) => {
+    const list = await server.request("collaborationMode/list", {});
+    assert.deepEqual(list.data.map((m) => [m.name, m.mode]), [["Plan", "plan"], ["Default", "default"]]);
+    assert.equal(list.data[0].reasoning_effort, "medium", "Plan's preset effort");
+    const { thread } = await server.request("thread/start", { cwd });
+    assert.deepEqual(await server.request("thread/settings/update", { threadId: thread.id, collaborationMode: mask("plan", "medium") }), {});
+    const updated = await waitFor(() => notes.find((n) => n.method === "thread/settings/updated"));
+    assert.deepEqual(adapt(updated.method, updated.params)[0].collaborationMode, { mode: "plan", model: "mock-model", effort: "medium" });
+    assert.match(updated.params.threadSettings.collaborationMode.settings.developer_instructions, /Plan Mode/, "a null asks for Codex's own plan.md");
+    const { items } = await runTurn(server, notes, thread.id, "PLAN please", { collaborationMode: mask("plan", "medium") });
+    assert.equal(items.find((i) => i.type === "plan")?.text, PLAN_BODY);
+    assert.equal(items.find((i) => i.type === "agentMessage")?.text, "Looked around.\n", "the plan block isn't in the message");
+    assert.ok(notes.some((n) => n.method === "item/plan/delta"), "the plan streams");
+    // Back to Default through turn/start alone: Codex reports the change too.
+    const from = notes.length;
+    await runTurn(server, notes, thread.id, "Implement the plan.", { collaborationMode: mask("default") });
+    const back = notes.slice(from).find((n) => n.method === "thread/settings/updated");
+    assert.equal(back?.params.threadSettings.collaborationMode.mode, "default");
+    assert.equal((await server.request("thread/resume", { threadId: thread.id })).collaborationMode?.mode, "default", "resume reports the mode");
+    assert.deepEqual(await server.request("thread/backgroundTerminals/clean", { threadId: thread.id }), {});
+    const muted = new Set(experimentalCapabilities().optOutNotificationMethods);
+    assert.deepEqual(notes.filter((n) => muted.has(n.method)).map((n) => n.method), [], "opted-out notifications arrived");
+    const unknown = notes.flatMap((n) => adapt(n.method, n.params)).filter((e) => e.type === "unknown");
+    assert.deepEqual(unknown.map((e) => e.method), [], "a notification Codex sends with experimentalApi that events.mjs doesn't know");
+  }, { capabilities: experimentalCapabilities(), script: planScript });
+});
+
 test("bad requests are classified the way plan D5 expects", { skip, timeout: START_TIMEOUT_MS + 30_000 }, async () => {
   await withRealEngine(async ({ server }) => {
     const missing = await server.request("thread/doesNotExist", {}).catch((e) => e);
@@ -228,5 +269,83 @@ test("folder trust: an upsert of projects keeps other folders, and config/read r
     const level = (p) => Object.entries(config.projects ?? {}).find(([k]) => k.toLowerCase() === p.toLowerCase())?.[1]?.trust_level;
     assert.equal(level(cwd), "trusted", JSON.stringify(config.projects));
     assert.equal(level(other), "untrusted");
+  });
+});
+
+test("S8: with thread_unload_delay_secs=0, thread/unsubscribe closes an idle thread at once, and a cold resume has its turns", opts, async () => {
+  await withRealEngine(
+    async ({ server, cwd, notes }) => {
+      const { thread } = await server.request("thread/start", { cwd });
+      await runTurn(server, notes, thread.id, "PING");
+      const r = await server.request("thread/unsubscribe", { threadId: thread.id });
+      assert.equal(r.status, "unsubscribed");
+      const end = Date.now() + 15_000;
+      while (!notes.some((n) => n.method === "thread/closed" && n.params.threadId === thread.id) && Date.now() < end) await new Promise((res) => setTimeout(res, 50));
+      assert.ok(notes.some((n) => n.method === "thread/closed" && n.params.threadId === thread.id), "thread/closed reaches the client that let go of it");
+      const resumed = await server.request("thread/resume", { threadId: thread.id, cwd });
+      assert.equal(resumed.thread.id, thread.id);
+      const { data } = await server.request("thread/turns/list", { threadId: thread.id });
+      assert.ok(data.length >= 1, "the cold resume reads the thread's turns from its rollout");
+    },
+    { codexArgs: ["-c", "thread_unload_delay_secs=0"] },
+  );
+});
+
+test("S1: Codex's own TUI settings round-trip through config/batchWrite and config/read; wrong types are refused", opts, async () => {
+  await withRealEngine(async ({ server }) => {
+    const write = (edits) => server.request("config/batchWrite", { edits: edits.map(([keyPath, value]) => ({ keyPath, value, mergeStrategy: "replace" })), reloadUserConfig: true });
+    await write([
+      ["tui.status_line", ["model-with-reasoning", "current-dir", "not-a-codex-item"]],
+      ["tui.terminal_title", ["activity", "project-name"]],
+      ["tui.theme", "dracula"],
+      ["tui.vim_mode_default", true],
+    ]);
+    const { config } = await server.request("config/read", {});
+    assert.deepEqual(config.tui?.status_line, ["model-with-reasoning", "current-dir", "not-a-codex-item"], "an id Codex doesn't know is kept (the stock UI only warns)");
+    assert.deepEqual(config.tui?.terminal_title, ["activity", "project-name"]);
+    assert.equal(config.tui?.theme, "dracula");
+    assert.equal(config.tui?.vim_mode_default, true);
+    await write([["tui.status_line", []]]);
+    assert.deepEqual((await server.request("config/read", {})).config.tui?.status_line, [], "[] is kept (status line off)");
+    await assert.rejects(write([["tui.vim_mode_default", "yes"]]), "a value of the wrong type is refused");
+    await write([["tui.status_line", null]]);
+    assert.equal((await server.request("config/read", {})).config.tui?.status_line ?? null, null, "null removes it (back to the default)");
+  });
+});
+
+// codex-parity-2 Part 10.
+test("S7: thread/approveGuardianDeniedAction takes ad's core GuardianAssessmentEvent for every action kind; a v2-shaped one is refused", opts, async () => {
+  const { guardianDenialEvent } = await import("../src/engine/codex/events.mjs");
+  await withRealEngine(async ({ server, cwd }) => {
+    const { thread } = await server.request("thread/start", { cwd });
+    const base = { threadId: thread.id, turnId: "turn-x", targetItemId: null, startedAtMs: 1, completedAtMs: 2, decisionSource: "agent", review: { status: "denied", riskLevel: "high", userAuthorization: "low", rationale: "risky" } };
+    const actions = [
+      { type: "command", source: "shell", command: "rm -rf build", cwd },
+      { type: "execve", source: "unifiedExec", program: "rm", argv: ["rm", "-rf", "build"], cwd },
+      { type: "applyPatch", cwd, files: [join(cwd, "a.txt")] },
+      { type: "networkAccess", target: "https://example.com", host: "example.com", protocol: "https", port: 443 },
+      { type: "mcpToolCall", server: "docs", toolName: "search", connectorId: null, connectorName: null, toolTitle: null },
+      { type: "writeStdin", approvalId: "a1", processId: "p1", stdin: "y\n", cwd },
+      // As the notification sends them: read and write beside entries (or entries left out).
+      { type: "requestPermissions", reason: null, permissions: { network: { enabled: true }, fileSystem: { read: null, write: null, entries: [{ path: { type: "path", path: cwd }, access: "write" }], globScanMaxDepth: 2 } } },
+      { type: "requestPermissions", reason: "read the docs", permissions: { network: null, fileSystem: { read: [cwd], write: null } } },
+      { type: "requestPermissions", reason: null, permissions: { network: null, fileSystem: { read: [cwd], write: [cwd], entries: [] } } },
+    ];
+    for (const action of actions) {
+      const event = guardianDenialEvent({ ...base, reviewId: `review-${action.type}`, action });
+      assert.deepEqual(await server.request("thread/approveGuardianDeniedAction", { threadId: thread.id, event }), {}, action.type);
+    }
+    await assert.rejects(server.request("thread/approveGuardianDeniedAction", { threadId: thread.id, event: { reviewId: "x", review: base.review, action: actions[0] } }), /invalid Guardian denial event/);
+  });
+});
+
+test("/recap's temporary thread: Codex takes its tool-off config and starts it read-only and ephemeral", opts, async () => {
+  const { TEMPORARY_THREAD_CONFIG } = await import("../src/tui/recap.mjs");
+  await withRealEngine(async ({ server, cwd }) => {
+    const r = await server.request("thread/start", { cwd, approvalPolicy: "never", sandbox: "read-only", ephemeral: true, threadSource: "system", config: { ...TEMPORARY_THREAD_CONFIG } });
+    assert.equal(r.sandbox?.type, "readOnly");
+    assert.equal(r.thread.ephemeral, true);
+    assert.equal(r.thread.path ?? null, null, "an ephemeral thread has no rollout file");
+    assert.equal((await server.request("thread/unsubscribe", { threadId: r.thread.id })).status, "unsubscribed");
   });
 });

@@ -59,6 +59,26 @@ test("diffSnapshots: removals and newly-required fields are breaking; additions 
   assert.ok(d.info.includes("U[text]: added spans"));
 });
 
+test("diffSnapshots: the allowlisted experimental surface losing a method, notification or field is breaking", () => {
+  const before = { ...structuredClone(base), experimental: { methods: ["collaborationMode/list", "x/y"], notifications: ["thread/settings/updated"], fields: { "turn/start": { collaborationMode: "CollaborationMode|null" } } } };
+  const after = { ...structuredClone(base), experimental: { methods: ["collaborationMode/list"], notifications: [], fields: { "turn/start": { collaborationMode: "CollaborationMode" } } } };
+  const d = diffSnapshots(before, after);
+  assert.ok(d.breaking.includes("experimental methods: removed x/y"));
+  assert.ok(d.breaking.includes("experimental notifications: removed thread/settings/updated"));
+  assert.ok(d.breaking.some((x) => x.startsWith("experimental turn/start.collaborationMode: type")));
+  after.experimental.fields = {};
+  assert.ok(diffSnapshots(before, after).breaking.includes("experimental turn/start.collaborationMode: removed"));
+});
+
+test("the committed snapshot has every allowlisted experimental method, notification and field", async () => {
+  const { EXPERIMENTAL_ALLOWLIST } = await import("../src/engine/codex/surface.mjs");
+  const snap = JSON.parse(readFileSync(new URL("../src/engine/codex/protocol-snapshot.json", import.meta.url), "utf8"));
+  assert.deepEqual(snap.experimental.methods, [...EXPERIMENTAL_ALLOWLIST.methods].sort());
+  assert.deepEqual(snap.experimental.notifications, [...EXPERIMENTAL_ALLOWLIST.notifications].sort());
+  for (const [m, fields] of Object.entries(EXPERIMENTAL_ALLOWLIST.fields)) assert.deepEqual(Object.keys(snap.experimental.fields[m]).sort(), [...fields].sort(), m);
+  for (const type of Object.values(snap.experimental.params.clientRequests)) assert.ok(snap.definitions[type], type);
+});
+
 test("diffSnapshots: identical snapshots produce no diff", () => {
   assert.deepEqual(diffSnapshots(base, structuredClone(base)), { breaking: [], info: [] });
   assert.match(diffToMarkdown({ breaking: [], info: [] }, "1", "1"), /No changes/);
@@ -107,4 +127,49 @@ test("diffSnapshots: a field that only became nullable is info, not breaking", (
   const d = diffSnapshots(snap({ P: { properties: { cwd: { type: "string" } } } }), snap({ P: { properties: { cwd: { type: ["string", "null"] } } } }));
   assert.deepEqual(d.breaking, []);
   assert.ok(d.info.some((x) => /P\.cwd: now nullable/.test(x)), JSON.stringify(d));
+});
+
+test("SENT_METHODS lists exactly the stable methods ad's code sends; the rest are on the experimental allowlist", async () => {
+  const { readdirSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { SENT_METHODS } = await import("../src/engine/codex/protocol-snapshot.mjs");
+  const { EXPERIMENTAL_ALLOWLIST } = await import("../src/engine/codex/surface.mjs");
+  const { fileURLToPath } = await import("node:url");
+  const root = fileURLToPath(new URL("../src/", import.meta.url));
+  const sent = new Set();
+  const walk = (dir) => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.name.endsWith(".mjs")) for (const m of readFileSync(p, "utf8").matchAll(/\.request\(\s*"([a-zA-Z_]+(?:\/[a-zA-Z_]+)*)"/g)) sent.add(m[1]);
+    }
+  };
+  walk(root);
+  const experimental = [...sent].filter((m) => EXPERIMENTAL_ALLOWLIST.methods.includes(m));
+  for (const m of experimental) assert.ok(committed.experimental.methods.includes(m), `${m} isn't in the snapshot's experimental section`);
+  assert.deepEqual([...sent].filter((m) => !experimental.includes(m)).sort(), [...SENT_METHODS].sort(), "add a new request method to SENT_METHODS (and regenerate the snapshot)");
+  for (const m of SENT_METHODS) assert.ok(committed.methods.clientRequests.includes(m), `${m} isn't on the pinned stable surface`);
+});
+
+test("checkRequest: stable methods and fields only, unless allowlisted; shapes checked", async () => {
+  const { checkRequest } = await import("../testkit/protocol-check.mjs");
+  assert.deepEqual(checkRequest({ method: "thread/list", params: { limit: 5, cwd: ["/a", "/b"] } }), []);
+  const none = { methods: [], fields: {} };
+  const plan = { mode: "plan", settings: { model: "m", reasoning_effort: "medium", developer_instructions: null } };
+  // Off the allowlist: refused even when the snapshot knows the method or field.
+  assert.match(checkRequest({ method: "collaborationMode/list", params: {} }, { allow: none })[0], /not a request the pinned Codex accepts/);
+  assert.match(checkRequest({ method: "turn/start", params: { threadId: "t", input: [], collaborationMode: plan } }, { allow: none }).join(), /collaborationMode is not a field of TurnStartParams/);
+  // On it: accepted with the opt-in, and its shape checked from the experimental schema.
+  assert.deepEqual(checkRequest({ method: "collaborationMode/list", params: {} }), []);
+  assert.deepEqual(checkRequest({ method: "turn/start", params: { threadId: "t", input: [], collaborationMode: plan } }), []);
+  assert.deepEqual(checkRequest({ method: "thread/settings/update", params: { threadId: "t", collaborationMode: plan } }), []);
+  assert.match(checkRequest({ method: "turn/start", params: { threadId: "t", input: [], collaborationMode: { mode: "plan", settings: {} } } }).join(), /missing required model/);
+  assert.match(checkRequest({ method: "thread/backgroundTerminals/clean", params: {} }).join(), /missing required threadId/);
+  // Without the opt-in, Codex refuses the allowlist too.
+  assert.match(checkRequest({ method: "collaborationMode/list", params: {} }, { experimental: false }).join(), /requires experimentalApi capability/);
+  assert.match(checkRequest({ method: "turn/start", params: { threadId: "t", input: [], collaborationMode: plan } }, { experimental: false }).join(), /requires experimentalApi capability/);
+  assert.match(checkRequest({ method: "turn/start", params: { input: [] } }).join(), /missing required threadId/);
+  // Union params are checked by their variant too.
+  assert.deepEqual(checkRequest({ method: "account/login/start", params: { type: "apiKey", apiKey: "sk-test" } }), []);
+  assert.match(checkRequest({ method: "account/login/start", params: { type: "password" } }).join(), /unknown variant/);
 });

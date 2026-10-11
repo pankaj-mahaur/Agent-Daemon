@@ -1,0 +1,19 @@
+    ⟦fg=#8c8fa1,italic⟧// count the entries
+    ⟦fg=#8839ef⟧export ⟦fg=#8839ef⟧async ⟦fg=#8839ef⟧function ⟦fg=#1e66f5⟧count⟦fg=#7c7f93⟧(path⟦fg=#04a5e5⟧: ⟦fg=#df8e1d⟧string⟦fg=#7c7f93⟧)⟦fg=#04a5e5⟧: ⟦fg=#d20f39⟧Promise⟦fg=#04a5e5⟧<⟦fg=#df8e1d⟧number⟦fg=#04a5e5⟧> ⟦fg=#7c7f93⟧{
+      ⟦fg=#8839ef⟧const text ⟦fg=#04a5e5⟧= ⟦fg=#8839ef⟧await ⟦fg=#1e66f5⟧read⟦fg=#7c7f93⟧(path⟦fg=#7c7f93⟧, ⟦fg=#40a02b⟧`utf8`⟦fg=#7c7f93⟧);
+      ⟦fg=#8839ef⟧return text⟦fg=#7c7f93⟧.⟦fg=#1e66f5⟧split⟦fg=#7c7f93⟧(⟦fg=#40a02b⟧"\n"⟦fg=#7c7f93⟧).⟦fg=#7287fd⟧length ⟦fg=#04a5e5⟧+ ⟦fg=#fe640b⟧0x10⟦fg=#7c7f93⟧; ⟦fg=#8c8fa1,italic⟧/* done */
+    ⟦fg=#7c7f93⟧}
+
+    ⟦fg=#df8e1d⟧@cache
+    ⟦fg=#8839ef⟧def ⟦fg=#1e66f5⟧greet⟦fg=#7c7f93⟧(name⟦fg=#04a5e5⟧: ⟦fg=#d20f39⟧str⟦fg=#7c7f93⟧) ⟦fg=#04a5e5⟧-> ⟦fg=#d20f39⟧str⟦fg=#04a5e5⟧:
+        ⟦fg=#8839ef⟧return ⟦fg=#40a02b⟧f"Hello, {name}!"  ⟦fg=#8c8fa1,italic⟧# say hi
+
+    ⟦fg=#7287fd⟧on⟦fg=#7c7f93⟧:
+    ⟦fg=#7c7f93⟧  ⟦fg=#7287fd⟧push⟦fg=#7c7f93⟧: ⟦fg=#40a02b⟧{ branches: [main] }
+    ⟦fg=#7287fd⟧env⟦fg=#7c7f93⟧: ⟦fg=#40a02b⟧{ CI: true }
+
+⟦dim⟧• ⟦bold⟧Edited src/greet.rs (⟦fg=green⟧+1 ⟦fg=red⟧-1)
+⟦dim⟧    12   ⟦fg=#8839ef⟧fn ⟦fg=#1e66f5⟧greet⟦fg=#7c7f93⟧(name⟦fg=#04a5e5⟧: ⟦fg=#04a5e5⟧&⟦fg=#df8e1d⟧str⟦fg=#7c7f93⟧) ⟦fg=#04a5e5⟧-> ⟦fg=#df8e1d⟧String ⟦fg=#7c7f93⟧{
+⟦dim⟧    13 - ⟦fg=red⟧    format!("Hello, {}!", name)
+⟦dim⟧    13 + ⟦fg=green⟧    format!("Hello, {name}!")
+⟦dim⟧    14   ⟦fg=#7c7f93⟧}

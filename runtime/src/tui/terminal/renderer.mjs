@@ -9,10 +9,12 @@
 //   commit(lines)           write history lines above the live region
 //   suspend() / resume()    erase the live region for a handoff, then re-anchor
 //   redraw()                Ctrl+L: re-anchor by CPR and redraw the live region
+//   clear(header)           /clear: wipe the screen and scrollback, start over with header
 //   onResize(fn)            called after a resize has been handled (re-layout)
 //
 // Terminal rules (research/terminal-engineering.md):
-//   - never ESC[2J / ESC[3J; history above the live top is never erased
+//   - never ESC[2J / ESC[3J; history above the live top is never erased, except
+//     by clear() (/clear, Codex's "clear the terminal", asked for by the user)
 //   - every write runs with autowrap off (?7l), and every line is cut to
 //     cols − 1, so a line is exactly one row whatever the width tables say
 //   - a cursor move with count 0 is never sent (ESC[0A moves one row)
@@ -366,6 +368,33 @@ export function createRenderer({
     async redraw() {
       if (!started || paused || disposed) return; // a resize re-anchors anyway
       await reanchor("redraw");
+    },
+    /**
+     * /clear: wipe the screen and the scrollback with Codex's own bytes, then
+     * start over at the top: `header` (history lines) and the live region.
+     * Whatever was pending is dropped with the rest: queued history, a commit
+     * batch, a resize wait or a re-anchor waiting for its cursor report (its
+     * geometry is gone). → false when there's no terminal to clear (not
+     * started, suspended for a handoff, disposed).
+     */
+    clear(header = []) {
+      if (!started || suspended || disposed) return false;
+      const resizePending = resizeTimer !== null || reanchoring;
+      generation++; // a re-anchor waiting for CPR now draws nothing
+      cancelTimers();
+      reanchoring = false;
+      paused = false;
+      recentWriteAtResize = false;
+      queued = [];
+      const { cols } = size();
+      let out = `${CSI}r${RESET}${CSI}H${CSI}2J${CSI}3J${CSI}H` + AUTOWRAP_OFF;
+      for (const s of renderRows(header, cols).strings) out += s + EOL + "\r\n";
+      out += fullLive(cols) + AUTOWRAP_ON;
+      send(out);
+      lastCommitAt = now();
+      // The UI laid out for the old width while a resize waited: lay out again.
+      if (resizePending) for (const fn of resizeListeners) fn(size());
+      return true;
     },
     onResize(fn) {
       resizeListeners.add(fn);

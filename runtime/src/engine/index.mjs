@@ -11,7 +11,8 @@ import { resolve } from "node:path";
 import { CodexAppServer } from "./codex/app-server.mjs";
 import { APPROVAL_METHODS, approvalResponse } from "./codex/approvals.mjs";
 import { defaultCodexHome, ensureCodexHome } from "./codex/home.mjs";
-import { adaptNotification, classifyRequest, elicitationResponse } from "./codex/events.mjs";
+import { adaptNotification, classifyRequest, collaborationMode, elicitationResponse } from "./codex/events.mjs";
+import { experimentalCapabilities } from "./codex/surface.mjs";
 
 // Harness defaults (user-approved): writes only inside the workspace, asks
 // before anything riskier.
@@ -199,6 +200,9 @@ export class Engine extends EventEmitter {
       cwd: this.opts.cwd,
       clientVersion: this.opts.clientVersion,
       detached: this.opts.detached,
+      codexArgs: this.opts.codexArgs,
+      // Only the terminal UI opts into the experimental allowlist (codex-parity-2 P0).
+      capabilities: this.opts.experimental ? experimentalCapabilities() : undefined,
       env: { ...(this.opts.env ?? {}), CODEX_HOME: this.home },
       onServerRequest: (msg) => this.#onServerRequest(msg),
     });
@@ -299,14 +303,34 @@ export class Engine extends EventEmitter {
     });
   }
 
-  async startThread({ cwd, model, sandbox = DEFAULT_SANDBOX, approvalPolicy = DEFAULT_APPROVAL_POLICY, ephemeral, developerInstructions, config } = {}) {
-    const r = await this.server.request("thread/start", clean({ cwd, model, sandbox, approvalPolicy, ephemeral, developerInstructions, config }));
+  async startThread({ cwd, model, sandbox = DEFAULT_SANDBOX, approvalPolicy = DEFAULT_APPROVAL_POLICY, ephemeral, developerInstructions, config, sessionStartSource } = {}) {
+    const r = await this.server.request("thread/start", clean({ cwd, model, sandbox, approvalPolicy, ephemeral, developerInstructions, config, sessionStartSource }));
     return { threadId: r.thread.id, model: r.model, modelProvider: r.modelProvider, thread: r.thread };
   }
 
   async resumeThread(threadId, overrides = {}) {
     const r = await this.server.request("thread/resume", clean({ threadId, ...overrides }));
-    return { threadId: r.thread.id, model: r.model, modelProvider: r.modelProvider, thread: r.thread };
+    return { threadId: r.thread.id, model: r.model, modelProvider: r.modelProvider, thread: r.thread, collaborationMode: collaborationMode(r.collaborationMode) };
+  }
+
+  /**
+   * Codex's collaboration-mode presets ([{name, mode, model, effort}], in its
+   * order). Codex's own TUI waits 2 s for them. Experimental: only an engine
+   * started with experimental: true.
+   */
+  async listCollaborationModes({ timeoutMs = 2000 } = {}) {
+    const r = await this.server.request("collaborationMode/list", {}, { timeoutMs });
+    return (r?.data ?? []).filter((m) => typeof m?.mode === "string").map((m) => ({ name: m.name ?? m.mode, mode: m.mode, model: m.model ?? null, effort: m.reasoning_effort ?? null }));
+  }
+
+  /** Ends every background terminal of a thread (experimental; /stop). */
+  cleanBackgroundTerminals(threadId) {
+    return this.server.request("thread/backgroundTerminals/clean", { threadId });
+  }
+
+  /** Changes a thread's settings for its next turns (experimental; ad sends only collaborationMode). */
+  updateThreadSettings(threadId, settings) {
+    return this.server.request("thread/settings/update", { threadId, ...settings });
   }
 
   // Run one turn to completion. onEvent receives normalized events for THIS
@@ -461,6 +485,39 @@ export class Engine extends EventEmitter {
       return done({ ok: true, result: r.output, parsedJson, sessionId: threadId });
     } catch (err) {
       return done({ ok: false, error: err.message });
+    }
+  }
+
+  /**
+   * Codex's temporary structured request (its /recap): an ephemeral thread,
+   * read-only, approvals never, every tool off (`config`, dotted keys, plus
+   * every MCP server off), one turn with an output schema, then unsubscribed.
+   * → the answer's text. As Codex: one deadline to start the thread, another
+   * for the turn. Stable fields only: Codex's own also sends experimental
+   * ones that lock the thread down further.
+   */
+  async structuredRequest({ cwd, model, modelProvider, text, outputSchema, config = {}, timeoutMs = 30_000 }) {
+    let deadline = Date.now() + timeoutMs;
+    const left = () => Math.max(1, deadline - Date.now());
+    const read = await this.server.request("config/read", { includeLayers: false, cwd }, { timeoutMs: left() });
+    const overrides = { ...config };
+    for (const id of Object.keys(read?.config?.mcp_servers ?? {})) overrides[`mcp_servers.${id}.enabled`] = false;
+    const r = await this.server.request(
+      "thread/start",
+      clean({ model, modelProvider, cwd, approvalPolicy: "never", sandbox: "read-only", ephemeral: true, threadSource: "system", config: overrides }),
+      { timeoutMs: left() },
+    );
+    const threadId = r.thread.id;
+    try {
+      if (r.sandbox?.type !== "readOnly") throw new Error("temporary structured thread did not start with read-only permissions");
+      deadline = Date.now() + timeoutMs;
+      const t = await this.turn({ threadId, input: [{ type: "text", text, text_elements: [] }], outputSchema, timeoutMs: left() });
+      if (t.status !== "completed") throw new Error(`temporary structured turn ended with status ${t.status}${t.error?.message ? `: ${t.error.message}` : ""}`);
+      if (!t.output) throw new Error("temporary structured turn completed without a response");
+      if (Buffer.byteLength(t.output, "utf8") > 8192) throw new Error("temporary structured response exceeds 8192 bytes");
+      return t.output;
+    } finally {
+      this.server.request("thread/unsubscribe", { threadId }).catch((err) => this.emit("warning", `could not unsubscribe a temporary thread: ${err.message}`));
     }
   }
 

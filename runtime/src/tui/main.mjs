@@ -8,7 +8,7 @@
 
 import { spawn, execFile } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, hostname } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { startHarnessEngine } from "../harness/start.mjs";
@@ -25,6 +25,8 @@ import { sanitize } from "./terminal/sanitize.mjs";
 import { createApp } from "./app.mjs";
 import { createHistory } from "./history.mjs";
 import { createAdLayer } from "./ad-layer.mjs";
+import { createCodexSettings, createPrefs, DEFAULT_PREFS_FILE } from "./prefs.mjs";
+import { createKeymap } from "./keymap.mjs";
 import { createPicker, newlineHint, renderHeader } from "./view/chrome.mjs";
 import { truncate } from "./terminal/text.mjs";
 
@@ -33,6 +35,9 @@ const DEFAULT_STATE_FILE = path.join(homedir(), ".agent-daemon", "tui", "state.j
 
 export { preflight } from "./preflight.mjs";
 import { preflight } from "./preflight.mjs";
+import { T } from "./view/theme.mjs";
+import { skillRoots } from "../harness/setup.mjs";
+import { setSyntaxTheme } from "./view/highlight.mjs";
 
 /* ------------------------------------------------------------------ */
 /* Small terminal helpers                                              */
@@ -56,12 +61,14 @@ function pickOnce({ io, renderer, title, items, intro = [] }) {
 }
 
 /** Gives the terminal to `fn` (a child program) and takes it back. */
-async function handoff(io, renderer, fn) {
+async function handoff(io, renderer, fn, app = null) {
+  app?.holdTitle?.(true); // the child sets its own title; ours comes back after
   renderer.suspend();
   try {
     return await io.handoff(fn);
   } finally {
-    renderer.resume();
+    await renderer.resume();
+    app?.holdTitle?.(false);
   }
 }
 
@@ -130,9 +137,9 @@ export async function editInEditor(text, { run, env = process.env, platform = pr
 /* git                                                                 */
 /* ------------------------------------------------------------------ */
 
-function git(cwd, args) {
+function git(cwd, args, { timeout = 0 } = {}) {
   return new Promise((resolve) => {
-    execFile("git", args, { cwd, maxBuffer: 32 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => resolve({ ok: !err, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") }));
+    execFile("git", args, { cwd, maxBuffer: 32 * 1024 * 1024, windowsHide: true, timeout }, (err, stdout, stderr) => resolve({ ok: !err, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") }));
   });
 }
 
@@ -244,22 +251,6 @@ export function hookRows(run, { hooksFile }) {
   return run.entries.filter((e) => e.kind === "warning").map((e) => ({ kind: "hook", text: line(e.text) }));
 }
 
-/** Footer meters: context left and the usage window, amber from 80 % used. */
-export function meters(st) {
-  const out = [];
-  const u = st.tokens;
-  if (u?.contextWindow && u.last) {
-    const used = Math.min(100, Math.round((u.last.total / u.contextWindow) * 100));
-    out.push({ text: `ctx ${100 - used}%`, warn: used >= 80 });
-  }
-  const p = st.rateLimits?.primary;
-  if (p?.usedPercent != null) {
-    const label = p.windowDurationMins ? `${Math.round(p.windowDurationMins / 60)}h` : "usage";
-    out.push({ text: `${label} ${Math.round(p.usedPercent)}%`, warn: p.usedPercent >= 80 });
-  }
-  return out;
-}
-
 /* ------------------------------------------------------------------ */
 /* The command                                                         */
 /* ------------------------------------------------------------------ */
@@ -267,7 +258,10 @@ export function meters(st) {
 export async function cmdTui(opts = {}) {
   const err = opts.stderr ?? process.stderr;
   const out = opts.stdout ?? process.stdout;
-  const cwd = path.resolve(opts.cwd ?? process.cwd());
+  // The folder ad works in; /cd changes it (every helper below reads it when used).
+  let cwd = path.resolve(opts.cwd ?? process.cwd());
+  // A relative --home means relative to where ad started, also after /cd.
+  if (opts.home) opts = { ...opts, home: path.resolve(cwd, opts.home) };
   const why = preflight();
   if (why) {
     err.write(`${why}\n`);
@@ -287,16 +281,17 @@ export async function cmdTui(opts = {}) {
     setWidthProfile(await probeWidthProfile({ io }));
     renderer = createRenderer({ io, caps, depth: colorDepth({ isTTY: true }), reflow: reflowModel(), resizeSource: process.stdout, hyperlinks: terminalName() !== "unknown" });
     await renderer.start();
-    renderer.frame({ lines: [[{ text: "Starting Codex\u{2026}", style: { dim: true } }]] });
+    renderer.frame({ lines: [[{ text: "Starting Codex\u{2026}", style: T.dim }]] });
 
-    const start = () => startHarnessEngine({ cwd, home: opts.home, command: opts.command, clientVersion: opts.clientVersion, store: opts.store, err: sink, detached: true });
+    // A thread ad lets go of (thread/unsubscribe) unloads at once, not after Codex's 60 s: /codex hands it over.
+    const start = () => startHarnessEngine({ cwd, home: opts.home, command: opts.command, clientVersion: opts.clientVersion, store: opts.store, err: sink, detached: true, codexArgs: ["-c", "thread_unload_delay_secs=0"], experimental: true });
     let started = await start();
     while (!started.engine && started.code === 2 && /Not logged in/.test(started.error ?? "")) {
       const choice = await pickOnce({
         io,
         renderer,
         title: "Sign in",
-        intro: [[{ text: "ad isn't signed in to Codex yet.", style: { bold: true } }]],
+        intro: [[{ text: "ad isn't signed in to Codex yet.", style: T.bold }]],
         items: [
           { label: "ChatGPT", hint: "sign in with your ChatGPT plan (browser)", value: ["auth", "login", "chatgpt"] },
           { label: "OpenAI API key", hint: "kept by Codex in ad's own Codex home", value: ["auth", "login", "openai"] },
@@ -323,7 +318,7 @@ export async function cmdTui(opts = {}) {
         io,
         renderer,
         title: "Trust",
-        intro: [[{ text: `Do you trust ${sanitize(cwd, "transcript")}?`, style: { bold: true } }], [{ text: "Trusted folders may load their own .codex config, hooks and skills.", style: { dim: true } }]],
+        intro: [[{ text: `Do you trust ${sanitize(cwd, "transcript")}?`, style: T.bold }], [{ text: "Trusted folders may load their own .codex config, hooks and skills.", style: T.dim }]],
         items: [
           { label: "Yes, trust this folder", value: "trusted" },
           { label: "No", hint: "ignore its .codex config", value: "untrusted" },
@@ -340,10 +335,15 @@ export async function cmdTui(opts = {}) {
     // Checkpoints for /undo, in a git repo only (plan Part 10).
     const { createCheckpoints } = await import("../harness/checkpoints.mjs");
     const { checkpointWiring } = await import("./undo.mjs");
-    const cp = createCheckpoints({ cwd });
-    const undoKit = (await cp.repo().catch(() => null)) ? checkpointWiring(cp, { cwd }) : null;
-    session = createSession({ engine, cwd, model: opts.model, sandbox: opts.sandbox, restart, maxRestarts: 3, hooks: undoKit?.hooks ?? {}, ...(opts.lockDir ? { lockDir: opts.lockDir } : {}) });
+    let cp = createCheckpoints({ cwd });
+    let undoKit = (await cp.repo().catch(() => null)) ? checkpointWiring(cp, { cwd }) : null;
+    // Settings: Codex's own (its config.toml in ad's home, shared with /codex) and ad's (prefs.json).
+    const settings = { codex: createCodexSettings({ engine: () => session.engine }), ad: createPrefs({ file: opts.prefsFile ?? DEFAULT_PREFS_FILE }) };
+    // modes: Codex's plan mode, on the experimental allowlist this engine opted into (codex-parity-2 P0).
+    // Default's mask keeps the configured effort, as Codex's own Default mode does.
+    session = createSession({ engine, cwd, model: opts.model, sandbox: opts.sandbox, restart, maxRestarts: 3, hooks: undoKit?.hooks ?? {}, modes: true, planEffort: () => settings.codex.get("plan_mode_reasoning_effort") ?? null, configEffort: () => settings.codex.get("model_reasoning_effort") ?? null, ...(opts.lockDir ? { lockDir: opts.lockDir } : {}) });
     await session.init();
+    await settings.codex.load();
 
     const term = terminalName();
     const newline = newlineHint({ terminal: term, csiU: Boolean(caps.kitty) });
@@ -384,9 +384,9 @@ export async function cmdTui(opts = {}) {
     const key = canonicalPath(cwd);
     const since = await sinceLastTime({ cwd, since: state[key]?.lastSeen ?? Date.now(), home: opts.adHome });
     const intro = [...header];
-    if (since.length) intro.push(truncate([{ text: `  Since last time: ${since.join(" \u{b7} ")}`, style: { dim: true } }], Math.max(10, io.size().cols - 2)));
-    intro.push([], [{ text: "  Try /review \u{b7} /goal \u{b7} /resume \u{b7} /codex = stock Codex UI \u{b7} ? for shortcuts", style: { dim: true } }], []);
-    for (const n of setupNotes.filter(Boolean)) intro.push([{ text: `  ${sanitize(n, "transcript")}`, style: { fg: "yellow" } }]);
+    if (since.length) intro.push(truncate([{ text: `  Since last time: ${since.join(" \u{b7} ")}`, style: T.dim }], Math.max(10, io.size().cols - 2)));
+    intro.push([], [{ text: "  Try /review \u{b7} /goal \u{b7} /resume \u{b7} /codex = stock Codex UI \u{b7} ? for shortcuts", style: T.dim }], []);
+    for (const n of setupNotes.filter(Boolean)) intro.push([{ text: `  ${sanitize(n, "transcript")}`, style: T.warning }]);
 
     if (opts.resume || opts.last) {
       let id = opts.resume;
@@ -394,12 +394,13 @@ export async function cmdTui(opts = {}) {
         const r = await engine.server.request("thread/list", { cwd, limit: 1, modelProviders: [], sourceKinds: ["cli", "vscode", "exec", "appServer"] }).catch(() => null);
         id = r?.data?.[0]?.id ?? null;
       }
-      if (id) await session.resume(id).catch((e) => intro.push([{ text: `  Could not resume: ${sanitize(e.message, "transcript")}`, style: { fg: "yellow" } }]));
+      if (id) await session.resume(id).catch((e) => intro.push([{ text: `  Could not resume: ${sanitize(e.message, "transcript")}`, style: T.warning }]));
     }
 
-    const ad = createAdLayer({ cwd, home: opts.adHome ?? homedir(), memory: opts.memory === false ? null : await import("../memory/episodic.mjs").catch(() => null), cli: CLI });
+    const adMemory = opts.memory === false ? null : await import("../memory/episodic.mjs").catch(() => null);
+    let ad = createAdLayer({ cwd, home: opts.adHome ?? homedir(), memory: adMemory, cli: CLI });
     const overdue = await ad.schedulerWarning().catch(() => null);
-    if (overdue) intro.push(truncate([{ text: `  ${overdue}`, style: { fg: "yellow" } }], Math.max(10, io.size().cols - 2)));
+    if (overdue) intro.push(truncate([{ text: `  ${overdue}`, style: T.warning }], Math.max(10, io.size().cols - 2)));
     let focused = true;
     io.onInput((ev) => {
       if (ev.type === "focus") focused = ev.focused;
@@ -420,8 +421,27 @@ export async function cmdTui(opts = {}) {
       },
       ad,
       ...(undoKit ? { undo: (o) => undoKit.undo(session, o), onTyping: () => undoKit.onTyping() } : {}),
+      // /cd: ad's memory project and /undo's checkpoints follow the new folder.
+      setCwd: async (dir) => {
+        cwd = dir;
+        actions.ad = ad = createAdLayer({ cwd, home: opts.adHome ?? homedir(), memory: adMemory, cli: CLI });
+        cp = createCheckpoints({ cwd });
+        undoKit = (await cp.repo().catch(() => null)) ? checkpointWiring(cp, { cwd }) : null;
+        session.setHooks(undoKit?.hooks ?? {});
+        if (undoKit) {
+          actions.undo = (o) => undoKit.undo(session, o);
+          actions.onTyping = () => undoKit.onTyping();
+        } else {
+          delete actions.undo;
+          delete actions.onTyping;
+        }
+        // The project's own skills (<folder>/.claude/skills) are the new folder's now.
+        await session.engine.setSkillRoots(skillRoots({ cwd, engineHome: session.engine.home })).catch((e) => {
+          throw new Error(`Skills weren't reloaded for the new folder: ${e.message}`);
+        });
+      },
       login: async (arg) => {
-        const code = await handoff(io, renderer, () => runChild(process.execPath, [CLI, "auth", "login", ...splitArgs(arg || "chatgpt")], { cwd }));
+        const code = await handoff(io, renderer, () => runChild(process.execPath, [CLI, "auth", "login", ...splitArgs(arg || "chatgpt")], { cwd }), app);
         if (code !== 0) return `Sign-in didn't finish (exit ${code}). Nothing changed.`;
         // Keys reach Codex when it starts, and a new login is read at start too: restart it.
         const ok = await session.restartEngine().catch(() => false);
@@ -429,21 +449,41 @@ export async function cmdTui(opts = {}) {
       },
       runAd: async (arg) => {
         if (!arg) return "Usage: /ad <command>, e.g. /ad doctor";
-        const code = await handoff(io, renderer, () => runChild(process.execPath, [CLI, ...splitArgs(arg)], { cwd }));
+        const code = await handoff(io, renderer, () => runChild(process.execPath, [CLI, ...splitArgs(arg)], { cwd }), app);
         return `ad ${sanitize(arg, "transcript")} exited ${code}.`;
       },
       openCodex: async (arg, { threadId }) => {
-        // One writer per thread: ad lets go of it while the stock UI has it.
-        if (threadId) session.newThread();
-        const code = await handoff(io, renderer, () => runStockCodex({ args: splitArgs(arg), threadId, cwd, home: engine.home, store: opts.store }));
+        // One runtime per thread: ad's engine unloads it before the stock UI opens it (else both
+        // run it, both append to its rollout, and back here ad's copy misses the stock UI's turns).
+        if (threadId && !(await session.release(threadId))) await session.restartEngine().catch(() => false);
+        const code = await handoff(io, renderer, () => runStockCodex({ args: splitArgs(arg), threadId, cwd, home: engine.home, store: opts.store }), app);
         if (threadId) await session.resume(threadId);
+        await settings.codex.load(); // the stock UI may have changed them
+        setSyntaxTheme(settings.codex.get("tui.theme")); // /theme there, too
         return `Back from the stock Codex UI (exit ${code}).`;
       },
       hookRows: (run) => hookRows(run, { hooksFile }),
-      editText: (text) => handoff(io, renderer, () => editInEditor(text, { run: (cmd, args, verbatim) => runChild(cmd, args, { cwd, windowsVerbatimArguments: Boolean(verbatim) }) })),
+      // The status line's and title's git facts (timed out, no console window).
+      gitInfo: async () => {
+        const opts = { timeout: 5000 };
+        const root = (await git(cwd, ["rev-parse", "--show-toplevel"], opts)).stdout.trim() || null;
+        if (!root) return { root: null, branch: null, changes: null };
+        const branch = (await git(cwd, ["rev-parse", "--abbrev-ref", "HEAD"], opts)).stdout.trim() || null;
+        let added = 0;
+        let removed = 0;
+        for (const l of (await git(cwd, ["diff", "--numstat", "HEAD"], opts)).stdout.split(/\r?\n/)) {
+          const [a, r] = l.split("\t");
+          if (/^\d+$/.test(a)) added += Number(a);
+          if (/^\d+$/.test(r)) removed += Number(r);
+        }
+        return { root, branch, changes: { added, removed } };
+      },
+      // /delete: the conversation's /undo snapshots go with it.
+      forgetCheckpoints: (threadId) => (undoKit ? cp.forget(threadId) : Promise.resolve(0)),
+      editText: (text) => handoff(io, renderer, () => editInEditor(text, { run: (cmd, args, verbatim) => runChild(cmd, args, { cwd, windowsVerbatimArguments: Boolean(verbatim) }) }), app),
     };
 
-    app = createApp({ io, renderer, session, cwd, header: intro, newline, history: createHistory(opts.historyFile ? { file: opts.historyFile } : {}), actions, meters, info: { compat: `${codexVersion} (tested)`, terminal: term } });
+    app = createApp({ io, renderer, session, cwd, header: intro, newline, history: createHistory(opts.historyFile ? { file: opts.historyFile } : {}), actions, settings, keymap: createKeymap({ overrides: settings.codex.get("tui.keymap") }), statusInfo: { codexVersion, hostname: hostname(), home: homedir() }, info: { compat: `${codexVersion} (tested)`, terminal: term } });
     // `ad tui "<prompt>"`: the first prompt is sent right away.
     if (opts.prompt) app.send(opts.prompt);
     await app.done;
