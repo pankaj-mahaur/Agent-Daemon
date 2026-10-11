@@ -13,6 +13,7 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 ### Added
 
+- `ad tui` has Codex's Vim mode for the prompt: `/vim` turns it on (and `tui.vim_mode_default` from the start), with Codex's Normal, Insert and Replace modes, motions, `d y c` operators and text objects, search, undo/redo and `.`. The footer shows the mode; the cursor is a bar in Insert. See [Vim mode](docs/tui.md#vim-mode).
 - `ad tui`: `/keymap` shows the keys in effect (yours from the stock UI's `/keymap` marked), and `/keymap debug` is Codex's Keypress Inspector: what your terminal sends for a key and which actions it presses.
 - `ad tui` has Codex's side conversations: `/side [question]` (or `/btw`) opens an ephemeral fork in a panel under the main conversation, also while a turn runs; Ctrl+/ moves between the two prompts, Ctrl+C closes it and its transcript stays in the scrollback; nothing merges back. ad's side runs read-only with no approvals and no hooks. See [Side conversations](docs/tui.md#side-conversations).
 - `ad tui` has Codex's `/cd [folder]`: the conversation is forked into the folder and continues there (edits, commands, `@` files, the status line's git facts, ad's memory and `/undo` follow it). A folder you haven't trusted yet is asked about first.

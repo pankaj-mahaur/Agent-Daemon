@@ -441,7 +441,11 @@ export function createComposer({ history = null, pasteLines = 5, pasteChars = 10
     get vim() {
       return vim;
     },
-    set: (t) => set(sanitize(String(t ?? ""), "transcript")),
+    /** Replaces the draft; the cursor goes to `at` (a code-unit offset), else the end. */
+    set: (t, at) => {
+      const next = sanitize(String(t ?? ""), "transcript");
+      set(next, at ?? next.length);
+    },
     get text() {
       return text;
     },

@@ -1056,3 +1056,38 @@ test("/keymap lists the keys; /keymap debug inspects them (Esc included) until C
     await until(() => !/Keypress Inspector/.test(text()), "closed");
   }, { cols: 100, rows: 30 });
 });
+
+test("/vim in the app: Codex's messages, the footer label, the cursor shape; Esc goes to Normal before it interrupts", async () => {
+  await withApp(async ({ app, type, until, text, committed, session, scr }) => {
+    const writes = () => scr.writes.join("");
+    type("/vim\r");
+    await until(() => /Vim mode enabled\./.test(committed()) && /Vim: Normal/.test(text()), "on, in Normal");
+    assert.ok(writes().includes("\x1b[0 q"), "the terminal's own cursor in Normal");
+    type("ihang");
+    await until(() => /Vim: Insert/.test(text()) && app.state.composer === "hang", "typing in Insert");
+    assert.ok(writes().includes("\x1b[6 q"), "a steady bar in Insert");
+    type("\r");
+    await until(() => session.state.activeTurnId, "the turn");
+    await until(() => /Vim: Insert/.test(text()), "a new draft starts in Insert");
+    type("\x1b"); // Insert → Normal: never an interrupt
+    await until(() => /Vim: Normal/.test(text()), "Normal");
+    assert.ok(session.state.activeTurnId, "the turn still runs");
+    type("\x1b"); // Normal, nothing pending: Codex's Esc (interrupt)
+    await until(() => !session.state.activeTurnId, "interrupted");
+    type("?"); // Normal: a backward search, not the shortcuts
+    await until(() => /^\?$/m.test(scr.visible().join("\n")), "the search line");
+    assert.equal(app.state.overlay, false);
+    type("\x1b"); // cancels the search (alone: Esc and a key together read as Alt+key)
+    await until(() => !/^\?$/m.test(scr.visible().join("\n")), "the search closed");
+    type("i/vim\r");
+    await until(() => /Vim mode disabled\./.test(committed()) && !/Vim: /.test(text()), "off");
+    assert.ok(writes().lastIndexOf("\x1b[0 q") > writes().lastIndexOf("\x1b[6 q"), "the cursor shape is put back");
+  }, { cols: 100, rows: 30 });
+});
+
+test("tui.vim_mode_default starts the prompt in Vim's Insert mode (Codex)", async () => {
+  const settings = { codex: { get: (k) => (k === "tui.vim_mode_default" ? true : undefined) }, ad: { get: (_k, d) => d, set: async () => {} } };
+  await withApp(async ({ until, text }) => {
+    await until(() => /Vim: Insert/.test(text()), "on from the start, in Insert");
+  }, { settings, cols: 100, rows: 30 });
+});

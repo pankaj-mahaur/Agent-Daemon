@@ -653,3 +653,41 @@ test("Part 7 live: a side question while the main turn runs; the side runs witho
     await removeWithRetry(w.root);
   }
 });
+
+// codex-parity-2 Part 8: Codex's Vim mode in the real terminal.
+test("Part 8 live: /vim, editing in Normal and Insert, and the prompt that reaches the model", { skip, timeout: 10 * 60_000 }, async () => {
+  const mock = await startMockResponses({ script: liveScript });
+  const w = world(mock.url);
+  let t;
+  try {
+    t = await start(w);
+    t.type("/vim\r");
+    await t.until(/Vim mode enabled\./, "on");
+    await t.until(/Vim: Normal/, "Normal");
+    t.type("iPING vim mode");
+    await t.until(/Vim: Insert/, "Insert");
+    await settle(200);
+    t.type("\x1b"); // alone, so it isn't read as Alt+key
+    await t.until(/Vim: Normal/, "back to Normal");
+    t.type("0wd$"); // line start, next word, delete to the end: "PING " is left
+    await settle(300);
+    t.type("\r");
+    await t.until(/pong/, "the model's answer");
+    const sent = mock.requests.find((r) => r.text?.startsWith("PING"));
+    assert.ok(sent, "the edited prompt reached the model");
+    assert.doesNotMatch(sent.text, /vim|mode/, "the words removed in Normal mode stayed out");
+    await t.until(/Vim: Insert/, "a new draft starts in Insert");
+
+    t.type("\x03");
+    await settle(200);
+    t.type("\x03");
+    assert.equal((await t.exit).exitCode, 0);
+  } catch (err) {
+    err.message += `\n--- model requests ---\n${mock.requests.map((r) => JSON.stringify(r.text)).join("\n")}`;
+    throw err;
+  } finally {
+    for (const k of launched.splice(0)) k();
+    await mock.close();
+    await removeWithRetry(w.root);
+  }
+});

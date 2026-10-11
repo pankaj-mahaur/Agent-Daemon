@@ -190,6 +190,7 @@ Big pastes (more than 5 lines or 1000 characters) show as `[Pasted N lines]` and
 | Alt+, / Alt+. | lower / raise the reasoning effort for the next turn, through the current model's own levels (Shift+↓ / Shift+↑ too) |
 | Shift+Tab | switch between Plan and Default mode ([Plan mode](#plan-mode)); not while a turn runs |
 | Ctrl+/ | with a [side conversation](#side-conversations) open: move between its prompt and the main one |
+| Esc (Vim on) | Insert → Normal; in Normal with nothing pending, the usual Esc ([Vim mode](#vim-mode)) |
 | Ctrl+O | copy the last answer (`/copy`) |
 | Alt+R | print the last answer as plain text (`/raw`) |
 | F2 | the warnings (`/warnings`) |
@@ -253,6 +254,8 @@ Type `/` to see them with a one-line hint each. Commands marked "Codex" keep Cod
 | `/logout` | sign out of Codex in ad's home (Codex) |
 | `/statusline` | choose the status line's items and their order: Space toggles, ← → move, Enter saves, Esc puts it back (Codex) |
 | `/title` | choose what the terminal window's title shows, the same way (Codex) |
+| `/vim` | toggle Codex's Vim mode for the prompt (Codex). See [Vim mode](#vim-mode) |
+| `/keymap [debug]` | the keys in effect; `debug` shows what a key sends (Codex) |
 
 Model, effort and permission changes apply from the next turn.
 
@@ -330,6 +333,351 @@ Codex's own plan mode: the model explores without changing anything, asks you wh
 - **Settings.** Plan mode's reasoning effort is Codex's `plan_mode_reasoning_effort` (else medium, Codex's default); Default keeps your own model and effort. ad and `/codex` share the mode: a conversation left in Plan in the stock UI resumes in Plan here. A new conversation starts in Default.
 - **Limits.** Like Codex, Plan mode is instructions to the model, not a sandbox: a model that edits anyway isn't stopped. For a hard stop, also set `/permissions` to read-only. Plan mode uses part of Codex's experimental app-server API (only `ad tui` uses it, only for this and `/stop`); if Codex can't list its modes, `/plan` answers "Plan mode unavailable right now." ([troubleshooting #33](troubleshooting.md#33-ad-tui-plan-says-plan-mode-unavailable-right-now)).
 - **Memory.** The clear-context message is written by the client, not by you: ad's memory hooks skip it, so the model's plan is never learned as your words.
+
+## Vim mode
+
+`/vim` turns on Codex's Vim mode for the prompt (it starts in Normal; `/vim` again turns it off). `tui.vim_mode_default = true` in ad's Codex config (the stock UI's setting) turns it on from the start, in Insert, as in Codex. The footer shows **Vim: Normal**, **Vim: Insert** or **Vim: Replace**, and the cursor is a bar in Insert.
+
+- **What Codex has, ad has:** `i a A I o O R`; `h j k l` and the arrows, `w b e`, `0 # `ad tui`: the terminal UI
+
+`ad tui` is a Codex-style terminal UI for agent-daemon's harness. It drives the same pinned Codex engine as `ad chat`, in ad's own Codex home (`~/.agent-daemon/codex-home`), with ad's memory, hooks and skills wired in. Your own `~/.codex` is never used.
+
+It runs inline, like Codex's own UI. Finished output goes into your terminal's normal scrollback, so scrolling, selecting and copying work as usual. Only the bottom of the screen (the running turn, the composer and the footer) is redrawn.
+
+If something gets in the way, `ad chat` is the plain line mode and stays available. How it is built, and the safety model behind `/undo`: [tui-architecture.md](tui-architecture.md).
+
+- [Starting it](#starting-it)
+- [First run](#first-run)
+- [The screen](#the-screen)
+- [Keys](#keys)
+- [Approvals and questions](#approvals-and-questions)
+- [Slash commands](#slash-commands)
+- [Images](#images)
+- [`/undo`](#undo)
+- [ad's own features](#ads-own-features)
+- [`ad codex` and `/codex`](#ad-codex-and-codex)
+- [Files ad writes](#files-ad-writes)
+- [Terminals](#terminals)
+- [When something goes wrong](#when-something-goes-wrong)
+
+---
+
+## Starting it
+
+```bash
+ad tui                              # in the current folder
+ad tui "fix the flaky login test"   # send a first prompt right away
+ad tui --last                       # continue the newest conversation in this folder
+ad tui --resume <thread-id>         # continue a given conversation
+ad tui --cwd ../other-repo --model <name> --sandbox read-only
+```
+
+| Option | Effect |
+|---|---|
+| `"<prompt>"` | sent as the first prompt as soon as the UI is up |
+| `--last` | resumes the newest conversation for this folder |
+| `--resume <id>` | resumes that conversation |
+| `--cwd <dir>` | works in another folder |
+| `--model <name>` | the model for new turns (`/model` changes it later) |
+| `--sandbox <mode>` | `read-only`, `workspace-write` (default) or `danger-full-access` |
+
+A conversation is open in one `ad` at a time. Resuming one that another `ad` has open says so and changes nothing.
+
+On exit, ad prints how to continue: `ad tui --resume <id>`, with the tokens used.
+
+**Bare `ad`** (and `ad --last`) opens the TUI whenever the terminal can show it. `ad chat` stays the plain line mode.
+- `AD_TUI=0` turns that off: bare `ad` prints the help. `ad --last` exits (code 2) saying that `ad tui --last` still reopens the last conversation in the TUI.
+- If the TUI can't run here, bare `ad` prints the reason and the help. `ad --last` exits (code 2) with the reason, and suggests `ad chat` with `/resume`.
+
+**Requirements.** An interactive terminal (stdin and stdout are TTYs), `TERM` not `dumb`, and on Windows Node 22.17+ or 24.2+ (not 23.x or 24.0–24.1). Otherwise `ad tui` exits with the reason and a command that works:
+
+| Where | What ad says |
+|---|---|
+| a pipe or a script | needs an interactive terminal: use `ad chat` |
+| `TERM=dumb` | this terminal can't show the UI: use `ad chat` |
+| Windows, older Node | needs Node 22.17+ or 24.2+: upgrade 22.x to 22.17+, 24.x to 24.2+, 23.x to 24.2+ (then `npm rebuild` in `runtime/`), or use `ad chat` |
+| mintty (Git Bash's window) | run `winpty ad tui`, or use Windows Terminal |
+
+`ad tui --preview` runs a minimal earlier preview instead: plain streamed text and `y` / `a` / `n` approvals on the same engine.
+
+---
+
+## First run
+
+1. **Sign in.** If ad isn't signed in to Codex yet, a sign-in panel opens:
+
+   | Choice | Runs |
+   |---|---|
+   | ChatGPT | `ad auth login chatgpt` (browser) |
+   | OpenAI API key | `ad auth login openai` (kept by Codex in ad's Codex home) |
+   | OpenRouter | `ad auth login openrouter` (key and model; the key goes to ad's secret store) |
+
+   The terminal is handed to that command and comes back when it finishes. Esc closes the panel and exits. `/login` does the same later; `/logout` signs out.
+2. **Trust the folder.** The first time in a folder, ad asks whether you trust it. Trusted folders may load their own `.codex` config, hooks and skills. The answer is saved once per folder in ad's Codex home (`config.toml`, `projects`). Your home folder is never asked about.
+3. **The header** appears, then the composer. Type and press Enter.
+
+---
+
+## The screen
+
+```
+╭────────────────────────────────────────────────────────────────────────────╮
+│ >_ Agent Daemon (v2.1.1) · on Codex 0.160.0 (tested)                       │
+│                                                                            │
+│ model:     gpt-5.x-codex medium · ChatGPT Plus      /model to change       │
+│ directory: D:\…\work\app · git: dev                                        │
+│ memory:    142 learnings                            /memory                │
+│ sandbox:   workspace-write · asks first                                    │
+╰────────────────────────────────────────────────────────────────────────────╯
+  Since last time: loop ran (6 iter) · schedule daily ran · 2 skill proposals
+
+  Try /review · /goal · /resume · /codex = stock Codex UI · ? for shortcuts
+
+› fix the flaky login test
+
+• Recalled 3 learnings
+• Explored
+  └ Read login.spec.ts, auth.ts
+• Ran npm test -- login.spec.ts
+  └ 1 failing: expected 200, got 401
+
+◦ Checking token refresh (14s · esc to interrupt)
+  ↳ queued: also run the signup test                              tab: edit
+
+› Ask ad to do anything
+  enter steer · tab queue · ctrl+j newline                     ctx 91% · 5h 38%
+```
+
+- **Header.** Shown once at the start, then it scrolls into history like everything else. Under 40 columns it is one line.
+  - **Since last time** lists, for this folder, loops that ran, scheduled jobs that ran or failed, and skill proposals waiting for review. It appears only when there is something new since your last visit.
+  - Setup warnings (a sandbox that isn't ready, a trust answer that wasn't saved) show in yellow under it. So does "the scheduler isn't running" when an enabled job is more than 5 minutes overdue.
+- **Cells.** Prompts (`›`), answers, commands (Explored, Ran, Failed (exit N), Declined, with the last lines of output), edits (`Edited N files (+A -R)` with a diff), the model's checklists (**Updated Plan**, each time it changes them), proposed plans ([Plan mode](#plan-mode)), tool calls and notices. A turn ends with "Worked for Ns".
+- **ad rows** are one dim line each, and only when something happens: recalled learnings, a guard that blocked a command, a hook that failed, what ad learned, loop iterations.
+- **Activity row** (while a turn runs): what Codex is doing, the time, and `esc to interrupt`. Queued prompts are listed under it; the last one says `tab: edit`.
+- **Status line** (under the prompt, from 12 rows): Codex's status line items, joined with ` · `. By default the model and its reasoning effort, the folder, `ctx N%` (the context left in this conversation) and `5h N%` (how much of the current usage window is used); a percentage turns amber at 80 % used. `/statusline` chooses the items and their order, with Codex's ids (`git-branch`, `branch-changes`, `run-state`, `weekly-limit`, `task-progress`, …); it's saved as Codex's `tui.status_line`, so `/codex` shows the same. When it's too wide, items drop from the end. Under an approval it shows only where the approval doesn't need the room.
+- **Footer.**
+  - Left: key hints. Idle: `? shortcuts · @ files · <newline key> newline`. While a turn runs: `enter steer · tab queue · <newline key> newline`.
+  - Right: chips: `private` while `/private` is on, `loop N` while a background loop runs.
+  - **When the footer is too narrow**, the key hints go first (from the end), then chips shorten (`loop 3` → `L3`, `private` → `P`), then chips go.
+- **Window title.** By default a spinner while a turn runs ("action required" while an approval waits), the conversation's name and the project. `/title` chooses the items (Codex's `tui.terminal_title`). The terminal's own title is saved when ad starts and put back when it ends and around `/codex` and the editor. `/private` keeps the conversation's name out of it.
+
+---
+
+## Keys
+
+`?` on an empty prompt shows the shortcuts; `/help` lists them too.
+
+**Sending and newlines**
+
+| Key | What it does |
+|---|---|
+| Enter | send. While a turn runs, Enter **steers** it: the text goes into the running turn |
+| newline key | a new line in the prompt (see below) |
+| `\` then Enter | a new line, in every terminal |
+| Tab | while a turn runs: **queue** the prompt for after this turn. On an empty prompt: pull the last queued prompt back to edit |
+
+The newline key depends on what the terminal sends. ad treats Enter as send and a line feed as a newline; the footer shows the right key for your terminal.
+
+| Terminal | Newline key |
+|---|---|
+| Zed | Shift+Enter |
+| Windows Terminal 1.24 | Ctrl+Enter (Shift+Enter after `/terminal-setup`) |
+| Windows Terminal 1.25+ | Shift+Enter or Ctrl+Enter |
+| VS Code | Ctrl+J (Shift+Enter after `/terminal-setup`) |
+| any terminal | Ctrl+J, or `\` then Enter |
+
+Alt+Enter is never used: it is Windows Terminal's fullscreen toggle.
+
+**Stopping and quitting**
+
+| Key | What it does |
+|---|---|
+| Esc | interrupt the running turn |
+| Esc Esc | on an empty prompt, while idle: rewind to an earlier prompt (below) |
+| Ctrl+C | in this order: close a popup, clear the prompt, interrupt the turn. A second Ctrl+C within 1.5 s quits |
+| Ctrl+L | redraw the screen |
+
+With an approval open, Ctrl+C declines it. Clearing the prompt or closing a popup doesn't arm the quit; only an interrupt or a press on an idle, empty prompt does.
+
+**Esc Esc: rewind.** A "Rewind to" picker lists your earlier prompts (latest first). Picking one rewinds the conversation to just before it and puts that prompt back in the composer to edit. **Files on disk are not changed.** To put files back too, use `/undo`. The first Esc says "Esc again to rewind".
+
+**Editing the prompt**
+
+| Key | What it does |
+|---|---|
+| ← / → | move; with Ctrl or Alt, by word (also Alt+B / Alt+F) |
+| Home / End, Ctrl+A / Ctrl+E | start / end of the line |
+| Ctrl+K / Ctrl+U | cut to the end / start of the line |
+| Ctrl+W | cut the word before the cursor |
+| Ctrl+Y | paste what was cut |
+| ↑ / ↓ | move between rows; at the first or last row, walk your prompt history |
+| Ctrl+R | search the prompt history (Ctrl+R again: older match; Enter takes it; Esc leaves) |
+| Ctrl+G | edit the prompt in your editor (below) |
+
+Big pastes (more than 5 lines or 1000 characters) show as `[Pasted N lines]` and are expanded when you send.
+
+**Ctrl+G** opens `$VISUAL`, else `$EDITOR` (arguments allowed), else Notepad on Windows and vi elsewhere, on a private temp file. Save and close the editor to come back. If the editor fails, nothing changes. An editor that returns at once (it opened the file in a window that was already running) keeps your prompt and says so: set `EDITOR` to one that waits, such as `code --wait`.
+
+**More**
+
+| Key | What it does |
+|---|---|
+| `?` | the shortcuts (on an empty prompt) |
+| `@` | complete a file name in this folder |
+| `/` | complete a command; Enter runs the highlighted one, Tab fills it in |
+| `!cmd` | run `cmd` in the shell, **unsandboxed** (like Codex's `!`). One line only; a multi-line paste starting with `!` is a prompt |
+| Ctrl+T | page through the whole transcript: ↑ ↓ (or `k` `j`), PgUp / Shift+Space / Ctrl+B, PgDn / Space / Ctrl+F, Ctrl+U / Ctrl+D (half a page), Home, End; Esc, `q`, Ctrl+C or Ctrl+T closes |
+| Alt+, / Alt+. | lower / raise the reasoning effort for the next turn, through the current model's own levels (Shift+↓ / Shift+↑ too) |
+| Shift+Tab | switch between Plan and Default mode ([Plan mode](#plan-mode)); not while a turn runs |
+| Ctrl+/ | with a [side conversation](#side-conversations) open: move between its prompt and the main one |
+| Ctrl+O | copy the last answer (`/copy`) |
+| Alt+R | print the last answer as plain text (`/raw`) |
+| F2 | the warnings (`/warnings`) |
+
+The terminal bell rings when an approval waits, and when a turn ends while the terminal window isn't focused.
+
+**Changing keys.** ad uses Codex's names for the actions it has, so the keys you set in the stock UI's `/keymap` (in `/codex`; they're saved as `tui.keymap` in ad's Codex home) apply in ad too: the transcript, the external editor, copy, raw output, clear, interrupt, reasoning effort, queue, the shortcuts and the pager. ad doesn't change them itself. A key ad can't use there (a chord like `ctrl-x f`, a key that would mean two things, or one of the prompt's editing keys) is skipped, and `/warnings` says why. `/keymap` lists the keys in effect (yours marked) and `/keymap debug` shows what your terminal sends for a key and what it does in ad (Ctrl+C closes it). Shift+Tab never queues: it switches [Plan mode](#plan-mode), a fixed key in Codex too.
+
+---
+
+## Approvals and questions
+
+When Codex wants to do something it needs permission for, the request opens as a box over the composer. Its full text also goes into the scrollback, and so does your answer ("approved", "approved for this session" or "declined").
+
+| Request | Choices (key) |
+|---|---|
+| Run a command | Yes (`y`) · Yes, and don't ask again this session (`a`) · Yes, and don't ask again for commands starting with `<prefix>` (`p`) · Yes, and always allow `<host>` (`h`) · No, and tell Codex what to do instead (`n`) · No, and stop (`esc`) |
+| Edit files (the diff is shown) | Yes (`y`) · Yes, and don't ask again for these files this session (`a`) · No, and tell Codex what to do instead (`n`) · No, and stop (`esc`) |
+| More permissions | Yes, for this turn (`y`) · Yes, for this session (`a`) · No (`n`) |
+
+A command request lists only what Codex offers for that command, so `p` and `h` appear only sometimes.
+
+- **Answering:** press the key, press the option's number, or move with ↑ / ↓ and press Enter.
+- **Arming.** An answer that grants something is taken only 400 ms after the box opened and after your last key. A key pressed too early restarts the wait. Type-ahead, a held key or a paste never approves. Declining works at once.
+- **Hidden characters** in a command or a diff (control characters, bidi marks, zero-width or look-alike spaces) are shown as `<U+XXXX>`, so a command can't hide part of itself.
+- **Long requests** scroll inside the box with PgUp / PgDn.
+- **Questions** from Codex list numbered options plus Skip (`esc`), or take free text. Secret answers are masked and never stored in history.
+- **Forms** from an MCP server offer Submit (`y`; "Open it, then continue" for a link), Decline (`n`) and Cancel (`esc`).
+- A request ad doesn't support yet is declined, and ad says "This needs the stock UI: /codex".
+
+---
+
+## Slash commands
+
+Type `/` to see them with a one-line hint each. Commands marked "Codex" keep Codex's meaning; the others are ad's own.
+
+**Conversations**
+
+| Command | What it does |
+|---|---|
+| `/new` | start a new conversation (Codex). The scrollback stays |
+| `/clear [name]` | clear the terminal, **scrollback included**, and start a new conversation, named if you give a name (Codex). The one before stays resumable. To keep the scrollback, set `"clear.keepScrollback": true` in `~/.agent-daemon/tui/prefs.json` |
+| `/resume` | continue an earlier conversation in this folder (Codex). `/resume archived` (or the last entry of the list) shows the archived ones; resuming one unarchives it |
+| `/archive` | archive this conversation, after asking (Codex). ad stays open on a new one; `/resume archived` brings it back |
+| `/delete` | delete this conversation for good, its subagents too, after asking (Codex). Its `/undo` snapshots go with it; ad's memory from it is kept |
+| `/pwd` | show the current working directory (Codex; `/cwd` too) |
+| `/cd [folder]` | continue in another folder (Codex): the conversation is forked there, and from then on everything works in it (edits, commands, `@` files, git facts, ad's memory, `/undo`). Alone, it goes home. A folder you haven't trusted yet is asked about first. Not while a turn runs, prompts are queued or background terminals run; never into a Codex home. `/undo` can't undo turns from before the change |
+| `/fork` | continue in a copy of this conversation (Codex) |
+| `/rename <name>` | name this conversation (Codex) |
+| `/compact` | summarize the conversation to free context (Codex) |
+| `/export [name]` | save the conversation as markdown in this folder (Codex). Never overwrites, never writes outside the folder |
+| `/quit`, `/exit` | exit ad (Codex) |
+
+**Settings**
+
+| Command | What it does |
+|---|---|
+| `/model` | choose the model and reasoning effort (Codex) |
+| `/permissions` | what Codex may do without asking: Read only, Auto (default: edits this folder, asks for the rest), Full access (Codex) |
+| `/login [chatgpt\|openai\|openrouter]` | sign in (ChatGPT, OpenAI key, OpenRouter); Codex restarts with the new login |
+| `/logout` | sign out of Codex in ad's home (Codex) |
+| `/statusline` | choose the status line's items and their order: Space toggles, ← → move, Enter saves, Esc puts it back (Codex) |
+| `/title` | choose what the terminal window's title shows, the same way (Codex) |
+| `/vim` | toggle Codex's Vim mode for the prompt (Codex). See [Vim mode](#vim-mode) |
+| `/keymap [debug]` | the keys in effect; `debug` shows what a key sends (Codex) |
+
+Model, effort and permission changes apply from the next turn.
+
+**Work**
+
+| Command | What it does |
+|---|---|
+| `/goal [<objective>\|clear]` | set a goal for this conversation (`/goal clear`); alone, shows it (Codex) |
+| `/side [question]` | a side conversation in an ephemeral fork, in a panel; works while a turn runs (Codex; `/btw` too). See [Side conversations](#side-conversations) |
+| `/plan [prompt]` | switch to Plan mode; with a prompt, send it there (Codex). See [Plan mode](#plan-mode) |
+| `/review` | review your uncommitted changes (Codex) |
+| `/ps` | list the background terminals and their last output lines (Codex). See [Background terminals](#background-terminals) |
+| `/stop` | stop all background terminals (Codex; `/clean` too) |
+| `/diff` | show git changes, untracked files included (Codex) |
+| `/init` | create an AGENTS.md for this repo, with Codex's own prompt (Codex) |
+| `/image <path>` | attach an image file to the next prompt |
+| `/undo [force]` | put back the files the last turn changed, and rewind it (below) |
+
+**Output**
+
+| Command | What it does |
+|---|---|
+| `/copy` | copy the last answer to the clipboard (Codex) |
+| `/raw` | print the last answer as plain text, for selecting (Codex) |
+
+**Inspection**
+
+| Command | What it does |
+|---|---|
+| `/status` | account, model, sandbox, tokens, limits, and the Codex version line (Codex) |
+| `/usage` | usage limits and tokens (Codex) |
+| `/mcp` | MCP servers and their status (Codex) |
+| `/hooks` | hooks and whether they are trusted; ad's own are marked (Codex) |
+| `/skills` | skills Codex can use here (Codex) |
+| `/warnings` | notices kept from this session, and events this ad doesn't know (Codex) |
+
+**ad**
+
+| Command | What it does |
+|---|---|
+| `/remember <text>` | save a note to ad's project memory |
+| `/memory [search <words>\|recent\|forget <id>\|profile]` | ad's memory (not Codex's `/memories`) |
+| `/private` | toggle: prompts are wrapped in `<private>` (ad never learns from them) |
+| `/proposals` | skill changes ad proposes (review with `/ad review`) |
+| `/loop "<objective>"` | work toward an objective in the background (`/loop stop`) |
+| `/team [id]` | the team board |
+| `/schedule [run <id>]` | scheduled jobs |
+| `/tools [list\|enable\|disable <tool>]` | optional agent tools (`/tools enable browser`) |
+| `/codex [args]` | open the stock Codex UI on this conversation |
+| `/ad <command>` | run an ad command, e.g. `/ad doctor` |
+
+**Help**
+
+| Command | What it does |
+|---|---|
+| `/help` | what you can do here: every command and shortcut |
+| `/terminal-setup` | how to make Shift+Enter add a newline in this terminal |
+
+A Codex command ad doesn't have yet is never sent to the model as a prompt. It answers in one line why ("/recap isn't in ad yet. /codex opens the stock Codex UI on this conversation."), and what you typed stays in the prompt. Where the stock UI can't help either (`/ide`, `/app`, `/daemon`), the answer says so instead. Codex's commands keep Codex's rules: the ones Codex disables while a task runs (`/new`, `/fork`, `/compact`, `/init`, `/export`, `/review`, `/logout`, …) answer "'/new' is disabled while a task is in progress.", and the draft stays. Codex's aliases work (`/cwd`, `/clean` for `/stop`, `/pet`), and `/quit` shows in the popup only once you type it.
+
+---
+
+## Plan mode
+
+Codex's own plan mode: the model explores without changing anything, asks you what it can't find out, and ends with a plan you can implement.
+
+- **Switching.** `/plan` switches to Plan mode; `/plan <prompt>` switches and sends the prompt there. Shift+Tab switches between Plan and Default. Neither works while a turn runs (as in Codex). In Plan mode the footer shows **Plan mode (shift+tab to cycle)** and the prompt turns magenta.
+- **What the model does.** It gets Codex's plan-mode instructions: read and search but don't edit, ask questions (they come up in the usual question dialog), and end with one **Proposed Plan**, shown as its own block.
+- **Implement this plan?** When a plan arrives and nothing else waits, ad asks, with Codex's choices:
+  1. **Yes, implement this plan**: switches to Default and sends "Implement the plan.".
+  2. **Yes, clear context and implement**: a new conversation in Default whose first message is the plan (the choice shows how much context the current one uses). The scrollback stays.
+  3. **No, stay in Plan mode** (or Esc): keep refining it.
+
+  If you're typing when the plan arrives, your draft stays: ad says "A plan is ready: clear the prompt to choose." and asks once the prompt is empty. A queued prompt runs instead of the question.
+- **Settings.** Plan mode's reasoning effort is Codex's `plan_mode_reasoning_effort` (else medium, Codex's default); Default keeps your own model and effort. ad and `/codex` share the mode: a conversation left in Plan in the stock UI resumes in Plan here. A new conversation starts in Default.
+- **Limits.** Like Codex, Plan mode is instructions to the model, not a sandbox: a model that edits anyway isn't stopped. For a hard stop, also set `/permissions` to read-only. Plan mode uses part of Codex's experimental app-server API (only `ad tui` uses it, only for this and `/stop`); if Codex can't list its modes, `/plan` answers "Plan mode unavailable right now." ([troubleshooting #33](troubleshooting.md#33-ad-tui-plan-says-plan-mode-unavailable-right-now)).
+- **Memory.** The clear-context message is written by the client, not by you: ad's memory hooks skip it, so the model's plan is never learned as your words.
+
+, `f F t T`, `gg`, `G`; `x s D C r Y p u`, Ctrl+R to redo, `.` to repeat the last change; `d y c` with those motions, `dd yy cc`, and the text objects `iw aw iW aW`, `i( a(` (also `)` and `b`), `i[ a[`, `i{ a{` (also `B`), `i" a" i' a' i` a``; `/` `?` `n` `N` to search (also after an operator: `d/word`). One register, shared with the prompt's Ctrl+K/U/W/Y.
+- **What Codex doesn't have, ad doesn't either:** counts (`3w`), Visual mode, `P`, `X`, `;` and `,`.
+- **Keys:** Enter sends in Normal and in Insert (a new line is your newline key, as without Vim); Tab queues. Esc in Insert goes to Normal, never interrupts; in Normal with nothing pending it does what Esc always does (interrupt a turn, Esc Esc to rewind). In Normal `/` and `?` search, so the command popup and the `?` shortcuts open from Insert. `j`/`k` on an empty prompt walk the prompt history. After you send, the new prompt starts in Insert.
+- **Undo:** one step is one Normal command, or everything typed between entering Insert and Esc.
+- **Not yet like Codex:** search matches aren't highlighted in the prompt; Backspace in Replace mode only moves left (Codex puts the old character back); a "[Pasted N lines]" token is plain text to Vim's motions (Codex moves over it as one character).
 
 ## Side conversations
 
