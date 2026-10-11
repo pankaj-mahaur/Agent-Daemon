@@ -12,12 +12,13 @@
 //   createVim(core, {now, mode}) → {handle(ev), mode, pending, hint, search,
 //     wantsEscape(), reset(), enter(mode)}
 //
-// `core` is the composer's buffer: {text, cursor, set(text, cursor), kill,
-// setKill(text), vertical(dir) → bool, history(dir) → bool, recalled,
+// `core` is the composer's buffer: {text, cursor, set(text, cursor), place(at),
+// kill, setKill(text), vertical(dir) → bool, history(dir) → bool, recalled,
 // passThrough(ev)}. handle() returns undefined to let the composer's own
 // editing take the event (Insert mode), null for a key Vim leaves to the app
 // (Esc with nothing pending, Ctrl shortcuts), else a composer result.
 
+import { sanitize } from "../terminal/sanitize.mjs";
 import { graphemeSegments } from "../terminal/width.mjs";
 
 const SEPARATORS = new Set([..."`~!@#$%^&*()-=+[{]}\\|;:'\",.<>/?"]);
@@ -38,17 +39,17 @@ function graphemes(t) {
   for (const { segment, index } of graphemeSegments(t)) out.push({ g: segment, at: index });
   return out;
 }
+// Boundaries next to an offset, without walking the text from its start (a
+// long draft stays fast): the text's segments are kept while it doesn't change.
+const GRAPHEMES = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+let segmented = { text: null, segments: null };
+const segmentsOf = (t) => (segmented.text === t ? segmented.segments : (segmented = { text: t, segments: GRAPHEMES.segment(t) }).segments);
 const nextB = (t, i) => {
   if (i >= t.length) return t.length;
-  for (const { segment } of graphemeSegments(t.slice(i))) return i + segment.length;
-  return t.length;
+  const s = segmentsOf(t).containing(i);
+  return s ? s.index + s.segment.length : t.length;
 };
-const prevB = (t, i) => {
-  if (i <= 0) return 0;
-  let last = 0;
-  for (const { index } of graphemeSegments(t.slice(0, i))) last = index;
-  return last;
-};
+const prevB = (t, i) => (i <= 0 ? 0 : (segmentsOf(t).containing(i - 1)?.index ?? 0));
 const charAt = (t, i) => t.slice(i, nextB(t, i));
 const bol = (t, i) => t.lastIndexOf("\n", i - 1) + 1;
 const eol = (t, i) => {
@@ -523,6 +524,7 @@ export function createVim(core, { now = () => Date.now(), mode: startMode = "nor
         const dir = k === "j" || k === "down" ? 1 : -1;
         if (!t || core.recalled) {
           core.history(dir);
+          if (T()) core.place(prevB(T(), T().length));
           return motion();
         }
         if (!core.vertical(dir)) move(dir > 0 ? t.length : 0);
@@ -652,24 +654,33 @@ export function createVim(core, { now = () => Date.now(), mode: startMode = "nor
     return { changed: true };
   }
 
+  // "." replays the recorded change: its command keys, then what was typed in
+  // Insert. A change that can't start (cj on the last line, ci( outside any
+  // parentheses) stops there: its typing never runs as Normal commands (Codex).
   function repeat() {
     step = null;
     rec = null;
     if (!dot) return { changed: true };
     replaying = true;
     try {
-      // Insert-mode typing is the composer's own editing: replayed through it too.
-      for (const ev of dot) if (handle(ev) === undefined) core.passThrough(ev);
+      for (const { kind, ev } of dot) {
+        if (kind === "ins" && mode === "normal") break;
+        if (handle(ev) === undefined) core.passThrough(ev);
+      }
       if (mode !== "normal") escapeToNormal();
     } finally {
       replaying = false;
     }
     return { changed: true };
   }
+  const record = (kind, ev) => {
+    if (rec && !replaying) rec.push({ kind, ev });
+  };
+  const chordLive = () => Boolean(gChord) && now() - gChord.at <= CHORD_MS;
 
   /* ---- search query editing ---- */
   function searchKey(ev) {
-    if (rec && !replaying) rec.push(ev);
+    record("cmd", ev);
     if (ev.type === "text" || ev.type === "paste") {
       search.query += String(ev.text).split("\n")[0];
       return { changed: true };
@@ -694,10 +705,14 @@ export function createVim(core, { now = () => Date.now(), mode: startMode = "nor
 
   /* ---- the entry point ---- */
   function handle(ev) {
+    if (gChord && !chordLive()) gChord = null; // the second g came too late
     if (search) return searchKey(ev);
     if (mode !== "normal") return insertKey(ev);
-    // A paste in Normal goes in at the cursor, as its own step.
+    // A paste in Normal goes in at the cursor as its own step (a pending command is dropped; not for ".").
     if (ev.type === "paste") {
+      pending = null;
+      gChord = null;
+      rec = null;
       beginStep();
       core.passThrough(ev);
       return finish();
@@ -728,8 +743,14 @@ export function createVim(core, { now = () => Date.now(), mode: startMode = "nor
         beginStep();
         if (!replaying) rec = [];
       }
-      if (rec && !replaying) rec.push({ type: "text", text: k });
+      // Keys are recorded as they came: a Delete key stays a Delete key in ".".
+      record("cmd", ev.type === "key" ? ev : { type: "text", text: k });
       out = normalKey(k, ev) ?? out;
+      // A burst that opened a search ("/foo" in one event): the rest is the query.
+      if (search && i < keys.length - 1) {
+        searchKey({ type: "text", text: keys.slice(i + 1).join("") });
+        return { changed: true };
+      }
     }
     return out;
   }
@@ -741,32 +762,44 @@ export function createVim(core, { now = () => Date.now(), mode: startMode = "nor
   }
 
   function insertKey(ev) {
-    if (rec && !replaying) rec.push(ev);
-    // An Insert session (also one not begun by a Normal command, as after a submit) is one undo step.
-    if (ev.type !== "key" || ev.name !== "escape") beginStep();
     if (ev.type === "key" && ev.name === "escape") {
+      record("ins", ev);
       escapeToNormal();
       return { changed: true };
     }
     // Legacy terminals send Alt+x for a fast Esc then x: in Insert it is that.
     if (ev.type === "key" && ev.alt && !ev.ctrl && ev.name.length === 1) {
+      record("ins", { type: "key", name: "escape" });
       escapeToNormal();
       return handle({ type: "text", text: ev.shift ? ev.name.toUpperCase() : ev.name });
     }
+    // Enter (send) and Ctrl+R (the history search) are the composer's, never part of a change.
+    if (ev.type === "key" && ((ev.name === "enter" && !ev.alt && !ev.shift && !ev.ctrl) || (ev.ctrl && ev.name === "r"))) return undefined;
+    // An Insert session (also one not begun by a Normal command, as after a submit) is one undo step.
+    beginStep();
     if (mode === "replace" && ev.type === "text") {
-      for (const g of [...String(ev.text)]) {
+      const typed = sanitize(String(ev.text), "transcript").replace(/\n/g, "");
+      for (const { g } of graphemes(typed)) {
         const t = T();
         const c = C();
         if (c < t.length && t[c] !== "\n") set(t.slice(0, c) + g + t.slice(nextB(t, c)), c + g.length);
         else set(t.slice(0, c) + g + t.slice(c), c + g.length);
       }
+      record("ins", ev);
       return { changed: true };
     }
     if (mode === "replace" && ev.type === "key" && ev.name === "backspace") {
       move(prevB(T(), C()));
+      record("ins", ev);
       return { changed: true };
     }
-    return undefined; // the composer's own editing
+    // The composer's own editing; "." keeps what moved or changed (a Backspace with nothing to delete isn't kept).
+    const before = T();
+    const at = C();
+    const r = core.passThrough(ev);
+    const deleting = ev.type === "key" && (ev.name === "backspace" || ev.name === "delete");
+    if (T() !== before || (!deleting && (C() !== at || ev.type === "text" || ev.type === "paste"))) record("ins", ev);
+    return r;
   }
 
   return {
@@ -775,18 +808,18 @@ export function createVim(core, { now = () => Date.now(), mode: startMode = "nor
       return mode;
     },
     get pending() {
-      return Boolean(pending || gChord || search);
+      return Boolean(pending || chordLive() || search);
     },
     /** The footer hint while gg waits for its second key (Codex's). */
     get hint() {
-      return gChord && now() - gChord.at <= CHORD_MS ? "g then \u{b7} g jump top \u{b7} esc cancel" : null;
+      return chordLive() ? "g then \u{b7} g jump top \u{b7} esc cancel" : null;
     },
     get search() {
       return search ? { dir: search.dir, query: search.query } : null;
     },
     /** Esc is Vim's: in Insert or Replace, or with a command or search pending. */
     wantsEscape() {
-      return mode !== "normal" || Boolean(pending || gChord || search);
+      return mode !== "normal" || Boolean(pending || chordLive() || search);
     },
     /** The draft was replaced (a submit, history, /new): Codex goes to Insert, history and "." go. */
     reset({ mode: next = "insert" } = {}) {

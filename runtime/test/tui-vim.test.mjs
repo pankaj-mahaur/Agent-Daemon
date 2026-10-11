@@ -308,3 +308,104 @@ test("vim: undo history goes with a new draft; the register stays", () => {
   c.handle({ type: "text", text: "p" });
   assert.equal(c.text, "xfoo ", "the register survives");
 });
+
+/* ------------------------------------------------------------------ */
+/* From the Part 8 review                                              */
+/* ------------------------------------------------------------------ */
+
+test("vim '.': a change that can't start stops there; its typing never runs as commands (Codex)", () => {
+  const cj = run("|one\ntwo\nthree", "cjfoo<esc>j.").c;
+  assert.equal(cj.text, "foo\nthree", "cj on the last line can't start, and 'foo' isn't run as f, o, o");
+  const ci = run("a (b|) c", "ci(xyz<esc>$.").c;
+  assert.equal(ci.text, "a (xyz) c", "ci( outside any parentheses: nothing, and 'x' doesn't delete");
+});
+
+test("vim '.': keys are replayed as keys (Delete, Insert, r Enter), and a Backspace that deleted nothing isn't replayed", () => {
+  const del = vim("|abc def");
+  del.handle({ type: "key", name: "delete" });
+  del.handle({ type: "text", text: "." });
+  assert.equal(del.text, "c def");
+  const ins = vim("|ab");
+  ins.handle({ type: "key", name: "insert" });
+  ins.handle({ type: "text", text: "X" });
+  ins.handle({ type: "key", name: "escape" });
+  ins.handle({ type: "text", text: "." });
+  assert.equal(ins.text, "XXab");
+  assert.equal(run("a|bcd", "r<cr>l.").c.text, "a\nc\n");
+  assert.equal(run("|one two", "i<bs>X<esc>w.").c.text, "Xone Xtwo", "Codex's repeat_distinguishes test");
+});
+
+test("vim: a burst that opens a search puts the rest in the query", () => {
+  const c = vim("|one two");
+  c.handle({ type: "text", text: "/tw" });
+  assert.deepEqual(c.vim.search, { dir: "/", query: "tw" });
+  c.handle({ type: "key", name: "enter" });
+  assert.equal(shown(c), "one |two");
+});
+
+test("vim: Enter in Normal sends even after a backslash (a Windows path), as Codex", () => {
+  const c = vim("open C:\\Users\\|me");
+  assert.deepEqual(c.handle({ type: "key", name: "enter" }), { submit: "open C:\\Users\\me" });
+  const i = vim("a\\|", { mode: "insert" });
+  i.handle({ type: "key", name: "enter" });
+  assert.equal(i.text, "a\n", "in Insert, \\ + Enter is still a newline");
+});
+
+test("vim: a recalled prompt puts the cursor on its last character", () => {
+  const c = vim("|", { history: { entries: () => ["first"], add() {} } });
+  c.handle({ type: "text", text: "k" });
+  assert.equal(shown(c), "firs|t");
+  c.handle({ type: "text", text: "x" });
+  assert.equal(c.text, "firs");
+});
+
+test("vim: an expired gg no longer holds Esc (it interrupts again)", () => {
+  let t = 0;
+  const c = createComposer({ now: () => t });
+  c.setVim(true);
+  c.set("ab", 0);
+  c.handle({ type: "text", text: "g" });
+  assert.equal(c.vim.wantsEscape(), true);
+  t = 2000;
+  assert.equal(c.vim.wantsEscape(), false);
+  assert.equal(c.vim.hint, null);
+  assert.equal(c.handle({ type: "key", name: "escape" }), null);
+});
+
+test("vim: the app replacing the draft drops a pending command; a paste drops one too, and isn't repeated by '.'", () => {
+  const c = vim("|abc def");
+  c.handle({ type: "text", text: "d" });
+  c.set("new text", 0);
+  c.handle({ type: "text", text: "w" });
+  assert.equal(c.text, "new text", "w moved: the d before the new draft is gone");
+  const p = vim("|ab");
+  p.handle({ type: "text", text: "x" }); // a change for "."
+  p.handle({ type: "text", text: "d" });
+  p.handle({ type: "paste", text: "PASTE" });
+  assert.equal(p.vim.pending, false);
+  assert.equal(p.text, "PASTEb");
+  p.handle({ type: "text", text: "." }); // still the x
+  assert.equal(p.text.length, "PASTEb".length - 1);
+});
+
+test("vim: Replace mode overwrites by character (an emoji flag is one) and keeps out control characters", () => {
+  const flag = vim("|abc");
+  for (const ev of [{ type: "text", text: "R" }, { type: "text", text: "🇮🇳" }, { type: "key", name: "escape" }]) flag.handle(ev);
+  assert.equal(flag.text, "🇮🇳bc");
+  const c = vim("|abc", { mode: "replace" });
+  c.handle({ type: "text", text: "x\u0007y" });
+  assert.equal(c.text, "xyc");
+});
+
+test("vim: long drafts stay fast (b and daw across thousands of blanks)", () => {
+  const text = `${"word ".repeat(1000)}${" ".repeat(5000)}end`;
+  const c = vim(`${text}|`);
+  let t0 = performance.now();
+  c.handle({ type: "text", text: "b" });
+  c.handle({ type: "text", text: "b" });
+  const b = performance.now() - t0;
+  t0 = performance.now();
+  c.handle({ type: "text", text: "daw" });
+  const daw = performance.now() - t0;
+  assert.ok(b < 1500 && daw < 1500, `b ${b.toFixed(0)} ms, daw ${daw.toFixed(0)} ms`);
+});

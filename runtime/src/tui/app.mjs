@@ -610,6 +610,7 @@ export function createApp({
   }
   // Codex's cursor in Vim mode: a steady bar in Insert, the terminal's own shape otherwise (DECSCUSR).
   let cursorShape = null;
+  let hintTimer = null;
   function syncCursorShape() {
     const want = composer.vim && !quitting && !titleHeld ? (composer.vim.mode === "insert" ? "bar" : "default") : null;
     if (want === cursorShape) return;
@@ -661,6 +662,8 @@ export function createApp({
     if (quitting) return;
     const pending = flush();
     syncCursorShape();
+    // The gg hint goes when its second has passed: one redraw then.
+    if (composer.vim?.hint && !hintTimer) hintTimer = setT(() => ((hintTimer = null), draw()), 1050);
     reportPlanUpdates();
     reportNotices();
     reportTurns();
@@ -1625,7 +1628,7 @@ export function createApp({
   function onInput(ev) {
     if (quitting) return;
     // /keymap debug: every key is shown, not acted on; Ctrl+C closes (Codex's inspector).
-    if (inspector) {
+    if (inspector && !modal && !confirm) {
       if (ev.type === "key" && ev.ctrl && ev.name === "c") inspector = null;
       else if (ev.type === "key" || ev.type === "text") inspector.last = inspectKey(ev);
       return draw();
@@ -1674,6 +1677,12 @@ export function createApp({
       if (ev.type === "key" && (ev.name === "escape" || (ev.name === "tab" && ev.shift))) return draw();
     }
     if (popup && popupKey(ev)) return draw();
+    // Vim's Esc comes first: Insert to Normal, or a pending command cancelled (never an
+    // interrupt), in the main prompt and in a side conversation's alike.
+    if (ev.type === "key" && ev.name === "escape" && composer.vim?.wantsEscape()) {
+      composer.handle(ev);
+      return draw();
+    }
     // Ctrl+/ (0x1f, or CSI 47;5u): focus between the side panel and the main prompt.
     if (keymap.is("global", "toggle_side_conversation", ev) || (ev.type === "key" && ev.ctrl && ev.name === "_" && keymap.keys("global", "toggle_side_conversation").includes("ctrl-/"))) {
       if (side) side.focus = side.focus === "side" ? "main" : "side";
@@ -1729,11 +1738,6 @@ export function createApp({
     if (ev.type === "key" && ev.name === "f2" && !ev.ctrl && !ev.alt && !ev.shift) return run("warnings");
     if (ev.type === "text" || ev.type === "paste") lastCtrlC = -Infinity; // new text: Ctrl+C clears it, not quit
     if ((ev.type === "text" || ev.type === "paste") && !turnActive()) actions.onTyping?.();
-    // Vim's Esc comes first: Insert to Normal, or a pending command cancelled (never an interrupt).
-    if (ev.type === "key" && ev.name === "escape" && composer.vim?.wantsEscape()) {
-      composer.handle(ev);
-      return draw();
-    }
     // In Vim's Normal mode "?" searches backwards; the shortcuts open only from Insert (Codex).
     if (keymap.is("composer", "toggle_shortcuts", ev) && !composer.text && !(composer.vim && composer.vim.mode !== "insert")) {
       overlay = true;
@@ -1867,6 +1871,7 @@ export function createApp({
     dispose() {
       restoreTitle();
       clearT(drawTimer);
+      clearT(hintTimer);
       clearT(searchTimer);
       clearI(ticker);
       offChange();

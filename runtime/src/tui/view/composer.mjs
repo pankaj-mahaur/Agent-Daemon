@@ -280,6 +280,10 @@ export function createComposer({ history = null, pasteLines = 5, pasteChars = 10
       if (next !== text || at !== cursor) goalCol = null;
       set(next, at);
     },
+    /** The cursor alone: a recalled history entry stays one (j/k go on walking the history). */
+    place(at) {
+      cursor = Math.max(0, Math.min(at, text.length));
+    },
     get kill() {
       return kill;
     },
@@ -324,7 +328,7 @@ export function createComposer({ history = null, pasteLines = 5, pasteChars = 10
     }
     if (name === "enter" && !alt) {
       // "\" + Enter is a newline everywhere (the FC0 fallback).
-      if (!mask && text.slice(0, cursor).endsWith("\\")) {
+      if (!mask && vim?.mode !== "normal" && text.slice(0, cursor).endsWith("\\")) {
         set(text.slice(0, cursor - 1) + "\n" + text.slice(cursor), cursor);
         return { changed: true };
       }
@@ -445,6 +449,7 @@ export function createComposer({ history = null, pasteLines = 5, pasteChars = 10
     set: (t, at) => {
       const next = sanitize(String(t ?? ""), "transcript");
       set(next, at ?? next.length);
+      vim?.reset({ mode: vim.mode });
     },
     get text() {
       return text;

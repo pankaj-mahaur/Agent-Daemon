@@ -1091,3 +1091,30 @@ test("tui.vim_mode_default starts the prompt in Vim's Insert mode (Codex)", asyn
     await until(() => /Vim: Insert/.test(text()), "on from the start, in Insert");
   }, { settings, cols: 100, rows: 30 });
 });
+
+test("vim (review): Esc reaches Vim in a side conversation too; the Keypress Inspector steps aside for an approval", async () => {
+  await withApp(async ({ app, type, until, text, session }) => {
+    type("fail-turn\r");
+    await until(() => !session.state.activeTurnId && session.state.turns.length === 1, "a main turn");
+    type("/vim\r");
+    await until(() => /Vim: Normal/.test(text()), "vim on");
+    type("i/side\r");
+    await until(() => /Side from main thread/.test(text()), "the side panel");
+    type("ix");
+    await until(() => /Vim: Insert/.test(text()), "Insert in the side");
+    await sleep(60);
+    type("\x1b");
+    await until(() => /Vim: Normal/.test(text()), "Esc: Normal, in the side as in main");
+    type("\x03"); // clears the side's draft (Ctrl+U isn't a Normal-mode key)
+    await until(() => app.state.composer === "", "the draft cleared");
+    type("\x03"); // an empty prompt: closes the side
+    await until(() => !/Side from main thread/.test(text()), "side closed");
+    // The inspector, then an approval: the approval takes the keys.
+    type("/keymap debug\r"); // a cleared draft starts in Insert
+    await until(() => /Keypress Inspector/.test(text()), "the inspector");
+    app.send("needs approval");
+    await until(() => app.state.modal, "an approval over it");
+    type("\x1b"); // declines the approval, not inspected
+    await until(() => !app.state.modal, "answered");
+  }, { modes: true, cols: 100, rows: 30 });
+});
