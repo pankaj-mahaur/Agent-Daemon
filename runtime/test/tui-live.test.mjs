@@ -507,7 +507,7 @@ function bgScript(body) {
   return defaultScript(body);
 }
 
-test("Part 5 live: a background terminal outlives the turn; /ps lists it and /stop ends the process", { skip, timeout: 10 * 60_000 }, async () => {
+test("Part 5 live: a background terminal outlives the turn; /ps lists it and /stop ends the process", { skip, timeout: 10 * 60_000 }, async (ctx) => {
   const mock = await startMockResponses({ script: bgScript });
   const w = world(mock.url);
   const pidFile = join(w.cwd, "bg.pid");
@@ -551,6 +551,11 @@ test("Part 5 live: a background terminal outlives the turn; /ps lists it and /st
       await settle(300);
     }
     await t.until(() => t.idle(), "the turn's end");
+    // GitHub's Windows runner: Codex 0.160's non-admin sandbox refuses the
+    // command outright (no "retry without sandbox?"), so there is nothing to
+    // test there. Any other failure still fails.
+    const refused = /cannot enforce split writable root sets/.test(t.text().replace(/\s+/g, " "));
+    if (refused) return void ctx.skip("Codex's unelevated Windows sandbox refused the command on this machine (\"cannot enforce split writable root sets\")");
     await t.until(() => existsSync(pidFile) && existsSync(logFile), "the script running");
     pid = Number(readFileSync(pidFile, "utf8"));
     assert.ok(await running(), "the background process outlives the turn");
