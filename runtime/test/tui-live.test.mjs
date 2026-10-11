@@ -691,3 +691,37 @@ test("Part 8 live: /vim, editing in Normal and Insert, and the prompt that reach
     await removeWithRetry(w.root);
   }
 });
+
+// codex-parity-2 Part 9: syntax highlighting and /theme in the real terminal.
+test("Part 9 live: /theme saves tui.theme through the real Codex, and code is coloured", { skip, timeout: 10 * 60_000 }, async () => {
+  const mock = await startMockResponses({ script: liveScript });
+  const w = world(mock.url);
+  let t;
+  try {
+    t = await start(w);
+    t.type("/theme\r");
+    await t.until(/Select Syntax Theme/, "the picker");
+    await t.until(/Move up\/down to live preview themes/, "the preview");
+    t.type("\x1b[B"); // catppuccin-mocha
+    await settle(200);
+    t.type("\r");
+    await t.until(/Syntax theme: catppuccin-mocha\. Saved for \/codex too\./, "saved");
+    const config = readFileSync(join(w.codexHome, "config.toml"), "utf8");
+    assert.match(config, /theme\s*=\s*"catppuccin-mocha"/, "Codex wrote it to ad's Codex home");
+    // A truecolor keyword colour reaches the terminal (#cba6f7 → 203;166;247, or its 256-colour cube index).
+    t.type("/theme\r");
+    await t.until(() => /Select Syntax Theme/.test(t.screen()), "the picker again");
+    assert.ok(/\x1b\[(?:[0-9;]*;)?38;(?:2;203;166;247|5;\d+)m/.test(t.raw()), "the preview's code is coloured by the theme");
+    t.type("\x1b");
+    await settle(200);
+
+    t.type("\x03");
+    await settle(200);
+    t.type("\x03");
+    assert.equal((await t.exit).exitCode, 0);
+  } finally {
+    for (const k of launched.splice(0)) k();
+    await mock.close();
+    await removeWithRetry(w.root);
+  }
+});

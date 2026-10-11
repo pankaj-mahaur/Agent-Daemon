@@ -16,7 +16,8 @@
 import { sanitize } from "../terminal/sanitize.mjs";
 import { lineWidth, normalize, truncate, wrap } from "../terminal/text.mjs";
 import { stringWidth } from "../terminal/width.mjs";
-import { codeLines, renderMarkdown, wrapPrefixed } from "./markdown.mjs";
+import { codeLines, codeTokenLines, renderMarkdown, wrapPrefixed } from "./markdown.mjs";
+import { highlightLines, languageFor } from "./highlight.mjs";
 import { T } from "./theme.mjs";
 
 const S = {
@@ -201,13 +202,19 @@ export function diffStats(change) {
 function diffBody(change, width, maxLines, mode) {
   const rows = diffRows(change, mode);
   const nw = Math.max(1, ...rows.map((r) => String(r.n ?? "").length));
+  // The file's language colours its unchanged lines (the lexer reads every code
+  // line, so a comment opened in a changed line is still a comment); changed
+  // lines keep the diff colours (foreground only: the scrollback can't be restyled).
+  const lang = languageFor(change?.movePath ?? change?.path);
+  const hl = lang ? highlightLines(lang, rows.map((r) => (" +-".includes(r.sign) ? r.text : ""))) : null;
   const out = [];
-  for (const r of rows) {
+  rows.forEach((r, k) => {
     const style = r.sign === "+" ? S.add : r.sign === "-" ? S.del : r.sign === " " ? undefined : r.sign === "?" ? S.warn : S.dim;
     const gutter = `${INDENT}${String(r.n ?? "").padStart(nw)} ${r.sign} `;
     const room = Math.max(1, width - stringWidth(gutter));
-    codeLines(r.text, room, style).forEach((l, i) => out.push(normalize([{ text: i === 0 ? gutter : " ".repeat(stringWidth(gutter)), style: S.dim }, ...l])));
-  }
+    const body = r.sign === " " && hl && !hl.plain ? codeTokenLines(hl.lines[k], room) : codeLines(r.text, room, style);
+    body.forEach((l, i) => out.push(normalize([{ text: i === 0 ? gutter : " ".repeat(stringWidth(gutter)), style: S.dim }, ...l])));
+  });
   return capLines(out, maxLines);
 }
 

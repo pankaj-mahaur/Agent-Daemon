@@ -11,7 +11,7 @@
 // file search, handing the terminal to another program) comes in `actions`.
 
 import { createComposer } from "./view/composer.mjs";
-import { createMarkdownStream } from "./view/markdown.mjs";
+import { createMarkdownStream, renderMarkdown } from "./view/markdown.mjs";
 import { isExploring, renderAdRow, renderBackgroundTerminals, renderCell, renderDiff, renderExploring, renderNotice, renderPlan } from "./view/cells.mjs";
 import { createChecklist, createPicker, renderFooter, renderShortcuts, renderStatus } from "./view/chrome.mjs";
 import { ARM_MS, createChoice, createConfirm, createRequestModal } from "./view/modals.mjs";
@@ -27,6 +27,7 @@ import { copyText, exportMarkdown, imagePath, lastAgentText, renderHooks, render
 import CODEX_SLASH from "./codex-slash.json" with { type: "json" };
 import { T } from "./view/theme.mjs";
 import { createKeymap, eventSpec, keyLabel } from "./keymap.mjs";
+import { setSyntaxTheme, SYNTAX_THEMES, syntaxTheme } from "./view/highlight.mjs";
 import { DEFAULT_STATUS, DEFAULT_TITLE, STATUS_IDS, TITLE_IDS, canonical, contextUsedLabel, statusSegments, titleText, unsupported } from "./status.mjs";
 
 export const FORCE_QUIT_MS = 1500;
@@ -49,6 +50,7 @@ export const SLASH_COMMANDS = [
   { name: "pwd", source: "codex", desc: "show the current working directory" },
   { name: "keymap", source: "codex", desc: "the keys in effect (/keymap debug shows what a key sends)" },
   { name: "vim", source: "codex", desc: "toggle Vim mode for the composer" },
+  { name: "theme", source: "codex", desc: "choose a syntax highlighting theme" },
   { name: "cd", source: "codex", desc: "change the working directory (the conversation continues there)" },
   { name: "model", source: "codex", desc: "choose the model and reasoning effort" },
   { name: "permissions", source: "codex", desc: "what Codex may do without asking" },
@@ -124,7 +126,6 @@ export const NOT_IN_AD = {
   mention: "Type @ in the prompt to mention a file.",
   daemon: "/daemon manages Codex's background server; ad runs its own engine and never uses it.",
   "debug-config": true,
-  theme: true,
   pets: "ad doesn't draw terminal pets (they need Kitty or Sixel images).",
   apps: true,
   plugins: true,
@@ -186,6 +187,8 @@ export function createApp({
 }) {
   const st = session.state;
   const composer = createComposer({ history, now });
+  // Codex's tui.theme: the syntax colours (a theme ad doesn't ship falls back to ansi; /warnings says so).
+  setSyntaxTheme(settings?.codex?.get?.("tui.theme"));
   // Codex's tui.vim_mode_default: Vim on from the start, in Insert (as Codex's code does).
   if (settings?.codex?.get?.("tui.vim_mode_default") === true) composer.setVim(true, { mode: "insert" });
   const width = () => Math.max(10, io.size().cols - 2);
@@ -707,6 +710,7 @@ export function createApp({
       if (attachments.length) lines.push(truncate([{ text: `  \u{1f4ce} ${attachments.map((a) => clean(path.basename(a))).join(", ")}`, style: T.code }], w));
       if (lines.length) lines.push([]);
       const top = lines.length;
+      if (popup?.kind === "theme") lines.push(...themePreview(w));
       const c = composer.render({ width: w, prompt: "\u{203a} ", promptStyle: st.mode?.kind === "plan" ? T.planMode : undefined, placeholder: turnActive() ? "Steer the turn, or tab to queue" : "Ask ad to do anything" });
       lines.push(...c.lines);
       cursor = { row: top + c.cursor.row, col: c.cursor.col };
@@ -734,9 +738,54 @@ export function createApp({
   /* Popups                                                          */
   /* -------------------------------------------------------------- */
 
-  function openPicker(kind, items, onSelect, opts = {}) {
-    popup = { kind, view: createPicker({ items, ...opts }), onSelect };
+  function openPicker(kind, items, onSelect, { onCancel, ...opts } = {}) {
+    popup = { kind, view: createPicker({ items, ...opts }), onSelect, onCancel };
     draw();
+  }
+
+  /* -------------------------------------------------------------- */
+  /* /theme: Codex's syntax theme picker, with a live preview (Part 9) */
+  /* -------------------------------------------------------------- */
+
+  const THEME_HINTS = { ansi: "the terminal's own colours (default)", "catppuccin-mocha": "dark", "catppuccin-latte": "light" };
+  // Codex's preview: a short Rust function and a diff of it.
+  const THEME_SAMPLE = ["```rust", "fn greet(name: &str) -> String {", "    // say hello", '    format!("Hello, {name}!")', "}", "```"].join("\n");
+  const THEME_DIFF = [{ path: "src/greet.rs", kind: "update", diff: ["@@ -12,3 +12,3 @@", " fn greet(name: &str) -> String {", '-    format!("Hello, {}!", name)', '+    format!("Hello, {name}!")', " }"].join("\n") }];
+  function themePreview(w) {
+    return [
+      [{ text: "Move up/down to live preview themes", style: DIM }],
+      ...renderMarkdown(THEME_SAMPLE, { width: w }),
+      [],
+      ...renderDiff(THEME_DIFF, { width: w, verb: "Edited" }),
+      [],
+    ];
+  }
+  function pickTheme() {
+    if (!settings?.codex) return warn("Settings aren't available here.");
+    const before = syntaxTheme();
+    const items = SYNTAX_THEMES.map((name) => ({ label: name, hint: `${THEME_HINTS[name] ?? ""}${name === before ? " \u{b7} current" : ""}`, value: name }));
+    openPicker(
+      "theme",
+      items,
+      async (name) => {
+        setSyntaxTheme(name);
+        try {
+          await settings.codex.set("tui.theme", name);
+          info0(`Syntax theme: ${name}. Saved for /codex too.`);
+        } catch (err) {
+          setSyntaxTheme(before);
+          fail(err);
+        }
+        drawSoon();
+      },
+      {
+        title: "Select Syntax Theme",
+        placeholder: "Type to filter themes...",
+        initial: before,
+        onChange: (name) => (setSyntaxTheme(name), drawSoon()),
+        onCancel: () => (setSyntaxTheme(before), drawSoon()),
+      },
+    );
   }
 
   // Options to switch on and reorder: onSave(values) on Enter, onCancel() on Esc
@@ -1079,6 +1128,8 @@ export function createApp({
         return pickItems("title");
       case "cd":
         return changeDir(arg);
+      case "theme":
+        return pickTheme();
       case "vim": {
         // Codex's /vim: a toggle for this session; turned on, it starts in Normal.
         const on = !composer.vim;
@@ -1327,6 +1378,10 @@ export function createApp({
     const unknown = Object.entries(session.engine?.unknownCounts?.() ?? {});
     const unused = [
       ...(keymap.warnings ?? []),
+      ...(() => {
+        const th = settings?.codex?.get?.("tui.theme");
+        return th && !SYNTAX_THEMES.includes(th) ? [`tui.theme: ad doesn't ship "${th}"; it shows code in ansi (the stock UI in /codex still uses yours)`] : [];
+      })(),
       ...unsupported(settings?.codex?.get("tui.status_line"), "status").map((id) => `tui.status_line: ad doesn't show "${id}" (the stock UI may)`),
       ...unsupported(settings?.codex?.get("tui.terminal_title"), "title").map((id) => `tui.terminal_title: ad doesn't show "${id}" (the stock UI may)`),
     ];

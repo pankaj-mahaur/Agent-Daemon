@@ -255,6 +255,7 @@ Type `/` to see them with a one-line hint each. Commands marked "Codex" keep Cod
 | `/statusline` | choose the status line's items and their order: Space toggles, ← → move, Enter saves, Esc puts it back (Codex) |
 | `/title` | choose what the terminal window's title shows, the same way (Codex) |
 | `/vim` | toggle Codex's Vim mode for the prompt (Codex). See [Vim mode](#vim-mode) |
+| `/theme` | choose the syntax colours, with a live preview; Esc keeps the old one (Codex). See [Syntax highlighting](#syntax-highlighting) |
 | `/keymap [debug]` | the keys in effect; `debug` shows what a key sends (Codex) |
 
 Model, effort and permission changes apply from the next turn.
@@ -333,6 +334,12 @@ Codex's own plan mode: the model explores without changing anything, asks you wh
 - **Settings.** Plan mode's reasoning effort is Codex's `plan_mode_reasoning_effort` (else medium, Codex's default); Default keeps your own model and effort. ad and `/codex` share the mode: a conversation left in Plan in the stock UI resumes in Plan here. A new conversation starts in Default.
 - **Limits.** Like Codex, Plan mode is instructions to the model, not a sandbox: a model that edits anyway isn't stopped. For a hard stop, also set `/permissions` to read-only. Plan mode uses part of Codex's experimental app-server API (only `ad tui` uses it, only for this and `/stop`); if Codex can't list its modes, `/plan` answers "Plan mode unavailable right now." ([troubleshooting #33](troubleshooting.md#33-ad-tui-plan-says-plan-mode-unavailable-right-now)).
 - **Memory.** The clear-context message is written by the client, not by you: ad's memory hooks skip it, so the model's plan is never learned as your words.
+
+## Syntax highlighting
+
+Code in answers (a fenced block that names its language) and the unchanged lines of an edit's diff are coloured by language, as in Codex: JavaScript and TypeScript (with JSX), Python, Rust, Go, C, C++, C#, Java, JSON, YAML, TOML, shell, PowerShell, HTML and XML, CSS, SQL and diff. A block in another language, or one over 2,000 lines (or a line over 2,000 characters), stays in the plain code colour. Added and removed lines of a diff keep the diff colours.
+
+`/theme` chooses the colours, as Codex's does: **Select Syntax Theme**, with a code sample and a diff previewing each theme as you move; Enter saves it as `tui.theme` in ad's Codex config (shared with `/codex`), Esc keeps the old one. ad ships three: `ansi` (the default: your terminal's own colours, readable on light and dark backgrounds), and Codex's `catppuccin-mocha` (dark) and `catppuccin-latte` (light), which become the nearest 256 or 16 colours where the terminal has no truecolor. A theme from Codex's longer list that ad doesn't ship shows as `ansi` in ad (the stock UI still uses it), and `/warnings` says so. With `NO_COLOR` set, code has no colours. What is already in the scrollback keeps the colours it was drawn with.
 
 ## Vim mode
 

@@ -37,6 +37,7 @@ export { preflight } from "./preflight.mjs";
 import { preflight } from "./preflight.mjs";
 import { T } from "./view/theme.mjs";
 import { skillRoots } from "../harness/setup.mjs";
+import { setSyntaxTheme } from "./view/highlight.mjs";
 
 /* ------------------------------------------------------------------ */
 /* Small terminal helpers                                              */
@@ -458,6 +459,7 @@ export async function cmdTui(opts = {}) {
         const code = await handoff(io, renderer, () => runStockCodex({ args: splitArgs(arg), threadId, cwd, home: engine.home, store: opts.store }), app);
         if (threadId) await session.resume(threadId);
         await settings.codex.load(); // the stock UI may have changed them
+        setSyntaxTheme(settings.codex.get("tui.theme")); // /theme there, too
         return `Back from the stock Codex UI (exit ${code}).`;
       },
       hookRows: (run) => hookRows(run, { hooksFile }),

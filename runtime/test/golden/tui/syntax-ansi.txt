@@ -1,0 +1,19 @@
+    ⟦fg=gray⟧// count the entries
+    ⟦fg=magenta⟧export ⟦fg=magenta⟧async ⟦fg=magenta⟧function ⟦fg=blue⟧count(path: ⟦fg=cyan⟧string): ⟦fg=cyan⟧Promise<⟦fg=cyan⟧number> {
+      ⟦fg=magenta⟧const text = ⟦fg=magenta⟧await ⟦fg=blue⟧read(path, ⟦fg=green⟧`utf8`);
+      ⟦fg=magenta⟧return text.⟦fg=blue⟧split(⟦fg=green⟧"\n").⟦fg=cyan⟧length + ⟦fg=yellow⟧0x10; ⟦fg=gray⟧/* done */
+    }
+
+    ⟦fg=yellow⟧@cache
+    ⟦fg=magenta⟧def ⟦fg=blue⟧greet(name: ⟦fg=cyan⟧str) -> ⟦fg=cyan⟧str:
+        ⟦fg=magenta⟧return ⟦fg=green⟧f"Hello, {name}!"  ⟦fg=gray⟧# say hi
+
+    ⟦fg=cyan⟧on:
+      ⟦fg=cyan⟧push: ⟦fg=green⟧{ branches: [main] }
+    ⟦fg=cyan⟧env: ⟦fg=green⟧{ CI: true }
+
+⟦dim⟧• ⟦bold⟧Edited src/greet.rs (⟦fg=green⟧+1 ⟦fg=red⟧-1)
+⟦dim⟧    12   ⟦fg=magenta⟧fn ⟦fg=blue⟧greet(name: &⟦fg=cyan⟧str) -> ⟦fg=cyan⟧String {
+⟦dim⟧    13 - ⟦fg=red⟧    format!("Hello, {}!", name)
+⟦dim⟧    13 + ⟦fg=green⟧    format!("Hello, {name}!")
+⟦dim⟧    14   }

@@ -1118,3 +1118,33 @@ test("vim (review): Esc reaches Vim in a side conversation too; the Keypress Ins
     await until(() => !app.state.modal, "answered");
   }, { modes: true, cols: 100, rows: 30 });
 });
+
+test("/theme: Codex's picker with a live preview; Esc puts the old theme back; Enter saves tui.theme; an unknown one is noted", async () => {
+  const { setSyntaxTheme, syntaxTheme } = await import("../src/tui/view/highlight.mjs");
+  const saved = {};
+  const values = { "tui.theme": "dracula" };
+  const settings = { codex: { get: (k) => values[k], set: async (k, v) => ((saved[k] = v), (values[k] = v)) }, ad: { get: (_k, d) => d, set: async () => {} } };
+  try {
+    await withApp(async ({ app, type, until, text, committed }) => {
+      assert.equal(syntaxTheme(), "ansi", "a theme ad doesn't ship: ansi");
+      type("/warnings\r");
+      await until(() => /tui\.theme: ad doesn't ship "dracula"/.test(committed()), "the note");
+      type("/theme\r");
+      await until(() => /Select Syntax Theme[\s\S]*ansi/.test(text()) && /Move up\/down to live preview themes/.test(text()), "the picker and its preview");
+      assert.match(text(), /fn greet\(name: &str\)/, "Codex's preview sample");
+      type("\x1b[B"); // Down: previewed at once
+      await until(() => syntaxTheme() === "catppuccin-mocha", "the preview");
+      type("\x1b");
+      await until(() => app.state.popup === null && syntaxTheme() === "ansi", "Esc: the old theme");
+      assert.equal(saved["tui.theme"], undefined, "nothing saved");
+      type("/theme\r");
+      await until(() => app.state.popup === "theme", "the picker again");
+      type("\x1b[B\x1b[B\r");
+      await until(() => /Syntax theme: catppuccin-latte\. Saved for \/codex too\./.test(committed()), "saved");
+      assert.equal(saved["tui.theme"], "catppuccin-latte");
+      assert.equal(syntaxTheme(), "catppuccin-latte");
+    }, { settings, cols: 100, rows: 40 });
+  } finally {
+    setSyntaxTheme("ansi");
+  }
+});

@@ -248,9 +248,9 @@ export function createChecklist({ items = [], title = "", reorder = false, onCha
  * ↑/↓ move, Enter picks, Esc closes.
  * items: [{label, hint?, value}]
  */
-export function createPicker({ items = [], title = "", placeholder = "type to filter", showQuery = true } = {}) {
+export function createPicker({ items = [], title = "", placeholder = "type to filter", showQuery = true, initial = null, onChange = null } = {}) {
   const query = createComposer();
-  let index = 0;
+  let index = Math.max(0, items.findIndex((it) => it.value === initial));
   let top = 0;
 
   const filtered = () => {
@@ -265,8 +265,15 @@ export function createPicker({ items = [], title = "", placeholder = "type to fi
     handle(ev) {
       if (ev.type === "key" && (ev.name === "escape" || (ev.ctrl && ev.name === "c"))) return { cancel: true };
       const list = filtered();
+      const was = list[index]?.value;
+      // A live preview (/theme) hears about the item under the cursor.
+      const moved = () => {
+        const now = filtered()[index]?.value;
+        if (now !== was && now !== undefined) onChange?.(now);
+      };
       if (ev.type === "key" && (ev.name === "up" || ev.name === "down")) {
         if (list.length) index = (index + (ev.name === "up" ? -1 : 1) + list.length) % list.length;
+        moved();
         return { changed: true };
       }
       if (ev.type === "key" && (ev.name === "enter" || ev.name === "tab") && !ev.alt) {
@@ -276,6 +283,7 @@ export function createPicker({ items = [], title = "", placeholder = "type to fi
       const r = query.handle(ev);
       index = 0;
       top = 0;
+      moved();
       return r && "submit" in r ? { changed: true } : (r ?? null);
     },
     render({ width = 80, height = 10 } = {}) {
@@ -300,6 +308,10 @@ export function createPicker({ items = [], title = "", placeholder = "type to fi
     },
     get query() {
       return query.text;
+    },
+    /** The value under the cursor. */
+    get current() {
+      return filtered()[index]?.value;
     },
   };
 }

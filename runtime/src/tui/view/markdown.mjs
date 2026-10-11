@@ -25,6 +25,7 @@ import { sanitize } from "../terminal/sanitize.mjs";
 import { graphemeSegments, graphemeWidth, stringWidth } from "../terminal/width.mjs";
 import { lineWidth, normalize, truncate, wrap } from "../terminal/text.mjs";
 import { T } from "./theme.mjs";
+import { highlightLines, languageFor, styleFor } from "./highlight.mjs";
 
 const S = {
   h1: T.heading,
@@ -556,6 +557,47 @@ export function codeLines(line, width, style) {
   return out.map((t) => (t ? [{ text: t, style }] : []));
 }
 
+/**
+ * Highlighted tokens of one code line, hard-wrapped at `width` like
+ * codeLines(): each token in its theme's style (codex-parity-2 Part 9).
+ */
+export function codeTokenLines(tokens, width) {
+  const out = [];
+  let cur = [];
+  let w = 0;
+  for (const t of tokens) {
+    const style = styleFor(t.cls) ?? undefined;
+    for (const { segment } of graphemeSegments(t.text.replace(/\t/g, "    "))) {
+      const gw = graphemeWidth(segment);
+      if (w + gw > width && cur.length) {
+        out.push(normalize(cur));
+        cur = [];
+        w = 0;
+      }
+      const last = cur.at(-1);
+      if (last && last.style === style) last.text += segment;
+      else cur.push({ text: segment, style });
+      w += gw;
+    }
+  }
+  out.push(normalize(cur));
+  return out;
+}
+
+/**
+ * A code block's lines: highlighted when its fence names a language ad knows
+ * (state carried from `b.state` and left in `b.endState`, for a block that
+ * streams in chunks), else in the code colour as before.
+ */
+function codeBlockLines(b, width) {
+  const lang = languageFor(b.info);
+  const plain = () => b.body.flatMap((l) => codeLines(l, width, S.block));
+  if (!lang) return plain();
+  const r = highlightLines(lang, b.body, b.state ?? {});
+  b.endState = r.state;
+  return r.plain ? plain() : r.lines.flatMap((tokens) => codeTokenLines(tokens, width));
+}
+
 const BULLETS = ["\u{2022}", "\u{25e6}", "\u{25aa}"];
 
 function renderList(block, width, depth) {
@@ -630,7 +672,7 @@ function renderBlockUnsafe(b, width, depth = 0) {
     case "paragraph":
       return wrap(inline(b.lines.map((l) => l.replace(/^[ \t]+/, "")).join("\n").replace(/[ \t]+$/, "")), width);
     case "code":
-      return b.body.flatMap((l) => codeLines(l, Math.max(1, width - 4), S.block).map((x) => normalize([{ text: "    " }, ...x])));
+      return codeBlockLines(b, Math.max(1, width - 4)).map((x) => normalize([{ text: "    " }, ...x]));
     case "rule":
       return [[{ text: "\u{2500}".repeat(Math.max(1, Math.min(width, 40))), style: S.rule }]];
     case "quote":
@@ -680,6 +722,7 @@ export function createMarkdownStream({ width = 80 } = {}) {
   let base = 0; // line index where the non-final region starts
   let blocksBefore = 0; // final blocks already emitted
   let codeEmitted = 0; // lines of an open fence (at `base`) already emitted
+  let fenceState = {}; // the highlighter's state after those lines
   let finished = false;
   // Complete lines, sanitized once each. A newline ends every escape
   // sequence sanitize() recognises, so line-by-line equals all at once.
@@ -710,8 +753,9 @@ export function createMarkdownStream({ width = 80 } = {}) {
         if (b.type === "code" && b.open) {
           // An open fence: its finished lines commit as they come.
           if (codeEmitted === 0 && b.body.length && blocksBefore > 0) out.push([]);
-          const rendered = renderBlock({ ...b, body: b.body.slice(codeEmitted) }, width);
-          out.push(...rendered);
+          const chunk = { ...b, body: b.body.slice(codeEmitted), state: fenceState };
+          out.push(...renderBlock(chunk, width));
+          fenceState = chunk.endState ?? {};
           codeEmitted = b.body.length;
           base += b.start;
           // Keep the fence's opening line at `base`.
@@ -722,14 +766,16 @@ export function createMarkdownStream({ width = 80 } = {}) {
       }
       if (b.type === "code" && codeEmitted > 0 && k === 0) {
         // The rest of a fence that was streaming.
-        out.push(...renderBlock({ ...b, body: b.body.slice(codeEmitted) }, width));
+        out.push(...renderBlock({ ...b, body: b.body.slice(codeEmitted), state: fenceState }, width));
         codeEmitted = 0;
+        fenceState = {};
       } else {
         if (blocksBefore > 0) out.push([]);
         out.push(...renderBlock(b, width));
       }
       blocksBefore++;
       codeEmitted = 0;
+      fenceState = {};
       if (isLast) base += b.end;
     }
     if (!blocks.length) base = all.length;

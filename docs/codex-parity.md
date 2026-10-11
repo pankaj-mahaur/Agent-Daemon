@@ -59,7 +59,7 @@ Codex's own rules come with the commands:
 | `/debug-config` | not yet | yes | config layers, for debugging; in `/codex` |
 | `/title` | yes | yes | choose what the terminal window's title shows |
 | `/statusline` | yes | yes | choose what the status line shows |
-| `/theme` | not yet | no | a syntax highlighting theme; in `/codex` |
+| `/theme` | yes | no | choose the syntax colours, with a live preview: `ansi` (your terminal's colours, the default) or Codex's `catppuccin-mocha` / `catppuccin-latte`; saved as `tui.theme`. A theme `ad` doesn't ship shows as `ansi` in `ad` (the stock UI still uses it) |
 | `/pets`, `/pet` | no | no | `ad` doesn't draw terminal pets (they need Kitty or Sixel images) |
 | `/mcp` | yes | yes | MCP servers and their status |
 | `/apps` | not yet | yes | ChatGPT apps; in `/codex` |
