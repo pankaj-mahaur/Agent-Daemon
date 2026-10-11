@@ -109,6 +109,7 @@ One table per leg (this machine, the Linux container, the PR's CI per job), each
 | A live test times out only on a fresh home | the first sandboxed action sets up the Windows sandbox (35 s to 2+ min) | wait minutes, not seconds |
 | Speed test over budget in a container | `CI` unset: the tight local budget applies | run with `CI=true`, as GitHub does |
 | `test/tui-pty-smoke.test.mjs` fails as a whole file in the container (`signal: 'SIGSEGV'`) | `@lydell/node-pty`'s Linux binary is built for glibc; Alpine is musl | the container's, not the code's: GitHub's Ubuntu job runs it. Not a blocker; say so in the report |
+| Windows real-engine test: `config/batchWrite: failed to persist config.toml` (-32603), passes on a rerun | Codex's own rewrite of `config.toml` collided with something holding the fresh file (an antivirus scan) | re-run that test alone (5 of 5 passed on 2026-10-11); count it as a flake only after that |
 | `ad doctor` exits 1 locally | usually only "Session context budget": the project memory file is too big | compact `.agent-daemon/memory/activeContext.md` (keep a `.bak`) |
 
 ## Anti-patterns
