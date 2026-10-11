@@ -108,3 +108,16 @@ test("picker: filters by every word, moves, scrolls, picks, closes", () => {
   assert.deepEqual(p.handle(key("enter")), { changed: false });
   assert.deepEqual(p.handle(key("escape")), { cancel: true });
 });
+
+test("picker: only a change to the filter takes the cursor back to the top", () => {
+  const seen = [];
+  const p = createPicker({ items: ["a", "b", "c"].map((v) => ({ label: v, value: v })), onChange: (v) => seen.push(v) });
+  p.handle(key("down"));
+  p.handle(key("down"));
+  p.handle(key("left"));
+  p.handle(key("home"));
+  assert.equal(p.current, "c", "Left and Home leave it where it is");
+  p.handle({ type: "text", text: "a" });
+  assert.equal(p.current, "a");
+  assert.deepEqual(seen, ["b", "c", "a"], "the live preview hears each move once");
+});

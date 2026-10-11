@@ -27,7 +27,7 @@ import { copyText, exportMarkdown, imagePath, lastAgentText, renderHooks, render
 import CODEX_SLASH from "./codex-slash.json" with { type: "json" };
 import { T } from "./view/theme.mjs";
 import { createKeymap, eventSpec, keyLabel } from "./keymap.mjs";
-import { setSyntaxTheme, SYNTAX_THEMES, syntaxTheme } from "./view/highlight.mjs";
+import { setSyntaxTheme, SYNTAX_THEMES, syntaxTheme, withSyntaxTheme } from "./view/highlight.mjs";
 import { DEFAULT_STATUS, DEFAULT_TITLE, STATUS_IDS, TITLE_IDS, canonical, contextUsedLabel, statusSegments, titleText, unsupported } from "./status.mjs";
 
 export const FORCE_QUIT_MS = 1500;
@@ -751,23 +751,28 @@ export function createApp({
   // Codex's preview: a short Rust function and a diff of it.
   const THEME_SAMPLE = ["```rust", "fn greet(name: &str) -> String {", "    // say hello", '    format!("Hello, {name}!")', "}", "```"].join("\n");
   const THEME_DIFF = [{ path: "src/greet.rs", kind: "update", diff: ["@@ -12,3 +12,3 @@", " fn greet(name: &str) -> String {", '-    format!("Hello, {}!", name)', '+    format!("Hello, {name}!")', " }"].join("\n") }];
+  // The theme under the picker's cursor colours its preview only: what
+  // commits meanwhile (a turn still streaming) keeps the current theme.
+  let previewTheme = null;
   function themePreview(w) {
-    return [
+    return withSyntaxTheme(previewTheme ?? syntaxTheme(), () => [
       [{ text: "Move up/down to live preview themes", style: DIM }],
       ...renderMarkdown(THEME_SAMPLE, { width: w }),
       [],
       ...renderDiff(THEME_DIFF, { width: w, verb: "Edited" }),
       [],
-    ];
+    ]);
   }
   function pickTheme() {
     if (!settings?.codex) return warn("Settings aren't available here.");
     const before = syntaxTheme();
+    previewTheme = null;
     const items = SYNTAX_THEMES.map((name) => ({ label: name, hint: `${THEME_HINTS[name] ?? ""}${name === before ? " \u{b7} current" : ""}`, value: name }));
     openPicker(
       "theme",
       items,
       async (name) => {
+        previewTheme = null;
         setSyntaxTheme(name);
         try {
           await settings.codex.set("tui.theme", name);
@@ -782,8 +787,8 @@ export function createApp({
         title: "Select Syntax Theme",
         placeholder: "Type to filter themes...",
         initial: before,
-        onChange: (name) => (setSyntaxTheme(name), drawSoon()),
-        onCancel: () => (setSyntaxTheme(before), drawSoon()),
+        onChange: (name) => ((previewTheme = name), drawSoon()),
+        onCancel: () => ((previewTheme = null), drawSoon()),
       },
     );
   }

@@ -55,7 +55,8 @@ const blank = (l) => /^[ \t]*$/.test(l);
 function fenceOpen(line) {
   const m = FENCE.exec(line);
   if (!m || (m[2][0] === "`" && m[3].includes("`"))) return null;
-  return { indent: m[1].length, char: m[2][0], len: m[2].length, info: m[3].trim().split(/\s+/)[0] ?? "" };
+  // The language is the info's first word: "ts {1,3}", "js,linenos", "{python}", "ts:app.ts".
+  return { indent: m[1].length, char: m[2][0], len: m[2].length, info: m[3].trim().split(/[\s,{}:]+/).find(Boolean) ?? "" };
 }
 
 function fenceCloses(line, f) {
@@ -562,23 +563,31 @@ export function codeLines(line, width, style) {
  * codeLines(): each token in its theme's style (codex-parity-2 Part 9).
  */
 export function codeTokenLines(tokens, width) {
+  // The whole line's graphemes (a cluster can span two tokens: a keycap's digit
+  // and its marks), each in the style of the token it starts in.
+  let text = "";
+  const starts = [];
+  for (const t of tokens) {
+    starts.push({ at: text.length, style: styleFor(t.cls) ?? undefined });
+    text += t.text.replace(/\t/g, "    ");
+  }
   const out = [];
   let cur = [];
   let w = 0;
-  for (const t of tokens) {
-    const style = styleFor(t.cls) ?? undefined;
-    for (const { segment } of graphemeSegments(t.text.replace(/\t/g, "    "))) {
-      const gw = graphemeWidth(segment);
-      if (w + gw > width && cur.length) {
-        out.push(normalize(cur));
-        cur = [];
-        w = 0;
-      }
-      const last = cur.at(-1);
-      if (last && last.style === style) last.text += segment;
-      else cur.push({ text: segment, style });
-      w += gw;
+  let k = 0;
+  for (const { segment, index } of graphemeSegments(text)) {
+    while (k + 1 < starts.length && starts[k + 1].at <= index) k++;
+    const style = starts[k]?.style;
+    const gw = graphemeWidth(segment);
+    if (w + gw > width && cur.length) {
+      out.push(normalize(cur));
+      cur = [];
+      w = 0;
     }
+    const last = cur.at(-1);
+    if (last && last.style === style) last.text += segment;
+    else cur.push({ text: segment, style });
+    w += gw;
   }
   out.push(normalize(cur));
   return out;
@@ -829,7 +838,8 @@ export function createMarkdownStream({ width = 80 } = {}) {
       const out = [];
       blocks.forEach((x, i) => {
         if (i > 0 || (blocksBefore > 0 && !(i === 0 && codeEmitted))) out.push([]);
-        out.push(...renderBlock(x, width));
+        // The rest of a streaming fence goes on from the state its committed lines left.
+        out.push(...renderBlock(i === 0 && codeEmitted && x.type === "code" ? { ...x, state: fenceState } : x, width));
       });
       return out;
     },

@@ -18,7 +18,7 @@ const FAKE = fileURLToPath(new URL("../testkit/fake-codex-app-server.mjs", impor
 const command = { cmd: process.execPath, prefix: [FAKE] };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function withApp(fn, { cols = 70, rows = 20, actions = {}, armMs = 60, sessionOpts = {}, restartable = false, settings = null, modes = false, env = null } = {}) {
+async function withApp(fn, { cols = 70, rows = 20, actions = {}, armMs = 60, sessionOpts = {}, restartable = false, settings = null, modes = false, env = null, depth = 0 } = {}) {
   const root = mkdtempSync(join(tmpdir(), "ad-app-"));
   const engines = [];
   const make = async () => {
@@ -35,7 +35,7 @@ async function withApp(fn, { cols = 70, rows = 20, actions = {}, armMs = 60, ses
   const io = { ...scr.io, onInput: (f) => (listeners.add(f), () => listeners.delete(f)) };
   const decoder = createInputDecoder({ onEvent: (e) => listeners.forEach((f) => f(e)), escTimeoutMs: 5 });
   const type = (s) => decoder.feed(s);
-  const renderer = createRenderer({ io, reflow: "none" });
+  const renderer = createRenderer({ io, reflow: "none", depth });
   await renderer.start();
   // What went into the scrollback (as opposed to the live region).
   const scrollback = [];
@@ -1125,15 +1125,19 @@ test("/theme: Codex's picker with a live preview; Esc puts the old theme back; E
   const values = { "tui.theme": "dracula" };
   const settings = { codex: { get: (k) => values[k], set: async (k, v) => ((saved[k] = v), (values[k] = v)) }, ad: { get: (_k, d) => d, set: async () => {} } };
   try {
-    await withApp(async ({ app, type, until, text, committed }) => {
+    await withApp(async ({ app, scr, type, until, text, committed }) => {
       assert.equal(syntaxTheme(), "ansi", "a theme ad doesn't ship: ansi");
       type("/warnings\r");
       await until(() => /tui\.theme: ad doesn't ship "dracula"/.test(committed()), "the note");
       type("/theme\r");
       await until(() => /Select Syntax Theme[\s\S]*ansi/.test(text()) && /Move up\/down to live preview themes/.test(text()), "the picker and its preview");
       assert.match(text(), /fn greet\(name: &str\)/, "Codex's preview sample");
-      type("\x1b[B"); // Down: previewed at once
-      await until(() => syntaxTheme() === "catppuccin-mocha", "the preview");
+      // Down: previewed at once (#cba6f7 is mocha's keyword colour), in the
+      // preview only: what commits meanwhile keeps the current theme.
+      const from = scr.writes.length;
+      type("\x1b[B");
+      await until(() => scr.writes.slice(from).join("").includes("38;2;203;166;247"), "the preview in catppuccin-mocha");
+      assert.equal(syntaxTheme(), "ansi", "the current theme is kept while previewing");
       type("\x1b");
       await until(() => app.state.popup === null && syntaxTheme() === "ansi", "Esc: the old theme");
       assert.equal(saved["tui.theme"], undefined, "nothing saved");
@@ -1143,7 +1147,7 @@ test("/theme: Codex's picker with a live preview; Esc puts the old theme back; E
       await until(() => /Syntax theme: catppuccin-latte\. Saved for \/codex too\./.test(committed()), "saved");
       assert.equal(saved["tui.theme"], "catppuccin-latte");
       assert.equal(syntaxTheme(), "catppuccin-latte");
-    }, { settings, cols: 100, rows: 40 });
+    }, { settings, cols: 100, rows: 40, depth: 24 });
   } finally {
     setSyntaxTheme("ansi");
   }

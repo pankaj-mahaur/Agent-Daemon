@@ -17,7 +17,7 @@ import { sanitize } from "../terminal/sanitize.mjs";
 import { lineWidth, normalize, truncate, wrap } from "../terminal/text.mjs";
 import { stringWidth } from "../terminal/width.mjs";
 import { codeLines, codeTokenLines, renderMarkdown, wrapPrefixed } from "./markdown.mjs";
-import { highlightLines, languageFor } from "./highlight.mjs";
+import { highlightLines, languageFor, MAX_CHARS, MAX_LINES } from "./highlight.mjs";
 import { T } from "./theme.mjs";
 
 const S = {
@@ -198,21 +198,40 @@ export function diffStats(change) {
   return { added: rows.filter((r) => r.sign === "+").length, removed: rows.filter((r) => r.sign === "-").length };
 }
 
+// The file's language colours a diff's unchanged lines; changed lines keep the
+// diff colours (foreground only: the scrollback can't be restyled). Each hunk
+// is lexed as the new file reads (unchanged and added lines, so a comment
+// opened in an added line is still a comment; a removed one doesn't count),
+// from a fresh state. → tokens by row index, or null (nothing to colour).
+function contextTokens(change, rows) {
+  const lang = languageFor(change?.movePath ?? change?.path);
+  if (!lang || !rows.some((r) => r.sign === " ") || rows.length > MAX_LINES) return null;
+  let chars = 0;
+  for (const r of rows) chars += r.text.length;
+  if (chars > MAX_CHARS) return null;
+  const tokens = [];
+  let state = {};
+  rows.forEach((r, k) => {
+    if (r.sign === "-") return;
+    if (r.sign !== " " && r.sign !== "+") return void (state = {}); // "⋮": the next hunk
+    const hl = highlightLines(lang, [r.text], state);
+    state = hl.state;
+    if (r.sign === " " && !hl.plain) tokens[k] = hl.lines[0];
+  });
+  return tokens;
+}
+
 // One file's diff as gutter lines: "  12 + text".
 function diffBody(change, width, maxLines, mode) {
   const rows = diffRows(change, mode);
   const nw = Math.max(1, ...rows.map((r) => String(r.n ?? "").length));
-  // The file's language colours its unchanged lines (the lexer reads every code
-  // line, so a comment opened in a changed line is still a comment); changed
-  // lines keep the diff colours (foreground only: the scrollback can't be restyled).
-  const lang = languageFor(change?.movePath ?? change?.path);
-  const hl = lang ? highlightLines(lang, rows.map((r) => (" +-".includes(r.sign) ? r.text : ""))) : null;
+  const hl = contextTokens(change, rows);
   const out = [];
   rows.forEach((r, k) => {
     const style = r.sign === "+" ? S.add : r.sign === "-" ? S.del : r.sign === " " ? undefined : r.sign === "?" ? S.warn : S.dim;
     const gutter = `${INDENT}${String(r.n ?? "").padStart(nw)} ${r.sign} `;
     const room = Math.max(1, width - stringWidth(gutter));
-    const body = r.sign === " " && hl && !hl.plain ? codeTokenLines(hl.lines[k], room) : codeLines(r.text, room, style);
+    const body = hl?.[k] ? codeTokenLines(hl[k], room) : codeLines(r.text, room, style);
     body.forEach((l, i) => out.push(normalize([{ text: i === 0 ? gutter : " ".repeat(stringWidth(gutter)), style: S.dim }, ...l])));
   });
   return capLines(out, maxLines);

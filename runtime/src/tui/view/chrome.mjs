@@ -280,9 +280,13 @@ export function createPicker({ items = [], title = "", placeholder = "type to fi
         const it = list[index];
         return it ? { select: it.value, item: it } : { changed: false };
       }
+      const typed = query.text;
       const r = query.handle(ev);
-      index = 0;
-      top = 0;
+      // Back to the top only when the filter changed (not on Left, Home...).
+      if (query.text !== typed) {
+        index = 0;
+        top = 0;
+      }
       moved();
       return r && "submit" in r ? { changed: true } : (r ?? null);
     },

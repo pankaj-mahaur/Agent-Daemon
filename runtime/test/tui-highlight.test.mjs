@@ -6,8 +6,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { assertGolden } from "../testkit/golden.mjs";
-import { highlightLines, languageFor, MAX_LINE, MAX_LINES, setSyntaxTheme, styleFor, SYNTAX_THEMES, syntaxTheme } from "../src/tui/view/highlight.mjs";
-import { createMarkdownStream, renderMarkdown } from "../src/tui/view/markdown.mjs";
+import { highlightLines, languageFor, MAX_CHARS, MAX_LINE, MAX_LINES, setSyntaxTheme, styleFor, SYNTAX_THEMES, syntaxTheme, withSyntaxTheme } from "../src/tui/view/highlight.mjs";
+import { codeTokenLines, createMarkdownStream, renderMarkdown } from "../src/tui/view/markdown.mjs";
 import { renderDiff } from "../src/tui/view/cells.mjs";
 
 // "[cls:text]" per classed token, plain text as is.
@@ -92,23 +92,37 @@ test("caps: a block over MAX_LINES or a line over MAX_LINE stays plain; an unkno
   assert.equal(highlightLines("cobol", ["MOVE 1 TO X"]).plain, true);
 });
 
-test("hostile input stays fast (no regex backtracking blow-up)", () => {
-  const hostile = [
-    "\"\\".repeat(MAX_LINE / 2),
-    "/*".repeat(MAX_LINE / 2),
-    "<".repeat(MAX_LINE),
-    "a.".repeat(MAX_LINE / 2),
-    " ".repeat(MAX_LINE - 1) + ":",
-    "- ".repeat(MAX_LINE / 2),
-    "'".repeat(MAX_LINE),
-    "$".repeat(MAX_LINE),
-  ];
-  for (const lang of ["javascript", "python", "rust", "yaml", "toml", "html", "css", "shell", "powershell", "sql", "json", "c"]) {
-    const t0 = performance.now();
-    highlightLines(lang, hostile);
-    const ms = performance.now() - t0;
-    assert.ok(ms < 500, `${lang}: ${ms.toFixed(0)} ms on hostile lines`);
+const LANGUAGES = ["javascript", "python", "rust", "go", "c", "cpp", "java", "csharp", "json", "jsonc", "yaml", "toml", "shell", "console", "powershell", "html", "css", "sql", "diff"];
+
+test("hostile input stays linear, at full size (every line MAX_LINE long, MAX_CHARS in all)", () => {
+  // Patterns that make a backtracking regex, or a rescan per character, quadratic.
+  const units = ['"\\', "/*", "<", "a.", " ", "- ", "'", "$", "#", "${", "/[", "(/", "a ", "a{", "<a ", "'''", "'a", "--", "<<", "a#", "a:", '"#', "`", "1", "#a"];
+  const lines = [" ".repeat(MAX_LINE - 1) + ":"];
+  // Up to the cap, so it is lexed.
+  for (let k = 0; lines.length < MAX_CHARS / MAX_LINE; k++) {
+    const u = units[k % units.length];
+    lines.push(u.repeat(Math.floor(MAX_LINE / u.length)));
   }
+  const budget = process.env.CI ? 6000 : 1500;
+  for (const lang of LANGUAGES) {
+    const t0 = performance.now();
+    const r = highlightLines(lang, lines);
+    const ms = performance.now() - t0;
+    assert.equal(r.plain, false, `${lang}: lexed, not left plain`);
+    assert.ok(ms < budget, `${lang}: ${ms.toFixed(0)} ms on ${MAX_CHARS} hostile characters`);
+  }
+  // Long runs of spaces inside lines: the quadratic case for a backtracking
+  // regex (YAML's took a second on these 100 lines; linear takes a few ms).
+  const runs = ["a: b", "a", "- a", "#", "x = 1", '"a', "k: 'v"].map((p) => p + " ".repeat(MAX_LINE - p.length - 1) + "z");
+  const spaced = Array.from({ length: MAX_CHARS / MAX_LINE }, (_, k) => runs[k % runs.length]);
+  for (const lang of LANGUAGES) {
+    const t0 = performance.now();
+    highlightLines(lang, spaced);
+    const ms = performance.now() - t0;
+    assert.ok(ms < budget / 6, `${lang}: ${ms.toFixed(0)} ms on lines with long runs of spaces`);
+  }
+  // Over the cap: plain at once.
+  assert.equal(highlightLines("javascript", [...lines, "x".repeat(MAX_LINE)]).plain, true);
 });
 
 test("speed: a 1,000-line block highlights in under 20 ms here (CI: 10x)", () => {
@@ -194,4 +208,91 @@ test("golden per theme: code blocks and a diff, with every span's style", () => 
   } finally {
     setSyntaxTheme("ansi");
   }
+});
+
+const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+const spanIs = (line, text, cls) => line?.some((s) => s.text === text && same(s.style, styleFor(cls)));
+
+test("YAML: comment lines, a quoted value with a # in it, U+2028, a colon in a value", () => {
+  assert.deepEqual(toks("yaml", '# a comment\n  # indented one\nkey: "a #b" # real\nurl: http://x\n- item # c'), [
+    "[comment:# a comment]",
+    "[comment:  # indented one]",
+    '[property:key][punctuation::] [string:"a #b"][comment: # real]',
+    "[property:url][punctuation::] [string:http://x]",
+    "[punctuation:- ][string:item][comment: # c]",
+  ]);
+  // U+2028 and U+2029 are whitespace to the lexer (once a crash in every .yml diff).
+  assert.deepEqual(toks("yaml", "b: \u{2028}x\u{2029}"), ["[property:b][punctuation::] \u{2028}[string:x]\u{2029}"]);
+  for (const lang of LANGUAGES) {
+    const line = "a: b\u{2028}c # d\u{2029}e";
+    assert.equal(highlightLines(lang, [line]).lines[0].map((t) => t.text).join(""), line, lang);
+  }
+});
+
+test("shell: an apostrophe inside a word, here-documents (not here-strings), console sessions", () => {
+  assert.deepEqual(toks("shell", "echo don't stop\nls"), ["[builtin:echo] don't stop", "[builtin:ls]"]);
+  const heredoc = toks("shell", "cat <<'EOF' > out\nit's $HOME\n\tEOF\necho ok");
+  assert.deepEqual(heredoc.slice(1), ["[string:it's $HOME]", "[constant:\tEOF]", "[builtin:echo] ok"]);
+  assert.deepEqual(toks("shell", "cat <<<'x'\necho ok").at(-1), "[builtin:echo] ok", "<<< is a here-string");
+  assert.deepEqual(toks("shell", "# cat <<EOF\necho ok").at(-1), "[builtin:echo] ok", "not in a comment");
+  assert.deepEqual(toks("console", "$ git status\nYour branch isn't up to date.\n$ echo 'hi'"), [
+    "[punctuation:$ ]git status",
+    "Your branch isn't up to date.",
+    "[punctuation:$ ][builtin:echo] [string:'hi']",
+  ]);
+  assert.equal(languageFor("console"), "console");
+});
+
+test("JavaScript: regex literals (a backtick in one opens no template string); division stays division", () => {
+  assert.deepEqual(toks("javascript", "const re = /`[/]/g;\nlet x = a / b / 2;\nreturn <Foo />;"), [
+    "[keyword:const] re [operator:=] [string:/`[/]/g][punctuation:;]",
+    "[keyword:let] x [operator:=] a [operator:/] b [operator:/] [number:2][punctuation:;]",
+    "[keyword:return] [punctuation:<][tag:Foo] [operator:/>][punctuation:;]",
+  ]);
+});
+
+test("jsonc/json5 have comments; a .h header is C++; a fence's language is its info's first word", () => {
+  assert.equal(languageFor("tsconfig.jsonc"), "jsonc");
+  assert.equal(languageFor("json5"), "jsonc");
+  assert.deepEqual(toks("jsonc", '{ "a": 1 // c\n}'), ['[punctuation:{] [property:"a"][operator::] [number:1] [comment:// c]', "[punctuation:}]"]);
+  assert.equal(languageFor("include/app.h"), "cpp");
+  for (const info of ["ts {1,3}", "ts,linenos", "{ts}", "{.ts}", "ts:src/app.ts"]) {
+    const lines = renderMarkdown(`\`\`\`${info}\nconst x = 1;\n\`\`\``, { width: 40 });
+    assert.ok(lines.some((l) => spanIs(l, "const", "keyword")), info);
+  }
+});
+
+test("a diff's unchanged lines are lexed as the new file reads them, each hunk afresh", () => {
+  const row = (diff, text) => renderDiff([{ path: "a.c", kind: "update", diff }], { width: 80 }).find((l) => l.map((s) => s.text).join("").includes(text));
+  // A comment opened in an added line goes on in the unchanged lines after it...
+  const inside = row("@@ -1,1 +1,2 @@\n+/* added\n inside */ int y;", "inside");
+  assert.ok(inside.some((s) => s.text.startsWith("inside") && same(s.style, styleFor("comment"))), JSON.stringify(inside));
+  // ...one opened in a removed line doesn't...
+  const still = row("@@ -1,2 +1,1 @@\n-/* removed\n still */ int y;", "still");
+  assert.ok(spanIs(still, "int", "keyword"), JSON.stringify(still));
+  // ...and the next hunk starts afresh.
+  const next = row("@@ -1,1 +1,2 @@\n ctx0\n+/* open\n@@ -20,1 +21,1 @@\n int z;", "int z");
+  assert.ok(spanIs(next, "int", "keyword"), JSON.stringify(next));
+});
+
+test("the live line of a streaming fence goes on from its committed lines' state", () => {
+  const md = createMarkdownStream({ width: 60 });
+  md.push("```c\n/* a long\n");
+  md.push("comment */ int x;");
+  const live = md.live();
+  const line = live.find((l) => l.some((s) => s.text.includes("comment */")));
+  assert.ok(line.some((s) => s.text.includes("comment */") && same(s.style, styleFor("comment"))), JSON.stringify(live));
+  assert.ok(spanIs(line, "int", "keyword"));
+});
+
+test("a grapheme split across tokens (a keycap's digit and its marks) is measured whole", () => {
+  const out = codeTokenLines([{ text: "a", cls: null }, { text: "1", cls: "number" }, { text: "\u{fe0f}\u{20e3}", cls: null }], 2);
+  assert.deepEqual(out.map((l) => l.map((s) => s.text).join("")), ["a", "1\u{fe0f}\u{20e3}"]);
+});
+
+test("withSyntaxTheme: a preview drawn in another theme leaves the current one alone", () => {
+  const lines = withSyntaxTheme("catppuccin-mocha", () => renderMarkdown("```rust\nfn x() {}\n```", { width: 40 }));
+  assert.ok(lines.some((l) => l.some((s) => s.text === "fn" && s.style?.fg === "#cba6f7")));
+  assert.equal(syntaxTheme(), "ansi");
+  assert.ok(renderMarkdown("```rust\nfn x() {}\n```", { width: 40 }).some((l) => spanIs(l, "fn", "keyword")));
 });

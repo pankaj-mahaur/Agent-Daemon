@@ -31,6 +31,16 @@ export function setSyntaxTheme(name) {
   return { theme, known };
 }
 export const syntaxTheme = () => theme;
+/** fn() drawn in another theme (a picker's preview), the current one kept for everything else. */
+export function withSyntaxTheme(name, fn) {
+  const was = theme;
+  theme = Object.hasOwn(THEMES, name) ? name : was;
+  try {
+    return fn();
+  } finally {
+    theme = was;
+  }
+}
 /** The style of a token class in the current theme (null: the text's own). */
 export const styleFor = (cls, name = theme) => (cls ? (THEMES[name] ?? THEMES.ansi)[cls] ?? null : null);
 
@@ -66,6 +76,7 @@ const LANGS = {
     strings: [{ q: '"' }, { q: "'" }, { q: "`", multi: true }],
     capsTypes: true,
     jsx: true,
+    regex: true,
   },
   python: {
     keywords: words("and as assert async await break class continue def del elif else except finally for from global if import in is lambda nonlocal not or pass raise return try while with yield match case"),
@@ -112,24 +123,31 @@ const LANGS = {
   java: { base: "c", keywords: JAVA_KEYWORDS, constants: words("true false null"), types: words("String Integer Long Boolean Object List Map Set"), preprocessor: false, annotations: true, capsTypes: true },
   csharp: { base: "c", keywords: CS_KEYWORDS, constants: words("true false null"), types: words("String Int32 List Dictionary Task"), preprocessor: true, capsTypes: true },
   json: { constants: words("true false null"), strings: [{ q: '"' }], keyStrings: true },
+  jsonc: { base: "json", line: ["//"], block: [["/*", "*/"]], strings: [{ q: '"' }, { q: "'" }] },
   yaml: { mode: "yaml" },
   toml: { mode: "toml" },
   shell: {
+    mode: "shell",
     keywords: words("if then else elif fi for while until do done case esac function in select return export local readonly declare unset"),
     builtins: words("echo cd printf read test exit source alias shift set eval exec trap pwd mkdir rm cp mv ls cat grep sed awk"),
     constants: words("true false"),
     line: ["#"],
     strings: [{ q: '"', multi: true }, { q: "'", multi: true, raw: true }],
-    variables: /\$(?:\{[^}\n]*\}|[A-Za-z_][\w]*|[0-9@#?$!*-])/y,
+    // ${...} stops at a "{": nested ones match innermost first, and a line of
+    // unclosed "${" stays linear.
+    variables: /\$(?:\{[^{}\n]*\}|[A-Za-z_][\w]*|[0-9@#?$!*-])/y,
     hashNeedsSpace: true,
+    // "don't": an apostrophe inside a word doesn't open a string.
+    quoteAfterWord: false,
   },
+  console: { mode: "console" },
   powershell: {
     keywords: words("begin break catch class continue data define do dynamicparam else elseif end exit filter finally for foreach from function if in param process return switch throw trap try until using var while"),
     constants: words("$true $false $null"),
     line: ["#"],
     block: [["<#", "#>"]],
     strings: [{ q: '@"', close: '"@', multi: true }, { q: "@'", close: "'@", multi: true, raw: true }, { q: '"' }, { q: "'", raw: true }],
-    variables: /\$(?:\{[^}\n]*\}|[A-Za-z_][\w:]*)/y,
+    variables: /\$(?:\{[^{}\n]*\}|[A-Za-z_][\w:]*)/y,
     cmdlets: /[A-Z][a-z]+-[A-Z][A-Za-z]+/y,
     params: /-[A-Za-z][\w]*/y,
     caseInsensitive: true,
@@ -156,13 +174,15 @@ const ALIASES = {
   py: "python", python: "python", python3: "python", pyw: "python",
   rs: "rust", rust: "rust",
   go: "go", golang: "go",
-  c: "c", h: "c",
-  cpp: "cpp", "c++": "cpp", cc: "cpp", cxx: "cpp", hpp: "cpp", hh: "cpp", hxx: "cpp",
+  c: "c",
+  // A header may be C or C++: C++'s words are a superset.
+  h: "cpp", cpp: "cpp", "c++": "cpp", cc: "cpp", cxx: "cpp", hpp: "cpp", hh: "cpp", hxx: "cpp",
   java: "java", cs: "csharp", csharp: "csharp", "c#": "csharp",
-  json: "json", jsonc: "json", json5: "json",
+  json: "json", jsonc: "jsonc", json5: "jsonc",
   yaml: "yaml", yml: "yaml",
   toml: "toml",
-  sh: "shell", bash: "shell", zsh: "shell", shell: "shell", console: "shell", shellscript: "shell", ksh: "shell",
+  sh: "shell", bash: "shell", zsh: "shell", shell: "shell", shellscript: "shell", ksh: "shell",
+  console: "console", "shell-session": "console",
   ps1: "powershell", psm1: "powershell", psd1: "powershell", powershell: "powershell", pwsh: "powershell",
   html: "html", htm: "html", xml: "html", svg: "html", xhtml: "html", vue: "html",
   css: "css", scss: "css", less: "css",
@@ -188,6 +208,7 @@ export function languageFor(infoOrPath) {
 // Caps: above them a block (or a line) stays plain text.
 export const MAX_LINES = 2000;
 export const MAX_LINE = 2000;
+export const MAX_CHARS = 200_000;
 
 const IDENT = /[\p{L}_$][\p{L}\p{N}_$]*/uy;
 const NUMBER = /(?:0[xX][\da-fA-F_]+|0[bB][01_]+|0[oO][0-7_]+|\d[\d_]*(?:\.\d[\d_]*)?(?:[eE][+-]?\d+)?)[a-zA-Z]*/y;
@@ -228,6 +249,29 @@ function scanString(s, i, close, raw) {
   return [s.length, false];
 }
 
+const WORD_CHAR = /[\p{L}\p{N}_]/u;
+// What a regex literal may follow: the start, an operator or an opening
+// bracket, or a keyword that takes an expression.
+const REGEX_AFTER = /^(?:|return|typeof|case|do|else|in|of|new|delete|void|throw|yield|await|instanceof)$|[^\w)\]}"]$/;
+
+// A regex literal from the "/" at i: → its end (flags included), or -1 when
+// the line ends first.
+function scanRegex(s, i) {
+  let inClass = false;
+  for (let k = i + 1; k < s.length; k++) {
+    const ch = s[k];
+    if (ch === "\\") k++;
+    else if (ch === "[") inClass = true;
+    else if (ch === "]") inClass = false;
+    else if (ch === "/" && !inClass) {
+      k++;
+      while (k < s.length && /[a-z]/.test(s[k])) k++;
+      return k;
+    }
+  }
+  return -1;
+}
+
 function lexGeneric(L, s, state, e) {
   let i = 0;
   // Carried over from the line before: a block comment or a multi-line string.
@@ -246,6 +290,8 @@ function lexGeneric(L, s, state, e) {
     state = {};
   }
   let prevSignificant = "";
+  const first = i + (at(SPACE, s, i)?.length ?? 0); // the line's first token
+  let noRegex = false; // a "/" on this line didn't start a regex: no other will
   while (i < s.length) {
     const c = s[i];
     let m;
@@ -272,7 +318,7 @@ function lexGeneric(L, s, state, e) {
       continue;
     }
     // C preprocessor, Java annotations, Python decorators.
-    if ((L.preprocessor && c === "#" && !s.slice(0, i).trim()) || ((L.annotations || L.decorators) && c === "@" && (m = at(IDENT, s, i + 1)))) {
+    if ((L.preprocessor && c === "#" && i === first) || ((L.annotations || L.decorators) && c === "@" && (m = at(IDENT, s, i + 1)))) {
       const end = L.preprocessor && c === "#" ? (at(/#\s*\w+/y, s, i) ?? "#").length + i : i + 1 + m.length;
       e.push(s.slice(i, end), "attribute");
       i = end;
@@ -294,7 +340,7 @@ function lexGeneric(L, s, state, e) {
     const prefix = L.prefixes ? at(L.prefixes, s, i) : null;
     const from = i + (prefix?.length ?? 0);
     const str = (L.strings ?? []).find((d) => s.startsWith(d.q, from));
-    if (str) {
+    if (str && (L.quoteAfterWord !== false || !WORD_CHAR.test(s[from - 1] ?? ""))) {
       const close = str.close ?? str.q;
       const [end, closed] = scanString(s, from + str.q.length, close, str.raw);
       const cls = str.cls ?? (L.keyStrings && at(/\s*:/y, s, end) ? "property" : "string");
@@ -327,6 +373,18 @@ function lexGeneric(L, s, state, e) {
       i += m.length;
       prevSignificant = "a";
       continue;
+    }
+    // JavaScript's regex literals, where an expression starts ("/" after a
+    // value is division; "/>" closes a JSX tag).
+    if (L.regex && c === "/" && !noRegex && s[i + 1] !== ">" && REGEX_AFTER.test(prevSignificant)) {
+      const end = scanRegex(s, i);
+      if (end > 0) {
+        e.push(s.slice(i, end), "string");
+        i = end;
+        prevSignificant = '"';
+        continue;
+      }
+      noRegex = true;
     }
     if (/\d/.test(c) && (m = at(NUMBER, s, i))) {
       e.push(m, "number");
@@ -371,42 +429,65 @@ function lexGeneric(L, s, state, e) {
 }
 
 // YAML: comments, keys, then a scalar value (or a flow collection) after them.
+// Scanned with indexOf, never a regex that could backtrack along a long line.
+const isSpace = (ch) => ch !== undefined && /\s/.test(ch);
 function lexYaml(s, state, e) {
+  const indent = at(SPACE, s, 0)?.length ?? 0;
   if (state.block !== undefined) {
-    const indent = /^\s*/.exec(s)[0].length;
-    if (s.trim() && indent > state.block) return e.push(s, "string"), state;
-    if (s.trim()) state = {};
+    if (indent < s.length && indent > state.block) return e.push(s, "string"), state;
+    if (indent < s.length) state = {};
     else return e.push(s), state;
   }
-  if (/^(---|\.\.\.)\s*$/.test(s)) return e.push(s, "meta"), state;
-  const m = /^(\s*(?:-\s+)*)((?:"[^"]*"|'[^']*'|[^\s#:"'][^#:]*?))(\s*:)(?=\s|$)/.exec(s);
-  let rest = s;
-  if (m) {
-    e.push(m[1], "punctuation");
-    e.push(m[2], "property");
-    e.push(m[3], "punctuation");
-    rest = s.slice(m[0].length);
-  } else {
-    const dash = /^\s*(?:-\s+)+/.exec(s);
-    if (dash) {
-      e.push(dash[0], "punctuation");
-      rest = s.slice(dash[0].length);
+  if (/^(?:---|\.\.\.)\s*$/.test(s)) return e.push(s, "meta"), state;
+  if (s[indent] === "#") return e.push(s, "comment"), state;
+  // The indent and list dashes ("- - key: v").
+  let i = indent;
+  while (s[i] === "-" && (i + 1 === s.length || isSpace(s[i + 1]))) i += 1 + (at(SPACE, s, i + 1)?.length ?? 0);
+  e.push(s.slice(0, i), "punctuation");
+  // A key: quoted, or plain up to the first ":" before a space (with no "#" in it).
+  let keyEnd = -1;
+  let colon = -1;
+  if (s[i] === '"' || s[i] === "'") {
+    const close = s.indexOf(s[i], i + 1);
+    const c = close < 0 ? -1 : close + 1 + (at(SPACE, s, close + 1)?.length ?? 0);
+    if (c > 0 && s[c] === ":" && (c + 1 === s.length || isSpace(s[c + 1]))) [keyEnd, colon] = [close + 1, c];
+  } else if (i < s.length && !isSpace(s[i]) && s[i] !== "#" && s[i] !== ":") {
+    const c = s.indexOf(":", i);
+    const hash = s.indexOf("#", i);
+    if (c > 0 && (hash < 0 || hash > c) && (c + 1 === s.length || isSpace(s[c + 1]))) {
+      keyEnd = c;
+      while (isSpace(s[keyEnd - 1])) keyEnd--;
+      colon = c;
     }
   }
-  const value = rest.match(/^(\s*)(.*?)(\s+#.*|\s*)$/);
-  e.push(value[1]);
-  const v = value[2];
+  if (colon >= 0) {
+    e.push(s.slice(i, keyEnd), "property");
+    e.push(s.slice(keyEnd, colon + 1), "punctuation");
+    i = colon + 1;
+  }
+  const lead = at(SPACE, s, i) ?? "";
+  e.push(lead);
+  i += lead.length;
+  // The value ends where a comment starts (a "#" after a space, past a quoted
+  // value's closing quote) or where trailing spaces do.
+  let from = i;
+  if (s[i] === '"' || s[i] === "'") from = scanString(s, i + 1, s[i], s[i] === "'")[0];
+  let hash = s.indexOf("#", from);
+  while (hash > 0 && !isSpace(s[hash - 1])) hash = s.indexOf("#", hash + 1);
+  const valueEnd = hash < 0 ? s.length : hash;
+  const v = s.slice(i, valueEnd).trimEnd();
+  const tail = s.slice(i + v.length);
   if (/^[|>][-+]?\d*$/.test(v)) {
     e.push(v, "punctuation");
-    e.push(value[3], "comment");
-    return { block: /^\s*/.exec(s)[0].length };
+    e.push(tail, "comment");
+    return { block: indent };
   }
-  if (/^["']/.test(v)) e.push(v, "string");
-  else if (/^(true|false|yes|no|on|off|null|~)$/i.test(v)) e.push(v, "constant");
-  else if (/^[-+]?(\d[\d_]*(\.\d+)?([eE][+-]?\d+)?|0x[\da-fA-F]+|\.inf|\.nan)$/i.test(v)) e.push(v, "number");
+  if (v[0] === '"' || v[0] === "'") e.push(v, "string");
+  else if (/^(?:true|false|yes|no|on|off|null|~)$/i.test(v)) e.push(v, "constant");
+  else if (/^[-+]?(?:\d[\d_]*(?:\.\d+)?(?:[eE][+-]?\d+)?|0x[\da-fA-F]+|\.inf|\.nan)$/i.test(v)) e.push(v, "number");
   else if (/^[&*][\w-]+/.test(v)) e.push(v, "variable");
   else if (v) e.push(v, "string");
-  e.push(value[3], value[3].trim() ? "comment" : null);
+  e.push(tail, tail.trim() ? "comment" : null);
   return state;
 }
 
@@ -566,7 +647,40 @@ function lexDiff(s, state, e) {
   return state;
 }
 
-const MODES = { yaml: lexYaml, toml: lexToml, markup: lexMarkup, css: lexCss, diff: lexDiff };
+// Shell: the generic lexer, and here-documents (cat <<EOF … EOF), whose body
+// is a string up to the line that is only the delimiter.
+const HEREDOC = /<<-?[ \t]*(["']?)([A-Za-z_][\w-]*)\1/g;
+function lexShell(s, state, e) {
+  if (state.heredoc) {
+    if (s.trim() === state.heredoc) return e.push(s, "constant"), {};
+    return e.push(s, "string"), state;
+  }
+  const own = emitter();
+  const next = lexGeneric(LANGS.shell, s, state, own);
+  for (const t of own.out) e.push(t.text, t.cls);
+  if (next.string || next.comment) return next;
+  HEREDOC.lastIndex = 0;
+  for (let m; (m = HEREDOC.exec(s)); ) {
+    if (s[m.index - 1] === "<") continue; // <<< is a here-string
+    // Not in a string or a comment.
+    let offset = 0;
+    const token = own.out.find((t) => (offset += t.text.length) > m.index);
+    if (token?.cls !== "string" && token?.cls !== "comment") return { heredoc: m[2] };
+  }
+  return next;
+}
+
+// A console session: lines after a "$ " (or "% ", "PS …> ") prompt are shell,
+// the rest is the commands' output and stays plain.
+function lexConsole(s, state, e) {
+  if (state.string || state.heredoc) return lexShell(s, state, e);
+  const prompt = at(/[ \t]*(?:[$%]|PS[^>\n]*>)[ \t]/y, s, 0);
+  if (!prompt) return e.push(s), {};
+  e.push(prompt, "punctuation");
+  return lexShell(s.slice(prompt.length), {}, e);
+}
+
+const MODES = { yaml: lexYaml, toml: lexToml, markup: lexMarkup, css: lexCss, diff: lexDiff, shell: lexShell, console: lexConsole };
 
 /**
  * Tokens for each line of `lines` in `lang`, with the state carried from line
@@ -575,17 +689,34 @@ const MODES = { yaml: lexYaml, toml: lexToml, markup: lexMarkup, css: lexCss, di
  */
 export function highlightLines(lang, lines, state = {}) {
   const L = LANGS[lang];
-  if (!L || lines.length > MAX_LINES) return { lines: lines.map((l) => [{ text: l, cls: null }]), state, plain: true };
+  const plainLine = (l) => [{ text: l, cls: null }];
+  let chars = 0;
+  for (const l of lines) chars += l.length;
+  if (!L || lines.length > MAX_LINES || chars > MAX_CHARS) return { lines: lines.map(plainLine), state, plain: true };
   const lex = L.mode ? MODES[L.mode] : (s, st, e) => lexGeneric(L, s, st, e);
   const out = [];
   for (const line of lines) {
     if (line.length > MAX_LINE) {
-      out.push([{ text: line, cls: null }]);
+      out.push(plainLine(line));
       continue;
     }
     const e = emitter();
-    state = lex(line, state, e) ?? {};
-    out.push(e.out.length ? e.out : []);
+    let next;
+    try {
+      next = lex(line, state, e) ?? {};
+    } catch {
+      next = null; // a lexer bug costs this line its colours, never the transcript
+    }
+    // Every character must come back exactly once, else the line is plain.
+    let n = 0;
+    for (const t of e.out) n += t.text.length;
+    if (!next || n !== line.length) {
+      out.push(plainLine(line));
+      state = {};
+      continue;
+    }
+    state = next;
+    out.push(e.out);
   }
   return { lines: out, state, plain: false };
 }
