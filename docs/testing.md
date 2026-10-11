@@ -58,6 +58,8 @@ It also checks ad's own requests (`checkRequest`): a method the pinned stable pr
 - An `/archive` or `/delete` step waits past the confirm's arm delay (400 ms) before answering.
 - Some runners can't run Codex's sandbox (GitHub's Windows runners): Codex then asks "retry without sandbox?", which `patchTurn` approves.
 - The first sandboxed action in a fresh Codex home sets up the Windows sandbox (about 35 s, longer on a busy machine): give it minutes, not seconds.
+- On Linux, Codex's sandbox gives a command its own PID namespace: a pid the command writes isn't the host's. Check a background process by what it does (a file it keeps writing), never with `process.kill(pid, 0)`.
+- A test that waits on a file's modification time must set it (`utimesSync`): a fast runner writes two versions in the same millisecond.
 
 ## Keeping tests honest
 

@@ -11,7 +11,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -500,7 +500,9 @@ function bgScript(body) {
   const input = Array.isArray(body?.input) ? body.input : [];
   const lastUser = input.findLastIndex((i) => i?.type === "message" && i.role === "user");
   const output = input.slice(lastUser + 1).findLast((i) => i?.type === "function_call_output");
-  if (output) return [ev.created(), ev.message(`server is up (${output.call_id})`), ev.completed()];
+  // The command's output goes into the reply: on a CI runner whose sandbox refuses it, the screen says why.
+  const said = (o) => String(typeof o?.output === "string" ? o.output : JSON.stringify(o?.output ?? "")).replace(/\s+/g, " ").slice(0, 160);
+  if (output) return [ev.created(), ev.message(`server is up (${output.call_id}): ${said(output)}`), ev.completed()];
   if (text.includes("BGSTART")) return [ev.created(), ev.functionCall("call-bg", "exec_command", { cmd: "node bg.js", yield_time_ms: 1500 }), ev.completed()];
   return defaultScript(body);
 }
@@ -509,8 +511,22 @@ test("Part 5 live: a background terminal outlives the turn; /ps lists it and /st
   const mock = await startMockResponses({ script: bgScript });
   const w = world(mock.url);
   const pidFile = join(w.cwd, "bg.pid");
-  writeFileSync(join(w.cwd, "bg.js"), `require("fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));\nconsole.log("listening");\nsetInterval(() => console.log("tick " + Date.now()), 300);\n`);
+  const logFile = join(w.cwd, "bg.log");
+  // It ticks into a file: "running" is the file growing. (A pid isn't enough: on
+  // Linux Codex's sandbox gives the command its own PID namespace.)
+  writeFileSync(
+    join(w.cwd, "bg.js"),
+    `const fs = require("fs");\nfs.writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));\nconsole.log("listening");\nsetInterval(() => { fs.appendFileSync(${JSON.stringify(logFile)}, "t"); console.log("tick " + Date.now()); }, 300);\n`,
+  );
+  const size = () => (existsSync(logFile) ? statSync(logFile).size : 0);
+  const running = async () => {
+    const before = size();
+    await settle(1200);
+    return size() > before;
+  };
+  // Only where the pid is the host's (not Linux, see above): a last-resort kill in `finally`.
   const alive = (pid) => {
+    if (process.platform === "linux") return false;
     try {
       process.kill(pid, 0);
       return true;
@@ -524,7 +540,8 @@ test("Part 5 live: a background terminal outlives the turn; /ps lists it and /st
     t = await start(w);
     t.type("BGSTART\r");
     // Approvals (or a retry outside the sandbox on CI's Windows runners) are approved.
-    const end = Date.now() + 180_000;
+    // Up to 5 min: a fresh Codex home sets up the Windows sandbox first (2+ min seen on a busy machine).
+    const end = Date.now() + 300_000;
     while (!/server is up/.test(t.text())) {
       if (Date.now() > end) throw new Error(`no answer after the background start\n${t.text().slice(-2000)}`);
       if (/Run command\?|retry without sandbox\?/.test(t.screen()) && /\(y\)|No, and stop/.test(t.screen())) {
@@ -534,17 +551,18 @@ test("Part 5 live: a background terminal outlives the turn; /ps lists it and /st
       await settle(300);
     }
     await t.until(() => t.idle(), "the turn's end");
-    await t.until(() => existsSync(pidFile), "the script's pid");
+    await t.until(() => existsSync(pidFile) && existsSync(logFile), "the script running");
     pid = Number(readFileSync(pidFile, "utf8"));
-    assert.ok(alive(pid), "the background process outlives the turn");
+    assert.ok(await running(), "the background process outlives the turn");
     await t.until(/1 background terminal running · \/ps to view · \/stop to close/, "the footer");
     t.type("/ps\r");
     await t.until(/Background terminals[\s\S]*node bg\.js[\s\S]*↳ /, "/ps");
     t.type("/stop\r");
     await t.until(/Stopping all background terminals\./, "/stop");
     const gone = Date.now() + 15_000;
-    while (alive(pid) && Date.now() < gone) await settle(200);
-    assert.equal(alive(pid), false, "the process ended");
+    let still = await running();
+    while (still && Date.now() < gone) still = await running();
+    assert.equal(still, false, "the process ended");
     await t.until(() => !/background terminal running/.test(t.screen()), "the footer cleared");
 
     t.type("\x03");
@@ -575,10 +593,10 @@ test("Part 6 live: /cd forks the conversation into another folder, and the next 
     await t.until(/pong/, "a first turn");
     await t.until(() => t.idle(), "idle");
     t.type("/cd sub\r");
-    await t.until(/Do you trust .*sub\?/, "the trust question");
+    await t.until(/Do you trust[\s\S]*sub\?/, "the trust question");
     await settle(600);
     t.type("1");
-    await t.until(/Working directory changed to: .*sub/, "changed");
+    await t.until(/Working directory changed to:\s+\S*sub/, "changed"); // a long temp path wraps (macOS: /private/var/…)
     // The patch turn; outside the sandbox where CI's Windows runners need it.
     const done = () => t.count(/done after call-patch/g);
     t.type("PATCH please\r");
@@ -595,7 +613,7 @@ test("Part 6 live: /cd forks the conversation into another folder, and the next 
     assert.ok(existsSync(join(sub, "hello.txt")), "the edit landed in the new folder");
     assert.ok(!existsSync(join(w.cwd, "hello.txt")), "not in the old one");
     t.type("/pwd\r");
-    await t.until(/Current working directory: .*sub/, "/pwd");
+    await t.until(/Current working directory:\s+\S*sub/, "/pwd");
 
     t.type("\x03");
     await settle(200);
