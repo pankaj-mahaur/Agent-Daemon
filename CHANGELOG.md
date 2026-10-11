@@ -4,6 +4,8 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [2.2.0] — 2026-10-11
+
 ### Fixed
 
 - `ad tui`: a Codex command ad doesn't have yet (`/plan fix the bug`, `/side …`, `/clear`) was sent to the model as a prompt. Now it answers why it isn't in ad (and that `/codex` has it, where the stock UI can help), and what you typed stays in the prompt.
@@ -452,6 +454,7 @@ Kept in the snapshot but not ported this release: `.codebuddy/`, `.kiro/`, `.tra
 
 Initial public state. Self-improving memory + skills runtime for Claude Code with multi-agent orchestration. 36 skills, 6 lifecycle hooks (SessionStart, SessionEnd, PreCompact, UserPromptSubmit, plus QMD-redirect), constitution layer, digest pipeline, GEPA skill evolution, multi-agent team templates, `ad init` / `ad doctor` / `ad team` / `ad spawn` CLI.
 
+[2.2.0]: https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v2.2.0
 [2.1.1]: https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v2.1.1
 [2.1.0]: https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v2.1.0
 [2.0.2]: https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v2.0.2
