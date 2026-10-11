@@ -552,6 +552,9 @@ Everything else (conversations, logs, login) is Codex's own, in ad's Codex home;
 | `/clear` wiped the scrollback | [#31](troubleshooting.md#31-ad-tui-clear-wiped-my-scrollback) |
 | the window title still says ad's after it ended | [#32](troubleshooting.md#32-the-terminals-title-still-says-ads-after-ad-ended) |
 | `/plan` says "Plan mode unavailable right now." | [#33](troubleshooting.md#33-ad-tui-plan-says-plan-mode-unavailable-right-now) |
+| `/recap`: "Could not generate a recap. Please try again." | [#34](troubleshooting.md#34-ad-tui-recap-says-could-not-generate-a-recap-please-try-again) |
+| `/approve` lists nothing, or "invalid Guardian denial event" | [#35](troubleshooting.md#35-ad-tui-approve-says-no-recent-auto-review-denials-in-this-thread-or-invalid-guardian-denial-event) |
+| `/setup-default-sandbox` refuses or fails | [#36](troubleshooting.md#36-ad-tui-setup-default-sandbox-refuses-or-fails) |
 | a Codex command says "isn't in ad yet" | [codex-parity.md](codex-parity.md) |
 | not signed in, sandbox, hooks, your own Codex home refused | [harness.md](harness.md#when-something-goes-wrong), troubleshooting #14–21 |
 

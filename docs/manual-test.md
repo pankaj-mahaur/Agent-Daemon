@@ -93,7 +93,16 @@ Run this in each terminal you use: Windows Terminal, Zed and the VS Code termina
 | `?`, then `/terminal-setup` | the shortcuts with the newline key for this terminal; advice for this terminal | [troubleshooting #24](troubleshooting.md#24-ad-tui-shiftenter-sends-instead-of-adding-a-newline) |
 | Make the window narrower, then wider, while `ad tui` runs | no stray copies of the bottom lines; if there are, Ctrl+L redraws | [troubleshooting #25](troubleshooting.md#25-ghost-copies-of-the-bottom-lines-after-narrowing-the-window) |
 | `/remember tests use node:test`, then `/memory recent` | a "Learned:" row, then the note listed with its `#id` | `/ad doctor` |
-| `/plan fix the bug` | "/plan isn't in ad yet. /codex opens the stock Codex UI on this conversation.", and the text stays in the prompt; nothing is sent | — |
+| `/import` | "/import isn't in ad yet. /codex opens the stock Codex UI on this conversation.", and the text stays in the prompt; nothing is sent | — |
+| `/plan`, then *"How would you add a subtract function to math.js?"* | **Plan mode** in the footer and a magenta prompt; the model explores without editing, then a **Proposed Plan** and "Implement this plan?". "Yes, implement this plan" implements it. Shift+Tab switches back | [troubleshooting #33](troubleshooting.md#33-ad-tui-plan-says-plan-mode-unavailable-right-now) |
+| *"Start `node -e "setInterval(() => {}, 1000)"` in the background."* | the footer counts "1 background terminal running"; `/ps` lists it with its last lines; `/stop` ends it | — |
+| `mkdir sub` in the project, then `/cd sub` | the trust question, then "Working directory changed to: …sub"; `/pwd` agrees | — |
+| While a turn runs: `/side What does node:test do?` | a side panel answers under the main conversation; Ctrl+/ moves between the prompts; Ctrl+C closes it | — |
+| `/vim`, type, Esc, `0`, `dw`, `i` | "Vim mode enabled."; **Vim: Normal** / **Vim: Insert** in the footer; the bar cursor in Insert; `/vim` again turns it off | — |
+| `/theme`, ↓, Enter | **Select Syntax Theme** with a code sample and a diff recoloured as you move; Enter saves it ("Saved for /codex too") | — |
+| `/recap` | "Generating conversation recap…", then a dim **↳ Recap:** and, when there is one, **Next:** | [troubleshooting #34](troubleshooting.md#34-ad-tui-recap-says-could-not-generate-a-recap-please-try-again) |
+| `/subagents` | "No agents available yet.", or, after the model used subagents, **Subagents**: pick one to watch it live; Alt+← / Alt+→ move between them | — |
+| `/keymap`, then `/keymap debug` and a few keys | the keys in effect; the Keypress Inspector names each key and its actions | [troubleshooting #30](troubleshooting.md#30-ad-tui-keys-set-with-the-stock-uis-keymap-dont-work-in-ad) |
 | `/statusline`, Space on an item, Esc; then again, Space, Enter | the status line changes as you toggle; Esc puts it back; Enter saves ("Saved for /codex too") | — |
 | `/title`, turn on `activity`, Enter; send a prompt | the window or tab title shows a spinner while the turn runs; after quitting, the terminal's own title is back | — |
 | `/clear test` | the screen and scrollback are cleared; "New conversation: test. The one before: /resume …" | — |

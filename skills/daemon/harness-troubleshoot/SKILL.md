@@ -79,6 +79,9 @@ The terminal UI runs the same engine in the same home, so steps 1–5 apply. The
 | `/clear` wiped the scrollback (#31) | Codex's `/clear` does | `/new` keeps it; `"clear.keepScrollback": true` in `~/.agent-daemon/tui/prefs.json` |
 | window title still ad's after exit (#32) | no title stack in the terminal, or a crash | new tab, or `/title` with every item off |
 | `/plan`: "Plan mode unavailable right now." (#33) | Codex didn't list its collaboration modes within 2 s of the engine starting (slow start, antivirus), or a Codex build changed the experimental call | restart `ad`; check the Codex version in `ad doctor`; `/codex` has the stock UI's `/plan` |
+| `/recap`: "Could not generate a recap. Please try again." (#34) | the temporary read-only thread didn't start or answer in time (30 s + 30 s), sign-in, or the answer wasn't Codex's recap format; no recap at all = a prompt or another turn dropped it | retry while idle; `/status` for sign-in; the grey reason says which |
+| `/approve`: "No recent auto-review denials…" or "invalid Guardian denial event" (#35) | denials are kept per conversation while ad runs (10), not after a resume, not a subagent's; the refusal = a Codex version ad wasn't tested with | ask the model to retry; `ad doctor` for the version |
+| `/setup-default-sandbox` refuses or fails (#36) | elevated sandbox = machine-wide + UAC; ad changes only a home it created; input waits while it runs | approve UAC; `ad sandbox setup` (non-admin); `ad sandbox setup --elevated --force` for a home ad didn't make |
 
 Reproduce TUI problems with `ad tui` in a scratch folder. Never use the user's own `codex` or `~/.codex`.
 

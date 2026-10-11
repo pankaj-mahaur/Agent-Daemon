@@ -25,15 +25,22 @@ runtime/src/tui/
   undo.mjs                     checkpoint wiring for /undo (hooks on the session)
   commands.mjs                 /mcp, /hooks, /skills, /usage, /export, clipboard, image paths, terminal setup
   flip.mjs, preflight.mjs      when bare `ad` opens the TUI; whether this terminal can run it
+  recap.mjs                    /recap: Codex's prompt, the conversation it reads (Codex's byte budget), the strict parse
   view/                        pure renderers: composer, markdown, cells (items), chrome (header/footer, picker,
-                               checklist), modals (Codex's requests, ad's confirm), theme (every colour)
+                               checklist), modals (Codex's requests, ad's confirm, choices), theme (every colour),
+                               highlight (the syntax lexer, one table per language), vim (Codex's Vim mode)
   terminal/                    io (raw mode, input decoding, handoff), renderer (inline frames), width, sanitize
 runtime/src/harness/
   session.mjs                  the session controller: one thread, turns, queue/steer, approvals, items, restarts
   checkpoints.mjs              git-tree snapshots, plan and restore for /undo
+  sandbox.mjs                  Windows sandbox setup and readiness (`ad sandbox`, /setup-default-sandbox)
+runtime/src/engine/
+  index.mjs                    the engine: threads, turns, subagent routing, structuredRequest (temporary threads)
 runtime/src/engine/codex/
   app-server.mjs               JSON-RPC client for the pinned `codex app-server`
   events.mjs                   protocol → normalized events and items (the only place that knows the wire shapes)
+  surface.mjs                  the stable surface ad uses, and the experimental allowlist (ad tui only)
+  protocol-snapshot.*          the pinned protocol, generated: requests are checked against it in the tests
   home.mjs                     ad's isolated CODEX_HOME and the engine's environment
 ```
 
@@ -49,6 +56,11 @@ The rule between layers: **only `engine/codex/` knows Codex's protocol.** Everyt
 - **Recovery.** If Codex exits, the controller restarts it (a bounded budget), resumes the thread, and settles every item that was in flight.
 - **Hooks.** `beforeTurn`, `turnStarted`, `turnStartFailed`, `itemStarted`, `itemCompleted`, `turnCompleted`: how `/undo` and the learned rows plug in without the controller knowing about them.
 - **Locks.** A thread open in one `ad tui` is locked (heartbeat file) so a second window can't drive it at the same time.
+- **Modes.** Codex's collaboration modes (plan mode): the presets Codex lists, and the mode's mask on each turn (the experimental allowlist).
+- **Background terminals.** A command still running after its turn (Codex's unified exec) is tracked by Codex's `processId`; `stopTerminals()` ends them all.
+- **The folder.** `state.config.cwd` is mutable: `changeDir()` forks the conversation into the new folder (`/cd`).
+- **Side conversations.** `openSide()` forks an ephemeral, read-only thread and returns a second session on the same engine: no requests, no lock, ad's hooks off.
+- **Subagents and denials.** `state.agents` (first seen, running, closed) for `/subagents`; `state.denials` (Codex's auto-review denials, the last 10) for `/approve`, sent back as Codex's core event.
 
 ### The renderer: inline, not fullscreen
 
