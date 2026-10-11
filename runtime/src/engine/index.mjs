@@ -492,11 +492,12 @@ export class Engine extends EventEmitter {
    * Codex's temporary structured request (its /recap): an ephemeral thread,
    * read-only, approvals never, every tool off (`config`, dotted keys, plus
    * every MCP server off), one turn with an output schema, then unsubscribed.
-   * → the answer's text. One deadline for all of it. Stable fields only:
-   * Codex's own also sends experimental ones that lock the thread down further.
+   * → the answer's text. As Codex: one deadline to start the thread, another
+   * for the turn. Stable fields only: Codex's own also sends experimental
+   * ones that lock the thread down further.
    */
   async structuredRequest({ cwd, model, modelProvider, text, outputSchema, config = {}, timeoutMs = 30_000 }) {
-    const deadline = Date.now() + timeoutMs;
+    let deadline = Date.now() + timeoutMs;
     const left = () => Math.max(1, deadline - Date.now());
     const read = await this.server.request("config/read", { includeLayers: false, cwd }, { timeoutMs: left() });
     const overrides = { ...config };
@@ -509,6 +510,7 @@ export class Engine extends EventEmitter {
     const threadId = r.thread.id;
     try {
       if (r.sandbox?.type !== "readOnly") throw new Error("temporary structured thread did not start with read-only permissions");
+      deadline = Date.now() + timeoutMs;
       const t = await this.turn({ threadId, input: [{ type: "text", text, text_elements: [] }], outputSchema, timeoutMs: left() });
       if (t.status !== "completed") throw new Error(`temporary structured turn ended with status ${t.status}${t.error?.message ? `: ${t.error.message}` : ""}`);
       if (!t.output) throw new Error("temporary structured turn completed without a response");

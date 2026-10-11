@@ -144,7 +144,7 @@ export const NOTIFICATION_HANDLERS = {
     const r = p.review ?? {};
     const what = autoReviewAction(p.action);
     if (r.status === "approved") return [notice(p, "info", "autoReview.approved", `Auto-review approved${what ? `: ${what}` : ""}.`)];
-    if (r.status === "denied") return [notice(p, "warn", "autoReview.denied", `Auto-review denied${what ? ` ${what}` : ""}${r.rationale ? ` (${r.rationale})` : ""}. /approve allows one retry.`, { review: p })];
+    if (r.status === "denied") return [notice(p, "warn", "autoReview.denied", `Auto-review denied${what ? ` ${what}` : ""}${r.rationale ? ` (${r.rationale})` : ""}.`, { review: p })];
     if (r.status === "timedOut" || r.status === "aborted") return [notice(p, "warn", `autoReview.${r.status}`, `Auto-review ${r.status === "timedOut" ? "timed out" : "was aborted"}${what ? ` for ${what}` : ""}.`)];
     return [notice(p, "info", "autoReview", `Auto-review finished${what ? ` for ${what}` : ""}.`)];
   },
@@ -188,6 +188,14 @@ export function guardianDenialEvent(p) {
   const action = { type: snake(type ?? "") };
   const snakeKeys = (v) => (Array.isArray(v) ? v.map(snakeKeys) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [snake(k), snakeKeys(x)])) : v);
   for (const [k, v] of Object.entries(fields)) if (v !== null && v !== undefined) action[snake(k)] = k === "source" || k === "protocol" ? snake(v) : snakeKeys(v);
+  // Core reads file permissions as {entries, glob_scan_max_depth} or as
+  // {read, write}, never a mix; the notification sends read and write (null
+  // when empty) beside entries. Codex's own TUI keeps entries when there are any.
+  const fsp = action.type === "request_permissions" ? action.permissions?.file_system : null;
+  if (fsp) {
+    const file_system = fsp.entries?.length ? present({ entries: fsp.entries, glob_scan_max_depth: fsp.glob_scan_max_depth }) : present({ read: fsp.read, write: fsp.write });
+    action.permissions = present({ ...action.permissions, file_system });
+  }
   // write_stdin's cwd is a path URI in core (S7: a plain "C:\…" is refused, a file: URL accepted).
   if (action.type === "write_stdin" && typeof action.cwd === "string" && !/^[a-z][\w+.-]+:\/\//i.test(action.cwd)) action.cwd = pathToFileURL(action.cwd).href;
   return present({

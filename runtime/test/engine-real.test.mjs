@@ -326,7 +326,10 @@ test("S7: thread/approveGuardianDeniedAction takes ad's core GuardianAssessmentE
       { type: "networkAccess", target: "https://example.com", host: "example.com", protocol: "https", port: 443 },
       { type: "mcpToolCall", server: "docs", toolName: "search", connectorId: null, connectorName: null, toolTitle: null },
       { type: "writeStdin", approvalId: "a1", processId: "p1", stdin: "y\n", cwd },
-      { type: "requestPermissions", reason: null, permissions: { network: { enabled: true }, fileSystem: { read: [cwd], write: null } } },
+      // As the notification sends them: read and write beside entries (or entries left out).
+      { type: "requestPermissions", reason: null, permissions: { network: { enabled: true }, fileSystem: { read: null, write: null, entries: [{ path: { type: "path", path: cwd }, access: "write" }], globScanMaxDepth: 2 } } },
+      { type: "requestPermissions", reason: "read the docs", permissions: { network: null, fileSystem: { read: [cwd], write: null } } },
+      { type: "requestPermissions", reason: null, permissions: { network: null, fileSystem: { read: [cwd], write: [cwd], entries: [] } } },
     ];
     for (const action of actions) {
       const event = guardianDenialEvent({ ...base, reviewId: `review-${action.type}`, action });

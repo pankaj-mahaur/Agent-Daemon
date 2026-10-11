@@ -469,7 +469,7 @@ async function onRequest({ id, method, params }) {
       return send({ id, result: { status: state.config.windows?.sandbox ? "ready" : "notConfigured" } });
     case "windowsSandbox/setupStart":
       send({ id, result: { started: true } });
-      return setTimeout(() => notify("windowsSandbox/setupCompleted", { mode: params.mode, success: process.env.FAKE_SANDBOX_FAIL !== "1", error: process.env.FAKE_SANDBOX_FAIL === "1" ? "denied by policy" : null }), 10);
+      return setTimeout(() => notify("windowsSandbox/setupCompleted", { mode: params.mode, success: process.env.FAKE_SANDBOX_FAIL !== "1", error: process.env.FAKE_SANDBOX_FAIL === "1" ? "denied by policy" : null }), Number(process.env.FAKE_SANDBOX_DELAY_MS ?? 10));
     case "skills/extraRoots/set":
     case "config/mcpServer/reload":
       return send({ id, result: {} });

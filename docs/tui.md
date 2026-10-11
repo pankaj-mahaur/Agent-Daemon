@@ -267,7 +267,7 @@ Type `/` to see them with a one-line hint each. Commands marked "Codex" keep Cod
 | `/vim` | toggle Codex's Vim mode for the prompt (Codex). See [Vim mode](#vim-mode) |
 | `/theme` | choose the syntax colours, with a live preview; Esc keeps the old one (Codex). See [Syntax highlighting](#syntax-highlighting) |
 | `/keymap [debug]` | the keys in effect; `debug` shows what a key sends (Codex) |
-| `/setup-default-sandbox` | Windows: set up Codex's elevated sandbox, after asking: machine-wide, so your own Codex uses it too (Codex) |
+| `/setup-default-sandbox` | Windows: set up Codex's elevated sandbox, after asking: machine-wide, so your own Codex uses it too. Nothing else is sent while it runs; then the conversation gets the Auto permissions. Not in a Codex home ad didn't create (`ad sandbox setup --elevated --force` there) (Codex) |
 
 Model, effort and permission changes apply from the next turn.
 
@@ -306,7 +306,7 @@ Model, effort and permission changes apply from the next turn.
 | `/hooks` | hooks and whether they are trusted; ad's own are marked (Codex) |
 | `/skills` | skills Codex can use here (Codex) |
 | `/warnings` | notices kept from this session, and events this ad doesn't know (Codex) |
-| `/debug-config` | Codex's config layers (lowest precedence first, the session's flags listed) and its requirements; secret values are masked. Typed only, as in Codex |
+| `/debug-config` | Codex's config layers (lowest precedence first, the session's flags listed) and its requirements. Values under secret-named keys, header and env maps, a URL's user:password and token-like arguments show as `****`. Typed only, as in Codex |
 | `/rollout` | the conversation's rollout file (Codex's debug command; typed only) |
 | `/agents` | Codex's agent command center needs its shared background server, which ad doesn't run: it says so, and points to `/subagents` and `/team` (Codex) |
 
@@ -376,11 +376,11 @@ Codex switches its whole view to the agent's thread; ad keeps your conversation 
 
 ## Recaps
 
-`/recap` asks for a short catch-up on this conversation, as Codex's does: what it is for, what is done, and an agreed next step or an open question. It reads the last 8 exchanges (prompts and answers, not tool output; never a `/private` prompt), within Codex's size budget, and asks Codex in a separate, temporary thread that is read-only, has every tool and MCP server off, and runs none of ad's hooks. "Generating conversation recap…" shows meanwhile; the answer is a dim, italic **↳ Recap:** with **Next:** under it. Sending a prompt meanwhile drops it, as in Codex. Not while a turn runs. Codex's automatic recaps (`tui.auto_recap`, after 30 idle minutes) aren't in ad.
+`/recap` asks for a short catch-up on this conversation, as Codex's does: what it is for, what is done, and an agreed next step or an open question. It reads the last 8 exchanges (prompts and answers, not tool output; never a `/private` prompt), within Codex's size budget, and asks Codex in a separate, temporary thread that is read-only, has every tool and MCP server off, and runs none of ad's hooks. "Generating conversation recap…" shows meanwhile; the answer is a dim, italic **↳ Recap:** with **Next:** under it. Sending a prompt meanwhile, or any other turn running first (`/compact`, `/review`), drops it, as in Codex. Not while a turn runs. Codex gets 30 seconds to start the temporary thread and 30 more to answer. Codex's automatic recaps (`tui.auto_recap`, after 30 idle minutes) aren't in ad.
 
 ## Auto-review denials
 
-When Codex's automatic approval reviewer (its "auto-review") denies an action, the notice says so and `/approve` lists the denials of this conversation, newest first (Codex keeps the last 10): **Auto-review Denials**, each with its rationale. Picking one records an approval for one retry: the model sees it, and the retry still goes through auto-review. It leaves the list. Another conversation has its own.
+When Codex's automatic approval reviewer (its "auto-review") denies an action, the notice says so and `/approve` lists the denials of this conversation, newest first (Codex keeps the last 10): **Auto-review Denials**, each with its rationale. Picking one records an approval for one retry: the model sees it, and the retry still goes through auto-review. It leaves the list (and stays on it if Codex refuses). Each conversation has its own list, kept while ad runs: a conversation resumed later starts with none. A subagent's denials aren't on it.
 
 ## Side conversations
 

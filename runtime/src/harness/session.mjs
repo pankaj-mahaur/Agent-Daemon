@@ -494,10 +494,12 @@ export function createSession({
         break;
       }
       case "notice":
-        // As Codex: the 10 latest denials, newest first, once each (/approve).
+        // As Codex: this thread's 10 latest denials, newest first, once each (/approve);
+        // a subagent's aren't on that list, so its notice doesn't point there.
         if (root && ev.code === "autoReview.denied" && ev.details?.review?.reviewId) {
           const r = ev.details.review;
           state.denials = [r, ...state.denials.filter((d) => d.reviewId !== r.reviewId)].slice(0, MAX_DENIALS);
+          return notice(ev.level, ev.code, `${ev.message} /approve allows one retry.`);
         }
         return notice(ev.level, ev.code, ev.message);
       case "hook.started":
@@ -997,15 +999,24 @@ export function createSession({
     modeMask,
     /**
      * Codex's /approve: one retry of a recent auto-review denial. The denial
-     * leaves the list; Codex records the approval (the model sees it; the
-     * retry still goes through auto-review).
+     * leaves the list (back in its place if Codex refuses); Codex records the
+     * approval (the model sees it; the retry still goes through auto-review).
      */
     async approveDenial(reviewId) {
       const i = state.denials.findIndex((d) => d.reviewId === reviewId);
       if (i < 0 || !state.thread) throw new Error("That auto-review denial is no longer available.");
+      const threadId = state.thread.id;
       const [d] = state.denials.splice(i, 1);
       change("denials");
-      await engine.server.request("thread/approveGuardianDeniedAction", { threadId: state.thread.id, event: guardianDenialEvent(d) });
+      try {
+        await eng.server.request("thread/approveGuardianDeniedAction", { threadId, event: guardianDenialEvent(d) });
+      } catch (err) {
+        if (state.thread?.id === threadId && !state.denials.some((x) => x.reviewId === reviewId)) {
+          state.denials.splice(Math.min(i, state.denials.length), 0, d);
+          change("denials");
+        }
+        throw err;
+      }
     },
     /**
      * Ends every background terminal of this conversation (Codex's /stop,

@@ -741,6 +741,132 @@ test("/setup-default-sandbox: Windows only; asks first (machine-wide); sets up t
   );
 });
 
+test("Part 10 review: /approve after an engine restart goes to the new engine; a refused one stays on the list", async () => {
+  await withApp(
+    async ({ app, type, until, committed, engines, session }) => {
+      const flat = () => committed().replace(/\s+/g, " ");
+      type("auto-review-deny\r");
+      await until(() => /Auto-review stopped two commands/.test(flat()), "the denials");
+      engines[0].server.request("test/crash", {}).catch(() => {});
+      await until(() => engines.length === 2 && session.state.engine.state === "ready", "the restart");
+      assert.equal(session.state.denials.length, 2, "kept across the restart");
+      type("/approve\r");
+      await until(() => app.state.popup === "approve", "the picker");
+      type("\r");
+      await until(() => /Approval recorded for one retry/.test(flat()), "approved through the new engine");
+      assert.deepEqual(session.state.denials.map((d) => d.reviewId), ["review-1"]);
+      // Codex refuses one: it stays on the list, and the reason shows.
+      session.state.denials[0].review = { ...session.state.denials[0].review, status: "approved" };
+      type("/approve\r");
+      await until(() => app.state.popup === "approve", "the picker again");
+      type("\r");
+      await until(() => /invalid Guardian denial event: bad status or action/.test(flat()), "the refusal");
+      assert.deepEqual(session.state.denials.map((d) => d.reviewId), ["review-1"], "back on the list");
+    },
+    { restartable: true, cols: 110, rows: 30 },
+  );
+});
+
+test("Part 10 review: a recap is dropped when another turn ran meanwhile; a /private prompt's answer stays out of it", async () => {
+  await withApp(
+    async ({ type, until, committed, text, session }) => {
+      const flat = () => committed().replace(/\s+/g, " ");
+      type("early-complete\r");
+      await until(() => /Worked for/.test(flat()), "a turn");
+      type("/recap\r");
+      await until(() => /Generating conversation recap/.test(text()), "loading");
+      session.submit("early-complete"); // a turn started another way (not a prompt typed here)
+      await until(() => !/Generating conversation recap/.test(text()), "done");
+      await sleep(300);
+      assert.doesNotMatch(flat(), /Recap:/, "stale: dropped");
+    },
+    { cols: 100, env: { FAKE_RECAP: `slow:${JSON.stringify({ summary: "late", next_action: null })}` } },
+  );
+  await withApp(
+    async ({ app, type, until, committed, engine, session }) => {
+      const flat = () => committed().replace(/\s+/g, " ");
+      type("early-complete\r");
+      await until(() => /Worked for/.test(flat()), "a turn");
+      type("/private\r");
+      await until(() => /Private: your prompts are wrapped/.test(flat()), "private on");
+      type("SECRET plan\r");
+      await until(() => app.state.modal, "its approval");
+      await sleep(100);
+      type("y");
+      await until(() => session.state.turns.length === 2 && !session.state.activeTurnId, "the private turn's answer");
+      type("/private\r");
+      await until(() => /Private is off\./.test(flat()), "private off");
+      type("/recap\r");
+      await until(() => /Recap:/.test(flat()), "the recap");
+      const prompt = (await engine.server.request("debug/state", {})).lastParams["turn/start"].input[0].text;
+      assert.match(prompt, /Conversation:\nUser: early-complete\n\nAssistant: early$/, "the private prompt and its answer stay out");
+      assert.doesNotMatch(prompt, /SECRET|pong/);
+    },
+    { cols: 100 },
+  );
+});
+
+test("Part 10 review: /setup-default-sandbox blocks every input while it runs (status kept); never in a Codex home ad didn't make", async () => {
+  await withApp(
+    async ({ app, type, until, text, committed, engine }) => {
+      const flat = () => committed().replace(/\s+/g, " ");
+      type("/setup-default-sandbox\r");
+      await until(() => app.state.confirm, "the question");
+      await sleep(100);
+      type("y");
+      await until(() => /Setting up sandbox\.\.\./.test(text()), "the status");
+      for (const input of ["/compact", "!ls", "hello"]) {
+        type(`${input}\r`);
+        await until(() => app.state.composer === input, `${input} kept in the prompt`);
+        type("\x15");
+      }
+      assert.equal((flat().match(/Input disabled until setup completes\./g) ?? []).length, 3);
+      assert.match(text(), /Setting up sandbox\.\.\./, "the status stays after a key");
+      const calls = (await engine.server.request("debug/state", {})).calls;
+      assert.ok(!calls.includes("thread/compact/start") && !calls.includes("thread/shellCommand") && !calls.includes("turn/start"), "nothing went out");
+      await until(() => /Sandbox ready/.test(flat()), "ready", 15000);
+    },
+    { platform: "win32", cols: 110, rows: 30, env: { FAKE_SANDBOX_DELAY_MS: "1500" } },
+  );
+  const { MANAGED_MARKER } = await import("../src/engine/codex/home.mjs");
+  await withApp(
+    async ({ type, until, committed, engine }) => {
+      rmSync(join(engine.home, MANAGED_MARKER), { force: true });
+      type("/setup-default-sandbox\r");
+      await until(() => /wasn't created by ad, so ad doesn't change its sandbox\. `ad sandbox setup --elevated --force` does it anyway\./.test(committed().replace(/\s+/g, " ")), "refused");
+    },
+    { platform: "win32", cols: 110 },
+  );
+});
+
+test("Part 10 review: watching a long subagent transcript, each frame after the first reuses the drawn cells", async () => {
+  await withApp(
+    async ({ app, type, until, session }) => {
+      session.state.agents.set("agent-long", { label: "Ada", nickname: "Ada", role: "explorer", path: null, running: true, closed: false });
+      for (let i = 0; i < 300; i++) {
+        const id = `long-${i}`;
+        session.state.items.set(id, { id, kind: "agentMessage", threadId: "agent-long", turnId: "t", text: `Step ${i}: read \`src/file${i}.js\`, then:\n\n\`\`\`js\nconst x${i} = await load(${i});\n\`\`\`\n` });
+      }
+      type("\x1b[1;3C"); // alt+→: watch it
+      await until(() => app.state.pager, "the pager");
+      const t0 = performance.now();
+      for (let k = 0; k < 10; k++) type("\x1b[A"); // scroll: a redraw each
+      const per = (performance.now() - t0) / 10;
+      // About 14 ms here with the cache, 130 without it.
+      const budget = process.env.CI ? 120 : 40;
+      assert.ok(per < budget, `${per.toFixed(1)} ms per frame with 300 cells (budget ${budget})`);
+    },
+    { cols: 110, rows: 30 },
+  );
+});
+
+test("Part 10 review: a subagent's denial doesn't point to /approve (the list is the main thread's)", async () => {
+  const { adaptNotification } = await import("../src/engine/codex/events.mjs");
+  const evs = adaptNotification("item/autoApprovalReview/completed", { threadId: "agent-x", turnId: "t", reviewId: "r9", targetItemId: null, startedAtMs: 1, completedAtMs: 2, decisionSource: "agent", review: { status: "denied", riskLevel: "high", userAuthorization: "low", rationale: null }, action: { type: "command", source: "shell", command: "ls", cwd: "/" } });
+  assert.equal(evs.length, 1);
+  assert.equal(evs[0].message, "Auto-review denied `ls`.", "the adapter leaves the /approve hint to the session, which adds it for the main thread only");
+});
+
 test("reasoningHeadline picks the first bold phrase", () => {
   assert.equal(reasoningHeadline("**Checking tests**\n\nmore"), "Checking tests");
   assert.equal(reasoningHeadline("no bold"), null);

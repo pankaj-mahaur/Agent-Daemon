@@ -23,7 +23,7 @@ import { INIT_PROMPT } from "./init-prompt.mjs";
 import { setupWindowsSandbox } from "../harness/sandbox.mjs";
 import { existsSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { canonicalPath } from "../engine/codex/home.mjs";
+import { canonicalPath, isManagedHome } from "../engine/codex/home.mjs";
 import path from "node:path";
 import { copyText, denialSummary, exportMarkdown, imagePath, lastAgentText, renderDebugConfig, renderHooks, renderKeyInspector, renderKeymap, renderMcp, renderSkills, renderUsage, terminalSetup, transcriptLines } from "./commands.mjs";
 import CODEX_SLASH from "./codex-slash.json" with { type: "json" };
@@ -710,6 +710,7 @@ export function createApp({
     const cap = Math.max(3, Math.floor(rows * LIVE_SHARE));
     if (live.length > cap) live = [[{ text: `  \u{2026} ${live.length - cap + 1} more lines above`, style: DIM }], ...live.slice(-(cap - 1))];
     lines.push(...live);
+    if (sandboxSetup) lines.push([{ text: "\u{2022} ", style: DIM }, { text: "Setting up sandbox...", style: T.bold }, { text: " Hang tight, this may take a few minutes. Input disabled until setup completes.", style: DIM }]);
     if (recapping) lines.push([{ text: "\u{2022} ", style: DIM }, { text: "Generating conversation recap", style: T.bold }, { text: "\u{2026}", style: DIM }]);
     lines.push(...statusLines());
     if (side && !modal && !confirm) lines.push(...sidePanel(w, rows));
@@ -776,6 +777,8 @@ export function createApp({
   async function setupSandbox() {
     if (platform !== "win32") return info0("Codex uses the OS sandbox here (Seatbelt or Landlock): /setup-default-sandbox is only for Windows.");
     if (sandboxSetup) return info0("Windows sandbox setup is still running. Restart Codex to retry.");
+    // As `ad sandbox setup`: never in a Codex home ad didn't make (`ad tui --home ~/.codex`).
+    if (session.engine.home && !isManagedHome(session.engine.home)) return warn(`${clean(session.engine.home)} wasn't created by ad, so ad doesn't change its sandbox. \`ad sandbox setup --elevated --force\` does it anyway.`);
     let mode;
     let allowed;
     try {
@@ -785,8 +788,8 @@ export function createApp({
       ]);
       mode = read?.config?.windows?.sandbox ?? null;
       allowed = req?.requirements?.allowedWindowsSandboxImplementations ?? null;
-    } catch {
-      return warn("Could not read Windows sandbox configuration and requirements from the app server.");
+    } catch (err) {
+      return commitCell(renderNotice({ level: "warn", message: "Could not read Windows sandbox configuration and requirements from the app server.", hint: err?.message }, { width: width() }));
     }
     if (mode === "elevated") return info0("The elevated sandbox is already set up.");
     if (allowed && !allowed.includes("elevated")) return info0("That Windows sandbox option is disallowed by requirements.");
@@ -798,7 +801,6 @@ export function createApp({
     });
     if (!yes) return info0("Kept the current sandbox.");
     sandboxSetup = true;
-    note = { level: "info", text: "Setting up sandbox... Hang tight, this may take a few minutes" };
     draw();
     try {
       await setupWindowsSandbox(session.engine, { mode: "elevated", cwd });
@@ -806,7 +808,6 @@ export function createApp({
       return commitCell(renderNotice({ level: "error", message: `Windows sandbox setup failed: ${err?.message || "unknown error"}`, hint: "`ad sandbox setup` sets up the non-admin sandbox instead." }, { width: width() }));
     } finally {
       sandboxSetup = false;
-      note = null;
       drawSoon();
     }
     session.setNextTurn(PERMISSION_PRESETS[1].value);
@@ -823,14 +824,23 @@ export function createApp({
   const isAgentKey = (ev) => ev.type === "key" && ev.alt && !ev.ctrl && (ev.name === "left" || ev.name === "right");
 
   // A subagent's own transcript: what its thread did, as the main one draws it.
+  // Drawn on every frame while watched, so each cell is rendered once until it
+  // changes (the session replaces an item's object when it does; its streaming
+  // flag, the width and the syntax theme are checked too).
+  const agentCells = new WeakMap(); // item → {w, streaming, theme, lines}
   function agentLines(threadId, w) {
     const out = [];
+    const theme = syntaxTheme();
     for (const it of st.items.values()) {
       if (it.threadId !== threadId) continue;
-      const lines = renderCell(it, { width: w });
-      if (!lines.length) continue;
+      let c = agentCells.get(it);
+      if (!c || c.w !== w || c.streaming !== it.streaming || c.theme !== theme) {
+        c = { w, streaming: it.streaming, theme, lines: renderCell(it, { width: w }) };
+        agentCells.set(it, c);
+      }
+      if (!c.lines.length) continue;
       if (out.length) out.push([]);
-      out.push(...lines);
+      for (const l of c.lines) out.push(l);
     }
     return out.length ? out : [[{ text: "No activity yet.", style: T.italicDim }]];
   }
@@ -879,10 +889,18 @@ export function createApp({
   /* -------------------------------------------------------------- */
 
   // What /recap reads: the prompts and the answers (a /private prompt never leaves this conversation).
-  const recapMessages = () =>
-    rootItems()
-      .filter((it) => (it.kind === "userMessage" && !/<private>/.test(it.text ?? "")) || it.kind === "agentMessage")
-      .map((it) => ({ role: it.kind === "userMessage" ? "user" : "assistant", text: it.text ?? "" }));
+  // Its answers stay out too: they would read as replies to the prompt before it.
+  function recapMessages() {
+    const out = [];
+    let hidden = false;
+    for (const it of rootItems()) {
+      if (it.kind === "userMessage") {
+        hidden = /<private>/.test(it.text ?? "");
+        if (!hidden) out.push({ role: "user", text: it.text ?? "" });
+      } else if (it.kind === "agentMessage" && !hidden) out.push({ role: "assistant", text: it.text ?? "" });
+    }
+    return out;
+  }
 
   // Codex's: a temporary read-only thread with no tools answers in its recap
   // schema. A prompt sent, or another conversation, meanwhile drops it.
@@ -890,7 +908,8 @@ export function createApp({
     if (recapping) return warn("A recap is already being generated.");
     const history = st.thread ? recapHistory(recapMessages()) : "";
     if (!history) return info0("There is no conversation history to recap.");
-    const me = { threadId: st.thread.id };
+    // As Codex: a recap is stale once another turn ran (/compact, /review, a queued prompt…).
+    const me = { threadId: st.thread.id, turns: st.turns.length };
     recapping = me;
     draw();
     let recap = null;
@@ -911,7 +930,7 @@ export function createApp({
     }
     if (recapping !== me) return;
     recapping = null;
-    if (st.thread?.id !== me.threadId || turnActive()) return draw();
+    if (st.thread?.id !== me.threadId || turnActive() || st.turns.length !== me.turns) return draw();
     if (!recap) commitCell(renderNotice({ level: "error", message: "Could not generate a recap. Please try again.", hint: why }, { width: width() }));
     else commitCell(renderRecap(recap, { width: width() }));
     draw(); // the loading line goes
@@ -1763,10 +1782,6 @@ export function createApp({
       if (!composer.text) composer.set(text);
       return warn("Changing directories: send it once that's done.");
     }
-    if (sandboxSetup) {
-      if (!composer.text) composer.set(text);
-      return warn("Input disabled until setup completes.");
-    }
     recapping = null; // as in Codex, a prompt drops a recap on its way
     turnStartedAt ??= now();
     try {
@@ -1814,6 +1829,10 @@ export function createApp({
 
   function dispatch(text) {
     note = null;
+    if (sandboxSetup && !/^\/(?:quit|exit)\s*$/i.test(text.trim())) {
+      if (!composer.text) composer.set(text);
+      return warn("Input disabled until setup completes.");
+    }
     if (st.engine.state === "crashed") restartEngine(); // the prompt waits in the queue meanwhile
     const t = text.trim();
     const m = /^\/([a-z][\w-]*)(?:\s+([\s\S]*))?$/i.exec(t);

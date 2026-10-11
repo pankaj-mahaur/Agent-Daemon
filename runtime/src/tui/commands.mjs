@@ -89,16 +89,29 @@ export function denialSummary(a) {
 /* /debug-config (codex-parity-2 Part 10)                              */
 /* ------------------------------------------------------------------ */
 
-// A value whose key names a secret is never shown (a provider's API key).
-const SECRET_KEY = /key|token|secret|password|credential/i;
-const maskDeep = (v, key = "") =>
-  key && SECRET_KEY.test(key) && ((typeof v === "string" && v !== "") || (v && typeof v === "object")) // a token limit (a number) stays
-    ? "****"
-    : Array.isArray(v)
-      ? v.map((x) => maskDeep(x))
-      : v && typeof v === "object"
-        ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, maskDeep(x, k)]))
-        : v;
+// Secrets are never shown: a value under a key that names one (api_key,
+// bearer_token, password; not tui.keymap), every value of a header or env map,
+// a URL's user:password, and a command argument that looks like a token or
+// follows a flag naming one. A number (a token limit) stays.
+const SECRET_KEY = /(?:^|[_.-])(?:api[_-]?key|key|pat|pass|auth)$|token|secret|passw(?:or)?d|credential/i;
+const ALL_SECRET = /(?:^|_)(?:headers|env)$/i;
+const SECRET_FLAG = /^--?[\w-]*(?:key|token|secret|pass|pat|auth)[\w-]*$/i;
+const SECRET_SHAPE = /^(?:sk-|ghp_|gho_|github_pat_|xox[abpr]-|AKIA|glpat-|Bearer\s)/i;
+const MASK = "****";
+const maskUrl = (s) => s.replace(/(\b[a-z][\w+.-]*:\/\/)[^/\s@]+@/gi, `$1${MASK}@`);
+const maskDeep = (v, key = "", all = false) => {
+  if (typeof v === "string") return v && (all || SECRET_KEY.test(key) || SECRET_SHAPE.test(v)) ? MASK : maskUrl(v);
+  if (Array.isArray(v)) {
+    if (key === "args") return v.map((x, i) => (typeof x === "string" && (SECRET_SHAPE.test(x) || (i > 0 && SECRET_FLAG.test(String(v[i - 1])))) ? MASK : maskDeep(x, "", all)));
+    return v.map((x) => maskDeep(x, key, all));
+  }
+  if (v && typeof v === "object") {
+    if (SECRET_KEY.test(key)) return MASK;
+    const inner = all || ALL_SECRET.test(key);
+    return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, maskDeep(x, k, inner)]));
+  }
+  return v;
+};
 const tomlValue = (v) =>
   typeof v === "string"
     ? JSON.stringify(v)

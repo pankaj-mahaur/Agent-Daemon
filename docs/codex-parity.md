@@ -20,7 +20,7 @@ Codex's own rules come with the commands:
 | `/permissions` | yes | yes | what Codex may do without asking |
 | `/keymap` | yes | no | shows the keys in effect, yours marked; `/keymap debug` is Codex's Keypress Inspector. Keys are changed in `/codex` (the stock UI's `/keymap`), and `ad` uses them (see [Keys](#keys)) |
 | `/vim` | yes | no | Codex's Vim mode for the prompt (Normal, Insert, Replace; its motions, operators, text objects, search, undo and `.`); `tui.vim_mode_default` starts it on |
-| `/setup-default-sandbox` | yes | no | Windows: set up Codex's elevated sandbox after a confirm that says it is machine-wide (your own Codex uses it too); then this conversation gets Codex's Default permissions. Elsewhere it says the OS sandbox is used |
+| `/setup-default-sandbox` | yes | no | Windows: set up Codex's elevated sandbox after a confirm that says it is machine-wide (your own Codex uses it too); then this conversation gets ad's Auto permissions (Codex's "Default" preset: edits here, asks for the rest). Not in a Codex home ad didn't create. Elsewhere it says the OS sandbox is used |
 | `/experimental` | not yet | no | Codex's experimental features; in `/codex` |
 | `/approve` | yes | yes | Codex's **Auto-review Denials**: approve one retry of a recent denial (the last 10 of this conversation) |
 | `/memories` | not yet | no | Codex's own memories; `ad`'s memory is `/memory` |
@@ -56,7 +56,7 @@ Codex's own rules come with the commands:
 | `/cd` | yes | no | continue the conversation in another folder (Codex forks it there); asks first if the folder isn't trusted yet |
 | `/pwd`, `/cwd` | yes | yes | show the current working directory |
 | `/usage` | yes | yes | usage limits and tokens |
-| `/debug-config` | yes | yes | config layers (lowest precedence first) and requirements, from Codex; secret values masked. Hidden from the popup, as in Codex |
+| `/debug-config` | yes | yes | config layers (lowest precedence first) and requirements, from Codex; values under secret-named keys, header and env maps, URL credentials and token-like arguments masked (Codex prints them). Hidden from the popup, as in Codex |
 | `/title` | yes | yes | choose what the terminal window's title shows |
 | `/statusline` | yes | yes | choose what the status line shows |
 | `/theme` | yes | no | choose the syntax colours, with a live preview: `ansi` (your terminal's colours, the default) or Codex's `catppuccin-mocha` / `catppuccin-latte`; saved as `tui.theme`. A theme `ad` doesn't ship shows as `ansi` in `ad` (the stock UI still uses it) |
