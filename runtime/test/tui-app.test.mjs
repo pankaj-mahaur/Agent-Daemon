@@ -1317,6 +1317,34 @@ test("/cd (review): a prompt sent while the folder is changing waits, its text k
   }, { modes: true, cols: 120, rows: 30 });
 });
 
+test("/cd (Codex): refused while another agent is running; it goes ahead once that agent stops", async () => {
+  await withApp(async ({ app, type, until, committed, session, root }) => {
+    mkdirSync(join(root, "shop-app"));
+    type("subagents-2\r");
+    await until(() => !session.state.activeTurnId && session.state.turns.length === 1, "the turn done");
+    const running = [...session.state.agents].filter(([, a]) => a.running && !a.closed);
+    assert.equal(running.length, 1, "one subagent still at work");
+    type("/cd shop-app\r");
+    await until(() => /Cannot change: another agent is running\./.test(committed()), "refused");
+    assert.ok(!app.state.confirm, "no trust question");
+    assert.equal(session.state.turns.length, 1, "nothing forked");
+    const cancelled = () => (committed().match(/Not changed\./g) ?? []).length;
+    // A closed agent doesn't count, whatever its running flag says.
+    const [id, agent] = running[0];
+    session.state.agents.set(id, { ...agent, running: true, closed: true });
+    type("/cd shop-app\r");
+    await until(() => app.state.confirm, "the trust question (a closed agent is ignored)");
+    type("\x1b");
+    await until(() => cancelled() === 1, "cancelled");
+    // Its turn ends: the same /cd goes ahead, to the trust question.
+    session.state.agents.set(id, { ...agent, running: false });
+    type("/cd shop-app\r");
+    await until(() => app.state.confirm, "the trust question");
+    type("\x1b");
+    await until(() => cancelled() === 2, "cancelled again");
+  }, { modes: true, cols: 120, rows: 30 });
+});
+
 test("/side: a panel on an ephemeral fork; Ctrl+/ switches prompts; only side commands; Ctrl+C closes it into the scrollback", async () => {
   await withApp(async ({ app, type, until, text, committed, session, engine }) => {
     const debug = () => engine.server.request("debug/state", {});

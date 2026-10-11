@@ -388,6 +388,18 @@ test("an engine crash ends the running turn as failed, then the engine restarts 
   });
 });
 
+test("an engine crash ends the subagents' turns too: none is running after the restart", async () => {
+  await withSession((make) => ({ restart: make, maxRestarts: 2 }), async ({ session, engines }) => {
+    const s = session.submit("subagents-2");
+    assert.equal((await s.done).status, "completed");
+    assert.ok([...session.state.agents.values()].some((a) => a.running), "a subagent at work");
+    engines[0].server.request("test/crash", {}).catch(() => {});
+    await until(() => session.state.engine.state === "ready" && session.state.engine.restarts === 1, "the restart");
+    assert.ok(![...session.state.agents.values()].some((a) => a.running), "its turn ended with the engine that ran it");
+    assert.ok(session.state.agents.size >= 2, "the agents themselves are still listed");
+  });
+});
+
 test("without restart, a crash leaves the session in a crashed state", async () => {
   await withSession(none, async ({ session, engine }) => {
     await session.submit("fail-turn").done;

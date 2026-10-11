@@ -111,6 +111,7 @@ One table per leg (this machine, the Linux container, the PR's CI per job), each
 | `test/tui-pty-smoke.test.mjs` fails as a whole file in the container (`signal: 'SIGSEGV'`) | `@lydell/node-pty`'s Linux binary is built for glibc; Alpine is musl | the container's, not the code's: GitHub's Ubuntu job runs it. Not a blocker; say so in the report |
 | Windows real-engine test: `config/batchWrite: failed to persist config.toml` (-32603), passes on a rerun | Codex's own rewrite of `config.toml` collided with something holding the fresh file (an antivirus scan) | re-run that test alone (5 of 5 passed on 2026-10-11); count it as a flake only after that |
 | `ad doctor` exits 1 locally | usually only "Session context budget": the project memory file is too big | compact `.agent-daemon/memory/activeContext.md` (keep a `.bak`) |
+| Local Git Bash: `--test-name-pattern="/cd"` runs 0 subtests yet reports `pass 1`; or `skill-install.test.mjs` "git URL install from a local repo" fails with exit 1 | MSYS turns an argument starting with `/` into a Windows path; `MSYS_NO_PATHCONV=1` stops that but git honours it too, so an exported value breaks the local-repo install test | prefix only the pattern-filtered command with `MSYS_NO_PATHCONV=1`; never `export` it in the shell that runs the suite |
 
 ## Anti-patterns
 

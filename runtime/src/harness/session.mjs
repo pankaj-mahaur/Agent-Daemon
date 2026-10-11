@@ -390,7 +390,7 @@ export function createSession({
   // agent tool call names, a sub-agent activity item; and whether it runs.
   function noteAgent(id, info = {}) {
     if (typeof id !== "string" || !id || id === state.thread?.id) return;
-    const prev = state.agents.get(id) ?? { label: null, nickname: null, role: null, path: null, parentThreadId: null, running: false, closed: false };
+    const prev = state.agents.get(id) ?? { label: null, nickname: null, role: null, path: null, parentThreadId: null, running: false, stopped: false, closed: false };
     const next = { ...prev };
     for (const [k, v] of Object.entries(info)) if (v !== undefined && v !== null) next[k] = v;
     next.label = next.nickname ?? next.role ?? null;
@@ -406,12 +406,15 @@ export function createSession({
       for (const id of it.receiverThreadIds ?? []) if (it.agents?.[id]?.status !== "notFound") noteAgent(id);
     }
     if ((ev.type === "item.started" || ev.type === "item.completed") && it?.kind === "subAgentActivity" && it.agentThreadId) {
-      noteAgent(it.agentThreadId, { path: it.agentPath, ...(it.activity === "started" ? { running: true } : it.activity === "completed" || it.activity === "interrupted" ? { running: false } : {}) });
+      // As Codex: a "started" hint for a thread whose turn already ended is late, and ignored.
+      const stopped = state.agents.get(it.agentThreadId)?.stopped;
+      const run = it.activity === "started" ? (stopped ? {} : { running: true }) : it.activity === "completed" || it.activity === "interrupted" ? { running: false, stopped: true } : {};
+      noteAgent(it.agentThreadId, { path: it.agentPath, ...run });
     }
     if (root || !state.agents.has(ev.threadId)) return;
-    if (ev.type === "turn.started") noteAgent(ev.threadId, { running: true });
-    else if (ev.type === "turn.completed") noteAgent(ev.threadId, { running: false });
-    else if (ev.type === "thread.closed") noteAgent(ev.threadId, { running: false, closed: true });
+    if (ev.type === "turn.started") noteAgent(ev.threadId, { running: true, stopped: false });
+    else if (ev.type === "turn.completed") noteAgent(ev.threadId, { running: false, stopped: true });
+    else if (ev.type === "thread.closed") noteAgent(ev.threadId, { running: false, stopped: true, closed: true });
   }
 
   function onThreadEvent(ev) {
@@ -593,6 +596,8 @@ export function createSession({
         // Overrides go again on the next turn, in case Codex lost them.
         nextTurn = { ...sticky, ...nextTurn };
         state.terminals = new Map(); // they ended with the engine that ran them
+        for (const [id, a] of state.agents) if (a.running) state.agents.set(id, { ...a, running: false, stopped: true }); // so did the subagents' turns
+        change("agents");
         loadModes();
         // Ready only once the thread is back: a prompt sent now goes to the right place.
         state.engine = { state: "ready", exitCode: null, restarts: state.engine.restarts };
