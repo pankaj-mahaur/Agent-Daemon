@@ -260,6 +260,7 @@ export function createApp({
 
   const rootItems = () => [...st.items.values()].filter((it) => !st.thread || it.threadId === st.thread.id || it.threadId == null);
   const turnActive = () => Boolean(st.activeTurnId || st.starting);
+  const agentRunning = () => [...st.agents.values()].some((a) => a.running && !a.closed); // a subagent's thread still at work
 
   // An item whose turn has ended can't change any more, even if Codex never
   // completed it (a crash, a declined patch): it must not hold back the
@@ -1055,9 +1056,9 @@ export function createApp({
 
   // Codex's /cd (app/event_dispatch.rs, app/working_directory.rs at the pinned tag):
   // the folder resolves against the current one ("~" alone or first is home),
-  // must be a folder, the session idle with nothing queued and no background
-  // terminal; an untrusted folder is asked about first. Then the conversation
-  // forks into it.
+  // must be a folder, the session idle with nothing queued, no background
+  // terminal and no subagent at work; an untrusted folder is asked about first.
+  // Then the conversation forks into it.
   async function changeDir(arg) {
     const BUSY = "Changing directories requires an idle primary session without queued input.";
     if (changingDir || turnActive() || st.queue.length || st.terminals?.size) return warn(BUSY);
@@ -1084,6 +1085,8 @@ export function createApp({
     const homes = [path.join(homedir(), ".codex"), session.engine?.home].filter(Boolean).map(real);
     if (homes.some((h) => real(dir) === h || real(dir).startsWith(h + path.sep))) return warn(`ad doesn't work inside a Codex home: ${clean(dir)}`);
     if (actions.ad?.loop?.state?.running) return warn("An ad loop is working in this folder: /loop stop first.");
+    // Codex's check at the app level: no other agent (a subagent's thread) may be at work.
+    if (agentRunning()) return warn("Cannot change: another agent is running.");
     // Trust, as on ad's first start in a folder (kept in ad's Codex home).
     const config = await session.engine.readConfig().catch(() => ({}));
     const known = Object.keys(config.projects ?? {}).some((k) => real(k) === real(dir));
@@ -1100,6 +1103,8 @@ export function createApp({
       if (!trust) return info0("Not changed.");
       await session.engine.writeConfig([["projects", { [dir]: { trust_level: trust } }, "upsert"]]);
     }
+    // The awaits above can overlap work: Codex checks every thread again before the fork.
+    if (turnActive() || agentRunning()) return warn("Cannot change: a task is running.");
     await session.changeDir(dir);
     cwd = dir;
     await Promise.resolve(actions.setCwd?.(dir)).catch((err) => warn(err.message));

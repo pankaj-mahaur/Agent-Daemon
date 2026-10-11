@@ -4,6 +4,10 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Fixed
+
+- `/cd`: refused while a subagent is still working ("Cannot change: another agent is running."), and every thread is checked again after the trust question ("Cannot change: a task is running."), as Codex does. A subagent's turn now ends with the engine that ran it, so a crash and restart doesn't leave `/cd` refused; a late "started" hint for a subagent whose turn already ended is ignored, as in Codex.
+
 ## [2.2.0] — 2026-10-11
 
 ### Fixed
