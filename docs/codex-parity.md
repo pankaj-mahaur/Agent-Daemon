@@ -20,9 +20,9 @@ Codex's own rules come with the commands:
 | `/permissions` | yes | yes | what Codex may do without asking |
 | `/keymap` | yes | no | shows the keys in effect, yours marked; `/keymap debug` is Codex's Keypress Inspector. Keys are changed in `/codex` (the stock UI's `/keymap`), and `ad` uses them (see [Keys](#keys)) |
 | `/vim` | yes | no | Codex's Vim mode for the prompt (Normal, Insert, Replace; its motions, operators, text objects, search, undo and `.`); `tui.vim_mode_default` starts it on |
-| `/setup-default-sandbox` | not yet | no | `ad sandbox setup --elevated` sets up the elevated sandbox (machine-wide: it also affects your own Codex) |
+| `/setup-default-sandbox` | yes | no | Windows: set up Codex's elevated sandbox after a confirm that says it is machine-wide (your own Codex uses it too); then this conversation gets Codex's Default permissions. Elsewhere it says the OS sandbox is used |
 | `/experimental` | not yet | no | Codex's experimental features; in `/codex` |
-| `/approve` | not yet | yes | approve one retry of a recent auto-review denial; in `/codex` |
+| `/approve` | yes | yes | Codex's **Auto-review Denials**: approve one retry of a recent denial (the last 10 of this conversation) |
 | `/memories` | not yet | no | Codex's own memories; `ad`'s memory is `/memory` |
 | `/skills` | yes | yes | skills Codex can use here |
 | `/import` | not yet | no | import setup and chats from Claude Code; in `/codex` |
@@ -38,25 +38,25 @@ Codex's own rules come with the commands:
 | `/app` | no | yes | it opens the Codex Desktop app, which uses your own Codex home, not `ad`'s, so it can't continue this conversation |
 | `/init` | yes | no | create an AGENTS.md for this repo (Codex's prompt) |
 | `/compact` | yes | no | summarize the conversation to free context |
-| `/recap` | not yet | no | a short summary of the conversation; in `/codex` |
+| `/recap` | yes | no | Codex's catch-up (**↳ Recap:** and **Next:**), from a temporary read-only thread with no tools, Codex's prompt and limits. Automatic recaps aren't in ad |
 | `/plan` | yes | no | Plan mode: Codex's own (the model explores read-only and proposes a plan); `/plan <prompt>` sends the prompt there. Shift+Tab switches between Plan and Default. See [Plan mode](tui.md#plan-mode) |
 | `/voice` | not yet | yes | voice; in `/codex` |
 | `/goal` | yes | yes | set a goal for this conversation (`/goal clear`) |
-| `/agents` | not yet | yes | Codex's agent command center; in `/codex` |
+| `/agents` | yes | yes | Codex's answer without its shared background server ("Shared agents unavailable"), which ad never runs; points to `/subagents` and `/team` |
 | `/side`, `/btw` | yes | yes | a side conversation in an ephemeral fork, in a panel under the main one; nothing merges back. See [Side conversations](tui.md#side-conversations) |
 | `/copy` | yes | yes | copy the last answer to the clipboard |
 | `/export` | yes | no | save the conversation as markdown in this folder |
 | `/raw` | yes | yes | print the last answer as plain text (for selecting) |
 | `/tui` | no | no | it chooses the stock UI's mode; `ad` has only its inline mode so far |
 | `/diff` | yes | yes | show git changes, untracked files included |
-| `/mention` | no | yes | type `@` in the prompt to mention a file |
+| `/mention` | yes | yes | an `@` in the prompt, and the file picker |
 | `/status` | yes | yes | account, model, sandbox, tokens, limits |
 | `/daemon` | no | yes | it manages Codex's background server; `ad` runs its own engine and never uses it |
 | `/warnings` | yes | yes | notices kept from this session, unknown events, settings `ad` couldn't use |
 | `/cd` | yes | no | continue the conversation in another folder (Codex forks it there); asks first if the folder isn't trusted yet |
 | `/pwd`, `/cwd` | yes | yes | show the current working directory |
 | `/usage` | yes | yes | usage limits and tokens |
-| `/debug-config` | not yet | yes | config layers, for debugging; in `/codex` |
+| `/debug-config` | yes | yes | config layers (lowest precedence first) and requirements, from Codex; secret values masked. Hidden from the popup, as in Codex |
 | `/title` | yes | yes | choose what the terminal window's title shows |
 | `/statusline` | yes | yes | choose what the status line shows |
 | `/theme` | yes | no | choose the syntax colours, with a live preview: `ansi` (your terminal's colours, the default) or Codex's `catppuccin-mocha` / `catppuccin-latte`; saved as `tui.theme`. A theme `ad` doesn't ship shows as `ansi` in `ad` (the stock UI still uses it) |
@@ -67,12 +67,12 @@ Codex's own rules come with the commands:
 | `/logout` | yes | no | sign out of Codex in `ad`'s home |
 | `/quit`, `/exit` | yes | yes | exit `ad` |
 | `/feedback` | no | yes | for `ad` problems, open an issue on the `ad` repository; the stock UI's `/feedback` uploads the whole conversation to OpenAI, `ad`'s memory context and `/private` prompts included |
-| `/rollout` | not yet | yes | the conversation's rollout file; in `/codex` |
+| `/rollout` | yes | yes | the conversation's rollout file. A debug command in Codex: typed only |
 | `/ps` | yes | yes | the background terminals Codex runs for this conversation (a dev server, a watcher), with their last output lines. See [Background terminals](tui.md#background-terminals) |
 | `/stop`, `/clean` | yes | yes | stop all background terminals (Codex's experimental call, which only `ad tui` makes) |
 | `/clear` | yes | no | clear the terminal (scrollback too) and start a new conversation |
 | `/test-approval` | no | yes | a Codex debug command |
-| `/subagents` | not yet | yes | switch between subagents; in `/codex` |
+| `/subagents` | yes | yes | Codex's **Subagents** picker; ad shows the agent's transcript live in a pager instead of switching the conversation. Alt+← / Alt+→ go round them |
 | `/debug-m-drop`, `/debug-m-update` | no | no | Codex debug commands |
 
 `ad` also has commands of its own, with names Codex doesn't use: `/help`, `/remember`, `/memory`, `/private`, `/proposals`, `/loop`, `/team`, `/schedule`, `/tools`, `/login`, `/codex`, `/ad`, `/image`, `/undo`, `/terminal-setup`. See [tui.md](tui.md#slash-commands).

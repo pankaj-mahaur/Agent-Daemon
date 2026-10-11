@@ -25,7 +25,8 @@ export const ev = {
     type: "response.output_item.done",
     item: { type: "reasoning", id, summary: [{ type: "summary_text", text: summary }], encrypted_content: Buffer.from("b".repeat(600)).toString("base64") },
   }),
-  functionCall: (callId, name, args) => ({ type: "response.output_item.done", item: { type: "function_call", call_id: callId, name, arguments: JSON.stringify(args) } }),
+  // A tool in a namespace (Codex 0.160 groups its agent tools as "multi_agent_v1") names it.
+  functionCall: (callId, name, args, namespace) => ({ type: "response.output_item.done", item: { type: "function_call", call_id: callId, name, ...(namespace ? { namespace } : {}), arguments: JSON.stringify(args) } }),
 };
 
 export const sse = (events) => events.map((e) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`).join("");

@@ -12,18 +12,20 @@
 
 import { createComposer } from "./view/composer.mjs";
 import { createMarkdownStream, renderMarkdown } from "./view/markdown.mjs";
-import { isExploring, renderAdRow, renderBackgroundTerminals, renderCell, renderDiff, renderExploring, renderNotice, renderPlan } from "./view/cells.mjs";
+import { isExploring, renderAdRow, renderBackgroundTerminals, renderCell, renderDiff, renderExploring, renderNotice, renderPlan, renderRecap } from "./view/cells.mjs";
+import { parseRecap, RECAP_PROMPT_PREFIX, RECAP_SCHEMA, recapHistory, TEMPORARY_THREAD_CONFIG } from "./recap.mjs";
 import { createChecklist, createPicker, renderFooter, renderShortcuts, renderStatus } from "./view/chrome.mjs";
 import { ARM_MS, createChoice, createConfirm, createRequestModal } from "./view/modals.mjs";
 import { CODEX_PLAN_CLEAR_CONTEXT_PREFIX } from "../hooks/generated-prompts.mjs";
 import { sanitize } from "./terminal/sanitize.mjs";
 import { lineWidth, truncate } from "./terminal/text.mjs";
 import { INIT_PROMPT } from "./init-prompt.mjs";
+import { setupWindowsSandbox } from "../harness/sandbox.mjs";
 import { existsSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { canonicalPath } from "../engine/codex/home.mjs";
 import path from "node:path";
-import { copyText, exportMarkdown, imagePath, lastAgentText, renderHooks, renderKeyInspector, renderKeymap, renderMcp, renderSkills, renderUsage, terminalSetup, transcriptLines } from "./commands.mjs";
+import { copyText, denialSummary, exportMarkdown, imagePath, lastAgentText, renderDebugConfig, renderHooks, renderKeyInspector, renderKeymap, renderMcp, renderSkills, renderUsage, terminalSetup, transcriptLines } from "./commands.mjs";
 import CODEX_SLASH from "./codex-slash.json" with { type: "json" };
 import { T } from "./view/theme.mjs";
 import { createKeymap, eventSpec, keyLabel } from "./keymap.mjs";
@@ -82,6 +84,14 @@ export const SLASH_COMMANDS = [
   { name: "rename", source: "codex", desc: "name this conversation" },
   { name: "copy", source: "codex", desc: "copy the last answer to the clipboard" },
   { name: "raw", source: "codex", desc: "print the last answer as plain text (for selecting)" },
+  { name: "mention", source: "codex", desc: "mention a file" },
+  { name: "agents", source: "codex", desc: "Codex's agent command center (not in ad: see /subagents, /team)" },
+  { name: "rollout", source: "codex", desc: "print the rollout file path" },
+  { name: "debug-config", source: "codex", desc: "show config layers and requirements, for debugging" },
+  { name: "recap", source: "codex", desc: "summarize the current conversation now" },
+  { name: "approve", source: "codex", desc: "approve one retry of a recent auto-review denial" },
+  { name: "setup-default-sandbox", source: "codex", desc: "set up the elevated agent sandbox (Windows)" },
+  { name: "subagents", source: "codex", desc: "watch this conversation's subagents (alt+\u{2190}/\u{2192})" },
   { name: "export", source: "codex", desc: "save the conversation as markdown in this folder" },
   { name: "mcp", source: "codex", desc: "MCP servers and their status" },
   { name: "hooks", source: "codex", desc: "hooks and whether they are trusted" },
@@ -99,6 +109,8 @@ export const SLASH_COMMANDS = [
 // Codex's commands at the pinned tag, by every spelling (scripts/codex-slash.mjs):
 // what ad mirrors follows Codex's rules (during a task, popup visibility).
 const CODEX_COMMANDS = new Map(CODEX_SLASH.commands.flatMap((c) => [c.name, ...c.aliases].map((n) => [n, c])));
+// Typeable but never listed: Codex's hidden commands, and those only its debug builds show.
+const popupHidden = (c) => c.source === "codex" && (CODEX_COMMANDS.get(c.name)?.popup === "hidden" || CODEX_COMMANDS.get(c.name)?.visible === "debug");
 
 // Codex commands ad doesn't run (yet), and what it says instead: `true` is
 // "not in ad yet, /codex has it"; a string is the whole answer (where the stock
@@ -112,27 +124,19 @@ export const PLAN_IMPLEMENTATION_CLEAR_CONTEXT_PREFIX = CODEX_PLAN_CLEAR_CONTEXT
 
 export const NOT_IN_AD = {
   ide: "/ide reads your editor's selection over Codex's private IDE link, which ad doesn't have.",
-  "setup-default-sandbox": "/setup-default-sandbox isn't in ad yet. `ad sandbox setup --elevated` sets up the elevated sandbox (machine-wide: it also affects your own Codex).",
   experimental: true,
-  approve: true,
   memories: `/memories (Codex's own memories) isn't in ad yet; ad's memory is /memory. ${STOCK_UI}`,
   import: true,
   worktree: true,
   app: "/app opens the Codex Desktop app, which uses your own Codex home, not ad's, so it can't continue this conversation.",
-  recap: true,
   voice: true,
-  agents: true,
   tui: "/tui chooses the stock Codex UI's mode; ad has only its inline mode so far.",
-  mention: "Type @ in the prompt to mention a file.",
   daemon: "/daemon manages Codex's background server; ad runs its own engine and never uses it.",
-  "debug-config": true,
   pets: "ad doesn't draw terminal pets (they need Kitty or Sixel images).",
   apps: true,
   plugins: true,
   feedback: "For ad problems: https://github.com/pankaj-mahaur/Agent-Daemon/issues. The stock UI's /feedback (in /codex) uploads this whole conversation to OpenAI, including ad's memory context and /private prompts.",
-  rollout: true,
   "test-approval": "/test-approval is a Codex debug command.",
-  subagents: true,
   "debug-m-drop": "/debug-m-drop is a Codex debug command.",
   "debug-m-update": "/debug-m-update is a Codex debug command.",
 };
@@ -184,6 +188,7 @@ export function createApp({
   setInterval: setI = setInterval,
   clearInterval: clearI = clearInterval,
   armMs = ARM_MS,
+  platform = process.platform,
 }) {
   const st = session.state;
   const composer = createComposer({ history, now });
@@ -213,8 +218,10 @@ export function createApp({
   let lastCtrlC = -Infinity;
   let lastEsc = -Infinity;
   let attachments = []; // image paths for the next prompt
-  let pager = null; // {lines, top} while Ctrl+T shows the transcript
+  let pager = null; // {lines, top} while Ctrl+T shows the transcript; {agent, lines, top} watching a subagent
   let privateMode = false; // prompts wrapped in <private>…</private>
+  let recapping = null; // {threadId}: a /recap on its way
+  let sandboxSetup = false; // /setup-default-sandbox is running: prompts wait
   const learnedShown = new Set(); // learning ids already shown as a row
   let loopWasRunning = false;
   let turnStartedAt = null; // the running turn's start (for "Worked for")
@@ -243,6 +250,7 @@ export function createApp({
   }
 
   function resetThreadView() {
+    recapping = null; // a recap of the conversation left behind is dropped
     committed = new Set();
     streams = new Map();
     echoesShown = new Set();
@@ -678,9 +686,22 @@ export function createApp({
     if (pager && !modal) {
       // Ctrl+T: the whole transcript, paged inside the live region.
       const view = Math.max(1, rows - 2);
+      if (pager.agent) {
+        // A subagent, live: at the end it follows what comes in.
+        const atEnd = pager.top >= pager.lines.length - view;
+        pager.lines = agentLines(pager.agent, w);
+        if (atEnd) pager.top = Infinity;
+      }
       pager.top = Math.max(0, Math.min(pager.top, pager.lines.length - view));
-      const where = pager.lines.length ? `Transcript ${pager.top + 1}\u{2013}${Math.min(pager.lines.length, pager.top + view)} of ${pager.lines.length}  ` : "The transcript is empty  ";
-      lines.push(truncate([{ text: where, style: T.bold }, { text: "\u{2191}\u{2193} pgup pgdn home end \u{b7} q or esc closes", style: DIM }], w));
+      if (pager.agent) {
+        const ids = [...st.agents.keys()];
+        const a = st.agents.get(pager.agent);
+        const state = a?.closed ? "closed" : a?.running ? "running" : "idle";
+        lines.push(truncate([{ text: `${clean(agentName(a))} \u{b7} ${state} \u{b7} ${ids.indexOf(pager.agent) + 1} of ${ids.length}  `, style: T.bold }, { text: `${AGENT_KEYS} other agents \u{b7} \u{2191}\u{2193} pgup pgdn \u{b7} q or esc closes`, style: DIM }], w));
+      } else {
+        const where = pager.lines.length ? `Transcript ${pager.top + 1}\u{2013}${Math.min(pager.lines.length, pager.top + view)} of ${pager.lines.length}  ` : "The transcript is empty  ";
+        lines.push(truncate([{ text: where, style: T.bold }, { text: "\u{2191}\u{2193} pgup pgdn home end \u{b7} q or esc closes", style: DIM }], w));
+      }
       lines.push(...pager.lines.slice(pager.top, pager.top + view));
       renderer.frame({ lines, cursor: { row: 0, col: 0 } });
       return;
@@ -689,6 +710,7 @@ export function createApp({
     const cap = Math.max(3, Math.floor(rows * LIVE_SHARE));
     if (live.length > cap) live = [[{ text: `  \u{2026} ${live.length - cap + 1} more lines above`, style: DIM }], ...live.slice(-(cap - 1))];
     lines.push(...live);
+    if (recapping) lines.push([{ text: "\u{2022} ", style: DIM }, { text: "Generating conversation recap", style: T.bold }, { text: "\u{2026}", style: DIM }]);
     lines.push(...statusLines());
     if (side && !modal && !confirm) lines.push(...sidePanel(w, rows));
     if (st.engine.state === "crashed") {
@@ -741,6 +763,158 @@ export function createApp({
   function openPicker(kind, items, onSelect, { onCancel, ...opts } = {}) {
     popup = { kind, view: createPicker({ items, ...opts }), onSelect, onCancel };
     draw();
+  }
+
+  /* -------------------------------------------------------------- */
+  /* /setup-default-sandbox: Codex's elevated Windows sandbox (Part 10) */
+  /* -------------------------------------------------------------- */
+
+  // As Codex: on Windows, from a sandbox that isn't elevated yet, where
+  // requirements allow it. It is machine-wide (your own Codex uses it too),
+  // so ad asks first. On success this conversation gets Codex's "auto"
+  // permissions (edits here, asks for the rest), as Codex does.
+  async function setupSandbox() {
+    if (platform !== "win32") return info0("Codex uses the OS sandbox here (Seatbelt or Landlock): /setup-default-sandbox is only for Windows.");
+    if (sandboxSetup) return info0("Windows sandbox setup is still running. Restart Codex to retry.");
+    let mode;
+    let allowed;
+    try {
+      const [read, req] = await Promise.all([
+        session.engine.server.request("config/read", { includeLayers: false, cwd }),
+        session.engine.server.request("configRequirements/read", undefined),
+      ]);
+      mode = read?.config?.windows?.sandbox ?? null;
+      allowed = req?.requirements?.allowedWindowsSandboxImplementations ?? null;
+    } catch {
+      return warn("Could not read Windows sandbox configuration and requirements from the app server.");
+    }
+    if (mode === "elevated") return info0("The elevated sandbox is already set up.");
+    if (allowed && !allowed.includes("elevated")) return info0("That Windows sandbox option is disallowed by requirements.");
+    const yes = await openConfirm({
+      title: "Set up the elevated sandbox?",
+      body: "Windows asks once for administrator approval. Codex then creates sandbox users and firewall rules for this machine, so your own Codex uses them too.\nThis conversation then edits in this folder and asks for the rest.",
+      yes: "Yes, set it up",
+      no: "No, keep the current one",
+    });
+    if (!yes) return info0("Kept the current sandbox.");
+    sandboxSetup = true;
+    note = { level: "info", text: "Setting up sandbox... Hang tight, this may take a few minutes" };
+    draw();
+    try {
+      await setupWindowsSandbox(session.engine, { mode: "elevated", cwd });
+    } catch (err) {
+      return commitCell(renderNotice({ level: "error", message: `Windows sandbox setup failed: ${err?.message || "unknown error"}`, hint: "`ad sandbox setup` sets up the non-admin sandbox instead." }, { width: width() }));
+    } finally {
+      sandboxSetup = false;
+      note = null;
+      drawSoon();
+    }
+    session.setNextTurn(PERMISSION_PRESETS[1].value);
+    commitCell([[{ text: "\u{2022} ", style: DIM }, { text: "Sandbox ready" }], [{ text: "  Codex can now safely edit files and execute commands in your computer", style: DIM }]]);
+  }
+
+  /* -------------------------------------------------------------- */
+  /* /subagents: watch this conversation's subagents (Part 10)        */
+  /* -------------------------------------------------------------- */
+
+  // Codex's names for its rows: a path, "Nick [role]", "Nick", "[role]", else "Agent".
+  const agentName = (a) => a?.path?.trim() || (a?.nickname && a?.role ? `${a.nickname} [${a.role}]` : a?.nickname || (a?.role ? `[${a.role}]` : "Agent"));
+  const AGENT_KEYS = process.platform === "darwin" ? "\u{2325}\u{2190} \u{2325}\u{2192}" : "alt+\u{2190} alt+\u{2192}";
+  const isAgentKey = (ev) => ev.type === "key" && ev.alt && !ev.ctrl && (ev.name === "left" || ev.name === "right");
+
+  // A subagent's own transcript: what its thread did, as the main one draws it.
+  function agentLines(threadId, w) {
+    const out = [];
+    for (const it of st.items.values()) {
+      if (it.threadId !== threadId) continue;
+      const lines = renderCell(it, { width: w });
+      if (!lines.length) continue;
+      if (out.length) out.push([]);
+      out.push(...lines);
+    }
+    return out.length ? out : [[{ text: "No activity yet.", style: T.italicDim }]];
+  }
+
+  // Codex's Subagents picker: the main conversation first, then each subagent as first seen.
+  function pickAgent() {
+    if (!st.agents.size) {
+      if (settings?.codex?.get?.("features.multi_agent") === false) return enableSubagents();
+      return info0("No agents available yet.");
+    }
+    const items = [
+      { label: "Main [default]", hint: st.thread?.id ?? "", value: null },
+      ...[...st.agents].map(([id, a]) => ({ label: agentName(a), hint: `${id}${a.closed ? " \u{b7} closed" : a.running ? " \u{b7} running" : ""}`, value: id })),
+    ];
+    const keys = process.platform === "darwin" ? "\u{2325}\u{2190} previous, \u{2325}\u{2192} next" : "alt+\u{2190} previous, alt+\u{2192} next";
+    openPicker("subagents", items, (id) => watchAgent(id), { title: "Subagents", placeholder: `Select an agent to watch. ${keys}.`, initial: pager?.agent ?? null });
+  }
+
+  // Watches a subagent in the pager (live); the main conversation closes it.
+  function watchAgent(id) {
+    pager = id ? { agent: id, lines: [], top: Infinity } : null;
+    draw();
+  }
+
+  // The previous or next row (the main conversation included), round the ends.
+  function cycleAgent(dir) {
+    const rows = [null, ...st.agents.keys()];
+    const i = rows.indexOf(pager?.agent ?? null);
+    watchAgent(rows[(Math.max(0, i) + dir + rows.length) % rows.length]);
+  }
+
+  // Codex's prompt when subagents are off and there are none.
+  async function enableSubagents() {
+    const yes = await openConfirm({ title: "Enable subagents?", body: "Subagents are disabled in this TUI session.\nYes saves it for new threads; this thread is unchanged.", yes: "Yes, enable", no: "Not now" });
+    if (!yes) return;
+    try {
+      await settings.codex.set("features.multi_agent", true);
+    } catch (err) {
+      return warn(`Failed to save Subagents setting: ${err?.message ?? err}`);
+    }
+    warn("Subagents setting saved on the server for new threads. This thread is unchanged. Project or task settings may override it.");
+  }
+
+  /* -------------------------------------------------------------- */
+  /* /recap: Codex's catch-up on this conversation (Part 10)          */
+  /* -------------------------------------------------------------- */
+
+  // What /recap reads: the prompts and the answers (a /private prompt never leaves this conversation).
+  const recapMessages = () =>
+    rootItems()
+      .filter((it) => (it.kind === "userMessage" && !/<private>/.test(it.text ?? "")) || it.kind === "agentMessage")
+      .map((it) => ({ role: it.kind === "userMessage" ? "user" : "assistant", text: it.text ?? "" }));
+
+  // Codex's: a temporary read-only thread with no tools answers in its recap
+  // schema. A prompt sent, or another conversation, meanwhile drops it.
+  async function startRecap() {
+    if (recapping) return warn("A recap is already being generated.");
+    const history = st.thread ? recapHistory(recapMessages()) : "";
+    if (!history) return info0("There is no conversation history to recap.");
+    const me = { threadId: st.thread.id };
+    recapping = me;
+    draw();
+    let recap = null;
+    let why = null;
+    try {
+      const text = await session.engine.structuredRequest({
+        cwd,
+        model: st.config.model ?? undefined,
+        modelProvider: st.thread.modelProvider ?? undefined,
+        text: RECAP_PROMPT_PREFIX + history,
+        outputSchema: RECAP_SCHEMA,
+        config: TEMPORARY_THREAD_CONFIG,
+      });
+      recap = parseRecap(text);
+      if (!recap) why = "The answer wasn't a recap.";
+    } catch (err) {
+      why = err?.message ?? String(err);
+    }
+    if (recapping !== me) return;
+    recapping = null;
+    if (st.thread?.id !== me.threadId || turnActive()) return draw();
+    if (!recap) commitCell(renderNotice({ level: "error", message: "Could not generate a recap. Please try again.", hint: why }, { width: width() }));
+    else commitCell(renderRecap(recap, { width: width() }));
+    draw(); // the loading line goes
   }
 
   /* -------------------------------------------------------------- */
@@ -1012,8 +1186,8 @@ export function createApp({
     }
     if (tok.kind === "command") {
       const q = tok.text.slice(1).toLowerCase();
-      // Codex hides some of its commands from the popup (debug ones always, aliases like /quit until typed).
-      const hidden = (c) => c.source === "codex" && (CODEX_COMMANDS.get(c.name)?.popup === "hidden" || (CODEX_COMMANDS.get(c.name)?.popup === "unfiltered" && !q));
+      // Codex hides some of its commands from the popup (hidden and debug-build ones always, aliases like /quit until typed).
+      const hidden = (c) => popupHidden(c) || (c.source === "codex" && CODEX_COMMANDS.get(c.name)?.popup === "unfiltered" && !q);
       const items = SLASH_COMMANDS.filter((c) => c.name.startsWith(q) && !hidden(c)).map((c) => ({ label: `/${c.name}`, hint: c.desc, value: c.name }));
       popup = items.length ? { kind: "command", view: createPicker({ items, showQuery: false }), tok, onSelect: (name) => composer.replace(tok.start, tok.end, `/${name} `) } : null;
       return;
@@ -1082,7 +1256,7 @@ export function createApp({
   /* Commands                                                        */
   /* -------------------------------------------------------------- */
 
-  const info0 = (text) => commitCell(renderNotice({ level: "info", message: text }, { width: width() }));
+  const info0 = (text, hint) => commitCell(renderNotice({ level: "info", message: text, hint }, { width: width() }));
   const warn = (text) => commitCell(renderNotice({ level: "warn", message: text }, { width: width() }));
   const fail = (err) => warn(err?.message ?? String(err));
 
@@ -1091,7 +1265,7 @@ export function createApp({
       case "help":
         return commitCell([
           [{ text: "Commands", style: T.bold }],
-          ...SLASH_COMMANDS.filter((c) => c.name !== "exit").map((c) => truncate([{ text: `  /${c.name.padEnd(12)}`, style: T.code }, { text: c.desc, style: DIM }], width())),
+          ...SLASH_COMMANDS.filter((c) => c.name !== "exit" && !popupHidden(c)).map((c) => truncate([{ text: `  /${c.name.padEnd(12)}`, style: T.code }, { text: c.desc, style: DIM }], width())),
           [],
           ...renderShortcuts({ newline, keymap }, { width: width() }),
         ]);
@@ -1151,6 +1325,56 @@ export function createApp({
         return commitCell(renderKeymap(keymap, { width: width(), label: keyLabel }));
       case "pwd":
         return arg ? warn("Usage: /pwd") : info0(`Current working directory: ${clean(cwd)}`);
+      case "debug-config": {
+        // Codex prints its in-process config; ad asks its Codex for the same (layers, requirements).
+        const [read, req] = await Promise.all([
+          session.engine.server.request("config/read", { includeLayers: true, cwd }),
+          session.engine.server.request("configRequirements/read", undefined),
+        ]);
+        return commitCell(renderDebugConfig({ layers: read?.layers, requirements: req?.requirements }, { width: width() }));
+      }
+      case "recap":
+        return startRecap();
+      case "subagents":
+        return pickAgent();
+      case "setup-default-sandbox":
+        return setupSandbox();
+      case "approve": {
+        // Codex's: the thread's recent auto-review denials; one picked is approved for one retry.
+        if (!st.denials?.length) return info0("No recent auto-review denials in this thread.", "Denials are recorded after auto-review rejects an action.");
+        const items = st.denials.map((d) => ({ label: denialSummary(d.action), hint: d.review?.rationale || "Auto-review did not include a rationale", value: d.reviewId }));
+        return openPicker(
+          "approve",
+          items,
+          async (id) => {
+            try {
+              await session.approveDenial(id);
+            } catch (err) {
+              return fail(err);
+            }
+            info0("Approval recorded for one retry of the selected auto-review denial.", "The model will see the approval context; the retry still goes through auto-review.");
+            drawSoon();
+          },
+          { title: "Auto-review Denials", placeholder: "Select a denied action to approve." },
+        );
+      }
+      case "rollout":
+        // Codex's debug-build command: the conversation's rollout file (none for an ephemeral one).
+        return info0(st.thread?.path ? `Current rollout path: ${clean(st.thread.path)}` : "Rollout path is not available yet.");
+      case "agents":
+        // Codex's answer when it runs its own server, as ad does (ad never starts Codex's shared one).
+        return info0(
+          "Shared agents unavailable",
+          "This session isn\u{2019}t connected to a shared background server. /subagents switches between this conversation's subagents; /team shows ad's team board.",
+        );
+      case "mention": {
+        // Codex's /mention: an "@" at the cursor, and the file picker for it.
+        const { text, cursor } = composer;
+        const at = cursor > 0 && !/\s/.test(text[cursor - 1]) ? " @" : "@";
+        composer.set(text.slice(0, cursor) + at + text.slice(cursor), cursor + at.length);
+        syncTokenPopup();
+        return draw();
+      }
       case "quit":
       case "exit":
         return quit("command");
@@ -1539,6 +1763,11 @@ export function createApp({
       if (!composer.text) composer.set(text);
       return warn("Changing directories: send it once that's done.");
     }
+    if (sandboxSetup) {
+      if (!composer.text) composer.set(text);
+      return warn("Input disabled until setup completes.");
+    }
+    recapping = null; // as in Codex, a prompt drops a recap on its way
     turnStartedAt ??= now();
     try {
       const images = attachments;
@@ -1698,6 +1927,10 @@ export function createApp({
       return draw();
     }
     if (keymap.is("global", "clear_terminal", ev)) return void renderer.redraw();
+    if (pager?.agent && !modal && isAgentKey(ev)) {
+      cycleAgent(ev.name === "left" ? -1 : 1);
+      return draw();
+    }
     if (pager && !modal) {
       const view = Math.max(1, height() - 2);
       const k = (action) => keymap.is("pager", action, ev);
@@ -1711,6 +1944,11 @@ export function createApp({
       else if (k("jump_top")) pager.top = 0;
       else if (k("jump_bottom")) pager.top = Infinity;
       if (pager) pager.top = Math.max(0, Math.min(pager.top, pager.lines.length - view));
+      return draw();
+    }
+    // Codex's fixed agent keys: from an empty prompt, Alt+←/→ watch a subagent.
+    if (isAgentKey(ev) && !modal && !confirm && !popup && !overlay && !composer.text && side?.focus !== "side" && st.agents.size) {
+      cycleAgent(ev.name === "left" ? -1 : 1);
       return draw();
     }
     if (keymap.is("global", "open_transcript", ev) && !modal) {

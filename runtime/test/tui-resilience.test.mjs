@@ -112,7 +112,8 @@ test("every Codex command has a decision in ad: it runs, or ad says why not (nev
       else assert.ok(said && said.length > 10, `/${n} has an answer`);
     }
   }
-  assert.equal(notInAd("recap"), "/recap isn't in ad yet. /codex opens the stock Codex UI on this conversation.");
+  assert.equal(notInAd("import"), "/import isn't in ad yet. /codex opens the stock Codex UI on this conversation.");
+  for (const n of ["recap", "subagents", "agents", "approve", "setup-default-sandbox", "mention", "debug-config", "rollout"]) assert.equal(notInAd(n), null, `ad runs /${n} (Part 10)`);
   assert.equal(notInAd("plan"), null, "ad runs /plan (Part 4)");
   assert.equal(notInAd("clean"), null, "ad runs /stop, and its alias /clean (Part 5)");
   assert.equal(notInAd("pet"), notInAd("pets"), "an alias answers as its command does");

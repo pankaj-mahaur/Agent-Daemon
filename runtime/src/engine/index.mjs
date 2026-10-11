@@ -488,6 +488,37 @@ export class Engine extends EventEmitter {
     }
   }
 
+  /**
+   * Codex's temporary structured request (its /recap): an ephemeral thread,
+   * read-only, approvals never, every tool off (`config`, dotted keys, plus
+   * every MCP server off), one turn with an output schema, then unsubscribed.
+   * → the answer's text. One deadline for all of it. Stable fields only:
+   * Codex's own also sends experimental ones that lock the thread down further.
+   */
+  async structuredRequest({ cwd, model, modelProvider, text, outputSchema, config = {}, timeoutMs = 30_000 }) {
+    const deadline = Date.now() + timeoutMs;
+    const left = () => Math.max(1, deadline - Date.now());
+    const read = await this.server.request("config/read", { includeLayers: false, cwd }, { timeoutMs: left() });
+    const overrides = { ...config };
+    for (const id of Object.keys(read?.config?.mcp_servers ?? {})) overrides[`mcp_servers.${id}.enabled`] = false;
+    const r = await this.server.request(
+      "thread/start",
+      clean({ model, modelProvider, cwd, approvalPolicy: "never", sandbox: "read-only", ephemeral: true, threadSource: "system", config: overrides }),
+      { timeoutMs: left() },
+    );
+    const threadId = r.thread.id;
+    try {
+      if (r.sandbox?.type !== "readOnly") throw new Error("temporary structured thread did not start with read-only permissions");
+      const t = await this.turn({ threadId, input: [{ type: "text", text, text_elements: [] }], outputSchema, timeoutMs: left() });
+      if (t.status !== "completed") throw new Error(`temporary structured turn ended with status ${t.status}${t.error?.message ? `: ${t.error.message}` : ""}`);
+      if (!t.output) throw new Error("temporary structured turn completed without a response");
+      if (Buffer.byteLength(t.output, "utf8") > 8192) throw new Error("temporary structured response exceeds 8192 bytes");
+      return t.output;
+    } finally {
+      this.server.request("thread/unsubscribe", { threadId }).catch((err) => this.emit("warning", `could not unsubscribe a temporary thread: ${err.message}`));
+    }
+  }
+
   close() {
     return this.server?.close();
   }

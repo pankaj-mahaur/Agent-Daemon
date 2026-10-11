@@ -312,3 +312,37 @@ test("S1: Codex's own TUI settings round-trip through config/batchWrite and conf
     assert.equal((await server.request("config/read", {})).config.tui?.status_line ?? null, null, "null removes it (back to the default)");
   });
 });
+
+// codex-parity-2 Part 10.
+test("S7: thread/approveGuardianDeniedAction takes ad's core GuardianAssessmentEvent for every action kind; a v2-shaped one is refused", opts, async () => {
+  const { guardianDenialEvent } = await import("../src/engine/codex/events.mjs");
+  await withRealEngine(async ({ server, cwd }) => {
+    const { thread } = await server.request("thread/start", { cwd });
+    const base = { threadId: thread.id, turnId: "turn-x", targetItemId: null, startedAtMs: 1, completedAtMs: 2, decisionSource: "agent", review: { status: "denied", riskLevel: "high", userAuthorization: "low", rationale: "risky" } };
+    const actions = [
+      { type: "command", source: "shell", command: "rm -rf build", cwd },
+      { type: "execve", source: "unifiedExec", program: "rm", argv: ["rm", "-rf", "build"], cwd },
+      { type: "applyPatch", cwd, files: [join(cwd, "a.txt")] },
+      { type: "networkAccess", target: "https://example.com", host: "example.com", protocol: "https", port: 443 },
+      { type: "mcpToolCall", server: "docs", toolName: "search", connectorId: null, connectorName: null, toolTitle: null },
+      { type: "writeStdin", approvalId: "a1", processId: "p1", stdin: "y\n", cwd },
+      { type: "requestPermissions", reason: null, permissions: { network: { enabled: true }, fileSystem: { read: [cwd], write: null } } },
+    ];
+    for (const action of actions) {
+      const event = guardianDenialEvent({ ...base, reviewId: `review-${action.type}`, action });
+      assert.deepEqual(await server.request("thread/approveGuardianDeniedAction", { threadId: thread.id, event }), {}, action.type);
+    }
+    await assert.rejects(server.request("thread/approveGuardianDeniedAction", { threadId: thread.id, event: { reviewId: "x", review: base.review, action: actions[0] } }), /invalid Guardian denial event/);
+  });
+});
+
+test("/recap's temporary thread: Codex takes its tool-off config and starts it read-only and ephemeral", opts, async () => {
+  const { TEMPORARY_THREAD_CONFIG } = await import("../src/tui/recap.mjs");
+  await withRealEngine(async ({ server, cwd }) => {
+    const r = await server.request("thread/start", { cwd, approvalPolicy: "never", sandbox: "read-only", ephemeral: true, threadSource: "system", config: { ...TEMPORARY_THREAD_CONFIG } });
+    assert.equal(r.sandbox?.type, "readOnly");
+    assert.equal(r.thread.ephemeral, true);
+    assert.equal(r.thread.path ?? null, null, "an ephemeral thread has no rollout file");
+    assert.equal((await server.request("thread/unsubscribe", { threadId: r.thread.id })).status, "unsubscribed");
+  });
+});

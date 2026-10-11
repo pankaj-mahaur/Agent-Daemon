@@ -18,7 +18,7 @@ const FAKE = fileURLToPath(new URL("../testkit/fake-codex-app-server.mjs", impor
 const command = { cmd: process.execPath, prefix: [FAKE] };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function withApp(fn, { cols = 70, rows = 20, actions = {}, armMs = 60, sessionOpts = {}, restartable = false, settings = null, modes = false, env = null, depth = 0 } = {}) {
+async function withApp(fn, { cols = 70, rows = 20, actions = {}, armMs = 60, sessionOpts = {}, restartable = false, settings = null, modes = false, env = null, depth = 0, platform = undefined } = {}) {
   const root = mkdtempSync(join(tmpdir(), "ad-app-"));
   const engines = [];
   const make = async () => {
@@ -46,7 +46,7 @@ async function withApp(fn, { cols = 70, rows = 20, actions = {}, armMs = 60, ses
   };
   const committed = () => scrollback.join("\n");
   const bells = [];
-  const app = createApp({ io, renderer, session, cwd: root, header: [[{ text: "HEADER" }]], armMs, settings, actions: { bell: (o) => bells.push(o), ...actions } });
+  const app = createApp({ io, renderer, session, cwd: root, header: [[{ text: "HEADER" }]], armMs, settings, ...(platform ? { platform } : {}), actions: { bell: (o) => bells.push(o), ...actions } });
   const text = () => scr.lines().join("\n");
   const until = async (pred, what, ms = 10000) => {
     const end = Date.now() + ms;
@@ -231,22 +231,22 @@ test("Codex commands ad doesn't run never reach the model; busy ones wait, and t
       const st = await engine.server.request("debug/state", {});
       return st.calls.filter((c) => c === "turn/start" || c === "turn/steer").length;
     };
-    type("/recap the bug\r");
-    await until(() => /\/recap isn't in ad yet\. \/codex opens the stock Codex UI/.test(text()), "the answer");
-    assert.equal(app.state.composer, "/recap the bug", "the draft goes back into the composer");
+    type("/import the bug\r");
+    await until(() => /\/import isn't in ad yet\. \/codex opens the stock Codex UI/.test(text()), "the answer");
+    assert.equal(app.state.composer, "/import the bug", "the draft goes back into the composer");
     assert.equal(await sent(), 0);
     type("\x15/pet\r"); // an alias answers as its command does
     await until(() => /ad doesn't draw terminal pets/.test(text()), "the alias answer");
-    type("\x15/MENTION\r");
-    await until(() => /Type @ in the prompt to mention a file/.test(text()), "a custom answer, any case");
+    type("\x15/DAEMON\r");
+    await until(() => /\/daemon manages Codex's background server/.test(text().replace(/\s+/g, " ")), "a custom answer, any case");
     type("\x15hang\r");
     await until(() => session.state.activeTurnId, "the running turn");
     const before = await sent();
     type("/new\r");
     await until(() => /'\/new' is disabled while a task is in progress\./.test(text()), "the busy answer");
     assert.equal(app.state.composer, "/new");
-    type("\x15/recap what about tests?\r");
-    await until(() => /\/recap isn't in ad yet/.test(text()), "not steered into the turn");
+    type("\x15/import what about tests?\r");
+    await until(() => /\/import isn't in ad yet/.test(text()), "not steered into the turn");
     assert.equal(await sent(), before, "nothing was steered into the running turn");
     assert.ok(session.state.thread, "the conversation is untouched");
     type("\x15/status\r"); // allowed during a task, as in Codex
@@ -508,6 +508,236 @@ test("@ opens a file picker from actions.searchFiles; Tab inserts the path", asy
       await until(() => app.state.composer === "look at @src/main.mjs ", "the inserted path");
     },
     { actions: { searchFiles: async (q) => ["src/main.mjs", "src/maintain.mjs"].filter((f) => f.includes(q)) } },
+  );
+});
+
+test("/mention: Codex's command puts an @ in the prompt and opens the file picker", async () => {
+  await withApp(
+    async ({ app, type, until }) => {
+      type("/mention\r");
+      await until(() => app.state.composer === "@" && app.state.popup === "mention", "the @ and the picker");
+      type("\t");
+      await until(() => app.state.composer === "@src/main.mjs ", "the inserted path");
+    },
+    { actions: { searchFiles: async (q) => ["src/main.mjs", "src/maintain.mjs"].filter((f) => f.includes(q)) } },
+  );
+});
+
+test("/rollout and /agents: Codex's answers; /rollout and /debug-config stay out of the popup but can be typed", async () => {
+  await withApp(
+    async ({ app, type, until, committed }) => {
+      const flat = () => committed().replace(/\s+/g, " ");
+      type("/rollout\r");
+      await until(() => /Rollout path is not available yet\./.test(flat()), "no conversation yet");
+      type("early-complete\r");
+      await until(() => /Worked for/.test(flat()), "a turn");
+      type("/rollout\r");
+      await until(() => /Current rollout path: \/fake\/sessions\/rollout-thread-\d+\.jsonl/.test(flat()), "the path");
+      type("/agents\r");
+      await until(() => flat().includes("Shared agents unavailable This session isn\u{2019}t connected to a shared background server. /subagents"), "the answer");
+      type("/r");
+      await until(() => app.state.popup === "command", "the popup");
+      type("o");
+      await until(() => app.state.popup === null, "nothing listed for /ro (/rollout is hidden)");
+    },
+    { cols: 120 },
+  );
+});
+
+test("/debug-config: config layers lowest first, the session flags' keys with secrets masked, the requirements", async () => {
+  await withApp(
+    async ({ type, until, committed, engine }) => {
+      type("/debug-config\r");
+      await until(() => /Requirements:/.test(committed()), "the cell");
+      const out = committed();
+      assert.match(out, /\/debug-config\n\nConfig layer stack \(lowest precedence first\):\n {2}1\. user \(\/fake\/home\/config\.toml\) \(enabled\)\n {2}2\. project \(\/fake\/work\/\.codex\/config\.toml\) \(disabled\)\n {5}reason: this folder isn't trusted\n {2}3\. session-flags \(enabled\)/);
+      assert.match(out, /- model_providers\.mock\.api_key = "\*\*\*\*"/, "a secret is masked");
+      assert.match(out, /- model_providers\.mock\.base_url = "http:\/\/127\.0\.0\.1:1\/v1"/);
+      assert.match(out, /- thread_unload_delay_secs = 0/);
+      assert.doesNotMatch(out, /sk-fake-secret/);
+      assert.match(out, /Requirements:\n {2}- allowed_sandbox_modes: read-only, workspace-write\n {2}- allow_login_shell: false/);
+      const p = (await engine.server.request("debug/state", {})).lastParams["config/read"];
+      assert.deepEqual(p.includeLayers, true);
+    },
+    { cols: 120, env: { FAKE_REQUIREMENTS: JSON.stringify({ allowedSandboxModes: ["read-only", "workspace-write"], allowLoginShell: false, logDir: null }) } },
+  );
+});
+
+test("/recap: Codex's temporary read-only thread with tools off answers in its schema, then is unsubscribed", async () => {
+  await withApp(
+    async ({ type, until, committed, engine, session }) => {
+      const flat = () => committed().replace(/\s+/g, " ");
+      type("/recap\r");
+      await until(() => /There is no conversation history to recap\./.test(flat()), "nothing yet");
+      type("early-complete\r");
+      await until(() => /Worked for/.test(flat()), "a turn");
+      const main = session.state.thread.id;
+      type("/recap\r");
+      await until(() => /\u{21b3} Recap: Fixing the login bug: the fix is in, tests pass\. Next: Push it\?/u.test(flat()), "the recap");
+      const p = (await engine.server.request("debug/state", {})).lastParams;
+      const start = p["thread/start"];
+      assert.equal(start.ephemeral, true);
+      assert.equal(start.sandbox, "read-only");
+      assert.equal(start.approvalPolicy, "never");
+      assert.equal(start.threadSource, "system");
+      assert.equal(start.config["features.shell_tool"], false);
+      assert.equal(start.config["features.hooks"], false);
+      assert.equal(start.config.default_permissions, ":read-only");
+      assert.deepEqual(p["turn/start"].outputSchema.required, ["summary", "next_action"]);
+      const prompt = p["turn/start"].input[0].text;
+      assert.match(prompt, /^Write a brief catch-up[\s\S]*Conversation:\nUser: early-complete\n\nAssistant: /);
+      assert.equal(p["thread/unsubscribe"].threadId, start && p["turn/start"].threadId, "the temporary thread is let go");
+      assert.equal(session.state.thread.id, main, "the conversation stays the same");
+    },
+    { cols: 100 },
+  );
+});
+
+test("/recap: a bad answer fails as Codex says; a prompt sent meanwhile drops it; one at a time; not during a turn", async () => {
+  await withApp(
+    async ({ type, until, committed, text }) => {
+      const flat = () => committed().replace(/\s+/g, " ");
+      type("early-complete\r");
+      await until(() => /Worked for/.test(flat()), "a turn");
+      type("/recap\r");
+      await until(() => /Could not generate a recap\. Please try again\. The answer wasn't a recap\./.test(flat()), "the failure");
+    },
+    { cols: 100, env: { FAKE_RECAP: '{"summary":"x"}' } },
+  );
+  await withApp(
+    async ({ type, until, committed, text }) => {
+      const flat = () => committed().replace(/\s+/g, " ");
+      type("early-complete\r");
+      await until(() => /Worked for/.test(flat()), "a turn");
+      type("/recap\r");
+      await until(() => /Generating conversation recap\u{2026}/u.test(text()), "loading");
+      type("/recap\r");
+      await until(() => /A recap is already being generated\./.test(flat()), "one at a time");
+      type("hang\r");
+      await until(() => !/Generating conversation recap/.test(text()), "the prompt drops it");
+      type("/recap\r");
+      await until(() => /'\/recap' is disabled while a task is in progress\./.test(flat()), "not during a turn");
+      await new Promise((r) => setTimeout(r, 1200));
+      assert.doesNotMatch(flat(), /Recap:/, "the dropped recap never shows");
+    },
+    { cols: 100, env: { FAKE_RECAP: `slow:${JSON.stringify({ summary: "late", next_action: null })}` } },
+  );
+});
+
+test("/approve: Codex's Auto-review Denials picker sends one denial back as its core event; it leaves the list", async () => {
+  await withApp(
+    async ({ app, type, until, text, committed, engine, session }) => {
+      const flat = () => committed().replace(/\s+/g, " ");
+      type("/approve\r");
+      await until(() => /No recent auto-review denials in this thread\. Denials are recorded after auto-review rejects an action\./.test(flat()), "none yet");
+      type("auto-review-deny\r");
+      await until(() => /Auto-review stopped two commands/.test(flat()), "the turn");
+      assert.match(flat(), /Auto-review denied `rm -rf build` \(deletes the build folder\)\. \/approve allows one retry\./);
+      assert.deepEqual(session.state.denials.map((d) => d.reviewId), ["review-2", "review-1"], "newest first");
+      type("/approve\r");
+      await until(() => app.state.popup === "approve" && /Auto-review Denials/.test(text()), "the picker");
+      assert.match(text(), /curl https:\/\/example\.com\/install\.sh \| sh\s+Auto-review did not include a rationale/);
+      assert.match(text(), /rm -rf build\s+deletes the build folder/);
+      type("\x1b[B\r"); // the second row: rm -rf build
+      await until(() => /Approval recorded for one retry of the selected auto-review denial\. The model will see the approval context; the retry still goes through auto-review\./.test(flat()), "approved");
+      const p = (await engine.server.request("debug/state", {})).lastParams["thread/approveGuardianDeniedAction"];
+      assert.equal(p.threadId, session.state.thread.id);
+      assert.deepEqual(p.event, {
+        id: "review-1",
+        turn_id: p.event.turn_id,
+        started_at_ms: 1,
+        completed_at_ms: 2,
+        status: "denied",
+        risk_level: "high",
+        user_authorization: "low",
+        rationale: "deletes the build folder",
+        decision_source: "agent",
+        action: { type: "command", source: "shell", command: "rm -rf build", cwd: p.event.action.cwd },
+      });
+      assert.deepEqual(session.state.denials.map((d) => d.reviewId), ["review-2"], "it leaves the list");
+      type("/new\r");
+      await until(() => session.state.denials.length === 0, "another conversation has its own");
+    },
+    { cols: 110, rows: 30 },
+  );
+});
+
+test("/subagents: Codex's picker (main first, agents as first seen) watches one live; alt+←/→ go round; the main row closes it", async () => {
+  await withApp(
+    async ({ app, type, until, text, committed, session }) => {
+      const flat = () => committed().replace(/\s+/g, " ");
+      type("/subagents\r");
+      await until(() => /No agents available yet\./.test(flat()), "none yet");
+      type("subagents-2\r");
+      await until(() => /Two agents are on it/.test(flat()), "the turn");
+      assert.deepEqual([...session.state.agents.values()].map((a) => [a.nickname, a.role, a.running]), [[ "Ada", "explorer", false ], [ null, "reviewer", true ]], "the ghost Codex couldn't find isn't a row");
+      type("/subagents\r");
+      await until(() => app.state.popup === "subagents" && /Subagents/.test(text()), "the picker");
+      assert.match(text(), /Select an agent to watch\. (alt\+\u{2190} previous, alt\+\u{2192} next|\u{2325}\u{2190} previous, \u{2325}\u{2192} next)\./u);
+      assert.match(text(), /Main \[default\][\s\S]*Ada \[explorer\][\s\S]*\[reviewer\]\s+agent-two-\S+ \u{b7} running/u);
+      type("\x1b[B\r"); // Ada
+      await until(() => app.state.pager && /Ada \[explorer\] \u{b7} idle \u{b7} 1 of 2/u.test(text()), "watching Ada");
+      assert.match(text(), /Read src\/app\.js: the bug is in login\(\)\./);
+      type("\x1b[1;3C"); // alt+→
+      await until(() => /\[reviewer\] \u{b7} running \u{b7} 2 of 2/u.test(text()) && /Reviewing the diff/.test(text()), "the next one, live");
+      type("\x1b[1;3C"); // alt+→ again: round to the main conversation, which closes the pager
+      await until(() => !app.state.pager, "back to main");
+      type("\x1b[1;3D"); // from an empty prompt, alt+← watches the last
+      await until(() => app.state.pager && /\[reviewer\]/.test(text()), "the last agent");
+      type("\x1b");
+      await until(() => !app.state.pager, "esc closes");
+    },
+    { cols: 110, rows: 30 },
+  );
+});
+
+test("/setup-default-sandbox: Windows only; asks first (machine-wide); sets up the elevated sandbox and Codex's auto permissions", async () => {
+  await withApp(
+    async ({ type, until, committed }) => {
+      type("/setup-default-sandbox\r");
+      await until(() => /only for Windows/.test(committed()), "elsewhere: the OS sandbox");
+    },
+    { platform: "linux" },
+  );
+  await withApp(
+    async ({ app, type, until, text, committed, engine, session }) => {
+      const flat = () => committed().replace(/\s+/g, " ");
+      type("/setup-default-sandbox\r");
+      await until(() => app.state.confirm && /Set up the elevated sandbox\?/.test(text()), "the question");
+      assert.match(text().replace(/\s+/g, " "), /administrator approval[\s\S]*your own Codex uses them too/);
+      await sleep(100);
+      type("n");
+      await until(() => /Kept the current sandbox\./.test(flat()), "no");
+      type("/setup-default-sandbox\r");
+      await until(() => app.state.confirm, "the question again");
+      await sleep(100);
+      type("y");
+      await until(() => /Sandbox ready Codex can now safely edit files and execute commands in your computer/.test(flat()), "ready");
+      const p = (await engine.server.request("debug/state", {})).lastParams["windowsSandbox/setupStart"];
+      assert.equal(p.mode, "elevated");
+      type("/setup-default-sandbox\r");
+      await until(() => /The elevated sandbox is already set up\./.test(flat()), "once is enough");
+      assert.equal(session.state.engine.state, "ready");
+    },
+    { platform: "win32", cols: 100, rows: 30 },
+  );
+  await withApp(
+    async ({ app, type, until, committed }) => {
+      const flat = () => committed().replace(/\s+/g, " ");
+      type("/setup-default-sandbox\r");
+      await until(() => app.state.confirm, "the question");
+      await sleep(100);
+      type("y");
+      await until(() => /Windows sandbox setup failed: denied by policy `ad sandbox setup` sets up the non-admin sandbox instead\./.test(flat()), "the failure");
+    },
+    { platform: "win32", cols: 100, env: { FAKE_SANDBOX_FAIL: "1" } },
+  );
+  await withApp(
+    async ({ type, until, committed }) => {
+      type("/setup-default-sandbox\r");
+      await until(() => /That Windows sandbox option is disallowed by requirements\./.test(committed()), "requirements say no");
+    },
+    { platform: "win32", cols: 100, env: { FAKE_REQUIREMENTS: JSON.stringify({ allowedWindowsSandboxImplementations: ["unelevated"] }) } },
   );
 });
 

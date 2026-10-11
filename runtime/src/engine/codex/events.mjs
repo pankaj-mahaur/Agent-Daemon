@@ -11,6 +11,7 @@
 // with the reason it is ignored; the exhaustiveness test checks both against
 // protocol-notifications.json for the pinned Codex.
 
+import { pathToFileURL } from "node:url";
 import { IGNORED_NOTIFICATIONS } from "./surface.mjs";
 
 /**
@@ -136,13 +137,14 @@ export const NOTIFICATION_HANDLERS = {
   warning: (p) => [notice(p, "warn", "warning", p.message)],
   guardianWarning: (p) => [notice(p, "warn", "guardian", p.message)],
   // [UNSTABLE upstream] Codex's automatic approval reviewer. Its verdicts show
-  // as notices; the start is silent (the completion says it all).
+  // as notices; the start is silent (the completion says it all). A denial
+  // keeps the review (`details.review`): /approve sends it back for one retry.
   "item/autoApprovalReview/started": () => [],
   "item/autoApprovalReview/completed": (p) => {
     const r = p.review ?? {};
     const what = autoReviewAction(p.action);
     if (r.status === "approved") return [notice(p, "info", "autoReview.approved", `Auto-review approved${what ? `: ${what}` : ""}.`)];
-    if (r.status === "denied") return [notice(p, "warn", "autoReview.denied", `Auto-review denied${what ? ` ${what}` : ""}${r.rationale ? ` (${r.rationale})` : ""}. To allow it anyway, use /codex.`)];
+    if (r.status === "denied") return [notice(p, "warn", "autoReview.denied", `Auto-review denied${what ? ` ${what}` : ""}${r.rationale ? ` (${r.rationale})` : ""}. /approve allows one retry.`, { review: p })];
     if (r.status === "timedOut" || r.status === "aborted") return [notice(p, "warn", `autoReview.${r.status}`, `Auto-review ${r.status === "timedOut" ? "timed out" : "was aborted"}${what ? ` for ${what}` : ""}.`)];
     return [notice(p, "info", "autoReview", `Auto-review finished${what ? ` for ${what}` : ""}.`)];
   },
@@ -171,6 +173,35 @@ function autoReviewAction(a) {
   if (a.type === "writeStdin") return "input to a running command";
   if (a.type === "requestPermissions") return "extra permissions";
   return "";
+}
+
+// Codex's /approve sends a denial back as its core GuardianAssessmentEvent
+// (protocol/src/approvals.rs at the pin): snake_case keys and enum values,
+// the action tagged by a snake_case "type", absent fields left out.
+const snake = (s) => String(s).replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
+const present = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== null && v !== undefined));
+
+/** An item/autoApprovalReview/completed notification's params → thread/approveGuardianDeniedAction's `event`. */
+export function guardianDenialEvent(p) {
+  const r = p?.review ?? {};
+  const { type, ...fields } = p?.action ?? {};
+  const action = { type: snake(type ?? "") };
+  const snakeKeys = (v) => (Array.isArray(v) ? v.map(snakeKeys) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [snake(k), snakeKeys(x)])) : v);
+  for (const [k, v] of Object.entries(fields)) if (v !== null && v !== undefined) action[snake(k)] = k === "source" || k === "protocol" ? snake(v) : snakeKeys(v);
+  // write_stdin's cwd is a path URI in core (S7: a plain "C:\…" is refused, a file: URL accepted).
+  if (action.type === "write_stdin" && typeof action.cwd === "string" && !/^[a-z][\w+.-]+:\/\//i.test(action.cwd)) action.cwd = pathToFileURL(action.cwd).href;
+  return present({
+    id: p?.reviewId,
+    turn_id: p?.turnId,
+    started_at_ms: p?.startedAtMs,
+    completed_at_ms: p?.completedAtMs,
+    status: r.status == null ? null : snake(r.status),
+    risk_level: r.riskLevel,
+    user_authorization: r.userAuthorization,
+    rationale: r.rationale,
+    decision_source: p?.decisionSource == null ? null : snake(p.decisionSource),
+    action,
+  });
 }
 
 /** Notifications handled on purpose with no event (the next one carries the news). */

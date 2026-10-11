@@ -319,7 +319,32 @@ const NOTICE = {
 
 export function renderNotice(notice, { width = 80 } = {}) {
   const n = NOTICE[notice?.level] ?? NOTICE.info;
-  return wrapPrefixed([{ text: clean(notice?.message), style: n.style }], width, [{ text: `${n.mark} `, style: n.style }], [{ text: "  " }]);
+  // A hint follows the message after a space, dim (Codex's info cells).
+  const hint = notice?.hint ? [{ text: ` ${clean(notice.hint)}`, style: S.dim }] : [];
+  return wrapPrefixed([{ text: clean(notice?.message), style: n.style }, ...hint], width, [{ text: `${n.mark} `, style: n.style }], [{ text: "  " }]);
+}
+
+/**
+ * Codex's recap cell: "  ↳ Recap: " and the summary with a hanging indent,
+ * then "Next: " and the action when there is one; all italic and dimmed.
+ * Narrower than the prefix: "↳ Recap:" alone, then the text unindented.
+ */
+export function renderRecap({ summary, next }, { width = 80 } = {}) {
+  const body = { ...T.italicDim };
+  const label = { ...T.italicDim, bold: true };
+  const nextLabel = { ...T.accent, italic: true, dim: true };
+  const prefix = [{ text: "  " }, { text: "\u{21b3} ", style: body }, { text: "Recap: ", style: label }];
+  const pw = lineWidth(prefix);
+  const text = (t) => [{ text: clean(t).replace(/\s*\n\s*/g, " "), style: body }];
+  if (width - 2 <= pw) {
+    const out = [[{ text: "\u{21b3} ", style: body }, { text: "Recap:", style: label }], ...wrap(text(summary), Math.max(1, width))];
+    if (next) out.push(...wrap([{ text: "Next: ", style: nextLabel }, ...text(next)], Math.max(1, width)));
+    return out.map((l) => normalize(l));
+  }
+  const indent = [{ text: " ".repeat(pw) }];
+  const out = wrapPrefixed(text(summary), width, prefix, indent);
+  if (next) out.push(...wrapPrefixed([{ text: "Next: ", style: nextLabel }, ...text(next)], width, indent, indent));
+  return out;
 }
 
 const AD_ROWS = {

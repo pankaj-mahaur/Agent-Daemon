@@ -27,6 +27,8 @@ export const T = deepFreeze({
   warning: { fg: "yellow" },
   // Codex's plan mode: the footer's mode chip and the prompt.
   planMode: { fg: "magenta" },
+  // The command a cell answers, as Codex heads them ("/debug-config").
+  commandEcho: { fg: "magenta" },
   // Codex's Vim mode indicator.
   vimNormal: { fg: "magenta" },
   vimInsert: { fg: "green" },

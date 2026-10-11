@@ -142,6 +142,10 @@ function liveScript(body) {
   const lastUser = input.findLastIndex((i) => i?.type === "message" && i.role === "user");
   const output = input.slice(lastUser + 1).findLast((i) => i?.type === "function_call_output");  if (output) return [ev.created(), ev.message(`done after ${output.call_id}`), ev.completed()];
   {
+    // Part 10: Codex's recap prompt answers in its schema; a parent spawns a real subagent.
+    if (text.startsWith("Write a brief catch-up")) return [ev.created(), ev.message(JSON.stringify({ summary: "Live recap: the first turn answered pong.", next_action: null })), ev.completed()];
+    if (text.includes("CHILDTASK")) return [ev.created(), ev.message("child read math.js"), ev.completed()];
+    if (text.includes("SPAWNONE")) return [ev.created(), ev.functionCall("call-spawn", "spawn_agent", { message: "CHILDTASK read math.js" }, "multi_agent_v1"), ev.completed()];
     if (text.includes("STEERED")) return [ev.created(), ev.message("steer received"), ev.completed()];
     if (text.includes("QUEUED")) return [ev.created(), ev.message("queue ran"), ev.completed()];
     if (text.includes("EDITMATH")) {
@@ -714,6 +718,51 @@ test("Part 9 live: /theme saves tui.theme through the real Codex, and code is co
     assert.ok(/\x1b\[(?:[0-9;]*;)?38;(?:2;203;166;247|5;\d+)m/.test(t.raw()), "the preview's code is coloured by the theme");
     t.type("\x1b");
     await settle(200);
+
+    t.type("\x03");
+    await settle(200);
+    t.type("\x03");
+    assert.equal((await t.exit).exitCode, 0);
+  } finally {
+    for (const k of launched.splice(0)) k();
+    await mock.close();
+    await removeWithRetry(w.root);
+  }
+});
+
+// codex-parity-2 Part 10: /recap and /subagents on the real Codex.
+test("Part 10 live: /recap from a temporary thread with no tools or hooks; /subagents watches a real subagent", { skip, timeout: 10 * 60_000 }, async () => {
+  const mock = await startMockResponses({ script: liveScript });
+  const w = world(mock.url);
+  const journal = join(w.cwd, ".agent-daemon", "learning-journal.jsonl");
+  const journalText = () => (existsSync(journal) ? readFileSync(journal, "utf8") : "");
+  let t;
+  try {
+    t = await start(w);
+    t.type("PING first\r");
+    await t.until(/pong/, "a first turn");
+    await t.until(() => t.idle(), "idle");
+    t.type("/recap\r");
+    await t.until(/Recap: Live recap: the first turn answered pong\./, "the recap");
+    const asked = mock.requests.find((r) => r.text.startsWith("Write a brief catch-up"));
+    assert.ok(asked, "Codex's recap prompt reached the model");
+    assert.match(asked.text, /Conversation:\nUser: PING first\n\nAssistant: pong/);
+    assert.doesNotMatch(journalText(), /Write a brief catch-up/, "ad's hooks never saw the recap's thread");
+
+    // A real subagent: the parent calls Codex's spawn_agent; the child runs its own turn.
+    t.type("SPAWNONE\r");
+    assert.deepEqual(mock.requests.find((r) => r.text.startsWith("Write a brief catch-up")).tools, [], "the recap's thread offers the model no tool");
+    await t.until(/done after call-spawn/, "the parent's turn");
+    await t.until(() => mock.requests.some((r) => r.text.includes("CHILDTASK")), "the child's turn at the model");
+    await t.until(() => t.idle(), "idle");
+    t.type("/subagents\r");
+    await t.until(/Main \[default\]/, "the picker, the main conversation first");
+    t.type("\x1b[B");
+    await settle(200);
+    t.type("\r");
+    await t.until(/child read math\.js/, "the subagent's own transcript");
+    t.type("\x1b");
+    await settle(300);
 
     t.type("\x03");
     await settle(200);

@@ -48,10 +48,18 @@ for (const file of files) {
       if (!tracked.has(resolved) && !dirs.has(resolved)) broken.push(`${file}:${i + 1}  ${target}`);
     }
   });
+  // A section heading twice is a pasted copy (a scripted edit gone wrong once
+  // duplicated half of docs/tui.md), never intended.
+  const seen = new Map();
+  lines.forEach((line, i) => {
+    if (!/^## /.test(line)) return;
+    if (seen.has(line)) broken.push(`${file}:${i + 1}  "${line}" again (first on line ${seen.get(line)}): a duplicated section`);
+    else seen.set(line, i + 1);
+  });
 }
 
 if (broken.length) {
-  console.log(`${broken.length} broken link${broken.length === 1 ? "" : "s"} (target not tracked by git):`);
+  console.log(`${broken.length} problem${broken.length === 1 ? "" : "s"} (a link to a file git doesn't track, or a duplicated section):`);
   for (const b of broken) console.log(`  ${b}`);
   process.exit(1);
 }

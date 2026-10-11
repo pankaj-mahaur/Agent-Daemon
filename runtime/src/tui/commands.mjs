@@ -8,7 +8,9 @@ import { existsSync, statSync } from "node:fs";
 import path from "node:path";
 import { sanitize } from "./terminal/sanitize.mjs";
 import { truncate } from "./terminal/text.mjs";
+import { graphemes } from "./terminal/width.mjs";
 import { renderCell } from "./view/cells.mjs";
+import { wrapPrefixed } from "./view/markdown.mjs";
 import { T } from "./view/theme.mjs";
 
 const DIM = T.dim;
@@ -49,6 +51,132 @@ export function renderKeymap(keymap, { width = 80, label = (k) => k } = {}) {
   }
   for (const w of keymap.warnings ?? []) out.push(row(width, { text: `  ${clean(w)}`, style: T.warning }));
   out.push(row(width, { text: "  Keys are set in the stock UI: /codex, then /keymap there (saved as tui.keymap). ad reads them, never writes them. /keymap debug shows what a key sends.", style: DIM }));
+  return out;
+}
+
+/* ------------------------------------------------------------------ */
+/* /approve (codex-parity-2 Part 10)                                   */
+/* ------------------------------------------------------------------ */
+
+// A shell word as shlex would quote it.
+const shellWord = (w) => (/^[\w@%+=:,./-]+$/.test(w) ? w : `'${String(w).replace(/'/g, `'"'"'`)}'`);
+
+/** What an auto-review denial was about, in Codex's words (tui/src/auto_review_denials.rs). */
+export function denialSummary(a) {
+  switch (a?.type) {
+    case "command":
+      return String(a.command ?? "");
+    case "execve":
+      return a.argv?.length ? a.argv.map(shellWord).join(" ") : String(a.program ?? "");
+    case "writeStdin": {
+      const g = graphemes(`send input to terminal ${a.processId}: ${JSON.stringify(String(a.stdin ?? ""))}`);
+      return g.length > 80 ? `${g.slice(0, 79).join("")}\u{2026}` : g.join("");
+    }
+    case "applyPatch":
+      return a.files?.length === 1 ? `apply_patch touching ${a.files[0]}` : `apply_patch touching ${a.files?.length ?? 0} files`;
+    case "networkAccess":
+      return `network access to ${a.target ?? a.host ?? ""}`;
+    case "mcpToolCall":
+      return `MCP ${a.toolName} on ${a.connectorName ?? a.server}`;
+    case "requestPermissions":
+      return a.reason ? `permission request: ${a.reason}` : "permission request";
+    default:
+      return "an action";
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* /debug-config (codex-parity-2 Part 10)                              */
+/* ------------------------------------------------------------------ */
+
+// A value whose key names a secret is never shown (a provider's API key).
+const SECRET_KEY = /key|token|secret|password|credential/i;
+const maskDeep = (v, key = "") =>
+  key && SECRET_KEY.test(key) && ((typeof v === "string" && v !== "") || (v && typeof v === "object")) // a token limit (a number) stays
+    ? "****"
+    : Array.isArray(v)
+      ? v.map((x) => maskDeep(x))
+      : v && typeof v === "object"
+        ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, maskDeep(x, k)]))
+        : v;
+const tomlValue = (v) =>
+  typeof v === "string"
+    ? JSON.stringify(v)
+    : Array.isArray(v)
+      ? `[${v.map(tomlValue).join(", ")}]`
+      : v && typeof v === "object"
+        ? `{ ${Object.entries(v).map(([k, x]) => `${k} = ${tomlValue(x)}`).join(", ")} }`
+        : String(v);
+const flatten = (obj, prefix = "", out = []) => {
+  for (const [k, v] of Object.entries(obj ?? {})) {
+    const key = prefix ? `${prefix}.${k}` : k;
+    if (v && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length) flatten(v, key, out);
+    else out.push([key, v]);
+  }
+  return out;
+};
+
+/** A config layer's source as Codex names it ("user (…/config.toml)", "session-flags"). */
+export function layerSource(n) {
+  const sep = (p) => (String(p).includes("\\") ? "\\" : "/");
+  switch (n?.type) {
+    case "packagedDefaults":
+      return `packaged defaults (${n.file})`;
+    case "mdm":
+      return `MDM (${n.domain}:${n.key})`;
+    case "system":
+      return `system (${n.file})`;
+    case "enterpriseManaged":
+      return `enterprise-managed (${n.name}, ${n.id})`;
+    case "user":
+      return `user (${n.file}${n.profile ? `, profile ${n.profile}` : ""})`;
+    case "project":
+      return `project (${n.dotCodexFolder}${sep(n.dotCodexFolder)}config.toml)`;
+    case "sessionFlags":
+      return "session-flags";
+    case "legacyManagedConfigTomlFromFile":
+      return `legacy managed_config.toml (${n.file})`;
+    case "legacyManagedConfigTomlFromMdm":
+      return "legacy managed_config.toml (MDM)";
+    default:
+      return String(n?.type ?? "unknown");
+  }
+}
+
+const snakeCase = (k) => k.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
+const requirementValue = (v) =>
+  Array.isArray(v)
+    ? v.length
+      ? v.map((x) => (x && typeof x === "object" ? JSON.stringify(x) : String(x))).join(", ")
+      : "<empty>"
+    : v && typeof v === "object"
+      ? Object.entries(v).map(([k, x]) => `${k}=${x && typeof x === "object" ? JSON.stringify(x) : x}`).join(", ") || "<empty>"
+      : String(v);
+
+/**
+ * Codex's /debug-config from config/read's layers (highest precedence first,
+ * shown lowest first, as Codex does) and configRequirements/read: each layer's
+ * source and state, the session flags' keys, then the requirements. Secret
+ * values are masked (Codex prints its in-process config unmasked).
+ */
+export function renderDebugConfig({ layers, requirements }, { width = 80 } = {}) {
+  const line = (indent, spans) => wrapPrefixed(spans, width, [{ text: indent }], [{ text: `${indent}  ` }]);
+  const out = [[{ text: "/debug-config", style: T.commandEcho }], [], [{ text: "Config layer stack (lowest precedence first):", style: BOLD }]];
+  const stack = [...(layers ?? [])].reverse();
+  if (!stack.length) out.push([{ text: "  <none>", style: DIM }]);
+  stack.forEach((l, i) => {
+    out.push(...line("  ", [{ text: `${i + 1}. ${clean(layerSource(l.name))} (${l.disabledReason ? "disabled" : "enabled"})` }]));
+    if (l.name?.type === "sessionFlags") {
+      const keys = flatten(maskDeep(l.config)).sort(([a], [b]) => a.localeCompare(b));
+      if (!keys.length) out.push([{ text: "     - <none>", style: DIM }]);
+      for (const [k, v] of keys) out.push(...line("     ", [{ text: `- ${clean(k)} = ${clean(tomlValue(v))}` }]));
+    }
+    if (l.disabledReason) out.push(...line("     ", [{ text: `reason: ${clean(l.disabledReason)}`, style: DIM }]));
+  });
+  out.push([], [{ text: "Requirements:", style: BOLD }]);
+  const reqs = Object.entries(maskDeep(requirements ?? {})).filter(([, v]) => v !== null && v !== undefined);
+  if (!reqs.length) out.push([{ text: "  <none>", style: DIM }]);
+  for (const [k, v] of reqs) out.push(...line("  ", [{ text: `- ${snakeCase(k)}: ${clean(requirementValue(v))}` }]));
   return out;
 }
 

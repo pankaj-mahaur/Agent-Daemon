@@ -34,9 +34,11 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_APPROVAL_POLICY, DEFAULT_SANDBOX } from "../engine/index.mjs";
 import { canonicalPath } from "../engine/codex/home.mjs";
+import { guardianDenialEvent } from "../engine/codex/events.mjs";
 
 export const DEFAULT_LOCK_DIR = join(homedir(), ".agent-daemon", "locks");
 const NOTICE_CAP = 50;
+const MAX_DENIALS = 10; // Codex's RecentAutoReviewDenials
 const PROCESS_STARTED_AT = Date.now() - Math.round(process.uptime() * 1000);
 
 export class SessionLockedError extends Error {
@@ -209,7 +211,11 @@ export function createSession({
     config: { model: model ?? null, effort: null, sandbox, approvalPolicy, cwd },
     account: null,
     goal: null,
-    agents: new Map(), // child threadId → {label, parentThreadId}
+    // This conversation's subagents (Codex's /subagents rows), first seen first:
+    // child threadId → {label, nickname, role, path, parentThreadId, running, closed}.
+    agents: new Map(),
+    // Codex's auto-review denials on this thread, newest first (/approve): the notifications' params.
+    denials: [],
     mcp: new Map(),
     tokens: null,
     plan: null,
@@ -380,9 +386,38 @@ export function createSession({
     return false;
   }
 
+  // A subagent as Codex finds them: a thread it started for an agent, one an
+  // agent tool call names, a sub-agent activity item; and whether it runs.
+  function noteAgent(id, info = {}) {
+    if (typeof id !== "string" || !id || id === state.thread?.id) return;
+    const prev = state.agents.get(id) ?? { label: null, nickname: null, role: null, path: null, parentThreadId: null, running: false, closed: false };
+    const next = { ...prev };
+    for (const [k, v] of Object.entries(info)) if (v !== undefined && v !== null) next[k] = v;
+    next.label = next.nickname ?? next.role ?? null;
+    state.agents.set(id, next);
+    change("agents");
+  }
+  function trackAgents(ev, root) {
+    if (ev.type === "thread.started" && !root && ev.thread?.parentThreadId) {
+      return noteAgent(ev.thread.id, { nickname: ev.thread.agentNickname, role: ev.thread.agentRole, parentThreadId: ev.thread.parentThreadId });
+    }
+    const it = ev.item;
+    if ((ev.type === "item.started" || ev.type === "item.completed") && it?.kind === "collabAgentToolCall") {
+      for (const id of it.receiverThreadIds ?? []) if (it.agents?.[id]?.status !== "notFound") noteAgent(id);
+    }
+    if ((ev.type === "item.started" || ev.type === "item.completed") && it?.kind === "subAgentActivity" && it.agentThreadId) {
+      noteAgent(it.agentThreadId, { path: it.agentPath, ...(it.activity === "started" ? { running: true } : it.activity === "completed" || it.activity === "interrupted" ? { running: false } : {}) });
+    }
+    if (root || !state.agents.has(ev.threadId)) return;
+    if (ev.type === "turn.started") noteAgent(ev.threadId, { running: true });
+    else if (ev.type === "turn.completed") noteAgent(ev.threadId, { running: false });
+    else if (ev.type === "thread.closed") noteAgent(ev.threadId, { running: false, closed: true });
+  }
+
   function onThreadEvent(ev) {
     const root = ev.threadId === state.thread?.id;
     if (root && trackTerminal(ev)) change("terminals");
+    trackAgents(ev, root);
     switch (ev.type) {
       case "thread.settings": {
         // The thread's mode as Codex has it (a switch here, in /codex, or a turn's mask).
@@ -400,7 +435,6 @@ export function createSession({
       }
       case "thread.started":
         if (root) state.thread = { ...state.thread, ...ev.thread };
-        else if (ev.thread?.parentThreadId) state.agents.set(ev.thread.id, { label: ev.thread.agentNickname ?? ev.thread.agentRole ?? null, parentThreadId: ev.thread.parentThreadId });
         break;
       case "thread.name":
         if (root) state.thread = { ...state.thread, name: ev.name };
@@ -460,6 +494,11 @@ export function createSession({
         break;
       }
       case "notice":
+        // As Codex: the 10 latest denials, newest first, once each (/approve).
+        if (root && ev.code === "autoReview.denied" && ev.details?.review?.reviewId) {
+          const r = ev.details.review;
+          state.denials = [r, ...state.denials.filter((d) => d.reviewId !== r.reviewId)].slice(0, MAX_DENIALS);
+        }
         return notice(ev.level, ev.code, ev.message);
       case "hook.started":
       case "hook.completed":
@@ -642,6 +681,7 @@ export function createSession({
     state.diff = null;
     state.tokens = null;
     state.agents = new Map();
+    state.denials = [];
     nextTurn = { ...sticky };
   }
 
@@ -955,6 +995,18 @@ export function createSession({
     },
     /** The mask a turn would carry now (null without presets). */
     modeMask,
+    /**
+     * Codex's /approve: one retry of a recent auto-review denial. The denial
+     * leaves the list; Codex records the approval (the model sees it; the
+     * retry still goes through auto-review).
+     */
+    async approveDenial(reviewId) {
+      const i = state.denials.findIndex((d) => d.reviewId === reviewId);
+      if (i < 0 || !state.thread) throw new Error("That auto-review denial is no longer available.");
+      const [d] = state.denials.splice(i, 1);
+      change("denials");
+      await engine.server.request("thread/approveGuardianDeniedAction", { threadId: state.thread.id, event: guardianDenialEvent(d) });
+    },
     /**
      * Ends every background terminal of this conversation (Codex's /stop,
      * thread/backgroundTerminals/clean), then forgets them, as Codex does.

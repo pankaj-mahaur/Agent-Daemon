@@ -224,6 +224,7 @@
       "review/start": "ReviewStartParams",
       "skills/extraRoots/set": "SkillsExtraRootsSetParams",
       "skills/list": "SkillsListParams",
+      "thread/approveGuardianDeniedAction": "ThreadApproveGuardianDeniedActionParams",
       "thread/archive": "ThreadArchiveParams",
       "thread/compact/start": "ThreadCompactStartParams",
       "thread/delete": "ThreadDeleteParams",
@@ -1853,6 +1854,20 @@
       "types": {
         "byteRange": "ByteRange",
         "placeholder": "null|string"
+      }
+    },
+    "ThreadApproveGuardianDeniedActionParams": {
+      "required": [
+        "event",
+        "threadId"
+      ],
+      "props": [
+        "event",
+        "threadId"
+      ],
+      "types": {
+        "event": "any",
+        "threadId": "string"
       }
     },
     "ThreadArchivedNotification": {
