@@ -1,8 +1,9 @@
 {
-  "pinned": "0.160.0",
+  "pinned": "0.162.1",
   "tested": [
     "0.159.2",
-    "0.160.0"
+    "0.160.0",
+    "0.162.1"
   ],
   "whatChanged": {
     "0.160.0": "Protocol unchanged from 0.159.2. ad maps all 63 stable notifications; the 22 experimental ones are ignored on purpose.",

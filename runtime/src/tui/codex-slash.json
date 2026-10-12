@@ -1,7 +1,8 @@
 {
-  "tag": "rust-v0.160.0",
+  "tag": "rust-v0.162.1",
   "names": [
     "model",
+    "daybreak",
     "ide",
     "permissions",
     "keymap",
@@ -72,6 +73,16 @@
       "name": "model",
       "aliases": [],
       "desc": "choose what model and reasoning effort to use",
+      "args": false,
+      "duringTask": true,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "daybreak",
+      "aliases": [],
+      "desc": "turn Daybreak on or off",
       "args": false,
       "duringTask": true,
       "sideAllowed": false,
@@ -223,7 +234,7 @@
       "aliases": [],
       "desc": "archive this session",
       "args": false,
-      "duringTask": false,
+      "duringTask": true,
       "sideAllowed": false,
       "visible": "always",
       "popup": "shown"
@@ -545,7 +556,7 @@
     {
       "name": "mcp",
       "aliases": [],
-      "desc": "list configured MCP tools; use /mcp verbose for details",
+      "desc": "list MCP tools; use /mcp verbose or /mcp login <name>",
       "args": true,
       "duringTask": true,
       "sideAllowed": false,
