@@ -41,7 +41,7 @@ The harness pins `@openai/codex` exactly (`runtime/package.json`). Each upgrade 
    - The workflow's own run is on Linux; the PR's CI (`test.yml`, all three OSes, `engine-real` job) only runs when the `CODEX_UPGRADE_TOKEN` secret is set. That job is non-blocking: read its result, not the run's colour. The bot's PR body lists real-engine failures by name (label `real-engine-failing`).
    - **`compat.json`** (`runtime/src/engine/codex/compat.json`): write the one-line, user-facing "what changed" note for the new version. `/status` and `ad doctor` show it.
    - **A slash collision** (test names it) means Codex now has a command ad uses for something else: rename ad's, or mark it `source: "codex"` if it now means the same.
-   - **`/init`**: re-copy Codex's prompt into `runtime/src/tui/init-prompt.mjs` from `codex-rs/tui/assets/prompt_for_init_command.md` at the new tag.
+   - **`/init`**: re-copy Codex's prompt into `runtime/src/tui/init-prompt.mjs` from `codex-rs/tui/assets/prompt_for_init_command.md` at the new tag. Put the new version in the file's header line too: `test/attribution.test.mjs` fails until both attributed files (`init-prompt.mjs`, `recap.mjs`) name the pinned version, which is how a bot PR shows the prompts still need re-copying.
 3. **Live smoke on Windows**, in a scratch directory, **never the repo**. Prompts run in the repo write learnings into its memory journal.
    ```bash
    mkdir <scratch>/smoke && cd <scratch>/smoke && git init -q

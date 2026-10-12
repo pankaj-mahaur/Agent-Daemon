@@ -68,6 +68,7 @@ scripts/
 ├── gen-width-tables.mjs        # regenerate the Unicode width table
 ├── check-doc-links.mjs         # every relative doc link points at a tracked file
 ├── lint-skills.mjs, skills-diff.mjs, sync-constitution-to-cursor.mjs
+├── check-brand.mjs + brand-allowlist.json   # the engine's name stays in its allowed zone (docs/testing.md)
 └── install-service-*.{sh,ps1}
 ```
 
@@ -91,6 +92,7 @@ node --test test/<name>.test.mjs           # one file
 AD_REAL_ENGINE=1 node --test --test-concurrency=1 --test-force-exit test/engine-real.test.mjs test/tui-live.test.mjs
                                            # the real pinned Codex vs a mock model (no login), and the live ad tui
 node scripts/codex-schema-snapshot.mjs --check   # protocol snapshot matches the pinned Codex
+node scripts/check-brand.mjs [--strict=A,B,C,D]  # brand lint: report mode prints counts; strict fails on hits
 ```
 
 The tests need the devDependencies (`npm install` without `--omit=dev`). CI runs `npm test` on Linux, macOS and Windows, plus the real-engine job (non-blocking: read its result). See [docs/testing.md](../docs/testing.md) for the layers and CI, and [docs/contributing.md](../docs/contributing.md) for conventions.

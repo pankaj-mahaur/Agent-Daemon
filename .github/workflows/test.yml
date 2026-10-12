@@ -43,6 +43,11 @@ jobs:
       - name: Lint skills
         run: node runtime/scripts/lint-skills.mjs
 
+      - name: Brand lint (report mode)
+        run: node runtime/scripts/check-brand.mjs
+        # The engine's name stays in its allowed zone (runtime/scripts/brand-allowlist.json).
+        # Report mode exits 0 while the own-harness parts bring each rule to zero; then --strict.
+
       - name: Smoke `ad doctor`
         run: node runtime/src/cli.mjs doctor || true
         # Doctor reports missing optional things (e.g. claude CLI on CI) — that's

@@ -71,13 +71,26 @@ It also checks ad's own requests (`checkRequest`): a method the pinned stable pr
 - **Reproduce before fixing.** A failing live test or a user's transcript is first reproduced in a temp home (same shell, same PATH), then fixed, then checked with the same reproduction.
 - **Never touch real user state.** Tests use temp homes for `~/.agent-daemon`, `CODEX_HOME`, the clipboard and the editor. Never start the real Codex outside `codexEnv()`.
 
+## The brand lint
+
+ad runs on a pinned third-party engine; the product says "the engine", and the engine's own name appears only in its allowed zone. `node runtime/scripts/check-brand.mjs` (`npm run lint:brand`) checks four rules over every tracked text file:
+
+| Rule | What it finds |
+|---|---|
+| A | the engine's name, in content or in a file name, outside the allowed zone |
+| B | a protocol method name in a request or wait call outside the adapter (`runtime/src/engine/codex/`) and the façade (`runtime/src/engine/index.mjs`) |
+| C | prose that names the engine in a string, template or JSON value under `runtime/src` (bare tokens such as env vars, paths and package names pass); such prose comes from `runtime/src/engine/attribution.mjs` only |
+| D | the adapter imported from outside `runtime/src/engine/` |
+
+The allowed zone and the other legitimate places are `runtime/scripts/brand-allowlist.json`: one entry per place, each with a reason, optionally narrowed to matching lines (`match`). An entry that matches nothing is reported as stale. Report mode (the default, and CI today) prints counts and exits 0; `--strict` or `--strict=B,D` fails on any hit or stale entry for those rules, and CI switches a rule to strict once the code is clean for it. `--verbose` lists every hit, `--json` prints the result. The tests in `test/check-brand.test.mjs` plant one hit per rule and prove that strict mode fails on each; `test/attribution.test.mjs` proves the attribution module's texts and that the two files that reproduce upstream's prompts keep their license headers.
+
 ## CI
 
 `.github/workflows/test.yml` runs on every push to `main`, every PR that targets `main`, and on demand:
 
 | Job | Runs |
 |---|---|
-| `ubuntu / macos / windows · node 22` | `npm test`, the skill linter, and smoke runs of `ad doctor`, `ad init --plan` and the skills-diff script |
+| `ubuntu / macos / windows · node 22` | `npm test`, the skill linter, the brand lint (report mode), and smoke runs of `ad doctor`, `ad init --plan` and the skills-diff script |
 | `real engine · ubuntu / macos / windows` | `engine-real` and `tui-live` with `AD_REAL_ENGINE=1` (on Linux after allowing unprivileged user namespaces for Codex's bubblewrap sandbox) |
 
 The real-engine job is non-blocking (`continue-on-error`): **read its result**, don't rely on the run's overall status.

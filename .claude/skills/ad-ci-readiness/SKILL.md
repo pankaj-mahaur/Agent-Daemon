@@ -31,6 +31,7 @@ It complements `ad-pre-push`: that one syncs docs, CHANGELOG, skills, memory and
 ```bash
 cd runtime && npm test                       # npm ci only if the lockfile changed: it wipes node_modules, and the global `ad` is npm-linked here
 node runtime/scripts/lint-skills.mjs         # 0 errors; the ~22 warnings are old style notes on untouched skills
+node runtime/scripts/check-brand.mjs         # brand lint: report mode in CI (counts only); --strict=<rules> for the rules a part brought to zero
 node runtime/src/cli.mjs doctor              # non-zero is allowed; read each ✗ (see Gotchas)
 S=$(mktemp -d); node runtime/src/cli.mjs init --profile security --plan --cwd "$S"; ls -A "$S"; rm -rf "$S"   # --plan writes nothing
 node runtime/scripts/skills-diff.mjs --json  # must parse with a numeric `ours` and an array `net-new`
