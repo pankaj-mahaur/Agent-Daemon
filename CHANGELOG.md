@@ -7,13 +7,16 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 ### Added
 
 - A brand lint (`npm run lint:brand`; CI runs it in report mode): the engine's name stays in its allowed zone (the engine adapter, the dependency pin, the two prompt files reproduced from upstream, the upgrade runbook, descriptive statements about other agents), with an allowlist that carries a reason for every exception. The texts that may name the engine on screen now live in one attribution module. Groundwork for 3.0, where ad's screens, docs and settings say "the engine" throughout.
+- `ad migrate` renames the engine's folder to `~/.agent-daemon/engine` (optional; `--undo` reverses it). New installs use that name and keep a link with the old one.
 
 ### Changed
 
 - `ad doctor`: the engine's rows are now Engine, Engine version, Engine home, Engine compatibility, Engine sign-in, Engine hooks and Windows sandbox, in plain words.
+- New names for the env vars: `AD_ENGINE_DIR`, `AD_ENGINE_BIN`, `AD_ENGINE_MODEL`; the old names still work.
 
 ### Fixed
 
+- The daemon now watches the engine's conversations in a folder set with `AD_ENGINE_DIR` / `AD_CODEX_HOME`.
 - `/cd`: refused while a subagent is still working ("Cannot change: another agent is running."), and every thread is checked again after the trust question ("Cannot change: a task is running."), as Codex does. A subagent's turn now ends with the engine that ran it, so a crash and restart doesn't leave `/cd` refused; a late "started" hint for a subagent whose turn already ended is ignored, as in Codex.
 
 ## [2.2.0] — 2026-10-11

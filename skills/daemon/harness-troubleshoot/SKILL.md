@@ -72,6 +72,8 @@ The terminal UI runs the same engine in the same home, so steps 1–5 apply. The
 | `Codex stopped (exit N). Your text is kept. Enter restarts and resumes.` (#27) | the engine exited and the 3 automatic restarts failed | Enter retries; else `/quit`, `ad doctor`, `ad tui --last`. The reason is in `logs_2.sqlite` (step 5) |
 | Ctrl+G: `The editor returned at once without waiting` (#28) | the editor opened the file in a running window and exited | `EDITOR="code --wait"` or another editor that waits |
 | `thread … is open in another ad (pid N)` | one `ad` per conversation (locks in `~/.agent-daemon/locks`) | close the other `ad tui`; a crashed one's lock is taken over once its process is gone |
+| "two engine folders" (#37) | an older ad started after the `codex-home` link was removed, so both folders are real | `ad doctor` shows both with last use, count and sign-in; rename the one you don't want; delete nothing until checked |
+| "Not moved: something is using …" from `ad migrate` (#38) | a file or working folder inside is held open (another ad window, an editor panel, a loop, a terminal, antivirus) | close it and run `ad migrate` again |
 | "This needs the stock UI: /codex" | a Codex request ad doesn't handle yet | `/codex` opens the stock UI on the same conversation; `ad codex` runs it standalone on ad's home with `--no-daemon` |
 | `/x isn't in ad yet.` | a Codex slash command ad doesn't run yet (never sent to the model) | `/codex` where the answer says so; `docs/codex-parity.md` lists every command |
 | `'/x' is disabled while a task is in progress.` | Codex's rule for that command | wait for the turn or Esc; the draft stays |

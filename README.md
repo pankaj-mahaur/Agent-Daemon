@@ -119,7 +119,7 @@ Profile manifest: [runtime/profiles/profiles.json](runtime/profiles/profiles.jso
 
 ## Agent harness (Codex engine)
 
-Agent Daemon runs agents itself, with [OpenAI Codex](https://github.com/openai/codex) as the engine. It drives a pinned `codex app-server` (JSON-RPC over stdio) in its own `CODEX_HOME` (`~/.agent-daemon/codex-home`), so your own `~/.codex` is never touched. Every run gets the daemon's memory (SessionStart context, per-prompt recall, correction capture, the `agent-daemon-memory` MCP tools, which run without an approval prompt), guard hooks, skills and constitution.
+Agent Daemon runs agents itself, with [OpenAI Codex](https://github.com/openai/codex) as the engine. It drives a pinned `codex app-server` (JSON-RPC over stdio) in its own home (`~/.agent-daemon/engine`; older installs: `codex-home`, moved with `ad migrate`), so your own `~/.codex` is never touched. Every run gets the daemon's memory (SessionStart context, per-prompt recall, correction capture, the `agent-daemon-memory` MCP tools, which run without an approval prompt), guard hooks, skills and constitution.
 
 ```bash
 ad auth login chatgpt            # ChatGPT Plus/Pro (browser; --device for a code)

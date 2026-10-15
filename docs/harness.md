@@ -223,7 +223,7 @@ Loop and worker prompts are marked as non-user (`AD_WORKER=1`), so they never en
 
 | Path | What |
 |---|---|
-| `~/.agent-daemon/codex-home/` | harness Codex home: `config.toml`, `hooks.json`, `AGENTS.md`, login `auth.json`, `sessions/` rollouts, `logs_2.sqlite` |
+| `~/.agent-daemon/engine/` (new installs; older installs: `codex-home/`) | engine home: `config.toml`, `hooks.json`, `AGENTS.md`, login `auth.json`, `sessions/` rollouts, `logs_2.sqlite` (see "The engine's folder" below) |
 | `~/.agent-daemon/secrets/` | provider keys (file backends) |
 | `~/.agent-daemon/schedules.json`, `schedule-logs/` | scheduled jobs and their output |
 | `<project>/.agent-daemon/loops/` | `ad loop` iteration logs |
@@ -233,14 +233,20 @@ Loop and worker prompts are marked as non-user (`AD_WORKER=1`), so they never en
 | Variable | Effect |
 |---|---|
 | `AD_TUI` | `0`: bare `ad` prints the help instead of opening the terminal UI (`ad tui` still opens it). `1`: the default behaviour |
-| `AD_CODEX_HOME` | use another harness Codex home (never your own `~/.codex` or `CODEX_HOME`: refused) |
-| `AD_CODEX_BIN` | run a specific `codex` binary instead of the pinned one (testing) |
+| `AD_ENGINE_DIR` (old name `AD_CODEX_HOME`, still read) | use another engine home (never your own `~/.codex` or `CODEX_HOME`: refused) |
+| `AD_ENGINE_BIN` (old name `AD_CODEX_BIN`, still read) | run a specific engine binary instead of the pinned one (testing) |
 | `CODEX_*` (yours) | not passed to the harness's Codex, so they can't point it at your own state; `CODEX_CA_CERTIFICATE` is kept |
-| `AD_ENGINE_HOME` | set by ad on the Codex processes it starts (hooks use it); don't set it yourself |
+| `AD_INTERNAL_ENGINE_HOME` (old name `AD_ENGINE_HOME`) | set by ad on the engine processes it starts (hooks use it); don't set it yourself |
 | `AD_AGENT_ENGINE` | `codex` (default) or `claude` for team workers |
 | `AD_LLM_BACKEND` | `claude`, `codex` or `auto` for digest / GEPA LLM calls (same as `--llm`) |
-| `AD_CODEX_LLM_MODEL` | model for those calls when they run on Codex |
+| `AD_ENGINE_MODEL` (old name `AD_CODEX_LLM_MODEL`, still read) | model for those calls when they run on the engine |
 | `AD_SECRETS_BACKEND=file` | store keys in plain 0600 files instead of the OS store |
+
+## The engine's folder
+
+New installs keep the engine's folder at `~/.agent-daemon/engine/`, plus a link named `codex-home` pointing at it (a rolled-back ad 2.x finds the same folder). Installs from before 3.0 keep their `codex-home/` folder untouched; `ad doctor` calls it the older folder name and says `ad migrate` is optional.
+
+`ad migrate` (interactive terminal only) renames `codex-home/` to `engine/` and leaves the link; `ad migrate --undo` reverses it. Nothing is ever moved without you running it: no other command renames the folder, and a folder you chose with `AD_ENGINE_DIR` is never touched. In Git Bash run `winpty ad migrate` (or use PowerShell or Windows Terminal).
 
 ---
 

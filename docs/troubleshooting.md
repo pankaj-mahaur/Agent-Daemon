@@ -600,6 +600,26 @@ Other choices: `nvim`, `vim`, `nano`, or Notepad++ with `-multiInst -nosession`.
 
 ---
 
+## 37. Two engine folders
+
+**Symptom:** `ad doctor` says "two engine folders" and refuses to pick, or a start fails with the two-folders refusal.
+
+**Cause:** an older ad started after the `codex-home` link was removed, so both `codex-home/` and `engine/` are real folders now.
+
+**Fix:** `ad doctor` shows both folders with their last use, conversation count and sign-in. Rename the one you don't want (for example to `engine.old`); delete nothing until you've checked.
+
+---
+
+## 38. `ad migrate` says something is using the folder
+
+**Symptom:** "Not moved: something is using … Nothing changed."
+
+**Cause:** a file or working folder inside is held open: another Agent Daemon window, an editor's agent panel, a background loop, a terminal, or antivirus.
+
+**Fix:** close it and run `ad migrate` again.
+
+---
+
 For harness problems, the [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill walks through login → hooks → sandbox → Codex's own log. See also [harness.md](harness.md) and, for the terminal UI, [tui.md](tui.md).
 
 ## Still stuck?
