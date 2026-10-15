@@ -677,7 +677,8 @@ async function onRequest({ id, method, params }) {
     case "test/silent":
       return; // never answers — exercises client timeouts
     default:
-      return send({ id, error: { code: -32601, message: `unknown method ${method}` } });
+      // As the real engine (0.160.0, spike S6): an unknown method is an invalid request.
+      return send({ id, error: { code: -32600, message: `Invalid request: unknown variant \`${method}\`` } });
   }
 }
 

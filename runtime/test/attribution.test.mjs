@@ -20,7 +20,9 @@ import {
   identityBlock,
   legacyHomeName,
   migrateMessages,
+  ownEngineHomeDefaultRefusal,
   ownEngineHomeRefusal,
+  ownEngineHomeStartRefusal,
   ownEngineSessionsNote,
   projectConfigFolder,
   readmeSentence,
@@ -153,6 +155,11 @@ test("the README sentence, the sandbox consent and the true statements about the
   assert.equal(ownEngineHomeRefusal("/home/me/.codex"), "ad doesn't work inside a Codex home: /home/me/.codex");
   assert.match(ownEngineSessionsNote, /~\/\.codex\/sessions/);
   assert.match(ownEngineSessionsNote, /ad never writes there\.$/);
+});
+
+test("the engine home refusals say whose home it is and what to do", () => {
+  assert.match(ownEngineHomeDefaultRefusal, /^ad won't start the engine without a home folder of its own: the default \(~\/\.codex\) belongs to your own Codex install\.$/);
+  assert.equal(ownEngineHomeStartRefusal("/home/me/.codex"), "ad won't run the engine in /home/me/.codex: that is your own Codex home. Choose another folder with AD_CODEX_HOME.");
 });
 
 test("migrate messages: done warns about an unsafe delete tool and macOS only when told; the rest say nothing changed", () => {

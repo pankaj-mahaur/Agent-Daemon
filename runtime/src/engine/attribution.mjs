@@ -112,6 +112,14 @@ export function ownEngineHomeRefusal(dir) {
   return `ad doesn't work inside a ${ENGINE.name} home: ${dir}`;
 }
 
+/** The engine refuses to start without a home of its own (the default home is the user's own install). */
+export const ownEngineHomeDefaultRefusal = `ad won't start the engine without a home folder of its own: the default (~/${projectConfigFolder}) belongs to your own ${ENGINE.name} install.`;
+
+/** The engine refuses to start in the user's own home. */
+export function ownEngineHomeStartRefusal(dir) {
+  return `ad won't run the engine in ${dir}: that is your own ${ENGINE.name} home. Choose another folder with AD_CODEX_HOME.`;
+}
+
 /** `ad watch` reads the user's own engine conversations, like Claude Code's and Cursor's. */
 export const ownEngineSessionsNote = `ad watch also reads your own ${ENGINE.name} conversations in ~/${projectConfigFolder}/sessions, if you have ${ENGINE.name} installed; ad never writes there.`;
 
@@ -186,6 +194,8 @@ export function brandPatterns() {
     new RegExp(`shared with any other ${name} install\\.`),
     new RegExp(`ad doesn't work inside a ${name} home:`),
     new RegExp(`your own ${name} conversations in ~/${escapeRe(projectConfigFolder)}/sessions, if you have ${name} installed`),
+    new RegExp(`the default \\(~/${escapeRe(projectConfigFolder)}\\) belongs to your own ${name} install\\.`),
+    new RegExp(`: that is your own ${name} home\\. Choose another folder with AD_CODEX_HOME\\.`),
     /`ad codex` was removed in 3\.0\./,
     /\/codex was removed in 3\.0\./,
     /AD_CODEX_HOME still works/,
@@ -208,6 +218,8 @@ export function renderedSamples() {
     ...SIGN_IN_ROUTES.map((signIn) => identityBlock({ adVersion: "3.0.0", engineVersion: "0.160.0", signIn })),
     sandboxConsent,
     ownEngineHomeRefusal("~/.codex"),
+    ownEngineHomeDefaultRefusal,
+    ownEngineHomeStartRefusal("C:\\Users\\me\\.codex"),
     ownEngineSessionsNote,
     tombstoneEngineUiCommand(p),
     tombstoneEngineUiSlash(p),

@@ -20,9 +20,9 @@ export const IGNORED_NOTIFICATIONS = {
   "account/gatewayOAuth/changed": "gateway sign-in is not part of ad",
   "app/list/updated": "ChatGPT apps are not part of ad's UI",
   "remoteControl/status/changed": "remote control is not part of ad",
-  "externalAgentConfig/import/progress": "ad doesn't import other agents' config through Codex",
-  "externalAgentConfig/import/completed": "ad doesn't import other agents' config through Codex",
-  "fs/changed": "ad doesn't use Codex's file watching",
+  "externalAgentConfig/import/progress": "ad doesn't import other agents' config through the engine",
+  "externalAgentConfig/import/completed": "ad doesn't import other agents' config through the engine",
+  "fs/changed": "ad doesn't use the engine's file watching",
   "fuzzyFileSearch/sessionUpdated": "ad uses one-shot fuzzyFileSearch, not search sessions",
   "fuzzyFileSearch/sessionCompleted": "ad uses one-shot fuzzyFileSearch, not search sessions",
 };

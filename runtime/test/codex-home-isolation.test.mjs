@@ -73,8 +73,8 @@ test("an inherited CODEX_HOME is the user's unless ad created it", () => {
 });
 
 test("no CODEX_HOME at all is refused", () => {
-  assert.throws(() => assertIsolatedHome(undefined, {}), /without an explicit CODEX_HOME/);
-  assert.throws(() => assertIsolatedHome("", {}), /without an explicit CODEX_HOME/);
+  assert.throws(() => assertIsolatedHome(undefined, {}), /without a home folder of its own/);
+  assert.throws(() => assertIsolatedHome("", {}), /without a home folder of its own/);
 });
 
 test("codexEnv drops every inherited CODEX_* setting and pins an absolute home", () => {

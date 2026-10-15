@@ -11,12 +11,14 @@
 import { existsSync, mkdirSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+import { ownEngineHomeDefaultRefusal, ownEngineHomeStartRefusal } from "../attribution.mjs";
+import { engineError } from "./errors.mjs";
 
-export const BOOTSTRAP_CONFIG = `# Agent Daemon harness config (CODEX_HOME).
-# Managed settings are written by \`ad\` through codex app-server; edit freely.
+export const BOOTSTRAP_CONFIG = `# Agent Daemon's engine settings.
+# ad writes the settings it manages through the engine; edit freely.
 
-# Keep credentials inside this folder instead of the OS keyring, so the
-# harness login never collides with the user's own \`codex\` login.
+# Keep the sign-in inside this folder instead of the OS keyring, so ad's
+# sign-in stays separate from any other sign-in on this machine.
 cli_auth_credentials_store = "file"
 `;
 
@@ -83,18 +85,18 @@ export function userCodexHomes(env = process.env) {
 // resolved against `base`, the directory Codex will be started in.
 export function assertIsolatedHome(home, env = process.env, base = process.cwd()) {
   if (!home) {
-    throw new Error("refusing to start Codex without an explicit CODEX_HOME: the default (~/.codex) belongs to your own Codex");
+    throw engineError("HOME_REQUIRED", ownEngineHomeDefaultRefusal);
   }
   const full = resolve(base, home);
   if (trailingDotOrSpace(full)) {
-    throw new Error(`refusing CODEX_HOME ${JSON.stringify(full)}: Windows ignores a trailing dot or space in a folder name, so it could open another folder`);
+    throw engineError("HOME_TRAILING", `refusing the engine home ${JSON.stringify(full)}: Windows ignores a trailing dot or space in a folder name, so it could open another folder`);
   }
   const target = canonicalPath(full);
   if (WIN && target.startsWith("\\\\")) {
-    throw new Error(`refusing CODEX_HOME ${full}: network (UNC) paths are not supported`);
+    throw engineError("HOME_UNC", `refusing the engine home ${full}: network (UNC) paths are not supported`);
   }
   if (userCodexHomes(env).some((h) => canonicalPath(h) === target)) {
-    throw new Error(`refusing to run Codex in ${full}: that is your own Codex home. Point AD_CODEX_HOME somewhere else.`);
+    throw engineError("HOME_IS_USERS", ownEngineHomeStartRefusal(full));
   }
 }
 
@@ -132,14 +134,14 @@ export function isManagedHome(dir) {
 export function ensureCodexHome(dir = defaultCodexHome(), { env = process.env } = {}) {
   // Before anything is written: a marker in the user's own home would make it look like ours.
   assertIsolatedHome(dir, env);
-  if (existsSync(dir) && !statSync(dir).isDirectory()) throw new Error(`CODEX_HOME ${dir} exists but is not a directory`);
+  if (existsSync(dir) && !statSync(dir).isDirectory()) throw engineError("HOME_NOT_DIR", `the engine home ${dir} exists but is not a directory`);
   const fresh = !existsSync(dir) || readdirSync(dir).length === 0;
   mkdirSync(dir, { recursive: true });
   const configPath = join(dir, "config.toml");
   let created = false;
   if (fresh) {
     writeFileSync(configPath, BOOTSTRAP_CONFIG, { encoding: "utf8", flag: "wx" });
-    writeFileSync(join(dir, MANAGED_MARKER), "Created by Agent Daemon. Delete to stop ad from managing this CODEX_HOME.\n");
+    writeFileSync(join(dir, MANAGED_MARKER), "Created by Agent Daemon. Delete this file to stop ad from managing this folder.\n");
     created = true;
   }
   return { dir, configPath, created, managed: isManagedHome(dir) };

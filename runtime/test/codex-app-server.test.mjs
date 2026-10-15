@@ -184,13 +184,13 @@ test("a real Codex command never starts without ad's own CODEX_HOME", async () =
   // this exits instead of starting Codex in the user's ~/.codex.
   const command = { cmd: process.execPath, prefix: ["-e", "process.exit(97)"], source: "pinned" };
   const noHome = new CodexAppServer({ command, env: {} });
-  await assert.rejects(noHome.start(), /without an explicit CODEX_HOME/);
+  await assert.rejects(noHome.start(), /without a home folder of its own/);
   assert.equal(noHome.running, false, "nothing was spawned");
   const userHome = new CodexAppServer({ command, env: { CODEX_HOME: join(homedir(), ".codex") } });
   await assert.rejects(userHome.start(), /your own Codex home/);
   // An unmarked command is treated as real too; only an explicit test double skips the guard.
   const unmarked = new CodexAppServer({ command: { cmd: process.execPath, prefix: ["-e", "process.exit(97)"] }, env: {} });
-  await assert.rejects(unmarked.start(), /without an explicit CODEX_HOME/);
+  await assert.rejects(unmarked.start(), /without a home folder of its own/);
 });
 
 test("with experimentalApi, the fake accepts the allowlist and checks its shapes, and still refuses the rest", async () => {

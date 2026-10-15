@@ -398,7 +398,7 @@ export function diffSnapshots(oldSnap, newSnap) {
 }
 
 export function diffToMarkdown({ breaking, info }, fromVersion, toVersion) {
-  const lines = [`## Codex app-server protocol: ${fromVersion} → ${toVersion}`, ""];
+  const lines = [`## Engine protocol: ${fromVersion} → ${toVersion}`, ""];
   if (!breaking.length && !info.length) lines.push("No changes to the tracked protocol surface.");
   if (breaking.length) lines.push(`### ⚠️ Breaking (${breaking.length})`, ...breaking.map((x) => `- ${x}`), "");
   if (info.length) lines.push(`### Added / relaxed (${info.length})`, ...info.map((x) => `- ${x}`), "");
