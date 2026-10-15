@@ -11,7 +11,7 @@ import { CodexAppServer, pinnedCodexVersion } from "./codex/app-server.mjs";
 import { engineError } from "./codex/errors.mjs";
 import { APPROVAL_METHODS, approvalResponse } from "./codex/approvals.mjs";
 import { canonicalPath, codexEnv, defaultCodexHome, ensureCodexHome, homeOverride, isManagedHome, prepareDefaultHome, MANAGED_MARKER } from "./codex/home.mjs";
-import { defaultRoot, entryKind, homeFacts, NEW_HOME_NAME, OLD_HOME_NAME, resolveHomeState } from "./codex/home-resolve.mjs";
+import { defaultRoot, entryKind, homeFacts, NEW_HOME_NAME, OLD_HOME_NAME, removeLink, createLegacyLink, resolveHomeState } from "./codex/home-resolve.mjs";
 import { acquireLockWithin } from "../lock.mjs";
 import { adaptNotification, classifyRequest, collaborationMode, elicitationResponse, execDisplay, guardianDenialEvent, normalizeItem } from "./codex/events.mjs";
 import { experimentalCapabilities } from "./codex/surface.mjs";
@@ -910,6 +910,9 @@ export const engineHome = {
   OLD_NAME: OLD_HOME_NAME,
   NEW_NAME: NEW_HOME_NAME,
   root: () => defaultRoot(),
+  entryKind: (p) => entryKind(p),
+  removeLink: (p) => removeLink(p),
+  createLink: (target, link) => createLegacyLink(target, link),
 };
 
 /** Turning the engine's items and requests into ad's shapes. */

@@ -126,6 +126,7 @@ Harness (Codex engine):
   tools enable <tool>    browser (Playwright MCP) | web-search (live); "tools disable <tool>" turns off
   sandbox setup          Windows: set up Codex's command sandbox for the harness (--elevated: stronger, asks UAC)
   sandbox status         Windows: show sandbox readiness
+  migrate [--undo]       Rename ad's engine folder from its older name (optional; --undo reverses it)
 
   team create     (tc)   Create a new multi-agent team
   team status     (ts)   Show team kanban board
@@ -2162,6 +2163,7 @@ async function main(argv) {
         "skills-mode": { type: "string" },
         "fallback-to-llm": { type: "boolean" },
         force:        { type: "boolean" },
+        undo:         { type: "boolean" },
         "once-on-existing": { type: "boolean" },
         "list-candidates": { type: "boolean" },
         "export-traces": { type: "boolean" },
@@ -2319,6 +2321,10 @@ async function main(argv) {
         cwd: parsed.values.cwd || process.cwd(),
         clientVersion: VERSION
       });
+    }
+    case "migrate": {
+      const { cmdMigrate } = await import("./harness/migrate.mjs");
+      return cmdMigrate({ undo: Boolean(parsed.values.undo) });
     }
     case "tui": {
       if (!parsed.values.preview) {
