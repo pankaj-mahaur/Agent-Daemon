@@ -215,7 +215,7 @@ export class Engine extends EventEmitter {
       setup: async ({ mode = "unelevated", cwd, timeoutMs = 10 * 60_000 } = {}) => {
         const done = this.#waitFor("windowsSandbox/setupCompleted", () => true, { timeoutMs });
         done.catch(() => {}); // awaited below; no unhandled rejection if setupStart throws
-        const started = await this.#request("windowsSandbox/setupStart", clean({ mode, cwd }));
+        const started = await this.#request("windowsSandbox/setupStart", clean({ mode, cwd: cwd || undefined }));
         if (!started?.started) throw engineError("SANDBOX_NOT_STARTED", "the engine did not start the sandbox setup");
         return done;
       },
@@ -516,6 +516,7 @@ export class Engine extends EventEmitter {
   // on the same thread, are dropped). Resolves {turnId, status, output, error}.
   // On timeout the turn is interrupted, not left running.
   turn({ threadId, text, input, onEvent, timeoutMs = 600_000, ...turnOpts }) {
+    if (!this.#server) return Promise.reject(engineError("ENGINE_NOT_STARTED", "the engine is not started"));
     const server = this.#server;
     return new Promise((resolve, reject) => {
       let turnId = null;

@@ -231,6 +231,17 @@ test("createEngine closes the child when initialize fails", async () => {
   }
 });
 
+test("a turn on an engine that was never started is refused with ENGINE_NOT_STARTED, not a TypeError", async () => {
+  const home = mkdtempSync(join(tmpdir(), "ad-engine-home-"));
+  try {
+    const fresh = new Engine({ home, command: { cmd: process.execPath, prefix: [FAKE] } });
+    await assert.rejects(fresh.turn({ threadId: "t", text: "hi" }), (err) => err.code === "ENGINE_NOT_STARTED");
+    assert.equal(fresh.running, false);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("complete() accepts callHeadlessClaude option names and drops Claude model aliases", async () => {
   const dir = mkdtempSync(join(tmpdir(), "ad-prompt-"));
   const promptFile = join(dir, "system.md");
