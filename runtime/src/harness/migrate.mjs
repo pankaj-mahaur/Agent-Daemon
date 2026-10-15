@@ -93,7 +93,7 @@ async function migrate({ fs, root, say, fail, platform, today }) {
   // 3. The link with the old name, then 4. a check through it. Any failure: back as it was.
   try {
     (fs.createLink ?? engineHome.createLink)(newP, oldP);
-    fs.readFileSync(join(oldP, "config.toml"), "utf8");
+    fs.readdirSync(oldP); // through the link: it resolves to a folder (any content; config.toml may be absent)
   } catch (e) {
     try {
       if (engineHome.entryKind(oldP) !== "missing") (fs.removeLink ?? engineHome.removeLink)(oldP);

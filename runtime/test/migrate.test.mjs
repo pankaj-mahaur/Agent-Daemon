@@ -142,9 +142,9 @@ test("5: a check that cannot read through the link removes it and renames back",
     const before = collect(oldP);
     const fs = {
       ...realFs,
-      readFileSync: (p, ...a) => {
-        if (String(p).endsWith("config.toml")) { const e = new Error("unreadable"); e.code = "EACCES"; throw e; }
-        return realFs.readFileSync(p, ...a);
+      readdirSync: (p, ...a) => {
+        if (String(p) === oldP) { const e = new Error("unreadable"); e.code = "EACCES"; throw e; }
+        return realFs.readdirSync(p, ...a);
       },
     };
     const { code } = await run(root, { fs });
@@ -152,6 +152,23 @@ test("5: a check that cannot read through the link removes it and renames back",
     assert.equal(entryKind(oldP), "dir", "the link is gone");
     assert.deepEqual(collect(oldP), before, "renamed back with all files");
     assert.equal(existsSync(join(root, "engine")), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("16: a home without config.toml still migrates; the link is checked by listing", async () => {
+  const root = tempRoot();
+  try {
+    const oldP = join(root, "codex-home");
+    mkdirSync(join(oldP, "sessions", "2026", "10", "12"), { recursive: true });
+    writeFileSync(join(oldP, "auth.json"), "{}");
+    writeFileSync(join(oldP, "sessions", "2026", "10", "12", "rollout-1.jsonl"), "{}\n");
+    const { code } = await run(root);
+    assert.equal(code, 0);
+    assert.equal(entryKind(oldP), "link");
+    assert.equal(entryKind(join(root, "engine")), "dir");
+    assert.ok(existsSync(join(oldP, "auth.json")), "readable through the link");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

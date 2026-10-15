@@ -83,8 +83,9 @@ function withParsedJson(result, { schema } = {}) {
   return result;
 }
 
-// Claude aliases ("haiku") mean nothing to Codex; AD_CODEX_LLM_MODEL picks
-// the Codex model for these background calls (e.g. a cheaper one).
+// Claude aliases ("haiku") mean nothing to the engine; the model env var
+// (AD_ENGINE_MODEL, still read under its old name, LEGACY.envModel)
+// picks the model for these background calls (e.g. a cheaper one).
 export function codexModelFor(model, env = process.env) {
   if (!model || ["haiku", "sonnet", "opus"].includes(model)) return env.AD_ENGINE_MODEL || env[LEGACY.envModel] || undefined;
   return model;
