@@ -55,7 +55,7 @@ test("subscribe(null): events without a thread go to thread-less subscribers onl
     const mine = [];
     engine.subscribe(null, (ev) => global.push(ev));
     engine.subscribe(threadId, (ev) => mine.push(ev));
-    engine.server.emit("notification", { method: "account/updated", params: { authMode: "chatgpt", planType: "go" } });
+    engine.testNotify("account/updated", { authMode: "chatgpt", planType: "go" });
     assert.deepEqual(global.map((e) => e.type), ["account"]);
     assert.deepEqual(mine, []);
   });
@@ -84,8 +84,8 @@ test("a child thread is linked by thread/started.parentThreadId alone", async ()
   await withEngine({}, async ({ engine, threadId }) => {
     const seen = [];
     engine.subscribe(threadId, (ev) => seen.push(ev));
-    engine.server.emit("notification", { method: "thread/started", params: { thread: { id: "kid", parentThreadId: threadId } } });
-    engine.server.emit("notification", { method: "item/agentMessage/delta", params: { threadId: "kid", turnId: "k", itemId: "m", delta: "from kid" } });
+    engine.testNotify("thread/started", { thread: { id: "kid", parentThreadId: threadId } });
+    engine.testNotify("item/agentMessage/delta", { threadId: "kid", turnId: "k", itemId: "m", delta: "from kid" });
     assert.deepEqual(engine.threadChain("kid"), ["kid", threadId]);
     assert.ok(seen.some((e) => e.type === "item.delta" && e.delta === "from kid"));
   });
@@ -153,7 +153,7 @@ test("a request open when the engine exits is cancelled", async () => {
     engine.subscribe(threadId, (ev) => seen.push(ev));
     const turn = engine.turn({ threadId, text: "hello", timeoutMs: 0 }).catch((e) => e);
     await until(() => opened, "the request");
-    engine.server.child.kill();
+    engine.kill();
     await turn;
     await until(() => seen.some((e) => e.type === "request.resolved"), "request.resolved");
     assert.equal(seen.find((e) => e.type === "request.resolved").cancelled, "engine exited");
@@ -221,7 +221,7 @@ test("without onRequest, Codex's serverRequest/resolved produces no orphan event
 
 test("model-chosen collab calls can't link threads, make cycles or re-parent", async () => {
   await withEngine({}, async ({ engine, threadId }) => {
-    const n = (method, params) => engine.server.emit("notification", { method, params });
+    const n = (method, params) => engine.testNotify(method, params);
     n("thread/started", { thread: { id: "kid", parentThreadId: threadId } });
     // The child "sends input" to the root: not a spawn, and it would be a cycle.
     n("item/started", { threadId: "kid", item: { type: "collabAgentToolCall", id: "c1", tool: "sendInput", receiverThreadIds: [threadId] } });
@@ -248,13 +248,13 @@ test("a malformed notification becomes a warning; later listeners still run", as
     engine.on("warning", (w) => warnings.push(w));
     engine.subscribe(threadId, () => {});
     let after = 0;
-    engine.server.on("notification", () => after++);
+    engine.onRawNotification(() => after++);
     for (const [method, params] of [
       ["turn/plan/updated", { threadId, plan: [null] }],
       ["item/fileChange/patchUpdated", { threadId, itemId: "i", changes: [null] }],
       ["hook/started", { threadId, run: null }],
     ]) {
-      assert.doesNotThrow(() => engine.server.emit("notification", { method, params }));
+      assert.doesNotThrow(() => engine.testNotify(method, params));
     }
     assert.equal(after, 3, "listeners registered after the router still ran");
   });
@@ -264,9 +264,9 @@ test("unsubscribing and closed threads leave no entries behind", async () => {
   await withEngine({}, async ({ engine }) => {
     for (let i = 0; i < 50; i++) {
       const off = engine.subscribe(`t${i}`, () => {});
-      engine.server.emit("notification", { method: "thread/started", params: { thread: { id: `c${i}`, parentThreadId: `t${i}`, agentNickname: "n" } } });
+      engine.testNotify("thread/started", { thread: { id: `c${i}`, parentThreadId: `t${i}`, agentNickname: "n" } });
       off();
-      engine.server.emit("notification", { method: "thread/closed", params: { threadId: `c${i}` } });
+      engine.testNotify("thread/closed", { threadId: `c${i}` });
     }
     await new Promise((r) => setImmediate(r));
     assert.equal([...engine.subscribers.keys()].filter((k) => String(k).startsWith("t")).length, 0);
@@ -291,7 +291,7 @@ test("a user message whose content isn't a list doesn't break routing", async ()
   await withEngine({}, async ({ engine, threadId }) => {
     const seen = [];
     engine.subscribe(threadId, (ev) => seen.push(ev));
-    engine.server.emit("notification", { method: "item/completed", params: { threadId, turnId: "t", item: { id: "u", type: "userMessage", content: "x" } } });
+    engine.testNotify("item/completed", { threadId, turnId: "t", item: { id: "u", type: "userMessage", content: "x" } });
     assert.deepEqual(seen.map((e) => [e.type, e.item.text]), [["item.completed", ""]]);
   });
 });

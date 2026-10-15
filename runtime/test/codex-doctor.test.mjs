@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { pinnedCodexVersion } from "../src/engine/codex/app-server.mjs";
-import { codexChecks, parseCodexVersion } from "../src/engine/codex/doctor.mjs";
+import { engineChecks, parseCodexVersion } from "../src/engine/codex/doctor.mjs";
 
 const env = { AD_CODEX_HOME: "/nonexistent/ad-codex-home" };
 
@@ -15,31 +15,33 @@ test("parseCodexVersion reads codex --version output", () => {
 });
 
 test("matching installed version passes", () => {
-  const [engine, home] = codexChecks({ env, run: () => `codex-cli ${pinnedCodexVersion()}` });
-  assert.equal(engine.ok, true);
-  assert.match(engine.note, /matches pin/);
-  assert.match(home.note, /created on first ad run/);
+  const [v, home] = engineChecks({ env, run: () => `codex-cli ${pinnedCodexVersion()}` });
+  assert.equal(v.code, "engine.version");
+  assert.equal(v.ok, true);
+  assert.equal(v.data.installed, pinnedCodexVersion());
+  assert.equal(home.code, "engine.home");
+  assert.equal(home.data.exists, false);
 });
 
 test("version drift fails with the fix command", () => {
-  const [engine] = codexChecks({ env, run: () => "codex-cli 0.0.1" });
-  assert.equal(engine.ok, false);
-  assert.match(engine.note, /pins/);
-  assert.match(engine.note, /npm install/);
+  const [v] = engineChecks({ env, run: () => "codex-cli 0.0.1" });
+  assert.equal(v.ok, false);
+  assert.equal(v.data.installed, "0.0.1");
+  assert.equal(v.data.pinned, pinnedCodexVersion());
 });
 
 test("an unrunnable codex fails instead of throwing", () => {
-  const [engine] = codexChecks({ env, run: () => { const e = new Error("spawn ENOENT"); e.code = "ENOENT"; throw e; } });
-  assert.equal(engine.ok, false);
-  assert.match(engine.note, /not runnable \(ENOENT\)/);
+  const [c] = engineChecks({ env, run: () => { const e = new Error("spawn ENOENT"); e.code = "ENOENT"; throw e; } });
+  assert.equal(c.code, "engine.notRunnable");
+  assert.equal(c.data.error, "ENOENT");
 });
 
 test("live checks: skipped without a harness home; report login, hooks, sandbox", async () => {
-  const { codexLiveChecks } = await import("../src/engine/codex/doctor.mjs");
+  const { engineLiveChecks } = await import("../src/engine/codex/doctor.mjs");
   const { mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
-  assert.deepEqual(await codexLiveChecks({ env: { AD_CODEX_HOME: "/nonexistent/ad-home" } }), [], "never creates the home");
+  assert.deepEqual(await engineLiveChecks({ env: { AD_CODEX_HOME: "/nonexistent/ad-home" }, engineFactory: async () => { throw new Error("must not be called"); } }), [], "never creates the home");
   const home = mkdtempSync(join(tmpdir(), "ad-doc-"));
   try {
     writeFileSync(join(home, "hooks.json"), "{}");
@@ -47,17 +49,19 @@ test("live checks: skipped without a harness home; report login, hooks, sandbox"
       account: async () => ({ account: null, requiresOpenaiAuth: true }),
       readConfig: async () => ({ windows: { sandbox: "unelevated" } }),
       listHooks: async () => [{ sourcePath: join(home, "hooks.json"), trustStatus: "trusted" }, { sourcePath: join(home, "hooks.json"), trustStatus: "modified" }],
-      server: { request: async () => ({ status: "ready" }) },
+      sandbox: { readiness: async () => "ready" },
       close: async () => {},
     };
-    const checks = await codexLiveChecks({ env: { AD_CODEX_HOME: home }, engineFactory: async () => fake, platform: "win32" });
-    const by = Object.fromEntries(checks.map((c) => [c.name, c]));
-    assert.equal(by["Harness login"].ok, false);
-    assert.match(by["Harness login"].note, /ad auth login chatgpt/);
-    assert.equal(by["Harness hooks"].note.startsWith("1/2 trusted"), true);
-    assert.equal(by["Windows sandbox"].ok, true);
-    const broken = await codexLiveChecks({ env: { AD_CODEX_HOME: home }, engineFactory: async () => { throw new Error("boom"); } });
-    assert.match(broken[0].note, /boom/);
+    const checks = await engineLiveChecks({ env: { AD_CODEX_HOME: home }, engineFactory: async () => fake, platform: "win32" });
+    const by = Object.fromEntries(checks.map((c) => [c.code, c]));
+    assert.equal(by["engine.login"].ok, false);
+    assert.equal(by["engine.hooks"].ok, false);
+    assert.deepEqual(by["engine.hooks"].data, { trusted: 1, total: 2 });
+    assert.equal(by["engine.windowsSandbox"].ok, true);
+    assert.equal(by["engine.windowsSandbox"].data.status, "ready");
+    const broken = await engineLiveChecks({ env: { AD_CODEX_HOME: home }, engineFactory: async () => { throw new Error("boom"); } });
+    assert.equal(broken[0].code, "engine.unreachable");
+    assert.match(broken[0].data.error, /boom/);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
@@ -68,7 +72,7 @@ test("the version probe runs Codex in a throwaway CODEX_HOME, never ~/.codex", a
   const { homedir } = await import("node:os");
   const { join } = await import("node:path");
   let seen = null;
-  codexChecks({ env: { ...env, CODEX_HOME: join(homedir(), ".codex") }, run: (_cmd, _args, opts) => { seen = opts.env.CODEX_HOME; return "codex-cli 1.0.0"; } });
+  engineChecks({ env: { ...env, CODEX_HOME: join(homedir(), ".codex") }, run: (_cmd, _args, opts) => { seen = opts.env.CODEX_HOME; return "codex-cli 1.0.0"; } });
   assert.ok(seen, "CODEX_HOME is set explicitly");
   assert.notEqual(seen, join(homedir(), ".codex"), "the inherited user home is replaced");
   assert.match(seen, /ad-codex-version-/);
@@ -76,8 +80,8 @@ test("the version probe runs Codex in a throwaway CODEX_HOME, never ~/.codex", a
 });
 
 test("a matching install also reports the tested versions and what changed (compat.json)", () => {
-  const checks = codexChecks({ env, run: () => `codex-cli ${pinnedCodexVersion()}` });
-  const compat = checks.find((c) => c.name === "Codex compatibility");
+  const checks = engineChecks({ env, run: () => `codex-cli ${pinnedCodexVersion()}` });
+  const compat = checks.find((c) => c.code === "engine.compat");
   assert.ok(compat, "compat line present");
-  assert.match(compat.note, new RegExp(`tested: .*${pinnedCodexVersion().replace(/\./g, "\.")}`));
+  assert.ok(compat.data.tested.includes(pinnedCodexVersion()));
 });

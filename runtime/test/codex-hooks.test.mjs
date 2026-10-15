@@ -218,7 +218,9 @@ test("a user's own fields on the memory server survive setup", async () => {
 
 test("a failing config step still leaves our hooks trusted, and is reported", async () => {
   await withEngine(async (engine) => {
-    const flaky = Object.create(engine, { readConfig: { value: async () => { throw new Error("unknown key after upgrade"); } } });
+    const flaky = new Proxy(engine, {
+      get: (target, key) => (key === "readConfig" ? async () => { throw new Error("unknown key after upgrade"); } : typeof target[key] === "function" ? target[key].bind(target) : target[key]),
+    });
     const r = await ensureHarnessSetup(flaky, { cwd: tmpdir(), roots: [], profile: "developer" });
     assert.ok(r.trusted >= 4);
     assert.ok(r.warnings.some((w) => /config: unknown key after upgrade/.test(w)));

@@ -129,19 +129,19 @@ test("diffSnapshots: a field that only became nullable is info, not breaking", (
   assert.ok(d.info.some((x) => /P\.cwd: now nullable/.test(x)), JSON.stringify(d));
 });
 
-test("SENT_METHODS lists exactly the stable methods ad's code sends; the rest are on the experimental allowlist", async () => {
+test("SENT_METHODS lists exactly the stable methods the façade sends; the rest are on the experimental allowlist", async () => {
   const { readdirSync } = await import("node:fs");
   const { join } = await import("node:path");
   const { SENT_METHODS } = await import("../src/engine/codex/protocol-snapshot.mjs");
   const { EXPERIMENTAL_ALLOWLIST } = await import("../src/engine/codex/surface.mjs");
   const { fileURLToPath } = await import("node:url");
-  const root = fileURLToPath(new URL("../src/", import.meta.url));
+  const root = fileURLToPath(new URL("../src/engine/", import.meta.url));
   const sent = new Set();
   const walk = (dir) => {
     for (const e of readdirSync(dir, { withFileTypes: true })) {
       const p = join(dir, e.name);
       if (e.isDirectory()) walk(p);
-      else if (e.name.endsWith(".mjs")) for (const m of readFileSync(p, "utf8").matchAll(/\.request\(\s*"([a-zA-Z_]+(?:\/[a-zA-Z_]+)*)"/g)) sent.add(m[1]);
+      else if (e.name.endsWith(".mjs")) for (const m of readFileSync(p, "utf8").matchAll(/(?:\.|#)request\(\s*"([a-zA-Z_]+(?:\/[a-zA-Z_]+)*)"/g)) sent.add(m[1]);
     }
   };
   walk(root);

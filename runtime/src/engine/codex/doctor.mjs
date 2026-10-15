@@ -1,11 +1,10 @@
-// `ad doctor` checks for the Codex engine. Same {name, ok, note} shape as
-// the rest of cmdDoctor's checks.
+// `ad doctor`'s checks of the engine, as codes and data; the façade (`engineDoctor` in `../index.mjs`) owns the words.
 
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CODEX_MISSING, pinnedCodexVersion, resolveCodexCommand } from "./app-server.mjs";
+import { pinnedCodexVersion, resolveCodexCommand } from "./app-server.mjs";
 import { codexEnv, defaultCodexHome, isManagedHome } from "./home.mjs";
 
 export function parseCodexVersion(text) {
@@ -21,15 +20,15 @@ export function codexCompat() {
   }
 }
 
-export function codexChecks({ env = process.env, run = execFileSync } = {}) {
+export function engineChecks({ env = process.env, run = execFileSync } = {}) {
   const checks = [];
   const pinned = pinnedCodexVersion();
   const command = resolveCodexCommand(env);
   let installed = null;
   if (!command.cmd) {
-    checks.push({ name: "Codex engine", ok: false, note: CODEX_MISSING });
+    checks.push({ code: "engine.missing", ok: false, data: {} });
   } else {
-    // A throwaway CODEX_HOME: without one, Codex falls back to ~/.codex, the user's own install.
+    // A throwaway home: without one, the engine falls back to the user's own install.
     let scratchHome = null;
     try {
       scratchHome = mkdtempSync(join(tmpdir(), "ad-codex-version-"));
@@ -40,67 +39,49 @@ export function codexChecks({ env = process.env, run = execFileSync } = {}) {
         env: codexEnv({ home: scratchHome, base: env }),
       }));
     } catch (err) {
-      checks.push({ name: "Codex engine", ok: false, note: `not runnable (${err.code ?? err.message}) — cd runtime && npm install` });
+      checks.push({ code: "engine.notRunnable", ok: false, data: { error: err.code ?? err.message } });
     } finally {
       if (scratchHome) rmSync(scratchHome, { recursive: true, force: true });
     }
   }
-  if (installed) {
-    const match = installed === pinned;
-    checks.push({
-      name: "Codex engine",
-      ok: match,
-      note: match
-        ? `codex ${installed} (${command.source}) matches pin`
-        : `codex ${installed} (${command.source}) but runtime pins ${pinned} — protocol untested; run: cd runtime && npm install`,
-    });
-  }
+  if (installed) checks.push({ code: "engine.version", ok: installed === pinned, data: { installed, pinned, source: command.source } });
   const home = defaultCodexHome(env);
-  checks.push({
-    name: "Harness CODEX_HOME",
-    ok: true,
-    note: existsSync(home)
-      ? `${home}${isManagedHome(home) ? "" : " (not created by ad — never auto-modified)"}`
-      : `${home} (created on first ad run)`,
-  });
+  const exists = existsSync(home);
+  checks.push({ code: "engine.home", ok: true, data: { path: home, exists, managed: exists && isManagedHome(home) } });
   const compat = codexCompat();
-  if (installed === pinned && compat.whatChanged?.[pinned]) checks.push({ name: "Codex compatibility", ok: true, note: `tested: ${compat.tested.join(", ")}. ${compat.whatChanged[pinned]}` });
+  if (installed === pinned && compat.whatChanged?.[pinned]) checks.push({ code: "engine.compat", ok: true, data: { tested: compat.tested, note: compat.whatChanged[pinned] } });
   return checks;
 }
 
-// Checks that need a running app-server: login, provider, hook trust and
-// (Windows) sandbox readiness. Skipped until the harness home exists, so
-// doctor never creates it. engineFactory is injectable for tests.
-export async function codexLiveChecks({ env = process.env, engineFactory, platform = process.platform } = {}) {
+// Checks that need a running engine: sign-in, provider, hook trust and
+// (Windows) sandbox readiness. Skipped until the home exists, so doctor never
+// creates it. engineFactory is injected (the façade passes createEngine).
+export async function engineLiveChecks({ env = process.env, engineFactory, platform = process.platform } = {}) {
   const home = defaultCodexHome(env);
   if (!existsSync(home)) return [];
   const checks = [];
   let engine;
   try {
-    const factory = engineFactory ?? (async (o) => (await import("../index.mjs")).createEngine(o));
-    engine = await factory({ home });
+    engine = await engineFactory({ home });
     const [acct, cfg] = [await engine.account(), await engine.readConfig()];
     const provider = cfg.model_provider ?? "openai";
     const a = acct.account;
     const loggedIn = Boolean(a) || !acct.requiresOpenaiAuth;
-    checks.push({
-      name: "Harness login",
-      ok: loggedIn,
-      note: loggedIn ? (a?.type === "chatgpt" ? `ChatGPT ${a.planType ?? ""}`.trim() : a?.type ?? `provider ${provider}`) : "not logged in — ad auth login chatgpt",
-    });
+    const label = a?.type === "chatgpt" ? `ChatGPT ${a.planType ?? ""}`.trim() : a?.type ?? `provider ${provider}`;
+    checks.push({ code: "engine.login", ok: loggedIn, data: { loggedIn, label } });
     const hooksFile = join(home, "hooks.json");
     if (existsSync(hooksFile)) {
       const norm = (p) => (process.platform === "win32" ? String(p).toLowerCase() : String(p));
       const ours = (await engine.listHooks([process.cwd()])).filter((h) => norm(h.sourcePath) === norm(hooksFile));
       const trusted = ours.filter((h) => h.trustStatus === "trusted").length;
-      checks.push({ name: "Harness hooks", ok: trusted === ours.length, note: `${trusted}/${ours.length} trusted${trusted < ours.length ? " — the next ad run re-trusts them" : ""}` });
+      checks.push({ code: "engine.hooks", ok: trusted === ours.length, data: { trusted, total: ours.length } });
     }
     if (platform === "win32") {
-      const status = (await engine.server.request("windowsSandbox/readiness", {})).status;
-      checks.push({ name: "Windows sandbox", ok: status === "ready", note: status === "ready" ? `ready (${cfg.windows?.sandbox ?? "?"})` : `${status} — ad sandbox setup` });
+      const status = await engine.sandbox.readiness();
+      checks.push({ code: "engine.windowsSandbox", ok: status === "ready", data: { status, mode: cfg.windows?.sandbox ?? null } });
     }
   } catch (e) {
-    checks.push({ name: "Harness engine", ok: false, note: `could not start codex app-server: ${e.message}` });
+    checks.push({ code: "engine.unreachable", ok: false, data: { error: e.message } });
   } finally {
     await engine?.close();
   }

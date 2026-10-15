@@ -13,9 +13,8 @@
 //     finish and declines any later approval
 
 import { createInterface } from "node:readline";
-import { DEFAULT_APPROVAL_POLICY, DEFAULT_SANDBOX } from "../engine/index.mjs";
+import { DEFAULT_APPROVAL_POLICY, DEFAULT_SANDBOX, engineEvents } from "../engine/index.mjs";
 import { describeItem } from "./run.mjs";
-import { execDisplay } from "../engine/codex/events.mjs";
 import { startHarnessEngine } from "./start.mjs";
 
 const useColor = (stream) => Boolean(stream.isTTY) && !process.env.NO_COLOR;
@@ -54,7 +53,7 @@ export function approvalQuestion(req, fileChanges = new Map()) {
   if (req.kind === "command") {
     // Same display as the TUI: a network approval names the host, a stdin
     // write shows the input escaped; never "$ null".
-    const d = execDisplay(p);
+    const d = engineEvents.execDisplay(p);
     const body = d.command != null ? `\n  $ ${d.command}` : d.detail ? `\n  ${d.detail}` : "";
     return `${d.title}${body}${p.cwd ? `\n  in ${p.cwd}` : ""}${why}\n[y]es / [a]lways this session / [n]o: `;
   }
@@ -199,7 +198,7 @@ export function createChatSession({ engine, cwd, out, err, ask, model, sandbox }
           return {};
         }
         const threadId = state.threadId;
-        const done = engine.waitForNotification("thread/compacted", (p) => p.threadId === threadId, { timeoutMs: COMPACT_TIMEOUT_MS });
+        const done = engine.waitForCompaction(threadId, { timeoutMs: COMPACT_TIMEOUT_MS });
         done.catch(() => {}); // awaited below
         await engine.compactThread(threadId);
         out.write("compacting…\n");

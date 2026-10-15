@@ -45,7 +45,7 @@ async function withSession(opts, fn, { engineOpts = {} } = {}) {
 }
 const none = () => ({});
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const debugState = (engine) => engine.server.request("debug/state", {});
+const debugState = (engine) => engine.testRequest("debug/state", {});
 const agentTexts = (s) => [...s.state.items.values()].filter((i) => i.kind === "agentMessage").map((i) => i.text);
 
 /* ------------------------------------------------------------------ */
@@ -204,13 +204,11 @@ test("a steer that races the turn's completion becomes a queued prompt and still
     const first = session.submit("hang");
     const { turnId } = await first.accepted;
     // The turn ends just as the steer goes out.
-    const request = engine.server.request.bind(engine.server);
-    engine.server.request = async (method, params) => {
-      if (method === "turn/steer") {
-        await request("turn/interrupt", { threadId: params.threadId, turnId });
-        await new Promise((r) => setTimeout(r, 20));
-      }
-      return request(method, params);
+    const steer = engine.turns.steer;
+    engine.turns.steer = async (threadId, expectedTurnId, input, opts) => {
+      await engine.turns.interrupt(threadId, turnId);
+      await new Promise((r) => setTimeout(r, 20));
+      return steer(threadId, expectedTurnId, input, opts);
     };
     const s = session.submit("fail-turn");
     const a = await s.accepted;
@@ -375,7 +373,7 @@ test("an engine crash ends the running turn as failed, then the engine restarts 
     const s = session.submit("hang");
     await s.accepted;
     const threadId = session.state.thread.id;
-    engines[0].server.request("test/crash", {}).catch(() => {});
+    engines[0].testRequest("test/crash", {}).catch(() => {});
     const r = await s.done;
     assert.equal(r.status, "failed");
     await until(() => session.state.engine.state === "ready" && session.state.engine.restarts === 1, "the restart");
@@ -393,7 +391,7 @@ test("an engine crash ends the subagents' turns too: none is running after the r
     const s = session.submit("subagents-2");
     assert.equal((await s.done).status, "completed");
     assert.ok([...session.state.agents.values()].some((a) => a.running), "a subagent at work");
-    engines[0].server.request("test/crash", {}).catch(() => {});
+    engines[0].testRequest("test/crash", {}).catch(() => {});
     await until(() => session.state.engine.state === "ready" && session.state.engine.restarts === 1, "the restart");
     assert.ok(![...session.state.agents.values()].some((a) => a.running), "its turn ended with the engine that ran it");
     assert.ok(session.state.agents.size >= 2, "the agents themselves are still listed");
@@ -403,7 +401,7 @@ test("an engine crash ends the subagents' turns too: none is running after the r
 test("without restart, a crash leaves the session in a crashed state", async () => {
   await withSession(none, async ({ session, engine }) => {
     await session.submit("fail-turn").done;
-    engine.server.request("test/crash", {}).catch(() => {});
+    engine.testRequest("test/crash", {}).catch(() => {});
     await until(() => session.state.engine.state === "crashed", "crashed");
   });
 });
@@ -486,7 +484,7 @@ test("a prompt queued behind a start that dies with the engine runs on the resta
     const a = session.submit("slow-start");
     session.queue("fail-turn");
     await sleep(50);
-    engines[0].server.request("test/crash", {}).catch(() => {});
+    engines[0].testRequest("test/crash", {}).catch(() => {});
     await assert.rejects(a.accepted);
     await until(() => engines.length === 2 && session.state.engine.state === "ready", "the restart");
     await until(() => session.state.queue.length === 0, "the queue to drain");
@@ -548,7 +546,7 @@ test("after a crash, a queued prompt waits for the restarted engine and then run
     const a = session.submit("hang");
     await a.accepted;
     session.queue("fail-turn");
-    engines[0].server.request("test/crash", {}).catch(() => {});
+    engines[0].testRequest("test/crash", {}).catch(() => {});
     await a.done;
     await until(() => engines.length === 2 && session.state.engine.state === "ready", "the restart");
     await until(() => session.state.queue.length === 0, "the queue to drain");
@@ -561,11 +559,11 @@ test("after a crash, a queued prompt waits for the restarted engine and then run
 test("close during a restart closes the new engine", async () => {
   await withSession((make) => ({ restart: make }), async ({ session, engines }) => {
     await session.submit("fail-turn").done;
-    engines[0].server.request("test/crash", {}).catch(() => {});
+    engines[0].testRequest("test/crash", {}).catch(() => {});
     await until(() => session.state.engine.state === "restarting", "restarting", 5000);
     session.close();
     await until(() => engines.length === 2, "the new engine");
-    await until(() => engines[1].server?.child?.exitCode !== null || engines[1].server?.closed, "the new engine closed", 5000).catch(() => {});
+    await until(() => !engines[1].running, "the new engine closed", 5000).catch(() => {});
     assert.equal(engines[1].onRequest, null);
     assert.equal(engines[1].subscribers.size, 0);
   });
@@ -619,10 +617,10 @@ test("a prompt queued behind a turn that ends before turn/start answers still ru
 });
 
 const delayTurnsList = (engine, ms) => {
-  const orig = engine.server.request.bind(engine.server);
-  engine.server.request = async (m, p, o) => {
-    const r = await orig(m, p, o);
-    if (m === "thread/turns/list") await sleep(ms);
+  const orig = engine.threads.turns;
+  engine.threads.turns = async (...a) => {
+    const r = await orig(...a);
+    await sleep(ms);
     return r;
   };
 };
@@ -667,7 +665,7 @@ test("restarts are capped even when every new engine dies while resuming", async
         const e = await make().finally(() => inFlight--);
         const orig = e.resumeThread.bind(e);
         e.resumeThread = async (...a) => {
-          e.server.request("test/crash", {}).catch(() => {});
+          e.testRequest("test/crash", {}).catch(() => {});
           return orig(...a);
         };
         return e;
@@ -675,7 +673,7 @@ test("restarts are capped even when every new engine dies while resuming", async
     }),
     async ({ session, engine }) => {
       await session.submit("early-complete").done;
-      engine.server.request("test/crash", {}).catch(() => {});
+      engine.testRequest("test/crash", {}).catch(() => {});
       await until(() => session.state.engine.state === "crashed" && session.state.engine.restarts === 3, "the cap", 8000);
       await sleep(300);
       assert.equal(calls, 3);
@@ -697,7 +695,7 @@ test("a thread the restarted engine can't resume is dropped; the engine is ready
     }),
     async ({ session, engine, engines }) => {
       await session.submit("early-complete").done;
-      engine.server.request("test/crash", {}).catch(() => {});
+      engine.testRequest("test/crash", {}).catch(() => {});
       await until(() => engines.length === 2 && session.state.engine.state === "ready", "ready");
       assert.equal(session.state.thread, null);
       assert.ok(session.state.notices.some((n) => n.code === "thread.notResumed"));
@@ -718,7 +716,7 @@ test("during a restart, a prompt is queued and runs once the engine is back, wit
     async ({ session, engine, engines }) => {
       session.setNextTurn({ model: "m-override", effort: "high" });
       await session.submit("early-complete").done;
-      engine.server.request("test/crash", {}).catch(() => {});
+      engine.testRequest("test/crash", {}).catch(() => {});
       await until(() => session.state.engine.state === "restarting", "restarting");
       const s = session.submit("fail-turn");
       assert.equal((await s.accepted).queued, true);
@@ -737,7 +735,7 @@ test("a crash ends the running turn's items too: none is left streaming", async 
     session.submit("hello");
     await until(() => session.state.requests.length === 1, "the approval");
     const turnId = session.state.activeTurnId;
-    engine.server.request("test/crash", {}).catch(() => {});
+    engine.testRequest("test/crash", {}).catch(() => {});
     await until(() => session.state.engine.state === "crashed", "crashed");
     const items = [...session.state.items.values()].filter((i) => i.turnId === turnId);
     assert.ok(items.length > 0);
@@ -749,7 +747,7 @@ test("a crash also settles items that have no turn (a running ! command)", async
   await withSession(none, async ({ session, engine }) => {
     await session.submit("fail-turn").done;
     session.state.items.set("sh-x", { id: "sh-x", kind: "commandExecution", command: "make", status: "inProgress", streaming: true, turnId: null, threadId: session.state.thread.id });
-    engine.server.request("test/crash", {}).catch(() => {});
+    engine.testRequest("test/crash", {}).catch(() => {});
     await until(() => session.state.engine.state === "crashed", "crashed");
     const it = session.state.items.get("sh-x");
     assert.equal(it.streaming, false);
@@ -817,7 +815,7 @@ test("modes: thread/settings/updated (here, /codex or a turn's mask) drives the 
     await session.submit("fail-turn").done;
     const id = session.state.thread.id;
     // As if the stock UI had switched the thread to Plan.
-    await engine.server.request("thread/settings/update", { threadId: id, collaborationMode: { mode: "plan", settings: { model: "fake-model", reasoning_effort: "medium", developer_instructions: null } } });
+    await engine.updateThreadSettings(id, { collaborationMode: { mode: "plan", settings: { model: "fake-model", reasoning_effort: "medium", developer_instructions: null } } });
     await until(() => session.state.mode.kind === "plan", "the mode from thread/settings/updated");
     session.newThread();
     assert.equal(session.state.mode.kind, "default");
@@ -839,7 +837,7 @@ test("modes: the mask goes with a queued prompt and with the re-sent prompt afte
       await session.interrupt();
       await until(() => session.state.queue.length === 0 && session.state.turns.length === 2, "the queued prompt");
       assert.equal((await turnMask(engine)).mode, "plan");
-      engine.server.request("test/crash", {}).catch(() => {});
+      engine.testRequest("test/crash", {}).catch(() => {});
       await until(() => session.state.engine.state === "restarting", "restarting");
       const s = session.submit("fail-turn");
       assert.equal((await s.accepted).queued, true);
@@ -922,7 +920,7 @@ test("modes (review #4): a restart whose engine has no presets leaves Plan for D
       await session.modesReady;
       session.setMode("plan");
       await session.submit("fail-turn").done;
-      engine.server.request("test/crash", {}).catch(() => {});
+      engine.testRequest("test/crash", {}).catch(() => {});
       await until(() => session.state.engine.state === "ready" && session.state.mode.presets?.length === 0, "the restart without presets");
       assert.equal(session.state.mode.kind, "default");
     },
@@ -975,7 +973,7 @@ test("background terminals (review): an item id reused across turns ends the rig
   await withSession(none, async ({ session }) => {
     await session.submit("bg-terminal").done;
     assert.equal(session.state.terminals.size, 1);
-    await assert.rejects(session.stopTerminals(), /experimentalApi/);
+    await assert.rejects(session.stopTerminals(), (err) => err.code === "FEATURE_UNAVAILABLE");
     assert.equal(session.state.terminals.size, 0, "forgotten anyway, as Codex does");
   });
 });
@@ -1002,7 +1000,7 @@ test("changeDir: forks the thread into the folder; the next turn, /new, a resume
       await session.submit("fail-turn").done;
       assert.equal((await debugState(engine)).lastParams["turn/start"].threadId, id);
       // An engine restart resumes the fork in the new folder.
-      engine.server.request("test/crash", {}).catch(() => {});
+      engine.testRequest("test/crash", {}).catch(() => {});
       await until(() => session.state.engine.state === "ready" && engines.length === 2, "the restart");
       assert.equal((await debugState(engines[1])).lastParams["thread/resume"].cwd, other);
       // A new conversation starts there; a resume goes there too.

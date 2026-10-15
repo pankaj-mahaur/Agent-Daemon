@@ -122,7 +122,7 @@ test("openrouter: key → store, provider active, key reaches Codex as env; logo
 
     const engine = await createEngine({ home: t.home, command, env: providerEnv(t.store) });
     try {
-      const { env } = await engine.server.request("debug/state");
+      const { env } = await engine.testRequest("debug/state");
       assert.equal(env.hasOpenRouterKey, true);
     } finally {
       await engine.close();

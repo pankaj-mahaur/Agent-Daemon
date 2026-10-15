@@ -16,8 +16,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PROVIDER_ENV_KEYS } from "../auth/providers.mjs";
-import { isManagedHome } from "../engine/codex/home.mjs";
-import { codexHooksForProfile } from "../engine/codex/hooks-config.mjs";
+import { engineDebugUi, engineHome, engineHooks } from "../engine/index.mjs";
 import { needsWindowsSandbox, setupWindowsSandbox } from "./sandbox.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -112,7 +111,7 @@ export function installedProfile({ env = process.env, home = homedir() } = {}) {
 }
 
 export async function ensureHarnessSetup(engine, { cwd = process.cwd(), profile = installedProfile(), roots, platform = process.platform } = {}) {
-  const report = { managed: isManagedHome(engine.home), profile, hooksWritten: false, agentsWritten: false, configWritten: false, trusted: 0, skillRoots: [], warnings: [] };
+  const report = { managed: engineHome.isManaged(engine.home), profile, hooksWritten: false, agentsWritten: false, configWritten: false, trusted: 0, skillRoots: [], warnings: [] };
   if (!report.managed) return report;
   const step = async (name, fn) => {
     try {
@@ -124,7 +123,7 @@ export async function ensureHarnessSetup(engine, { cwd = process.cwd(), profile 
   const hooksFile = path.join(engine.home, "hooks.json");
 
   await step("hooks.json", async () => {
-    report.hooksWritten = writeIfChanged(hooksFile, JSON.stringify(await codexHooksForProfile(profile), null, 2) + "\n");
+    report.hooksWritten = writeIfChanged(hooksFile, JSON.stringify(await engineHooks.forProfile(profile), null, 2) + "\n");
   });
 
   // Trust before config: if a config write fails, hooks must still run.
@@ -174,8 +173,7 @@ export async function ensureHarnessSetup(engine, { cwd = process.cwd(), profile 
   });
 
   await step("skills", async () => {
-    const { syncSkills } = await import("./codex-ui.mjs");
-    report.skillRoots = roots ?? skillRoots({ cwd, engineHome: engine.home, refresh: syncSkills });
+    report.skillRoots = roots ?? skillRoots({ cwd, engineHome: engine.home, refresh: engineDebugUi.syncSkills });
     if (report.skillRoots.length) await engine.setSkillRoots(report.skillRoots);
   });
 

@@ -29,7 +29,7 @@ async function withEngine(opts, fn) {
 
 test("engine runs Codex with CODEX_HOME set to the harness home", async () => {
   await withEngine({}, async (engine, home) => {
-    const { env } = await engine.server.request("debug/state");
+    const { env } = await engine.testRequest("debug/state");
     assert.equal(env.CODEX_HOME, home);
     assert.ok(existsSync(join(home, "config.toml")));
   });
@@ -37,11 +37,11 @@ test("engine runs Codex with CODEX_HOME set to the harness home", async () => {
 
 test("only an engine started with experimental: true opts into the allowlist, muting the other experimental notifications", async () => {
   await withEngine({}, async (engine) => {
-    const { lastParams } = await engine.server.request("debug/state");
+    const { lastParams } = await engine.testRequest("debug/state");
     assert.equal(lastParams.initialize.capabilities, undefined, "stable-only by default");
   });
   await withEngine({ experimental: true }, async (engine) => {
-    const { lastParams } = await engine.server.request("debug/state");
+    const { lastParams } = await engine.testRequest("debug/state");
     const caps = lastParams.initialize.capabilities;
     assert.equal(caps.experimentalApi, true);
     assert.ok(caps.optOutNotificationMethods.includes("thread/queue/changed"));
@@ -53,7 +53,7 @@ test("startThread sends the approved safe defaults", async () => {
   await withEngine({}, async (engine) => {
     const { threadId } = await engine.startThread({ cwd: "/work" });
     assert.equal(threadId, "thread-1");
-    const { lastParams } = await engine.server.request("debug/state");
+    const { lastParams } = await engine.testRequest("debug/state");
     assert.deepEqual(lastParams["thread/start"], { cwd: "/work", sandbox: DEFAULT_SANDBOX, approvalPolicy: DEFAULT_APPROVAL_POLICY });
     assert.equal(DEFAULT_SANDBOX, "workspace-write");
     assert.equal(DEFAULT_APPROVAL_POLICY, "on-request");
@@ -108,7 +108,7 @@ test("complete() returns the callHeadlessClaude shape with parsed JSON", async (
     assert.deepEqual(r.parsedJson, { answer: 42 });
     assert.equal(typeof r.durationMs, "number");
     assert.ok(r.sessionId);
-    const { lastParams } = await engine.server.request("debug/state");
+    const { lastParams } = await engine.testRequest("debug/state");
     assert.equal(lastParams["thread/start"].sandbox, "read-only");
     assert.equal(lastParams["thread/start"].approvalPolicy, "never");
     assert.equal(lastParams["thread/start"].ephemeral, true);
@@ -188,7 +188,7 @@ test("a timed-out turn is interrupted, not left running", async () => {
     const { threadId } = await engine.startThread({});
     await assert.rejects(engine.turn({ threadId, text: "hang", timeoutMs: 300 }), /timed out after 300ms/);
     const { lastParams } = await waitFor(async () => {
-      const s = await engine.server.request("debug/state");
+      const s = await engine.testRequest("debug/state");
       return s.calls.includes("turn/interrupt") && s;
     }, { what: "turn/interrupt" });
     assert.equal(lastParams["turn/interrupt"].threadId, threadId);
@@ -219,7 +219,7 @@ test("createEngine closes the child when initialize fails", async () => {
   try {
     await assert.rejects(engine.start(), /init refused/);
     await engine.close();
-    assert.equal(engine.server.running, false);
+    assert.equal(engine.running, false);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
@@ -240,7 +240,7 @@ test("complete() accepts callHeadlessClaude option names and drops Claude model 
       const r = await engine.complete({ systemPromptFile: promptFile, userMessage: "q", jsonSchema: { type: "object" }, model: "haiku" });
       assert.equal(r.ok, true);
       assert.deepEqual(r.parsedJson, { answer: 42 });
-      const { lastParams } = await engine.server.request("debug/state");
+      const { lastParams } = await engine.testRequest("debug/state");
       assert.equal(lastParams["thread/start"].developerInstructions, "system from file");
       assert.equal(lastParams["thread/start"].model, undefined);
       assert.deepEqual(lastParams["turn/start"].outputSchema, { type: "object" });
@@ -271,7 +271,7 @@ test("a turn that times out before turn/start answers is still interrupted", asy
   await withEngine({}, async (engine) => {
     const { threadId } = await engine.startThread({});
     await assert.rejects(engine.turn({ threadId, text: "slow-start", timeoutMs: 100 }), /timed out after 100ms/);
-    await waitFor(async () => (await engine.server.request("debug/state")).calls.includes("turn/interrupt"), { what: "late-starting turn to be interrupted" });
+    await waitFor(async () => (await engine.testRequest("debug/state")).calls.includes("turn/interrupt"), { what: "late-starting turn to be interrupted" });
   });
 });
 
@@ -279,7 +279,7 @@ test("a throwing onEvent also interrupts the running turn", async () => {
   await withEngine({}, async (engine) => {
     const { threadId } = await engine.startThread({});
     await assert.rejects(engine.turn({ threadId, text: "hang", onEvent: () => { throw new Error("boom"); } }), /boom/);
-    await waitFor(async () => (await engine.server.request("debug/state")).calls.includes("turn/interrupt"), { what: "turn/interrupt" });
+    await waitFor(async () => (await engine.testRequest("debug/state")).calls.includes("turn/interrupt"), { what: "turn/interrupt" });
   });
 });
 
@@ -298,7 +298,7 @@ test("complete() runs isolated: hooks off and every MCP server disabled for its 
   await withEngine({}, async (engine) => {
     await engine.writeConfig([["mcp_servers.agent-daemon-memory", { command: "node" }], ["mcp_servers.playwright", { command: "npx" }]]);
     await engine.complete({ userMessage: "q" });
-    const { lastParams } = await engine.server.request("debug/state");
+    const { lastParams } = await engine.testRequest("debug/state");
     assert.deepEqual(lastParams["thread/start"].config, {
       "features.hooks": false,
       "mcp_servers.agent-daemon-memory.enabled": false,

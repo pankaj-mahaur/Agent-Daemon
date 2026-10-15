@@ -8,23 +8,18 @@
 // app-server caches readiness per process, so status is read from a fresh one.
 // On macOS/Linux Codex uses Seatbelt/Landlock and nothing is needed here.
 
-import { createEngine } from "../engine/index.mjs";
-import { isManagedHome } from "../engine/codex/home.mjs";
+import { createEngine, engineHome } from "../engine/index.mjs";
 
 export const needsWindowsSandbox = (platform = process.platform) => platform === "win32";
 
 export async function sandboxReadiness(engine) {
-  return (await engine.server.request("windowsSandbox/readiness", {})).status;
+  return engine.sandbox.readiness();
 }
 
 // The mode is written to config only AFTER setup succeeds: written first,
 // a failed setup would look configured and never be retried.
 export async function setupWindowsSandbox(engine, { mode = "unelevated", cwd, timeoutMs = 10 * 60_000 } = {}) {
-  const done = engine.waitForNotification("windowsSandbox/setupCompleted", () => true, { timeoutMs });
-  done.catch(() => {}); // observed below; avoid an unhandled rejection if setupStart throws
-  const started = await engine.server.request("windowsSandbox/setupStart", { mode, ...(cwd ? { cwd } : {}) });
-  if (!started?.started) throw new Error("Codex did not start sandbox setup");
-  const r = await done;
+  const r = await engine.sandbox.setup({ mode, cwd, timeoutMs });
   if (!r.success) throw new Error(r.error ?? "sandbox setup failed");
   await engine.writeConfig([["windows.sandbox", mode]]);
   return r;
@@ -59,7 +54,7 @@ export async function cmdSandbox(sub, opts = {}) {
   let engine;
   try {
     engine = await createEngine(engineOpts);
-    if (!isManagedHome(engine.home) && !opts.force) {
+    if (!engineHome.isManaged(engine.home) && !opts.force) {
       err.write(`Refusing to change ${engine.home}: it was not created by ad. Re-run with --force.\n`);
       return 2;
     }

@@ -45,8 +45,8 @@ async function withEngine(fn) {
 test("the fake server only sends what the pinned Codex could (required fields, enums, variants)", async () => {
   await withEngine(async ({ engine, session }) => {
     const problems = [];
-    engine.server.on("notification", (m) => problems.push(...checkMessage(m)));
-    engine.server.on("server-request", (m) => problems.push(...checkMessage(m, { kind: "request" })));
+    engine.onRawNotification((m) => problems.push(...checkMessage(m)));
+    engine.onRawServerRequest((m) => problems.push(...checkMessage(m, { kind: "request" })));
     const answer = () => {
       for (const r of session.state.requests) {
         const req = r.request;

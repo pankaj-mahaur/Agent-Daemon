@@ -12,8 +12,8 @@
 
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { createEngine } from "../engine/index.mjs";
-import { isManagedHome } from "../engine/codex/home.mjs";
+import { createEngine, engineHome } from "../engine/index.mjs";
+
 
 export const PLAYWRIGHT_MCP = "@playwright/mcp@0.0.83";
 
@@ -60,7 +60,7 @@ export async function cmdTools(sub, name, opts = {}) {
       err.write(`Unknown tool "${name}". Known: ${Object.keys(TOOLS).join(", ")}\n`);
       return 1;
     }
-    if (!isManagedHome(engine.home) && !opts.force) {
+    if (!engineHome.isManaged(engine.home) && !opts.force) {
       err.write(`Refusing to change ${engine.home}: it was not created by ad. Re-run with --force.\n`);
       return 2;
     }

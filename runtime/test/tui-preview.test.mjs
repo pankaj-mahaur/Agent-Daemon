@@ -166,7 +166,7 @@ test("preview app: Esc interrupts a running turn", async () => {
     await until(() => app.state.busy && scr.lines().some((l) => l.includes("Working (")), "the working row");
     // Esc before Codex accepted the turn only asks to wait; on a loaded machine
     // 100 ms wasn't enough, so wait for the turn itself, then let it answer.
-    for (let i = 0; i < 200 && !(await engine.server.request("debug/state", {})).calls.includes("turn/start"); i++) await new Promise((r) => setTimeout(r, 25));
+    for (let i = 0; i < 200 && !(await engine.testRequest("debug/state", {})).calls.includes("turn/start"); i++) await new Promise((r) => setTimeout(r, 25));
     await new Promise((r) => setTimeout(r, 100));
     type("\x1b");
     await until(() => !app.state.busy, "the turn to stop");
@@ -209,7 +209,7 @@ test("preview app: submitting while a turn runs is refused with a notice", async
     assert.equal(app.state.composer, "more", "the text is kept");
     // Esc before Codex accepted the turn only asks to wait ("still starting"); on a
     // loaded machine 100 ms wasn't enough, so wait for the turn itself.
-    for (let i = 0; i < 200 && !(await engine.server.request("debug/state", {})).calls.includes("turn/start"); i++) await new Promise((r) => setTimeout(r, 25));
+    for (let i = 0; i < 200 && !(await engine.testRequest("debug/state", {})).calls.includes("turn/start"); i++) await new Promise((r) => setTimeout(r, 25));
     await new Promise((r) => setTimeout(r, 100));
     type("\x1b");
     await until(() => !app.state.busy, "the turn to stop");
@@ -280,7 +280,7 @@ test("preview app: if the engine stops during an approval, the prompt is decline
   await withApp(async ({ app, scr, type, until, engine }) => {
     type("hello\r");
     await until(() => app.state.approval, "the approval prompt");
-    engine.server.child.kill();
+    engine.kill();
     await until(() => !app.state.busy, "the turn to end");
     assert.equal(app.state.approval, null);
     assert.ok(scr.lines().some((l) => l.includes("declined: Run command?")));

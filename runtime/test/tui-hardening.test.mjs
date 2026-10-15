@@ -12,7 +12,7 @@ import { createApp } from "../src/tui/app.mjs";
 import { copyText } from "../src/tui/commands.mjs";
 import { createMarkdownStream, inline, renderMarkdown } from "../src/tui/view/markdown.mjs";
 import { diffRows } from "../src/tui/view/cells.mjs";
-import { syncSkills } from "../src/harness/codex-ui.mjs";
+import { syncSkills } from "../src/engine/codex/stock-ui.mjs";
 import { createRenderer } from "../src/tui/terminal/renderer.mjs";
 import { createInputDecoder } from "../src/tui/terminal/input.mjs";
 import { modelScreen } from "../testkit/screen.mjs";
@@ -116,7 +116,7 @@ function stub(state = {}, { models = [] } = {}) {
   return {
     state: st,
     calls,
-    engine: { server: { request: async (m) => (m === "model/list" ? { data: models } : {}) } },
+    engine: { models: { list: async () => models } },
     on: (ev, fn) => (ev === "change" && listeners.add(fn), () => listeners.delete(fn)),
     emit: (what) => listeners.forEach((f) => f({ what, state: st })),
     submit: (text) => (calls.push(["submit", text]), { clientUserMessageId: "c", accepted: Promise.resolve({ turnId: "u" }), done: Promise.resolve({}) }),

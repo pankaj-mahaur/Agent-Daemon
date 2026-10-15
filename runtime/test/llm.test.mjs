@@ -19,7 +19,7 @@ function fakeFactory(root, seen) {
     const complete = engine.complete.bind(engine);
     engine.complete = async (o) => {
       const r = await complete(o);
-      seen.push((await engine.server.request("debug/state")).lastParams["turn/start"]);
+      seen.push((await engine.testRequest("debug/state")).lastParams["turn/start"]);
       return r;
     };
     return engine;

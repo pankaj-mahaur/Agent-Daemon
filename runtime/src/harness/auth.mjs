@@ -11,8 +11,8 @@
 // not created by ad (AD_CODEX_HOME pointing at a real ~/.codex), mutations
 // are refused unless --force: that folder belongs to the user's own codex.
 
-import { createEngine } from "../engine/index.mjs";
-import { isManagedHome } from "../engine/codex/home.mjs";
+import { createEngine, engineHome } from "../engine/index.mjs";
+
 import { PROVIDERS, useProviderEdits } from "../auth/providers.mjs";
 import { createSecretStore } from "../auth/secrets.mjs";
 import { openUrl, readSecret } from "./io.mjs";
@@ -55,7 +55,7 @@ export async function cmdAuth(sub, args = [], opts = {}) {
       // stored key must not block the very commands that repair it.
       env: opts.env,
     });
-    if (sub !== "status" && !isManagedHome(engine.home) && !opts.force) {
+    if (sub !== "status" && !engineHome.isManaged(engine.home) && !opts.force) {
       err.write(`Refusing to change ${engine.home}: it was not created by ad (it may be your own codex home). Re-run with --force to proceed.\n`);
       return 2;
     }

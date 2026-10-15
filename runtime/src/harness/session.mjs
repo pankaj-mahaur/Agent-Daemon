@@ -32,9 +32,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_APPROVAL_POLICY, DEFAULT_SANDBOX } from "../engine/index.mjs";
-import { canonicalPath } from "../engine/codex/home.mjs";
-import { guardianDenialEvent } from "../engine/codex/events.mjs";
+import { DEFAULT_APPROVAL_POLICY, DEFAULT_SANDBOX, engineEvents, engineHome } from "../engine/index.mjs";
 
 export const DEFAULT_LOCK_DIR = join(homedir(), ".agent-daemon", "locks");
 const NOTICE_CAP = 50;
@@ -579,7 +577,7 @@ export function createSession({
             await eng.resumeThread(id, { cwd: state.config.cwd, sandbox: state.config.sandbox, approvalPolicy: state.config.approvalPolicy, excludeTurns: true });
           } catch (err) {
             if (closed) return void (await eng.close?.());
-            if (eng.server?.exitError) {
+            if (eng.exitError) {
               notice("error", "engine.restartFailed", `Codex stopped again: ${err.message}`);
               continue; // the new engine died too
             }
@@ -787,8 +785,8 @@ export function createSession({
     const turnId = state.activeTurnId;
     state.echoes.set(cid, inputText(input));
     change("echoes");
-    const accepted = eng.server
-      .request("turn/steer", { threadId: state.thread.id, expectedTurnId: turnId, input: toInput(input), clientUserMessageId: cid })
+    const accepted = eng.turns
+      .steer(state.thread.id, turnId, toInput(input), { clientUserMessageId: cid })
       .then(
         (r) => ({ steered: true, turnId: r?.turnId ?? turnId }),
         () => {
@@ -869,7 +867,7 @@ export function createSession({
         if (eng !== asked || closed) return;
         // Without presets ad can't keep a mode it can't send: Default, as the footer then shows.
         state.mode = { kind: "default", presets: [] };
-        notice("warn", "modes.unavailable", `Plan mode is unavailable: Codex didn't list its modes (${err.message}).`);
+        notice("warn", "modes.unavailable", err?.code === "FEATURE_UNAVAILABLE" ? err.message : `Plan mode is unavailable: the engine didn't list its modes (${err.message}).`);
       },
     ).finally(() => change("mode"));
   }
@@ -926,11 +924,10 @@ export function createSession({
   }
 
   async function loadTurns(threadId, e) {
-    const { normalizeItem } = await import("../engine/codex/events.mjs");
     const turns = [];
     let cursor = null;
     for (let page = 0; page < 1000; page++) {
-      const r = await eng.server.request("thread/turns/list", { threadId, itemsView: "full", sortDirection: "asc", limit: 50, ...(cursor ? { cursor } : {}) });
+      const r = await eng.threads.turns(threadId, { cursor });
       if (stale(e)) throw new Error("the session moved on before the history loaded");
       turns.push(...(r?.data ?? []));
       cursor = r?.nextCursor ?? null;
@@ -940,7 +937,7 @@ export function createSession({
       const turn = turnOf(t.id);
       turn.status = t.status ?? "completed";
       turn.error = t.error ?? null;
-      for (const item of t.items ?? []) placeItem(normalizeItem(item), { threadId, turnId: t.id });
+      for (const item of t.items ?? []) placeItem(engineEvents.normalizeItem(item), { threadId, turnId: t.id });
     }
   }
 
@@ -981,7 +978,7 @@ export function createSession({
     async init() {
       const acct = await eng.account().catch(() => null);
       if (acct) state.account = { ...(acct.account ?? {}), requiresOpenaiAuth: Boolean(acct.requiresOpenaiAuth) };
-      const limits = await eng.server.request("account/rateLimits/read", {}).catch(() => null);
+      const limits = await eng.usage.limits().catch(() => null);
       if (limits) state.rateLimits = limits.rateLimits ?? limits;
       change("account");
     },
@@ -1014,7 +1011,7 @@ export function createSession({
       const [d] = state.denials.splice(i, 1);
       change("denials");
       try {
-        await eng.server.request("thread/approveGuardianDeniedAction", { threadId, event: guardianDenialEvent(d) });
+        await eng.guardian.approve(threadId, d);
       } catch (err) {
         if (state.thread?.id === threadId && !state.denials.some((x) => x.reviewId === reviewId)) {
           state.denials.splice(Math.min(i, state.denials.length), 0, d);
@@ -1030,7 +1027,7 @@ export function createSession({
     async stopTerminals() {
       const threadId = state.thread?.id;
       try {
-        if (threadId) await eng.cleanBackgroundTerminals(threadId);
+        if (threadId) await eng.terminals.clean(threadId);
       } finally {
         // Forgotten either way, as Codex does after asking (a failure is still reported).
         state.terminals = new Map();
@@ -1041,7 +1038,7 @@ export function createSession({
     modesReady: null,
     async review(target = { type: "uncommittedChanges" }) {
       const threadId = await ensureThread();
-      return eng.server.request("review/start", { threadId, target });
+      return eng.review.start(threadId, target);
     },
     async compact() {
       if (!state.thread) return false;
@@ -1050,7 +1047,7 @@ export function createSession({
     },
     async shell(command) {
       const threadId = await ensureThread();
-      return eng.server.request("thread/shellCommand", { threadId, command });
+      return eng.terminals.run(threadId, command);
     },
     async setGoal(text) {
       const threadId = await ensureThread();
@@ -1062,7 +1059,7 @@ export function createSession({
     async revert(turnId) {
       if (!state.thread) throw new Error("no thread to revert");
       if (state.activeTurnId) throw new Error("interrupt the running turn first");
-      await eng.server.request("thread/revert", { threadId: state.thread.id, beforeTurnId: turnId });
+      await eng.threads.revert(state.thread.id, turnId);
       const i = state.turns.findIndex((t) => t.id === turnId);
       if (i >= 0) {
         const gone = new Set(state.turns.slice(i).map((t) => t.id));
@@ -1077,7 +1074,7 @@ export function createSession({
       if (!state.thread) throw new Error("nothing to name yet: send a prompt first");
       const n = String(name ?? "").trim();
       if (!n) throw new Error("a name is needed");
-      await eng.server.request("thread/name/set", { threadId: state.thread.id, name: n });
+      await eng.threads.rename(state.thread.id, n);
       state.thread = { ...state.thread, name: n };
       change("thread.name");
       return n;
@@ -1086,7 +1083,7 @@ export function createSession({
     async fork(throughTurnId = null) {
       if (!state.thread) throw new Error("nothing to fork yet");
       if (state.activeTurnId || state.starting) throw new Error("wait for the turn to finish first");
-      const r = await eng.server.request("thread/fork", { threadId: state.thread.id, ...(throughTurnId ? { lastTurnId: throughTurnId } : {}) });
+      const r = await eng.threads.fork(state.thread.id, throughTurnId ? { lastTurnId: throughTurnId } : {});
       const id = r?.thread?.id;
       if (!id) throw new Error("Codex didn't return the new thread");
       return api.resume(id);
@@ -1114,18 +1111,18 @@ export function createSession({
         return null;
       }
       const e = epoch;
-      const r = await eng.server.request("thread/fork", { threadId: from.id, cwd: dir, sandbox: state.config.sandbox, approvalPolicy: state.config.approvalPolicy, excludeTurns: true });
+      const r = await eng.threads.fork(from.id, { cwd: dir, sandbox: state.config.sandbox, approvalPolicy: state.config.approvalPolicy, excludeTurns: true });
       const id = r?.thread?.id;
       if (!id) throw new Error("Codex didn't return the new thread");
       // A fork nobody uses (the session moved on, a prompt started meanwhile, or
       // Codex put it somewhere else) is let go, not left loaded.
       const drop = (why) => {
-        eng.server.request("thread/unsubscribe", { threadId: id }).catch(() => {});
+        eng.threads.unsubscribe(id).catch(() => {});
         throw new Error(why);
       };
       if (stale(e)) drop("the session moved on before the folder changed");
       if (state.activeTurnId || state.starting || state.queue.length) drop("Changing directories requires an idle primary session without queued input.");
-      if (r.cwd && canonicalPath(r.cwd) !== canonicalPath(dir)) drop("Requested directory or permissions not applied.");
+      if (r.cwd && engineHome.canonical(r.cwd) !== engineHome.canonical(dir)) drop("Requested directory or permissions not applied.");
       const kind = state.mode.kind; // the fork keeps the thread's mode
       detach();
       resetThreadState();
@@ -1153,8 +1150,7 @@ export function createSession({
       if (closed) throw new Error("session closed");
       // A thread Codex has saved: one with turns, or a fork (after /cd); an empty new one can't be forked.
       if (!state.thread || (!state.turns.length && !state.thread.forkedFromId)) throw new Error("'/side' is unavailable until the main thread is ready.");
-      const r = await eng.server.request("thread/fork", {
-        threadId: state.thread.id,
+      const r = await eng.threads.fork(state.thread.id, {
         ephemeral: true,
         excludeTurns: true,
         sandbox: "read-only",
@@ -1166,9 +1162,9 @@ export function createSession({
       if (!id) throw new Error("Codex didn't return the side thread");
       const text = (role, t) => ({ type: "message", role, content: [{ type: "input_text", text: t }] });
       try {
-        await eng.server.request("thread/inject_items", { threadId: id, items: [text("developer", SIDE_DEVELOPER_INSTRUCTIONS), text("user", SIDE_BOUNDARY_PROMPT)] });
+        await eng.threads.inject(id, [text("developer", SIDE_DEVELOPER_INSTRUCTIONS), text("user", SIDE_BOUNDARY_PROMPT)]);
       } catch (err) {
-        eng.server.request("thread/unsubscribe", { threadId: id }).catch(() => {});
+        eng.threads.unsubscribe(id).catch(() => {});
         throw err;
       }
       const side = createSession({ engine: eng, cwd: state.config.cwd, model: state.config.model, sandbox: "read-only", approvalPolicy: "never", secondary: true, modes, configEffort: () => state.config.effort ?? configEffort() });
@@ -1203,7 +1199,7 @@ export function createSession({
         timer = setTimeout(() => resolve(false), timeoutMs);
       });
       try {
-        const r = await eng.server.request("thread/unsubscribe", { threadId });
+        const r = await eng.threads.unsubscribe(threadId);
         return r?.status === "notLoaded" ? true : await closed;
       } catch {
         return false;
@@ -1224,11 +1220,11 @@ export function createSession({
     },
     /** Archives the current conversation (Codex keeps it; /resume can bring it back) and leaves it. → its id. */
     async archive() {
-      return leaveWith((threadId) => eng.server.request("thread/archive", { threadId }));
+      return leaveWith((threadId) => eng.threads.archive(threadId));
     },
     /** Deletes the current conversation for good, its subagents' too, and leaves it. → its id. */
     async deleteThread() {
-      return leaveWith((threadId) => eng.server.request("thread/delete", { threadId }));
+      return leaveWith((threadId) => eng.threads.delete(threadId));
     },
     /** Continues an earlier thread, with its history loaded. */
     async resume(threadId) {
@@ -1263,7 +1259,7 @@ export function createSession({
       // A side conversation's thread is let go: ephemeral, it ends with it.
       const sideThread = secondary ? state.thread?.id : null;
       detach("closed");
-      if (sideThread) eng.server.request("thread/unsubscribe", { threadId: sideThread }).catch(() => {});
+      if (sideThread) eng.threads.unsubscribe(sideThread).catch(() => {});
       state.queue = [];
       unwire();
       for (const [, list] of doneWaiters) for (const r of list) r({ status: "closed" });

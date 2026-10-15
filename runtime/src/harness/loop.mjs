@@ -181,7 +181,7 @@ export async function cmdLoop(objective, opts = {}) {
 // Compaction runs as its own turn; starting the next turn before it ends
 // fails. Wait for thread/compacted.
 async function compact(engine, threadId, err) {
-  const done = engine.waitForNotification("thread/compacted", (p) => p.threadId === threadId, { timeoutMs: COMPACT_WAIT_MS });
+  const done = engine.waitForCompaction(threadId, { timeoutMs: COMPACT_WAIT_MS });
   done.catch(() => {}); // awaited below
   try {
     await engine.compactThread(threadId);

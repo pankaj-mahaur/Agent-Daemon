@@ -979,10 +979,10 @@ async function cmdDoctor({ cwd = process.cwd(), tokens, limit, model } = {}) {
   // Check 2: claude CLI on PATH
   checks.push(await checkBinary("claude", "headless engine for digest pipeline"));
 
-  // Check 2a: Codex engine (harness) — pinned version + harness home
-  const { codexChecks, codexLiveChecks } = await import("./engine/codex/doctor.mjs");
-  checks.push(...codexChecks());
-  checks.push(...(await codexLiveChecks()));
+  // Check 2a: the engine — pinned version, home, and (once the home exists) sign-in, hooks, sandbox
+  const { engineDoctor } = await import("./engine/index.mjs");
+  checks.push(...engineDoctor.checks());
+  checks.push(...(await engineDoctor.liveChecks()));
 
   // Check 2b: Auth — ANTHROPIC_API_KEY or OAuth/keychain
   // As of v0.5, --bare is no longer used. OAuth/keychain auth works for GEPA.

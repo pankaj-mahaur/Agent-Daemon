@@ -13,9 +13,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { startHarnessEngine } from "../harness/start.mjs";
 import { createSession } from "../harness/session.mjs";
-import { runStockCodex } from "../harness/codex-ui.mjs";
-import { pinnedCodexVersion } from "../engine/codex/app-server.mjs";
-import { canonicalPath } from "../engine/codex/home.mjs";
+import { engineDebugUi, engineHome, engineVersion } from "../engine/index.mjs";
 import { createIo } from "./terminal/io.mjs";
 import { createRenderer } from "./terminal/renderer.mjs";
 import { colorDepth } from "./terminal/text.mjs";
@@ -218,7 +216,7 @@ export async function sinceLastTime({ cwd, since = 0, home } = {}) {
     const { loadJobs } = await import("../harness/schedule.mjs");
     for (const j of loadJobs(home)) {
       const at = Date.parse(j.lastRun ?? j.lastRunAt ?? "");
-      if (!(at > since) || (j.cwd && canonicalPath(j.cwd) !== canonicalPath(cwd))) continue;
+      if (!(at > since) || (j.cwd && engineHome.canonical(j.cwd) !== engineHome.canonical(cwd))) continue;
       parts.push(`schedule ${j.id} ${j.lastExit === 0 || j.lastStatus === "ok" ? "ran" : "failed"}`);
     }
   } catch {
@@ -238,7 +236,7 @@ export async function sinceLastTime({ cwd, since = 0, home } = {}) {
 /** ad rows for a hook run of ad's own hooks.json (recalled memory, guard blocks). */
 export function hookRows(run, { hooksFile }) {
   if (run?.phase !== "completed" || !run.sourcePath || !hooksFile) return [];
-  if (canonicalPath(run.sourcePath) !== canonicalPath(hooksFile)) return [];
+  if (engineHome.canonical(run.sourcePath) !== engineHome.canonical(hooksFile)) return [];
   const first = (kind) => run.entries.find((e) => e.kind === kind)?.text ?? "";
   const line = (t) => sanitize(t, "transcript").split("\n").find((l) => l.trim()) ?? "";
   if (run.status === "blocked") return [{ kind: "guard", text: line(first("feedback") || first("stop") || first("error")) || run.event }];
@@ -312,8 +310,8 @@ export async function cmdTui(opts = {}) {
     // Folder trust (S3): asked once per folder, kept in ad's Codex home.
     const config = await engine.readConfig().catch(() => ({}));
     const projects = config.projects ?? {};
-    const known = Object.keys(projects).find((k) => canonicalPath(k) === canonicalPath(cwd));
-    if (!known && canonicalPath(cwd) !== canonicalPath(homedir())) {
+    const known = Object.keys(projects).find((k) => engineHome.canonical(k) === engineHome.canonical(cwd));
+    if (!known && engineHome.canonical(cwd) !== engineHome.canonical(homedir())) {
       const trust = await pickOnce({
         io,
         renderer,
@@ -359,12 +357,12 @@ export async function cmdTui(opts = {}) {
     } catch {
       // memory is optional
     }
-    const codexVersion = pinnedCodexVersion() ?? "?";
+    const codexVersion = engineVersion.pinned() ?? "?";
     // No model configured: name the one Codex will use (its default), not "default".
     let modelName = config.model ?? opts.model ?? null;
     if (!modelName) {
-      const listed = await Promise.race([engine.server.request("model/list", {}).catch(() => null), new Promise((r) => setTimeout(() => r(null), 2000).unref?.())]);
-      const def = listed?.data?.find((m) => m.isDefault);
+      const listed = await Promise.race([engine.models.list().catch(() => null), new Promise((r) => setTimeout(() => r(null), 2000).unref?.())]);
+      const def = listed?.find((m) => m.isDefault);
       modelName = def?.model ?? def?.id ?? "default";
     }
     const header = renderHeader(
@@ -381,7 +379,7 @@ export async function cmdTui(opts = {}) {
     );
     const stateFile = opts.stateFile ?? DEFAULT_STATE_FILE;
     const state = readState(stateFile);
-    const key = canonicalPath(cwd);
+    const key = engineHome.canonical(cwd);
     const since = await sinceLastTime({ cwd, since: state[key]?.lastSeen ?? Date.now(), home: opts.adHome });
     const intro = [...header];
     if (since.length) intro.push(truncate([{ text: `  Since last time: ${since.join(" \u{b7} ")}`, style: T.dim }], Math.max(10, io.size().cols - 2)));
@@ -391,8 +389,8 @@ export async function cmdTui(opts = {}) {
     if (opts.resume || opts.last) {
       let id = opts.resume;
       if (!id) {
-        const r = await engine.server.request("thread/list", { cwd, limit: 1, modelProviders: [], sourceKinds: ["cli", "vscode", "exec", "appServer"] }).catch(() => null);
-        id = r?.data?.[0]?.id ?? null;
+        const listed = await engine.threads.list({ cwd, limit: 1, modelProviders: [], sourceKinds: ["cli", "vscode", "exec", "appServer"] }).catch(() => null);
+        id = listed?.[0]?.id ?? null;
       }
       if (id) await session.resume(id).catch((e) => intro.push([{ text: `  Could not resume: ${sanitize(e.message, "transcript")}`, style: T.warning }]));
     }
@@ -411,8 +409,7 @@ export async function cmdTui(opts = {}) {
         if (!o.unfocusedOnly || !focused) io.write("\x07");
       },
       searchFiles: async (q) => {
-        const r = await session.engine.server.request("fuzzyFileSearch", { query: q, roots: [cwd], cancellationToken: "ad-mention" });
-        return (r?.files ?? []).map((f) => f.path);
+        return (await session.engine.files.search(q, [cwd], { token: "ad-mention" })).map((f) => f.path);
       },
       gitDiff: () => gitDiff(cwd),
       remember: opts.memory === false ? undefined : async (text) => {
@@ -456,7 +453,7 @@ export async function cmdTui(opts = {}) {
         // One runtime per thread: ad's engine unloads it before the stock UI opens it (else both
         // run it, both append to its rollout, and back here ad's copy misses the stock UI's turns).
         if (threadId && !(await session.release(threadId))) await session.restartEngine().catch(() => false);
-        const code = await handoff(io, renderer, () => runStockCodex({ args: splitArgs(arg), threadId, cwd, home: engine.home, store: opts.store }), app);
+        const code = await handoff(io, renderer, () => engineDebugUi.run({ args: splitArgs(arg), threadId, cwd, home: engine.home, store: opts.store }), app);
         if (threadId) await session.resume(threadId);
         await settings.codex.load(); // the stock UI may have changed them
         setSyntaxTheme(settings.codex.get("tui.theme")); // /theme there, too

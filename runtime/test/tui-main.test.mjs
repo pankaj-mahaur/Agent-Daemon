@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { hookRows, preflight, sinceLastTime, splitArgs, splitUnifiedDiff } from "../src/tui/main.mjs";
-import { codexArgs, MIRROR_MARKER, MIRRORED_FLAG, runStockCodex, syncSkills } from "../src/harness/codex-ui.mjs";
+import { stockUiArgs as codexArgs, MIRROR_MARKER, MIRRORED_FLAG, runStockUi as runStockCodex, syncSkills } from "../src/engine/codex/stock-ui.mjs";
 import { skillRoots } from "../src/harness/setup.mjs";
 
 const tty = { isTTY: true };

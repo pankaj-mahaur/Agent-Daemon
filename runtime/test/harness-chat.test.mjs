@@ -85,7 +85,7 @@ test("slash commands drive the engine", async () => {
     await session.handleLine("/nope");
     assert.match(err.text, /unknown command \/nope/);
     assert.deepEqual(await session.handleLine("/exit"), { exit: true });
-    const { calls } = await engine.server.request("debug/state");
+    const { calls } = await engine.testRequest("debug/state");
     for (const m of ["thread/list", "thread/goal/set", "thread/compact/start", "thread/resume"]) assert.ok(calls.includes(m), m);
   });
 });

@@ -58,7 +58,7 @@ test("startHarnessEngine auto-configures the Windows sandbox once and restarts t
     const { engine } = await startHarnessEngine({ cwd: root, home, command, err, platform: "win32", store: { get: () => null } });
     try {
       assert.match(err.text, /set up the Windows sandbox \(unelevated\)/);
-      assert.equal(await engine.server.request("windowsSandbox/readiness", {}).then((r) => r.status), "ready", "restarted process sees it");
+      assert.equal(await engine.sandbox.readiness(), "ready", "restarted process sees it");
     } finally {
       await engine.close();
     }

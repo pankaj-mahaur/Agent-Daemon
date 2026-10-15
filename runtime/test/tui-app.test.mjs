@@ -85,7 +85,7 @@ test("a crash mid-stream doesn't wedge the scrollback: the next answer still sho
     async ({ app, type, until, committed, engines, session }) => {
       type("hello\r");
       await until(() => app.state.modal, "the approval");
-      engines[0].server.request("test/crash", {}).catch(() => {});
+      engines[0].testRequest("test/crash", {}).catch(() => {});
       await until(() => engines.length === 2 && session.state.engine.state === "ready", "the restart");
       type("early-complete\r");
       await until(() => /• early/.test(committed()), "the next answer in scrollback");
@@ -110,7 +110,7 @@ test("Codex stopped and not restarted: a banner; Enter restarts and the kept pro
     async ({ type, until, text, committed, engines, session }) => {
       type("fail-turn\r");
       await until(() => /Worked for/.test(committed()), "a first turn");
-      engines[0].server.request("test/crash", {}).catch(() => {});
+      engines[0].testRequest("test/crash", {}).catch(() => {});
       await until(() => /Codex stopped \(exit 3\)\. Your text is kept\. Enter restarts/.test(text()), "the banner");
       type("early-complete\r");
       await until(() => session.state.engine.state === "ready" && /• early/.test(committed()), "the restart and the prompt");
@@ -171,7 +171,7 @@ test("Enter while a turn runs steers; Tab queues and Tab on an empty composer pu
     await until(() => session.state.activeTurnId, "the running turn");
     type("also this\r");
     await until(() => /steered: also this/.test(text()), "the steer");
-    const st = await engine.server.request("debug/state", {});
+    const st = await engine.testRequest("debug/state", {});
     assert.ok(st.calls.includes("turn/steer"));
     await until(() => !session.state.activeTurnId, "the steered turn's end");
     type("hang\r");
@@ -228,7 +228,7 @@ test("slash commands: the popup completes, /status reports, /new resets, unknown
 test("Codex commands ad doesn't run never reach the model; busy ones wait, and the draft stays", async () => {
   await withApp(async ({ app, type, until, text, session, engine }) => {
     const sent = async () => {
-      const st = await engine.server.request("debug/state", {});
+      const st = await engine.testRequest("debug/state", {});
       return st.calls.filter((c) => c === "turn/start" || c === "turn/steer").length;
     };
     type("/import the bug\r");
@@ -331,7 +331,7 @@ const LAYERS = {
     await until(() => app.state.overlay, "the shortcuts");
   },
 };
-const sent = async (engine, method) => (await engine.server.request("debug/state", {})).calls.filter((c) => c === method).length;
+const sent = async (engine, method) => (await engine.testRequest("debug/state", {})).calls.filter((c) => c === method).length;
 const ROUTES = [
   ["idle", "ctrlC", async ({ app }) => assert.match(app.state.note ?? "", /Ctrl\+C again quits/)],
   ["idle", "shiftTab", async ({ app, engine, session }) => (assert.equal(app.state.composer, ""), assert.equal(await sent(engine, "turn/start"), 0), assert.equal(session.state.mode.kind, "plan", "Codex's mode cycle"))],
@@ -388,7 +388,7 @@ test("key routing table: the topmost layer takes Esc, Ctrl+C, Tab, Shift+Tab, En
 
 test("/plan and Shift+Tab: Codex's plan mode, its footer chip and prompt colour, /plan <prompt>, and the unavailable answer", async () => {
   await withApp(async ({ type, until, text, session, engine }) => {
-    const debug = () => engine.server.request("debug/state", {});
+    const debug = () => engine.testRequest("debug/state", {});
     assert.doesNotMatch(text(), /Plan mode/);
     type("/plan\r");
     await until(() => session.state.mode.kind === "plan" && /Plan mode \(shift\+tab to cycle\)/.test(text()), "the plan chip");
@@ -407,7 +407,7 @@ test("/plan and Shift+Tab: Codex's plan mode, its footer chip and prompt colour,
     type("/plan fix the bug\r");
     await until(() => /Plan mode unavailable right now\./.test(text()), "the answer");
     assert.equal(app.state.composer, "/plan fix the bug");
-    assert.ok(!(await engine.server.request("debug/state", {})).calls.includes("turn/start"), "never sent to the model");
+    assert.ok(!(await engine.testRequest("debug/state", {})).calls.includes("turn/start"), "never sent to the model");
     type("\x15\x1b[Z");
     await sleep(60);
     assert.match(text(), /Plan mode unavailable right now\./);
@@ -418,7 +418,7 @@ test("/clear, /archive, /resume archived, /delete and /pwd", async () => {
   const forgotten = [];
   await withApp(
     async ({ app, type, until, text, session, engine }) => {
-      const debug = () => engine.server.request("debug/state", {});
+      const debug = () => engine.testRequest("debug/state", {});
       type("/pwd\r");
       await until(() => /Current working directory:\s+\S/.test(text()), "/pwd"); // a long temp path wraps
       type("/pwd now\r");
@@ -486,7 +486,7 @@ test("/permissions and /model set the next turn's overrides through pickers", as
     await until(() => /Permissions: Read only/.test(text()), "set");
     type("fail-turn\r");
     await until(() => /Worked for/.test(text()), "the turn");
-    const st = await engine.server.request("debug/state", {});
+    const st = await engine.testRequest("debug/state", {});
     assert.deepEqual(st.lastParams["turn/start"].sandboxPolicy, { type: "readOnly" });
     assert.equal(session.state.config.sandbox, "read-only");
   });
@@ -556,7 +556,7 @@ test("/debug-config: config layers lowest first, the session flags' keys with se
       assert.match(out, /- thread_unload_delay_secs = 0/);
       assert.doesNotMatch(out, /sk-fake-secret/);
       assert.match(out, /Requirements:\n {2}- allowed_sandbox_modes: read-only, workspace-write\n {2}- allow_login_shell: false/);
-      const p = (await engine.server.request("debug/state", {})).lastParams["config/read"];
+      const p = (await engine.testRequest("debug/state", {})).lastParams["config/read"];
       assert.deepEqual(p.includeLayers, true);
     },
     { cols: 120, env: { FAKE_REQUIREMENTS: JSON.stringify({ allowedSandboxModes: ["read-only", "workspace-write"], allowLoginShell: false, logDir: null }) } },
@@ -574,7 +574,7 @@ test("/recap: Codex's temporary read-only thread with tools off answers in its s
       const main = session.state.thread.id;
       type("/recap\r");
       await until(() => /\u{21b3} Recap: Fixing the login bug: the fix is in, tests pass\. Next: Push it\?/u.test(flat()), "the recap");
-      const p = (await engine.server.request("debug/state", {})).lastParams;
+      const p = (await engine.testRequest("debug/state", {})).lastParams;
       const start = p["thread/start"];
       assert.equal(start.ephemeral, true);
       assert.equal(start.sandbox, "read-only");
@@ -640,7 +640,7 @@ test("/approve: Codex's Auto-review Denials picker sends one denial back as its 
       assert.match(text(), /rm -rf build\s+deletes the build folder/);
       type("\x1b[B\r"); // the second row: rm -rf build
       await until(() => /Approval recorded for one retry of the selected auto-review denial\. The model will see the approval context; the retry still goes through auto-review\./.test(flat()), "approved");
-      const p = (await engine.server.request("debug/state", {})).lastParams["thread/approveGuardianDeniedAction"];
+      const p = (await engine.testRequest("debug/state", {})).lastParams["thread/approveGuardianDeniedAction"];
       assert.equal(p.threadId, session.state.thread.id);
       assert.deepEqual(p.event, {
         id: "review-1",
@@ -713,7 +713,7 @@ test("/setup-default-sandbox: Windows only; asks first (machine-wide); sets up t
       await sleep(100);
       type("y");
       await until(() => /Sandbox ready Codex can now safely edit files and execute commands in your computer/.test(flat()), "ready");
-      const p = (await engine.server.request("debug/state", {})).lastParams["windowsSandbox/setupStart"];
+      const p = (await engine.testRequest("debug/state", {})).lastParams["windowsSandbox/setupStart"];
       assert.equal(p.mode, "elevated");
       type("/setup-default-sandbox\r");
       await until(() => /The elevated sandbox is already set up\./.test(flat()), "once is enough");
@@ -747,7 +747,7 @@ test("Part 10 review: /approve after an engine restart goes to the new engine; a
       const flat = () => committed().replace(/\s+/g, " ");
       type("auto-review-deny\r");
       await until(() => /Auto-review stopped two commands/.test(flat()), "the denials");
-      engines[0].server.request("test/crash", {}).catch(() => {});
+      engines[0].testRequest("test/crash", {}).catch(() => {});
       await until(() => engines.length === 2 && session.state.engine.state === "ready", "the restart");
       assert.equal(session.state.denials.length, 2, "kept across the restart");
       type("/approve\r");
@@ -798,7 +798,7 @@ test("Part 10 review: a recap is dropped when another turn ran meanwhile; a /pri
       await until(() => /Private is off\./.test(flat()), "private off");
       type("/recap\r");
       await until(() => /Recap:/.test(flat()), "the recap");
-      const prompt = (await engine.server.request("debug/state", {})).lastParams["turn/start"].input[0].text;
+      const prompt = (await engine.testRequest("debug/state", {})).lastParams["turn/start"].input[0].text;
       assert.match(prompt, /Conversation:\nUser: early-complete\n\nAssistant: early$/, "the private prompt and its answer stay out");
       assert.doesNotMatch(prompt, /SECRET|pong/);
     },
@@ -822,7 +822,7 @@ test("Part 10 review: /setup-default-sandbox blocks every input while it runs (s
       }
       assert.equal((flat().match(/Input disabled until setup completes\./g) ?? []).length, 3);
       assert.match(text(), /Setting up sandbox\.\.\./, "the status stays after a key");
-      const calls = (await engine.server.request("debug/state", {})).calls;
+      const calls = (await engine.testRequest("debug/state", {})).calls;
       assert.ok(!calls.includes("thread/compact/start") && !calls.includes("thread/shellCommand") && !calls.includes("turn/start"), "nothing went out");
       await until(() => /Sandbox ready/.test(flat()), "ready", 15000);
     },
@@ -1125,7 +1125,7 @@ test("window title: nothing is written while another program has the terminal", 
 
 test("Implement this plan?: after a Plan turn with a proposed plan; implement here sends Codex's message in Default", async () => {
   await withApp(async ({ app, type, until, text, session, engine, bells, committed }) => {
-    const debug = () => engine.server.request("debug/state", {});
+    const debug = () => engine.testRequest("debug/state", {});
     type("/plan plan-reply\r");
     await until(() => app.state.confirm && /Implement this plan\?/.test(text()), "the choice");
     assert.match(committed(), /• Proposed Plan/);
@@ -1148,7 +1148,7 @@ test("Implement this plan?: after a Plan turn with a proposed plan; implement he
 
 test("Implement this plan?: clear context starts a new conversation with Codex's prefix and the plan; stay keeps planning", async () => {
   await withApp(async ({ app, type, until, text, session, engine }) => {
-    const debug = () => engine.server.request("debug/state", {});
+    const debug = () => engine.testRequest("debug/state", {});
     type("/plan plan-reply\r");
     await until(() => app.state.confirm, "the choice");
     const first = session.state.thread.id;
@@ -1236,7 +1236,7 @@ test("background terminals: output after one is committed during the turn; the f
     await until(() => /Background terminals[\s\S]*• npm run dev:0[\s\S]*↳ /.test(committed()), "/ps");
     type("/stop\r");
     await until(() => /Stopping all background terminals\./.test(committed()), "/stop");
-    assert.ok((await engine.server.request("debug/state", {})).calls.includes("thread/backgroundTerminals/clean"));
+    assert.ok((await engine.testRequest("debug/state", {})).calls.includes("thread/backgroundTerminals/clean"));
     await until(() => !/background terminal running/.test(text()), "the footer cleared");
     type("/ps\r");
     await until(() => /No background terminals running\./.test(committed()), "none left");
@@ -1262,7 +1262,7 @@ test("background terminals (review): Esc on a turn with a command still running 
 
 test("/cd: Codex's checks and texts, the trust question, and the conversation forked into the folder", async () => {
   await withApp(async ({ app, type, until, committed, session, engine, root }) => {
-    const debug = () => engine.server.request("debug/state", {});
+    const debug = () => engine.testRequest("debug/state", {});
     const other = join(root, "shop-app");
     mkdirSync(other);
     writeFileSync(join(root, "notes.txt"), "x");
@@ -1347,7 +1347,7 @@ test("/cd (Codex): refused while another agent is running; it goes ahead once th
 
 test("/side: a panel on an ephemeral fork; Ctrl+/ switches prompts; only side commands; Ctrl+C closes it into the scrollback", async () => {
   await withApp(async ({ app, type, until, text, committed, session, engine }) => {
-    const debug = () => engine.server.request("debug/state", {});
+    const debug = () => engine.testRequest("debug/state", {});
     type("/side\r");
     await until(() => /'\/side' is unavailable until the main thread is ready\./.test(committed()), "too early");
     type("fail-turn\r");
@@ -1399,7 +1399,7 @@ test("/side while main runs: main's approval comes first and hides the panel; th
 
 test("/side (review): one at a time, the text kept; a failed side turn shows in the panel; no images to the side; /side right after /cd", async () => {
   await withApp(async ({ app, type, until, text, committed, session, engine, root }) => {
-    const debug = () => engine.server.request("debug/state", {});
+    const debug = () => engine.testRequest("debug/state", {});
     writeFileSync(join(root, "shot.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
     type("fail-turn\r");
     await until(() => !session.state.activeTurnId && session.state.turns.length === 1, "a main turn");

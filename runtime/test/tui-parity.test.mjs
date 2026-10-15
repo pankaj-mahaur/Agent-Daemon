@@ -272,7 +272,7 @@ test("Esc Esc rewinds to an earlier prompt and puts it back in the composer", as
     await until(() => app.state.composer === "fail-turn", "the prompt back in the composer");
     assert.equal(session.state.turns.length, 1);
     assert.match(committed(), /Rewound to before .fail-turn.\. Files on disk weren't changed/);
-    const st = await engine.server.request("debug/state", {});
+    const st = await engine.testRequest("debug/state", {});
     assert.ok(st.calls.includes("thread/revert"));
   });
 });
@@ -299,7 +299,7 @@ test("Ctrl+T pages the transcript; Ctrl+G edits in the editor; alt+. raises the 
         await until(() => /Attached shot\.png/.test(app.state.note ?? ""), "attached");
         type("fail-turn\r");
         await sleep(300);
-        const st = await engine.server.request("debug/state", {});
+        const st = await engine.testRequest("debug/state", {});
         const tp = st.lastParams["turn/start"];
         assert.equal(tp.effort, "high");
         assert.deepEqual(tp.input.map((i) => i.type), ["text", "localImage"]);

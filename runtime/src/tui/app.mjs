@@ -23,7 +23,7 @@ import { INIT_PROMPT } from "./init-prompt.mjs";
 import { setupWindowsSandbox } from "../harness/sandbox.mjs";
 import { existsSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { canonicalPath, isManagedHome } from "../engine/codex/home.mjs";
+import { engineHome } from "../engine/index.mjs";
 import path from "node:path";
 import { copyText, denialSummary, exportMarkdown, imagePath, lastAgentText, renderDebugConfig, renderHooks, renderKeyInspector, renderKeymap, renderMcp, renderSkills, renderUsage, terminalSetup, transcriptLines } from "./commands.mjs";
 import CODEX_SLASH from "./codex-slash.json" with { type: "json" };
@@ -779,16 +779,16 @@ export function createApp({
     if (platform !== "win32") return info0("Codex uses the OS sandbox here (Seatbelt or Landlock): /setup-default-sandbox is only for Windows.");
     if (sandboxSetup) return info0("Windows sandbox setup is still running. Restart Codex to retry.");
     // As `ad sandbox setup`: never in a Codex home ad didn't make (`ad tui --home ~/.codex`).
-    if (session.engine.home && !isManagedHome(session.engine.home)) return warn(`${clean(session.engine.home)} wasn't created by ad, so ad doesn't change its sandbox. \`ad sandbox setup --elevated --force\` does it anyway.`);
+    if (session.engine.home && !engineHome.isManaged(session.engine.home)) return warn(`${clean(session.engine.home)} wasn't created by ad, so ad doesn't change its sandbox. \`ad sandbox setup --elevated --force\` does it anyway.`);
     let mode;
     let allowed;
     try {
       const [read, req] = await Promise.all([
-        session.engine.server.request("config/read", { includeLayers: false, cwd }),
-        session.engine.server.request("configRequirements/read", undefined),
+        session.engine.config.read({ includeLayers: false, cwd }),
+        session.engine.config.requirements(),
       ]);
       mode = read?.config?.windows?.sandbox ?? null;
-      allowed = req?.requirements?.allowedWindowsSandboxImplementations ?? null;
+      allowed = req?.allowedWindowsSandboxImplementations ?? null;
     } catch (err) {
       return commitCell(renderNotice({ level: "warn", message: "Could not read Windows sandbox configuration and requirements from the app server.", hint: err?.message }, { width: width() }));
     }
@@ -1081,7 +1081,7 @@ export function createApp({
     }
     if (!stat.isDirectory()) return warn(`Not a directory: ${clean(dir)}`);
     // Never into a Codex home: your own Codex's, or ad's (compared as Codex's home check does).
-    const real = (p) => canonicalPath(p);
+    const real = (p) => engineHome.canonical(p);
     const homes = [path.join(homedir(), ".codex"), session.engine?.home].filter(Boolean).map(real);
     if (homes.some((h) => real(dir) === h || real(dir).startsWith(h + path.sep))) return warn(`ad doesn't work inside a Codex home: ${clean(dir)}`);
     if (actions.ad?.loop?.state?.running) return warn("An ad loop is working in this folder: /loop stop first.");
@@ -1352,10 +1352,10 @@ export function createApp({
       case "debug-config": {
         // Codex prints its in-process config; ad asks its Codex for the same (layers, requirements).
         const [read, req] = await Promise.all([
-          session.engine.server.request("config/read", { includeLayers: true, cwd }),
-          session.engine.server.request("configRequirements/read", undefined),
+          session.engine.config.read({ includeLayers: true, cwd }),
+          session.engine.config.requirements(),
         ]);
-        return commitCell(renderDebugConfig({ layers: read?.layers, requirements: req?.requirements }, { width: width() }));
+        return commitCell(renderDebugConfig({ layers: read?.layers, requirements: req }, { width: width() }));
       }
       case "recap":
         return startRecap();
@@ -1447,8 +1447,13 @@ export function createApp({
         // Codex's /ps: the background terminals of this conversation, with their last lines.
         return commitCell([[{ text: "/ps", style: DIM }], ...renderBackgroundTerminals([...st.terminals.values()], { width: width() })]);
       case "stop":
-        // Codex's /stop (/clean): ends them all (thread/backgroundTerminals/clean).
-        await session.stopTerminals();
+        // The engine's /stop (/clean): ends them all. Off when the pinned protocol lacks it (G5).
+        try {
+          await session.stopTerminals();
+        } catch (err) {
+          if (err?.code === "FEATURE_UNAVAILABLE") return warn(err.message);
+          throw err;
+        }
         return info0("Stopping all background terminals.");
       case "btw":
       case "side": {
@@ -1530,14 +1535,14 @@ export function createApp({
         }
       }
       case "mcp":
-        return session.engine.server.request("mcpServerStatus/list", {}).then((r) => commitCell(renderMcp(r?.data, { width: width() })), fail);
+        return session.engine.mcp.status().then((data) => commitCell(renderMcp(data, { width: width() })), fail);
       case "hooks":
         return Promise.resolve(session.engine.listHooks([cwd])).then((h) => commitCell(renderHooks(h, { width: width(), hooksFile: session.engine.home ? path.join(session.engine.home, "hooks.json") : null })), fail);
       case "skills":
-        return session.engine.server.request("skills/list", { cwds: [cwd] }).then((r) => commitCell(renderSkills(r?.data, { width: width() })), fail);
+        return session.engine.skills.list([cwd]).then((data) => commitCell(renderSkills(data, { width: width() })), fail);
       case "usage": {
-        const rl = await session.engine.server.request("account/rateLimits/read", {}).catch(() => st.rateLimits);
-        const usage = await session.engine.server.request("account/usage/read", {}).catch(() => null);
+        const rl = await session.engine.usage.limits().catch(() => st.rateLimits);
+        const usage = await session.engine.usage.read().catch(() => null);
         return commitCell(renderUsage({ rateLimits: rl ?? st.rateLimits, usage, tokens: st.tokens }, { width: width() }));
       }
       case "image": {
@@ -1702,7 +1707,7 @@ export function createApp({
   const EFFORT_ORDER = ["none", "minimal", "low", "medium", "high", "xhigh"];
   let modelsCache = null;
   async function stepEffort(dir) {
-    modelsCache ??= await session.engine.server.request("model/list", {}).then((r) => r?.data ?? [], () => []);
+    modelsCache ??= await session.engine.models.list().catch(() => []);
     const model = st.config.model ?? null;
     const m = modelsCache.find((x) => x.model === model || x.id === model) ?? modelsCache.find((x) => x.isDefault);
     let levels = (m?.supportedReasoningEfforts ?? []).map((e) => e.reasoningEffort ?? e).filter((e) => EFFORT_ORDER.includes(e));
@@ -1722,8 +1727,7 @@ export function createApp({
   async function pickModel() {
     let models = [];
     try {
-      const r = await session.engine.server.request("model/list", {});
-      models = r?.data ?? [];
+      models = await session.engine.models.list();
     } catch (err) {
       return fail(err);
     }
@@ -1745,8 +1749,7 @@ export function createApp({
   async function pickThread({ archived = false } = {}) {
     let threads = [];
     try {
-      const r = await session.engine.server.request("thread/list", { cwd, limit: 30, modelProviders: [], sourceKinds: ["cli", "vscode", "exec", "appServer"], ...(archived ? { archived: true } : {}) });
-      threads = (r?.data ?? []).filter((t) => t.id !== st.thread?.id);
+      threads = (await session.engine.threads.list({ cwd, limit: 30, modelProviders: [], sourceKinds: ["cli", "vscode", "exec", "appServer"], ...(archived ? { archived: true } : {}) })).filter((t) => t.id !== st.thread?.id);
     } catch (err) {
       return fail(err);
     }
@@ -1761,7 +1764,7 @@ export function createApp({
         if (id === ARCHIVED) return void pickThread({ archived: true }).catch(fail);
         // The view isn't reset: the resumed thread's items are new ids, and if
         // resume fails (locked elsewhere) what is in the scrollback stays committed.
-        Promise.resolve(archived && session.engine.server.request("thread/unarchive", { threadId: id }))
+        Promise.resolve(archived && session.engine.threads.unarchive(id))
           .then(() => session.resume(id))
           .then(() => {
             info0(archived ? "Unarchived and resumed." : "Resumed.");
