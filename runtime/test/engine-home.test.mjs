@@ -274,6 +274,9 @@ test("18: removeLink removes the link and never its target", () => {
     assert.equal(entryKind(p), "missing");
     assert.equal(existsSync(join(target, "config.toml")), true);
     assert.equal(existsSync(join(target, "sessions", "2026", "10", "12", "rollout-0.jsonl")), true);
+    const real = makeHome(join(root, "real"));
+    assert.throws(() => removeLink(real), "never a recursive delete: a real folder is refused");
+    assert.equal(existsSync(join(real, "config.toml")), true, "the real folder survives");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
