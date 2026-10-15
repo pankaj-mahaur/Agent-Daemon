@@ -12,7 +12,7 @@ import * as cline      from "./cline.mjs";
 import * as cursor     from "./cursor.mjs";
 import * as codex      from "./codex.mjs";
 
-const ADAPTERS = { "claude-code": claudeCode, cline, cursor, codex };
+const ADAPTERS = { "claude-code": claudeCode, cline, cursor, codex, ad: codex };
 
 /**
  * @param {string} transcriptPath
@@ -45,7 +45,8 @@ export async function detect(transcriptPath) {
   if (/saoudrizwan\.claude-dev[/\\]tasks/i.test(transcriptPath)) return "cline";  // VS Code Cline extension
   if (/[/\\]\.cursor[/\\]sessions/i.test(transcriptPath))      return "cursor";
   if (/[/\\]\.codex[/\\]sessions/i.test(transcriptPath))       return "codex";
-  if (/[/\\]codex-home[/\\](?:archived_)?sessions[/\\]/i.test(transcriptPath)) return "codex";  // ad harness CODEX_HOME
+  if (/[/\\]\.agent-daemon[/\\](?:codex-home|engine)[/\\](?:archived_)?sessions[/\\]/i.test(transcriptPath)) return "ad";  // ad's engine folder (either name)
+  if (/[/\\]codex-home[/\\](?:archived_)?sessions[/\\]/i.test(transcriptPath)) return "ad";  // an older layout elsewhere
 
   // Filename heuristics
   const fname = p.split("/").pop() || "";
