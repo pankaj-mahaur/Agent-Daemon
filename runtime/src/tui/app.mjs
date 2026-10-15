@@ -15,6 +15,7 @@ import { createMarkdownStream, renderMarkdown } from "./view/markdown.mjs";
 import { isExploring, renderAdRow, renderBackgroundTerminals, renderCell, renderDiff, renderExploring, renderNotice, renderPlan, renderRecap } from "./view/cells.mjs";
 import { parseRecap, RECAP_PROMPT_PREFIX, RECAP_SCHEMA, recapHistory, TEMPORARY_THREAD_CONFIG } from "./recap.mjs";
 import { createChecklist, createPicker, renderFooter, renderShortcuts, renderStatus } from "./view/chrome.mjs";
+import { ownEngineHomeRefusal } from "../engine/attribution.mjs";
 import { ARM_MS, createChoice, createConfirm, createRequestModal } from "./view/modals.mjs";
 import { CODEX_PLAN_CLEAR_CONTEXT_PREFIX } from "../hooks/generated-prompts.mjs";
 import { sanitize } from "./terminal/sanitize.mjs";
@@ -1083,7 +1084,7 @@ export function createApp({
     // Never into a Codex home: your own Codex's, or ad's (compared as Codex's home check does).
     const real = (p) => engineHome.canonical(p);
     const homes = [path.join(homedir(), ".codex"), session.engine?.home].filter(Boolean).map(real);
-    if (homes.some((h) => real(dir) === h || real(dir).startsWith(h + path.sep))) return warn(`ad doesn't work inside a Codex home: ${clean(dir)}`);
+    if (homes.some((h) => real(dir) === h || real(dir).startsWith(h + path.sep))) return warn(ownEngineHomeRefusal(clean(dir)));
     if (actions.ad?.loop?.state?.running) return warn("An ad loop is working in this folder: /loop stop first.");
     // Codex's check at the app level: no other agent (a subagent's thread) may be at work.
     if (agentRunning()) return warn("Cannot change: another agent is running.");

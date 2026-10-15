@@ -107,4 +107,6 @@ test("codexModelFor maps Claude aliases to AD_CODEX_LLM_MODEL", async () => {
   assert.equal(codexModelFor("haiku", {}), undefined);
   assert.equal(codexModelFor("haiku", { AD_CODEX_LLM_MODEL: "gpt-mini" }), "gpt-mini");
   assert.equal(codexModelFor("gpt-x", { AD_CODEX_LLM_MODEL: "gpt-mini" }), "gpt-x");
+  assert.equal(codexModelFor("haiku", { AD_ENGINE_MODEL: "gpt-new" }), "gpt-new", "the new name works");
+  assert.equal(codexModelFor("haiku", { AD_ENGINE_MODEL: "gpt-new", AD_CODEX_LLM_MODEL: "gpt-mini" }), "gpt-new", "the new name wins");
 });

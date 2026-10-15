@@ -117,7 +117,7 @@ export const ownEngineHomeDefaultRefusal = `ad won't start the engine without a 
 
 /** The engine refuses to start in the user's own home. */
 export function ownEngineHomeStartRefusal(dir) {
-  return `ad won't run the engine in ${dir}: that is your own ${ENGINE.name} home. Choose another folder with AD_CODEX_HOME.`;
+  return `ad won't run the engine in ${dir}: that is your own ${ENGINE.name} home. Choose another folder with AD_ENGINE_DIR.`;
 }
 
 /** `ad watch` reads the user's own engine conversations, like Claude Code's and Cursor's. */
@@ -169,6 +169,28 @@ export const migrateMessages = Object.freeze({
   },
 });
 
+/**
+ * Names from ad 2.x that users may still type or set; read forever (design C11).
+ * Code outside the adapter reads them through this object, never as literals,
+ * so the brand lint stays clean.
+ */
+export const LEGACY = Object.freeze({
+  productValue: "codex", // the old value of --engine, --llm, --host and their env vars
+  envHome: "AD_CODEX_HOME",
+  envBin: "AD_CODEX_BIN",
+  envModel: "AD_CODEX_LLM_MODEL",
+});
+
+/** An old env var name still works, once per install. */
+export function envRenameNote(oldName, newName) {
+  return `${oldName} still works (its new name is ${newName}).`;
+}
+
+/** Both names of one setting are set, to different values. */
+export function envConflictRefusal({ newName, oldName, newValue, oldValue }) {
+  return `${newName} (${newValue}) and ${oldName} (${oldValue}) point at different folders. Keep one of them.`;
+}
+
 // ── the live brand test's allowance (spike S5) ─────────────────────────────
 
 const escapeRe = (s) => s.replace(/[.+^${}()|[\]\\]/g, "\\$&");
@@ -195,7 +217,9 @@ export function brandPatterns() {
     new RegExp(`ad doesn't work inside a ${name} home:`),
     new RegExp(`your own ${name} conversations in ~/${escapeRe(projectConfigFolder)}/sessions, if you have ${name} installed`),
     new RegExp(`the default \\(~/${escapeRe(projectConfigFolder)}\\) belongs to your own ${name} install\\.`),
-    new RegExp(`: that is your own ${name} home\\. Choose another folder with AD_CODEX_HOME\\.`),
+    new RegExp(`: that is your own ${name} home\\. Choose another folder with AD_ENGINE_DIR\\.`),
+    /AD_CODEX_[A-Z_]+ still works \(its new name is AD_ENGINE_[A-Z_]+\)\./,
+    /\) and AD_CODEX_HOME \(/,
     /`ad codex` was removed in 3\.0\./,
     /\/codex was removed in 3\.0\./,
     /AD_CODEX_HOME still works/,
@@ -231,5 +255,8 @@ export function renderedSamples() {
     migrateMessages.failed({ reason: "permission denied" }),
     migrateMessages.customPath({ path: "D:\\engine" }),
     migrateMessages.oneEmpty({ name: "codex-home.empty-2026-10-12" }),
+    envRenameNote("AD_CODEX_BIN", "AD_ENGINE_BIN"),
+    envRenameNote("AD_CODEX_LLM_MODEL", "AD_ENGINE_MODEL"),
+    envConflictRefusal({ newName: "AD_ENGINE_DIR", oldName: "AD_CODEX_HOME", newValue: "D:\\a", oldValue: "D:\\b" }),
   ];
 }

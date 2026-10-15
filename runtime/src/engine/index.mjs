@@ -6,11 +6,13 @@
 import { EventEmitter } from "node:events";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { CodexAppServer, pinnedCodexVersion } from "./codex/app-server.mjs";
 import { engineError } from "./codex/errors.mjs";
 import { APPROVAL_METHODS, approvalResponse } from "./codex/approvals.mjs";
-import { canonicalPath, codexEnv, defaultCodexHome, ensureCodexHome, isManagedHome, MANAGED_MARKER } from "./codex/home.mjs";
+import { canonicalPath, codexEnv, defaultCodexHome, ensureCodexHome, homeOverride, isManagedHome, prepareDefaultHome, MANAGED_MARKER } from "./codex/home.mjs";
+import { defaultRoot, entryKind, homeFacts, NEW_HOME_NAME, OLD_HOME_NAME, resolveHomeState } from "./codex/home-resolve.mjs";
+import { acquireLockWithin } from "../lock.mjs";
 import { adaptNotification, classifyRequest, collaborationMode, elicitationResponse, execDisplay, guardianDenialEvent, normalizeItem } from "./codex/events.mjs";
 import { experimentalCapabilities } from "./codex/surface.mjs";
 import { codexHooksForProfile } from "./codex/hooks-config.mjs";
@@ -101,14 +103,16 @@ const turnIdOf = (params) => params?.turnId ?? params?.turn?.id ?? null;
 export class Engine extends EventEmitter {
   #server = null;
   #features = null;
+  #defaultHome = false;
 
   constructor(opts = {}) {
     super();
     this.opts = opts;
     this.env = { ...process.env, ...(opts.env ?? {}) };
-    // Resolved once, against the directory the engine runs in: ensureCodexHome and
-    // the engine itself must agree on which folder a relative home means.
-    this.home = resolve(opts.cwd ?? process.cwd(), opts.home ?? defaultCodexHome(this.env));
+    // An explicit home (opts.home, AD_ENGINE_DIR, AD_CODEX_HOME) is used as given;
+    // the default one is resolved again under the migrate lock in start().
+    this.#defaultHome = opts.home === undefined && !homeOverride(this.env);
+    this.home = resolve(opts.cwd ?? process.cwd(), opts.home ?? defaultCodexHome(this.env, { root: opts.homeRoot }));
     this.onApproval = opts.onApproval ?? (() => "decline");
     // Front ends that handle every server request themselves (the TUI) set
     // onRequest(PendingRequest) → answer. Without it the old behaviour stays:
@@ -387,7 +391,22 @@ export class Engine extends EventEmitter {
   }
 
   async start() {
-    ensureCodexHome(this.home);
+    if (this.#defaultHome) {
+      let release;
+      try {
+        release = await acquireLockWithin("migrate", { dir: this.opts.lockDir, waitMs: this.opts.lockWaitMs ?? 5000 });
+      } catch (err) {
+        if (err.code === "LOCK_BUSY") throw engineError("HOME_BUSY", "Another ad is moving the engine's folder. Try again in a minute.");
+        throw err;
+      }
+      try {
+        this.home = prepareDefaultHome({ root: this.opts.homeRoot, autoPickEmpty: this.opts.interactive === true, env: this.env });
+      } finally {
+        release();
+      }
+    } else {
+      ensureCodexHome(this.home);
+    }
     this.#server = new CodexAppServer({
       command: this.opts.command,
       cwd: this.opts.cwd,
@@ -871,6 +890,26 @@ export const engineHome = {
   ensure: (dir, o) => ensureCodexHome(dir, o),
   env: (o) => codexEnv(o),
   MANAGED_MARKER,
+  /** The user's own folder from AD_ENGINE_DIR / AD_CODEX_HOME, or null (throws HOME_CONFLICT, HOME_STRAY_STAMP). */
+  override: (env = process.env) => homeOverride(env),
+  /** Where the folder is and in which state (read-only). {path, state: "custom" | "fresh" | "old" | "new" | "two-folders", …}. */
+  state: ({ env = process.env, root } = {}) => {
+    const custom = homeOverride(env);
+    return custom ? { path: custom, state: "custom" } : resolveHomeState({ root });
+  },
+  /** The engine's settings file (TOML), or null when the folder can't be resolved. */
+  settingsPath: (env = process.env) => {
+    try {
+      return join(defaultCodexHome(env), "config.toml");
+    } catch {
+      return null; // two folders, a conflict: the caller says "see ad doctor"
+    }
+  },
+  /** {path, conversations, lastUsed, signedIn} of a folder (reads only). */
+  facts: (dir) => homeFacts(dir),
+  OLD_NAME: OLD_HOME_NAME,
+  NEW_NAME: NEW_HOME_NAME,
+  root: () => defaultRoot(),
 };
 
 /** Turning the engine's items and requests into ad's shapes. */
@@ -910,7 +949,17 @@ const DOCTOR_WORDS = {
     name: "Engine version",
     note: d.installed === d.pinned ? `${d.installed} (${d.source}), the version ad is tested with` : `${d.installed} (${d.source}), but ad was tested with ${d.pinned}. Run: cd runtime && npm install`,
   }),
-  "engine.home": (d) => ({ name: "Engine home", note: !d.exists ? `${d.path} (created on the first run)` : d.managed ? d.path : `${d.path} (not created by ad, so ad never changes it)` }),
+  "engine.home": (d) => ({
+    name: "Engine home",
+    note: !d.exists ? `${d.path} (created on the first run)` : !d.managed ? `${d.path} (not created by ad, so ad never changes it)` : d.state === "old" ? `${d.path} (older folder name; nothing is wrong; ad migrate is optional)` : d.path,
+  }),
+  "engine.link": (d) => ({
+    name: "Engine home link",
+    note: d.kind === "link" ? `${d.link} (a link older versions of ad need${d.migratedAt ? `; made by ad migrate on ${d.migratedAt.slice(0, 10)}` : ""})` : d.kind === "dangling" ? `${d.link} points nowhere; the next ad start replaces it` : `no link at ${d.link}: an ad 2.x would start a new, empty folder`,
+  }),
+  "engine.twoFolders": (d) => ({ name: "Engine home", note: `two engine folders: ${d.oldPath} and ${d.newPath}. Rename the one you don't want (for example to engine.old); delete nothing until you've checked.` }),
+  "engine.folderFacts": (d) => ({ name: `Engine folder (${d.which})`, note: `${d.path}: ${d.conversations} conversations, last used ${d.lastUsed ? d.lastUsed.slice(0, 10) : "never"}, ${d.signedIn ? "signed in" : "not signed in"}` }),
+  "engine.homeError": (d) => ({ name: "Engine home", note: d.message }),
   "engine.compat": (d) => ({ name: "Engine compatibility", note: `tested: ${d.tested.join(", ")}. ${d.note}` }),
   "engine.login": (d) => ({ name: "Engine sign-in", note: d.loggedIn ? d.label : "not signed in. Run: ad auth login chatgpt" }),
   "engine.hooks": (d) => ({ name: "Engine hooks", note: `${d.trusted}/${d.total} trusted${d.trusted < d.total ? "; the next ad run trusts them again" : ""}` }),

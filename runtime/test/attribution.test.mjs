@@ -16,6 +16,8 @@ import {
   ATTRIBUTED_FILES,
   brandPatterns,
   ENGINE,
+  envConflictRefusal,
+  envRenameNote,
   formAutoCancel,
   identityBlock,
   legacyHomeName,
@@ -159,7 +161,15 @@ test("the README sentence, the sandbox consent and the true statements about the
 
 test("the engine home refusals say whose home it is and what to do", () => {
   assert.match(ownEngineHomeDefaultRefusal, /^ad won't start the engine without a home folder of its own: the default \(~\/\.codex\) belongs to your own Codex install\.$/);
-  assert.equal(ownEngineHomeStartRefusal("/home/me/.codex"), "ad won't run the engine in /home/me/.codex: that is your own Codex home. Choose another folder with AD_CODEX_HOME.");
+  assert.equal(ownEngineHomeStartRefusal("/home/me/.codex"), "ad won't run the engine in /home/me/.codex: that is your own Codex home. Choose another folder with AD_ENGINE_DIR.");
+});
+
+test("env var renames: the note and the conflict refusal", () => {
+  assert.equal(envRenameNote("AD_CODEX_BIN", "AD_ENGINE_BIN"), "AD_CODEX_BIN still works (its new name is AD_ENGINE_BIN).");
+  assert.equal(
+    envConflictRefusal({ newName: "AD_ENGINE_DIR", oldName: "AD_CODEX_HOME", newValue: "/a", oldValue: "/b" }),
+    "AD_ENGINE_DIR (/a) and AD_CODEX_HOME (/b) point at different folders. Keep one of them.",
+  );
 });
 
 test("migrate messages: done warns about an unsafe delete tool and macOS only when told; the rest say nothing changed", () => {

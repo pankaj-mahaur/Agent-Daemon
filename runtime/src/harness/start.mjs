@@ -4,7 +4,9 @@
 // Used by `ad run`, `ad chat` and team workers.
 
 import { createEngine } from "../engine/index.mjs";
+import { envRenameNote, LEGACY, migrateMessages } from "../engine/attribution.mjs";
 import { providerEnv } from "../auth/providers.mjs";
+import { noteOnce } from "./notes.mjs";
 import { ensureHarnessSetup } from "./setup.mjs";
 import { needsWindowsSandbox, sandboxReadiness } from "./sandbox.mjs";
 
@@ -12,8 +14,16 @@ export const NOT_LOGGED_IN = "Not logged in. Run: ad auth login chatgpt   (or: a
 
 // env: extra variables for Codex and the hooks it runs (e.g. AD_WORKER=1).
 // detached: run the engine in its own process group on POSIX (the terminal UI).
-export async function startHarnessEngine({ cwd, home, command, clientVersion, store, onApproval, err = process.stderr, setup = true, platform, env, requireSandbox = false, detached = false, codexArgs, experimental = false } = {}) {
-  const engineOpts = { cwd, home, command, clientVersion, detached, codexArgs, experimental, env: { ...providerEnv(store), ...(env ?? {}) }, onApproval };
+export async function startHarnessEngine({ cwd, home, command, clientVersion, store, onApproval, err = process.stderr, setup = true, platform, env, requireSandbox = false, detached = false, codexArgs, experimental = false, interactive = false, notesFile } = {}) {
+  const e = { ...process.env, ...(env ?? {}) };
+  const notesFileFinal = notesFile ?? (process.env.NODE_TEST_CONTEXT ? null : undefined);
+  if (notesFileFinal !== null) {
+    const notes = { err, ...(notesFileFinal ? { file: notesFileFinal } : {}) };
+    if (e[LEGACY.envHome] && !e.AD_ENGINE_DIR) noteOnce("env.legacyHome", migrateMessages.customPath({ path: e[LEGACY.envHome] }), notes);
+    if (e[LEGACY.envBin] && !e.AD_ENGINE_BIN) noteOnce("env.legacyBin", envRenameNote(LEGACY.envBin, "AD_ENGINE_BIN"), notes);
+    if (e[LEGACY.envModel] && !e.AD_ENGINE_MODEL) noteOnce("env.legacyModel", envRenameNote(LEGACY.envModel, "AD_ENGINE_MODEL"), notes);
+  }
+  const engineOpts = { cwd, home, command, clientVersion, detached, codexArgs, experimental, interactive, env: { ...providerEnv(store), ...(env ?? {}) }, onApproval };
   let engine = await createEngine(engineOpts);
   try {
     const acct = await engine.account();

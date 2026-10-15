@@ -9,6 +9,7 @@
 // return callHeadlessClaude's result shape, so callers don't care which ran.
 
 import { callHeadlessClaude } from "./claude.mjs";
+import { LEGACY } from "./engine/attribution.mjs";
 
 const BACKENDS = new Set(["claude", "codex", "auto"]);
 
@@ -85,7 +86,7 @@ function withParsedJson(result, { schema } = {}) {
 // Claude aliases ("haiku") mean nothing to Codex; AD_CODEX_LLM_MODEL picks
 // the Codex model for these background calls (e.g. a cheaper one).
 export function codexModelFor(model, env = process.env) {
-  if (!model || ["haiku", "sonnet", "opus"].includes(model)) return env.AD_CODEX_LLM_MODEL || undefined;
+  if (!model || ["haiku", "sonnet", "opus"].includes(model)) return env.AD_ENGINE_MODEL || env[LEGACY.envModel] || undefined;
   return model;
 }
 

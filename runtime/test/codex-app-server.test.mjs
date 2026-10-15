@@ -133,6 +133,7 @@ test("request before start rejects", async () => {
 
 test("resolveCodexCommand honours AD_CODEX_BIN, else runs the pinned launcher with node", () => {
   assert.deepEqual(resolveCodexCommand({ AD_CODEX_BIN: "/opt/codex" }), { cmd: "/opt/codex", prefix: [], source: "env" });
+  assert.deepEqual(resolveCodexCommand({ AD_ENGINE_BIN: "/opt/engine" }), { cmd: "/opt/engine", prefix: [], source: "env" }, "the new name works");
   const r = resolveCodexCommand({});
   assert.equal(r.source, "pinned");
   assert.equal(r.cmd, process.execPath);

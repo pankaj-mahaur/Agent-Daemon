@@ -157,11 +157,13 @@ test("a hook started by ad's Codex may start an engine in the same home; an unre
     mkdirSync(home);
     writeFileSync(join(home, "config.toml"), "# pre-existing\n");
     const child = codexEnv({ home, base: {} });
-    assert.equal(child.AD_ENGINE_HOME, canonicalPath(home));
-    const hookEnv = { CODEX_HOME: child.CODEX_HOME, AD_ENGINE_HOME: child.AD_ENGINE_HOME, AD_CODEX_HOME: home };
+    assert.equal(child.AD_INTERNAL_ENGINE_HOME, canonicalPath(home));
+    assert.equal(child.AD_ENGINE_HOME, undefined, "the old stamp name is never passed on");
+    const hookEnv = { CODEX_HOME: child.CODEX_HOME, AD_INTERNAL_ENGINE_HOME: child.AD_INTERNAL_ENGINE_HOME, AD_CODEX_HOME: home };
     assert.doesNotThrow(() => assertIsolatedHome(home, hookEnv));
+    assert.doesNotThrow(() => assertIsolatedHome(home, { CODEX_HOME: child.CODEX_HOME, AD_ENGINE_HOME: child.AD_INTERNAL_ENGINE_HOME }), "the old stamp name still proves provenance");
     assert.throws(() => assertIsolatedHome(home, { CODEX_HOME: home, AD_CODEX_HOME: home }), /your own Codex home/, "no provenance");
-    assert.throws(() => assertIsolatedHome(home, { CODEX_HOME: home, AD_ENGINE_HOME: canonicalPath(join(root, "other")) }), /your own Codex home/, "provenance for another home");
+    assert.throws(() => assertIsolatedHome(home, { CODEX_HOME: home, AD_INTERNAL_ENGINE_HOME: canonicalPath(join(root, "other")) }), /your own Codex home/, "provenance for another home");
   });
 });
 

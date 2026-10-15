@@ -11,8 +11,9 @@
 import { existsSync, mkdirSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { ownEngineHomeDefaultRefusal, ownEngineHomeStartRefusal } from "../attribution.mjs";
+import { ownEngineHomeDefaultRefusal, ownEngineHomeStartRefusal, envConflictRefusal } from "../attribution.mjs";
 import { engineError } from "./errors.mjs";
+import { createLegacyLink, defaultRoot, entryKind, OLD_HOME_NAME, resolveHomeState } from "./home-resolve.mjs";
 
 export const BOOTSTRAP_CONFIG = `# Agent Daemon's engine settings.
 # ad writes the settings it manages through the engine; edit freely.
@@ -22,10 +23,40 @@ export const BOOTSTRAP_CONFIG = `# Agent Daemon's engine settings.
 cli_auth_credentials_store = "file"
 `;
 
-const managedHome = () => join(homedir(), ".agent-daemon", "codex-home");
+/**
+ * The engine's folder chosen by the user's environment, or null:
+ * AD_ENGINE_DIR, else the older AD_CODEX_HOME (read forever). Both set to
+ * different folders → refused. A stray AD_ENGINE_HOME (an internal stamp of
+ * ad 2.x, a natural wrong guess) outside the engine's own processes → refused.
+ */
+export function homeOverride(env = process.env) {
+  const a = env.AD_ENGINE_DIR ? resolve(env.AD_ENGINE_DIR) : null;
+  const b = env.AD_CODEX_HOME ? resolve(env.AD_CODEX_HOME) : null;
+  if (a && b && canonicalPath(a) !== canonicalPath(b)) {
+    throw engineError("HOME_CONFLICT", envConflictRefusal({ newName: "AD_ENGINE_DIR", oldName: "AD_CODEX_HOME", newValue: a, oldValue: b }));
+  }
+  if (!a && !b && env.AD_ENGINE_HOME && !env.CODEX_HOME) {
+    throw engineError("HOME_STRAY_STAMP", "AD_ENGINE_HOME is not a setting. To choose the engine's folder, set AD_ENGINE_DIR.");
+  }
+  return a ?? b;
+}
 
-export function defaultCodexHome(env = process.env) {
-  return env.AD_CODEX_HOME ? resolve(env.AD_CODEX_HOME) : managedHome();
+/** The engine's folder: the user's override, else the resolved default (read-only; never writes). */
+export function defaultCodexHome(env = process.env, { root } = {}) {
+  return homeOverride(env) ?? resolveHomeState({ root }).path;
+}
+
+/**
+ * Resolves the default folder (write mode) and bootstraps a fresh install:
+ * engine/ plus the codex-home link. Call it under the `migrate` lock.
+ * → the folder's path.
+ */
+export function prepareDefaultHome({ root = defaultRoot(), autoPickEmpty = false, env = process.env } = {}) {
+  const r = resolveHomeState({ root, write: true, autoPickEmpty });
+  const { created } = ensureCodexHome(r.path, { env });
+  const link = join(root, OLD_HOME_NAME);
+  if (r.state === "fresh" && created && entryKind(link) === "missing") createLegacyLink(r.path, link);
+  return r.path;
 }
 
 const WIN = process.platform === "win32";
@@ -62,8 +93,9 @@ export function canonicalPath(p, base = process.cwd()) {
 // The user's own Codex homes: ~/.codex (for both the current HOME and the OS
 // account's home), plus a CODEX_HOME inherited from their shell — unless ad
 // started that Codex. Codex runs our hooks with our CODEX_HOME, and they must
-// still be able to start an engine: codexEnv() stamps AD_ENGINE_HOME on every
-// Codex it starts, and a home ad created carries the managed marker.
+// still be able to start an engine: codexEnv() stamps AD_INTERNAL_ENGINE_HOME
+// on every Codex it starts (the old AD_ENGINE_HOME name is still read), and a
+// home ad created carries the managed marker.
 export function userCodexHomes(env = process.env) {
   const homes = new Set([join(homedir(), ".codex")]);
   try {
@@ -73,7 +105,8 @@ export function userCodexHomes(env = process.env) {
   }
   if (env.CODEX_HOME) {
     const inherited = resolve(env.CODEX_HOME);
-    const startedByAd = env.AD_ENGINE_HOME && canonicalPath(inherited) === env.AD_ENGINE_HOME;
+    const stamp = env.AD_INTERNAL_ENGINE_HOME ?? env.AD_ENGINE_HOME; // the old name: hooks of an engine ad 2.x started
+    const startedByAd = stamp && canonicalPath(inherited) === stamp;
     if (!startedByAd && !isManagedHome(inherited)) homes.add(inherited);
   }
   return [...homes];
@@ -110,12 +143,14 @@ const dropCodexVars = (vars) =>
 // CODEX_SQLITE_HOME, CODEX_EXEC_SERVER_URL, CODEX_API_KEY and friends override
 // config and would point ad's Codex at the user's own state, executor or
 // credentials (CODEX_CA_CERTIFICATE stays: TLS trust behind proxies). Then an
-// absolute, isolated CODEX_HOME, and AD_ENGINE_HOME so ad processes Codex
+// absolute, isolated CODEX_HOME, and AD_INTERNAL_ENGINE_HOME so ad processes Codex
 // starts (hooks) recognise the home as ad's.
 export function codexEnv({ home, base = process.env, extra = {}, cwd = process.cwd() } = {}) {
   assertIsolatedHome(home, base, cwd);
   const full = resolve(cwd, home);
-  return { ...dropCodexVars(base), ...dropCodexVars(extra), CODEX_HOME: full, AD_ENGINE_HOME: canonicalPath(full) };
+  const env = { ...dropCodexVars(base), ...dropCodexVars(extra), CODEX_HOME: full, AD_INTERNAL_ENGINE_HOME: canonicalPath(full) };
+  delete env.AD_ENGINE_HOME; // ad 2.x's name for the stamp: never passed on
+  return env;
 }
 
 

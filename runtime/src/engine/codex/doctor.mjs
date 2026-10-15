@@ -3,9 +3,10 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { pinnedCodexVersion, resolveCodexCommand } from "./app-server.mjs";
-import { codexEnv, defaultCodexHome, isManagedHome } from "./home.mjs";
+import { codexEnv, homeOverride, isManagedHome } from "./home.mjs";
+import { entryKind, homeFacts, OLD_HOME_NAME, resolveHomeState } from "./home-resolve.mjs";
 
 export function parseCodexVersion(text) {
   return String(text).match(/(\d+\.\d+\.\d+(?:-[\w.]+)?)/)?.[1] ?? null;
@@ -20,7 +21,7 @@ export function codexCompat() {
   }
 }
 
-export function engineChecks({ env = process.env, run = execFileSync } = {}) {
+export function engineChecks({ env = process.env, run = execFileSync, root } = {}) {
   const checks = [];
   const pinned = pinnedCodexVersion();
   const command = resolveCodexCommand(env);
@@ -45,19 +46,53 @@ export function engineChecks({ env = process.env, run = execFileSync } = {}) {
     }
   }
   if (installed) checks.push({ code: "engine.version", ok: installed === pinned, data: { installed, pinned, source: command.source } });
-  const home = defaultCodexHome(env);
-  const exists = existsSync(home);
-  checks.push({ code: "engine.home", ok: true, data: { path: home, exists, managed: exists && isManagedHome(home) } });
+  let state;
+  try {
+    const custom = homeOverride(env);
+    state = custom ? { path: custom, state: "custom" } : resolveHomeState({ root });
+  } catch (err) {
+    checks.push({ code: "engine.homeError", ok: false, data: { message: err.message } });
+  }
+  if (state?.state === "two-folders") {
+    const oldPath = join(dirname(state.path), OLD_HOME_NAME);
+    checks.push({ code: "engine.twoFolders", ok: false, data: { oldPath, newPath: state.path } });
+    checks.push({ code: "engine.folderFacts", ok: true, data: { which: "older name", ...homeFacts(oldPath) } });
+    checks.push({ code: "engine.folderFacts", ok: true, data: { which: "new name", ...homeFacts(state.path) } });
+  } else if (state) {
+    const exists = existsSync(state.path);
+    checks.push({ code: "engine.home", ok: true, data: { path: state.path, exists, managed: exists && isManagedHome(state.path), state: state.state } });
+    if (state.state === "new") {
+      const link = join(dirname(state.path), OLD_HOME_NAME);
+      checks.push({ code: "engine.link", ok: true, data: { link, kind: entryKind(link), migratedAt: readMigrated(dirname(state.path)) } });
+    }
+  }
   const compat = codexCompat();
   if (installed === pinned && compat.whatChanged?.[pinned]) checks.push({ code: "engine.compat", ok: true, data: { tested: compat.tested, note: compat.whatChanged[pinned] } });
   return checks;
 }
 
+/** When ad migrate last moved the folder (root/migrate.json), or null. */
+function readMigrated(root) {
+  try {
+    return JSON.parse(readFileSync(join(root, "migrate.json"), "utf8"))?.at ?? null;
+  } catch {
+    return null;
+  }
+}
+
 // Checks that need a running engine: sign-in, provider, hook trust and
 // (Windows) sandbox readiness. Skipped until the home exists, so doctor never
 // creates it. engineFactory is injected (the façade passes createEngine).
-export async function engineLiveChecks({ env = process.env, engineFactory, platform = process.platform } = {}) {
-  const home = defaultCodexHome(env);
+export async function engineLiveChecks({ env = process.env, engineFactory, platform = process.platform, root } = {}) {
+  let home;
+  try {
+    const custom = homeOverride(env);
+    const s = custom ? { path: custom, state: "custom" } : resolveHomeState({ root });
+    if (s.state === "two-folders") return []; // never start an engine in one of two folders
+    home = s.path;
+  } catch {
+    return []; // engineChecks already shows the engine.homeError row
+  }
   if (!existsSync(home)) return [];
   const checks = [];
   let engine;

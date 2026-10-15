@@ -38,7 +38,8 @@ export function pinnedCodexVersion() {
 // and the user's Codex stays theirs. Run the package's JS launcher with our
 // own node (a .cmd shim would need a shell, which mangles args on Windows).
 export function resolveCodexCommand(env = process.env) {
-  if (env.AD_CODEX_BIN) return { cmd: env.AD_CODEX_BIN, prefix: [], source: "env" };
+  const bin = env.AD_ENGINE_BIN || env.AD_CODEX_BIN; // the old name is read forever
+  if (bin) return { cmd: bin, prefix: [], source: "env" };
   try {
     const pkg = require.resolve("@openai/codex/package.json");
     const entry = join(dirname(pkg), "bin", "codex.js");

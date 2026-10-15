@@ -85,3 +85,52 @@ test("a matching install also reports the tested versions and what changed (comp
   assert.ok(compat, "compat line present");
   assert.ok(compat.data.tested.includes(pinnedCodexVersion()));
 });
+
+test("an older codex-home folder reports state old; a new folder reports its link", async () => {
+  const { mkdtempSync, mkdirSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { createLegacyLink } = await import("../src/engine/codex/home-resolve.mjs");
+  const run = () => `codex-cli ${pinnedCodexVersion()}`;
+  const oldRoot = mkdtempSync(join(tmpdir(), "ad-doc-old-"));
+  const newRoot = mkdtempSync(join(tmpdir(), "ad-doc-new-"));
+  try {
+    mkdirSync(join(oldRoot, "codex-home"), { recursive: true });
+    const oldChecks = engineChecks({ env: {}, run, root: oldRoot });
+    const oldHome = oldChecks.find((c) => c.code === "engine.home");
+    assert.equal(oldHome.data.state, "old");
+    assert.equal(oldHome.data.path, join(oldRoot, "codex-home"));
+    assert.equal(oldChecks.some((c) => c.code === "engine.link"), false, "no link row on an older install");
+    mkdirSync(join(newRoot, "engine"), { recursive: true });
+    createLegacyLink(join(newRoot, "engine"), join(newRoot, "codex-home"), { hide: false });
+    const newChecks = engineChecks({ env: {}, run, root: newRoot });
+    assert.equal(newChecks.find((c) => c.code === "engine.home").data.state, "new");
+    const link = newChecks.find((c) => c.code === "engine.link");
+    assert.equal(link.data.kind, "link");
+    assert.equal(link.data.link, join(newRoot, "codex-home"));
+  } finally {
+    rmSync(oldRoot, { recursive: true, force: true });
+    rmSync(newRoot, { recursive: true, force: true });
+  }
+});
+
+test("two real folders report twoFolders plus a facts row each", async () => {
+  const { mkdtempSync, mkdirSync, rmSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const root = mkdtempSync(join(tmpdir(), "ad-doc-home-"));
+  try {
+    mkdirSync(join(root, "codex-home"), { recursive: true });
+    mkdirSync(join(root, "engine"), { recursive: true });
+    writeFileSync(join(root, "engine", "auth.json"), "{}");
+    const checks = engineChecks({ env: {}, run: () => `codex-cli ${pinnedCodexVersion()}`, root });
+    const two = checks.find((c) => c.code === "engine.twoFolders");
+    assert.equal(two.ok, false);
+    assert.match(two.data.oldPath, /codex-home$/);
+    const facts = checks.filter((c) => c.code === "engine.folderFacts");
+    assert.equal(facts.length, 2);
+    assert.equal(facts.find((f) => f.data.which === "new name").data.signedIn, true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

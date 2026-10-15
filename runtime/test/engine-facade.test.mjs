@@ -380,3 +380,52 @@ test("the engine home refusals come from the attribution module, with codes", as
   const own = join(homedir(), ".codex");
   assert.throws(() => engineHome.env({ home: own, base: {} }), (e) => e.code === "HOME_IS_USERS" && e.message === ownEngineHomeStartRefusal(own));
 });
+
+test("doctor live checks never throw on a broken setup: conflicts and two folders resolve to []", async () => {
+  const conflicted = await engineDoctor.liveChecks({ env: { AD_ENGINE_DIR: "/a", AD_CODEX_HOME: "/b" } });
+  assert.deepEqual(conflicted, []);
+  const { mkdirSync } = await import("node:fs");
+  const root = mkdtempSync(join(tmpdir(), "ad-facade-two-"));
+  try {
+    mkdirSync(join(root, "codex-home"), { recursive: true });
+    mkdirSync(join(root, "engine"), { recursive: true });
+    const two = await engineDoctor.liveChecks({ env: {}, root, engineFactory: async () => { throw new Error("must not start an engine"); } });
+    assert.deepEqual(two, []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("doctor words for the folder states never name the engine", async () => {
+  const { mkdirSync } = await import("node:fs");
+  const { createLegacyLink } = await import("../src/engine/codex/home-resolve.mjs");
+  const pinned = engineVersion.pinned();
+  const run = () => `codex-cli ${pinned}`;
+  const oldRoot = mkdtempSync(join(tmpdir(), "ad-facade-old-"));
+  const newRoot = mkdtempSync(join(tmpdir(), "ad-facade-new-"));
+  const twoRoot = mkdtempSync(join(tmpdir(), "ad-facade-two-"));
+  try {
+    mkdirSync(join(oldRoot, "codex-home"), { recursive: true });
+    const { writeFileSync } = await import("node:fs");
+    writeFileSync(join(oldRoot, "codex-home", ".agent-daemon-managed"), "Created by Agent Daemon.\n");
+    mkdirSync(join(newRoot, "engine"), { recursive: true });
+    createLegacyLink(join(newRoot, "engine"), join(newRoot, "codex-home"), { hide: false });
+    mkdirSync(join(twoRoot, "codex-home"), { recursive: true });
+    mkdirSync(join(twoRoot, "engine"), { recursive: true });
+    const words = (root) => engineDoctor.checks({ env: {}, root, run });
+    const oldBy = Object.fromEntries(words(oldRoot).map((c) => [c.name, c]));
+    assert.match(oldBy["Engine home"].note, /older folder name; nothing is wrong; ad migrate is optional/);
+    const newBy = Object.fromEntries(words(newRoot).map((c) => [c.name, c]));
+    assert.match(newBy["Engine home link"].note, /a link older versions of ad need/);
+    const twoBy = Object.fromEntries(words(twoRoot).map((c) => [c.name, c]));
+    assert.match(twoBy["Engine home"].note, /^two engine folders:/);
+    const facts = words(twoRoot).filter((c) => c.name.startsWith("Engine folder ("));
+    assert.equal(facts.length, 2);
+    // The old folder's on-disk name is data, not words: scrub path-like
+    // tokens carrying it, then no prose may name the engine.
+    const scrubbed = (s) => s.replace(/[^\s]*codex-home[^\s]*/gi, "<path>");
+    for (const c of [...words(oldRoot), ...words(newRoot), ...words(twoRoot)]) assert.doesNotMatch(scrubbed(`${c.name} ${c.note}`), /codex/i, `${c.name}: ${c.note}`);
+  } finally {
+    for (const d of [oldRoot, newRoot, twoRoot]) rmSync(d, { recursive: true, force: true });
+  }
+});
