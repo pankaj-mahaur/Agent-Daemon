@@ -289,7 +289,7 @@ Agent-Daemon/                       # The cloned repo
 ├── logs/                           # Digest failure reports, tui-probe logs
 ├── checkpoints/                    # Pre-compact memory markers (ad checkpoint; not /undo)
 ├── watch.json                      # Watcher config
-├── codex-home/                     # Harness CODEX_HOME (login, config, rollouts, skills mirror)
+├── codex-home/                     # Engine home (login, config, rollouts, skills mirror)
 ├── secrets/                        # Provider keys (file backends)
 ├── schedules.json, schedule-logs/  # ad schedule jobs + output
 ├── tui/                            # Terminal UI: prompt history (0600), per-folder state

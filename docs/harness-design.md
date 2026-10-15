@@ -16,6 +16,8 @@ ad (tui) · ad chat · ad run · ad loop · ad schedule · ad web · ad acp · a
 
 ad drives a pinned `codex app-server` over JSON-RPC on stdio. Codex owns the agent loop, the model calls, the sandbox and the ChatGPT login; ad owns everything around it.
 
+Code outside `runtime/src/engine/` reaches the engine only through the façade's named capabilities (`threads`, `turns`, `review`, `guardian`, `terminals`, `config`, `models`, `skills`, `files`, `mcp`, `usage`, `modes`, `sandbox` on the engine object, plus the `engineHome`, `engineEvents`, `engineHooks`, `engineVersion`, `engineDoctor` and `engineDebugUi` helpers); the raw server is a private field. Features built on the engine's experimental API (plan mode, `/stop`) are gated on the protocol snapshot (`featureFlags`): when the pinned protocol lacks their methods they turn themselves off with a notice instead of failing mid-use. Errors carry codes (`ENGINE_*`, `HOME_*`, `FEATURE_UNAVAILABLE`, `TEST_DOOR`, or the engine's numeric JSON-RPC code) and the façade owns the words the user reads.
+
 ## Hard rules
 
 - **Never fork Codex.** Drive the pinned binary over its app-server protocol, stable surface only, with one exception: `ad tui` opts into Codex's experimental API for an allowlist (`EXPERIMENTAL_ALLOWLIST` in `runtime/src/engine/codex/surface.mjs`: Codex's collaboration modes for plan mode, and cleaning background terminals for `/stop`), and opts out of every other experimental notification. Every other front end stays stable-only.

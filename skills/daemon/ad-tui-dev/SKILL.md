@@ -149,6 +149,7 @@ The status says Parts 0–11 are built, FC2–FC4 run automated in `test/tui-liv
 
 ## Anti-patterns
 
+- **Reaching the engine's raw server.** Use the façade's capabilities (`engine.threads.*`, `engine.turns.*`, …); a new protocol method means a new capability in `engine/index.mjs`, an entry in `SENT_METHODS`, and the brand lint's rule B stays at zero.
 - **Starting the real Codex without `codexEnv()`,** or reading or writing `~/.codex`.
 - **Changing what bare `ad` opens** (`TUI_IS_DEFAULT` in `src/tui/flip.mjs`) without the user.
 - **Teaching the fake a message the real Codex can't send.** It must pass `protocol-check`.

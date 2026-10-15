@@ -36,6 +36,8 @@ Install with `npm ci` (or `npm install`) in `runtime/`, devDependencies included
 
 It also checks ad's own requests (`checkRequest`): a method the pinned stable protocol doesn't have, a top-level field its params type lacks, or a wrong type is rejected with -32600, as Codex would. A new `request("method")` in `src/` needs the method in `SENT_METHODS` (`engine/codex/protocol-snapshot.mjs`) and a regenerated snapshot (`node scripts/codex-schema-snapshot.mjs`, pinned binary, temp home); a test compares the list with the source.
 
+The fake answers an unknown method with -32600, like the real engine. Tests reach the fake's `debug/` and `test/` methods through `engine.testRequest()`, feed notifications with `engine.testNotify()`, observe raw traffic with `engine.onRawNotification()` / `engine.onRawServerRequest()`, and crash the engine with `engine.kill()`; `engine.server` no longer exists.
+
 ### The mock model
 
 `testkit/mock-responses.mjs` stands in for the OpenAI Responses API. A keyword in the prompt picks the reply: `PING` (a streamed "pong"), and in `tui-live`'s own script `SPAWNONE` (Codex's `spawn_agent`; 0.160 namespaces the agent tools as `multi_agent_v1`, so the call carries `namespace`) and Codex's recap prompt (an answer in its schema), `SHELL` / `ESCALATE` (a command, the second asking to leave the sandbox), `PATCH` (an `apply_patch` adding `hello.txt`), `FAIL`, `HOLD` (streams, then waits for `mock.release()`). A test can pass its own script; the live test adds `STEERED`, `QUEUED` and `EDITMATH` (an Update File patch).

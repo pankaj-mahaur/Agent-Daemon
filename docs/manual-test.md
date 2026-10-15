@@ -21,7 +21,7 @@ node --test            # expect: 1 failing test (the bug the agent will fix in s
 | Run | Expect | If not |
 |---|---|---|
 | `ad --version` | the version in `runtime/package.json` | [troubleshooting #1](troubleshooting.md#1-ad-command-not-found-after-npm-link) |
-| `ad doctor` | settings, hooks and dirs OK; a "Codex engine" line with the pinned version | re-run the installer; `cd runtime && npm install` |
+| `ad doctor` | settings, hooks and dirs OK; an "Engine version" line with the pinned version | re-run the installer; `cd runtime && npm install` |
 
 ## 2. Claude Code mode (v1 features)
 
