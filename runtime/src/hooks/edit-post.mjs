@@ -13,7 +13,7 @@ const MAX_LINES_REPORTED = 5;
 
 export async function editPost() {
   const input = await readStdinJson();
-  // Codex apply_patch can touch several files (hooks/io.mjs fills file_paths).
+  // apply_patch can touch several files (hooks/io.mjs fills file_paths).
   const single = input?.tool_input?.file_path || input?.path || input?.file || "";
   const files = input?.tool_input?.file_paths?.length ? input.tool_input.file_paths : single ? [single] : [];
   for (const filePath of files) reportConsoleLogs(filePath);

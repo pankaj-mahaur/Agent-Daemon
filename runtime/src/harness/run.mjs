@@ -1,4 +1,4 @@
-// `ad run "<prompt>"` — one non-interactive agent turn on the Codex engine.
+// `ad run "<prompt>"` — one non-interactive agent turn on ad's engine.
 //
 // Nobody is at the keyboard, so every approval request is declined (and
 // reported on stderr). Streamed agent text goes to stdout; activity

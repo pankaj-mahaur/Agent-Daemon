@@ -1,4 +1,4 @@
-// Tests for team workers on Codex (orchestration/codex-worker.mjs, spawn.mjs).
+// Tests for team workers on ad's engine (orchestration/engine-worker.mjs, spawn.mjs).
 // Property: an unattended worker never asks for approval and is confined to
 // its worktree (+ the repo's git dir so it can commit), without network.
 
@@ -11,7 +11,7 @@ const require = createRequire(import.meta.url);
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { commitWorktree, runCodexWorker, WORKER_SANDBOX_POLICY } from "../src/orchestration/codex-worker.mjs";
+import { commitWorktree, runEngineWorker, WORKER_SANDBOX_POLICY } from "../src/orchestration/engine-worker.mjs";
 
 const FAKE = fileURLToPath(new URL("../testkit/fake-codex-app-server.mjs", import.meta.url));
 const command = { cmd: process.execPath, prefix: [FAKE] };
@@ -41,10 +41,10 @@ test("commitWorktree commits the worker's changes on its own branch, or nothing"
   }
 });
 
-test("runCodexWorker: approval policy never, sandbox policy on the turn, output returned", async () => {
+test("runEngineWorker: approval policy never, sandbox policy on the turn, output returned", async () => {
   const root = mkdtempSync(join(tmpdir(), "ad-worker-"));
   try {
-    const r = await runCodexWorker({
+    const r = await runEngineWorker({
       worktreePath: root,
       systemPrompt: "You are a worker.",
       userMessage: "early-complete",
@@ -59,7 +59,7 @@ test("runCodexWorker: approval policy never, sandbox policy on the turn, output 
   }
 });
 
-test("spawnAgent defaults to the Codex worker and reports to the leader inbox", async () => {
+test("spawnAgent defaults to the engine worker and reports to the leader inbox", async () => {
   const { spawnAgent } = await import("../src/orchestration/spawn.mjs");
   const root = mkdtempSync(join(tmpdir(), "ad-spawn-"));
   const seen = [];

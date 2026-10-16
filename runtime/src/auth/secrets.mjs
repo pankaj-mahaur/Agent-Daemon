@@ -7,8 +7,8 @@
 //   linux  → libsecret via `secret-tool` (secret on stdin), else file
 //   other  → file ~/.agent-daemon/secrets/<name> with mode 0600
 //
-// ChatGPT / OpenAI logins are NOT stored here — Codex owns those tokens in
-// the harness CODEX_HOME and refreshes them itself.
+// ChatGPT / OpenAI logins are NOT stored here — the engine owns those tokens in
+// the engine home and refreshes them itself.
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";

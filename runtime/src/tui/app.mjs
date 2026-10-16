@@ -17,7 +17,7 @@ import { parseRecap, RECAP_PROMPT_PREFIX, RECAP_SCHEMA, recapHistory, TEMPORARY_
 import { createChecklist, createPicker, renderFooter, renderShortcuts, renderStatus } from "./view/chrome.mjs";
 import { ownEngineHomeRefusal } from "../engine/attribution.mjs";
 import { ARM_MS, createChoice, createConfirm, createRequestModal } from "./view/modals.mjs";
-import { CODEX_PLAN_CLEAR_CONTEXT_PREFIX } from "../hooks/generated-prompts.mjs";
+import { PLAN_CLEAR_CONTEXT_PREFIX } from "../hooks/generated-prompts.mjs";
 import { sanitize } from "./terminal/sanitize.mjs";
 import { lineWidth, truncate } from "./terminal/text.mjs";
 import { INIT_PROMPT } from "./init-prompt.mjs";
@@ -121,7 +121,7 @@ const popupHidden = (c) => c.source === "codex" && (CODEX_COMMANDS.get(c.name)?.
 const STOCK_UI = "/codex opens the stock Codex UI on this conversation.";
 // Codex's "Implement this plan?" (tui/src/chatwidget/plan_implementation.rs at the pinned tag).
 export const PLAN_IMPLEMENTATION_CODING_MESSAGE = "Implement the plan.";
-export const PLAN_IMPLEMENTATION_CLEAR_CONTEXT_PREFIX = CODEX_PLAN_CLEAR_CONTEXT_PREFIX; // ad's prompt hooks skip it
+export const PLAN_IMPLEMENTATION_CLEAR_CONTEXT_PREFIX = PLAN_CLEAR_CONTEXT_PREFIX; // ad's prompt hooks skip it
 
 export const NOT_IN_AD = {
   ide: "/ide reads your editor's selection over Codex's private IDE link, which ad doesn't have.",

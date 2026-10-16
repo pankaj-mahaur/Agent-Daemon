@@ -17,7 +17,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { sendMessage, createInbox } from "./inbox.mjs";
 import { productValue } from "../product-values.mjs";
-import { commitWorktree, runCodexWorker } from "./codex-worker.mjs";
+import { commitWorktree, runEngineWorker } from "./engine-worker.mjs";
 
 const MAX_CONCURRENT_AGENTS = 8;
 const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
@@ -184,7 +184,7 @@ export async function spawnAgent(opts) {
     let r;
     try {
       await updateAgentStatus(opts.teamId, agentName, "running", null, process.pid);
-      r = await (opts.runWorker ?? runCodexWorker)({
+      r = await (opts.runWorker ?? runEngineWorker)({
         worktreePath,
         systemPrompt,
         userMessage,
@@ -192,7 +192,7 @@ export async function spawnAgent(opts) {
         timeoutMs,
         engineOpts: opts.engineOpts,
       });
-      // The worker can't touch .git (see codex-worker.mjs); commit its work
+      // The worker can't touch .git (see engine-worker.mjs); commit its work
       // here, outside the sandbox, on its own branch.
       if (r.ok && opts.worktree !== false) {
         try {

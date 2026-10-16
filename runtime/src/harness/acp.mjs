@@ -1,14 +1,14 @@
 // `ad acp` — Agent Daemon as an Agent Client Protocol agent (JSON-RPC 2.0
 // over stdio, protocol v1), so ACP editors (Zed, JetBrains, …) can drive the
-// harness: memory, hooks and skills included, Codex underneath.
+// harness: memory, hooks and skills included, the engine underneath.
 //
 // Mapping:
-//   session/new            → a Codex thread (workspace-write, on-request)
+//   session/new            → an engine thread (workspace-write, on-request)
 //   session/prompt         → engine.turn; streamed as session/update:
 //                            agent_message_chunk, tool_call, tool_call_update
-//   Codex approval request → session/request_permission to the client
+//   engine approval request → session/request_permission to the client
 //   session/cancel         → turn/interrupt; the prompt returns "cancelled"
-// Client-provided MCP servers are not forwarded yet (Codex's own config and
+// Client-provided MCP servers are not forwarded yet (the engine's own config and
 // the harness memory server apply).
 
 import { createInterface } from "node:readline";
@@ -46,7 +46,7 @@ export function toolCallUpdateFor(item) {
   return { toolCallId: item.id, status: failed ? "failed" : "completed", ...(text ? { content: [{ type: "content", content: { type: "text", text: clip(text) } }] } : {}) };
 }
 
-// ACP option → approval word (engine/codex/approvals.mjs)
+// ACP option → approval word (the engine's approvals module)
 export const PERMISSION_OPTIONS = [
   { optionId: "allow_once", name: "Allow", kind: "allow_once" },
   { optionId: "allow_always", name: "Always allow (this session)", kind: "allow_always" },

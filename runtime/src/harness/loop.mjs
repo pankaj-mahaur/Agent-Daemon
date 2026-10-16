@@ -1,4 +1,4 @@
-// `ad loop "<objective>"` — autonomous, Ralph-style work loop on one Codex
+// `ad loop "<objective>"` — autonomous, Ralph-style work loop on one engine thread
 // thread, with brakes that live in OUR code (the model can't talk its way
 // past them):
 //
@@ -171,7 +171,7 @@ export async function cmdLoop(objective, opts = {}) {
     err.write(`ad loop: ${e.message}\n`);
     return 1;
   } finally {
-    // An active goal could let Codex keep driving the thread on its own,
+    // An active goal could let the engine keep driving the thread on its own,
     // outside our brakes; the loop owns the goal only while it runs.
     if (goalSet) await engine.clearGoal(threadId).catch((e) => err.write(`[loop] could not clear the thread goal: ${e.message}\n`));
     await engine?.close();

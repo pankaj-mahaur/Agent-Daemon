@@ -1,10 +1,10 @@
 // `ad tools list | enable <tool> | disable <tool>` — optional agent tools
-// for the harness, written to its CODEX_HOME config through Codex.
+// for the harness, written to its engine-home config through the engine.
 //
 //   browser     Playwright MCP (accessibility-tree browser control, no
 //               vision model needed), pinned; launched via node's own
 //               npx-cli.js so Windows needs no .cmd shim
-//   web-search  Codex web search in "live" mode (default is "cached": an
+//   web-search  web search in "live" mode (default is "cached": an
 //               OpenAI-maintained index, no live fetches)
 //
 // Opt-in on purpose: both reach the network, and the browser downloads its
@@ -35,7 +35,7 @@ export const TOOLS = {
   "web-search": {
     label: "Live web search",
     enable: () => [["web_search", "live"]],
-    disable: () => [["web_search", null]], // back to Codex's default (cached)
+    disable: () => [["web_search", null]], // back to the default (cached)
     enabled: (cfg) => cfg.web_search === "live",
   },
 };

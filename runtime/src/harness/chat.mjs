@@ -1,4 +1,4 @@
-// `ad chat` — interactive agent session on the Codex engine (zero-dep:
+// `ad chat` — interactive agent session on ad's engine (zero-dep:
 // readline + ANSI).
 //
 // The session logic (createChatSession) is terminal-free so it can be tested:
@@ -39,7 +39,7 @@ export function parseCommand(line) {
   return m ? { cmd: m[1].toLowerCase(), arg: m[2].trim() } : null;
 }
 
-// y / a / n → approval words understood by engine/codex/approvals.mjs
+// y / a / n → approval words understood by the engine's approvals module
 export function parseApprovalAnswer(answer) {
   const a = String(answer ?? "").trim().toLowerCase();
   if (a === "y" || a === "yes") return "accept";

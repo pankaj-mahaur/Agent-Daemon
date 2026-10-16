@@ -2,11 +2,11 @@
 //
 // Nobody approves anything there, so everything that could act outside the
 // sandbox is switched off for those threads:
-//   - MCP servers run outside Codex's sandbox → all disabled except our
+//   - MCP servers run outside the engine's sandbox → all disabled except our
 //     own memory server (read-mostly, local SQLite)
 //   - live web search → back to "cached" (OpenAI's index, no live fetches)
 //   - every turn: workspace-write, no extra writable roots, no network
-// These are per-thread overrides (dotted keys, verified on codex 0.159.2);
+// These are per-thread overrides (dotted keys, verified on 0.159.2);
 // the user's config is not changed.
 
 import { MEMORY_SERVER_ID } from "./setup.mjs";

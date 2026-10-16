@@ -48,7 +48,7 @@ export function touchedFiles(summary, cwd) {
   for (const e of summary.events) {
     if (set.size >= 12) break;
     if (e.type !== "tool_use") continue;
-    // Codex apply_patch: the input is the raw patch text, not JSON.
+    // apply_patch: the input is the raw patch text, not JSON.
     if (e.tool === "apply_patch") {
       // As written: patch paths are cwd-relative already (absolute ones are
       // relativized by add()); resolving would inject a drive letter.

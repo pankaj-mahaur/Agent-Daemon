@@ -12,7 +12,7 @@ import { needsWindowsSandbox, sandboxReadiness } from "./sandbox.mjs";
 
 export const NOT_LOGGED_IN = "Not logged in. Run: ad auth login chatgpt   (or: ad auth login openai | ad auth login openrouter --model <slug>)";
 
-// env: extra variables for Codex and the hooks it runs (e.g. AD_WORKER=1).
+// env: extra variables for the engine and the hooks it runs (e.g. AD_WORKER=1).
 // detached: run the engine in its own process group on POSIX (the terminal UI).
 export async function startHarnessEngine({ cwd, home, command, clientVersion, store, onApproval, err = process.stderr, setup = true, platform, env, requireSandbox = false, detached = false, engineArgs, experimental = false, interactive = false, notesFile } = {}) {
   const e = { ...process.env, ...(env ?? {}) };

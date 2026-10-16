@@ -25,7 +25,7 @@ import { appendLearnings } from "./journal.mjs";
 import { markRecentSkillFailure } from "../memory/episodic.mjs";
 import { isGeneratedPrompt } from "./generated-prompts.mjs";
 
-// 1 MB: Claude turns fit in 64 KB, but Codex rollouts can put >64 KB of
+// 1 MB: Claude turns fit in 64 KB, but the engine's rollouts can put >64 KB of
 // tool output / injected context between the last assistant message and
 // the next prompt (~6% of real prompts). Reading 1 MB costs ~ms.
 const TRANSCRIPT_TAIL_BYTES = 1024 * 1024;
@@ -38,7 +38,7 @@ export async function userPromptExtract() {
       passthrough();
       return 0;
     }
-    // A prompt the client wrote (Codex's plan hand-off) isn't the user's words.
+    // A prompt the client wrote (the engine's plan hand-off) isn't the user's words.
     if (isGeneratedPrompt(input.prompt)) {
       passthrough();
       return 0;
@@ -141,23 +141,23 @@ async function readLastAssistantTurn(transcriptPath) {
       if (!line) continue;
       let obj;
       try { obj = JSON.parse(line); } catch { continue; }
-      // Codex rollout: {type:"response_item", payload:{type:"message", role:"assistant", content}}
+      // Engine rollout: {type:"response_item", payload:{type:"message", role:"assistant", content}}
       // or an item_completed AgentMessage.
       const p = obj.payload;
-      const codexMsg =
+      const rolloutMsg =
         (obj.type === "response_item" && p?.type === "message" && p.role === "assistant" && p) ||
         (obj.type === "event_msg" && p?.type === "item_completed" && p.item?.type === "AgentMessage" && p.item) ||
         null;
       const isAssistant =
-        Boolean(codexMsg) ||
+        Boolean(rolloutMsg) ||
         obj.type === "assistant" ||
         obj.role === "assistant" ||
         obj.message?.role === "assistant";
       if (!isAssistant) continue;
 
-      const text = stringifyContent(codexMsg ? codexMsg.content ?? codexMsg.text : obj.message?.content ?? obj.content);
+      const text = stringifyContent(rolloutMsg ? rolloutMsg.content ?? rolloutMsg.text : obj.message?.content ?? obj.content);
       if (!text || text.length < 8) continue;
-      return { text, uuid: obj.uuid ?? codexMsg?.id };
+      return { text, uuid: obj.uuid ?? rolloutMsg?.id };
     }
     return null;
   } catch {

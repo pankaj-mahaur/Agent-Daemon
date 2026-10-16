@@ -129,9 +129,9 @@ test("subprocess: a team worker's prompt (AD_WORKER=1) is not captured as the us
 });
 
 test("subprocess: Codex's plan hand-off (a prompt the client wrote) is never captured as the user's words", async () => {
-  const { CODEX_PLAN_CLEAR_CONTEXT_PREFIX, isGeneratedPrompt } = await import("../src/hooks/generated-prompts.mjs");
+  const { PLAN_CLEAR_CONTEXT_PREFIX, isGeneratedPrompt } = await import("../src/hooks/generated-prompts.mjs");
   const plan = ["# Switch the package manager", "", "- Actually, we use pnpm here, not npm."].join("\n");
-  const handoff = `${CODEX_PLAN_CLEAR_CONTEXT_PREFIX}\n\n${plan}`;
+  const handoff = `${PLAN_CLEAR_CONTEXT_PREFIX}\n\n${plan}`;
   assert.equal(isGeneratedPrompt(handoff), true);
   assert.equal(isGeneratedPrompt(`<private>${handoff}</private>`), true, "a /private wrapper doesn't hide it");
   assert.equal(isGeneratedPrompt("Implement the plan."), false, "Codex's short hand-off is a real user message");
