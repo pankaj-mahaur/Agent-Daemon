@@ -35,7 +35,7 @@ Don't delegate one-line edits or anything that needs back-and-forth design. Do t
    | one bounded task, no questions | `ad run "<task>" --cwd <repo>` (add `--json` to parse the result) |
    | iterate until an objective is met | `ad loop "<objective>" --max-iterations N --max-minutes M` |
    | recurring | `ad schedule add "<cron>" run\|loop "<prompt>" --cwd <repo>`, which needs `ad watch` or `ad service install` running |
-   | parallel workers on branches | `ad tc` (team create), then `ad sp` (Codex worker by default) |
+   | parallel workers on branches | `ad tc` (team create), then `ad sp` (an `ad` worker by default; `--engine claude` for Claude Code) |
    | the user wants to work with the agent themselves, watching and approving | tell them to run `ad tui` (Codex-style terminal UI; `ad tui --last` continues) or `ad codex` (the stock Codex UI on ad's home). Both need an interactive terminal, so you can't drive them from a tool call. Guide: `docs/tui.md` |
 
 3. **Write the prompt as a spec:** the goal, the files involved, how to verify ("`node --test` passes"), and what *not* to touch. For `ad loop`, state a verifiable finish line. The loop stops only when the agent reports `done` + `exit_signal`, or a brake trips.

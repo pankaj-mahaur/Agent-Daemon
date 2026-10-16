@@ -7,7 +7,7 @@
 
 A **self-improving runtime** for AI coding agents — with **multi-agent orchestration** built in. Wraps Claude Code (and any agent that writes a session transcript) with universal guardrails, persistent memory, and a digest pipeline that distills lessons from every session so the next one is automatically smarter. Since v2 it also runs agents itself, on the OpenAI Codex engine.
 
-Ships with a full **team coordination layer**: spawn worker agents (sandboxed Codex workers by default, Claude Code with `--engine claude`) in isolated git worktrees, coordinate them through filesystem-based inboxes, and manage task dependencies with auto-unblocking — all without a central server or database.
+Ships with a full **team coordination layer**: spawn worker agents (sandboxed engine workers by default, Claude Code with `--engine claude`) in isolated git worktrees, coordinate them through filesystem-based inboxes, and manage task dependencies with auto-unblocking — all without a central server or database.
 
 Skills evolve too: [GEPA](runtime/src/digest/gepa/README.md) (Genetic-Pareto Prompt Evolution) reads execution traces and proposes Pareto-optimal skill refinements that you accept or reject via `agent-daemon review`.
 
@@ -129,7 +129,6 @@ ad auth status
 
 ad                               # Codex-style terminal UI (= ad tui); docs/tui.md
 ad tui "fix the failing test"    # the same, sending a first prompt; --last / --resume <id>
-ad codex                         # the stock Codex UI, on the harness home
 ad chat                          # plain line mode; approve commands/edits with y / a / n
 ad run "fix the failing test"    # one non-interactive turn (approvals declined)
 ad loop "make the build green"   # autonomous loop with hard brakes (below)
@@ -452,12 +451,13 @@ All commands work with both `ad` (short) and `agent-daemon` (full). Short aliase
 # Harness (Codex engine) — see "Agent harness" above
 ad auth login chatgpt|openai|openrouter   # ad auth use / status / logout
 ad [--last]                                    # terminal UI (AD_TUI=0: bare ad prints the help)
-ad tui ["<prompt>"] [--last | --resume <id>]   # terminal UI (docs/tui.md); ad codex = stock Codex UI
+ad tui ["<prompt>"] [--last | --resume <id>]   # terminal UI (docs/tui.md)
+ad about                                     # what ad runs on: versions, the engine, licenses, settings path
 ad chat | ad run "<prompt>" | ad loop "<objective>"
 ad schedule add|list|remove|enable|disable|run|tick
 ad web | ad acp | ad tools list|enable|disable | ad sandbox setup|status | ad agy "<prompt>"
-ad spawn ... --engine codex|claude     # team workers (default: sandboxed Codex thread)
-ad evolve <skill> --llm claude|codex|auto
+ad spawn ... --engine ad|claude     # team workers (default: sandboxed engine thread)
+ad evolve <skill> --llm claude|ad|auto
 
 # Core
 ad doctor                              # Diagnose install — hooks, PATH, dirs, harness login/sandbox

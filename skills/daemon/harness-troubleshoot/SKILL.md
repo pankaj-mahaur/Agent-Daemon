@@ -22,7 +22,7 @@ Any harness command errors out, hangs, or finishes without doing the work ("my s
 1. **Login.** `ad auth status`. `Not logged in` → `ad auth login chatgpt` (or `openai` / `openrouter --model <slug>`). The harness login is separate from the user's own `codex` login.
 2. **Engine + hooks.** `ad doctor`. Look at the Codex lines:
    - the engine version should equal the pin in `runtime/package.json`; if it doesn't, `cd runtime && npm install`.
-   - `Engine hooks: k/N trusted` with k < N → the next `ad run` re-trusts them; if it stays low, the hook commands changed (re-run `ad run` once, then check again).
+   - `Engine hooks: k/N trusted` with k < N → the next `ad run` re-trusts them; if it stays low, the hook commands changed (re-run `ad run` once, then check again). After an upgrade the hooks file is regenerated at the next start; both `--host ad` and the old `--host codex` keep working.
 3. **Sandbox (Windows).** `ad sandbox status`. Not ready → `ad sandbox setup`. Unattended runs (`ad loop`, workers, schedules) refuse to start without it.
 4. **Reproduce small**, in a scratch dir and never the user's repo, so test prompts don't land in its memory:
    ```bash

@@ -19,7 +19,7 @@ irm https://raw.githubusercontent.com/pankaj-mahaur/Agent-Daemon/main/install.ps
 - **Pin a release:** set `AD_VERSION` (e.g. `AD_VERSION=v1.0.0` for the Claude Code–only v1). Re-run without it to move back to `main`.
 - **From a clone instead:** `cd runtime && npm install --omit=dev && npm link --omit=dev` (contributors drop `--omit=dev` to get the test tools).
 - **Then, per project:** `ad init`.
-- **To let ad run the agent:** type `ad` in the project. The terminal UI opens and asks you to sign in on the first run. For `ad chat`, `ad run`, `ad loop` and the other harness commands, sign in first with `ad auth login chatgpt` (or `openai` / `openrouter --model <slug>`). See [harness.md](harness.md) and [tui.md](tui.md).
+- **To let ad run the agent:** type `ad` in the project. The terminal UI opens and asks you to sign in on the first run. For `ad chat`, `ad run`, `ad loop` and the other harness commands, sign in first with `ad auth login chatgpt` (or `openai` / `openrouter --model <slug>`). The ChatGPT sign-in opens OpenAI's page, which may say 'Codex': that is the engine ad runs on. See [harness.md](harness.md) and [tui.md](tui.md).
 
 ## Skills only (no `ad` command)
 

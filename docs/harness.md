@@ -82,14 +82,9 @@ A Codex-style terminal UI on ad's own Codex home. History goes into your termina
 
 Keys, commands, `/undo`, terminals and the files it writes: **[tui.md](tui.md)**.
 
-### `ad codex`: the stock Codex UI on ad's home
+### `ad codex` is gone
 
-```bash
-ad codex                         # the pinned Codex's own UI
-ad codex resume --last           # any codex arguments
-```
-
-The pinned Codex, with `CODEX_HOME` set to ad's home (never `~/.codex`) and `--no-daemon`, so it never talks to your own Codex. Your `~/.claude/skills` are mirrored into the home's `skills/` folder first; folders you put there yourself are never touched. Project `.claude/skills` aren't visible in `ad codex`. Inside `ad tui`, `/codex` opens it on the same conversation and returns to `ad` afterwards ([tui.md](tui.md#ad-codex-and-codex)).
+`ad codex` (the engine's own UI) was removed in 3.0. It now prints what to use instead: `ad --last` resumes a conversation, and the engine's settings file holds the settings. Maintainers can still reach the engine's UI with `ad engine ui --debug`.
 
 ### `ad tui --preview`: the minimal preview
 
@@ -176,7 +171,7 @@ Opt-in, and it uses *your* installed Antigravity CLI and its login. The daemon n
 
 ### Team workers
 
-`ad sp` (spawn) now starts **Codex workers** by default; see [Multi-agent orchestration](../README.md#multi-agent-orchestration). `--engine claude` (or `AD_AGENT_ENGINE=claude`) spawns headless `claude` as in v1.
+`ad sp` (spawn) now starts **engine workers** by default; see [Multi-agent orchestration](../README.md#multi-agent-orchestration). `--engine claude` (or `AD_AGENT_ENGINE=claude`) spawns headless `claude` as in v1.
 
 ---
 
@@ -213,7 +208,7 @@ Loop and worker prompts are marked as non-user (`AD_WORKER=1`), so they never en
 
 ## Windows
 
-- **Sandbox.** `ad sandbox status` shows readiness. The default is unelevated, and its sandbox identity is kept per Codex home, so it is separate from your own Codex. `ad sandbox setup --elevated` is stronger (one UAC prompt), but it is **machine-wide**: it creates Windows sandbox accounts and rules that your own Codex uses too.
+- **Sandbox.** `ad sandbox status` shows readiness. The default is unelevated, and its sandbox identity is kept per Codex home, so it is separate from your own Codex. `ad sandbox setup --elevated` is stronger (one UAC prompt), but it is **machine-wide**: it creates Windows sandbox accounts and rules that your own Codex uses too. It asks for consent first (`--yes` skips the question off a terminal).
 - **PowerShell from the Microsoft Store** can't be started by the sandbox. On Windows, every Codex that ad starts (including `ad codex`) gets a PATH without any `WindowsApps` folder: neither the per-user app-alias folder nor the Store package folder that PowerShell 7 puts first when you start ad from it. Codex then runs commands, sandboxed, in a PowerShell 7 installed from the MSI or in Windows PowerShell 5.1. Store app aliases (`winget`, the `python` stub) aren't on the agent's PATH either. Fixed in 2.0.1 for the alias folder, completed in 2.1.1 for the package folder; see [troubleshooting #16](troubleshooting.md#16-harness-on-windows-every-agent-command-fails-access-is-denied-or-createprocessasuserw-failed).
 - **`node --test` fails with `spawn EPERM`** in the unelevated sandbox, because Node can't start child processes there. The agent can run test files directly (`node file.test.js`). `--elevated` may lift this, but that's untested.
 
@@ -237,8 +232,9 @@ Loop and worker prompts are marked as non-user (`AD_WORKER=1`), so they never en
 | `AD_ENGINE_BIN` (old name `AD_CODEX_BIN`, still read) | run a specific engine binary instead of the pinned one (testing) |
 | `CODEX_*` (yours) | not passed to the harness's Codex, so they can't point it at your own state; `CODEX_CA_CERTIFICATE` is kept |
 | `AD_INTERNAL_ENGINE_HOME` (old name `AD_ENGINE_HOME`) | set by ad on the engine processes it starts (hooks use it); don't set it yourself |
-| `AD_AGENT_ENGINE` | `codex` (default) or `claude` for team workers |
-| `AD_LLM_BACKEND` | `claude`, `codex` or `auto` for digest / GEPA LLM calls (same as `--llm`) |
+| `AD_AGENT_ENGINE` | `ad` (default) or `claude` for team workers (`codex` still works) |
+| `AD_LLM_BACKEND` | `claude`, `ad` or `auto` for digest / GEPA LLM calls (same as `--llm`; `codex` still works) |
+| `AD_HOOK_HOST` | `ad` for hook input/output adaptation (`codex` still works) |
 | `AD_ENGINE_MODEL` (old name `AD_CODEX_LLM_MODEL`, still read) | model for those calls when they run on the engine |
 | `AD_SECRETS_BACKEND=file` | store keys in plain 0600 files instead of the OS store |
 
@@ -252,7 +248,7 @@ New installs keep the engine's folder at `~/.agent-daemon/engine/`, plus a link 
 
 ## When something goes wrong
 
-1. `ad doctor`: engine version, login, hooks trusted, Windows sandbox.
+1. `ad doctor`: engine version, login, hooks trusted, Windows sandbox. `ad about` says what ad runs on: ad's version and license, the engine's name, version, license, URL, process name, home and settings path, and the tested engine versions.
 2. `ad auth status` and `ad sandbox status`.
 3. [troubleshooting.md](troubleshooting.md): entries 14–21 (harness, including the Windows sandbox and Store PowerShell in #16), 22–28 (`ad tui`) and 29 (a slow first command on Windows).
 4. Codex's own log: `logs_2.sqlite` in the harness home (table `logs`). The [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill shows how to read it.

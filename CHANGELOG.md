@@ -8,11 +8,18 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 - A brand lint (`npm run lint:brand`; CI runs it in report mode): the engine's name stays in its allowed zone (the engine adapter, the dependency pin, the two prompt files reproduced from upstream, the upgrade runbook, descriptive statements about other agents), with an allowlist that carries a reason for every exception. The texts that may name the engine on screen now live in one attribution module. Groundwork for 3.0, where ad's screens, docs and settings say "the engine" throughout.
 - `ad migrate` renames the engine's folder to `~/.agent-daemon/engine` (optional; `--undo` reverses it). New installs use that name and keep a link with the old one.
+- `ad about`: what ad runs on (versions, the engine, licenses, settings path).
 
 ### Changed
 
 - `ad doctor`: the engine's rows are now Engine, Engine version, Engine home, Engine compatibility, Engine sign-in, Engine hooks and Windows sandbox, in plain words.
 - New names for the env vars: `AD_ENGINE_DIR`, `AD_ENGINE_BIN`, `AD_ENGINE_MODEL`; the old names still work.
+- Flags and env vars that choose ad's engine take `ad` (`--engine ad`, `--llm ad`, `AD_HOOK_HOST=ad`); `codex` still works until 3.1.
+- `ad sandbox setup --elevated` asks before it changes the machine (`--yes` to skip the question).
+
+### Removed
+
+- `ad codex` (the engine's own UI). It now says what to use instead.
 
 ### Fixed
 
