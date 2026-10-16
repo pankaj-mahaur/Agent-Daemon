@@ -15,19 +15,19 @@ import { createMarkdownStream, renderMarkdown } from "./view/markdown.mjs";
 import { isExploring, renderAdRow, renderBackgroundTerminals, renderCell, renderDiff, renderExploring, renderNotice, renderPlan, renderRecap } from "./view/cells.mjs";
 import { parseRecap, RECAP_PROMPT_PREFIX, RECAP_SCHEMA, recapHistory, TEMPORARY_THREAD_CONFIG } from "./recap.mjs";
 import { createChecklist, createPicker, renderFooter, renderShortcuts, renderStatus } from "./view/chrome.mjs";
-import { ownEngineHomeRefusal } from "../engine/attribution.mjs";
+import { formAutoCancel, LEGACY, ownEngineHomeRefusal, projectConfigFolder, sandboxConsentBody, tombstoneEngineUiSlash } from "../engine/attribution.mjs";
 import { ARM_MS, createChoice, createConfirm, createRequestModal } from "./view/modals.mjs";
-import { PLAN_CLEAR_CONTEXT_PREFIX } from "../hooks/generated-prompts.mjs";
+import { CODEX_PLAN_CLEAR_CONTEXT_PREFIX } from "../hooks/generated-prompts.mjs";
 import { sanitize } from "./terminal/sanitize.mjs";
 import { lineWidth, truncate } from "./terminal/text.mjs";
 import { INIT_PROMPT } from "./init-prompt.mjs";
 import { setupWindowsSandbox } from "../harness/sandbox.mjs";
 import { existsSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { engineHome } from "../engine/index.mjs";
+import { engineCommands, engineHome } from "../engine/index.mjs";
 import path from "node:path";
 import { copyText, denialSummary, exportMarkdown, imagePath, lastAgentText, renderDebugConfig, renderHooks, renderKeyInspector, renderKeymap, renderMcp, renderSkills, renderUsage, terminalSetup, transcriptLines } from "./commands.mjs";
-import CODEX_SLASH from "./codex-slash.json" with { type: "json" };
+
 import { T } from "./view/theme.mjs";
 import { createKeymap, eventSpec, keyLabel } from "./keymap.mjs";
 import { setSyntaxTheme, SYNTAX_THEMES, syntaxTheme, withSyntaxTheme } from "./view/highlight.mjs";
@@ -40,37 +40,35 @@ const LIVE_SHARE = 0.6; // at most this much of the screen for streaming cells
 const DIM = T.dim;
 const WARN = T.warning;
 
-// source "codex": the same command as Codex's (its name must stay one of
-// Codex's); "ad": ad's own (its name must never be one of Codex's). The
-// collision test checks both against codex-slash.json from the pinned tag.
+// source "upstream": the same command as the engine's own UI (its name must stay one of upstream's); "ad": ad's own (its name must never be one of upstream's). The collision test checks both against upstream-commands.json in the adapter.
 export const SLASH_COMMANDS = [
   { name: "help", source: "ad", desc: "what you can do here" },
-  { name: "new", source: "codex", desc: "start a new conversation" },
-  { name: "resume", source: "codex", desc: "continue an earlier conversation (/resume archived)" },
-  { name: "clear", source: "codex", desc: "clear the terminal and start a new conversation" },
-  { name: "archive", source: "codex", desc: "archive this conversation (/resume archived brings it back)" },
-  { name: "delete", source: "codex", desc: "delete this conversation for good" },
-  { name: "pwd", source: "codex", desc: "show the current working directory" },
-  { name: "keymap", source: "codex", desc: "the keys in effect (/keymap debug shows what a key sends)" },
-  { name: "vim", source: "codex", desc: "toggle Vim mode for the composer" },
-  { name: "theme", source: "codex", desc: "choose a syntax highlighting theme" },
-  { name: "cd", source: "codex", desc: "change the working directory (the conversation continues there)" },
-  { name: "model", source: "codex", desc: "choose the model and reasoning effort" },
-  { name: "permissions", source: "codex", desc: "what Codex may do without asking" },
-  { name: "status", source: "codex", desc: "account, model, sandbox, tokens, limits" },
-  { name: "goal", source: "codex", desc: "set a goal for this conversation (/goal clear)" },
-  { name: "plan", source: "codex", desc: "switch to Plan mode (/plan <prompt> sends it there)" },
-  { name: "side", source: "codex", desc: "a side conversation in an ephemeral fork (/btw)" },
-  { name: "btw", source: "codex", desc: "a side chat (/side)" },
-  { name: "ps", source: "codex", desc: "list background terminals" },
-  { name: "stop", source: "codex", desc: "stop all background terminals (/clean)" },
-  { name: "review", source: "codex", desc: "review your uncommitted changes" },
-  { name: "diff", source: "codex", desc: "show git changes, untracked files included" },
-  { name: "compact", source: "codex", desc: "summarize the conversation to free context" },
-  { name: "init", source: "codex", desc: "create an AGENTS.md for this repo (Codex's prompt)" },
-  { name: "warnings", source: "codex", desc: "notices kept from this session, and unknown events" },
+  { name: "new", source: "upstream", desc: "start a new conversation" },
+  { name: "resume", source: "upstream", desc: "continue an earlier conversation (/resume archived)" },
+  { name: "clear", source: "upstream", desc: "clear the terminal and start a new conversation" },
+  { name: "archive", source: "upstream", desc: "archive this conversation (/resume archived brings it back)" },
+  { name: "delete", source: "upstream", desc: "delete this conversation for good" },
+  { name: "pwd", source: "upstream", desc: "show the current working directory" },
+  { name: "keymap", source: "upstream", desc: "the keys in effect (/keymap debug shows what a key sends)" },
+  { name: "vim", source: "upstream", desc: "toggle Vim mode for the composer" },
+  { name: "theme", source: "upstream", desc: "choose a syntax highlighting theme" },
+  { name: "cd", source: "upstream", desc: "change the working directory (the conversation continues there)" },
+  { name: "model", source: "upstream", desc: "choose the model and reasoning effort" },
+  { name: "permissions", source: "upstream", desc: "what the agent may do without asking" },
+  { name: "status", source: "upstream", desc: "account, model, sandbox, tokens, limits" },
+  { name: "goal", source: "upstream", desc: "set a goal for this conversation (/goal clear)" },
+  { name: "plan", source: "upstream", desc: "switch to Plan mode (/plan <prompt> sends it there)" },
+  { name: "side", source: "upstream", desc: "a side conversation in an ephemeral fork (/btw)" },
+  { name: "btw", source: "upstream", desc: "a side chat (/side)" },
+  { name: "ps", source: "upstream", desc: "list background terminals" },
+  { name: "stop", source: "upstream", desc: "stop all background terminals (/clean)" },
+  { name: "review", source: "upstream", desc: "review your uncommitted changes" },
+  { name: "diff", source: "upstream", desc: "show git changes, untracked files included" },
+  { name: "compact", source: "upstream", desc: "summarize the conversation to free context" },
+  { name: "init", source: "upstream", desc: "create an AGENTS.md for this repo" },
+  { name: "warnings", source: "upstream", desc: "notices kept from this session, and unknown events" },
   { name: "remember", source: "ad", desc: "save a note to ad's project memory" },
-  { name: "memory", source: "ad", desc: "ad's memory: search, recent, forget, profile (not Codex's /memories)" },
+  { name: "memory", source: "ad", desc: "ad's memory: search, recent, forget, profile" },
   { name: "private", source: "ad", desc: "toggle: prompts are wrapped in <private> (ad never learns from them)" },
   { name: "proposals", source: "ad", desc: "skill changes ad proposes (review with /ad review)" },
   { name: "loop", source: "ad", desc: "work toward an objective in the background (/loop stop)" },
@@ -78,76 +76,73 @@ export const SLASH_COMMANDS = [
   { name: "schedule", source: "ad", desc: "scheduled jobs (/schedule run <id>)" },
   { name: "tools", source: "ad", desc: "optional agent tools (/tools enable browser)" },
   { name: "login", source: "ad", desc: "sign in (ChatGPT, OpenAI key, OpenRouter)" },
-  { name: "logout", source: "codex", desc: "sign out of Codex in ad's home" },
-  { name: "codex", source: "ad", desc: "open the stock Codex UI on this conversation" },
+  { name: "logout", source: "upstream", desc: "sign out" },
   { name: "ad", source: "ad", desc: "run an ad command, e.g. /ad doctor" },
-  { name: "fork", source: "codex", desc: "continue in a copy of this conversation" },
-  { name: "rename", source: "codex", desc: "name this conversation" },
-  { name: "copy", source: "codex", desc: "copy the last answer to the clipboard" },
-  { name: "raw", source: "codex", desc: "print the last answer as plain text (for selecting)" },
-  { name: "mention", source: "codex", desc: "mention a file" },
-  { name: "agents", source: "codex", desc: "Codex's agent command center (not in ad: see /subagents, /team)" },
-  { name: "rollout", source: "codex", desc: "print the rollout file path" },
-  { name: "debug-config", source: "codex", desc: "show config layers and requirements, for debugging" },
-  { name: "recap", source: "codex", desc: "summarize the current conversation now" },
-  { name: "approve", source: "codex", desc: "approve one retry of a recent auto-review denial" },
-  { name: "setup-default-sandbox", source: "codex", desc: "set up the elevated agent sandbox (Windows)" },
-  { name: "subagents", source: "codex", desc: "watch this conversation's subagents (alt+\u{2190}/\u{2192})" },
-  { name: "export", source: "codex", desc: "save the conversation as markdown in this folder" },
-  { name: "mcp", source: "codex", desc: "MCP servers and their status" },
-  { name: "hooks", source: "codex", desc: "hooks and whether they are trusted" },
-  { name: "skills", source: "codex", desc: "skills Codex can use here" },
-  { name: "usage", source: "codex", desc: "usage limits and tokens" },
-  { name: "statusline", source: "codex", desc: "choose what the status line shows" },
-  { name: "title", source: "codex", desc: "choose what the terminal window's title shows" },
+  { name: "fork", source: "upstream", desc: "continue in a copy of this conversation" },
+  { name: "rename", source: "upstream", desc: "name this conversation" },
+  { name: "copy", source: "upstream", desc: "copy the last answer to the clipboard" },
+  { name: "raw", source: "upstream", desc: "print the last answer as plain text (for selecting)" },
+  { name: "mention", source: "upstream", desc: "mention a file" },
+  { name: "agents", source: "upstream", desc: "an agent command center (not in ad: see /subagents, /team)" },
+  { name: "rollout", source: "upstream", desc: "print the rollout file path" },
+  { name: "debug-config", source: "upstream", desc: "show config layers and requirements, for debugging" },
+  { name: "recap", source: "upstream", desc: "summarize the current conversation now" },
+  { name: "approve", source: "upstream", desc: "approve one retry of a recent auto-review denial" },
+  { name: "setup-default-sandbox", source: "upstream", desc: "set up the elevated agent sandbox (Windows)" },
+  { name: "subagents", source: "upstream", desc: "watch this conversation's subagents (alt+\u{2190}/\u{2192})" },
+  { name: "export", source: "upstream", desc: "save the conversation as markdown in this folder" },
+  { name: "mcp", source: "upstream", desc: "MCP servers and their status" },
+  { name: "hooks", source: "upstream", desc: "hooks and whether they are trusted" },
+  { name: "skills", source: "upstream", desc: "skills the agent can use here" },
+  { name: "usage", source: "upstream", desc: "usage limits and tokens" },
+  { name: "statusline", source: "upstream", desc: "choose what the status line shows" },
+  { name: "title", source: "upstream", desc: "choose what the terminal window's title shows" },
   { name: "image", source: "ad", desc: "attach an image file to the next prompt" },
   { name: "undo", source: "ad", desc: "put back the files the last turn changed, and rewind it (/undo force)" },
   { name: "terminal-setup", source: "ad", desc: "how to make Shift+Enter add a newline here" },
-  { name: "quit", source: "codex", desc: "exit ad" },
-  { name: "exit", source: "codex", desc: "exit ad" },
+  { name: "quit", source: "upstream", desc: "exit ad" },
+  { name: "exit", source: "upstream", desc: "exit ad" },
 ];
 
-// Codex's commands at the pinned tag, by every spelling (scripts/codex-slash.mjs):
-// what ad mirrors follows Codex's rules (during a task, popup visibility).
-const CODEX_COMMANDS = new Map(CODEX_SLASH.commands.flatMap((c) => [c.name, ...c.aliases].map((n) => [n, c])));
-// Typeable but never listed: Codex's hidden commands, and those only its debug builds show.
-const popupHidden = (c) => c.source === "codex" && (CODEX_COMMANDS.get(c.name)?.popup === "hidden" || CODEX_COMMANDS.get(c.name)?.visible === "debug");
+// Upstream's commands at the pinned tag, by every spelling (the generator script):
+// what ad mirrors follows upstream's rules (during a task, popup visibility).
+const UPSTREAM_COMMANDS = new Map(engineCommands.commands.flatMap((c) => [c.name, ...c.aliases].map((n) => [n, c])));
+// Typeable but never listed: upstream's hidden commands, and those only its debug builds show.
+const popupHidden = (c) => c.source === "upstream" && (UPSTREAM_COMMANDS.get(c.name)?.popup === "hidden" || UPSTREAM_COMMANDS.get(c.name)?.visible === "debug");
 
-// Codex commands ad doesn't run (yet), and what it says instead: `true` is
-// "not in ad yet, /codex has it"; a string is the whole answer (where the stock
-// UI can't help either, or there's something better to say). Every Codex
-// command is either in SLASH_COMMANDS or here: a test fails when a Codex
-// release adds one, so the upgrade PR has to decide.
-const STOCK_UI = "/codex opens the stock Codex UI on this conversation.";
-// Codex's "Implement this plan?" (tui/src/chatwidget/plan_implementation.rs at the pinned tag).
+// Upstream commands ad doesn't run (yet), and what it says instead: `true`
+// is "not in ad yet"; a string is the whole answer. Every upstream command
+// is either in SLASH_COMMANDS or here: a test fails when an engine release
+// adds one, so the upgrade PR has to decide.
+// The engine's "Implement this plan?" (tui/src/chatwidget/plan_implementation.rs at the pinned tag).
 export const PLAN_IMPLEMENTATION_CODING_MESSAGE = "Implement the plan.";
-export const PLAN_IMPLEMENTATION_CLEAR_CONTEXT_PREFIX = PLAN_CLEAR_CONTEXT_PREFIX; // ad's prompt hooks skip it
+export const PLAN_IMPLEMENTATION_CLEAR_CONTEXT_PREFIX = CODEX_PLAN_CLEAR_CONTEXT_PREFIX; // ad's prompt hooks skip it
 
 export const NOT_IN_AD = {
-  ide: "/ide reads your editor's selection over Codex's private IDE link, which ad doesn't have.",
-  experimental: true,
-  memories: `/memories (Codex's own memories) isn't in ad yet; ad's memory is /memory. ${STOCK_UI}`,
-  import: true,
-  worktree: true,
-  app: "/app opens the Codex Desktop app, which uses your own Codex home, not ad's, so it can't continue this conversation.",
-  voice: true,
-  tui: "/tui chooses the stock Codex UI's mode; ad has only its inline mode so far.",
-  daemon: "/daemon manages Codex's background server; ad runs its own engine and never uses it.",
+  ide: "/ide needs an editor link that ad doesn't have.",
+  experimental: "/experimental isn't in ad. Features are set under [features] in the engine's settings file (ad about shows where); features you turned on keep working.",
+  memories: "/memories isn't in ad; ad's memory is /memory.",
+  import: "/import isn't planned for ad.",
+  worktree: "/worktree isn't in ad. For parallel work in worktrees, use /team or ad sp.",
+  app: "/app isn't in ad: the desktop app keeps its own folder, not ad's, so it can't continue this conversation.",
+  voice: "/voice isn't planned for ad.",
+  tui: "/tui isn't in ad: ad has only its inline mode.",
+  daemon: "/daemon manages a background server ad never uses; ad runs its own engine.",
   pets: "ad doesn't draw terminal pets (they need Kitty or Sixel images).",
-  apps: true,
-  plugins: true,
-  feedback: "For ad problems: https://github.com/pankaj-mahaur/Agent-Daemon/issues. The stock UI's /feedback (in /codex) uploads this whole conversation to OpenAI, including ad's memory context and /private prompts.",
-  "test-approval": "/test-approval is a Codex debug command.",
-  "debug-m-drop": "/debug-m-drop is a Codex debug command.",
-  "debug-m-update": "/debug-m-update is a Codex debug command.",
+  apps: "/apps isn't planned for ad.",
+  plugins: "/plugins isn't planned for ad. /mcp lists MCP servers; add one in the engine's settings file.",
+  feedback: "For ad problems: https://github.com/pankaj-mahaur/Agent-Daemon/issues.",
+  "test-approval": "/test-approval is a debug command of the engine's own UI.",
+  "debug-m-drop": "/debug-m-drop is a debug command of the engine's own UI.",
+  "debug-m-update": "/debug-m-update is a debug command of the engine's own UI.",
 };
 
-/** What ad says for a Codex command it doesn't run, by any of its spellings. */
+/** What ad says for an upstream command it doesn't run, by any of its spellings. */
 export function notInAd(name) {
-  const c = CODEX_COMMANDS.get(name);
+  const c = UPSTREAM_COMMANDS.get(name);
   const said = c && NOT_IN_AD[c.name];
   if (said === undefined) return null;
-  return said === true ? `/${name} isn't in ad yet. ${STOCK_UI}` : said.replace(`/${c.name}`, `/${name}`);
+  return said === true ? `/${name} isn't in ad yet.` : said.replace(`/${c.name}`, `/${name}`);
 }
 
 const PERMISSION_PRESETS = [
@@ -178,9 +173,9 @@ export function createApp({
   newline = "ctrl+j",
   history = null,
   actions = {},
-  settings = null, // {codex, ad} from prefs.mjs; null in tests that don't need them
-  keymap = createKeymap(), // keys as Codex's actions, with tui.keymap applied (keymap.mjs)
-  statusInfo = {}, // {codexVersion, hostname, home} for the status line and the title
+  settings = null, // {engine, ad} from prefs.mjs; null in tests that don't need them
+  keymap = createKeymap(), // keys as the engine's actions, with tui.keymap applied (keymap.mjs)
+  statusInfo = {}, // {engineVersion, hostname, home} for the status line and the title
   chips = () => [],
   info = {},
   now = () => Date.now(),
@@ -193,9 +188,9 @@ export function createApp({
 }) {
   const st = session.state;
   const composer = createComposer({ history, now });
-  // Codex's tui.theme: the syntax colours (a theme ad doesn't ship falls back to ansi; /warnings says so).
+  // The engine's tui.theme: the syntax colours (a theme ad doesn't ship falls back to ansi; /warnings says so).
   setSyntaxTheme(settings?.codex?.get?.("tui.theme"));
-  // Codex's tui.vim_mode_default: Vim on from the start, in Insert (as Codex's code does).
+  // The engine's tui.vim_mode_default: Vim on from the start, in Insert (as its code does).
   if (settings?.codex?.get?.("tui.vim_mode_default") === true) composer.setVim(true, { mode: "insert" });
   const width = () => Math.max(10, io.size().cols - 2);
   const height = () => Math.max(4, io.size().rows);
@@ -243,7 +238,7 @@ export function createApp({
     if (lines.length) renderer.commit(lines);
   }
 
-  // A cell gets a blank line before it, as in Codex.
+  // A cell gets a blank line before it, as in the engine's own UI.
   function commitCell(lines) {
     if (!lines.length) return;
     commit(lastWasCell ? [[], ...lines] : lines);
@@ -263,12 +258,12 @@ export function createApp({
   const turnActive = () => Boolean(st.activeTurnId || st.starting);
   const agentRunning = () => [...st.agents.values()].some((a) => a.running && !a.closed); // a subagent's thread still at work
 
-  // An item whose turn has ended can't change any more, even if Codex never
+  // An item whose turn has ended can't change any more, even if the engine never
   // completed it (a crash, a declined patch): it must not hold back the
   // scrollback behind it.
   // A turn is live only while it is the running one (or one is being
   // started): a resumed turn still "inProgress" in history is over here.
-  // An item with no known turn (a user's ! command) stays open while Codex
+  // An item with no known turn (a user's ! command) stays open while the engine
   // is up; a crash settles it.
   function turnOver(it) {
     const t = it.turnId ? st.turns.find((x) => x.id === it.turnId) : null;
@@ -276,7 +271,7 @@ export function createApp({
     return st.engine.state !== "ready" && st.engine.state !== "restarting";
   }
   const open = (it) => (it.streaming || it.status === "inProgress") && !turnOver(it);
-  // A command Codex runs through unified exec that is still running (every exec_command is one
+  // A command the engine runs through unified exec that is still running (every exec_command is one
   // while it runs; a dev server stays one after the turn).
   const backgroundTerminal = (it) => it.kind === "commandExecution" && it.source === "unifiedExecStartup" && it.status === "inProgress" && !isExploring(it);
   const runningShown = new Set(); // shownKeys committed while still running: their end is drawn too (during a task)
@@ -292,7 +287,7 @@ export function createApp({
     lateEnds();
     for (let i = 0; i < items.length; i++) {
       const it = items[i];
-      // Codex's rule for a command still running: it never holds back what comes
+      // The engine's rule for a command still running: it never holds back what comes
       // after it. Once something follows (or its turn is over) its cell goes into
       // the scrollback as it is: "Running" while the process lives (a background
       // terminal, see /ps), else stopped.
@@ -352,7 +347,7 @@ export function createApp({
   }
 
   // A command whose "Running" cell is already in the scrollback ended: during a
-  // task its end is drawn as its own cell, as Codex's does; after it, only /ps changes.
+  // task its end is drawn as its own cell, as the engine's does; after it, only /ps changes.
   function lateEnds() {
     for (const key of runningShown) {
       const it = rootItems().find((x) => shownKey(x) === key);
@@ -374,7 +369,7 @@ export function createApp({
       notePlan(t);
       showLearned(turnStarts.get(t.id) ?? turnStartedAt);
       if (t.status === "failed" && t.error) commitCell(renderNotice({ level: "error", message: `The turn failed: ${t.error.message ?? "unknown error"}` }, { width: width() }));
-      else if (t.status === "interrupted") commitCell(renderNotice({ level: "warn", message: "Interrupted. Tell Codex what to do differently." }, { width: width() }));
+      else if (t.status === "interrupted") commitCell(renderNotice({ level: "warn", message: "Interrupted. Say what to do differently." }, { width: width() }));
       const started = turnStarts.get(t.id) ?? turnStartedAt;
       turnStarts.delete(t.id);
       if (started != null) {
@@ -389,7 +384,7 @@ export function createApp({
   }
 
   // Every checklist the model sets (update_plan → turn/plan/updated) goes into
-  // the scrollback as Codex's "Updated Plan" cell, once per update.
+  // the scrollback as the engine's "Updated Plan" cell, once per update.
   let planShown = null;
   function reportPlanUpdates() {
     if (!st.plan || st.plan === planShown) return;
@@ -449,11 +444,17 @@ export function createApp({
       pager = null; // the request comes first
       lastCtrlC = -Infinity; // a Ctrl+C meant for the new prompt must not quit
       const diff = head.kind === "approval-patch" ? ((session.itemFor?.(head.itemId, head.turnId) ?? st.items.get(head.itemId))?.changes ?? null) : null;
+      if (head.kind === "elicitation" && head.form?.mode === "openaiForm") {
+        // Only the engine's own UI can answer it, and ad doesn't ship that UI: cancel at once and say so.
+        session.resolve(head.id, { action: "cancel" });
+        note = { level: "warn", text: formAutoCancel };
+        return;
+      }
       const view = createRequestModal(head, { now, armMs, diff });
       if (!view) {
-        // Nothing here can answer it (a tool call): decline, and say how to get it.
+        // Nothing here can answer it (a tool call): decline it and say so.
         session.resolve(head.id, null);
-        note = { level: "warn", text: "This needs the stock UI: /codex" };
+        note = { level: "warn", text: "ad declined a request it can't show here." };
         return;
       }
       modal = { id: head.id, view, answered: false };
@@ -502,7 +503,7 @@ export function createApp({
         i = j - 1;
       } else if (it.kind !== "userMessage") out.push(...renderCell(it, { width: w }));
     }
-    // Prompts sent but not yet echoed by Codex.
+    // Prompts sent but not yet echoed by the engine.
     for (const [cid, text] of st.echoes) if (!echoesShown.has(cid)) out.push(...renderCell({ kind: "userMessage", text }, { width: w }));
     return out;
   }
@@ -518,17 +519,17 @@ export function createApp({
   function footer() {
     const running = turnActive();
     const vim = composer.vim;
-    // Codex's gg chord hint replaces the hints while the second g is awaited.
+    // The engine's gg chord hint replaces the hints while the second g is awaited.
     const hints = vim?.hint ? [vim.hint] : running ? ["enter steer", "tab queue", `${newline} newline`] : ["? shortcuts", "@ files", `${newline} newline`];
     const own = [];
-    // Codex's mode indicator, first so it's the last to go when the footer is narrow.
+    // The engine's mode indicator, first so it's the last to go when the footer is narrow.
     const mode = st.mode?.kind === "plan" ? [{ full: "Plan mode (shift+tab to cycle)", short: "Plan mode", style: T.planMode }] : [];
-    // Codex's Vim indicator comes before the collaboration mode.
+    // The Vim indicator comes before the collaboration mode.
     if (vim) {
       const name = { normal: "Normal", insert: "Insert", replace: "Replace" }[vim.mode];
       mode.unshift({ full: `Vim: ${name}`, style: { normal: T.vimNormal, insert: T.vimInsert, replace: T.vimReplace }[vim.mode] });
     }
-    // Codex's unified-exec footer: how many background terminals run, and how to see or stop them.
+    // The unified-exec footer: how many background terminals run, and how to see or stop them.
     const n = st.terminals?.size ?? 0;
     if (n) own.unshift({ full: `${n} background terminal${n === 1 ? "" : "s"} running \u{b7} /ps to view \u{b7} /stop to close`, short: `${n} background terminal${n === 1 ? "" : "s"}` });
     if (privateMode) own.push({ full: "private", short: "P" });
@@ -538,7 +539,7 @@ export function createApp({
   }
 
   /* -------------------------------------------------------------- */
-  /* Status line and window title (Codex's tui.status_line, tui.terminal_title) */
+  /* Status line and window title (the engine's tui.status_line, tui.terminal_title) */
   /* -------------------------------------------------------------- */
 
   let preview = { status: null, title: null }; // a checklist's live preview
@@ -569,7 +570,7 @@ export function createApp({
       approvalPolicy: c.approvalPolicy,
       tokens: st.tokens,
       rateLimits: st.rateLimits,
-      codexVersion: statusInfo.codexVersion,
+      engineVersion: statusInfo.engineVersion,
       threadId: st.thread?.id,
       // A /private conversation's name never reaches the window title or the status line.
       threadName: privateMode ? null : st.thread?.name || st.thread?.preview,
@@ -621,7 +622,7 @@ export function createApp({
     titleShown = text;
     titleAt = now();
   }
-  // Codex's cursor in Vim mode: a steady bar in Insert, the terminal's own shape otherwise (DECSCUSR).
+  // The cursor in Vim mode: a steady bar in Insert, the terminal's own shape otherwise (DECSCUSR).
   let cursorShape = null;
   let hintTimer = null;
   function syncCursorShape() {
@@ -639,7 +640,7 @@ export function createApp({
     io.write("\x1b]0;\x07\x1b[23;0t");
     titleShown = null;
   }
-  // /statusline and /title: a checklist of Codex's items (with what each shows now), live preview, saved to Codex's config.
+  // /statusline and /title: a checklist of the engine's items (with what each shows now), live preview, saved to the engine's config.
   function pickItems(kind) {
     const isTitle = kind === "title";
     const key = isTitle ? "tui.terminal_title" : "tui.status_line";
@@ -647,7 +648,7 @@ export function createApp({
     const current = (isTitle ? titleIds() : statusIds()) ?? null;
     const chosen = (current ?? (isTitle ? DEFAULT_TITLE : DEFAULT_STATUS)).map(canonical);
     const all = isTitle ? TITLE_IDS : STATUS_IDS;
-    const keep = unsupported(current, kind); // Codex's items ad can't show stay in the setting
+    const keep = unsupported(current, kind); // items ad can't show stay in the setting
     const ctx = statusCtx();
     const now_ = (id) => (isTitle ? titleText([id], ctx) : statusSegments([id], ctx)[0]?.text) || "";
     const order = [...chosen.filter((id) => all.includes(id)), ...all.filter((id) => !chosen.includes(id))];
@@ -658,7 +659,7 @@ export function createApp({
         preview = { ...preview, [kind]: null };
         try {
           await settings.codex.set(key, [...values, ...keep]);
-          info0(`${isTitle ? "Title" : "Status line"}: ${values.length ? values.join(", ") : "off"}. Saved for /codex too.`);
+          info0(`${isTitle ? "Title" : "Status line"}: ${values.length ? values.join(", ") : "off"}. Saved.`);
         } catch (err) {
           fail(err);
         }
@@ -718,8 +719,8 @@ export function createApp({
     if (side && !modal && !confirm) lines.push(...sidePanel(w, rows));
     if (st.engine.state === "crashed") {
       const code = Number.isInteger(st.engine.exitCode) ? ` (exit ${st.engine.exitCode})` : "";
-      lines.push(truncate([{ text: `\u{25a0} Codex stopped${code}. Your text is kept. Enter restarts and resumes.`, style: WARN }], w));
-    } else if (st.engine.state === "restarting") lines.push(truncate([{ text: "\u{25e6} Restarting Codex\u{2026}", style: DIM }], w));
+      lines.push(truncate([{ text: `\u{25a0} ad's engine stopped${code} (details: /warnings). Your text is kept; Enter restarts it and resumes.`, style: WARN }], w));
+    } else if (st.engine.state === "restarting") lines.push(truncate([{ text: "\u{25e6} Restarting the engine\u{2026}", style: DIM }], w));
     let cursor = null;
     // The status line: from 12 rows; under a modal only in room the modal doesn't need.
     const status = rows >= 12 ? statusRow(w) : null;
@@ -769,17 +770,17 @@ export function createApp({
   }
 
   /* -------------------------------------------------------------- */
-  /* /setup-default-sandbox: Codex's elevated Windows sandbox (Part 10) */
+  /* /setup-default-sandbox: the elevated Windows sandbox (Part 10) */
   /* -------------------------------------------------------------- */
 
-  // As Codex: on Windows, from a sandbox that isn't elevated yet, where
-  // requirements allow it. It is machine-wide (your own Codex uses it too),
-  // so ad asks first. On success this conversation gets Codex's "auto"
-  // permissions (edits here, asks for the rest), as Codex does.
+  // As the engine does: on Windows, from a sandbox that isn't elevated yet, where
+  // requirements allow it. It is machine-wide (your own engine install uses it too),
+  // so ad asks first. On success this conversation gets the engine's "auto"
+  // permissions (edits here, asks for the rest), as the engine does.
   async function setupSandbox() {
-    if (platform !== "win32") return info0("Codex uses the OS sandbox here (Seatbelt or Landlock): /setup-default-sandbox is only for Windows.");
-    if (sandboxSetup) return info0("Windows sandbox setup is still running. Restart Codex to retry.");
-    // As `ad sandbox setup`: never in a Codex home ad didn't make (`ad tui --home ~/.codex`).
+    if (platform !== "win32") return info0("The engine uses the operating system's sandbox here (Seatbelt or Landlock): /setup-default-sandbox is only for Windows.");
+    if (sandboxSetup) return info0("Windows sandbox setup is still running. Restart ad to try again.");
+    // As `ad sandbox setup`: never in an engine home ad didn't make.
     if (session.engine.home && !engineHome.isManaged(session.engine.home)) return warn(`${clean(session.engine.home)} wasn't created by ad, so ad doesn't change its sandbox. \`ad sandbox setup --elevated --force\` does it anyway.`);
     let mode;
     let allowed;
@@ -797,7 +798,7 @@ export function createApp({
     if (allowed && !allowed.includes("elevated")) return info0("That Windows sandbox option is disallowed by requirements.");
     const yes = await openConfirm({
       title: "Set up the elevated sandbox?",
-      body: "Windows asks once for administrator approval. Codex then creates sandbox users and firewall rules for this machine, so your own Codex uses them too.\nThis conversation then edits in this folder and asks for the rest.",
+      body: `${sandboxConsentBody}\nThis conversation then edits in this folder and asks for the rest.`,
       yes: "Yes, set it up",
       no: "No, keep the current one",
     });
@@ -813,14 +814,14 @@ export function createApp({
       drawSoon();
     }
     session.setNextTurn(PERMISSION_PRESETS[1].value);
-    commitCell([[{ text: "\u{2022} ", style: DIM }, { text: "Sandbox ready" }], [{ text: "  Codex can now safely edit files and execute commands in your computer", style: DIM }]]);
+    commitCell([[{ text: "\u{2022} ", style: DIM }, { text: "Sandbox ready" }], [{ text: "  The agent can now safely edit files and run commands on your computer", style: DIM }]]);
   }
 
   /* -------------------------------------------------------------- */
   /* /subagents: watch this conversation's subagents (Part 10)        */
   /* -------------------------------------------------------------- */
 
-  // Codex's names for its rows: a path, "Nick [role]", "Nick", "[role]", else "Agent".
+  // The engine's names for its rows: a path, "Nick [role]", "Nick", "[role]", else "Agent".
   const agentName = (a) => a?.path?.trim() || (a?.nickname && a?.role ? `${a.nickname} [${a.role}]` : a?.nickname || (a?.role ? `[${a.role}]` : "Agent"));
   const AGENT_KEYS = process.platform === "darwin" ? "\u{2325}\u{2190} \u{2325}\u{2192}" : "alt+\u{2190} alt+\u{2192}";
   const isAgentKey = (ev) => ev.type === "key" && ev.alt && !ev.ctrl && (ev.name === "left" || ev.name === "right");
@@ -847,7 +848,7 @@ export function createApp({
     return out.length ? out : [[{ text: "No activity yet.", style: T.italicDim }]];
   }
 
-  // Codex's Subagents picker: the main conversation first, then each subagent as first seen.
+  // The Subagents picker: the main conversation first, then each subagent as first seen.
   function pickAgent() {
     if (!st.agents.size) {
       if (settings?.codex?.get?.("features.multi_agent") === false) return enableSubagents();
@@ -874,7 +875,7 @@ export function createApp({
     watchAgent(rows[(Math.max(0, i) + dir + rows.length) % rows.length]);
   }
 
-  // Codex's prompt when subagents are off and there are none.
+  // The prompt when subagents are off and there are none.
   async function enableSubagents() {
     const yes = await openConfirm({ title: "Enable subagents?", body: "Subagents are disabled in this TUI session.\nYes saves it for new threads; this thread is unchanged.", yes: "Yes, enable", no: "Not now" });
     if (!yes) return;
@@ -887,7 +888,7 @@ export function createApp({
   }
 
   /* -------------------------------------------------------------- */
-  /* /recap: Codex's catch-up on this conversation (Part 10)          */
+  /* /recap: catch-up on this conversation (Part 10)                */
   /* -------------------------------------------------------------- */
 
   // What /recap reads: the prompts and the answers (a /private prompt never leaves this conversation).
@@ -904,13 +905,13 @@ export function createApp({
     return out;
   }
 
-  // Codex's: a temporary read-only thread with no tools answers in its recap
+  // The recap: a temporary read-only thread with no tools answers in its recap
   // schema. A prompt sent, or another conversation, meanwhile drops it.
   async function startRecap() {
     if (recapping) return warn("A recap is already being generated.");
     const history = st.thread ? recapHistory(recapMessages()) : "";
     if (!history) return info0("There is no conversation history to recap.");
-    // As Codex: a recap is stale once another turn ran (/compact, /review, a queued prompt…).
+    // As the engine does: a recap is stale once another turn ran (/compact, /review, a queued prompt…).
     const me = { threadId: st.thread.id, turns: st.turns.length };
     recapping = me;
     draw();
@@ -939,11 +940,11 @@ export function createApp({
   }
 
   /* -------------------------------------------------------------- */
-  /* /theme: Codex's syntax theme picker, with a live preview (Part 9) */
+  /* /theme: the syntax theme picker, with a live preview (Part 9) */
   /* -------------------------------------------------------------- */
 
   const THEME_HINTS = { ansi: "the terminal's own colours (default)", "catppuccin-mocha": "dark", "catppuccin-latte": "light" };
-  // Codex's preview: a short Rust function and a diff of it.
+  // The preview: a short Rust function and a diff of it.
   const THEME_SAMPLE = ["```rust", "fn greet(name: &str) -> String {", "    // say hello", '    format!("Hello, {name}!")', "}", "```"].join("\n");
   const THEME_DIFF = [{ path: "src/greet.rs", kind: "update", diff: ["@@ -12,3 +12,3 @@", " fn greet(name: &str) -> String {", '-    format!("Hello, {}!", name)', '+    format!("Hello, {name}!")', " }"].join("\n") }];
   // The theme under the picker's cursor colours its preview only: what
@@ -971,7 +972,7 @@ export function createApp({
         setSyntaxTheme(name);
         try {
           await settings.codex.set("tui.theme", name);
-          info0(`Syntax theme: ${name}. Saved for /codex too.`);
+          info0(`Syntax theme: ${name}. Saved.`);
         } catch (err) {
           setSyntaxTheme(before);
           fail(err);
@@ -996,7 +997,7 @@ export function createApp({
   }
 
   /* -------------------------------------------------------------- */
-  /* "Implement this plan?" (Codex's plan mode, codex-parity-2 4e)     */
+  /* "Implement this plan?" (the plan mode, parity 4e)             */
   /* -------------------------------------------------------------- */
 
   // A completed Plan-mode turn with a proposed plan: remembered until the choice can open.
@@ -1007,7 +1008,7 @@ export function createApp({
     if (plan) planReady = { turnId: t.id, threadId: st.thread?.id ?? null, text: String(plan.text) };
   }
 
-  // Codex opens the choice only with nothing queued and nothing open; ad also
+  // The engine opens the choice only with nothing queued and nothing open; ad also
   // waits for an empty prompt (a draft is never thrown away) and says so.
   function maybeOfferPlan() {
     if (!planReady) return;
@@ -1046,7 +1047,7 @@ export function createApp({
       return send(PLAN_IMPLEMENTATION_CODING_MESSAGE);
     }
     if (answer === "clear") {
-      // A fresh conversation in Default whose first message is Codex's prefix and the plan.
+      // A fresh conversation in Default whose first message is the plan prefix and the plan.
       // The scrollback stays (a divider), unlike /clear.
       session.newThread();
       resetThreadView();
@@ -1055,7 +1056,7 @@ export function createApp({
     }
   }
 
-  // Codex's /cd (app/event_dispatch.rs, app/working_directory.rs at the pinned tag):
+  // The engine's /cd (app/event_dispatch.rs, app/working_directory.rs at the pinned tag):
   // the folder resolves against the current one ("~" alone or first is home),
   // must be a folder, the session idle with nothing queued, no background
   // terminal and no subagent at work; an untrusted folder is asked about first.
@@ -1081,30 +1082,30 @@ export function createApp({
       return warn(`Cannot access directory ${clean(dir)}: ${err.code ?? err.message}`);
     }
     if (!stat.isDirectory()) return warn(`Not a directory: ${clean(dir)}`);
-    // Never into a Codex home: your own Codex's, or ad's (compared as Codex's home check does).
+    // Never into an engine home: the user's own install's, or ad's (compared as the home check does).
     const real = (p) => engineHome.canonical(p);
-    const homes = [path.join(homedir(), ".codex"), session.engine?.home].filter(Boolean).map(real);
+    const homes = [path.join(homedir(), projectConfigFolder), session.engine?.home].filter(Boolean).map(real);
     if (homes.some((h) => real(dir) === h || real(dir).startsWith(h + path.sep))) return warn(ownEngineHomeRefusal(clean(dir)));
     if (actions.ad?.loop?.state?.running) return warn("An ad loop is working in this folder: /loop stop first.");
-    // Codex's check at the app level: no other agent (a subagent's thread) may be at work.
+    // The check at the app level: no other agent (a subagent's thread) may be at work.
     if (agentRunning()) return warn("Cannot change: another agent is running.");
-    // Trust, as on ad's first start in a folder (kept in ad's Codex home).
+    // Trust, as on ad's first start in a folder (kept in ad's engine home).
     const config = await session.engine.readConfig().catch(() => ({}));
     const known = Object.keys(config.projects ?? {}).some((k) => real(k) === real(dir));
     if (!known && real(dir) !== real(homedir())) {
       const trust = await openChoice({
         title: `Do you trust ${clean(dir)}?`,
-        body: "Trusted folders may load their own .codex config, hooks and skills.",
+        body: "Trusted folders can run their own hooks, skills and settings. Trust only projects you know.",
         options: [
           { label: "Yes, trust this folder", value: "trusted" },
-          { label: "No", hint: "ignore its .codex config", value: "untrusted" },
+          { label: "No", hint: "ignore its hooks and settings", value: "untrusted" },
           { label: "Cancel", hint: "stay here", value: null, safe: true },
         ],
       });
       if (!trust) return info0("Not changed.");
       await session.engine.writeConfig([["projects", { [dir]: { trust_level: trust } }, "upsert"]]);
     }
-    // The awaits above can overlap work: Codex checks every thread again before the fork.
+    // The awaits above can overlap work: the engine checks every thread again before the fork.
     if (turnActive() || agentRunning()) return warn("Cannot change: a task is running.");
     await session.changeDir(dir);
     cwd = dir;
@@ -1116,7 +1117,7 @@ export function createApp({
   let changingDir = false; // a /cd on its way: prompts wait (they'd go to the old folder)
 
   /* -------------------------------------------------------------- */
-  /* Side conversations (Codex's /side, codex-parity-2 Part 7)         */
+  /* Side conversations (the engine's /side, parity Part 7)           */
   /* -------------------------------------------------------------- */
 
   let side = null; // {session, focus: "side" | "main", mainStatus, noticesSeen, off}
@@ -1137,7 +1138,7 @@ export function createApp({
     return Boolean(st.activeTurnId) && items.some((it) => it.kind === "enteredReviewMode") && !items.some((it) => it.kind === "exitedReviewMode");
   };
 
-  // Codex's context row: "Side from main thread · <main's state> · ctrl+/ to switch · ctrl+c to close".
+  // The side context row: "Side from main thread · <main's state> · ctrl+/ to switch · ctrl+c to close".
   function sideLabel() {
     const req = st.requests[0]?.request;
     const main = req ? (req.kind === "user-input" ? "main needs input" : "main needs approval") : side.mainStatus;
@@ -1182,7 +1183,7 @@ export function createApp({
     drawSoon();
   }
 
-  // One of a few answers (Codex's selection views) → the chosen value, or the safe one on Esc.
+  // One of a few answers (the selection views) → the chosen value, or the safe one on Esc.
   function openChoice(opts) {
     confirm?.resolve(false);
     return new Promise((resolve) => {
@@ -1192,7 +1193,7 @@ export function createApp({
   }
 
   // A yes/no question ad asks before acting on its own (/archive, /delete…).
-  // → Promise<boolean>. Codex's own requests come first: one that arrives
+  // → Promise<boolean>. The engine's own requests come first: one that arrives
   // meanwhile is shown, and the question waits under it.
   function openConfirm(opts) {
     confirm?.resolve(false);
@@ -1211,8 +1212,8 @@ export function createApp({
     }
     if (tok.kind === "command") {
       const q = tok.text.slice(1).toLowerCase();
-      // Codex hides some of its commands from the popup (hidden and debug-build ones always, aliases like /quit until typed).
-      const hidden = (c) => popupHidden(c) || (c.source === "codex" && CODEX_COMMANDS.get(c.name)?.popup === "unfiltered" && !q);
+      // Upstream hides some of its commands from the popup (hidden and debug-build ones always, aliases like /quit until typed).
+      const hidden = (c) => popupHidden(c) || (c.source === "upstream" && UPSTREAM_COMMANDS.get(c.name)?.popup === "unfiltered" && !q);
       const items = SLASH_COMMANDS.filter((c) => c.name.startsWith(q) && !hidden(c)).map((c) => ({ label: `/${c.name}`, hint: c.desc, value: c.name }));
       popup = items.length ? { kind: "command", view: createPicker({ items, showQuery: false }), tok, onSelect: (name) => composer.replace(tok.start, tok.end, `/${name} `) } : null;
       return;
@@ -1299,7 +1300,7 @@ export function createApp({
         resetThreadView();
         return info0("New conversation.");
       case "clear": {
-        // Codex's /clear: clear the terminal, scrollback too, and start a new
+        // The engine's /clear: clear the terminal, scrollback too, and start a new
         // conversation (named, if a name follows). The old one stays resumable.
         // clear.keepScrollback in prefs.json keeps the scrollback (a divider instead).
         const old = st.thread?.id ?? null;
@@ -1335,23 +1336,23 @@ export function createApp({
       case "theme":
         return pickTheme();
       case "vim": {
-        // Codex's /vim: a toggle for this session; turned on, it starts in Normal.
+        // The engine's /vim: a toggle for this session; turned on, it starts in Normal.
         const on = !composer.vim;
         composer.setVim(on, { mode: "normal" });
         return info0(on ? "Vim mode enabled." : "Vim mode disabled.");
       }
       case "keymap":
-        // Codex's /keymap edits tui.keymap; ad reads it and never writes it (P3), so it shows them.
+        // The engine's /keymap edits tui.keymap; ad reads it and never writes it (P3), so it shows them.
         if (arg === "debug") {
           inspector = { last: null };
           return draw();
         }
         if (arg) return warn("Usage: /keymap [debug]");
-        return commitCell(renderKeymap(keymap, { width: width(), label: keyLabel }));
+        return commitCell(renderKeymap(keymap, { width: width(), label: keyLabel, settingsPath: session.engine?.home ? path.join(session.engine.home, "config.toml") : null }));
       case "pwd":
         return arg ? warn("Usage: /pwd") : info0(`Current working directory: ${clean(cwd)}`);
       case "debug-config": {
-        // Codex prints its in-process config; ad asks its Codex for the same (layers, requirements).
+        // The engine prints its in-process config; ad asks its engine for the same (layers, requirements).
         const [read, req] = await Promise.all([
           session.engine.config.read({ includeLayers: true, cwd }),
           session.engine.config.requirements(),
@@ -1365,7 +1366,7 @@ export function createApp({
       case "setup-default-sandbox":
         return setupSandbox();
       case "approve": {
-        // Codex's: the thread's recent auto-review denials; one picked is approved for one retry.
+        // The denials: the thread's recent auto-review denials; one picked is approved for one retry.
         if (!st.denials?.length) return info0("No recent auto-review denials in this thread.", "Denials are recorded after auto-review rejects an action.");
         const items = st.denials.map((d) => ({ label: denialSummary(d.action), hint: d.review?.rationale || "Auto-review did not include a rationale", value: d.reviewId }));
         return openPicker(
@@ -1384,16 +1385,16 @@ export function createApp({
         );
       }
       case "rollout":
-        // Codex's debug-build command: the conversation's rollout file (none for an ephemeral one).
+        // The debug-build command: the conversation's rollout file (none for an ephemeral one).
         return info0(st.thread?.path ? `Current rollout path: ${clean(st.thread.path)}` : "Rollout path is not available yet.");
       case "agents":
-        // Codex's answer when it runs its own server, as ad does (ad never starts Codex's shared one).
+        // The engine's answer when it runs its own server, as ad does (ad never starts the shared one).
         return info0(
           "Shared agents unavailable",
           "This session isn\u{2019}t connected to a shared background server. /subagents switches between this conversation's subagents; /team shows ad's team board.",
         );
       case "mention": {
-        // Codex's /mention: an "@" at the cursor, and the file picker for it.
+        // The engine's /mention: an "@" at the cursor, and the file picker for it.
         const { text, cursor } = composer;
         const at = cursor > 0 && !/\s/.test(text[cursor - 1]) ? " @" : "@";
         composer.set(text.slice(0, cursor) + at + text.slice(cursor), cursor + at.length);
@@ -1423,7 +1424,7 @@ export function createApp({
       case "permissions":
         return openPicker("permissions", PERMISSION_PRESETS.map((p) => ({ label: p.label, hint: p.hint, value: p.value })), (value, item) => {
           session.setNextTurn(value);
-          // Codex fixes a turn's permissions when it starts: say so if one is running.
+          // The engine fixes a turn's permissions when it starts: say so if one is running.
           info0(`Permissions: ${item.label} (from the next turn${turnActive() ? "; the running turn keeps asking as before" : ""}).`);
         });
       case "resume":
@@ -1445,7 +1446,7 @@ export function createApp({
       case "fork":
         return session.fork().then(() => info0("Forked: you are in the copy now; the original is unchanged."), fail);
       case "ps":
-        // Codex's /ps: the background terminals of this conversation, with their last lines.
+        // The engine's /ps: the background terminals of this conversation, with their last lines.
         return commitCell([[{ text: "/ps", style: DIM }], ...renderBackgroundTerminals([...st.terminals.values()], { width: width() })]);
       case "stop":
         // The engine's /stop (/clean): ends them all. Off when the pinned protocol lacks it (G5).
@@ -1458,7 +1459,7 @@ export function createApp({
         return info0("Stopping all background terminals.");
       case "btw":
       case "side": {
-        // Codex's /side (/btw): one at a time. What was typed comes back when it can't open.
+        // The engine's /side (/btw): one at a time. What was typed comes back when it can't open.
         const typed = `/${name} ${arg}`.trim();
         if (side || sideOpening) {
           if (side) side.focus = "side";
@@ -1488,7 +1489,7 @@ export function createApp({
         return draw();
       }
       case "plan": {
-        // Codex's /plan: switch, then send the text there; unavailable, the text goes back to the composer.
+        // The engine's /plan: switch, then send the text there; unavailable, the text goes back to the composer.
         const r = session.setMode("plan");
         if (!r.ok) {
           if (arg) composer.set(`/plan ${arg}`);
@@ -1607,21 +1608,12 @@ export function createApp({
       case "tools":
         return slash("ad", `tools ${arg || "list"}`);
       case "login":
-      case "codex":
       case "ad": {
-        const run = { login: actions.login, codex: actions.openCodex, ad: actions.runAd }[name];
+        const run = { login: actions.login, ad: actions.runAd }[name];
         if (!run) return warn(`/${name} isn't available here.`);
         if (turnActive()) return warn(`Wait for the turn to finish (or esc), then /${name}.`);
-        // /codex lets go of the thread and resumes it afterwards: what is
-        // already in the scrollback stays committed; only new turns show.
-        const known = new Set(committed);
-        const seen = new Map(turnsSeen);
         return Promise.resolve(run(arg, { threadId: st.thread?.id ?? null }))
           .then((msg) => {
-            if (name === "codex") {
-              for (const id of known) committed.add(id);
-              for (const [k, v] of seen) turnsSeen.set(k, v);
-            }
             if (msg) info0(msg);
             renderer.redraw?.();
           })
@@ -1639,16 +1631,16 @@ export function createApp({
       ...(keymap.warnings ?? []),
       ...(() => {
         const th = settings?.codex?.get?.("tui.theme");
-        return th && !SYNTAX_THEMES.includes(th) ? [`tui.theme: ad doesn't ship "${th}"; it shows code in ansi (the stock UI in /codex still uses yours)`] : [];
+        return th && !SYNTAX_THEMES.includes(th) ? [`tui.theme: ad doesn't ship "${th}"; it shows code in ansi`] : [];
       })(),
-      ...unsupported(settings?.codex?.get("tui.status_line"), "status").map((id) => `tui.status_line: ad doesn't show "${id}" (the stock UI may)`),
-      ...unsupported(settings?.codex?.get("tui.terminal_title"), "title").map((id) => `tui.terminal_title: ad doesn't show "${id}" (the stock UI may)`),
+      ...unsupported(settings?.codex?.get("tui.status_line"), "status").map((id) => `tui.status_line: ad doesn't show "${id}"`),
+      ...unsupported(settings?.codex?.get("tui.terminal_title"), "title").map((id) => `tui.terminal_title: ad doesn't show "${id}"`),
     ];
     if (!kept.length && !unknown.length && !unused.length) return renderNotice({ level: "info", message: "No warnings in this session." }, { width: width() });
     const out = [[{ text: "Warnings", style: T.bold }]];
     for (const n of kept.slice(-20)) out.push(...renderNotice(n, { width: width() }));
     if (unknown.length) {
-      out.push([{ text: "Events this ad doesn't know (a newer Codex?):", style: DIM }]);
+      out.push([{ text: "Events this ad doesn't know (a newer engine?):", style: DIM }]);
       for (const [method, n] of unknown.slice(0, 20)) out.push(truncate([{ text: `  ${clean(method)} ×${n}`, style: DIM }], width()));
     }
     if (unused.length) {
@@ -1672,7 +1664,7 @@ export function createApp({
     ];
     const rl = st.rateLimits?.primary;
     if (rl?.usedPercent != null) rows.push(["usage", `${Math.round(rl.usedPercent)}% of the ${rl.windowDurationMins ? `${Math.round(rl.windowDurationMins / 60)}h` : "current"} window`]);
-    if (info.compat) rows.push(["codex", info.compat]);
+    if (info.compat) rows.push(["engine", info.compat]);
     return [[{ text: "Status", style: T.bold }], ...rows.map(([k, v]) => truncate([{ text: `  ${k.padEnd(13)}`, style: DIM }, { text: clean(v) }], width()))];
   }
 
@@ -1791,7 +1783,7 @@ export function createApp({
       if (!composer.text) composer.set(text);
       return warn("Changing directories: send it once that's done.");
     }
-    recapping = null; // as in Codex, a prompt drops a recap on its way
+    recapping = null; // as the engine does, a prompt drops a recap on its way
     turnStartedAt ??= now();
     try {
       const images = attachments;
@@ -1823,10 +1815,10 @@ export function createApp({
 
   // After a crash the automatic restarts gave up on: Enter tries once more.
   function restartEngine() {
-    note = { level: "info", text: "Restarting Codex\u{2026}" };
+    note = { level: "info", text: "Restarting the engine\u{2026}" };
     Promise.resolve(session.restartEngine?.())
       .then((ok) => {
-        note = ok ? null : { level: "warn", text: "Codex didn't come back. Enter tries again; /quit and `ad tui --last` start fresh." };
+        note = ok ? null : { level: "warn", text: "The engine didn't come back. Enter tries again; /quit and `ad tui --last` start fresh." };
         drawSoon();
       })
       .catch((err) => {
@@ -1847,26 +1839,27 @@ export function createApp({
     const m = /^\/([a-z][\w-]*)(?:\s+([\s\S]*))?$/i.exec(t);
     if (m) {
       const name = m[1].toLowerCase();
-      const codex = CODEX_COMMANDS.get(name);
-      const cmd = SLASH_COMMANDS.find((c) => c.name === name) ?? (codex && SLASH_COMMANDS.find((c) => c.source === "codex" && c.name === codex.name));
-      // In a side conversation only Codex's side commands work (Codex's texts).
-      if (side?.focus === "side" && (cmd || codex)) {
-        if (["side", "btw"].includes(cmd?.name ?? codex?.name)) return warn("A side conversation is already open. Press ctrl + c to return before starting another.");
-        if (!codex?.sideAllowed || !cmd) {
+      if (name === LEGACY.command) return warn(tombstoneEngineUiSlash({ settingsPath: session.engine?.home ? path.join(session.engine.home, "config.toml") : "(see ad doctor)" }));
+      const upstream = UPSTREAM_COMMANDS.get(name);
+      const cmd = SLASH_COMMANDS.find((c) => c.name === name) ?? (upstream && SLASH_COMMANDS.find((c) => c.source === "upstream" && c.name === upstream.name));
+      // In a side conversation only the side commands work.
+      if (side?.focus === "side" && (cmd || upstream)) {
+        if (["side", "btw"].includes(cmd?.name ?? upstream?.name)) return warn("A side conversation is already open. Press ctrl + c to return before starting another.");
+        if (!upstream?.sideAllowed || !cmd) {
           composer.set(text);
           return warn(`'/${name}' is unavailable in side conversations. Press Ctrl+C to return to the main thread first.`);
         }
       }
       if (cmd) {
-        // Codex's rule for its commands: some wait for the task to end. The draft stays.
-        if (cmd.source === "codex" && codex && !codex.duringTask && (side?.focus === "side" ? Boolean(side.session.state.activeTurnId || side.session.state.starting) : turnActive())) {
+        // The rule for upstream commands: some wait for the task to end. The draft stays.
+        if (cmd.source === "upstream" && upstream && !upstream.duringTask && (side?.focus === "side" ? Boolean(side.session.state.activeTurnId || side.session.state.starting) : turnActive())) {
           composer.set(text);
           return warn(`'/${name}' is disabled while a task is in progress.`);
         }
         // Any failure inside a command (a rejected request, a renderer error) is shown, never left unhandled.
         return void Promise.resolve(slash(cmd.name, (m[2] ?? "").trim())).catch(fail);
       }
-      // A Codex command ad doesn't run never goes to the model as a prompt, text or not.
+      // An upstream command ad doesn't run never goes to the model as a prompt, text or not.
       const said = notInAd(name);
       if (said) {
         composer.set(text);
@@ -1944,7 +1937,7 @@ export function createApp({
 
   function onInput(ev) {
     if (quitting) return;
-    // /keymap debug: every key is shown, not acted on; Ctrl+C closes (Codex's inspector).
+    // /keymap debug: every key is shown, not acted on; Ctrl+C closes.
     if (inspector && !modal && !confirm) {
       if (ev.type === "key" && ev.ctrl && ev.name === "c") inspector = null;
       else if (ev.type === "key" || ev.type === "text") inspector.last = inspectKey(ev);
@@ -1974,7 +1967,7 @@ export function createApp({
       if (pager) pager.top = Math.max(0, Math.min(pager.top, pager.lines.length - view));
       return draw();
     }
-    // Codex's fixed agent keys: from an empty prompt, Alt+←/→ watch a subagent.
+    // Fixed agent keys: from an empty prompt, Alt+←/→ watch a subagent.
     if (isAgentKey(ev) && !modal && !confirm && !popup && !overlay && !composer.text && side?.focus !== "side" && st.agents.size) {
       cycleAgent(ev.name === "left" ? -1 : 1);
       return draw();
@@ -1999,7 +1992,7 @@ export function createApp({
     }
     if (overlay && (ev.type === "key" || ev.type === "text")) {
       overlay = false;
-      // Esc and Shift+Tab only close it (Shift+Tab switches modes with nothing open, as in Codex).
+      // Esc and Shift+Tab only close it (Shift+Tab switches modes with nothing open, as upstream does).
       if (ev.type === "key" && (ev.name === "escape" || (ev.name === "tab" && ev.shift))) return draw();
     }
     if (popup && popupKey(ev)) return draw();
@@ -2056,7 +2049,7 @@ export function createApp({
       stepEffort(up ? 1 : -1).catch(fail);
       return;
     }
-    // Codex's keys for /copy and /raw, and F2 for /warnings.
+    // Keys for /copy and /raw, and F2 for /warnings.
     // (straight to the command: a key never restarts a crashed engine, as sending a prompt does)
     const run = (name) => void Promise.resolve(slash(name, "")).catch(fail).finally(() => draw());
     if (keymap.is("global", "copy", ev)) return run("copy");
@@ -2064,7 +2057,7 @@ export function createApp({
     if (ev.type === "key" && ev.name === "f2" && !ev.ctrl && !ev.alt && !ev.shift) return run("warnings");
     if (ev.type === "text" || ev.type === "paste") lastCtrlC = -Infinity; // new text: Ctrl+C clears it, not quit
     if ((ev.type === "text" || ev.type === "paste") && !turnActive()) actions.onTyping?.();
-    // In Vim's Normal mode "?" searches backwards; the shortcuts open only from Insert (Codex).
+    // In Vim's Normal mode "?" searches backwards; the shortcuts open only from Insert (as upstream does).
     if (keymap.is("composer", "toggle_shortcuts", ev) && !composer.text && !(composer.vim && composer.vim.mode !== "insert")) {
       overlay = true;
       return draw();
@@ -2094,7 +2087,7 @@ export function createApp({
       }
       return draw();
     }
-    // Shift+Tab: Codex's fixed key for the next collaboration mode (Plan ↔ Default), only with no task running.
+    // Shift+Tab: the fixed key for the next collaboration mode (Plan ↔ Default), only with no task running.
     if (ev.type === "key" && ev.name === "tab" && ev.shift && !ev.ctrl && !ev.alt) {
       if (!turnActive()) {
         const r = session.cycleMode();
@@ -2186,12 +2179,12 @@ export function createApp({
     get state() {
       return { composer: composer.text, modal: modal?.view.kind ?? null, confirm: Boolean(confirm), pager: Boolean(pager), popup: popup?.kind ?? null, overlay, note: note?.text ?? null, committed: committed.size };
     },
-    /** Around a handoff (/codex, the editor): the title goes back to the terminal's, then ours again. */
+    /** Around a handoff (the editor): the title goes back to the terminal's, then ours again. */
     holdTitle(hold) {
       titleHeld = Boolean(hold);
       if (hold) {
         restoreTitle();
-        syncCursorShape(); // the editor or the stock UI gets the terminal's own cursor
+        syncCursorShape(); // the editor or the engine's own UI gets the terminal's own cursor
       } else draw();
     },
     dispose() {
@@ -2209,15 +2202,15 @@ export function createApp({
 }
 
 /**
- * Collisions between ad's slash commands and Codex's (plan Part 7): an ad
- * command must not take a Codex name, and a mirrored one must still exist.
+ * Collisions between ad's slash commands and upstream's (plan Part 7): an ad
+ * command must not take an upstream name, and a mirrored one must still exist.
  */
-export function slashCollisions(commands, codexNames) {
-  const codex = new Set(codexNames);
+export function slashCollisions(commands, upstreamNames) {
+  const upstream = new Set(upstreamNames);
   const out = [];
   for (const c of commands) {
-    if (c.source === "ad" && codex.has(c.name)) out.push(`/${c.name} is ad's own but Codex now has it too`);
-    if (c.source === "codex" && !codex.has(c.name)) out.push(`/${c.name} mirrors Codex but Codex no longer has it`);
+    if (c.source === "ad" && upstream.has(c.name)) out.push(`/${c.name} is ad's own but the engine's own UI now has it too`);
+    if (c.source === "upstream" && !upstream.has(c.name)) out.push(`/${c.name} mirrors the engine's own UI, which no longer has it`);
   }
   return out;
 }

@@ -12,9 +12,9 @@ const text = (lines) => lines.map((l) => l.map((s) => s.text).join("").replace(/
 const key = (name, mods = {}) => ({ type: "key", name, ctrl: false, alt: false, shift: false, ...mods });
 
 const HEADER = {
-  title: ">_ Agent Daemon (v2.1.0) \u{b7} on Codex 0.160.0 (tested)",
+  title: ">_ Agent Daemon (v2.1.0)",
   rows: [
-    { label: "model", value: "gpt-5.x-codex medium \u{b7} ChatGPT Plus", hint: "/model to change" },
+    { label: "model", value: "gpt-5.x medium \u{b7} ChatGPT Plus", hint: "/model to change" },
     { label: "directory", value: "D:\\Program Files\\work\\shop-app \u{b7} git: dev", path: true },
     { label: "memory", value: "142 learnings \u{b7} profile loaded", hint: "/memory" },
     { label: "sandbox", value: "workspace-write \u{b7} asks first \u{b7} Windows sandbox ready" },

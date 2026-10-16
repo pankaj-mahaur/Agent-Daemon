@@ -98,7 +98,7 @@
 
 ⟦bold,fg=cyan⟧› ⟦dim⟧1. ⟦bold,fg=cyan⟧Yes  ⟦dim⟧(y)
 ⟦bold,fg=cyan⟧  ⟦dim⟧2. Yes, and don't ask again this session  ⟦dim⟧(a)
-⟦bold,fg=cyan⟧  ⟦dim⟧3. No, and tell Codex what to do instead  ⟦bold,fg=cyan⟧(n)
+⟦bold,fg=cyan⟧  ⟦dim⟧3. No, and say what to do instead  ⟦bold,fg=cyan⟧(n)
 ⟦bold,fg=cyan⟧  ⟦dim⟧4. No, and stop  ⟦bold,fg=cyan⟧(esc)
 ── patch approval ──
 ⟦bold⟧Apply file changes?
@@ -109,7 +109,7 @@
 
 ⟦bold,fg=cyan⟧› ⟦dim⟧1. ⟦bold,fg=cyan⟧Yes  ⟦dim⟧(y)
 ⟦bold,fg=cyan⟧  ⟦dim⟧2. Yes, and don't ask again for these files this session  ⟦dim⟧(a)
-⟦bold,fg=cyan⟧  ⟦dim⟧3. No, and tell Codex what to do instead  ⟦bold,fg=cyan⟧(n)
+⟦bold,fg=cyan⟧  ⟦dim⟧3. No, and say what to do instead  ⟦bold,fg=cyan⟧(n)
 ⟦bold,fg=cyan⟧  ⟦dim⟧4. No, and stop  ⟦bold,fg=cyan⟧(esc)
 ── mcp ──
 ⟦bold⟧MCP servers

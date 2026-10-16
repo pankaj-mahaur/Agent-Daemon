@@ -6,7 +6,7 @@
 // or changes one, a test fails in the upgrade PR.
 //
 //   node scripts/codex-slash.mjs [--tag rust-v0.160.0] [--file slash_command.rs] [--popup command_popup.rs]
-//     → writes src/tui/codex-slash.json
+//     → writes src/engine/codex/upstream-commands.json
 //
 // Without --file / --popup it downloads them with `gh api` (public repo, read-only).
 
@@ -127,7 +127,7 @@ async function main() {
   const popupRs = opt("--popup") ? readFileSync(opt("--popup"), "utf8") : fetch("bottom_pane/command_popup.rs");
   const commands = parseSlashMeta(rs, popupRs);
   const out = { tag, names: commands.flatMap((c) => [c.name, ...c.aliases]), commands };
-  writeFileSync(fileURLToPath(new URL("../src/tui/codex-slash.json", import.meta.url)), `${JSON.stringify(out, null, 2)}\n`);
+  writeFileSync(fileURLToPath(new URL("../src/engine/codex/upstream-commands.json", import.meta.url)), `${JSON.stringify(out, null, 2)}\n`);
   console.log(`${commands.length} commands (${out.names.length} names) from ${tag}`);
 }
 

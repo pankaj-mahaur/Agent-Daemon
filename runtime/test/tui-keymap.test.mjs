@@ -128,3 +128,15 @@ test("eventSpec and bindings(): what /keymap and its inspector show", async () =
   assert.match(out, /open_transcript\s+ctrl\+x {2}\(yours\)/);
   assert.match(out, /never writes them/);
 });
+
+test("the keymap example parses: its action binds its key, and the footer shows it", async () => {
+  const { createKeymap } = await import("../src/tui/keymap.mjs");
+  const { KEYMAP_EXAMPLE, renderKeymap } = await import("../src/tui/commands.mjs");
+  const km = createKeymap({ overrides: { global: { [KEYMAP_EXAMPLE.action]: KEYMAP_EXAMPLE.key } } });
+  assert.ok(!km.warnings.length, JSON.stringify(km.warnings));
+  assert.deepEqual(km.bindings().find((b) => b.action === "open_transcript")?.keys, ["alt-y"]);
+  const out = renderKeymap(km, { width: 120, settingsPath: "/h/config.toml" }).map((l) => l.map((s) => s.text).join("")).join("\n");
+  assert.match(out, /Keys are set in the engine's settings file, under \[tui\.keymap\]: \/h\/config\.toml/);
+  assert.match(out, /\[tui\.keymap\.global\]/);
+  assert.match(out, /open_transcript = "alt-y"/);
+});

@@ -1,8 +1,8 @@
 ── header ──
 ╭────────────────────────────────────────────────────────────────────────────╮
-│ >_ Agent Daemon (v2.1.0) · on Codex 0.160.0 (tested)                       │
+│ >_ Agent Daemon (v2.1.0)                                                   │
 │                                                                            │
-│ model:     gpt-5.x-codex medium · ChatGPT Plus            /model to change │
+│ model:     gpt-5.x medium · ChatGPT Plus                  /model to change │
 │ directory: D:\Program Files\work\shop-app · git: dev                       │
 │ memory:    142 learnings · profile loaded                          /memory │
 │ sandbox:   workspace-write · asks first · Windows sandbox ready            │

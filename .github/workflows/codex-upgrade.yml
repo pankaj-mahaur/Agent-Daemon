@@ -106,8 +106,8 @@ jobs:
           GH_TOKEN: ${{ secrets.CODEX_UPGRADE_TOKEN || github.token }}
           TARGET: ${{ steps.ver.outputs.target }}
         run: |
-          # ad's own slash commands must not collide with new Codex ones (test/tui-resilience).
-          node scripts/codex-slash.mjs || echo "::warning::could not regenerate codex-slash.json; the collision test runs on the old list"
+          # ad's own slash commands must not collide with new upstream ones (test/tui-resilience).
+          node scripts/codex-slash.mjs || echo "::warning::could not regenerate upstream-commands.json; the collision test runs on the old list"
           # compat.json: the new pin is tested; "what changed" is left for a human
           # (the PR body asks for it; the test suite runs with AD_COMPAT_NOTE_PENDING=1).
           node -e '
@@ -155,7 +155,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$BRANCH"
-          git add runtime/package.json runtime/package-lock.json runtime/src/engine/codex/protocol-snapshot.json runtime/src/tui/codex-slash.json runtime/src/engine/codex/compat.json
+          git add runtime/package.json runtime/package-lock.json runtime/src/engine/codex/protocol-snapshot.json runtime/src/engine/codex/upstream-commands.json runtime/src/engine/codex/compat.json
           git commit -m "chore(engine): bump @openai/codex $CURRENT -> $TARGET"
           git push --force origin "$BRANCH"
           {

@@ -13,7 +13,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { startHarnessEngine } from "../harness/start.mjs";
 import { createSession } from "../harness/session.mjs";
-import { engineDebugUi, engineHome, engineVersion } from "../engine/index.mjs";
+import { engineHome, engineVersion } from "../engine/index.mjs";
 import { createIo } from "./terminal/io.mjs";
 import { createRenderer } from "./terminal/renderer.mjs";
 import { colorDepth } from "./terminal/text.mjs";
@@ -279,21 +279,20 @@ export async function cmdTui(opts = {}) {
     setWidthProfile(await probeWidthProfile({ io }));
     renderer = createRenderer({ io, caps, depth: colorDepth({ isTTY: true }), reflow: reflowModel(), resizeSource: process.stdout, hyperlinks: terminalName() !== "unknown" });
     await renderer.start();
-    renderer.frame({ lines: [[{ text: "Starting Codex\u{2026}", style: T.dim }]] });
+    renderer.frame({ lines: [[{ text: "Starting the engine\u{2026}", style: T.dim }]] });
 
-    // A thread ad lets go of (thread/unsubscribe) unloads at once, not after Codex's 60 s: /codex hands it over.
-    const start = () => startHarnessEngine({ cwd, home: opts.home, command: opts.command, clientVersion: opts.clientVersion, store: opts.store, err: sink, detached: true, engineArgs: ["-c", "thread_unload_delay_secs=0"], experimental: true, interactive: true });
+    const start = () => startHarnessEngine({ cwd, home: opts.home, command: opts.command, clientVersion: opts.clientVersion, store: opts.store, err: sink, detached: true, experimental: true, interactive: true });
     let started = await start();
     while (!started.engine && started.code === 2 && /Not logged in/.test(started.error ?? "")) {
       const choice = await pickOnce({
         io,
         renderer,
         title: "Sign in",
-        intro: [[{ text: "ad isn't signed in to Codex yet.", style: T.bold }]],
+        intro: [[{ text: "ad isn't signed in yet.", style: T.bold }]],
         items: [
-          { label: "ChatGPT", hint: "sign in with your ChatGPT plan (browser)", value: ["auth", "login", "chatgpt"] },
-          { label: "OpenAI API key", hint: "kept by Codex in ad's own Codex home", value: ["auth", "login", "openai"] },
+          { label: "OpenAI API key", hint: "kept in ad's own folder", value: ["auth", "login", "openai"] },
           { label: "OpenRouter", hint: "API key + model", value: ["auth", "login", "openrouter"] },
+          { label: "ChatGPT", hint: "sign in with your ChatGPT plan (browser)", value: ["auth", "login", "chatgpt"] },
         ],
       });
       if (!choice) break;
@@ -307,7 +306,7 @@ export async function cmdTui(opts = {}) {
     }
     engine = started.engine;
 
-    // Folder trust (S3): asked once per folder, kept in ad's Codex home.
+    // Folder trust (S3): asked once per folder, kept in ad's engine home.
     const config = await engine.readConfig().catch(() => ({}));
     const projects = config.projects ?? {};
     const known = Object.keys(projects).find((k) => engineHome.canonical(k) === engineHome.canonical(cwd));
@@ -316,10 +315,10 @@ export async function cmdTui(opts = {}) {
         io,
         renderer,
         title: "Trust",
-        intro: [[{ text: `Do you trust ${sanitize(cwd, "transcript")}?`, style: T.bold }], [{ text: "Trusted folders may load their own .codex config, hooks and skills.", style: T.dim }]],
+        intro: [[{ text: `Do you trust ${sanitize(cwd, "transcript")}?`, style: T.bold }], [{ text: "Trusted folders can run their own hooks, skills and settings. Trust only projects you know.", style: T.dim }]],
         items: [
           { label: "Yes, trust this folder", value: "trusted" },
-          { label: "No", hint: "ignore its .codex config", value: "untrusted" },
+          { label: "No", hint: "ignore its hooks and settings", value: "untrusted" },
         ],
       });
       if (trust) await engine.writeConfig([["projects", { [cwd]: { trust_level: trust } }, "upsert"]]).catch((e) => setupNotes.push(`trust not saved: ${e.message}`));
@@ -335,10 +334,10 @@ export async function cmdTui(opts = {}) {
     const { checkpointWiring } = await import("./undo.mjs");
     let cp = createCheckpoints({ cwd });
     let undoKit = (await cp.repo().catch(() => null)) ? checkpointWiring(cp, { cwd }) : null;
-    // Settings: Codex's own (its config.toml in ad's home, shared with /codex) and ad's (prefs.json).
+    // Settings: the engine's own (its config.toml in ad's home) and ad's (prefs.json).
     const settings = { codex: createCodexSettings({ engine: () => session.engine }), ad: createPrefs({ file: opts.prefsFile ?? DEFAULT_PREFS_FILE }) };
-    // modes: Codex's plan mode, on the experimental allowlist this engine opted into (codex-parity-2 P0).
-    // Default's mask keeps the configured effort, as Codex's own Default mode does.
+    // modes: the plan mode, on the experimental allowlist this engine opted into (parity P0).
+    // Default's mask keeps the configured effort, as the engine's own Default mode does.
     session = createSession({ engine, cwd, model: opts.model, sandbox: opts.sandbox, restart, maxRestarts: 3, hooks: undoKit?.hooks ?? {}, modes: true, planEffort: () => settings.codex.get("plan_mode_reasoning_effort") ?? null, configEffort: () => settings.codex.get("model_reasoning_effort") ?? null, ...(opts.lockDir ? { lockDir: opts.lockDir } : {}) });
     await session.init();
     await settings.codex.load();
@@ -357,8 +356,8 @@ export async function cmdTui(opts = {}) {
     } catch {
       // memory is optional
     }
-    const codexVersion = engineVersion.pinned() ?? "?";
-    // No model configured: name the one Codex will use (its default), not "default".
+    const engineVersionText = engineVersion.pinned() ?? "?";
+    // No model configured: name the one the engine will use (its default), not "default".
     let modelName = config.model ?? opts.model ?? null;
     if (!modelName) {
       const listed = await Promise.race([engine.models.list().catch(() => null), new Promise((r) => setTimeout(() => r(null), 2000).unref?.())]);
@@ -367,7 +366,7 @@ export async function cmdTui(opts = {}) {
     }
     const header = renderHeader(
       {
-        title: `>_ Agent Daemon (v${opts.clientVersion ?? "?"}) \u{b7} on Codex ${codexVersion} (tested)`,
+        title: `>_ Agent Daemon (v${opts.clientVersion ?? "?"})`,
         rows: [
           { label: "model", value: `${modelName}${config.model_reasoning_effort ? ` ${config.model_reasoning_effort}` : ""} \u{b7} ${acct}`, hint: "/model to change" },
           { label: "directory", value: `${cwd}${branch ? ` \u{b7} git: ${branch}` : ""}`, path: true },
@@ -383,7 +382,7 @@ export async function cmdTui(opts = {}) {
     const since = await sinceLastTime({ cwd, since: state[key]?.lastSeen ?? Date.now(), home: opts.adHome });
     const intro = [...header];
     if (since.length) intro.push(truncate([{ text: `  Since last time: ${since.join(" \u{b7} ")}`, style: T.dim }], Math.max(10, io.size().cols - 2)));
-    intro.push([], [{ text: "  Try /review \u{b7} /goal \u{b7} /resume \u{b7} /codex = stock Codex UI \u{b7} ? for shortcuts", style: T.dim }], []);
+    intro.push([], [{ text: "  Try /review \u{b7} /goal \u{b7} /resume \u{b7} /memory \u{b7} ? for shortcuts", style: T.dim }], []);
     for (const n of setupNotes.filter(Boolean)) intro.push([{ text: `  ${sanitize(n, "transcript")}`, style: T.warning }]);
 
     if (opts.resume || opts.last) {
@@ -440,24 +439,14 @@ export async function cmdTui(opts = {}) {
       login: async (arg) => {
         const code = await handoff(io, renderer, () => runChild(process.execPath, [CLI, "auth", "login", ...splitArgs(arg || "chatgpt")], { cwd }), app);
         if (code !== 0) return `Sign-in didn't finish (exit ${code}). Nothing changed.`;
-        // Keys reach Codex when it starts, and a new login is read at start too: restart it.
+        // Keys reach the engine when it starts, and a new login is read at start too: restart it.
         const ok = await session.restartEngine().catch(() => false);
-        return ok ? "Signed in; Codex restarted with it." : "Signed in, but Codex didn't restart: /quit and start ad again to use the new sign-in.";
+        return ok ? "Signed in; the engine restarted with it." : "Signed in, but the engine didn't restart: /quit and start ad again to use the new sign-in.";
       },
       runAd: async (arg) => {
         if (!arg) return "Usage: /ad <command>, e.g. /ad doctor";
         const code = await handoff(io, renderer, () => runChild(process.execPath, [CLI, ...splitArgs(arg)], { cwd }), app);
         return `ad ${sanitize(arg, "transcript")} exited ${code}.`;
-      },
-      openCodex: async (arg, { threadId }) => {
-        // One runtime per thread: ad's engine unloads it before the stock UI opens it (else both
-        // run it, both append to its rollout, and back here ad's copy misses the stock UI's turns).
-        if (threadId && !(await session.release(threadId))) await session.restartEngine().catch(() => false);
-        const code = await handoff(io, renderer, () => engineDebugUi.run({ args: splitArgs(arg), threadId, cwd, home: engine.home, store: opts.store }), app);
-        if (threadId) await session.resume(threadId);
-        await settings.codex.load(); // the stock UI may have changed them
-        setSyntaxTheme(settings.codex.get("tui.theme")); // /theme there, too
-        return `Back from the stock Codex UI (exit ${code}).`;
       },
       hookRows: (run) => hookRows(run, { hooksFile }),
       // The status line's and title's git facts (timed out, no console window).
@@ -480,7 +469,7 @@ export async function cmdTui(opts = {}) {
       editText: (text) => handoff(io, renderer, () => editInEditor(text, { run: (cmd, args, verbatim) => runChild(cmd, args, { cwd, windowsVerbatimArguments: Boolean(verbatim) }) }), app),
     };
 
-    app = createApp({ io, renderer, session, cwd, header: intro, newline, history: createHistory(opts.historyFile ? { file: opts.historyFile } : {}), actions, settings, keymap: createKeymap({ overrides: settings.codex.get("tui.keymap") }), statusInfo: { codexVersion, hostname: hostname(), home: homedir() }, info: { compat: `${codexVersion} (tested)`, terminal: term } });
+    app = createApp({ io, renderer, session, cwd, header: intro, newline, history: createHistory(opts.historyFile ? { file: opts.historyFile } : {}), actions, settings, keymap: createKeymap({ overrides: settings.codex.get("tui.keymap") }), statusInfo: { engineVersion: engineVersionText, hostname: hostname(), home: homedir() }, info: { compat: `${engineVersionText} (tested)`, terminal: term } });
     // `ad tui "<prompt>"`: the first prompt is sent right away.
     if (opts.prompt) app.send(opts.prompt);
     await app.done;

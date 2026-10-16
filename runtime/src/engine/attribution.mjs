@@ -102,7 +102,9 @@ export function identityBlock({ adVersion, engineVersion, signIn } = {}) {
 
 // ── the elevated sandbox consent (`ad sandbox setup --elevated`, /setup-default-sandbox) ──
 
-export const sandboxConsent = `Windows will ask for administrator permission. The helper is ${ENGINE.vendor}'s sandbox program, shipped with the engine. It creates sandbox accounts and firewall rules on this machine, shared with any other ${ENGINE.name} install. Continue? [y/N]`;
+export const sandboxConsentBody = `Windows will ask for administrator permission. The helper is ${ENGINE.vendor}'s sandbox program, shipped with the engine. It creates sandbox accounts and firewall rules on this machine, shared with any other ${ENGINE.name} install.`;
+
+export const sandboxConsent = `${sandboxConsentBody} Continue? [y/N]`;
 
 // ── true statements about the user's own install of the engine ─────────────
 // (export names stay brand-free: their callers live outside the allowed zone)
@@ -242,6 +244,7 @@ export function renderedSamples() {
     readmeSentence,
     ...SIGN_IN_ROUTES.map((signIn) => identityBlock({ adVersion: "3.0.0", engineVersion: "0.160.0", signIn })),
     sandboxConsent,
+    sandboxConsentBody,
     ownEngineHomeRefusal("~/.codex"),
     ownEngineHomeDefaultRefusal,
     ownEngineHomeStartRefusal("C:\\Users\\me\\.codex"),

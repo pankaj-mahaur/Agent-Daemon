@@ -1,13 +1,13 @@
-// TUI settings (codex-parity-2 1c, P3), in two homes:
+// TUI settings (parity 1c, P3), in two homes:
 //
-//   - Codex's own TUI settings stay in Codex's config.toml, in ad's Codex
-//     home (never ~/.codex), under Codex's keys and value types, so the stock
-//     UI (/codex) shows the same status line, title, theme and Vim default.
-//     Read with config/read (at start and after every /codex), written with
-//     config/batchWrite. `tui.keymap` is read but never written: the stock UI
-//     refuses to start on a keymap conflict, and ad doesn't know all of
-//     Codex's actions to check for one.
-//   - ad's own preferences (what Codex has no setting for) in
+//   - The engine's own TUI settings stay in its config.toml, in ad's engine
+//     home, under the engine's keys and value types, so the engine's own UI
+//     shows the same status line, title, theme and Vim default.
+//     Read with config/read (at start), written with
+//     config/batchWrite. `tui.keymap` is read but never written: the engine's
+//     own UI refuses to start on a keymap conflict, and ad doesn't know all of
+//     the engine's actions to check for one.
+//   - ad's own preferences (what the engine has no setting for) in
 //     ~/.agent-daemon/tui/prefs.json: owner-only, written atomically.
 //
 //   createCodexSettings({engine: () => engine}) → {load(), get(keyPath), set(keyPath, value)}
@@ -27,7 +27,7 @@ function at(obj, keyPath) {
 }
 
 /**
- * Codex's settings as ad's Codex reads them. `engine` is a getter: the
+ * The engine's settings as ad reads them. `engine` is a getter: the
  * engine is replaced when it restarts.
  */
 export function createCodexSettings({ engine }) {
@@ -42,15 +42,15 @@ export function createCodexSettings({ engine }) {
       }
       return config;
     },
-    /** A setting by Codex's key path, e.g. "tui.status_line"; undefined when unset. */
+    /** A setting by the engine's key path, e.g. "tui.status_line"; undefined when unset. */
     get(keyPath) {
       return at(config, keyPath);
     },
-    /** Writes one of Codex's settings (null removes it, back to the default). */
+    /** Writes one of the engine's settings (null removes it, back to the default). */
     async set(keyPath, value) {
-      if (keyPath === "tui.keymap" || keyPath.startsWith("tui.keymap.")) throw new Error("ad doesn't write tui.keymap: change keys in /codex (ad reads them from there)");
+      if (keyPath === "tui.keymap" || keyPath.startsWith("tui.keymap.")) throw new Error("ad doesn't write tui.keymap: change keys in the engine's settings file (ad reads them from there)");
       await engine().writeConfig([[keyPath, value]]);
-      // What Codex now has; ours is a copy until the next load().
+      // What the engine now has; ours is a copy until the next load().
       const keys = keyPath.split(".");
       let o = config;
       for (const k of keys.slice(0, -1)) o = o[k] && typeof o[k] === "object" ? o[k] : (o[k] = {});

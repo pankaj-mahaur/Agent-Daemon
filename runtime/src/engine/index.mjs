@@ -19,8 +19,12 @@ import { codexHooksForProfile } from "./codex/hooks-config.mjs";
 import { codexCompat, engineChecks, engineLiveChecks, parseCodexVersion, probeVersion } from "./codex/doctor.mjs";
 import { MIRROR_MARKER, MIRRORED_FLAG, runStockUi, stockUiArgs, syncSkills } from "./codex/stock-ui.mjs";
 import PINNED_SNAPSHOT from "./codex/protocol-snapshot.json" with { type: "json" };
+import UPSTREAM_COMMANDS from "./codex/upstream-commands.json" with { type: "json" };
 
 export { engineError };
+
+/** The engine's own UI's slash commands at the pinned tag: {tag, names, commands[{name, aliases, duringTask, sideAllowed, visible, popup, …}]}. */
+export const engineCommands = UPSTREAM_COMMANDS;
 
 // Harness defaults (user-approved): writes only inside the workspace, asks
 // before anything riskier.
@@ -175,7 +179,17 @@ export class Engine extends EventEmitter {
     };
     this.config = {
       /** → the engine's whole answer ({config, layers, …}). */
-      read: ({ includeLayers = false, cwd } = {}) => this.#request("config/read", clean({ includeLayers, cwd })),
+      read: async ({ includeLayers = false, cwd } = {}) => {
+        const r = await this.#request("config/read", clean({ includeLayers, cwd }));
+        // The engine calls a project layer's folder dotCodexFolder; ad calls it projectFolder.
+        for (const layer of r?.layers ?? []) {
+          if (layer?.name && Object.hasOwn(layer.name, "dotCodexFolder")) {
+            layer.name.projectFolder = layer.name.dotCodexFolder;
+            delete layer.name.dotCodexFolder;
+          }
+        }
+        return r;
+      },
       write: (edits, o) => this.writeConfig(edits, o),
       /** → the requirements object, or null. */
       requirements: async () => (await this.#request("configRequirements/read", undefined))?.requirements ?? null,

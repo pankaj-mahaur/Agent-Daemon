@@ -115,6 +115,17 @@
       "reason": "reference config for the `codex` session adapter: the user's own Codex is a third-party product ad reads (descriptive)"
     },
     {
+      "path": "runtime/src/tui/status.mjs",
+      "rules": ["A"],
+      "match": "\"codex-version\"",
+      "reason": "the engine's own status-line item id, stored in the engine's settings (tui.status_line); ad keeps the id and renders it as \"engine <version>\" (design D6)"
+    },
+    {
+      "path": "runtime/src/engine/codex/upstream-commands.json",
+      "rules": ["C"],
+      "reason": "generated from upstream's slash_command.rs (scripts/codex-slash.mjs); its descriptions are upstream's words and never reach the screen (ad shows its own, from SLASH_COMMANDS)"
+    },
+    {
       "path": "runtime/src/hooks/codex-session-end.mjs",
       "rules": ["A"],
       "reason": "a shim with the file name hooks.json files written by ad 2.x still call; the real launcher is hooks/engine-session-end.mjs (removed in 4.0)"

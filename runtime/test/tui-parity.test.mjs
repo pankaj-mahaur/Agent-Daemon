@@ -90,7 +90,7 @@ test("export: markdown of the conversation, sanitized; the last answer for /copy
   assert.match(md, /^# fix login/);
   assert.match(md, /## You\n\nfix it/);
   assert.match(md, /\$ npm test\nok/);
-  assert.match(md, /## Codex\n\nDone: \*\*fixed\*\*/);
+  assert.match(md, /## Agent\n\nDone: \*\*fixed\*\*/);
   assert.ok(!/\x1b/.test(md));
   assert.ok(!md.includes("child"), "subagent threads are not the conversation");
   assert.match(lastAgentText(ST), /Done/);
@@ -249,7 +249,7 @@ test("/rename, /fork, /mcp, /hooks, /skills, /usage, /copy, /raw, /export", asyn
     }
     type("/export notes.md\r");
     await until(() => /Saved notes\.md/.test(committed()), "export");
-    assert.match(readFileSync(join(root, "notes.md"), "utf8"), /## Codex\n\nearly/);
+    assert.match(readFileSync(join(root, "notes.md"), "utf8"), /## Agent\n\nearly/);
     type("/export ../outside.md\r");
     await until(() => /inside this folder only/.test(committed()), "refused");
     type("/export notes.md\r");

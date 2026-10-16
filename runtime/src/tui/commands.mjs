@@ -1,4 +1,4 @@
-// Codex-parity commands (plan Part 8), kept out of app.mjs: pure renderers
+// Parity commands (plan Part 8), kept out of app.mjs: pure renderers
 // for /mcp, /hooks, /skills, /usage and /terminal-setup, the transcript for
 // /export, /raw and the Ctrl+T pager, the clipboard for /copy, and image
 // paths for /image and pasted file paths.
@@ -9,6 +9,7 @@ import path from "node:path";
 import { sanitize } from "./terminal/sanitize.mjs";
 import { truncate } from "./terminal/text.mjs";
 import { graphemes } from "./terminal/width.mjs";
+import { keyLabel } from "./keymap.mjs";
 import { renderCell } from "./view/cells.mjs";
 import { wrapPrefixed } from "./view/markdown.mjs";
 import { T } from "./view/theme.mjs";
@@ -25,7 +26,7 @@ const row = (width, ...spans) => truncate(spans, width);
 /* ------------------------------------------------------------------ */
 
 export function renderMcp(servers, { width = 80 } = {}) {
-  if (!servers?.length) return [[{ text: "No MCP servers configured for ad's Codex.", style: DIM }]];
+  if (!servers?.length) return [[{ text: "No MCP servers configured for ad's engine.", style: DIM }]];
   const out = [[{ text: "MCP servers", style: BOLD }]];
   for (const s of servers) {
     const status = clean(s.runtimeStatus ?? "unknown");
@@ -36,10 +37,13 @@ export function renderMcp(servers, { width = 80 } = {}) {
 }
 
 /**
- * /keymap: the keys in effect by context (ad's defaults with the stock UI's
+ * /keymap: the keys in effect by context (ad's defaults with the engine's
  * tui.keymap on top), what was dropped and why, and where they're edited.
  */
-export function renderKeymap(keymap, { width = 80, label = (k) => k } = {}) {
+/** The example /keymap shows; test/tui-keymap.test.mjs proves ad's own reader accepts it. */
+export const KEYMAP_EXAMPLE = Object.freeze({ table: "tui.keymap.global", action: "open_transcript", key: "alt-y" });
+
+export function renderKeymap(keymap, { width = 80, label = (k) => k, settingsPath = null } = {}) {
   const out = [[{ text: "Keymap", style: BOLD }]];
   let ctx = null;
   for (const b of keymap.bindings()) {
@@ -50,18 +54,25 @@ export function renderKeymap(keymap, { width = 80, label = (k) => k } = {}) {
     out.push(row(width, { text: `    ${b.action}`.padEnd(32) }, { text: b.keys.length ? b.keys.map(label).join(", ") : "unbound", style: b.keys.length ? T.code : DIM }, ...(b.custom ? [{ text: "  (yours)", style: DIM }] : [])));
   }
   for (const w of keymap.warnings ?? []) out.push(row(width, { text: `  ${clean(w)}`, style: T.warning }));
-  out.push(row(width, { text: "  Keys are set in the stock UI: /codex, then /keymap there (saved as tui.keymap). ad reads them, never writes them. /keymap debug shows what a key sends.", style: DIM }));
+  const foot = [
+    "  Keys are set in the engine's settings file, under [tui.keymap]" + (settingsPath ? `: ${settingsPath}` : "."),
+    `  For example, to open the transcript with ${keyLabel(KEYMAP_EXAMPLE.key)}:`,
+    `    [${KEYMAP_EXAMPLE.table}]`,
+    `    ${KEYMAP_EXAMPLE.action} = "${KEYMAP_EXAMPLE.key}"`,
+    "  ad reads these keys and never writes them. /keymap debug shows what a key sends.",
+  ];
+  for (const line of foot) out.push(row(width, { text: clean(line), style: DIM }));
   return out;
 }
 
 /* ------------------------------------------------------------------ */
-/* /approve (codex-parity-2 Part 10)                                   */
+/* /approve (parity Part 10)                                         */
 /* ------------------------------------------------------------------ */
 
 // A shell word as shlex would quote it.
 const shellWord = (w) => (/^[\w@%+=:,./-]+$/.test(w) ? w : `'${String(w).replace(/'/g, `'"'"'`)}'`);
 
-/** What an auto-review denial was about, in Codex's words (tui/src/auto_review_denials.rs). */
+/** What an auto-review denial was about, in upstream's words (tui/src/auto_review_denials.rs). */
 export function denialSummary(a) {
   switch (a?.type) {
     case "command":
@@ -86,7 +97,7 @@ export function denialSummary(a) {
 }
 
 /* ------------------------------------------------------------------ */
-/* /debug-config (codex-parity-2 Part 10)                              */
+/* /debug-config (parity Part 10)                                    */
 /* ------------------------------------------------------------------ */
 
 // Secrets are never shown: a value under a key that names one (api_key,
@@ -129,7 +140,7 @@ const flatten = (obj, prefix = "", out = []) => {
   return out;
 };
 
-/** A config layer's source as Codex names it ("user (…/config.toml)", "session-flags"). */
+/** A config layer's source as the engine names it ("user (…/config.toml)", "session-flags"). */
 export function layerSource(n) {
   const sep = (p) => (String(p).includes("\\") ? "\\" : "/");
   switch (n?.type) {
@@ -144,7 +155,7 @@ export function layerSource(n) {
     case "user":
       return `user (${n.file}${n.profile ? `, profile ${n.profile}` : ""})`;
     case "project":
-      return `project (${n.dotCodexFolder}${sep(n.dotCodexFolder)}config.toml)`;
+      return `project (${n.projectFolder}${sep(n.projectFolder)}config.toml)`;
     case "sessionFlags":
       return "session-flags";
     case "legacyManagedConfigTomlFromFile":
@@ -167,10 +178,10 @@ const requirementValue = (v) =>
       : String(v);
 
 /**
- * Codex's /debug-config from config/read's layers (highest precedence first,
- * shown lowest first, as Codex does) and configRequirements/read: each layer's
+ * The engine's /debug-config from config/read's layers (highest precedence first,
+ * shown lowest first, as the engine does) and configRequirements/read: each layer's
  * source and state, the session flags' keys, then the requirements. Secret
- * values are masked (Codex prints its in-process config unmasked).
+ * values are masked (the engine prints its in-process config unmasked).
  */
 export function renderDebugConfig({ layers, requirements }, { width = 80 } = {}) {
   const line = (indent, spans) => wrapPrefixed(spans, width, [{ text: indent }], [{ text: `${indent}  ` }]);
@@ -194,7 +205,7 @@ export function renderDebugConfig({ layers, requirements }, { width = 80 } = {})
 }
 
 /**
- * /keymap debug, Codex's Keypress Inspector: the last key ad received, its
+ * /keymap debug, the Keypress Inspector: the last key ad received, its
  * config spelling and the actions it presses.
  */
 export function renderKeyInspector(last, { width = 80 } = {}) {
@@ -294,7 +305,7 @@ export function exportMarkdown(st, { title = "Conversation" } = {}) {
   if (st.thread?.id) out.push(`Thread: \`${text(st.thread.id)}\``, "");
   for (const it of rootItems(st)) {
     if (it.kind === "userMessage") out.push("## You", "", text(it.text), "");
-    else if (it.kind === "agentMessage") out.push("## Codex", "", text(it.text), "");
+    else if (it.kind === "agentMessage") out.push("## Agent", "", text(it.text), "");
     else if (it.kind === "commandExecution") {
       const body = [`$ ${text(it.command)}`, ...text(it.output ?? "").replace(/\n+$/, "").split("\n").slice(-50)];
       // A fence longer than any backtick run inside, so the output can't close it.

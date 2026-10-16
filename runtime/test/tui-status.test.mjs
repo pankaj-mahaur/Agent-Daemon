@@ -22,7 +22,7 @@ const CTX = {
   approvalPolicy: "on-request",
   tokens: { last: { total: 85_000 }, contextWindow: 100_000, total: { inputTokens: 120_000, outputTokens: 4_200 } },
   rateLimits: { primary: { usedPercent: 38.4, windowDurationMins: 300 }, secondary: { usedPercent: 91, windowDurationMins: 10080 } },
-  codexVersion: "0.160.0",
+  engineVersion: "0.160.0",
   threadId: "t-1",
   threadName: "login fix",
   plan: { steps: [{ status: "completed" }, { status: "inProgress" }, { status: "pending" }] },
@@ -39,7 +39,7 @@ test("status line: ad's default when unset; [] is off; Codex's order and aliases
 });
 
 test("status line: every item ad shows, warnings at 80 % used, empty values skipped", () => {
-  assert.deepEqual(texts(["reasoning", "hostname", "branch-changes", "permissions", "approval-mode", "context-used", "context-window-size", "weekly-limit", "codex-version", "used-tokens", "total-input-tokens", "total-output-tokens", "thread-name", "task-progress"]), ["high", "box", "+12 -3", "workspace-write", "on-request", "ctx 85% used", "100.0k window", "wk 91%", "codex 0.160.0", "85.0k tokens", "120.0k in", "4.2k out", "login fix", "1/3 steps"]);
+  assert.deepEqual(texts(["reasoning", "hostname", "branch-changes", "permissions", "approval-mode", "context-used", "context-window-size", "weekly-limit", "codex-version", "used-tokens", "total-input-tokens", "total-output-tokens", "thread-name", "task-progress"]), ["high", "box", "+12 -3", "workspace-write", "on-request", "ctx 85% used", "100.0k window", "wk 91%", "engine 0.160.0", "85.0k tokens", "120.0k in", "4.2k out", "login fix", "1/3 steps"]);
   const segs = statusSegments(["context-remaining", "five-hour-limit", "weekly-limit"], CTX);
   assert.deepEqual(segs.map((s) => s.warn), [true, false, true]);
   assert.deepEqual(texts(["thread-name", "git-branch", "pull-request-number", 42], { ...CTX, threadName: null, branch: null }), [], "nothing for missing values or ids ad can't show");

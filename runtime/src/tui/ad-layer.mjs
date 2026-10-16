@@ -88,7 +88,7 @@ export function createAdLayer({ cwd, home = homedir(), memory = null, cli = null
     const st = await memory.stats();
     if (!st.driver) return ["ad memory isn't set up (ad doctor)."];
     const waiting = pending().length;
-    return [`ad memory: ${st.counts.learnings} learnings, ${st.counts.sessions} sessions${waiting ? `, ${waiting} captured (saved when ad next starts)` : ""}.`, "/memory search <words> \u{b7} /memory recent \u{b7} /memory forget <id> \u{b7} /memory profile", "(Codex's own /memories is separate.)"];
+    return [`ad memory: ${st.counts.learnings} learnings, ${st.counts.sessions} sessions${waiting ? `, ${waiting} captured (saved when ad next starts)` : ""}.`, "/memory search <words> \u{b7} /memory recent \u{b7} /memory forget <id> \u{b7} /memory profile"];
   }
 
   /** Learnings recorded for this thread since `sinceIso` (the "learned" row): saved ones and captured ones. */

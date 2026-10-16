@@ -111,7 +111,7 @@ test("Codex stopped and not restarted: a banner; Enter restarts and the kept pro
       type("fail-turn\r");
       await until(() => /Worked for/.test(committed()), "a first turn");
       engines[0].testRequest("test/crash", {}).catch(() => {});
-      await until(() => /Codex stopped \(exit 3\)\. Your text is kept\. Enter restarts/.test(text()), "the banner");
+      await until(() => /ad's engine stopped \(exit 3\)/.test(text()), "the banner");
       type("early-complete\r");
       await until(() => session.state.engine.state === "ready" && /• early/.test(committed()), "the restart and the prompt");
     },
@@ -162,6 +162,17 @@ test("Esc in an approval declines; Ctrl+C twice quits", async () => {
     type("\x03");
     await sleep(20);
     assert.equal(quit, true);
+  });
+});
+
+test("an openaiForm request is cancelled at once: no modal, a warning", async () => {
+  const { formAutoCancel } = await import("../src/engine/attribution.mjs");
+  await withApp(async ({ app, type, until, text, session }) => {
+    session.state.requests.push({ request: { id: "e-form", kind: "elicitation", form: { mode: "openaiForm" } }, resolve: () => {} });
+    type("x"); // trigger a draw; the character stays in the composer
+    await until(() => text().includes("engine's own UI"), "the auto-cancel warning");
+    assert.equal(app.state.modal, null, "no modal opens");
+    assert.ok(formAutoCancel.includes("ad cancelled it"));
   });
 });
 
@@ -232,13 +243,13 @@ test("Codex commands ad doesn't run never reach the model; busy ones wait, and t
       return st.calls.filter((c) => c === "turn/start" || c === "turn/steer").length;
     };
     type("/import the bug\r");
-    await until(() => /\/import isn't in ad yet\. \/codex opens the stock Codex UI/.test(text()), "the answer");
+    await until(() => /\/import isn't planned for ad\./.test(text()), "the answer");
     assert.equal(app.state.composer, "/import the bug", "the draft goes back into the composer");
     assert.equal(await sent(), 0);
     type("\x15/pet\r"); // an alias answers as its command does
     await until(() => /ad doesn't draw terminal pets/.test(text()), "the alias answer");
     type("\x15/DAEMON\r");
-    await until(() => /\/daemon manages Codex's background server/.test(text().replace(/\s+/g, " ")), "a custom answer, any case");
+    await until(() => /\/daemon manages a background server/.test(text().replace(/\s+/g, " ")), "a custom answer, any case");
     type("\x15hang\r");
     await until(() => session.state.activeTurnId, "the running turn");
     const before = await sent();
@@ -246,11 +257,21 @@ test("Codex commands ad doesn't run never reach the model; busy ones wait, and t
     await until(() => /'\/new' is disabled while a task is in progress\./.test(text()), "the busy answer");
     assert.equal(app.state.composer, "/new");
     type("\x15/import what about tests?\r");
-    await until(() => /\/import isn't in ad yet/.test(text()), "not steered into the turn");
+    await until(() => /\/import isn't planned for ad/.test(text()), "not steered into the turn");
     assert.equal(await sent(), before, "nothing was steered into the running turn");
     assert.ok(session.state.thread, "the conversation is untouched");
     type("\x15/status\r"); // allowed during a task, as in Codex
     await until(() => /sandbox/.test(text()), "the status report mid-turn");
+  });
+});
+
+test("/codex prints the tombstone: nothing opens, nothing is sent", async () => {
+  await withApp(async ({ type, until, text, session, engine }) => {
+    type("/codex\r");
+    await until(() => /\/codex was removed in 3\.0/.test(text().replace(/\s+/g, " ")) && /Resume a conversation: `ad --last`/.test(text().replace(/\s+/g, " ")), "the tombstone");
+    const st = await engine.testRequest("debug/state", {});
+    assert.equal(st.calls.filter((c) => c === "turn/start" || c === "turn/steer").length, 0, "the prompt is not sent to the model");
+    assert.ok(!session.state.thread, "no thread was opened");
   });
 });
 
@@ -704,7 +725,7 @@ test("/setup-default-sandbox: Windows only; asks first (machine-wide); sets up t
       const flat = () => committed().replace(/\s+/g, " ");
       type("/setup-default-sandbox\r");
       await until(() => app.state.confirm && /Set up the elevated sandbox\?/.test(text()), "the question");
-      assert.match(text().replace(/\s+/g, " "), /administrator approval[\s\S]*your own Codex uses them too/);
+      assert.match(text().replace(/\s+/g, " "), /Windows will ask for administrator permission[\s\S]*shared with any other Codex install/);
       await sleep(100);
       type("n");
       await until(() => /Kept the current sandbox\./.test(flat()), "no");
@@ -712,7 +733,7 @@ test("/setup-default-sandbox: Windows only; asks first (machine-wide); sets up t
       await until(() => app.state.confirm, "the question again");
       await sleep(100);
       type("y");
-      await until(() => /Sandbox ready Codex can now safely edit files and execute commands in your computer/.test(flat()), "ready");
+      await until(() => /Sandbox ready The agent can now safely edit files and run commands on your computer/.test(flat()), "ready");
       const p = (await engine.testRequest("debug/state", {})).lastParams["windowsSandbox/setupStart"];
       assert.equal(p.mode, "elevated");
       type("/setup-default-sandbox\r");
@@ -1043,7 +1064,7 @@ test("status line: Codex's items under the composer; /statusline previews, saves
       type(" "); // model off: the row changes at once (a preview)
       await until(() => !/fake-model ·/.test(text()), "the preview");
       type("\r");
-      await until(() => /Status line: current-dir\. Saved for \/codex too\./.test(text()), "saved");
+      await until(() => /Status line: current-dir\. Saved\./.test(text()), "saved");
       assert.deepEqual(settings.store.tui.status_line, ["current-dir", "pull-request-number"], "Codex's item ad can't show is kept");
       // Esc puts the row back as it was.
       type("/statusline\r");
@@ -1528,7 +1549,7 @@ test("/theme: Codex's picker with a live preview; Esc puts the old theme back; E
       type("/theme\r");
       await until(() => app.state.popup === "theme", "the picker again");
       type("\x1b[B\x1b[B\r");
-      await until(() => /Syntax theme: catppuccin-latte\. Saved for \/codex too\./.test(committed()), "saved");
+      await until(() => /Syntax theme: catppuccin-latte\. Saved\./.test(committed()), "saved");
       assert.equal(saved["tui.theme"], "catppuccin-latte");
       assert.equal(syntaxTheme(), "catppuccin-latte");
     }, { settings, cols: 100, rows: 40, depth: 24 });

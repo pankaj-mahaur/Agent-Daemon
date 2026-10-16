@@ -18,7 +18,7 @@ import { checkMessage } from "../testkit/protocol-check.mjs";
 
 const FAKE = fileURLToPath(new URL("../testkit/fake-codex-app-server.mjs", import.meta.url));
 const command = { cmd: process.execPath, prefix: [FAKE] };
-const CODEX_SLASH = JSON.parse(readFileSync(new URL("../src/tui/codex-slash.json", import.meta.url), "utf8"));
+const CODEX_SLASH = JSON.parse(readFileSync(new URL("../src/engine/codex/upstream-commands.json", import.meta.url), "utf8"));
 const PKG = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 const until = async (pred, what, ms = 10000) => {
   const end = Date.now() + ms;
@@ -92,13 +92,13 @@ test("a synthetic newer Codex: unknown methods, items, fields, enum values and r
 test("slash names: ad's own never collide with Codex's; mirrored ones stay Codex's", () => {
   assert.deepEqual(slashCollisions(SLASH_COMMANDS, CODEX_SLASH.names), []);
   // A Codex release that adds /remember would fail here, in the upgrade PR.
-  assert.deepEqual(slashCollisions(SLASH_COMMANDS, [...CODEX_SLASH.names, "remember"]), ["/remember is ad's own but Codex now has it too"]);
-  assert.deepEqual(slashCollisions(SLASH_COMMANDS, CODEX_SLASH.names.filter((n) => n !== "diff")), ["/diff mirrors Codex but Codex no longer has it"]);
-  assert.equal(CODEX_SLASH.tag, `rust-v${PKG.dependencies["@openai/codex"]}`, "regenerate codex-slash.json for the pinned Codex");
+  assert.deepEqual(slashCollisions(SLASH_COMMANDS, [...CODEX_SLASH.names, "remember"]), ["/remember is ad's own but the engine's own UI now has it too"]);
+  assert.deepEqual(slashCollisions(SLASH_COMMANDS, CODEX_SLASH.names.filter((n) => n !== "diff")), ["/diff mirrors the engine's own UI, which no longer has it"]);
+  assert.equal(CODEX_SLASH.tag, `rust-v${PKG.dependencies["@openai/codex"]}`, "regenerate upstream-commands.json for the pinned engine");
 });
 
 test("every Codex command has a decision in ad: it runs, or ad says why not (never sent to the model)", () => {
-  const mirrored = new Set(SLASH_COMMANDS.filter((c) => c.source === "codex").map((c) => c.name));
+  const mirrored = new Set(SLASH_COMMANDS.filter((c) => c.source === "upstream").map((c) => c.name));
   for (const c of CODEX_SLASH.commands) {
     const decided = mirrored.has(c.name) + (c.name in NOT_IN_AD);
     assert.equal(decided, 1, `/${c.name}: ${decided ? "both run and answered" : "no decision (run it, or add it to NOT_IN_AD)"}`);
@@ -112,7 +112,7 @@ test("every Codex command has a decision in ad: it runs, or ad says why not (nev
       else assert.ok(said && said.length > 10, `/${n} has an answer`);
     }
   }
-  assert.equal(notInAd("import"), "/import isn't in ad yet. /codex opens the stock Codex UI on this conversation.");
+  assert.equal(notInAd("import"), "/import isn't planned for ad.");
   for (const n of ["recap", "subagents", "agents", "approve", "setup-default-sandbox", "mention", "debug-config", "rollout"]) assert.equal(notInAd(n), null, `ad runs /${n} (Part 10)`);
   assert.equal(notInAd("plan"), null, "ad runs /plan (Part 4)");
   assert.equal(notInAd("clean"), null, "ad runs /stop, and its alias /clean (Part 5)");
@@ -239,7 +239,7 @@ test("docs/codex-parity.md lists every Codex command, and says 'yes' exactly for
     const m = /^\| (`\/[^|]+) \| (yes|no|not yet) \|/.exec(line);
     if (m) for (const n of m[1].match(/\/[\w-]+/g)) rows.set(n.slice(1), m[2]);
   }
-  const runs = new Set(SLASH_COMMANDS.filter((c) => c.source === "codex").map((c) => c.name));
+  const runs = new Set(SLASH_COMMANDS.filter((c) => c.source === "upstream").map((c) => c.name));
   for (const c of CODEX_SLASH.commands) {
     for (const n of [c.name, ...c.aliases]) assert.ok(rows.has(n), `docs/codex-parity.md has no row for /${n}`);
     assert.equal(rows.get(c.name) === "yes", runs.has(c.name), `/${c.name}: the doc says "${rows.get(c.name)}"`);

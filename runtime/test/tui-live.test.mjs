@@ -182,7 +182,8 @@ test("FC3 live script: ad tui on the real Codex binary, end to end", { skip, tim
     // 1. First run: trust, then the header card.
     t = await start(w);
     const head = t.text();
-    assert.match(head, /on Codex 0\.\d+\.\d+ \(tested\)/);
+    assert.match(head, />_ Agent Daemon \(v[\d.]+\)/);
+    assert.doesNotMatch(head, /on Codex/);
     assert.match(head, /directory: .*git: (main|master)/);
     assert.match(head, /sandbox: +workspace-write/);
 
@@ -320,19 +321,6 @@ test("FC3 live script: ad tui on the real Codex binary, end to end", { skip, tim
     t.term.resize(100, 30);
     await settle(800);
     assert.equal((t.screen().match(/\? shortcuts/g) ?? []).length, 1, `one footer after resizing:\n${t.screen()}`);
-
-    // 8. /codex and back: the stock Codex UI on the same conversation.
-    t.type("/codex\r");
-    await t.until(/OpenAI Codex/, "the stock Codex UI", 120_000);
-    await settle(3000);
-    // Ctrl+C until the stock UI is gone (as a person would).
-    for (let i = 0; i < 4 && !/Back from the stock Codex UI/.test(t.text()); i++) {
-      t.type("\x03");
-      await settle(1500);
-      if (t.exited) assert.fail(`ad exited (${JSON.stringify(t.exited)}) after ${i + 1} Ctrl+C`);
-    }
-    await t.until(/Back from the stock Codex UI \(exit \d+\)/, "back in ad", 60_000);
-    await t.until(() => t.idle(), "ad's composer again");
 
     // 9. Quit: Ctrl+C twice on an empty prompt.
     t.type("\x03");

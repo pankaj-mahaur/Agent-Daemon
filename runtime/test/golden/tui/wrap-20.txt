@@ -1,8 +1,8 @@
-|Codex-style answers|
-|wrap at word|
-|boundaries, like|
-|this bold phrase,|
-|and keep CJK text|
+|Agent answers wrap|
+|at word boundaries,|
+|like this bold|
+|phrase, and keep CJK|
+|text|
 |(日本語のテキスト)|
 |and emoji 👨‍👩‍👧 🇮🇳|
 |whole.|
@@ -16,11 +16,11 @@
 |_hard_broken_somewhe|
 |re|
 --- ansi (depth 4)
-"Codex-style answers"
-"wrap at word"
-"boundaries, like"
-"\u001b[1mthis bold phrase\u001b[0m,"
-"and keep CJK text"
+"Agent answers wrap"
+"at word boundaries,"
+"like \u001b[1mthis bold\u001b[0m"
+"\u001b[1mphrase\u001b[0m, and keep CJK"
+"text"
 "(日本語のテキスト)"
 "and emoji 👨‍👩‍👧 🇮🇳"
 "whole."

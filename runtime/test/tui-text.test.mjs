@@ -249,7 +249,7 @@ test("truncate adds an ellipsis only when it cuts", () => {
 /* ------------------------------------------------------------------ */
 
 const PARAGRAPH = [
-  { text: "Codex-style answers wrap at word boundaries, like " },
+  { text: "Agent answers wrap at word boundaries, like " },
   { text: "this bold phrase", style: { bold: true } },
   { text: `, and keep CJK text (\u{65e5}\u{672c}\u{8a9e}\u{306e}\u{30c6}\u{30ad}\u{30b9}\u{30c8}) and emoji ${FAMILY} ${FLAG_IN} whole.\n` },
   { text: "    Indented code stays indented;\tthen a tab.\n\n" },
