@@ -1,6 +1,6 @@
 // SessionEnd adapter: the host supplies session metadata as JSON on stdin.
 //
-// Claude Code allows the hook 30 s, so the digest runs inline. Codex caps
+// Claude Code allows the hook 30 s, so the digest runs inline. The engine caps
 // SessionEnd at 3 s, so there the digest is handed to a detached
 // `ad digest` process and the hook returns at once.
 
@@ -34,7 +34,7 @@ export async function sessionEndDigest({ spawnFn } = {}) {
         sessionId: String(input.session_id || process.env.CLAUDE_SESSION_ID || ""),
         cwd: String(input.cwd || process.env.CLAUDE_PROJECT_DIR || process.cwd()),
       };
-      if (hookHost() === "codex") {
+      if (hookHost() === "ad") {
         spawnDetachedDigest(meta, spawnFn);
       } else {
         // Lazy: the digest pipeline (SQLite etc.) is only needed inline.

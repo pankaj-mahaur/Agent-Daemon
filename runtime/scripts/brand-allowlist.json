@@ -115,6 +115,11 @@
       "reason": "reference config for the `codex` session adapter: the user's own Codex is a third-party product ad reads (descriptive)"
     },
     {
+      "path": "runtime/src/hooks/codex-session-end.mjs",
+      "rules": ["A"],
+      "reason": "a shim with the file name hooks.json files written by ad 2.x still call; the real launcher is hooks/engine-session-end.mjs (removed in 4.0)"
+    },
+    {
       "path": "runtime/test/codex-*.test.mjs",
       "rules": ["A", "B"],
       "reason": "tests of the adapter: they assert what the adapter sends to and reads from the engine"

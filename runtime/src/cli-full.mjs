@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { exec } from "node:child_process";
 import path from "node:path";
 import fs from "node:fs/promises";
+import { productValue } from "./product-values.mjs";
 
 import { runSessionStart } from "./session-start.mjs";
 import { runDigest } from "./digest/digest.mjs";
@@ -2204,8 +2205,8 @@ async function main(argv) {
     return 1;
   }
 
-  // `--host codex` (set in the harness hooks.json) makes hooks/io.mjs adapt
-  // hook input/output to Codex. Default is Claude Code.
+  // `--host ad` (set in the harness hooks.json; the old value is still read)
+  // makes hooks/io.mjs adapt hook input/output to the engine. Default is Claude Code.
   if (parsed.values.host) process.env.AD_HOOK_HOST = parsed.values.host;
   const SANDBOX_MODES = ["read-only", "workspace-write", "danger-full-access"];
   if (parsed.values.sandbox !== undefined && !SANDBOX_MODES.includes(parsed.values.sandbox)) {
@@ -2214,10 +2215,10 @@ async function main(argv) {
   }
   // Backend for ad's own LLM calls (digest fallback, GEPA) — see llm.mjs.
   if (parsed.values.llm) process.env.AD_LLM_BACKEND = parsed.values.llm;
-  // Under Codex, CLAUDE_* vars are leftovers from an outer Claude Code
+  // Under the engine, CLAUDE_* vars are leftovers from an outer Claude Code
   // session (e.g. `ad chat` started from inside one) and name the wrong
   // project; hooks get cwd/session from their stdin payload instead.
-  const claudeEnv = process.env.AD_HOOK_HOST === "codex" ? {} : process.env;
+  const claudeEnv = productValue(process.env.AD_HOOK_HOST) === "ad" ? {} : process.env;
 
   const opts = {
     transcript:  parsed.values.transcript    || claudeEnv.CLAUDE_TRANSCRIPT_PATH,

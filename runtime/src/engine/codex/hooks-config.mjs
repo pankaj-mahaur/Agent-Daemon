@@ -9,10 +9,10 @@
 //   - apply_patch edits match `Edit|Write` (no MultiEdit tool)
 //   - no Skill tool / UserPromptExpansion event → those hooks are skipped
 //   - SessionEnd is capped at 3 s → a dependency-free launcher that only
-//     spawns a detached digest (hooks/codex-session-end.mjs)
+//     spawns a detached digest (hooks/engine-session-end.mjs)
 //   - other handlers get ≥ 10 s: node + PowerShell cold start alone can
 //     take ~2 s on Windows, and Claude-tuned 3 s limits would time out
-//   - handlers get `--host codex` so hooks/io.mjs adapts input and output
+//   - handlers get `--host ad` so hooks/io.mjs adapts input and output (2.x homes wrote `--host codex`, still read)
 //
 // Every hook invokes our CLI by absolute path with the current node binary,
 // so it works whether or not `ad` is on PATH.
@@ -21,7 +21,7 @@ import { fileURLToPath } from "node:url";
 import { resolveProfile } from "../../profiles.mjs";
 
 export const CLI_PATH = fileURLToPath(new URL("../../cli.mjs", import.meta.url));
-export const SESSION_END_SCRIPT = fileURLToPath(new URL("../../hooks/codex-session-end.mjs", import.meta.url));
+export const SESSION_END_SCRIPT = fileURLToPath(new URL("../../hooks/engine-session-end.mjs", import.meta.url));
 
 const SKIP = new Set(["skill-use", "slash-command-use"]);
 const CODEX_EVENTS = new Set(["SessionStart", "SessionEnd", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PreCompact", "PostCompact", "Stop"]);
@@ -33,11 +33,11 @@ export const shQuote = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
 // quotes; each must be doubled inside a single-quoted string.
 export const psQuote = (s) => `'${String(s).replace(/['‘-‛]/g, "$&$&")}'`;
 
-// "ad hook bash-post" → ["hook", "bash-post", "--host", "codex"]
+// "ad hook bash-post" → ["hook", "bash-post", "--host", "ad"]
 function argsFor(def) {
   const parts = def.command.trim().split(/\s+/);
   if (parts[0] !== "ad") throw new Error(`hook command must start with "ad": ${def.command}`);
-  return [...parts.slice(1), "--host", "codex"];
+  return [...parts.slice(1), "--host", "ad"];
 }
 
 // hooks: resolved hook definitions [{id, event, matcher, command, timeout}]

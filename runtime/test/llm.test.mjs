@@ -28,7 +28,8 @@ function fakeFactory(root, seen) {
 
 test("llmBackend: default auto, env and opts override, unknown rejected", () => {
   assert.equal(llmBackend({}, {}), "auto");
-  assert.equal(llmBackend({}, { AD_LLM_BACKEND: "codex" }), "codex");
+  assert.equal(llmBackend({}, { AD_LLM_BACKEND: "codex" }), "ad", "the old value still works");
+  assert.equal(llmBackend({}, { AD_LLM_BACKEND: "ad" }), "ad");
   assert.equal(llmBackend({ backend: "claude" }, { AD_LLM_BACKEND: "codex" }), "claude");
   assert.throws(() => llmBackend({ backend: "gpt" }, {}), /unknown LLM backend/);
 });
@@ -79,7 +80,28 @@ test("codex: a non-strict schema is embedded in the prompt, not sent as outputSc
     await callLlm({ backend: "codex", userMessage: "q", jsonSchema: { type: "object", properties: { a: {} } } }, { engineFactory: fakeFactory(root, seen) });
     assert.equal(seen[0].outputSchema, undefined);
     assert.match(seen[0].input[0].text, /Respond with ONLY a JSON object/);
+    await callLlm({ backend: "ad", userMessage: "q", jsonSchema: { type: "object", properties: { a: {} } } }, { engineFactory: fakeFactory(root, seen) });
+    assert.equal(seen[1].outputSchema, undefined, "the new value reaches the engine too");
   } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("auto: the fallback note names ad's engine", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ad-llm-"));
+  const seen = [];
+  const lines = [];
+  const err = process.stderr;
+  const write = err.write.bind(err);
+  err.write = (s) => (lines.push(String(s)), true);
+  try {
+    await callLlm(
+      { userMessage: "q", verbose: true },
+      { callClaude: async () => ({ ok: false, error: "spawn failed: spawn claude ENOENT" }), engineFactory: fakeFactory(root, seen) },
+    );
+    assert.ok(lines.some((l) => l.includes("using ad's engine")), JSON.stringify(lines));
+  } finally {
+    err.write = write;
     rmSync(root, { recursive: true, force: true });
   }
 });
@@ -102,11 +124,11 @@ test("a schema'd call whose reply has no JSON fails with a reason", async () => 
   assert.match(r.error, /no JSON object/);
 });
 
-test("codexModelFor maps Claude aliases to AD_CODEX_LLM_MODEL", async () => {
-  const { codexModelFor } = await import("../src/llm.mjs");
-  assert.equal(codexModelFor("haiku", {}), undefined);
-  assert.equal(codexModelFor("haiku", { AD_CODEX_LLM_MODEL: "gpt-mini" }), "gpt-mini");
-  assert.equal(codexModelFor("gpt-x", { AD_CODEX_LLM_MODEL: "gpt-mini" }), "gpt-x");
-  assert.equal(codexModelFor("haiku", { AD_ENGINE_MODEL: "gpt-new" }), "gpt-new", "the new name works");
-  assert.equal(codexModelFor("haiku", { AD_ENGINE_MODEL: "gpt-new", AD_CODEX_LLM_MODEL: "gpt-mini" }), "gpt-new", "the new name wins");
+test("engineModelFor maps Claude aliases to AD_ENGINE_MODEL", async () => {
+  const { engineModelFor } = await import("../src/llm.mjs");
+  assert.equal(engineModelFor("haiku", {}), undefined);
+  assert.equal(engineModelFor("haiku", { AD_CODEX_LLM_MODEL: "gpt-mini" }), "gpt-mini");
+  assert.equal(engineModelFor("gpt-x", { AD_CODEX_LLM_MODEL: "gpt-mini" }), "gpt-x");
+  assert.equal(engineModelFor("haiku", { AD_ENGINE_MODEL: "gpt-new" }), "gpt-new", "the new name works");
+  assert.equal(engineModelFor("haiku", { AD_ENGINE_MODEL: "gpt-new", AD_CODEX_LLM_MODEL: "gpt-mini" }), "gpt-new", "the new name wins");
 });

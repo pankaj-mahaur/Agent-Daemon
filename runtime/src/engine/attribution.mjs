@@ -176,6 +176,7 @@ export const migrateMessages = Object.freeze({
  */
 export const LEGACY = Object.freeze({
   productValue: "codex", // the old value of --engine, --llm, --host and their env vars
+  command: "codex", // the removed command
   envHome: "AD_CODEX_HOME",
   envBin: "AD_CODEX_BIN",
   envModel: "AD_CODEX_LLM_MODEL",

@@ -81,7 +81,19 @@ test("spawnAgent defaults to the Codex worker and reports to the leader inbox", 
     assert.match(seen[0].systemPrompt, /role \*\*coder\*\*/);
     assert.match(seen[0].userMessage, /do a thing/);
     const bad = await spawnAgent({ teamId: "t1", role: "coder", task: "x", cwd: root, worktree: false, engine: "gpt" });
-    assert.match(bad.error, /unknown engine/);
+    assert.match(bad.error, /unknown engine "gpt" \(use ad or claude\)/);
+    const alias = await spawnAgent({
+      teamId: "t1",
+      role: "coder",
+      task: "do a thing",
+      cwd: root,
+      worktree: false,
+      leader: "lead",
+      engine: "codex",
+      runWorker: async (args) => (seen.push(args), { ok: true, output: "done!", threadId: "th-2" }),
+    });
+    assert.equal(alias.ok, true, "the old value still runs the engine worker");
+    assert.equal(alias.threadId, "th-2");
   } finally {
     process.env.HOME = prevHome;
     process.env.USERPROFILE = prevProfile;
