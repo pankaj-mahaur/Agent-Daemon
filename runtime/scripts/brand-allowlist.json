@@ -280,6 +280,16 @@
       "reason": "an attribution place (design D4): it lists the upstream sources"
     },
     {
+      "path": "THIRD_PARTY_NOTICES.md",
+      "rules": ["A"],
+      "reason": "an attribution place (design D4): the engine's notices and license"
+    },
+    {
+      "path": "docs/upgrade-3.0.md",
+      "rules": ["A"],
+      "reason": "an attribution place (design D4): the 2.x to 3.0 upgrade guide must name the old names"
+    },
+    {
       "path": ".claude/skills/ad-ci-readiness/SKILL.md",
       "rules": ["A"],
       "reason": "this repo's maintainer skill: it describes the engine's sandbox behaviour on the CI runners"

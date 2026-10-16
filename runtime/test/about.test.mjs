@@ -38,6 +38,7 @@ test("ad about names ad, the engine, its process, the settings and the tested ve
     assert.match(out.text, /its process shows as codex/);
     assert.ok(out.text.includes(join(root, "engine", "config.toml")), "the settings path under the resolved home");
     assert.match(out.text, new RegExp(`tested engine versions: ${TESTED.join(", ")}`, "m"));
+    assert.match(out.text, /^notices: THIRD_PARTY_NOTICES\.md \(in ad's source folder\)$/m);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

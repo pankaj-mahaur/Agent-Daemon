@@ -22,6 +22,7 @@ export function cmdAbout(opts = {}) {
     `Agent Daemon ${pkg.version} (${pkg.license ?? "see LICENSE"})`,
     ...aboutLines({ engineVersion: installed.version ?? undefined, pinnedVersion: engineVersion.pinned(), homePath: home ?? "(see ad doctor)", settingsPath: home ? join(home, "config.toml") : "(see ad doctor)" }),
     `tested engine versions: ${(engineVersion.compat().tested ?? []).join(", ")}`,
+    `notices: THIRD_PARTY_NOTICES.md (in ad's source folder)`,
   ];
   out.write(`${lines.join("\n")}\n`);
   return 0;
