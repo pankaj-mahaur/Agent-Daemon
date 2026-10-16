@@ -20,6 +20,8 @@ import unicode11 from "@xterm/addon-unicode11";
 import { defaultScript, ev, lastUserText, startMockResponses, writeMockCodexHome } from "../testkit/mock-responses.mjs";
 import { resolveCodexCommand } from "../src/engine/codex/app-server.mjs";
 import { MANAGED_MARKER } from "../src/engine/codex/home.mjs";
+import { screenHits } from "../scripts/check-brand.mjs";
+import { brandPatterns } from "../src/engine/attribution.mjs";
 
 const { Terminal } = xtermHeadless;
 const { Unicode11Addon } = unicode11;
@@ -321,6 +323,15 @@ test("FC3 live script: ad tui on the real Codex binary, end to end", { skip, tim
     t.term.resize(100, 30);
     await settle(800);
     assert.equal((t.screen().match(/\? shortcuts/g) ?? []).length, 1, `one footer after resizing:\n${t.screen()}`);
+
+    // G2: nothing on ad's screen names the engine, except the attribution texts and model names.
+    const shown = screenHits(t.text(), { allow: brandPatterns() });
+    assert.deepEqual(shown.map((h) => h.text), [], "ad's screen names the engine");
+    // …nor the files ad writes: /export, and the managed instructions block.
+    t.type("/export brand-check.md\r");
+    await t.until(() => existsSync(join(w.cwd, "brand-check.md")), "the export");
+    const written = readFileSync(join(w.cwd, "brand-check.md"), "utf8") + "\n" + readFileSync(join(w.codexHome, "AGENTS.md"), "utf8");
+    assert.deepEqual(screenHits(written, { allow: brandPatterns() }).map((h) => h.text), [], "a file ad wrote names the engine");
 
     // 9. Quit: Ctrl+C twice on an empty prompt.
     t.type("\x03");
