@@ -273,3 +273,21 @@ test("ensureHarnessSetup leaves a home it did not create alone", async () => {
     assert.equal(existsSync(join(engine.home, "hooks.json")), false);
   });
 });
+
+test("hookHost reads AD_HOOK_HOST with the old value as an alias", async () => {
+  const { hookHost } = await import("../src/hooks/io.mjs");
+  const prev = process.env.AD_HOOK_HOST;
+  try {
+    process.env.AD_HOOK_HOST = "codex";
+    assert.equal(hookHost(), "ad");
+    process.env.AD_HOOK_HOST = "ad";
+    assert.equal(hookHost(), "ad");
+    process.env.AD_HOOK_HOST = "claude";
+    assert.equal(hookHost(), "claude");
+    delete process.env.AD_HOOK_HOST;
+    assert.equal(hookHost(), "claude");
+  } finally {
+    if (prev === undefined) delete process.env.AD_HOOK_HOST;
+    else process.env.AD_HOOK_HOST = prev;
+  }
+});

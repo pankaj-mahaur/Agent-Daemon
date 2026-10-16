@@ -76,3 +76,21 @@ test("starting the harness with the pinned engine warns nothing", async () => {
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+test("starting the harness with an untested engine warns once", async () => {
+  const home = mkdtempSync(join(tmpdir(), "ad-about-home-"));
+  const err = new Sink();
+  const orig = engineVersion.installed;
+  engineVersion.installed = () => ({ version: "0.0.1", source: "pinned" });
+  try {
+    const { engine } = await startHarnessEngine({ home, command: FAKE, setup: false, err });
+    try {
+      assert.match(err.text, /the engine is version 0\.0\.1; ad was tested with/);
+    } finally {
+      await engine?.close();
+    }
+  } finally {
+    engineVersion.installed = orig;
+    rmSync(home, { recursive: true, force: true });
+  }
+});

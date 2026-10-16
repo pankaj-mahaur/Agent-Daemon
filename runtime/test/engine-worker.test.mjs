@@ -101,6 +101,35 @@ test("spawnAgent defaults to the engine worker and reports to the leader inbox",
   }
 });
 
+test("spawnAgent reads AD_AGENT_ENGINE with the old value as an alias", async () => {
+  const { spawnAgent } = await import("../src/orchestration/spawn.mjs");
+  const root = mkdtempSync(join(tmpdir(), "ad-spawn-"));
+  const prevHome = process.env.HOME;
+  const prevProfile = process.env.USERPROFILE;
+  const prevEngine = process.env.AD_AGENT_ENGINE;
+  process.env.HOME = process.env.USERPROFILE = root; // team state under a temp home
+  try {
+    process.env.AD_AGENT_ENGINE = "codex";
+    const r = await spawnAgent({
+      teamId: "t1",
+      role: "coder",
+      task: "x",
+      cwd: root,
+      worktree: false,
+      leader: "lead",
+      runWorker: async () => ({ ok: true, output: "done!", threadId: "th-env" }),
+    });
+    assert.equal(r.ok, true);
+    assert.equal(r.threadId, "th-env", "the old env value still runs the engine worker");
+  } finally {
+    process.env.HOME = prevHome;
+    process.env.USERPROFILE = prevProfile;
+    if (prevEngine === undefined) delete process.env.AD_AGENT_ENGINE;
+    else process.env.AD_AGENT_ENGINE = prevEngine;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("commitWorktree never runs repo-controlled hooks (husky-style core.hooksPath)", () => {
   const root = mkdtempSync(join(tmpdir(), "ad-hooks-"));
   try {

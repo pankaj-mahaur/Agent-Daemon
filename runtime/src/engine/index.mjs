@@ -274,7 +274,7 @@ export class Engine extends EventEmitter {
   }
 
   /**
-   * Adapted events (engine/codex/events.mjs) for one thread and every child
+   * Adapted events (the engine's events module) for one thread and every child
    * thread it spawned (subagents), or with threadId null the events that
    * belong to no thread (account, rate limits, MCP status, warnings).
    * Returns an unsubscribe function.
