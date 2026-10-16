@@ -61,6 +61,7 @@ The rule between layers: **only `engine/codex/` knows Codex's protocol.** Everyt
 - **The folder.** `state.config.cwd` is mutable: `changeDir()` forks the conversation into the new folder (`/cd`).
 - **Side conversations.** `openSide()` forks an ephemeral, read-only thread and returns a second session on the same engine: no requests, no lock, ad's hooks off.
 - **Subagents and denials.** `state.agents` (first seen, running, closed) for `/subagents`; `state.denials` (Codex's auto-review denials, the last 10) for `/approve`, sent back as Codex's core event.
+- **Identity.** The agent learns who it is from the identity block: on a managed engine home it is the first line of the managed instructions block in `<home>/AGENTS.md`; on a home ad didn't create, the TUI injects it as a developer message into each new thread.
 
 ### The renderer: inline, not fullscreen
 
@@ -110,7 +111,7 @@ For `/codex`, ad's own engine first unloads the conversation (`thread/unsubscrib
 - **Snapshot + checks.** A committed protocol snapshot (`engine/codex/protocol-snapshot.json`) records every method and notification the client relies on; the test suite checks the fake server's messages against it.
 - **Generic fallbacks.** An unknown item type renders as a plain row; an unknown notification is ignored; an unknown request is declined with a note.
 - **Weekly upgrade PR.** The `codex-upgrade` workflow bumps the pin, diffs the protocol (removals flagged as breaking), regenerates Codex's slash-command names, and runs the suite and the live TUI tests on the real binary in its own Linux job before opening the PR. The PR's own CI on Linux, macOS and Windows runs only when the repo has a `CODEX_UPGRADE_TOKEN` secret ([testing.md](testing.md#ci)).
-- **Slash commands.** `src/tui/codex-slash.json` is generated from Codex's own source at the pin (`scripts/codex-slash.mjs`): every command with its aliases, whether it runs during a task, whether it works in a side conversation, and whether the popup hides it. ad's own commands must never take a Codex name, and every Codex command is either run by ad (with Codex's rules) or listed in `NOT_IN_AD` with what ad says instead; a Codex command is never sent to the model. A command Codex adds fails a test in the upgrade PR until ad decides.
+- **Slash commands.** `engine/codex/upstream-commands.json` is generated from the engine's own source at the pin (`scripts/codex-slash.mjs`) and reached through the façade as `engineCommands`: every command with its aliases, whether it runs during a task, whether it works in a side conversation, and whether the popup hides it. ad's own commands must never take an upstream name, and every upstream command is either run by ad (with upstream's rules) or listed in `NOT_IN_AD` with what ad says instead; an upstream command is never sent to the model. A command the engine adds fails a test in the upgrade PR until ad decides.
 - **Requests checked both ways.** The fake app-server rejects any request of ad's that the pinned stable protocol doesn't accept (an unknown method or field, a wrong type); `SENT_METHODS` lists every method ad sends, checked against the source. Experimental calls must be on `EXPERIMENTAL_ALLOWLIST` (`engine/codex/surface.mjs`), and the fake refuses them without the opt-in.
 
 ## `/undo`: the safety model

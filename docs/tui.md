@@ -72,13 +72,13 @@ On exit, ad prints how to continue: `ad tui --resume <id>`, with the tokens used
 
 ## First run
 
-1. **Sign in.** If ad isn't signed in to Codex yet, a sign-in panel opens:
+1. **Sign in.** If ad isn't signed in yet, a sign-in panel opens:
 
    | Choice | Runs |
    |---|---|
-   | ChatGPT | `ad auth login chatgpt` (browser) |
-   | OpenAI API key | `ad auth login openai` (kept by Codex in ad's Codex home) |
+   | OpenAI API key | `ad auth login openai` (kept in ad's own folder) |
    | OpenRouter | `ad auth login openrouter` (key and model; the key goes to ad's secret store) |
+   | ChatGPT | `ad auth login chatgpt` (browser) |
 
    The terminal is handed to that command and comes back when it finishes. Esc closes the panel and exits. `/login` does the same later; `/logout` signs out.
 2. **Trust the folder.** The first time in a folder, ad asks whether you trust it. Trusted folders may load their own `.codex` config, hooks and skills. The answer is saved once per folder in ad's Codex home (`config.toml`, `projects`). Your home folder is never asked about.
@@ -122,12 +122,12 @@ On exit, ad prints how to continue: `ad tui --resume <id>`, with the tokens used
 - **Cells.** Prompts (`›`), answers, commands (Explored, Ran, Failed (exit N), Declined, with the last lines of output), edits (`Edited N files (+A -R)` with a diff), the model's checklists (**Updated Plan**, each time it changes them), proposed plans ([Plan mode](#plan-mode)), tool calls and notices. A turn ends with "Worked for Ns".
 - **ad rows** are one dim line each, and only when something happens: recalled learnings, a guard that blocked a command, a hook that failed, what ad learned, loop iterations.
 - **Activity row** (while a turn runs): what Codex is doing, the time, and `esc to interrupt`. Queued prompts are listed under it; the last one says `tab: edit`.
-- **Status line** (under the prompt, from 12 rows): Codex's status line items, joined with ` · `. By default the model and its reasoning effort, the folder, `ctx N%` (the context left in this conversation) and `5h N%` (how much of the current usage window is used); a percentage turns amber at 80 % used. `/statusline` chooses the items and their order, with Codex's ids (`git-branch`, `branch-changes`, `run-state`, `weekly-limit`, `task-progress`, …); it's saved as Codex's `tui.status_line`, so `/codex` shows the same. When it's too wide, items drop from the end. Under an approval it shows only where the approval doesn't need the room.
+- **Status line** (under the prompt, from 12 rows): the engine's status line items, joined with ` · `. By default the model and its reasoning effort, the folder, `ctx N%` (the context left in this conversation) and `5h N%` (how much of the current usage window is used); a percentage turns amber at 80 % used. `/statusline` chooses the items and their order, with the engine's ids (`git-branch`, `branch-changes`, `run-state`, `weekly-limit`, `task-progress`, …); it's saved as the engine's `tui.status_line`. When it's too wide, items drop from the end. Under an approval it shows only where the approval doesn't need the room.
 - **Footer.**
   - Left: key hints. Idle: `? shortcuts · @ files · <newline key> newline`. While a turn runs: `enter steer · tab queue · <newline key> newline`.
   - Right: chips: `private` while `/private` is on, `loop N` while a background loop runs.
   - **When the footer is too narrow**, the key hints go first (from the end), then chips shorten (`loop 3` → `L3`, `private` → `P`), then chips go.
-- **Window title.** By default a spinner while a turn runs ("action required" while an approval waits), the conversation's name and the project. `/title` chooses the items (Codex's `tui.terminal_title`). The terminal's own title is saved when ad starts and put back when it ends and around `/codex` and the editor. `/private` keeps the conversation's name out of it.
+- **Window title.** By default a spinner while a turn runs ("action required" while an approval waits), the conversation's name and the project. `/title` chooses the items (the engine's `tui.terminal_title`). The terminal's own title is saved when ad starts and put back when it ends and around the editor. `/private` keeps the conversation's name out of it.
 
 ---
 
@@ -206,7 +206,18 @@ Big pastes (more than 5 lines or 1000 characters) show as `[Pasted N lines]` and
 
 The terminal bell rings when an approval waits, and when a turn ends while the terminal window isn't focused.
 
-**Changing keys.** ad uses Codex's names for the actions it has, so the keys you set in the stock UI's `/keymap` (in `/codex`; they're saved as `tui.keymap` in ad's Codex home) apply in ad too: the transcript, the external editor, copy, raw output, clear, interrupt, reasoning effort, queue, the shortcuts and the pager. ad doesn't change them itself. A key ad can't use there (a chord like `ctrl-x f`, a key that would mean two things, or one of the prompt's editing keys) is skipped, and `/warnings` says why. `/keymap` lists the keys in effect (yours marked) and `/keymap debug` shows what your terminal sends for a key and what it does in ad (Ctrl+C closes it). Shift+Tab never queues: it switches [Plan mode](#plan-mode), a fixed key in Codex too.
+**Changing keys.** ad uses the engine's names for the actions it has. Set keys in the engine's settings file, under `[tui.keymap]` (ad about shows where); for example:
+
+```toml
+[tui.keymap.global]
+open_transcript = "alt-y"
+```
+
+ad reads them and never writes them. A key ad can't use there (a chord like `ctrl-x f`, a key that would mean two things, or one of the prompt's editing keys) is skipped, and `/warnings` says why. `/keymap` lists the keys in effect (yours marked) and `/keymap debug` shows what your terminal sends for a key and what it does in ad (Ctrl+C closes it). Shift+Tab never queues: it switches [Plan mode](#plan-mode).
+
+### Settings in the engine's settings file
+
+The status line, the window title, the keys and the theme are stored in the engine's settings file (`config.toml` in the engine home; `ad about` shows where). ad reads them and never writes `tui.keymap`; `/warnings` lists what ad can't show.
 
 ---
 
@@ -228,7 +239,7 @@ A command request lists only what Codex offers for that command, so `p` and `h` 
 - **Long requests** scroll inside the box with PgUp / PgDn.
 - **Questions** from Codex list numbered options plus Skip (`esc`), or take free text. Secret answers are masked and never stored in history.
 - **Forms** from an MCP server offer Submit (`y`; "Open it, then continue" for a link), Decline (`n`) and Cancel (`esc`).
-- A request ad doesn't support yet is declined, and ad says "This needs the stock UI: /codex".
+- A request ad doesn't support yet is declined, and ad says "ad declined a request it can't show here.".
 
 ---
 
@@ -321,8 +332,7 @@ Model, effort and permission changes apply from the next turn.
 | `/loop "<objective>"` | work toward an objective in the background (`/loop stop`) |
 | `/team [id]` | the team board |
 | `/schedule [run <id>]` | scheduled jobs |
-| `/tools [list\|enable\|disable <tool>]` | optional agent tools (`/tools enable browser`) |
-| `/codex [args]` | open the stock Codex UI on this conversation |
+| `/tools [list|enable|disable <tool>]` | optional agent tools (`/tools enable browser`) |
 | `/ad <command>` | run an ad command, e.g. `/ad doctor` |
 
 **Help**
@@ -332,7 +342,7 @@ Model, effort and permission changes apply from the next turn.
 | `/help` | what you can do here: every command and shortcut |
 | `/terminal-setup` | how to make Shift+Enter add a newline in this terminal |
 
-A Codex command ad doesn't have yet is never sent to the model as a prompt. It answers in one line why ("/import isn't in ad yet. /codex opens the stock Codex UI on this conversation."), and what you typed stays in the prompt. Where the stock UI can't help either (`/ide`, `/app`, `/daemon`), the answer says so instead. Codex's commands keep Codex's rules: the ones Codex disables while a task runs (`/new`, `/fork`, `/compact`, `/init`, `/export`, `/review`, `/logout`, …) answer "'/new' is disabled while a task is in progress.", and the draft stays. Codex's aliases work (`/cwd`, `/clean` for `/stop`, `/pet`), and `/quit` shows in the popup only once you type it.
+A command ad doesn't have yet is never sent to the model as a prompt. It answers in one line why ("/import isn't planned for ad."), and what you typed stays in the prompt. Where the engine's own UI can't help either (`/ide`, `/app`, `/daemon`), the answer says so instead. Upstream commands keep upstream's rules: the ones disabled while a task runs (`/new`, `/fork`, `/compact`, `/init`, `/export`, `/review`, `/logout`, …) answer "'/new' is disabled while a task is in progress.", and the draft stays. Upstream's aliases work (`/cwd`, `/clean` for `/stop`, `/pet`), and `/quit` shows in the popup only once you type it.
 
 ---
 
@@ -356,7 +366,7 @@ Codex's own plan mode: the model explores without changing anything, asks you wh
 
 Code in answers (a fenced block that names its language) and the unchanged lines of an edit's diff are coloured by language, as in Codex: JavaScript and TypeScript (with JSX), Python, Rust, Go, C, C++, C#, Java, JSON (and JSON with comments), YAML, TOML, shell (here-documents too), console sessions (the commands after a `$ ` prompt; their output stays plain), PowerShell, HTML and XML, CSS, SQL and diff. A block in another language, or one over 2,000 lines or 200,000 characters (or a line over 2,000 characters), stays in the plain code colour. Added and removed lines of a diff keep the diff colours; its unchanged lines are coloured as the new file reads, hunk by hunk.
 
-`/theme` chooses the colours, as Codex's does: **Select Syntax Theme**, with a code sample and a diff previewing each theme as you move (only the preview: what a running turn adds meanwhile keeps the current theme); Enter saves it as `tui.theme` in ad's Codex config (shared with `/codex`), Esc keeps the old one. ad ships three: `ansi` (the default: your terminal's own colours, readable on light and dark backgrounds), and Codex's `catppuccin-mocha` (dark) and `catppuccin-latte` (light), which become the nearest 256 or 16 colours where the terminal has no truecolor. A theme from Codex's longer list that ad doesn't ship shows as `ansi` in ad (the stock UI still uses it), and `/warnings` says so. With `NO_COLOR` set, code has no colours. What is already in the scrollback keeps the colours it was drawn with.
+`/theme` chooses the colours: **Select Syntax Theme**, with a code sample and a diff previewing each theme as you move (only the preview: what a running turn adds meanwhile keeps the current theme); Enter saves it as `tui.theme` in the engine's config, Esc keeps the old one. ad ships three: `ansi` (the default: your terminal's own colours, readable on light and dark backgrounds), and `catppuccin-mocha` (dark) and `catppuccin-latte` (light), which become the nearest 256 or 16 colours where the terminal has no truecolor. A theme from the engine's longer list that ad doesn't ship shows as `ansi` in ad, and `/warnings` says so. With `NO_COLOR` set, code has no colours. What is already in the scrollback keeps the colours it was drawn with.
 
 ## Vim mode
 
@@ -483,18 +493,9 @@ Esc Esc rewinds the conversation only; `/undo` rewinds the conversation **and** 
 
 ---
 
-## `ad codex` and `/codex`
+## `/codex` is gone
 
-```bash
-ad codex                         # the pinned Codex's own UI, on ad's home
-ad codex resume --last           # any codex arguments
-```
-
-`ad codex` runs the stock Codex UI from the same pinned Codex, with `CODEX_HOME` set to ad's home (never `~/.codex`) and `--no-daemon`, so it never talks to your own Codex or its daemon. Provider keys come from ad's secret store.
-
-Codex reads skills only from its home, so your `~/.claude/skills` are mirrored into the home's `skills/` folder first. Only folders ad created there are ever replaced or removed. Project `.claude/skills` aren't visible in `ad codex`.
-
-**`/codex`** inside `ad tui` opens the stock UI on the **same conversation**. ad lets go of the conversation first: its engine unloads it (so only the stock UI runs it, and nothing is written twice), and resumes it from disk when you quit the stock UI, with the turns you took there. What was already in the scrollback stays; only the new turns show. Use it for a Codex feature ad doesn't have yet.
+`ad codex` and `/codex` (the engine's own UI) were removed in 3.0. Typing `/codex` prints what to use instead: `ad --last` resumes a conversation, and the engine's settings file holds the settings.
 
 ---
 
