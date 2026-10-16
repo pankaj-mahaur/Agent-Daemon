@@ -61,7 +61,7 @@ export function createIo({
     kitty: false,
     modifyOtherKeys: false,
     sync: false,
-    focus: platform !== "win32", // as in Codex: no focus reporting on Windows
+    focus: platform !== "win32", // as in the engine's own UI: no focus reporting on Windows
     da1: null,
   };
   const inputListeners = new Set();
@@ -273,7 +273,7 @@ export function createIo({
   }
 
   /**
-   * Gives the terminal to `fn` (stock Codex UI, an editor): input detached,
+   * Gives the terminal to `fn` (the engine's own UI, an editor): input detached,
    * modes restored, then everything re-entered. The caller must make sure no
    * turn is running. Listeners get onResume afterwards to re-anchor.
    */

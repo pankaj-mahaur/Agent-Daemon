@@ -1033,13 +1033,13 @@ test("Codex's keys for /copy, /raw and /warnings: Ctrl+O, Alt+R, F2", async () =
   );
 });
 
-// Codex's settings as the app sees them (prefs.mjs's createCodexSettings), in memory.
+// The engine's settings as the app sees them (prefs.mjs's createEngineSettings), in memory.
 function memorySettings(initial = {}) {
   const store = structuredClone(initial);
   const at = (k) => k.split(".").reduce((o, x) => o?.[x], store);
   return {
     store,
-    codex: {
+    engine: {
       get: at,
       async set(k, v) {
         const keys = k.split(".");
@@ -1491,7 +1491,7 @@ test("/vim in the app: Codex's messages, the footer label, the cursor shape; Esc
 });
 
 test("tui.vim_mode_default starts the prompt in Vim's Insert mode (Codex)", async () => {
-  const settings = { codex: { get: (k) => (k === "tui.vim_mode_default" ? true : undefined) }, ad: { get: (_k, d) => d, set: async () => {} } };
+  const settings = { engine: { get: (k) => (k === "tui.vim_mode_default" ? true : undefined) }, ad: { get: (_k, d) => d, set: async () => {} } };
   await withApp(async ({ until, text }) => {
     await until(() => /Vim: Insert/.test(text()), "on from the start, in Insert");
   }, { settings, cols: 100, rows: 30 });
@@ -1528,7 +1528,7 @@ test("/theme: Codex's picker with a live preview; Esc puts the old theme back; E
   const { setSyntaxTheme, syntaxTheme } = await import("../src/tui/view/highlight.mjs");
   const saved = {};
   const values = { "tui.theme": "dracula" };
-  const settings = { codex: { get: (k) => values[k], set: async (k, v) => ((saved[k] = v), (values[k] = v)) }, ad: { get: (_k, d) => d, set: async () => {} } };
+  const settings = { engine: { get: (k) => values[k], set: async (k, v) => ((saved[k] = v), (values[k] = v)) }, ad: { get: (_k, d) => d, set: async () => {} } };
   try {
     await withApp(async ({ app, scr, type, until, text, committed }) => {
       assert.equal(syntaxTheme(), "ansi", "a theme ad doesn't ship: ansi");

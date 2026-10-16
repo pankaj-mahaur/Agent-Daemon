@@ -1,5 +1,5 @@
-// Transcript cells (plan Part 5c): ViewItems (engine/codex/events.mjs) to span
-// lines, the way Codex's TUI shows them. Pure; untrusted text (commands,
+// Transcript cells (plan Part 5c): ViewItems (the engine's events module) to span
+// lines, the way the engine's own UI shows them. Pure; untrusted text (commands,
 // output, paths, tool results) is sanitized here.
 //
 //   renderCell(item, {width, live})   → lines for one item
@@ -276,9 +276,9 @@ export function renderPlan(steps, { width = 80, explanation = null } = {}) {
   return out;
 }
 
-// What a background terminal runs, without the shell wrapper Codex adds
+// What a background terminal runs, without the shell wrapper the engine adds
 // (`bash -lc '…'`, `powershell.exe -Command '…'`): its parsed command when
-// Codex gives one, else the unwrapped string.
+// the engine gives one, else the unwrapped string.
 export function terminalCommand(t) {
   const parsed = (t?.actions ?? []).length === 1 ? t.actions[0]?.command : null;
   if (parsed) return String(parsed);
@@ -288,7 +288,7 @@ export function terminalCommand(t) {
 }
 
 /**
- * Codex's /ps (history_cell/exec.rs): "Background terminals", each command
+ * The engine's /ps (history_cell/exec.rs): "Background terminals", each command
  * (80 characters at most, " [...]" when cut) with its last lines, 16 at most
  * then "... and N more running".
  */
@@ -296,7 +296,7 @@ export function renderBackgroundTerminals(terminals, { width = 80 } = {}) {
   const w = Math.max(4, width);
   const out = [[{ text: "Background terminals", style: S.head }], []];
   if (!terminals.length) return [...out, [{ text: "  \u{2022} No background terminals running.", style: S.italic }]];
-  // Codex's cut: what fits, then " [...]" (also when the command was longer than 80).
+  // The cut: what fits, then " [...]" (also when the command was longer than 80).
   const cut = (text, room, style, cutAlready = false) => {
     const one = clean(text).replace(/\r?\n/g, "\u{21b5}");
     if (!cutAlready && lineWidth([{ text: one }]) <= room) return [{ text: one, style }];
@@ -319,13 +319,13 @@ const NOTICE = {
 
 export function renderNotice(notice, { width = 80 } = {}) {
   const n = NOTICE[notice?.level] ?? NOTICE.info;
-  // A hint follows the message after a space, dim (Codex's info cells).
+  // A hint follows the message after a space, dim (the engine's info cells).
   const hint = notice?.hint ? [{ text: ` ${clean(notice.hint)}`, style: S.dim }] : [];
   return wrapPrefixed([{ text: clean(notice?.message), style: n.style }, ...hint], width, [{ text: `${n.mark} `, style: n.style }], [{ text: "  " }]);
 }
 
 /**
- * Codex's recap cell: "  ↳ Recap: " and the summary with a hanging indent,
+ * The recap cell: "  ↳ Recap: " and the summary with a hanging indent,
  * then "Next: " and the action when there is one; all italic and dimmed.
  * Narrower than the prefix: "↳ Recap:" alone, then the text unindented.
  */
@@ -408,7 +408,7 @@ function cellLines(item, width) {
       return text.trim() ? capLines(mdCell(text, width, { style: S.italic }), TEXT_LINES) : [];
     }
     case "plan": {
-      // Codex's proposed plan (Plan mode): a titled block, the plan indented 2 (foreground colours only).
+      // The proposed plan (Plan mode): a titled block, the plan indented 2 (foreground colours only).
       const text = String(item.text ?? "");
       const body = text.trim() ? renderMarkdown(text, { width: Math.max(1, width - 4) }) : [[{ text: "(empty)", style: S.italic }]];
       return [normalize([{ text: "\u{2022} ", style: S.bullet }, { text: "Proposed Plan", style: S.head }]), [], ...body.map((l) => normalize([{ text: "  " }, ...l]))];

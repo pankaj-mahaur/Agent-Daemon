@@ -62,6 +62,9 @@ export function featureFlags(snapshot, { experimental = false } = {}) {
   return out;
 }
 
+/** The engine's automatic model ids ("codex-auto-…") take no reasoning effort. */
+export const isAutoModel = (m) => typeof m === "string" && m.startsWith("codex-auto-");
+
 /** Thrown when a gated feature is off. code FEATURE_UNAVAILABLE; the message is shown as is. */
 export class EngineFeatureUnavailable extends Error {
   constructor(message) {

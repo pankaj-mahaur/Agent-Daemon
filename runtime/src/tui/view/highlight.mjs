@@ -1,4 +1,4 @@
-// Syntax highlighting for code blocks and diffs (codex-parity-2 Part 9, P7):
+// Syntax highlighting for code blocks and diffs (parity Part 9, P7):
 // no dependency, one table-driven lexer with per-line state (block comments,
 // multi-line strings, an open tag), linear in the input (every step consumes
 // at least one character; sticky regexes with no nested quantifiers), and caps
@@ -7,7 +7,7 @@
 //   languageFor(fenceInfoOrPath) → language id | null
 //   highlightLines(lang, lines, state?) → {lines: [[{text, cls}]], state}
 //   setSyntaxTheme(name) → {theme, known}; syntaxTheme(); styleFor(cls)
-//   SYNTAX_THEMES: the themes ad ships (Codex's names), "ansi" first
+//   SYNTAX_THEMES: the themes ad ships (upstream's names), "ansi" first
 //
 // Token classes: keyword string number comment function type constant
 // operator punctuation property tag attribute variable builtin, and for diffs
@@ -24,7 +24,7 @@ const THEMES = SYNTAX;
 export const SYNTAX_THEMES = Object.keys(THEMES);
 let theme = "ansi";
 
-/** Uses a theme by Codex's name; one ad doesn't ship falls back to "ansi" (known: false). */
+/** Uses a theme by upstream's name; one ad doesn't ship falls back to "ansi" (known: false). */
 export function setSyntaxTheme(name) {
   const known = !name || Object.hasOwn(THEMES, name);
   theme = name && known ? name : "ansi";

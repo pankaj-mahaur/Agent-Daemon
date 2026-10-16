@@ -17,7 +17,7 @@ import { parseRecap, RECAP_PROMPT_PREFIX, RECAP_SCHEMA, recapHistory, TEMPORARY_
 import { createChecklist, createPicker, renderFooter, renderShortcuts, renderStatus } from "./view/chrome.mjs";
 import { formAutoCancel, LEGACY, ownEngineHomeRefusal, projectConfigFolder, sandboxConsentBody, tombstoneEngineUiSlash } from "../engine/attribution.mjs";
 import { ARM_MS, createChoice, createConfirm, createRequestModal } from "./view/modals.mjs";
-import { CODEX_PLAN_CLEAR_CONTEXT_PREFIX } from "../hooks/generated-prompts.mjs";
+import { PLAN_CLEAR_CONTEXT_PREFIX } from "../hooks/generated-prompts.mjs";
 import { sanitize } from "./terminal/sanitize.mjs";
 import { lineWidth, truncate } from "./terminal/text.mjs";
 import { INIT_PROMPT } from "./init-prompt.mjs";
@@ -116,7 +116,7 @@ const popupHidden = (c) => c.source === "upstream" && (UPSTREAM_COMMANDS.get(c.n
 // adds one, so the upgrade PR has to decide.
 // The engine's "Implement this plan?" (tui/src/chatwidget/plan_implementation.rs at the pinned tag).
 export const PLAN_IMPLEMENTATION_CODING_MESSAGE = "Implement the plan.";
-export const PLAN_IMPLEMENTATION_CLEAR_CONTEXT_PREFIX = CODEX_PLAN_CLEAR_CONTEXT_PREFIX; // ad's prompt hooks skip it
+export const PLAN_IMPLEMENTATION_CLEAR_CONTEXT_PREFIX = PLAN_CLEAR_CONTEXT_PREFIX; // ad's prompt hooks skip it
 
 export const NOT_IN_AD = {
   ide: "/ide needs an editor link that ad doesn't have.",
@@ -189,9 +189,9 @@ export function createApp({
   const st = session.state;
   const composer = createComposer({ history, now });
   // The engine's tui.theme: the syntax colours (a theme ad doesn't ship falls back to ansi; /warnings says so).
-  setSyntaxTheme(settings?.codex?.get?.("tui.theme"));
+  setSyntaxTheme(settings?.engine?.get?.("tui.theme"));
   // The engine's tui.vim_mode_default: Vim on from the start, in Insert (as its code does).
-  if (settings?.codex?.get?.("tui.vim_mode_default") === true) composer.setVim(true, { mode: "insert" });
+  if (settings?.engine?.get?.("tui.vim_mode_default") === true) composer.setVim(true, { mode: "insert" });
   const width = () => Math.max(10, io.size().cols - 2);
   const height = () => Math.max(4, io.size().rows);
 
@@ -550,8 +550,8 @@ export function createApp({
   let titleAt = -Infinity;
   let titleTimer = null;
   let titleHeld = false; // another program has the terminal (a handoff)
-  const statusIds = () => preview.status ?? settings?.codex?.get("tui.status_line");
-  const titleIds = () => preview.title ?? settings?.codex?.get("tui.terminal_title");
+  const statusIds = () => preview.status ?? settings?.engine?.get("tui.status_line");
+  const titleIds = () => preview.title ?? settings?.engine?.get("tui.terminal_title");
   function statusCtx() {
     const c = st.config;
     return {
@@ -644,7 +644,7 @@ export function createApp({
   function pickItems(kind) {
     const isTitle = kind === "title";
     const key = isTitle ? "tui.terminal_title" : "tui.status_line";
-    if (!settings?.codex) return warn("Settings aren't available here.");
+    if (!settings?.engine) return warn("Settings aren't available here.");
     const current = (isTitle ? titleIds() : statusIds()) ?? null;
     const chosen = (current ?? (isTitle ? DEFAULT_TITLE : DEFAULT_STATUS)).map(canonical);
     const all = isTitle ? TITLE_IDS : STATUS_IDS;
@@ -658,7 +658,7 @@ export function createApp({
       async (values) => {
         preview = { ...preview, [kind]: null };
         try {
-          await settings.codex.set(key, [...values, ...keep]);
+          await settings.engine.set(key, [...values, ...keep]);
           info0(`${isTitle ? "Title" : "Status line"}: ${values.length ? values.join(", ") : "off"}. Saved.`);
         } catch (err) {
           fail(err);
@@ -851,7 +851,7 @@ export function createApp({
   // The Subagents picker: the main conversation first, then each subagent as first seen.
   function pickAgent() {
     if (!st.agents.size) {
-      if (settings?.codex?.get?.("features.multi_agent") === false) return enableSubagents();
+      if (settings?.engine?.get?.("features.multi_agent") === false) return enableSubagents();
       return info0("No agents available yet.");
     }
     const items = [
@@ -880,7 +880,7 @@ export function createApp({
     const yes = await openConfirm({ title: "Enable subagents?", body: "Subagents are disabled in this TUI session.\nYes saves it for new threads; this thread is unchanged.", yes: "Yes, enable", no: "Not now" });
     if (!yes) return;
     try {
-      await settings.codex.set("features.multi_agent", true);
+      await settings.engine.set("features.multi_agent", true);
     } catch (err) {
       return warn(`Failed to save Subagents setting: ${err?.message ?? err}`);
     }
@@ -960,7 +960,7 @@ export function createApp({
     ]);
   }
   function pickTheme() {
-    if (!settings?.codex) return warn("Settings aren't available here.");
+    if (!settings?.engine) return warn("Settings aren't available here.");
     const before = syntaxTheme();
     previewTheme = null;
     const items = SYNTAX_THEMES.map((name) => ({ label: name, hint: `${THEME_HINTS[name] ?? ""}${name === before ? " \u{b7} current" : ""}`, value: name }));
@@ -971,7 +971,7 @@ export function createApp({
         previewTheme = null;
         setSyntaxTheme(name);
         try {
-          await settings.codex.set("tui.theme", name);
+          await settings.engine.set("tui.theme", name);
           info0(`Syntax theme: ${name}. Saved.`);
         } catch (err) {
           setSyntaxTheme(before);
@@ -1630,11 +1630,11 @@ export function createApp({
     const unused = [
       ...(keymap.warnings ?? []),
       ...(() => {
-        const th = settings?.codex?.get?.("tui.theme");
+        const th = settings?.engine?.get?.("tui.theme");
         return th && !SYNTAX_THEMES.includes(th) ? [`tui.theme: ad doesn't ship "${th}"; it shows code in ansi`] : [];
       })(),
-      ...unsupported(settings?.codex?.get("tui.status_line"), "status").map((id) => `tui.status_line: ad doesn't show "${id}"`),
-      ...unsupported(settings?.codex?.get("tui.terminal_title"), "title").map((id) => `tui.terminal_title: ad doesn't show "${id}"`),
+      ...unsupported(settings?.engine?.get("tui.status_line"), "status").map((id) => `tui.status_line: ad doesn't show "${id}"`),
+      ...unsupported(settings?.engine?.get("tui.terminal_title"), "title").map((id) => `tui.terminal_title: ad doesn't show "${id}"`),
     ];
     if (!kept.length && !unknown.length && !unused.length) return renderNotice({ level: "info", message: "No warnings in this session." }, { width: width() });
     const out = [[{ text: "Warnings", style: T.bold }]];

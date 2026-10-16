@@ -1,9 +1,9 @@
-// Codex's Vim mode for the composer (codex-parity-2 Part 8), after Codex
+// The Vim mode for the composer (parity Part 8), after the engine
 // 0.160's textarea/vim.rs, vim_commands.rs and vim_search.rs:
 //
 //   - Normal, Insert and Replace. No counts, no Visual mode, no `P`, `X`,
-//     `;` or `,` (Codex has none of them).
-//   - Operators d y c with Codex's motions (h l j k w b e 0 $ f F t T gg G,
+//     `;` or `,` (upstream has none of them).
+//   - Operators d y c with the engine's motions (h l j k w b e 0 $ f F t T gg G,
 //     / ? n N) and text objects (iw aw iW aW, ( ) b [ ] { } B, " ' `).
 //   - One unnamed register shared with the composer's Ctrl+K/U/W/Y, linewise
 //     or charwise; undo/redo by whole command or Insert session; `.` repeats
@@ -63,7 +63,7 @@ function firstNonBlank(t, ls) {
   return j;
 }
 
-// Codex's words: whitespace splits runs; a run splits where separators meet
+// The engine's words: whitespace splits runs; a run splits where separators meet
 // other characters and at Unicode word boundaries (each CJK character is a
 // word); consecutive separators are one piece.
 let segmenter = null;
@@ -84,7 +84,7 @@ function pieces(t) {
     }
     for (const seg of segmenter.segment(t.slice(p.start, p.end))) {
       const start = p.start + seg.index;
-      // ICU groups CJK into dictionary words; Codex's segmentation keeps each character apart.
+      // ICU groups CJK into dictionary words; the engine's segmentation keeps each character apart.
       if (!IDEOGRAPH.test(seg.segment)) out.push({ cls: "word", start, end: start + seg.segment.length });
       else for (const { g, at } of graphemes(seg.segment)) out.push({ cls: "word", start: start + at, end: start + at + g.length });
     }
@@ -362,7 +362,7 @@ export function createVim(core, { now = () => Date.now(), mode: startMode = "nor
         const down = key === "j";
         const otherStart = down ? (le < t.length ? le + 1 : -1) : ls > 0 ? bol(t, ls - 1) : -1;
         if (op === "c") {
-          if (otherStart < 0) return true; // Codex: no-op on the last/first line
+          if (otherStart < 0) return true; // no-op on the last/first line
           const start = down ? ls : otherStart;
           const endLine = eol(t, down ? otherStart : ls);
           store(`${t.slice(start, endLine)}\n`, true);
@@ -618,7 +618,7 @@ export function createVim(core, { now = () => Date.now(), mode: startMode = "nor
         return toInsert(ls), { changed: true };
       }
       case "!":
-        // Codex: "!" on an empty draft starts a shell command.
+        // "!" on an empty draft starts a shell command.
         if (t) return finish();
         set("!", 1);
         return toInsert(1), { changed: true };
@@ -638,7 +638,7 @@ export function createVim(core, { now = () => Date.now(), mode: startMode = "nor
       case ".":
         return repeat();
       default:
-        return finish(); // ignored, as in Codex
+        return finish(); // ignored, as upstream does
     }
   }
 
@@ -656,7 +656,7 @@ export function createVim(core, { now = () => Date.now(), mode: startMode = "nor
 
   // "." replays the recorded change: its command keys, then what was typed in
   // Insert. A change that can't start (cj on the last line, ci( outside any
-  // parentheses) stops there: its typing never runs as Normal commands (Codex).
+  // parentheses) stops there: its typing never runs as Normal commands (as upstream does).
   function repeat() {
     step = null;
     rec = null;
@@ -810,7 +810,7 @@ export function createVim(core, { now = () => Date.now(), mode: startMode = "nor
     get pending() {
       return Boolean(pending || chordLive() || search);
     },
-    /** The footer hint while gg waits for its second key (Codex's). */
+    /** The footer hint while gg waits for its second key. */
     get hint() {
       return chordLive() ? "g then \u{b7} g jump top \u{b7} esc cancel" : null;
     },
@@ -821,7 +821,7 @@ export function createVim(core, { now = () => Date.now(), mode: startMode = "nor
     wantsEscape() {
       return mode !== "normal" || Boolean(pending || chordLive() || search);
     },
-    /** The draft was replaced (a submit, history, /new): Codex goes to Insert, history and "." go. */
+    /** The draft was replaced (a submit, history, /new): the mode goes to Insert, history and "." go. */
     reset({ mode: next = "insert" } = {}) {
       mode = next;
       pending = null;

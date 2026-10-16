@@ -180,7 +180,7 @@ export function renderShortcuts({ newline = "ctrl+j", keymap = null } = {}, { wi
 }
 
 /**
- * A list of options to switch on and off (codex-parity-2 1b: /statusline,
+ * A list of options to switch on and off (parity 1b: /statusline,
  * /title…): ↑/↓ move, Space toggles, ←/→ move the current option up or down
  * the order (with `reorder`), Enter saves, Esc cancels. `onChange(values)`
  * sees every change, for a live preview.

@@ -32,7 +32,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_APPROVAL_POLICY, DEFAULT_SANDBOX, engineEvents, engineHome } from "../engine/index.mjs";
+import { DEFAULT_APPROVAL_POLICY, DEFAULT_SANDBOX, engineEvents, engineHome, isAutoModel } from "../engine/index.mjs";
 import { acquireLock, DEFAULT_LOCK_DIR } from "../lock.mjs";
 
 export { DEFAULT_LOCK_DIR };
@@ -823,7 +823,7 @@ export function createSession({
     state.mode = { ...state.mode, kind };
     const after = modeMask();
     if (before && after && (before.settings.model !== after.settings.model || before.settings.reasoning_effort !== after.settings.reasoning_effort)) {
-      const effort = after.settings.model.startsWith("codex-auto-") ? "" : ` ${after.settings.reasoning_effort ?? "default"}`;
+      const effort = isAutoModel(after.settings.model) ? "" : ` ${after.settings.reasoning_effort ?? "default"}`;
       notice("info", "mode.model", `Model changed to ${after.settings.model}${effort} for ${modeName(kind)} mode.`);
     }
     // The thread learns it now; every turn/start carries it anyway.

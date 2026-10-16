@@ -23,7 +23,7 @@ import { sanitize } from "./terminal/sanitize.mjs";
 import { createApp } from "./app.mjs";
 import { createHistory } from "./history.mjs";
 import { createAdLayer } from "./ad-layer.mjs";
-import { createCodexSettings, createPrefs, DEFAULT_PREFS_FILE } from "./prefs.mjs";
+import { createEngineSettings, createPrefs, DEFAULT_PREFS_FILE } from "./prefs.mjs";
 import { createKeymap } from "./keymap.mjs";
 import { createPicker, newlineHint, renderHeader } from "./view/chrome.mjs";
 import { truncate } from "./terminal/text.mjs";
@@ -335,12 +335,12 @@ export async function cmdTui(opts = {}) {
     let cp = createCheckpoints({ cwd });
     let undoKit = (await cp.repo().catch(() => null)) ? checkpointWiring(cp, { cwd }) : null;
     // Settings: the engine's own (its config.toml in ad's home) and ad's (prefs.json).
-    const settings = { codex: createCodexSettings({ engine: () => session.engine }), ad: createPrefs({ file: opts.prefsFile ?? DEFAULT_PREFS_FILE }) };
+    const settings = { codex: createEngineSettings({ engine: () => session.engine }), ad: createPrefs({ file: opts.prefsFile ?? DEFAULT_PREFS_FILE }) };
     // modes: the plan mode, on the experimental allowlist this engine opted into (parity P0).
     // Default's mask keeps the configured effort, as the engine's own Default mode does.
-    session = createSession({ engine, cwd, model: opts.model, sandbox: opts.sandbox, restart, maxRestarts: 3, hooks: undoKit?.hooks ?? {}, modes: true, planEffort: () => settings.codex.get("plan_mode_reasoning_effort") ?? null, configEffort: () => settings.codex.get("model_reasoning_effort") ?? null, ...(opts.lockDir ? { lockDir: opts.lockDir } : {}), identity: engineHome.isManaged(engine.home) ? null : await harnessIdentity(engine).catch(() => null) }); // no identity: the session starts without it
+    session = createSession({ engine, cwd, model: opts.model, sandbox: opts.sandbox, restart, maxRestarts: 3, hooks: undoKit?.hooks ?? {}, modes: true, planEffort: () => settings.engine.get("plan_mode_reasoning_effort") ?? null, configEffort: () => settings.engine.get("model_reasoning_effort") ?? null, ...(opts.lockDir ? { lockDir: opts.lockDir } : {}), identity: engineHome.isManaged(engine.home) ? null : await harnessIdentity(engine).catch(() => null) }); // no identity: the session starts without it
     await session.init();
-    await settings.codex.load();
+    await settings.engine.load();
 
     const term = terminalName();
     const newline = newlineHint({ terminal: term, csiU: Boolean(caps.kitty) });
@@ -469,7 +469,7 @@ export async function cmdTui(opts = {}) {
       editText: (text) => handoff(io, renderer, () => editInEditor(text, { run: (cmd, args, verbatim) => runChild(cmd, args, { cwd, windowsVerbatimArguments: Boolean(verbatim) }) }), app),
     };
 
-    app = createApp({ io, renderer, session, cwd, header: intro, newline, history: createHistory(opts.historyFile ? { file: opts.historyFile } : {}), actions, settings, keymap: createKeymap({ overrides: settings.codex.get("tui.keymap") }), statusInfo: { engineVersion: engineVersionText, hostname: hostname(), home: homedir() }, info: { compat: `${engineVersionText} (tested)`, terminal: term } });
+    app = createApp({ io, renderer, session, cwd, header: intro, newline, history: createHistory(opts.historyFile ? { file: opts.historyFile } : {}), actions, settings, keymap: createKeymap({ overrides: settings.engine.get("tui.keymap") }), statusInfo: { engineVersion: engineVersionText, hostname: hostname(), home: homedir() }, info: { compat: `${engineVersionText} (tested)`, terminal: term } });
     // `ad tui "<prompt>"`: the first prompt is sent right away.
     if (opts.prompt) app.send(opts.prompt);
     await app.done;

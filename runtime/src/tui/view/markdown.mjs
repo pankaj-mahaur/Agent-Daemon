@@ -370,7 +370,7 @@ function parseLink(ctx, i) {
   ctx.brackets ??= bracketPairs(text);
   const j = ctx.brackets.get(i);
   if (j === undefined || text[j + 1] !== "(") return null;
-  // A destination in <…> may hold spaces (CommonMark): Codex names local files
+  // A destination in <…> may hold spaces (CommonMark): the engine names local files
   // that way, as in [app.js](</D:/My Projects/app.js:12>).
   const m = /^\(\s*(?:<([^<>\n]*)>|([^\s()<>]+))(?:\s+"[^"]*")?\s*\)/.exec(text.slice(j + 1));
   const raw = m && (m[1] ?? m[2]);
@@ -560,7 +560,7 @@ export function codeLines(line, width, style) {
 
 /**
  * Highlighted tokens of one code line, hard-wrapped at `width` like
- * codeLines(): each token in its theme's style (codex-parity-2 Part 9).
+ * codeLines(): each token in its theme's style (parity Part 9).
  */
 export function codeTokenLines(tokens, width) {
   // The whole line's graphemes (a cluster can span two tokens: a keycap's digit

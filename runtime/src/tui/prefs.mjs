@@ -10,7 +10,7 @@
 //   - ad's own preferences (what the engine has no setting for) in
 //     ~/.agent-daemon/tui/prefs.json: owner-only, written atomically.
 //
-//   createCodexSettings({engine: () => engine}) → {load(), get(keyPath), set(keyPath, value)}
+//   createEngineSettings({engine: () => engine}) → {load(), get(keyPath), set(keyPath, value)}
 //   createPrefs({file}) → {get(key, fallback), set(key, value), all()}
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -30,7 +30,7 @@ function at(obj, keyPath) {
  * The engine's settings as ad reads them. `engine` is a getter: the
  * engine is replaced when it restarts.
  */
-export function createCodexSettings({ engine }) {
+export function createEngineSettings({ engine }) {
   let config = {};
   return {
     /** Re-reads them; a failure keeps the last known values. */

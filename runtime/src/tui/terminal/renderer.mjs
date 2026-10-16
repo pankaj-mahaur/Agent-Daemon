@@ -14,7 +14,7 @@
 //
 // Terminal rules (research/terminal-engineering.md):
 //   - never ESC[2J / ESC[3J; history above the live top is never erased, except
-//     by clear() (/clear, Codex's "clear the terminal", asked for by the user)
+//     by clear() (/clear, the engine's "clear the terminal", asked for by the user)
 //   - every write runs with autowrap off (?7l), and every line is cut to
 //     cols − 1, so a line is exactly one row whatever the width tables say
 //   - a cursor move with count 0 is never sent (ESC[0A moves one row)
@@ -370,7 +370,7 @@ export function createRenderer({
       await reanchor("redraw");
     },
     /**
-     * /clear: wipe the screen and the scrollback with Codex's own bytes, then
+     * /clear: wipe the screen and the scrollback with the engine's own bytes, then
      * start over at the top: `header` (history lines) and the live region.
      * Whatever was pending is dropped with the rest: queued history, a commit
      * batch, a resize wait or a re-anchor waiting for its cursor report (its

@@ -1,7 +1,7 @@
-// The terminal UI's styles in one place (codex-parity-2 P8): modules name a
+// The terminal UI's styles in one place (parity P8): modules name a
 // style by what it means (accent, code, success…) instead of keeping their
 // own colour tables, so a colour has one name and one home. The UI's colours
-// follow Codex's and aren't themeable; syntax highlighting gets its own
+// follow upstream's and aren't themeable; syntax highlighting gets its own
 // themes. Transcript (committed) lines use foreground colours only: the
 // terminal's scrollback can't be restyled after a light/dark change.
 //
@@ -25,11 +25,11 @@ export const T = deepFreeze({
   error: { fg: "red" },
   errorStrong: { fg: "red", bold: true },
   warning: { fg: "yellow" },
-  // Codex's plan mode: the footer's mode chip and the prompt.
+  // The plan mode: the footer's mode chip and the prompt.
   planMode: { fg: "magenta" },
-  // The command a cell answers, as Codex heads them ("/debug-config").
+  // The command a cell answers, as the engine heads them ("/debug-config").
   commandEcho: { fg: "magenta" },
-  // Codex's Vim mode indicator.
+  // The Vim mode indicator.
   vimNormal: { fg: "magenta" },
   vimInsert: { fg: "green" },
   vimReplace: { fg: "cyan" },
@@ -38,10 +38,10 @@ export const T = deepFreeze({
   diffHunk: { fg: "cyan", dim: true },
 });
 
-// Syntax highlighting (codex-parity-2 Part 9): token class → style, per theme
-// (Codex's names). Used by view/highlight.mjs; /theme picks one.
+// Syntax highlighting (parity Part 9): token class → style, per theme
+// (upstream's names). Used by view/highlight.mjs; /theme picks one.
 // "ansi" uses the terminal's own 16 colours (it follows its palette, light or
-// dark); the other two are Codex's adaptive defaults, in truecolor (the
+// dark); the other two are upstream's adaptive defaults, in truecolor (the
 // renderer downsamples them to 256 or 16 colours; NO_COLOR keeps none).
 export const SYNTAX = {
   ansi: {
