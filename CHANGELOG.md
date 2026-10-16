@@ -6,7 +6,7 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 ### Added
 
-- A brand lint (`npm run lint:brand`; CI runs it in report mode): the engine's name stays in its allowed zone (the engine adapter, the dependency pin, the two prompt files reproduced from upstream, the upgrade runbook, descriptive statements about other agents), with an allowlist that carries a reason for every exception. The texts that may name the engine on screen now live in one attribution module. Groundwork for 3.0, where ad's screens, docs and settings say "the engine" throughout.
+- A brand lint (`npm run lint:brand`; CI runs it in strict mode): the engine's name stays in its allowed zone (the engine adapter, the dependency pin, the two prompt files reproduced from upstream, the upgrade runbook, descriptive statements about other agents), with an allowlist that carries a reason for every exception. The texts that may name the engine on screen now live in one attribution module. Groundwork for 3.0, where ad's screens, docs and settings say "the engine" throughout.
 - `ad migrate` renames the engine's folder to `~/.agent-daemon/engine` (optional; `--undo` reverses it). New installs use that name and keep a link with the old one.
 - `ad about`: what ad runs on (versions, the engine, licenses, settings path).
 - The agent is told what it is: Agent Daemon's agent, on ad's engine, with the sign-in route (in the engine folder's AGENTS.md).
@@ -18,6 +18,7 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 - Flags and env vars that choose ad's engine take `ad` (`--engine ad`, `--llm ad`, `AD_HOOK_HOST=ad`); `codex` still works until 3.1.
 - `ad sandbox setup --elevated` asks before it changes the machine (`--yes` to skip the question).
 - The terminal UI says "the engine" where it used to name it; the sign-in picker lists an OpenAI API key and OpenRouter first.
+- The engine-upgrade workflow and skill replace codex-upgrade; upgrade PRs regenerate and commit the protocol notifications list, and the old token secret still works.
 
 ### Removed
 

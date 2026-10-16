@@ -76,7 +76,7 @@ The fake answers an unknown method with -32600, like the real engine. Tests reac
 
 ## The brand lint
 
-ad runs on a pinned third-party engine; the product says "the engine", and the engine's own name appears only in its allowed zone. `node runtime/scripts/check-brand.mjs` (`npm run lint:brand`) checks four rules over every tracked text file:
+ad runs on a pinned third-party engine; the product says "the engine", and the engine's own name appears only in its allowed zone. `node runtime/scripts/check-brand.mjs` checks four rules over every tracked text file:
 
 | Rule | What it finds |
 |---|---|
@@ -85,7 +85,7 @@ ad runs on a pinned third-party engine; the product says "the engine", and the e
 | C | prose that names the engine in a string, template or JSON value under `runtime/src` (bare tokens such as env vars, paths and package names pass); such prose comes from `runtime/src/engine/attribution.mjs` only |
 | D | the adapter imported from outside `runtime/src/engine/` |
 
-The allowed zone and the other legitimate places are `runtime/scripts/brand-allowlist.json`: one entry per place, each with a reason, and every docs/tests entry narrowed to the exact phrases it covers (`match`). An entry that matches nothing is reported as stale. Report mode (the default) prints counts and exits 0; `--strict` fails on any hit or stale entry, and CI runs `node runtime/scripts/check-brand.mjs --strict --tracked`. `--verbose` lists every hit, `--json` prints the result. The tests in `test/check-brand.test.mjs` plant one hit per rule and prove that strict mode fails on each; `test/attribution.test.mjs` proves the attribution module's texts and that the two files that reproduce upstream's prompts keep their license headers.
+The allowed zone and the other legitimate places are `runtime/scripts/brand-allowlist.json`: one entry per place, each with a reason, and every docs/tests entry narrowed to the exact phrases it covers (`match`). An entry that matches nothing is reported as stale. `npm run lint:brand` runs in strict mode. Report mode (the default when calling the script directly) prints counts and exits 0; `--strict` fails on any hit or stale entry, and CI runs `node runtime/scripts/check-brand.mjs --strict --tracked`. `--verbose` lists every hit, `--json` prints the result. The tests in `test/check-brand.test.mjs` plant one hit per rule and prove that strict mode fails on each; `test/attribution.test.mjs` proves the attribution module's texts and that the two files that reproduce upstream's prompts keep their license headers.
 
 ## CI
 
@@ -100,7 +100,7 @@ The real-engine job is non-blocking (`continue-on-error`): **read its result**, 
 
 Run the same pipeline before pushing, on this machine and in a Linux container, with the project skill [`ad-ci-readiness`](../.claude/skills/ad-ci-readiness/SKILL.md): it also reads a PR's CI test by test and holds the release-readiness checklist.
 
-`.github/workflows/engine-upgrade.yml` runs `npm test` and the same real-engine tests in its own Linux job before it opens the PR that bumps the engine pin, and puts the results in the PR body. The PR's own `test.yml` run (all three OSes) happens only when the repo has an `ENGINE_UPGRADE_TOKEN` secret: PRs opened with the default token don't trigger other workflows.
+`.github/workflows/engine-upgrade.yml` runs `npm test` and the same real-engine tests in its own Linux job before it opens the PR that bumps the engine pin, and puts the results in the PR body. The PR's own `test.yml` run (all three OSes) happens only when the repo has an `ENGINE_UPGRADE_TOKEN` secret (the old `CODEX_UPGRADE_TOKEN` also works): PRs opened with the default token don't trigger other workflows.
 
 ## Pitfalls met in practice
 
