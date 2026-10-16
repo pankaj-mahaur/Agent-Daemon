@@ -1,4 +1,4 @@
-// Tests for the engine API (engine/index.mjs) and harness home (codex/home.mjs).
+// Tests for the engine API (engine/index.mjs) and harness home (engine/codex/home.mjs).
 //
 // Against the scripted fake app-server. What matters: core never sees
 // protocol names, safe defaults are actually sent, only this thread's
@@ -27,7 +27,7 @@ async function withEngine(opts, fn) {
   }
 }
 
-test("engine runs Codex with CODEX_HOME set to the harness home", async () => {
+test("the engine starts with CODEX_HOME set to the harness home", async () => {
   await withEngine({}, async (engine, home) => {
     const { env } = await engine.testRequest("debug/state");
     assert.equal(env.CODEX_HOME, home);

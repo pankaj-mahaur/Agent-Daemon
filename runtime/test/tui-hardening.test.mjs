@@ -148,7 +148,7 @@ async function withStub(session, fn, { actions = {}, cwd = "/x" } = {}) {
   }
 }
 
-test("a running ! command (no turn) stays live while Codex is up; a resumed turn still 'inProgress' in history doesn't wedge", async () => {
+test("a running ! command (no turn) stays live while the engine is up; a resumed turn still 'inProgress' in history doesn't wedge", async () => {
   const s = stub({ turns: [{ id: "old", status: "inProgress", itemIds: ["h1"] }] });
   s.state.items.set("h1", { id: "h1", kind: "agentMessage", text: "half an answer", streaming: true, turnId: "old", threadId: "t" });
   s.state.items.set("sh", { id: "sh", kind: "commandExecution", command: "make test", status: "inProgress", source: "userShell", actions: [], turnId: null, threadId: "t" });

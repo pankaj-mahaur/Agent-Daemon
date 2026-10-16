@@ -295,9 +295,9 @@ Error: write EOF
 **Fix:** log the harness in once. It keeps its own login in `~/.agent-daemon/codex-home`, separate from your own `~/.codex`.
 
 ```sh
-ad auth login chatgpt                          # ChatGPT plan (browser; --device for a code)
-ad auth login openai                           # or an OpenAI API key
-ad auth login openrouter --model <slug>        # or an OpenRouter key
+ad auth login openai                           # OpenAI API key
+ad auth login openrouter --model <slug>         # or an OpenRouter key
+ad auth login chatgpt                          # or a ChatGPT plan (browser; --device for a code)
 ad auth status
 ```
 

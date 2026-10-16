@@ -1,5 +1,6 @@
-// `ad tui` helpers (tui/main.mjs) and `ad codex` (harness/codex-ui.mjs), plan Part 6.
+// `ad tui` helpers (tui/main.mjs) and `ad engine ui --debug` (engine/codex/stock-ui.mjs), plan Part 6.
 
+import { projectConfigFolder } from "../src/engine/attribution.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
@@ -57,7 +58,7 @@ test("hookRows: only ad's own hooks; recalled memory, guard blocks, failures", (
   assert.deepEqual(hookRows(run({ entries: [{ kind: "context", text: "## Learnings\n- a\n- b\n- c" }] }), { hooksFile }), [{ kind: "recalled", text: "3 learnings" }]);
   assert.deepEqual(hookRows(run({ event: "PreToolUse", status: "blocked", entries: [{ kind: "feedback", text: "rm -rf / is blocked\nmore" }] }), { hooksFile }), [{ kind: "guard", text: "rm -rf / is blocked" }]);
   assert.deepEqual(hookRows(run({ status: "failed", entries: [{ kind: "error", text: "boom" }] }), { hooksFile }), [{ kind: "hook", text: "UserPromptSubmit hook failed: boom" }]);
-  assert.deepEqual(hookRows(run({ sourcePath: path.join(tmpdir(), "repo", ".codex", "hooks.json"), entries: [{ kind: "context", text: "- x" }] }), { hooksFile }), [], "a repo's hooks are not ad's");
+  assert.deepEqual(hookRows(run({ sourcePath: path.join(tmpdir(), "repo", projectConfigFolder, "hooks.json"), entries: [{ kind: "context", text: "- x" }] }), { hooksFile }), [], "a repo's hooks are not ad's");
   assert.deepEqual(hookRows({ ...run({}), phase: "started" }, { hooksFile }), []);
   // Escapes in hook output never reach the row.
   assert.ok(!/\x1b/.test(hookRows(run({ status: "blocked", entries: [{ kind: "feedback", text: "\x1b[2Jno" }] }), { hooksFile })[0].text));
@@ -81,7 +82,7 @@ test("sinceLastTime: proposals waiting and loops newer than the last visit", asy
 });
 
 /* ------------------------------------------------------------------ */
-/* ad codex                                                            */
+/* Engine debug UI                                                            */
 /* ------------------------------------------------------------------ */
 
 test("codexArgs: always --no-daemon; resume a thread; -C the folder", () => {
@@ -130,7 +131,7 @@ test("syncSkills mirrors ~/.claude/skills, never touches the user's own folders,
   }
 });
 
-test("runStockCodex: pinned binary, isolated CODEX_HOME, no CODEX_* leaks, provider keys from ad's store", async () => {
+test("runStockCodex: pinned binary, isolated CODEX_HOME, no engine environment leaks, provider keys from ad's store", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ad-stock-"));
   try {
     let seen = null;

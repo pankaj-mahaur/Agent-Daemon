@@ -34,8 +34,8 @@ test("ad about names ad, the engine, its process, the settings and the tested ve
     const out = new Sink();
     assert.equal(cmdAbout({ stdout: out, env: {}, root }), 0);
     assert.match(out.text, new RegExp(`^Agent Daemon ${PKG.version.replace(/\./g, "\\.")} \\(MIT\\)`, "m"));
-    assert.match(out.text, new RegExp(`engine: Codex ${PINNED.replace(/\./g, "\\.")} by OpenAI, Apache-2\\.0, https://github\\.com/openai/codex`, "m"));
-    assert.match(out.text, /its process shows as codex/);
+    assert.ok(out.text.includes(`engine: ${ENGINE.name} ${PINNED} by ${ENGINE.vendor}, ${ENGINE.license}, ${ENGINE.url}`));
+    assert.ok(out.text.includes(`its process shows as ${ENGINE.processName}`));
     assert.ok(out.text.includes(join(root, "engine", "config.toml")), "the settings path under the resolved home");
     assert.match(out.text, new RegExp(`tested engine versions: ${TESTED.join(", ")}`, "m"));
     assert.match(out.text, /^notices: THIRD_PARTY_NOTICES\.md \(in ad's source folder\)$/m);

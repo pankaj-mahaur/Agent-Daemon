@@ -462,7 +462,7 @@ test("an edit named through another path to the repo (8.3 short name, junction, 
     const s = fakeSession();
     await w.hooks.beforeTurn({ input: [] });
     w.hooks.turnStarted({ turn: { id: "u1" }, session: STARTING });
-    // Codex names the files by the other path; one of them doesn't exist (deleted).
+    // engine names the files by the other path; one of them doesn't exist (deleted).
     s.state.items.set("fc", { id: "fc", turnId: "u1", kind: "fileChange", status: "completed", changes: [{ path: join(link, "src", "gone.js") }, { path: "rel.txt" }] });
     w.hooks.itemCompleted({ item: s.state.items.get("fc") });
     s.state.turns.push({ id: "u1", status: "completed", itemIds: ["fc"] });

@@ -18,7 +18,7 @@ Nothing moves: the folder keeps its name until you run `ad migrate`.
 
 ## Renamed
 
-Old names still work; new installs use the new ones.
+The old env var names keep working; new installs use the new ones. The old product values work at least until 3.1.
 
 | Old | New |
 |---|---|
@@ -49,10 +49,10 @@ The hand-off to the engine's own UI is gone. Typing either prints what to use in
 
 ## Rolling back to 2.2.0
 
-1. `git checkout v2.2.0`
-2. `cd runtime && npm install`
-3. The `codex-home` link lets 2.2.0 find your folder.
-4. If you ran `ad migrate`, run `ad migrate --undo` first only if you want the old layout back (not needed: 2.2.0 follows the link).
+1. If you ran `ad migrate` and want the old layout back, run `ad migrate --undo` while still on 3.0. This is optional: 2.2.0 follows the `codex-home` link.
+2. `git checkout v2.2.0`
+3. `cd runtime && npm install`
+4. The `codex-home` link lets 2.2.0 find your folder.
 
 ## Something wrong?
 

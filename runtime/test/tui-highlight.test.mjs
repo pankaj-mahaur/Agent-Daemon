@@ -1,4 +1,4 @@
-// Syntax highlighting (tui/view/highlight.mjs, codex-parity-2 Part 9, P7):
+// Syntax highlighting (tui/view/highlight.mjs, terminal UI plan Part 9, P7):
 // token streams per language, state across lines (and across the chunks of a
 // streaming block), the caps, hostile input staying linear, the speed budget,
 // and a style-aware golden per theme (AD_UPDATE_GOLDEN=1 rewrites them).
@@ -147,7 +147,7 @@ test("speed: a 1,000-line block highlights in under 20 ms here (CI: 10x)", () =>
   assert.ok(best < budget, `best of 5: ${best.toFixed(1)} ms (budget ${budget} ms)`);
 });
 
-test("themes: ad ships ansi and Codex's two adaptive defaults; another name falls back to ansi", () => {
+test("themes: ad ships ansi and the engine's two adaptive defaults; another name falls back to ansi", () => {
   assert.deepEqual(SYNTAX_THEMES, ["ansi", "catppuccin-mocha", "catppuccin-latte"]);
   try {
     assert.deepEqual(setSyntaxTheme("catppuccin-latte"), { theme: "catppuccin-latte", known: true });

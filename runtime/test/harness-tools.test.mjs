@@ -31,7 +31,7 @@ test("enable/disable browser and web-search round-trip through config", async ()
     await run("disable", "browser");
     await run("disable", "web-search");
     assert.equal(cfg().mcp_servers.playwright, undefined);
-    assert.equal(cfg().web_search, undefined, "back to Codex's default");
+    assert.equal(cfg().web_search, undefined, "back to engine's default");
     assert.equal((await run("enable", "nope")).code, 1);
   } finally {
     rmSync(root, { recursive: true, force: true });

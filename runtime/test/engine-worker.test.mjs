@@ -2,6 +2,7 @@
 // Property: an unattended worker never asks for approval and is confined to
 // its worktree (+ the repo's git dir so it can commit), without network.
 
+import { LEGACY } from "../src/engine/attribution.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -89,7 +90,7 @@ test("spawnAgent defaults to the engine worker and reports to the leader inbox",
       cwd: root,
       worktree: false,
       leader: "lead",
-      engine: "codex",
+      engine: LEGACY.productValue,
       runWorker: async (args) => (seen.push(args), { ok: true, output: "done!", threadId: "th-2" }),
     });
     assert.equal(alias.ok, true, "the old value still runs the engine worker");
@@ -109,7 +110,7 @@ test("spawnAgent reads AD_AGENT_ENGINE with the old value as an alias", async ()
   const prevEngine = process.env.AD_AGENT_ENGINE;
   process.env.HOME = process.env.USERPROFILE = root; // team state under a temp home
   try {
-    process.env.AD_AGENT_ENGINE = "codex";
+    process.env.AD_AGENT_ENGINE = LEGACY.productValue;
     const r = await spawnAgent({
       teamId: "t1",
       role: "coder",

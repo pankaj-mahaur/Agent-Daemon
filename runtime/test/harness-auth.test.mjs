@@ -1,9 +1,10 @@
 // Tests for `ad auth` (harness/auth.mjs) + providers (auth/providers.mjs),
 // against the fake app-server with an in-memory config and a file secret
-// store in a temp dir. Properties: logins go through Codex, provider keys
-// reach the Codex process as env (never config), no secret is printed, and
+// store in a temp dir. Properties: logins go through the engine, provider keys
+// reach the engine process as env (never config), no secret is printed, and
 // a CODEX_HOME not created by ad is never modified without --force.
 
+import { ENGINE } from "../src/engine/attribution.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -82,9 +83,9 @@ test("the sign-in note is ChatGPT-only: openai and openrouter say nothing about 
   const t = setup();
   try {
     const o = await t.auth("login", ["openai"], { readKey: async () => "sk-openai-test" });
-    assert.doesNotMatch(o.out, /may say 'Codex'/);
+    assert.doesNotMatch(o.out, new RegExp(`may say '${ENGINE.name}'`));
     const r = await t.auth("login", ["openrouter"], { model: "anthropic/some-model", readKey: async () => KEY });
-    assert.doesNotMatch(r.out, /may say 'Codex'/);
+    assert.doesNotMatch(r.out, new RegExp(`may say '${ENGINE.name}'`));
   } finally {
     t.cleanup();
   }
@@ -101,7 +102,7 @@ test("a failed ChatGPT sign-in exits 1 with the reason", async () => {
   }
 });
 
-test("login openai passes the key to Codex, not to our store or output", async () => {
+test("login openai passes the key to the engine, not to our store or output", async () => {
   const t = setup();
   try {
     const r = await t.auth("login", ["openai"], { readKey: async () => "sk-openai-test" });
@@ -125,7 +126,7 @@ test("login openrouter requires --model before asking for a key", async () => {
   }
 });
 
-test("openrouter: key → store, provider active, key reaches Codex as env; logout reverts", async () => {
+test("openrouter: key → store, provider active, key reaches the engine as env; logout reverts", async () => {
   const t = setup();
   try {
     const r = await t.auth("login", ["openrouter"], { model: "anthropic/some-model", readKey: async () => KEY });
@@ -163,7 +164,7 @@ test("use openrouter without a stored key explains how to add one", async () => 
 test("mutations are refused on a CODEX_HOME that ad did not create", async () => {
   const t = setup();
   try {
-    const foreign = join(t.root, "users-codex");
+    const foreign = join(t.root, "users-engine");
     rmSync(foreign, { recursive: true, force: true });
     await import("node:fs").then((fs) => fs.mkdirSync(foreign));
     writeFileSync(join(foreign, "auth.json"), "{}");

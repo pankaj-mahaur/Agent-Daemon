@@ -615,7 +615,7 @@ test("plain helper sanity", () => {
 });
 
 /* ------------------------------------------------------------------ */
-/* clear(): /clear, the one sanctioned wipe (codex-parity-2 Part 2)    */
+/* clear(): /clear, the one sanctioned wipe (terminal UI plan Part 2)    */
 /* ------------------------------------------------------------------ */
 
 for (const [name, make, reflow] of SCREENS) {
@@ -631,7 +631,7 @@ for (const [name, make, reflow] of SCREENS) {
     r.commit(["new history"]);
     await scr.settle();
     assert.deepEqual(scr.lines(), ["HEADER", "new history", "> composer", "  footer"]);
-    // Codex's own bytes.
+    // the engine's own bytes.
     assert.ok(scr.writes.some((w) => w.includes("\x1b[r\x1b[0m\x1b[H\x1b[2J\x1b[3J\x1b[H")));
   });
 

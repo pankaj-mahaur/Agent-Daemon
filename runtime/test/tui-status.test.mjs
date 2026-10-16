@@ -1,5 +1,5 @@
-// The status line and the window title (tui/status.mjs, codex-parity-2
-// Part 3): Codex's item ids, ad's defaults, the title's joins, and hostile
+// The status line and the window title (tui/status.mjs, terminal UI plan
+// Part 3): the engine's item ids, ad's defaults, the title's joins, and hostile
 // names kept out of the terminal's title.
 
 import { test } from "node:test";
@@ -30,7 +30,7 @@ const CTX = {
 };
 const texts = (ids, ctx = CTX) => statusSegments(ids, ctx).map((s) => s.text);
 
-test("status line: ad's default when unset; [] is off; Codex's order and aliases", () => {
+test("status line: ad's default when unset; [] is off; the engine's order and aliases", () => {
   assert.deepEqual(DEFAULT_STATUS, ["model-with-reasoning", "current-dir", "context-remaining", "five-hour-limit"]);
   assert.deepEqual(texts(undefined), ["gpt-5.5 high", "~\\work\\app", "ctx 15%", "5h 38%"]);
   assert.deepEqual(texts([]), []);
@@ -47,13 +47,13 @@ test("status line: every item ad shows, warnings at 80 % used, empty values skip
   assert.deepEqual(texts(["run-state"], { ...CTX, waiting: true }), ["waiting for you"]);
 });
 
-test("unsupported: Codex's ids ad can't show (and junk) are listed, so they're kept and warned about", () => {
+test("unsupported: the engine's ids ad can't show (and junk) are listed, so they're kept and warned about", () => {
   assert.deepEqual(unsupported(["model", "pull-request-number", "fast-mode", 7, "session-id"]), ["pull-request-number", "fast-mode", 7]);
   assert.deepEqual(unsupported(["activity", "thread-title"], "title"), ["thread-title"]);
   assert.deepEqual(unsupported(undefined), []);
 });
 
-test("window title: Codex's joins, the spinner while running, 'action required' while waiting", () => {
+test("window title: the engine's joins, the spinner while running, 'action required' while waiting", () => {
   assert.equal(titleText(undefined, CTX), "login fix | app", "default: activity (nothing while idle), thread name, project");
   assert.equal(titleText(undefined, { ...CTX, running: true, frame: 1 }), "\u{2819} login fix | app", "spaces around the activity, not bars");
   assert.equal(titleText(["project-name", "activity", "thread-name"], { ...CTX, running: true }), "app \u{280b} login fix");

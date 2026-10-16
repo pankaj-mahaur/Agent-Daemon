@@ -5,6 +5,7 @@
 // while the fake server still answers it (G5). Against the fake app-server,
 // which rejects any request that doesn't fit the pinned protocol.
 
+import { ENGINE, projectConfigFolder } from "../src/engine/attribution.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -220,7 +221,7 @@ test("G5 plan mode: a snapshot without collaborationMode/list turns the feature 
       const notice = session.state.notices.find((n) => n.code === "modes.unavailable");
       assert.ok(notice, "a notice says why");
       assert.match(notice.message, /Plan mode is unavailable/);
-      assert.doesNotMatch(notice.message, /codex/i);
+      assert.doesNotMatch(notice.message, new RegExp(ENGINE.name, "i"));
       assert.deepEqual(session.setMode("plan"), { ok: false, message: "Plan mode unavailable right now." });
       assert.equal(session.cycleMode().ok, false);
       assert.equal(session.modeMask(), null, "no mask is ever sent");
@@ -243,7 +244,7 @@ test("G5 /stop: a snapshot without thread/backgroundTerminals/clean turns it off
       await session.modesReady;
       await session.submit("bg-terminal").done;
       assert.equal(session.state.terminals.size, 1);
-      await assert.rejects(session.stopTerminals(), (err) => err.code === "FEATURE_UNAVAILABLE" && /\/stop is unavailable/.test(err.message) && !/codex/i.test(err.message));
+      await assert.rejects(session.stopTerminals(), (err) => err.code === "FEATURE_UNAVAILABLE" && /\/stop is unavailable/.test(err.message) && !new RegExp(ENGINE.name, "i").test(err.message));
       assert.equal(session.state.terminals.size, 0, "forgotten, as after a refused clean");
       assert.ok(!(await debug(engine)).calls.includes("thread/backgroundTerminals/clean"), "never sent");
     } finally {
@@ -260,10 +261,10 @@ test("errors carry codes: a JSON-RPC error keeps the engine's numeric code, the 
     assert.equal(err.raw, "boom");
     assert.deepEqual(err.data, { why: "scripted" });
     assert.match(err.message, /boom/);
-    assert.doesNotMatch(err.message, /codex/i);
+    assert.doesNotMatch(err.message, new RegExp(ENGINE.name, "i"));
     const late = await engine.testRequest("test/silent", {}, { timeoutMs: 40 }).catch((e) => e);
     assert.equal(late.code, "ENGINE_TIMEOUT");
-    assert.doesNotMatch(late.message, /codex/i);
+    assert.doesNotMatch(late.message, new RegExp(ENGINE.name, "i"));
   });
   const fresh = new Engine({ home: mkdtempSync(join(tmpdir(), "ad-facade-")), command });
   await assert.rejects(fresh.threads.list({}), { code: "ENGINE_NOT_STARTED" });
@@ -280,7 +281,7 @@ test("kill() ends the engine: pending requests fail with ENGINE_EXITED, running 
     await exited;
     assert.equal(engine.running, false);
     assert.equal(engine.exitError.code, "ENGINE_EXITED");
-    assert.doesNotMatch(engine.exitError.message, /codex/i);
+    assert.doesNotMatch(engine.exitError.message, new RegExp(ENGINE.name, "i"));
   });
 });
 
@@ -311,8 +312,8 @@ test("helper namespaces: home, events, hooks and version delegate to the adapter
     assert.equal(typeof engineHome.defaultPath({ AD_CODEX_HOME: dir }), "string");
     assert.equal(engineHome.env({ home: dir, base: {} }).CODEX_HOME, dir);
     const home = readFileSync(join(dir, "config.toml"), "utf8");
-    assert.doesNotMatch(home, /codex/i, "the bootstrap settings file names no engine");
-    assert.doesNotMatch(readFileSync(join(dir, engineHome.MANAGED_MARKER), "utf8"), /codex/i, "nor the marker");
+    assert.doesNotMatch(home, new RegExp(ENGINE.name, "i"), "the bootstrap settings file names no engine");
+    assert.doesNotMatch(readFileSync(join(dir, engineHome.MANAGED_MARKER), "utf8"), new RegExp(ENGINE.name, "i"), "nor the marker");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -322,21 +323,21 @@ test("helper namespaces: home, events, hooks and version delegate to the adapter
   const hooks = await engineHooks.forProfile("developer");
   assert.ok(hooks.hooks);
   assert.match(engineVersion.pinned(), /^\d+\.\d+\.\d+/);
-  assert.equal(engineVersion.parse("codex-cli 0.160.0"), "0.160.0");
+  assert.equal(engineVersion.parse(`${ENGINE.processName}-cli 0.160.0`), "0.160.0");
   assert.ok(Array.isArray(engineVersion.compat().tested));
 });
 
 test("doctor: the adapter returns codes and data; the façade owns the words, and they never name the engine", () => {
   const env = { AD_CODEX_HOME: "/nonexistent/ad-engine-home" };
   const pinned = engineVersion.pinned();
-  const words = engineDoctor.checks({ env, run: () => `codex-cli ${pinned}` });
+  const words = engineDoctor.checks({ env, run: () => `${ENGINE.processName}-cli ${pinned}` });
   const by = Object.fromEntries(words.map((c) => [c.name, c]));
   assert.equal(by["Engine version"].ok, true);
   assert.match(by["Engine version"].note, new RegExp(pinned.replace(/\./g, "\\.")));
   assert.match(by["Engine home"].note, /created on the first run/);
   assert.ok(by["Engine compatibility"]);
-  for (const c of words) assert.doesNotMatch(`${c.name} ${c.note}`, /codex/i, `${c.name}: ${c.note}`);
-  const drift = engineDoctor.checks({ env, run: () => "codex-cli 0.0.1" });
+  for (const c of words) assert.doesNotMatch(`${c.name} ${c.note}`, new RegExp(ENGINE.name, "i"), `${c.name}: ${c.note}`);
+  const drift = engineDoctor.checks({ env, run: () => `${ENGINE.processName}-cli 0.0.1` });
   const v = drift.find((c) => c.name === "Engine version");
   assert.equal(v.ok, false);
   assert.match(v.note, /tested with/);
@@ -363,11 +364,11 @@ test("doctor live checks through the façade: sign-in, hooks and the Windows san
     assert.match(by["Engine sign-in"].note, /ad auth login chatgpt/);
     assert.equal(by["Engine hooks"].note.startsWith("1/2 trusted"), true);
     assert.equal(by["Windows sandbox"].ok, true);
-    for (const c of checks) assert.doesNotMatch(`${c.name} ${c.note}`, /codex/i);
+    for (const c of checks) assert.doesNotMatch(`${c.name} ${c.note}`, new RegExp(ENGINE.name, "i"));
     const broken = await engineDoctor.liveChecks({ env: { AD_CODEX_HOME: home }, engineFactory: async () => { throw new Error("boom"); } });
     assert.equal(broken[0].name, "Engine");
     assert.match(broken[0].note, /boom/);
-    assert.doesNotMatch(broken[0].note, /codex/i);
+    assert.doesNotMatch(broken[0].note, new RegExp(ENGINE.name, "i"));
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
@@ -377,7 +378,7 @@ test("the engine home refusals come from the attribution module, with codes", as
   const { ownEngineHomeDefaultRefusal, ownEngineHomeStartRefusal } = await import("../src/engine/attribution.mjs");
   const { homedir } = await import("node:os");
   assert.throws(() => engineHome.env({ home: undefined, base: {} }), (e) => e.code === "HOME_REQUIRED" && e.message === ownEngineHomeDefaultRefusal);
-  const own = join(homedir(), ".codex");
+  const own = join(homedir(), projectConfigFolder);
   assert.throws(() => engineHome.env({ home: own, base: {} }), (e) => e.code === "HOME_IS_USERS" && e.message === ownEngineHomeStartRefusal(own));
 });
 
@@ -400,7 +401,7 @@ test("doctor words for the folder states never name the engine", async () => {
   const { mkdirSync } = await import("node:fs");
   const { createLegacyLink } = await import("../src/engine/codex/home-resolve.mjs");
   const pinned = engineVersion.pinned();
-  const run = () => `codex-cli ${pinned}`;
+  const run = () => `${ENGINE.processName}-cli ${pinned}`;
   const oldRoot = mkdtempSync(join(tmpdir(), "ad-facade-old-"));
   const newRoot = mkdtempSync(join(tmpdir(), "ad-facade-new-"));
   const twoRoot = mkdtempSync(join(tmpdir(), "ad-facade-two-"));
@@ -424,7 +425,7 @@ test("doctor words for the folder states never name the engine", async () => {
     // The old folder's on-disk name is data, not words: scrub path-like
     // tokens carrying it, then no prose may name the engine.
     const scrubbed = (s) => s.replace(/[^\s]*codex-home[^\s]*/gi, "<path>");
-    for (const c of [...words(oldRoot), ...words(newRoot), ...words(twoRoot)]) assert.doesNotMatch(scrubbed(`${c.name} ${c.note}`), /codex/i, `${c.name}: ${c.note}`);
+    for (const c of [...words(oldRoot), ...words(newRoot), ...words(twoRoot)]) assert.doesNotMatch(scrubbed(`${c.name} ${c.note}`), new RegExp(ENGINE.name, "i"), `${c.name}: ${c.note}`);
   } finally {
     for (const d of [oldRoot, newRoot, twoRoot]) rmSync(d, { recursive: true, force: true });
   }

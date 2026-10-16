@@ -67,7 +67,7 @@ test("lazy: no thread, no lock until the first prompt; quitting leaves no trace"
 test("a prompt echoes at once, starts a thread and a turn; the request waits for resolve()", async () => {
   await withSession(none, async ({ session, lockDir }) => {
     const { clientUserMessageId, accepted, done } = session.submit("hello");
-    assert.equal(session.state.echoes.get(clientUserMessageId), "hello", "local echo before Codex answers");
+    assert.equal(session.state.echoes.get(clientUserMessageId), "hello", "local echo before engine answers");
     const { turnId } = await accepted;
     assert.match(turnId, /^turn-/);
     assert.equal(readdirSync(lockDir).length, 1, "the thread is locked");
@@ -78,7 +78,7 @@ test("a prompt echoes at once, starts a thread and a turn; the request waits for
     const r = await done;
     assert.equal(r.status, "completed");
     assert.ok(agentTexts(session).includes("pong[accept]"));
-    assert.equal(session.state.echoes.size, 0, "Codex's copy replaced the echo");
+    assert.equal(session.state.echoes.size, 0, "engine's copy replaced the echo");
     const echo = [...session.state.items.values()].find((i) => i.kind === "userMessage");
     assert.equal(echo.clientId, clientUserMessageId);
     assert.equal(session.state.activeTurnId, null);
@@ -241,7 +241,7 @@ test("queue and editQueued: visible, editable, drained in order", async () => {
   });
 });
 
-test("interrupt before Codex accepted the turn interrupts it as soon as it is accepted", async () => {
+test("interrupt before the engine accepted the turn interrupts it as soon as it is accepted", async () => {
   await withSession(none, async ({ session }) => {
     const s = session.submit("slow-start");
     assert.equal(await session.interrupt(), true);
@@ -260,7 +260,7 @@ test("setNextTurn overrides go on the next turn/start", async () => {
     assert.equal(session.state.config.model, "m2");
     await session.submit("fail-turn").done;
     const st2 = await debugState(engine);
-    assert.equal(st2.lastParams["turn/start"].model, undefined, "once: Codex keeps it for later turns itself");
+    assert.equal(st2.lastParams["turn/start"].model, undefined, "once: engine keeps it for later turns itself");
   });
 });
 
@@ -327,7 +327,7 @@ test("an item id a later turn reuses is a new item there: no merging, nothing hi
     assert.equal(msg(t2).text, "reply to same-id two", "the delta didn't append to the old text");
     assert.notEqual(msg(t1).id, msg(t2).id, "two items, two keys");
     assert.equal(msg(t2).turnId, t2.id);
-    assert.equal(session.itemFor("msg-same", t2.id), msg(t2), "Codex's id within its turn finds it");
+    assert.equal(session.itemFor("msg-same", t2.id), msg(t2), "engine's id within its turn finds it");
     assert.equal(session.itemFor("msg-same", t1.id), msg(t1));
   });
 });
@@ -421,7 +421,7 @@ test("close declines open requests and resolves waiting turns", async () => {
 /* Part 4 re-review: thread switches, close and restart races          */
 /* ------------------------------------------------------------------ */
 
-test("release: ad leaves the thread and waits until Codex has unloaded it (for /codex)", async () => {
+test("release: ad leaves the thread and waits until the engine has unloaded it", async () => {
   await withSession(none, async ({ session, engine }) => {
     await session.submit("fail-turn").done;
     const id = session.state.thread.id;
@@ -429,7 +429,7 @@ test("release: ad leaves the thread and waits until Codex has unloaded it (for /
     assert.equal(session.state.thread, null, "ad left the thread");
     const st = await debugState(engine);
     assert.deepEqual(st.lastParams["thread/unsubscribe"], { threadId: id });
-    // A thread Codex doesn't have loaded is free already.
+    // A thread engine doesn't have loaded is free already.
     assert.equal(await session.release("not-loaded"), true);
     // No thread/closed in time: false, so the caller can fall back (restart ad's engine).
     await session.submit("fail-turn").done;
@@ -756,7 +756,7 @@ test("a crash also settles items that have no turn (a running ! command)", async
 });
 
 /* ------------------------------------------------------------------ */
-/* Collaboration modes (Codex's plan mode, codex-parity-2 Part 4)      */
+/* Collaboration modes (the engine's plan mode, terminal UI plan Part 4)      */
 /* ------------------------------------------------------------------ */
 
 const withModes = (opts, fn, extra = {}) => withSession((make) => ({ modes: true, ...opts(make) }), fn, { engineOpts: { experimental: true, ...(extra.env ? { env: extra.env } : {}) } });
@@ -805,11 +805,11 @@ test("modes: before a thread exists a switch is local; the first turn carries it
     assert.equal(st.lastParams["thread/settings/update"], undefined);
     assert.equal(st.lastParams["turn/start"].collaborationMode.mode, "plan");
     assert.equal(session.cycleMode().ok, true);
-    assert.equal(session.state.mode.kind, "default", "cycles back in Codex's order");
+    assert.equal(session.state.mode.kind, "default", "cycles back in engine's order");
   });
 });
 
-test("modes: thread/settings/updated (here, /codex or a turn's mask) drives the mode; resume restores it; a new conversation starts in Default", async () => {
+test("modes: thread/settings/updated (a turn's mask) drives the mode; resume restores it; a new conversation starts in Default", async () => {
   await withModes(none, async ({ session, engine }) => {
     await session.modesReady;
     await session.submit("fail-turn").done;
@@ -849,7 +849,7 @@ test("modes: the mask goes with a queued prompt and with the re-sent prompt afte
   );
 });
 
-test("modes: Codex without presets → unavailable, with a notice; a slow list gives up after 2 s", async () => {
+test("modes: the engine without presets → unavailable, with a notice; a slow list gives up after 2 s", async () => {
   await withModes(none, async ({ session, engine }) => {
     await session.modesReady;
     assert.deepEqual(session.state.mode.presets, []);
@@ -862,7 +862,7 @@ test("modes: Codex without presets → unavailable, with a notice; a slow list g
   await withModes(none, async ({ session }) => {
     const t = Date.now();
     await session.modesReady;
-    assert.ok(Date.now() - t >= 1500, "Codex's 2 s wait");
+    assert.ok(Date.now() - t >= 1500, "engine's 2 s wait");
     assert.deepEqual(session.state.mode.presets, []);
   }, { env: { FAKE_MODES_SLOW: "1" } });
 });
@@ -878,7 +878,7 @@ test("modes off (every front end but ad tui): no list, no mask, stable requests 
   });
 });
 
-test("modes (review #1): with no effort picked, Default carries Codex's configured model_reasoning_effort, not null", async () => {
+test("modes (review #1): with no effort picked, Default carries the engine's configured model_reasoning_effort, not null", async () => {
   await withModes(() => ({ configEffort: () => "high" }), async ({ session, engine }) => {
     await session.modesReady;
     await session.submit("fail-turn").done;
@@ -928,10 +928,10 @@ test("modes (review #4): a restart whose engine has no presets leaves Plan for D
 });
 
 /* ------------------------------------------------------------------ */
-/* Background terminals (Codex's unified exec, codex-parity-2 Part 5)  */
+/* Background terminals (the engine's unified exec, terminal UI plan Part 5)  */
 /* ------------------------------------------------------------------ */
 
-test("background terminals: tracked by Codex's processId past the turn, last 3 lines; stopTerminals cleans them", async () => {
+test("background terminals: tracked by the engine's processId past the turn, last 3 lines; stopTerminals cleans them", async () => {
   await withModes(none, async ({ session, engine }) => {
     await session.submit("bg-terminal").done;
     assert.equal(session.state.terminals.size, 1, "it outlives the turn");
@@ -943,7 +943,7 @@ test("background terminals: tracked by Codex's processId past the turn, last 3 l
     assert.equal(session.state.terminals.size, 0);
     assert.ok((await debugState(engine)).calls.includes("thread/backgroundTerminals/clean"));
     await sleep(100);
-    assert.equal(session.state.terminals.size, 0, "Codex's late item/completed doesn't bring it back");
+    assert.equal(session.state.terminals.size, 0, "engine's late item/completed doesn't bring it back");
   });
 });
 
@@ -959,7 +959,7 @@ test("background terminals: a new conversation and a resume forget them", async 
   });
 });
 
-test("background terminals (review): an item id reused across turns ends the right one; /stop forgets them even when Codex refuses", async () => {
+test("background terminals (review): an item id reused across turns ends the right one; /stop forgets them even when the engine refuses", async () => {
   await withModes(none, async ({ session }) => {
     await session.submit("bg-call0").done;
     const [server] = [...session.state.terminals.values()];
@@ -974,12 +974,12 @@ test("background terminals (review): an item id reused across turns ends the rig
     await session.submit("bg-terminal").done;
     assert.equal(session.state.terminals.size, 1);
     await assert.rejects(session.stopTerminals(), (err) => err.code === "FEATURE_UNAVAILABLE");
-    assert.equal(session.state.terminals.size, 0, "forgotten anyway, as Codex does");
+    assert.equal(session.state.terminals.size, 0, "forgotten anyway, as the engine does");
   });
 });
 
 /* ------------------------------------------------------------------ */
-/* /cd: a mutable folder (codex-parity-2 Part 6)                       */
+/* /cd: a mutable folder (terminal UI plan Part 6)                       */
 /* ------------------------------------------------------------------ */
 
 test("changeDir: forks the thread into the folder; the next turn, /new, a resume and an engine restart all use it", async () => {
@@ -1049,16 +1049,16 @@ test("changeDir (review): a thread with nothing in it yet (/clear) isn't forked;
     assert.equal(session.state.thread, null);
     await session.submit("fail-turn").done;
     const st = await debugState(engine);
-    assert.ok(!st.calls.includes("thread/fork"), "Codex hasn't saved an empty thread: nothing to fork");
+    assert.ok(!st.calls.includes("thread/fork"), "engine hasn't saved an empty thread: nothing to fork");
     assert.equal(st.lastParams["thread/start"].cwd, other);
   });
 });
 
 /* ------------------------------------------------------------------ */
-/* Side conversations (codex-parity-2 Part 7)                          */
+/* Side conversations (terminal UI plan Part 7)                          */
 /* ------------------------------------------------------------------ */
 
-test("openSide: an ephemeral, read-only fork with Codex's side texts; its events stay apart; closing lets it go", async () => {
+test("openSide: an ephemeral, read-only fork with the engine's side texts; its events stay apart; closing lets it go", async () => {
   await withModes(none, async ({ session, engine, lockDir }) => {
     await session.modesReady;
     await assert.rejects(session.openSide(), /'\/side' is unavailable until the main thread is ready\./);

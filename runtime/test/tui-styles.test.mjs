@@ -1,4 +1,4 @@
-// Styles, not just text (codex-parity-2 P8): the other goldens strip styles,
+// Styles, not just text (terminal UI plan P8): the other goldens strip styles,
 // so a colour changing by accident would pass them. This sheet keeps every
 // span's style, so moving the colours into tui/view/theme.mjs (or any later
 // change) can't recolour the UI unnoticed. AD_UPDATE_GOLDEN=1 rewrites it.

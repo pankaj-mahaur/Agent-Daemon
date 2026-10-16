@@ -25,3 +25,31 @@ test("the README carries the attribution sentence verbatim", () => {
   const readme = readFileSync(`${ROOT}README.md`, "utf8");
   assert.ok(readme.includes(readmeSentence), "readmeSentence verbatim in the README");
 });
+
+
+test("the README and troubleshooting login recipes lead with API routes", () => {
+  const readme = readFileSync(`${ROOT}README.md`, "utf8");
+  const recipe = readme.split("The harness commands need a login.")[1]?.split("\n")[0] ?? "";
+  assert.ok(recipe.includes("ad auth login openai"), recipe);
+  assert.ok(recipe.indexOf("openai") < recipe.indexOf("chatgpt"), recipe);
+  assert.ok(recipe.indexOf("openrouter") < recipe.indexOf("chatgpt"), recipe);
+  const troubleshooting = readFileSync(`${ROOT}docs/troubleshooting.md`, "utf8");
+  const fix = troubleshooting.split("## 14.")[1]?.split("## 15.")[0] ?? "";
+  assert.ok(fix.indexOf("ad auth login openai") >= 0, fix);
+  assert.ok(fix.indexOf("ad auth login openai") < fix.indexOf("ad auth login chatgpt                          #"), fix);
+  assert.ok(fix.indexOf("ad auth login openrouter") < fix.indexOf("ad auth login chatgpt                          #"), fix);
+});
+
+test("the upgrade guide distinguishes env-name lifetime and value aliases", () => {
+  const guide = readFileSync(`${ROOT}docs/upgrade-3.0.md`, "utf8");
+  const renamed = guide.split("## Renamed")[1]?.split("## Removed:")[0] ?? "";
+  assert.match(renamed, /old env var names keep working/i);
+  assert.match(renamed, /old (?:product )?values work (?:at least )?until 3\.1/i);
+});
+
+test("the rollback recipe offers optional undo before switching to 2.2.0", () => {
+  const guide = readFileSync(`${ROOT}docs/upgrade-3.0.md`, "utf8");
+  const rollback = guide.split("## Rolling back to 2.2.0")[1]?.split("## Something wrong?")[0] ?? "";
+  assert.ok(rollback.indexOf("ad migrate --undo") >= 0, rollback);
+  assert.ok(rollback.indexOf("ad migrate --undo") < rollback.indexOf("git checkout v2.2.0"), rollback);
+});

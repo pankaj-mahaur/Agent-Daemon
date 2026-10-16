@@ -1,7 +1,8 @@
-// Tests for the LLM backend switch (llm.mjs): claude by default, Codex on
+// Tests for the LLM backend switch (llm.mjs): claude by default, engine on
 // request or when the claude binary is missing; schemas that OpenAI strict
 // mode would reject are embedded in the prompt instead.
 
+import { LEGACY } from "../src/engine/attribution.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -28,9 +29,9 @@ function fakeFactory(root, seen) {
 
 test("llmBackend: default auto, env and opts override, unknown rejected", () => {
   assert.equal(llmBackend({}, {}), "auto");
-  assert.equal(llmBackend({}, { AD_LLM_BACKEND: "codex" }), "ad", "the old value still works");
+  assert.equal(llmBackend({}, { AD_LLM_BACKEND: LEGACY.productValue }), "ad", "the old value still works");
   assert.equal(llmBackend({}, { AD_LLM_BACKEND: "ad" }), "ad");
-  assert.equal(llmBackend({ backend: "claude" }, { AD_LLM_BACKEND: "codex" }), "claude");
+  assert.equal(llmBackend({ backend: "claude" }, { AD_LLM_BACKEND: LEGACY.productValue }), "claude");
   assert.throws(() => llmBackend({ backend: "gpt" }, {}), /unknown LLM backend/);
 });
 
@@ -56,7 +57,7 @@ test("claude backend: JSON is parsed from text when no schema was given (digest 
   assert.deepEqual(r.parsedJson, { learnings: [{ text: "t" }] });
 });
 
-test("auto: a missing claude binary falls back to the Codex engine", async () => {
+test("auto: a missing claude binary falls back to the engine", async () => {
   const root = mkdtempSync(join(tmpdir(), "ad-llm-"));
   const seen = [];
   try {
@@ -67,17 +68,17 @@ test("auto: a missing claude binary falls back to the Codex engine", async () =>
     );
     assert.equal(r.ok, true, r.error);
     assert.deepEqual(r.parsedJson, { answer: 42 });
-    assert.deepEqual(seen[0].outputSchema, strict, "strict schema goes to Codex as outputSchema");
+    assert.deepEqual(seen[0].outputSchema, strict, "strict schema goes to the engine as outputSchema");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("codex: a non-strict schema is embedded in the prompt, not sent as outputSchema", async () => {
+test("legacy backend: a non-strict schema is embedded in the prompt, not sent as outputSchema", async () => {
   const root = mkdtempSync(join(tmpdir(), "ad-llm-"));
   const seen = [];
   try {
-    await callLlm({ backend: "codex", userMessage: "q", jsonSchema: { type: "object", properties: { a: {} } } }, { engineFactory: fakeFactory(root, seen) });
+    await callLlm({ backend: LEGACY.productValue, userMessage: "q", jsonSchema: { type: "object", properties: { a: {} } } }, { engineFactory: fakeFactory(root, seen) });
     assert.equal(seen[0].outputSchema, undefined);
     assert.match(seen[0].input[0].text, /Respond with ONLY a JSON object/);
     await callLlm({ backend: "ad", userMessage: "q", jsonSchema: { type: "object", properties: { a: {} } } }, { engineFactory: fakeFactory(root, seen) });
@@ -107,7 +108,7 @@ test("auto: the fallback note names ad's engine", async () => {
 });
 
 test("auto does not fall back for ordinary claude failures", async () => {
-  const r = await callLlm({ userMessage: "q" }, { callClaude: async () => ({ ok: false, error: "budget exceeded" }), engineFactory: async () => assert.fail("must not start codex") });
+  const r = await callLlm({ userMessage: "q" }, { callClaude: async () => ({ ok: false, error: "budget exceeded" }), engineFactory: async () => assert.fail("must not start the engine") });
   assert.equal(r.error, "budget exceeded");
 });
 

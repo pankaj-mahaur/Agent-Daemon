@@ -10,15 +10,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { screenHits } from "../scripts/check-brand.mjs";
-import { brandPatterns } from "../src/engine/attribution.mjs";
+import { brandPatterns, LEGACY } from "../src/engine/attribution.mjs";
 
 const CLI = fileURLToPath(new URL("../src/cli.mjs", import.meta.url));
 
 const CASES = [
   ["--help"],
   ["tui", "--help"],
-  ["codex"],
-  ["codex", "--help"],
+  [LEGACY.productValue],
+  [LEGACY.productValue, "--help"],
   ["about"],
   ["auth"],
   ["run"],
@@ -48,7 +48,7 @@ test("help, usage errors, the tombstone and ad about name no engine", () => {
   }
 });
 
-test("ad codex exits 2 with the tombstone and empty stdout; ad engine falls through", () => {
+test("the removed engine command exits 2 with the tombstone and empty stdout; ad engine falls through", () => {
   const home = mkdtempSync(join(tmpdir(), "ad-help-"));
   try {
     const env = { ...process.env, HOME: home, USERPROFILE: home };
@@ -56,7 +56,7 @@ test("ad codex exits 2 with the tombstone and empty stdout; ad engine falls thro
     delete env.AD_ENGINE_DIR;
     delete env.CODEX_HOME;
     const run = (args) => spawnSync(process.execPath, [CLI, ...args], { input: "", encoding: "utf8", timeout: 30_000, env });
-    for (const args of [["codex"], ["codex", "--help"]]) {
+    for (const args of [[LEGACY.productValue], [LEGACY.productValue, "--help"]]) {
       const r = run(args);
       assert.equal(r.status, 2, `ad ${args.join(" ")}`);
       assert.match(r.stderr, /was removed in 3\.0\. Settings: .*config\.toml|\(see ad doctor\)/);

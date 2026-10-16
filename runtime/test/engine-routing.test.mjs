@@ -91,7 +91,7 @@ test("a child thread is linked by thread/started.parentThreadId alone", async ()
   });
 });
 
-test("user input: the front end's answers go back in Codex's shape", async () => {
+test("user input: the front end's answers go back in the engine's shape", async () => {
   await withEngine({ onRequest: async (req) => (req.kind === "user-input" ? { q: ["A"] } : "decline") }, async ({ engine, threadId }) => {
     const r = await engine.turn({ threadId, text: "user-input", timeoutMs: 0 });
     assert.equal(r.output, 'input{"answers":{"q":{"answers":["A"]}}}');
@@ -123,7 +123,7 @@ for (const [scenario, why] of [["resolved-elsewhere", "resolved"], ["revert-pend
   });
 }
 
-test("startTurn returns once Codex accepted the turn; events keep coming through subscribe", async () => {
+test("startTurn returns once the engine accepted the turn; events keep coming through subscribe", async () => {
   await withEngine({}, async ({ engine, threadId }) => {
     const seen = [];
     engine.subscribe(threadId, (ev) => seen.push(ev));
@@ -198,18 +198,18 @@ test("requestResult: only offered options are sent; anything else declines", () 
 /* Re-review 3: one resolved per request, spoofed links, robustness    */
 /* ------------------------------------------------------------------ */
 
-test("an answered request gets exactly one request.resolved, even though Codex announces it too", async () => {
+test("an answered request gets exactly one request.resolved, even though the engine announces it too", async () => {
   await withEngine({ onRequest: async () => "accept" }, async ({ engine, threadId }) => {
     const seen = [];
     engine.subscribe(threadId, (ev) => seen.push(ev));
     await engine.turn({ threadId, text: "hello", timeoutMs: 0 });
-    await new Promise((r) => setTimeout(r, 30)); // Codex's serverRequest/resolved follows the answer
+    await new Promise((r) => setTimeout(r, 30)); // The engine's serverRequest/resolved follows the answer
     assert.equal(seen.filter((e) => e.type === "request.opened").length, 1);
     assert.equal(seen.filter((e) => e.type === "request.resolved").length, 1);
   });
 });
 
-test("without onRequest, Codex's serverRequest/resolved produces no orphan event", async () => {
+test("without onRequest, the engine's serverRequest/resolved produces no orphan event", async () => {
   await withEngine({ onApproval: () => "accept" }, async ({ engine, threadId }) => {
     const seen = [];
     engine.subscribe(threadId, (ev) => seen.push(ev));
