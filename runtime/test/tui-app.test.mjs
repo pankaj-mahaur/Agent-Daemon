@@ -168,10 +168,13 @@ test("Esc in an approval declines; Ctrl+C twice quits", async () => {
 test("an openaiForm request is cancelled at once: no modal, a warning", async () => {
   const { formAutoCancel } = await import("../src/engine/attribution.mjs");
   await withApp(async ({ app, type, until, text, session }) => {
-    session.state.requests.push({ request: { id: "e-form", kind: "elicitation", form: { mode: "openaiForm" } }, resolve: () => {} });
+    let got = "unanswered";
+    session.state.requests.push({ request: { id: "e-form", kind: "elicitation", form: { mode: "openaiForm" } }, resolve: (a) => (got = a) });
     type("x"); // trigger a draw; the character stays in the composer
     await until(() => text().includes("engine's own UI"), "the auto-cancel warning");
     assert.equal(app.state.modal, null, "no modal opens");
+    assert.deepEqual(got, { action: "cancel" }, "cancelled, not declined");
+    assert.ok(!session.state.requests.some((r) => r.request.id === "e-form"), "the request left the queue");
     assert.ok(formAutoCancel.includes("ad cancelled it"));
   });
 });

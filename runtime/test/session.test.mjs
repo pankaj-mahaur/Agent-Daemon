@@ -1109,8 +1109,18 @@ test("identity is injected on an unmanaged home's new threads, never on a manage
       rmSync(join(engine.home, ".agent-daemon-managed"));
       const unmanaged = createSession({ engine, cwd: root, lockDir, identity: "IDENTITY" });
       try {
+        const injects = async () => (await debugState(engine)).calls.filter((c) => c === "thread/inject_items").length;
         await unmanaged.submit("early-complete").done;
         assert.equal((await debugState(engine)).lastParams["thread/inject_items"].items[0].content[0].text, "IDENTITY");
+        assert.equal(await injects(), 1);
+        const firstThread = unmanaged.state.thread.id;
+        unmanaged.newThread();
+        await unmanaged.submit("early-complete").done;
+        assert.notEqual(unmanaged.state.thread.id, firstThread, "a second thread started");
+        assert.equal(await injects(), 2, "every new thread is told");
+        await unmanaged.resume(firstThread);
+        await unmanaged.submit("early-complete").done;
+        assert.equal(await injects(), 2, "a resumed thread is not told again");
       } finally {
         unmanaged.close();
       }
