@@ -100,7 +100,7 @@ The real-engine job is non-blocking (`continue-on-error`): **read its result**, 
 
 Run the same pipeline before pushing, on this machine and in a Linux container, with the project skill [`ad-ci-readiness`](../.claude/skills/ad-ci-readiness/SKILL.md): it also reads a PR's CI test by test and holds the release-readiness checklist.
 
-`.github/workflows/codex-upgrade.yml` runs `npm test` and the same real-engine tests in its own Linux job before it opens the PR that bumps the engine pin, and puts the results in the PR body. The PR's own `test.yml` run (all three OSes) happens only when the repo has a `CODEX_UPGRADE_TOKEN` secret: PRs opened with the default token don't trigger other workflows.
+`.github/workflows/engine-upgrade.yml` runs `npm test` and the same real-engine tests in its own Linux job before it opens the PR that bumps the engine pin, and puts the results in the PR body. The PR's own `test.yml` run (all three OSes) happens only when the repo has an `ENGINE_UPGRADE_TOKEN` secret: PRs opened with the default token don't trigger other workflows.
 
 ## Pitfalls met in practice
 

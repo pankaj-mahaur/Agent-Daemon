@@ -75,7 +75,7 @@ ad init
 
 The `ad` command is the short alias for `agent-daemon` — both work interchangeably. No API key is required for local capture, retrieval, deterministic SessionEnd digest parsing, or inline skill evolution proposals. Claude Code itself must be authenticated for interactive sessions; authenticated batch/LLM fallback remains explicit opt-in behavior.
 
-The harness commands need a login. Bare `ad` (the terminal UI) asks for it on the first run; `ad chat`, `ad run`, `ad loop`, `ad schedule`, `ad web` and `ad acp` need `ad auth login chatgpt` (or `openai` / `openrouter`) first. See [Agent harness](#agent-harness).
+The harness commands need a login. Bare `ad` (the terminal UI) asks for it on the first run; `ad chat`, `ad run`, `ad loop`, `ad schedule`, `ad web` and `ad acp` need `ad auth login openai`, `ad auth login openrouter --model <slug>` or `ad auth login chatgpt` first. See [Agent harness](#agent-harness).
 
 ### Windows team setup (Claude Code)
 
@@ -164,9 +164,9 @@ Full guide: [docs/harness.md](docs/harness.md).
 
 **Staying current with the engine.** The engine is pinned exactly.
 - A committed protocol snapshot is checked by the test suite.
-- The weekly [`codex-upgrade`](.github/workflows/codex-upgrade.yml) workflow bumps the pin, diffs the protocol (removals flagged as breaking), and regenerates the engine's slash-command names and the tested-versions file. In its own Linux job it runs the suite plus the real pinned engine against a mock model (`engine-real` and the live terminal UI tests), then opens a PR with the results.
-- The PR's own CI (Linux, macOS, Windows) runs only when the repo has a `CODEX_UPGRADE_TOKEN` secret; see [docs/testing.md](docs/testing.md#ci).
-- CI has no real login and no working Windows sandbox, so still run the live `ad run` and `ad tui` smokes on Windows before merging (the `codex-upgrade` skill has the steps).
+- The weekly [`engine-upgrade`](.github/workflows/engine-upgrade.yml) workflow bumps the pin, diffs the protocol (removals flagged as breaking), and regenerates the engine's slash-command names, notification list and tested-versions file. In its own Linux job it runs the suite plus the real pinned engine against a mock model (`engine-real` and the live terminal UI tests), then opens a PR with the results.
+- The PR's own CI (Linux, macOS, Windows) runs only when the repo has an `ENGINE_UPGRADE_TOKEN` secret (the old `CODEX_UPGRADE_TOKEN` also works); see [docs/testing.md](docs/testing.md#ci).
+- CI has no real login and no working Windows sandbox, so still run the live `ad run` and `ad tui` smokes on Windows before merging (the `engine-upgrade` skill has the steps).
 
 Design and decisions: [docs/harness-design.md](docs/harness-design.md).
 
@@ -584,7 +584,7 @@ ad spawn         (sp)  --team <id> --role <name> --task "..."
 | [big-feature-flow](skills/daemon/big-feature-flow/) | Research how others built it → plan in parts → review rounds until final → per-part implement/test/review | Auto: big multi-part work, "research first", "plan it to perfection" |
 | [ad-harness](skills/daemon/ad-harness/) | Hand work to ad's own harness (`ad run`, `ad loop`, `ad schedule`, `ad sp`) with budgets and the sandbox, then verify the result | Auto: "run this in the background", "keep working until it's done", "schedule this" |
 | [harness-troubleshoot](skills/daemon/harness-troubleshoot/) | Harness failures: login → hooks → sandbox → the engine's own log, with known Windows causes | Auto: "Not logged in", "Access is denied", "the engine stopped" |
-| [codex-upgrade](skills/daemon/codex-upgrade/) | Maintainers: land an engine bump (protocol diff, suite, live Windows smokes) | Auto: the weekly `codex-upgrade` PR, "bump the engine" |
+| [engine-upgrade](skills/daemon/engine-upgrade/) | Maintainers: land an engine bump (protocol diff, suite, live Windows smokes) | Auto: the weekly `engine-upgrade` PR, "bump the engine" |
 | [ad-tui-dev](skills/daemon/ad-tui-dev/) | Maintainers: work on the terminal UI with its isolation and renderer rules | Auto: changes under `runtime/src/tui/` |
 
 ### Methodology

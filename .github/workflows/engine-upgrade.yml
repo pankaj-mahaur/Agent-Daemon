@@ -1,6 +1,6 @@
-name: codex-upgrade
+name: engine-upgrade
 
-# Keeps the pinned Codex engine current without surprises.
+# Keeps the pinned engine current without surprises.
 # Weekly: if npm `latest` (never alpha) is newer than the pin, bump it on a
 # branch, regenerate the protocol snapshot, run the full suite, and open a
 # PR whose body is the protocol diff. Breaking protocol changes get a label;
@@ -8,8 +8,9 @@ name: codex-upgrade
 #
 # Repo setup: Settings → Actions → General → "Allow GitHub Actions to create
 # and approve pull requests" must be on. PRs opened with GITHUB_TOKEN do not
-# trigger other workflows; add a CODEX_UPGRADE_TOKEN secret (fine-grained PAT,
-# contents + pull-requests write) to get the normal CI checks on the PR.
+# trigger other workflows; add an ENGINE_UPGRADE_TOKEN secret (fine-grained PAT,
+# contents + pull-requests write) to get the normal CI checks on the PR (the
+# old CODEX_UPGRADE_TOKEN secret keeps working).
 
 on:
   schedule:
@@ -17,7 +18,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Codex version to try (default: npm dist-tag latest)"
+        description: "Engine version to try (default: npm dist-tag latest)"
         required: false
 
 permissions:
@@ -25,7 +26,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: codex-upgrade
+  group: engine-upgrade
   cancel-in-progress: false
 
 jobs:
@@ -44,7 +45,7 @@ jobs:
         id: ver
         working-directory: runtime
         env:
-          GH_TOKEN: ${{ secrets.CODEX_UPGRADE_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.ENGINE_UPGRADE_TOKEN || secrets.CODEX_UPGRADE_TOKEN || github.token }}
           INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
           current=$(node -p "require('./package.json').dependencies['@openai/codex']")
@@ -54,7 +55,7 @@ jobs:
             echo "refusing non-release version '$target'"
             exit 1
           fi
-          branch="codex-upgrade/$target"
+          branch="engine-upgrade/$target"
           echo "current=$current" >> "$GITHUB_OUTPUT"
           echo "target=$target" >> "$GITHUB_OUTPUT"
           echo "branch=$branch" >> "$GITHUB_OUTPUT"
@@ -99,15 +100,18 @@ jobs:
             exit "$code"
           fi
 
-      - name: Regenerate Codex slash names and compat
+      - name: Regenerate the engine's command list, notifications and compat
         if: steps.ver.outputs.skip != 'true'
         working-directory: runtime
         env:
-          GH_TOKEN: ${{ secrets.CODEX_UPGRADE_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.ENGINE_UPGRADE_TOKEN || secrets.CODEX_UPGRADE_TOKEN || github.token }}
           TARGET: ${{ steps.ver.outputs.target }}
         run: |
           # ad's own slash commands must not collide with new upstream ones (test/tui-resilience).
           node scripts/codex-slash.mjs || echo "::warning::could not regenerate upstream-commands.json; the collision test runs on the old list"
+          # protocol-notifications.json: every server notification, so the events
+          # exhaustiveness test names each new one that needs a decision.
+          node scripts/codex-notifications.mjs || echo "::warning::could not regenerate protocol-notifications.json; the exhaustiveness test runs on the old list"
           # compat.json: the new pin is tested; "what changed" is left for a human
           # (the PR body asks for it; the test suite runs with AD_COMPAT_NOTE_PENDING=1).
           node -e '
@@ -143,7 +147,7 @@ jobs:
       - name: Open PR
         if: steps.ver.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ secrets.CODEX_UPGRADE_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.ENGINE_UPGRADE_TOKEN || secrets.CODEX_UPGRADE_TOKEN || github.token }}
           BASE: ${{ github.event.repository.default_branch }}
           CURRENT: ${{ steps.ver.outputs.current }}
           TARGET: ${{ steps.ver.outputs.target }}
@@ -155,11 +159,11 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$BRANCH"
-          git add runtime/package.json runtime/package-lock.json runtime/src/engine/codex/protocol-snapshot.json runtime/src/engine/codex/upstream-commands.json runtime/src/engine/codex/compat.json
+          git add runtime/package.json runtime/package-lock.json runtime/src/engine/codex/protocol-snapshot.json runtime/src/engine/codex/upstream-commands.json runtime/src/engine/codex/protocol-notifications.json runtime/src/engine/codex/compat.json
           git commit -m "chore(engine): bump @openai/codex $CURRENT -> $TARGET"
           git push --force origin "$BRANCH"
           {
-            echo "Automated Codex engine upgrade: \`$CURRENT\` → \`$TARGET\`."
+            echo "Automated engine upgrade: \`$CURRENT\` → \`$TARGET\`."
             echo
             echo "- Release notes: https://github.com/openai/codex/releases/tag/rust-v$TARGET"
             echo "- Test suite: **$TESTS**"
@@ -174,9 +178,9 @@ jobs:
             echo
             cat "$RUNNER_TEMP/protocol-diff.md"
             echo
-            echo "Merge only after the live smokes in the codex-upgrade skill (\`ad run\` and \`ad tui\`) on Windows."
+            echo "Merge only after the live smokes in the engine-upgrade skill (\`ad run\` and \`ad tui\`) on Windows."
           } > "$RUNNER_TEMP/body.md"
-          labels="codex-upgrade"
+          labels="engine-upgrade"
           [ "$BREAKING" = "true" ] && labels="$labels,breaking-protocol"
           [ "$TESTS" != "success" ] && labels="$labels,tests-failing"
           [ "$REAL" != "success" ] && labels="$labels,real-engine-failing"
@@ -184,5 +188,5 @@ jobs:
             gh label create "$l" --force >/dev/null 2>&1 || echo "::warning::could not create label $l"
           done
           gh pr create --base "$BASE" --head "$BRANCH" \
-            --title "chore(engine): bump Codex to $TARGET" \
+            --title "chore(engine): bump the engine to $TARGET" \
             --body-file "$RUNNER_TEMP/body.md" --label "$labels"

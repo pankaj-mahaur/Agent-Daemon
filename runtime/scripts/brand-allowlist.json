@@ -55,14 +55,14 @@
       "reason": "a citation of upstream's own source path (codex-rs/…): the file is upstream's and keeps its name, as the attributed prompt files cite theirs; a line that also names the engine in prose is still a hit"
     },
     {
-      "path": "skills/daemon/codex-upgrade/",
+      "path": "skills/daemon/engine-upgrade/",
       "rules": ["A"],
-      "reason": "the engine-upgrade runbook: it fetches upstream's releases and must say what it upgrades (renamed engine-upgrade in Part 5, still allowed)"
+      "reason": "the engine-upgrade runbook: it fetches upstream's releases and must say what it upgrades"
     },
     {
-      "path": ".github/workflows/codex-upgrade.yml",
+      "path": ".github/workflows/engine-upgrade.yml",
       "rules": ["A"],
-      "reason": "the engine-upgrade workflow: it bumps the pin from upstream's releases (renamed engine-upgrade.yml in Part 5, still allowed)"
+      "reason": "the engine-upgrade workflow: it bumps the pin from upstream's releases"
     },
     {
       "path": "runtime/scripts/codex-schema-snapshot.mjs",

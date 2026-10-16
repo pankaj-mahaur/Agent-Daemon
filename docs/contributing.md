@@ -229,7 +229,7 @@ git diff test/golden
 - `runtime/src/engine/codex/upstream-commands.json` (the engine's slash-command names at the pinned tag; regenerate with `node runtime/scripts/codex-slash.mjs`), so ad's own commands never collide with the engine's;
 - `runtime/src/engine/codex/compat.json`, which must list the pin as tested, with a user-facing "what changed" note. `AD_COMPAT_NOTE_PENDING=1` lets the upgrade bot's run pass until a person writes it.
 
-CI has no real login and no working Windows sandbox. Before merging an engine bump, run the live `ad run` and `ad tui` smokes on Windows in a scratch directory; the [`codex-upgrade`](../skills/daemon/codex-upgrade/SKILL.md) skill has the steps.
+CI has no real login and no working Windows sandbox. Before merging an engine bump, run the live `ad run` and `ad tui` smokes on Windows in a scratch directory; the [`engine-upgrade`](../skills/daemon/engine-upgrade/SKILL.md) skill has the steps.
 
 ---
 
