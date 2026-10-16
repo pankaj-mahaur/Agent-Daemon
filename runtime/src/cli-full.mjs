@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { exec } from "node:child_process";
 import path from "node:path";
 import fs from "node:fs/promises";
+import { LEGACY } from "./engine/attribution.mjs";
 import { productValue } from "./product-values.mjs";
 
 import { runSessionStart } from "./session-start.mjs";
@@ -64,7 +65,7 @@ Commands:
   service uninstall      Unregister the watch service
   service status         Show whether the watch service is registered
   evolve <skill>         GEPA self-improvement run for a skill (sample → reflect → generate → evaluate → select)
-                         --llm <backend>      claude | codex | auto (default: claude, else Codex engine)
+                         --llm <backend>      claude | ad | auto (default: claude, else ad's engine)
                          --list-candidates    list skills with ≥3 failures in 30d (no auth needed)
                          --export-traces      export skill_executions to JSONL for inline GEPA (no auth needed)
                          --json               machine-readable output (use with --list-candidates / --export-traces)
@@ -95,17 +96,17 @@ Commands:
   skill search <query>   Search the bundled skill catalog by name/description
   doctor                 Diagnose the install — settings.json, PATH, dirs
   doctor --tokens        Show token usage + cache stats from recent sessions
+  about                  What ad runs on: versions, the engine, licenses, settings path
   viewer                 Render the episodic store to a single self-contained HTML file (zero-dep snapshot)
                          --out <path>         output path (default ~/.agent-daemon/viewer.html)
                          --open               open it in the default browser
 
-Harness (Codex engine):
+Agent harness (ad's engine; ad about):
   chat                   Interactive agent session (approve commands/edits as they come; /help inside)
                          --cwd <dir>  --model <name>  --sandbox <mode>  --resume <thread-id>
-  tui                    The terminal UI (Codex-style, inline; bare "ad" opens it): see docs/tui.md
+  tui                    The terminal UI (inline; bare "ad" opens it): see docs/tui.md
                          --cwd <dir>  --model <name>  --sandbox <mode>  --resume <thread-id>  --last
                          --preview            a minimal preview UI on the same engine instead
-  codex [args…]          The pinned stock Codex UI on ad's own Codex home (never ~/.codex)
   loop "<objective>"     Autonomous loop until done (dual exit, circuit breaker, budgets, STOP file)
                          --max-iterations 20  --max-minutes 60  --max-tokens <n>  --resume <thread-id>
   run "<prompt>"         One non-interactive agent turn (approvals are declined)
@@ -125,7 +126,7 @@ Harness (Codex engine):
                          --edits (let agy edit files)  --model <m>
   tools list             Optional agent tools and whether they are on
   tools enable <tool>    browser (Playwright MCP) | web-search (live); "tools disable <tool>" turns off
-  sandbox setup          Windows: set up Codex's command sandbox for the harness (--elevated: stronger, asks UAC)
+  sandbox setup          Windows: set up the command sandbox for ad's engine (--elevated: stronger; asks first, --yes off a terminal)
   sandbox status         Windows: show sandbox readiness
   migrate [--undo]       Rename ad's engine folder from its older name (optional; --undo reverses it)
 
@@ -137,7 +138,7 @@ Harness (Codex engine):
   team cleanup    (tu)   Prune stale worktrees and dangling team data
   team delete     (td)   Delete a team and its data
   team retry      (tr)   Reset a failed task to pending (--team <id> --task <task-id>)
-  spawn           (sp)   Spawn a worker agent in a team (--engine codex [default, sandboxed] | claude)
+  spawn           (sp)   Spawn a worker agent in a team (--engine ad [default, sandboxed] | claude)
 
 Options:
   --version              Print version and exit
@@ -979,9 +980,9 @@ async function cmdDoctor({ cwd = process.cwd(), tokens, limit, model } = {}) {
   checks.push({ name: "agent-daemon CLI", ok: true, note: `running from ${__filename}` });
 
   // Check 2: claude CLI on PATH
-  checks.push(await checkBinary("claude", "headless engine for digest pipeline"));
+  checks.push(await checkBinary("claude", "headless runner for the digest pipeline"));
 
-  // Check 2a: the engine — pinned version, home, and (once the home exists) sign-in, hooks, sandbox
+  // Check 2a: ad's engine — pinned version, home, and (once the home exists) sign-in, hooks, sandbox
   const { engineDoctor } = await import("./engine/index.mjs");
   checks.push(...engineDoctor.checks());
   checks.push(...(await engineDoctor.liveChecks()));
@@ -1001,7 +1002,7 @@ async function cmdDoctor({ cwd = process.cwd(), tokens, limit, model } = {}) {
     if (hasOAuth) {
       checks.push({ name: "Auth (OAuth)", ok: true, note: "~/.claude/auth.json found — OAuth/keychain login active" });
     } else {
-      checks.push({ name: "Auth", ok: true, note: "no Claude login — digest works via agent-emitted blocks; GEPA needs `claude auth login`, ANTHROPIC_API_KEY, or the Codex engine (ad auth login chatgpt; --llm codex)" });
+      checks.push({ name: "Auth", ok: true, note: "no Claude login — digest works via agent-emitted blocks; GEPA needs `claude auth login`, ANTHROPIC_API_KEY, or ad's engine (ad auth login; --llm ad)" });
     }
   }
 
@@ -2087,7 +2088,7 @@ async function cmdSpawn(opts) {
     console.log(`  Name: ${result.agentName}`);
     console.log(`  Branch: ${result.branch}`);
     console.log(`  Worktree: ${result.worktreePath}`);
-    console.log(result.threadId ? `  Codex thread: ${result.threadId}${result.commit ? `\n  Commit: ${result.commit}` : ""}` : `  PID: ${result.pid}`);
+    console.log(result.threadId ? `  Thread: ${result.threadId}${result.commit ? `\n  Commit: ${result.commit}` : ""}` : `  PID: ${result.pid}`);
   } else {
     console.error(`\nSpawn failed: ${result.error}`);
   }
@@ -2133,10 +2134,12 @@ async function main(argv) {
 
   const [command, ...rest] = expanded;
 
-  // `ad codex [args…]`: everything after "codex" goes to the stock UI as is.
-  if (command === "codex") {
-    const { cmdCodex } = await import("./harness/codex-ui.mjs");
-    return cmdCodex(rest);
+  // The hand-off to the engine's own UI left the product in 3.0 (design C4): a tombstone says what replaced it.
+  if (command === LEGACY.command) {
+    const { tombstoneEngineUiCommand } = await import("./engine/attribution.mjs");
+    const { engineHome } = await import("./engine/index.mjs");
+    process.stderr.write(`${tombstoneEngineUiCommand({ settingsPath: engineHome.settingsPath() ?? "(see ad doctor)" })}\n`);
+    return 2;
   }
 
   // Parse remaining args generically (each command interprets what it needs)
@@ -2165,6 +2168,7 @@ async function main(argv) {
         "fallback-to-llm": { type: "boolean" },
         force:        { type: "boolean" },
         undo:         { type: "boolean" },
+        yes:          { type: "boolean" },
         "once-on-existing": { type: "boolean" },
         "list-candidates": { type: "boolean" },
         "export-traces": { type: "boolean" },
@@ -2268,6 +2272,10 @@ async function main(argv) {
       json: parsed.values.json
     });
     case "doctor":         return cmdDoctor({ ...opts, tokens: parsed.values.tokens, limit: parsed.values.limit, model: parsed.values.model });
+    case "about": {
+      const { cmdAbout } = await import("./harness/about.mjs");
+      return cmdAbout();
+    }
     case "viewer":         return cmdViewer({ ...opts, out: parsed.values.out, open: parsed.values.open || false });
     case "auth": {
       const { cmdAuth } = await import("./harness/auth.mjs");
@@ -2319,6 +2327,7 @@ async function main(argv) {
       return cmdSandbox(parsed.positionals[0], {
         elevated: parsed.values.elevated || false,
         force: parsed.values.force || false,
+        yes: Boolean(parsed.values.yes),
         cwd: parsed.values.cwd || process.cwd(),
         clientVersion: VERSION
       });

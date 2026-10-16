@@ -3,7 +3,7 @@
 // if setup changed something the running app-server caches (Windows sandbox).
 // Used by `ad run`, `ad chat` and team workers.
 
-import { createEngine } from "../engine/index.mjs";
+import { createEngine, engineVersion } from "../engine/index.mjs";
 import { envRenameNote, LEGACY, migrateMessages } from "../engine/attribution.mjs";
 import { providerEnv } from "../auth/providers.mjs";
 import { noteOnce } from "./notes.mjs";
@@ -14,7 +14,7 @@ export const NOT_LOGGED_IN = "Not logged in. Run: ad auth login chatgpt   (or: a
 
 // env: extra variables for Codex and the hooks it runs (e.g. AD_WORKER=1).
 // detached: run the engine in its own process group on POSIX (the terminal UI).
-export async function startHarnessEngine({ cwd, home, command, clientVersion, store, onApproval, err = process.stderr, setup = true, platform, env, requireSandbox = false, detached = false, codexArgs, experimental = false, interactive = false, notesFile } = {}) {
+export async function startHarnessEngine({ cwd, home, command, clientVersion, store, onApproval, err = process.stderr, setup = true, platform, env, requireSandbox = false, detached = false, engineArgs, experimental = false, interactive = false, notesFile } = {}) {
   const e = { ...process.env, ...(env ?? {}) };
   const notesFileFinal = notesFile ?? (process.env.NODE_TEST_CONTEXT ? null : undefined);
   if (notesFileFinal !== null) {
@@ -23,7 +23,9 @@ export async function startHarnessEngine({ cwd, home, command, clientVersion, st
     if (e[LEGACY.envBin] && !e.AD_ENGINE_BIN) noteOnce("env.legacyBin", envRenameNote(LEGACY.envBin, "AD_ENGINE_BIN"), notes);
     if (e[LEGACY.envModel] && !e.AD_ENGINE_MODEL) noteOnce("env.legacyModel", envRenameNote(LEGACY.envModel, "AD_ENGINE_MODEL"), notes);
   }
-  const engineOpts = { cwd, home, command, clientVersion, detached, codexArgs, experimental, interactive, env: { ...providerEnv(store), ...(env ?? {}) }, onApproval };
+  const v = engineVersion.check({ installed: engineVersion.installed().version });
+  if (v.code === "untested") err.write(`[agent-daemon] the engine is version ${v.installed}; ad was tested with ${v.tested.join(", ")}. Run: cd runtime && npm install\n`);
+  const engineOpts = { cwd, home, command, clientVersion, detached, engineArgs, experimental, interactive, env: { ...providerEnv(store), ...(env ?? {}) }, onApproval };
   let engine = await createEngine(engineOpts);
   try {
     const acct = await engine.account();

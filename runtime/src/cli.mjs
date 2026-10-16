@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 // agent-daemon / ad — the launcher (plan D7). It stays at this path so the
 // npm bin shims and hook commands keep working, and routes the terminal UI
-// (`ad tui`, `ad codex`, and bare `ad` once it opens the TUI) before loading
+// (`ad tui`, and bare `ad` once it opens the TUI) before loading
 // the full command module (cli-full.mjs), which the rest goes to.
 
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
+import { LEGACY } from "./engine/attribution.mjs";
 import { TUI_IS_DEFAULT, bareAdChoice } from "./tui/flip.mjs";
 
 const argv = process.argv.slice(2);
@@ -71,9 +72,22 @@ async function tui(args) {
 async function launch() {
   const [command, ...rest] = argv;
   if (command === "tui") return tui(rest);
-  if (command === "codex") {
-    const { cmdCodex } = await import("./harness/codex-ui.mjs");
-    return cmdCodex(rest);
+  // The hand-off to the engine's own UI left the product in 3.0 (design C4): a tombstone says what replaced it.
+  if (command === LEGACY.command) {
+    const { tombstoneEngineUiCommand } = await import("./engine/attribution.mjs");
+    const { engineHome } = await import("./engine/index.mjs");
+    process.stderr.write(`${tombstoneEngineUiCommand({ settingsPath: engineHome.settingsPath() ?? "(see ad doctor)" })}\n`);
+    return 2;
+  }
+  // Maintainers only, never in HELP: the engine's own UI on ad's engine folder.
+  if (command === "engine" && rest[0] === "ui" && rest.includes("--debug")) {
+    const { engineDebugUi } = await import("./engine/index.mjs");
+    try {
+      return await engineDebugUi.run({ args: rest.slice(1).filter((a) => a !== "--debug"), cwd: process.cwd() });
+    } catch (err) {
+      process.stderr.write(`ad engine ui: ${err.message}\n`);
+      return 1;
+    }
   }
   // Bare `ad` (and `ad --last`) open the TUI unless AD_TUI=0; otherwise the
   // help, with the reason when the TUI was wanted but can't run here.

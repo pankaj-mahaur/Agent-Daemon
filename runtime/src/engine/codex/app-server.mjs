@@ -33,6 +33,17 @@ export function pinnedCodexVersion() {
   }
 }
 
+/** The installed engine's version without starting it → {version | null, source: "pinned" | "env" | "missing"}. */
+export function installedCodexVersion(env = process.env) {
+  const command = resolveCodexCommand(env);
+  if (command.source !== "pinned") return { version: null, source: command.source };
+  try {
+    return { version: require("@openai/codex/package.json").version ?? null, source: "pinned" };
+  } catch {
+    return { version: null, source: "missing" };
+  }
+}
+
 // Order: explicit override → the pinned npm dependency. Never the user's own
 // global or PATH install: ad runs exactly the version it is tested against,
 // and the user's Codex stays theirs. Run the package's JS launcher with our

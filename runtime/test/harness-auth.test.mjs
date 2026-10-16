@@ -59,7 +59,8 @@ test("login chatgpt opens the browser and waits for completion", async () => {
     const r = await t.auth("login", ["chatgpt"], { openBrowser: async (url) => (opened.push(url), true), env: { FAKE_LOGGED_OUT: "1" } });
     assert.equal(r.code, 0, r.err);
     assert.deepEqual(opened, ["https://auth.example/authorize?x=1&y=2"]);
-    assert.match(r.out, /Opened your browser/);
+    assert.match(r.out, /Opening your browser to sign in with ChatGPT/);
+    assert.match(r.out, /If nothing appeared, open this URL to sign in:\nhttps:\/\/auth\.example/);
     assert.match(r.out, /logged in: ChatGPT pro plan/);
   } finally {
     t.cleanup();
@@ -71,7 +72,19 @@ test("login chatgpt --device prints the code instead of opening a browser", asyn
   try {
     const r = await t.auth("login", ["chatgpt"], { device: true, openBrowser: async () => assert.fail("must not open a browser") });
     assert.equal(r.code, 0, r.err);
-    assert.match(r.out, /https:\/\/auth\.example\/device and enter code: ABCD-1234/);
+    assert.match(r.out, /Go to https:\/\/auth\.example\/device and enter ABCD-1234\./);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("the sign-in note is ChatGPT-only: openai and openrouter say nothing about the engine", async () => {
+  const t = setup();
+  try {
+    const o = await t.auth("login", ["openai"], { readKey: async () => "sk-openai-test" });
+    assert.doesNotMatch(o.out, /may say 'Codex'/);
+    const r = await t.auth("login", ["openrouter"], { model: "anthropic/some-model", readKey: async () => KEY });
+    assert.doesNotMatch(r.out, /may say 'Codex'/);
   } finally {
     t.cleanup();
   }

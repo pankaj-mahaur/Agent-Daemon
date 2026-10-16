@@ -23,20 +23,40 @@ function withRoot(fn) {
 test("non-Windows platforms need no setup", async () => {
   const out = sink();
   assert.equal(await cmdSandbox("setup", { platform: "linux", stdout: out, stderr: sink() }), 0);
-  assert.match(out.text, /No setup needed/);
+  assert.match(out.text, /on this platform the engine uses the operating system's sandbox/);
 });
 
 test("sandbox setup writes the mode and reports readiness from a fresh process", () =>
   withRoot(async (root) => {
     const home = join(root, "home");
     const out = sink();
-    assert.equal(await cmdSandbox("setup", { platform: "win32", home, command, stdout: out, stderr: sink(), elevated: true }), 0);
-    assert.match(out.text, /administrator approval/);
+    assert.equal(await cmdSandbox("setup", { platform: "win32", home, command, stdout: out, stderr: sink(), elevated: true, yes: true }), 0);
+    assert.match(out.text, /Windows will ask for administrator permission/);
     assert.match(out.text, /windows sandbox: ready/);
     assert.equal(JSON.parse(readFileSync(join(home, "fake-config.json"), "utf8")).windows.sandbox, "elevated");
     const status = sink();
     await cmdSandbox("status", { platform: "win32", home, command, stdout: status, stderr: sink() });
     assert.match(status.text, /ready/);
+  }));
+
+test("elevated setup without an answer changes nothing", () =>
+  withRoot(async (root) => {
+    const home = join(root, "home");
+    const out = sink();
+    const code = await cmdSandbox("setup", { platform: "win32", home, command, stdout: out, stderr: sink(), elevated: true, confirm: async () => false });
+    assert.equal(code, 1);
+    assert.match(out.text, /Not changed/);
+    const { existsSync } = await import("node:fs");
+    assert.equal(existsSync(join(home, "fake-config.json")), false, "the engine's config is unchanged");
+  }));
+
+test("elevated setup off a terminal refuses with the --yes hint", () =>
+  withRoot(async (root) => {
+    const out = sink();
+    const err = sink();
+    const code = await cmdSandbox("setup", { platform: "win32", home: join(root, "home"), command, stdout: out, stderr: err, elevated: true, confirm: async () => null });
+    assert.equal(code, 2);
+    assert.match(err.text, /add --yes/);
   }));
 
 test("a failed setup exits 1 with the reason", () =>

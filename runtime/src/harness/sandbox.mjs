@@ -1,16 +1,32 @@
-// Windows sandbox for the harness CODEX_HOME.
+// Windows sandbox for the harness home.
 //
-// Codex confines workspace-write commands on Windows with its own sandbox,
-// which needs a one-time setup per CODEX_HOME (verified on codex 0.159.2):
+// The engine confines workspace-write commands on Windows with its own sandbox,
+// which needs a one-time setup per home (verified on 0.159.2):
 //   - unelevated: restricted token + ACLs, no admin prompt, weaker network isolation
 //   - elevated:   dedicated sandbox users + firewall rules, needs one UAC approval
 // Setup = config `windows.sandbox = <mode>` + windowsSandbox/setupStart. The
 // app-server caches readiness per process, so status is read from a fresh one.
-// On macOS/Linux Codex uses Seatbelt/Landlock and nothing is needed here.
+// On macOS/Linux the engine uses Seatbelt/Landlock and nothing is needed here.
 
 import { createEngine, engineHome } from "../engine/index.mjs";
+import { sandboxConsent } from "../engine/attribution.mjs";
 
 export const needsWindowsSandbox = (platform = process.platform) => platform === "win32";
+
+// y/N on a terminal → true/false; null when there is no terminal to ask on.
+export async function confirmOnTty({ stdin = process.stdin, stdout = process.stdout } = {}) {
+  if (!stdin.isTTY) return null;
+  stdout.write("> ");
+  const line = await new Promise((resolve) => {
+    stdin.setEncoding("utf8");
+    stdin.resume();
+    stdin.once("data", (d) => {
+      stdin.pause();
+      resolve(String(d));
+    });
+  });
+  return /^\s*y(es)?\s*$/i.test(line);
+}
 
 export async function sandboxReadiness(engine) {
   return engine.sandbox.readiness();
@@ -40,7 +56,7 @@ export async function cmdSandbox(sub, opts = {}) {
   const err = opts.stderr ?? process.stderr;
   const engineOpts = { home: opts.home, command: opts.command, clientVersion: opts.clientVersion };
   if (!needsWindowsSandbox(opts.platform)) {
-    out.write("No setup needed: Codex uses the OS sandbox (Seatbelt / Landlock) on this platform.\n");
+    out.write("No setup needed: on this platform the engine uses the operating system's sandbox (Seatbelt or Landlock).\n");
     return 0;
   }
   if (sub === "status") {
@@ -59,7 +75,18 @@ export async function cmdSandbox(sub, opts = {}) {
       return 2;
     }
     const mode = opts.elevated ? "elevated" : "unelevated";
-    if (mode === "elevated") out.write("Windows will ask for administrator approval (UAC) to create the sandbox users…\n");
+    if (mode === "elevated") {
+      out.write(`${sandboxConsent}\n`);
+      const answer = opts.yes === true ? true : await (opts.confirm ?? confirmOnTty)({ stdin: opts.stdin ?? process.stdin, stdout: out });
+      if (answer === null) {
+        err.write("ad sandbox setup --elevated asks before it changes this machine. Run it in a terminal, or add --yes.\n");
+        return 2;
+      }
+      if (!answer) {
+        out.write("Not changed.\n");
+        return 1;
+      }
+    }
     await setupWindowsSandbox(engine, { mode, cwd: opts.cwd });
   } catch (e) {
     err.write(`ad sandbox: ${e.message}\n`);

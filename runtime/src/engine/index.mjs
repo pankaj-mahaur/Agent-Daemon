@@ -7,7 +7,7 @@ import { EventEmitter } from "node:events";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { CodexAppServer, pinnedCodexVersion } from "./codex/app-server.mjs";
+import { CodexAppServer, installedCodexVersion, pinnedCodexVersion } from "./codex/app-server.mjs";
 import { engineError } from "./codex/errors.mjs";
 import { APPROVAL_METHODS, approvalResponse } from "./codex/approvals.mjs";
 import { canonicalPath, codexEnv, defaultCodexHome, ensureCodexHome, homeOverride, isManagedHome, prepareDefaultHome, MANAGED_MARKER } from "./codex/home.mjs";
@@ -16,7 +16,7 @@ import { acquireLockWithin } from "../lock.mjs";
 import { adaptNotification, classifyRequest, collaborationMode, elicitationResponse, execDisplay, guardianDenialEvent, normalizeItem } from "./codex/events.mjs";
 import { experimentalCapabilities } from "./codex/surface.mjs";
 import { codexHooksForProfile } from "./codex/hooks-config.mjs";
-import { codexCompat, engineChecks, engineLiveChecks, parseCodexVersion } from "./codex/doctor.mjs";
+import { codexCompat, engineChecks, engineLiveChecks, parseCodexVersion, probeVersion } from "./codex/doctor.mjs";
 import { MIRROR_MARKER, MIRRORED_FLAG, runStockUi, stockUiArgs, syncSkills } from "./codex/stock-ui.mjs";
 import PINNED_SNAPSHOT from "./codex/protocol-snapshot.json" with { type: "json" };
 
@@ -412,7 +412,7 @@ export class Engine extends EventEmitter {
       cwd: this.opts.cwd,
       clientVersion: this.opts.clientVersion,
       detached: this.opts.detached,
-      codexArgs: this.opts.codexArgs,
+      codexArgs: this.opts.engineArgs ?? this.opts.codexArgs,
       // Only the terminal UI opts into the experimental allowlist (codex-parity-2 P0).
       capabilities: this.opts.experimental ? experimentalCapabilities() : undefined,
       env: { ...(this.opts.env ?? {}), CODEX_HOME: this.home },
@@ -933,6 +933,17 @@ export const engineVersion = {
   pinned: () => pinnedCodexVersion(),
   parse: (text) => parseCodexVersion(text),
   compat: () => codexCompat(),
+  /** {version, source}: the pinned package's version read from disk; a custom binary (AD_ENGINE_BIN) is probed. */
+  installed: (env = process.env, { run } = {}) => {
+    const v = installedCodexVersion(env);
+    return v.source === "env" ? probeVersion({ env, run }) : v;
+  },
+  /** {code: "pinned" | "tested" | "untested" | "unknown", installed, pinned, tested}. Never refuses (Part 3, D3-1). */
+  check: ({ installed, pinned = pinnedCodexVersion(), tested = codexCompat().tested ?? [] } = {}) => {
+    if (!installed) return { code: "unknown", installed: null, pinned, tested };
+    if (installed === pinned) return { code: "pinned", installed, pinned, tested };
+    return { code: tested.includes(installed) ? "tested" : "untested", installed, pinned, tested };
+  },
 };
 
 /** The engine's own UI, for maintainers only (removed from the product in Part 3/4). */

@@ -21,31 +21,33 @@ export function codexCompat() {
   }
 }
 
+/** The engine binary's version via `--version`, in a throwaway home → {version | null, source, error?}. */
+export function probeVersion({ env = process.env, run = execFileSync } = {}) {
+  const command = resolveCodexCommand(env);
+  if (!command.cmd) return { version: null, source: "missing" };
+  let scratchHome = null;
+  try {
+    scratchHome = mkdtempSync(join(tmpdir(), "ad-codex-version-"));
+    const text = run(command.cmd, [...command.prefix, "--version"], { encoding: "utf8", timeout: 15_000, windowsHide: true, env: codexEnv({ home: scratchHome, base: env }) });
+    return { version: parseCodexVersion(text), source: command.source };
+  } catch (err) {
+    return { version: null, source: command.source, error: err.code ?? err.message };
+  } finally {
+    if (scratchHome) rmSync(scratchHome, { recursive: true, force: true });
+  }
+}
+
 export function engineChecks({ env = process.env, run = execFileSync, root } = {}) {
   const checks = [];
   const pinned = pinnedCodexVersion();
-  const command = resolveCodexCommand(env);
-  let installed = null;
-  if (!command.cmd) {
+  const probed = probeVersion({ env, run });
+  if (probed.source === "missing") {
     checks.push({ code: "engine.missing", ok: false, data: {} });
-  } else {
-    // A throwaway home: without one, the engine falls back to the user's own install.
-    let scratchHome = null;
-    try {
-      scratchHome = mkdtempSync(join(tmpdir(), "ad-codex-version-"));
-      installed = parseCodexVersion(run(command.cmd, [...command.prefix, "--version"], {
-        encoding: "utf8",
-        timeout: 15_000,
-        windowsHide: true,
-        env: codexEnv({ home: scratchHome, base: env }),
-      }));
-    } catch (err) {
-      checks.push({ code: "engine.notRunnable", ok: false, data: { error: err.code ?? err.message } });
-    } finally {
-      if (scratchHome) rmSync(scratchHome, { recursive: true, force: true });
-    }
+  } else if (probed.error) {
+    checks.push({ code: "engine.notRunnable", ok: false, data: { error: probed.error } });
   }
-  if (installed) checks.push({ code: "engine.version", ok: installed === pinned, data: { installed, pinned, source: command.source } });
+  const installed = probed.version;
+  if (installed) checks.push({ code: "engine.version", ok: installed === pinned, data: { installed, pinned, source: probed.source } });
   let state;
   try {
     const custom = homeOverride(env);
