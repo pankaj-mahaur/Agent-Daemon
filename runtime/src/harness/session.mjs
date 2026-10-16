@@ -114,6 +114,9 @@ export function createSession({
   // The engine's model_reasoning_effort: Default's effort until the user picks one
   // (a mask with no effort would drop the configured one).
   configEffort = () => null,
+  // Who the agent is (attribution.mjs identityBlock), for a home ad didn't
+  // create: injected into each new thread, since there's no managed file.
+  identity = null,
 } = {}) {
   let eng = engine;
   const emitter = new EventEmitter();
@@ -572,6 +575,10 @@ export function createSession({
       state.config.model ??= t.model ?? null;
       attach(t.threadId, t.thread);
       change("thread");
+      if (identity && !engineHome.isManaged(eng.home)) {
+        // A home ad didn't create gets no managed instructions file, so the agent learns who it is here (design D5).
+        eng.threads.inject(t.threadId, [{ type: "message", role: "developer", content: [{ type: "input_text", text: identity }] }]).catch((err) => notice("warn", "identity.notInjected", `The agent's identity couldn't be given to this conversation (${err.message}).`));
+      }
       return t.threadId;
     })().finally(() => {
       if (threadStarting === p) threadStarting = null;

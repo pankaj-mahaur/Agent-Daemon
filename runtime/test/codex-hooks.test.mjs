@@ -274,6 +274,19 @@ test("ensureHarnessSetup leaves a home it did not create alone", async () => {
   });
 });
 
+test("the managed AGENTS.md names the agent and its sign-in, with no engine name outside the allowance", async () => {
+  const { screenHits } = await import("../scripts/check-brand.mjs");
+  const { brandPatterns } = await import("../src/engine/attribution.mjs");
+  await withEngine(async (engine) => {
+    const r = await ensureHarnessSetup(engine, { cwd: tmpdir(), roots: [], profile: "developer" });
+    assert.equal(r.managed, true);
+    const agentsMd = readFileSync(join(engine.home, "AGENTS.md"), "utf8");
+    assert.match(agentsMd, /You are Agent Daemon's agent/);
+    assert.match(agentsMd, /signed in with a ChatGPT plan/);
+    assert.deepEqual(screenHits(agentsMd, { allow: brandPatterns() }), []);
+  });
+});
+
 test("hookHost reads AD_HOOK_HOST with the old value as an alias", async () => {
   const { hookHost } = await import("../src/hooks/io.mjs");
   const prev = process.env.AD_HOOK_HOST;

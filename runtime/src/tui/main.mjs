@@ -34,7 +34,7 @@ const DEFAULT_STATE_FILE = path.join(homedir(), ".agent-daemon", "tui", "state.j
 export { preflight } from "./preflight.mjs";
 import { preflight } from "./preflight.mjs";
 import { T } from "./view/theme.mjs";
-import { skillRoots } from "../harness/setup.mjs";
+import { harnessIdentity, skillRoots } from "../harness/setup.mjs";
 import { setSyntaxTheme } from "./view/highlight.mjs";
 
 /* ------------------------------------------------------------------ */
@@ -338,7 +338,7 @@ export async function cmdTui(opts = {}) {
     const settings = { codex: createCodexSettings({ engine: () => session.engine }), ad: createPrefs({ file: opts.prefsFile ?? DEFAULT_PREFS_FILE }) };
     // modes: the plan mode, on the experimental allowlist this engine opted into (parity P0).
     // Default's mask keeps the configured effort, as the engine's own Default mode does.
-    session = createSession({ engine, cwd, model: opts.model, sandbox: opts.sandbox, restart, maxRestarts: 3, hooks: undoKit?.hooks ?? {}, modes: true, planEffort: () => settings.codex.get("plan_mode_reasoning_effort") ?? null, configEffort: () => settings.codex.get("model_reasoning_effort") ?? null, ...(opts.lockDir ? { lockDir: opts.lockDir } : {}) });
+    session = createSession({ engine, cwd, model: opts.model, sandbox: opts.sandbox, restart, maxRestarts: 3, hooks: undoKit?.hooks ?? {}, modes: true, planEffort: () => settings.codex.get("plan_mode_reasoning_effort") ?? null, configEffort: () => settings.codex.get("model_reasoning_effort") ?? null, ...(opts.lockDir ? { lockDir: opts.lockDir } : {}), identity: engineHome.isManaged(engine.home) ? null : await harnessIdentity(engine).catch(() => null) }); // no identity: the session starts without it
     await session.init();
     await settings.codex.load();
 

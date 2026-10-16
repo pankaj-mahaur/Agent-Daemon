@@ -16,7 +16,8 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PROVIDER_ENV_KEYS } from "../auth/providers.mjs";
-import { engineDebugUi, engineHome, engineHooks } from "../engine/index.mjs";
+import { identityBlock } from "../engine/attribution.mjs";
+import { engineDebugUi, engineHome, engineHooks, engineVersion } from "../engine/index.mjs";
 import { needsWindowsSandbox, setupWindowsSandbox } from "./sandbox.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -26,13 +27,13 @@ export const MEMORY_SERVER_ID = "agent-daemon-memory";
 const START = "<!-- agent-daemon:start -->";
 const END = "<!-- agent-daemon:end -->";
 
-export function renderHarnessBlock(root = REPO_ROOT) {
+export function renderHarnessBlock(root = REPO_ROOT, { identity = null } = {}) {
   const read = (f) => readFileSync(path.join(root, "constitution", f), "utf8").trim();
   return [
     START,
     "# Agent Daemon harness",
     "",
-    "You are running inside Agent Daemon (`ad`), a local agent harness.",
+    identity ?? "You are running inside Agent Daemon (`ad`), a local agent harness.",
     "",
     "## Memory",
     "- Project learnings, past corrections and user preferences live in local SQLite memory.",
@@ -57,6 +58,17 @@ export function mergeManagedBlock(existing, block) {
   const e = existing.indexOf(END);
   if (s !== -1 && e > s) return existing.slice(0, s) + block + existing.slice(e + END.length);
   return `${existing.replace(/\s*$/, "")}\n\n${block}\n`;
+}
+
+/**
+ * Who the agent is (attribution.mjs identityBlock): ad's version, the engine's
+ * version and the sign-in route, read from the running engine. No model name
+ * (it changes per turn); the text says when to name one.
+ */
+export async function harnessIdentity(engine) {
+  const [acct, cfg] = [await engine.account(), await engine.readConfig()];
+  const signIn = cfg.model_provider === "openrouter" ? "openrouter" : acct.account?.type === "chatgpt" ? "chatgpt" : "openai-key";
+  return identityBlock({ adVersion: engine.opts?.clientVersion || "unknown", engineVersion: engineVersion.installed().version ?? engineVersion.pinned() ?? "unknown", signIn });
 }
 
 // Atomic replace: an engine process reading concurrently never sees half a file.
@@ -139,9 +151,14 @@ export async function ensureHarnessSetup(engine, { cwd = process.cwd(), profile 
     if (!mine.length) report.warnings.push(`hook trust: the engine listed none of the hooks in ${hooksFile}`);
   });
 
+  let identity = null;
+  await step("identity", async () => {
+    identity = await harnessIdentity(engine);
+  });
+
   await step("AGENTS.md", async () => {
     const file = path.join(engine.home, "AGENTS.md");
-    report.agentsWritten = writeIfChanged(file, mergeManagedBlock(existsSync(file) ? readFileSync(file, "utf8") : "", renderHarnessBlock()));
+    report.agentsWritten = writeIfChanged(file, mergeManagedBlock(existsSync(file) ? readFileSync(file, "utf8") : "", renderHarnessBlock(REPO_ROOT, { identity })));
   });
 
   await step("config", async () => {

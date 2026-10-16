@@ -1093,3 +1093,31 @@ test("openSide: an ephemeral, read-only fork with Codex's side texts; its events
     assert.ok(session.state.thread, "main goes on");
   });
 });
+test("identity is injected on an unmanaged home's new threads, never on a managed home", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ad-session-"));
+  const lockDir = join(root, "locks");
+  try {
+    const engine = await createEngine({ home: join(root, "home"), command });
+    try {
+      const managed = createSession({ engine, cwd: root, lockDir, identity: "IDENTITY" });
+      try {
+        await managed.submit("early-complete").done;
+        assert.equal((await debugState(engine)).lastParams["thread/inject_items"], undefined, "no injection on a managed home");
+      } finally {
+        managed.close();
+      }
+      rmSync(join(engine.home, ".agent-daemon-managed"));
+      const unmanaged = createSession({ engine, cwd: root, lockDir, identity: "IDENTITY" });
+      try {
+        await unmanaged.submit("early-complete").done;
+        assert.equal((await debugState(engine)).lastParams["thread/inject_items"].items[0].content[0].text, "IDENTITY");
+      } finally {
+        unmanaged.close();
+      }
+    } finally {
+      await engine.close();
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
