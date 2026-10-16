@@ -259,6 +259,42 @@
       "path": ".claude/skills/ad-pre-push/SKILL.md",
       "rules": ["A"],
       "reason": "this repo's maintainer skill: it names the upgrade bot and the engine's files that must not be pushed"
+    },
+    {
+      "path": "docs/**",
+      "rules": ["A"],
+      "match": "[a-z][A-Za-z0-9]*Codex[A-Za-z0-9]*|Codex[A-Z][A-Za-z0-9]*|codex[A-Z][A-Za-z0-9]*|CODEX_[A-Z_]+|AD_CODEX_[A-Z_]+|codex app-server|engine/codex/|@openai/codex|~/\\.codex|codex-home|\\.codex/|codex-rs/|codex-version|codex\\.exe|codex-session-end\\.mjs|upstream-commands\\.json|codex-slash\\.mjs|codex-schema-snapshot\\.mjs|codex-notifications\\.mjs|fake-codex-app-server\\.mjs|codex-[a-z-]+\\.test\\.mjs|gpt-[\\w.-]*codex[\\w.-]*",
+      "reason": "maintainer and user docs may cite the engine's API tokens, file names and on-disk names; prose says 'the engine'"
+    },
+    {
+      "path": "skills/daemon/**",
+      "rules": ["A"],
+      "match": "[a-z][A-Za-z0-9]*Codex[A-Za-z0-9]*|Codex[A-Z][A-Za-z0-9]*|codex[A-Z][A-Za-z0-9]*|CODEX_[A-Z_]+|AD_CODEX_[A-Z_]+|codex app-server|engine/codex/|@openai/codex|~/\\.codex|codex-home|\\.codex/|codex-rs/|codex-version|codex\\.exe|codex-session-end\\.mjs|upstream-commands\\.json|codex-slash\\.mjs|codex-schema-snapshot\\.mjs|codex-notifications\\.mjs|fake-codex-app-server\\.mjs|codex-[a-z-]+\\.test\\.mjs|gpt-[\\w.-]*codex[\\w.-]*",
+      "reason": "maintainer and user docs may cite the engine's API tokens, file names and on-disk names; prose says 'the engine'"
+    },
+    {
+      "path": "runtime/README.md",
+      "rules": ["A"],
+      "match": "[a-z][A-Za-z0-9]*Codex[A-Za-z0-9]*|Codex[A-Z][A-Za-z0-9]*|codex[A-Z][A-Za-z0-9]*|CODEX_[A-Z_]+|AD_CODEX_[A-Z_]+|codex app-server|engine/codex/|@openai/codex|~/\\.codex|codex-home|\\.codex/|codex-rs/|codex-version|codex\\.exe|codex-session-end\\.mjs|upstream-commands\\.json|codex-slash\\.mjs|codex-schema-snapshot\\.mjs|codex-notifications\\.mjs|fake-codex-app-server\\.mjs|codex-[a-z-]+\\.test\\.mjs|gpt-[\\w.-]*codex[\\w.-]*",
+      "reason": "maintainer and user docs may cite the engine's API tokens, file names and on-disk names; prose says 'the engine'"
+    },
+    {
+      "path": "README.md",
+      "rules": ["A"],
+      "match": "[a-z][A-Za-z0-9]*Codex[A-Za-z0-9]*|Codex[A-Z][A-Za-z0-9]*|codex[A-Z][A-Za-z0-9]*|CODEX_[A-Z_]+|AD_CODEX_[A-Z_]+|codex app-server|engine/codex/|@openai/codex|~/\\.codex|codex-home|\\.codex/|codex-rs/|codex-version|codex\\.exe|codex-session-end\\.mjs|upstream-commands\\.json|codex-slash\\.mjs|codex-schema-snapshot\\.mjs|codex-notifications\\.mjs|fake-codex-app-server\\.mjs|codex-[a-z-]+\\.test\\.mjs|gpt-[\\w.-]*codex[\\w.-]*",
+      "reason": "the README's one attribution sentence and its API tokens; prose says 'the engine'"
+    },
+    {
+      "path": "runtime/test/**",
+      "rules": ["A"],
+      "match": "[a-z][A-Za-z0-9]*Codex[A-Za-z0-9]*|Codex[A-Z][A-Za-z0-9]*|codex[A-Z][A-Za-z0-9]*|CODEX_[A-Z_]+|AD_CODEX_[A-Z_]+|codex app-server|engine/codex/|@openai/codex|~/\\.codex|codex-home|\\.codex/|codex-rs/|codex-version|codex\\.exe|codex-session-end\\.mjs|upstream-commands\\.json|codex-slash\\.mjs|codex-schema-snapshot\\.mjs|codex-notifications\\.mjs|fake-codex-app-server\\.mjs|codex-[a-z-]+\\.test\\.mjs|gpt-[\\w.-]*codex[\\w.-]*",
+      "reason": "tests may name the engine's API tokens and files they exercise"
+    },
+    {
+      "path": "runtime/testkit/**",
+      "rules": ["A"],
+      "match": "[a-z][A-Za-z0-9]*Codex[A-Za-z0-9]*|Codex[A-Z][A-Za-z0-9]*|codex[A-Z][A-Za-z0-9]*|CODEX_[A-Z_]+|AD_CODEX_[A-Z_]+|codex app-server|engine/codex/|@openai/codex|~/\\.codex|codex-home|\\.codex/|codex-rs/|codex-version|codex\\.exe|codex-session-end\\.mjs|upstream-commands\\.json|codex-slash\\.mjs|codex-schema-snapshot\\.mjs|codex-notifications\\.mjs|fake-codex-app-server\\.mjs|codex-[a-z-]+\\.test\\.mjs|gpt-[\\w.-]*codex[\\w.-]*",
+      "reason": "tests may name the engine's API tokens and files they exercise"
     }
   ]
 }
