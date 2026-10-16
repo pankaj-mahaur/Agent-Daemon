@@ -5,7 +5,9 @@
 [![version](https://img.shields.io/badge/version-2.2.0-green.svg)](CHANGELOG.md)
 [![harnesses](https://img.shields.io/badge/harnesses-Claude%20Code%20%7C%20Codex%20%7C%20Cursor-purple.svg)](#cross-harness-support)
 
-A **self-improving runtime** for AI coding agents — with **multi-agent orchestration** built in. Wraps Claude Code (and any agent that writes a session transcript) with universal guardrails, persistent memory, and a digest pipeline that distills lessons from every session so the next one is automatically smarter. Since v2 it also runs agents itself, on the OpenAI Codex engine.
+**Agent Daemon.** A terminal coding agent that remembers. Type `ad` in a project: it works in your repo, runs commands in a sandbox, asks before going beyond it (see [Safety model](#production-safety)), and keeps what it learns. It also gives Claude Code the same memory, guards and skills. To run the agent yourself you need an OpenAI API key, an OpenRouter key or a ChatGPT plan; the Claude Code memory and guards need none.
+
+`cd your-project && ad` (sign in once).
 
 Ships with a full **team coordination layer**: spawn worker agents (sandboxed engine workers by default, Claude Code with `--engine claude`) in isolated git worktrees, coordinate them through filesystem-based inboxes, and manage task dependencies with auto-unblocking — all without a central server or database.
 
@@ -13,11 +15,11 @@ Skills evolve too: [GEPA](runtime/src/digest/gepa/README.md) (Genetic-Pareto Pro
 
 > **v1.0.0** is the stable Claude Code memory runtime (hooks, memory, skills, GEPA, teams). See [CHANGELOG.md](CHANGELOG.md).
 
-> **v2.2.0 — every Codex command in `ad`.** Each slash command of the pinned Codex works in `ad` with Codex's meaning, or says why not: plan mode (`/plan`, Shift+Tab), background terminals (`/ps`, `/stop`), `/cd`, side conversations (`/side`), Vim mode, syntax highlighting and `/theme`, `/recap`, `/subagents`, `/approve` and more. See [Codex commands in ad](docs/codex-parity.md) and the [release notes](https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v2.2.0).
+> **v2.2.0 — every engine command in `ad`.** Each slash command of the pinned engine works in `ad` with the engine's meaning, or says why not: plan mode (`/plan`, Shift+Tab), background terminals (`/ps`, `/stop`), `/cd`, side conversations (`/side`), Vim mode, syntax highlighting and `/theme`, `/recap`, `/subagents`, `/approve` and more. See [Commands in ad](docs/commands.md) and the [release notes](https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v2.2.0).
 
-> **v2.1.0 — `ad` is a Codex-style terminal UI.** Type `ad` in any project: the Codex look and keys, plus what ad adds: project memory you can see ("Learned:" rows, `/memory`), `/undo` for the files the last turn changed (only the agent's own edits; it refuses rather than guess), background `/loop`s, schedules and teams. See [Terminal UI](#terminal-ui-ad) and the [release notes](https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v2.1.0).
+> **v2.1.0 — `ad` is a terminal UI.** Type `ad` in any project: the engine's look and keys, plus what ad adds: project memory you can see ("Learned:" rows, `/memory`), `/undo` for the files the last turn changed (only the agent's own edits; it refuses rather than guess), background `/loop`s, schedules and teams. See [Terminal UI](#terminal-ui-ad) and the [release notes](https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v2.1.0).
 
-> **v2.0.0 — Agent Daemon is now its own agent harness** on the OpenAI Codex engine: `ad chat`, `ad run`, `ad loop`, `ad schedule`, `ad web`, `ad acp`, with memory, hooks and skills wired in. See [Agent harness](#agent-harness-codex-engine). Want the Claude Code–only v1? See [Versions](#versions-v1-vs-v2).
+> **v2.0.0 — ad runs agents itself.** `ad chat`, `ad run`, `ad loop`, `ad schedule`, `ad web`, `ad acp`, with memory, hooks and skills wired in. See [Agent harness](#agent-harness). Want the Claude Code–only v1? See [Versions](#versions-v1-vs-v2).
 
 ## Quick start
 
@@ -73,7 +75,7 @@ ad init
 
 The `ad` command is the short alias for `agent-daemon` — both work interchangeably. No API key is required for local capture, retrieval, deterministic SessionEnd digest parsing, or inline skill evolution proposals. Claude Code itself must be authenticated for interactive sessions; authenticated batch/LLM fallback remains explicit opt-in behavior.
 
-The harness commands need a login. Bare `ad` (the terminal UI) asks for it on the first run; `ad chat`, `ad run`, `ad loop`, `ad schedule`, `ad web` and `ad acp` need `ad auth login chatgpt` (or `openai` / `openrouter`) first. See [Agent harness](#agent-harness-codex-engine).
+The harness commands need a login. Bare `ad` (the terminal UI) asks for it on the first run; `ad chat`, `ad run`, `ad loop`, `ad schedule`, `ad web` and `ad acp` need `ad auth login chatgpt` (or `openai` / `openrouter`) first. See [Agent harness](#agent-harness).
 
 ### Windows team setup (Claude Code)
 
@@ -117,17 +119,17 @@ Expected result: `CLAUDE_DAEMON_OK`, with no `SessionEnd hook failed` message af
 
 Profile manifest: [runtime/profiles/profiles.json](runtime/profiles/profiles.json). Hook handlers under [runtime/src/hooks/](runtime/src/hooks/) are invoked via `ad hook <name>` and consume Claude Code's tool-use JSON on stdin. Profile shape adapted from [`everything-claude-code`](https://github.com/affaan-m/everything-claude-code) — see [ATTRIBUTION.md](ATTRIBUTION.md).
 
-## Agent harness (Codex engine)
+## Agent harness
 
-Agent Daemon runs agents itself, with [OpenAI Codex](https://github.com/openai/codex) as the engine. It drives a pinned `codex app-server` (JSON-RPC over stdio) in its own home (`~/.agent-daemon/engine`; older installs: `codex-home`, moved with `ad migrate`), so your own `~/.codex` is never touched. Every run gets the daemon's memory (SessionStart context, per-prompt recall, correction capture, the `agent-daemon-memory` MCP tools, which run without an approval prompt), guard hooks, skills and constitution.
+ad runs on a pinned copy of OpenAI's open-source Codex engine (Apache-2.0) in its own folder; ad never writes to your own `~/.codex`. The optional elevated sandbox (`ad sandbox setup --elevated`) is machine-wide. `ad about` has the details.
 
 ```bash
-ad auth login chatgpt            # ChatGPT Plus/Pro (browser; --device for a code)
-ad auth login openai             # or an OpenAI API key (hidden prompt / stdin)
+ad auth login openai             # an OpenAI API key (hidden prompt / stdin)
 ad auth login openrouter --model anthropic/<model>   # Claude, Gemini, … via one OpenRouter key
+ad auth login chatgpt            # or a ChatGPT Plus/Pro plan (browser; --device for a code)
 ad auth status
 
-ad                               # Codex-style terminal UI (= ad tui); docs/tui.md
+ad                               # terminal UI (= ad tui); docs/tui.md
 ad tui "fix the failing test"    # the same, sending a first prompt; --last / --resume <id>
 ad chat                          # plain line mode; approve commands/edits with y / a / n
 ad run "fix the failing test"    # one non-interactive turn (approvals declined)
@@ -148,33 +150,34 @@ ad sandbox setup --elevated      # Windows: stronger command sandbox (one UAC pr
 
 **Keys.**
 - OpenRouter keys are stored with DPAPI on Windows, libsecret on Linux (falling back to a 0600 file), and a 0600 file on macOS. They never go into config or argv, and `OPENROUTER_API_KEY` is stripped from the agent's shell.
-- ChatGPT / OpenAI logins are kept by Codex in the harness home (`auth.json`). Your own environment variables (e.g. `GITHUB_TOKEN`) are passed through as in any Codex session.
+- ChatGPT / OpenAI logins are kept by the engine in the harness home (`auth.json`). Your own environment variables (e.g. `GITHUB_TOKEN`) are passed through to the agent's shell unchanged.
 
 **`ad loop` brakes:** dual exit (the agent must report `done` *and* `exit_signal`), a circuit breaker (no progress or the same error repeatedly), iteration / time / token budgets, and a STOP file (`.agent-daemon/STOP`) checked mid-turn.
 
-**Subscriptions.** ChatGPT uses Codex's own login. Claude Pro/Max and Google AI Pro/Ultra logins are **never** reused by the harness, because their terms forbid it and it has been enforced. Use API keys or OpenRouter instead. `ad agy` can hand a prompt to *your own* Antigravity CLI (opt-in, `--accept-risk`).
+**Subscriptions.** ChatGPT sign-in uses the engine's own login. Claude Pro/Max and Google AI Pro/Ultra logins are **never** reused by the harness, because their terms forbid it and it has been enforced. Use API keys or OpenRouter instead. `ad agy` can hand a prompt to *your own* Antigravity CLI (opt-in, `--accept-risk`).
 
 Full guide: [docs/harness.md](docs/harness.md).
 
-**Staying current with Codex.** The engine is pinned exactly.
+**Your own install stays yours.** The harness runs a separate pinned copy of the engine in its own home. It refuses to run in `~/.codex` (or a `CODEX_HOME` you set), and never passes your `CODEX_HOME`, `CODEX_API_KEY` and the like to its engine. The optional `ad watch` daemon reads `~/.codex/sessions` to learn from your own sessions, and writes nothing there.
+
+**The engine's folder.** The engine lives in its own home (`~/.agent-daemon/engine`; older installs: `codex-home`, moved with `ad migrate`). `ad about` shows the engine version, the folder, and where the notices live.
+
+**Staying current with the engine.** The engine is pinned exactly.
 - A committed protocol snapshot is checked by the test suite.
-- The weekly [`codex-upgrade`](.github/workflows/codex-upgrade.yml) workflow bumps the pin, diffs the protocol (removals flagged as breaking), and regenerates Codex's slash-command names and the tested-versions file. In its own Linux job it runs the suite plus the real pinned Codex against a mock model (`engine-real` and the live terminal UI tests), then opens a PR with the results.
+- The weekly [`codex-upgrade`](.github/workflows/codex-upgrade.yml) workflow bumps the pin, diffs the protocol (removals flagged as breaking), and regenerates the engine's slash-command names and the tested-versions file. In its own Linux job it runs the suite plus the real pinned engine against a mock model (`engine-real` and the live terminal UI tests), then opens a PR with the results.
 - The PR's own CI (Linux, macOS, Windows) runs only when the repo has a `CODEX_UPGRADE_TOKEN` secret; see [docs/testing.md](docs/testing.md#ci).
 - CI has no real login and no working Windows sandbox, so still run the live `ad run` and `ad tui` smokes on Windows before merging (the `codex-upgrade` skill has the steps).
 
 Design and decisions: [docs/harness-design.md](docs/harness-design.md).
 
-**Your own Codex stays yours.** The harness runs a separate pinned copy of Codex in its own home. It refuses to run in `~/.codex` (or a `CODEX_HOME` you set), and never passes your `CODEX_*` variables to its engine. The optional `ad watch` daemon reads `~/.codex/sessions` to learn from your own sessions, and writes nothing there.
-
 ### Terminal UI (`ad`)
 
-Bare `ad` (or `ad tui`) opens a Codex-style terminal UI on the same engine, and `ad --last` reopens the newest conversation in it. `AD_TUI=0` turns that off, so bare `ad` prints the help (`ad tui` still opens the UI); `ad chat` stays the plain line mode.
-- **Codex's reflexes:** history in your terminal's own scrollback, approvals showing the full command or diff (keys pressed in the first 400 ms are ignored), steer (Enter) and queue (Tab) while a turn runs, Esc to interrupt, Esc Esc to rewind, Ctrl+T for the transcript, Ctrl+O to copy, `/model`, `/review`, `/resume`, `/permissions`, `/clear`, `/archive`, `/delete`, `/statusline`, `/title` and the rest of Codex's commands, with Codex's rules (some wait for the turn to end). A Codex command ad doesn't have yet answers why instead of going to the model; [codex-parity.md](docs/codex-parity.md) lists every one.
-- **Codex's commands:** plan mode (`/plan`, Shift+Tab), background terminals (`/ps`, `/stop`), `/cd`, side conversations (`/side`, `/btw`), Vim mode (`/vim`), syntax highlighting and `/theme`, `/recap`, `/subagents` (Alt+← / Alt+→), `/approve`, `/keymap`, `/clear`, `/archive`, `/delete` and the rest: [what each does in ad](docs/codex-parity.md).
-- **Shared with the stock UI:** the status line, the window title and the keys you set in `/codex` (Codex's `tui.*` settings in ad's Codex home).
+Bare `ad` (or `ad tui`) opens a terminal UI on the same engine, and `ad --last` reopens the newest conversation in it. `AD_TUI=0` turns that off, so bare `ad` prints the help (`ad tui` still opens the UI); `ad chat` stays the plain line mode.
+- **Reflexes:** history in your terminal's own scrollback, approvals showing the full command or diff (keys pressed in the first 400 ms are ignored), steer (Enter) and queue (Tab) while a turn runs, Esc to interrupt, Esc Esc to rewind, Ctrl+T for the transcript, Ctrl+O to copy, `/model`, `/review`, `/resume`, `/permissions`, `/clear`, `/archive`, `/delete`, `/statusline`, `/title` and the rest of the commands, with the engine's rules (some wait for the turn to end). A command ad doesn't have yet answers why instead of going to the model; [commands.md](docs/commands.md) lists every one.
+- **Commands:** plan mode (`/plan`, Shift+Tab), background terminals (`/ps`, `/stop`), `/cd`, side conversations (`/side`, `/btw`), Vim mode (`/vim`), syntax highlighting and `/theme`, `/recap`, `/subagents` (Alt+← / Alt+→), `/approve`, `/keymap`, `/clear`, `/archive`, `/delete` and the rest: [what each does in ad](docs/commands.md).
+- **Shared with the engine's own UI:** the status line, the window title and the keys you set in `/keymap` (the engine's `tui.*` settings in ad's engine home).
 - **What ad adds:** "Learned:" rows after a turn and `/memory`; `/private`; `/undo`, which puts back the files the last turn's edits changed and rewinds it, and refuses when your own work is in the way (a save of yours during the turn, or after the agent's edit, is a conflict; only `/undo force` discards later changes to the agent's files); `/loop` in the background; `/team`, `/schedule`, `/tools`.
-- **`/codex`** (or `ad codex`) opens the stock Codex UI on the same conversation.
-- **Tested live:** CI's real-engine job (non-blocking) runs the manual test's terminal UI script and ad's own TUI features on the real `ad tui`, in a real pseudo-terminal with the real pinned Codex, on Linux, macOS and Windows (`runtime/test/tui-live.test.mjs`).
+- **Tested live:** CI's real-engine job (non-blocking) runs the manual test's terminal UI script and ad's own TUI features on the real `ad tui`, in a real pseudo-terminal with the real pinned engine, on Linux, macOS and Windows (`runtime/test/tui-live.test.mjs`).
 
 Guide: [docs/tui.md](docs/tui.md). Needs an interactive terminal; on Windows, Node 22.17+ or 24.2+.
 
@@ -182,7 +185,7 @@ Guide: [docs/tui.md](docs/tui.md). Needs an interactive terminal; on Windows, No
 
 | | **v2** (`main`, 2.x) | **v1** (`release/v1`, 1.x) |
 |---|---|---|
-| What | Agent harness on the Codex engine **plus** everything in v1 | Claude Code memory runtime (hooks, memory, skills, GEPA, teams) |
+| What | Agent harness **plus** everything in v1 | Claude Code memory runtime (hooks, memory, skills, GEPA, teams) |
 | Status | Active development | Bug fixes only |
 | Install | default one-liner | `AD_VERSION=v1.0.0` with the one-liner |
 
@@ -197,10 +200,10 @@ $env:AD_VERSION = 'v1.0.0'; irm https://raw.githubusercontent.com/pankaj-mahaur/
 Re-run the one-liner without `AD_VERSION` to move back to `main`.
 
 **Upgrading v1 → v2.** Claude Code mode is unchanged: `ad init`, the hooks, memory, skills and `/evolve` work as before. What changes:
-- `ad sp` (spawn a team worker) now runs a **Codex** worker by default. Pass `--engine claude` for the v1 behaviour.
-- New commands: `ad auth`, `ad tui` (terminal UI), `ad codex` (the stock Codex UI on the harness home), `ad chat`, `ad run`, `ad loop`, `ad schedule`, `ad web`, `ad acp`, `ad tools`, `ad sandbox`, `ad agy`. The ones that run the agent need a login first (`ad auth login chatgpt` / `openai` / `openrouter`).
-- Digest/extract and GEPA LLM calls take `--llm claude|codex|auto` (`AD_LLM_BACKEND`). The default `auto` uses Claude and falls back to Codex when `claude` isn't installed.
-- `ad doctor` adds Codex engine checks. The login, hook and sandbox checks are skipped until the harness home exists.
+- `ad sp` (spawn a team worker) now runs a worker on ad's engine by default. Pass `--engine claude` for the v1 behaviour.
+- New commands: `ad auth`, `ad tui` (terminal UI), `ad chat`, `ad run`, `ad loop`, `ad schedule`, `ad web`, `ad acp`, `ad tools`, `ad sandbox`, `ad agy`. The ones that run the agent need a login first (`ad auth login openai` / `openrouter` / `chatgpt`).
+- Digest/extract and GEPA LLM calls take `--llm claude|ad|auto` (`AD_LLM_BACKEND`). The default `auto` uses Claude and falls back to ad's engine when `claude` isn't installed.
+- `ad doctor` adds engine checks. The login, hook and sandbox checks are skipped until the harness home exists.
 - Since 2.1, bare `ad` opens the terminal UI instead of the help. Set `AD_TUI=0` to keep the old behaviour.
 
 ## Daily workflow
@@ -305,7 +308,7 @@ User gives complex task
         |
 [ad sp] for each role:
   - Creates isolated git worktree at ~/.agent-daemon/worktrees/
-  - Starts a sandboxed Codex worker with a role-specific system prompt (no network, no `.git` writes; the daemon commits its work on its branch). `--engine claude` / `AD_AGENT_ENGINE=claude` spawns headless `claude` instead
+  - Starts a sandboxed worker on ad's engine with a role-specific system prompt (no network, no `.git` writes; the daemon commits its work on its branch). `--engine claude` / `AD_AGENT_ENGINE=claude` spawns headless `claude` instead
   - Agent works independently on its branch
         |
 [Filesystem Inboxes] coordination:
@@ -334,7 +337,7 @@ Templates live in `teams/templates/`. Add your own as JSON files in `~/.agent-da
 
 The orchestration layer is hardened for real use:
 
-- **Spawn timeout** (15 min default): Codex workers get a per-turn timeout; `claude` workers get SIGTERM → SIGKILL escalation
+- **Spawn timeout** (15 min default): engine workers get a per-turn timeout; `claude` workers get SIGTERM → SIGKILL escalation
 - **Concurrent agent limit** (max 8) prevents runaway process spawning
 - **Stdout/stderr buffer caps** (512KB) prevent OOM on verbose agents
 - **Atomic JSON writes** (tmp + rename) across all state files
@@ -421,12 +424,12 @@ agent-daemon/
 ├── memory-templates/    # Scaffold for project memory (.agent-daemon/memory/)
 ├── runtime/             # Node CLI (agent-daemon) — digest, orchestration, self-improvement, harness
 │   └── src/
-│       ├── cli.mjs          # Launcher: the terminal UI (bare ad, ad tui, ad codex); cli-full.mjs runs the rest
+│       ├── cli.mjs          # Launcher: the terminal UI (bare ad, ad tui); cli-full.mjs runs the rest
 │       ├── tui/             # ad tui: terminal layer, view components, /undo wiring
-│       ├── engine/          # Codex app-server driver (pinned @openai/codex)
-│       ├── harness/         # ad chat/run/loop/schedule/web/acp/auth/sandbox/agy/codex, session controller, /undo checkpoints
+│       ├── engine/          # the engine adapter and façade
+│       ├── harness/         # ad chat/run/loop/schedule/web/acp/auth/sandbox/agy, session controller, /undo checkpoints
 │       ├── auth/            # Provider keys + OS secret store
-│       ├── orchestration/   # Multi-agent: inbox, spawn, team, templates, Codex workers
+│       ├── orchestration/   # Multi-agent: inbox, spawn, team, templates, engine workers
 │       ├── daemon/          # Watch daemon + OS service registration
 │       ├── digest/          # Extract → sanitize → classify → apply pipeline + GEPA
 │       ├── memory/          # SQLite + FTS5 episodic store + consolidation
@@ -438,7 +441,7 @@ agent-daemon/
 ├── mcp/                 # MCP server config + docs (agent-daemon-memory)
 ├── plugins/             # Claude Code plugins (scaffolded)
 ├── tools/               # Standalone CLI tools (scaffolded)
-├── adapters/            # Codex reference config + Cursor hooks / .mdc converter
+├── adapters/            # example config for your own install + Cursor hooks / .mdc converter
 ├── examples/            # Settings + config templates
 └── docs/                # Anatomy guides, install, customization
 ```
@@ -448,8 +451,8 @@ agent-daemon/
 All commands work with both `ad` (short) and `agent-daemon` (full). Short aliases are shown in parentheses.
 
 ```bash
-# Harness (Codex engine) — see "Agent harness" above
-ad auth login chatgpt|openai|openrouter   # ad auth use / status / logout
+# Harness (ad's own engine) — see "Agent harness" above
+ad auth login openai|openrouter|chatgpt   # ad auth use / status / logout
 ad [--last]                                    # terminal UI (AD_TUI=0: bare ad prints the help)
 ad tui ["<prompt>"] [--last | --resume <id>]   # terminal UI (docs/tui.md)
 ad about                                     # what ad runs on: versions, the engine, licenses, settings path
@@ -580,8 +583,8 @@ ad spawn         (sp)  --team <id> --role <name> --task "..."
 | [release-flow](skills/daemon/release-flow/) | Composite flow: changelog → verify → review diff → go/no-go | Auto: "cut a release", "release banao" |
 | [big-feature-flow](skills/daemon/big-feature-flow/) | Research how others built it → plan in parts → review rounds until final → per-part implement/test/review | Auto: big multi-part work, "research first", "plan it to perfection" |
 | [ad-harness](skills/daemon/ad-harness/) | Hand work to ad's own harness (`ad run`, `ad loop`, `ad schedule`, `ad sp`) with budgets and the sandbox, then verify the result | Auto: "run this in the background", "keep working until it's done", "schedule this" |
-| [harness-troubleshoot](skills/daemon/harness-troubleshoot/) | Harness failures: login → hooks → sandbox → Codex's own log, with known Windows causes | Auto: "Not logged in", "Access is denied", "Codex stopped" |
-| [codex-upgrade](skills/daemon/codex-upgrade/) | Maintainers: land a Codex engine bump (protocol diff, suite, live Windows smokes) | Auto: the weekly `codex-upgrade` PR, "bump codex" |
+| [harness-troubleshoot](skills/daemon/harness-troubleshoot/) | Harness failures: login → hooks → sandbox → the engine's own log, with known Windows causes | Auto: "Not logged in", "Access is denied", "the engine stopped" |
+| [codex-upgrade](skills/daemon/codex-upgrade/) | Maintainers: land an engine bump (protocol diff, suite, live Windows smokes) | Auto: the weekly `codex-upgrade` PR, "bump the engine" |
 | [ad-tui-dev](skills/daemon/ad-tui-dev/) | Maintainers: work on the terminal UI with its isolation and renderer rules | Auto: changes under `runtime/src/tui/` |
 
 ### Methodology
@@ -634,7 +637,7 @@ Three first-class harnesses. Adapters live under [adapters/](adapters/).
 | Harness | Coverage | Install |
 |---|---|---|
 | **Claude Code** (primary) | Native — `ad init` writes to `~/.claude/`, hooks fire directly. | `ad init --profile <minimal\|developer\|security>` |
-| **Codex** | **Engine of the Agent Daemon harness** (`ad` / `ad tui`, `ad chat` / `run` / `loop`, [above](#agent-harness-codex-engine)); rollout transcripts are digested. Reference config for your own `codex` CLI too. | `ad` (signs in on first run) — or `cp adapters/codex/config.example.toml ~/.codex/config.toml` |
+| **Codex** | Your own install, alongside ad's harness ([above](#agent-harness)): reference config for your own install too; rollout transcripts are digested. | `ad` (signs in on first run) — or `cp adapters/codex/config.example.toml ~/.codex/config.toml` |
 | **Cursor** | Hooks JSON wiring the same `ad hook` handlers + skill→`.mdc` converter. | `cp adapters/cursor/hooks.json .cursor/ && node adapters/cursor/adapt.mjs --core --out .cursor/rules` |
 
 Other harnesses (Kiro / Trae / CodeBuddy / OpenCode / Gemini) are vendored-only for now — see [docs/future-harnesses.md](docs/future-harnesses.md).
@@ -652,7 +655,7 @@ ad init                                              # in your project — scaff
 
 ### Other agents
 
-Open `skills/<name>/SKILL.md` directly — paste the content into your agent's system prompt or rules file. The frontmatter is informational; the body is plain markdown. Cursor has an adapter (`adapters/cursor/`), and the Codex harness writes its own `AGENTS.md`.
+Open `skills/<name>/SKILL.md` directly — paste the content into your agent's system prompt or rules file. The frontmatter is informational; the body is plain markdown. Cursor has an adapter (`adapters/cursor/`), and other agents read `AGENTS.md` natively.
 
 ## Installation options
 
@@ -816,7 +819,7 @@ Remove-Item -Recurse -Force "$env:USERPROFILE\.agent-daemon"
 This deletes:
 - `audit/mcp.jsonl` and its rotations — MCP audit trail
 - `episodic.db` — SQLite episodic memory across all projects
-- `codex-home/` — the harness's Codex home (ChatGPT/OpenAI login `auth.json`, session rollouts, the skills mirror for `ad codex`)
+- `codex-home/` — the engine's home (ChatGPT/OpenAI login `auth.json`, session rollouts)
 - `secrets/`, `schedules.json`, `schedule-logs/` — provider keys, scheduled jobs and their logs
 - `tui/` — the terminal UI's prompt history (`history.jsonl`, your typed prompts) and per-folder state; `locks/` — conversation locks
 - `logs/`, `checkpoints/` — digest and probe logs, pre-compact memory markers
@@ -865,7 +868,7 @@ Done. agent-daemon is fully removed.
     +---------+---------+  +----------+  +----------------+
     |   team create     |  |  spawn   |  |  watch daemon  |
     | templates, tasks, |  | worktree |  | inbox polling, |
-    | dependency graph  |  | + Codex  |  | auto-unblock   |
+    | dependency graph  |  | + engine |  | auto-unblock   |
     |                   |  | (claude) |  |                |
     +-------------------+  +----------+  +----------------+
               |                  |               |
@@ -885,8 +888,8 @@ Done. agent-daemon is fully removed.
 - v0.5 — Token efficiency, ecosystem interop, cross-agent coexistence
 - v0.6 — Multi-agent orchestration with production hardening, `ad` short commands, AD-INSTRUCTIONS.md auto-generation
 - v1.0.0 — VS Code digest-sweep fallback, injection quarantine guardrails, on-demand `ad skill install` + data-driven routing with follow/diverge telemetry, Hermes-style memory evolution (reinforce → decay → consolidate), cross-project user facts, MCP memory server, `ad service` registration, composite flow skills, routing self-evolution proposals; **claude-mem-inspired:** progressive-disclosure MCP recall (`memory_get`/`memory_timeline`/`memory_files`), file-aware memory + SessionStart working-set boost, `<private>` exclusion tag, and `ad viewer` (zero-dep HTML snapshot)
-- v2.0.0 — Agent harness on the Codex engine (`ad chat/run/loop/schedule/web/acp`), Codex team workers, `AD_VERSION` installer pinning
-- v2.1 — `ad` is a Codex-style terminal UI (bare `ad`, `ad tui`): steer and queue, approvals, `/undo` checkpoints for the agent's own edits, ad's memory and loops in the UI, and `ad codex` for the stock Codex UI on ad's home
+- v2.0.0 — ad runs agents itself (`ad chat/run/loop/schedule/web/acp`), engine team workers, `AD_VERSION` installer pinning
+- v2.1 — `ad` opens a terminal UI (bare `ad`, `ad tui`): steer and queue, approvals, `/undo` checkpoints for the agent's own edits, ad's memory and loops in the UI
 
 **Next:**
 - Semantic task router — LLM-based auto template selection + role assignment
@@ -908,8 +911,8 @@ Copy-paste configuration templates:
 
 **Start here:**
 - [Terminal UI](docs/tui.md) — Using `ad` / `ad tui`: keys, commands, `/undo`, terminals
-- [Codex commands in ad](docs/codex-parity.md) — Every Codex slash command: works in ad, or why not yet; keys and settings shared with the stock UI
-- [Agent harness guide](docs/harness.md) — `ad auth`, `ad tui`, `ad codex`, `ad chat/run/loop/schedule/web/acp`, safety model, Windows notes
+- [Commands in ad](docs/commands.md) — Every engine slash command: works in ad, or why not yet; keys and settings shared with the engine's own UI
+- [Agent harness guide](docs/harness.md) — `ad auth`, `ad tui`, `ad chat/run/loop/schedule/web/acp`, safety model, Windows notes
 - [Workflow](docs/workflow.md) — `ad watch` vs `ad digest-latest`, the ending protocol, decision matrix
 - [Troubleshooting](docs/troubleshooting.md) — Symptoms, causes and fixes (watch, digest, harness, Windows sandbox, terminal UI)
 - [Architecture](docs/architecture.md) — Three loops, components, data flow, file-system layout
@@ -919,7 +922,7 @@ Copy-paste configuration templates:
 - [Installation Guide](docs/installation-guide.md) — All install methods with OS-specific instructions
 - [Customization Guide](docs/customization-guide.md) — Fork and adapt skills for your project
 - [Skill Anatomy](docs/skill-anatomy.md) — How SKILL.md works, frontmatter fields, trigger system
-- [Harness design](docs/harness-design.md) — The engine boundary, isolation from your own Codex, the safety model, staying current with Codex
+- [Harness design](docs/harness-design.md) — The engine boundary, isolation from your own install, the safety model, staying current with the engine
 - [Terminal UI architecture](docs/tui-architecture.md) — How `ad tui` is built, the `/undo` safety model, decisions
 - [Testing](docs/testing.md) — The test layers, the live terminal UI tests, mutation checks, CI
 - [Manual test](docs/manual-test.md) — End-to-end checklist (Claude Code mode + harness + terminal UI)

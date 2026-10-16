@@ -67,8 +67,8 @@ export async function loadConfig() {
   });
 }
 
-// ad's engine writes its conversations into its own folder (engine/, or
-// codex-home on an older install, or the user's AD_ENGINE_DIR). Derived at
+// ad's engine writes its conversations into its own folder (see "The engine's folder"
+// in docs/harness.md for the current and older names). Derived at
 // every start, never written to watch.json. Opt out with "harnessSessions": false.
 export function harnessSessionsEntry({ state = () => engineHome.state() } = {}) {
   const s = state();

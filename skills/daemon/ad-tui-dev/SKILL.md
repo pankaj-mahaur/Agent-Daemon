@@ -1,6 +1,6 @@
 ---
 name: ad-tui-dev
-description: "Use when working on agent-daemon's own terminal UI (maintainers, this repo): \"continue the TUI\", \"TUI ka kaam\", \"ad tui\", \"next TUI part\", \"renderer\", \"composer\", \"input parser\", \"tui-probe\", \"terminal UI bug\", \"/undo\", \"ad codex\", \"the fake app-server\". Loads the plan's state, the module map, tests and goldens, and the rules the TUI must keep: isolation from the user's own Codex, inline-renderer terminal rules, Windows input facts, and the per-part loop."
+description: "Use when working on agent-daemon's own terminal UI (maintainers, this repo): \"continue the TUI\", \"TUI ka kaam\", \"ad tui\", \"next TUI part\", \"renderer\", \"composer\", \"input parser\", \"tui-probe\", \"terminal UI bug\", \"/undo\", \"ad codex\", \"the fake app-server\". Loads the plan's state, the module map, tests and goldens, and the rules the TUI must keep: isolation from the user's own install, inline-renderer terminal rules, Windows input facts, and the per-part loop."
 license: MIT
 metadata:
   author: agent-daemon
@@ -11,11 +11,11 @@ allowed-tools: Bash, Read, Edit, Write, Grep, Glob, Agent
 
 # Work on the `ad` terminal UI
 
-The TUI (`ad tui` and bare `ad`: a Codex-style terminal UI on the pinned Codex engine, released in 2.1.0) was built from a reviewed plan, one part at a time. This skill puts its hard-won rules in front of you before you touch code, so a new session continues the work instead of re-deriving it. User docs: `docs/tui.md`. Design and the `/undo` safety model: `docs/tui-architecture.md`. Tests: `docs/testing.md`. The maintainer's working plan (`docs/plans/ad-tui.md`) and research notes (`docs/research/`) are local-only, not in the public repo: read them when present.
+The TUI (`ad tui` and bare `ad`: a terminal UI on the pinned engine, released in 2.1.0) was built from a reviewed plan, one part at a time. This skill puts its hard-won rules in front of you before you touch code, so a new session continues the work instead of re-deriving it. User docs: `docs/tui.md`. Design and the `/undo` safety model: `docs/tui-architecture.md`. Tests: `docs/testing.md`. The maintainer's working plan (`docs/plans/ad-tui.md`) and research notes (`docs/research/`) are local-only, not in the public repo: read them when present.
 
 ## When to use
 
-Any change under `runtime/src/tui/`, `runtime/src/harness/{session,checkpoints,codex-ui}.mjs`, `runtime/src/engine/codex/events.mjs`, `runtime/testkit/`, the probe, `docs/tui.md`, or the TUI parts of the plan.
+Any change under `runtime/src/tui/`, `runtime/src/harness/{session,checkpoints}.mjs`, `runtime/src/engine/codex/events.mjs`, `runtime/testkit/`, the probe, `docs/tui.md`, or the TUI parts of the plan.
 
 ## Module map
 
@@ -23,23 +23,22 @@ All paths under `runtime/`.
 
 | Path | What |
 |---|---|
-| `src/cli.mjs` | thin launcher: routes `tui`, `codex` and bare `ad` / `ad --last` before loading `cli-full.mjs` (the rest of the CLI). Keep it light |
+| `src/cli.mjs` | thin launcher: routes `tui` and bare `ad` / `ad --last` before loading `cli-full.mjs` (the rest of the CLI). Keep it light |
 | `src/tui/flip.mjs` | bare `ad` → TUI (D7). `TUI_IS_DEFAULT` is `true` (flipped after FC3); `AD_TUI=0` opts out; the one-time `ad chat` hint |
 | `src/tui/preflight.mjs` | why the TUI can't run here (TTY, `TERM=dumb`, Node on Windows, mintty), with a working alternative |
-| `src/tui/main.mjs` | `cmdTui`: preflight → terminal → engine (sign-in panel) → folder trust → session + checkpoints → header and "since last time" → app → exit hint. Builds `actions` (file search, git diff, editor, handoffs to `ad …` and `/codex`) |
+| `src/tui/main.mjs` | `cmdTui`: preflight → terminal → engine (sign-in panel) → folder trust → session + checkpoints → header and "since last time" → app → exit hint. Builds `actions` (file search, git diff, editor, handoffs to `ad …`) |
 | `src/tui/app.mjs` | the app: input → intents, session events → frames, scrollback commits, keys, `SLASH_COMMANDS` (each marked `source: "upstream"` or `"ad"`), `slashCollisions` |
 | `src/tui/commands.mjs` | Part 8 renderers: `/mcp`, `/hooks`, `/skills`, `/usage`, `/terminal-setup`, transcript pager, `/export` markdown, `/copy` clipboard, image paths |
 | `src/tui/ad-layer.mjs` | Part 9: `/memory`, learned rows, `/proposals`, `/loop`, `/team`, `/schedule`, scheduler warning |
 | `src/tui/undo.mjs` | Part 10 wiring: "before" started at Enter and awaited (10 s cap) so no agent action can be in it, "after" after the turn, applied edits only (hashed + line-counted per file), edit paths resolved to real paths, `/undo` |
 | `src/tui/history.mjs` | prompt history JSONL (`~/.agent-daemon/tui/history.jsonl`) |
-| `src/tui/init-prompt.mjs` | Codex's `/init` prompt, vendored (re-copy on Codex upgrades) |
+| `src/tui/init-prompt.mjs` | the engine's `/init` prompt, vendored (re-copy on engine upgrades) |
 | `src/tui/preview.mjs` | `ad tui --preview`, a minimal preview UI on the same engine (the first walking skeleton) |
 | `src/engine/codex/upstream-commands.json` | the engine's slash commands at the pinned tag with their rules: aliases, inline args, allowed during a task, side-conversation allowlist, visibility, popup (`scripts/codex-slash.mjs --file slash_command.rs --popup command_popup.rs`), reached through the façade as `engineCommands` |
 | `src/tui/terminal/` | `io` (raw mode, caps, handoff, restore), `input` (bytes → key/text/paste events), `renderer` (inline), `sanitize`, `text` (spans, SGR, wrap), `width` + `width-table` (generated), `detect` (terminal name, reflow model, width profile) |
 | `src/tui/view/` | pure views: `composer`, `markdown` (streaming), `cells` (items, diffs, ad rows), `chrome` (header, status, footer, shortcuts, picker), `modals` (approvals with arming, questions, forms) |
 | `src/harness/session.mjs` | UI-agnostic session controller: submit / steer / queue, requests, restarts, thread locks (`~/.agent-daemon/locks`) |
 | `src/harness/checkpoints.mjs` | git-tree snapshots under `refs/ad/checkpoints/`, private index, restore with conflict check, `UNDO_LIMITS` |
-| `src/harness/codex-ui.mjs` | `ad codex` / `/codex`: stock Codex UI on the harness home, `--no-daemon`, skills mirror |
 | `src/engine/codex/events.mjs` | protocol traffic → `AdEvent`s; `compat.json` holds tested versions and "what changed" |
 | `testkit/protocol-check.mjs` | validates messages against the pinned protocol snapshot |
 | `testkit/tui-fake.mjs` | runs `ad tui` on `fake-codex-app-server.mjs` in a temp root (pty smoke) |
@@ -49,17 +48,17 @@ All paths under `runtime/`.
 
 ## Tests and goldens
 
-- **TUI tests** (`runtime/test/`): `tui-input`, `tui-io`, `tui-detect`, `tui-width`, `tui-text`, `tui-sanitize`, `tui-renderer` (terminal layer); `tui-composer`, `tui-markdown`, `tui-cells`, `tui-chrome`, `tui-modals` (views); `tui-app`, `tui-main`, `tui-parity`, `tui-ad`, `tui-hardening`, `tui-resilience`, `tui-preview`, `tui-pty-smoke`. Also `session`, `checkpoints`, `codex-events`, `codex-protocol-snapshot`, `engine-real` and `tui-live` (both `AD_REAL_ENGINE=1`; `tui-live` is the FC3/FC4 script on the real `ad tui` in a pty: run it after any app, session or view change).
+- **TUI tests** (`runtime/test/`): `tui-input`, `tui-io`, `tui-detect`, `tui-width`, `tui-text`, `tui-sanitize`, `tui-renderer` (terminal layer); `tui-composer`, `tui-markdown`, `tui-cells`, `tui-chrome`, `tui-modals` (views); `tui-app`, `tui-main`, `tui-parity`, `tui-ad`, `tui-hardening`, `tui-resilience`, `tui-preview`, `tui-pty-smoke`. Also `session`, `checkpoints`, `codex-events.test.mjs`, `codex-protocol-snapshot.test.mjs`, `engine-real` and `tui-live` (both `AD_REAL_ENGINE=1`; `tui-live` is the FC3/FC4 script on the real `ad tui` in a pty: run it after any app, session or view change).
 - **Goldens:** `test/golden/tui/` holds `wrap-{20,40,79}`, `{cells,chrome,markdown,modals,parity}-{40,80,120}` and `modals-small`. They are LF on every platform. After an intended change, run with `AD_UPDATE_GOLDEN=1`, then read the golden diff line by line before committing.
 - **Fixtures:** `test/fixtures/tui/s1-keys.json` (real key bytes from Windows Terminal and Zed).
 - **The fake must stay honest:** every message `fake-codex-app-server.mjs` sends in the main scenarios must pass `protocol-check` (`tui-resilience` enforces it). When you add a fake message, give it the real shape (full `Thread` objects, `startedAtMs`, the approval's `itemId`, …), not just the fields ad reads.
 - **Mutation-check every guard.** For each fix or safety check, break it on purpose (delete the line, flip the condition), run the tests, and confirm a named test fails; then restore it. A guard no test catches isn't done. Record the count in the plan ("N guards mutation-checked").
 - **Slash names:** a new command needs `source: "upstream"` (mirroring the engine's own UI) or `"ad"`, a check against `engine/codex/upstream-commands.json` (`slashCollisions`), a row in `docs/tui.md`, and `/help` coverage. Never point users to the engine's own UI. Every upstream command is either a `source: "upstream"` row in `SLASH_COMMANDS` or an entry in `NOT_IN_AD` (what ad says instead; never sent to the model): implementing one means removing it from `NOT_IN_AD`. Upstream's "during a task" rule and popup hiding come from the generated metadata, not by hand.
-- **Status line and title:** items are Codex's ids in `tui/status.mjs`; every value through `titleSafe`; the title is never written while `holdTitle(true)` (a handoff). A new item needs Codex's id (or it stays "unsupported").
+- **Status line and title:** items are the engine's ids in `tui/status.mjs`; every value through `titleSafe`; the title is never written while `holdTitle(true)` (a handoff). A new item needs the engine's id (or it stays "unsupported").
 - **Test pitfalls met:** match long paths and hints with `\s+` (they wrap); give "too soon" assertions a long arm delay (500 ms) and waits that end early on success a generous cap (a 50 ms query timeout flaked under load); `until()` must await async predicates; if a mutation isn't caught, change the setup until the old and new behaviour differ on screen. In Git Bash, `--test-name-pattern="/cd"` matches nothing (the slash is turned into a path): prefix that one command with `MSYS_NO_PATHCONV=1`, never export it for the shell (git honours it and `skill-install.test.mjs`'s local-repo test fails). Capture a live run to a file before filtering it: a grep that keeps only `ok`/`not ok` lines eats the error block.
-- **Subagent run state** lives in `session.state.agents` (`noteAgent`/`trackAgents` in `harness/session.mjs`): `running` from `turn.started`/`turn.completed` and `subAgentActivity` hints, `stopped` so a late "started" hint for a finished agent is ignored (Codex's `stopped_threads` guard), `closed` from `thread.closed`. An engine restart clears every `running` (the engine that ran them is gone), as it clears `terminals`. `/cd` refuses while any agent is `running && !closed`, as Codex's `app/working_directory.rs` does; the fake's `subagents-2` prompt leaves one running and sends a late hint, so it is the fixture for both guards.
-- **Keys:** a key ad handles is an action in `tui/keymap.mjs` (Codex's context, action name and default keys from `codex-rs/tui/src/keymap.rs`), checked with `keymap.is(ctx, action, ev)`, never a hard-coded test. A new key needs a row in `docs/tui.md` (a test checks every default key is named there) and a cell in the key routing table test when a layer is involved. Colours come from `tui/view/theme.mjs` only (a test fails on a colour literal elsewhere).
-- **Requests to Codex:** a new `request("method")` call needs the method in `SENT_METHODS` (`engine/codex/protocol-snapshot.mjs`) and a regenerated snapshot (`node scripts/codex-schema-snapshot.mjs`, pinned binary, temp home). The fake app-server rejects params the stable protocol lacks; an experimental method or field must be on `EXPERIMENTAL_ALLOWLIST` (`engine/codex/surface.mjs`) on purpose.
+- **Subagent run state** lives in `session.state.agents` (`noteAgent`/`trackAgents` in `harness/session.mjs`): `running` from `turn.started`/`turn.completed` and `subAgentActivity` hints, `stopped` so a late "started" hint for a finished agent is ignored (the engine's `stopped_threads` guard), `closed` from `thread.closed`. An engine restart clears every `running` (the engine that ran them is gone), as it clears `terminals`. `/cd` refuses while any agent is `running && !closed`, as the engine's `app/working_directory.rs` does; the fake's `subagents-2` prompt leaves one running and sends a late hint, so it is the fixture for both guards.
+- **Keys:** a key ad handles is an action in `tui/keymap.mjs` (the engine's context, action name and default keys from `codex-rs/tui/src/keymap.rs`), checked with `keymap.is(ctx, action, ev)`, never a hard-coded test. A new key needs a row in `docs/tui.md` (a test checks every default key is named there) and a cell in the key routing table test when a layer is involved. Colours come from `tui/view/theme.mjs` only (a test fails on a colour literal elsewhere).
+- **Requests to the engine:** a new `request("method")` call needs the method in `SENT_METHODS` (`engine/codex/protocol-snapshot.mjs`) and a regenerated snapshot (`node scripts/codex-schema-snapshot.mjs`, pinned binary, temp home). The fake app-server rejects params the stable protocol lacks; an experimental method or field must be on `EXPERIMENTAL_ALLOWLIST` (`engine/codex/surface.mjs`) on purpose.
 
 ## Procedure
 
@@ -68,11 +67,11 @@ All paths under `runtime/`.
    - Read `.agent-daemon/memory/activeContext.md`.
    - Check `git status -sb`: work happens on `feat/tui`, never on main.
 2. **Follow the plan's loop** for the (sub-)part, and finish its Done-when. Interfaces are fixed; changing one needs a revision-log entry. If the plan and the code disagree, verify against the code and fix whichever is wrong.
-3. **Never touch the user's own Codex.**
-   - Every real Codex process starts through `codexEnv()` (`runtime/src/engine/codex/home.mjs`).
-   - Tests use temp homes, a `source: "test-double"` fake, or the real-engine suite (`AD_REAL_ENGINE=1`).
-   - Never use `~/.codex` or the user's global `codex`.
-   - Elevated Windows sandbox setup is machine-wide: ask first.
+3. **Never touch the user's own install.**
+    - Every real engine process starts through `codexEnv()` (`runtime/src/engine/codex/home.mjs`).
+    - Tests use temp homes, a `source: "test-double"` fake, or the real-engine suite (`AD_REAL_ENGINE=1`).
+    - Never use `~/.codex` or the user's global install.
+    - Elevated Windows sandbox setup is machine-wide: ask first.
 4. **Renderer rules** (inline mode; why: `docs/tui-architecture.md`):
    - **Live region:**
      - never `2J` or `3J`;
@@ -102,24 +101,24 @@ All paths under `runtime/`.
    - When in doubt, run `node runtime/scripts/tui-probe.mjs keys|screen` and read `~/.agent-daemon/logs/tui-probe-*.log`.
 6. **Protocol facts:**
    - Stable surface, except `EXPERIMENTAL_ALLOWLIST` (`engine/codex/surface.mjs`): only the TUI's engine sends `experimentalApi: true` (`experimentalCapabilities()`, which also opts out of every experimental notification ad doesn't handle). A new experimental use needs the user's OK, the allowlist, a regenerated snapshot (its `experimental` section) and a real-engine test.
-   - **Plan mode** (Codex's collaboration modes): the session owns it (`state.mode`, `setMode`, `cycleMode`, `modeMask`); every `turn/start` gets the mask in `startTurn` only, so no turn path can miss it. Default's mask carries the user's own model/effort (never values read back after a plan turn); `thread/settings/updated` and the resume response set the mode; `newThread()` resets to Default. "Implement this plan?" opens from `draw()` via `maybeOfferPlan()` in a microtask (opening a dialog redraws), never over a draft, a popup or a request.
-   - **Background terminals** (Codex's unified exec): a `commandExecution` with `source: "unifiedExecStartup"` is one until its `item/completed`, which comes only when the process exits (possibly long after the turn). `session.state.terminals` keys them by Codex's `processId`; `flush()` never stops at a running one: once anything follows it (or its turn ends) its cell is committed as it is, "Running" while the process lives, and its end is drawn as a new cell during a task (Codex's rule; every exec_command is such an item while it runs, so never drop one silently); `/stop` = `thread/backgroundTerminals/clean` (allowlisted), after which Codex completes them as failed, exit -1.
+    - **Plan mode** (the engine's collaboration modes): the session owns it (`state.mode`, `setMode`, `cycleMode`, `modeMask`); every `turn/start` gets the mask in `startTurn` only, so no turn path can miss it. Default's mask carries the user's own model/effort (never values read back after a plan turn); `thread/settings/updated` and the resume response set the mode; `newThread()` resets to Default. "Implement this plan?" opens from `draw()` via `maybeOfferPlan()` in a microtask (opening a dialog redraws), never over a draft, a popup or a request.
+    - **Background terminals** (the engine's unified exec): a `commandExecution` with `source: "unifiedExecStartup"` is one until its `item/completed`, which comes only when the process exits (possibly long after the turn). `session.state.terminals` keys them by the engine's `processId`; `flush()` never stops at a running one: once anything follows it (or its turn ends) its cell is committed as it is, "Running" while the process lives, and its end is drawn as a new cell during a task (the engine's rule; every exec_command is such an item while it runs, so never drop one silently); `/stop` = `thread/backgroundTerminals/clean` (allowlisted), after which the engine completes them as failed, exit -1.
    - **The folder is mutable** (`/cd`): the session's `state.config.cwd` is what every thread start, resume and restart uses (never a captured `cwd`); `session.changeDir()` forks with `cwd` + `excludeTurns: true` (the history is on screen) and moves the lock; `main.mjs` `actions.setCwd()` rebuilds the ad layer and `/undo`'s checkpoints (`session.setHooks`). A new folder-bound helper must read the current folder when used.
-   - **Side conversations**: a second `createSession({secondary: true})` on the same engine (no requests, no global events, no lock, no restarts; `adopt(threadId)`), made by the main session's `openSide()`. Codex 0.160 ignores a fork's `developerInstructions`, so the side texts go in through `thread/inject_items` (developer + user items). The app keeps one composer; `side.focus` decides where Enter, Esc, Ctrl+C and /commands go; the panel replaces main's live items (main shows only its status rows).
-   - **Vim mode** (`view/vim.mjs`, Codex 0.160 semantics, no counts or Visual mode): the composer's `setVim()` puts Vim in front of its own editing; Vim returns `undefined` for Insert typing (the composer edits), `null` for keys the app owns (Esc with nothing pending, Ctrl shortcuts). The app must offer Esc to `composer.vim.wantsEscape()` before its interrupt key. Esc and the next key sent together decode as Alt+key (a fast Esc), which Insert treats as Esc then the key; tests send Esc alone. The binding table is `test/tui-vim.test.mjs`.
+   - **Side conversations**: a second `createSession({secondary: true})` on the same engine (no requests, no global events, no lock, no restarts; `adopt(threadId)`), made by the main session's `openSide()`. The pinned engine ignores a fork's `developerInstructions`, so the side texts go in through `thread/inject_items` (developer + user items). The app keeps one composer; `side.focus` decides where Enter, Esc, Ctrl+C and /commands go; the panel replaces main's live items (main shows only its status rows).
+   - **Vim mode** (`view/vim.mjs`, the engine's 0.160 semantics, no counts or Visual mode): the composer's `setVim()` puts Vim in front of its own editing; Vim returns `undefined` for Insert typing (the composer edits), `null` for keys the app owns (Esc with nothing pending, Ctrl shortcuts). The app must offer Esc to `composer.vim.wantsEscape()` before its interrupt key. Esc and the next key sent together decode as Alt+key (a fast Esc), which Insert treats as Esc then the key; tests send Esc alone. The binding table is `test/tui-vim.test.mjs`.
    - **Syntax highlighting** (`view/highlight.mjs`): one table-driven lexer with per-line state (`highlightLines(lang, lines, state)` → `{lines, state}`), sticky regexes and caps (`MAX_LINES`, `MAX_LINE`, `MAX_CHARS`) so it stays linear. Never a regex with a lazy or nested quantifier over a whole line (`/^(\s*)(.*?)(\s+#.*)$/` was quadratic on runs of spaces and threw on U+2028): scan with `indexOf`; the hostile test times every language on space runs at the caps. `highlightLines` guards each line (a throw, or tokens that don't add up to the line, make it plain). Theme colours live in `theme.mjs` (`SYNTAX`, the colours-have-one-home test). A streaming fence carries `fenceState` between the chunks it commits and into its live tail (`createMarkdownStream`). A diff's context rows are lexed as the new file reads (`+` and context rows), each hunk from a fresh state (`contextTokens` in `cells.mjs`). The current theme is module state (`setSyntaxTheme`): tests that change it must put back `ansi`; a preview draws in another theme with `withSyntaxTheme(name, fn)`, never by setting it.
-   - **Subagents** (`/subagents`): `state.agents` keeps Codex's rows in first-seen order (`noteAgent` in the session: `thread/started` with a parent, `collabAgentToolCall.receiverThreadIds` unless `notFound`, `subAgentActivity`; running from their turns, closed from `thread/closed`). An agent's items are in `state.items` with its `threadId`; the pager (`pager.agent`) re-renders them on every draw. ad watches an agent beside the conversation instead of switching to it as Codex does, so prompts never go to an agent by accident.
-   - **Temporary threads** (`/recap`): `engine.structuredRequest()` is Codex's temporary structured request (ephemeral, read-only, every tool, hook and MCP server off, `threadSource: "system"`, unsubscribed after). Its events reach no session subscriber (no parent link), so they never land in the transcript.
-   - Prompts the client writes (Codex's clear-context plan hand-off) must be skipped by ad's prompt hooks: `hooks/generated-prompts.mjs`.
-   - Errors are -32600 with distinct messages; -32601 only means an operation is unsupported.
-   - `availableDecisions` leaks through on exec approvals only. Codex's fallback applies otherwise. A real exec approval offers `y` / `p` ("don't ask again for commands starting with …") / Esc ("No, and stop": declines and ends the turn); `n` only when Codex offers "No, and tell Codex what to do instead" (patch approvals).
-   - **Item ids are not unique across turns** with some providers (`msg-1`, `call_0`): the session keys a later turn's item `<id>@<turn>`, the app keys shown items per turn, and requests resolve Codex's id with `session.itemFor(id, turnId)`.
-   - **The `turn/start` response can arrive before the `turn/started` notification:** never rely on `state.starting` inside `turnStarted`.
-   - **`item/started` is not ordered before the disk write** of a patch: nothing safety-related may depend on that race.
-   - Codex's own diff of an applied patch matches git's line counts (verified live for Update File).
-   - MCP tool approval per server: `default_tools_approval_mode` = `auto` | `prompt` | `writes` | `approve` (and per-tool `approval_mode`).
-   - Codex runs commands in the first `pwsh` on PATH (PowerShell 7 adds its own folder to its children's PATH); the Windows sandbox can't start a Store (MSIX) app, so `withoutStoreAliases()` (`engine/codex/app-server.mjs`) drops every PATH entry with a `WindowsApps` segment at every Codex spawn, always on Windows (the alias folder and the Store package folders).
-   - The first sandboxed action in a fresh Codex home sets up the Windows sandbox: about 35 s once (longer on a busy machine).
+    - **Subagents** (`/subagents`): `state.agents` keeps the engine's rows in first-seen order (`noteAgent` in the session: `thread/started` with a parent, `collabAgentToolCall.receiverThreadIds` unless `notFound`, `subAgentActivity`; running from their turns, closed from `thread/closed`). An agent's items are in `state.items` with its `threadId`; the pager (`pager.agent`) re-renders them on every draw. ad watches an agent beside the conversation instead of switching to it as the engine's own UI does, so prompts never go to an agent by accident.
+    - **Temporary threads** (`/recap`): `engine.structuredRequest()` is the engine's temporary structured request (ephemeral, read-only, every tool, hook and MCP server off, `threadSource: "system"`, unsubscribed after). Its events reach no session subscriber (no parent link), so they never land in the transcript.
+    - Prompts the client writes (the engine's clear-context plan hand-off) must be skipped by ad's prompt hooks: `hooks/generated-prompts.mjs`.
+    - Errors are -32600 with distinct messages; -32601 only means an operation is unsupported.
+    - `availableDecisions` leaks through on exec approvals only. The engine's fallback applies otherwise. A real exec approval offers `y` / `p` ("don't ask again for commands starting with …") / Esc ("No, and stop": declines and ends the turn); `n` only when the engine offers "No, and say what to do instead" (patch approvals).
+    - **Item ids are not unique across turns** with some providers (`msg-1`, `call_0`): the session keys a later turn's item `<id>@<turn>`, the app keys shown items per turn, and requests resolve the engine's id with `session.itemFor(id, turnId)`.
+    - **The `turn/start` response can arrive before the `turn/started` notification:** never rely on `state.starting` inside `turnStarted`.
+    - **`item/started` is not ordered before the disk write** of a patch: nothing safety-related may depend on that race.
+    - The engine's own diff of an applied patch matches git's line counts (verified live for Update File).
+    - MCP tool approval per server: `default_tools_approval_mode` = `auto` | `prompt` | `writes` | `approve` (and per-tool `approval_mode`).
+    - The engine runs commands in the first `pwsh` on PATH (PowerShell 7 adds its own folder to its children's PATH); the Windows sandbox can't start a Store (MSIX) app, so `withoutStoreAliases()` (`engine/codex/app-server.mjs`) drops every PATH entry with a `WindowsApps` segment at every engine spawn, always on Windows (the alias folder and the Store package folders).
+    - The first sandboxed action in a fresh engine home sets up the Windows sandbox: about 35 s once (longer on a busy machine).
    - Details, when present locally: `docs/research/codex-tui-and-app-server.md`.
 6a. **`/undo` invariants** (`docs/tui-architecture.md#undo-the-safety-model`): it never destroys or reverts the user's work on its own (only `/undo force` discards changes made after the agent's edit, and only those), and refuses rather than guesses.
    - The "before" snapshot is awaited before `turn/start` (10 s cap): never let it race the agent.
@@ -150,10 +149,10 @@ The status says Parts 0–11 are built, FC2–FC4 run automated in `test/tui-liv
 ## Anti-patterns
 
 - **Reaching the engine's raw server.** Use the façade's capabilities (`engine.threads.*`, `engine.turns.*`, …); a new protocol method means a new capability in `engine/index.mjs`, an entry in `SENT_METHODS`, and the brand lint's rule B stays at zero.
-- **Starting the real Codex without `codexEnv()`,** or reading or writing `~/.codex`.
+- **Starting the real engine without `codexEnv()`,** or reading or writing `~/.codex`.
 - **Changing what bare `ad` opens** (`TUI_IS_DEFAULT` in `src/tui/flip.mjs`) without the user.
-- **Teaching the fake a message the real Codex can't send.** It must pass `protocol-check`.
-- **Adding a slash command that takes a Codex name** for something else, or a key without updating the `?` overlay and `docs/tui.md`.
+- **Teaching the fake a message the real engine can't send.** It must pass `protocol-check`.
+- **Adding a slash command that takes the engine's name** for something else, or a key without updating the `?` overlay and `docs/tui.md`.
 - **Reaching for an experimental protocol method** because it's convenient.
 - **Editing files that contain backslashes or `$` through shell heredocs.** Use the Write/Edit tools, and give `replace()` a function.
 - **Moving to the next part with a red test or an open medium-or-worse finding** (see `big-feature-flow`).

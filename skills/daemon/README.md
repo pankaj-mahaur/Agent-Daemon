@@ -17,6 +17,6 @@ These are **destructive or high-impact** — the bootstrap skill writes files, s
 | [bug-flow](bug-flow/) | Bug end to end: debug-triage → fix → verify. |
 | [release-flow](release-flow/) | Cut a release: changelog → verify → review → go/no-go. Never tags or pushes without OK. |
 | [ad-harness](ad-harness/) | Hand work to the harness: pick `ad run` / `ad loop` / `ad schedule` / `ad sp`, set brakes, verify the result yourself. |
-| [harness-troubleshoot](harness-troubleshoot/) | Harness failures: login → engine/hooks → sandbox → Codex's own log, with the known Windows causes. |
-| [codex-upgrade](codex-upgrade/) | Maintainers: land a Codex engine bump — protocol diff, suite, real-engine tests, live Windows sandbox smoke, then release-flow. |
-| [ad-tui-dev](ad-tui-dev/) | Maintainers: work on the `ad` terminal UI — load the plan's state, keep own-Codex isolation, the inline-renderer rules and the per-part loop. |
+| [harness-troubleshoot](harness-troubleshoot/) | Harness failures: login → engine/hooks → sandbox → the engine's own log, with the known Windows causes. |
+| [codex-upgrade](codex-upgrade/) | Maintainers: land an engine bump — protocol diff, suite, real-engine tests, live Windows sandbox smoke, then release-flow. |
+| [ad-tui-dev](ad-tui-dev/) | Maintainers: work on the `ad` terminal UI — load the plan's state, keep your-own-install isolation, the inline-renderer rules and the per-part loop. |

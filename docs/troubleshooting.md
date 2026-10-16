@@ -104,7 +104,7 @@ The `--force` flag bypasses triage. The session log will still record the run.
    ```sh
    ad digest --transcript <path> --cwd <project> --fallback-to-llm --force
    ```
-   The fallback uses your local `claude` CLI to extract learnings post-hoc, or the Codex engine with `--llm codex` (`--llm auto` falls back to Codex when `claude` isn't installed).
+   The fallback uses your local `claude` CLI to extract learnings post-hoc, or ad's engine with `--llm ad` (`--llm auto` falls back to ad's engine when `claude` isn't installed).
 
 3. **Make it stick** — add a reminder to `AGENTS.md` or `CLAUDE.md`:
    ```
@@ -309,7 +309,7 @@ ad auth status
 
 **Cause:** unattended runs never ask for approval, so on Windows they require a ready sandbox.
 
-**Fix:** `ad sandbox setup` (unelevated), or `ad sandbox setup --elevated` for stronger isolation (one UAC prompt; machine-wide, so your own Codex shares the sandbox accounts it creates). `ad sandbox status` shows the current state.
+**Fix:** `ad sandbox setup` (unelevated), or `ad sandbox setup --elevated` for stronger isolation (one UAC prompt; machine-wide, so your own install shares the sandbox accounts it creates). `ad sandbox status` shows the current state.
 
 ---
 
@@ -317,10 +317,10 @@ ad auth status
 
 **Symptom:** one of:
 
-- `ad run` / `ad chat` finish, but the agent says its shell was denied and changes nothing. Codex's log (`logs_2.sqlite` in the harness home) shows `CreateProcessAsUserW failed: 5 (Access is denied.)` for `...\Microsoft\WindowsApps\pwsh.exe`.
+- `ad run` / `ad chat` finish, but the agent says its shell was denied and changes nothing. The engine's log (`logs_2.sqlite` in the harness home) shows `CreateProcessAsUserW failed: 5 (Access is denied.)` for `...\Microsoft\WindowsApps\pwsh.exe`.
 - In `ad tui`, each command shows `Failed … Failed to create unified exec process: CreateProcessAsUserW failed: -1073283067`, naming a `pwsh.exe` under `C:\Program Files\WindowsApps\…`, and the agent then asks to run it outside the sandbox.
 
-**Cause:** PowerShell 7 installed from the Microsoft Store. Codex runs commands in the first `pwsh` on PATH, and the Windows sandbox can't start a Store (MSIX) app. Two PATH entries lead to it: the per-user app-alias folder (`…\Microsoft\WindowsApps`), and the package folder (`C:\Program Files\WindowsApps\Microsoft.PowerShell_…`), which that PowerShell puts at the front of PATH when you start ad from it.
+**Cause:** PowerShell 7 installed from the Microsoft Store. The engine runs commands in the first `pwsh` on PATH, and the Windows sandbox can't start a Store (MSIX) app. Two PATH entries lead to it: the per-user app-alias folder (`…\Microsoft\WindowsApps`), and the package folder (`C:\Program Files\WindowsApps\Microsoft.PowerShell_…`), which that PowerShell puts at the front of PATH when you start ad from it.
 
 **Fix:** update agent-daemon. Fixed in 2.0.1 (the alias folder) and completed in 2.1.1 (the package folder): on Windows, ad leaves every `WindowsApps` folder out of its engine's PATH, so commands run inside the sandbox in a PowerShell 7 installed from the [MSI](https://learn.microsoft.com/powershell/scripting/install/installing-powershell-on-windows) or in Windows PowerShell 5.1. Your own shell and PATH are unchanged.
 
@@ -350,33 +350,29 @@ Delete the file before starting the next loop (an existing STOP file refuses to 
 
 ---
 
-## 19. Harness: `refusing to run Codex in …: that is your own Codex home`
+## 19. Harness: ad won't run the engine in your own install's home
 
-**Symptom:** a harness command stops before Codex starts, with one of:
+**Symptom:** a harness command stops before the engine starts, saying the folder is your own install's home (and suggesting `AD_ENGINE_DIR`), or refusing an unusable `CODEX_HOME` value (a trailing dot or space, a network path).
 
-- `refusing to run Codex in <path>: that is your own Codex home`
-- `refusing CODEX_HOME "<path>": Windows ignores a trailing dot or space …`
-- `refusing CODEX_HOME <path>: network (UNC) paths are not supported`
-
-**Cause:** the harness only runs Codex in its own home, `~/.agent-daemon/codex-home`, or wherever `AD_CODEX_HOME` points. It refuses any of these:
+**Cause:** the harness only runs the engine in its own home, `~/.agent-daemon/engine`, or wherever `AD_ENGINE_DIR` points. It refuses any of these:
 
 - `~/.codex`;
-- a `CODEX_HOME` your shell sets for your own Codex;
+- a `CODEX_HOME` your shell sets for your own install;
 - any path that leads to one of those (a junction, symlink, `\\?\` prefix, a trailing dot or space, a network share).
 
-Your own Codex keeps its login, sessions and config to itself.
+Your own install keeps its login, sessions and config to itself.
 
-**Fix:** unset `AD_CODEX_HOME`, or point it at a new folder of its own. Leaving `CODEX_HOME` set for your own Codex is fine: the harness never passes `CODEX_*` variables to its engine (except `CODEX_CA_CERTIFICATE`).
+**Fix:** unset `AD_CODEX_HOME`, or point `AD_ENGINE_DIR` at a new folder of its own. Leaving `CODEX_HOME` set for your own install is fine: the harness never passes `CODEX_HOME`, `CODEX_API_KEY` and the like to its engine (except `CODEX_CA_CERTIFICATE`).
 
 ---
 
-## 20. Harness: `Codex engine not installed — run: cd runtime && npm install`
+## 20. Harness: engine not installed — run: cd runtime && npm install
 
-**Symptom:** `ad doctor` or any harness command reports the engine missing, even though `codex` works in your terminal.
+**Symptom:** `ad doctor` or any harness command reports the engine missing, even though your own install works in your terminal.
 
-**Cause:** the harness runs only the Codex version it pins (`runtime/package.json`), installed under `runtime/node_modules`. It never falls back to your global or PATH `codex`, so your own install and its version stay yours.
+**Cause:** the harness runs only the engine version it pins (`runtime/package.json`), installed under `runtime/node_modules`. It never falls back to a global or PATH install, so your own install and its version stay yours.
 
-**Fix:** re-run the installer, or `cd runtime && npm install`. `AD_CODEX_BIN` can point at a specific binary for testing.
+**Fix:** re-run the installer, or `cd runtime && npm install`. `AD_ENGINE_BIN` can point at a specific binary for testing.
 
 ---
 
@@ -493,7 +489,7 @@ With any of these, plain `/undo` changes nothing.
 - `The last turn has no checkpoint (…)`, with the reason:
   - the snapshot taken when you sent the prompt wasn't done within 10 s (a very large working folder, a busy machine);
   - snapshots fail in this repo (git's message follows), or the snapshot after the turn failed;
-  - the turn wasn't started from a prompt here: Codex started it itself (a review, a goal);
+  - the turn wasn't started from a prompt here: the engine started it itself (a review, a goal);
   - one of the agent's edits couldn't be read back, so ad can't tell its lines from anyone else's;
   - the turn ran before `ad tui` started.
 - `… edit(s) outside this repo weren't touched`: the agent edited files outside the repo `ad tui` runs in; `/undo` only covers this repo.
@@ -503,17 +499,17 @@ With any of these, plain `/undo` changes nothing.
 
 ---
 
-## 27. `ad tui`: `Codex stopped (exit N)`
+## 27. `ad tui`: `ad's engine stopped (exit N)`
 
-**Symptom:** a banner under the composer says `Codex stopped (exit N). Your text is kept. Enter restarts and resumes.`
+**Symptom:** a banner under the composer says `ad's engine stopped (exit N) (details: /warnings). Your text is kept; Enter restarts it and resumes.`
 
-**Cause:** the Codex engine process exited, and ad's automatic restarts (3) didn't bring it back. The running turn is marked failed; your prompt and the scrollback are kept.
+**Cause:** the engine process exited, and ad's automatic restarts (3) didn't bring it back. The running turn is marked failed; your prompt and the scrollback are kept.
 
 **Fix:**
 
-- Press Enter on an empty prompt to try again. A prompt you send meanwhile waits in the queue and goes once Codex is back.
+- Press Enter on an empty prompt to try again. A prompt you send meanwhile waits in the queue and goes once the engine is back.
 - If it keeps stopping: `/quit`, then `ad doctor`, then `ad tui --last` to continue the conversation.
-- To see why: Codex's own log is `logs_2.sqlite` in the harness home (`~/.agent-daemon/codex-home`, table `logs`). The [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill shows how to read it. Common causes are a lost login (`ad auth status`) and the Windows sandbox (#16).
+- To see why: the engine's own log is `logs_2.sqlite` in the harness home (`~/.agent-daemon/engine`, table `logs`). The [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill shows how to read it. Common causes are a lost login (`ad auth status`) and the Windows sandbox (#16).
 
 ---
 
@@ -536,25 +532,25 @@ Other choices: `nvim`, `vim`, `nano`, or Notepad++ with `-multiInst -nosession`.
 
 ## 29. Windows: the first command or edit after installing takes ~35 s
 
-**Symptom:** right after installing (or with a fresh `~/.agent-daemon/codex-home`), the agent's first command or file edit sits on "Thinking" for about half a minute. Later ones take a second or two.
+**Symptom:** right after installing (or with a fresh `~/.agent-daemon/engine`), the agent's first command or file edit sits on "Thinking" for about half a minute. Later ones take a second or two.
 
-**Cause:** Codex sets up its Windows sandbox for ad's Codex home on the first sandboxed action. It happens once per Codex home, not per project folder.
+**Cause:** the engine sets up its Windows sandbox for ad's engine home on the first sandboxed action. It happens once per engine home, not per project folder.
 
 **Fix:** nothing to do; wait it out once. A command you approve to run outside the sandbox doesn't pay it.
 
-## 30. `ad tui`: keys set with the stock UI's `/keymap` don't work in ad
+## 30. `ad tui`: keys set outside ad don't work in ad
 
-**Symptom:** you changed a key in `/codex` → `/keymap`, and ad still uses the old one (or the key does nothing).
+**Symptom:** you changed a key under `[tui.keymap]` in the engine's settings file, and ad still uses the old one (or the key does nothing).
 
 **Cause:** ad applies `tui.keymap` only to the actions it has (the transcript, the editor, copy, raw output, clear, interrupt, reasoning effort, queue, the shortcuts, the pager). It skips a key it can't use: a two-key chord (`ctrl-x f`), a key that would mean two things, or one of the prompt's editing keys (Enter, Ctrl+A/E/K/U/W/Y, Ctrl+R, the arrows).
 
-**Fix:** `/warnings` (or F2) lists what was skipped and why. Pick another key in `/keymap`, then restart ad (it reads the keymap at start and after `/codex`). See [codex-parity.md](codex-parity.md#keys).
+**Fix:** `/warnings` (or F2) lists what was skipped and why. Pick another key in the settings file, then restart ad (it reads the keymap at start). See [commands.md](commands.md#keys).
 
 ## 31. `ad tui`: `/clear` wiped my scrollback
 
 **Symptom:** after `/clear`, the terminal's scrollback (and what was above ad) is gone.
 
-**Cause:** that is Codex's `/clear`: it clears the terminal, scrollback included, and starts a new conversation. The old conversation is kept; `/resume` brings it back.
+**Cause:** that is the engine's `/clear`: it clears the terminal, scrollback included, and starts a new conversation. The old conversation is kept; `/resume` brings it back.
 
 **Fix:** use `/new` to start fresh and keep the scrollback, or set `"clear.keepScrollback": true` in `~/.agent-daemon/tui/prefs.json` so `/clear` keeps it too (it draws a divider instead).
 
@@ -568,35 +564,35 @@ Other choices: `nvim`, `vim`, `nano`, or Notepad++ with `-multiInst -nosession`.
 
 ## 33. `ad tui`: `/plan` says "Plan mode unavailable right now."
 
-**Symptom:** `/plan` or Shift+Tab answers "Plan mode unavailable right now.", and `/warnings` may say "Plan mode is unavailable: Codex didn't list its modes (…)".
+**Symptom:** `/plan` or Shift+Tab answers "Plan mode unavailable right now.", and `/warnings` may say "Plan mode is unavailable: the engine didn't list its modes (…)".
 
-**Cause:** Plan mode is Codex's collaboration mode, part of Codex's experimental app-server API. ad asks Codex for its modes when the engine starts and waits 2 s, as Codex's own UI does. A slow start (a busy machine, antivirus scanning a freshly installed Codex) or a Codex build that changed or dropped the call leaves ad with none.
+**Cause:** Plan mode is the engine's collaboration mode, part of its experimental app-server API. ad asks the engine for its modes when the engine starts and waits 2 s, as the engine's own UI does. A slow start (a busy machine, antivirus scanning a freshly installed engine) or an engine build that changed or dropped the call leaves ad with none.
 
-**Fix:** quit and start `ad` again (the modes are asked for again, and after every engine restart). If it keeps happening, check `ad doctor` for the Codex version: ad is tested with the pinned one, and `/codex` opens the stock UI, whose `/plan` works on the same conversation.
+**Fix:** quit and start `ad` again (the modes are asked for again, and after every engine restart). If it keeps happening, check `ad doctor` for the engine version: ad is tested with the pinned one.
 
 ## 34. `ad tui`: `/recap` says "Could not generate a recap. Please try again."
 
 **Symptom:** after "Generating conversation recap…", that message, with the reason after it in grey.
 
-**Cause:** `/recap` asks Codex in a temporary thread (read-only, no tools, none of ad's hooks), as Codex's own `/recap` does: it must start within 30 s and answer within 30 s more, in Codex's recap format. A sign-in problem, a model error or a slow model ends it. When no recap appears at all, a prompt you sent meanwhile, or another turn (`/compact`, `/review`), dropped it, as in Codex.
+**Cause:** `/recap` asks the engine in a temporary thread (read-only, no tools, none of ad's hooks), as the engine's own `/recap` does: it must start within 30 s and answer within 30 s more, in the engine's recap format. A sign-in problem, a model error or a slow model ends it. When no recap appears at all, a prompt you sent meanwhile, or another turn (`/compact`, `/review`), dropped it, as in the engine's own UI.
 
 **Fix:** try again while the conversation is idle. Check the sign-in with `/status`. The reason after the message says which of the above it was.
 
 ## 35. `ad tui`: `/approve` says "No recent auto-review denials in this thread." or "invalid Guardian denial event"
 
-**Symptom:** `/approve` lists nothing although Codex's auto-review denied something earlier, or the approval is refused.
+**Symptom:** `/approve` lists nothing although the engine's auto-review denied something earlier, or the approval is refused.
 
-**Cause:** `/approve` lists the denials of this conversation since ad started (the last 10, as Codex keeps them): a conversation resumed later starts with none, and a subagent's denials aren't on the list. "invalid Guardian denial event" is Codex refusing the approval's format: a Codex version ad wasn't tested with. The denial stays on the list.
+**Cause:** `/approve` lists the denials of this conversation since ad started (the last 10, as the engine keeps them): a conversation resumed later starts with none, and a subagent's denials aren't on the list. "invalid Guardian denial event" is the engine refusing the approval's format: an engine version ad wasn't tested with. The denial stays on the list.
 
-**Fix:** for an older denial, ask the model to try again (the retry goes through auto-review). For the refusal, check the Codex version in `ad doctor`, and report it with `/warnings`.
+**Fix:** for an older denial, ask the model to try again (the retry goes through auto-review). For the refusal, check the engine version in `ad doctor`, and report it with `/warnings`.
 
 ## 36. `ad tui`: `/setup-default-sandbox` refuses or fails
 
 **Symptom:** "… wasn't created by ad, so ad doesn't change its sandbox.", or "Windows sandbox setup failed: …", or "Input disabled until setup completes." while it runs.
 
-**Cause:** it sets up Codex's elevated (admin) Windows sandbox, which is machine-wide (your own Codex uses it too), so Windows asks for administrator approval once. ad changes only a Codex home it created. While setup runs, nothing is sent: prompts, commands and `!` shell commands wait.
+**Cause:** it sets up the engine's elevated (admin) Windows sandbox, which is machine-wide (your own install uses it too), so Windows asks for administrator approval once. ad changes only an engine home it created. While setup runs, nothing is sent: prompts, commands and `!` shell commands wait.
 
-**Fix:** approve the Windows prompt. If it is declined or blocked by policy, `ad sandbox setup` sets up the non-admin sandbox instead. For a Codex home ad didn't create, `ad sandbox setup --elevated --force` changes it anyway. On macOS and Linux nothing is needed: Codex uses the OS sandbox.
+**Fix:** approve the Windows prompt. If it is declined or blocked by policy, `ad sandbox setup` sets up the non-admin sandbox instead. For an engine home ad didn't create, `ad sandbox setup --elevated --force` changes it anyway. On macOS and Linux nothing is needed: the engine uses the OS sandbox.
 
 ---
 
@@ -620,7 +616,7 @@ Other choices: `nvim`, `vim`, `nano`, or Notepad++ with `-multiInst -nosession`.
 
 ---
 
-For harness problems, the [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill walks through login → hooks → sandbox → Codex's own log. See also [harness.md](harness.md) and, for the terminal UI, [tui.md](tui.md).
+For harness problems, the [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill walks through login → hooks → sandbox → the engine's own log. See also [harness.md](harness.md) and, for the terminal UI, [tui.md](tui.md).
 
 ## Still stuck?
 

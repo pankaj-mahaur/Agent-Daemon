@@ -23,7 +23,7 @@ cat .agent-daemon/sessions.jsonl           # audit ledger — one line per drain
 The on-demand commands still exist for edge cases:
 
 ```sh
-# Set-and-forget watcher: digests Claude/Cursor/Codex/harness sessions and runs `ad schedule` jobs
+# Set-and-forget watcher: digests Claude/Cursor/harness sessions (plus your own install's) and runs `ad schedule` jobs
 # (or register it as a service: ad service install)
 ad watch --verbose --force
 
@@ -99,7 +99,7 @@ Flags:
 
 The watcher:
 
-1. Monitors `~/.claude/projects/**/*.jsonl` (Claude Code), `~/.cursor/sessions` (Cursor), `~/.codex/sessions/**/*.jsonl` (Codex) and `~/.agent-daemon/codex-home/sessions` (the harness: `ad` / `ad tui`, `ad chat`, `ad run`, `ad loop`; opt out with `"harnessSessions": false`)
+1. Monitors `~/.claude/projects/**/*.jsonl` (Claude Code), `~/.cursor/sessions` (Cursor), `~/.codex/sessions/**/*.jsonl` (your own install) and `~/.agent-daemon/engine/sessions` (the harness: `ad` / `ad tui`, `ad chat`, `ad run`, `ad loop`; opt out with `"harnessSessions": false`)
 2. Waits for a file to be "stable" — no writes for ~30 seconds, size unchanged across two 5-second polls
 3. Reads the `cwd` field from inside the transcript so memory lands in the right project
 4. Fires `ad digest` with the right transcript + cwd
@@ -145,7 +145,7 @@ This:
 | `--cwd <path>` | Digest the latest transcript for a *different* project |
 | `--dry-run` | Preview without writing |
 | `--fallback-to-llm` | Optional authenticated LLM extraction if no agent block found; not installed in default hooks |
-| `--llm <claude, codex or auto>` | Which engine the LLM fallback uses (also `AD_LLM_BACKEND`); `auto` tries `claude`, then Codex |
+| `--llm <claude, ad or auto>` | Which engine the LLM fallback uses (also `AD_LLM_BACKEND`); `auto` tries `claude`, then ad's engine |
 
 ### Composable workflow
 

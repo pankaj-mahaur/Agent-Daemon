@@ -54,9 +54,9 @@ For work too big for one sitting: learn how others built the same thing, write a
 
 ### Example 1: the `ad` terminal UI (agent-daemon, 2026-10-04)
 
-The user asked for a Codex-style TUI with agent-daemon's extras that survives Codex releases.
+The user asked for a terminal UI like the engine's own with agent-daemon's extras that survives engine releases.
 
-- **Research:** three agents covered the Codex TUI and app-server, terminal engineering in Node, and other harnesses; an Explore agent mapped the code.
+- **Research:** three agents covered the engine's TUI and app-server, terminal engineering in Node, and other harnesses; an Explore agent mapped the code.
 - **Plan rounds:**
   - v1 review: 2 critical, 7 high.
   - v2 (technical + product reviewers): 6 critical, 13 high.

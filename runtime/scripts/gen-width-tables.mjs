@@ -4,7 +4,7 @@
 //
 // JavaScript regexes have no East_Asian_Width property, so this one table is
 // vendored. Zero-width and emoji rules come from regex properties at runtime
-// (see width.mjs). Ambiguous (A) stays 1 cell, as in Codex and most terminals.
+// (see width.mjs). Ambiguous (A) stays 1 cell, as in most terminals.
 //
 // Usage:
 //   node scripts/gen-width-tables.mjs            # the pinned DEFAULT_VERSION

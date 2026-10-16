@@ -99,7 +99,7 @@ export function matchKey(ev, k) {
 }
 
 /**
- * A decoded key event in Codex's config spelling ("ctrl-t", "alt-.", "esc",
+ * A decoded key event in the engine's config spelling ("ctrl-t", "alt-.", "esc",
  * "page-up"), as /keymap debug shows it; null for what isn't a key.
  */
 export function eventSpec(ev) {

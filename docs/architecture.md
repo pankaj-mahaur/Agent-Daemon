@@ -41,12 +41,11 @@ agent-daemon is best understood as three nested loops:
 
 ### 1. CLI (`runtime/src/cli.mjs` + `runtime/src/cli-full.mjs`)
 
-`runtime/src/cli.mjs` is the entry point the `ad` / `agent-daemon` bin shims and hook commands call. It is a small launcher: it routes the terminal UI (bare `ad`, `ad --last`, `ad tui`) and `ad codex` itself, and hands every other command to `runtime/src/cli-full.mjs`, which holds the help text and the subcommand dispatcher. Roughly:
+`runtime/src/cli.mjs` is the entry point the `ad` / `agent-daemon` bin shims and hook commands call. It is a small launcher: it routes the terminal UI (bare `ad`, `ad --last`, `ad tui`) itself, and hands every other command to `runtime/src/cli-full.mjs`, which holds the help text and the subcommand dispatcher. Roughly:
 
 | Command | Module |
 |---|---|
 | bare `ad`, `ad --last`, `tui` | `runtime/src/tui/main.mjs` (`tui --preview`: `runtime/src/tui/preview.mjs`); whether bare `ad` can open it: `tui/flip.mjs`, `tui/preflight.mjs` |
-| `codex` | `runtime/src/harness/codex-ui.mjs` |
 | `session-start` | `runtime/src/session-start.mjs` |
 | `digest`, `digest-latest`, `digest-sweep` | `runtime/src/digest/digest.mjs` |
 | `watch`, `service` | `runtime/src/daemon/` |
@@ -167,17 +166,17 @@ Constitution changes propagate to all future sessions on the next start. **No ag
 
 Optional multi-agent layer. `ad team create` spins up a coordinator + workers, each in its own git worktree. `ad spawn` adds workers to an existing team. `ad team inbox` reads cross-agent messages.
 
-Workers default to sandboxed Codex threads: they can't reach the network or write `.git`, and the daemon commits their work on their branch. `--engine claude` (or `AD_AGENT_ENGINE=claude`) spawns headless `claude` as in v1.
+Workers default to sandboxed engine threads: they can't reach the network or write `.git`, and the daemon commits their work on their branch. `--engine claude` (or `AD_AGENT_ENGINE=claude`) spawns headless `claude` as in v1.
 
 Out of scope for daily solo workflow — see [`skills/orchestrate-team/SKILL.md`](../skills/daemon/orchestrate-team/SKILL.md) when you need it.
 
 ### 9. Agent harness (`runtime/src/harness/`, `runtime/src/engine/`)
 
-ad's own agent runs on a pinned `codex app-server`, driven over JSON-RPC on stdio in ad's own Codex home. `engine/index.mjs` is the engine API the rest of ad uses; `engine/codex/` is the only code that knows Codex's protocol and the only code that starts Codex. `harness/` holds the front ends (`chat`, `run`, `loop`, `schedule`, `web`, `acp`, `auth`, `sandbox`, `tools`, `agy`, `codex-ui`), the harness-home setup (`setup.mjs`: hooks, memory MCP server, skills, Windows sandbox), the session controller the terminal UI drives (`session.mjs`) and the `/undo` checkpoints (`checkpoints.mjs`). See [harness-design.md](harness-design.md).
+ad's own agent runs on a pinned app-server, driven over JSON-RPC on stdio in ad's own engine home. `engine/index.mjs` is the engine API the rest of ad uses; `engine/codex/` is the only code that knows the engine's protocol and the only code that starts it. `harness/` holds the front ends (`chat`, `run`, `loop`, `schedule`, `web`, `acp`, `auth`, `sandbox`, `tools`, `agy`), the harness-home setup (`setup.mjs`: hooks, memory MCP server, skills, Windows sandbox), the session controller the terminal UI drives (`session.mjs`) and the `/undo` checkpoints (`checkpoints.mjs`). See [harness-design.md](harness-design.md).
 
 ### 10. Terminal UI (`runtime/src/tui/`)
 
-Bare `ad` / `ad tui`: an inline, Codex-style terminal UI on the session controller. `terminal/` is the terminal layer (input decoding, sanitizing, widths, the inline renderer), `view/` the components (composer, markdown, cells, chrome, approval prompts), `app.mjs` the slash commands and keys, `main.mjs` the startup (sign-in, folder trust, header), `ad-layer.mjs` ad's own features (memory, loops, schedules, teams) and `undo.mjs` the `/undo` wiring. See [tui-architecture.md](tui-architecture.md) and [tui.md](tui.md).
+Bare `ad` / `ad tui`: an inline terminal UI on the session controller. `terminal/` is the terminal layer (input decoding, sanitizing, widths, the inline renderer), `view/` the components (composer, markdown, cells, chrome, approval prompts), `app.mjs` the slash commands and keys, `main.mjs` the startup (sign-in, folder trust, header), `ad-layer.mjs` ad's own features (memory, loops, schedules, teams) and `undo.mjs` the `/undo` wiring. See [tui-architecture.md](tui-architecture.md) and [tui.md](tui.md).
 
 ---
 
@@ -258,19 +257,17 @@ Agent-Daemon/                       # The cloned repo
 ├── skills/                         # Skills library
 ├── hooks/                          # Hook JSON snippets for settings.json
 ├── teams/                          # Multi-agent team templates
-├── adapters/
-│   ├── codex/
-│   └── cursor/
+├── adapters/                     # per-agent reference configs (your own install, cursor)
 ├── runtime/                        # Node implementation
 │   ├── src/
-│   │   ├── cli.mjs                 # Launcher: terminal UI and ad codex; the rest → cli-full.mjs
+│   │   ├── cli.mjs                 # Launcher: terminal UI; the rest → cli-full.mjs
 │   │   ├── cli-full.mjs            # Help text + dispatcher for every other command
 │   │   ├── digest/                 # Pipeline modules
 │   │   ├── hooks/                  # Hook handlers
 │   │   ├── memory/
 │   │   ├── mcp/                    # MCP memory server (reads + usefulness feedback)
-│   │   ├── engine/                 # Codex app-server driver
-│   │   ├── harness/                # chat/run/loop/schedule/web/acp/auth/sandbox/agy/codex, session controller, /undo checkpoints
+│   │   ├── engine/                 # The engine adapter and façade
+│   │   ├── harness/                # chat/run/loop/schedule/web/acp/auth/sandbox/agy, session controller, /undo checkpoints
 │   │   ├── tui/                    # Terminal UI: terminal/ layer, view/ components, app, /undo wiring
 │   │   ├── auth/                   # Provider keys + secret store
 │   │   ├── orchestration/
@@ -312,21 +309,21 @@ Agent-Daemon/                       # The cloned repo
 
 ~/.claude/settings.json             # Where hooks are registered
 ~/.claude/projects/<encoded>/*.jsonl  # Transcripts (input to digest)
-~/.agent-daemon/codex-home/sessions/**/rollout-*.jsonl  # Harness transcripts
+~/.agent-daemon/engine/sessions/**/rollout-*.jsonl  # Harness transcripts
 ```
 
 ### Harness mode
 
-The same hooks from `runtime/profiles/profiles.json` are rendered into `CODEX_HOME/hooks.json`, so `ad tui` (bare `ad`), `ad chat`, `ad run` and `ad loop` get memory injection, correction capture and guards. Codex caps SessionEnd at 3 s, so that hook spawns a detached `ad digest` instead of digesting inline. Memory is also exposed to the agent as the `agent-daemon-memory` MCP server, whose tools run without an approval prompt (`default_tools_approval_mode = "approve"`, unless the user set a mode). Design: [harness-design.md](harness-design.md).
+The same hooks from `runtime/profiles/profiles.json` are rendered into the engine home's `hooks.json`, so `ad tui` (bare `ad`), `ad chat`, `ad run` and `ad loop` get memory injection, correction capture and guards. The engine caps SessionEnd at 3 s, so that hook spawns a detached `ad digest` instead of digesting inline. Memory is also exposed to the agent as the `agent-daemon-memory` MCP server, whose tools run without an approval prompt (`default_tools_approval_mode = "approve"`, unless the user set a mode). Design: [harness-design.md](harness-design.md).
 
-**Isolation from the user's own Codex.** `runtime/src/engine/codex/` is the only code that starts Codex, and every spawn goes through `codexEnv()` in `home.mjs`:
+**Isolation from the user's own install.** `runtime/src/engine/codex/` is the only code that starts the engine, and every spawn goes through `codexEnv()` in `home.mjs`:
 
-- It runs only the pinned binary from `runtime/node_modules` (or `AD_CODEX_BIN`), never a global or PATH install.
+- It runs only the pinned binary from `runtime/node_modules` (or `AD_ENGINE_BIN`), never a global or PATH install.
 - Its home must be ad's own. `~/.codex`, a `CODEX_HOME` set by the user's shell, and any path that resolves to one of them are refused. Paths are compared by real path, which collapses junctions, symlinks, `\\?\`, 8.3 names and case. On Windows, trailing dots and spaces and UNC paths are refused too.
-- Every `CODEX_*` variable is dropped, because those override config; `CODEX_CA_CERTIFICATE` is kept.
-- `AD_ENGINE_HOME` is stamped on the child, so hooks that Codex runs for ad recognise the home as ad's.
-- `ad doctor` and the protocol-schema generator run Codex in throwaway temp homes.
-- On Windows, `withoutStoreAliases()` in `app-server.mjs` drops every PATH entry with a `WindowsApps` segment at each spawn (`ad codex` too): the sandbox can't start PowerShell 7 from the Microsoft Store, so Codex uses an MSI PowerShell 7 or Windows PowerShell 5.1.
+- Every `CODEX_HOME`, `CODEX_API_KEY` and similar variable is dropped, because those override config; `CODEX_CA_CERTIFICATE` is kept.
+- `AD_INTERNAL_ENGINE_HOME` is stamped on the child, so hooks that the engine runs for ad recognise the home as ad's.
+- `ad doctor` and the protocol-schema generator run the engine in throwaway temp homes.
+- On Windows, `withoutStoreAliases()` in `app-server.mjs` drops every PATH entry with a `WindowsApps` segment at each spawn: the sandbox can't start PowerShell 7 from the Microsoft Store, so the engine uses an MSI PowerShell 7 or Windows PowerShell 5.1.
 
 **Testing against the engine.** Three layers sit under the unit tests:
 - the scripted fake app-server (`runtime/testkit/fake-codex-app-server.mjs`) for crashes and edge traffic;
@@ -347,7 +344,7 @@ A few load-bearing decisions:
 A daemon bug must never block the user's tool execution. Trade-off: an adversary who controls the hook's stdin could bypass it. But the stdin comes from the Claude Code host, which is the user's own machine — out of scope.
 
 ### Zero-LLM digest (with optional fallback)
-Default extraction is parse-only — the agent emits a structured block during the session. Cheap, deterministic, no API key needed. LLM fallback exists for sessions where the agent didn't follow protocol; it runs on `claude` or the Codex engine (`--llm claude|codex|auto`).
+Default extraction is parse-only — the agent emits a structured block during the session. Cheap, deterministic, no API key needed. LLM fallback exists for sessions where the agent didn't follow protocol; it runs on `claude` or ad's engine (`--llm claude|ad|auto`).
 
 ### Per-project memory, global SQLite
 Per-project markdown means each codebase has its own brain. Global SQLite means queries can span all projects ("what have I learned about React in any project?").

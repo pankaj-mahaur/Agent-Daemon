@@ -12,6 +12,18 @@
       "reason": "the façade: it imports the adapter by its folder name and maps its codes; its own prose is rule C's business"
     },
     {
+      "path": "docs/**",
+      "rules": ["A"],
+      "match": "/codex|\\bad codex|codex-is-gone",
+      "reason": "the removed hand-off: docs must name `/codex` and `ad codex` to tell users what typing them does now; any other brand word on the line is still a hit"
+    },
+    {
+      "path": "skills/daemon/**",
+      "rules": ["A"],
+      "match": "/codex|\\bad codex|codex-is-gone",
+      "reason": "the removed hand-off: maintainer skills must name `/codex` and `ad codex` where the code still answers them; any other brand word on the line is still a hit"
+    },
+    {
       "path": "runtime/src/engine/attribution.mjs",
       "rules": ["A"],
       "reason": "the attribution module: the only exporter of prose that names the engine (plan §4, D4)"
@@ -218,14 +230,32 @@
     {
       "path": "README.md",
       "rules": ["A"],
-      "match": "Claude%20Code%20%7C%20Codex%20%7C%20Cursor|Claude Code, Cursor, Cline, and Codex",
-      "reason": "the cross-harness badge and the transcript-adapter list: descriptive statements about the agents ad reads (C9 may reword)"
+      "match": "Claude%20Code%20%7C%20Codex%20%7C%20Cursor|Claude Code, Cursor, Cline, and Codex|\\|\\s\\*\\*Codex\\*\\*\\s\\||adapters/codex/config\\.example\\.toml|~/\\.codex",
+      "reason": "the cross-harness badge, the transcript-adapter list, the harness table and its install cell: descriptive statements about the agents ad reads (C9 may reword)"
+    },
+    {
+      "path": "README.md",
+      "rules": ["A"],
+      "match": "ad runs on a pinned copy of OpenAI's open-source Codex|~/\\.codex",
+      "reason": "the README's one attribution sentence (design D4): kept verbatim from runtime/src/engine/attribution.mjs, a test checks it"
     },
     {
       "path": "constitution/ending-protocol.md",
       "rules": ["A"],
       "match": "Claude Code / Cursor / Cline / Codex",
       "reason": "the agents whose session the extraction runs inside: descriptive"
+    },
+    {
+      "path": "SECURITY.md",
+      "rules": ["A"],
+      "match": "Claude Code, Cursor, Codex|Claude Code / Cursor / Codex",
+      "reason": "the agents ad's hooks may run inside: descriptive statements about tools a user may run"
+    },
+    {
+      "path": "SECURITY.md",
+      "rules": ["A"],
+      "match": "[a-z][A-Za-z0-9]*Codex[A-Za-z0-9]*|Codex[A-Z][A-Za-z0-9]*|codex[A-Z][A-Za-z0-9]*|CODEX_[A-Z_]+|AD_CODEX_[A-Z_]+|codex app-server|engine/codex/|@openai/codex|~/\\.codex|codex-home|\\.codex/|codex-rs/|codex-version|codex\\.exe|codex-session-end\\.mjs|upstream-commands\\.json|codex-slash\\.mjs|codex-schema-snapshot\\.mjs|codex-notifications\\.mjs|fake-codex-app-server\\.mjs|codex-[a-z-]+\\.test\\.mjs|gpt-[\\w.-]*codex[\\w.-]*",
+      "reason": "the threat model names the exact paths and variables the threats are about; prose says 'the engine'"
     },
     {
       "path": "adapters/cursor/.cursor/rules/agent-daemon-ending-protocol.mdc",
@@ -240,15 +270,14 @@
       "reason": "points at the `codex` session adapter as the template for a new one (descriptive)"
     },
     {
-      "path": "docs/testing.md",
-      "rules": ["A"],
-      "match": "runtime/src/engine/codex/",
-      "reason": "the brand lint's description points at the adapter folder, which keeps upstream's name by decision (D2)"
-    },
-    {
       "path": "CHANGELOG.md",
       "rules": ["A"],
       "reason": "history: the entries up to 2.2.0 describe what was built; release notes are an attribution place (C10)"
+    },
+    {
+      "path": "ATTRIBUTION.md",
+      "rules": ["A"],
+      "reason": "an attribution place (design D4): it lists the upstream sources"
     },
     {
       "path": ".claude/skills/ad-ci-readiness/SKILL.md",

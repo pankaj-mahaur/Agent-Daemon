@@ -1,6 +1,6 @@
 # Agent harness guide
 
-Since v2, agent-daemon runs agents itself. The engine is [OpenAI Codex](https://github.com/openai/codex): the daemon drives a pinned `codex app-server` over JSON-RPC, in its own Codex home, with the daemon's memory, hooks and skills wired in. This guide covers everyday use. The design and its decisions are in [harness-design.md](harness-design.md).
+Since v2, agent-daemon runs agents itself. The engine is a pinned copy of the open-source engine in `@openai/codex` (Apache-2.0; see `THIRD_PARTY_NOTICES.md`): the daemon drives its app-server over JSON-RPC, in its own home, with the daemon's memory, hooks and skills wired in. This guide covers everyday use. The design and its decisions are in [harness-design.md](harness-design.md).
 
 - [Setup](#setup)
 - [Commands](#commands)
@@ -14,28 +14,28 @@ Since v2, agent-daemon runs agents itself. The engine is [OpenAI Codex](https://
 
 ## Setup
 
-1. **Install** with the one-liner (see the [README](../README.md#quick-start)). `npm install` pulls the pinned `@openai/codex`; you don't need Codex installed separately.
-2. **Log in** once. Pick one:
+1. **Install** with the one-liner (see the [README](../README.md#quick-start)). `npm install` pulls the pinned `@openai/codex`; you don't need your own install of the engine separately.
+2. **Log in** once. Pick one (an OpenAI API key or an OpenRouter key first, a ChatGPT plan last):
 
-   ```bash
-   ad auth login chatgpt                      # ChatGPT plan, in the browser (--device for a code instead)
-   ad auth login openai                       # OpenAI API key (hidden prompt, or pipe it on stdin)
-   ad auth login openrouter --model <slug>    # OpenRouter key: Claude, Gemini, … through one key
-   ad auth status                             # who is logged in, which provider is active (no secrets)
-   ```
+    ```bash
+    ad auth login openai                       # OpenAI API key (hidden prompt, or pipe it on stdin)
+    ad auth login openrouter --model <slug>    # OpenRouter key: Claude, Gemini, … through one key
+    ad auth login chatgpt                      # ChatGPT plan, in the browser (--device for a code instead)
+    ad auth status                             # who is logged in, which provider is active (no secrets)
+    ```
 
-   Switch between saved providers with `ad auth use openai` or `ad auth use openrouter --model <slug>`. `ad auth logout` signs out; `ad auth logout openrouter` deletes the stored key.
+    Switch between saved providers with `ad auth use openai` or `ad auth use openrouter --model <slug>`. `ad auth logout` signs out; `ad auth logout openrouter` deletes the stored key.
 
-3. **Windows only:** the first run sets up Codex's command sandbox (unelevated). For stronger isolation run `ad sandbox setup --elevated` once (one UAC prompt). See [Windows](#windows).
+3. **Windows only:** the first run sets up the engine's command sandbox (unelevated). For stronger isolation run `ad sandbox setup --elevated` once (one UAC prompt). See [Windows](#windows).
 
-The harness keeps its own Codex home at `~/.agent-daemon/codex-home`, and its own pinned Codex binary under `runtime/node_modules`. Your own Codex is never changed:
-- The harness refuses to run Codex in `~/.codex`, in a `CODEX_HOME` your shell sets, or in any path that leads there (junctions, `\\?\`, a trailing dot or space).
-- It never runs your global `codex` binary.
-- It never passes your `CODEX_*` variables to its engine (`CODEX_CA_CERTIFICATE` excepted).
+The harness keeps its own engine home at `~/.agent-daemon/engine`, and its own pinned engine binary under `runtime/node_modules`. Your own install is never changed:
+- The harness refuses to run the engine in `~/.codex`, in a `CODEX_HOME` your shell sets, or in any path that leads there (junctions, `\\?\`, a trailing dot or space).
+- It never runs your own global install.
+- It never passes your `CODEX_HOME`, `CODEX_API_KEY` and similar variables to its engine (`CODEX_CA_CERTIFICATE` excepted).
 
-The one thing that reads your Codex data is the optional `ad watch` daemon: it reads `~/.codex/sessions` transcripts to learn from your own Codex sessions. It never writes there.
+The one thing that reads your own install's data is the optional `ad watch` daemon: it reads `~/.codex/sessions` transcripts to learn from your own sessions. It never writes there.
 
-**Subscriptions.** ChatGPT uses Codex's own login. Claude Pro/Max and Google AI Pro/Ultra logins are never reused: their terms forbid it. For Claude or Gemini models use an API key or OpenRouter. `ad agy` can hand a prompt to *your own* Antigravity CLI (see below).
+**Subscriptions.** ChatGPT sign-in uses the engine's own login. Claude Pro/Max and Google AI Pro/Ultra logins are never reused: their terms forbid it. For Claude or Gemini models use an API key or OpenRouter. `ad agy` can hand a prompt to *your own* Antigravity CLI (see below).
 
 ---
 
@@ -72,11 +72,11 @@ ad tui --last                    # continue the newest conversation here (ad --l
 ad tui --resume <thread-id>      # continue a given one
 ```
 
-A Codex-style terminal UI on ad's own Codex home. History goes into your terminal's scrollback; only the bottom of the screen is redrawn. If something gets in the way, `ad chat` is the plain line mode.
+A terminal UI on ad's own engine home. History goes into your terminal's scrollback; only the bottom of the screen is redrawn. If something gets in the way, `ad chat` is the plain line mode.
 - **First run:** a sign-in panel if ad isn't signed in (it runs `ad auth login …` for you), then a one-time trust question per folder.
 - **Keys:** Enter sends, and steers a running turn. Tab queues a prompt for after the turn. Esc interrupts. The newline key depends on the terminal (Shift+Enter in Zed, Ctrl+Enter in Windows Terminal, Ctrl+J or `\` + Enter anywhere). `?` shows every shortcut.
-- **Approvals** list what Codex offers. An answer that grants something is taken only 400 ms after the box opens, so type-ahead never approves, and hidden characters show as `<U+…>`.
-- **Commands:** Codex's (`/new`, `/clear`, `/resume`, `/archive`, `/delete`, `/model`, `/review`, `/diff`, `/compact`, `/statusline`, `/title`, …) keep Codex's meaning and rules; one ad doesn't have yet answers why instead of reaching the model ([codex-parity.md](codex-parity.md) lists every one). ad adds `/undo` (put back the files the last turn changed), `/memory`, `/remember`, `/private`, `/proposals`, `/loop`, `/team`, `/schedule`, `/tools`, `/image`, `/login`, `/codex` and `/ad <command>`.
+- **Approvals** list what the engine offers. An answer that grants something is taken only 400 ms after the box opens, so type-ahead never approves, and hidden characters show as `<U+…>`.
+- **Commands:** the engine's (`/new`, `/clear`, `/resume`, `/archive`, `/delete`, `/model`, `/review`, `/diff`, `/compact`, `/statusline`, `/title`, …) keep the engine's meaning and rules; one ad doesn't have yet answers why instead of reaching the model ([commands.md](commands.md) lists every one). ad adds `/undo` (put back the files the last turn changed), `/memory`, `/remember`, `/private`, `/proposals`, `/loop`, `/team`, `/schedule`, `/tools`, `/image`, `/login` and `/ad <command>`.
 - **Bare `ad`** opens the TUI where the terminal can show it. `AD_TUI=0` turns that off: bare `ad` prints the help, and `ad --last` points you at `ad tui --last`.
 - **Requirements:** an interactive terminal, and on Windows Node 22.17+ or 24.2+. Otherwise use `ad chat` (with `/resume` to continue a conversation).
 
@@ -187,7 +187,7 @@ Unattended runs also switch off every MCP server except the daemon's memory, and
 
 `--sandbox danger-full-access` turns the sandbox off for `ad run` / `ad chat`. Use it only in a throwaway environment.
 
-**Keys.** OpenRouter keys are stored with DPAPI on Windows, libsecret on Linux (falling back to a 0600 file) and a 0600 file on macOS. They never go into config or argv, and `OPENROUTER_API_KEY` is removed from the agent's shell. ChatGPT / OpenAI logins are kept by Codex in the harness home (`auth.json`).
+**Keys.** OpenRouter keys are stored with DPAPI on Windows, libsecret on Linux (falling back to a 0600 file) and a 0600 file on macOS. They never go into config or argv, and `OPENROUTER_API_KEY` is removed from the agent's shell. ChatGPT / OpenAI logins are kept by the engine in the harness home (`auth.json`).
 
 ---
 
@@ -197,9 +197,9 @@ Every harness run gets the same daemon features as a Claude Code session:
 
 - **Memory in:** the SessionStart hook injects project memory and recent learnings, and each prompt recalls relevant learnings.
 - **Memory out:** corrections you type are captured, and SessionEnd starts a digest in the background.
-- **Memory on demand:** the agent can query memory mid-turn through the `agent-daemon-memory` MCP server, which ad registers in its Codex home. Its tools read ad's memory and record usefulness feedback into it, and they run without an approval prompt (`default_tools_approval_mode = "approve"`). A mode you set for that server yourself is kept.
+- **Memory on demand:** the agent can query memory mid-turn through the `agent-daemon-memory` MCP server, which ad registers in its engine home. Its tools read ad's memory and record usefulness feedback into it, and they run without an approval prompt (`default_tools_approval_mode = "approve"`). A mode you set for that server yourself is kept.
 - **Guards:** the PreToolUse hooks from your install profile (for example blocking `--no-verify`) run on the agent's commands.
-- **Skills:** `~/.claude/skills/` and the project's `.claude/skills/` are registered as Codex skills.
+- **Skills:** `~/.claude/skills/` and the project's `.claude/skills/` are mirrored into the engine home and registered as skills.
 - **Instructions:** the constitution is added to the harness's `AGENTS.md` (a managed block; your own text there is kept).
 
 Loop and worker prompts are marked as non-user (`AD_WORKER=1`), so they never end up in memory as your corrections.
@@ -208,8 +208,8 @@ Loop and worker prompts are marked as non-user (`AD_WORKER=1`), so they never en
 
 ## Windows
 
-- **Sandbox.** `ad sandbox status` shows readiness. The default is unelevated, and its sandbox identity is kept per Codex home, so it is separate from your own Codex. `ad sandbox setup --elevated` is stronger (one UAC prompt), but it is **machine-wide**: it creates Windows sandbox accounts and rules that your own Codex uses too. It asks for consent first (`--yes` skips the question off a terminal).
-- **PowerShell from the Microsoft Store** can't be started by the sandbox. On Windows, every Codex that ad starts (including `ad codex`) gets a PATH without any `WindowsApps` folder: neither the per-user app-alias folder nor the Store package folder that PowerShell 7 puts first when you start ad from it. Codex then runs commands, sandboxed, in a PowerShell 7 installed from the MSI or in Windows PowerShell 5.1. Store app aliases (`winget`, the `python` stub) aren't on the agent's PATH either. Fixed in 2.0.1 for the alias folder, completed in 2.1.1 for the package folder; see [troubleshooting #16](troubleshooting.md#16-harness-on-windows-every-agent-command-fails-access-is-denied-or-createprocessasuserw-failed).
+- **Sandbox.** `ad sandbox status` shows readiness. The default is unelevated, and its sandbox identity is kept per engine home, so it is separate from your own install. `ad sandbox setup --elevated` is stronger (one UAC prompt), but it is **machine-wide**: it creates Windows sandbox accounts and rules that your own install uses too. It asks for consent first (`--yes` skips the question off a terminal).
+- **PowerShell from the Microsoft Store** can't be started by the sandbox. On Windows, every engine ad starts gets a PATH without any `WindowsApps` folder: neither the per-user app-alias folder nor the Store package folder that PowerShell 7 puts first when you start ad from it. The engine then runs commands, sandboxed, in a PowerShell 7 installed from the MSI or in Windows PowerShell 5.1. Store app aliases (`winget`, the `python` stub) aren't on the agent's PATH either. Fixed in 2.0.1 for the alias folder, completed in 2.1.1 for the package folder; see [troubleshooting #16](troubleshooting.md#16-harness-on-windows-every-agent-command-fails-access-is-denied-or-createprocessasuserw-failed).
 - **`node --test` fails with `spawn EPERM`** in the unelevated sandbox, because Node can't start child processes there. The agent can run test files directly (`node file.test.js`). `--elevated` may lift this, but that's untested.
 
 ---
@@ -230,11 +230,11 @@ Loop and worker prompts are marked as non-user (`AD_WORKER=1`), so they never en
 | `AD_TUI` | `0`: bare `ad` prints the help instead of opening the terminal UI (`ad tui` still opens it). `1`: the default behaviour |
 | `AD_ENGINE_DIR` (old name `AD_CODEX_HOME`, still read) | use another engine home (never your own `~/.codex` or `CODEX_HOME`: refused) |
 | `AD_ENGINE_BIN` (old name `AD_CODEX_BIN`, still read) | run a specific engine binary instead of the pinned one (testing) |
-| `CODEX_*` (yours) | not passed to the harness's Codex, so they can't point it at your own state; `CODEX_CA_CERTIFICATE` is kept |
+| `CODEX_HOME` and similar (yours) | not passed to the harness's engine, so they can't point it at your own state; `CODEX_CA_CERTIFICATE` is kept |
 | `AD_INTERNAL_ENGINE_HOME` (old name `AD_ENGINE_HOME`) | set by ad on the engine processes it starts (hooks use it); don't set it yourself |
-| `AD_AGENT_ENGINE` | `ad` (default) or `claude` for team workers (`codex` still works) |
-| `AD_LLM_BACKEND` | `claude`, `ad` or `auto` for digest / GEPA LLM calls (same as `--llm`; `codex` still works) |
-| `AD_HOOK_HOST` | `ad` for hook input/output adaptation (`codex` still works) |
+| `AD_AGENT_ENGINE` | `ad` (default) or `claude` for team workers |
+| `AD_LLM_BACKEND` | `claude`, `ad` or `auto` for digest / GEPA LLM calls (same as `--llm`) |
+| `AD_HOOK_HOST` | `ad` for hook input/output adaptation |
 | `AD_ENGINE_MODEL` (old name `AD_CODEX_LLM_MODEL`, still read) | model for those calls when they run on the engine |
 | `AD_SECRETS_BACKEND=file` | store keys in plain 0600 files instead of the OS store |
 
@@ -251,4 +251,4 @@ New installs keep the engine's folder at `~/.agent-daemon/engine/`, plus a link 
 1. `ad doctor`: engine version, login, hooks trusted, Windows sandbox. `ad about` says what ad runs on: ad's version and license, the engine's name, version, license, URL, process name, home and settings path, and the tested engine versions.
 2. `ad auth status` and `ad sandbox status`.
 3. [troubleshooting.md](troubleshooting.md): entries 14–21 (harness, including the Windows sandbox and Store PowerShell in #16), 22–28 (`ad tui`) and 29 (a slow first command on Windows).
-4. Codex's own log: `logs_2.sqlite` in the harness home (table `logs`). The [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill shows how to read it.
+4. The engine's own log: `logs_2.sqlite` in the harness home (table `logs`). The [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill shows how to read it.

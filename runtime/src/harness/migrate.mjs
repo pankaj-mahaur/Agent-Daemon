@@ -1,5 +1,5 @@
 // `ad migrate` (own-harness design D7): renames the engine's folder from its
-// older name (~/.agent-daemon/codex-home) to ~/.agent-daemon/engine and
+// older name to ~/.agent-daemon/engine and
 // leaves a link with the old name, which older versions of ad need.
 // Interactive only; never moves a folder the user chose (AD_ENGINE_DIR).
 // It never copies-and-deletes: one rename, and any failure renames back.
