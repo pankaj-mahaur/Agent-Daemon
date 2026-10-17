@@ -12,6 +12,12 @@
       "reason": "the façade: it imports the adapter by its folder name and maps its codes; its own prose is rule C's business"
     },
     {
+      "path": "docs/troubleshooting.md",
+      "rules": ["A"],
+      "match": "OpenAI's own sign-in and usage-limit pages may say \"Codex\"|The engine's process shows as `codex` / `codex\\.exe`",
+      "reason": "Part 6 attribution: the provider's own pages and OS process labels are outside ad's screens; only these exact descriptive phrases may name them"
+    },
+    {
       "path": "docs/**",
       "rules": ["A"],
       "match": "/codex|\\bad codex|codex-is-gone",

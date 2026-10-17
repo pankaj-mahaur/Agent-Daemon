@@ -53,3 +53,11 @@ test("the rollback recipe offers optional undo before switching to 2.2.0", () =>
   assert.ok(rollback.indexOf("ad migrate --undo") >= 0, rollback);
   assert.ok(rollback.indexOf("ad migrate --undo") < rollback.indexOf("git checkout v2.2.0"), rollback);
 });
+
+
+test("the reference adapter guide points to ad's current UI and data folder", () => {
+  const guide = readFileSync(`${ROOT}adapters/${ENGINE.name.toLowerCase()}/README.md`, "utf8");
+  assert.ok(guide.includes("~/.agent-daemon/engine"));
+  assert.ok(guide.includes("ad engine ui --debug"));
+  assert.ok(!guide.includes(`ad ${ENGINE.name.toLowerCase()}\x60 opens`));
+});

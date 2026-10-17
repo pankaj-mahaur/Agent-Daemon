@@ -248,6 +248,8 @@ New installs keep the engine's folder at `~/.agent-daemon/engine/`, plus a link 
 
 ## When something goes wrong
 
+Engine failures use ad's words. Read `/warnings` in the terminal UI or the labelled `details:` lines in CLI output for the engine's original diagnostic text. The web UI points to the server log for that detail. See [what ad cannot rename](troubleshooting.md#39-what-ad-cant-rename).
+
 1. `ad doctor`: engine version, login, hooks trusted, Windows sandbox. `ad about` says what ad runs on: ad's version and license, the engine's name, version, license, URL, process name, home and settings path, and the tested engine versions.
 2. `ad auth status` and `ad sandbox status`.
 3. [troubleshooting.md](troubleshooting.md): entries 14–21 (harness, including the Windows sandbox and Store PowerShell in #16), 22–28 (`ad tui`) and 29 (a slow first command on Windows).

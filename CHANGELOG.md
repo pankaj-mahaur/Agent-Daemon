@@ -13,6 +13,8 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 ### Changed
 
+- Errors and notices from the engine show in ad's words; the engine's own text is in `/warnings` (and on a `details:` line in CLI commands).
+
 - `ad doctor`: the engine's rows are now Engine, Engine version, Engine home, Engine compatibility, Engine sign-in, Engine hooks and Windows sandbox, in plain words.
 - New names for the env vars: `AD_ENGINE_DIR`, `AD_ENGINE_BIN`, `AD_ENGINE_MODEL`; the old names still work.
 - Flags and env vars that choose ad's engine take `ad` (`--engine ad`, `--llm ad`, `AD_HOOK_HOST=ad`); `codex` still works until 3.1.

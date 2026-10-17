@@ -584,7 +584,7 @@ Other choices: `nvim`, `vim`, `nano`, or Notepad++ with `-multiInst -nosession`.
 
 **Cause:** `/approve` lists the denials of this conversation since ad started (the last 10, as the engine keeps them): a conversation resumed later starts with none, and a subagent's denials aren't on the list. "invalid Guardian denial event" is the engine refusing the approval's format: an engine version ad wasn't tested with. The denial stays on the list.
 
-**Fix:** for an older denial, ask the model to try again (the retry goes through auto-review). For the refusal, check the engine version in `ad doctor`, and report it with `/warnings`.
+**Fix:** for an older denial, ask the model to try again (the retry goes through auto-review). For a refusal saying "The engine refused a request from ad", read the raw reason in `/warnings`, check the engine version in `ad doctor`, and report both.
 
 ## 36. `ad tui`: `/setup-default-sandbox` refuses or fails
 
@@ -613,6 +613,22 @@ Other choices: `nvim`, `vim`, `nano`, or Notepad++ with `-multiInst -nosession`.
 **Cause:** a file or working folder inside is held open: another Agent Daemon window, an editor's agent panel, a background loop, a terminal, or antivirus.
 
 **Fix:** close it and run `ad migrate` again.
+
+---
+
+## 39. What ad can't rename
+
+ad shows its own words for engine errors and notices. To see the original text, open `/warnings` in the terminal UI or read the labelled `details:` lines in CLI output.
+
+- OpenAI's own sign-in and usage-limit pages may say "Codex".
+- The engine's process shows as `codex` / `codex.exe` in Task Manager, UAC prompts and the firewall.
+- Raw engine details in `/warnings` and CLI `details:` lines are the engine's own words. They can include its name.
+- On-disk names stay: `codex-home` on older installs, a project's `.codex/` folder and the `codex-version` status-line id.
+- Model names such as `gpt-5.x-codex` stay as the provider names them.
+
+For browser errors in `ad web`, read the server's terminal log: raw details stay there, and the page points to it.
+
+For "The engine reported a problem", inspect those details first. `ad doctor` shows whether the engine version is one ad was tested with.
 
 ---
 

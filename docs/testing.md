@@ -52,7 +52,7 @@ The fake answers an unknown method with -32600, like the real engine. Tests reac
 - FC3: header, a streamed answer, exec approval (the 400 ms guard, Esc = "No, and stop", approval), a patch in Auto and `/undo`, an Update File patch and `/undo`, the permissions picker and a read-only patch approval, steer, queue, interrupt, Esc Esc, `/undo` refusing a user's edit and `/undo force`, Ctrl+T, a narrowing resize, quit, `ad tui --last`.
 - FC4: `/memory`, `/private` (the model receives the wrapper; the transcript shows the prompt as typed), a correction becoming a "Learned:" row, `/schedule`, `/team`, `/proposals`, `/loop` start and stop.
 - Engine parity: plan mode end to end, a background terminal with `/ps` and `/stop`, `/cd` then an edit, `/side` during a turn, `/vim`, `/theme`, `/recap`, and a real subagent (spawned through the engine) in `/subagents`.
-- G2: the live brand test — nothing on ad's screen names the engine (Part 4).
+- G2: the live brand test — nothing on ad's screen names the engine; signed-out startup and a rejected model request are covered too. The latter verifies that `/warnings` retains the original error. `test/engine-text.test.mjs` and the TUI app tests also cover crash stderr, engine notices, RPC failures and raw diagnostic retention.
 
 **Writing steps that don't flake.**
 - Wait for state, never for time: `t.until(predicate)`. Sleep only where a person would pause (after Esc, so the next key isn't read as Alt+key).

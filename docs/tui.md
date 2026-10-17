@@ -316,7 +316,7 @@ Model, effort and permission changes apply from the next turn.
 | `/mcp` | MCP servers and their status (engine) |
 | `/hooks` | hooks and whether they are trusted; ad's own are marked (engine) |
 | `/skills` | skills the engine can use here (engine) |
-| `/warnings` | notices kept from this session, and events this ad doesn't know (engine) |
+| `/warnings` | notices and raw engine details kept from this session, and events this ad doesn't know |
 | `/debug-config` | the engine's config layers (lowest precedence first, the session's flags listed) and its requirements. Values under secret-named keys, header and env maps, a URL's user:password and token-like arguments show as `****`. Typed only, as in the engine's own UI |
 | `/rollout` | the conversation's rollout file (the engine's debug command; typed only) |
 | `/agents` | the engine's agent command center needs its shared background server, which ad doesn't run: it says so, and points to `/subagents` and `/team` (engine) |
@@ -556,7 +556,8 @@ Everything else (conversations, logs, login) is the engine's own, in ad's engine
 | `/recap`: "Could not generate a recap. Please try again." | [#34](troubleshooting.md#34-ad-tui-recap-says-could-not-generate-a-recap-please-try-again) |
 | `/approve` lists nothing, or "invalid Guardian denial event" | [#35](troubleshooting.md#35-ad-tui-approve-says-no-recent-auto-review-denials-in-this-thread-or-invalid-guardian-denial-event) |
 | `/setup-default-sandbox` refuses or fails | [#36](troubleshooting.md#36-ad-tui-setup-default-sandbox-refuses-or-fails) |
+| "The engine reported a problem", or an upstream name in raw details or an OS prompt | [#39](troubleshooting.md#39-what-ad-cant-rename) |
 | an engine command says "isn't in ad yet" | [commands.md](commands.md) |
 | not signed in, sandbox, hooks, your own install's home refused | [harness.md](harness.md#when-something-goes-wrong), troubleshooting #14–21 |
 
-`/warnings` lists the notices of this session and any events this ad doesn't know (a newer engine). `/status` shows the engine version ad was tested with. `ad doctor` checks the engine, login, hooks and sandbox.
+`/warnings` lists the notices of this session, the engine's raw error and notice details (up to eight lines each), and any events this ad doesn't know (a newer engine). The main screen uses ad's words; raw details appear only when requested. `/status` shows the engine version ad was tested with. `ad doctor` checks the engine, login, hooks and sandbox.

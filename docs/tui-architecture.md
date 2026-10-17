@@ -53,6 +53,7 @@ The rule between layers: **only `engine/codex/` knows the engine's protocol.** E
 - **Turns.** `submit()` starts a turn, or steers the running one, or queues; `interrupt()`; an epoch counter drops results from a turn or thread the session has already left.
 - **Items.** A map of everything the engine reported, keyed per turn: some providers reuse item ids across turns (`msg-1`, `call_0`), so a later turn's item gets its own key and never merges into, or hides behind, an earlier one.
 - **Requests.** Approvals, permission requests, user input and MCP elicitations land in `state.requests`; the app answers them with the options the engine offered.
+- **Diagnostics.** Engine errors and warning/config/deprecation notices use the façade's messages. Their raw details stay separate from live rendering and appear only in `/warnings`, sanitized and limited to eight lines per entry. Session notices and command errors each retain at most 50 entries; `/warnings` shows the newest 20, including detail-bearing side-conversation notices preserved when the side closes.
 - **Recovery.** If the engine exits, the controller restarts it (a bounded budget), resumes the thread, and settles every item that was in flight.
 - **Hooks.** `beforeTurn`, `turnStarted`, `turnStartFailed`, `itemStarted`, `itemCompleted`, `turnCompleted`: how `/undo` and the learned rows plug in without the controller knowing about them.
 - **Locks.** A thread open in one `ad tui` is locked (heartbeat file) so a second window can't drive it at the same time.

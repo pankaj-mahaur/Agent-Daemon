@@ -62,6 +62,8 @@ All paths under `runtime/`.
 
 ## Procedure
 
+Engine-originated failures must retain their classification through wrappers: use the façade's `engineErrorText` for the screen and `engineErrorDetail` for diagnostics. A failed engine result converted to a plain `Error` loses that classification. Preserve raw text separately, including startup and side-conversation failures; only `/warnings` renders it (sanitized, eight lines per entry), including detail-bearing info notices. CLI output uses `cliErrorLines`; browser errors point to the server log.
+
 1. **Load the state.**
    - Read `docs/tui-architecture.md` (layers, invariants, decisions); when present locally, the status block of `docs/plans/ad-tui.md`.
    - Read `.agent-daemon/memory/activeContext.md`.

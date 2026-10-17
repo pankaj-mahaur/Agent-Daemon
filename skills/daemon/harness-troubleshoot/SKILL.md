@@ -13,6 +13,8 @@ allowed-tools: Bash, Read, Grep
 
 The harness drives the engine's app-server in its own home (`~/.agent-daemon/engine`). Most failures are one of four things: login, sandbox, hooks, or an engine error that only shows up in the engine's own log. Check them in that order. Don't guess from the agent's chat output.
 
+If an error says "The engine reported a problem", open `/warnings` in the TUI or read the `details:` lines in CLI output for the engine's original text. `ad doctor` shows its tested version.
+
 ## When to use
 
 Any harness command errors out, hangs, or finishes without doing the work ("my shell was denied", "couldn't run the tests").
