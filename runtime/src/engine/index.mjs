@@ -1022,9 +1022,12 @@ export const engineDebugUi = {
 };
 
 // `ad doctor`: the adapter reports codes and data; these are ad's words for them.
+const doctorDetailLines = (raw) => raw ? "\n" + String(raw).split("\n").slice(0, 8).map((line) => `  details: ${line}`).join("\n") : "";
+
 const DOCTOR_WORDS = {
   "engine.missing": () => ({ name: "Engine", note: "not installed. Run: cd runtime && npm install" }),
   "engine.notRunnable": (d) => ({ name: "Engine", note: `not runnable (${d.error}). Run: cd runtime && npm install` }),
+  "engine.versionDiagnostic": (d) => ({ name: "Engine version details", note: "The engine sent a notice." + doctorDetailLines(d.detail) }),
   "engine.version": (d) => ({
     name: "Engine version",
     note: d.installed === d.pinned ? `${d.installed} (${d.source}), the version ad is tested with` : `${d.installed} (${d.source}), but ad was tested with ${d.pinned}. Run: cd runtime && npm install`,
@@ -1044,7 +1047,10 @@ const DOCTOR_WORDS = {
   "engine.login": (d) => ({ name: "Engine sign-in", note: d.loggedIn ? d.label : "not signed in. Run: ad auth login chatgpt" }),
   "engine.hooks": (d) => ({ name: "Engine hooks", note: `${d.trusted}/${d.total} trusted${d.trusted < d.total ? "; the next ad run trusts them again" : ""}` }),
   "engine.windowsSandbox": (d) => ({ name: "Windows sandbox", note: d.status === "ready" ? `ready (${d.mode ?? "?"})` : `${d.status}. Run: ad sandbox setup` }),
-  "engine.unreachable": (d) => ({ name: "Engine", note: `could not start: ${d.error}` }),
+  "engine.unreachable": (d) => {
+    const err = { ...d, message: d.error };
+    return { name: "Engine", note: `could not start: ${engineErrorText(err, { details: null })}${doctorDetailLines(engineErrorDetail(err))}` };
+  },
 };
 
 const doctorWords = (c) => ({ ok: c.ok, ...(DOCTOR_WORDS[c.code]?.(c.data ?? {}) ?? { name: "Engine", note: c.code }) });

@@ -15,6 +15,8 @@ The harness drives the engine's app-server in its own home (`~/.agent-daemon/eng
 
 If an error says "The engine reported a problem", open `/warnings` in the TUI or read the `details:` lines in CLI output for the engine's original text. `ad doctor` shows its tested version.
 
+Version probes must capture child stderr explicitly: Node's `execFileSync` echoes it when stdio is omitted. Doctor retains probe stderr as labelled details, and live checks must preserve engine error codes/raw fields for the façade's mapping.
+
 ## When to use
 
 Any harness command errors out, hangs, or finishes without doing the work ("my shell was denied", "couldn't run the tests").

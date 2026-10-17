@@ -1,7 +1,7 @@
 // `ad doctor`'s checks of the engine, as codes and data; the façade (`engineDoctor` in `../index.mjs`) owns the words.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pinnedCodexVersion, resolveCodexCommand } from "./app-server.mjs";
@@ -26,13 +26,22 @@ export function probeVersion({ env = process.env, run = execFileSync } = {}) {
   const command = resolveCodexCommand(env);
   if (!command.cmd) return { version: null, source: "missing" };
   let scratchHome = null;
+  let stderrFd = null;
+  let stderrPath = null;
+  const diagnostics = () => stderrPath && existsSync(stderrPath) ? readFileSync(stderrPath, "utf8") : "";
   try {
     scratchHome = mkdtempSync(join(tmpdir(), "ad-codex-version-"));
-    const text = run(command.cmd, [...command.prefix, "--version"], { encoding: "utf8", timeout: 15_000, windowsHide: true, env: codexEnv({ home: scratchHome, base: env }) });
-    return { version: parseCodexVersion(text), source: command.source };
+    stderrPath = join(scratchHome, "version.stderr");
+    stderrFd = openSync(stderrPath, "w");
+    // execFileSync otherwise echoes child stderr directly to ad's screen.
+    const text = run(command.cmd, [...command.prefix, "--version"], { encoding: "utf8", timeout: 15_000, windowsHide: true, stdio: ["ignore", "pipe", stderrFd], env: codexEnv({ home: scratchHome, base: env }) });
+    const stderr = diagnostics();
+    return { version: parseCodexVersion(text), source: command.source, ...(stderr ? { stderr } : {}) };
   } catch (err) {
-    return { version: null, source: command.source, error: err.code ?? err.message };
+    const stderr = diagnostics() || err.stderr?.toString() || err.message;
+    return { version: null, source: command.source, error: err.code ?? "ENGINE_VERSION_FAILED", ...(stderr ? { stderr } : {}) };
   } finally {
+    if (stderrFd !== null) closeSync(stderrFd);
     if (scratchHome) rmSync(scratchHome, { recursive: true, force: true });
   }
 }
@@ -48,6 +57,7 @@ export function engineChecks({ env = process.env, run = execFileSync, root } = {
   }
   const installed = probed.version;
   if (installed) checks.push({ code: "engine.version", ok: installed === pinned, data: { installed, pinned, source: probed.source } });
+  if (probed.stderr) checks.push({ code: "engine.versionDiagnostic", ok: true, data: { detail: probed.stderr } });
   let state;
   try {
     const custom = homeOverride(env);
@@ -118,7 +128,7 @@ export async function engineLiveChecks({ env = process.env, engineFactory, platf
       checks.push({ code: "engine.windowsSandbox", ok: status === "ready", data: { status, mode: cfg.windows?.sandbox ?? null } });
     }
   } catch (e) {
-    checks.push({ code: "engine.unreachable", ok: false, data: { error: e.message } });
+    checks.push({ code: "engine.unreachable", ok: false, data: { error: e.message, code: e.code, raw: e.raw, stderr: e.stderr } });
   } finally {
     await engine?.close();
   }

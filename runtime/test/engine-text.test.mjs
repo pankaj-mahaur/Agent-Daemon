@@ -160,3 +160,34 @@ test("sandbox setup keeps a failed result classified as an engine error", async 
     return true;
   });
 });
+
+
+test("doctor keeps version-probe stderr on a labelled diagnostic line", async () => {
+  const { spawnSync } = await import("node:child_process");
+  const raw = `WARNING: Refusing helper binaries under temporary dir "/tmp" (${LEGACY.productValue}_home: AbsolutePathBuf("/tmp/ad-version-fixture"))`;
+  const moduleUrl = new URL("../src/engine/index.mjs", import.meta.url).href;
+  const code = `import { engineDoctor } from ${JSON.stringify(moduleUrl)};
+    import { execFileSync } from "node:child_process";
+    const checks = engineDoctor.checks({env:{}, root:${JSON.stringify(join(tmpdir(), "ad-nonexistent-doctor-fixture"))}, run:(_cmd,_args,opts)=>execFileSync(process.execPath,["-e",${JSON.stringify(`process.stderr.write(${JSON.stringify(raw)}); process.stdout.write("engine-cli 0.160.0");`)}],opts)});
+    process.stdout.write(JSON.stringify(checks));`;
+  const child = spawnSync(process.execPath, ["--input-type=module", "-e", code], { cwd: tmpdir(), encoding: "utf8" });
+  assert.equal(child.status, 0, child.stderr);
+  assert.equal(child.stderr, "", "the synchronous probe must not echo raw stderr");
+  const checks = JSON.parse(child.stdout);
+  const detail = checks.find((c) => c.name === "Engine version details");
+  assert.ok(detail, "version diagnostics remain available");
+  assert.doesNotMatch(detail.note.split("\n")[0], BRAND);
+  assert.ok(detail.note.includes(`  details: ${raw}`));
+});
+
+test("doctor maps live engine failures while retaining their exact diagnostic", async () => {
+  const { engineDoctor } = await import("../src/engine/index.mjs");
+  const root = mkdtempSync(join(tmpdir(), "ad-doctor-text-"));
+  const raw = `${LEGACY.productValue} doctor startup failed`;
+  try {
+    const rows = await engineDoctor.liveChecks({ env: { [LEGACY.envHome]: root }, engineFactory: async () => { throw error(-32000, raw); } });
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].note.split("\n")[0], "could not start: The engine reported a problem.");
+    assert.ok(rows[0].note.includes(`  details: ${raw}`));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

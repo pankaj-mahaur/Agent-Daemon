@@ -38,6 +38,7 @@ Agent Daemon 3.0: ad is its own product. Same agent and sign-in; conversations, 
 
 ### Fixed
 
+- `ad doctor` keeps engine version warnings on labelled `details:` lines and shows engine startup failures in ad's words.
 - The daemon now watches the engine's conversations in a folder set with `AD_ENGINE_DIR` / `AD_CODEX_HOME`.
 - `/cd`: refused while a subagent is still working ("Cannot change: another agent is running."), and every thread is checked again after the trust question ("Cannot change: a task is running."), as Codex does. A subagent's turn now ends with the engine that ran it, so a crash and restart doesn't leave `/cd` refused; a late "started" hint for a subagent whose turn already ended is ignored, as in Codex.
 

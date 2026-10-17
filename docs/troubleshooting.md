@@ -618,6 +618,8 @@ Other choices: `nvim`, `vim`, `nano`, or Notepad++ with `-multiInst -nosession`.
 
 ## 39. What ad can't rename
 
+`ad doctor` also labels captured version-probe diagnostics with `details:`; its startup failure line uses ad's words.
+
 ad shows its own words for engine errors and notices. To see the original text, open `/warnings` in the terminal UI or read the labelled `details:` lines in CLI output.
 
 - OpenAI's own sign-in and usage-limit pages may say "Codex".
