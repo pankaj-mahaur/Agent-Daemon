@@ -1,7 +1,8 @@
 // The terminal app (tui/app.mjs, plan Part 6) on a test screen, driven by
 // the session controller on the fake engine app-server.
 
-import { ENGINE, LEGACY, projectConfigFolder } from "../src/engine/attribution.mjs";
+import { ENGINE, LEGACY, projectConfigFolder, brandPatterns } from "../src/engine/attribution.mjs";
+import { screenHits } from "../scripts/check-brand.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -657,7 +658,7 @@ test("/approve: the engine's Auto-review Denials picker sends one denial back as
       await until(() => /No recent auto-review denials in this thread\. Denials are recorded after auto-review rejects an action\./.test(flat()), "none yet");
       type("auto-review-deny\r");
       await until(() => /Auto-review stopped two commands/.test(flat()), "the turn");
-      assert.match(flat(), /Auto-review denied `rm -rf build` \(deletes the build folder\)\. \/approve allows one retry\./);
+      assert.match(flat(), /The engine sent a notice\. Details: \/warnings \/approve allows one retry\./);
       assert.deepEqual(session.state.denials.map((d) => d.reviewId), ["review-2", "review-1"], "newest first");
       type("/approve\r");
       await until(() => app.state.popup === "approve" && /Auto-review Denials/.test(text()), "the picker");
@@ -753,7 +754,10 @@ test("/setup-default-sandbox: Windows only; asks first (machine-wide); sets up t
       await until(() => app.state.confirm, "the question");
       await sleep(100);
       type("y");
-      await until(() => /Windows sandbox setup failed: denied by policy `ad sandbox setup` sets up the non-admin sandbox instead\./.test(flat()), "the failure");
+      await until(() => /Windows sandbox setup failed: The engine reported a problem\. Details: \/warnings/.test(flat()), "the mapped failure");
+      assert.doesNotMatch(flat(), /denied by policy/);
+      type("/warnings\r");
+      await until(() => /details: denied by policy/.test(flat()), "the raw sandbox detail");
     },
     { platform: "win32", cols: 100, env: { FAKE_SANDBOX_FAIL: "1" } },
   );
@@ -785,7 +789,9 @@ test("Part 10 review: /approve after an engine restart goes to the new engine; a
       type("/approve\r");
       await until(() => app.state.popup === "approve", "the picker again");
       type("\r");
-      await until(() => /invalid Guardian denial event: bad status or action/.test(flat()), "the refusal");
+      await until(() => /The engine refused a request from ad/.test(flat()), "the refusal");
+      type("/warnings\r");
+      await until(() => /details: invalid Guardian denial event: bad status or action/.test(flat()), "the original refusal in warnings");
       assert.deepEqual(session.state.denials.map((d) => d.reviewId), ["review-1"], "back on the list");
     },
     { restartable: true, cols: 110, rows: 30 },
@@ -1435,7 +1441,7 @@ test("/side (review): one at a time, the text kept; a failed side turn shows in 
     assert.equal(app.state.composer, "/side again please", "the text is kept");
     assert.equal((await debug()).calls.filter((c) => c === "thread/fork").length, 1, "one fork");
     type("\x15fail-turn\r");
-    await until(() => /The turn failed: model refused/.test(text()), "the side's failure, in the panel");
+    await until(() => /The turn failed: The engine reported a problem/.test(text()), "the side's failure, in the panel");
     type(`\x1b[200~${join(root, "shot.png")}\x1b[201~`);
     await until(() => /Images can't go to a side conversation/.test(text()), "no image to the side");
     type("\x03");
@@ -1560,4 +1566,89 @@ test("/theme: the engine's picker with a live preview; Esc puts the old theme ba
   } finally {
     setSyntaxTheme("ansi");
   }
+});
+
+
+test("engine crash diagnostics stay out of the screen until /warnings", async () => {
+  const raw = `${LEGACY.productValue}: panicked at core`;
+  await withApp(async ({ engine, session, type, until, text, committed }) => {
+    await session.submit("fail-turn").done;
+    await assert.rejects(engine.testRequest("test/crash"));
+    await until(() => /ad's engine stopped/.test(text()), "the crash banner");
+    assert.deepEqual(screenHits(text() + "\n" + committed(), { allow: brandPatterns() }), []);
+    assert.equal(session.state.notices.find((n) => n.code === "engine.exited")?.detail, raw);
+    type("/warnings\r");
+    await until(() => /details:.*panicked at core/.test(committed()), "raw stderr in warnings");
+  }, { env: { FAKE_CRASH_STDERR: raw } });
+});
+
+test("warning and informational deprecation details are kept for /warnings", async () => {
+  const raw = `${LEGACY.productValue} old setting`;
+  await withApp(async ({ engine, session, type, until, text, committed }) => {
+    engine.testNotify("deprecationNotice", { summary: raw, details: "the original detail" });
+    await until(() => session.state.notices.some((n) => n.code === "deprecation"), "the deprecation notice");
+    engine.testNotify("warning", { message: raw + " warning" });
+    await until(() => session.state.notices.some((n) => n.code === "warning"), "the warning notice");
+    assert.deepEqual(screenHits(text() + "\n" + committed(), { allow: brandPatterns() }), []);
+    type("/warnings\r");
+    await until(() => committed().includes(`details: ${raw}`), "raw details");
+    assert.ok(committed().includes("the original detail"), "info-level deprecation details remain inspectable");
+  });
+});
+
+test("command RPC failures keep raw details without putting them on the main screen", async () => {
+  const raw = `${LEGACY.productValue} refused to list threads`;
+  await withApp(async ({ engine, type, until, text, committed }) => {
+    engine.threads.list = async () => { throw Object.assign(new Error(raw), { code: -32000, raw }); };
+    type("/resume\r");
+    await until(() => /The engine reported a problem/.test(committed()), "mapped command failure");
+    assert.deepEqual(screenHits(text() + "\n" + committed(), { allow: brandPatterns() }), []);
+    type("/warnings\r");
+    await until(() => committed().includes(`details: ${raw}`), "raw command details");
+  });
+});
+
+test("failed turn diagnostics are mapped and remain available in /warnings", async () => {
+  const raw = `${LEGACY.productValue} refused the model`;
+  await withApp(async ({ type, until, text, committed }) => {
+    type("fail-turn\r");
+    await until(() => /The turn failed: The engine reported a problem/.test(committed()), "mapped turn failure");
+    assert.deepEqual(screenHits(text() + "\n" + committed(), { allow: brandPatterns() }), []);
+    type("/warnings\r");
+    await until(() => committed().includes(`details: ${raw}`), "raw failed-turn detail");
+  }, { env: { FAKE_TURN_ERROR: raw } });
+});
+
+
+test("review: recap failure is mapped and its exact raw reason remains inspectable", async () => {
+  const raw = `${LEGACY.productValue} recap failed`;
+  await withApp(async ({ session, engine, type, until, committed, text }) => {
+    await session.submit("early-complete").done;
+    engine.turn = async () => ({ status: "failed", error: { message: raw } });
+    type("/recap\r");
+    await until(() => /Could not generate a recap/.test(committed()), "recap failure");
+    assert.deepEqual(screenHits(text() + "\n" + committed(), { allow: brandPatterns() }), []);
+    type("/warnings\r");
+    await until(() => committed().includes(`details: ${raw}`), "the exact recap reason");
+  });
+});
+
+test("review: side warning details remain available while active and after close", async () => {
+  const raw = `${LEGACY.productValue} side warning`;
+  await withApp(async ({ session, engine, type, until, committed }) => {
+    await session.submit("early-complete").done;
+    let secondary;
+    const open = session.openSide;
+    session.openSide = async (...args) => (secondary = await open(...args));
+    type("/side\r");
+    await until(() => secondary, "the side conversation");
+    engine.testNotify("warning", { threadId: secondary.state.thread.id, message: raw });
+    await until(() => secondary.state.notices.some((n) => n.detail === raw), "the side warning");
+    type("\x1f/warnings\r");
+    await until(() => committed().includes(`details: ${raw}`), "side details while active");
+    const before = committed().split(`details: ${raw}`).length;
+    type("\x1f\x03");
+    type("/warnings\r");
+    await until(() => committed().split(`details: ${raw}`).length > before, "side details after closing");
+  }, { cols: 110, rows: 30 });
 });

@@ -2,6 +2,8 @@
 // model's — dual exit, circuit breaker, budgets, STOP file — plus the
 // end-to-end loop against the fake app-server.
 
+import { Engine } from "../src/engine/index.mjs";
+import { ENGINE, LEGACY } from "../src/engine/attribution.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
@@ -138,4 +140,50 @@ test("unattended threads: only the memory MCP server stays on; live web search i
   assert.deepEqual(await unattendedThreadConfig({ readConfig: async () => ({ web_search: "cached" }) }), {});
   assert.deepEqual(UNATTENDED_SANDBOX_POLICY, { type: "workspaceWrite", writableRoots: [], networkAccess: false });
   assert.equal(UNATTENDED_ENV.AD_WORKER, "1", "loop re-prompts are not the user's corrections");
+});
+
+
+test("review: loop goal, cleanup and compaction errors use labelled raw details", async () => {
+  for (const [method, suffix] of [["setGoal", "goal"], ["clearGoal", "goal clear"], ["compactThread", "compaction"]]) {
+    const original = Engine.prototype[method];
+    const originalWait = Engine.prototype.waitForCompaction;
+    const raw = `${LEGACY.productValue} ${suffix} failure`;
+    Engine.prototype[method] = async () => { throw Object.assign(new Error(raw), { code: -32000, raw }); };
+    if (method === "compactThread") Engine.prototype.waitForCompaction = () => Promise.resolve();
+    try {
+      const result = await loop("LOOPTEST-DONE-AFTER-2 fix the tests", () => ({ limits: { compactEvery: 1 } }));
+      assert.equal(result.code, 0, result.err);
+      assert.ok(result.err.includes(`  details: ${raw}\n`), result.err);
+      const visible = result.err.split("\n").filter((line) => !line.startsWith("  details: ")).join("\n");
+      assert.doesNotMatch(visible, new RegExp(ENGINE.name, "i"));
+    } finally {
+      Engine.prototype[method] = original;
+      Engine.prototype.waitForCompaction = originalWait;
+    }
+  }
+});
+
+test("review: STOP-triggered loop interrupt maps the exact engine rejection", async () => {
+  const originalTurn = Engine.prototype.turn;
+  const originalInterrupt = Engine.prototype.interrupt;
+  const raw = `${LEGACY.productValue} interrupt failure`;
+  Engine.prototype.interrupt = async () => { throw Object.assign(new Error(raw), { code: -32000, raw }); };
+  try {
+    const result = await loop("LOOPTEST-STUCK", (root) => {
+      Engine.prototype.turn = async ({ onEvent }) => {
+        onEvent({ type: "turnStarted", turnId: "turn-1" });
+        writeFileSync(join(root, ".agent-daemon", "STOP"), "");
+        await new Promise((resolve) => setTimeout(resolve, 2200));
+        return { status: "interrupted", output: "" };
+      };
+      return {};
+    });
+    assert.equal(result.code, 3, result.err);
+    assert.match(result.err, /STOP file found/);
+    assert.ok(result.err.includes(`  details: ${raw}\n`), result.err);
+    assert.doesNotMatch(result.err.split("\n").filter((line) => !line.startsWith("  details: ")).join("\n"), new RegExp(ENGINE.name, "i"));
+  } finally {
+    Engine.prototype.turn = originalTurn;
+    Engine.prototype.interrupt = originalInterrupt;
+  }
 });

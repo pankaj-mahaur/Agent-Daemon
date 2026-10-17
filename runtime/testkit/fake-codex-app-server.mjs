@@ -240,7 +240,7 @@ async function runScriptedTurn(threadId, turn, params) {
     agentMessage(threadId, turn.id, "Auto-review stopped two commands.");
     return complete(threadId, turn);
   }
-  if (text === "fail-turn") return complete(threadId, turn, { status: "failed", error: { message: "model refused" } });
+  if (text === "fail-turn") return complete(threadId, turn, { status: "failed", error: { message: process.env.FAKE_TURN_ERROR ?? "model refused" } });
   if (params.outputSchema?.properties?.summary) {
     // Codex's /recap schema: FAKE_RECAP sets the answer ("slow:" first waits a while).
     const env = process.env.FAKE_RECAP ?? "";
@@ -437,7 +437,7 @@ async function onRequest({ id, method, params }) {
       else send({ id, result: { type: "chatgpt", loginId, authUrl: "https://auth.example/authorize?x=1&y=2" } });
       return setTimeout(() => {
         state.account = { type: "chatgpt", email: "someone@example.com", planType: "pro" };
-        notify("account/login/completed", { loginId, success: process.env.FAKE_LOGIN_FAIL !== "1", error: process.env.FAKE_LOGIN_FAIL === "1" ? "denied" : null });
+        notify("account/login/completed", { loginId, success: process.env.FAKE_LOGIN_FAIL !== "1", error: process.env.FAKE_LOGIN_FAIL === "1" ? (process.env.FAKE_LOGIN_ERROR ?? "denied") : null });
       }, 20);
     }
     case "account/login/cancel":
@@ -670,6 +670,7 @@ async function onRequest({ id, method, params }) {
     case "test/fail":
       return send({ id, error: { code: -32000, message: "boom", data: { why: "scripted" } } });
     case "test/crash":
+      if (process.env.FAKE_CRASH_STDERR) process.stderr.write(process.env.FAKE_CRASH_STDERR + "\n");
       return process.exit(3);
     case "test/error-notification":
       notify("error", { error: { message: "transient" }, willRetry: true });

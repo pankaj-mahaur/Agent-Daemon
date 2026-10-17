@@ -12,8 +12,9 @@
 //     a queued line answers the next approval, EOF waits for the queue to
 //     finish and declines any later approval
 
+import { cliErrorLines } from "./io.mjs";
 import { createInterface } from "node:readline";
-import { DEFAULT_APPROVAL_POLICY, DEFAULT_SANDBOX, engineEvents } from "../engine/index.mjs";
+import { DEFAULT_APPROVAL_POLICY, DEFAULT_SANDBOX, engineEvents, engineError, isEngineError } from "../engine/index.mjs";
 import { describeItem } from "./run.mjs";
 import { startHarnessEngine } from "./start.mjs";
 
@@ -112,7 +113,7 @@ export function createChatSession({ engine, cwd, out, err, ask, model, sandbox }
     } else if (evt.type === "itemStarted") {
       const line = describeItem(evt.item);
       if (line) err.write(`\n${paint(color.err, "2", line)}\n`);
-    } else if (evt.type === "error") err.write(`\n${paint(color.err, "33", `[${evt.willRetry ? "retrying" : "error"}] ${evt.message}`)}\n`);
+    } else if (evt.type === "error") err.write(`[${evt.willRetry ? "retrying" : "error"}] ` + cliErrorLines("chat", engineError(-32000, evt.message, { raw: evt.message })));
   }
 
   async function runTurn(text) {
@@ -125,7 +126,10 @@ export function createChatSession({ engine, cwd, out, err, ask, model, sandbox }
     try {
       const r = await turn;
       out.write("\n");
-      if (r.status !== "completed") err.write(paint(color.err, "33", `[turn ${r.status}${r.error?.message ? `: ${r.error.message}` : ""}]`) + "\n");
+      if (r.status !== "completed") {
+        err.write(paint(color.err, "33", `[turn ${r.status}]`) + "\n");
+        if (r.error?.message) err.write(cliErrorLines("chat", engineError(-32000, r.error.message, { raw: r.error.message })));
+      }
       return r;
     } finally {
       state.turn = null;
@@ -141,7 +145,7 @@ export function createChatSession({ engine, cwd, out, err, ask, model, sandbox }
       err.write("[turn is still starting — press Ctrl+C again in a moment]\n");
       return true;
     }
-    await engine.interrupt(threadId, turnId).catch((e) => err.write(`[interrupt failed: ${e.message}]\n`));
+    await engine.interrupt(threadId, turnId).catch((e) => err.write("[interrupt failed] " + cliErrorLines("chat", e)));
     return true;
   }
 
@@ -227,7 +231,7 @@ export function createChatSession({ engine, cwd, out, err, ask, model, sandbox }
       if (c) return await command(c);
       await runTurn(text);
     } catch (e) {
-      err.write(`${paint(color.err, "31", `error: ${e.message}`)}\n`);
+      err.write(isEngineError(e) ? cliErrorLines("chat", e) : `${paint(color.err, "31", `error: ${e.message}`)}\n`);
     }
     return {};
   }
@@ -323,7 +327,7 @@ export async function cmdChat(opts = {}) {
       rl.prompt();
     });
   } catch (e) {
-    err.write(`ad chat: ${e.message}\n`);
+    err.write(cliErrorLines("chat", e));
     return 1;
   } finally {
     rl?.close();

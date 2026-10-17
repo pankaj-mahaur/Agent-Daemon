@@ -47,7 +47,8 @@ test("ad run --json prints one JSON result line", async () => {
 test("ad run exits 1 on a failed turn", async () => {
   const r = await run("fail-turn");
   assert.equal(r.code, 1);
-  assert.match(r.stderr, /turn failed: model refused/);
+  assert.match(r.stderr, /\[turn failed\]/);
+  assert.match(r.stderr, /ad run: The engine reported a problem\.\n  details: model refused\n/);
 });
 
 test("ad run with no prompt prints usage", async () => {

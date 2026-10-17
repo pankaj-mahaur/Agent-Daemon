@@ -23,6 +23,55 @@ import UPSTREAM_COMMANDS from "./codex/upstream-commands.json" with { type: "jso
 
 export { engineError };
 
+// The engine's errors and notices in ad's words (design G2): the screen shows
+// these; the raw text goes to /warnings (terminal UI) or a "details:" line (CLI).
+const ENGINE_CODES = new Set(["ENGINE_EXITED", "ENGINE_SPAWN_FAILED", "ENGINE_TIMEOUT", "ENGINE_NOT_STARTED"]);
+
+/** True for an error that came from the engine (its numeric JSON-RPC codes) or from talking to it. */
+export const isEngineError = (err) => typeof err?.code === "number" || ENGINE_CODES.has(err?.code);
+
+/** ad's words for an error. `details`: where the raw text can be read ("/warnings" in the UI; null in the CLI). */
+export function engineErrorText(err, { details = "/warnings" } = {}) {
+  const see = details ? ` Details: ${details}` : "";
+  const code = err?.code;
+  if (typeof code === "number") {
+    if (code === -32600 || code === -32601) return `The engine refused a request from ad; it may not be the version ad was tested with (ad doctor shows it).${see}`;
+    return `The engine reported a problem.${see}`;
+  }
+  switch (code) {
+    case "ENGINE_EXITED":
+      return `The engine stopped${err.exitCode != null ? ` (exit ${err.exitCode})` : ""}.${see}`;
+    case "ENGINE_SPAWN_FAILED":
+      return `The engine could not start.${see || " Run: ad doctor"}`;
+    case "ENGINE_TIMEOUT":
+      return "The engine didn't answer in time.";
+    case "ENGINE_NOT_STARTED":
+      return "The engine isn't running.";
+    default:
+      return err?.message ?? String(err); // ad's own words (HOME_*, FEATURE_UNAVAILABLE, ENGINE_NOT_INSTALLED, …), or not an engine error
+  }
+}
+
+/** The engine's raw text for an error, unmodified, or null. */
+export function engineErrorDetail(err) {
+  if (!isEngineError(err)) return null;
+  return err.raw ?? err.stderr ?? err.message ?? null;
+}
+
+/** ad's words for a notice the engine sent (events.mjs codes: warning, deprecation, config, …). */
+export function engineNoticeText(ev) {
+  switch (ev?.code) {
+    case "warning":
+      return "The engine sent a warning. Details: /warnings";
+    case "deprecation":
+      return "The engine says a setting or feature it uses is going away. Details: /warnings";
+    case "config":
+      return "The engine found a problem in its settings file. Details: /warnings";
+    default:
+      return "The engine sent a notice. Details: /warnings";
+  }
+}
+
 /** The engine's own UI's slash commands at the pinned tag: {tag, names, commands[{name, aliases, duringTask, sideAllowed, visible, popup, …}]}. */
 export const engineCommands = UPSTREAM_COMMANDS;
 
@@ -594,7 +643,7 @@ export class Engine extends EventEmitter {
         if (turnId === null) early.push(msg);
         else handle(msg);
       };
-      const onExit = () => finish(reject, engineError("ENGINE_EXITED", `the engine exited mid-turn${server.stderr.trim() ? `: ${server.stderr.trim().slice(-500)}` : ""}`));
+      const onExit = () => finish(reject, engineError("ENGINE_EXITED", `the engine exited mid-turn`, { stderr: server.stderr.trim().slice(-500) }));
       function finish(settle, value) {
         if (settled) return;
         settled = true;
@@ -726,7 +775,7 @@ export class Engine extends EventEmitter {
       if (r.sandbox?.type !== "readOnly") throw new Error("temporary structured thread did not start with read-only permissions");
       deadline = Date.now() + timeoutMs;
       const t = await this.turn({ threadId, input: [{ type: "text", text, text_elements: [] }], outputSchema, timeoutMs: left() });
-      if (t.status !== "completed") throw new Error(`temporary structured turn ended with status ${t.status}${t.error?.message ? `: ${t.error.message}` : ""}`);
+      if (t.status !== "completed") throw engineError(-32000, `temporary structured turn ended with status ${t.status}`, { raw: t.error?.message ?? `temporary structured turn ended with status ${t.status}` });
       if (!t.output) throw new Error("temporary structured turn completed without a response");
       if (Buffer.byteLength(t.output, "utf8") > 8192) throw new Error("temporary structured response exceeds 8192 bytes");
       return t.output;

@@ -10,6 +10,7 @@
 // Opt-in on purpose: both reach the network, and the browser downloads its
 // package on first use.
 
+import { cliErrorLines } from "./io.mjs";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { createEngine, engineHome } from "../engine/index.mjs";
@@ -71,7 +72,7 @@ export async function cmdTools(sub, name, opts = {}) {
     out.write(`${name}: ${sub === "enable" ? "on" : "off"}\n`);
     return 0;
   } catch (e) {
-    err.write(`ad tools: ${e.message}\n`);
+    err.write(cliErrorLines("tools", e));
     return 1;
   } finally {
     await engine?.close();

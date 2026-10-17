@@ -96,7 +96,7 @@ test("a failed ChatGPT sign-in exits 1 with the reason", async () => {
   try {
     const r = await t.auth("login", ["chatgpt"], { openBrowser: async () => true, env: { FAKE_LOGIN_FAIL: "1" } });
     assert.equal(r.code, 1);
-    assert.match(r.err, /sign-in failed: denied/);
+    assert.match(r.err, /sign-in failed\nad auth: The engine reported a problem\.\n  details: denied/);
   } finally {
     t.cleanup();
   }
@@ -266,6 +266,21 @@ test("login chatgpt always prints the sign-in URL", async () => {
   try {
     const r = await t.auth("login", ["chatgpt"], { openBrowser: async () => true });
     assert.match(r.out, /https:\/\/auth\.example\/authorize\?x=1&y=2/);
+  } finally {
+    t.cleanup();
+  }
+});
+
+
+test("review: sign-in completion errors are raw only on details lines", async () => {
+  const t = setup();
+  const raw = `${ENGINE.name.toLowerCase()} sign-in failure`;
+  try {
+    const result = await t.auth("login", ["chatgpt"], { openBrowser: async () => true, env: { FAKE_LOGIN_FAIL: "1", FAKE_LOGIN_ERROR: raw } });
+    assert.equal(result.code, 1);
+    assert.match(result.err, /The engine reported a problem/);
+    assert.ok(result.err.includes(`  details: ${raw}\n`));
+    assert.ok(!result.err.split("\n").filter((line) => !line.startsWith("  details: ")).join("\n").includes(raw));
   } finally {
     t.cleanup();
   }

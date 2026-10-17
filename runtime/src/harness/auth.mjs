@@ -11,7 +11,8 @@
 // not created by ad, mutations are refused unless --force: that folder
 // belongs to the user's own engine install.
 
-import { createEngine, engineHome } from "../engine/index.mjs";
+import { cliErrorLines } from "./io.mjs";
+import { createEngine, engineHome, engineError } from "../engine/index.mjs";
 import { signInNoteBrowser, signInNoteDevice } from "../engine/attribution.mjs";
 
 import { PROVIDERS, useProviderEdits } from "../auth/providers.mjs";
@@ -122,7 +123,7 @@ export async function cmdAuth(sub, args = [], opts = {}) {
     err.write(usage);
     return 1;
   } catch (e) {
-    err.write(`ad auth: ${e.message}\n`);
+    err.write(cliErrorLines("auth", e));
     return 1;
   } finally {
     await engine?.close();
@@ -167,7 +168,7 @@ async function loginChatgpt(engine, { device, openBrowser, out, err }) {
     }
     if (done.loginId && done.loginId !== r.loginId) throw new Error("login finished for a different request");
     if (!done.success) {
-      err.write(`sign-in failed: ${done.error ?? "unknown error"}\n`);
+      err.write("sign-in failed\n" + cliErrorLines("auth", engineError(-32000, done.error ?? "unknown error", { raw: done.error ?? "unknown error" })));
       return 1;
     }
     const config = await engine.readConfig();

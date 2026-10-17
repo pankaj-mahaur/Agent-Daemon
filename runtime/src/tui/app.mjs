@@ -24,7 +24,7 @@ import { INIT_PROMPT } from "./init-prompt.mjs";
 import { setupWindowsSandbox } from "../harness/sandbox.mjs";
 import { existsSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { engineCommands, engineHome } from "../engine/index.mjs";
+import { engineCommands, engineHome, isEngineError, engineErrorText, engineErrorDetail } from "../engine/index.mjs";
 import path from "node:path";
 import { copyText, denialSummary, exportMarkdown, imagePath, lastAgentText, renderDebugConfig, renderHooks, renderKeyInspector, renderKeymap, renderMcp, renderSkills, renderUsage, terminalSetup, transcriptLines } from "./commands.mjs";
 
@@ -203,6 +203,7 @@ export function createApp({
   let echoesShown = new Set(); // clientUserMessageIds committed as typed
   let turnsSeen = new Map(); // turnId → status reported
   const noticesSeen = new WeakSet();
+  const commandErrors = []; // Raw command/turn diagnostics are shown only by /warnings.
   let lastWasCell = false;
 
   let modal = null; // {id, view}
@@ -368,7 +369,7 @@ export function createApp({
       actions.bell?.({ unfocusedOnly: true });
       notePlan(t);
       showLearned(turnStarts.get(t.id) ?? turnStartedAt);
-      if (t.status === "failed" && t.error) commitCell(renderNotice({ level: "error", message: `The turn failed: ${t.error.message ?? "unknown error"}` }, { width: width() }));
+      if (t.status === "failed" && t.error) commitCell(renderNotice({ level: "error", message: `The turn failed: ${errorText({ ...t.error, code: -32000 })}` }, { width: width() }));
       else if (t.status === "interrupted") commitCell(renderNotice({ level: "warn", message: "Interrupted. Say what to do differently." }, { width: width() }));
       const started = turnStarts.get(t.id) ?? turnStartedAt;
       turnStarts.delete(t.id);
@@ -792,7 +793,7 @@ export function createApp({
       mode = read?.config?.windows?.sandbox ?? null;
       allowed = req?.allowedWindowsSandboxImplementations ?? null;
     } catch (err) {
-      return commitCell(renderNotice({ level: "warn", message: "Could not read Windows sandbox configuration and requirements from the app server.", hint: err?.message }, { width: width() }));
+      return commitCell(renderNotice({ level: "warn", message: "Could not read Windows sandbox configuration and requirements from the app server.", hint: errorText(err) }, { width: width() }));
     }
     if (mode === "elevated") return info0("The elevated sandbox is already set up.");
     if (allowed && !allowed.includes("elevated")) return info0("That Windows sandbox option is disallowed by requirements.");
@@ -808,7 +809,7 @@ export function createApp({
     try {
       await setupWindowsSandbox(session.engine, { mode: "elevated", cwd });
     } catch (err) {
-      return commitCell(renderNotice({ level: "error", message: `Windows sandbox setup failed: ${err?.message || "unknown error"}`, hint: "`ad sandbox setup` sets up the non-admin sandbox instead." }, { width: width() }));
+      return commitCell(renderNotice({ level: "error", message: `Windows sandbox setup failed: ${errorText(err) || "unknown error"}`, hint: "`ad sandbox setup` sets up the non-admin sandbox instead." }, { width: width() }));
     } finally {
       sandboxSetup = false;
       drawSoon();
@@ -882,7 +883,7 @@ export function createApp({
     try {
       await settings.engine.set("features.multi_agent", true);
     } catch (err) {
-      return warn(`Failed to save Subagents setting: ${err?.message ?? err}`);
+      return warn(`Failed to save Subagents setting: ${errorText(err)}`);
     }
     warn("Subagents setting saved on the server for new threads. This thread is unchanged. Project or task settings may override it.");
   }
@@ -929,7 +930,7 @@ export function createApp({
       recap = parseRecap(text);
       if (!recap) why = "The answer wasn't a recap.";
     } catch (err) {
-      why = err?.message ?? String(err);
+      why = errorText(err);
     }
     if (recapping !== me) return;
     recapping = null;
@@ -1109,7 +1110,7 @@ export function createApp({
     if (turnActive() || agentRunning()) return warn("Cannot change: a task is running.");
     await session.changeDir(dir);
     cwd = dir;
-    await Promise.resolve(actions.setCwd?.(dir)).catch((err) => warn(err.message));
+    await Promise.resolve(actions.setCwd?.(dir)).catch((err) => warn(errorText(err)));
     refreshGit(true);
     return info0(`Working directory changed to: ${clean(dir)}`);
   }
@@ -1157,7 +1158,7 @@ export function createApp({
     const shown = body.length > budget ? [[{ text: `  \u{2026} ${body.length - budget + 1} more lines above`, style: DIM }], ...body.slice(-(budget - 1))] : body;
     // What the main transcript would say about a turn or a notice, said in the panel.
     const last = s.turns.at(-1);
-    if (last?.status === "failed" && last.error) body.push(...renderNotice({ level: "error", message: `The turn failed: ${last.error.message ?? "unknown error"}` }, { width: w }));
+    if (last?.status === "failed" && last.error) body.push(...renderNotice({ level: "error", message: `The turn failed: ${errorText({ ...last.error, code: -32000 })}` }, { width: w }));
     else if (last?.status === "interrupted") body.push(...renderNotice({ level: "warn", message: "Interrupted." }, { width: w }));
     for (const n of s.notices.slice(side.noticesSeen ?? 0)) if (n.level !== "info") body.push(...renderNotice(n, { width: w }));
     for (const q of s.queue) body.push(truncate([{ text: `  \u{21b3} queued: ${clean(q.text)}`, style: DIM }], w));
@@ -1168,6 +1169,7 @@ export function createApp({
 
   // Closing: the side transcript goes into the scrollback as one block; nothing merges back.
   function closeSide() {
+    collectSideDiagnostics();
     const s = side;
     if (!s) return;
     side = null;
@@ -1284,7 +1286,24 @@ export function createApp({
 
   const info0 = (text, hint) => commitCell(renderNotice({ level: "info", message: text, hint }, { width: width() }));
   const warn = (text) => commitCell(renderNotice({ level: "warn", message: text }, { width: width() }));
-  const fail = (err) => warn(err?.message ?? String(err));
+  function collectSideDiagnostics() {
+    for (const n of side?.session.state.notices ?? []) {
+      if (!n.detail || commandErrors.some((d) => d.message === n.message && d.detail === n.detail)) continue;
+      commandErrors.push({ ...n });
+      if (commandErrors.length > 50) commandErrors.shift();
+    }
+  }
+  function errorText(err, options) {
+    if (!isEngineError(err)) return err?.message ?? String(err);
+    const message = engineErrorText(err);
+    const detail = engineErrorDetail(err);
+    if (detail && !commandErrors.some((n) => n.message === message && n.detail === String(detail))) {
+      commandErrors.push({ level: "error", message, detail: String(detail), at: Date.now() });
+      if (commandErrors.length > 50) commandErrors.shift();
+    }
+    return engineErrorText(err, options);
+  }
+  const fail = (err) => warn(errorText(err));
 
   async function slash(name, arg) {
     switch (name) {
@@ -1453,7 +1472,7 @@ export function createApp({
         try {
           await session.stopTerminals();
         } catch (err) {
-          if (err?.code === "FEATURE_UNAVAILABLE") return warn(err.message);
+          if (err?.code === "FEATURE_UNAVAILABLE") return warn(errorText(err));
           throw err;
         }
         return info0("Stopping all background terminals.");
@@ -1625,7 +1644,8 @@ export function createApp({
   }
 
   function warningsReport() {
-    const kept = st.notices.filter((n) => n.level !== "info");
+    collectSideDiagnostics();
+    const kept = [...st.notices, ...commandErrors].filter((n) => n.level !== "info" || n.detail).sort((a, b) => (a.at ?? 0) - (b.at ?? 0));
     const unknown = Object.entries(session.engine?.unknownCounts?.() ?? {});
     const unused = [
       ...(keymap.warnings ?? []),
@@ -1638,7 +1658,10 @@ export function createApp({
     ];
     if (!kept.length && !unknown.length && !unused.length) return renderNotice({ level: "info", message: "No warnings in this session." }, { width: width() });
     const out = [[{ text: "Warnings", style: T.bold }]];
-    for (const n of kept.slice(-20)) out.push(...renderNotice(n, { width: width() }));
+    for (const n of kept.slice(-20)) {
+      out.push(...renderNotice(n, { width: width() }));
+      if (n.detail) for (const line of String(n.detail).split("\n").slice(0, 8)) out.push(truncate([{ text: `    details: ${clean(line)}`, style: DIM }], width()));
+    }
     if (unknown.length) {
       out.push([{ text: "Events this ad doesn't know (a newer engine?):", style: DIM }]);
       for (const [method, n] of unknown.slice(0, 20)) out.push(truncate([{ text: `  ${clean(method)} ×${n}`, style: DIM }], width()));
@@ -1776,7 +1799,7 @@ export function createApp({
   function send(text, shown = null) {
     if (side?.focus === "side" && !shown) {
       const r = side.session.submit(privateMode ? `<private>${text}</private>` : text);
-      r.accepted.catch((err) => warn(`Not sent: ${err.message}`));
+      r.accepted.catch((err) => warn(`Not sent: ${errorText(err)}`));
       return drawSoon();
     }
     if (changingDir) {
@@ -1802,14 +1825,14 @@ export function createApp({
           drawSoon();
         },
         (err) => {
-          warn(`Not sent: ${err.message}`);
+          warn(`Not sent: ${errorText(err)}`);
           if (!composer.text && !shown) composer.set(raw);
           if (images.length && !attachments.length) attachments = images;
           drawSoon();
         },
       );
     } catch (err) {
-      warn(`Not sent: ${err.message}`);
+      warn(`Not sent: ${errorText(err)}`);
     }
   }
 

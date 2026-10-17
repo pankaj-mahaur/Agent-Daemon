@@ -3,14 +3,14 @@
 // if setup changed something the running app-server caches (Windows sandbox).
 // Used by `ad run`, `ad chat` and team workers.
 
-import { createEngine, engineVersion } from "../engine/index.mjs";
+import { createEngine, engineVersion, engineErrorText, engineErrorDetail } from "../engine/index.mjs";
 import { envRenameNote, LEGACY, migrateMessages } from "../engine/attribution.mjs";
 import { providerEnv } from "../auth/providers.mjs";
 import { noteOnce } from "./notes.mjs";
 import { ensureHarnessSetup } from "./setup.mjs";
 import { needsWindowsSandbox, sandboxReadiness } from "./sandbox.mjs";
 
-export const NOT_LOGGED_IN = "Not logged in. Run: ad auth login chatgpt   (or: ad auth login openai | ad auth login openrouter --model <slug>)";
+export const NOT_LOGGED_IN = "Not logged in. Run: ad auth login openai | ad auth login openrouter --model <slug> | ad auth login chatgpt";
 
 // env: extra variables for the engine and the hooks it runs (e.g. AD_WORKER=1).
 // detached: run the engine in its own process group on POSIX (the terminal UI).
@@ -44,7 +44,11 @@ export async function startHarnessEngine({ cwd, home, command, clientVersion, st
     // Unattended runs (loops, workers) rely on the sandbox instead of a
     // human; on Windows, refuse to start them without a ready one.
     if (requireSandbox && needsWindowsSandbox(platform ?? process.platform)) {
-      const status = await sandboxReadiness(engine).catch((e) => `unknown (${e.message})`);
+      const status = await sandboxReadiness(engine).catch((e) => {
+        const detail = engineErrorDetail(e);
+        if (detail) for (const line of String(detail).split("\n").slice(0, 8)) err.write(`  details: ${line}\n`);
+        return `unknown (${engineErrorText(e, { details: null })})`;
+      });
       if (status !== "ready") {
         await engine.close();
         return { engine: null, error: `Windows sandbox is ${status}; unattended runs need it. Run: ad sandbox setup`, code: 2 };
@@ -61,11 +65,14 @@ async function safeSetup(engine, opts, err) {
   try {
     const report = await ensureHarnessSetup(engine, opts);
     for (const w of report.warnings) err.write(`[agent-daemon] harness setup: ${w}\n`);
+    for (const d of report.details ?? []) for (const line of String(d.detail).split("\n").slice(0, 8)) err.write(`  details: ${line}\n`);
     if (report.sandboxConfigured) err.write(`[agent-daemon] set up the Windows sandbox (${report.sandboxConfigured}); for stronger isolation run: ad sandbox setup --elevated\n`);
     return report;
   } catch (e) {
     // Memory/hooks are an enhancement; a setup failure must not block the run.
-    err.write(`[agent-daemon] harness setup incomplete: ${e.message}\n`);
+    err.write(`[agent-daemon] harness setup incomplete: ${engineErrorText(e, { details: null })}\n`);
+    const detail = engineErrorDetail(e);
+    if (detail) for (const line of String(detail).split("\n").slice(0, 8)) err.write(`  details: ${line}\n`);
     return null;
   }
 }

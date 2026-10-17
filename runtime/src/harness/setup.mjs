@@ -17,7 +17,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PROVIDER_ENV_KEYS } from "../auth/providers.mjs";
 import { identityBlock } from "../engine/attribution.mjs";
-import { engineDebugUi, engineHome, engineHooks, engineVersion } from "../engine/index.mjs";
+import { engineDebugUi, engineHome, engineHooks, engineVersion, engineErrorText, engineErrorDetail } from "../engine/index.mjs";
 import { needsWindowsSandbox, setupWindowsSandbox } from "./sandbox.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -129,7 +129,9 @@ export async function ensureHarnessSetup(engine, { cwd = process.cwd(), profile 
     try {
       await fn();
     } catch (e) {
-      report.warnings.push(`${name}: ${e.message}`);
+      report.warnings.push(`${name}: ${engineErrorText(e, { details: null })}`);
+      const detail = engineErrorDetail(e);
+      if (detail) (report.details ??= []).push({ message: `${name}: ${engineErrorText(e)}`, detail });
     }
   };
   const hooksFile = path.join(engine.home, "hooks.json");

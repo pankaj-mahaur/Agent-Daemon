@@ -140,7 +140,7 @@ export class CodexAppServer extends EventEmitter {
     // a response or turn/completed written just before exit is still seen.
     this.child.on("close", (code, signal) => {
       const tail = this.stderr.trim().slice(-500);
-      this.exitError ??= engineError("ENGINE_EXITED", `the engine exited (code=${code}, signal=${signal})${tail ? ` ${tail}` : ""}`, { exitCode: code, signal, stderr: tail });
+      this.exitError ??= engineError("ENGINE_EXITED", `the engine exited (code=${code}, signal=${signal})`, { exitCode: code, signal, stderr: tail });
       this.#failAll(this.exitError);
       this.emit("exit", { code, signal });
     });

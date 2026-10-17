@@ -11,9 +11,10 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { cliErrorLines } from "../harness/io.mjs";
 import { startHarnessEngine } from "../harness/start.mjs";
 import { createSession } from "../harness/session.mjs";
-import { engineHome, engineVersion } from "../engine/index.mjs";
+import { engineHome, engineVersion, engineErrorText, engineErrorDetail } from "../engine/index.mjs";
 import { createIo } from "./terminal/io.mjs";
 import { createRenderer } from "./terminal/renderer.mjs";
 import { colorDepth } from "./terminal/text.mjs";
@@ -266,7 +267,19 @@ export async function cmdTui(opts = {}) {
     return 2;
   }
   const setupNotes = [];
-  const sink = { write: (s) => (setupNotes.push(String(s).trim()), true) };
+  const setupDetails = [];
+  const keepStartupError = (e) => {
+    const detail = engineErrorDetail(e);
+    if (detail) setupDetails.push(String(detail));
+    return engineErrorText(e);
+  };
+  const sink = { write: (s) => {
+    for (const line of String(s).split("\n")) {
+      if (line.startsWith("  details: ")) setupDetails.push(line.slice("  details: ".length));
+      else if (line.trim()) setupNotes.push(line.trim());
+    }
+    return true;
+  } };
   let io;
   let renderer;
   let engine;
@@ -321,7 +334,7 @@ export async function cmdTui(opts = {}) {
           { label: "No", hint: "ignore its hooks and settings", value: "untrusted" },
         ],
       });
-      if (trust) await engine.writeConfig([["projects", { [cwd]: { trust_level: trust } }, "upsert"]]).catch((e) => setupNotes.push(`trust not saved: ${e.message}`));
+      if (trust) await engine.writeConfig([["projects", { [cwd]: { trust_level: trust } }, "upsert"]]).catch((e) => setupNotes.push(`trust not saved: ${keepStartupError(e)}`));
     }
 
     const restart = async () => {
@@ -391,8 +404,11 @@ export async function cmdTui(opts = {}) {
         const listed = await engine.threads.list({ cwd, limit: 1, modelProviders: [], sourceKinds: ["cli", "vscode", "exec", "appServer"] }).catch(() => null);
         id = listed?.[0]?.id ?? null;
       }
-      if (id) await session.resume(id).catch((e) => intro.push([{ text: `  Could not resume: ${sanitize(e.message, "transcript")}`, style: T.warning }]));
+      if (id) await session.resume(id).catch((e) => intro.push([{ text: `  Could not resume: ${sanitize(keepStartupError(e), "transcript")}`, style: T.warning }]));
     }
+
+    for (const detail of setupDetails.slice(-50)) session.state.notices.push({ level: "info", code: "startup.details", message: "Engine startup details. Details: /warnings", detail, at: Date.now() });
+    if (session.state.notices.length > 50) session.state.notices.splice(0, session.state.notices.length - 50);
 
     const adMemory = opts.memory === false ? null : await import("../memory/episodic.mjs").catch(() => null);
     let ad = createAdLayer({ cwd, home: opts.adHome ?? homedir(), memory: adMemory, cli: CLI });
@@ -432,9 +448,8 @@ export async function cmdTui(opts = {}) {
           delete actions.onTyping;
         }
         // The project's own skills (<folder>/.claude/skills) are the new folder's now.
-        await session.engine.setSkillRoots(skillRoots({ cwd, engineHome: session.engine.home })).catch((e) => {
-          throw new Error(`Skills weren't reloaded for the new folder: ${e.message}`);
-        });
+        // Preserve RPC error codes and raw details for /warnings.
+        await session.engine.setSkillRoots(skillRoots({ cwd, engineHome: session.engine.home }));
       },
       login: async (arg) => {
         const code = await handoff(io, renderer, () => runChild(process.execPath, [CLI, "auth", "login", ...splitArgs(arg || "chatgpt")], { cwd }), app);
@@ -485,7 +500,7 @@ export async function cmdTui(opts = {}) {
     return 0;
   } catch (e) {
     io?.restore();
-    err.write(`ad tui: ${e.message}\n`);
+    err.write(cliErrorLines("tui", e));
     return 1;
   } finally {
     app?.dispose();

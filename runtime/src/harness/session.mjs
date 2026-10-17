@@ -32,7 +32,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_APPROVAL_POLICY, DEFAULT_SANDBOX, engineEvents, engineHome, isAutoModel } from "../engine/index.mjs";
+import { DEFAULT_APPROVAL_POLICY, DEFAULT_SANDBOX, engineEvents, engineHome, isAutoModel, engineErrorText, engineErrorDetail, engineNoticeText } from "../engine/index.mjs";
 import { acquireLock, DEFAULT_LOCK_DIR } from "../lock.mjs";
 
 export { DEFAULT_LOCK_DIR };
@@ -169,8 +169,8 @@ export function createSession({
   const doneWaiters = new Map(); // turnId → [resolve]
 
   const change = (what) => emitter.emit("change", { what, state });
-  const notice = (level, code, message) => {
-    state.notices.push({ level, code, message, at: Date.now() });
+  const notice = (level, code, message, detail = null) => {
+    state.notices.push({ level, code, message, ...(detail ? { detail: String(detail) } : {}), at: Date.now() });
     if (state.notices.length > NOTICE_CAP) state.notices.splice(0, state.notices.length - NOTICE_CAP);
     change("notices");
   };
@@ -214,7 +214,7 @@ export function createSession({
     if (ev.type === "account") state.account = { ...(state.account ?? {}), ...ev.account };
     else if (ev.type === "rateLimits") state.rateLimits = ev.limits;
     else if (ev.type === "mcp.status") state.mcp.set(ev.server, { status: ev.status, error: ev.error, failureReason: ev.failureReason });
-    else if (ev.type === "notice") return notice(ev.level, ev.code, ev.message);
+    else if (ev.type === "notice") return notice(ev.level, ev.code, engineNoticeText(ev), [ev.message, ev.details && JSON.stringify(ev.details)].filter(Boolean).join("\n"));
     else return;
     change(ev.type);
   }
@@ -423,9 +423,9 @@ export function createSession({
         if (root && ev.code === "autoReview.denied" && ev.details?.review?.reviewId) {
           const r = ev.details.review;
           state.denials = [r, ...state.denials.filter((d) => d.reviewId !== r.reviewId)].slice(0, MAX_DENIALS);
-          return notice(ev.level, ev.code, `${ev.message} /approve allows one retry.`);
+          return notice(ev.level, ev.code, `${engineNoticeText(ev)} /approve allows one retry.`, [ev.message, ev.details && JSON.stringify(ev.details)].filter(Boolean).join("\n"));
         }
-        return notice(ev.level, ev.code, ev.message);
+        return notice(ev.level, ev.code, engineNoticeText(ev), [ev.message, ev.details && JSON.stringify(ev.details)].filter(Boolean).join("\n"));
       case "hook.started":
       case "hook.completed":
         // ad's hook rows (recalled memory, guard blocks…) for the front end.
@@ -446,6 +446,7 @@ export function createSession({
   async function onExit(info, from) {
     if (closed || from !== eng || restarting) return;
     state.engine = { ...state.engine, state: "crashed", exitCode: info?.code ?? null };
+    if (eng.exitError) notice("error", "engine.exited", engineErrorText(eng.exitError), engineErrorDetail(eng.exitError));
     // The running turn won't complete: end it as failed for whoever waits.
     if (state.activeTurnId) {
       const t = turnOf(state.activeTurnId);
@@ -491,7 +492,7 @@ export function createSession({
           wire();
         } catch (err) {
           await fresh?.close?.()?.catch?.(() => {});
-          notice("error", "engine.restartFailed", `The engine could not be restarted: ${err.message}`);
+          notice("error", "engine.restartFailed", `The engine could not be restarted: ${engineErrorText(err)}`, engineErrorDetail(err));
           continue;
         }
         if (state.thread) {
@@ -501,10 +502,10 @@ export function createSession({
           } catch (err) {
             if (closed) return void (await eng.close?.());
             if (eng.exitError) {
-              notice("error", "engine.restartFailed", `The engine stopped again: ${err.message}`);
+              notice("error", "engine.restartFailed", `The engine stopped again: ${engineErrorText(err)}`, engineErrorDetail(err));
               continue; // the new engine died too
             }
-            notice("warn", "thread.notResumed", `The conversation could not be resumed (${err.message}); the next prompt starts a new one.`);
+            notice("warn", "thread.notResumed", `The conversation could not be resumed (${engineErrorText(err, { details: null })}); the next prompt starts a new one.`, engineErrorDetail(err));
             const queued = state.queue;
             detach();
             resetThreadState();
@@ -577,7 +578,7 @@ export function createSession({
       change("thread");
       if (identity && !engineHome.isManaged(eng.home)) {
         // A home ad didn't create gets no managed instructions file, so the agent learns who it is here (design D5).
-        eng.threads.inject(t.threadId, [{ type: "message", role: "developer", content: [{ type: "input_text", text: identity }] }]).catch((err) => notice("warn", "identity.notInjected", `The agent's identity couldn't be given to this conversation (${err.message}).`));
+        eng.threads.inject(t.threadId, [{ type: "message", role: "developer", content: [{ type: "input_text", text: identity }] }]).catch((err) => notice("warn", "identity.notInjected", `The agent's identity couldn't be given to this conversation (${engineErrorText(err, { details: null })}).`, engineErrorDetail(err)));
       }
       return t.threadId;
     })().finally(() => {
@@ -661,7 +662,7 @@ export function createSession({
         if (t.status === "inProgress") state.activeTurnId ??= turnId;
         if (pendingInterrupt) {
           pendingInterrupt = false;
-          eng.interrupt(threadId, turnId).catch((err) => notice("warn", "interrupt.failed", err.message));
+          eng.interrupt(threadId, turnId).catch((err) => notice("warn", "interrupt.failed", engineErrorText(err), engineErrorDetail(err)));
         }
         return { turnId };
       } catch (err) {
@@ -753,12 +754,12 @@ export function createSession({
     change("queue");
     const cid = randomUUID();
     state.echoes.set(cid, next.text);
-    startTurn(next.input, cid).accepted.catch((err) => notice("error", "turn.start", err.message));
+    startTurn(next.input, cid).accepted.catch((err) => notice("error", "turn.start", engineErrorText(err), engineErrorDetail(err)));
   }
 
   async function interrupt() {
     if (state.activeTurnId) {
-      await eng.interrupt(state.thread.id, state.activeTurnId).catch((e) => notice("warn", "interrupt.failed", e.message));
+      await eng.interrupt(state.thread.id, state.activeTurnId).catch((e) => notice("warn", "interrupt.failed", engineErrorText(e), engineErrorDetail(e)));
       return true;
     }
     if (state.starting) {
@@ -794,7 +795,7 @@ export function createSession({
         if (eng !== asked || closed) return;
         // Without presets ad can't keep a mode it can't send: Default, as the footer then shows.
         state.mode = { kind: "default", presets: [] };
-        notice("warn", "modes.unavailable", err?.code === "FEATURE_UNAVAILABLE" ? err.message : `Plan mode is unavailable: the engine didn't list its modes (${err.message}).`);
+        notice("warn", "modes.unavailable", err?.code === "FEATURE_UNAVAILABLE" ? err.message : `Plan mode is unavailable: the engine didn't list its modes (${engineErrorText(err, { details: null })}).`, engineErrorDetail(err));
       },
     ).finally(() => change("mode"));
   }
@@ -834,7 +835,7 @@ export function createSession({
         if (state.thread?.id !== threadId) return;
         const i = modeEchoes.lastIndexOf(kind);
         if (i >= 0) modeEchoes.splice(i, 1); // no echo will come
-        notice("warn", "mode.notUpdated", `The engine didn't take the mode change yet (${err.message}); the next prompt carries it.`);
+        notice("warn", "mode.notUpdated", `The engine didn't take the mode change yet (${engineErrorText(err, { details: null })}); the next prompt carries it.`, engineErrorDetail(err));
       });
     }
     change("mode");

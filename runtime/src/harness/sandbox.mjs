@@ -8,7 +8,8 @@
 // app-server caches readiness per process, so status is read from a fresh one.
 // On macOS/Linux the engine uses Seatbelt/Landlock and nothing is needed here.
 
-import { createEngine, engineHome } from "../engine/index.mjs";
+import { cliErrorLines } from "./io.mjs";
+import { createEngine, engineHome, engineError } from "../engine/index.mjs";
 import { sandboxConsent } from "../engine/attribution.mjs";
 
 export const needsWindowsSandbox = (platform = process.platform) => platform === "win32";
@@ -36,7 +37,7 @@ export async function sandboxReadiness(engine) {
 // a failed setup would look configured and never be retried.
 export async function setupWindowsSandbox(engine, { mode = "unelevated", cwd, timeoutMs = 10 * 60_000 } = {}) {
   const r = await engine.sandbox.setup({ mode, cwd, timeoutMs });
-  if (!r.success) throw new Error(r.error ?? "sandbox setup failed");
+  if (!r.success) throw engineError(-32000, "the engine could not set up the sandbox", { raw: r.error ?? "sandbox setup failed" });
   await engine.writeConfig([["windows.sandbox", mode]]);
   return r;
 }
@@ -89,7 +90,7 @@ export async function cmdSandbox(sub, opts = {}) {
     }
     await setupWindowsSandbox(engine, { mode, cwd: opts.cwd });
   } catch (e) {
-    err.write(`ad sandbox: ${e.message}\n`);
+    err.write(cliErrorLines("sandbox", e));
     return 1;
   } finally {
     await engine?.close();
