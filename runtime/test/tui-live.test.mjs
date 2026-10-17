@@ -844,3 +844,35 @@ test("error paths live: a model rejection is mapped with raw details in /warning
     await removeWithRetry(w.root);
   }
 });
+
+test("prompt at the bottom live: the composer starts on the last rows and stays there; prompt.atBottom false keeps it under the header", { skip, timeout: 5 * 60_000 }, async () => {
+  const mock = await startMockResponses({ script: liveScript });
+  const w = world(mock.url);
+  let t;
+  const lastRow = () => t.screen().split("\n").at(-1);
+  try {
+    t = await start(w);
+    await t.until(() => t.idle(), "idle at the start");
+    assert.match(lastRow(), /\? shortcuts/, "the footer is on the screen's last row from the start");
+    t.type("PING please\r");
+    await t.until(/pong/, "the answer");
+    await t.until(() => t.idle(), "idle after the turn");
+    assert.match(lastRow(), /\? shortcuts/, "still on the last row after a turn");
+    assert.ok(t.text().indexOf("pong") > t.text().indexOf(">_ Agent Daemon"), "the answer below the header");
+    t.type("/quit\r");
+    await t.exit;
+    t.kill();
+
+    mkdirSync(join(w.home, ".agent-daemon", "tui"), { recursive: true });
+    writeFileSync(join(w.home, ".agent-daemon", "tui", "prefs.json"), JSON.stringify({ "prompt.atBottom": false }));
+    t = await start(w);
+    await t.until(() => t.idle(), "idle with the preference off");
+    assert.doesNotMatch(lastRow(), /\? shortcuts/, "off: the composer follows the transcript, like the engine's inline mode");
+    t.type("/quit\r");
+    await t.exit;
+  } finally {
+    t?.kill();
+    await mock.close();
+    await removeWithRetry(w.root);
+  }
+});

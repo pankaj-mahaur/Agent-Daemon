@@ -29,6 +29,7 @@ Agent Daemon 3.0: ad is its own product. Same agent and sign-in; conversations, 
 - Flags and env vars that choose ad's engine take `ad` (`--engine ad`, `--llm ad`, `AD_HOOK_HOST=ad`); `codex` still works until 3.1.
 - `ad sandbox setup --elevated` asks before it changes the machine (`--yes` to skip the question).
 - The terminal UI says "the engine" where it used to name it; the sign-in picker lists an OpenAI API key and OpenRouter first.
+- `ad tui`: the prompt sits at the bottom of the screen from the start, and the conversation fills the space above it; history still goes into your terminal's own scrollback. `"prompt.atBottom": false` in `~/.agent-daemon/tui/prefs.json` brings back the old behaviour.
 - The engine-upgrade workflow and skill replace codex-upgrade; upgrade PRs regenerate and commit the protocol notifications list, and the old token secret still works.
 
 ### Removed

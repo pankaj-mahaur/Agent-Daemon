@@ -282,6 +282,7 @@ export async function cmdTui(opts = {}) {
   } };
   let io;
   let renderer;
+  let adPrefs;
   let engine;
   let session;
   let app;
@@ -290,7 +291,9 @@ export async function cmdTui(opts = {}) {
     io = createIo();
     const caps = await io.enter();
     setWidthProfile(await probeWidthProfile({ io }));
-    renderer = createRenderer({ io, caps, depth: colorDepth({ isTTY: true }), reflow: reflowModel(), resizeSource: process.stdout, hyperlinks: terminalName() !== "unknown" });
+    // The prompt sits on the screen's last rows unless prefs.json says "prompt.atBottom": false.
+    adPrefs = createPrefs({ file: opts.prefsFile ?? DEFAULT_PREFS_FILE });
+    renderer = createRenderer({ io, caps, depth: colorDepth({ isTTY: true }), reflow: reflowModel(), pinBottom: adPrefs.get("prompt.atBottom", true) !== false, resizeSource: process.stdout, hyperlinks: terminalName() !== "unknown" });
     await renderer.start();
     renderer.frame({ lines: [[{ text: "Starting the engine\u{2026}", style: T.dim }]] });
 
@@ -348,7 +351,7 @@ export async function cmdTui(opts = {}) {
     let cp = createCheckpoints({ cwd });
     let undoKit = (await cp.repo().catch(() => null)) ? checkpointWiring(cp, { cwd }) : null;
     // Settings: the engine's own (its config.toml in ad's home) and ad's (prefs.json).
-    const settings = { engine: createEngineSettings({ engine: () => session.engine }), ad: createPrefs({ file: opts.prefsFile ?? DEFAULT_PREFS_FILE }) };
+    const settings = { engine: createEngineSettings({ engine: () => session.engine }), ad: adPrefs };
     // modes: the plan mode, on the experimental allowlist this engine opted into (parity P0).
     // Default's mask keeps the configured effort, as the engine's own Default mode does.
     session = createSession({ engine, cwd, model: opts.model, sandbox: opts.sandbox, restart, maxRestarts: 3, hooks: undoKit?.hooks ?? {}, modes: true, planEffort: () => settings.engine.get("plan_mode_reasoning_effort") ?? null, configEffort: () => settings.engine.get("model_reasoning_effort") ?? null, ...(opts.lockDir ? { lockDir: opts.lockDir } : {}), identity: engineHome.isManaged(engine.home) ? null : await harnessIdentity(engine).catch(() => null) }); // no identity: the session starts without it

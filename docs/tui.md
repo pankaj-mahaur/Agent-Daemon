@@ -2,7 +2,7 @@
 
 `ad tui` is a terminal UI for agent-daemon's harness. It drives the same pinned engine as `ad chat`, in ad's own engine home (`~/.agent-daemon/engine`), with ad's memory, hooks and skills wired in. Your own `~/.codex` is never used.
 
-It runs inline, like the engine's own UI. Finished output goes into your terminal's normal scrollback, so scrolling, selecting and copying work as usual. Only the bottom of the screen (the running turn, the composer and the footer) is redrawn.
+It runs inline: finished output goes into your terminal's normal scrollback, so scrolling, selecting and copying work as usual. Only the bottom of the screen (the running turn, the composer and the footer) is redrawn. The composer sits on the screen's last rows from the start, and the conversation fills the space above it. To have it follow the conversation instead, as in the engine's own inline mode, set `"prompt.atBottom": false` in `~/.agent-daemon/tui/prefs.json`.
 
 If something gets in the way, `ad chat` is the plain line mode and stays available. How it is built, and the safety model behind `/undo`: [tui-architecture.md](tui-architecture.md).
 
@@ -507,7 +507,7 @@ Esc Esc rewinds the conversation only; `/undo` rewinds the conversation **and** 
 | `~/.agent-daemon/tui/state.json` | when you last used each folder, for "Since last time" |
 | `~/.agent-daemon/tui/chat-hint-shown` | marks the one-time `ad chat` hint (that bare `ad` opens the TUI) as shown |
 | `~/.agent-daemon/locks/` | conversation locks, so two `ad`s never write one conversation |
-| `~/.agent-daemon/tui/prefs.json` | ad's own TUI preferences (owner-only), for what the engine has no setting for: `clear.keepScrollback` |
+| `~/.agent-daemon/tui/prefs.json` | ad's own TUI preferences (owner-only), for what the engine has no setting for: `clear.keepScrollback`, `prompt.atBottom` |
 | `~/.agent-daemon/engine/config.toml` | folder trust (`projects`), as the engine keeps it, and the engine's own TUI settings (`tui.status_line`, `tui.terminal_title`, `tui.theme`, `tui.vim_mode_default`): an item ad can't show stays there (`/warnings` lists it). `tui.keymap` is read, never written by ad |
 | `~/.agent-daemon/engine/skills/` | the mirror of `~/.claude/skills` for the engine |
 | `<repo>/.git/ad-checkpoint-index`, `refs/ad/checkpoints/` | `/undo` snapshots |

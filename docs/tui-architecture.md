@@ -68,6 +68,7 @@ The rule between layers: **only `engine/codex/` knows the engine's protocol.** E
 
 The UI draws **inline**, like the engine's default mode: finished output is written into the terminal's own scrollback (so it scrolls, searches and copies like any terminal output), and only a small live region at the bottom is redrawn.
 
+- **The prompt at the bottom.** The live region ends on the screen's last row from the start (ad's choice; the engine's inline mode lets it follow the transcript, which `"prompt.atBottom": false` brings back). Committed lines fill the blank rows above it from the top, then scroll as usual. The renderer counts those blank rows as a lower bound: after a width change, which may reflow history into them, it counts none, so it never writes over history.
 - **Committed vs live.** An item is committed once it can no longer change (a finished command, a closed message). A streaming answer commits line by line as newlines arrive; only the unfinished tail stays live. Committed lines are never repainted.
 - **Markdown streams safely.** The rendering of the committed lines plus the live tail always equals the rendering of the text so far; tables and an open code fence stay live until complete.
 - **Resizes.** Terminals reflow scrollback behind the program's back. The renderer debounces, re-anchors with a cursor-position query, and never reflows text that has already been committed.
