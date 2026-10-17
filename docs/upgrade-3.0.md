@@ -13,7 +13,8 @@
 
 Nothing moves: the folder keeps its name until you run `ad migrate`.
 
-- `ad migrate` (interactive terminal only) renames `codex-home/` to `engine/` and leaves a link named `codex-home` pointing at it; `ad migrate --undo` reverses it. In Git Bash run `winpty ad migrate` (or use PowerShell or Windows Terminal).
+- `ad migrate` (interactive terminal only) renames `codex-home/` to `engine/` and leaves a link named `codex-home` pointing at it; `ad migrate --undo` reverses it. Close running ad sessions first. In Git Bash run `winpty ad migrate` (or use PowerShell or Windows Terminal).
+- If your `codex-home` is a link you made (to another drive, say), ad uses it as it is and never replaces it.
 - A folder you chose with `AD_ENGINE_DIR` is never touched.
 
 ## Renamed

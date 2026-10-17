@@ -167,7 +167,7 @@ export const migrateMessages = Object.freeze({
     return `AD_CODEX_HOME still works (its new name is AD_ENGINE_DIR). Using ${path}; nothing moved.`;
   },
   oneEmpty({ name }) {
-    return `Found an empty second engine folder from an older version; set it aside as ${name}.`;
+    return `Found a second, empty engine folder; set it aside as ${name}.`;
   },
 });
 

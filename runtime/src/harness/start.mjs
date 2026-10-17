@@ -28,6 +28,7 @@ export async function startHarnessEngine({ cwd, home, command, clientVersion, st
   const engineOpts = { cwd, home, command, clientVersion, detached, engineArgs, experimental, interactive, env: { ...providerEnv(store), ...(env ?? {}) }, onApproval };
   let engine = await createEngine(engineOpts);
   try {
+    reportHomeEvents(engine.homeEvents, err, notesFileFinal);
     const acct = await engine.account();
     if (acct.requiresOpenaiAuth && !acct.account) {
       await engine.close();
@@ -58,6 +59,19 @@ export async function startHarnessEngine({ cwd, home, command, clientVersion, st
   } catch (e) {
     await engine.close();
     throw e;
+  }
+}
+
+// What the start did to the engine's folders. A set-aside folder is said every
+// time it happens; a link that can't be made (a drive without links) once.
+export function reportHomeEvents(events = [], err, notesFile) {
+  for (const ev of events) {
+    if (ev.type === "setAside") err.write(`[agent-daemon] ${migrateMessages.oneEmpty({ name: ev.path })}\n`);
+    if (ev.type === "linkFailed") {
+      const text = `couldn't make ${ev.link}, the link older versions of ad need (${ev.error}). ad works without it; \`ad doctor\` shows it.`;
+      if (notesFile === null) err.write(`[agent-daemon] ${text}\n`);
+      else noteOnce("home.linkFailed", text, { err, ...(notesFile ? { file: notesFile } : {}) });
+    }
   }
 }
 

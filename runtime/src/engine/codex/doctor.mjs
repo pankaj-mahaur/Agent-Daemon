@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pinnedCodexVersion, resolveCodexCommand } from "./app-server.mjs";
 import { codexEnv, homeOverride, isManagedHome } from "./home.mjs";
-import { entryKind, homeFacts, OLD_HOME_NAME, resolveHomeState } from "./home-resolve.mjs";
+import { entryKind, homeFacts, linkTarget, OLD_HOME_NAME, resolveHomeState } from "./home-resolve.mjs";
 
 export function parseCodexVersion(text) {
   return String(text).match(/(\d+\.\d+\.\d+(?:-[\w.]+)?)/)?.[1] ?? null;
@@ -72,10 +72,11 @@ export function engineChecks({ env = process.env, run = execFileSync, root } = {
     checks.push({ code: "engine.folderFacts", ok: true, data: { which: "new name", ...homeFacts(state.path) } });
   } else if (state) {
     const exists = existsSync(state.path);
-    checks.push({ code: "engine.home", ok: true, data: { path: state.path, exists, managed: exists && isManagedHome(state.path), state: state.state } });
+    checks.push({ code: "engine.home", ok: true, data: { path: state.path, exists, managed: exists && isManagedHome(state.path), state: state.state, sameFolder: state.sameFolder === true } });
     if (state.state === "new") {
       const link = join(dirname(state.path), OLD_HOME_NAME);
-      checks.push({ code: "engine.link", ok: true, data: { link, kind: entryKind(link), migratedAt: readMigrated(dirname(state.path)) } });
+      const kind = entryKind(link);
+      checks.push({ code: "engine.link", ok: true, data: { link, kind, target: kind === "missing" ? null : linkTarget(link), migratedAt: readMigrated(dirname(state.path)), platform: process.platform } });
     }
   }
   const compat = codexCompat();

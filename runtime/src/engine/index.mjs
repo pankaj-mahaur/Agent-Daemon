@@ -11,7 +11,7 @@ import { CodexAppServer, installedCodexVersion, pinnedCodexVersion } from "./cod
 import { engineError } from "./codex/errors.mjs";
 import { APPROVAL_METHODS, approvalResponse } from "./codex/approvals.mjs";
 import { canonicalPath, codexEnv, defaultCodexHome, ensureCodexHome, homeOverride, isManagedHome, prepareDefaultHome, MANAGED_MARKER } from "./codex/home.mjs";
-import { defaultRoot, entryKind, homeFacts, NEW_HOME_NAME, OLD_HOME_NAME, removeLink, createLegacyLink, resolveHomeState } from "./codex/home-resolve.mjs";
+import { defaultRoot, entryKind, homeFacts, linkTarget, NEW_HOME_NAME, OLD_HOME_NAME, removeLink, createLegacyLink, resolveHomeState, sameFolder } from "./codex/home-resolve.mjs";
 import { acquireLockWithin } from "../lock.mjs";
 import { adaptNotification, classifyRequest, collaborationMode, elicitationResponse, execDisplay, guardianDenialEvent, normalizeItem } from "./codex/events.mjs";
 import { experimentalCapabilities } from "./codex/surface.mjs";
@@ -466,7 +466,9 @@ export class Engine extends EventEmitter {
         throw err;
       }
       try {
-        this.home = prepareDefaultHome({ root: this.opts.homeRoot, autoPickEmpty: this.opts.interactive === true, env: this.env });
+        // What happened to the folders on the way ({type: "setAside" | "linkFailed", …}): the caller tells the user.
+        this.homeEvents = [];
+        this.home = prepareDefaultHome({ root: this.opts.homeRoot, autoPickEmpty: this.opts.interactive === true, env: this.env, onEvent: (e) => this.homeEvents.push(e) });
       } finally {
         release();
       }
@@ -979,6 +981,10 @@ export const engineHome = {
   entryKind: (p) => entryKind(p),
   removeLink: (p) => removeLink(p),
   createLink: (target, link) => createLegacyLink(target, link),
+  /** Where a link points (absolute), or "?". */
+  linkTarget: (p) => linkTarget(p),
+  /** True when both paths open the same existing folder. */
+  sameFolder: (a, b) => sameFolder(a, b),
 };
 
 /** Turning the engine's items and requests into ad's shapes. */
@@ -1034,11 +1040,16 @@ const DOCTOR_WORDS = {
   }),
   "engine.home": (d) => ({
     name: "Engine home",
-    note: !d.exists ? `${d.path} (created on the first run)` : !d.managed ? `${d.path} (not created by ad, so ad never changes it)` : d.state === "old" ? `${d.path} (older folder name; nothing is wrong; ad migrate is optional)` : d.path,
+    note: d.sameFolder ? `${d.path} (the folder named engine is a link to it; both names open this one folder)` : !d.exists ? `${d.path} (created on the first run)` : !d.managed ? `${d.path} (not created by ad, so ad never changes it)` : d.state === "old" ? `${d.path} (older folder name; nothing is wrong; ad migrate is optional)` : d.path,
   }),
   "engine.link": (d) => ({
     name: "Engine home link",
-    note: d.kind === "link" ? `${d.link} (a link older versions of ad need${d.migratedAt ? `; made by ad migrate on ${d.migratedAt.slice(0, 10)}` : ""})` : d.kind === "dangling" ? `${d.link} points nowhere; the next ad start replaces it` : `no link at ${d.link}: an ad 2.x would start a new, empty folder`,
+    note:
+      d.kind === "link"
+        ? `${d.link} (a link older versions of ad need${d.migratedAt ? `; made by ad migrate on ${d.migratedAt.slice(0, 10)}` : ""}${d.platform === "win32" ? "; delete it only with rmdir, never with Remove-Item -Recurse" : ""})`
+        : d.kind === "missing"
+          ? `no link at ${d.link}: the next ad start makes it (without it an ad 2.x would start a new, empty folder)`
+          : `${d.link} points to ${d.target ?? "?"}, which ${d.kind === "unreachable" ? "isn't reachable right now" : d.kind === "dangling" ? "doesn't exist" : "isn't a folder"}`,
   }),
   "engine.twoFolders": (d) => ({ name: "Engine home", note: `two engine folders: ${d.oldPath} and ${d.newPath}. Rename the one you don't want (for example to engine.old); delete nothing until you've checked.` }),
   "engine.folderFacts": (d) => ({ name: `Engine folder (${d.which})`, note: `${d.path}: ${d.conversations} conversations, last used ${d.lastUsed ? d.lastUsed.slice(0, 10) : "never"}, ${d.signedIn ? "signed in" : "not signed in"}` }),

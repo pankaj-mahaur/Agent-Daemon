@@ -17,7 +17,7 @@ Agent Daemon 3.0: ad is its own product. Same agent and sign-in; conversations, 
 ### Added
 
 - A brand lint (`npm run lint:brand`; CI runs it in strict mode): the engine's name stays in its allowed zone (the engine adapter, the dependency pin, the two prompt files reproduced from upstream, the upgrade runbook, descriptive statements about other agents), with an allowlist that carries a reason for every exception. The texts that may name the engine on screen now live in one attribution module. Groundwork for 3.0, where ad's screens, docs and settings say "the engine" throughout.
-- `ad migrate` renames the engine's folder to `~/.agent-daemon/engine` (optional; `--undo` reverses it). New installs use that name and keep a link with the old one.
+- `ad migrate` renames the engine's folder to `~/.agent-daemon/engine` (optional; `--undo` reverses it). New installs use that name and keep a link with the old one. ad never removes or replaces a `codex-home` link you made: if it points to a drive that isn't connected, ad refuses to start until you reconnect it. A start sets aside only a second folder holding nothing but ad's own first-run files, and says so. A missing link is made again on the next start (or by `ad migrate`). `ad migrate` and `--undo` wait until no ad session is running.
 - `ad about`: what ad runs on (versions, the engine, licenses, settings path).
 - The agent is told what it is: Agent Daemon's agent, on ad's engine, with the sign-in route (in the engine folder's AGENTS.md).
 

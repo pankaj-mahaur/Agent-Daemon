@@ -48,14 +48,26 @@ export function defaultCodexHome(env = process.env, { root } = {}) {
 
 /**
  * Resolves the default folder (write mode) and bootstraps a fresh install:
- * engine/ plus the codex-home link. Call it under the `migrate` lock.
+ * engine/ plus the codex-home link. A missing link next to engine/ is made
+ * again (a crash or a failed first start can leave none, and without it a
+ * rolled-back 2.x would start an empty folder). The link is best effort: the
+ * engine works without it. Call it under the `migrate` lock.
+ * `onEvent` hears {type: "setAside", path} and {type: "linkFailed", link, error}.
  * → the folder's path.
  */
-export function prepareDefaultHome({ root = defaultRoot(), autoPickEmpty = false, env = process.env } = {}) {
+export function prepareDefaultHome({ root = defaultRoot(), autoPickEmpty = false, env = process.env, onEvent = () => {} } = {}) {
   const r = resolveHomeState({ root, write: true, autoPickEmpty });
-  const { created } = ensureCodexHome(r.path, { env });
+  if (r.setAside) onEvent({ type: "setAside", path: r.setAside });
+  ensureCodexHome(r.path, { env });
   const link = join(root, OLD_HOME_NAME);
-  if (r.state === "fresh" && created && entryKind(link) === "missing") createLegacyLink(r.path, link);
+  if (r.linkError) onEvent({ type: "linkFailed", link, error: r.linkError });
+  else if ((r.state === "fresh" || r.state === "new") && entryKind(link) === "missing") {
+    try {
+      createLegacyLink(r.path, link);
+    } catch (err) {
+      onEvent({ type: "linkFailed", link, error: err.message });
+    }
+  }
   return r.path;
 }
 

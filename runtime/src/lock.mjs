@@ -1,7 +1,7 @@
 // One holder at a time for a named lock (O_EXCL file, heartbeat, takeover of a stale holder serialised by a `.takeover` file). Used for conversation threads (`lockThread` in `harness/session.mjs`) and for the engine's folder (the `migrate` lock).
 
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -66,15 +66,27 @@ export function acquireLock(name, opts = {}) {
     try {
       let holder = null;
       let fresh = true;
+      let gone = false;
       try {
         fresh = now() - statSync(file).mtimeMs < staleMs;
         holder = JSON.parse(readFileSync(file, "utf8"));
       } catch (e) {
-        if (e.code === "ENOENT") fresh = false;
+        if (e.code === "ENOENT") {
+          fresh = false;
+          gone = true;
+        }
       }
       if (!holder && fresh) throw busy(null);
       if (holder && fresh && isAlive(holder.pid)) throw busy(holder);
-      writeFileSync(file, me); // stale: take it
+      if (gone) {
+        // Released meanwhile: another process may have just taken it with O_EXCL. Never overwrite that.
+        try {
+          writeFileSync(file, me, { flag: "wx" });
+        } catch (e) {
+          if (e.code === "EEXIST") throw busy(null);
+          throw e;
+        }
+      } else writeFileSync(file, me); // stale: take it
     } finally {
       rmSync(guard, { force: true });
     }
@@ -99,6 +111,40 @@ export function acquireLock(name, opts = {}) {
       // Already gone, or someone else's now.
     }
   };
+}
+
+/**
+ * The locks in `dir` held right now, by the same test as acquireLock (a fresh
+ * heartbeat and a live process; an unreadable fresh file counts as held) →
+ * [{name, pid}]. `except` names locks to skip (the caller's own).
+ */
+export function liveLocks({ dir = DEFAULT_LOCK_DIR, except = [], isAlive = alive, now = Date.now, staleMs = 120_000 } = {}) {
+  let files;
+  try {
+    files = readdirSync(dir);
+  } catch {
+    return []; // no lock folder: nothing held
+  }
+  const skip = new Set(except.map((n) => String(n).replace(/[^A-Za-z0-9_.-]/g, "_")));
+  const held = [];
+  for (const f of files) {
+    if (!f.endsWith(".lock") || skip.has(f.slice(0, -5))) continue;
+    const file = join(dir, f);
+    let mtime;
+    try {
+      mtime = statSync(file).mtimeMs;
+    } catch {
+      continue; // released while we looked
+    }
+    if (now() - mtime >= staleMs) continue;
+    try {
+      const holder = JSON.parse(readFileSync(file, "utf8"));
+      if (isAlive(holder.pid)) held.push({ name: holder.threadId ?? f.slice(0, -5), pid: holder.pid });
+    } catch {
+      held.push({ name: f.slice(0, -5), pid: "unknown" }); // mid-write: someone is taking it
+    }
+  }
+  return held;
 }
 
 /** acquireLock, retried every stepMs for up to waitMs while another process holds it. */

@@ -602,17 +602,17 @@ Other choices: `nvim`, `vim`, `nano`, or Notepad++ with `-multiInst -nosession`.
 
 **Cause:** an older ad started after the `codex-home` link was removed, so both `codex-home/` and `engine/` are real folders now.
 
-**Fix:** `ad doctor` shows both folders with their last use, conversation count and sign-in. Rename the one you don't want (for example to `engine.old`); delete nothing until you've checked.
+**Fix:** `ad doctor` shows both folders with their last use, conversation count and sign-in. Rename the one you don't want (for example to `engine.old`); delete nothing until you've checked. The terminal UI picks by itself only when one folder holds nothing but ad's first-run files: it renames that one to `<name>.empty-<date>` and says so.
 
 ---
 
 ## 38. `ad migrate` says something is using the folder
 
-**Symptom:** "Not moved: something is using … Nothing changed."
+**Symptom:** "Not moved: something is using … Nothing changed.", or "Not moved: an ad session is running (pid …)."
 
-**Cause:** a file or working folder inside is held open: another Agent Daemon window, an editor's agent panel, a background loop, a terminal, or antivirus.
+**Cause:** a file or working folder inside is held open: another Agent Daemon window, an editor's agent panel, a background loop, a terminal, or antivirus. The second text means an ad session holds a conversation open.
 
-**Fix:** close it and run `ad migrate` again.
+**Fix:** close it and run `ad migrate` (or `ad migrate --undo`) again.
 
 ---
 
@@ -631,6 +631,16 @@ ad shows its own words for engine errors and notices. To see the original text, 
 For browser errors in `ad web`, read the server's terminal log: raw details stay there, and the page points to it.
 
 For "The engine reported a problem", inspect those details first. `ad doctor` shows whether the engine version is one ad was tested with.
+
+---
+
+## 40. A start says `codex-home` points to a folder that doesn't exist
+
+**Symptom:** "…codex-home points to X, which doesn't exist. Reconnect it, or remove that link (only the link: …), and start ad again.", or "…, which can't be read (EACCES)." The same can name `engine`.
+
+**Cause:** `codex-home` (or `engine`) is a link you made, to a drive or folder that isn't there right now: a USB drive, an encrypted volume that isn't unlocked yet, a network share. ad never replaces a link it didn't make, so it doesn't start over in a new, empty folder. It can also be ad's own link from before `~/.agent-daemon` moved (a renamed user profile): it still points at the old place.
+
+**Fix:** connect or unlock the drive and start ad again. If that folder is gone for good, or the link points at your old profile, remove the link (`rmdir codex-home` in `~/.agent-daemon` on Windows, `rm codex-home` elsewhere; this removes only the link). The next start makes the link again, or a new folder if there is none.
 
 ---
 

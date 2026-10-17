@@ -242,7 +242,14 @@ Loop and worker prompts are marked as non-user (`AD_WORKER=1`), so they never en
 
 New installs keep the engine's folder at `~/.agent-daemon/engine/`, plus a link named `codex-home` pointing at it (a rolled-back ad 2.x finds the same folder). Installs from before 3.0 keep their `codex-home/` folder untouched; `ad doctor` calls it the older folder name and says `ad migrate` is optional.
 
-`ad migrate` (interactive terminal only) renames `codex-home/` to `engine/` and leaves the link; `ad migrate --undo` reverses it. Nothing is ever moved without you running it: no other command renames the folder, and a folder you chose with `AD_ENGINE_DIR` is never touched. In Git Bash run `winpty ad migrate` (or use PowerShell or Windows Terminal).
+`ad migrate` (interactive terminal only) renames `codex-home/` to `engine/` and leaves the link; `ad migrate --undo` reverses it. Nothing is ever moved without you running it: no other command renames the folder, and a folder you chose with `AD_ENGINE_DIR` is never touched. In Git Bash run `winpty ad migrate` (or use PowerShell or Windows Terminal). Both refuse while an ad session is running; close it first.
+
+What a start does with these names:
+
+- A `codex-home` link you made yourself (to another drive, say) is used as it is. If its target is missing or can't be read, ad refuses to start and names the target ([troubleshooting #40](troubleshooting.md#40-a-start-says-codex-home-points-to-a-folder-that-doesnt-exist)); it never removes or replaces your link.
+- If `engine` is a link to `codex-home` (or the other way round), both names are one folder.
+- If both are real folders and one holds nothing but ad's first-run files (its marker, the one-line settings file, empty `log/` and `tmp/`), the terminal UI renames that one to `<name>.empty-<date>` and says so. Any other file or setting makes it yours, and ad asks you to choose ([troubleshooting #37](troubleshooting.md#37-two-engine-folders)).
+- If `engine/` has no `codex-home` link next to it, the start makes it again; where links can't be made, ad works without it and says so once.
 
 ---
 

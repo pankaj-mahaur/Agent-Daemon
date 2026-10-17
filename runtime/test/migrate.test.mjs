@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { migrateMessages, twoHomesRefusal } from "../src/engine/attribution.mjs";
 import { isManagedHome } from "../src/engine/codex/home.mjs";
-import { entryKind } from "../src/engine/codex/home-resolve.mjs";
+import { createLegacyLink, entryKind } from "../src/engine/codex/home-resolve.mjs";
 import { acquireLock } from "../src/lock.mjs";
 import { cmdMigrate } from "../src/harness/migrate.mjs";
 
@@ -86,7 +86,7 @@ test("1: a 2.2.0 home moves to engine/ with the old name left as a link", async 
   }
 });
 
-test("2: a rename that never succeeds keeps everything and keeps the sign-in copy", async () => {
+test("2: a rename that never succeeds keeps everything and leaves no sign-in copy behind", async () => {
   const root = tempRoot();
   try {
     const oldP = shape2_2(join(root, "codex-home"));
@@ -95,11 +95,11 @@ test("2: a rename that never succeeds keeps everything and keeps the sign-in cop
     const { code, err } = await run(root, { fs });
     assert.equal(code, 1);
     assert.match(err, /something is using/);
+    assert.match(err, /Nothing changed/);
     assert.deepEqual(collect(oldP), before, "the folder is untouched");
     assert.equal(existsSync(join(root, "engine")), false);
-    const copies = readdirSync(join(root, "backup"));
-    assert.equal(copies.length, 1, "the sign-in copy is kept");
-    assert.match(err, new RegExp(copies[0].replace(/\./g, "\\.")), "stderr names it");
+    assert.deepEqual(readdirSync(join(root, "backup")), [], "nothing moved, so no copy is left");
+    assert.doesNotMatch(err, /copy of the sign-in/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -130,6 +130,7 @@ test("4: a link that cannot be made renames the folder back", async () => {
     assert.match(err, /Couldn't move/);
     assert.deepEqual(collect(oldP), before, "a real folder again with all files");
     assert.equal(existsSync(join(root, "engine")), false);
+    assert.deepEqual(readdirSync(join(root, "backup")), [], "moved back, so no copy is left");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -309,6 +310,175 @@ test("15: undo with nothing migrated does nothing", async () => {
     const { code, out } = await run(root, { undo: true });
     assert.equal(code, 0);
     assert.match(out, /Nothing to undo/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+const link = (target, p) => createLegacyLink(target, p, { hide: false });
+
+test("17: a running ad session refuses the move, before anything is copied", async () => {
+  const root = tempRoot();
+  try {
+    const oldP = shape2_2(join(root, "codex-home"));
+    const before = collect(oldP);
+    const release = acquireLock("thread-1", { dir: join(root, "locks") });
+    try {
+      const { code, err } = await run(root);
+      assert.equal(code, 1);
+      assert.match(err, /an ad session is running/);
+      assert.match(err, /Nothing changed/);
+    } finally {
+      release();
+    }
+    assert.deepEqual(collect(oldP), before);
+    assert.equal(existsSync(join(root, "engine")), false);
+    assert.equal(existsSync(join(root, "backup")), false, "no sign-in copy made");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("18: a running ad session refuses the undo", async () => {
+  const root = tempRoot();
+  try {
+    shape2_2(join(root, "codex-home"));
+    assert.equal((await run(root)).code, 0);
+    const release = acquireLock("thread-1", { dir: join(root, "locks") });
+    try {
+      const { code, err } = await run(root, { undo: true });
+      assert.equal(code, 1);
+      assert.match(err, /ad migrate --undo/);
+    } finally {
+      release();
+    }
+    assert.equal(entryKind(join(root, "codex-home")), "link");
+    assert.equal(entryKind(join(root, "engine")), "dir");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("19: an undo whose link can't be put back says exactly where things are, and throws nothing", async () => {
+  const root = tempRoot();
+  try {
+    shape2_2(join(root, "codex-home"));
+    assert.equal((await run(root)).code, 0);
+    const fs = { ...realFs, renameSync: () => busy("rename"), createLink: () => { const e = new Error("exists"); e.code = "EEXIST"; throw e; } };
+    const { code, err } = await run(root, { undo: true, fs });
+    assert.equal(code, 1);
+    assert.match(err, /Putting the link back also failed \(exists\)/);
+    assert.ok(err.includes(join(root, "engine")), "names where the folder is");
+    assert.match(err, /nothing was deleted/);
+    assert.doesNotMatch(err, /Nothing changed/);
+    assert.equal(entryKind(join(root, "engine")), "dir", "engine/ intact");
+    assert.ok(existsSync(join(root, "engine", "auth.json")));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("20: undo leaves a codex-home link that points elsewhere alone", async () => {
+  const root = tempRoot();
+  try {
+    shape2_2(join(root, "engine"));
+    const mine = shape2_2(join(root, "mine"));
+    link(mine, join(root, "codex-home"));
+    const { code, err } = await run(root, { undo: true });
+    assert.equal(code, 2);
+    assert.match(err, /not to/);
+    assert.equal(entryKind(join(root, "codex-home")), "link", "the user's link is kept");
+    assert.equal(entryKind(join(root, "engine")), "dir");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("21: engine/ without its link: migrate makes the link, undo renames back", async () => {
+  const root = tempRoot();
+  try {
+    const newP = shape2_2(join(root, "engine"));
+    const oldP = join(root, "codex-home");
+    const { code, out } = await run(root);
+    assert.equal(code, 0);
+    assert.match(out, /Made the link/);
+    assert.equal(entryKind(oldP), "link");
+    assert.ok(existsSync(join(oldP, "auth.json")), "readable through the link");
+    const { removeLink } = await import("../src/engine/codex/home-resolve.mjs");
+    removeLink(oldP);
+    const undone = await run(root, { undo: true });
+    assert.equal(undone.code, 0);
+    assert.equal(entryKind(oldP), "dir");
+    assert.equal(existsSync(newP), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("22: a dangling engine link is named as such, not as something in use", async () => {
+  const root = tempRoot();
+  try {
+    shape2_2(join(root, "codex-home"));
+    link(join(root, "nowhere"), join(root, "engine"));
+    const { code, err } = await run(root);
+    assert.equal(code, 2);
+    assert.match(err, /doesn't exist/);
+    assert.doesNotMatch(err, /something is using/);
+    assert.equal(entryKind(join(root, "codex-home")), "dir");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("23: codex-home as the user's own link is left where it is, its target named", async () => {
+  const root = tempRoot();
+  try {
+    const mine = shape2_2(join(root, "mine"));
+    link(mine, join(root, "codex-home"));
+    const { code, out } = await run(root);
+    assert.equal(code, 0);
+    assert.match(out, /your own link/);
+    assert.ok(out.includes("mine"));
+    assert.equal(existsSync(join(root, "engine")), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("24: engine/ as a link to codex-home: one folder, nothing to move", async () => {
+  const root = tempRoot();
+  try {
+    const oldP = shape2_2(join(root, "codex-home"));
+    link(oldP, join(root, "engine"));
+    const { code, out } = await run(root);
+    assert.equal(code, 0);
+    assert.match(out, /both names open the same folder/);
+    assert.equal(entryKind(oldP), "dir");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("25: a real folder that appears at codex-home mid-move is never removed by the roll-back", async () => {
+  const root = tempRoot();
+  try {
+    const oldP = shape2_2(join(root, "codex-home"));
+    const fs = {
+      ...realFs,
+      createLink: (_target, p) => {
+        mkdirSync(p);
+        writeFileSync(join(p, "someone-elses.txt"), "keep\n");
+        const e = new Error("exists");
+        e.code = "EEXIST";
+        throw e;
+      },
+    };
+    const { code, err } = await run(root, { fs });
+    assert.equal(code, 1);
+    assert.match(err, /Moving it back also failed/);
+    assert.equal(readFileSync(join(oldP, "someone-elses.txt"), "utf8"), "keep\n", "the new folder survives");
+    assert.ok(existsSync(join(root, "engine", "auth.json")), "the moved folder is intact");
+    assert.equal(readdirSync(join(root, "backup")).length, 1, "the sign-in copy is kept when the roll-back failed");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
