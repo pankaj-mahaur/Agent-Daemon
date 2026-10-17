@@ -722,6 +722,9 @@ test("Part 8 live: /vim, editing in Normal and Insert, and the prompt that reach
 test("Part 9 live: /theme saves tui.theme through the real engine, and code is coloured", { skip, timeout: 10 * 60_000 }, async () => {
   const mock = await startMockResponses({ script: liveScript });
   const w = world(mock.url);
+  // This assertion needs a colour-capable terminal, independent of the runner.
+  delete w.env.NO_COLOR;
+  w.env.TERM = "xterm-256color";
   let t;
   try {
     t = await start(w);
@@ -792,6 +795,51 @@ test("Part 10 live: /recap from a temporary thread with no tools or hooks; /suba
     assert.equal((await t.exit).exitCode, 0);
   } finally {
     for (const k of launched.splice(0)) k();
+    await mock.close();
+    await removeWithRetry(w.root);
+  }
+});
+
+
+test("error paths live: signed-out first run has a clean sign-in picker", { skip, timeout: 60_000 }, async () => {
+  const mock = await startMockResponses();
+  const w = world(mock.url);
+  let t;
+  try {
+    // Only files in this test's throwaway home; no real provider or login.
+    writeFileSync(join(w.codexHome, "config.toml"), 'cli_auth_credentials_store = "file"\n');
+    for (const k of ["OPENAI_API_KEY", "OPENROUTER_API_KEY", "AD_ENGINE_DIR", "AD_ENGINE_BIN"]) delete w.env[k];
+    t = await launch(w);
+    await t.until(/Sign in[\s\S]*OpenAI API key[\s\S]*OpenRouter[\s\S]*ChatGPT/, "the sign-in picker");
+    assert.deepEqual(screenHits(t.text(), { allow: brandPatterns() }), []);
+    t.type("\x1b");
+    await t.exit;
+  } finally {
+    t?.kill();
+    await mock.close();
+    await removeWithRetry(w.root);
+  }
+});
+
+test("error paths live: a model rejection is mapped with raw details in /warnings", { skip, timeout: 90_000 }, async () => {
+  const raw = `${ENGINE.name}: model nope does not exist`;
+  const mock = await startMockResponses({ script: () => [ev.created(), ev.failed("missing-model", raw)] });
+  const w = world(mock.url);
+  let t;
+  try {
+    writeMockCodexHome(w.codexHome, { url: mock.url, model: "nope" });
+    t = await start(w);
+    t.type("PING missing model\r");
+    await t.until(/The engine sent a notice|The engine reported a problem/, "mapped model rejection");
+    await t.until(() => t.idle(), "idle after the failure");
+    assert.ok(mock.requests.some((req) => req.model === "nope"), "the backend saw the unknown model");
+    assert.deepEqual(screenHits(t.text(), { allow: brandPatterns() }), []);
+    t.type("/warnings\r");
+    await t.until(/details:.*model nope does not exist/, "raw model rejection");
+    t.type("/quit\r");
+    await t.exit;
+  } finally {
+    t?.kill();
     await mock.close();
     await removeWithRetry(w.root);
   }
