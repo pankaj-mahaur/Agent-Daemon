@@ -2,7 +2,7 @@
 
 [![test](https://github.com/pankaj-mahaur/Agent-Daemon/actions/workflows/test.yml/badge.svg)](https://github.com/pankaj-mahaur/Agent-Daemon/actions/workflows/test.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![version](https://img.shields.io/badge/version-2.2.0-green.svg)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-3.0.0-green.svg)](CHANGELOG.md)
 [![harnesses](https://img.shields.io/badge/harnesses-Claude%20Code%20%7C%20Codex%20%7C%20Cursor-purple.svg)](#cross-harness-support)
 
 **Agent Daemon.** A terminal coding agent that remembers. Type `ad` in a project: it works in your repo, runs commands in a sandbox, asks before going beyond it (see [Safety model](#production-safety)), and keeps what it learns. It also gives Claude Code the same memory, guards and skills. To run the agent yourself you need an OpenAI API key, an OpenRouter key or a ChatGPT plan; the Claude Code memory and guards need none.
@@ -13,13 +13,15 @@ Ships with a full **team coordination layer**: spawn worker agents (sandboxed en
 
 Skills evolve too: [GEPA](runtime/src/digest/gepa/README.md) (Genetic-Pareto Prompt Evolution) reads execution traces and proposes Pareto-optimal skill refinements that you accept or reject via `agent-daemon review`.
 
+> **v3.0.0 — ad is its own product.** Same agent and sign-in; your conversations, skills and settings carry over. See the [upgrade guide](docs/upgrade-3.0.md) and [release notes](CHANGELOG.md#300--2026-10-17).
+
 > **v1.0.0** is the stable Claude Code memory runtime (hooks, memory, skills, GEPA, teams). See [CHANGELOG.md](CHANGELOG.md).
 
 > **v2.2.0 — every engine command in `ad`.** Each slash command of the pinned engine works in `ad` with the engine's meaning, or says why not: plan mode (`/plan`, Shift+Tab), background terminals (`/ps`, `/stop`), `/cd`, side conversations (`/side`), Vim mode, syntax highlighting and `/theme`, `/recap`, `/subagents`, `/approve` and more. See [Commands in ad](docs/commands.md) and the [release notes](https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v2.2.0).
 
 > **v2.1.0 — `ad` is a terminal UI.** Type `ad` in any project: the engine's look and keys, plus what ad adds: project memory you can see ("Learned:" rows, `/memory`), `/undo` for the files the last turn changed (only the agent's own edits; it refuses rather than guess), background `/loop`s, schedules and teams. See [Terminal UI](#terminal-ui-ad) and the [release notes](https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v2.1.0).
 
-> **v2.0.0 — ad runs agents itself.** `ad chat`, `ad run`, `ad loop`, `ad schedule`, `ad web`, `ad acp`, with memory, hooks and skills wired in. See [Agent harness](#agent-harness). Want the Claude Code–only v1? See [Versions](#versions-v1-vs-v2).
+> **v2.0.0 — ad runs agents itself.** `ad chat`, `ad run`, `ad loop`, `ad schedule`, `ad web`, `ad acp`, with memory, hooks and skills wired in. See [Agent harness](#agent-harness). Want the Claude Code–only v1? See [Versions](#versions-v1-vs-v3).
 
 ## Quick start
 
@@ -35,7 +37,7 @@ irm https://raw.githubusercontent.com/pankaj-mahaur/Agent-Daemon/main/install.ps
 curl -fsSL https://raw.githubusercontent.com/pankaj-mahaur/Agent-Daemon/main/install.sh | bash
 ```
 
-Both are idempotent (re-run = `git pull` + relink) and clone to `~/.agent-daemon-src` (override with `AGENT_DAEMON_DIR`). They verify Node >=22 (on Windows they also warn on Node 22 before 22.17, 23.x and 24 before 24.2, which the terminal UI can't use), skip test-only packages, run `ad doctor`, and print the next step. Pin a release with `AD_VERSION` (e.g. `AD_VERSION=v1.0.0`, see [Versions](#versions-v1-vs-v2)). Then, in any project:
+Both are idempotent (re-run = `git pull` + relink) and clone to `~/.agent-daemon-src` (override with `AGENT_DAEMON_DIR`). They verify Node >=22 (on Windows they also warn on Node 22 before 22.17, 23.x and 24 before 24.2, which the terminal UI can't use), skip test-only packages, run `ad doctor`, and print the next step. Pin a release with `AD_VERSION` (e.g. `AD_VERSION=v1.0.0`, see [Versions](#versions-v1-vs-v3)). Then, in any project:
 
 ```bash
 cd /path/to/your/project
@@ -181,9 +183,9 @@ Bare `ad` (or `ad tui`) opens a terminal UI on the same engine, and `ad --last` 
 
 Guide: [docs/tui.md](docs/tui.md). Needs an interactive terminal; on Windows, Node 22.17+ or 24.2+.
 
-## Versions: v1 vs v2
+## Versions: v1 vs v3
 
-| | **v2** (`main`, 2.x) | **v1** (`release/v1`, 1.x) |
+| | **v3** (`main`, 3.x) | **v1** (`release/v1`, 1.x) |
 |---|---|---|
 | What | Agent harness **plus** everything in v1 | Claude Code memory runtime (hooks, memory, skills, GEPA, teams) |
 | Status | Active development | Bug fixes only |

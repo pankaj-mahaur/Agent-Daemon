@@ -4,6 +4,16 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [3.0.0] — 2026-10-17
+
+Agent Daemon 3.0: ad is its own product. Same agent and sign-in; conversations, skills and settings carry over.
+
+1. Your data folder keeps its name; `ad migrate` (optional) renames it to `~/.agent-daemon/engine` and `ad migrate --undo` reverses it.
+2. ad's screens call the runtime "the engine"; `ad about` says what it is (OpenAI's open-source Codex, Apache-2.0).
+3. Removed `ad codex` and `/codex` (the engine's own UI); `docs/upgrade-3.0.md` lists what to use instead. Renamed: `AD_CODEX_HOME` → `AD_ENGINE_DIR`, `AD_CODEX_BIN` → `AD_ENGINE_BIN`, `AD_CODEX_LLM_MODEL` → `AD_ENGINE_MODEL` (the old names keep working; `AD_ENGINE_HOME` is not a setting and is refused); `--engine codex` → `--engine ad` (the old value works until 3.1).
+4. Something wrong? `ad doctor`. Rolling back to 2.2.0: see the upgrade guide.
+5. Upgrade guide: [docs/upgrade-3.0.md](docs/upgrade-3.0.md).
+
 ### Added
 
 - A brand lint (`npm run lint:brand`; CI runs it in strict mode): the engine's name stays in its allowed zone (the engine adapter, the dependency pin, the two prompt files reproduced from upstream, the upgrade runbook, descriptive statements about other agents), with an allowlist that carries a reason for every exception. The texts that may name the engine on screen now live in one attribution module. Groundwork for 3.0, where ad's screens, docs and settings say "the engine" throughout.
@@ -14,7 +24,6 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 ### Changed
 
 - Errors and notices from the engine show in ad's words; the engine's own text is in `/warnings` (and on a `details:` line in CLI commands).
-
 - `ad doctor`: the engine's rows are now Engine, Engine version, Engine home, Engine compatibility, Engine sign-in, Engine hooks and Windows sandbox, in plain words.
 - New names for the env vars: `AD_ENGINE_DIR`, `AD_ENGINE_BIN`, `AD_ENGINE_MODEL`; the old names still work.
 - Flags and env vars that choose ad's engine take `ad` (`--engine ad`, `--llm ad`, `AD_HOOK_HOST=ad`); `codex` still works until 3.1.
@@ -483,6 +492,7 @@ Kept in the snapshot but not ported this release: `.codebuddy/`, `.kiro/`, `.tra
 
 Initial public state. Self-improving memory + skills runtime for Claude Code with multi-agent orchestration. 36 skills, 6 lifecycle hooks (SessionStart, SessionEnd, PreCompact, UserPromptSubmit, plus QMD-redirect), constitution layer, digest pipeline, GEPA skill evolution, multi-agent team templates, `ad init` / `ad doctor` / `ad team` / `ad spawn` CLI.
 
+[3.0.0]: https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v3.0.0
 [2.2.0]: https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v2.2.0
 [2.1.1]: https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v2.1.1
 [2.1.0]: https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v2.1.0

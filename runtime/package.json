@@ -1,7 +1,7 @@
 {
   "name": "agent-daemon",
-  "version": "2.2.0",
-  "description": "Self-improving memory + skills runtime for AI coding agents",
+  "version": "3.0.0",
+  "description": "A terminal coding agent that remembers, plus memory, guards and skills for Claude Code.",
   "type": "module",
   "bin": {
     "agent-daemon": "./src/cli.mjs",
@@ -33,6 +33,7 @@
   "keywords": [
     "claude-code",
     "ai-agent",
+    "coding-agent",
     "memory",
     "self-improving",
     "skills"
