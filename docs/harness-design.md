@@ -1,44 +1,45 @@
-# Harness design: Agent Daemon on the Codex engine
+# Harness design: ad's own engine
 
-Since v2, agent-daemon runs agents itself. This page explains how and why: the engine boundary, isolation from your own Codex, the safety model, and how memory, hooks and skills get into every run. For using the commands, read [harness.md](harness.md). For the terminal UI on top, read [tui-architecture.md](tui-architecture.md).
+Since v2, agent-daemon runs agents itself. This page explains how and why: the engine boundary, isolation from your own install, the safety model, and how memory, hooks and skills get into every run. For using the commands, read [harness.md](harness.md). For the terminal UI on top, read [tui-architecture.md](tui-architecture.md).
 
 ## The shape
 
 ```
-ad (tui) · ad chat · ad run · ad loop · ad schedule · ad web · ad acp · ad codex   ← ad's front ends
+ad (tui) · ad chat · ad run · ad loop · ad schedule · ad web · ad acp   ← ad's front ends
   └─ agent-daemon core: memory · skills · learning · teams · loops · scheduler
-      ├─ auth broker      ad auth …  (ChatGPT login, OpenAI / OpenRouter keys)
-      ├─ engine API       runtime/src/engine/index.mjs      ← the only thing core talks to
-      │    └─ codex       runtime/src/engine/codex/*        ← the only thing that knows Codex's protocol
-      └─ harness home     ~/.agent-daemon/codex-home        (CODEX_HOME: config.toml, hooks.json,
-                           AGENTS.md, sessions) — never your ~/.codex
+       ├─ auth broker      ad auth …  (ChatGPT login, OpenAI / OpenRouter keys)
+       ├─ engine API       runtime/src/engine/index.mjs      ← the only thing core talks to
+       │    └─ adapter    runtime/src/engine/codex/*        ← the only thing that knows the engine's protocol
+       └─ harness home     ~/.agent-daemon/engine           (engine home: config.toml, hooks.json,
+                            AGENTS.md, sessions) — never your ~/.codex
 ```
 
-ad drives a pinned `codex app-server` over JSON-RPC on stdio. Codex owns the agent loop, the model calls, the sandbox and the ChatGPT login; ad owns everything around it.
+ad drives a pinned app-server over JSON-RPC on stdio. The engine owns the agent loop, the model calls, the sandbox and the ChatGPT login; ad owns everything around it.
+
+Code outside `runtime/src/engine/` reaches the engine only through the façade's named capabilities (`threads`, `turns`, `review`, `guardian`, `terminals`, `config`, `models`, `skills`, `files`, `mcp`, `usage`, `modes`, `sandbox` on the engine object, plus the `engineHome`, `engineEvents`, `engineHooks`, `engineVersion`, `engineDoctor` and `engineDebugUi` helpers); the raw server is a private field. Features built on the engine's experimental API (plan mode, `/stop`) are gated on the protocol snapshot (`featureFlags`): when the pinned protocol lacks their methods they turn themselves off with a notice instead of failing mid-use. Errors carry codes (`ENGINE_*`, `HOME_*`, `FEATURE_UNAVAILABLE`, `TEST_DOOR`, or the engine's numeric JSON-RPC code) and the façade owns the words the user reads.
 
 ## Hard rules
 
-- **Never fork Codex.** Drive the pinned binary over its app-server protocol, stable surface only, with one exception: `ad tui` opts into Codex's experimental API for an allowlist (`EXPERIMENTAL_ALLOWLIST` in `runtime/src/engine/codex/surface.mjs`: Codex's collaboration modes for plan mode, and cleaning background terminals for `/stop`), and opts out of every other experimental notification. Every other front end stays stable-only.
-- **Never reuse Claude or Google subscription logins.** Their terms forbid it and it has been enforced. ChatGPT uses Codex's own login; other models go through API keys or OpenRouter. `ad agy` only hands a prompt to the user's own Antigravity CLI (opt-in).
-- **Minimal dependencies.** Codex is a pinned engine binary (`@openai/codex` in `runtime/package.json`); ad's own code stays Node built-ins plus a handful of packages.
+- **Never fork the engine.** Drive the pinned binary over its app-server protocol, stable surface only, with one exception: `ad tui` opts into the engine's experimental API for an allowlist (`EXPERIMENTAL_ALLOWLIST` in `runtime/src/engine/codex/surface.mjs`: the engine's collaboration modes for plan mode, and cleaning background terminals for `/stop`), and opts out of every other experimental notification. Every other front end stays stable-only.
+- **Never reuse Claude or Google subscription logins.** Their terms forbid it and it has been enforced. ChatGPT uses the engine's own login; other models go through API keys or OpenRouter. `ad agy` only hands a prompt to the user's own Antigravity CLI (opt-in).
+- **Minimal dependencies.** The engine is a pinned binary (`@openai/codex` in `runtime/package.json`); ad's own code stays Node built-ins plus a handful of packages.
 
 ## Isolation
 
-The user's own Codex (a global install, `~/.codex`, its daemon) must never be affected.
+The user's own install (a global install, `~/.codex`, its daemon) must never be affected.
 
-- ad's Codex runs with `CODEX_HOME=~/.agent-daemon/codex-home` (`AD_CODEX_HOME` overrides it for tests). `runtime/src/engine/codex/home.mjs` refuses `~/.codex`, a `CODEX_HOME` set by the user's shell, and network (UNC) paths, however the path is spelled.
-- The engine never sees the user's `CODEX_*` environment variables.
-- Only the pinned binary is used, never a `codex` on PATH.
+- ad's engine runs with its own home at `~/.agent-daemon/engine` (`AD_ENGINE_DIR` overrides it). `runtime/src/engine/codex/home.mjs` refuses `~/.codex`, a `CODEX_HOME` set by the user's shell, and network (UNC) paths, however the path is spelled.
+- The engine never sees your `CODEX_HOME`, `CODEX_API_KEY` and similar variables.
+- Only the pinned binary is used, never an install on PATH.
 - Credentials stay in the harness home (`cli_auth_credentials_store = "file"`), so ad's login never collides with the user's own.
-- `ad codex` / `/codex` open the stock Codex UI on ad's home with `--no-daemon`. Before `/codex` opens it on the same conversation, ad's engine unloads that conversation (`thread/unsubscribe` with `thread_unload_delay_secs=0`, then `thread/closed`), so two runtimes never write it.
 
-**Windows note.** The engine's environment is otherwise the user's, with one exception: on Windows, every PATH entry with a `WindowsApps` segment is left out, at every Codex spawn (`withoutStoreAliases()` in `runtime/src/engine/codex/app-server.mjs`, also used by `ad codex`). That covers the per-user app-alias folder (`…\Microsoft\WindowsApps`) and the Store package folders (`C:\Program Files\WindowsApps\Microsoft.PowerShell_…`, which PowerShell 7 puts first on its children's PATH). Codex runs commands in the first `pwsh` on PATH, and the Windows sandbox can't start a Store (MSIX) app, so with those entries every sandboxed command failed. Without them Codex uses an MSI-installed PowerShell 7 or Windows PowerShell 5.1, inside the sandbox. Store app aliases (`winget`, the `python` stub) are not on the agent's PATH either.
+**Windows note.** The engine's environment is otherwise the user's, with one exception: on Windows, every PATH entry with a `WindowsApps` segment is left out, at every engine spawn (`withoutStoreAliases()` in `runtime/src/engine/codex/app-server.mjs`). That covers the per-user app-alias folder (`…\Microsoft\WindowsApps`) and the Store package folders (`C:\Program Files\WindowsApps\Microsoft.PowerShell_…`, which PowerShell 7 puts first on its children's PATH). The engine runs commands in the first `pwsh` on PATH, and the Windows sandbox can't start a Store (MSIX) app, so with those entries every sandboxed command failed. Without them the engine uses an MSI-installed PowerShell 7 or Windows PowerShell 5.1, inside the sandbox. Store app aliases (`winget`, the `python` stub) are not on the agent's PATH either.
 
 ## Safety model
 
 | Run | Sandbox | Approvals | Network |
 |---|---|---|---|
-| `ad tui`, `ad chat`, `ad web`, `ad acp` | `workspace-write` (writes only inside the project) | asks first (`on-request`) | as Codex's sandbox allows |
+| `ad tui`, `ad chat`, `ad web`, `ad acp` | `workspace-write` (writes only inside the project) | asks first (`on-request`) | as the engine's sandbox allows |
 | `ad run` | same | nobody can answer, so anything needing approval is declined | same |
 | `ad loop`, team workers, `loop` schedule jobs | workspace only | never asks | **off**; MCP servers other than memory off; live web search off |
 
@@ -54,37 +55,48 @@ The user's own Codex (a global install, `~/.codex`, its daemon) must never be af
 - **Hooks.** The same hook handlers as the Claude Code install (`runtime/profiles/profiles.json`) are rendered into `CODEX_HOME/hooks.json`: SessionStart context, per-prompt recall and correction capture, edit and bash post-hooks. Only hooks from that file are trusted. On Windows they run through PowerShell.
 - **Memory MCP.** The `agent-daemon-memory` server is registered, with its tools approved by default (`default_tools_approval_mode = "approve"`; a mode the user set is kept): its tools read ad's memory and record feedback into it.
 - **AGENTS.md.** A managed block in the harness home's `AGENTS.md` tells the agent about memory, skills and the constitution.
-- **Skills.** Skill roots (the user's and the project's) are passed to Codex.
+- **Skills.** Skill roots (the user's and the project's) are mirrored into the engine home and passed to the engine.
 - **Learning.** Hooks append corrections and notes to the project's learning journal during a session; the next session start folds them into memory. `ad tui` shows them as "Learned:" rows right away.
 
 ## Front ends
 
-- **`ad tui`** (and bare `ad`): the Codex-style terminal UI on a session controller with steer, queue, approvals, `/undo` and recovery. See [tui-architecture.md](tui-architecture.md).
+- **`ad tui`** (and bare `ad`): the terminal UI on a session controller with steer, queue, approvals, `/undo` and recovery. See [tui-architecture.md](tui-architecture.md).
 - **`ad chat`**: a plain line mode (works in any terminal, scripts, pipes).
 - **`ad run`**: one non-interactive turn.
 - **`ad web`**: a local web UI, loopback only, token-protected, with a strict content security policy.
 - **`ad acp`**: an Agent Client Protocol agent for Zed and JetBrains: several sessions on one engine, permission requests forwarded to the editor.
 - **`ad loop`, `ad schedule`, `ad sp` (team workers)**: unattended runs under the stricter sandbox above.
-- **`ad codex`**: the pinned stock Codex UI on ad's home, for a Codex feature ad doesn't have yet.
 
-## Staying current with Codex
+## Staying current with the engine
 
-Codex ships several releases a week, with no protocol changelog and no deprecation window.
+The engine ships several releases a week, with no protocol changelog and no deprecation window.
 
 1. The engine is **pinned exactly**.
-2. A committed **protocol snapshot** (`runtime/src/engine/codex/protocol-snapshot.json`) lists the methods, notifications and parameter types ad relies on. The fake app-server used in tests is checked against it both ways: what it sends must be something Codex could send, and every request ad sends (`SENT_METHODS`, checked against the source) must fit the stable protocol, or be on the experimental allowlist. The snapshot also records the allowlisted experimental shapes (from `generate-json-schema --experimental`), and the fake refuses them on a connection that didn't opt in, as Codex does.
-3. The weekly **`codex-upgrade` workflow** (`.github/workflows/codex-upgrade.yml`) bumps the pin, regenerates the snapshot, Codex's slash-command names (`runtime/src/tui/codex-slash.json`) and `runtime/src/engine/codex/compat.json`, and flags removals as breaking. In its own Linux job it runs the suite and the real pinned Codex against a mock model (`engine-real` and the live terminal UI tests), then opens a PR with the results. The PR's own CI (the suite and the real-engine job on Linux, macOS and Windows) runs only when the repo has a `CODEX_UPGRADE_TOKEN` secret, because PRs opened with the default token don't trigger other workflows.
+2. A committed **protocol snapshot** (`runtime/src/engine/codex/protocol-snapshot.json`) lists the methods, notifications and parameter types ad relies on. The fake app-server used in tests is checked against it both ways: what it sends must be something the engine could send, and every request ad sends (`SENT_METHODS`, checked against the source) must fit the stable protocol, or be on the experimental allowlist. The snapshot also records the allowlisted experimental shapes (from `generate-json-schema --experimental`), and the fake refuses them on a connection that didn't opt in, as the engine does.
+3. The weekly **`engine-upgrade` workflow** (`.github/workflows/engine-upgrade.yml`) bumps the pin, regenerates the snapshot, the engine's slash-command names (`runtime/src/engine/codex/upstream-commands.json`), `runtime/src/engine/codex/protocol-notifications.json` and `runtime/src/engine/codex/compat.json`, and flags removals as breaking. In its own Linux job it runs the suite and the real pinned engine against a mock model (`engine-real` and the live terminal UI tests), then opens a PR with the results. The PR's own CI (the suite and the real-engine job on Linux, macOS and Windows) runs only when the repo has an `ENGINE_UPGRADE_TOKEN` secret (the old `CODEX_UPGRADE_TOKEN` also works), because PRs opened with the default token don't trigger other workflows.
 4. Unknown items and notifications degrade to plain rows or are ignored; they never crash a front end. `/warnings` in `ad tui` lists the ones this ad doesn't know.
-5. CI has no real login and no working Windows sandbox, so before merging an upgrade, run the live `ad run` and `ad tui` smokes on Windows in a scratch folder (the `codex-upgrade` skill has the steps; see also [manual-test.md](manual-test.md)).
+5. CI has no real login and no working Windows sandbox, so before merging an upgrade, run the live `ad run` and `ad tui` smokes on Windows in a scratch folder (the `engine-upgrade` skill has the steps; see also [manual-test.md](manual-test.md)).
 
-The `codex-upgrade` skill walks through an upgrade by hand.
+The `engine-upgrade` skill walks through an upgrade by hand.
+
+## Where the engine's name appears
+
+ad says "the engine" everywhere users read. The engine's own name stays in exactly these places:
+
+- `THIRD_PARTY_NOTICES.md` — the engine's notices and license, and the upstream text ad reproduces;
+- `docs/upgrade-3.0.md` — the 2.x → 3.0 upgrade guide (old names must be searchable);
+- `CHANGELOG.md` — the release history;
+- `ATTRIBUTION.md` — the list of upstream sources;
+- one sentence in the README (kept verbatim from `runtime/src/engine/attribution.mjs`; a test checks it).
+
+API tokens (`CODEX_HOME`, `codex app-server`, `runtime/src/engine/codex/`, `~/.codex`, …) stay wherever maintainers need them, covered by narrow allowlist entries. Everything else is rewritten. The brand lint (`runtime/scripts/check-brand.mjs`, strict in CI) enforces this; see [testing.md](testing.md#the-brand-lint).
 
 ## Decisions
 
 | Decision | Reason |
 |---|---|
-| Codex app-server as the only engine | It brings a maintained agent loop, sandbox, approvals and ChatGPT login; ad stays a client and adds memory, skills, teams and loops. |
-| An isolated harness home | Never disturbs the user's own Codex; costs one extra ChatGPT sign-in. |
-| Pin Codex as an npm dependency | Every user runs the version the tests ran; upgrades are deliberate PRs. |
+| The engine's app-server as the only engine | It brings a maintained agent loop, sandbox, approvals and ChatGPT login; ad stays a client and adds memory, skills, teams and loops. |
+| An isolated harness home | Never disturbs the user's own install; costs one extra ChatGPT sign-in. |
+| Pin the engine as an npm dependency | Every user runs the version the tests ran; upgrades are deliberate PRs. |
 | `workspace-write` + `on-request` by default | Safe for interactive work without constant prompts; unattended runs get no network and never ask. |
 | Keep the Claude Code mode | v1 users keep hooks, memory and skills in Claude Code; the harness is additive. |

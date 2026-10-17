@@ -1,6 +1,6 @@
-// The status line and the terminal window title (codex-parity-2 Part 3), by
-// Codex's item ids (tui.status_line, tui.terminal_title), so the stock UI and
-// ad read the same settings. Pure: every value comes in `ctx`.
+// The status line and the terminal window title (parity Part 3), by
+// the engine's item ids (tui.status_line, tui.terminal_title), so the engine's
+// own UI and ad read the same settings. Pure: every value comes in `ctx`.
 //
 //   statusSegments(ids, ctx) → [{id, text, warn}]     ids unset → DEFAULT_STATUS; [] → none
 //   titleText(ids, ctx) → string                      ids unset → DEFAULT_TITLE
@@ -9,17 +9,17 @@
 //
 // ctx: {app, model, effort, cwd, home, project, hostname, branch, changes,
 //       running, waiting, sandbox, approvalPolicy, tokens, rateLimits,
-//       codexVersion, threadId, threadName, plan, frame}
+//       engineVersion, threadId, threadName, plan, frame}
 
 import { sanitize } from "./terminal/sanitize.mjs";
 import { graphemes } from "./terminal/width.mjs";
 import { shortenPath } from "./view/chrome.mjs";
 
-// Codex's aliases (codex-rs/tui/src/bottom_pane/status_line_setup.rs, title_setup.rs).
+// The engine's aliases (codex-rs/tui/src/bottom_pane/status_line_setup.rs, title_setup.rs).
 const ALIASES = { "model-name": "model", project: "project-name", "project-root": "project-name", status: "run-state", approval: "approval-mode", "context-usage": "context-used", "session-id": "thread-id", spinner: "activity" };
 export const canonical = (id) => ALIASES[id] ?? id;
 
-// ad's own defaults when the setting is unset (Codex's differ: "unset" means each app's own).
+// ad's own defaults when the setting is unset (upstream's differ: "unset" means each app's own).
 export const DEFAULT_STATUS = ["model-with-reasoning", "current-dir", "context-remaining", "five-hour-limit"];
 export const DEFAULT_TITLE = ["activity", "thread-name", "project-name"];
 
@@ -30,7 +30,7 @@ function contextUsed(t) {
   return Math.min(100, (t.last.total / t.contextWindow) * 100);
 }
 /**
- * How much of the context window is used, as Codex words it for "clear
+ * How much of the context window is used, as the engine words it for "clear
  * context and implement": "89% used", else "123K used", else null (a fresh
  * or unknown context, so the choice doesn't sound urgent without evidence).
  */
@@ -48,7 +48,7 @@ function limit(w, fallback) {
 }
 const homeShort = (p, home) => (home && (p === home || p.startsWith(home + "\\") || p.startsWith(home + "/")) ? `~${p.slice(home.length)}` : p);
 
-// id → (ctx) → string | {text, warn} | null. Ids missing here are Codex's but not shown by ad.
+// id → (ctx) → string | {text, warn} | null. Ids missing here are upstream's but not shown by ad.
 const ITEMS = {
   "app-name": (c) => c.app ?? "ad",
   model: (c) => c.model,
@@ -73,7 +73,7 @@ const ITEMS = {
   "context-window-size": (c) => (c.tokens?.contextWindow ? `${k(c.tokens.contextWindow)} window` : null),
   "five-hour-limit": (c) => limit(c.rateLimits?.primary, "usage"),
   "weekly-limit": (c) => limit(c.rateLimits?.secondary, "wk"),
-  "codex-version": (c) => (c.codexVersion ? `codex ${c.codexVersion}` : null),
+  "codex-version": (c) => (c.engineVersion ? `engine ${c.engineVersion}` : null),
   "used-tokens": (c) => (c.tokens?.last?.total != null ? `${k(c.tokens.last.total)} tokens` : null),
   "total-input-tokens": (c) => (c.tokens?.total?.inputTokens != null ? `${k(c.tokens.total.inputTokens)} in` : null),
   "total-output-tokens": (c) => (c.tokens?.total?.outputTokens != null ? `${k(c.tokens.total.outputTokens)} out` : null),
@@ -87,11 +87,11 @@ const ITEMS = {
 };
 const SPINNER = ["\u{280b}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283c}", "\u{2834}", "\u{2826}", "\u{2827}", "\u{2807}", "\u{280f}"];
 
-// What each surface offers (Codex's lists; ad shows the ones it can compute).
+// What each surface offers (upstream's lists; ad shows the ones it can compute).
 export const STATUS_IDS = ["model-with-reasoning", "model", "reasoning", "current-dir", "project-name", "hostname", "git-branch", "branch-changes", "run-state", "permissions", "approval-mode", "context-remaining", "context-used", "context-window-size", "five-hour-limit", "weekly-limit", "codex-version", "used-tokens", "total-input-tokens", "total-output-tokens", "thread-id", "thread-name", "task-progress"];
 export const TITLE_IDS = ["activity", "app-name", "project-name", "current-dir", "run-state", "thread-name", "git-branch", "context-remaining", "context-used", "five-hour-limit", "weekly-limit", "codex-version", "used-tokens", "total-input-tokens", "total-output-tokens", "thread-id", "model", "model-with-reasoning", "reasoning", "task-progress"];
 
-/** The ids in a setting ad can't show (Codex's others, or typos): kept in the config, listed in /warnings. */
+/** The ids in a setting ad can't show (upstream's others, or typos): kept in the config, listed in /warnings. */
 export function unsupported(ids, kind = "status") {
   const known = new Set(kind === "title" ? TITLE_IDS : STATUS_IDS);
   return (Array.isArray(ids) ? ids : []).filter((id) => typeof id !== "string" || !known.has(canonical(id)));
@@ -126,7 +126,7 @@ export function statusSegments(ids, ctx) {
   return out;
 }
 
-/** The window title: items joined with " | ", the activity spinner set off by spaces only (Codex's way). */
+/** The window title: items joined with " | ", the activity spinner set off by spaces only (upstream's way). */
 export function titleText(ids, ctx) {
   const list = Array.isArray(ids) ? ids : DEFAULT_TITLE;
   let out = "";

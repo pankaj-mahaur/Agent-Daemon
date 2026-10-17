@@ -1,4 +1,4 @@
-// `ad loop "<objective>"` — autonomous, Ralph-style work loop on one Codex
+// `ad loop "<objective>"` — autonomous, Ralph-style work loop on one engine thread
 // thread, with brakes that live in OUR code (the model can't talk its way
 // past them):
 //
@@ -16,6 +16,8 @@
 // logged to <cwd>/.agent-daemon/loops/<threadId>.jsonl; --resume continues
 // a thread by id (never "latest").
 
+import { engineError, engineErrorText } from "../engine/index.mjs";
+import { cliErrorLines } from "./io.mjs";
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -135,7 +137,7 @@ export async function cmdLoop(objective, opts = {}) {
       await engine
         .setGoal(threadId, objective, limits.maxTokens ? { tokenBudget: limits.maxTokens } : {})
         .then(() => (goalSet = true))
-        .catch((e) => err.write(`[loop] could not set thread goal: ${e.message}\n`));
+        .catch((e) => err.write("[loop] could not set thread goal\n" + cliErrorLines("loop", e)));
     }
     const logDir = path.join(cwd, ".agent-daemon", "loops");
     mkdirSync(logDir, { recursive: true });
@@ -165,15 +167,18 @@ export async function cmdLoop(objective, opts = {}) {
       decision = loopDecision(history, { limits, elapsedMs: Date.now() - t0, spentTokens, stopRequested: stopRequested() });
     }
     const spent = threadTotal == null ? 0 : threadTotal - baseline;
-    out.write(`ad loop stopped: ${decision.reason} (${history.length} iteration(s), ~${spent} tokens). Resume: ad loop --resume ${threadId}\n`);
+    const reason = history.at(-1)?.error && decision.reason.startsWith("same error ")
+      ? decision.reason.replace(history.at(-1).error, engineErrorText({ code: -32000 }, { details: null }))
+      : decision.reason;
+    out.write(`ad loop stopped: ${reason} (${history.length} iteration(s), ~${spent} tokens). Resume: ad loop --resume ${threadId}\n`);
     return decision.success ? 0 : 3;
   } catch (e) {
-    err.write(`ad loop: ${e.message}\n`);
+    err.write(cliErrorLines("loop", e));
     return 1;
   } finally {
-    // An active goal could let Codex keep driving the thread on its own,
+    // An active goal could let the engine keep driving the thread on its own,
     // outside our brakes; the loop owns the goal only while it runs.
-    if (goalSet) await engine.clearGoal(threadId).catch((e) => err.write(`[loop] could not clear the thread goal: ${e.message}\n`));
+    if (goalSet) await engine.clearGoal(threadId).catch((e) => err.write("[loop] could not clear the thread goal\n" + cliErrorLines("loop", e)));
     await engine?.close();
   }
 }
@@ -181,13 +186,13 @@ export async function cmdLoop(objective, opts = {}) {
 // Compaction runs as its own turn; starting the next turn before it ends
 // fails. Wait for thread/compacted.
 async function compact(engine, threadId, err) {
-  const done = engine.waitForNotification("thread/compacted", (p) => p.threadId === threadId, { timeoutMs: COMPACT_WAIT_MS });
+  const done = engine.waitForCompaction(threadId, { timeoutMs: COMPACT_WAIT_MS });
   done.catch(() => {}); // awaited below
   try {
     await engine.compactThread(threadId);
     await done;
   } catch (e) {
-    err.write(`[loop] compaction failed: ${e.message}\n`);
+    err.write("[loop] compaction failed\n" + cliErrorLines("loop", e));
   }
 }
 
@@ -205,7 +210,7 @@ async function runIteration(engine, { threadId, text, stopRequested, err, limits
     if (turnId && (stopRequested() || overTime)) {
       if (!interruptSent) err.write(`[loop] ${overTime ? "time limit reached" : "STOP file found"} — interrupting\n`);
       interruptSent = true;
-      engine.interrupt(threadId, turnId).catch((e) => err.write(`[loop] interrupt failed: ${e.message}\n`));
+      engine.interrupt(threadId, turnId).catch((e) => err.write("[loop] interrupt failed\n" + cliErrorLines("loop", e)));
     }
   }, 2000);
   try {
@@ -229,8 +234,10 @@ async function runIteration(engine, { threadId, text, stopRequested, err, limits
         }
       },
     });
+    if (r.error?.message) err.write(cliErrorLines("loop", engineError(-32000, r.error.message, { raw: r.error.message })));
     return { turnStatus: r.status, status: parseLoopStatus(r.output), error: r.error?.message ?? null, fileChanges, commands, threadTotal, baseline };
   } catch (e) {
+    err.write(cliErrorLines("loop", e));
     return { turnStatus: "failed", status: null, error: e.message, fileChanges, commands, threadTotal, baseline };
   } finally {
     clearInterval(poll);

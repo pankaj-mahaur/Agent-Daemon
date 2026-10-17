@@ -21,7 +21,7 @@ node --test            # expect: 1 failing test (the bug the agent will fix in s
 | Run | Expect | If not |
 |---|---|---|
 | `ad --version` | the version in `runtime/package.json` | [troubleshooting #1](troubleshooting.md#1-ad-command-not-found-after-npm-link) |
-| `ad doctor` | settings, hooks and dirs OK; a "Codex engine" line with the pinned version | re-run the installer; `cd runtime && npm install` |
+| `ad doctor` | settings, hooks and dirs OK; an "Engine version" line with the pinned version | re-run the installer; `cd runtime && npm install` |
 
 ## 2. Claude Code mode (v1 features)
 
@@ -38,10 +38,10 @@ node --test            # expect: 1 failing test (the bug the agent will fix in s
 
 | Run | Expect | If not |
 |---|---|---|
-| `ad auth login chatgpt` (or `openai` / `openrouter --model <slug>`) | browser sign-in, then `logged in: …` | `--device` for a code instead of the browser |
-| `ad auth status` | harness home `~/.agent-daemon/codex-home`, the active login, no secrets printed | — |
+| `ad auth login openai` (or `openrouter --model <slug>` / `chatgpt`) | API-key prompt or browser sign-in, then `logged in: …` | `--device` for a code instead of the browser |
+| `ad auth status` | harness home `~/.agent-daemon/engine`, the active login, no secrets printed | — |
 | Windows: `ad sandbox status` | `ready` (it's set up on first use) | `ad sandbox setup` |
-| `ad doctor` | Codex login OK, harness hooks `N/N trusted`, Windows sandbox ready | the next `ad run` re-trusts hooks |
+| `ad doctor` | engine login OK, harness hooks `N/N trusted`, Windows sandbox ready | the next `ad run` re-trusts hooks |
 
 ## 4. Harness: real turns
 
@@ -67,20 +67,19 @@ node --test            # expect: 1 failing test (the bug the agent will fix in s
 
 Run this in each terminal you use: Windows Terminal, Zed and the VS Code terminal. Stay in the scratch project from step 0, never a real repo. Start with `git checkout math.js` so the bug is back.
 
-**Live script** (the FC3 sign-off). It also runs automated, on the real Codex with a mock model, together with checks of ad's own TUI features: `cd runtime && AD_REAL_ENGINE=1 node --test --test-concurrency=1 --test-force-exit test/tui-live.test.mjs` (a few minutes; the first run on Windows adds ~35 s once). It needs the devDependencies, which the one-liner skips: run `npm install` in `runtime/` first.
+**Live script** (the FC3 sign-off). It also runs automated, on the real engine with a mock model, together with checks of ad's own TUI features: `cd runtime && AD_REAL_ENGINE=1 node --test --test-concurrency=1 --test-force-exit test/tui-live.test.mjs` (a few minutes; the first run on Windows adds ~35 s once). It needs the devDependencies, which the one-liner skips: run `npm install` in `runtime/` first.
 
 | # | Do | Expect | If not |
 |---|---|---|---|
-| 1 | `ad tui` | the sign-in panel if needed, then "Do you trust …?" on the first run (answer Yes), then the header card: version, Codex version, model, directory with `git: <branch>`, memory, sandbox | [troubleshooting #23](troubleshooting.md#23-ad-tui-says-it-needs-an-interactive-terminal-or-node-2217) |
+| 1 | `ad tui` | the sign-in panel if needed, then "Do you trust …?" on the first run (answer Yes), then the header card: `>_ Agent Daemon (v…)`, model, directory with `git: <branch>`, memory, sandbox | [troubleshooting #23](troubleshooting.md#23-ad-tui-says-it-needs-an-interactive-terminal-or-node-2217) |
 | 2 | **Ask:** *"What does math.js do? Don't change anything."* | Explored / Ran rows, a streamed answer, "Worked for Ns"; the status line under the prompt shows the model, the folder and `ctx N%` | — |
-| 3 | `/permissions` → **Read only**. Then: *"Run `echo hi > hello.txt` in the shell."* | **exec approval:** a box with the full command and the choices Codex offers (`y`, `p` for "don't ask again", Esc = "No, and stop"; `n` when Codex offers "No, and tell Codex what to do instead"). `y` within 400 ms of it opening does nothing; Esc declines and ends the turn | — |
+| 3 | `/permissions` → **Read only**. Then: *"Run `echo hi > hello.txt` in the shell."* | **exec approval:** a box with the full command and the choices the engine offers (`y`, `p` for "don't ask again", Esc = "No, and stop"; `n` when the engine offers "No, and say what to do instead"). `y` within 400 ms of it opening does nothing; Esc declines and ends the turn | — |
 | 4 | Still Read only: *"Fix the bug in math.js."* | **patch approval:** a box with the diff of `math.js`. `y` → "approved", and the file changes. Then `/permissions` → **Auto** | — |
 | 5 | **Steer:** ask *"Explain node:test in 40 lines."*, and while it runs type *"make it 5 lines"* + Enter | the footer reads `enter steer`; your text joins the running turn and the answer follows it | — |
 | 6 | **Queue:** while a turn runs, type *"now run node --test"* + Tab | `↳ queued: now run node --test` under the status line. Tab on an empty prompt pulls it back; Tab again queues it. It runs when the turn ends | — |
 | 7 | **Interrupt:** start a long answer, press Esc | "Interrupting…", and the turn ends as interrupted. Ctrl+C on a running turn does the same | — |
-| 8 | **`/codex` and back:** `/codex`, ask one thing there, quit the stock UI | the stock Codex UI opens on the same conversation; back in ad, "Back from the stock Codex UI (exit 0)", the new turn shows, and nothing earlier is printed twice | — |
-| 9 | **Quit:** Ctrl+C on an empty prompt, then Ctrl+C again | "Ctrl+C again quits", then ad exits with `To continue: ad tui --resume <id>` and the tokens. The terminal works normally (cursor, echo) | `reset` the terminal and report it |
-| 10 | `ad tui --last` | the same conversation; *"What did we change?"* answers from it | — |
+| 8 | **Quit:** Ctrl+C on an empty prompt, then Ctrl+C again | "Ctrl+C again quits", then ad exits with `To continue: ad tui --resume <id>` and the tokens. The terminal works normally (cursor, echo) | `reset` the terminal and report it |
+| 9 | `ad tui --last` | the same conversation; *"What did we change?"* answers from it | — |
 
 **Quick checks** (same scratch project):
 
@@ -93,17 +92,17 @@ Run this in each terminal you use: Windows Terminal, Zed and the VS Code termina
 | `?`, then `/terminal-setup` | the shortcuts with the newline key for this terminal; advice for this terminal | [troubleshooting #24](troubleshooting.md#24-ad-tui-shiftenter-sends-instead-of-adding-a-newline) |
 | Make the window narrower, then wider, while `ad tui` runs | no stray copies of the bottom lines; if there are, Ctrl+L redraws | [troubleshooting #25](troubleshooting.md#25-ghost-copies-of-the-bottom-lines-after-narrowing-the-window) |
 | `/remember tests use node:test`, then `/memory recent` | a "Learned:" row, then the note listed with its `#id` | `/ad doctor` |
-| `/import` | "/import isn't in ad yet. /codex opens the stock Codex UI on this conversation.", and the text stays in the prompt; nothing is sent | — |
+| `/import` | "/import isn't planned for ad.", and the text stays in the prompt; nothing is sent | — |
 | `/plan`, then *"How would you add a subtract function to math.js?"* | **Plan mode** in the footer and a magenta prompt; the model explores without editing, then a **Proposed Plan** and "Implement this plan?". "Yes, implement this plan" implements it. Shift+Tab switches back | [troubleshooting #33](troubleshooting.md#33-ad-tui-plan-says-plan-mode-unavailable-right-now) |
 | *"Start `node -e "setInterval(() => {}, 1000)"` in the background."* | the footer counts "1 background terminal running"; `/ps` lists it with its last lines; `/stop` ends it | — |
 | `mkdir sub` in the project, then `/cd sub` | the trust question, then "Working directory changed to: …sub"; `/pwd` agrees | — |
 | While a turn runs: `/side What does node:test do?` | a side panel answers under the main conversation; Ctrl+/ moves between the prompts; Ctrl+C closes it | — |
 | `/vim`, type, Esc, `0`, `dw`, `i` | "Vim mode enabled."; **Vim: Normal** / **Vim: Insert** in the footer; the bar cursor in Insert; `/vim` again turns it off | — |
-| `/theme`, ↓, Enter | **Select Syntax Theme** with a code sample and a diff recoloured as you move; Enter saves it ("Saved for /codex too") | — |
+| `/theme`, ↓, Enter | **Select Syntax Theme** with a code sample and a diff recoloured as you move; Enter saves it ("Saved.") | — |
 | `/recap` | "Generating conversation recap…", then a dim **↳ Recap:** and, when there is one, **Next:** | [troubleshooting #34](troubleshooting.md#34-ad-tui-recap-says-could-not-generate-a-recap-please-try-again) |
 | `/subagents` | "No agents available yet.", or, after the model used subagents, **Subagents**: pick one to watch it live; Alt+← / Alt+→ move between them | — |
-| `/keymap`, then `/keymap debug` and a few keys | the keys in effect; the Keypress Inspector names each key and its actions | [troubleshooting #30](troubleshooting.md#30-ad-tui-keys-set-with-the-stock-uis-keymap-dont-work-in-ad) |
-| `/statusline`, Space on an item, Esc; then again, Space, Enter | the status line changes as you toggle; Esc puts it back; Enter saves ("Saved for /codex too") | — |
+| `/keymap`, then `/keymap debug` and a few keys | the keys in effect; the Keypress Inspector names each key and its actions | [troubleshooting #30](troubleshooting.md#30-ad-tui-keys-set-outside-ad-dont-work-in-ad) |
+| `/statusline`, Space on an item, Esc; then again, Space, Enter | the status line changes as you toggle; Esc puts it back; Enter saves ("Saved.") | — |
 | `/title`, turn on `activity`, Enter; send a prompt | the window or tab title shows a spinner while the turn runs; after quitting, the terminal's own title is back | — |
 | `/clear test` | the screen and scrollback are cleared; "New conversation: test. The one before: /resume …" | — |
 | `/archive` (wait a moment, then `y`), then `/resume archived` and Enter | "Archived. /resume archived brings it back.", then "Unarchived and resumed." | — |
@@ -123,4 +122,27 @@ Run this in each terminal you use: Windows Terminal, Zed and the VS Code termina
 cd .. && rm -rf ad-manual-test
 ```
 
-The harness login stays in `~/.agent-daemon/codex-home`. Use `ad auth logout` to remove it.
+The harness login stays in `~/.agent-daemon/engine`. Use `ad auth logout` to remove it.
+
+---
+
+## 8. Stranger's walk (G8)
+
+A first-time user with a fresh machine state walks the whole path and captures everything, then searches the capture for the engine's name. Do this once per release, by hand (it needs a real sign-in).
+
+1. Start with a fresh `HOME` and `USERPROFILE` (a new OS user, or `HOME=$(mktemp -d)` on Linux/macOS), so no ad state and no engine home exists.
+2. Install with the one-liner, then `cd` into a scratch project.
+3. Run `ad`: expect the sign-in panel. Sign in, then answer the folder-trust question.
+4. Run `/status`: note the engine version line.
+5. Run `/cd` into an untrusted folder: expect the trust question first.
+6. Ask for something that needs an approval: answer it, and check the scrollback shows the full command.
+7. Run `/quit`, then `ad tui --last`: expect the same conversation back.
+8. Save the whole terminal transcript (script, screen recording transcript, or copy from scrollback).
+9. Search the transcript for the engine's name (case-insensitive). Allowed hits only:
+   - model names (`gpt-5.x-codex` and the like);
+   - OpenAI's sign-in page text;
+   - the attribution texts (`ad about`, the managed `AGENTS.md` block);
+   - a `codex-home` path where a path is printed;
+   - raw engine text surfaced in `/warnings` (unknown events, with their details).
+
+Anything else is a Part 6 leak: file it against the engine-originated text mapping.

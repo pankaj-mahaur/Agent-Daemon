@@ -1,19 +1,20 @@
 // `ad tools list | enable <tool> | disable <tool>` — optional agent tools
-// for the harness, written to its CODEX_HOME config through Codex.
+// for the harness, written to its engine-home config through the engine.
 //
 //   browser     Playwright MCP (accessibility-tree browser control, no
 //               vision model needed), pinned; launched via node's own
 //               npx-cli.js so Windows needs no .cmd shim
-//   web-search  Codex web search in "live" mode (default is "cached": an
+//   web-search  web search in "live" mode (default is "cached": an
 //               OpenAI-maintained index, no live fetches)
 //
 // Opt-in on purpose: both reach the network, and the browser downloads its
 // package on first use.
 
+import { cliErrorLines } from "./io.mjs";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { createEngine } from "../engine/index.mjs";
-import { isManagedHome } from "../engine/codex/home.mjs";
+import { createEngine, engineHome } from "../engine/index.mjs";
+
 
 export const PLAYWRIGHT_MCP = "@playwright/mcp@0.0.83";
 
@@ -35,7 +36,7 @@ export const TOOLS = {
   "web-search": {
     label: "Live web search",
     enable: () => [["web_search", "live"]],
-    disable: () => [["web_search", null]], // back to Codex's default (cached)
+    disable: () => [["web_search", null]], // back to the default (cached)
     enabled: (cfg) => cfg.web_search === "live",
   },
 };
@@ -60,7 +61,7 @@ export async function cmdTools(sub, name, opts = {}) {
       err.write(`Unknown tool "${name}". Known: ${Object.keys(TOOLS).join(", ")}\n`);
       return 1;
     }
-    if (!isManagedHome(engine.home) && !opts.force) {
+    if (!engineHome.isManaged(engine.home) && !opts.force) {
       err.write(`Refusing to change ${engine.home}: it was not created by ad. Re-run with --force.\n`);
       return 2;
     }
@@ -71,7 +72,7 @@ export async function cmdTools(sub, name, opts = {}) {
     out.write(`${name}: ${sub === "enable" ? "on" : "off"}\n`);
     return 0;
   } catch (e) {
-    err.write(`ad tools: ${e.message}\n`);
+    err.write(cliErrorLines("tools", e));
     return 1;
   } finally {
     await engine?.close();

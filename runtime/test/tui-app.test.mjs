@@ -1,6 +1,8 @@
 // The terminal app (tui/app.mjs, plan Part 6) on a test screen, driven by
-// the session controller on the fake Codex app-server.
+// the session controller on the fake engine app-server.
 
+import { ENGINE, LEGACY, projectConfigFolder, brandPatterns } from "../src/engine/attribution.mjs";
+import { screenHits } from "../scripts/check-brand.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -22,7 +24,7 @@ async function withApp(fn, { cols = 70, rows = 20, actions = {}, armMs = 60, ses
   const root = mkdtempSync(join(tmpdir(), "ad-app-"));
   const engines = [];
   const make = async () => {
-    // modes: as ad tui runs it, on the experimental allowlist with Codex's collaboration modes.
+    // modes: as ad tui runs it, on the experimental allowlist with the engine's collaboration modes.
     const e = await createEngine({ home: join(root, "home"), command, ...(modes ? { experimental: true } : {}), ...(env ? { env } : {}) });
     engines.push(e);
     return e;
@@ -85,7 +87,7 @@ test("a crash mid-stream doesn't wedge the scrollback: the next answer still sho
     async ({ app, type, until, committed, engines, session }) => {
       type("hello\r");
       await until(() => app.state.modal, "the approval");
-      engines[0].server.request("test/crash", {}).catch(() => {});
+      engines[0].testRequest("test/crash", {}).catch(() => {});
       await until(() => engines.length === 2 && session.state.engine.state === "ready", "the restart");
       type("early-complete\r");
       await until(() => /• early/.test(committed()), "the next answer in scrollback");
@@ -105,13 +107,13 @@ test("a declined patch whose item never completes doesn't hold back the next tur
   });
 });
 
-test("Codex stopped and not restarted: a banner; Enter restarts and the kept prompt runs", async () => {
+test("engine stopped and not restarted: a banner; Enter restarts and the kept prompt runs", async () => {
   await withApp(
     async ({ type, until, text, committed, engines, session }) => {
       type("fail-turn\r");
       await until(() => /Worked for/.test(committed()), "a first turn");
-      engines[0].server.request("test/crash", {}).catch(() => {});
-      await until(() => /Codex stopped \(exit 3\)\. Your text is kept\. Enter restarts/.test(text()), "the banner");
+      engines[0].testRequest("test/crash", {}).catch(() => {});
+      await until(() => /ad's engine stopped \(exit 3\)/.test(text()), "the banner");
       type("early-complete\r");
       await until(() => session.state.engine.state === "ready" && /• early/.test(committed()), "the restart and the prompt");
     },
@@ -165,13 +167,27 @@ test("Esc in an approval declines; Ctrl+C twice quits", async () => {
   });
 });
 
+test("an openaiForm request is cancelled at once: no modal, a warning", async () => {
+  const { formAutoCancel } = await import("../src/engine/attribution.mjs");
+  await withApp(async ({ app, type, until, text, session }) => {
+    let got = "unanswered";
+    session.state.requests.push({ request: { id: "e-form", kind: "elicitation", form: { mode: "openaiForm" } }, resolve: (a) => (got = a) });
+    type("x"); // trigger a draw; the character stays in the composer
+    await until(() => text().includes("engine's own UI"), "the auto-cancel warning");
+    assert.equal(app.state.modal, null, "no modal opens");
+    assert.deepEqual(got, { action: "cancel" }, "cancelled, not declined");
+    assert.ok(!session.state.requests.some((r) => r.request.id === "e-form"), "the request left the queue");
+    assert.ok(formAutoCancel.includes("ad cancelled it"));
+  });
+});
+
 test("Enter while a turn runs steers; Tab queues and Tab on an empty composer pulls it back", async () => {
   await withApp(async ({ type, until, text, session, engine }) => {
     type("hang\r");
     await until(() => session.state.activeTurnId, "the running turn");
     type("also this\r");
     await until(() => /steered: also this/.test(text()), "the steer");
-    const st = await engine.server.request("debug/state", {});
+    const st = await engine.testRequest("debug/state", {});
     assert.ok(st.calls.includes("turn/steer"));
     await until(() => !session.state.activeTurnId, "the steered turn's end");
     type("hang\r");
@@ -211,7 +227,7 @@ test("slash commands: the popup completes, /status reports, /new resets, unknown
     type("\r");
     await until(() => /Status/.test(text()) && /sandbox/.test(text()), "the status report");
     type("fail-turn\r");
-    // /new waits for the task to end (Codex's rule), so wait for the turn too.
+    // /new waits for the task to end (the engine's rule), so wait for the turn too.
     await until(() => /The turn failed/.test(text()) && !session.state.activeTurnId && !session.state.starting, "a thread, its turn over");
     type("/new\r");
     await until(() => !session.state.thread && /New conversation/.test(text()), "a new conversation");
@@ -225,20 +241,20 @@ test("slash commands: the popup completes, /status reports, /new resets, unknown
   });
 });
 
-test("Codex commands ad doesn't run never reach the model; busy ones wait, and the draft stays", async () => {
+test("engine commands ad doesn't run never reach the model; busy ones wait, and the draft stays", async () => {
   await withApp(async ({ app, type, until, text, session, engine }) => {
     const sent = async () => {
-      const st = await engine.server.request("debug/state", {});
+      const st = await engine.testRequest("debug/state", {});
       return st.calls.filter((c) => c === "turn/start" || c === "turn/steer").length;
     };
     type("/import the bug\r");
-    await until(() => /\/import isn't in ad yet\. \/codex opens the stock Codex UI/.test(text()), "the answer");
+    await until(() => /\/import isn't planned for ad\./.test(text()), "the answer");
     assert.equal(app.state.composer, "/import the bug", "the draft goes back into the composer");
     assert.equal(await sent(), 0);
     type("\x15/pet\r"); // an alias answers as its command does
     await until(() => /ad doesn't draw terminal pets/.test(text()), "the alias answer");
     type("\x15/DAEMON\r");
-    await until(() => /\/daemon manages Codex's background server/.test(text().replace(/\s+/g, " ")), "a custom answer, any case");
+    await until(() => /\/daemon manages a background server/.test(text().replace(/\s+/g, " ")), "a custom answer, any case");
     type("\x15hang\r");
     await until(() => session.state.activeTurnId, "the running turn");
     const before = await sent();
@@ -246,11 +262,21 @@ test("Codex commands ad doesn't run never reach the model; busy ones wait, and t
     await until(() => /'\/new' is disabled while a task is in progress\./.test(text()), "the busy answer");
     assert.equal(app.state.composer, "/new");
     type("\x15/import what about tests?\r");
-    await until(() => /\/import isn't in ad yet/.test(text()), "not steered into the turn");
+    await until(() => /\/import isn't planned for ad/.test(text()), "not steered into the turn");
     assert.equal(await sent(), before, "nothing was steered into the running turn");
     assert.ok(session.state.thread, "the conversation is untouched");
-    type("\x15/status\r"); // allowed during a task, as in Codex
+    type("\x15/status\r"); // allowed during a task
     await until(() => /sandbox/.test(text()), "the status report mid-turn");
+  });
+});
+
+test("the removed engine command prints the tombstone: nothing opens, nothing is sent", async () => {
+  await withApp(async ({ type, until, text, session, engine }) => {
+    type(`/${LEGACY.command}\r`);
+    await until(() => new RegExp(`/${LEGACY.command} was removed in 3\\.0`).test(text().replace(/\s+/g, " ")) && /Resume a conversation: `ad --last`/.test(text().replace(/\s+/g, " ")), "the tombstone");
+    const st = await engine.testRequest("debug/state", {});
+    assert.equal(st.calls.filter((c) => c === "turn/start" || c === "turn/steer").length, 0, "the prompt is not sent to the model");
+    assert.ok(!session.state.thread, "no thread was opened");
   });
 });
 
@@ -289,7 +315,7 @@ test("ad's own dialogs in the app: a confirm takes the keys and waits for its ar
   });
 });
 
-// The key routing table (codex-parity-2 1d; docs/tui-architecture.md): the
+// The key routing table (terminal UI plan 1d; docs/tui-architecture.md): the
 // topmost layer takes the key. Each row opens a layer, presses one key, and
 // checks what happened, so a key can't reach a layer underneath by accident.
 const ESC = "\x1b";
@@ -331,10 +357,10 @@ const LAYERS = {
     await until(() => app.state.overlay, "the shortcuts");
   },
 };
-const sent = async (engine, method) => (await engine.server.request("debug/state", {})).calls.filter((c) => c === method).length;
+const sent = async (engine, method) => (await engine.testRequest("debug/state", {})).calls.filter((c) => c === method).length;
 const ROUTES = [
   ["idle", "ctrlC", async ({ app }) => assert.match(app.state.note ?? "", /Ctrl\+C again quits/)],
-  ["idle", "shiftTab", async ({ app, engine, session }) => (assert.equal(app.state.composer, ""), assert.equal(await sent(engine, "turn/start"), 0), assert.equal(session.state.mode.kind, "plan", "Codex's mode cycle"))],
+  ["idle", "shiftTab", async ({ app, engine, session }) => (assert.equal(app.state.composer, ""), assert.equal(await sent(engine, "turn/start"), 0), assert.equal(session.state.mode.kind, "plan", "the engine's mode cycle"))],
   ["idle", "enter", async ({ engine }) => assert.equal(await sent(engine, "turn/start"), 0, "an empty prompt sends nothing")],
   ["text", "esc", async ({ app }) => assert.equal(app.state.composer, "draft", "Esc doesn't throw the draft away")],
   ["text", "ctrlC", async ({ app }) => (assert.equal(app.state.composer, ""), assert.doesNotMatch(app.state.note ?? "", /again quits/, "clearing doesn't arm the quit"))],
@@ -386,9 +412,9 @@ test("key routing table: the topmost layer takes Esc, Ctrl+C, Tab, Shift+Tab, En
   }
 });
 
-test("/plan and Shift+Tab: Codex's plan mode, its footer chip and prompt colour, /plan <prompt>, and the unavailable answer", async () => {
+test("/plan and Shift+Tab: the engine's plan mode, its footer chip and prompt colour, /plan <prompt>, and the unavailable answer", async () => {
   await withApp(async ({ type, until, text, session, engine }) => {
-    const debug = () => engine.server.request("debug/state", {});
+    const debug = () => engine.testRequest("debug/state", {});
     assert.doesNotMatch(text(), /Plan mode/);
     type("/plan\r");
     await until(() => session.state.mode.kind === "plan" && /Plan mode \(shift\+tab to cycle\)/.test(text()), "the plan chip");
@@ -402,12 +428,12 @@ test("/plan and Shift+Tab: Codex's plan mode, its footer chip and prompt colour,
     await sleep(50);
     assert.equal(session.state.mode.kind, "plan");
   }, { modes: true, cols: 90 });
-  // Codex without presets: /plan <text> goes back into the composer, with Codex's answer.
+  // the engine without presets: /plan <text> goes back into the composer, with the engine's answer.
   await withApp(async ({ app, type, until, text, engine }) => {
     type("/plan fix the bug\r");
     await until(() => /Plan mode unavailable right now\./.test(text()), "the answer");
     assert.equal(app.state.composer, "/plan fix the bug");
-    assert.ok(!(await engine.server.request("debug/state", {})).calls.includes("turn/start"), "never sent to the model");
+    assert.ok(!(await engine.testRequest("debug/state", {})).calls.includes("turn/start"), "never sent to the model");
     type("\x15\x1b[Z");
     await sleep(60);
     assert.match(text(), /Plan mode unavailable right now\./);
@@ -418,7 +444,7 @@ test("/clear, /archive, /resume archived, /delete and /pwd", async () => {
   const forgotten = [];
   await withApp(
     async ({ app, type, until, text, session, engine }) => {
-      const debug = () => engine.server.request("debug/state", {});
+      const debug = () => engine.testRequest("debug/state", {});
       type("/pwd\r");
       await until(() => /Current working directory:\s+\S/.test(text()), "/pwd"); // a long temp path wraps
       type("/pwd now\r");
@@ -486,7 +512,7 @@ test("/permissions and /model set the next turn's overrides through pickers", as
     await until(() => /Permissions: Read only/.test(text()), "set");
     type("fail-turn\r");
     await until(() => /Worked for/.test(text()), "the turn");
-    const st = await engine.server.request("debug/state", {});
+    const st = await engine.testRequest("debug/state", {});
     assert.deepEqual(st.lastParams["turn/start"].sandboxPolicy, { type: "readOnly" });
     assert.equal(session.state.config.sandbox, "read-only");
   });
@@ -511,7 +537,7 @@ test("@ opens a file picker from actions.searchFiles; Tab inserts the path", asy
   );
 });
 
-test("/mention: Codex's command puts an @ in the prompt and opens the file picker", async () => {
+test("/mention: the engine's command puts an @ in the prompt and opens the file picker", async () => {
   await withApp(
     async ({ app, type, until }) => {
       type("/mention\r");
@@ -523,7 +549,7 @@ test("/mention: Codex's command puts an @ in the prompt and opens the file picke
   );
 });
 
-test("/rollout and /agents: Codex's answers; /rollout and /debug-config stay out of the popup but can be typed", async () => {
+test("/rollout and /agents: the engine's answers; /rollout and /debug-config stay out of the popup but can be typed", async () => {
   await withApp(
     async ({ app, type, until, committed }) => {
       const flat = () => committed().replace(/\s+/g, " ");
@@ -550,20 +576,20 @@ test("/debug-config: config layers lowest first, the session flags' keys with se
       type("/debug-config\r");
       await until(() => /Requirements:/.test(committed()), "the cell");
       const out = committed();
-      assert.match(out, /\/debug-config\n\nConfig layer stack \(lowest precedence first\):\n {2}1\. user \(\/fake\/home\/config\.toml\) \(enabled\)\n {2}2\. project \(\/fake\/work\/\.codex\/config\.toml\) \(disabled\)\n {5}reason: this folder isn't trusted\n {2}3\. session-flags \(enabled\)/);
+      assert.match(out, new RegExp(String.raw`\/debug-config\n\nConfig layer stack \(lowest precedence first\):\n {2}1\. user \(\/fake\/home\/config\.toml\) \(enabled\)\n {2}2\. project \(\/fake\/work\/${projectConfigFolder.replace(".", "\\.")}\/config\.toml\) \(disabled\)\n {5}reason: this folder isn't trusted\n {2}3\. session-flags \(enabled\)`));
       assert.match(out, /- model_providers\.mock\.api_key = "\*\*\*\*"/, "a secret is masked");
       assert.match(out, /- model_providers\.mock\.base_url = "http:\/\/127\.0\.0\.1:1\/v1"/);
       assert.match(out, /- thread_unload_delay_secs = 0/);
       assert.doesNotMatch(out, /sk-fake-secret/);
       assert.match(out, /Requirements:\n {2}- allowed_sandbox_modes: read-only, workspace-write\n {2}- allow_login_shell: false/);
-      const p = (await engine.server.request("debug/state", {})).lastParams["config/read"];
+      const p = (await engine.testRequest("debug/state", {})).lastParams["config/read"];
       assert.deepEqual(p.includeLayers, true);
     },
     { cols: 120, env: { FAKE_REQUIREMENTS: JSON.stringify({ allowedSandboxModes: ["read-only", "workspace-write"], allowLoginShell: false, logDir: null }) } },
   );
 });
 
-test("/recap: Codex's temporary read-only thread with tools off answers in its schema, then is unsubscribed", async () => {
+test("/recap: the engine's temporary read-only thread with tools off answers in its schema, then is unsubscribed", async () => {
   await withApp(
     async ({ type, until, committed, engine, session }) => {
       const flat = () => committed().replace(/\s+/g, " ");
@@ -574,7 +600,7 @@ test("/recap: Codex's temporary read-only thread with tools off answers in its s
       const main = session.state.thread.id;
       type("/recap\r");
       await until(() => /\u{21b3} Recap: Fixing the login bug: the fix is in, tests pass\. Next: Push it\?/u.test(flat()), "the recap");
-      const p = (await engine.server.request("debug/state", {})).lastParams;
+      const p = (await engine.testRequest("debug/state", {})).lastParams;
       const start = p["thread/start"];
       assert.equal(start.ephemeral, true);
       assert.equal(start.sandbox, "read-only");
@@ -593,7 +619,7 @@ test("/recap: Codex's temporary read-only thread with tools off answers in its s
   );
 });
 
-test("/recap: a bad answer fails as Codex says; a prompt sent meanwhile drops it; one at a time; not during a turn", async () => {
+test("/recap: a bad answer fails as engine says; a prompt sent meanwhile drops it; one at a time; not during a turn", async () => {
   await withApp(
     async ({ type, until, committed, text }) => {
       const flat = () => committed().replace(/\s+/g, " ");
@@ -624,7 +650,7 @@ test("/recap: a bad answer fails as Codex says; a prompt sent meanwhile drops it
   );
 });
 
-test("/approve: Codex's Auto-review Denials picker sends one denial back as its core event; it leaves the list", async () => {
+test("/approve: the engine's Auto-review Denials picker sends one denial back as its core event; it leaves the list", async () => {
   await withApp(
     async ({ app, type, until, text, committed, engine, session }) => {
       const flat = () => committed().replace(/\s+/g, " ");
@@ -632,7 +658,7 @@ test("/approve: Codex's Auto-review Denials picker sends one denial back as its 
       await until(() => /No recent auto-review denials in this thread\. Denials are recorded after auto-review rejects an action\./.test(flat()), "none yet");
       type("auto-review-deny\r");
       await until(() => /Auto-review stopped two commands/.test(flat()), "the turn");
-      assert.match(flat(), /Auto-review denied `rm -rf build` \(deletes the build folder\)\. \/approve allows one retry\./);
+      assert.match(flat(), /The engine sent a notice\. Details: \/warnings \/approve allows one retry\./);
       assert.deepEqual(session.state.denials.map((d) => d.reviewId), ["review-2", "review-1"], "newest first");
       type("/approve\r");
       await until(() => app.state.popup === "approve" && /Auto-review Denials/.test(text()), "the picker");
@@ -640,7 +666,7 @@ test("/approve: Codex's Auto-review Denials picker sends one denial back as its 
       assert.match(text(), /rm -rf build\s+deletes the build folder/);
       type("\x1b[B\r"); // the second row: rm -rf build
       await until(() => /Approval recorded for one retry of the selected auto-review denial\. The model will see the approval context; the retry still goes through auto-review\./.test(flat()), "approved");
-      const p = (await engine.server.request("debug/state", {})).lastParams["thread/approveGuardianDeniedAction"];
+      const p = (await engine.testRequest("debug/state", {})).lastParams["thread/approveGuardianDeniedAction"];
       assert.equal(p.threadId, session.state.thread.id);
       assert.deepEqual(p.event, {
         id: "review-1",
@@ -662,7 +688,7 @@ test("/approve: Codex's Auto-review Denials picker sends one denial back as its 
   );
 });
 
-test("/subagents: Codex's picker (main first, agents as first seen) watches one live; alt+←/→ go round; the main row closes it", async () => {
+test("/subagents: the engine's picker (main first, agents as first seen) watches one live; alt+←/→ go round; the main row closes it", async () => {
   await withApp(
     async ({ app, type, until, text, committed, session }) => {
       const flat = () => committed().replace(/\s+/g, " ");
@@ -670,7 +696,7 @@ test("/subagents: Codex's picker (main first, agents as first seen) watches one 
       await until(() => /No agents available yet\./.test(flat()), "none yet");
       type("subagents-2\r");
       await until(() => /Two agents are on it/.test(flat()), "the turn");
-      assert.deepEqual([...session.state.agents.values()].map((a) => [a.nickname, a.role, a.running]), [[ "Ada", "explorer", false ], [ null, "reviewer", true ]], "the ghost Codex couldn't find isn't a row");
+      assert.deepEqual([...session.state.agents.values()].map((a) => [a.nickname, a.role, a.running]), [[ "Ada", "explorer", false ], [ null, "reviewer", true ]], "the ghost engine couldn't find isn't a row");
       type("/subagents\r");
       await until(() => app.state.popup === "subagents" && /Subagents/.test(text()), "the picker");
       assert.match(text(), /Select an agent to watch\. (alt\+\u{2190} previous, alt\+\u{2192} next|\u{2325}\u{2190} previous, \u{2325}\u{2192} next)\./u);
@@ -691,7 +717,7 @@ test("/subagents: Codex's picker (main first, agents as first seen) watches one 
   );
 });
 
-test("/setup-default-sandbox: Windows only; asks first (machine-wide); sets up the elevated sandbox and Codex's auto permissions", async () => {
+test("/setup-default-sandbox: Windows only; asks first (machine-wide); sets up the elevated sandbox and the engine's auto permissions", async () => {
   await withApp(
     async ({ type, until, committed }) => {
       type("/setup-default-sandbox\r");
@@ -704,7 +730,7 @@ test("/setup-default-sandbox: Windows only; asks first (machine-wide); sets up t
       const flat = () => committed().replace(/\s+/g, " ");
       type("/setup-default-sandbox\r");
       await until(() => app.state.confirm && /Set up the elevated sandbox\?/.test(text()), "the question");
-      assert.match(text().replace(/\s+/g, " "), /administrator approval[\s\S]*your own Codex uses them too/);
+      assert.match(text().replace(/\s+/g, " "), new RegExp(`Windows will ask for administrator permission[\\s\\S]*shared with any other ${ENGINE.name} install`));
       await sleep(100);
       type("n");
       await until(() => /Kept the current sandbox\./.test(flat()), "no");
@@ -712,8 +738,8 @@ test("/setup-default-sandbox: Windows only; asks first (machine-wide); sets up t
       await until(() => app.state.confirm, "the question again");
       await sleep(100);
       type("y");
-      await until(() => /Sandbox ready Codex can now safely edit files and execute commands in your computer/.test(flat()), "ready");
-      const p = (await engine.server.request("debug/state", {})).lastParams["windowsSandbox/setupStart"];
+      await until(() => /Sandbox ready The agent can now safely edit files and run commands on your computer/.test(flat()), "ready");
+      const p = (await engine.testRequest("debug/state", {})).lastParams["windowsSandbox/setupStart"];
       assert.equal(p.mode, "elevated");
       type("/setup-default-sandbox\r");
       await until(() => /The elevated sandbox is already set up\./.test(flat()), "once is enough");
@@ -728,7 +754,10 @@ test("/setup-default-sandbox: Windows only; asks first (machine-wide); sets up t
       await until(() => app.state.confirm, "the question");
       await sleep(100);
       type("y");
-      await until(() => /Windows sandbox setup failed: denied by policy `ad sandbox setup` sets up the non-admin sandbox instead\./.test(flat()), "the failure");
+      await until(() => /Windows sandbox setup failed: The engine reported a problem\. Details: \/warnings/.test(flat()), "the mapped failure");
+      assert.doesNotMatch(flat(), /denied by policy/);
+      type("/warnings\r");
+      await until(() => /details: denied by policy/.test(flat()), "the raw sandbox detail");
     },
     { platform: "win32", cols: 100, env: { FAKE_SANDBOX_FAIL: "1" } },
   );
@@ -747,7 +776,7 @@ test("Part 10 review: /approve after an engine restart goes to the new engine; a
       const flat = () => committed().replace(/\s+/g, " ");
       type("auto-review-deny\r");
       await until(() => /Auto-review stopped two commands/.test(flat()), "the denials");
-      engines[0].server.request("test/crash", {}).catch(() => {});
+      engines[0].testRequest("test/crash", {}).catch(() => {});
       await until(() => engines.length === 2 && session.state.engine.state === "ready", "the restart");
       assert.equal(session.state.denials.length, 2, "kept across the restart");
       type("/approve\r");
@@ -755,12 +784,14 @@ test("Part 10 review: /approve after an engine restart goes to the new engine; a
       type("\r");
       await until(() => /Approval recorded for one retry/.test(flat()), "approved through the new engine");
       assert.deepEqual(session.state.denials.map((d) => d.reviewId), ["review-1"]);
-      // Codex refuses one: it stays on the list, and the reason shows.
+      // engine refuses one: it stays on the list, and the reason shows.
       session.state.denials[0].review = { ...session.state.denials[0].review, status: "approved" };
       type("/approve\r");
       await until(() => app.state.popup === "approve", "the picker again");
       type("\r");
-      await until(() => /invalid Guardian denial event: bad status or action/.test(flat()), "the refusal");
+      await until(() => /The engine refused a request from ad/.test(flat()), "the refusal");
+      type("/warnings\r");
+      await until(() => /details: invalid Guardian denial event: bad status or action/.test(flat()), "the original refusal in warnings");
       assert.deepEqual(session.state.denials.map((d) => d.reviewId), ["review-1"], "back on the list");
     },
     { restartable: true, cols: 110, rows: 30 },
@@ -798,7 +829,7 @@ test("Part 10 review: a recap is dropped when another turn ran meanwhile; a /pri
       await until(() => /Private is off\./.test(flat()), "private off");
       type("/recap\r");
       await until(() => /Recap:/.test(flat()), "the recap");
-      const prompt = (await engine.server.request("debug/state", {})).lastParams["turn/start"].input[0].text;
+      const prompt = (await engine.testRequest("debug/state", {})).lastParams["turn/start"].input[0].text;
       assert.match(prompt, /Conversation:\nUser: early-complete\n\nAssistant: early$/, "the private prompt and its answer stay out");
       assert.doesNotMatch(prompt, /SECRET|pong/);
     },
@@ -806,7 +837,7 @@ test("Part 10 review: a recap is dropped when another turn ran meanwhile; a /pri
   );
 });
 
-test("Part 10 review: /setup-default-sandbox blocks every input while it runs (status kept); never in a Codex home ad didn't make", async () => {
+test("Part 10 review: /setup-default-sandbox blocks every input while it runs (status kept); never in an engine home ad didn't make", async () => {
   await withApp(
     async ({ app, type, until, text, committed, engine }) => {
       const flat = () => committed().replace(/\s+/g, " ");
@@ -822,7 +853,7 @@ test("Part 10 review: /setup-default-sandbox blocks every input while it runs (s
       }
       assert.equal((flat().match(/Input disabled until setup completes\./g) ?? []).length, 3);
       assert.match(text(), /Setting up sandbox\.\.\./, "the status stays after a key");
-      const calls = (await engine.server.request("debug/state", {})).calls;
+      const calls = (await engine.testRequest("debug/state", {})).calls;
       assert.ok(!calls.includes("thread/compact/start") && !calls.includes("thread/shellCommand") && !calls.includes("turn/start"), "nothing went out");
       await until(() => /Sandbox ready/.test(flat()), "ready", 15000);
     },
@@ -884,7 +915,7 @@ test("a tiny screen still shows the composer; no footer under 10 rows", async ()
   );
 });
 
-test("/warnings lists kept notices and events from a newer Codex", async () => {
+test("/warnings lists kept notices and events from a newer engine", async () => {
   await withApp(async ({ type, until, text }) => {
     type("/warnings\r");
     await until(() => /No warnings in this session/.test(text()), "the empty report");
@@ -996,7 +1027,7 @@ test("/undo: files back and the prompt returns; typing takes the next turn's sna
   });
 });
 
-test("Codex's keys for /copy, /raw and /warnings: Ctrl+O, Alt+R, F2", async () => {
+test("the engine's keys for /copy, /raw and /warnings: Ctrl+O, Alt+R, F2", async () => {
   await withApp(
     async ({ type, until, committed }) => {
       type("early-complete\r");
@@ -1012,13 +1043,13 @@ test("Codex's keys for /copy, /raw and /warnings: Ctrl+O, Alt+R, F2", async () =
   );
 });
 
-// Codex's settings as the app sees them (prefs.mjs's createCodexSettings), in memory.
+// The the engine's settings as the app sees them (prefs.mjs's createEngineSettings), in memory.
 function memorySettings(initial = {}) {
   const store = structuredClone(initial);
   const at = (k) => k.split(".").reduce((o, x) => o?.[x], store);
   return {
     store,
-    codex: {
+    engine: {
       get: at,
       async set(k, v) {
         const keys = k.split(".");
@@ -1032,7 +1063,7 @@ function memorySettings(initial = {}) {
   };
 }
 
-test("status line: Codex's items under the composer; /statusline previews, saves, and keeps ids ad can't show", async () => {
+test("status line: the engine's items under the composer; /statusline previews, saves, and keeps ids ad can't show", async () => {
   const settings = memorySettings({ tui: { status_line: ["model", "pull-request-number", "current-dir"] } });
   await withApp(
     async ({ app, type, until, text }) => {
@@ -1043,8 +1074,8 @@ test("status line: Codex's items under the composer; /statusline previews, saves
       type(" "); // model off: the row changes at once (a preview)
       await until(() => !/fake-model ·/.test(text()), "the preview");
       type("\r");
-      await until(() => /Status line: current-dir\. Saved for \/codex too\./.test(text()), "saved");
-      assert.deepEqual(settings.store.tui.status_line, ["current-dir", "pull-request-number"], "Codex's item ad can't show is kept");
+      await until(() => /Status line: current-dir\. Saved\./.test(text()), "saved");
+      assert.deepEqual(settings.store.tui.status_line, ["current-dir", "pull-request-number"], "engine's item ad can't show is kept");
       // Esc puts the row back as it was.
       type("/statusline\r");
       await until(() => app.state.popup === "status", "again");
@@ -1091,7 +1122,7 @@ test("window title: saved first, set by OSC 0, /private keeps the conversation's
   );
 });
 
-test("/title saves Codex's tui.terminal_title; [] leaves the title alone", async () => {
+test("/title saves the engine's tui.terminal_title; [] leaves the title alone", async () => {
   const settings = memorySettings({ tui: { terminal_title: [] } });
   await withApp(
     async ({ app, scr, type, until }) => {
@@ -1123,9 +1154,9 @@ test("window title: nothing is written while another program has the terminal", 
   );
 });
 
-test("Implement this plan?: after a Plan turn with a proposed plan; implement here sends Codex's message in Default", async () => {
+test("Implement this plan?: after a Plan turn with a proposed plan; implement here sends the engine's message in Default", async () => {
   await withApp(async ({ app, type, until, text, session, engine, bells, committed }) => {
-    const debug = () => engine.server.request("debug/state", {});
+    const debug = () => engine.testRequest("debug/state", {});
     type("/plan plan-reply\r");
     await until(() => app.state.confirm && /Implement this plan\?/.test(text()), "the choice");
     assert.match(committed(), /• Proposed Plan/);
@@ -1138,7 +1169,7 @@ test("Implement this plan?: after a Plan turn with a proposed plan; implement he
     assert.ok(app.state.confirm, "still open");
     await sleep(120);
     type("1");
-    await until(async () => (await debug()).lastParams["turn/start"]?.input?.[0]?.text === "Implement the plan.", "Codex's message");
+    await until(async () => (await debug()).lastParams["turn/start"]?.input?.[0]?.text === "Implement the plan.", "engine's message");
     const st = await debug();
     assert.equal(st.lastParams["turn/start"].collaborationMode.mode, "default");
     assert.equal(session.state.mode.kind, "default");
@@ -1146,9 +1177,9 @@ test("Implement this plan?: after a Plan turn with a proposed plan; implement he
   }, { modes: true, cols: 90, rows: 30 });
 });
 
-test("Implement this plan?: clear context starts a new conversation with Codex's prefix and the plan; stay keeps planning", async () => {
+test("Implement this plan?: clear context starts a new conversation with the engine's prefix and the plan; stay keeps planning", async () => {
   await withApp(async ({ app, type, until, text, session, engine }) => {
-    const debug = () => engine.server.request("debug/state", {});
+    const debug = () => engine.testRequest("debug/state", {});
     type("/plan plan-reply\r");
     await until(() => app.state.confirm, "the choice");
     const first = session.state.thread.id;
@@ -1195,7 +1226,7 @@ test("Implement this plan?: waits for an empty prompt (the draft stays), and nev
   }, { modes: true, cols: 90, rows: 30 });
 });
 
-test("update_plan checklists go into the scrollback as Codex's 'Updated Plan' cells, one per update", async () => {
+test("update_plan checklists go into the scrollback as the engine's 'Updated Plan' cells, one per update", async () => {
   await withApp(async ({ type, until, committed, session }) => {
     type("checklist\r");
     await until(() => session.state.turns[0]?.status === "completed" && /working on it/.test(committed()), "the turn");
@@ -1224,28 +1255,28 @@ test("plan mode (review #3, #6): the 'plan is ready' note goes with the plan; Sh
   }, { modes: true, cols: 90, rows: 30 });
 });
 
-test("background terminals: output after one is committed during the turn; the footer, /ps (16 at most) and /stop are Codex's", async () => {
+test("background terminals: output after one is committed during the turn; the footer, /ps (16 at most) and /stop are the engine's", async () => {
   await withApp(async ({ app, type, until, text, session, engine, committed }) => {
     type("bg-terminal\r");
     await until(() => /after the server/.test(committed()), "what came after the server, in the scrollback");
     await until(() => !session.state.activeTurnId, "the turn's end");
     await until(() => /1 background terminal running · \/ps to view · \/stop to close/.test(text()), "the footer");
-    // As in Codex: its cell goes in as it is (running) once something follows, and holds nothing back.
+    // As in engine: its cell goes in as it is (running) once something follows, and holds nothing back.
     assert.match(committed(), /Running .*npm run dev:0[\s\S]*after the server/);
     type("/ps\r");
     await until(() => /Background terminals[\s\S]*• npm run dev:0[\s\S]*↳ /.test(committed()), "/ps");
     type("/stop\r");
     await until(() => /Stopping all background terminals\./.test(committed()), "/stop");
-    assert.ok((await engine.server.request("debug/state", {})).calls.includes("thread/backgroundTerminals/clean"));
+    assert.ok((await engine.testRequest("debug/state", {})).calls.includes("thread/backgroundTerminals/clean"));
     await until(() => !/background terminal running/.test(text()), "the footer cleared");
     type("/ps\r");
     await until(() => /No background terminals running\./.test(committed()), "none left");
-    type("/clean\r"); // Codex's alias
+    type("/clean\r"); // the engine's alias
     await until(() => committed().match(/Stopping all background terminals\./g)?.length === 2, "the alias");
     type("bg-terminals-20\r");
     await until(() => session.state.terminals.size === 20 && !session.state.activeTurnId, "twenty");
     type("/ps\r");
-    await until(() => /\.\.\. and 4 more running/.test(committed()), "Codex's cap of 16");
+    await until(() => /\.\.\. and 4 more running/.test(committed()), "engine's cap of 16");
   }, { modes: true, cols: 100, rows: 30 });
 });
 
@@ -1256,13 +1287,13 @@ test("background terminals (review): Esc on a turn with a command still running 
     type("\x1b");
     await until(() => session.state.turns[0]?.status === "interrupted", "interrupted");
     await until(() => /Running .*npm run dev:0/.test(committed()), "its cell in the scrollback");
-    assert.equal(session.state.terminals.size, 1, "Esc interrupts the turn, not the command (Codex)");
+    assert.equal(session.state.terminals.size, 1, "Esc interrupts the turn, not the command (engine)");
   }, { modes: true, cols: 100, rows: 30 });
 });
 
-test("/cd: Codex's checks and texts, the trust question, and the conversation forked into the folder", async () => {
+test("/cd: the engine's checks and texts, the trust question, and the conversation forked into the folder", async () => {
   await withApp(async ({ app, type, until, committed, session, engine, root }) => {
-    const debug = () => engine.server.request("debug/state", {});
+    const debug = () => engine.testRequest("debug/state", {});
     const other = join(root, "shop-app");
     mkdirSync(other);
     writeFileSync(join(root, "notes.txt"), "x");
@@ -1271,7 +1302,7 @@ test("/cd: Codex's checks and texts, the trust question, and the conversation fo
     type("/cd notes.txt\r");
     await until(() => /Not a directory: .*notes\.txt/.test(committed()), "a file");
     type(`/cd ${session.engine.home}\r`);
-    await until(() => /ad doesn't work inside a Codex home/.test(committed()), "ad's Codex home");
+    await until(() => new RegExp(`ad doesn't work inside a ${ENGINE.name} home`).test(committed()), "ad's engine home");
     type("fail-turn\r");
     await until(() => !session.state.activeTurnId && session.state.turns.length === 1, "a turn first");
     const first = session.state.thread.id;
@@ -1293,7 +1324,7 @@ test("/cd: Codex's checks and texts, the trust question, and the conversation fo
     assert.ok(Object.entries(projects).some(([k, v]) => k === other && v.trust_level === "trusted"), JSON.stringify(projects));
     type("/pwd\r");
     await until(() => new RegExp(`Current working directory: .*shop-app`).test(committed()), "/pwd");
-    // Busy: Codex's refusal, the draft kept.
+    // Busy: the engine's refusal, the draft kept.
     type("hang\r");
     await until(() => session.state.activeTurnId, "a running turn");
     type("/cd ..\r");
@@ -1317,7 +1348,7 @@ test("/cd (review): a prompt sent while the folder is changing waits, its text k
   }, { modes: true, cols: 120, rows: 30 });
 });
 
-test("/cd (Codex): refused while another agent is running; it goes ahead once that agent stops", async () => {
+test("/cd (engine): refused while another agent is running; it goes ahead once that agent stops", async () => {
   await withApp(async ({ app, type, until, committed, session, root }) => {
     mkdirSync(join(root, "shop-app"));
     type("subagents-2\r");
@@ -1347,7 +1378,7 @@ test("/cd (Codex): refused while another agent is running; it goes ahead once th
 
 test("/side: a panel on an ephemeral fork; Ctrl+/ switches prompts; only side commands; Ctrl+C closes it into the scrollback", async () => {
   await withApp(async ({ app, type, until, text, committed, session, engine }) => {
-    const debug = () => engine.server.request("debug/state", {});
+    const debug = () => engine.testRequest("debug/state", {});
     type("/side\r");
     await until(() => /'\/side' is unavailable until the main thread is ready\./.test(committed()), "too early");
     type("fail-turn\r");
@@ -1359,7 +1390,7 @@ test("/side: a panel on an ephemeral fork; Ctrl+/ switches prompts; only side co
     const sideId = (await debug()).lastParams["turn/start"].threadId;
     await until(() => /pong\[decline\]/.test(text()), "the side answer in the panel");
     assert.doesNotMatch(committed(), /pong\[decline\]/, "nothing of the side in the scrollback yet");
-    // Only Codex's side commands; no shell.
+    // Only the engine's side commands; no shell.
     type("/model\r");
     await until(() => /'\/model' is unavailable in side conversations\. Press Ctrl\+C to return to the main thread first\./.test(committed()), "/model refused");
     type("\x15!ls\r");
@@ -1399,7 +1430,7 @@ test("/side while main runs: main's approval comes first and hides the panel; th
 
 test("/side (review): one at a time, the text kept; a failed side turn shows in the panel; no images to the side; /side right after /cd", async () => {
   await withApp(async ({ app, type, until, text, committed, session, engine, root }) => {
-    const debug = () => engine.server.request("debug/state", {});
+    const debug = () => engine.testRequest("debug/state", {});
     writeFileSync(join(root, "shot.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
     type("fail-turn\r");
     await until(() => !session.state.activeTurnId && session.state.turns.length === 1, "a main turn");
@@ -1410,7 +1441,7 @@ test("/side (review): one at a time, the text kept; a failed side turn shows in 
     assert.equal(app.state.composer, "/side again please", "the text is kept");
     assert.equal((await debug()).calls.filter((c) => c === "thread/fork").length, 1, "one fork");
     type("\x15fail-turn\r");
-    await until(() => /The turn failed: model refused/.test(text()), "the side's failure, in the panel");
+    await until(() => /The turn failed: The engine reported a problem/.test(text()), "the side's failure, in the panel");
     type(`\x1b[200~${join(root, "shot.png")}\x1b[201~`);
     await until(() => /Images can't go to a side conversation/.test(text()), "no image to the side");
     type("\x03");
@@ -1441,7 +1472,7 @@ test("/keymap lists the keys; /keymap debug inspects them (Esc included) until C
   }, { cols: 100, rows: 30 });
 });
 
-test("/vim in the app: Codex's messages, the footer label, the cursor shape; Esc goes to Normal before it interrupts", async () => {
+test("/vim in the app: the engine's messages, the footer label, the cursor shape; Esc goes to Normal before it interrupts", async () => {
   await withApp(async ({ app, type, until, text, committed, session, scr }) => {
     const writes = () => scr.writes.join("");
     type("/vim\r");
@@ -1456,7 +1487,7 @@ test("/vim in the app: Codex's messages, the footer label, the cursor shape; Esc
     type("\x1b"); // Insert → Normal: never an interrupt
     await until(() => /Vim: Normal/.test(text()), "Normal");
     assert.ok(session.state.activeTurnId, "the turn still runs");
-    type("\x1b"); // Normal, nothing pending: Codex's Esc (interrupt)
+    type("\x1b"); // Normal, nothing pending: Esc interrupts
     await until(() => !session.state.activeTurnId, "interrupted");
     type("?"); // Normal: a backward search, not the shortcuts
     await until(() => /^\?$/m.test(scr.visible().join("\n")), "the search line");
@@ -1469,8 +1500,8 @@ test("/vim in the app: Codex's messages, the footer label, the cursor shape; Esc
   }, { cols: 100, rows: 30 });
 });
 
-test("tui.vim_mode_default starts the prompt in Vim's Insert mode (Codex)", async () => {
-  const settings = { codex: { get: (k) => (k === "tui.vim_mode_default" ? true : undefined) }, ad: { get: (_k, d) => d, set: async () => {} } };
+test("tui.vim_mode_default starts the prompt in Vim's Insert mode (engine)", async () => {
+  const settings = { engine: { get: (k) => (k === "tui.vim_mode_default" ? true : undefined) }, ad: { get: (_k, d) => d, set: async () => {} } };
   await withApp(async ({ until, text }) => {
     await until(() => /Vim: Insert/.test(text()), "on from the start, in Insert");
   }, { settings, cols: 100, rows: 30 });
@@ -1503,11 +1534,11 @@ test("vim (review): Esc reaches Vim in a side conversation too; the Keypress Ins
   }, { modes: true, cols: 100, rows: 30 });
 });
 
-test("/theme: Codex's picker with a live preview; Esc puts the old theme back; Enter saves tui.theme; an unknown one is noted", async () => {
+test("/theme: the engine's picker with a live preview; Esc puts the old theme back; Enter saves tui.theme; an unknown one is noted", async () => {
   const { setSyntaxTheme, syntaxTheme } = await import("../src/tui/view/highlight.mjs");
   const saved = {};
   const values = { "tui.theme": "dracula" };
-  const settings = { codex: { get: (k) => values[k], set: async (k, v) => ((saved[k] = v), (values[k] = v)) }, ad: { get: (_k, d) => d, set: async () => {} } };
+  const settings = { engine: { get: (k) => values[k], set: async (k, v) => ((saved[k] = v), (values[k] = v)) }, ad: { get: (_k, d) => d, set: async () => {} } };
   try {
     await withApp(async ({ app, scr, type, until, text, committed }) => {
       assert.equal(syntaxTheme(), "ansi", "a theme ad doesn't ship: ansi");
@@ -1515,7 +1546,7 @@ test("/theme: Codex's picker with a live preview; Esc puts the old theme back; E
       await until(() => /tui\.theme: ad doesn't ship "dracula"/.test(committed()), "the note");
       type("/theme\r");
       await until(() => /Select Syntax Theme[\s\S]*ansi/.test(text()) && /Move up\/down to live preview themes/.test(text()), "the picker and its preview");
-      assert.match(text(), /fn greet\(name: &str\)/, "Codex's preview sample");
+      assert.match(text(), /fn greet\(name: &str\)/, "engine's preview sample");
       // Down: previewed at once (#cba6f7 is mocha's keyword colour), in the
       // preview only: what commits meanwhile keeps the current theme.
       const from = scr.writes.length;
@@ -1528,11 +1559,96 @@ test("/theme: Codex's picker with a live preview; Esc puts the old theme back; E
       type("/theme\r");
       await until(() => app.state.popup === "theme", "the picker again");
       type("\x1b[B\x1b[B\r");
-      await until(() => /Syntax theme: catppuccin-latte\. Saved for \/codex too\./.test(committed()), "saved");
+      await until(() => /Syntax theme: catppuccin-latte\. Saved\./.test(committed()), "saved");
       assert.equal(saved["tui.theme"], "catppuccin-latte");
       assert.equal(syntaxTheme(), "catppuccin-latte");
     }, { settings, cols: 100, rows: 40, depth: 24 });
   } finally {
     setSyntaxTheme("ansi");
   }
+});
+
+
+test("engine crash diagnostics stay out of the screen until /warnings", async () => {
+  const raw = `${LEGACY.productValue}: panicked at core`;
+  await withApp(async ({ engine, session, type, until, text, committed }) => {
+    await session.submit("fail-turn").done;
+    await assert.rejects(engine.testRequest("test/crash"));
+    await until(() => /ad's engine stopped/.test(text()), "the crash banner");
+    assert.deepEqual(screenHits(text() + "\n" + committed(), { allow: brandPatterns() }), []);
+    assert.equal(session.state.notices.find((n) => n.code === "engine.exited")?.detail, raw);
+    type("/warnings\r");
+    await until(() => /details:.*panicked at core/.test(committed()), "raw stderr in warnings");
+  }, { env: { FAKE_CRASH_STDERR: raw } });
+});
+
+test("warning and informational deprecation details are kept for /warnings", async () => {
+  const raw = `${LEGACY.productValue} old setting`;
+  await withApp(async ({ engine, session, type, until, text, committed }) => {
+    engine.testNotify("deprecationNotice", { summary: raw, details: "the original detail" });
+    await until(() => session.state.notices.some((n) => n.code === "deprecation"), "the deprecation notice");
+    engine.testNotify("warning", { message: raw + " warning" });
+    await until(() => session.state.notices.some((n) => n.code === "warning"), "the warning notice");
+    assert.deepEqual(screenHits(text() + "\n" + committed(), { allow: brandPatterns() }), []);
+    type("/warnings\r");
+    await until(() => committed().includes(`details: ${raw}`), "raw details");
+    assert.ok(committed().includes("the original detail"), "info-level deprecation details remain inspectable");
+  });
+});
+
+test("command RPC failures keep raw details without putting them on the main screen", async () => {
+  const raw = `${LEGACY.productValue} refused to list threads`;
+  await withApp(async ({ engine, type, until, text, committed }) => {
+    engine.threads.list = async () => { throw Object.assign(new Error(raw), { code: -32000, raw }); };
+    type("/resume\r");
+    await until(() => /The engine reported a problem/.test(committed()), "mapped command failure");
+    assert.deepEqual(screenHits(text() + "\n" + committed(), { allow: brandPatterns() }), []);
+    type("/warnings\r");
+    await until(() => committed().includes(`details: ${raw}`), "raw command details");
+  });
+});
+
+test("failed turn diagnostics are mapped and remain available in /warnings", async () => {
+  const raw = `${LEGACY.productValue} refused the model`;
+  await withApp(async ({ type, until, text, committed }) => {
+    type("fail-turn\r");
+    await until(() => /The turn failed: The engine reported a problem/.test(committed()), "mapped turn failure");
+    assert.deepEqual(screenHits(text() + "\n" + committed(), { allow: brandPatterns() }), []);
+    type("/warnings\r");
+    await until(() => committed().includes(`details: ${raw}`), "raw failed-turn detail");
+  }, { env: { FAKE_TURN_ERROR: raw } });
+});
+
+
+test("review: recap failure is mapped and its exact raw reason remains inspectable", async () => {
+  const raw = `${LEGACY.productValue} recap failed`;
+  await withApp(async ({ session, engine, type, until, committed, text }) => {
+    await session.submit("early-complete").done;
+    engine.turn = async () => ({ status: "failed", error: { message: raw } });
+    type("/recap\r");
+    await until(() => /Could not generate a recap/.test(committed()), "recap failure");
+    assert.deepEqual(screenHits(text() + "\n" + committed(), { allow: brandPatterns() }), []);
+    type("/warnings\r");
+    await until(() => committed().includes(`details: ${raw}`), "the exact recap reason");
+  });
+});
+
+test("review: side warning details remain available while active and after close", async () => {
+  const raw = `${LEGACY.productValue} side warning`;
+  await withApp(async ({ session, engine, type, until, committed }) => {
+    await session.submit("early-complete").done;
+    let secondary;
+    const open = session.openSide;
+    session.openSide = async (...args) => (secondary = await open(...args));
+    type("/side\r");
+    await until(() => secondary, "the side conversation");
+    engine.testNotify("warning", { threadId: secondary.state.thread.id, message: raw });
+    await until(() => secondary.state.notices.some((n) => n.detail === raw), "the side warning");
+    type("\x1f/warnings\r");
+    await until(() => committed().includes(`details: ${raw}`), "side details while active");
+    const before = committed().split(`details: ${raw}`).length;
+    type("\x1f\x03");
+    type("/warnings\r");
+    await until(() => committed().split(`details: ${raw}`).length > before, "side details after closing");
+  }, { cols: 110, rows: 30 });
 });

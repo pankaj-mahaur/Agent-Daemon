@@ -279,7 +279,7 @@ export function createPreviewApp({ io, renderer, makeSession, header = [], hints
     /** The engine exited: decline an open prompt and say so. */
     engineStopped(code) {
       if (approval) answer("n");
-      renderer.commit([[{ text: `Codex stopped (exit ${Number.isInteger(code) ? code : "?"}). Ctrl+C quits; run ad tui --preview again to restart.`, style: WARN }]]);
+      renderer.commit([[{ text: `The engine stopped (exit ${Number.isInteger(code) ? code : "?"}). Ctrl+C quits; run ad tui --preview again to restart.`, style: WARN }]]);
       draw();
     },
     dispose() {
@@ -343,7 +343,7 @@ export async function cmdTuiPreview(opts = {}) {
       [
         `>_ Agent Daemon (v${opts.clientVersion ?? "?"}) \u{b7} terminal UI preview`,
         "",
-        `model:     ${opts.model ?? config.model ?? "(Codex default)"} \u{b7} ${login}`,
+        `model:     ${opts.model ?? config.model ?? "(the engine's default)"} \u{b7} ${login}`,
         `directory: ${cwd}`,
         `sandbox:   ${opts.sandbox ?? "workspace-write"} \u{b7} asks first`,
       ],

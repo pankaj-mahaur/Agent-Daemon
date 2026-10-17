@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Runs `ad tui --preview` against the fake Codex app-server, in a throwaway
-// Codex home, for the pty smoke test. Never starts the real Codex.
+// Runs `ad tui --preview` against the fake engine app-server, in a throwaway
+// engine home, for the pty smoke test. Never starts the real engine.
 //   node testkit/tui-preview-fake.mjs <codex-home> <cwd>
 
 import { fileURLToPath } from "node:url";

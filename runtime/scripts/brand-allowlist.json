@@ -1,0 +1,345 @@
+{
+  "$comment": "Where the engine's name may appear, with the reason (own-harness D2). Read by runtime/scripts/check-brand.mjs. `path` is a file, a folder (trailing slash) or a glob (`*` within a segment, `**` across); `rules` are the lint rules the entry exempts; `match` (a regex) narrows an entry to the hits whose text matches, and the brand word must sit inside the matched part. An entry that matches nothing is reported as stale, and test/check-brand.test.mjs fails on it: rewording an allowed line means updating its entry. Everything not listed here is a baseline hit that a plan part removes.",
+  "entries": [
+    {
+      "path": "runtime/src/engine/codex/",
+      "rules": ["A"],
+      "reason": "the adapter: upstream's API names (CODEX_HOME, `codex app-server`, protocol methods, the snapshot) live here by design; rules C and D still apply to it (its prose becomes codes, the façade owns the words)"
+    },
+    {
+      "path": "runtime/src/engine/index.mjs",
+      "rules": ["A"],
+      "reason": "the façade: it imports the adapter by its folder name and maps its codes; its own prose is rule C's business"
+    },
+    {
+      "path": "docs/troubleshooting.md",
+      "rules": ["A"],
+      "match": "OpenAI's own sign-in and usage-limit pages may say \"Codex\"|The engine's process shows as `codex` / `codex\\.exe`",
+      "reason": "Part 6 attribution: the provider's own pages and OS process labels are outside ad's screens; only these exact descriptive phrases may name them"
+    },
+    {
+      "path": "docs/**",
+      "rules": ["A"],
+      "match": "/codex|\\bad codex|codex-is-gone",
+      "reason": "the removed hand-off: docs must name `/codex` and `ad codex` to tell users what typing them does now; any other brand word on the line is still a hit"
+    },
+    {
+      "path": "skills/daemon/**",
+      "rules": ["A"],
+      "match": "/codex|\\bad codex|codex-is-gone",
+      "reason": "the removed hand-off: maintainer skills must name `/codex` and `ad codex` where the code still answers them; any other brand word on the line is still a hit"
+    },
+    {
+      "path": "runtime/src/engine/attribution.mjs",
+      "rules": ["A"],
+      "reason": "the attribution module: the only exporter of prose that names the engine (plan §4, D4)"
+    },
+    {
+      "path": "runtime/package.json",
+      "rules": ["A"],
+      "reason": "the dependency pin (@openai/codex, exact version)"
+    },
+    {
+      "path": "runtime/package-lock.json",
+      "rules": ["A"],
+      "reason": "the dependency pin's lock entries"
+    },
+    {
+      "path": "runtime/src/tui/init-prompt.mjs",
+      "rules": ["A"],
+      "reason": "upstream's /init prompt verbatim (Apache-2.0): the §4(c) attribution header must name the source; test/attribution.test.mjs checks it stays"
+    },
+    {
+      "path": "runtime/src/tui/recap.mjs",
+      "rules": ["A"],
+      "reason": "upstream's /recap prompt and schema verbatim (Apache-2.0): the attribution header must name the source; test/attribution.test.mjs checks it stays"
+    },
+    {
+      "path": "**",
+      "rules": ["A"],
+      "match": "codex-rs/",
+      "reason": "a citation of upstream's own source path (codex-rs/…): the file is upstream's and keeps its name, as the attributed prompt files cite theirs; a line that also names the engine in prose is still a hit"
+    },
+    {
+      "path": "skills/daemon/engine-upgrade/",
+      "rules": ["A"],
+      "reason": "the engine-upgrade runbook: it fetches upstream's releases and must say what it upgrades"
+    },
+    {
+      "path": ".github/workflows/engine-upgrade.yml",
+      "rules": ["A"],
+      "reason": "the engine-upgrade workflow: it bumps the pin from upstream's releases"
+    },
+    {
+      "path": "runtime/scripts/codex-schema-snapshot.mjs",
+      "rules": ["A"],
+      "reason": "maintainer tooling the engine-upgrade runbook runs: it drives the binary's `codex app-server generate-json-schema`"
+    },
+    {
+      "path": "runtime/scripts/codex-notifications.mjs",
+      "rules": ["A"],
+      "reason": "maintainer tooling the engine-upgrade runbook runs: it regenerates protocol-notifications.json from the binary"
+    },
+    {
+      "path": "runtime/scripts/codex-slash.mjs",
+      "rules": ["A"],
+      "reason": "maintainer tooling the engine-upgrade runbook runs: it extracts upstream's command list for the parity comparison"
+    },
+    {
+      "path": "runtime/scripts/check-brand.mjs",
+      "rules": ["A"],
+      "reason": "the brand lint: its rules name the adapter folder and the tokens that pass"
+    },
+    {
+      "path": "runtime/scripts/brand-allowlist.json",
+      "rules": ["A"],
+      "reason": "this allowlist names the files it allows"
+    },
+    {
+      "path": "runtime/test/check-brand.test.mjs",
+      "rules": ["A", "B"],
+      "reason": "the lint's test: it plants a hit per rule in fixture strings"
+    },
+    {
+      "path": "runtime/test/attribution.test.mjs",
+      "rules": ["A"],
+      "reason": "the attribution module's test asserts its texts"
+    },
+    {
+      "path": "runtime/src/adapters/codex.mjs",
+      "rules": ["A"],
+      "reason": "the `codex` session adapter: it reads rollout transcripts in the format of the user's own Codex (the harness home's are the same format)"
+    },
+    {
+      "path": "runtime/src/adapters/index.mjs",
+      "rules": ["A"],
+      "reason": "the adapter registry: the `codex` adapter id and its path detection (the harness-home regex moves to the engine folder in Part 2, with its own tests)"
+    },
+    {
+      "path": "runtime/src/daemon/config.mjs",
+      "rules": ["A"],
+      "match": "~/\\.codex/sessions|adapter: \"codex\"",
+      "reason": "the default watch entry for the user's own Codex conversations (the harness-sessions entry below it is Part 2's)"
+    },
+    {
+      "path": "runtime/src/memory/sqlite.mjs",
+      "rules": ["A", "C"],
+      "match": "-- 'claude-code' \\| 'cline' \\| 'cursor' \\| 'codex' \\| 'aider'",
+      "reason": "the memory schema's comment lists the session adapter ids; `codex` is the adapter for the user's own Codex"
+    },
+    {
+      "path": "adapters/codex/",
+      "rules": ["A"],
+      "reason": "reference config for the `codex` session adapter: the user's own Codex is a third-party product ad reads (descriptive)"
+    },
+    {
+      "path": "runtime/src/tui/status.mjs",
+      "rules": ["A"],
+      "match": "\"codex-version\"",
+      "reason": "the engine's own status-line item id, stored in the engine's settings (tui.status_line); ad keeps the id and renders it as \"engine <version>\" (design D6)"
+    },
+    {
+      "path": "runtime/src/engine/codex/upstream-commands.json",
+      "rules": ["C"],
+      "reason": "generated from upstream's slash_command.rs (scripts/codex-slash.mjs); its descriptions are upstream's words and never reach the screen (ad shows its own, from SLASH_COMMANDS)"
+    },
+    {
+      "path": "runtime/src/hooks/codex-session-end.mjs",
+      "rules": ["A"],
+      "reason": "a shim with the file name hooks.json files written by ad 2.x still call; the real launcher is hooks/engine-session-end.mjs (removed in 4.0)"
+    },
+    {
+      "path": "runtime/test/codex-*.test.mjs",
+      "rules": ["A", "B"],
+      "reason": "tests of the adapter: they assert what the adapter sends to and reads from the engine"
+    },
+    {
+      "path": "runtime/test/engine-real.test.mjs",
+      "rules": ["A", "B"],
+      "reason": "the real-engine suite: it starts the pinned binary and speaks the protocol to it on purpose"
+    },
+    {
+      "path": "runtime/test/fixtures/codex-rollout.jsonl",
+      "rules": ["A"],
+      "reason": "a captured rollout file in the engine's own format, read by the session adapter's test"
+    },
+    {
+      "path": "runtime/testkit/fake-codex-app-server.mjs",
+      "rules": ["A", "B"],
+      "reason": "the fake engine: it implements the pinned protocol for the unit suite"
+    },
+    {
+      "path": "runtime/testkit/mock-responses.mjs",
+      "rules": ["A"],
+      "reason": "the mock model for the real-engine suite: it writes a throwaway engine home and knows the binary's wire format"
+    },
+    {
+      "path": "runtime/testkit/protocol-check.mjs",
+      "rules": ["A"],
+      "reason": "validates the fake engine against the pinned snapshot"
+    },
+    {
+      "path": "skills/agent-eval/SKILL.md",
+      "rules": ["A"],
+      "reason": "shipped third-party skill: compares coding agents, Codex among them (descriptive, D2)"
+    },
+    {
+      "path": "skills/ai-regression-testing/SKILL.md",
+      "rules": ["A"],
+      "reason": "shipped third-party skill: names the agents that may have edited code, Codex among them (descriptive, D2)"
+    },
+    {
+      "path": "skills/autonomous-loops/SKILL.md",
+      "rules": ["A"],
+      "reason": "shipped third-party skill: a role table that assigns steps to Codex as one agent (descriptive, D2)"
+    },
+    {
+      "path": "skills/deep-research/SKILL.md",
+      "rules": ["A"],
+      "reason": "shipped third-party skill: names the user's own ~/.codex/config.toml as a place to configure a tool (descriptive, D2)"
+    },
+    {
+      "path": "skills/dmux-workflows/SKILL.md",
+      "rules": ["A"],
+      "reason": "shipped third-party skill: dmux drives Codex as one of several agents, with its `codex exec` command (descriptive, D2; a Part 7 cleanup candidate)"
+    },
+    {
+      "path": "skills/documentation-lookup/SKILL.md",
+      "rules": ["A"],
+      "reason": "shipped third-party skill: lists the agents it applies to, Codex among them (descriptive, D2)"
+    },
+    {
+      "path": "skills/everything-claude-code/SKILL.md",
+      "rules": ["A"],
+      "reason": "shipped third-party skill: its upstream changelog names cross-harness copies for Codex and Cursor (descriptive, D2)"
+    },
+    {
+      "path": "skills/knowledge-ops/SKILL.md",
+      "rules": ["A"],
+      "reason": "shipped third-party skill: lists session sources, Codex sessions among them (descriptive, D2)"
+    },
+    {
+      "path": "skills/safety-guard/SKILL.md",
+      "rules": ["A"],
+      "reason": "shipped third-party skill: an example with the user's own `codex -a never` sessions (descriptive, D2)"
+    },
+    {
+      "path": "skills/video-editing/SKILL.md",
+      "rules": ["A"],
+      "reason": "shipped third-party skill: Claude or Codex as the organisation layer (descriptive, D2)"
+    },
+    {
+      "path": "skills/workspace-surface-audit/SKILL.md",
+      "rules": ["A"],
+      "reason": "shipped third-party skill: audits the user's `.codex/*` workspace files and plugins (descriptive, D2)"
+    },
+    {
+      "path": "README.md",
+      "rules": ["A"],
+      "match": "Claude%20Code%20%7C%20Codex%20%7C%20Cursor|Claude Code, Cursor, Cline, and Codex|\\|\\s\\*\\*Codex\\*\\*\\s\\||adapters/codex/config\\.example\\.toml|~/\\.codex",
+      "reason": "the cross-harness badge, the transcript-adapter list, the harness table and its install cell: descriptive statements about the agents ad reads (C9 may reword)"
+    },
+    {
+      "path": "README.md",
+      "rules": ["A"],
+      "match": "ad runs on a pinned copy of OpenAI's open-source Codex|~/\\.codex",
+      "reason": "the README's one attribution sentence (design D4): kept verbatim from runtime/src/engine/attribution.mjs, a test checks it"
+    },
+    {
+      "path": "constitution/ending-protocol.md",
+      "rules": ["A"],
+      "match": "Claude Code / Cursor / Cline / Codex",
+      "reason": "the agents whose session the extraction runs inside: descriptive"
+    },
+    {
+      "path": "SECURITY.md",
+      "rules": ["A"],
+      "match": "Claude Code, Cursor, Codex|Claude Code / Cursor / Codex",
+      "reason": "the agents ad's hooks may run inside: descriptive statements about tools a user may run"
+    },
+    {
+      "path": "SECURITY.md",
+      "rules": ["A"],
+      "match": "[a-z][A-Za-z0-9]*Codex[A-Za-z0-9]*|Codex[A-Z][A-Za-z0-9]*|codex[A-Z][A-Za-z0-9]*|CODEX_[A-Z_]+|AD_CODEX_[A-Z_]+|codex app-server|engine/codex/|@openai/codex|~/\\.codex|codex-home|\\.codex/|codex-rs/|codex-version|codex\\.exe|codex-session-end\\.mjs|upstream-commands\\.json|codex-slash\\.mjs|codex-schema-snapshot\\.mjs|codex-notifications\\.mjs|fake-codex-app-server\\.mjs|codex-[a-z-]+\\.test\\.mjs|gpt-[\\w.-]*codex[\\w.-]*",
+      "reason": "the threat model names the exact paths and variables the threats are about; prose says 'the engine'"
+    },
+    {
+      "path": "adapters/cursor/.cursor/rules/agent-daemon-ending-protocol.mdc",
+      "rules": ["A"],
+      "match": "Claude Code / Cursor / Cline / Codex",
+      "reason": "the Cursor rendering of constitution/ending-protocol.md: the same descriptive line"
+    },
+    {
+      "path": "docs/future-harnesses.md",
+      "rules": ["A"],
+      "match": "\\[Codex adapter\\]\\(\\.\\./adapters/codex/\\)",
+      "reason": "points at the `codex` session adapter as the template for a new one (descriptive)"
+    },
+    {
+      "path": "CHANGELOG.md",
+      "rules": ["A"],
+      "reason": "history: the entries up to 2.2.0 describe what was built; release notes are an attribution place (C10)"
+    },
+    {
+      "path": "ATTRIBUTION.md",
+      "rules": ["A"],
+      "reason": "an attribution place (design D4): it lists the upstream sources"
+    },
+    {
+      "path": "THIRD_PARTY_NOTICES.md",
+      "rules": ["A"],
+      "reason": "an attribution place (design D4): the engine's notices and license"
+    },
+    {
+      "path": "docs/upgrade-3.0.md",
+      "rules": ["A"],
+      "reason": "an attribution place (design D4): the 2.x to 3.0 upgrade guide must name the old names"
+    },
+    {
+      "path": ".claude/skills/ad-ci-readiness/SKILL.md",
+      "rules": ["A"],
+      "reason": "this repo's maintainer skill: it describes the engine's sandbox behaviour on the CI runners"
+    },
+    {
+      "path": ".claude/skills/ad-pre-push/SKILL.md",
+      "rules": ["A"],
+      "reason": "this repo's maintainer skill: it names the upgrade bot and the engine's files that must not be pushed"
+    },
+    {
+      "path": "docs/**",
+      "rules": ["A"],
+      "match": "[a-z][A-Za-z0-9]*Codex[A-Za-z0-9]*|Codex[A-Z][A-Za-z0-9]*|codex[A-Z][A-Za-z0-9]*|CODEX_[A-Z_]+|AD_CODEX_[A-Z_]+|codex app-server|engine/codex/|@openai/codex|~/\\.codex|codex-home|\\.codex/|codex-rs/|codex-version|codex\\.exe|codex-session-end\\.mjs|upstream-commands\\.json|codex-slash\\.mjs|codex-schema-snapshot\\.mjs|codex-notifications\\.mjs|fake-codex-app-server\\.mjs|codex-[a-z-]+\\.test\\.mjs|gpt-[\\w.-]*codex[\\w.-]*",
+      "reason": "maintainer and user docs may cite the engine's API tokens, file names and on-disk names; prose says 'the engine'"
+    },
+    {
+      "path": "skills/daemon/**",
+      "rules": ["A"],
+      "match": "[a-z][A-Za-z0-9]*Codex[A-Za-z0-9]*|Codex[A-Z][A-Za-z0-9]*|codex[A-Z][A-Za-z0-9]*|CODEX_[A-Z_]+|AD_CODEX_[A-Z_]+|codex app-server|engine/codex/|@openai/codex|~/\\.codex|codex-home|\\.codex/|codex-rs/|codex-version|codex\\.exe|codex-session-end\\.mjs|upstream-commands\\.json|codex-slash\\.mjs|codex-schema-snapshot\\.mjs|codex-notifications\\.mjs|fake-codex-app-server\\.mjs|codex-[a-z-]+\\.test\\.mjs|gpt-[\\w.-]*codex[\\w.-]*",
+      "reason": "maintainer and user docs may cite the engine's API tokens, file names and on-disk names; prose says 'the engine'"
+    },
+    {
+      "path": "runtime/README.md",
+      "rules": ["A"],
+      "match": "[a-z][A-Za-z0-9]*Codex[A-Za-z0-9]*|Codex[A-Z][A-Za-z0-9]*|codex[A-Z][A-Za-z0-9]*|CODEX_[A-Z_]+|AD_CODEX_[A-Z_]+|codex app-server|engine/codex/|@openai/codex|~/\\.codex|codex-home|\\.codex/|codex-rs/|codex-version|codex\\.exe|codex-session-end\\.mjs|upstream-commands\\.json|codex-slash\\.mjs|codex-schema-snapshot\\.mjs|codex-notifications\\.mjs|fake-codex-app-server\\.mjs|codex-[a-z-]+\\.test\\.mjs|gpt-[\\w.-]*codex[\\w.-]*",
+      "reason": "maintainer and user docs may cite the engine's API tokens, file names and on-disk names; prose says 'the engine'"
+    },
+    {
+      "path": "README.md",
+      "rules": ["A"],
+      "match": "[a-z][A-Za-z0-9]*Codex[A-Za-z0-9]*|Codex[A-Z][A-Za-z0-9]*|codex[A-Z][A-Za-z0-9]*|CODEX_[A-Z_]+|AD_CODEX_[A-Z_]+|codex app-server|engine/codex/|@openai/codex|~/\\.codex|codex-home|\\.codex/|codex-rs/|codex-version|codex\\.exe|codex-session-end\\.mjs|upstream-commands\\.json|codex-slash\\.mjs|codex-schema-snapshot\\.mjs|codex-notifications\\.mjs|fake-codex-app-server\\.mjs|codex-[a-z-]+\\.test\\.mjs|gpt-[\\w.-]*codex[\\w.-]*",
+      "reason": "the README's one attribution sentence and its API tokens; prose says 'the engine'"
+    },
+    {
+      "path": "runtime/test/**",
+      "rules": ["A"],
+      "match": "[a-z][A-Za-z0-9]*Codex[A-Za-z0-9]*|Codex[A-Z][A-Za-z0-9]*|codex[A-Z][A-Za-z0-9]*|CODEX_[A-Z_]+|AD_CODEX_[A-Z_]+|codex app-server|engine/codex/|@openai/codex|~/\\.codex|codex-home|\\.codex/|codex-rs/|codex-version|codex\\.exe|codex-session-end\\.mjs|upstream-commands\\.json|codex-slash\\.mjs|codex-schema-snapshot\\.mjs|codex-notifications\\.mjs|fake-codex-app-server\\.mjs|codex-[a-z-]+\\.test\\.mjs|gpt-[\\w.-]*codex[\\w.-]*",
+      "reason": "tests may name the engine's API tokens and files they exercise"
+    },
+    {
+      "path": "runtime/testkit/**",
+      "rules": ["A"],
+      "match": "[a-z][A-Za-z0-9]*Codex[A-Za-z0-9]*|Codex[A-Z][A-Za-z0-9]*|codex[A-Z][A-Za-z0-9]*|CODEX_[A-Z_]+|AD_CODEX_[A-Z_]+|codex app-server|engine/codex/|@openai/codex|~/\\.codex|codex-home|\\.codex/|codex-rs/|codex-version|codex\\.exe|codex-session-end\\.mjs|upstream-commands\\.json|codex-slash\\.mjs|codex-schema-snapshot\\.mjs|codex-notifications\\.mjs|fake-codex-app-server\\.mjs|codex-[a-z-]+\\.test\\.mjs|gpt-[\\w.-]*codex[\\w.-]*",
+      "reason": "tests may name the engine's API tokens and files they exercise"
+    }
+  ]
+}

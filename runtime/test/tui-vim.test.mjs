@@ -1,5 +1,5 @@
-// Codex's Vim mode in the composer (tui/view/vim.mjs, codex-parity-2 Part 8):
-// a binding table after Codex 0.160's textarea/vim*.rs and its tests. Cases
+// the engine's Vim mode in the composer (tui/view/vim.mjs, terminal UI plan Part 8):
+// a binding table after the engine 0.160's textarea/vim*.rs and its tests. Cases
 // are "text with | at the cursor", keys in a small notation (<esc> <cr> <bs>
 // <c-r> <c-k> <a-b> <up> <down> <left> <right>), and the expected draft.
 
@@ -62,7 +62,7 @@ const TABLE = [
   ["ab\n|cd", "h", "ab|\ncd"],
   ["a|b", "ll", "ab|"],
   ["ab|\ncd", "l", "ab\n|cd"],
-  // w b e: Codex's words (separators apart, a run of them is one piece, CJK per character)
+  // w b e: the engine's words (separators apart, a run of them is one piece, CJK per character)
   ["|foo bar", "w", "foo |bar"],
   ["foo |bar", "w", "foo bar|"],
   ["fo|o\nbar", "w", "foo\n|bar"],
@@ -128,7 +128,7 @@ const TABLE = [
   ["|foo bar", "cwx<esc>", "|x bar"],
   ["foo| bar", "cwx<esc>", "foo|xbar"],
   ["|foo bar", "yw", "|foo bar"],
-  ["|foo bar", "ywP", "|foo bar"], // no P in Codex: ignored
+  ["|foo bar", "ywP", "|foo bar"], // no P in the engine: ignored
   // linewise: dd yy cc Y p
   ["a\n|b\nc", "dd", "a\n|c"],
   ["a\n|b", "dd", "a\n|"],
@@ -172,11 +172,11 @@ const TABLE = [
   ["|ab", "yw.", "|ab"],
   // the register is the composer's kill: Ctrl+K in Insert, p in Normal
   ["a|bc", "i<c-k><esc>p", "abc|"],
-  // a burst of keys in one event, and Codex's "!" on an empty draft
+  // a burst of keys in one event, and the engine's "!" on an empty draft
   ["", "!ls<esc>", "!l|s"],
 ];
 
-test("vim binding table (Codex 0.160's semantics)", () => {
+test("vim binding table (engine 0.160's semantics)", () => {
   const failures = [];
   for (const [start, keys, expected, mode = "normal"] of TABLE) {
     const { c } = run(start, keys);
@@ -207,7 +207,7 @@ test("vim: Enter submits in Normal with nothing pending (then Insert); with some
   const c = vim("|hi there");
   assert.deepEqual(c.handle({ type: "key", name: "enter" }), { submit: "hi there" });
   assert.equal(c.text, "");
-  assert.equal(c.vim.mode, "insert", "after a submit the new draft starts in Insert (Codex)");
+  assert.equal(c.vim.mode, "insert", "after a submit the new draft starts in Insert (engine)");
   const p = vim("a|b");
   p.handle({ type: "text", text: "d" });
   const r = p.handle({ type: "key", name: "enter" });
@@ -252,7 +252,7 @@ test("vim: Alt+x in Insert (a fast Esc then x on legacy terminals) is Esc, then 
   assert.equal(shown(c), "foo |bar");
 });
 
-test("vim: gg waits a second for its second g (Codex's chord), with Codex's hint", () => {
+test("vim: gg waits a second for its second g (the engine's chord), with the engine's hint", () => {
   let t = 0;
   const c = createComposer({ now: () => t });
   c.setVim(true);
@@ -313,7 +313,7 @@ test("vim: undo history goes with a new draft; the register stays", () => {
 /* From the Part 8 review                                              */
 /* ------------------------------------------------------------------ */
 
-test("vim '.': a change that can't start stops there; its typing never runs as commands (Codex)", () => {
+test("vim '.': a change that can't start stops there; its typing never runs as commands (engine)", () => {
   const cj = run("|one\ntwo\nthree", "cjfoo<esc>j.").c;
   assert.equal(cj.text, "foo\nthree", "cj on the last line can't start, and 'foo' isn't run as f, o, o");
   const ci = run("a (b|) c", "ci(xyz<esc>$.").c;
@@ -332,7 +332,7 @@ test("vim '.': keys are replayed as keys (Delete, Insert, r Enter), and a Backsp
   ins.handle({ type: "text", text: "." });
   assert.equal(ins.text, "XXab");
   assert.equal(run("a|bcd", "r<cr>l.").c.text, "a\nc\n");
-  assert.equal(run("|one two", "i<bs>X<esc>w.").c.text, "Xone Xtwo", "Codex's repeat_distinguishes test");
+  assert.equal(run("|one two", "i<bs>X<esc>w.").c.text, "Xone Xtwo", "engine's repeat_distinguishes test");
 });
 
 test("vim: a burst that opens a search puts the rest in the query", () => {
@@ -343,7 +343,7 @@ test("vim: a burst that opens a search puts the rest in the query", () => {
   assert.equal(shown(c), "one |two");
 });
 
-test("vim: Enter in Normal sends even after a backslash (a Windows path), as Codex", () => {
+test("vim: Enter in Normal sends even after a backslash (a Windows path), as the engine", () => {
   const c = vim("open C:\\Users\\|me");
   assert.deepEqual(c.handle({ type: "key", name: "enter" }), { submit: "open C:\\Users\\me" });
   const i = vim("a\\|", { mode: "insert" });

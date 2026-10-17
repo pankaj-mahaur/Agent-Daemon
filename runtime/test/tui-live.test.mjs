@@ -1,6 +1,6 @@
 // The FC3 live script (docs/manual-test.md, section 6), automated: the REAL
 // `ad tui` in a real pseudo-terminal (ConPTY on Windows, as Windows Terminal
-// uses), the REAL pinned Codex, and a mock model (testkit/mock-responses.mjs).
+// uses), the REAL pinned engine, and a mock model (testkit/mock-responses.mjs).
 // The screen is xterm.js (headless), which also answers the TUI's queries.
 //
 // Opt-in: AD_REAL_ENGINE=1. Everything runs in throwaway folders: a fake
@@ -20,13 +20,15 @@ import unicode11 from "@xterm/addon-unicode11";
 import { defaultScript, ev, lastUserText, startMockResponses, writeMockCodexHome } from "../testkit/mock-responses.mjs";
 import { resolveCodexCommand } from "../src/engine/codex/app-server.mjs";
 import { MANAGED_MARKER } from "../src/engine/codex/home.mjs";
+import { screenHits } from "../scripts/check-brand.mjs";
+import { brandPatterns, ENGINE } from "../src/engine/attribution.mjs";
 
 const { Terminal } = xtermHeadless;
 const { Unicode11Addon } = unicode11;
 const CLI = fileURLToPath(new URL("../src/cli.mjs", import.meta.url));
 const wanted = process.env.AD_REAL_ENGINE === "1";
-const skip = !wanted ? "set AD_REAL_ENGINE=1 to run ad tui on the real Codex binary" : resolveCodexCommand({}).source !== "pinned" ? "the pinned Codex binary isn't installed" : false;
-const STEP_MS = 90_000; // a first Codex start can be slow while antivirus scans the binary
+const skip = !wanted ? "set AD_REAL_ENGINE=1 to run ad tui on the real engine binary" : resolveCodexCommand({}).source !== "pinned" ? "the pinned engine binary isn't installed" : false;
+const STEP_MS = 90_000; // a first engine start can be slow while antivirus scans the binary
 
 async function removeWithRetry(dir) {
   for (let i = 0; i < 40; i++) {
@@ -39,7 +41,7 @@ async function removeWithRetry(dir) {
   }
 }
 
-// The scratch world: user home, Codex home, a git project.
+// The scratch world: user home, engine home, a git project.
 function world(mockUrl) {
   const root = mkdtempSync(join(tmpdir(), "ad-live-"));
   const home = join(root, "home");
@@ -61,7 +63,7 @@ function world(mockUrl) {
   git("add", ".");
   git("commit", "-qm", "init");
   const env = { ...process.env, HOME: home, USERPROFILE: home, AD_CODEX_HOME: codexHome, AD_TUI: "1" };
-  for (const k of Object.keys(env)) if (/^CODEX_/.test(k) || k === "AD_CODEX_BIN") delete env[k];
+  for (const k of Object.keys(env)) if (new RegExp(`^${ENGINE.name.toUpperCase()}_`).test(k) || k === "AD_CODEX_BIN") delete env[k];
   delete env.CI; // the TUI is interactive here
   return { root, home, codexHome, cwd, env, git };
 }
@@ -138,18 +140,18 @@ const settle = (ms = 300) => new Promise((r) => setTimeout(r, ms));
 function liveScript(body) {
   const text = lastUserText(body);
   const input = Array.isArray(body?.input) ? body.input : [];
-  // A tool's result after the prompt (Codex may add items after it, e.g. once a command was approved).
+  // A tool's result after the prompt (engine may add items after it, e.g. once a command was approved).
   const lastUser = input.findLastIndex((i) => i?.type === "message" && i.role === "user");
   const output = input.slice(lastUser + 1).findLast((i) => i?.type === "function_call_output");  if (output) return [ev.created(), ev.message(`done after ${output.call_id}`), ev.completed()];
   {
-    // Part 10: Codex's recap prompt answers in its schema; a parent spawns a real subagent.
+    // Part 10: the engine's recap prompt answers in its schema; a parent spawns a real subagent.
     if (text.startsWith("Write a brief catch-up")) return [ev.created(), ev.message(JSON.stringify({ summary: "Live recap: the first turn answered pong.", next_action: null })), ev.completed()];
     if (text.includes("CHILDTASK")) return [ev.created(), ev.message("child read math.js"), ev.completed()];
     if (text.includes("SPAWNONE")) return [ev.created(), ev.functionCall("call-spawn", "spawn_agent", { message: "CHILDTASK read math.js" }, "multi_agent_v1"), ev.completed()];
     if (text.includes("STEERED")) return [ev.created(), ev.message("steer received"), ev.completed()];
     if (text.includes("QUEUED")) return [ev.created(), ev.message("queue ran"), ev.completed()];
     if (text.includes("EDITMATH")) {
-      // An Update File patch: Codex's own diff of it must match git's line counts.
+      // An Update File patch: the engine's own diff of it must match git's line counts.
       const patch = "*** Begin Patch\n*** Update File: math.js\n@@\n export const add = (a, b) => a + b;\n+export const sub = (a, b) => a - b;\n*** End Patch";
       return [ev.created(), ev.functionCall("call-patch", "exec_command", { cmd: `apply_patch <<'EOF'\n${patch}\nEOF\n` }), ev.completed()];
     }
@@ -157,13 +159,13 @@ function liveScript(body) {
   return defaultScript(body);
 }
 
-test("FC3 live script: ad tui on the real Codex binary, end to end", { skip, timeout: 15 * 60_000 }, async () => {
+test("FC3 live script: ad tui on the real engine binary, end to end", { skip, timeout: 15 * 60_000 }, async () => {
   const mock = await startMockResponses({ script: liveScript });
   const w = world(mock.url);
   let t;
-  // A patch turn in Auto. Where Codex's sandbox can't run the edit (GitHub's
-  // Windows runners), Codex asks to retry without it: that's approved too.
-  // The first sandboxed action in a fresh Codex home sets up the Windows sandbox (~35 s, once).
+  // A patch turn in Auto. Where the engine's sandbox can't run the edit (GitHub's
+  // Windows runners), engine asks to retry without it: that's approved too.
+  // The first sandboxed action in a fresh engine home sets up the Windows sandbox (~35 s, once).
   const patchTurn = async (prompt, what) => {
     const done = () => t.count(/done after call-patch/g);
     const retries = () => t.count(/retry without sandbox\?/g);
@@ -182,7 +184,8 @@ test("FC3 live script: ad tui on the real Codex binary, end to end", { skip, tim
     // 1. First run: trust, then the header card.
     t = await start(w);
     const head = t.text();
-    assert.match(head, /on Codex 0\.\d+\.\d+ \(tested\)/);
+    assert.match(head, />_ Agent Daemon \(v[\d.]+\)/);
+    assert.doesNotMatch(head, new RegExp(`on ${ENGINE.name}`));
     assert.match(head, /directory: .*git: (main|master)/);
     assert.match(head, /sandbox: +workspace-write/);
 
@@ -222,7 +225,7 @@ test("FC3 live script: ad tui on the real Codex binary, end to end", { skip, tim
     await t.until(/PATCH please\s*$/m, "the prompt back in the composer");
     t.type("\x7f".repeat(20));
 
-    // 4a'. An edit of a committed file: /undo puts it back (Codex's diff counts match git's).
+    // 4a'. An edit of a committed file: /undo puts it back (the engine's diff counts match git's).
     const math = readFileSync(join(w.cwd, "math.js"), "utf8");
     await patchTurn("EDITMATH please", "the math.js edit");
     assert.match(readFileSync(join(w.cwd, "math.js"), "utf8"), /export const sub/);
@@ -280,7 +283,7 @@ test("FC3 live script: ad tui on the real Codex binary, end to end", { skip, tim
     await settle(300);
     t.type("\x1b");
     await t.until(/Interrupting/, "Interrupting…");
-    await t.until(() => mock.hangups > hangups, "Codex hanging up the model request");
+    await t.until(() => mock.hangups > hangups, "engine hanging up the model request");
     await t.until(() => t.idle(), "idle after the interrupt");
 
     // Esc Esc while idle: the rewind picker; Esc closes it.
@@ -321,18 +324,14 @@ test("FC3 live script: ad tui on the real Codex binary, end to end", { skip, tim
     await settle(800);
     assert.equal((t.screen().match(/\? shortcuts/g) ?? []).length, 1, `one footer after resizing:\n${t.screen()}`);
 
-    // 8. /codex and back: the stock Codex UI on the same conversation.
-    t.type("/codex\r");
-    await t.until(/OpenAI Codex/, "the stock Codex UI", 120_000);
-    await settle(3000);
-    // Ctrl+C until the stock UI is gone (as a person would).
-    for (let i = 0; i < 4 && !/Back from the stock Codex UI/.test(t.text()); i++) {
-      t.type("\x03");
-      await settle(1500);
-      if (t.exited) assert.fail(`ad exited (${JSON.stringify(t.exited)}) after ${i + 1} Ctrl+C`);
-    }
-    await t.until(/Back from the stock Codex UI \(exit \d+\)/, "back in ad", 60_000);
-    await t.until(() => t.idle(), "ad's composer again");
+    // G2: nothing on ad's screen names the engine, except the attribution texts and model names.
+    const shown = screenHits(t.text(), { allow: brandPatterns() });
+    assert.deepEqual(shown.map((h) => h.text), [], "ad's screen names the engine");
+    // …nor the files ad writes: /export, and the managed instructions block.
+    t.type("/export brand-check.md\r");
+    await t.until(() => existsSync(join(w.cwd, "brand-check.md")), "the export");
+    const written = readFileSync(join(w.cwd, "brand-check.md"), "utf8") + "\n" + readFileSync(join(w.codexHome, "AGENTS.md"), "utf8");
+    assert.deepEqual(screenHits(written, { allow: brandPatterns() }).map((h) => h.text), [], "a file ad wrote names the engine");
 
     // 9. Quit: Ctrl+C twice on an empty prompt.
     t.type("\x03");
@@ -366,7 +365,7 @@ test("FC3 live script: ad tui on the real Codex binary, end to end", { skip, tim
   }
 });
 
-test("FC4 live: ad's own features in ad tui on the real Codex binary", { skip, timeout: 10 * 60_000 }, async () => {
+test("FC4 live: ad's own features in ad tui on the real engine binary", { skip, timeout: 10 * 60_000 }, async () => {
   const mock = await startMockResponses({ script: liveScript });
   const w = world(mock.url);
   let t;
@@ -401,7 +400,7 @@ test("FC4 live: ad's own features in ad tui on the real Codex binary", { skip, t
     await t.until(/Loop: finished after \d+ iterations?/, "the loop's end", 120_000);
     assert.ok(mock.requests.some((r) => /Objective:\s*PING loop objective/.test(r.text)), "the loop prompted the model");
 
-    // /clear (Codex's): the screen and the scrollback go; a new, named conversation starts.
+    // /clear (the engine's): the screen and the scrollback go; a new, named conversation starts.
     await run("/clear tidy", /New conversation: tidy\./, "cleared");
     assert.doesNotMatch(t.text(), /Learned: pnpm/, "the scrollback from before /clear is gone (ED3 reached the terminal)");
     // /archive asks first; /resume archived brings it back.
@@ -431,7 +430,7 @@ test("FC4 live: ad's own features in ad tui on the real Codex binary", { skip, t
   }
 });
 
-// codex-parity-2 Part 4: Codex's plan mode in ad tui, on the real Codex.
+// terminal UI plan Part 4: the engine's plan mode in ad tui, on the real engine.
 const PLAN_BODY = ["# Add hello", "", "- write hello.txt"].join("\n");
 function planScript(body) {
   const text = lastUserText(body);
@@ -450,7 +449,7 @@ function planScript(body) {
   return defaultScript(body);
 }
 
-test("Part 4 live: /plan, a proposed plan, and 'Yes, implement this plan' on the real Codex binary", { skip, timeout: 10 * 60_000 }, async () => {
+test("Part 4 live: /plan, a proposed plan, and 'Yes, implement this plan' on the real engine binary", { skip, timeout: 10 * 60_000 }, async () => {
   const mock = await startMockResponses({ script: planScript });
   const w = world(mock.url);
   let t;
@@ -461,9 +460,9 @@ test("Part 4 live: /plan, a proposed plan, and 'Yes, implement this plan' on the
     await t.until(/Proposed Plan[\s\S]*Add hello[\s\S]*write hello\.txt/, "the proposed plan cell");
     await t.until(/Implement this plan\?/, "the choice");
     const asked = mock.requests.find((r) => r.text === "PLANME");
-    assert.equal(asked?.mode, "plan", "the model was in Codex's Plan mode");
+    assert.equal(asked?.mode, "plan", "the model was in engine's Plan mode");
     await settle(600); // past the arm delay
-    // Where Codex's sandbox can't run the edit (GitHub's Windows runners), Codex asks to retry without it.
+    // Where the engine's sandbox can't run the edit (GitHub's Windows runners), engine asks to retry without it.
     const done = () => t.count(/done after call-patch/g);
     const retries = () => t.count(/retry without sandbox\?/g);
     t.type("1");
@@ -476,7 +475,7 @@ test("Part 4 live: /plan, a proposed plan, and 'Yes, implement this plan' on the
     await t.until(() => t.idle(), "idle after the implement turn");
     assert.ok(existsSync(join(w.cwd, "hello.txt")), "the plan was implemented");
     const implement = mock.requests.find((r) => r.text === "Implement the plan.");
-    assert.ok(implement, "Codex's message was sent");
+    assert.ok(implement, "engine's message was sent");
     assert.notEqual(implement.mode, "plan", "implemented in Default mode");
     assert.doesNotMatch(t.screen(), /Plan mode/, "the chip is gone");
 
@@ -494,7 +493,7 @@ test("Part 4 live: /plan, a proposed plan, and 'Yes, implement this plan' on the
   }
 });
 
-// codex-parity-2 Part 5: background terminals in ad tui, on the real Codex.
+// terminal UI plan Part 5: background terminals in ad tui, on the real engine.
 function bgScript(body) {
   const text = lastUserText(body);
   const input = Array.isArray(body?.input) ? body.input : [];
@@ -513,7 +512,7 @@ test("Part 5 live: a background terminal outlives the turn; /ps lists it and /st
   const pidFile = join(w.cwd, "bg.pid");
   const logFile = join(w.cwd, "bg.log");
   // It ticks into a file: "running" is the file growing. (A pid isn't enough: on
-  // Linux Codex's sandbox gives the command its own PID namespace.)
+  // Linux the engine's sandbox gives the command its own PID namespace.)
   writeFileSync(
     join(w.cwd, "bg.js"),
     `const fs = require("fs");\nfs.writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));\nconsole.log("listening");\nsetInterval(() => { fs.appendFileSync(${JSON.stringify(logFile)}, "t"); console.log("tick " + Date.now()); }, 300);\n`,
@@ -540,7 +539,7 @@ test("Part 5 live: a background terminal outlives the turn; /ps lists it and /st
     t = await start(w);
     t.type("BGSTART\r");
     // Approvals (or a retry outside the sandbox on CI's Windows runners) are approved.
-    // Up to 5 min: a fresh Codex home sets up the Windows sandbox first (2+ min seen on a busy machine).
+    // Up to 5 min: a fresh engine home sets up the Windows sandbox first (2+ min seen on a busy machine).
     const end = Date.now() + 300_000;
     while (!/server is up/.test(t.text())) {
       if (Date.now() > end) throw new Error(`no answer after the background start\n${t.text().slice(-2000)}`);
@@ -551,11 +550,11 @@ test("Part 5 live: a background terminal outlives the turn; /ps lists it and /st
       await settle(300);
     }
     await t.until(() => t.idle(), "the turn's end");
-    // GitHub's Windows runner: Codex 0.160's non-admin sandbox refuses the
+    // GitHub's Windows runner: engine 0.160's non-admin sandbox refuses the
     // command outright (no "retry without sandbox?"), so there is nothing to
     // test there. Any other failure still fails.
     const refused = /cannot enforce split writable root sets/.test(t.text().replace(/\s+/g, " "));
-    if (refused) return void ctx.skip("Codex's unelevated Windows sandbox refused the command on this machine (\"cannot enforce split writable root sets\")");
+    if (refused) return void ctx.skip("The engine's unelevated Windows sandbox refused the command on this machine (\"cannot enforce split writable root sets\")");
     await t.until(() => existsSync(pidFile) && existsSync(logFile), "the script running");
     pid = Number(readFileSync(pidFile, "utf8"));
     assert.ok(await running(), "the background process outlives the turn");
@@ -585,7 +584,7 @@ test("Part 5 live: a background terminal outlives the turn; /ps lists it and /st
   }
 });
 
-// codex-parity-2 Part 6: /cd on the real Codex.
+// terminal UI plan Part 6: /cd on the real engine.
 test("Part 6 live: /cd forks the conversation into another folder, and the next edit lands there", { skip, timeout: 10 * 60_000 }, async () => {
   const mock = await startMockResponses({ script: liveScript });
   const w = world(mock.url);
@@ -634,7 +633,7 @@ test("Part 6 live: /cd forks the conversation into another folder, and the next 
   }
 });
 
-// codex-parity-2 Part 7: /side on the real Codex, while a main turn runs.
+// terminal UI plan Part 7: /side on the real engine, while a main turn runs.
 test("Part 7 live: a side question while the main turn runs; the side runs without ad's hooks; nothing merges back", { skip, timeout: 10 * 60_000 }, async () => {
   const mock = await startMockResponses({ script: liveScript });
   const w = world(mock.url);
@@ -653,8 +652,8 @@ test("Part 7 live: a side question while the main turn runs; the side runs witho
     await t.until(() => mock.requests.some((r) => r.text === "Actually, we use pnpm here, not npm."), "the side question at the model");
     const asked = mock.requests.find((r) => r.text === "Actually, we use pnpm here, not npm.");
     assert.ok(asked.userTexts.includes("PING first"), "the side sees the main history");
-    assert.ok(asked.userTexts.some((x) => x.startsWith("Side conversation boundary.")), "Codex's boundary");
-    assert.ok(asked.developerTexts.some((x) => x.includes("You are in a side conversation, not the main thread.")), "Codex's side instructions");
+    assert.ok(asked.userTexts.some((x) => x.startsWith("Side conversation boundary.")), "engine's boundary");
+    assert.ok(asked.developerTexts.some((x) => x.includes("You are in a side conversation, not the main thread.")), "engine's side instructions");
     await t.until((s) => (s.match(/pong/g) ?? []).length >= 2, "the side answer");
     mock.release();
     await t.until(/waiting, released/, "the main turn going on");
@@ -681,7 +680,7 @@ test("Part 7 live: a side question while the main turn runs; the side runs witho
   }
 });
 
-// codex-parity-2 Part 8: Codex's Vim mode in the real terminal.
+// terminal UI plan Part 8: the engine's Vim mode in the real terminal.
 test("Part 8 live: /vim, editing in Normal and Insert, and the prompt that reaches the model", { skip, timeout: 10 * 60_000 }, async () => {
   const mock = await startMockResponses({ script: liveScript });
   const w = world(mock.url);
@@ -719,10 +718,13 @@ test("Part 8 live: /vim, editing in Normal and Insert, and the prompt that reach
   }
 });
 
-// codex-parity-2 Part 9: syntax highlighting and /theme in the real terminal.
-test("Part 9 live: /theme saves tui.theme through the real Codex, and code is coloured", { skip, timeout: 10 * 60_000 }, async () => {
+// terminal UI plan Part 9: syntax highlighting and /theme in the real terminal.
+test("Part 9 live: /theme saves tui.theme through the real engine, and code is coloured", { skip, timeout: 10 * 60_000 }, async () => {
   const mock = await startMockResponses({ script: liveScript });
   const w = world(mock.url);
+  // This assertion needs a colour-capable terminal, independent of the runner.
+  delete w.env.NO_COLOR;
+  w.env.TERM = "xterm-256color";
   let t;
   try {
     t = await start(w);
@@ -732,9 +734,9 @@ test("Part 9 live: /theme saves tui.theme through the real Codex, and code is co
     t.type("\x1b[B"); // catppuccin-mocha
     await settle(200);
     t.type("\r");
-    await t.until(/Syntax theme: catppuccin-mocha\. Saved for \/codex too\./, "saved");
+    await t.until(/Syntax theme: catppuccin-mocha\. Saved\./, "saved");
     const config = readFileSync(join(w.codexHome, "config.toml"), "utf8");
-    assert.match(config, /theme\s*=\s*"catppuccin-mocha"/, "Codex wrote it to ad's Codex home");
+    assert.match(config, /theme\s*=\s*"catppuccin-mocha"/, "engine wrote it to ad's engine home");
     // A truecolor keyword colour reaches the terminal (#cba6f7 → 203;166;247, or its 256-colour cube index).
     t.type("/theme\r");
     await t.until(() => /Select Syntax Theme/.test(t.screen()), "the picker again");
@@ -753,7 +755,7 @@ test("Part 9 live: /theme saves tui.theme through the real Codex, and code is co
   }
 });
 
-// codex-parity-2 Part 10: /recap and /subagents on the real Codex.
+// terminal UI plan Part 10: /recap and /subagents on the real engine.
 test("Part 10 live: /recap from a temporary thread with no tools or hooks; /subagents watches a real subagent", { skip, timeout: 10 * 60_000 }, async () => {
   const mock = await startMockResponses({ script: liveScript });
   const w = world(mock.url);
@@ -768,11 +770,11 @@ test("Part 10 live: /recap from a temporary thread with no tools or hooks; /suba
     t.type("/recap\r");
     await t.until(/Recap: Live recap: the first turn answered pong\./, "the recap");
     const asked = mock.requests.find((r) => r.text.startsWith("Write a brief catch-up"));
-    assert.ok(asked, "Codex's recap prompt reached the model");
+    assert.ok(asked, "engine's recap prompt reached the model");
     assert.match(asked.text, /Conversation:\nUser: PING first\n\nAssistant: pong/);
     assert.doesNotMatch(journalText(), /Write a brief catch-up/, "ad's hooks never saw the recap's thread");
 
-    // A real subagent: the parent calls Codex's spawn_agent; the child runs its own turn.
+    // A real subagent: the parent calls the engine's spawn_agent; the child runs its own turn.
     t.type("SPAWNONE\r");
     assert.deepEqual(mock.requests.find((r) => r.text.startsWith("Write a brief catch-up")).tools, [], "the recap's thread offers the model no tool");
     await t.until(/done after call-spawn/, "the parent's turn");
@@ -793,6 +795,83 @@ test("Part 10 live: /recap from a temporary thread with no tools or hooks; /suba
     assert.equal((await t.exit).exitCode, 0);
   } finally {
     for (const k of launched.splice(0)) k();
+    await mock.close();
+    await removeWithRetry(w.root);
+  }
+});
+
+
+test("error paths live: signed-out first run has a clean sign-in picker", { skip, timeout: 60_000 }, async () => {
+  const mock = await startMockResponses();
+  const w = world(mock.url);
+  let t;
+  try {
+    // Only files in this test's throwaway home; no real provider or login.
+    writeFileSync(join(w.codexHome, "config.toml"), 'cli_auth_credentials_store = "file"\n');
+    for (const k of ["OPENAI_API_KEY", "OPENROUTER_API_KEY", "AD_ENGINE_DIR", "AD_ENGINE_BIN"]) delete w.env[k];
+    t = await launch(w);
+    await t.until(/Sign in[\s\S]*OpenAI API key[\s\S]*OpenRouter[\s\S]*ChatGPT/, "the sign-in picker");
+    assert.deepEqual(screenHits(t.text(), { allow: brandPatterns() }), []);
+    t.type("\x1b");
+    await t.exit;
+  } finally {
+    t?.kill();
+    await mock.close();
+    await removeWithRetry(w.root);
+  }
+});
+
+test("error paths live: a model rejection is mapped with raw details in /warnings", { skip, timeout: 90_000 }, async () => {
+  const raw = `${ENGINE.name}: model nope does not exist`;
+  const mock = await startMockResponses({ script: () => [ev.created(), ev.failed("missing-model", raw)] });
+  const w = world(mock.url);
+  let t;
+  try {
+    writeMockCodexHome(w.codexHome, { url: mock.url, model: "nope" });
+    t = await start(w);
+    t.type("PING missing model\r");
+    await t.until(/The engine sent a notice|The engine reported a problem/, "mapped model rejection");
+    await t.until(() => t.idle(), "idle after the failure");
+    assert.ok(mock.requests.some((req) => req.model === "nope"), "the backend saw the unknown model");
+    assert.deepEqual(screenHits(t.text(), { allow: brandPatterns() }), []);
+    t.type("/warnings\r");
+    await t.until(/details:.*model nope does not exist/, "raw model rejection");
+    t.type("/quit\r");
+    await t.exit;
+  } finally {
+    t?.kill();
+    await mock.close();
+    await removeWithRetry(w.root);
+  }
+});
+
+test("prompt at the bottom live: the composer starts on the last rows and stays there; prompt.atBottom false keeps it under the header", { skip, timeout: 5 * 60_000 }, async () => {
+  const mock = await startMockResponses({ script: liveScript });
+  const w = world(mock.url);
+  let t;
+  const lastRow = () => t.screen().split("\n").at(-1);
+  try {
+    t = await start(w);
+    await t.until(() => t.idle(), "idle at the start");
+    assert.match(lastRow(), /\? shortcuts/, "the footer is on the screen's last row from the start");
+    t.type("PING please\r");
+    await t.until(/pong/, "the answer");
+    await t.until(() => t.idle(), "idle after the turn");
+    assert.match(lastRow(), /\? shortcuts/, "still on the last row after a turn");
+    assert.ok(t.text().indexOf("pong") > t.text().indexOf(">_ Agent Daemon"), "the answer below the header");
+    t.type("/quit\r");
+    await t.exit;
+    t.kill();
+
+    mkdirSync(join(w.home, ".agent-daemon", "tui"), { recursive: true });
+    writeFileSync(join(w.home, ".agent-daemon", "tui", "prefs.json"), JSON.stringify({ "prompt.atBottom": false }));
+    t = await start(w);
+    await t.until(() => t.idle(), "idle with the preference off");
+    assert.doesNotMatch(lastRow(), /\? shortcuts/, "off: the composer follows the transcript, like the engine's inline mode");
+    t.type("/quit\r");
+    await t.exit;
+  } finally {
+    t?.kill();
     await mock.close();
     await removeWithRetry(w.root);
   }

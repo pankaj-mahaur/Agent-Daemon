@@ -10,6 +10,8 @@
 // Approvals are pushed to the page over SSE and answered with a POST;
 // with no page connected they are declined.
 
+import { engineError, engineErrorText, isEngineError } from "../engine/index.mjs";
+import { cliErrorLines } from "./io.mjs";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import http from "node:http";
@@ -56,6 +58,11 @@ export async function startWebServer({ cwd = process.cwd(), port = 0, token = ra
   const started = await engineFactory({ cwd, err, ...engineOpts });
   if (!started.engine) throw new Error(started.error);
   const engine = started.engine;
+  const describeError = (e) => {
+    if (!isEngineError(e)) return e?.message ?? String(e);
+    err.write(cliErrorLines("web", e));
+    return engineErrorText(e, { details: "server log" });
+  };
   const clients = new Set();
   const approvals = new Map(); // id → { resolve, event } — event is replayed to pages that (re)connect
   const fileChanges = new Map(); // itemId → fileChange item, for approval details
@@ -119,11 +126,11 @@ export async function startWebServer({ cwd = process.cwd(), port = 0, token = ra
           else if (evt.type === "delta") broadcast({ type: "delta", itemId: evt.itemId, text: evt.text });
           else if (evt.type === "itemStarted" && evt.item?.type !== "agentMessage" && evt.item?.type !== "reasoning" && evt.item?.type !== "userMessage") {
             broadcast({ type: "activity", itemType: evt.item.type, command: evt.item.command ?? null, paths: (evt.item.changes ?? []).map((c) => c.path) });
-          } else if (evt.type === "error") broadcast({ type: "error", message: evt.message, willRetry: evt.willRetry });
+          } else if (evt.type === "error") broadcast({ type: "error", message: describeError(engineError(-32000, evt.message, { raw: evt.message })), willRetry: evt.willRetry });
         },
       })
-      .then((r) => broadcast({ type: "done", status: r.status, error: r.error?.message ?? null }))
-      .catch((e) => broadcast({ type: "done", status: "failed", error: e.message }))
+      .then((r) => broadcast({ type: "done", status: r.status, error: r.error?.message ? describeError(engineError(-32000, r.error.message, { raw: r.error.message })) : null }))
+      .catch((e) => broadcast({ type: "done", status: "failed", error: describeError(e) }))
       .finally(() => {
         turn = null;
         fileChanges.clear();
@@ -219,7 +226,7 @@ export async function startWebServer({ cwd = process.cwd(), port = 0, token = ra
       send(200, await handler(body));
     } catch (e) {
       send(e.status ?? 500, { error: e.status ? e.message : "internal error" });
-      if (!e.status) err.write(`[agent-daemon web] ${req.method} ${url.pathname}: ${e.message}\n`);
+      if (!e.status) err.write(`[agent-daemon web] ${req.method} ${url.pathname}\n` + cliErrorLines("web", e));
     }
   });
 
@@ -247,7 +254,7 @@ export async function cmdWeb(opts = {}) {
   try {
     web = await startWebServer({ cwd: opts.cwd, port: opts.port ?? 0, engineOpts: { clientVersion: opts.clientVersion }, err });
   } catch (e) {
-    err.write(`ad web: ${e.message}\n`);
+    err.write(cliErrorLines("web", e));
     return /logged in/i.test(e.message) ? 2 : 1;
   }
   out.write(`Agent Daemon web UI: ${web.url}\n(local only; the link carries the access token — don't share it. Ctrl+C to stop.)\n`);

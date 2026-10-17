@@ -2,6 +2,7 @@
 // Invokes `node src/cli.mjs hook user-prompt-extract`, pipes a fake Claude
 // Code hook payload to stdin, and asserts the journal lands the learning.
 
+import { LEGACY } from "../src/engine/attribution.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -96,20 +97,20 @@ test("subprocess: injected daemon protocol examples from assistant are not persi
   );
 });
 
-test("subprocess (Codex host): assistant 'remember:' note is read from a rollout transcript", async () => {
+test("subprocess (engine host): assistant 'remember:' note is read from a rollout transcript", async () => {
   const cwd = await makeTmp();
   const transcript = path.join(cwd, "rollout-2026-10-01T00-00-00-x.jsonl");
   const lines = [
-    { type: "session_meta", payload: { id: "s-codex", cwd } },
+    { type: "session_meta", payload: { id: "s-engine", cwd } },
     { type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "Done. Remember: always run npm run lint before committing in this repo." }] } },
   ];
   await fs.writeFile(transcript, lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
   const result = await new Promise((resolve) => {
-    const proc = spawn(process.execPath, [CLI, "hook", "user-prompt-extract", "--host", "codex"], { stdio: ["pipe", "pipe", "pipe"] });
+    const proc = spawn(process.execPath, [CLI, "hook", "user-prompt-extract", "--host", LEGACY.productValue], { stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
     proc.stdout.on("data", (c) => (stdout += c));
     proc.on("close", (code) => resolve({ code, stdout }));
-    proc.stdin.end(JSON.stringify({ session_id: "s-codex", cwd, transcript_path: transcript, prompt: "ok, next task please", hook_event_name: "UserPromptSubmit" }));
+    proc.stdin.end(JSON.stringify({ session_id: "s-engine", cwd, transcript_path: transcript, prompt: "ok, next task please", hook_event_name: "UserPromptSubmit" }));
   });
   assert.equal(result.code, 0);
   assert.equal(result.stdout.trim(), "{}");
@@ -120,7 +121,7 @@ test("subprocess (Codex host): assistant 'remember:' note is read from a rollout
 test("subprocess: a team worker's prompt (AD_WORKER=1) is not captured as the user's correction", async () => {
   const cwd = await makeTmp();
   const code = await new Promise((resolve) => {
-    const proc = spawn(process.execPath, [CLI, "hook", "user-prompt-extract", "--host", "codex"], { stdio: ["pipe", "ignore", "ignore"], env: { ...process.env, AD_WORKER: "1" } });
+    const proc = spawn(process.execPath, [CLI, "hook", "user-prompt-extract", "--host", LEGACY.productValue], { stdio: ["pipe", "ignore", "ignore"], env: { ...process.env, AD_WORKER: "1" } });
     proc.on("close", resolve);
     proc.stdin.end(JSON.stringify({ session_id: "w", cwd, prompt: "Actually, we use pnpm here, not npm.", hook_event_name: "UserPromptSubmit" }));
   });
@@ -128,17 +129,17 @@ test("subprocess: a team worker's prompt (AD_WORKER=1) is not captured as the us
   await assert.rejects(fs.readFile(path.join(cwd, ".agent-daemon", "learning-journal.jsonl"), "utf8"), /ENOENT/);
 });
 
-test("subprocess: Codex's plan hand-off (a prompt the client wrote) is never captured as the user's words", async () => {
-  const { CODEX_PLAN_CLEAR_CONTEXT_PREFIX, isGeneratedPrompt } = await import("../src/hooks/generated-prompts.mjs");
+test("subprocess: the engine's plan hand-off (a prompt the client wrote) is never captured as the user's words", async () => {
+  const { PLAN_CLEAR_CONTEXT_PREFIX, isGeneratedPrompt } = await import("../src/hooks/generated-prompts.mjs");
   const plan = ["# Switch the package manager", "", "- Actually, we use pnpm here, not npm."].join("\n");
-  const handoff = `${CODEX_PLAN_CLEAR_CONTEXT_PREFIX}\n\n${plan}`;
+  const handoff = `${PLAN_CLEAR_CONTEXT_PREFIX}\n\n${plan}`;
   assert.equal(isGeneratedPrompt(handoff), true);
   assert.equal(isGeneratedPrompt(`<private>${handoff}</private>`), true, "a /private wrapper doesn't hide it");
-  assert.equal(isGeneratedPrompt("Implement the plan."), false, "Codex's short hand-off is a real user message");
+  assert.equal(isGeneratedPrompt("Implement the plan."), false, "engine's short hand-off is a real user message");
   assert.equal(isGeneratedPrompt(plan), false);
   const run = (cwd, prompt) =>
     new Promise((resolve) => {
-      const proc = spawn(process.execPath, [CLI, "hook", "user-prompt-extract", "--host", "codex"], { stdio: ["pipe", "ignore", "ignore"] });
+      const proc = spawn(process.execPath, [CLI, "hook", "user-prompt-extract", "--host", LEGACY.productValue], { stdio: ["pipe", "ignore", "ignore"] });
       proc.on("close", resolve);
       proc.stdin.end(JSON.stringify({ session_id: "p", cwd, prompt, hook_event_name: "UserPromptSubmit" }));
     });

@@ -55,7 +55,7 @@ function sheet(width) {
   out.push("── /ps ──", text(renderBackgroundTerminals(bg, { width })));
   out.push("── /ps (none) ──", text(renderBackgroundTerminals([], { width })));
   out.push("── plan ──", text(renderPlan([{ step: "Reproduce", status: "completed" }, { step: "Fix timers", status: "inProgress" }, { step: "Run the suite", status: "pending" }], { width, explanation: "Small fix" })));
-  out.push("── notices ──", text([...renderNotice({ level: "info", message: "Codex restarted; the conversation continues." }, { width }), ...renderNotice({ level: "warn", message: "Usage at 85%" }, { width }), ...renderNotice({ level: "error", message: "Codex stopped (exit 3). Your text is kept." }, { width })]));
+  out.push("── notices ──", text([...renderNotice({ level: "info", message: "The engine restarted; the conversation continues." }, { width }), ...renderNotice({ level: "warn", message: "Usage at 85%" }, { width }), ...renderNotice({ level: "error", message: "The engine stopped (exit 3). Your text is kept." }, { width })]));
   out.push("── ad rows ──", text([...renderAdRow("recalled", '3 learnings: "login.spec uses fake timers" +2', { width }), ...renderAdRow("skill", "debug-triage", { width }), ...renderAdRow("guard", "rm -rf / blocked", { width })]));
   return out.join("\n");
 }

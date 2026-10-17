@@ -1,8 +1,8 @@
 # `ad tui`: the terminal UI
 
-`ad tui` is a Codex-style terminal UI for agent-daemon's harness. It drives the same pinned Codex engine as `ad chat`, in ad's own Codex home (`~/.agent-daemon/codex-home`), with ad's memory, hooks and skills wired in. Your own `~/.codex` is never used.
+`ad tui` is a terminal UI for agent-daemon's harness. It drives the same pinned engine as `ad chat`, in ad's own engine home (`~/.agent-daemon/engine`), with ad's memory, hooks and skills wired in. Your own `~/.codex` is never used.
 
-It runs inline, like Codex's own UI. Finished output goes into your terminal's normal scrollback, so scrolling, selecting and copying work as usual. Only the bottom of the screen (the running turn, the composer and the footer) is redrawn.
+It runs inline: finished output goes into your terminal's normal scrollback, so scrolling, selecting and copying work as usual. Only the bottom of the screen (the running turn, the composer and the footer) is redrawn. The composer sits on the screen's last rows from the start, and the conversation fills the space above it. To have it follow the conversation instead, as in the engine's own inline mode, set `"prompt.atBottom": false` in `~/.agent-daemon/tui/prefs.json`.
 
 If something gets in the way, `ad chat` is the plain line mode and stays available. How it is built, and the safety model behind `/undo`: [tui-architecture.md](tui-architecture.md).
 
@@ -23,7 +23,7 @@ If something gets in the way, `ad chat` is the plain line mode and stays availab
 - [Images](#images)
 - [`/undo`](#undo)
 - [ad's own features](#ads-own-features)
-- [`ad codex` and `/codex`](#ad-codex-and-codex)
+- [`/codex` is gone](#codex-is-gone)
 - [Files ad writes](#files-ad-writes)
 - [Terminals](#terminals)
 - [When something goes wrong](#when-something-goes-wrong)
@@ -72,16 +72,16 @@ On exit, ad prints how to continue: `ad tui --resume <id>`, with the tokens used
 
 ## First run
 
-1. **Sign in.** If ad isn't signed in to Codex yet, a sign-in panel opens:
+1. **Sign in.** If ad isn't signed in yet, a sign-in panel opens:
 
    | Choice | Runs |
    |---|---|
-   | ChatGPT | `ad auth login chatgpt` (browser) |
-   | OpenAI API key | `ad auth login openai` (kept by Codex in ad's Codex home) |
+   | OpenAI API key | `ad auth login openai` (kept in ad's own folder) |
    | OpenRouter | `ad auth login openrouter` (key and model; the key goes to ad's secret store) |
+   | ChatGPT | `ad auth login chatgpt` (browser) |
 
    The terminal is handed to that command and comes back when it finishes. Esc closes the panel and exits. `/login` does the same later; `/logout` signs out.
-2. **Trust the folder.** The first time in a folder, ad asks whether you trust it. Trusted folders may load their own `.codex` config, hooks and skills. The answer is saved once per folder in ad's Codex home (`config.toml`, `projects`). Your home folder is never asked about.
+   2. **Trust the folder.** The first time in a folder, ad asks whether you trust it. Trusted folders can run their own hooks, skills and settings. The answer is saved once per folder in ad's engine home (`config.toml`, `projects`). Your home folder is never asked about.
 3. **The header** appears, then the composer. Type and press Enter.
 
 ---
@@ -90,7 +90,7 @@ On exit, ad prints how to continue: `ad tui --resume <id>`, with the tokens used
 
 ```
 ╭────────────────────────────────────────────────────────────────────────────╮
-│ >_ Agent Daemon (v2.1.1) · on Codex 0.160.0 (tested)                       │
+│ >_ Agent Daemon (v2.1.1)                                                   │
 │                                                                            │
 │ model:     gpt-5.x-codex medium · ChatGPT Plus      /model to change       │
 │ directory: D:\…\work\app · git: dev                                        │
@@ -99,7 +99,7 @@ On exit, ad prints how to continue: `ad tui --resume <id>`, with the tokens used
 ╰────────────────────────────────────────────────────────────────────────────╯
   Since last time: loop ran (6 iter) · schedule daily ran · 2 skill proposals
 
-  Try /review · /goal · /resume · /codex = stock Codex UI · ? for shortcuts
+  Try /review · /goal · /resume · /memory · ? for shortcuts
 
 › fix the flaky login test
 
@@ -121,13 +121,13 @@ On exit, ad prints how to continue: `ad tui --resume <id>`, with the tokens used
   - Setup warnings (a sandbox that isn't ready, a trust answer that wasn't saved) show in yellow under it. So does "the scheduler isn't running" when an enabled job is more than 5 minutes overdue.
 - **Cells.** Prompts (`›`), answers, commands (Explored, Ran, Failed (exit N), Declined, with the last lines of output), edits (`Edited N files (+A -R)` with a diff), the model's checklists (**Updated Plan**, each time it changes them), proposed plans ([Plan mode](#plan-mode)), tool calls and notices. A turn ends with "Worked for Ns".
 - **ad rows** are one dim line each, and only when something happens: recalled learnings, a guard that blocked a command, a hook that failed, what ad learned, loop iterations.
-- **Activity row** (while a turn runs): what Codex is doing, the time, and `esc to interrupt`. Queued prompts are listed under it; the last one says `tab: edit`.
-- **Status line** (under the prompt, from 12 rows): Codex's status line items, joined with ` · `. By default the model and its reasoning effort, the folder, `ctx N%` (the context left in this conversation) and `5h N%` (how much of the current usage window is used); a percentage turns amber at 80 % used. `/statusline` chooses the items and their order, with Codex's ids (`git-branch`, `branch-changes`, `run-state`, `weekly-limit`, `task-progress`, …); it's saved as Codex's `tui.status_line`, so `/codex` shows the same. When it's too wide, items drop from the end. Under an approval it shows only where the approval doesn't need the room.
+- **Activity row** (while a turn runs): what the engine is doing, the time, and `esc to interrupt`. Queued prompts are listed under it; the last one says `tab: edit`.
+- **Status line** (under the prompt, from 12 rows): the engine's status line items, joined with ` · `. By default the model and its reasoning effort, the folder, `ctx N%` (the context left in this conversation) and `5h N%` (how much of the current usage window is used); a percentage turns amber at 80 % used. `/statusline` chooses the items and their order, with the engine's ids (`git-branch`, `branch-changes`, `run-state`, `weekly-limit`, `task-progress`, …); it's saved as the engine's `tui.status_line`. When it's too wide, items drop from the end. Under an approval it shows only where the approval doesn't need the room.
 - **Footer.**
   - Left: key hints. Idle: `? shortcuts · @ files · <newline key> newline`. While a turn runs: `enter steer · tab queue · <newline key> newline`.
   - Right: chips: `private` while `/private` is on, `loop N` while a background loop runs.
   - **When the footer is too narrow**, the key hints go first (from the end), then chips shorten (`loop 3` → `L3`, `private` → `P`), then chips go.
-- **Window title.** By default a spinner while a turn runs ("action required" while an approval waits), the conversation's name and the project. `/title` chooses the items (Codex's `tui.terminal_title`). The terminal's own title is saved when ad starts and put back when it ends and around `/codex` and the editor. `/private` keeps the conversation's name out of it.
+- **Window title.** By default a spinner while a turn runs ("action required" while an approval waits), the conversation's name and the project. `/title` chooses the items (the engine's `tui.terminal_title`). The terminal's own title is saved when ad starts and put back when it ends and around the editor. `/private` keeps the conversation's name out of it.
 
 ---
 
@@ -193,10 +193,10 @@ Big pastes (more than 5 lines or 1000 characters) show as `[Pasted N lines]` and
 | `?` | the shortcuts (on an empty prompt) |
 | `@` | complete a file name in this folder |
 | `/` | complete a command; Enter runs the highlighted one, Tab fills it in |
-| `!cmd` | run `cmd` in the shell, **unsandboxed** (like Codex's `!`). One line only; a multi-line paste starting with `!` is a prompt |
+| `!cmd` | run `cmd` in the shell, **unsandboxed** (like the engine's own UI `!`). One line only; a multi-line paste starting with `!` is a prompt |
 | Ctrl+T | page through the whole transcript: ↑ ↓ (or `k` `j`), PgUp / Shift+Space / Ctrl+B, PgDn / Space / Ctrl+F, Ctrl+U / Ctrl+D (half a page), Home, End; Esc, `q`, Ctrl+C or Ctrl+T closes |
 | Alt+, / Alt+. | lower / raise the reasoning effort for the next turn, through the current model's own levels (Shift+↓ / Shift+↑ too) |
-| Alt+← / Alt+→ | with the prompt empty: watch the previous / next [subagent](#subagents) (Codex's fixed keys) |
+| Alt+← / Alt+→ | with the prompt empty: watch the previous / next [subagent](#subagents) (the engine's fixed keys) |
 | Shift+Tab | switch between Plan and Default mode ([Plan mode](#plan-mode)); not while a turn runs |
 | Ctrl+/ | with a [side conversation](#side-conversations) open: move between its prompt and the main one |
 | Esc (Vim on) | Insert → Normal; in Normal with nothing pending, the usual Esc ([Vim mode](#vim-mode)) |
@@ -206,68 +206,79 @@ Big pastes (more than 5 lines or 1000 characters) show as `[Pasted N lines]` and
 
 The terminal bell rings when an approval waits, and when a turn ends while the terminal window isn't focused.
 
-**Changing keys.** ad uses Codex's names for the actions it has, so the keys you set in the stock UI's `/keymap` (in `/codex`; they're saved as `tui.keymap` in ad's Codex home) apply in ad too: the transcript, the external editor, copy, raw output, clear, interrupt, reasoning effort, queue, the shortcuts and the pager. ad doesn't change them itself. A key ad can't use there (a chord like `ctrl-x f`, a key that would mean two things, or one of the prompt's editing keys) is skipped, and `/warnings` says why. `/keymap` lists the keys in effect (yours marked) and `/keymap debug` shows what your terminal sends for a key and what it does in ad (Ctrl+C closes it). Shift+Tab never queues: it switches [Plan mode](#plan-mode), a fixed key in Codex too.
+**Changing keys.** ad uses the engine's names for the actions it has. Set keys in the engine's settings file, under `[tui.keymap]` (ad about shows where); for example:
+
+```toml
+[tui.keymap.global]
+open_transcript = "alt-y"
+```
+
+ad reads them and never writes them. A key ad can't use there (a chord like `ctrl-x f`, a key that would mean two things, or one of the prompt's editing keys) is skipped, and `/warnings` says why. `/keymap` lists the keys in effect (yours marked) and `/keymap debug` shows what your terminal sends for a key and what it does in ad (Ctrl+C closes it). Shift+Tab never queues: it switches [Plan mode](#plan-mode).
+
+### Settings in the engine's settings file
+
+The status line, the window title, the keys and the theme are stored in the engine's settings file (`config.toml` in the engine home; `ad about` shows where). ad reads them and never writes `tui.keymap`; `/warnings` lists what ad can't show.
 
 ---
 
 ## Approvals and questions
 
-When Codex wants to do something it needs permission for, the request opens as a box over the composer. Its full text also goes into the scrollback, and so does your answer ("approved", "approved for this session" or "declined").
+When the engine wants to do something it needs permission for, the request opens as a box over the composer. Its full text also goes into the scrollback, and so does your answer ("approved", "approved for this session" or "declined").
 
 | Request | Choices (key) |
 |---|---|
-| Run a command | Yes (`y`) · Yes, and don't ask again this session (`a`) · Yes, and don't ask again for commands starting with `<prefix>` (`p`) · Yes, and always allow `<host>` (`h`) · No, and tell Codex what to do instead (`n`) · No, and stop (`esc`) |
-| Edit files (the diff is shown) | Yes (`y`) · Yes, and don't ask again for these files this session (`a`) · No, and tell Codex what to do instead (`n`) · No, and stop (`esc`) |
+| Run a command | Yes (`y`) · Yes, and don't ask again this session (`a`) · Yes, and don't ask again for commands starting with `<prefix>` (`p`) · Yes, and always allow `<host>` (`h`) · No, and tell the engine what to do instead (`n`) · No, and stop (`esc`) |
+| Edit files (the diff is shown) | Yes (`y`) · Yes, and don't ask again for these files this session (`a`) · No, and tell the engine what to do instead (`n`) · No, and stop (`esc`) |
 | More permissions | Yes, for this turn (`y`) · Yes, for this session (`a`) · No (`n`) |
 
-A command request lists only what Codex offers for that command, so `p` and `h` appear only sometimes.
+A command request lists only what the engine offers for that command, so `p` and `h` appear only sometimes.
 
 - **Answering:** press the key, press the option's number, or move with ↑ / ↓ and press Enter.
 - **Arming.** An answer that grants something is taken only 400 ms after the box opened and after your last key. A key pressed too early restarts the wait. Type-ahead, a held key or a paste never approves. Declining works at once.
 - **Hidden characters** in a command or a diff (control characters, bidi marks, zero-width or look-alike spaces) are shown as `<U+XXXX>`, so a command can't hide part of itself.
 - **Long requests** scroll inside the box with PgUp / PgDn.
-- **Questions** from Codex list numbered options plus Skip (`esc`), or take free text. Secret answers are masked and never stored in history.
+- **Questions** from the engine list numbered options plus Skip (`esc`), or take free text. Secret answers are masked and never stored in history.
 - **Forms** from an MCP server offer Submit (`y`; "Open it, then continue" for a link), Decline (`n`) and Cancel (`esc`).
-- A request ad doesn't support yet is declined, and ad says "This needs the stock UI: /codex".
+- A request ad doesn't support yet is declined, and ad says "ad declined a request it can't show here.".
 
 ---
 
 ## Slash commands
 
-Type `/` to see them with a one-line hint each. Commands marked "Codex" keep Codex's meaning; the others are ad's own.
+Type `/` to see them with a one-line hint each. Commands marked "engine" keep the engine's meaning; the others are ad's own.
 
 **Conversations**
 
 | Command | What it does |
 |---|---|
-| `/new` | start a new conversation (Codex). The scrollback stays |
-| `/clear [name]` | clear the terminal, **scrollback included**, and start a new conversation, named if you give a name (Codex). The one before stays resumable. To keep the scrollback, set `"clear.keepScrollback": true` in `~/.agent-daemon/tui/prefs.json` |
-| `/resume` | continue an earlier conversation in this folder (Codex). `/resume archived` (or the last entry of the list) shows the archived ones; resuming one unarchives it |
-| `/archive` | archive this conversation, after asking (Codex). ad stays open on a new one; `/resume archived` brings it back |
-| `/delete` | delete this conversation for good, its subagents too, after asking (Codex). Its `/undo` snapshots go with it; ad's memory from it is kept |
-| `/pwd` | show the current working directory (Codex; `/cwd` too) |
-| `/cd [folder]` | continue in another folder (Codex): the conversation is forked there, and from then on everything works in it (edits, commands, `@` files, git facts, ad's memory, `/undo`). Alone, it goes home. A folder you haven't trusted yet is asked about first. Not while a turn runs, prompts are queued, background terminals run or a subagent (one seen start in this session) is still working; never into a Codex home. `/undo` can't undo turns from before the change |
-| `/fork` | continue in a copy of this conversation (Codex) |
-| `/rename <name>` | name this conversation (Codex) |
-| `/compact` | summarize the conversation to free context (Codex) |
-| `/recap` | a short catch-up on this conversation: what it is for, what is done, what is next (Codex). See [Recaps](#recaps) |
-| `/export [name]` | save the conversation as markdown in this folder (Codex). Never overwrites, never writes outside the folder |
-| `/quit`, `/exit` | exit ad (Codex) |
+| `/new` | start a new conversation (engine). The scrollback stays |
+| `/clear [name]` | clear the terminal, **scrollback included**, and start a new conversation, named if you give a name (engine). The one before stays resumable. To keep the scrollback, set `"clear.keepScrollback": true` in `~/.agent-daemon/tui/prefs.json` |
+| `/resume` | continue an earlier conversation in this folder (engine). `/resume archived` (or the last entry of the list) shows the archived ones; resuming one unarchives it |
+| `/archive` | archive this conversation, after asking (engine). ad stays open on a new one; `/resume archived` brings it back |
+| `/delete` | delete this conversation for good, its subagents too, after asking (engine). Its `/undo` snapshots go with it; ad's memory from it is kept |
+| `/pwd` | show the current working directory (engine; `/cwd` too) |
+| `/cd [folder]` | continue in another folder (engine): the conversation is forked there, and from then on everything works in it (edits, commands, `@` files, git facts, ad's memory, `/undo`). Alone, it goes home. A folder you haven't trusted yet is asked about first. Not while a turn runs, prompts are queued, background terminals run or a subagent (one seen start in this session) is still working; never into an engine home. `/undo` can't undo turns from before the change |
+| `/fork` | continue in a copy of this conversation (engine) |
+| `/rename <name>` | name this conversation (engine) |
+| `/compact` | summarize the conversation to free context (engine) |
+| `/recap` | a short catch-up on this conversation: what it is for, what is done, what is next (engine). See [Recaps](#recaps) |
+| `/export [name]` | save the conversation as markdown in this folder (engine). Never overwrites, never writes outside the folder |
+| `/quit`, `/exit` | exit ad (engine) |
 
 **Settings**
 
 | Command | What it does |
 |---|---|
-| `/model` | choose the model and reasoning effort (Codex) |
-| `/permissions` | what Codex may do without asking: Read only, Auto (default: edits this folder, asks for the rest), Full access (Codex) |
-| `/login [chatgpt\|openai\|openrouter]` | sign in (ChatGPT, OpenAI key, OpenRouter); Codex restarts with the new login |
-| `/logout` | sign out of Codex in ad's home (Codex) |
-| `/statusline` | choose the status line's items and their order: Space toggles, ← → move, Enter saves, Esc puts it back (Codex) |
-| `/title` | choose what the terminal window's title shows, the same way (Codex) |
-| `/vim` | toggle Codex's Vim mode for the prompt (Codex). See [Vim mode](#vim-mode) |
-| `/theme` | choose the syntax colours, with a live preview; Esc keeps the old one (Codex). See [Syntax highlighting](#syntax-highlighting) |
-| `/keymap [debug]` | the keys in effect; `debug` shows what a key sends (Codex) |
-| `/setup-default-sandbox` | Windows: set up Codex's elevated sandbox, after asking: machine-wide, so your own Codex uses it too. Nothing else is sent while it runs; then the conversation gets the Auto permissions. Not in a Codex home ad didn't create (`ad sandbox setup --elevated --force` there) (Codex) |
+| `/model` | choose the model and reasoning effort (engine) |
+| `/permissions` | what the engine may do without asking: Read only, Auto (default: edits this folder, asks for the rest), Full access (engine) |
+| `/login [chatgpt\|openai\|openrouter]` | sign in (ChatGPT, OpenAI key, OpenRouter); the engine restarts with the new login |
+| `/logout` | sign out in ad's home (engine) |
+| `/statusline` | choose the status line's items and their order: Space toggles, ← → move, Enter saves, Esc puts it back (engine) |
+| `/title` | choose what the terminal window's title shows, the same way (engine) |
+| `/vim` | toggle the engine's Vim mode for the prompt (engine). See [Vim mode](#vim-mode) |
+| `/theme` | choose the syntax colours, with a live preview; Esc keeps the old one (engine). See [Syntax highlighting](#syntax-highlighting) |
+| `/keymap [debug]` | the keys in effect; `debug` shows what a key sends (engine) |
+| `/setup-default-sandbox` | Windows: set up the engine's elevated sandbox, after asking: machine-wide, so your own install uses it too. Nothing else is sent while it runs; then the conversation gets the Auto permissions. Not in an engine home ad didn't create (`ad sandbox setup --elevated --force` there) (engine) |
 
 Model, effort and permission changes apply from the next turn.
 
@@ -275,17 +286,17 @@ Model, effort and permission changes apply from the next turn.
 
 | Command | What it does |
 |---|---|
-| `/goal [<objective>\|clear]` | set a goal for this conversation (`/goal clear`); alone, shows it (Codex) |
-| `/side [question]` | a side conversation in an ephemeral fork, in a panel; works while a turn runs (Codex; `/btw` too). See [Side conversations](#side-conversations) |
-| `/plan [prompt]` | switch to Plan mode; with a prompt, send it there (Codex). See [Plan mode](#plan-mode) |
-| `/review` | review your uncommitted changes (Codex) |
-| `/ps` | list the background terminals and their last output lines (Codex). See [Background terminals](#background-terminals) |
-| `/stop` | stop all background terminals (Codex; `/clean` too) |
-| `/subagents` | watch this conversation's subagents, live; Alt+← / Alt+→ go from one to the next (Codex). See [Subagents](#subagents) |
-| `/approve` | approve one retry of an action Codex's auto-review denied (Codex). See [Auto-review denials](#auto-review-denials) |
-| `/mention` | put an `@` in the prompt and open the file picker (Codex) |
-| `/diff` | show git changes, untracked files included (Codex) |
-| `/init` | create an AGENTS.md for this repo, with Codex's own prompt (Codex) |
+| `/goal [<objective>\|clear]` | set a goal for this conversation (`/goal clear`); alone, shows it (engine) |
+| `/side [question]` | a side conversation in an ephemeral fork, in a panel; works while a turn runs (engine; `/btw` too). See [Side conversations](#side-conversations) |
+| `/plan [prompt]` | switch to Plan mode; with a prompt, send it there (engine). See [Plan mode](#plan-mode) |
+| `/review` | review your uncommitted changes (engine) |
+| `/ps` | list the background terminals and their last output lines (engine). See [Background terminals](#background-terminals) |
+| `/stop` | stop all background terminals (engine; `/clean` too) |
+| `/subagents` | watch this conversation's subagents, live; Alt+← / Alt+→ go from one to the next (engine). See [Subagents](#subagents) |
+| `/approve` | approve one retry of an action the engine's auto-review denied (engine). See [Auto-review denials](#auto-review-denials) |
+| `/mention` | put an `@` in the prompt and open the file picker (engine) |
+| `/diff` | show git changes, untracked files included (engine) |
+| `/init` | create an AGENTS.md for this repo, with the engine's own prompt (engine) |
 | `/image <path>` | attach an image file to the next prompt |
 | `/undo [force]` | put back the files the last turn changed, and rewind it (below) |
 
@@ -293,36 +304,35 @@ Model, effort and permission changes apply from the next turn.
 
 | Command | What it does |
 |---|---|
-| `/copy` | copy the last answer to the clipboard (Codex) |
-| `/raw` | print the last answer as plain text, for selecting (Codex) |
+| `/copy` | copy the last answer to the clipboard (engine) |
+| `/raw` | print the last answer as plain text, for selecting (engine) |
 
 **Inspection**
 
 | Command | What it does |
 |---|---|
-| `/status` | account, model, sandbox, tokens, limits, and the Codex version line (Codex) |
-| `/usage` | usage limits and tokens (Codex) |
-| `/mcp` | MCP servers and their status (Codex) |
-| `/hooks` | hooks and whether they are trusted; ad's own are marked (Codex) |
-| `/skills` | skills Codex can use here (Codex) |
-| `/warnings` | notices kept from this session, and events this ad doesn't know (Codex) |
-| `/debug-config` | Codex's config layers (lowest precedence first, the session's flags listed) and its requirements. Values under secret-named keys, header and env maps, a URL's user:password and token-like arguments show as `****`. Typed only, as in Codex |
-| `/rollout` | the conversation's rollout file (Codex's debug command; typed only) |
-| `/agents` | Codex's agent command center needs its shared background server, which ad doesn't run: it says so, and points to `/subagents` and `/team` (Codex) |
+| `/status` | account, model, sandbox, tokens, limits, and the engine version line (engine) |
+| `/usage` | usage limits and tokens (engine) |
+| `/mcp` | MCP servers and their status (engine) |
+| `/hooks` | hooks and whether they are trusted; ad's own are marked (engine) |
+| `/skills` | skills the engine can use here (engine) |
+| `/warnings` | notices and raw engine details kept from this session, and events this ad doesn't know |
+| `/debug-config` | the engine's config layers (lowest precedence first, the session's flags listed) and its requirements. Values under secret-named keys, header and env maps, a URL's user:password and token-like arguments show as `****`. Typed only, as in the engine's own UI |
+| `/rollout` | the conversation's rollout file (the engine's debug command; typed only) |
+| `/agents` | the engine's agent command center needs its shared background server, which ad doesn't run: it says so, and points to `/subagents` and `/team` (engine) |
 
 **ad**
 
 | Command | What it does |
 |---|---|
 | `/remember <text>` | save a note to ad's project memory |
-| `/memory [search <words>\|recent\|forget <id>\|profile]` | ad's memory (not Codex's `/memories`) |
+| `/memory [search <words>\|recent\|forget <id>\|profile]` | ad's memory (not the engine's `/memories`) |
 | `/private` | toggle: prompts are wrapped in `<private>` (ad never learns from them) |
 | `/proposals` | skill changes ad proposes (review with `/ad review`) |
 | `/loop "<objective>"` | work toward an objective in the background (`/loop stop`) |
 | `/team [id]` | the team board |
 | `/schedule [run <id>]` | scheduled jobs |
-| `/tools [list\|enable\|disable <tool>]` | optional agent tools (`/tools enable browser`) |
-| `/codex [args]` | open the stock Codex UI on this conversation |
+| `/tools [list|enable|disable <tool>]` | optional agent tools (`/tools enable browser`) |
 | `/ad <command>` | run an ad command, e.g. `/ad doctor` |
 
 **Help**
@@ -332,73 +342,73 @@ Model, effort and permission changes apply from the next turn.
 | `/help` | what you can do here: every command and shortcut |
 | `/terminal-setup` | how to make Shift+Enter add a newline in this terminal |
 
-A Codex command ad doesn't have yet is never sent to the model as a prompt. It answers in one line why ("/import isn't in ad yet. /codex opens the stock Codex UI on this conversation."), and what you typed stays in the prompt. Where the stock UI can't help either (`/ide`, `/app`, `/daemon`), the answer says so instead. Codex's commands keep Codex's rules: the ones Codex disables while a task runs (`/new`, `/fork`, `/compact`, `/init`, `/export`, `/review`, `/logout`, …) answer "'/new' is disabled while a task is in progress.", and the draft stays. Codex's aliases work (`/cwd`, `/clean` for `/stop`, `/pet`), and `/quit` shows in the popup only once you type it.
+A command ad doesn't have yet is never sent to the model as a prompt. It answers in one line why ("/import isn't planned for ad."), and what you typed stays in the prompt. Where the engine's own UI can't help either (`/ide`, `/app`, `/daemon`), the answer says so instead. Upstream commands keep upstream's rules: the ones disabled while a task runs (`/new`, `/fork`, `/compact`, `/init`, `/export`, `/review`, `/logout`, …) answer "'/new' is disabled while a task is in progress.", and the draft stays. Upstream's aliases work (`/cwd`, `/clean` for `/stop`, `/pet`), and `/quit` shows in the popup only once you type it.
 
 ---
 
 ## Plan mode
 
-Codex's own plan mode: the model explores without changing anything, asks you what it can't find out, and ends with a plan you can implement.
+The engine's own plan mode: the model explores without changing anything, asks you what it can't find out, and ends with a plan you can implement.
 
-- **Switching.** `/plan` switches to Plan mode; `/plan <prompt>` switches and sends the prompt there. Shift+Tab switches between Plan and Default. Neither works while a turn runs (as in Codex). In Plan mode the footer shows **Plan mode (shift+tab to cycle)** and the prompt turns magenta.
-- **What the model does.** It gets Codex's plan-mode instructions: read and search but don't edit, ask questions (they come up in the usual question dialog), and end with one **Proposed Plan**, shown as its own block.
-- **Implement this plan?** When a plan arrives and nothing else waits, ad asks, with Codex's choices:
+- **Switching.** `/plan` switches to Plan mode; `/plan <prompt>` switches and sends the prompt there. Shift+Tab switches between Plan and Default. Neither works while a turn runs (as in the engine's own UI). In Plan mode the footer shows **Plan mode (shift+tab to cycle)** and the prompt turns magenta.
+- **What the model does.** It gets the engine's plan-mode instructions: read and search but don't edit, ask questions (they come up in the usual question dialog), and end with one **Proposed Plan**, shown as its own block.
+- **Implement this plan?** When a plan arrives and nothing else waits, ad asks, with the engine's choices:
   1. **Yes, implement this plan**: switches to Default and sends "Implement the plan.".
   2. **Yes, clear context and implement**: a new conversation in Default whose first message is the plan (the choice shows how much context the current one uses). The scrollback stays.
   3. **No, stay in Plan mode** (or Esc): keep refining it.
 
   If you're typing when the plan arrives, your draft stays: ad says "A plan is ready: clear the prompt to choose." and asks once the prompt is empty. A queued prompt runs instead of the question.
-- **Settings.** Plan mode's reasoning effort is Codex's `plan_mode_reasoning_effort` (else medium, Codex's default); Default keeps your own model and effort. ad and `/codex` share the mode: a conversation left in Plan in the stock UI resumes in Plan here. A new conversation starts in Default.
-- **Limits.** Like Codex, Plan mode is instructions to the model, not a sandbox: a model that edits anyway isn't stopped. For a hard stop, also set `/permissions` to read-only. Plan mode uses part of Codex's experimental app-server API (only `ad tui` uses it, only for this and `/stop`); if Codex can't list its modes, `/plan` answers "Plan mode unavailable right now." ([troubleshooting #33](troubleshooting.md#33-ad-tui-plan-says-plan-mode-unavailable-right-now)).
+- **Settings.** Plan mode's reasoning effort is the engine's `plan_mode_reasoning_effort` (else medium, the engine's default); Default keeps your own model and effort. A new conversation starts in Default.
+- **Limits.** Like in the engine's own UI, Plan mode is instructions to the model, not a sandbox: a model that edits anyway isn't stopped. For a hard stop, also set `/permissions` to read-only. Plan mode uses part of the engine's experimental app-server API (only `ad tui` uses it, only for this and `/stop`); if the engine can't list its modes, `/plan` answers "Plan mode unavailable right now." ([troubleshooting #33](troubleshooting.md#33-ad-tui-plan-says-plan-mode-unavailable-right-now)).
 - **Memory.** The clear-context message is written by the client, not by you: ad's memory hooks skip it, so the model's plan is never learned as your words.
 
 ## Syntax highlighting
 
-Code in answers (a fenced block that names its language) and the unchanged lines of an edit's diff are coloured by language, as in Codex: JavaScript and TypeScript (with JSX), Python, Rust, Go, C, C++, C#, Java, JSON (and JSON with comments), YAML, TOML, shell (here-documents too), console sessions (the commands after a `$ ` prompt; their output stays plain), PowerShell, HTML and XML, CSS, SQL and diff. A block in another language, or one over 2,000 lines or 200,000 characters (or a line over 2,000 characters), stays in the plain code colour. Added and removed lines of a diff keep the diff colours; its unchanged lines are coloured as the new file reads, hunk by hunk.
+Code in answers (a fenced block that names its language) and the unchanged lines of an edit's diff are coloured by language, as in the engine's own UI: JavaScript and TypeScript (with JSX), Python, Rust, Go, C, C++, C#, Java, JSON (and JSON with comments), YAML, TOML, shell (here-documents too), console sessions (the commands after a `$ ` prompt; their output stays plain), PowerShell, HTML and XML, CSS, SQL and diff. A block in another language, or one over 2,000 lines or 200,000 characters (or a line over 2,000 characters), stays in the plain code colour. Added and removed lines of a diff keep the diff colours; its unchanged lines are coloured as the new file reads, hunk by hunk.
 
-`/theme` chooses the colours, as Codex's does: **Select Syntax Theme**, with a code sample and a diff previewing each theme as you move (only the preview: what a running turn adds meanwhile keeps the current theme); Enter saves it as `tui.theme` in ad's Codex config (shared with `/codex`), Esc keeps the old one. ad ships three: `ansi` (the default: your terminal's own colours, readable on light and dark backgrounds), and Codex's `catppuccin-mocha` (dark) and `catppuccin-latte` (light), which become the nearest 256 or 16 colours where the terminal has no truecolor. A theme from Codex's longer list that ad doesn't ship shows as `ansi` in ad (the stock UI still uses it), and `/warnings` says so. With `NO_COLOR` set, code has no colours. What is already in the scrollback keeps the colours it was drawn with.
+`/theme` chooses the colours: **Select Syntax Theme**, with a code sample and a diff previewing each theme as you move (only the preview: what a running turn adds meanwhile keeps the current theme); Enter saves it as `tui.theme` in the engine's config, Esc keeps the old one. ad ships three: `ansi` (the default: your terminal's own colours, readable on light and dark backgrounds), and `catppuccin-mocha` (dark) and `catppuccin-latte` (light), which become the nearest 256 or 16 colours where the terminal has no truecolor. A theme from the engine's longer list that ad doesn't ship shows as `ansi` in ad, and `/warnings` says so. With `NO_COLOR` set, code has no colours. What is already in the scrollback keeps the colours it was drawn with.
 
 ## Vim mode
 
-`/vim` turns on Codex's Vim mode for the prompt (it starts in Normal; `/vim` again turns it off). `tui.vim_mode_default = true` in ad's Codex config (the stock UI's setting) turns it on from the start, in Insert, as in Codex. The footer shows **Vim: Normal**, **Vim: Insert** or **Vim: Replace**, and the cursor is a bar in Insert.
+`/vim` turns on the engine's Vim mode for the prompt (it starts in Normal; `/vim` again turns it off). `tui.vim_mode_default = true` in ad's engine config turns it on from the start, in Insert, as in the engine's own UI. The footer shows **Vim: Normal**, **Vim: Insert** or **Vim: Replace**, and the cursor is a bar in Insert.
 
-- **What Codex has, ad has:** `i a A I o O R`; `h j k l` and the arrows, `w b e`, `0 $`, `f F t T`, `gg`, `G`; `x s D C r Y p u`, Ctrl+R to redo, `.` to repeat the last change; `d y c` with those motions, `dd yy cc`, and the text objects `iw aw iW aW`, `i( a(` (also `)` and `b`), `i[ a[`, `i{ a{` (also `B`), `i" a" i' a' i` a``; `/` `?` `n` `N` to search (also after an operator: `d/word`). One register, shared with the prompt's Ctrl+K/U/W/Y.
-- **What Codex doesn't have, ad doesn't either:** counts (`3w`), Visual mode, `P`, `X`, `;` and `,`.
+- **What the engine's own UI has, ad has:** `i a A I o O R`; `h j k l` and the arrows, `w b e`, `0 $`, `f F t T`, `gg`, `G`; `x s D C r Y p u`, Ctrl+R to redo, `.` to repeat the last change; `d y c` with those motions, `dd yy cc`, and the text objects `iw aw iW aW`, `i( a(` (also `)` and `b`), `i[ a[`, `i{ a{` (also `B`), `i" a" i' a' i` a``; `/` `?` `n` `N` to search (also after an operator: `d/word`). One register, shared with the prompt's Ctrl+K/U/W/Y.
+- **What the engine's own UI doesn't have, ad doesn't either:** counts (`3w`), Visual mode, `P`, `X`, `;` and `,`.
 - **Keys:** Enter sends in Normal and in Insert (a new line is your newline key, as without Vim); Tab queues. Esc in Insert goes to Normal, never interrupts; in Normal with nothing pending it does what Esc always does (interrupt a turn, Esc Esc to rewind). In Normal `/` and `?` search, so the command popup and the `?` shortcuts open from Insert. `j`/`k` on an empty prompt walk the prompt history. After you send, the new prompt starts in Insert.
 - **Undo:** one step is one Normal command, or everything typed between entering Insert and Esc.
-- **Not yet like Codex:** search matches aren't highlighted in the prompt; Backspace in Replace mode only moves left (Codex puts the old character back); a "[Pasted N lines]" token is plain text to Vim's motions (Codex moves over it as one character).
+- **Not yet like the engine's own UI:** search matches aren't highlighted in the prompt; Backspace in Replace mode only moves left (the engine's own UI puts the old character back); a "[Pasted N lines]" token is plain text to Vim's motions (the engine's own UI moves over it as one character).
 
 ## Subagents
 
-When Codex spawns subagents, `/subagents` lists them as Codex does: **Subagents**, the main conversation first (`Main [default]`), then each agent in the order it appeared, by its nickname and role (`Ada [explorer]`), with its thread id and whether it is running or closed. Pick one to watch it: its own transcript, live, in a pager (↑ ↓, PgUp PgDn; at the bottom it follows what comes in). Alt+← and Alt+→ go to the previous or next agent, round to the main conversation, which closes the pager; from an empty prompt they open the pager on the last or first agent, as in Codex (⌥← ⌥→ on macOS). q or Esc closes it. With none yet: "No agents available yet."; with subagents switched off (`features.multi_agent = false`), Codex's "Enable subagents?" saves it on for new threads.
+When the engine spawns subagents, `/subagents` lists them as the engine's own UI does: **Subagents**, the main conversation first (`Main [default]`), then each agent in the order it appeared, by its nickname and role (`Ada [explorer]`), with its thread id and whether it is running or closed. Pick one to watch it: its own transcript, live, in a pager (↑ ↓, PgUp PgDn; at the bottom it follows what comes in). Alt+← and Alt+→ go to the previous or next agent, round to the main conversation, which closes the pager; from an empty prompt they open the pager on the last or first agent, as in the engine's own UI (⌥← ⌥→ on macOS). q or Esc closes it. With none yet: "No agents available yet."; with subagents switched off (`features.multi_agent = false`), the engine's "Enable subagents?" saves it on for new threads.
 
-Codex switches its whole view to the agent's thread; ad keeps your conversation where it is and shows the agent beside it, so watching one never changes what your prompts go to.
+The engine's own UI switches its whole view to the agent's thread; ad keeps your conversation where it is and shows the agent beside it, so watching one never changes what your prompts go to.
 
 ## Recaps
 
-`/recap` asks for a short catch-up on this conversation, as Codex's does: what it is for, what is done, and an agreed next step or an open question. It reads the last 8 exchanges (prompts and answers, not tool output; never a `/private` prompt), within Codex's size budget, and asks Codex in a separate, temporary thread that is read-only, has every tool and MCP server off, and runs none of ad's hooks. "Generating conversation recap…" shows meanwhile; the answer is a dim, italic **↳ Recap:** with **Next:** under it. Sending a prompt meanwhile, or any other turn running first (`/compact`, `/review`), drops it, as in Codex. Not while a turn runs. Codex gets 30 seconds to start the temporary thread and 30 more to answer. Codex's automatic recaps (`tui.auto_recap`, after 30 idle minutes) aren't in ad.
+`/recap` asks for a short catch-up on this conversation, as the engine's own does: what it is for, what is done, and an agreed next step or an open question. It reads the last 8 exchanges (prompts and answers, not tool output; never a `/private` prompt), within the engine's size budget, and asks the engine in a separate, temporary thread that is read-only, has every tool and MCP server off, and runs none of ad's hooks. "Generating conversation recap…" shows meanwhile; the answer is a dim, italic **↳ Recap:** with **Next:** under it. Sending a prompt meanwhile, or any other turn running first (`/compact`, `/review`), drops it, as in the engine's own UI. Not while a turn runs. The engine gets 30 seconds to start the temporary thread and 30 more to answer. The engine's automatic recaps (`tui.auto_recap`, after 30 idle minutes) aren't in ad.
 
 ## Auto-review denials
 
-When Codex's automatic approval reviewer (its "auto-review") denies an action, the notice says so and `/approve` lists the denials of this conversation, newest first (Codex keeps the last 10): **Auto-review Denials**, each with its rationale. Picking one records an approval for one retry: the model sees it, and the retry still goes through auto-review. It leaves the list (and stays on it if Codex refuses). Each conversation has its own list, kept while ad runs: a conversation resumed later starts with none. A subagent's denials aren't on it.
+When the engine's automatic approval reviewer (its "auto-review") denies an action, the notice says so and `/approve` lists the denials of this conversation, newest first (the engine keeps the last 10): **Auto-review Denials**, each with its rationale. Picking one records an approval for one retry: the model sees it, and the retry still goes through auto-review. It leaves the list (and stays on it if the engine refuses). Each conversation has its own list, kept while ad runs: a conversation resumed later starts with none. A subagent's denials aren't on it.
 
 ## Side conversations
 
-`/side` (or `/btw`) asks something on the side without disturbing the main conversation, as in Codex: it works while a turn runs, and nothing from it goes back.
+`/side` (or `/btw`) asks something on the side without disturbing the main conversation, as in the engine's own UI: it works while a turn runs, and nothing from it goes back.
 
-- **What it is.** An ephemeral fork of the conversation: the model sees the history as reference, gets Codex's side-conversation instructions, and answers. It runs **read-only, with no approvals and no ad hooks** (Codex's own side conversations keep the main one's permissions; ad's are read-only). It is never saved, so `/resume` doesn't list it.
+- **What it is.** An ephemeral fork of the conversation: the model sees the history as reference, gets the engine's side-conversation instructions, and answers. It runs **read-only, with no approvals and no ad hooks** (the engine's own side conversations keep the main one's permissions; ad's are read-only). It is never saved, so `/resume` doesn't list it.
 - **The panel.** It opens under the main conversation's status, with **Side from main thread · <main's state> · ctrl+/ to switch · ctrl+c to close**. The main conversation keeps going above it (its finished output still goes into the scrollback); its approvals come first and hide the panel until answered.
-- **Keys.** Enter sends to the side; Esc interrupts only the side's turn; Ctrl+/ moves between the side prompt and the main one; Ctrl+C on an empty prompt closes it. Only Codex's side commands work there (`/copy` copies the side's last answer, `/status`, `/diff`, `/pwd`…); `!` shell commands don't. Images can't be attached to a side question. The side's failures and queued prompts show in the panel.
+- **Keys.** Enter sends to the side; Esc interrupts only the side's turn; Ctrl+/ moves between the side prompt and the main one; Ctrl+C on an empty prompt closes it. Only the engine's side commands work there (`/copy` copies the side's last answer, `/status`, `/diff`, `/pwd`…); `!` shell commands don't. Images can't be attached to a side question. The side's failures and queued prompts show in the panel.
 - **Closing.** The side transcript goes into the scrollback as one block ("Side conversation"), and the fork ends. A new conversation, `/resume` or an engine restart closes it too. One at a time: `/side` from the main prompt goes back to the open one.
 
 ## Background terminals
 
-A command the model starts that keeps running, such as a dev server or a watcher, becomes a **background terminal**, as in Codex. It doesn't hold up the conversation: what the model says after starting it goes into the scrollback at once, and the turn can end while it runs.
+A command the model starts that keeps running, such as a dev server or a watcher, becomes a **background terminal**, as in the engine's own UI. It doesn't hold up the conversation: what the model says after starting it goes into the scrollback at once, and the turn can end while it runs.
 
 - The footer says **N background terminal(s) running · /ps to view · /stop to close**.
 - `/ps` lists them with their last 3 output lines (16 at most, then "... and N more running").
 - `/stop` (or `/clean`) stops them all: "Stopping all background terminals.". Both work while a turn runs.
-- They belong to ad's engine: a new conversation, `/resume` or an engine restart leaves them behind (Codex ends them with its engine), and the stock UI in `/codex` doesn't see them.
+- They belong to ad's engine: a new conversation, `/resume` or an engine restart leaves them behind (the engine ends them when it ends), and no other UI sees them.
 
 ## Images
 
@@ -416,7 +426,7 @@ A command the model starts that keeps running, such as a dev server or a watcher
 **How it works.** In a git repo, while `ad tui` runs, ad takes a snapshot of your working folder before and after each turn.
 - The "before" snapshot is started when you press Enter, so everything you saved before sending is in it. The turn starts once it is done (usually well under a second; up to 10 s on a very large folder or a busy machine), so nothing the agent does can be in it. Not done in 10 s: that turn gets no checkpoint, ad never guesses. (Snapshots while you type only warm git's caches.)
 - The "after" snapshot is started once the turn has ended.
-- Snapshots are git trees under `refs/ad/checkpoints/<thread>/`. Nothing goes into Codex's session files.
+- Snapshots are git trees under `refs/ad/checkpoints/<thread>/`. Nothing goes into the engine's session files.
 - ad uses its own index (`.git/ad-checkpoint-index`). Your index, HEAD, branches and stash are never touched.
 - `.gitignore` is respected. Untracked files over 2 MB and heavy folders (`node_modules`, `.venv`, `dist`, `build`, `target`, …) are skipped, and so is ad's own `.agent-daemon/` (its hooks write there during every turn).
 - The last 20 turns per conversation are kept, and about 200 turns over all conversations.
@@ -445,7 +455,7 @@ Not undone: src/app.js (changed since the agent's edit). /undo force puts the ag
 **When there is no checkpoint,** `/undo` says why:
 - the snapshot before the turn wasn't ready in time;
 - snapshots fail in this repo (with git's message), or the snapshot after the turn failed;
-- the turn wasn't started from a prompt here (Codex started it: a review, a goal);
+- the turn wasn't started from a prompt here (the engine started it: a review, a goal);
 - one of the agent's edits couldn't be read back;
 - the turn ran before `ad tui` started.
 
@@ -483,18 +493,9 @@ Esc Esc rewinds the conversation only; `/undo` rewinds the conversation **and** 
 
 ---
 
-## `ad codex` and `/codex`
+## `/codex` is gone
 
-```bash
-ad codex                         # the pinned Codex's own UI, on ad's home
-ad codex resume --last           # any codex arguments
-```
-
-`ad codex` runs the stock Codex UI from the same pinned Codex, with `CODEX_HOME` set to ad's home (never `~/.codex`) and `--no-daemon`, so it never talks to your own Codex or its daemon. Provider keys come from ad's secret store.
-
-Codex reads skills only from its home, so your `~/.claude/skills` are mirrored into the home's `skills/` folder first. Only folders ad created there are ever replaced or removed. Project `.claude/skills` aren't visible in `ad codex`.
-
-**`/codex`** inside `ad tui` opens the stock UI on the **same conversation**. ad lets go of the conversation first: its engine unloads it (so only the stock UI runs it, and nothing is written twice), and resumes it from disk when you quit the stock UI, with the turns you took there. What was already in the scrollback stays; only the new turns show. Use it for a Codex feature ad doesn't have yet.
+`ad codex` and `/codex` (the engine's own UI) were removed in 3.0. Typing `/codex` prints what to use instead: `ad --last` resumes a conversation, and the engine's settings file holds the settings.
 
 ---
 
@@ -506,15 +507,15 @@ Codex reads skills only from its home, so your `~/.claude/skills` are mirrored i
 | `~/.agent-daemon/tui/state.json` | when you last used each folder, for "Since last time" |
 | `~/.agent-daemon/tui/chat-hint-shown` | marks the one-time `ad chat` hint (that bare `ad` opens the TUI) as shown |
 | `~/.agent-daemon/locks/` | conversation locks, so two `ad`s never write one conversation |
-| `~/.agent-daemon/tui/prefs.json` | ad's own TUI preferences (owner-only), for what Codex has no setting for: `clear.keepScrollback` |
-| `~/.agent-daemon/codex-home/config.toml` | folder trust (`projects`), as Codex keeps it, and Codex's own TUI settings (`tui.status_line`, `tui.terminal_title`, `tui.theme`, `tui.vim_mode_default`): the stock UI (`/codex`) uses the same ones, and an item ad can't show stays there (`/warnings` lists it). `tui.keymap` is read, never written by ad |
-| `~/.agent-daemon/codex-home/skills/` | the mirror of `~/.claude/skills` for `ad codex` |
+| `~/.agent-daemon/tui/prefs.json` | ad's own TUI preferences (owner-only), for what the engine has no setting for: `clear.keepScrollback`, `prompt.atBottom` |
+| `~/.agent-daemon/engine/config.toml` | folder trust (`projects`), as the engine keeps it, and the engine's own TUI settings (`tui.status_line`, `tui.terminal_title`, `tui.theme`, `tui.vim_mode_default`): an item ad can't show stays there (`/warnings` lists it). `tui.keymap` is read, never written by ad |
+| `~/.agent-daemon/engine/skills/` | the mirror of `~/.claude/skills` for the engine |
 | `<repo>/.git/ad-checkpoint-index`, `refs/ad/checkpoints/` | `/undo` snapshots |
 | `<project>/.agent-daemon/loop-tui.log`, `STOP` | `/loop` output, and its stop file |
 | `<folder>/ad-conversation-<time>.md` | `/export` (or the name you give) |
 | a temp folder `ad-prompt-*` | the Ctrl+G file; removed afterwards |
 
-Everything else (conversations, logs, login) is Codex's own, in ad's Codex home; see [harness.md](harness.md#files-and-environment-variables).
+Everything else (conversations, logs, login) is the engine's own, in ad's engine home; see [harness.md](harness.md#files-and-environment-variables).
 
 ---
 
@@ -543,19 +544,20 @@ Everything else (conversations, logs, login) is Codex's own, in ad's Codex home;
 | Shift+Enter sends instead of adding a newline | [#24](troubleshooting.md#24-ad-tui-shiftenter-sends-instead-of-adding-a-newline) |
 | ghost copies of the bottom lines after narrowing | [#25](troubleshooting.md#25-ghost-copies-of-the-bottom-lines-after-narrowing-the-window) |
 | `/undo` refuses: "Not undone: …" | [#26](troubleshooting.md#26-undo-refuses-not-undone) |
-| "Codex stopped (exit N)" | [#27](troubleshooting.md#27-ad-tui-codex-stopped-exit-n) |
+| "ad's engine stopped (exit N)" | [#27](troubleshooting.md#27-ad-tui-ads-engine-stopped-exit-n) |
 | Ctrl+G returns at once | [#28](troubleshooting.md#28-ad-tui-the-editor-ctrlg-returned-at-once) |
 | Windows: the first command or edit takes ~35 s | [#29](troubleshooting.md#29-windows-the-first-command-or-edit-after-installing-takes-35-s) |
 | Windows: every command fails with `CreateProcessAsUserW failed` or "Access is denied" | [#16](troubleshooting.md#16-harness-on-windows-every-agent-command-fails-access-is-denied-or-createprocessasuserw-failed) |
 | keys or paste behave oddly | [#22](troubleshooting.md#22-keys-or-paste-behave-oddly-in-a-terminal) |
-| keys set in `/codex` → `/keymap` don't work in ad | [#30](troubleshooting.md#30-ad-tui-keys-set-with-the-stock-uis-keymap-dont-work-in-ad) |
+| keys set elsewhere → `/keymap` don't work in ad | [#30](troubleshooting.md#30-ad-tui-keys-set-outside-ad-dont-work-in-ad) |
 | `/clear` wiped the scrollback | [#31](troubleshooting.md#31-ad-tui-clear-wiped-my-scrollback) |
 | the window title still says ad's after it ended | [#32](troubleshooting.md#32-the-terminals-title-still-says-ads-after-ad-ended) |
 | `/plan` says "Plan mode unavailable right now." | [#33](troubleshooting.md#33-ad-tui-plan-says-plan-mode-unavailable-right-now) |
 | `/recap`: "Could not generate a recap. Please try again." | [#34](troubleshooting.md#34-ad-tui-recap-says-could-not-generate-a-recap-please-try-again) |
 | `/approve` lists nothing, or "invalid Guardian denial event" | [#35](troubleshooting.md#35-ad-tui-approve-says-no-recent-auto-review-denials-in-this-thread-or-invalid-guardian-denial-event) |
 | `/setup-default-sandbox` refuses or fails | [#36](troubleshooting.md#36-ad-tui-setup-default-sandbox-refuses-or-fails) |
-| a Codex command says "isn't in ad yet" | [codex-parity.md](codex-parity.md) |
-| not signed in, sandbox, hooks, your own Codex home refused | [harness.md](harness.md#when-something-goes-wrong), troubleshooting #14–21 |
+| "The engine reported a problem", or an upstream name in raw details or an OS prompt | [#39](troubleshooting.md#39-what-ad-cant-rename) |
+| an engine command says "isn't in ad yet" | [commands.md](commands.md) |
+| not signed in, sandbox, hooks, your own install's home refused | [harness.md](harness.md#when-something-goes-wrong), troubleshooting #14–21 |
 
-`/warnings` lists the notices of this session and any events this ad doesn't know (a newer Codex). `/status` shows the Codex version ad was tested with. `ad doctor` checks the engine, login, hooks and sandbox.
+`/warnings` lists the notices of this session, the engine's raw error and notice details (up to eight lines each), and any events this ad doesn't know (a newer engine). The main screen uses ad's words; raw details appear only when requested. `/status` shows the engine version ad was tested with. `ad doctor` checks the engine, login, hooks and sandbox.

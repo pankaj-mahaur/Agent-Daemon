@@ -3,6 +3,8 @@
 // strict CSP with a nonce. Then a chat turn with an approval answered over
 // HTTP while events stream over SSE.
 
+import { EventEmitter } from "node:events";
+import { ENGINE, LEGACY } from "../src/engine/attribution.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
@@ -180,4 +182,39 @@ test("concurrent chats: exactly one starts; bad bodies are 400/413", async () =>
     assert.equal(await raw("[1,2]"), 400);
     assert.ok([413, "reset"].includes(await raw("x".repeat(70_000))));
   });
+});
+
+
+test("review: web streamed, failed and rejected turn errors are mapped with server-log details", async () => {
+  for (const rejected of [false, true]) {
+    const root = mkdtempSync(join(tmpdir(), "ad-web-errors-"));
+    const engine = new EventEmitter();
+    const streamed = `${LEGACY.productValue} streamed error`;
+    const failed = `${LEGACY.productValue} failed turn`;
+    const refused = `${LEGACY.productValue} rejected turn`;
+    engine.startThread = async () => ({ threadId: "thread-1" });
+    engine.close = async () => {};
+    engine.turn = async ({ onEvent }) => {
+      if (rejected) throw Object.assign(new Error(refused), { code: -32000, raw: refused });
+      onEvent({ type: "error", message: streamed, willRetry: false });
+      return { status: "failed", error: { message: failed } };
+    };
+    let log = "";
+    const web = await startWebServer({ cwd: root, userHome: root, engineFactory: async () => ({ engine }), err: { write(s) { log += s; } } });
+    const events = [];
+    let stream;
+    try {
+      stream = await sse(web.port, web.token, (event) => events.push(event));
+      assert.equal((await req(web.port, "POST", "/api/chat", { token: web.token, body: { text: "test" } })).status, 200);
+      await waitFor(() => events.some((event) => event.type === "done"));
+      const errors = events.filter((event) => event.type === "error" || event.type === "done");
+      for (const event of errors) assert.doesNotMatch(event.message ?? event.error ?? "", new RegExp(ENGINE.name, "i"));
+      assert.ok(errors.every((event) => /The engine reported a problem/.test(event.message ?? event.error ?? "")));
+      for (const raw of rejected ? [refused] : [streamed, failed]) assert.ok(log.includes(`  details: ${raw}\n`), log);
+    } finally {
+      stream?.destroy();
+      await web.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
 });

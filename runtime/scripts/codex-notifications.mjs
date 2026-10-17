@@ -11,7 +11,7 @@
 //   node scripts/codex-notifications.mjs                 # the pinned version
 //   node scripts/codex-notifications.mjs --file common.rs --version 0.160.0
 //
-// Run it on every Codex bump (the codex-upgrade skill lists it); the events
+// Run it on every engine bump (the engine-upgrade skill lists it); the events
 // exhaustiveness test then names every notification that needs a decision.
 
 import fs from "node:fs";

@@ -7,12 +7,14 @@
 //   ad auth status
 //   ad auth logout [openrouter]
 //
-// Everything here acts on the harness CODEX_HOME only. If CODEX_HOME was
-// not created by ad (AD_CODEX_HOME pointing at a real ~/.codex), mutations
-// are refused unless --force: that folder belongs to the user's own codex.
+// Everything here acts on the engine home only. If the home was
+// not created by ad, mutations are refused unless --force: that folder
+// belongs to the user's own engine install.
 
-import { createEngine } from "../engine/index.mjs";
-import { isManagedHome } from "../engine/codex/home.mjs";
+import { cliErrorLines } from "./io.mjs";
+import { createEngine, engineHome, engineError } from "../engine/index.mjs";
+import { signInNoteBrowser, signInNoteDevice } from "../engine/attribution.mjs";
+
 import { PROVIDERS, useProviderEdits } from "../auth/providers.mjs";
 import { createSecretStore } from "../auth/secrets.mjs";
 import { openUrl, readSecret } from "./io.mjs";
@@ -25,7 +27,7 @@ export function maskEmail(email) {
 
 export function describeAccount(acct, config = {}) {
   const provider = config.model_provider ?? "openai";
-  const model = config.model ?? "(codex default)";
+  const model = config.model ?? "(the engine's default)";
   if (provider !== "openai") return `provider ${provider}, model ${model}`;
   const a = acct?.account;
   if (!a) return "not logged in";
@@ -55,8 +57,8 @@ export async function cmdAuth(sub, args = [], opts = {}) {
       // stored key must not block the very commands that repair it.
       env: opts.env,
     });
-    if (sub !== "status" && !isManagedHome(engine.home) && !opts.force) {
-      err.write(`Refusing to change ${engine.home}: it was not created by ad (it may be your own codex home). Re-run with --force to proceed.\n`);
+    if (sub !== "status" && !engineHome.isManaged(engine.home) && !opts.force) {
+      err.write(`Refusing to change ${engine.home}: ad didn't create it (it may belong to another program). Re-run with --force to proceed.\n`);
       return 2;
     }
 
@@ -121,7 +123,7 @@ export async function cmdAuth(sub, args = [], opts = {}) {
     err.write(usage);
     return 1;
   } catch (e) {
-    err.write(`ad auth: ${e.message}\n`);
+    err.write(cliErrorLines("auth", e));
     return 1;
   } finally {
     await engine?.close();
@@ -136,17 +138,18 @@ async function loginChatgpt(engine, { device, openBrowser, out, err }) {
   completed.catch(() => {});
   const r = await engine.loginStart({ type: device ? "chatgptDeviceCode" : "chatgpt" });
   if (r.type === "chatgptDeviceCode") {
-    out.write(`Open ${r.verificationUrl} and enter code: ${r.userCode}\n`);
+    out.write(`${signInNoteDevice({ url: r.verificationUrl, code: r.userCode })}\n`);
   } else {
+    out.write(`${signInNoteBrowser}\n`);
     const opened = await openBrowser(r.authUrl);
     // Always print the URL: on Windows the opener "succeeds" even when no
     // browser appears (no default browser, remote session).
-    out.write(`${opened ? "Opened your browser. If nothing appeared, open" : "Open"} this URL to sign in:\n${r.authUrl}\n`);
+    out.write(`${opened ? "If nothing appeared, open" : "Open"} this URL to sign in:\n${r.authUrl}\n`);
   }
   out.write("Waiting for sign-in to finish (Ctrl+C to cancel)…\n");
   // Ctrl+C cancels locally at once. The same Ctrl+C usually reaches the
-  // codex child too, so the protocol-level cancel is best-effort: its
-  // failure ("codex exited") is expected and not worth reporting.
+  // engine's process too, so the protocol-level cancel is best-effort: its
+  // failure (the engine exited) is expected and not worth reporting.
   let cancel;
   const cancelled = new Promise((_, reject) => (cancel = () => reject(new Error("cancelled"))));
   const onSigint = () => {
@@ -165,7 +168,7 @@ async function loginChatgpt(engine, { device, openBrowser, out, err }) {
     }
     if (done.loginId && done.loginId !== r.loginId) throw new Error("login finished for a different request");
     if (!done.success) {
-      err.write(`sign-in failed: ${done.error ?? "unknown error"}\n`);
+      err.write("sign-in failed\n" + cliErrorLines("auth", engineError(-32000, done.error ?? "unknown error", { raw: done.error ?? "unknown error" })));
       return 1;
     }
     const config = await engine.readConfig();

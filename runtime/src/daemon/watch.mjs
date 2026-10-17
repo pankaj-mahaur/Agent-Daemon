@@ -90,6 +90,7 @@ export async function runWatcher(opts) {
   for (const e of existing) {
     console.error(`  ${e.path}/${e.pattern}  (adapter=${e.adapter || "auto"})`);
   }
+  if (config.harnessSessionsSkipped) console.error(`  (skip ad's engine conversations: ${config.harnessSessionsSkipped}; see ad doctor)`);
   console.error(`  debounce: ${config.debounceMs}ms, stable poll: ${config.stableCheckIntervalMs}ms`);
   console.error("  press Ctrl+C to stop\n");
 

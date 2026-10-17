@@ -17,12 +17,12 @@ The digest pipeline keeps memory updated automatically after bootstrapping.
 |---------|-------|-------------|
 | `ad doctor` | | Verify install — hooks, PATH, settings, harness login and sandbox |
 | `ad init` | | Scaffold .agent-daemon/ in this project |
-| `ad` | | Open the terminal UI (ad's own agent harness on the Codex engine; signs in on first run) |
+| `ad` | | Open the terminal UI (ad's own agent harness; signs in on first run) |
 | `ad team list-templates` | `ad tt` | Show available team templates |
 | `ad team create --template <name> --task "..."` | `ad tc` | Create a team with roles + task graph |
 | `ad team status --team <id>` | `ad ts` | Kanban board — tasks, agents, progress |
 | `ad team inbox --team <id> --agent <name>` | `ad ti` | Read completion messages |
-| `ad spawn --team <id> --role <role> --task "..." --cwd .` | `ad sp` | Launch a worker in an isolated worktree (a sandboxed Codex worker by default; `--engine claude` for headless `claude`) |
+| `ad spawn --team <id> --role <role> --task "..." --cwd .` | `ad sp` | Launch a worker in an isolated worktree (a sandboxed worker on ad's engine by default; `--engine claude` for headless `claude`) |
 | `ad team delete --team <id>` | `ad td` | Remove a team |
 | `ad team cleanup` | `ad tu` | Prune stale worktrees |
 

@@ -1,4 +1,4 @@
-// `ad chat` — interactive agent session on the Codex engine (zero-dep:
+// `ad chat` — interactive agent session on ad's engine (zero-dep:
 // readline + ANSI).
 //
 // The session logic (createChatSession) is terminal-free so it can be tested:
@@ -12,10 +12,10 @@
 //     a queued line answers the next approval, EOF waits for the queue to
 //     finish and declines any later approval
 
+import { cliErrorLines } from "./io.mjs";
 import { createInterface } from "node:readline";
-import { DEFAULT_APPROVAL_POLICY, DEFAULT_SANDBOX } from "../engine/index.mjs";
+import { DEFAULT_APPROVAL_POLICY, DEFAULT_SANDBOX, engineEvents, engineError, isEngineError } from "../engine/index.mjs";
 import { describeItem } from "./run.mjs";
-import { execDisplay } from "../engine/codex/events.mjs";
 import { startHarnessEngine } from "./start.mjs";
 
 const useColor = (stream) => Boolean(stream.isTTY) && !process.env.NO_COLOR;
@@ -40,7 +40,7 @@ export function parseCommand(line) {
   return m ? { cmd: m[1].toLowerCase(), arg: m[2].trim() } : null;
 }
 
-// y / a / n → approval words understood by engine/codex/approvals.mjs
+// y / a / n → approval words understood by the engine's approvals module
 export function parseApprovalAnswer(answer) {
   const a = String(answer ?? "").trim().toLowerCase();
   if (a === "y" || a === "yes") return "accept";
@@ -54,7 +54,7 @@ export function approvalQuestion(req, fileChanges = new Map()) {
   if (req.kind === "command") {
     // Same display as the TUI: a network approval names the host, a stdin
     // write shows the input escaped; never "$ null".
-    const d = execDisplay(p);
+    const d = engineEvents.execDisplay(p);
     const body = d.command != null ? `\n  $ ${d.command}` : d.detail ? `\n  ${d.detail}` : "";
     return `${d.title}${body}${p.cwd ? `\n  in ${p.cwd}` : ""}${why}\n[y]es / [a]lways this session / [n]o: `;
   }
@@ -113,7 +113,7 @@ export function createChatSession({ engine, cwd, out, err, ask, model, sandbox }
     } else if (evt.type === "itemStarted") {
       const line = describeItem(evt.item);
       if (line) err.write(`\n${paint(color.err, "2", line)}\n`);
-    } else if (evt.type === "error") err.write(`\n${paint(color.err, "33", `[${evt.willRetry ? "retrying" : "error"}] ${evt.message}`)}\n`);
+    } else if (evt.type === "error") err.write(`[${evt.willRetry ? "retrying" : "error"}] ` + cliErrorLines("chat", engineError(-32000, evt.message, { raw: evt.message })));
   }
 
   async function runTurn(text) {
@@ -126,7 +126,10 @@ export function createChatSession({ engine, cwd, out, err, ask, model, sandbox }
     try {
       const r = await turn;
       out.write("\n");
-      if (r.status !== "completed") err.write(paint(color.err, "33", `[turn ${r.status}${r.error?.message ? `: ${r.error.message}` : ""}]`) + "\n");
+      if (r.status !== "completed") {
+        err.write(paint(color.err, "33", `[turn ${r.status}]`) + "\n");
+        if (r.error?.message) err.write(cliErrorLines("chat", engineError(-32000, r.error.message, { raw: r.error.message })));
+      }
       return r;
     } finally {
       state.turn = null;
@@ -142,7 +145,7 @@ export function createChatSession({ engine, cwd, out, err, ask, model, sandbox }
       err.write("[turn is still starting — press Ctrl+C again in a moment]\n");
       return true;
     }
-    await engine.interrupt(threadId, turnId).catch((e) => err.write(`[interrupt failed: ${e.message}]\n`));
+    await engine.interrupt(threadId, turnId).catch((e) => err.write("[interrupt failed] " + cliErrorLines("chat", e)));
     return true;
   }
 
@@ -199,7 +202,7 @@ export function createChatSession({ engine, cwd, out, err, ask, model, sandbox }
           return {};
         }
         const threadId = state.threadId;
-        const done = engine.waitForNotification("thread/compacted", (p) => p.threadId === threadId, { timeoutMs: COMPACT_TIMEOUT_MS });
+        const done = engine.waitForCompaction(threadId, { timeoutMs: COMPACT_TIMEOUT_MS });
         done.catch(() => {}); // awaited below
         await engine.compactThread(threadId);
         out.write("compacting…\n");
@@ -228,7 +231,7 @@ export function createChatSession({ engine, cwd, out, err, ask, model, sandbox }
       if (c) return await command(c);
       await runTurn(text);
     } catch (e) {
-      err.write(`${paint(color.err, "31", `error: ${e.message}`)}\n`);
+      err.write(isEngineError(e) ? cliErrorLines("chat", e) : `${paint(color.err, "31", `error: ${e.message}`)}\n`);
     }
     return {};
   }
@@ -245,7 +248,7 @@ export async function cmdChat(opts = {}) {
   let engine;
   let rl;
   try {
-    const started = await startHarnessEngine({ cwd, home: opts.home, command: opts.command, clientVersion: opts.clientVersion, store: opts.store, platform: opts.platform, err });
+    const started = await startHarnessEngine({ cwd, home: opts.home, command: opts.command, clientVersion: opts.clientVersion, store: opts.store, platform: opts.platform, err, interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY) });
     if (!started.engine) {
       err.write(started.error + "\n");
       return started.code;
@@ -324,7 +327,7 @@ export async function cmdChat(opts = {}) {
       rl.prompt();
     });
   } catch (e) {
-    err.write(`ad chat: ${e.message}\n`);
+    err.write(cliErrorLines("chat", e));
     return 1;
   } finally {
     rl?.close();

@@ -1,6 +1,6 @@
 // Checkpoints and /undo (plan Part 10, spike S4).
 //
-// Why not Codex's own undo: Codex's "ghost commit" undo (openai/codex#3914,
+// Why not the engine's own undo: its "ghost commit" undo (upstream #3914,
 // TUI #5629) snapshotted the worktree on every turn and recorded the
 // snapshots in the session rollout. In big repos that was slow (#6977,
 // #6990), and listing every untracked file in every snapshot grew one

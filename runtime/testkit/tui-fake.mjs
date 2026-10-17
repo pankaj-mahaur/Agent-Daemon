@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Runs `ad tui` against the fake Codex app-server, in a throwaway Codex home,
-// for the pty smoke test. Never starts the real Codex, and never touches ad's
+// Runs `ad tui` against the fake engine app-server, in a throwaway engine home,
+// for the pty smoke test. Never starts the real engine, and never touches ad's
 // real memory, prompt history, state, thread locks or schedules (all under <root>).
 //   node testkit/tui-fake.mjs <root> <cwd>
 

@@ -4,8 +4,43 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [3.0.0] — 2026-10-17
+
+Agent Daemon 3.0: ad is its own product. Same agent and sign-in; conversations, skills and settings carry over.
+
+1. Your data folder keeps its name; `ad migrate` (optional) renames it to `~/.agent-daemon/engine` and `ad migrate --undo` reverses it.
+2. ad's screens call the runtime "the engine"; `ad about` says what it is (OpenAI's open-source Codex, Apache-2.0).
+3. Removed `ad codex` and `/codex` (the engine's own UI); `docs/upgrade-3.0.md` lists what to use instead. Renamed: `AD_CODEX_HOME` → `AD_ENGINE_DIR`, `AD_CODEX_BIN` → `AD_ENGINE_BIN`, `AD_CODEX_LLM_MODEL` → `AD_ENGINE_MODEL` (the old names keep working; `AD_ENGINE_HOME` is not a setting and is refused); `--engine codex` → `--engine ad` (the old value works until 3.1).
+4. Something wrong? `ad doctor`. Rolling back to 2.2.0: see the upgrade guide.
+5. Upgrade guide: [docs/upgrade-3.0.md](docs/upgrade-3.0.md).
+
+### Added
+
+- A brand lint (`npm run lint:brand`; CI runs it in strict mode): the engine's name stays in its allowed zone (the engine adapter, the dependency pin, the two prompt files reproduced from upstream, the upgrade runbook, descriptive statements about other agents), with an allowlist that carries a reason for every exception. The texts that may name the engine on screen now live in one attribution module. Groundwork for 3.0, where ad's screens, docs and settings say "the engine" throughout.
+- `ad migrate` renames the engine's folder to `~/.agent-daemon/engine` (optional; `--undo` reverses it). New installs use that name and keep a link with the old one. ad never removes or replaces a `codex-home` link you made: if it points to a drive that isn't connected, ad refuses to start until you reconnect it. A start sets aside only a second folder holding nothing but ad's own first-run files, and says so. A missing link is made again on the next start (or by `ad migrate`). `ad migrate` and `--undo` wait until no ad session is running.
+- `ad about`: what ad runs on (versions, the engine, licenses, settings path).
+- The agent is told what it is: Agent Daemon's agent, on ad's engine, with the sign-in route (in the engine folder's AGENTS.md).
+
+### Changed
+
+- Errors and notices from the engine show in ad's words; the engine's own text is in `/warnings` (and on a `details:` line in CLI commands).
+- `ad doctor`: the engine's rows are now Engine, Engine version, Engine home, Engine compatibility, Engine sign-in, Engine hooks and Windows sandbox, in plain words.
+- New names for the env vars: `AD_ENGINE_DIR`, `AD_ENGINE_BIN`, `AD_ENGINE_MODEL`; the old names still work.
+- Flags and env vars that choose ad's engine take `ad` (`--engine ad`, `--llm ad`, `AD_HOOK_HOST=ad`); `codex` still works until 3.1.
+- `ad sandbox setup --elevated` asks before it changes the machine (`--yes` to skip the question).
+- The terminal UI says "the engine" where it used to name it; the sign-in picker lists an OpenAI API key and OpenRouter first.
+- `ad tui`: the prompt sits at the bottom of the screen from the start, and the conversation fills the space above it; history still goes into your terminal's own scrollback. `"prompt.atBottom": false` in `~/.agent-daemon/tui/prefs.json` brings back the old behaviour.
+- The engine-upgrade workflow and skill replace codex-upgrade; upgrade PRs regenerate and commit the protocol notifications list, and the old token secret still works.
+
+### Removed
+
+- `ad codex` (the engine's own UI). It now says what to use instead.
+- `/codex` in the terminal UI (the engine's own UI). It now says what to use instead.
+
 ### Fixed
 
+- `ad doctor` keeps engine version warnings on labelled `details:` lines and shows engine startup failures in ad's words.
+- The daemon now watches the engine's conversations in a folder set with `AD_ENGINE_DIR` / `AD_CODEX_HOME`.
 - `/cd`: refused while a subagent is still working ("Cannot change: another agent is running."), and every thread is checked again after the trust question ("Cannot change: a task is running."), as Codex does. A subagent's turn now ends with the engine that ran it, so a crash and restart doesn't leave `/cd` refused; a late "started" hint for a subagent whose turn already ended is ignored, as in Codex.
 
 ## [2.2.0] — 2026-10-11
@@ -40,7 +75,7 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 - `ad tui` follows Codex's rules for its commands: those Codex disables while a task runs (`/new`, `/fork`, `/compact`, `/init`, `/export`, `/review`, `/logout`) wait for the turn to end, and keep your draft. Codex's aliases (`/cwd`, `/clean`, `/pet`) are recognised.
 - Tests check every request ad sends against the pinned Codex's stable protocol, not only what Codex sends.
 - For contributors: the doc link check also fails on a section heading that appears twice, and the `ad-ci-readiness` project skill runs the CI pipeline locally (here and in a Linux container) with a release-readiness checklist.
-- New docs: [Codex commands in ad](docs/codex-parity.md) lists every Codex slash command (works in ad, or why not yet), the keys and the settings shared with the stock UI; troubleshooting entries for `/keymap` keys, `/clear` and the window title; contributing has the steps for adding a terminal UI command.
+- New docs: [Commands in ad](docs/commands.md) lists every engine slash command (works in ad, or why not yet), the keys and the settings shared with the engine's own UI; troubleshooting entries for `/keymap` keys, `/clear` and the window title; contributing has the steps for adding a terminal UI command.
 
 ## [2.1.1] — 2026-10-06
 
@@ -459,6 +494,7 @@ Kept in the snapshot but not ported this release: `.codebuddy/`, `.kiro/`, `.tra
 
 Initial public state. Self-improving memory + skills runtime for Claude Code with multi-agent orchestration. 36 skills, 6 lifecycle hooks (SessionStart, SessionEnd, PreCompact, UserPromptSubmit, plus QMD-redirect), constitution layer, digest pipeline, GEPA skill evolution, multi-agent team templates, `ad init` / `ad doctor` / `ad team` / `ad spawn` CLI.
 
+[3.0.0]: https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v3.0.0
 [2.2.0]: https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v2.2.0
 [2.1.1]: https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v2.1.1
 [2.1.0]: https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v2.1.0

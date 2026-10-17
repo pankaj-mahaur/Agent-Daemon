@@ -1,6 +1,7 @@
 // Small terminal helpers for harness commands: hidden secret input and
 // opening a URL in the browser without a shell.
 
+import { isEngineError, engineErrorText, engineErrorDetail } from "../engine/index.mjs";
 import { execFile } from "node:child_process";
 
 const READ_TIMEOUT_MS = 5 * 60_000;
@@ -79,4 +80,12 @@ export function openUrl(url) {
       : ["xdg-open", [url]];
     execFile(cmd, args, { windowsHide: true }, (err) => resolve(!err));
   });
+}
+
+/** "ad <cmd>: <ad's words>" and, for an engine error, "  details: <the engine's raw text>". */
+export function cliErrorLines(cmd, err) {
+  const lines = [`ad ${cmd}: ${isEngineError(err) ? engineErrorText(err, { details: null }) : err?.message ?? String(err)}`];
+  const raw = engineErrorDetail(err);
+  if (raw) for (const l of String(raw).split("\n").slice(0, 8)) lines.push(`  details: ${l}`);
+  return lines.join("\n") + "\n";
 }

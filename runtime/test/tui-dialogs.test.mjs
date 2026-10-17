@@ -1,4 +1,4 @@
-// ad's own dialogs (codex-parity-2 Part 1): the yes/no confirm (view/modals.mjs)
+// ad's own dialogs (terminal UI plan Part 1): the yes/no confirm (view/modals.mjs)
 // and the checklist (view/chrome.mjs), alone and inside the app.
 
 import { test } from "node:test";
@@ -18,7 +18,7 @@ function clock(start = 0) {
 }
 
 const CONFIRM = { title: "Delete this conversation?", body: "login fix\nCannot be undone. Subagent threads will also be deleted.", yes: "Yes, delete it", no: "No, keep it" };
-// Codex's "Implement this plan?" (Plan mode).
+// the engine's "Implement this plan?" (Plan mode).
 const PLAN_CHOICE = {
   title: "Implement this plan?",
   options: [

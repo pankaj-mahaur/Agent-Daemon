@@ -1,4 +1,4 @@
-// Keys as Codex's actions (tui/keymap.mjs, codex-parity-2 1d): Codex's key
+// Keys as the engine's actions (tui/keymap.mjs, terminal UI plan 1d): the engine's key
 // spelling, tui.keymap overrides, conflicts, and the docs naming every key.
 
 import { test } from "node:test";
@@ -9,7 +9,7 @@ import { createKeymap, DEFAULT_KEYMAP, keyLabel, matchKey, parseKey } from "../s
 const key = (name, mods = {}) => ({ type: "key", name, ctrl: false, alt: false, shift: false, ...mods });
 const chr = (text) => ({ type: "text", text });
 
-test("parseKey: Codex's spelling, aliases, and what Codex refuses", () => {
+test("parseKey: the engine's spelling, aliases, and what the engine refuses", () => {
   assert.deepEqual(parseKey("Ctrl-T"), { key: "t", ctrl: true, alt: false, shift: false });
   assert.deepEqual(parseKey("option-shift-up"), { key: "up", ctrl: false, alt: true, shift: true });
   assert.equal(parseKey("escape").key, "esc");
@@ -38,7 +38,7 @@ test("matchKey: decoder events against strokes", () => {
   assert.ok(!matchKey(chr("ab"), parseKey("a")), "a burst of text is not a key");
 });
 
-test("defaults: every action ad lists is one of Codex's, with Codex's default keys", () => {
+test("defaults: every action ad lists is one of the engine's, with the engine's default keys", () => {
   const km = createKeymap();
   assert.deepEqual(km.warnings, []);
   assert.ok(km.is("global", "open_transcript", key("t", { ctrl: true })));
@@ -61,7 +61,7 @@ test("tui.keymap overrides: replace, a list, unbind, global fallback; unknown ac
   });
   assert.deepEqual(km.warnings, []);
   assert.ok(km.is("global", "copy", key("x", { ctrl: true })) && !km.is("global", "copy", key("o", { ctrl: true })));
-  assert.ok(km.is("composer", "queue", key("q", { alt: true })), "global.queue applies where the context has none (Codex's rule)");
+  assert.ok(km.is("composer", "queue", key("q", { alt: true })), "global.queue applies where the context has none (engine's rule)");
   assert.ok(!km.is("chat", "interrupt_turn", key("escape")), "[] unbinds");
   assert.equal(km.label("chat", "interrupt_turn"), "");
   assert.ok(km.is("pager", "close", chr("x")) && km.is("pager", "close", key("escape")));
@@ -127,4 +127,16 @@ test("eventSpec and bindings(): what /keymap and its inspector show", async () =
   const out = renderKeymap(km, { width: 120, label: (k) => k.replace("-", "+") }).map((l) => l.map((s) => s.text).join("")).join("\n");
   assert.match(out, /open_transcript\s+ctrl\+x {2}\(yours\)/);
   assert.match(out, /never writes them/);
+});
+
+test("the keymap example parses: its action binds its key, and the footer shows it", async () => {
+  const { createKeymap } = await import("../src/tui/keymap.mjs");
+  const { KEYMAP_EXAMPLE, renderKeymap } = await import("../src/tui/commands.mjs");
+  const km = createKeymap({ overrides: { global: { [KEYMAP_EXAMPLE.action]: KEYMAP_EXAMPLE.key } } });
+  assert.ok(!km.warnings.length, JSON.stringify(km.warnings));
+  assert.deepEqual(km.bindings().find((b) => b.action === "open_transcript")?.keys, ["alt-y"]);
+  const out = renderKeymap(km, { width: 120, settingsPath: "/h/config.toml" }).map((l) => l.map((s) => s.text).join("")).join("\n");
+  assert.match(out, /Keys are set in the engine's settings file, under \[tui\.keymap\]: \/h\/config\.toml/);
+  assert.match(out, /\[tui\.keymap\.global\]/);
+  assert.match(out, /open_transcript = "alt-y"/);
 });

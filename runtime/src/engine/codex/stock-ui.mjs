@@ -1,14 +1,7 @@
-// `ad codex [args…]` (plan Part 6, D6, spike S3): the pinned stock Codex UI
-// on ad's own Codex home, never the user's ~/.codex.
-//
-//   - CODEX_HOME is the harness home (codexEnv drops every CODEX_* variable
-//     and refuses the user's own home); provider keys come from ad's secret
-//     store; `--no-daemon`, so it never talks to the user's Codex daemon.
-//   - Skills: Codex reads $CODEX_HOME/skills, so ~/.claude/skills is mirrored
-//     there (copy-sync). Only folders ad created (marked) are ever replaced or
-//     removed. Once mirrored, ad's engine stops passing that folder as an
-//     extra root (setup.mjs skillRoots), so skills don't appear twice.
-//     Project .claude/skills are a known gap in `ad codex`.
+// The engine's own UI on ad's engine home, never the user's own install. For
+// maintainers (`ad engine ui --debug`, Part 3); ad's users don't get it.
+// Mirrors ~/.claude/skills into the home's skills folder (copy-sync), as
+// before.
 
 import { spawn } from "node:child_process";
 import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -22,9 +15,9 @@ function isBrokenLink(p) {
 }
 import { homedir } from "node:os";
 import path from "node:path";
-import { providerEnv } from "../auth/providers.mjs";
-import { CODEX_MISSING, resolveCodexCommand, withoutStoreAliases } from "../engine/codex/app-server.mjs";
-import { codexEnv, defaultCodexHome, ensureCodexHome } from "../engine/codex/home.mjs";
+import { providerEnv } from "../../auth/providers.mjs";
+import { CODEX_MISSING, resolveCodexCommand, withoutStoreAliases } from "./app-server.mjs";
+import { codexEnv, defaultCodexHome, ensureCodexHome } from "./home.mjs";
 
 export const MIRROR_MARKER = ".ad-mirror";
 export const MIRRORED_FLAG = ".ad-mirrored-claude-skills";
@@ -73,7 +66,7 @@ export function syncSkills({ home, from = path.join(homedir(), ".claude", "skill
       rmSync(tmp, { recursive: true, force: true });
       // The folder itself is resolved; links inside are kept as links (never followed into big trees).
       cpSync(realpathSync(src), tmp, { recursive: true, verbatimSymlinks: true, filter: (from) => !isBrokenLink(from) });
-      writeFileSync(path.join(tmp, MIRROR_MARKER), "mirrored from ~/.claude/skills by ad codex; edits here are overwritten\n");
+      writeFileSync(path.join(tmp, MIRROR_MARKER), "mirrored from ~/.claude/skills by ad; edits here are overwritten\n");
       rmSync(dst, { recursive: true, force: true });
       renameSync(tmp, dst);
       out.copied++;
@@ -95,7 +88,7 @@ export function syncSkills({ home, from = path.join(homedir(), ".claude", "skill
 }
 
 /** The argv for the stock UI: `--no-daemon` always; `resume <id>` to continue a thread. */
-export function codexArgs({ args = [], threadId = null, cwd = null } = {}) {
+export function stockUiArgs({ args = [], threadId = null, cwd = null } = {}) {
   const out = threadId ? ["resume", threadId] : [...args];
   if (!out.includes("--no-daemon")) out.push("--no-daemon");
   if (cwd && !out.includes("-C") && !out.includes("--cd")) out.push("-C", cwd);
@@ -106,7 +99,7 @@ export function codexArgs({ args = [], threadId = null, cwd = null } = {}) {
  * Runs the stock UI in the foreground and resolves with its exit code. The
  * caller owns the terminal handoff (io.handoff in the TUI).
  */
-export function runStockCodex({ args = [], threadId = null, cwd = process.cwd(), home = defaultCodexHome(), store, env = process.env, spawnFn = spawn, skillsFrom } = {}) {
+export function runStockUi({ args = [], threadId = null, cwd = process.cwd(), home = defaultCodexHome(), store, env = process.env, spawnFn = spawn, skillsFrom } = {}) {
   const cmd = resolveCodexCommand(env);
   if (!cmd.cmd) return Promise.reject(new Error(CODEX_MISSING));
   ensureCodexHome(home, { env });
@@ -117,17 +110,8 @@ export function runStockCodex({ args = [], threadId = null, cwd = process.cwd(),
   }
   const childEnv = withoutStoreAliases(codexEnv({ home, base: env, extra: providerEnv(store), cwd }));
   return new Promise((resolve, reject) => {
-    const child = spawnFn(cmd.cmd, [...cmd.prefix, ...codexArgs({ args, threadId, cwd })], { stdio: "inherit", env: childEnv, cwd });
+    const child = spawnFn(cmd.cmd, [...cmd.prefix, ...stockUiArgs({ args, threadId, cwd })], { stdio: "inherit", env: childEnv, cwd });
     child.on("error", reject);
     child.on("exit", (code, signal) => resolve(code ?? (signal ? 1 : 0)));
   });
-}
-
-export async function cmdCodex(args = [], opts = {}) {
-  try {
-    return await runStockCodex({ args, cwd: opts.cwd ?? process.cwd(), home: opts.home, store: opts.store });
-  } catch (err) {
-    (opts.stderr ?? process.stderr).write(`ad codex: ${err.message}\n`);
-    return 1;
-  }
 }

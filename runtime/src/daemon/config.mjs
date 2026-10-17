@@ -14,6 +14,7 @@
 
 import fs from "node:fs/promises";
 import path from "node:path";
+import { engineHome } from "../engine/index.mjs";
 
 /** @typedef {{path: string, pattern: string, adapter?: string}} WatchEntry */
 /** @typedef {{watch: WatchEntry[], debounceMs: number, stableCheckIntervalMs: number, skipDigested: boolean}} WatchConfig */
@@ -66,17 +67,27 @@ export async function loadConfig() {
   });
 }
 
-// The ad harness writes Codex rollouts to its own CODEX_HOME. Watched even
-// for watch.json files written before the harness existed; opt out with
-// "harnessSessions": false.
-export const HARNESS_SESSIONS_ENTRY = { path: "~/.agent-daemon/codex-home/sessions", pattern: "**/*.jsonl", adapter: "codex" };
+// ad's engine writes its conversations into its own folder (see "The engine's folder"
+// in docs/harness.md for the current and older names). Derived at
+// every start, never written to watch.json. Opt out with "harnessSessions": false.
+export function harnessSessionsEntry({ state = () => engineHome.state() } = {}) {
+  const s = state();
+  if (s.state === "two-folders") return { skip: "HOME_TWO_FOLDERS" };
+  return { entry: { path: path.join(s.path, "sessions"), pattern: "**/*.jsonl", adapter: "ad" } };
+}
 
-export function withHarnessSessions(config) {
+export function withHarnessSessions(config, opts = {}) {
   if (config.harnessSessions === false) return config;
-  const entry = expandEntry(HARNESS_SESSIONS_ENTRY);
-  const norm = (x) => path.resolve(x).toLowerCase();
-  if (config.watch.some((w) => norm(w.path) === norm(entry.path))) return config;
-  return { ...config, watch: [...config.watch, entry] };
+  let found;
+  try {
+    found = harnessSessionsEntry(opts);
+  } catch (err) {
+    return { ...config, harnessSessionsSkipped: err.code ?? "ERROR" };
+  }
+  if (found.skip) return { ...config, harnessSessionsSkipped: found.skip };
+  const same = (a, b) => engineHome.canonical(a) === engineHome.canonical(b);
+  if (config.watch.some((w) => same(w.path, found.entry.path))) return config;
+  return { ...config, watch: [...config.watch, found.entry] };
 }
 
 /**

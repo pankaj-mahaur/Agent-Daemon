@@ -45,7 +45,7 @@ For work too big for one sitting: learn how others built the same thing, write a
    2. Implement in small steps; run focused tests as you go.
    3. Run the full suite and lint; do a live smoke where the part has a runtime effect.
    4. Review the diff with a fresh-eyes review subagent, then do your own pass.
-   5. Fix, and re-review the fix. Stop when no finding of medium severity or above is left.
+   5. Fix, and re-review the fix: a fresh reviewer for each new round, then the same reviewer (it still holds its probes) for a targeted check of the fixes, which costs a fraction of a round. Run its probe inputs verbatim; twice a fix passed its own test because the test put the trigger next to the bug, not on it. Stop when no finding of medium severity or above is left.
    6. For guards and security fixes, run a **mutation check**: remove the guard and confirm that a test fails.
    7. Update the plan's status and project memory, commit by file name, then move to the next part.
 6. **Push and merge only with the user's OK**, every time. Report test counts and any skipped step plainly.
@@ -54,9 +54,9 @@ For work too big for one sitting: learn how others built the same thing, write a
 
 ### Example 1: the `ad` terminal UI (agent-daemon, 2026-10-04)
 
-The user asked for a Codex-style TUI with agent-daemon's extras that survives Codex releases.
+The user asked for a terminal UI like the engine's own with agent-daemon's extras that survives engine releases.
 
-- **Research:** three agents covered the Codex TUI and app-server, terminal engineering in Node, and other harnesses; an Explore agent mapped the code.
+- **Research:** three agents covered the engine's TUI and app-server, terminal engineering in Node, and other harnesses; an Explore agent mapped the code.
 - **Plan rounds:**
   - v1 review: 2 critical, 7 high.
   - v2 (technical + product reviewers): 6 critical, 13 high.

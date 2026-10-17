@@ -1,6 +1,6 @@
 // Tests for `ad acp` (harness/acp.mjs): a scripted ACP client drives the
 // stdio server, backed by the fake app-server. Properties: protocol v1
-// handshake, streamed agent chunks, Codex approvals become
+// handshake, streamed agent chunks, engine approvals become
 // session/request_permission round trips, session/cancel interrupts.
 
 import { test } from "node:test";
@@ -60,7 +60,7 @@ test("handshake, session, prompt with a permission round trip", async () => {
     const p = await c.call("session/prompt", { sessionId, prompt: [{ type: "text", text: "do it" }] });
     assert.equal(p.result.stopReason, "end_turn");
     const chunks = c.messages.filter((m) => m.method === "session/update" && m.params.update.sessionUpdate === "agent_message_chunk").map((m) => m.params.update.content.text);
-    assert.equal(chunks.join(""), "pong[accept]", "the client's allow_once reached Codex");
+    assert.equal(chunks.join(""), "pong[accept]", "the client's allow_once reached the engine");
     const perm = c.messages.find((m) => m.method === "session/request_permission");
     assert.equal(perm.params.sessionId, sessionId);
     assert.deepEqual(perm.params.options.map((o) => o.kind), ["allow_once", "allow_always", "reject_once"]);

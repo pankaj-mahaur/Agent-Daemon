@@ -45,6 +45,7 @@ Map each change to the docs that describe it, and update every one that is now w
 | `runtime/src/cli*.mjs`, new commands or flags | README "CLI reference" + quick start, `docs/installation-guide.md` |
 | `runtime/src/memory/**`, `runtime/src/hooks/**`, `mcp/**` | README memory sections, `docs/architecture.md`, `mcp/agent-daemon-memory/README.md` |
 | `runtime/test/**`, `testkit/**`, `.github/workflows/**` | `docs/testing.md`, `docs/contributing.md` |
+| `runtime/scripts/check-brand.mjs`, `brand-allowlist.json`, `runtime/src/engine/attribution.mjs` | `docs/testing.md` "The brand lint"; a new allowlist entry needs a reason (and a `match` where a line will do); a new attribution text needs a pattern in `brandPatterns()` and a sample in `renderedSamples()`; the own-harness plan's status |
 | `install.sh`, `install.ps1` | README quick start, `docs/installation-guide.md` |
 | a new error a user can hit | a numbered `docs/troubleshooting.md` entry + the index table at the end of `docs/tui.md` (for TUI errors) |
 
@@ -62,7 +63,7 @@ Map each change to the docs that describe it, and update every one that is now w
 - **Skills that encode the changed behaviour.** Update the ones a future session would read before touching this area:
   - `skills/daemon/ad-tui-dev` — TUI layers, invariants, test practices, gotchas met;
   - `skills/daemon/harness-troubleshoot` — every new error a user can hit (symptom → cause → fix, matching troubleshooting);
-  - `skills/daemon/codex-upgrade` — Codex protocol/behaviour facts learned (shapes, ordering, defaults, valid config values);
+  - `skills/daemon/engine-upgrade` — engine protocol/behaviour facts learned (shapes, ordering, defaults, valid config values);
   - `skills/daemon/ad-harness` — how to hand work to the harness, when commands or safety defaults change.
   Skills ship to users' `~/.claude/skills/`: no personal names, paths, client projects or secrets in them.
 - **What was learned this session.** For each gotcha, decision or correction that cost time: one line in `.agent-daemon/memory/activeContext.md` (local project memory) and, if it changes how to work here, a line in the matching skill. Learnings are facts with the reason ("X happens because Y; do Z"), not a diary.

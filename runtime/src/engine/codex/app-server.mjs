@@ -15,7 +15,10 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { approvalResponse, isApprovalMethod } from "./approvals.mjs";
+import { engineError } from "./errors.mjs";
 import { codexEnv } from "./home.mjs";
+
+export { engineError };
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 
@@ -30,12 +33,24 @@ export function pinnedCodexVersion() {
   }
 }
 
+/** The installed engine's version without starting it → {version | null, source: "pinned" | "env" | "missing"}. */
+export function installedCodexVersion(env = process.env) {
+  const command = resolveCodexCommand(env);
+  if (command.source !== "pinned") return { version: null, source: command.source };
+  try {
+    return { version: require("@openai/codex/package.json").version ?? null, source: "pinned" };
+  } catch {
+    return { version: null, source: "missing" };
+  }
+}
+
 // Order: explicit override → the pinned npm dependency. Never the user's own
 // global or PATH install: ad runs exactly the version it is tested against,
 // and the user's Codex stays theirs. Run the package's JS launcher with our
 // own node (a .cmd shim would need a shell, which mangles args on Windows).
 export function resolveCodexCommand(env = process.env) {
-  if (env.AD_CODEX_BIN) return { cmd: env.AD_CODEX_BIN, prefix: [], source: "env" };
+  const bin = env.AD_ENGINE_BIN || env.AD_CODEX_BIN; // the old name is read forever
+  if (bin) return { cmd: bin, prefix: [], source: "env" };
   try {
     const pkg = require.resolve("@openai/codex/package.json");
     const entry = join(dirname(pkg), "bin", "codex.js");
@@ -46,7 +61,7 @@ export function resolveCodexCommand(env = process.env) {
   return { cmd: null, prefix: [], source: "missing" };
 }
 
-export const CODEX_MISSING = "Codex engine not installed — run: cd runtime && npm install";
+export const CODEX_MISSING = "The engine isn't installed. Run: cd runtime && npm install";
 
 // Codex picks the first pwsh.exe on PATH as the agent's shell. The Microsoft
 // Store's pwsh is an app-execution alias under ...\Microsoft\WindowsApps, and
@@ -98,7 +113,7 @@ export class CodexAppServer extends EventEmitter {
       ? { ...process.env, ...(this.opts.env ?? {}) }
       : codexEnv({ home: this.opts.env?.CODEX_HOME, extra: this.opts.env ?? {}, cwd: this.opts.cwd ?? process.cwd() }));
     const { cmd, prefix } = this.opts.command ?? resolveCodexCommand(env);
-    if (!cmd) throw new Error(CODEX_MISSING);
+    if (!cmd) throw engineError("ENGINE_NOT_INSTALLED", CODEX_MISSING);
     const args = [...prefix, "app-server", ...(this.opts.codexArgs ?? [])];
     this.child = spawn(cmd, args, {
       cwd: this.opts.cwd,
@@ -115,7 +130,7 @@ export class CodexAppServer extends EventEmitter {
       this.stderr = (this.stderr + chunk.toString()).slice(-8192);
     });
     this.child.on("error", (err) => {
-      this.exitError ??= new Error(`codex spawn failed: ${err.message}`);
+      this.exitError ??= engineError("ENGINE_SPAWN_FAILED", `the engine could not start: ${err.message}`);
       this.#failAll(this.exitError);
     });
     // EPIPE after the server dies would otherwise crash the host process;
@@ -124,7 +139,8 @@ export class CodexAppServer extends EventEmitter {
     // "close" (not "exit"): it fires only after stdout is fully drained, so
     // a response or turn/completed written just before exit is still seen.
     this.child.on("close", (code, signal) => {
-      this.exitError ??= new Error(`codex app-server exited (code=${code}, signal=${signal}) ${this.stderr.trim().slice(-500)}`);
+      const tail = this.stderr.trim().slice(-500);
+      this.exitError ??= engineError("ENGINE_EXITED", `the engine exited (code=${code}, signal=${signal})`, { exitCode: code, signal, stderr: tail });
       this.#failAll(this.exitError);
       this.emit("exit", { code, signal });
     });
@@ -143,14 +159,14 @@ export class CodexAppServer extends EventEmitter {
   }
 
   request(method, params, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
-    if (!this.child) return Promise.reject(new Error("codex app-server not started"));
+    if (!this.child) return Promise.reject(engineError("ENGINE_NOT_STARTED", "the engine is not started"));
     if (this.exitError) return Promise.reject(this.exitError);
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       const timer = timeoutMs > 0
         ? setTimeout(() => {
             this.pending.delete(id);
-            reject(new Error(`codex ${method} timed out after ${timeoutMs}ms`));
+            reject(engineError("ENGINE_TIMEOUT", `${method} timed out after ${timeoutMs}ms`, { method }));
           }, timeoutMs)
         : null;
       this.pending.set(id, { resolve, reject, timer, method });
@@ -218,10 +234,8 @@ export class CodexAppServer extends EventEmitter {
     this.pending.delete(msg.id);
     if (p.timer) clearTimeout(p.timer);
     if (msg.error) {
-      const err = new Error(`codex ${p.method}: ${msg.error.message ?? JSON.stringify(msg.error)}`);
-      err.code = msg.error.code;
-      err.data = msg.error.data;
-      p.reject(err);
+      const raw = msg.error.message ?? JSON.stringify(msg.error);
+      p.reject(engineError(msg.error.code, `${p.method}: ${raw}`, { method: p.method, raw, data: msg.error.data }));
     } else {
       p.resolve(msg.result);
     }

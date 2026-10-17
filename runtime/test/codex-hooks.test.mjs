@@ -12,10 +12,10 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { codexHooksForProfile, psQuote, shQuote, SESSION_END_SCRIPT } from "../src/engine/codex/hooks-config.mjs";
-import { normalizeCodexInput, patchPaths, renderDecision } from "../src/hooks/io.mjs";
+import { normalizeEngineInput, patchPaths, renderDecision } from "../src/hooks/io.mjs";
 import { ensureHarnessSetup, installedProfile, MEMORY_SERVER_ID, mergeManagedBlock, renderHarnessBlock } from "../src/harness/setup.mjs";
 import { detachedDigestArgs, spawnDetachedDigest } from "../src/hooks/session-end-digest.mjs";
-import { digestArgs } from "../src/hooks/codex-session-end.mjs";
+import { digestArgs } from "../src/hooks/engine-session-end.mjs";
 import { createEngine } from "../src/engine/index.mjs";
 
 const CLI = fileURLToPath(new URL("../src/cli.mjs", import.meta.url));
@@ -31,11 +31,11 @@ function runNode(args, stdinObj) {
   });
 }
 
-test("hooks.json: Codex events only, Edit|Write matcher, ≥10 s timeouts, --host codex", async () => {
+test("hooks.json: engine events only, Edit|Write matcher, ≥10 s timeouts, --host ad", async () => {
   const { hooks } = await codexHooksForProfile("developer", { node: "C:\\Program Files\\nodejs\\node.exe", cli: "D:\\Program Files\\ad\\cli.mjs" });
   assert.deepEqual(Object.keys(hooks).sort(), ["PostToolUse", "SessionEnd", "SessionStart", "UserPromptSubmit"]);
   const nonEnd = Object.entries(hooks).filter(([e]) => e !== "SessionEnd").flatMap(([, g]) => g).flatMap((g) => g.hooks);
-  assert.ok(nonEnd.every((h) => h.command.includes("--host codex") && h.commandWindows.includes("--host codex")));
+  assert.ok(nonEnd.every((h) => h.command.includes("--host ad") && h.commandWindows.includes("--host ad")));
   assert.ok(nonEnd.every((h) => h.commandWindows.startsWith("& 'C:\\Program Files\\nodejs\\node.exe' 'D:\\Program Files\\ad\\cli.mjs' ")));
   assert.ok(nonEnd.every((h) => h.timeout >= 10), "node + PowerShell cold start needs headroom");
   assert.ok(!JSON.stringify(hooks).includes("skill-use"), "Claude-only hooks are skipped");
@@ -67,13 +67,14 @@ test("shell quoting survives ASCII and typographic quotes in paths", () => {
 });
 
 test("renderDecision adapts output per host", () => {
-  const codex = (kind, v, event) => renderDecision(kind, v, { host: "codex", event });
-  assert.deepEqual(codex("approve"), {}, "Codex marks decision:approve as a failed hook");
-  assert.deepEqual(codex("block", "no", "PreToolUse"), {
+  const engine = (kind, v, event) => renderDecision(kind, v, { host: "ad", event });
+  assert.deepEqual(engine("approve"), {}, "the engine marks decision:approve as a failed hook");
+  assert.deepEqual(engine("block", "no", "PreToolUse"), {
     hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "no" },
   });
-  assert.deepEqual(codex("block", "no", "UserPromptSubmit"), { decision: "block", reason: "no" });
-  assert.deepEqual(codex("advise", "ctx", "UserPromptSubmit"), { hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: "ctx" } });
+  assert.deepEqual(engine("block", "no", "UserPromptSubmit"), { decision: "block", reason: "no" });
+  assert.deepEqual(engine("advise", "ctx", "UserPromptSubmit"), { hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: "ctx" } });
+  assert.deepEqual(renderDecision("approve", null, { host: "codex" }), {}, "the old value still gives the engine's shape");
   const claude = (kind, v) => renderDecision(kind, v, { host: "claude" });
   assert.deepEqual(claude("approve"), { decision: "approve" });
   assert.deepEqual(claude("advise", "ctx"), { additionalContext: "ctx" });
@@ -95,14 +96,14 @@ test("apply_patch input is normalized to file paths", () => {
     "*** End Patch",
   ].join("\n");
   assert.deepEqual(patchPaths(patch, cwd), ["src/a.js", "b.ts", "old.js", "moved/new.js", "gone.js"].map((p) => resolve(cwd, p)));
-  const n = normalizeCodexInput({ tool_name: "apply_patch", cwd, tool_input: { command: patch } });
+  const n = normalizeEngineInput({ tool_name: "apply_patch", cwd, tool_input: { command: patch } });
   assert.equal(n.tool_input.file_path, resolve(cwd, "src/a.js"));
   assert.equal(n.tool_input.file_paths.length, 5);
-  assert.deepEqual(normalizeCodexInput({ tool_name: "Bash", tool_response: "ok\n" }).tool_response, { output: "ok\n" });
+  assert.deepEqual(normalizeEngineInput({ tool_name: "Bash", tool_response: "ok\n" }).tool_response, { output: "ok\n" });
 });
 
-test("bash-pre under --host codex denies with the PreToolUse shape", async () => {
-  const { code, out } = await runNode([CLI, "hook", "bash-pre", "--host", "codex"], {
+test("bash-pre under --host ad denies with the PreToolUse shape", async () => {
+  const { code, out } = await runNode([CLI, "hook", "bash-pre", "--host", "ad"], {
     hook_event_name: "PreToolUse",
     tool_name: "Bash",
     tool_input: { command: "git push --no-verify" },
@@ -120,13 +121,20 @@ test("bash-pre under --host codex allows harmless commands with an empty object"
   assert.deepEqual(JSON.parse(out), {});
 });
 
-test("codex-session-end launcher prints {} and builds the digest command", async () => {
+test("engine-session-end launcher prints {} and builds the digest command", async () => {
   const { code, out } = await runNode([SESSION_END_SCRIPT], { hook_event_name: "SessionEnd" });
   assert.equal(code, 0);
   assert.equal(out, "{}");
   assert.equal(digestArgs({}), null);
   const args = digestArgs({ transcript_path: "/t/rollout.jsonl", session_id: "s1", cwd: "/w" });
   assert.deepEqual(args.slice(1), ["digest", "--transcript", "/t/rollout.jsonl", "--cwd", "/w", "--session-id", "s1"]);
+});
+
+test("the codex-session-end shim runs the real launcher", async () => {
+  const shim = fileURLToPath(new URL("../src/hooks/codex-session-end.mjs", import.meta.url));
+  const { code, out } = await runNode([shim], { hook_event_name: "SessionEnd" });
+  assert.equal(code, 0);
+  assert.equal(out, "{}");
 });
 
 test("session-end-digest --host codex also hands the digest to a detached process", () => {
@@ -218,11 +226,43 @@ test("a user's own fields on the memory server survive setup", async () => {
 
 test("a failing config step still leaves our hooks trusted, and is reported", async () => {
   await withEngine(async (engine) => {
-    const flaky = Object.create(engine, { readConfig: { value: async () => { throw new Error("unknown key after upgrade"); } } });
+    const flaky = new Proxy(engine, {
+      get: (target, key) => (key === "readConfig" ? async () => { throw new Error("unknown key after upgrade"); } : typeof target[key] === "function" ? target[key].bind(target) : target[key]),
+    });
     const r = await ensureHarnessSetup(flaky, { cwd: tmpdir(), roots: [], profile: "developer" });
     assert.ok(r.trusted >= 4);
     assert.ok(r.warnings.some((w) => /config: unknown key after upgrade/.test(w)));
   });
+});
+
+test("a 2.x hooks.json (--host codex, old launcher) is rewritten and silently re-trusted", async () => {
+  const { startHarnessEngine } = await import("../src/harness/start.mjs");
+  const root = mkdtempSync(join(tmpdir(), "ad-retrust-"));
+  const home = join(root, "home");
+  const command = { cmd: process.execPath, prefix: [FAKE] };
+  const engine = await createEngine({ home, command });
+  try {
+    const json = JSON.stringify(await codexHooksForProfile("developer"), null, 2)
+      .replaceAll("--host ad", "--host codex")
+      .replaceAll("engine-session-end.mjs", "codex-session-end.mjs");
+    assert.match(json, /--host codex/, "the 2.x shape is really in place");
+    writeFileSync(join(home, "hooks.json"), json);
+    const r = await ensureHarnessSetup(engine, { cwd: root, roots: [], profile: "developer" });
+    assert.equal(r.hooksWritten, true);
+    assert.ok(r.trusted >= 1);
+    assert.deepEqual(r.warnings, []);
+  } finally {
+    await engine.close();
+  }
+  const err = { text: "", write(s) { this.text += String(s); } };
+  const started = await startHarnessEngine({ home, command, cwd: root, setup: true, err });
+  try {
+    assert.ok(started.engine, started.error);
+    assert.ok(!/trust/i.test(err.text), `the re-trust is silent, got: ${err.text}`);
+  } finally {
+    await started.engine?.close();
+  }
+  rmSync(root, { recursive: true, force: true });
 });
 
 test("ensureHarnessSetup leaves a home it did not create alone", async () => {
@@ -232,4 +272,35 @@ test("ensureHarnessSetup leaves a home it did not create alone", async () => {
     assert.equal(r.managed, false);
     assert.equal(existsSync(join(engine.home, "hooks.json")), false);
   });
+});
+
+test("the managed AGENTS.md names the agent and its sign-in, with no engine name outside the allowance", async () => {
+  const { screenHits } = await import("../scripts/check-brand.mjs");
+  const { brandPatterns } = await import("../src/engine/attribution.mjs");
+  await withEngine(async (engine) => {
+    const r = await ensureHarnessSetup(engine, { cwd: tmpdir(), roots: [], profile: "developer" });
+    assert.equal(r.managed, true);
+    const agentsMd = readFileSync(join(engine.home, "AGENTS.md"), "utf8");
+    assert.match(agentsMd, /You are Agent Daemon's agent/);
+    assert.match(agentsMd, /signed in with a ChatGPT plan/);
+    assert.deepEqual(screenHits(agentsMd, { allow: brandPatterns() }), []);
+  });
+});
+
+test("hookHost reads AD_HOOK_HOST with the old value as an alias", async () => {
+  const { hookHost } = await import("../src/hooks/io.mjs");
+  const prev = process.env.AD_HOOK_HOST;
+  try {
+    process.env.AD_HOOK_HOST = "codex";
+    assert.equal(hookHost(), "ad");
+    process.env.AD_HOOK_HOST = "ad";
+    assert.equal(hookHost(), "ad");
+    process.env.AD_HOOK_HOST = "claude";
+    assert.equal(hookHost(), "claude");
+    delete process.env.AD_HOOK_HOST;
+    assert.equal(hookHost(), "claude");
+  } finally {
+    if (prev === undefined) delete process.env.AD_HOOK_HOST;
+    else process.env.AD_HOOK_HOST = prev;
+  }
 });

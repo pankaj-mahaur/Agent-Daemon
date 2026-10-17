@@ -2,7 +2,7 @@
 // scrollback and is never repainted; only the live region at the bottom
 // (at most rows − 1 lines) is redrawn.
 //
-// createRenderer({io, caps, depth, reflow, resizeSource, now, setTimeout, clearTimeout})
+// createRenderer({io, caps, depth, reflow, pinBottom, resizeSource, now, setTimeout, clearTimeout})
 //   start()                 anchor at the cursor (CPR); call once after io.enter()
 //   frame({lines, cursor})  draw the live region; lines are span arrays (text.mjs)
 //                           or plain strings, cursor {row, col} is where to park
@@ -14,7 +14,7 @@
 //
 // Terminal rules (research/terminal-engineering.md):
 //   - never ESC[2J / ESC[3J; history above the live top is never erased, except
-//     by clear() (/clear, Codex's "clear the terminal", asked for by the user)
+//     by clear() (/clear, the engine's "clear the terminal", asked for by the user)
 //   - every write runs with autowrap off (?7l), and every line is cut to
 //     cols − 1, so a line is exactly one row whatever the width tables say
 //   - a cursor move with count 0 is never sent (ESC[0A moves one row)
@@ -23,6 +23,15 @@
 //     without it, commits are batched at least 150 ms apart
 //   - resize: pause, wait 75 ms of quiet, re-anchor by CPR with the terminal's
 //     reflow model, redraw
+//
+// pinBottom (ad's default; the engine's inline mode doesn't): the live region
+// ends on the screen's last row from the start. History fills the free rows
+// above it top-down, then scrolls as usual. `gap` counts the blank rows between
+// the last history row and the live top, `slack` the blank rows below the live
+// region, or below the cursor row while it is empty (right after start, a
+// re-anchor or /clear). Both are lower bounds:
+// counting a history row as blank would overwrite it; one too few only leaves
+// the live region a row higher.
 
 import { renderLine, truncate } from "./text.mjs";
 import { graphemes, graphemeWidth } from "./width.mjs";
@@ -71,6 +80,7 @@ export function createRenderer({
   depth = 0,
   hyperlinks = false, // OSC 8 for spans with style.link (text.mjs)
   reflow = "unknown", // "reflow" | "none" | "unknown" (per terminal, from S1b)
+  pinBottom = false, // keep the live region on the screen's last rows (see above)
   resizeSource = null,
   now = () => Date.now(),
   setTimeout: setT = setTimeout,
@@ -97,6 +107,9 @@ export function createRenderer({
   let reanchoring = false; // a re-anchor is waiting for CPR
   let missedResize = false; // a resize came while suspended or starting
   let disposed = false;
+  let gap = 0; // pinBottom: blank rows between history and the live top
+  let slack = 0; // pinBottom: blank rows below the live bottom
+  let drawnCols = 0; // the width the live region was last drawn at
 
   const size = () => io.size();
   const wrapSync = (s) => (caps.sync ? SYNC_ON + s + SYNC_OFF : s);
@@ -151,13 +164,35 @@ export function createRenderer({
     prevMinWidths = widths;
     cursorRow = strings.length ? row : 0;
     cursorCol = Math.max(0, Math.min(col, cols - 1));
+    drawnCols = cols;
     return out;
+  }
+
+  // pinBottom: from the live top, go up to the first blank row after history,
+  // write `history` there, blank rows while there's room, then the live region
+  // on the last rows. Without room, it scrolls as without pinBottom.
+  function pinnedLayout(history, cols) {
+    const hist = renderRows(history, cols).strings;
+    const room = Math.min(gap + Math.max(1, prev.length) + slack, size().rows); // rows from the first blank row to the bottom (an empty live region holds the cursor row)
+    const live = Math.max(1, clampFrame().lines.length); // an empty live region still holds the cursor row
+    let out = toTop() + up(gap) + AUTOWRAP_OFF;
+    for (const s of hist) out += s + EOL + "\r\n";
+    const blanks = hist.length + live <= room ? room - hist.length - live : 0;
+    for (let i = 0; i < blanks; i++) out += EOL + "\r\n";
+    gap = blanks;
+    slack = 0;
+    return out + fullLive(cols);
   }
 
   function drawFrame() {
     const { cols } = size();
     const { lines, row, col } = clampFrame();
     const { strings, widths } = renderRows(lines, cols);
+    // A taller or shorter live region moves its top, so the bottom stays put.
+    if (pinBottom && (slack > 0 || strings.length !== prev.length)) {
+      send(pinnedLayout([], cols) + AUTOWRAP_ON);
+      return;
+    }
     let f = 0;
     while (f < strings.length && f < prev.length && strings[f] === prev[f]) f++;
     const changed = f < strings.length || strings.length !== prev.length;
@@ -191,6 +226,11 @@ export function createRenderer({
 
   function doCommit(history) {
     const { cols } = size();
+    if (pinBottom) {
+      send(pinnedLayout(history, cols) + AUTOWRAP_ON);
+      lastCommitAt = now();
+      return;
+    }
     const { strings } = renderRows(history, cols);
     let out = toTop() + AUTOWRAP_OFF;
     for (const s of strings) out += s + EOL + "\r\n";
@@ -241,24 +281,34 @@ export function createRenderer({
     }
     // A newer resize, redraw, suspend or dispose happened meanwhile: this geometry is stale.
     if (mine !== generation || suspended || disposed) return false;
-    const { cols } = size();
+    const { cols, rows } = size();
     const p = rowsAboveCursor(cols, kind);
     let out;
+    let liveTop = null;
     if (pos) {
-      const liveTop = Math.max(1, pos.row - p);
+      liveTop = Math.max(1, pos.row - p);
       out = `${CSI}${liveTop};1H${RESET}${CSI}J`;
     } else {
       // No CPR answer: move relatively, as well as we can.
       out = "\r" + up(p) + `${RESET}${CSI}J`;
     }
+    // The blank rows above the live top stay blank and in place unless the width
+    // changed (a reflow may have moved history into them): then count none.
+    const keepGap = kind === "redraw" || cols === drawnCols;
     prev = [];
     prevMinWidths = [];
     cursorRow = 0;
     const history = queued;
     queued = [];
-    out += AUTOWRAP_OFF;
-    for (const s of renderRows(history, cols).strings) out += s + EOL + "\r\n";
-    out += fullLive(cols) + AUTOWRAP_ON;
+    if (pinBottom) {
+      gap = keepGap ? (liveTop === null ? gap : Math.min(gap, liveTop - 1)) : 0;
+      slack = liveTop === null ? 0 : rows - liveTop; // just erased
+      out += pinnedLayout(history, cols) + AUTOWRAP_ON;
+    } else {
+      out += AUTOWRAP_OFF;
+      for (const s of renderRows(history, cols).strings) out += s + EOL + "\r\n";
+      out += fullLive(cols) + AUTOWRAP_ON;
+    }
     send(out);
     if (history.length) lastCommitAt = now();
     recentWriteAtResize = false;
@@ -294,17 +344,21 @@ export function createRenderer({
     const { cols } = size();
     const resizePending = resizeTimer !== null || reanchoring;
     const p = resizePending ? rowsAboveCursor(cols, "resize") : cursorRow;
+    // pinBottom: the blank rows above go too, so what follows starts right after history.
+    const blankAbove = pinBottom && !resizePending ? gap : 0;
     const history = queued;
     queued = [];
     // Erase first: a re-wrapped row keeps its wrap flag, and history written
     // onto it would be glued to the ghost on the next widening.
-    let out = "\r" + up(p) + AUTOWRAP_OFF + `${RESET}${CSI}J`;
+    let out = "\r" + up(p + blankAbove) + AUTOWRAP_OFF + `${RESET}${CSI}J`;
     for (const s of renderRows(history, cols).strings) out += s + EOL + "\r\n";
     out += `${RESET}${CSI}J` + AUTOWRAP_ON;
     send(out);
     prev = [];
     prevMinWidths = [];
     cursorRow = 0;
+    gap = 0;
+    slack = 0;
   }
 
   function cancelTimers() {
@@ -323,6 +377,10 @@ export function createRenderer({
       started = true;
       prev = [];
       cursorRow = 0;
+      gap = 0;
+      // pinBottom: the rows from here to the bottom are ours (without CPR, unknown: none).
+      const { rows } = size();
+      slack = pinBottom && pos ? rows - Math.min(rows, pos.row + (pos.col !== 1 ? 1 : 0)) : 0;
       const history = queued;
       queued = [];
       if (history.length) doCommit(history);
@@ -370,7 +428,7 @@ export function createRenderer({
       await reanchor("redraw");
     },
     /**
-     * /clear: wipe the screen and the scrollback with Codex's own bytes, then
+     * /clear: wipe the screen and the scrollback with the engine's own bytes, then
      * start over at the top: `header` (history lines) and the live region.
      * Whatever was pending is dropped with the rest: queued history, a commit
      * batch, a resize wait or a re-anchor waiting for its cursor report (its
@@ -386,10 +444,19 @@ export function createRenderer({
       paused = false;
       recentWriteAtResize = false;
       queued = [];
-      const { cols } = size();
-      let out = `${CSI}r${RESET}${CSI}H${CSI}2J${CSI}3J${CSI}H` + AUTOWRAP_OFF;
-      for (const s of renderRows(header, cols).strings) out += s + EOL + "\r\n";
-      out += fullLive(cols) + AUTOWRAP_ON;
+      const { cols, rows } = size();
+      let out = `${CSI}r${RESET}${CSI}H${CSI}2J${CSI}3J${CSI}H`;
+      if (pinBottom) {
+        prev = [];
+        cursorRow = 0;
+        gap = 0;
+        slack = rows - 1; // the whole screen is blank now; the cursor row is the live region's
+        out += pinnedLayout(header, cols) + AUTOWRAP_ON;
+      } else {
+        out += AUTOWRAP_OFF;
+        for (const s of renderRows(header, cols).strings) out += s + EOL + "\r\n";
+        out += fullLive(cols) + AUTOWRAP_ON;
+      }
       send(out);
       lastCommitAt = now();
       // The UI laid out for the old width while a resize waited: lay out again.
@@ -410,7 +477,7 @@ export function createRenderer({
       disposed = true;
     },
     get state() {
-      return { started, paused, suspended, disposed, rows: prev.length, cursorRow, queued: queued.length };
+      return { started, paused, suspended, disposed, rows: prev.length, cursorRow, queued: queued.length, gap, slack };
     },
   };
 }

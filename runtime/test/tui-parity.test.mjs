@@ -1,4 +1,4 @@
-// Codex parity++ (plan Part 8): tui/commands.mjs, the auto-review notices,
+// Terminal UI parity (plan Part 8): tui/commands.mjs, the auto-review notices,
 // and the new commands and keys in the app on the fake engine.
 
 import { test } from "node:test";
@@ -90,7 +90,7 @@ test("export: markdown of the conversation, sanitized; the last answer for /copy
   assert.match(md, /^# fix login/);
   assert.match(md, /## You\n\nfix it/);
   assert.match(md, /\$ npm test\nok/);
-  assert.match(md, /## Codex\n\nDone: \*\*fixed\*\*/);
+  assert.match(md, /## Agent\n\nDone: \*\*fixed\*\*/);
   assert.ok(!/\x1b/.test(md));
   assert.ok(!md.includes("child"), "subagent threads are not the conversation");
   assert.match(lastAgentText(ST), /Done/);
@@ -249,7 +249,7 @@ test("/rename, /fork, /mcp, /hooks, /skills, /usage, /copy, /raw, /export", asyn
     }
     type("/export notes.md\r");
     await until(() => /Saved notes\.md/.test(committed()), "export");
-    assert.match(readFileSync(join(root, "notes.md"), "utf8"), /## Codex\n\nearly/);
+    assert.match(readFileSync(join(root, "notes.md"), "utf8"), /## Agent\n\nearly/);
     type("/export ../outside.md\r");
     await until(() => /inside this folder only/.test(committed()), "refused");
     type("/export notes.md\r");
@@ -272,7 +272,7 @@ test("Esc Esc rewinds to an earlier prompt and puts it back in the composer", as
     await until(() => app.state.composer === "fail-turn", "the prompt back in the composer");
     assert.equal(session.state.turns.length, 1);
     assert.match(committed(), /Rewound to before .fail-turn.\. Files on disk weren't changed/);
-    const st = await engine.server.request("debug/state", {});
+    const st = await engine.testRequest("debug/state", {});
     assert.ok(st.calls.includes("thread/revert"));
   });
 });
@@ -299,7 +299,7 @@ test("Ctrl+T pages the transcript; Ctrl+G edits in the editor; alt+. raises the 
         await until(() => /Attached shot\.png/.test(app.state.note ?? ""), "attached");
         type("fail-turn\r");
         await sleep(300);
-        const st = await engine.server.request("debug/state", {});
+        const st = await engine.testRequest("debug/state", {});
         const tp = st.lastParams["turn/start"];
         assert.equal(tp.effort, "high");
         assert.deepEqual(tp.input.map((i) => i.type), ["text", "localImage"]);
@@ -312,7 +312,7 @@ test("Ctrl+T pages the transcript; Ctrl+G edits in the editor; alt+. raises the 
   }
 });
 
-// codex-parity-2 Part 10.
+// terminal UI plan Part 10.
 test("/debug-config masks secrets: keys that name one, header and env maps, URL credentials, token-like args; not tui.keymap", () => {
   const text = (lines) => lines.map((l) => l.map((s) => s.text).join("")).join("\n");
   const out = text(
@@ -344,7 +344,7 @@ test("/debug-config masks secrets: keys that name one, header and env maps, URL 
   assert.match(out, /- allowed_sandbox_modes: read-only/);
 });
 
-test("denialSummary: Codex's words for each kind of denied action", () => {
+test("denialSummary: the engine's words for each kind of denied action", () => {
   assert.equal(denialSummary({ type: "command", command: "rm -rf build" }), "rm -rf build");
   assert.equal(denialSummary({ type: "execve", program: "rm", argv: ["rm", "-rf", "my dir"] }), "rm -rf 'my dir'");
   assert.equal(denialSummary({ type: "applyPatch", files: ["a.js"] }), "apply_patch touching a.js");

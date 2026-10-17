@@ -18,7 +18,7 @@
 // as "[Pasted N lines]" and expands on submit. With `mask`, the text renders
 // as dots and never reaches the history.
 //
-// setVim(on, {mode}) turns Codex's Vim mode on (view/vim.mjs) for this
+// setVim(on, {mode}) turns the Vim mode on (view/vim.mjs) for this
 // composer: Normal-mode keys go to it first; Insert typing stays here.
 
 import { isNewline } from "../terminal/input.mjs";
@@ -123,7 +123,7 @@ export function createComposer({ history = null, pasteLines = 5, pasteChars = 10
   let search = null; // {query, match} during Ctrl+R
   let room = 78; // text cells per row, from the last render
   let goalCol = null; // the column Up/Down aim for across short rows
-  let vim = null; // Codex's Vim mode, when on
+  let vim = null; // the Vim mode, when on
 
   const entries = () => history?.entries() ?? [];
   const rows = () => layout(text, room, mask);
@@ -195,7 +195,7 @@ export function createComposer({ history = null, pasteLines = 5, pasteChars = 10
     pastes.clear();
     histIndex = null;
     goalCol = null;
-    vim?.reset(); // Codex: a new draft starts in Insert, with no undo history
+    vim?.reset(); // a new draft starts in Insert, with no undo history
   }
 
   function historyMove(dir) {
@@ -383,7 +383,7 @@ export function createComposer({ history = null, pasteLines = 5, pasteChars = 10
   /** The word under the cursor when it starts with `@` (anywhere) or `/` (at the start). */
   function token() {
     if (mask) return null;
-    // In Vim's Normal mode "/" searches: the popups open only from Insert (Codex).
+    // In Vim's Normal mode "/" searches: the popups open only from Insert (as upstream does).
     if (vim && vim.mode !== "insert") return null;
     const before = text.slice(0, cursor);
     const m = /(?:^|\s)([@/]\S*)$/u.exec(before);
@@ -422,7 +422,7 @@ export function createComposer({ history = null, pasteLines = 5, pasteChars = 10
     ]);
     if (!text && placeholder) lines[0].push({ text: placeholder, style: DIM });
     const at = rowOf(r, cursor);
-    // Vim's search query, on its own line under the draft (Codex puts it in the footer row).
+    // Vim's search query, on its own line under the draft (upstream puts it in the footer row).
     const vs = vim?.search;
     if (vs) {
       lines.push(truncate([{ text: vs.dir, style: T.code }, { text: sanitize(vs.query, "transcript").replace(/\t/g, " ") }], width));
@@ -438,7 +438,7 @@ export function createComposer({ history = null, pasteLines = 5, pasteChars = 10
     token,
     replace,
     clear: reset,
-    /** Codex's Vim mode on (starting in `mode`) or off; masked composers never have it. */
+    /** The Vim mode on (starting in `mode`) or off; masked composers never have it. */
     setVim(on, { mode = "normal" } = {}) {
       vim = on && !mask ? createVim(core, { now, mode }) : null;
     },

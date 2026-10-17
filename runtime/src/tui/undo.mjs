@@ -14,7 +14,7 @@ import { FORCEABLE, UNDO_LIMITS } from "../harness/checkpoints.mjs";
 
 /**
  * The lines an edit's diff adds and removes, as text (a trailing CR dropped),
- * read from Codex's raw diff: hunk lines for an update, the content for an add
+ * read from the engine's raw diff: hunk lines for an update, the content for an add
  * or a delete (split as git counts lines).
  */
 export function diffLines(c) {
@@ -155,7 +155,7 @@ export function checkpointWiring(cp, { cwd = process.cwd(), waitMs = 10_000, typ
     const top = realPath(root);
     for (const c of item.changes ?? []) {
       for (const p of [c.path, c.movePath].filter(Boolean)) {
-        // Both real: Codex may name the folder by an 8.3 short name, a junction
+        // Both real: the engine may name the folder by an 8.3 short name, a junction
         // or a subst drive (C:\Users\RUNNER~1\…) while git names it by its long path.
         const rel = path.relative(top, realPath(path.resolve(cwd, p))).split(path.sep).join("/");
         if (rel && rel !== ".." && !rel.startsWith("../") && !path.isAbsolute(rel)) out.push(rel);

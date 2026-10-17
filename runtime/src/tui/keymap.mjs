@@ -1,4 +1,4 @@
-// Keys as actions (codex-parity-2 1d), under Codex's contexts, action names
+// Keys as actions (parity 1d), under the engine's contexts, action names
 // and key spelling (codex-rs/config/src/tui_keymap.rs at the pinned tag), so
 // `tui.keymap` in ad's config.toml means the same here as in the stock UI,
 // whose /keymap edits it. Only the actions ad has are listed; an override for
@@ -7,18 +7,18 @@
 //   createKeymap({overrides}) → {is(ctx, action, ev), keys(ctx, action), label(ctx, action), warnings}
 //   parseKey("ctrl-t") → {key: "t", ctrl: true, alt: false, shift: false}
 //
-// A key spec is Codex's: modifiers `ctrl-` `alt-` `shift-` (in that order),
+// A key spec is the engine's: modifiers `ctrl-` `alt-` `shift-` (in that order),
 // then a printable character or a key name (enter, tab, backspace, esc,
 // delete, up, down, left, right, home, end, page-up, page-down, space, minus,
 // f1–f12). Several strokes (`ctrl-x f`, a chord) aren't supported by ad yet.
 
-// Codex's defaults for the actions ad has. The comment names what ad does.
+// The engine's defaults for the actions ad has. The comment names what ad does.
 export const DEFAULT_KEYMAP = Object.freeze({
   global: {
     open_transcript: ["ctrl-t"], // the Ctrl+T pager
     open_external_editor: ["ctrl-g"], // edit the prompt in $EDITOR
     copy: ["ctrl-o"], // /copy
-    clear_terminal: ["ctrl-l"], // ad redraws (Codex clears)
+    clear_terminal: ["ctrl-l"], // ad redraws (the engine clears)
     toggle_raw_output: ["alt-r"], // /raw
     toggle_side_conversation: ["ctrl-/"], // focus between a /side panel and the main prompt
   },
@@ -50,15 +50,15 @@ const TOGETHER = [["global", "chat", "composer"], ["global", "pager"]];
 // Keys the composer itself uses for editing (not remappable in ad yet), and
 // ad's own fixed keys: an override can't take them in the main contexts.
 export const RESERVED = ["shift-tab", "enter", "ctrl-j", "ctrl-a", "ctrl-e", "ctrl-b", "ctrl-f", "ctrl-k", "ctrl-u", "ctrl-w", "ctrl-y", "ctrl-r", "ctrl-c", "alt-b", "alt-f", "up", "down", "left", "right", "home", "end", "backspace", "delete", "f2"];
-// A context without its own binding for an action falls back to global's (Codex's rule).
+// A context without its own binding for an action falls back to global's (upstream's rule).
 const FALLBACK = "global";
 
 const NAMES = new Set(["enter", "tab", "backspace", "esc", "delete", "up", "down", "left", "right", "home", "end", "page-up", "page-down", "space", "minus"]);
 const ALIASES = { escape: "esc", return: "enter", spacebar: "space", pgup: "page-up", pageup: "page-up", pgdn: "page-down", pagedown: "page-down", del: "delete" };
-// Codex's key name → the decoder's (tui/terminal/input.mjs).
+// The engine's key name → the decoder's (tui/terminal/input.mjs).
 const DECODER = { esc: "escape", "page-up": "pageup", "page-down": "pagedown", minus: "-" };
 
-/** One stroke in Codex's spelling → {key, ctrl, alt, shift}; throws on what Codex would refuse. */
+/** One stroke in the engine's spelling → {key, ctrl, alt, shift}; throws on what the engine would refuse. */
 export function parseKey(spec) {
   const raw = String(spec ?? "").trim().toLowerCase();
   if (!raw) throw new Error("empty keybinding");
@@ -99,12 +99,12 @@ export function matchKey(ev, k) {
 }
 
 /**
- * A decoded key event in Codex's config spelling ("ctrl-t", "alt-.", "esc",
+ * A decoded key event in the engine's config spelling ("ctrl-t", "alt-.", "esc",
  * "page-up"), as /keymap debug shows it; null for what isn't a key.
  */
 export function eventSpec(ev) {
   if (ev?.type !== "key" || !ev.name) return null;
-  const back = Object.fromEntries(Object.entries(DECODER).map(([codex, decoder]) => [decoder, codex]));
+  const back = Object.fromEntries(Object.entries(DECODER).map(([upstream, decoder]) => [decoder, upstream]));
   const name = back[ev.name] ?? ev.name;
   return [ev.ctrl && "ctrl", ev.alt && "alt", ev.shift && name.length > 1 && "shift", name].filter(Boolean).join("-");
 }
@@ -187,7 +187,7 @@ export function createKeymap({ overrides = null } = {}) {
       if (!ks) throw new Error(`no action ${ctx}.${action} in ad's keymap`);
       return ks.some((k) => matchKey(ev, k));
     },
-    /** Its keys in Codex's spelling ([] when unbound). */
+    /** Its keys in the engine's spelling ([] when unbound). */
     keys(ctx, action) {
       return [...(map[ctx]?.[action]?.keys ?? [])];
     },

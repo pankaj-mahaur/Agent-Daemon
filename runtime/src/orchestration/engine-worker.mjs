@@ -1,4 +1,4 @@
-// One team worker as a Codex thread (replaces `claude --print
+// One team worker as an engine thread (replaces `claude --print
 // --dangerously-skip-permissions` for workers).
 //
 // Safety model: the worker runs unattended, so it never asks — approval
@@ -48,7 +48,7 @@ export function commitWorktree(worktreePath, message, run = execFileSync) {
 /**
  * @returns {Promise<{ok: boolean, status?: string, output?: string, threadId?: string, error?: string}>}
  */
-export async function runCodexWorker({ worktreePath, systemPrompt, userMessage, model, timeoutMs, engineOpts = {}, onEvent, err = process.stderr }) {
+export async function runEngineWorker({ worktreePath, systemPrompt, userMessage, model, timeoutMs, engineOpts = {}, onEvent, err = process.stderr }) {
   let engine;
   try {
     const prefixed = { write: (s) => err.write(String(s).replace(/^\[agent-daemon\]/gm, "[agent-daemon worker]")) };

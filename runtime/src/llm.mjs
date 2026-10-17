@@ -2,19 +2,21 @@
 // reflect / generate / evaluate), with a selectable backend:
 //
 //   claude  headless `claude` CLI (runtime/src/claude.mjs) — the original path
-//   codex   the harness Codex engine (engine/index.mjs complete())
-//   auto    claude, falling back to codex when the claude binary is missing
+//   ad      ad's own engine (engine/index.mjs complete())
+//   auto    claude, falling back to ad when the claude binary is missing
 //
 // Pick with AD_LLM_BACKEND or opts.backend; default is auto. Both backends
 // return callHeadlessClaude's result shape, so callers don't care which ran.
 
 import { callHeadlessClaude } from "./claude.mjs";
+import { LEGACY } from "./engine/attribution.mjs";
+import { productValue } from "./product-values.mjs";
 
-const BACKENDS = new Set(["claude", "codex", "auto"]);
+const BACKENDS = new Set(["claude", "ad", "auto"]);
 
 export function llmBackend(opts = {}, env = process.env) {
-  const b = opts.backend ?? env.AD_LLM_BACKEND ?? "auto";
-  if (!BACKENDS.has(b)) throw new Error(`unknown LLM backend "${b}" (use claude, codex or auto)`);
+  const b = productValue(opts.backend ?? env.AD_LLM_BACKEND ?? "auto");
+  if (!BACKENDS.has(b)) throw new Error(`unknown LLM backend "${b}" (use claude, ad or auto)`);
   return b;
 }
 
@@ -82,30 +84,31 @@ function withParsedJson(result, { schema } = {}) {
   return result;
 }
 
-// Claude aliases ("haiku") mean nothing to Codex; AD_CODEX_LLM_MODEL picks
-// the Codex model for these background calls (e.g. a cheaper one).
-export function codexModelFor(model, env = process.env) {
-  if (!model || ["haiku", "sonnet", "opus"].includes(model)) return env.AD_CODEX_LLM_MODEL || undefined;
+// Claude aliases ("haiku") mean nothing to the engine; the model env var
+// (AD_ENGINE_MODEL, still read under its old name, LEGACY.envModel)
+// picks the model for these background calls (e.g. a cheaper one).
+export function engineModelFor(model, env = process.env) {
+  if (!model || ["haiku", "sonnet", "opus"].includes(model)) return env.AD_ENGINE_MODEL || env[LEGACY.envModel] || undefined;
   return model;
 }
 
-async function callCodex(opts, { engineFactory } = {}) {
+async function callEngine(opts, { engineFactory } = {}) {
   const [{ createEngine }, { providerEnv }] = await Promise.all([import("./engine/index.mjs"), import("./auth/providers.mjs")]);
   const factory = engineFactory ?? ((o) => createEngine({ env: providerEnv(), ...o }));
   let engine;
   try {
     engine = await factory({});
     const acct = await engine.account();
-    if (acct.requiresOpenaiAuth && !acct.account) return { ok: false, error: "codex backend not logged in (run: ad auth login chatgpt)" };
+    if (acct.requiresOpenaiAuth && !acct.account) return { ok: false, error: "ad's engine isn't signed in (run: ad auth login openai, openrouter or chatgpt)" };
     const schema = opts.jsonSchema ?? opts.schema;
     const strict = schema && isStrictSchema(schema);
     const userMessage = schema && !strict
       ? `${opts.userMessage}\n\nRespond with ONLY a JSON object (no prose) matching this JSON Schema:\n${JSON.stringify(schema)}`
       : opts.userMessage;
-    const r = await engine.complete({ ...opts, userMessage, model: codexModelFor(opts.model), jsonSchema: strict ? schema : undefined, schema: undefined });
+    const r = await engine.complete({ ...opts, userMessage, model: engineModelFor(opts.model), jsonSchema: strict ? schema : undefined, schema: undefined });
     return withParsedJson(r, { schema });
   } catch (err) {
-    return { ok: false, error: `codex backend: ${err.message}` };
+    return { ok: false, error: `ad's engine: ${err.message}` };
   } finally {
     await engine?.close();
   }
@@ -113,12 +116,12 @@ async function callCodex(opts, { engineFactory } = {}) {
 
 export async function callLlm(opts, deps = {}) {
   const backend = llmBackend(opts);
-  if (backend === "codex") return callCodex(opts, deps);
+  if (backend === "ad") return callEngine(opts, deps);
   const claude = deps.callClaude ?? callHeadlessClaude;
   const r = withParsedJson(await claude(opts), { schema: opts.jsonSchema });
   if (backend === "auto" && !r.ok && /spawn failed: .*ENOENT/.test(r.error ?? "")) {
-    if (opts.verbose) process.stderr.write("[agent-daemon] claude CLI not found; using the Codex engine\n");
-    return callCodex(opts, deps);
+    if (opts.verbose) process.stderr.write("[agent-daemon] claude CLI not found; using ad's engine\n");
+    return callEngine(opts, deps);
   }
   return r;
 }

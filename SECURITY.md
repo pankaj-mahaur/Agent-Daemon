@@ -3,7 +3,7 @@
 agent-daemon does two jobs, and both are covered here:
 
 - **Tooling around your coding agent** (Claude Code, Cursor, Codex). Its hooks process the JSON the host hands them about tool calls the agent is about to make.
-- **Its own agent harness** (since v2). `ad` / `ad tui`, `ad chat`, `ad run`, `ad loop`, `ad schedule`, `ad web` and `ad acp` run the agent themselves on a pinned OpenAI Codex engine. There ad also shows untrusted model and command output, asks for your approvals, serves a local web UI and stores provider keys. See [The agent harness and terminal UI](#the-agent-harness-and-terminal-ui).
+- **Its own agent harness** (since v2). `ad` / `ad tui`, `ad chat`, `ad run`, `ad loop`, `ad schedule`, `ad web` and `ad acp` run the agent themselves on ad's own pinned engine. There ad also shows untrusted model and command output, asks for your approvals, serves a local web UI and stores provider keys. See [The agent harness and terminal UI](#the-agent-harness-and-terminal-ui).
 
 This document explains the threat model, the design choices behind it, and how to report a vulnerability.
 
@@ -17,8 +17,8 @@ This document explains the threat model, the design choices behind it, and how t
 | `~/.agent-daemon/episodic.db` (SQLite) | Local-only, user-owned. Not network-exposed. | Standard `better-sqlite3` defaults; rows are agent-emitted, not user-controlled |
 | Vendored upstream content | Code-injection if upstream is compromised | Vendored snapshot is **gitignored** (only `MANIFEST.md` + `fetch.mjs` tracked); commit SHA is pinned |
 | MCP audit trail | Tampering / repudiation | Append-only writes; rotation rather than truncation; no remote log shipping (yet) |
-| Your own Codex install (`~/.codex`, its login, sessions, daemon) | The harness reading or changing it | The harness runs only its pinned Codex, in its own home (`~/.agent-daemon/codex-home`). It refuses `~/.codex`, a `CODEX_HOME` your shell sets, network paths and any spelling that resolves to them, and drops your `CODEX_*` variables (`CODEX_CA_CERTIFICATE` excepted) |
-| Provider keys and logins | Leaking into config, argv, logs or the agent's shell | OpenRouter keys: DPAPI on Windows, libsecret on Linux (else a 0600 file), a 0600 file on macOS; never in config or argv; excluded from the agent's shell environment. The ChatGPT login and an OpenAI API key are kept by Codex in the harness home (`auth.json`, file store), never in your OS keyring or `~/.codex` |
+| Your own install (`~/.codex`, its login, sessions, daemon) | The harness reading or changing it | The harness runs only its pinned engine, in its own home (`~/.agent-daemon/engine`). It refuses `~/.codex`, a `CODEX_HOME` your shell sets, network paths and any spelling that resolves to them, and drops your `CODEX_HOME`, `CODEX_API_KEY` and similar variables (`CODEX_CA_CERTIFICATE` excepted) |
+| Provider keys and logins | Leaking into config, argv, logs or the agent's shell | OpenRouter keys: DPAPI on Windows, libsecret on Linux (else a 0600 file), a 0600 file on macOS; never in config or argv; excluded from the agent's shell environment. The ChatGPT login and an OpenAI API key are kept by the engine in the harness home (`auth.json`, file store), never in your OS keyring or `~/.codex` |
 | Approval prompts | A command or diff that hides part of itself; type-ahead approving by accident | Hidden characters (control, bidi, zero-width, look-alike spaces) show as `<U+XXXX>`; an answer that grants something counts only 400 ms after the prompt opens and after your last key; only a "don't ask again" rule the request offered can be sent, and one whose prefix hides characters is never offered |
 | Your terminal | Escape sequences in model or command output (clearing the screen, faking a prompt, setting the title or clipboard) | Untrusted text is sanitized before it is drawn: control sequences are removed or shown as visible `<U+…>` forms |
 | `ad web` | Other local users or web pages driving the agent | Binds 127.0.0.1 only; every API call needs the random token in the printed link; the Host header must be loopback (DNS rebinding); strict content security policy; all data rendered as text, never HTML |
@@ -27,8 +27,8 @@ This document explains the threat model, the design choices behind it, and how t
 
 What's **not** in scope:
 
-- Enforcing the sandbox. That is the host's job (Claude Code, Cursor) or Codex's. In ad's own harness, ad chooses the Codex sandbox mode and approval policy for each kind of run (see [docs/harness.md](docs/harness.md#safety-model)); `--sandbox danger-full-access` and the "Full access" permission turn the sandbox off on purpose.
-- Commands you run yourself with `!` in `ad tui`: like Codex's `!`, they run unsandboxed, as you.
+- Enforcing the sandbox. That is the host's job (Claude Code, Cursor) or the engine's. In ad's own harness, ad chooses the engine sandbox mode and approval policy for each kind of run (see [docs/harness.md](docs/harness.md#safety-model)); `--sandbox danger-full-access` and the "Full access" permission turn the sandbox off on purpose.
+- Commands you run yourself with `!` in `ad tui`: like the engine's own `!`, they run unsandboxed, as you.
 - Hardening user-supplied skill content — skills are markdown text loaded into the agent's prompt, treated like documentation.
 - Protecting against a compromised `node`/`git`/`gh` binary on PATH.
 - Multi-tenant isolation — agent-daemon is a single-user tool.
@@ -50,13 +50,13 @@ Every hook handler under [runtime/src/hooks/](runtime/src/hooks/) **never blocks
 
 ## The agent harness and terminal UI
 
-The harness drives a pinned `codex app-server`. Codex owns the agent loop, the model calls and the sandbox; ad decides the sandbox mode and approval policy for each kind of run, and wires in its memory, hooks and skills. The table above lists the main assets. In more detail:
+The harness drives a pinned app-server. The engine owns the agent loop, the model calls and the sandbox; ad decides the sandbox mode and approval policy for each kind of run, and wires in its memory, hooks and skills. The table above lists the main assets. In more detail:
 
 - **Hooks inside the harness** are the same handlers as in Claude Code, with the same fail-safe-to-approve rule. Only hooks from ad's own `hooks.json` are trusted automatically; a repo's or plugin's hooks are not.
-- **Folder trust.** The first time `ad tui` runs in a folder it asks whether you trust it; only a trusted folder may load its own `.codex` config, hooks and skills.
+- **Folder trust.** The first time `ad tui` runs in a folder it asks whether you trust it; only a trusted folder may run its own hooks, skills and settings.
 - **ad's memory MCP server** (`agent-daemon-memory`) is registered in the harness home and its tools run without an approval prompt, unless you set an approval mode for that server yourself. Its blast radius: it reads the local memory store and can write only retrieval counters and a usefulness score; it can't insert, delete or change memory text ([details](mcp/agent-daemon-memory/README.md#security-blast-radius)).
 - **Local files the TUI writes.** The prompt history (`~/.agent-daemon/tui/history.jsonl`) is owner-only (0600) and never stores masked answers. `/export` writes a new file inside the current folder only (no overwrite, no device names, no path through a link that leads out). Prompts typed under `/private` are wrapped in `<private>`, which ad's extractors drop, so they never become learnings.
-- **Windows.** The engine's PATH leaves out every `WindowsApps` folder, so commands never run in a Store (MSIX) PowerShell that the sandbox can't start; they run sandboxed in an MSI PowerShell 7 or Windows PowerShell 5.1. `ad sandbox setup --elevated` creates machine-wide sandbox accounts that your own Codex uses too.
+- **Windows.** The engine's PATH leaves out every `WindowsApps` folder, so commands never run in a Store (MSIX) PowerShell that the sandbox can't start; they run sandboxed in an MSI PowerShell 7 or Windows PowerShell 5.1. `ad sandbox setup --elevated` creates machine-wide sandbox accounts that your own install uses too.
 - **`ad acp`** speaks the Agent Client Protocol on stdio to the editor that started it; approvals become the editor's permission prompts.
 
 ## Audit log

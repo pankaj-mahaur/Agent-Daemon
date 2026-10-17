@@ -76,11 +76,19 @@ test("isInjectedContext", () => {
 test("detection: harness sessions dir, rollout file name, and first-line sniff", async () => {
   const root = mkdtempSync(join(tmpdir(), "ad-detect-"));
   try {
-    const harness = join(root, "codex-home", "sessions", "2026", "10", "01");
-    mkdirSync(harness, { recursive: true });
-    const a = join(harness, "whatever.jsonl");
-    writeFileSync(a, "{}\n");
-    assert.equal(await detect(a), "codex");
+    const adHome = join(root, ".agent-daemon");
+    for (const name of ["codex-home", "engine"]) {
+      const harness = join(adHome, name, "sessions", "2026", "10", "01");
+      mkdirSync(harness, { recursive: true });
+      const a = join(harness, "whatever.jsonl");
+      writeFileSync(a, "{}\n");
+      assert.equal(await detect(a), "ad", name);
+    }
+    const own = join(root, ".codex", "sessions");
+    mkdirSync(own, { recursive: true });
+    const o = join(own, "whatever.jsonl");
+    writeFileSync(o, "{}\n");
+    assert.equal(await detect(o), "codex", "the user's own Codex stays codex");
     const b = join(root, "rollout-2026-10-01T00-00-00-abc.jsonl");
     writeFileSync(b, "{}\n");
     assert.equal(await detect(b), "codex");
@@ -93,6 +101,8 @@ test("detection: harness sessions dir, rollout file name, and first-line sniff",
     const { adapter, summary } = await summarizeAny(FIXTURE, { adapter: undefined });
     assert.equal(adapter, "codex");
     assert.equal(summary.userTurns, 2);
+    const { adapter: adAdapter } = await summarizeAny(join(adHome, "engine", "sessions", "2026", "10", "01", "whatever.jsonl"), { adapter: "ad" });
+    assert.equal(adAdapter, "ad");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -100,11 +110,18 @@ test("detection: harness sessions dir, rollout file name, and first-line sniff",
 
 test("watcher config always includes the harness session folder unless opted out", async () => {
   const { withHarnessSessions } = await import("../src/daemon/config.mjs");
+  const state = () => ({ path: "/r/engine", state: "new" });
   const base = { watch: [{ path: "/x/.claude/projects", pattern: "**/*.jsonl" }] };
-  const withIt = withHarnessSessions(base);
-  assert.ok(withIt.watch.some((w) => /codex-home[\\/]sessions$/.test(w.path) && w.adapter === "codex"));
-  assert.equal(withHarnessSessions(withIt).watch.length, withIt.watch.length, "not added twice");
-  assert.equal(withHarnessSessions({ ...base, harnessSessions: false }).watch.length, 1);
+  const withIt = withHarnessSessions(base, { state });
+  const entry = withIt.watch.find((w) => w.adapter === "ad");
+  assert.deepEqual(entry, { path: join("/r/engine", "sessions"), pattern: "**/*.jsonl", adapter: "ad" });
+  assert.equal(withHarnessSessions(withIt, { state }).watch.length, withIt.watch.length, "not added twice");
+  const upper = { watch: [{ path: "/R/ENGINE/sessions", pattern: "**/*.jsonl" }] };
+  if (process.platform === "win32") assert.equal(withHarnessSessions(upper, { state }).watch.length, 1, "same path in another case is not added twice");
+  assert.equal(withHarnessSessions({ ...base, harnessSessions: false }, { state }).watch.length, 1);
+  const two = withHarnessSessions(base, { state: () => ({ path: "/r/engine", state: "two-folders" }) });
+  assert.equal(two.harnessSessionsSkipped, "HOME_TWO_FOLDERS");
+  assert.equal(two.watch.length, 1, "no entry while two folders exist");
 });
 
 test("a subagent rollout (parent history embedded) is skipped, not double counted", () => {

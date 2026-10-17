@@ -101,7 +101,7 @@ test("approval arming: too-soon answers are ignored and restart the window; decl
   assert.deepEqual(b.handle(typed("yy")), { changed: true });
 });
 
-test("exec options map to Codex's decisions, and every answer is one requestResult accepts", () => {
+test("exec options map to the engine's decisions, and every answer is one requestResult accepts", () => {
   const c = clock();
   const m = createRequestModal(EXEC, { now: c.now });
   c.advance(500);

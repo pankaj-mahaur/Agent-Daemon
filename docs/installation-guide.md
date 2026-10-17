@@ -4,7 +4,7 @@
 
 The one-liner clones the repo to `~/.agent-daemon-src`, installs runtime dependencies (including the pinned `@openai/codex` engine; test-only packages are skipped with `--omit=dev`), registers the global `ad` command and runs `ad doctor`. It needs git and Node.js 22 or later. On Windows it warns on Node 22 before 22.17, 23.x and 24 before 24.2: the `ad` terminal UI (bare `ad`, `ad tui`) needs Node's VT console input, and everything else works without it.
 
-The engine is a separate copy of Codex in `~/.agent-daemon-src/runtime`, with its own home in `~/.agent-daemon/codex-home`. An existing Codex install and its `~/.codex` are left alone.
+The engine is a separate copy in `~/.agent-daemon-src/runtime`, with its own home in `~/.agent-daemon/engine`. An existing install of the engine and its `~/.codex` are left alone.
 
 ```bash
 # macOS / Linux / Git-Bash
@@ -19,7 +19,7 @@ irm https://raw.githubusercontent.com/pankaj-mahaur/Agent-Daemon/main/install.ps
 - **Pin a release:** set `AD_VERSION` (e.g. `AD_VERSION=v1.0.0` for the Claude Code–only v1). Re-run without it to move back to `main`.
 - **From a clone instead:** `cd runtime && npm install --omit=dev && npm link --omit=dev` (contributors drop `--omit=dev` to get the test tools).
 - **Then, per project:** `ad init`.
-- **To let ad run the agent:** type `ad` in the project. The terminal UI opens and asks you to sign in on the first run. For `ad chat`, `ad run`, `ad loop` and the other harness commands, sign in first with `ad auth login chatgpt` (or `openai` / `openrouter --model <slug>`). See [harness.md](harness.md) and [tui.md](tui.md).
+- **To let ad run the agent:** type `ad` in the project. The terminal UI opens and asks you to sign in on the first run. For `ad chat`, `ad run`, `ad loop` and the other harness commands, sign in first with `ad auth login openai` (or `openrouter --model <slug>` / `chatgpt`). The ChatGPT sign-in opens the vendor's page, which may name the engine: that is what ad runs on. See [harness.md](harness.md) and [tui.md](tui.md).
 
 ## Skills only (no `ad` command)
 

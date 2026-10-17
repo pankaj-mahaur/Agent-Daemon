@@ -1,7 +1,8 @@
 // Resilience (plan Part 7): the fake server speaks the pinned protocol; a
-// synthetic newer Codex doesn't break ad; slash names don't collide with
-// Codex's; compat.json tracks the pin.
+// synthetic newer engine doesn't break ad; slash names don't collide with
+// the engine's; compat.json tracks the pin.
 
+import { ENGINE } from "../src/engine/attribution.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -18,7 +19,7 @@ import { checkMessage } from "../testkit/protocol-check.mjs";
 
 const FAKE = fileURLToPath(new URL("../testkit/fake-codex-app-server.mjs", import.meta.url));
 const command = { cmd: process.execPath, prefix: [FAKE] };
-const CODEX_SLASH = JSON.parse(readFileSync(new URL("../src/tui/codex-slash.json", import.meta.url), "utf8"));
+const CODEX_SLASH = JSON.parse(readFileSync(new URL("../src/engine/codex/upstream-commands.json", import.meta.url), "utf8"));
 const PKG = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 const until = async (pred, what, ms = 10000) => {
   const end = Date.now() + ms;
@@ -42,11 +43,11 @@ async function withEngine(fn) {
   }
 }
 
-test("the fake server only sends what the pinned Codex could (required fields, enums, variants)", async () => {
+test("the fake server only sends what the pinned engine could (required fields, enums, variants)", async () => {
   await withEngine(async ({ engine, session }) => {
     const problems = [];
-    engine.server.on("notification", (m) => problems.push(...checkMessage(m)));
-    engine.server.on("server-request", (m) => problems.push(...checkMessage(m, { kind: "request" })));
+    engine.onRawNotification((m) => problems.push(...checkMessage(m)));
+    engine.onRawServerRequest((m) => problems.push(...checkMessage(m, { kind: "request" })));
     const answer = () => {
       for (const r of session.state.requests) {
         const req = r.request;
@@ -69,7 +70,7 @@ test("the fake server only sends what the pinned Codex could (required fields, e
   });
 });
 
-test("a synthetic newer Codex: unknown methods, items, fields, enum values and requests don't break ad", async () => {
+test("a synthetic newer engine: unknown methods, items, fields, enum values and requests don't break ad", async () => {
   await withEngine(async ({ engine, session }) => {
     const r = session.submit("future");
     const done = await r.done;
@@ -89,22 +90,22 @@ test("a synthetic newer Codex: unknown methods, items, fields, enum values and r
   });
 });
 
-test("slash names: ad's own never collide with Codex's; mirrored ones stay Codex's", () => {
+test("slash names: ad's own never collide with the engine's; mirrored ones stay the engine's", () => {
   assert.deepEqual(slashCollisions(SLASH_COMMANDS, CODEX_SLASH.names), []);
-  // A Codex release that adds /remember would fail here, in the upgrade PR.
-  assert.deepEqual(slashCollisions(SLASH_COMMANDS, [...CODEX_SLASH.names, "remember"]), ["/remember is ad's own but Codex now has it too"]);
-  assert.deepEqual(slashCollisions(SLASH_COMMANDS, CODEX_SLASH.names.filter((n) => n !== "diff")), ["/diff mirrors Codex but Codex no longer has it"]);
-  assert.equal(CODEX_SLASH.tag, `rust-v${PKG.dependencies["@openai/codex"]}`, "regenerate codex-slash.json for the pinned Codex");
+  // An engine release that adds /remember would fail here, in the upgrade PR.
+  assert.deepEqual(slashCollisions(SLASH_COMMANDS, [...CODEX_SLASH.names, "remember"]), ["/remember is ad's own but the engine's own UI now has it too"]);
+  assert.deepEqual(slashCollisions(SLASH_COMMANDS, CODEX_SLASH.names.filter((n) => n !== "diff")), ["/diff mirrors the engine's own UI, which no longer has it"]);
+  assert.equal(CODEX_SLASH.tag, `rust-v${PKG.dependencies["@openai/codex"]}`, "regenerate upstream-commands.json for the pinned engine");
 });
 
-test("every Codex command has a decision in ad: it runs, or ad says why not (never sent to the model)", () => {
-  const mirrored = new Set(SLASH_COMMANDS.filter((c) => c.source === "codex").map((c) => c.name));
+test("every engine command has a decision in ad: it runs, or ad says why not (never sent to the model)", () => {
+  const mirrored = new Set(SLASH_COMMANDS.filter((c) => c.source === "upstream").map((c) => c.name));
   for (const c of CODEX_SLASH.commands) {
     const decided = mirrored.has(c.name) + (c.name in NOT_IN_AD);
     assert.equal(decided, 1, `/${c.name}: ${decided ? "both run and answered" : "no decision (run it, or add it to NOT_IN_AD)"}`);
   }
   const codexNames = new Set(CODEX_SLASH.commands.map((c) => c.name));
-  for (const k of Object.keys(NOT_IN_AD)) assert.ok(codexNames.has(k), `NOT_IN_AD has /${k}, which isn't a Codex command`);
+  for (const k of Object.keys(NOT_IN_AD)) assert.ok(codexNames.has(k), `NOT_IN_AD has /${k}, which isn't an engine command`);
   for (const c of CODEX_SLASH.commands) {
     for (const n of [c.name, ...c.aliases]) {
       const said = notInAd(n);
@@ -112,13 +113,13 @@ test("every Codex command has a decision in ad: it runs, or ad says why not (nev
       else assert.ok(said && said.length > 10, `/${n} has an answer`);
     }
   }
-  assert.equal(notInAd("import"), "/import isn't in ad yet. /codex opens the stock Codex UI on this conversation.");
+  assert.equal(notInAd("import"), "/import isn't planned for ad.");
   for (const n of ["recap", "subagents", "agents", "approve", "setup-default-sandbox", "mention", "debug-config", "rollout"]) assert.equal(notInAd(n), null, `ad runs /${n} (Part 10)`);
   assert.equal(notInAd("plan"), null, "ad runs /plan (Part 4)");
   assert.equal(notInAd("clean"), null, "ad runs /stop, and its alias /clean (Part 5)");
   assert.equal(notInAd("pet"), notInAd("pets"), "an alias answers as its command does");
   assert.equal(notInAd("btw"), null, "ad runs /side, and its alias /btw (Part 7)");
-  assert.equal(notInAd("remember"), null, "ad's own commands aren't Codex's");
+  assert.equal(notInAd("remember"), null, "ad's own commands aren't engine's");
 });
 
 test("parseSlashMeta: descriptions, inline args, busy rules, side allowlist, visibility, popup", () => {
@@ -213,7 +214,7 @@ test("parseSlashCommands: kebab-case names and strum renames", () => {
   assert.deepEqual(parseSlashCommands(many).map((c) => c.names), [["model"], ["debug-config"], ["setup-default-sandbox"], ["pwd", "cwd"], ["quit"], ["aa"], ["bb"], ["cc"], ["dd"], ["ee"], ["ff"]]);
 });
 
-test("compat.json tracks the pinned Codex and says what changed", () => {
+test("compat.json tracks the pinned engine and says what changed", () => {
   const c = codexCompat();
   const pinned = PKG.dependencies["@openai/codex"];
   assert.equal(c.pinned, pinned);
@@ -228,20 +229,20 @@ test("the protocol check itself catches missing fields, bad enums, unknown varia
   assert.ok(bad.some((p) => /"paused" is not one of/.test(p)), bad.join("\n"));
   const item = checkMessage({ method: "item/completed", params: { threadId: "t", turnId: "u", completedAtMs: 0, item: { type: "hologram", id: "x" } } });
   assert.ok(item.some((p) => /unknown variant "hologram"/.test(p)), item.join("\n"));
-  assert.deepEqual(checkMessage({ method: "thread/hologram/updated", params: {} }), ["thread/hologram/updated: not a notification the pinned Codex sends"]);
-  assert.deepEqual(checkMessage({ method: "item/teleport/requestApproval", params: {} }, { kind: "request" }), ["item/teleport/requestApproval: not a request the pinned Codex sends"]);
+  assert.deepEqual(checkMessage({ method: "thread/hologram/updated", params: {} }), [`thread/hologram/updated: not a notification the pinned ${ENGINE.name} sends`]);
+  assert.deepEqual(checkMessage({ method: "item/teleport/requestApproval", params: {} }, { kind: "request" }), [`item/teleport/requestApproval: not a request the pinned ${ENGINE.name} sends`]);
 });
 
-test("docs/codex-parity.md lists every Codex command, and says 'yes' exactly for the ones ad runs", () => {
-  const doc = readFileSync(new URL("../../docs/codex-parity.md", import.meta.url), "utf8");
+test("docs/commands.md lists every engine command, and says 'yes' exactly for the ones ad runs", () => {
+  const doc = readFileSync(new URL("../../docs/commands.md", import.meta.url), "utf8");
   const rows = new Map();
   for (const line of doc.split(/\r?\n/)) {
     const m = /^\| (`\/[^|]+) \| (yes|no|not yet) \|/.exec(line);
     if (m) for (const n of m[1].match(/\/[\w-]+/g)) rows.set(n.slice(1), m[2]);
   }
-  const runs = new Set(SLASH_COMMANDS.filter((c) => c.source === "codex").map((c) => c.name));
+  const runs = new Set(SLASH_COMMANDS.filter((c) => c.source === "upstream").map((c) => c.name));
   for (const c of CODEX_SLASH.commands) {
-    for (const n of [c.name, ...c.aliases]) assert.ok(rows.has(n), `docs/codex-parity.md has no row for /${n}`);
+    for (const n of [c.name, ...c.aliases]) assert.ok(rows.has(n), `docs/commands.md has no row for /${n}`);
     assert.equal(rows.get(c.name) === "yes", runs.has(c.name), `/${c.name}: the doc says "${rows.get(c.name)}"`);
   }
 });

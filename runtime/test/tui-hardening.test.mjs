@@ -12,7 +12,7 @@ import { createApp } from "../src/tui/app.mjs";
 import { copyText } from "../src/tui/commands.mjs";
 import { createMarkdownStream, inline, renderMarkdown } from "../src/tui/view/markdown.mjs";
 import { diffRows } from "../src/tui/view/cells.mjs";
-import { syncSkills } from "../src/harness/codex-ui.mjs";
+import { syncSkills } from "../src/engine/codex/stock-ui.mjs";
 import { createRenderer } from "../src/tui/terminal/renderer.mjs";
 import { createInputDecoder } from "../src/tui/terminal/input.mjs";
 import { modelScreen } from "../testkit/screen.mjs";
@@ -116,7 +116,7 @@ function stub(state = {}, { models = [] } = {}) {
   return {
     state: st,
     calls,
-    engine: { server: { request: async (m) => (m === "model/list" ? { data: models } : {}) } },
+    engine: { models: { list: async () => models } },
     on: (ev, fn) => (ev === "change" && listeners.add(fn), () => listeners.delete(fn)),
     emit: (what) => listeners.forEach((f) => f({ what, state: st })),
     submit: (text) => (calls.push(["submit", text]), { clientUserMessageId: "c", accepted: Promise.resolve({ turnId: "u" }), done: Promise.resolve({}) }),
@@ -148,7 +148,7 @@ async function withStub(session, fn, { actions = {}, cwd = "/x" } = {}) {
   }
 }
 
-test("a running ! command (no turn) stays live while Codex is up; a resumed turn still 'inProgress' in history doesn't wedge", async () => {
+test("a running ! command (no turn) stays live while the engine is up; a resumed turn still 'inProgress' in history doesn't wedge", async () => {
   const s = stub({ turns: [{ id: "old", status: "inProgress", itemIds: ["h1"] }] });
   s.state.items.set("h1", { id: "h1", kind: "agentMessage", text: "half an answer", streaming: true, turnId: "old", threadId: "t" });
   s.state.items.set("sh", { id: "sh", kind: "commandExecution", command: "make test", status: "inProgress", source: "userShell", actions: [], turnId: null, threadId: "t" });

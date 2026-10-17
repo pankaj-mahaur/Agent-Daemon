@@ -122,11 +122,11 @@ Background terminals
     □ Fix timers
     □ Run the suite
 ── notices ──
-• Codex restarted; the conversation
+• The engine restarted; the conversation
   continues.
 ⚠ Usage at 85%
-■ Codex stopped (exit 3). Your text is
-  kept.
+■ The engine stopped (exit 3). Your text
+  is kept.
 ── ad rows ──
 • Recalled 3 learnings: "login.spec use…
 • Skill suggested: debug-triage

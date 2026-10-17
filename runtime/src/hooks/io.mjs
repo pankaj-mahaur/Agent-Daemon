@@ -7,23 +7,25 @@
 //   { decision: "block",  reason: "..." }   — block with a message shown to the model
 //   {}                                       — pass-through (default allow)
 //
-// Hosts: handlers are shared between Claude Code and Codex. With
-// AD_HOOK_HOST=codex (set by `ad hook … --host codex`) input and output are
-// adapted, because Codex differs in ways that silently break hooks:
-//   - `{decision:"approve"}` is an unsupported field → Codex marks the hook failed
+// Hosts: handlers are shared between Claude Code and ad's engine. With
+// AD_HOOK_HOST=ad (set by `ad hook … --host ad`; the old value is still
+// read) input and output are adapted, because the engine differs in ways
+// that silently break hooks:
+//   - `{decision:"approve"}` is an unsupported field → the engine marks the hook failed
 //   - context must be wrapped in hookSpecificOutput (top-level additionalContext is ignored)
 //   - PreToolUse denies via hookSpecificOutput.permissionDecision
 //   - apply_patch sends the patch text as tool_input.command, not a file_path
 
 import path from "node:path";
+import { productValue } from "../product-values.mjs";
 
 const MAX_STDIN = 1024 * 1024; // 1 MB safety cap
 
 let lastEvent = null;
 
-export const hookHost = () => (process.env.AD_HOOK_HOST === "codex" ? "codex" : "claude");
+export const hookHost = () => (productValue(process.env.AD_HOOK_HOST) === "ad" ? "ad" : "claude");
 
-// Paths touched by a Codex apply_patch body ("*** Update File: x", …),
+// Paths touched by an apply_patch body ("*** Update File: x", …),
 // resolved against cwd — or as written when resolve is false.
 export function patchPaths(patch, cwd = process.cwd(), { resolve = true } = {}) {
   const paths = [];
@@ -35,8 +37,8 @@ export function patchPaths(patch, cwd = process.cwd(), { resolve = true } = {}) 
   return paths;
 }
 
-// Codex hook input → the Claude Code shape our handlers read.
-export function normalizeCodexInput(input) {
+// The engine's hook input → the Claude Code shape our handlers read.
+export function normalizeEngineInput(input) {
   if (!input || typeof input !== "object") return {};
   const out = { ...input };
   if (input.tool_name === "apply_patch") {
@@ -64,12 +66,13 @@ export async function readStdinJson() {
     process.stdin.on("error", () => resolve({}));
   });
   lastEvent = input?.hook_event_name ?? null;
-  return hookHost() === "codex" ? normalizeCodexInput(input) : input;
+  return hookHost() === "ad" ? normalizeEngineInput(input) : input;
 }
 
 // The output a decision takes for the current host/event. Exported for tests.
 export function renderDecision(kind, value, { host = hookHost(), event = lastEvent } = {}) {
-  if (host !== "codex") {
+  host = productValue(host);
+  if (host !== "ad") {
     if (kind === "approve") return { decision: "approve" };
     if (kind === "block") return { decision: "block", reason: value };
     if (kind === "advise") return { additionalContext: value };

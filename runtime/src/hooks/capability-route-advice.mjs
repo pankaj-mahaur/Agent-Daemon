@@ -132,7 +132,7 @@ export async function capabilityRouteAdvice() {
     const sessionId = String(input.session_id || "");
 
     if (!prompt) { passthrough(); return 0; }
-    // A prompt the client wrote (Codex's plan hand-off): no advice, nothing recorded.
+    // A prompt the client wrote (the engine's plan hand-off): no advice, nothing recorded.
     if (isGeneratedPrompt(prompt)) { passthrough(); return 0; }
 
     // Respect explicit capability constraints.

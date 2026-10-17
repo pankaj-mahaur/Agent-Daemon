@@ -1,8 +1,8 @@
 ── header ──
 ╭────────────────────────────────────╮
-│ >_ Agent Daemon (v2.1.0) · on Cod… │
+│ >_ Agent Daemon (v2.1.0)           │
 │                                    │
-│ model:     gpt-5.x-codex medium ·… │
+│ model:     gpt-5.x medium · ChatG… │
 │ directory: D:\Program Files\work\… │
 │ memory:    142 learnings…  /memory │
 │ sandbox:   workspace-write · asks… │

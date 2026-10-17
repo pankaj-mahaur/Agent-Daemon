@@ -1,9 +1,11 @@
-// `ad run "<prompt>"` — one non-interactive agent turn on the Codex engine.
+// `ad run "<prompt>"` — one non-interactive agent turn on ad's engine.
 //
 // Nobody is at the keyboard, so every approval request is declined (and
 // reported on stderr). Streamed agent text goes to stdout; activity
 // (commands, file edits, errors) goes to stderr so stdout stays pipeable.
 
+import { engineError } from "../engine/index.mjs";
+import { cliErrorLines } from "./io.mjs";
 import { NOT_LOGGED_IN, startHarnessEngine } from "./start.mjs";
 
 export { NOT_LOGGED_IN };
@@ -69,18 +71,19 @@ export async function cmdRun(prompt, opts = {}) {
         } else if (evt.type === "itemStarted") {
           const line = describeItem(evt.item);
           if (line) err.write(`\n${line}\n`);
-        } else if (evt.type === "error") err.write(`\n[error] ${evt.message}\n`);
+        } else if (evt.type === "error") err.write(cliErrorLines("run", engineError(-32000, evt.message, { raw: evt.message })));
       },
     });
     if (opts.json) out.write(JSON.stringify({ threadId, turnId: r.turnId, status: r.status, output: r.output, error: r.error }) + "\n");
     else out.write("\n");
     if (r.status !== "completed") {
-      err.write(`[turn ${r.status}${r.error?.message ? `: ${r.error.message}` : ""}]\n`);
+      err.write(`[turn ${r.status}]\n`);
+      if (r.error?.message) err.write(cliErrorLines("run", engineError(-32000, r.error.message, { raw: r.error.message })));
       return 1;
     }
     return 0;
   } catch (e) {
-    err.write(`ad run: ${e.message}\n`);
+    err.write(cliErrorLines("run", e));
     return 1;
   } finally {
     await engine?.close();

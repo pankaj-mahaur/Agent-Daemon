@@ -43,6 +43,10 @@ jobs:
       - name: Lint skills
         run: node runtime/scripts/lint-skills.mjs
 
+      - name: Brand lint
+        run: node runtime/scripts/check-brand.mjs --strict --tracked
+        # The engine's name stays in its allowed zone (runtime/scripts/brand-allowlist.json; docs/testing.md).
+
       - name: Smoke `ad doctor`
         run: node runtime/src/cli.mjs doctor || true
         # Doctor reports missing optional things (e.g. claude CLI on CI) — that's
@@ -71,7 +75,7 @@ jobs:
           "
 
   engine-real:
-    # The real pinned Codex binary against a mock model (runtime/testkit/mock-responses.mjs).
+    # The real pinned engine binary against a mock model (runtime/testkit/mock-responses.mjs).
     # continue-on-error while each platform's sandbox behaviour is being learned (docs/testing.md).
     name: real engine / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -98,13 +102,13 @@ jobs:
         run: npm ci
 
       # Ubuntu 24.04 runners block unprivileged user namespaces through AppArmor,
-      # which Codex's bubblewrap sandbox needs (docs/testing.md). Runner VMs are throwaway.
+      # which the engine's bubblewrap sandbox needs (docs/testing.md). Runner VMs are throwaway.
       - name: Allow user namespaces for the Linux sandbox
         if: runner.os == 'Linux'
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       # engine-real: the protocol; tui-live: the FC3 script, the real ad tui in a pty.
-      - name: Real Codex vs mock model
+      - name: Real engine vs mock model
         working-directory: runtime
         env:
           AD_REAL_ENGINE: "1"

@@ -519,13 +519,13 @@ const WORDS = ["alpha", "beta", "\u{65e5}\u{672c}", "\u{1f44d}", "gamma-delta", 
 // general run allows long lines and height shrinks, where a terminal may push
 // live rows into scrollback (ghost rows, plan 1c): history must still be
 // intact and in order, and the last lines must be exactly the last frame.
-async function randomSession(make, reflow, seed, exact) {
+async function randomSession(make, reflow, seed, exact, pinBottom = false) {
   const random = rng(seed);
   const minCols = 14;
   let cols = 30 + Math.floor(random() * 30);
   let rows = 4 + Math.floor(random() * 8);
   const scr = make({ cols, rows });
-  const r = createRenderer({ io: scr.io, reflow, resizeSource: scr.resizeSource });
+  const r = createRenderer({ io: scr.io, reflow, pinBottom, resizeSource: scr.resizeSource });
   scr.feed("$ ad\r\n");
   await scr.settle();
   await r.start();
@@ -574,8 +574,9 @@ async function randomSession(make, reflow, seed, exact) {
   await new Promise((res) => setTimeout(res, 100));
   await scr.settle();
   const live = frame.slice(-Math.max(1, rows - 1)).map((l) => cut(l, cols));
+  const lastLiveBlank = !live.length || live.at(-1) === "";
   while (live.length && live.at(-1) === "") live.pop();
-  const result = { lines: scr.lines(), visible: scr.visible(), history, live, cols, rows, narrowed };
+  const result = { lines: scr.lines(), visible: scr.visible(), history, live, cols, rows, narrowed, lastLiveBlank };
   r.dispose();
   return result;
 }
@@ -615,7 +616,7 @@ test("plain helper sanity", () => {
 });
 
 /* ------------------------------------------------------------------ */
-/* clear(): /clear, the one sanctioned wipe (codex-parity-2 Part 2)    */
+/* clear(): /clear, the one sanctioned wipe (terminal UI plan Part 2)    */
 /* ------------------------------------------------------------------ */
 
 for (const [name, make, reflow] of SCREENS) {
@@ -631,7 +632,7 @@ for (const [name, make, reflow] of SCREENS) {
     r.commit(["new history"]);
     await scr.settle();
     assert.deepEqual(scr.lines(), ["HEADER", "new history", "> composer", "  footer"]);
-    // Codex's own bytes.
+    // the engine's own bytes.
     assert.ok(scr.writes.some((w) => w.includes("\x1b[r\x1b[0m\x1b[H\x1b[2J\x1b[3J\x1b[H")));
   });
 
@@ -681,3 +682,161 @@ test("clear() does nothing before start, while suspended, or after dispose", asy
   assert.equal(r.clear(["H"]), false, "disposed");
   assert.ok(!scr.writes.some((w) => w.includes("\x1b[3J")));
 });
+
+/* ------------------------------------------------------------------ */
+/* pinBottom: the live region on the screen's last rows                */
+/* ------------------------------------------------------------------ */
+
+const pinned = (make, reflow, opts = {}) => setup(make, reflow, { ...opts, renderer: { pinBottom: true, ...opts.renderer } });
+const hist = (from, to) => Array.from({ length: to - from + 1 }, (_, i) => `h${from + i}`);
+
+for (const [name, make, reflow] of SCREENS) {
+  test(`${name}: pinBottom: the live region starts on the last rows; history fills from the top, then scrolls`, async () => {
+    const { scr, r } = await pinned(make, reflow);
+    r.frame({ lines: ["> composer", "  footer"], cursor: { row: 0, col: 2 } });
+    await scr.settle();
+    let v = scr.visible();
+    assert.equal(v.length, 10, "down to the last row");
+    assert.deepEqual(v.slice(-2), ["> composer", "  footer"]);
+    assert.deepEqual(v.slice(1, 8), ["", "", "", "", "", "", ""], "free rows between the shell and the live region");
+    r.commit(["h1", "h2"]);
+    await scr.settle();
+    v = scr.visible();
+    assert.deepEqual(v.slice(0, 3), ["$ ad", "h1", "h2"], "history right after what was there");
+    assert.deepEqual(v.slice(-2), ["> composer", "  footer"]);
+    assert.equal(v.length, 10);
+    r.commit(hist(3, 14));
+    await scr.settle();
+    assert.deepEqual(scr.lines(), ["$ ad", ...hist(1, 14), "> composer", "  footer"], "no blank row anywhere once the screen is full");
+    assert.deepEqual(scr.visible().slice(-2), ["> composer", "  footer"]);
+    const c = scr.cursor();
+    assert.equal(scr.lines()[c.row], "> composer");
+    assert.equal(c.col, 2);
+  });
+
+  test(`${name}: pinBottom: a shorter live region moves down, and the freed rows take the next history first`, async () => {
+    const { scr, r } = await pinned(make, reflow);
+    r.frame({ lines: ["a", "b", "c", "d"] });
+    r.commit(hist(1, 12));
+    await scr.settle();
+    r.frame({ lines: ["> one row"] });
+    await scr.settle();
+    let v = scr.visible();
+    assert.equal(v.length, 10);
+    assert.equal(v.at(-1), "> one row");
+    assert.deepEqual(v.slice(-4, -1), ["", "", ""], "three freed rows");
+    r.commit(["h13"]);
+    await scr.settle();
+    v = scr.visible();
+    assert.deepEqual(v.slice(-4), ["h13", "", "", "> one row"], "written into the first freed row");
+    r.frame({ lines: ["x", "y", "z"] });
+    await scr.settle();
+    assert.deepEqual(scr.visible().slice(-4), ["h13", "x", "y", "z"], "a taller one takes the freed rows back");
+    r.commit(hist(14, 16));
+    await scr.settle();
+    assert.deepEqual(scr.lines(), ["$ ad", ...hist(1, 16), "x", "y", "z"], "history stays contiguous");
+  });
+
+  test(`${name}: pinBottom: the live region at most rows − 1, and a 2-row screen still works`, async () => {
+    const { scr, r } = await pinned(make, reflow, { rows: 2, cols: 10 });
+    r.frame({ lines: ["one", "two"] });
+    r.commit(["h1", "h2"]);
+    r.frame({ lines: ["three"] });
+    await scr.settle();
+    assert.deepEqual(scr.lines(), ["$ ad", "h1", "h2", "three"]);
+    assert.equal(scr.visible().at(-1), "three");
+  });
+
+  test(`${name}: pinBottom: resizes keep the live region on the last rows and every history line`, async () => {
+    const { scr, r } = await pinned(make, reflow);
+    r.commit(["short history"]);
+    r.frame({ lines: ["a".repeat(35), "> type here"], cursor: { row: 1, col: 11 } });
+    await scr.settle();
+    await wait(300);
+    scr.resize(40, 14); // taller
+    await wait(120);
+    await scr.settle();
+    let v = scr.visible();
+    assert.equal(v.length, 14);
+    assert.equal(v.at(-1), "> type here");
+    r.commit(["after taller"]);
+    await scr.settle();
+    let all = scr.lines();
+    assert.equal(all.indexOf("after taller"), all.indexOf("short history") + 1, "same width: the blank rows are reused");
+    await wait(300); // a resize right after a write may leave a ghost row (accepted, see rowsAboveCursor)
+    scr.resize(20, 14); // narrower
+    await wait(120);
+    await scr.settle();
+    r.frame({ lines: ["a".repeat(15), "> type here"], cursor: { row: 1, col: 11 } });
+    await scr.settle();
+    v = scr.visible();
+    assert.equal(v.length, 14);
+    assert.equal(v.at(-1), "> type here");
+    r.commit(["after resize"]);
+    await scr.settle();
+    all = scr.lines();
+    const from = all.indexOf("after taller");
+    const to = all.indexOf("after resize");
+    assert.ok(from > all.indexOf("short history") && to > from + 1, "history kept, in order");
+    // After a width change the blank rows above the live region are never written into
+    // (a reflow could have moved history there): they stay blank between the two.
+    assert.deepEqual(all.slice(from + 1, to).filter((l) => l !== ""), []);
+    assert.equal(scr.visible().at(-1), "> type here");
+  });
+
+  test(`${name}: pinBottom: dispose and suspend start what follows right after history`, async () => {
+    const { scr, r } = await pinned(make, reflow);
+    r.frame({ lines: ["> composer", "footer"] });
+    r.commit(["before handoff"]);
+    await scr.settle();
+    r.suspend();
+    scr.feed("child output\r\n");
+    await scr.settle();
+    assert.deepEqual(scr.lines(), ["$ ad", "before handoff", "child output"], "no blank rows before the child's output");
+    await r.resume();
+    r.frame({ lines: ["> composer"] });
+    await scr.settle();
+    assert.equal(scr.visible().at(-1), "> composer", "back on the last row");
+    r.commit(["after"]);
+    await scr.settle();
+    r.dispose();
+    scr.feed("$ next\r\n");
+    await scr.settle();
+    assert.deepEqual(scr.lines(), ["$ ad", "before handoff", "child output", "after", "$ next"]);
+  });
+
+  test(`${name}: pinBottom: redraw keeps the screen; clear puts the header on top and the live region at the bottom`, async () => {
+    const { scr, r } = await pinned(make, reflow);
+    r.commit(["h"]);
+    r.frame({ lines: ["l1", "l2"], cursor: { row: 0, col: 1 } });
+    await scr.settle();
+    const before = scr.visible();
+    await r.redraw();
+    await scr.settle();
+    assert.deepEqual(scr.visible(), before);
+    assert.equal(r.clear(["header"]), true);
+    await scr.settle();
+    const v = scr.visible();
+    assert.equal(v[0], "header");
+    assert.equal(v.length, 10);
+    assert.deepEqual(v.slice(-2), ["l1", "l2"]);
+  });
+}
+
+for (const [name, make, reflow] of SCREENS) {
+  test(`${name}: pinBottom property — history intact and in order with only blank rows between, last frame on the last row`, async () => {
+    for (const exact of [true, false]) {
+      for (let round = 0; round < 12; round++) {
+        const { lines, visible, history, live, cols, rows, lastLiveBlank } = await randomSession(make, reflow, (exact ? 9000 : 13000) + round * 11 + name.length, exact, true);
+        const ctx = `${exact ? "exact" : "any resize"} round ${round} (${cols}x${rows})`;
+        assert.deepEqual(lines.slice(lines.length - live.length), live, `${ctx}: bottom is the last frame`);
+        if (!lastLiveBlank) assert.equal(visible.length, rows, `${ctx}: the last frame ends on the last row`);
+        let i = 0;
+        for (const line of lines) if (i < history.length && line === history[i]) i++;
+        assert.equal(i, history.length, `${ctx}: history line ${i} (${JSON.stringify(history[i])}) missing or out of order`);
+        // Exact runs never push live rows into scrollback: anything that isn't history or the frame is a blank row.
+        if (exact) assert.deepEqual(lines.filter((l) => l !== ""), [...history, ...live].filter((l) => l !== ""), `${ctx}: a stale row`);
+      }
+    }
+  });
+}

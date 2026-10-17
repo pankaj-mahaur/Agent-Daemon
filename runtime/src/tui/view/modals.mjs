@@ -1,5 +1,5 @@
-// Modals (plan Part 5d): what Codex asks the user, as pure state machines.
-// Each takes a PendingRequest (engine/codex/events.mjs classifyRequest) and
+// Modals (plan Part 5d): what the engine asks the user, as pure state machines.
+// Each takes a PendingRequest (the engine's classifyRequest) and
 // returns, through handle(ev), the answer session.resolve() takes.
 //
 //   createRequestModal(request, {now, armMs, diff})  → the right modal for request.kind
@@ -120,7 +120,7 @@ function createChoices(choices, { now, armMs }) {
 function execChoice(o) {
   if (o === "accept") return { label: "Yes", key: "y", value: o };
   if (o === "acceptForSession") return { label: "Yes, and don't ask again this session", key: "a", value: o };
-  if (o === "decline") return { label: "No, and tell Codex what to do instead", key: "n", value: o, safe: true };
+  if (o === "decline") return { label: "No, and say what to do instead", key: "n", value: o, safe: true };
   if (o === "cancel") return { label: "No, and stop", key: "esc", value: o, safe: true };
   if (o && typeof o === "object" && o.acceptWithExecpolicyAmendment) {
     // Tokens with spaces are quoted: ["git", "push --force"] must not read like git push --force.
@@ -137,7 +137,7 @@ function execChoice(o) {
 const PATCH = {
   accept: { label: "Yes", key: "y" },
   acceptForSession: { label: "Yes, and don't ask again for these files this session", key: "a" },
-  decline: { label: "No, and tell Codex what to do instead", key: "n", safe: true },
+  decline: { label: "No, and say what to do instead", key: "n", safe: true },
   cancel: { label: "No, and stop", key: "esc", safe: true },
 };
 const PERMS = {
@@ -392,7 +392,6 @@ function createElicitationModal(req, { now, armMs }) {
       out.push(...block(`${shown(form.server ?? "An MCP server")} asks:`, width, S.title, ""));
       out.push(...block(shown(form.message), width));
       if (form.mode === "url" && form.url) out.push(...block(`URL: ${shown(form.url)}`, width, S.cmd));
-      if (form.mode === "openaiForm") out.push(...block("This form needs the stock UI: answer it with /codex.", width, S.warn));
       if (!done) {
         const f = fields[fi];
         out.push([]);
@@ -422,7 +421,7 @@ function createElicitationModal(req, { now, armMs }) {
 /* ------------------------------------------------------------------ */
 
 /**
- * Yes or no, for a step ad takes on its own (codex-parity-2 1a: /archive,
+ * Yes or no, for a step ad takes on its own (parity 1a: /archive,
  * /delete, /stop…). "No" comes first and is focused; Esc or Ctrl+C is "no"
  * at once; either answer waits for the arm delay, like an approval, so a key
  * typed before it opened (or held down) can't answer it.
@@ -456,7 +455,7 @@ export function createConfirm({ title, body = "", yes = "Yes", no = "No" } = {},
 }
 
 /**
- * One of a few answers to a question ad asks on its own (Codex's selection
+ * One of a few answers to a question ad asks on its own (the selection
  * views: "Implement this plan?"). Numbers, arrows and Enter pick; Esc or
  * Ctrl+C is the last `safe` option at once; any other answer waits for the
  * arm delay, as an approval does.
@@ -475,7 +474,7 @@ export function createChoice({ title, body = "", options = [] } = {}, { now = ()
     },
     render({ width = 80, height = 12 } = {}) {
       const head = [truncate([{ text: oneRow(shown(title)), style: S.title }], width), ...(body ? block(shown(body), width, S.dim) : []), []];
-      // Hints beside their labels when they all fit; else each under its label, wrapped (as Codex's descriptions do).
+      // Hints beside their labels when they all fit; else each under its label, wrapped (as the descriptions do).
       const rows = options.map((o, i) => {
         const cur = i === choices.index;
         const label = [{ text: cur ? "\u{203a} " : "  ", style: S.sel }, { text: `${i + 1}. `, style: S.dim }, { text: oneRow(shown(o.label)), style: cur ? S.sel : undefined }];

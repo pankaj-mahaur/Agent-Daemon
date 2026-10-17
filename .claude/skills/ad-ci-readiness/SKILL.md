@@ -31,6 +31,7 @@ It complements `ad-pre-push`: that one syncs docs, CHANGELOG, skills, memory and
 ```bash
 cd runtime && npm test                       # npm ci only if the lockfile changed: it wipes node_modules, and the global `ad` is npm-linked here
 node runtime/scripts/lint-skills.mjs         # 0 errors; the ~22 warnings are old style notes on untouched skills
+node runtime/scripts/check-brand.mjs --strict --tracked  # no hits or stale allowlist entries
 node runtime/src/cli.mjs doctor              # non-zero is allowed; read each ✗ (see Gotchas)
 S=$(mktemp -d); node runtime/src/cli.mjs init --profile security --plan --cwd "$S"; ls -A "$S"; rm -rf "$S"   # --plan writes nothing
 node runtime/scripts/skills-diff.mjs --json  # must parse with a numeric `ours` and an array `net-new`
@@ -81,7 +82,7 @@ gh run view <id> --log-failed | grep -E "not ok [0-9]+ - " | sed 's/^.*Z //' | s
 - **Codex pin:**
   - `@openai/codex` must be exact in `package.json`.
   - `node runtime/scripts/codex-schema-snapshot.mjs --check` must say up to date.
-  - `node runtime/scripts/codex-slash.mjs` regenerates `codex-slash.json` from the pinned tag over `gh`. `git status` must stay clean.
+  - `node runtime/scripts/codex-slash.mjs` regenerates `runtime/src/engine/codex/upstream-commands.json` from the pinned tag over `gh`. `git status` must stay clean.
 - **Dependencies:** `npm audit --omit=dev` shows 0 vulnerabilities; `npm ls --omit=dev --depth=0` is clean.
 - **The release diff** (`git diff origin/main...HEAD`):
   - no `console.log(`, `debugger;`, `TODO` or `FIXME` added in `runtime/src`;

@@ -1,9 +1,10 @@
 // Tests for `ad auth` (harness/auth.mjs) + providers (auth/providers.mjs),
 // against the fake app-server with an in-memory config and a file secret
-// store in a temp dir. Properties: logins go through Codex, provider keys
-// reach the Codex process as env (never config), no secret is printed, and
+// store in a temp dir. Properties: logins go through the engine, provider keys
+// reach the engine process as env (never config), no secret is printed, and
 // a CODEX_HOME not created by ad is never modified without --force.
 
+import { ENGINE } from "../src/engine/attribution.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -59,7 +60,8 @@ test("login chatgpt opens the browser and waits for completion", async () => {
     const r = await t.auth("login", ["chatgpt"], { openBrowser: async (url) => (opened.push(url), true), env: { FAKE_LOGGED_OUT: "1" } });
     assert.equal(r.code, 0, r.err);
     assert.deepEqual(opened, ["https://auth.example/authorize?x=1&y=2"]);
-    assert.match(r.out, /Opened your browser/);
+    assert.match(r.out, /Opening your browser to sign in with ChatGPT/);
+    assert.match(r.out, /If nothing appeared, open this URL to sign in:\nhttps:\/\/auth\.example/);
     assert.match(r.out, /logged in: ChatGPT pro plan/);
   } finally {
     t.cleanup();
@@ -71,7 +73,19 @@ test("login chatgpt --device prints the code instead of opening a browser", asyn
   try {
     const r = await t.auth("login", ["chatgpt"], { device: true, openBrowser: async () => assert.fail("must not open a browser") });
     assert.equal(r.code, 0, r.err);
-    assert.match(r.out, /https:\/\/auth\.example\/device and enter code: ABCD-1234/);
+    assert.match(r.out, /Go to https:\/\/auth\.example\/device and enter ABCD-1234\./);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("the sign-in note is ChatGPT-only: openai and openrouter say nothing about the engine", async () => {
+  const t = setup();
+  try {
+    const o = await t.auth("login", ["openai"], { readKey: async () => "sk-openai-test" });
+    assert.doesNotMatch(o.out, new RegExp(`may say '${ENGINE.name}'`));
+    const r = await t.auth("login", ["openrouter"], { model: "anthropic/some-model", readKey: async () => KEY });
+    assert.doesNotMatch(r.out, new RegExp(`may say '${ENGINE.name}'`));
   } finally {
     t.cleanup();
   }
@@ -82,13 +96,13 @@ test("a failed ChatGPT sign-in exits 1 with the reason", async () => {
   try {
     const r = await t.auth("login", ["chatgpt"], { openBrowser: async () => true, env: { FAKE_LOGIN_FAIL: "1" } });
     assert.equal(r.code, 1);
-    assert.match(r.err, /sign-in failed: denied/);
+    assert.match(r.err, /sign-in failed\nad auth: The engine reported a problem\.\n  details: denied/);
   } finally {
     t.cleanup();
   }
 });
 
-test("login openai passes the key to Codex, not to our store or output", async () => {
+test("login openai passes the key to the engine, not to our store or output", async () => {
   const t = setup();
   try {
     const r = await t.auth("login", ["openai"], { readKey: async () => "sk-openai-test" });
@@ -112,7 +126,7 @@ test("login openrouter requires --model before asking for a key", async () => {
   }
 });
 
-test("openrouter: key → store, provider active, key reaches Codex as env; logout reverts", async () => {
+test("openrouter: key → store, provider active, key reaches the engine as env; logout reverts", async () => {
   const t = setup();
   try {
     const r = await t.auth("login", ["openrouter"], { model: "anthropic/some-model", readKey: async () => KEY });
@@ -122,7 +136,7 @@ test("openrouter: key → store, provider active, key reaches Codex as env; logo
 
     const engine = await createEngine({ home: t.home, command, env: providerEnv(t.store) });
     try {
-      const { env } = await engine.server.request("debug/state");
+      const { env } = await engine.testRequest("debug/state");
       assert.equal(env.hasOpenRouterKey, true);
     } finally {
       await engine.close();
@@ -150,7 +164,7 @@ test("use openrouter without a stored key explains how to add one", async () => 
 test("mutations are refused on a CODEX_HOME that ad did not create", async () => {
   const t = setup();
   try {
-    const foreign = join(t.root, "users-codex");
+    const foreign = join(t.root, "users-engine");
     rmSync(foreign, { recursive: true, force: true });
     await import("node:fs").then((fs) => fs.mkdirSync(foreign));
     writeFileSync(join(foreign, "auth.json"), "{}");
@@ -252,6 +266,21 @@ test("login chatgpt always prints the sign-in URL", async () => {
   try {
     const r = await t.auth("login", ["chatgpt"], { openBrowser: async () => true });
     assert.match(r.out, /https:\/\/auth\.example\/authorize\?x=1&y=2/);
+  } finally {
+    t.cleanup();
+  }
+});
+
+
+test("review: sign-in completion errors are raw only on details lines", async () => {
+  const t = setup();
+  const raw = `${ENGINE.name.toLowerCase()} sign-in failure`;
+  try {
+    const result = await t.auth("login", ["chatgpt"], { openBrowser: async () => true, env: { FAKE_LOGIN_FAIL: "1", FAKE_LOGIN_ERROR: raw } });
+    assert.equal(result.code, 1);
+    assert.match(result.err, /The engine reported a problem/);
+    assert.ok(result.err.includes(`  details: ${raw}\n`));
+    assert.ok(!result.err.split("\n").filter((line) => !line.startsWith("  details: ")).join("\n").includes(raw));
   } finally {
     t.cleanup();
   }

@@ -231,7 +231,7 @@ test("in the app: /memory, /private wraps prompts, learned rows after a turn, /l
       await until(() => app.state.modal, "the approval (the wrapped prompt is the fake's default turn)");
       type("y");
       await until(() => /Learned: login\.spec uses fake timers/.test(committed()), "the learned row");
-      const st = await engine.server.request("debug/state", {});
+      const st = await engine.testRequest("debug/state", {});
       assert.equal(st.lastParams["turn/start"].input[0].text, "<private>hello</private>");
       assert.match(committed(), /› hello {2}\(private\)/, "shown as typed, marked private");
       assert.doesNotMatch(committed(), /› <private>/);

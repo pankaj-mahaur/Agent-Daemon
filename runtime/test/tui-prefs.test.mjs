@@ -1,4 +1,4 @@
-// TUI settings (tui/prefs.mjs, codex-parity-2 1c): Codex's own in its
+// TUI settings (tui/prefs.mjs, terminal UI plan 1c): the engine's own in its
 // config.toml (through the engine), ad's own in prefs.json.
 
 import { test } from "node:test";
@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createCodexSettings, createPrefs } from "../src/tui/prefs.mjs";
+import { createEngineSettings, createPrefs } from "../src/tui/prefs.mjs";
 
 function fakeEngine(config) {
   const writes = [];
@@ -23,9 +23,9 @@ function fakeEngine(config) {
   };
 }
 
-test("Codex settings: read by key path, written through the engine, kept when a re-read fails", async () => {
+test("engine settings: read by key path, written through the engine, kept when a re-read fails", async () => {
   const eng = fakeEngine({ tui: { status_line: ["model", "current-dir"], theme: "dracula" }, plan_mode_reasoning_effort: "high" });
-  const s = createCodexSettings({ engine: () => eng });
+  const s = createEngineSettings({ engine: () => eng });
   assert.equal(s.get("tui.status_line"), undefined, "nothing before load()");
   await s.load();
   assert.deepEqual(s.get("tui.status_line"), ["model", "current-dir"]);
@@ -41,9 +41,9 @@ test("Codex settings: read by key path, written through the engine, kept when a 
   assert.equal(s.get("tui.vim_mode_default"), true, "a failed re-read keeps the last values");
 });
 
-test("Codex settings: ad never writes tui.keymap (the stock UI refuses to start on a conflict)", async () => {
+test("engine settings: ad never writes tui.keymap (the stock UI refuses to start on a conflict)", async () => {
   const eng = fakeEngine({});
-  const s = createCodexSettings({ engine: () => eng });
+  const s = createEngineSettings({ engine: () => eng });
   await assert.rejects(s.set("tui.keymap.composer.submit", "enter"), /doesn't write tui\.keymap/);
   await assert.rejects(s.set("tui.keymap", {}), /doesn't write tui\.keymap/);
   assert.deepEqual(eng.writes, []);

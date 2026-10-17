@@ -16,7 +16,8 @@ import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 import { sendMessage, createInbox } from "./inbox.mjs";
-import { commitWorktree, runCodexWorker } from "./codex-worker.mjs";
+import { productValue } from "../product-values.mjs";
+import { commitWorktree, runEngineWorker } from "./engine-worker.mjs";
 
 const MAX_CONCURRENT_AGENTS = 8;
 const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
@@ -177,14 +178,13 @@ export async function spawnAgent(opts) {
 
   activeAgents.add(agentName);
 
-  // Default worker engine is Codex (sandboxed, no approvals needed);
-  // `--engine claude` / AD_AGENT_ENGINE=claude keeps the headless claude path.
-  const engine = opts.engine ?? process.env.AD_AGENT_ENGINE ?? "codex";
-  if (engine === "codex") {
+  // Default worker: ad's own engine (sandboxed, no approvals needed); "claude" runs headless Claude Code.
+  const engine = productValue(opts.engine ?? process.env.AD_AGENT_ENGINE ?? "ad");
+  if (engine === "ad") {
     let r;
     try {
       await updateAgentStatus(opts.teamId, agentName, "running", null, process.pid);
-      r = await (opts.runWorker ?? runCodexWorker)({
+      r = await (opts.runWorker ?? runEngineWorker)({
         worktreePath,
         systemPrompt,
         userMessage,
@@ -192,7 +192,7 @@ export async function spawnAgent(opts) {
         timeoutMs,
         engineOpts: opts.engineOpts,
       });
-      // The worker can't touch .git (see codex-worker.mjs); commit its work
+      // The worker can't touch .git (see engine-worker.mjs); commit its work
       // here, outside the sandbox, on its own branch.
       if (r.ok && opts.worktree !== false) {
         try {
@@ -222,7 +222,7 @@ export async function spawnAgent(opts) {
   if (engine !== "claude") {
     activeAgents.delete(agentName);
     await updateAgentStatus(opts.teamId, agentName, "error", `unknown engine ${engine}`);
-    return { ok: false, agentName, error: `unknown engine "${engine}" (use codex or claude)` };
+    return { ok: false, agentName, error: `unknown engine "${engine}" (use ad or claude)` };
   }
 
   return new Promise((resolve) => {

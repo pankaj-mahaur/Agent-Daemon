@@ -33,11 +33,11 @@ runtime/src/cli.mjs              ← Launcher: routes the terminal UI and `ad co
 runtime/src/cli-full.mjs         ← Help text + command dispatcher
 runtime/src/digest/digest.mjs    ← Pipeline orchestrator (read first)
 runtime/src/hooks/*.mjs          ← One file per hook handler
-runtime/src/adapters/*.mjs       ← Transcript parsers (claude-code, codex, cursor, cline)
+runtime/src/adapters/*.mjs       ← Transcript parsers, one per agent
 runtime/src/memory/episodic.mjs  ← SQLite wrapper
-runtime/src/orchestration/       ← Multi-agent team layer (Codex + claude workers)
-runtime/src/engine/codex/        ← Codex app-server driver (the harness engine)
-runtime/src/harness/             ← ad chat / run / loop / schedule / web / acp / auth / sandbox / codex, session controller, /undo checkpoints
+runtime/src/orchestration/       ← Multi-agent team layer (engine + claude workers)
+runtime/src/engine/codex/        ← The engine adapter (the harness engine)
+runtime/src/harness/             ← ad chat / run / loop / schedule / web / acp / auth / sandbox, session controller, /undo checkpoints
 runtime/src/tui/                 ← ad tui: terminal/ layer, view/ components, app, /undo wiring
 runtime/test/*.test.mjs          ← node:test suite
 
@@ -121,13 +121,13 @@ test("hello command exits 0", async () => {
 
 ## Adding a slash command to the terminal UI
 
-1. **Codex has it?** Check `runtime/src/tui/codex-slash.json` (generated from Codex's source at the pin). A Codex command keeps Codex's name and meaning: add a `source: "codex"` row to `SLASH_COMMANDS` in `runtime/src/tui/app.mjs` and remove it from `NOT_IN_AD`. Codex's "during a task" rule and popup hiding come from the generated file.
-2. **ad's own?** A `source: "ad"` row with a name Codex doesn't use (a test fails on a clash).
+1. **The engine has it?** Check `runtime/src/engine/codex/upstream-commands.json` (generated from the engine's source at the pin). An engine command keeps the engine's name and meaning: add a `source: "upstream"` row to `SLASH_COMMANDS` in `runtime/src/tui/app.mjs` and remove it from `NOT_IN_AD`. The engine's "during a task" rule and popup hiding come from the generated file.
+2. **ad's own?** A `source: "ad"` row with a name the engine doesn't use (a test fails on a clash).
 3. **A `case` in `slash()`.** Ask before anything destructive with `openConfirm`; a list of options is `openChecklist` or `openPicker`.
-4. **A key?** Make it an action in `runtime/src/tui/keymap.mjs` with Codex's action name and default keys, checked with `keymap.is(ctx, action, ev)`; name the key in `docs/tui.md` (a test checks every default key is there) and add a cell to the key routing table test if a layer is involved.
-5. **A new request to Codex?** Add the method to `SENT_METHODS` and regenerate the snapshot (see [testing.md](testing.md#the-fake-engine-speaks-the-pinned-protocol)).
+4. **A key?** Make it an action in `runtime/src/tui/keymap.mjs` with the engine's action name and default keys, checked with `keymap.is(ctx, action, ev)`; name the key in `docs/tui.md` (a test checks every default key is there) and add a cell to the key routing table test if a layer is involved.
+5. **A new request to the engine?** Add the method to `SENT_METHODS` and regenerate the snapshot (see [testing.md](testing.md#the-fake-engine-speaks-the-pinned-protocol)).
 6. **Tests:** the app flow on the fake app-server (`test/tui-app.test.mjs`), plus a live step in `test/tui-live.test.mjs` when it has a runtime effect.
-7. **Docs:** a row in `docs/tui.md` and in `docs/codex-parity.md` for a Codex command (a test checks the parity table).
+7. **Docs:** a row in `docs/tui.md` and in `docs/commands.md` for an engine command (a test checks the parity table).
 
 ## Adding a new hook
 
@@ -139,7 +139,7 @@ test("hello command exits 0", async () => {
 6. **Test it** with a subprocess test (see `runtime/test/hooks.test.mjs` for the pattern)
 7. **Document** in `hooks/README.md`
 
-Hooks in `profiles.json` are also rendered into the Codex harness (`CODEX_HOME/hooks.json`, see `runtime/src/engine/codex/hooks-config.mjs`). There the handler runs with `--host codex`, so read input and write decisions through `io.mjs`, which adapts Codex's shapes. Skill-use hooks are skipped in the harness.
+Hooks in `profiles.json` are also rendered into the engine home (`CODEX_HOME/hooks.json`, see `runtime/src/engine/codex/hooks-config.mjs`). There the handler runs with `--host ad`, so read input and write decisions through `io.mjs`, which adapts the engine's shapes. Skill-use hooks are skipped in the harness.
 
 Hook handler contract:
 
@@ -203,8 +203,8 @@ The full map of test layers, the live terminal UI tests and CI is in [testing.md
 Harness tests come in two kinds:
 
 - **Fake engine (default).** Most harness tests drive the scripted fake app-server in [`runtime/testkit/fake-codex-app-server.mjs`](../runtime/testkit/fake-codex-app-server.mjs): fast, and good for crashes and odd traffic. A test that builds `CodexAppServer` around the fake directly marks the command `source: "test-double"`.
-  - **The fake speaks the pinned protocol.** `test/tui-resilience.test.mjs` checks its messages with [`runtime/testkit/protocol-check.mjs`](../runtime/testkit/protocol-check.mjs) (required fields, enums, variants from the snapshot). A new scenario must keep passing it. The `future` scenario is the deliberate exception: a synthetic newer Codex.
-- **Real engine (opt-in).** [`runtime/test/engine-real.test.mjs`](../runtime/test/engine-real.test.mjs) runs the pinned Codex binary against [`runtime/testkit/mock-responses.mjs`](../runtime/testkit/mock-responses.mjs), a scripted stand-in for the Responses API. No login and no network are needed. It catches behaviour changes in a Codex release that a protocol snapshot can't. [`runtime/test/tui-live.test.mjs`](../runtime/test/tui-live.test.mjs) goes one step further: the real `ad tui` in a pseudo-terminal, on the real Codex and the mock model, running the manual test's terminal UI script and ad's own TUI features. CI's `engine-real` job runs both on Linux, macOS and Windows.
+  - **The fake speaks the pinned protocol.** `test/tui-resilience.test.mjs` checks its messages with [`runtime/testkit/protocol-check.mjs`](../runtime/testkit/protocol-check.mjs) (required fields, enums, variants from the snapshot). A new scenario must keep passing it. The `future` scenario is the deliberate exception: a synthetic newer engine.
+- **Real engine (opt-in).** [`runtime/test/engine-real.test.mjs`](../runtime/test/engine-real.test.mjs) runs the pinned engine binary against [`runtime/testkit/mock-responses.mjs`](../runtime/testkit/mock-responses.mjs), a scripted stand-in for the Responses API. No login and no network are needed. It catches behaviour changes in an engine release that a protocol snapshot can't. [`runtime/test/tui-live.test.mjs`](../runtime/test/tui-live.test.mjs) goes one step further: the real `ad tui` in a pseudo-terminal, on the real engine and the mock model, running the manual test's terminal UI script and ad's own TUI features. CI's `engine-real` job runs both on Linux, macOS and Windows.
 
   ```sh
   cd runtime
@@ -223,13 +223,13 @@ git diff test/golden
 
 **Width table.** `runtime/src/tui/terminal/width-table.mjs` is generated: `node runtime/scripts/gen-width-tables.mjs [version]` (pinned to Unicode 16.0.0). Bump it on purpose and re-run the width tests.
 
-**Never start the real Codex outside an isolated home.** Every spawn site builds its environment with `codexEnv()` (`runtime/src/engine/codex/home.mjs`). That refuses the user's own `~/.codex` and their `CODEX_HOME`, and drops their `CODEX_*` variables. On Windows the spawn also goes through `withoutStoreAliases()` (`runtime/src/engine/codex/app-server.mjs`), which drops every `WindowsApps` entry from PATH. A test fails when a new file resolves the Codex binary without `codexEnv()`. Tests use temp homes.
+**Never start the real engine outside an isolated home.** Every spawn site builds its environment with `codexEnv()` (`runtime/src/engine/codex/home.mjs`). That refuses the user's own `~/.codex` and their `CODEX_HOME`, and drops their `CODEX_HOME`, `CODEX_API_KEY` and similar variables. On Windows the spawn also goes through `withoutStoreAliases()` (`runtime/src/engine/codex/app-server.mjs`), which drops every `WindowsApps` entry from PATH. A test fails when a new file resolves the engine binary without `codexEnv()`. Tests use temp homes.
 
-**Bumping the Codex pin.** `test/tui-resilience.test.mjs` checks two files against the pin in `runtime/package.json`:
-- `runtime/src/tui/codex-slash.json` (Codex's slash-command names at the pinned tag; regenerate with `node runtime/scripts/codex-slash.mjs`), so ad's own commands never collide with Codex's;
+**Bumping the engine pin.** `test/tui-resilience.test.mjs` checks two files against the pin in `runtime/package.json`:
+- `runtime/src/engine/codex/upstream-commands.json` (the engine's slash-command names at the pinned tag; regenerate with `node runtime/scripts/codex-slash.mjs`), so ad's own commands never collide with the engine's;
 - `runtime/src/engine/codex/compat.json`, which must list the pin as tested, with a user-facing "what changed" note. `AD_COMPAT_NOTE_PENDING=1` lets the upgrade bot's run pass until a person writes it.
 
-CI has no real login and no working Windows sandbox. Before merging an engine bump, run the live `ad run` and `ad tui` smokes on Windows in a scratch directory; the [`codex-upgrade`](../skills/daemon/codex-upgrade/SKILL.md) skill has the steps.
+CI has no real login and no working Windows sandbox. Before merging an engine bump, run the live `ad run` and `ad tui` smokes on Windows in a scratch directory; the [`engine-upgrade`](../skills/daemon/engine-upgrade/SKILL.md) skill has the steps.
 
 ---
 
@@ -263,7 +263,7 @@ Body should explain **why**, not what. The diff shows what.
 - Name your branch `feat/<thing>` or `fix/<thing>`
 - Open PRs early as drafts if you want feedback
 - Squash-merge into `main` (we prefer linear history)
-- Every PR to `main` must pass CI: `npm test` + the skill linter on Ubuntu / macOS / Windows × Node 22. The `engine-real` job (real Codex vs a mock model, plus the live terminal UI tests) runs alongside; it is non-blocking (`continue-on-error`) while each platform's sandbox behaviour is being recorded, so read its result.
+- Every PR to `main` must pass CI: `npm test` + the skill linter + the brand lint (report mode, see [testing](./testing.md#the-brand-lint)) on Ubuntu / macOS / Windows × Node 22. The `engine-real` job (real engine vs a mock model, plus the live terminal UI tests) runs alongside; it is non-blocking (`continue-on-error`) while each platform's sandbox behaviour is being recorded, so read its result.
 - Before pushing, check the doc links: `node runtime/scripts/check-doc-links.mjs` (every relative link must point at a file git tracks, and no `## ` section appears twice).
 - Before pushing to a PR or releasing, run the CI pipeline locally too: the [`ad-ci-readiness`](../.claude/skills/ad-ci-readiness/SKILL.md) project skill mirrors it on your machine and in a Linux container, and holds the release-readiness checklist.
 

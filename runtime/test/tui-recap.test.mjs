@@ -1,5 +1,5 @@
-// /recap as Codex 0.160 does it (codex-parity-2 Part 10): the conversation it
-// reads (exchanges, labels, Codex's byte budget), the strict parse of the
+// /recap as the engine 0.160 does it (terminal UI plan Part 10): the conversation it
+// reads (exchanges, labels, the engine's byte budget), the strict parse of the
 // answer, and the cell.
 
 import { test } from "node:test";
@@ -11,7 +11,7 @@ const u = (text) => ({ role: "user", text });
 const a = (text) => ({ role: "assistant", text });
 const bytes = (s) => Buffer.byteLength(s, "utf8");
 
-test("the prompt and schema are Codex's, byte for byte (its budget comes out the same)", () => {
+test("the prompt and schema are the engine's, byte for byte (its budget comes out the same)", () => {
   assert.equal(bytes(RECAP_PROMPT_PREFIX), 1790);
   assert.equal(HISTORY_MAX_BYTES, 30978);
   assert.ok(RECAP_PROMPT_PREFIX.startsWith("Write a brief catch-up for a user returning to this task."));
@@ -60,7 +60,7 @@ test("over the budget: the oldest exchanges go first (marked); the newest is kep
   assert.ok(!/[\ud800-\udbff](?![\udc00-\udfff])/.test(emoji), "no lone surrogate");
 });
 
-test("parseRecap: Codex's strict reading of the answer", () => {
+test("parseRecap: the engine's strict reading of the answer", () => {
   assert.deepEqual(parseRecap('{"summary":"  Done.  ","next_action":"  Push? "}'), { summary: "Done.", next: "Push?" });
   assert.deepEqual(parseRecap('{"summary":"Done.","next_action":null}'), { summary: "Done.", next: null });
   assert.deepEqual(parseRecap('{"summary":"Done.","next_action":"   "}'), { summary: "Done.", next: null }, "blank next: none");
