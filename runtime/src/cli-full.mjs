@@ -2009,9 +2009,16 @@ async function cmdSpawn(opts) {
     console.error("agent-daemon spawn: --task is required");
     return 1;
   }
-  if (opts.role.length > 64 || /[\/\\:*?"<>|]/.test(opts.role)) {
-    console.error("agent-daemon spawn: --role contains invalid characters or is too long");
-    return 1;
+  {
+    const { checkModel, checkName } = await import("./safe-spawn.mjs");
+    try {
+      checkName(opts.team, "--team");
+      checkName(opts.role, "--role");
+      if (opts.model) checkModel(opts.model);
+    } catch (e) {
+      console.error(`agent-daemon spawn: ${e.message}`);
+      return 1;
+    }
   }
 
   const { loadTeam, listTasks } = await import("./orchestration/team.mjs");

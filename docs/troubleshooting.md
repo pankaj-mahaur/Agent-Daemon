@@ -642,6 +642,28 @@ For "The engine reported a problem", inspect those details first. `ad doctor` sh
 
 **Fix:** connect or unlock the drive and start ad again. If that folder is gone for good, or the link points at your old profile, remove the link (`rmdir codex-home` in `~/.agent-daemon` on Windows, `rm codex-home` elsewhere; this removes only the link). The next start makes the link again, or a new folder if there is none.
 
+## 41. `ad sp`: a name "can only use letters, digits, ".", "_" and "-""
+
+**Symptom:** `agent-daemon spawn: --role "dev ops" can only use letters, digits, ".", "_" and "-" (max 64).` (or `--team`, `agentName`), or `--model "…" isn't a model name ad can pass on.`
+
+**Cause:** the team id, role and agent name become a git branch (`team/<team>/<agent>`) and a folder name, so ad accepts only plain names: letters, digits, `.`, `_` and `-`, starting with a letter or digit, at most 64 characters, not ending in `.` or `.lock`. Model ids may also use `:`, `/`, `@` and `+`.
+
+**Fix:** rename the role in the team (for example `dev-ops`), or pass a plain `--model` id.
+
+## 42. Claude workers: `claude isn't on PATH`, or `Found claude.cmd, but ad can't tell what it runs`
+
+**Symptom:** `ad sp --engine claude` (or a digest that uses Claude Code) says `claude isn't on PATH. Install Claude Code, or set AD_CLAUDE_BIN to its path.`, or `Found …\claude.cmd, but ad can't tell what it runs without a shell. …`
+
+**Cause:** ad starts Claude Code without a shell and, on Windows, only by its full path from PATH (never from the current folder). An npm-installed `claude.cmd` is read to find the `cli.js` it runs; a `.cmd` of another shape can't be run safely without `cmd.exe`, so ad refuses it.
+
+**Fix:** install Claude Code's native build (`claude.exe`), or set `AD_CLAUDE_BIN` to the full path of `claude.exe` or of the `cli.js` your `claude.cmd` starts. `git isn't on PATH.` has the same cause for git: install Git for Windows, or add its `cmd` folder to PATH.
+
+## 43. Claude workers: `Your Claude Code doesn't know --append-system-prompt-file`
+
+**Cause:** ad passes a worker's instructions in a temporary file, not on the command line, and older Claude Code versions don't have that option.
+
+**Fix:** `claude update`, then retry.
+
 ---
 
 For harness problems, the [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill walks through login → hooks → sandbox → the engine's own log. See also [harness.md](harness.md) and, for the terminal UI, [tui.md](tui.md).

@@ -4,6 +4,16 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Security
+
+- Claude Code team workers (`ad sp --engine claude`) no longer start through `cmd.exe` on Windows, so a task containing `&`, `|` or `%VAR%` can't run commands on your machine before Claude starts. The task goes to Claude on stdin and in a temporary system-prompt file (`--append-system-prompt-file`), never on the command line. Digest calls through Claude Code do the same.
+- On Windows, the worker path starts `claude` and `git`, and the key store starts Windows PowerShell, by full path, so a `claude.exe`, `git.exe` or `powershell.exe` in the repo or the current folder never runs instead.
+- `ad sp` checks team ids, roles, agent names and `--model` before anything starts: names can use only letters, digits, `.`, `_` and `-` (max 64).
+
+### Fixed
+
+- An npm-installed Claude Code (`claude.cmd`) works for digest calls, which used to fail with `ENOENT`, and starts Claude workers without `cmd.exe`. `AD_CLAUDE_BIN` picks a specific Claude Code.
+
 ### Changed
 
 - Agent Daemon is a personal open-source project: the MIT licence now names its author, Pankaj Kumar (Pankaj Mahaur). Security reports go to pankajmahaur2003@gmail.com or a private GitHub security advisory.

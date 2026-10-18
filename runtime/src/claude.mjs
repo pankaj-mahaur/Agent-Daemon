@@ -7,8 +7,8 @@
 // --bare is avoided because it ignores OAuth and requires ANTHROPIC_API_KEY.
 // The hardening flags prevent hook recursion, auto-memory, and plugin loading.
 
-import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
+import { CLAUDE_TOO_OLD, claudeLacksPromptFile, resolveClaude, spawnResolved, withPromptFile } from "./safe-spawn.mjs";
 
 /**
  * @typedef {Object} HeadlessOptions
@@ -93,27 +93,40 @@ export async function callHeadlessClaude(opts) {
       return { ok: false, error: `cannot read systemPromptFile ${opts.systemPromptFile}: ${err.message}` };
     }
   }
-  if (systemPromptText) {
-    args.push("--append-system-prompt", systemPromptText);
-  }
   if (opts.jsonSchema) {
     args.push("--json-schema", JSON.stringify(opts.jsonSchema));
   }
 
+  // missing: true lets the auto LLM backend fall back to ad's engine.
+  const { resolved, error } = resolveClaude();
+  if (error) return { ok: false, error, missing: true };
+
+  // The system prompt goes through a temp file, never argv.
+  if (systemPromptText) {
+    return await withPromptFile(systemPromptText, (file) => runClaude(resolved, [...args, "--append-system-prompt-file", file], opts));
+  }
+  return await runClaude(resolved, args, opts);
+}
+
+function runClaude(resolved, args, opts) {
   if (opts.verbose) {
     process.stderr.write(`[claude] spawn: claude ${args.map(a => a.length > 80 ? `<${a.length}b>` : JSON.stringify(a)).join(" ")}\n`);
   }
 
-  return await new Promise((resolve) => {
-    // `shell: true` previously used on Windows to find claude.cmd, but the
-    // shell-quote layer eats empty-string args ("" for --setting-sources and
-    // --tools) so claude's argparse consumes the next flag as the value and
-    // dies with "Invalid setting source: --strict-mcp-config". With modern
-    // installs (`claude.exe` on PATH) we can spawn directly without shell and
-    // empty args survive intact.
-    const child = spawn("claude", args, {
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+  return new Promise((resolve) => {
+    // No shell: a shell's quoting eats empty-string args ("" for
+    // --setting-sources and --tools), and it would parse the prompt text.
+    // resolveClaude gives an absolute claude.exe, or our node plus the
+    // script an npm claude.cmd starts.
+    let child;
+    try {
+      child = spawnResolved(resolved, args, {
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+    } catch (err) {
+      resolve({ ok: false, error: `spawn failed: ${err.message}` });
+      return;
+    }
 
     let stdout = "";
     let stderr = "";
@@ -134,7 +147,7 @@ export async function callHeadlessClaude(opts) {
     child.on("close", (code) => {
       clearTimeout(timer);
       if (code !== 0) {
-        resolve({ ok: false, error: `claude exited ${code}`, stderr });
+        resolve({ ok: false, error: claudeLacksPromptFile(stderr) ? CLAUDE_TOO_OLD : `claude exited ${code}`, stderr });
         return;
       }
 
@@ -168,7 +181,9 @@ export async function callHeadlessClaude(opts) {
       resolve(out);
     });
 
-    // Write the user message via stdin
+    // Write the user message via stdin. A child that exits before reading it
+    // (EPIPE) is reported by "close".
+    child.stdin.on("error", () => {});
     child.stdin.write(opts.userMessage);
     child.stdin.end();
   });

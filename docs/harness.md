@@ -173,6 +173,10 @@ Opt-in, and it uses *your* installed Antigravity CLI and its login. The daemon n
 
 `ad sp` (spawn) now starts **engine workers** by default; see [Multi-agent orchestration](../README.md#multi-agent-orchestration). `--engine claude` (or `AD_AGENT_ENGINE=claude`) spawns headless `claude` as in v1.
 
+- **Names.** Team ids, roles and agent names become part of a git branch and a folder name, so they can use only letters, digits, `.`, `_` and `-` (at most 64 characters, starting with a letter or digit). `--model` takes a model id (letters, digits and `._:/@+-`).
+- **How a worker starts.** No shell is involved: the task reaches Claude Code on stdin and in a temporary system-prompt file (`--append-system-prompt-file`, removed when the worker ends), never on a command line. On Windows ad starts `claude` and `git` by their full path from PATH, so a `claude.exe` or `git.exe` inside a repo never runs. An npm-installed `claude.cmd` works: ad runs the script it starts with its own Node. Set `AD_CLAUDE_BIN` to use a specific Claude Code (`claude.exe` or its `cli.js`).
+- **Claude workers' permissions.** A Claude worker runs with `--dangerously-skip-permissions`: it can run any command as you and reach the network, and its worktree is not a sandbox. Use it only for tasks you'd run yourself. The default `ad` worker is sandboxed (below).
+
 ---
 
 ## Safety model
@@ -233,6 +237,7 @@ Loop and worker prompts are marked as non-user (`AD_WORKER=1`), so they never en
 | `CODEX_HOME` and similar (yours) | not passed to the harness's engine, so they can't point it at your own state; `CODEX_CA_CERTIFICATE` is kept |
 | `AD_INTERNAL_ENGINE_HOME` (old name `AD_ENGINE_HOME`) | set by ad on the engine processes it starts (hooks use it); don't set it yourself |
 | `AD_AGENT_ENGINE` | `ad` (default) or `claude` for team workers |
+| `AD_CLAUDE_BIN` | the Claude Code to start for Claude workers and digest calls: an absolute path to `claude.exe` (`claude` on macOS and Linux) or to the `cli.js` it runs. Default: `claude` from PATH |
 | `AD_LLM_BACKEND` | `claude`, `ad` or `auto` for digest / GEPA LLM calls (same as `--llm`) |
 | `AD_HOOK_HOST` | `ad` for hook input/output adaptation |
 | `AD_ENGINE_MODEL` (old name `AD_CODEX_LLM_MODEL`, still read) | model for those calls when they run on the engine |
