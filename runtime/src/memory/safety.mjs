@@ -122,6 +122,24 @@ function safeTags(tags) {
   }
 }
 
+/**
+ * Run the one-time scan from a long-running command (`ad` start, `ad doctor`).
+ * Never throws: a busy or missing store just means "next time".
+ */
+export async function runSafetyScanOnce({ err = process.stderr } = {}) {
+  try {
+    const { db } = await import("./episodic.mjs");
+    const handle = await db();
+    if (!handle || safetyScanDone(handle)) return null;
+    const r = runSafetyScan(handle);
+    if (!r.skipped && !r.busy && r.learnings + r.facts > 0) err.write(`agent-daemon: checked older memory notes: ${r.learnings + r.facts} held back (ad memory held)\n`);
+    return r;
+  } catch (e) {
+    err.write(`agent-daemon: the memory check didn't run (${e.message}); ad memory scan runs it\n`);
+    return null;
+  }
+}
+
 /** True once the scan has run (hooks read this, never run the scan). */
 export function safetyScanDone(handle, { name = SCAN_NAME } = {}) {
   try {

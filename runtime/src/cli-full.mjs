@@ -78,6 +78,7 @@ Commands:
   query-retrieve         Extract keywords from user prompt and inject relevant past learnings (UserPromptSubmit hook)
   memory stats           Episodic store row counts + retrieval telemetry (truncation rate, injected bytes)
   memory scan            Check older memory notes once: hold back rows with a provider key or an injection
+  memory held [accept|release|drop <id>]  Notes memory keeps back (agent-written, flagged); accept/release/drop need your own terminal and the typed id
   memory consolidate     Hermes-style evolution pass: near-duplicate merges, stale archive, contradictions
                          → proposals only; --apply-merges / --apply-stale execute after review
                          --all-projects       span every project (default: current --cwd only)
@@ -956,14 +957,27 @@ async function cmdStatus({ cwd = process.cwd() }) {
       console.log(`  ${d}  (${stat.size} bytes, ${stat.mtime.toISOString()})`);
     }
     console.log("\nReview with: agent-daemon review");
+    await printHeldLine(cwd);
     return 0;
   } catch (err) {
     if (err.code === "ENOENT") {
       console.log("No queued proposals.");
+      await printHeldLine(cwd);
       return 0;
     }
     throw err;
   }
+}
+
+// "<n> memory notes are waiting or held back. Review: ad memory held" (ad status).
+async function printHeldLine(cwd) {
+  try {
+    const { db, projectSlug } = await import("./memory/episodic.mjs");
+    const { heldNotes, heldLine } = await import("./memory/held.mjs");
+    const handle = await db();
+    const n = handle ? heldNotes(handle, [projectSlug(cwd)]).length : 0;
+    if (n) console.log(heldLine(n));
+  } catch { /* memory store unavailable: nothing to add */ }
 }
 
 async function cmdReview(opts) {
@@ -1133,6 +1147,25 @@ async function cmdDoctor({ cwd = process.cwd(), tokens, limit, model } = {}) {
       ok: placeholders === 0,
       note: placeholders === 0 ? "no template placeholders" : `${placeholders} file(s) contain placeholders — bootstrap daemon memory`
     });
+    try {
+      const { runSafetyScanOnce, findSlugCollisions } = await import("./memory/safety.mjs");
+      const { heldNotes } = await import("./memory/held.mjs");
+      const { db, projectSlug } = await import("./memory/episodic.mjs");
+      await runSafetyScanOnce();
+      const handle = await db();
+      if (handle) {
+        const held = heldNotes(handle, [projectSlug(cwd)]).length;
+        checks.push({ name: "Memory notes held", ok: true, note: held ? `${held} waiting or held back — review: ad memory held` : "none waiting or held back" });
+        const collisions = findSlugCollisions(handle);
+        checks.push({
+          name: "Memory keys",
+          ok: collisions.length === 0,
+          note: collisions.length ? `these folders share one memory key, so ad keeps their notes out of both until a later release gives each project its own ID: ${collisions.map((c) => c.paths.join(", ")).join("; ")}` : "every project has its own key",
+        });
+      }
+    } catch (e) {
+      checks.push({ name: "Memory notes held", ok: true, note: `not checked (${e.message})` });
+    }
     checks.push({
       name: "Session context budget",
       ok: activeBytes <= 4100,
@@ -1525,6 +1558,27 @@ async function cmdRoute(sub, opts) {
 
 async function cmdMemory(sub, opts) {
   switch (sub) {
+    case "held": {
+      // What memory keeps back; accept / release / drop only from your own terminal.
+      const ep = await import("./memory/episodic.mjs");
+      const { hookProjectKeys } = await import("./memory/scope.mjs");
+      const { memoryHeld } = await import("./memory/held.mjs");
+      const handle = await ep.db();
+      if (!handle) {
+        console.error("agent-daemon: better-sqlite3 not installed — no episodic store");
+        return 1;
+      }
+      const keys = opts.allProjects ? null : await hookProjectKeys(opts.cwd);
+      const [action, ref] = opts.rest ?? [];
+      const readline = await import("node:readline/promises");
+      const io = {
+        ask: async (q) => {
+          const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+          try { return await rl.question(q); } finally { rl.close(); }
+        },
+      };
+      return memoryHeld(action, { ref, keys, handle, json: opts.json, io });
+    }
     case "scan": {
       // One-time check of notes stored before the secret filter (runs once;
       // later runs say so). Hooks never run it.
@@ -2330,7 +2384,9 @@ async function main(argv) {
       ...opts,
       applyMerges: parsed.values["apply-merges"] || false,
       applyStale: parsed.values["apply-stale"] || false,
-      allProjects: parsed.values["all-projects"] || false
+      allProjects: parsed.values["all-projects"] || false,
+      json: parsed.values.json || false,
+      rest: parsed.positionals?.slice(1) ?? []
     });
     case "route":          return cmdRoute(parsed.positionals?.[0], { ...opts, days: parsed.values.days, json: parsed.values.json });
     case "skill":          return cmdSkill(parsed.positionals?.[0], {
@@ -2408,6 +2464,8 @@ async function main(argv) {
     }
     case "tui": {
       if (!parsed.values.preview) {
+        // The one-time check of older memory notes (never from a hook).
+        await (await import("./memory/safety.mjs")).runSafetyScanOnce();
         const { cmdTui } = await import("./tui/main.mjs");
         return cmdTui({
           cwd: parsed.values.cwd || process.cwd(),

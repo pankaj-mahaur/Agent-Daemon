@@ -678,7 +678,7 @@ For "The engine reported a problem", inspect those details first. `ad doctor` sh
 - it belongs to another project, or it was a "global" note from ad 3.0 written in another project (those stay in their project);
 - it is a user fact observed in another project.
 
-**Fix:** say it again in your own words in this project, or use `/remember` in `ad tui`: what you type yourself applies at once. A command to review pending and held notes comes in a later release.
+**Fix:** `ad memory held` lists what is waiting or held back in this project. Run it in your own terminal: `ad memory held accept L12` serves a waiting note, `release` brings back one the injection screen held (never one holding a secret), `drop` clears it; each asks you to type the id. Or say it again in your own words, or use `/remember` in `ad tui`: what you type yourself applies at once.
 
 ## 46. `ad doctor` or memory says two folders share one memory key
 

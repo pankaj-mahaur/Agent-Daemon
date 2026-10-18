@@ -218,6 +218,13 @@ export async function runSessionStart(opts) {
   // a system folder or ad's own folders, and for a key two folders share.
   // Every DB-backed section below reads only rows visible to these keys.
   const memKeys = await hookProjectKeys(opts.cwd).catch(() => []);
+  // Hooks never run the safety scan; they only say when it hasn't run yet.
+  try {
+    const { db } = await import("./memory/episodic.mjs");
+    const { safetyScanDone } = await import("./memory/safety.mjs");
+    const handle = await db();
+    if (handle && !safetyScanDone(handle) && handle.get("SELECT 1 AS x FROM learnings LIMIT 1")) sections.push("<!-- memory-scan-hint -->\nad hasn't checked older memory notes for secrets yet. Run: ad memory scan");
+  } catch { /* no store: nothing to check */ }
   try {
     const files = memKeys.length ? await recentlyChangedFiles(opts.cwd) : [];
     if (files.length > 0) {

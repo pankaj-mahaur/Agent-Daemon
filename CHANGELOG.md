@@ -16,7 +16,11 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 - **Agent notes wait for you.** A note the agent wrote about itself (from its own turn, or a digest item it marks as its own) is stored as pending until you type it yourself: it isn't added to `activeContext.md`, isn't served, and never becomes a user fact. What you type yourself still applies at once in its project.
 - **Nothing goes global by itself.** Notes that sound global stay in their project and are marked for promotion (a later release adds `ad memory promote`); nothing is appended to `~/.agent-daemon/user.md` automatically. User facts are served only in the projects that observed them. Notes ad 3.0 stored as global are served only in the project whose session wrote them. Older ad versions still show those older notes and all user facts everywhere.
 - Two folders whose paths map to the same memory key (`/x/a/b` and `/x/a-b`) are withheld from the MCP server, SessionStart and prompt recall until each project gets its own ID.
-- ad's engine tool shells carry `AD_TOOL_SHELL=1`, so memory accept and promote commands (in later releases) refuse to run from an agent's shell.
+- ad's engine tool shells carry `AD_TOOL_SHELL=1`, so the memory review commands refuse to run from an agent's shell.
+
+### Added
+
+- `ad memory held` lists the memory notes waiting for you (agent-written) or held back (flagged), for this project or `--all-projects`. `ad memory held accept|release|drop <id>` run only in your own terminal and ask you to type the id; a note holding a secret can be dropped, never released. `ad status` and `ad doctor` say how many are waiting; doctor also flags folders that share one memory key. `ad` and `ad doctor` run the one-time check of older notes, and SessionStart reminds you when it hasn't run yet.
 
 ### Fixed
 

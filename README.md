@@ -499,6 +499,7 @@ ad query-retrieve                      # Keyword extraction + learning injection
 # Memory
 ad memory stats                        # Row counts + retrieval telemetry (truncation rate, bytes)
 ad memory scan                         # Check older notes once: hold back rows holding a key or an injection
+ad memory held                         # Notes memory keeps back; accept|release|drop <id> from your own terminal
 ad memory consolidate                  # Evolution pass: near-dup merges, stale archive, contradictions
                                        #   proposals only — --apply-merges / --apply-stale execute
                                        #   --all-projects     span every project (default: --cwd only)
