@@ -72,6 +72,7 @@ On exit, ad prints how to continue: `ad tui --resume <id>`, with the tokens used
 
 ## First run
 
+0. **Pick a project folder** (only in some folders). Started in your home folder, or under a home folder that is a git repository, when your own `~/.codex` has skills, `ad` first lists your recent projects, the last one selected: Enter opens it. **Open home anyway** and **Always open home without asking** (saved as `allowHomeFolder` in `prefs.json`) are the other rows; Esc exits. See [harness.md](harness.md#working-in-your-home-folder) for why and the other overrides.
 1. **Sign in.** If ad isn't signed in yet, a sign-in panel opens:
 
    | Choice | Runs |
@@ -313,10 +314,10 @@ Model, effort and permission changes apply from the next turn.
 |---|---|
 | `/status` | account, model, sandbox, tokens, limits, and the engine version line (engine) |
 | `/usage` | usage limits and tokens (engine) |
-| `/mcp` | MCP servers and their status (engine) |
+| `/mcp` | MCP servers and their status (engine): the ones in ad's engine settings; a trusted project's own start with its conversation |
 | `/hooks` | hooks and whether they are trusted; ad's own are marked (engine) |
 | `/skills` | skills the engine can use here (engine) |
-| `/warnings` | notices and raw engine details kept from this session, and events this ad doesn't know |
+| `/warnings` | notices and raw engine details kept from this session (a repeated one shows once, with `×n`), key settings ad can't use (one summary line; `/keymap` lists each), and events this ad doesn't know |
 | `/debug-config` | the engine's config layers (lowest precedence first, the session's flags listed) and its requirements. Values under secret-named keys, header and env maps, a URL's user:password and token-like arguments show as `****`. Typed only, as in the engine's own UI |
 | `/rollout` | the conversation's rollout file (the engine's debug command; typed only) |
 | `/agents` | the engine's agent command center needs its shared background server, which ad doesn't run: it says so, and points to `/subagents` and `/team` (engine) |
@@ -557,6 +558,7 @@ Everything else (conversations, logs, login) is the engine's own, in ad's engine
 | `/approve` lists nothing, or "invalid Guardian denial event" | [#35](troubleshooting.md#35-ad-tui-approve-says-no-recent-auto-review-denials-in-this-thread-or-invalid-guardian-denial-event) |
 | `/setup-default-sandbox` refuses or fails | [#36](troubleshooting.md#36-ad-tui-setup-default-sandbox-refuses-or-fails) |
 | "The engine reported a problem", or an upstream name in raw details or an OS prompt | [#39](troubleshooting.md#39-what-ad-cant-rename) |
+| "Pick a project folder" at start, or `/cd` says a folder would load your own skills from `~/.codex/` | [#48](troubleshooting.md#48-pick-a-project-folder-or-run-this-in-a-project-folder) |
 | an engine command says "isn't in ad yet" | [commands.md](commands.md) |
 | not signed in, sandbox, hooks, your own install's home refused | [harness.md](harness.md#when-something-goes-wrong), troubleshooting #14–21 |
 

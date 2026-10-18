@@ -15,7 +15,7 @@ import { createMarkdownStream, renderMarkdown } from "./view/markdown.mjs";
 import { isExploring, renderAdRow, renderBackgroundTerminals, renderCell, renderDiff, renderExploring, renderNotice, renderPlan, renderRecap } from "./view/cells.mjs";
 import { parseRecap, RECAP_PROMPT_PREFIX, RECAP_SCHEMA, recapHistory, TEMPORARY_THREAD_CONFIG } from "./recap.mjs";
 import { createChecklist, createPicker, renderFooter, renderShortcuts, renderStatus } from "./view/chrome.mjs";
-import { formAutoCancel, LEGACY, ownEngineHomeRefusal, projectConfigFolder, sandboxConsentBody, tombstoneEngineUiSlash } from "../engine/attribution.mjs";
+import { formAutoCancel, homeCdRefusal, homeTrustSkippedNote, LEGACY, ownEngineHomeRefusal, projectConfigFolder, sandboxConsentBody, tombstoneEngineUiSlash } from "../engine/attribution.mjs";
 import { ARM_MS, createChoice, createConfirm, createRequestModal } from "./view/modals.mjs";
 import { PLAN_CLEAR_CONTEXT_PREFIX } from "../hooks/generated-prompts.mjs";
 import { sanitize } from "./terminal/sanitize.mjs";
@@ -1090,10 +1090,16 @@ export function createApp({
     if (actions.ad?.loop?.state?.running) return warn("An ad loop is working in this folder: /loop stop first.");
     // The check at the app level: no other agent (a subagent's thread) may be at work.
     if (agentRunning()) return warn("Cannot change: another agent is running.");
+    // A folder that would load the user's own engine home (P0.2a): refused before any trust is written.
+    const homeRisk = await session.engine.homeFolderRisk?.(dir);
+    if (homeRisk) return warn(homeCdRefusal(homeRisk));
     // Trust, as on ad's first start in a folder (kept in ad's engine home).
     const config = await session.engine.readConfig().catch(() => ({}));
     const known = Object.keys(config.projects ?? {}).some((k) => real(k) === real(dir));
-    if (!known && real(dir) !== real(homedir())) {
+    // Never offered where trusting would also apply the user's own engine settings (a folder under a git home).
+    const trustLoadsHome = !session.engine.allowHomeFolder && engineHome.homeLayerRisk(dir, { trusted: [dir] })?.loads.includes("settings");
+    if (!known && trustLoadsHome) info0(homeTrustSkippedNote);
+    if (!known && !trustLoadsHome && real(dir) !== real(homedir())) {
       const trust = await openChoice({
         title: `Do you trust ${clean(dir)}?`,
         body: "Trusted folders can run their own hooks, skills and settings. Trust only projects you know.",

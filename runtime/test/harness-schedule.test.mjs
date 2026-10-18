@@ -2,6 +2,8 @@
 // selection, missed-run policy, no self-overlap, and the job command line.
 
 import { test } from "node:test";
+import { projectConfigFolder } from "../src/engine/attribution.mjs";
+const DOT = projectConfigFolder; // the engine's per-project folder name
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -208,4 +210,69 @@ test("P0.3b: a 3.0 .pid file with a live pid blocks while recent, and is dropped
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
+});
+
+// P0.2a: jobs in a folder that would load the user's own ~/.codex.
+async function inFakeUserHome(fn) {
+  const { mkdirSync, writeFileSync } = await import("node:fs");
+  const home = mkdtempSync(join(tmpdir(), "ad-sched-userhome-"));
+  mkdirSync(join(home, DOT, "skills", "mine"), { recursive: true });
+  writeFileSync(join(home, DOT, "skills", "mine", "SKILL.md"), "---\nname: mine\ndescription: x\n---\n");
+  const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  try {
+    return await fn(home);
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+
+test("P0.2a: a 3.0 job whose folder is home is grandfathered once: it runs with the override, logs the note, and is listed", async () => {
+  const { homeFolderJobs } = await import("../src/harness/schedule.mjs");
+  const { mkdirSync, writeFileSync } = await import("node:fs");
+  await inFakeUserHome(async (home) => {
+    // A store 3.0 wrote: no homeFolderReviewed mark.
+    mkdirSync(join(home, ".agent-daemon"), { recursive: true });
+    const old = { id: "j30", cron: "0 * * * *", kind: "run", prompt: "nightly", cwd: home, enabled: true, createdAt: "2026-10-01T00:00:00Z", nextRun: "2026-10-01T08:00:00.000Z", lastRun: null, lastStatus: null };
+    writeFileSync(join(home, ".agent-daemon", "schedules.json"), JSON.stringify({ jobs: [old] }));
+    assert.equal(loadJobs(home)[0].allowHomeFolder, "grandfathered");
+    assert.equal(JSON.parse(readFileSync(join(home, ".agent-daemon", "schedules.json"), "utf8")).homeFolderReviewed, true, "written once");
+    assert.ok(jobArgs(loadJobs(home)[0]).includes("--allow-home-folder"));
+    assert.deepEqual(homeFolderJobs(home), [{ id: "j30", cwd: home, allowHomeFolder: "grandfathered" }]);
+    const spawned = [];
+    const spawnFn = (cmd, args) => {
+      const c = new EventEmitter();
+      spawned.push(args);
+      return c;
+    };
+    const errWrite = process.stderr.write;
+    let said = "";
+    process.stderr.write = (s) => ((said += s), true);
+    try {
+      tick({ home, now: new Date("2026-10-01T09:00:00Z"), spawnFn });
+    } finally {
+      process.stderr.write = errWrite;
+    }
+    assert.ok(spawned[0].includes("--allow-home-folder"));
+    assert.match(said, /Scheduled job j30 runs in your home folder/);
+    await new Promise((r) => setTimeout(r, 50));
+    assert.match(readFileSync(join(home, ".agent-daemon", "schedule-logs", "j30.log"), "utf8"), /note: Scheduled job j30 runs in your home folder/);
+  });
+});
+
+test("P0.2a: a new schedule add in home without the flag is refused; with it the job is marked, never grandfathered", async () => {
+  await inFakeUserHome(async (home) => {
+    assert.throws(() => addJob({ cron: "0 * * * *", kind: "run", prompt: "x", cwd: home }, home), /Run this in a project folder/);
+    const job = addJob({ cron: "0 * * * *", kind: "run", prompt: "x", cwd: home, allowHomeFolder: true }, home);
+    assert.equal(job.allowHomeFolder, true);
+    const { mkdirSync } = await import("node:fs");
+    mkdirSync(join(home, "proj", ".git"), { recursive: true });
+    const plain = addJob({ cron: "0 * * * *", kind: "run", prompt: "y", cwd: join(home, "proj") }, home);
+    assert.equal(plain.allowHomeFolder, undefined, "a project folder needs nothing");
+  });
 });

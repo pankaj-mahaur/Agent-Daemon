@@ -14,6 +14,9 @@
 import { spawn } from "node:child_process";
 import { systemTool } from "../safe-spawn.mjs";
 import { acquireLock, liveLocks } from "../lock.mjs";
+import { engineHome } from "../engine/index.mjs";
+import { homeFolderRefusal, homeJobNote } from "../engine/attribution.mjs";
+import { noteOnce } from "./notes.mjs";
 import { randomBytes } from "node:crypto";
 import { createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -109,20 +112,35 @@ export function loadJobs(home) {
   const f = storeFile(home);
   if (!existsSync(f)) return [];
   const data = JSON.parse(readFileSync(f, "utf8"));
-  return Array.isArray(data.jobs) ? data.jobs : [];
+  const jobs = Array.isArray(data.jobs) ? data.jobs : [];
+  // Once, for a store an older ad wrote (P0.2a): jobs whose folder would load
+  // the user's own engine home keep running, marked "grandfathered". Every store
+  // ad writes from now on is marked reviewed, so new jobs are never marked.
+  if (data.homeFolderReviewed !== true) {
+    for (const j of jobs) if (j.cwd && j.allowHomeFolder === undefined && engineHome.homeLayerRisk(j.cwd)) j.allowHomeFolder = "grandfathered";
+    saveJobs(jobs, home);
+  }
+  return jobs;
 }
 
 export function saveJobs(jobs, home) {
   mkdirSync(scheduleDir(home), { recursive: true });
   const f = storeFile(home);
   const tmp = `${f}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify({ jobs }, null, 2) + "\n");
+  writeFileSync(tmp, JSON.stringify({ homeFolderReviewed: true, jobs }, null, 2) + "\n");
   renameSync(tmp, f);
 }
 
-export function addJob({ cron, kind, prompt, cwd, now = new Date() }, home) {
+/** Jobs that run in a folder loading the user's own engine home: [{id, cwd, allowHomeFolder}] (ad doctor). */
+export function homeFolderJobs(home) {
+  return loadJobs(home).filter((j) => j.allowHomeFolder).map((j) => ({ id: j.id, cwd: j.cwd, allowHomeFolder: j.allowHomeFolder }));
+}
+
+export function addJob({ cron, kind, prompt, cwd, now = new Date(), allowHomeFolder = false }, home) {
   if (!["run", "loop"].includes(kind)) throw new Error(`job kind must be run or loop, got "${kind}"`);
   if (!prompt?.trim()) throw new Error("job needs a prompt");
+  const risk = engineHome.homeLayerRisk(path.resolve(cwd ?? process.cwd()));
+  if (risk && !allowHomeFolder) throw new Error(homeFolderRefusal(risk));
   const job = {
     id: randomBytes(3).toString("hex"),
     cron,
@@ -134,6 +152,7 @@ export function addJob({ cron, kind, prompt, cwd, now = new Date() }, home) {
     nextRun: nextRun(cron, now).toISOString(), // validates the cron too
     lastRun: null,
     lastStatus: null,
+    ...(risk ? { allowHomeFolder: true } : {}),
   };
   saveJobs([...loadJobs(home), job], home);
   return job;
@@ -144,7 +163,7 @@ export function addJob({ cron, kind, prompt, cwd, now = new Date() }, home) {
 // "--" ends option parsing: a prompt like "--sandbox=danger-full-access"
 // stays a prompt instead of becoming a flag.
 export function jobArgs(job) {
-  return [CLI, job.kind === "loop" ? "loop" : "run", "--cwd", job.cwd, "--", job.prompt];
+  return [CLI, job.kind === "loop" ? "loop" : "run", "--cwd", job.cwd, ...(job.allowHomeFolder ? ["--allow-home-folder"] : []), "--", job.prompt];
 }
 
 // Cross-process "running" lock: a job must not overlap itself even across
@@ -195,6 +214,12 @@ function runJob(job, { home, spawnFn = spawn, onExit } = {}) {
   // A log problem must never take the daemon down.
   log.on("error", (err) => process.stderr.write(`agent-daemon: schedule log for ${job.id}: ${err.message}\n`));
   log.write(`\n=== ${new Date().toISOString()} ${job.kind}: ${job.prompt}\n`);
+  // A 3.0 job in the home folder keeps running (P0.2a): said in its log every
+  // run, and once in the daemon's output.
+  if (job.allowHomeFolder === "grandfathered") {
+    log.write(`=== note: ${homeJobNote(job.id)}\n`);
+    noteOnce(`home.job.${job.id}`, homeJobNote(job.id), { file: path.join(scheduleDir(home), "notes.json") });
+  }
   if (!existsSync(job.cwd)) {
     queueMicrotask(() => finish(-1, `folder no longer exists: ${job.cwd}`));
     return null;
@@ -309,7 +334,7 @@ export async function cmdSchedule(sub, args = [], opts = {}) {
     switch (sub) {
       case "add": {
         const [cron, kind, ...rest] = args;
-        const job = addJob({ cron, kind, prompt: rest.join(" "), cwd: opts.cwd }, home);
+        const job = addJob({ cron, kind, prompt: rest.join(" "), cwd: opts.cwd, allowHomeFolder: opts.allowHomeFolder === true }, home);
         out.write(`added ${job.id}: ${job.kind} "${job.prompt}" at "${job.cron}" (next ${new Date(job.nextRun).toLocaleString()})\n`);
         out.write("Jobs run while the daemon is up: ad watch  (or keep it running: ad service install)\n");
         return 0;

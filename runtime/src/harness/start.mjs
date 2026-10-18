@@ -4,7 +4,9 @@
 // Used by `ad run`, `ad chat` and team workers.
 
 import { createEngine, engineVersion, engineErrorText, engineErrorDetail } from "../engine/index.mjs";
-import { envRenameNote, LEGACY, migrateMessages } from "../engine/attribution.mjs";
+import { envRenameNote, homeCliGraceNote, homeOverrideNote, homeTrustRemovedNote, LEGACY, migrateMessages } from "../engine/attribution.mjs";
+import { engineHome } from "../engine/index.mjs";
+import { homeFolderAllowed } from "./home-folder.mjs";
 import { providerEnv } from "../auth/providers.mjs";
 import { noteOnce } from "./notes.mjs";
 import { ensureHarnessSetup } from "./setup.mjs";
@@ -14,7 +16,12 @@ export const NOT_LOGGED_IN = "Not logged in. Run: ad auth login openai | ad auth
 
 // env: extra variables for the engine and the hooks it runs (e.g. AD_WORKER=1).
 // detached: run the engine in its own process group on POSIX (the terminal UI).
-export async function startHarnessEngine({ cwd, home, command, clientVersion, store, onApproval, err = process.stderr, setup = true, platform, env, requireSandbox = false, detached = false, engineArgs, experimental = false, interactive = false, notesFile } = {}) {
+// allowHomeFolder: --allow-home-folder (AD_ALLOW_HOME_FOLDER=1 and the pref also allow it).
+// homePolicy (P0.2a), for a cwd that would load the user's own engine home:
+//   "refuse" (default): threads there are refused (HOME_FOLDER_REFUSED);
+//   "grace": non-interactive ad run/chat/loop in 3.0.x run anyway, with a one-time note per folder.
+// → {engine, homeRisk} | {engine: null, error, code}.
+export async function startHarnessEngine({ cwd, home, command, clientVersion, store, onApproval, err = process.stderr, setup = true, platform, env, requireSandbox = false, detached = false, engineArgs, experimental = false, interactive = false, notesFile, allowHomeFolder = false, homePolicy = "refuse" } = {}) {
   const e = { ...process.env, ...(env ?? {}) };
   const notesFileFinal = notesFile ?? (process.env.NODE_TEST_CONTEXT ? null : undefined);
   if (notesFileFinal !== null) {
@@ -25,10 +32,24 @@ export async function startHarnessEngine({ cwd, home, command, clientVersion, st
   }
   const v = engineVersion.check({ installed: engineVersion.installed().version });
   if (v.code === "untested") err.write(`[agent-daemon] the engine is version ${v.installed}; ad was tested with ${v.tested.join(", ")}. Run: cd runtime && npm install\n`);
-  const engineOpts = { cwd, home, command, clientVersion, detached, engineArgs, experimental, interactive, env: { ...providerEnv(store), ...(env ?? {}) }, onApproval };
+  let allowed = homeFolderAllowed({ flag: allowHomeFolder, env: e }).allowed;
+  const engineOpts = { cwd, home, command, clientVersion, detached, engineArgs, experimental, interactive, env: { ...providerEnv(store), ...(env ?? {}) }, onApproval, allowHomeFolder: allowed };
   let engine = await createEngine(engineOpts);
+  let homeRisk = null;
   try {
     reportHomeEvents(engine.homeEvents, err, notesFileFinal);
+    // Working in a folder that loads the user's own engine home, judged with ad's
+    // real settings (markers, trust): allowed by an override, or by the 3.0.x grace for scripts.
+    homeRisk = cwd ? await engine.homeFolderRisk(cwd, { ignoreAllow: true }) : null;
+    if (homeRisk && !allowed && homePolicy === "grace") {
+      if (notesFileFinal === null) err.write(`[agent-daemon] ${homeCliGraceNote}\n`);
+      else noteOnce(`home.cli.${engineHome.canonical(cwd)}`, homeCliGraceNote, { err, ...(notesFileFinal ? { file: notesFileFinal } : {}) });
+      allowed = true;
+      engine.allowHomeFolder = true;
+      engineOpts.allowHomeFolder = true; // a restart below keeps it
+    } else if (homeRisk && allowed) {
+      err.write(`[agent-daemon] ${homeOverrideNote(homeRisk)}\n`);
+    }
     const acct = await engine.account();
     if (acct.requiresOpenaiAuth && !acct.account) {
       await engine.close();
@@ -55,7 +76,7 @@ export async function startHarnessEngine({ cwd, home, command, clientVersion, st
         return { engine: null, error: `Windows sandbox is ${status}; unattended runs need it. Run: ad sandbox setup`, code: 2 };
       }
     }
-    return { engine };
+    return { engine, homeRisk: allowed ? homeRisk : null };
   } catch (e) {
     await engine.close();
     throw e;
@@ -67,6 +88,10 @@ export async function startHarnessEngine({ cwd, home, command, clientVersion, st
 export function reportHomeEvents(events = [], err, notesFile) {
   for (const ev of events) {
     if (ev.type === "setAside") err.write(`[agent-daemon] ${migrateMessages.oneEmpty({ name: ev.path })}\n`);
+    if (ev.type === "trustRemoved") {
+      if (notesFile === null) err.write(`[agent-daemon] ${homeTrustRemovedNote}\n`);
+      else noteOnce("home.trustRemoved", homeTrustRemovedNote, { err, ...(notesFile ? { file: notesFile } : {}) });
+    }
     if (ev.type === "linkFailed") {
       const text = `couldn't make ${ev.link}, the link older versions of ad need (${ev.error}). ad works without it; \`ad doctor\` shows it.`;
       if (notesFile === null) err.write(`[agent-daemon] ${text}\n`);

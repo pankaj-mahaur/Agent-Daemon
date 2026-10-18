@@ -113,6 +113,8 @@ Agent harness (ad's engine; ad about):
   run "<prompt>"         One non-interactive agent turn (approvals are declined)
                          --cwd <dir>  --model <name>  --json
                          --sandbox <mode>     read-only | workspace-write (default) | danger-full-access
+                         --allow-home-folder  (ad, tui, chat, loop, run, schedule add) work in a folder that
+                                              would load skills from your own engine install (docs/harness.md)
   auth login chatgpt     Sign in with your ChatGPT subscription (browser; --device for a code)
   auth login openai      Use an OpenAI API key (hidden prompt, or pipe it on stdin)
   auth login openrouter  Store an OpenRouter key and make it active (needs --model <slug>)
@@ -1010,6 +1012,19 @@ async function cmdDoctor({ cwd = process.cwd(), tokens, limit, model } = {}) {
   const { engineDoctor } = await import("./engine/index.mjs");
   checks.push(...engineDoctor.checks());
   checks.push(...(await engineDoctor.liveChecks()));
+  // Jobs and folders that keep running in a folder loading the user's own engine home (P0.2a).
+  try {
+    const { homeFolderJobs } = await import("./harness/schedule.mjs");
+    const { homeGraceFolders } = await import("./harness/home-folder.mjs");
+    const jobs = homeFolderJobs();
+    const folders = homeGraceFolders();
+    if (jobs.length || folders.length) {
+      const parts = [...jobs.map((j) => `job ${j.id} (${j.cwd}${j.allowHomeFolder === "grandfathered" ? ", kept from 3.0" : ""})`), ...folders.map((f) => `ad run/chat/loop in ${f}`)];
+      checks.push({ name: "Home-folder jobs", ok: true, note: `${parts.join("; ")}. Move them to a project folder (ad schedule add --cwd <project>); from 3.1 ad run/chat/loop there need --allow-home-folder` });
+    }
+  } catch (e) {
+    checks.push({ name: "Home-folder jobs", ok: true, note: `could not read the schedule: ${e.message}` });
+  }
 
   // Check 2b: Auth — ANTHROPIC_API_KEY or OAuth/keychain
   // As of v0.5, --bare is no longer used. OAuth/keychain auth works for GEPA.
@@ -2323,7 +2338,8 @@ async function main(argv) {
         "max-tokens":     { type: "string" },
         "accept-risk":    { type: "boolean" },
         port:             { type: "string" },
-        edits:            { type: "boolean" }
+        edits:            { type: "boolean" },
+        "allow-home-folder": { type: "boolean" }
       },
       allowPositionals: true,
       strict: false
@@ -2431,7 +2447,7 @@ async function main(argv) {
     }
     case "schedule": {
       const { cmdSchedule } = await import("./harness/schedule.mjs");
-      return cmdSchedule(parsed.positionals[0], parsed.positionals.slice(1), { cwd: parsed.values.cwd || process.cwd() });
+      return cmdSchedule(parsed.positionals[0], parsed.positionals.slice(1), { cwd: parsed.values.cwd || process.cwd(), allowHomeFolder: Boolean(parsed.values["allow-home-folder"]) });
     }
     case "tools": {
       const { cmdTools } = await import("./harness/tools.mjs");
@@ -2445,6 +2461,7 @@ async function main(argv) {
         model: parsed.values.model,
         resume: parsed.values.resume,
         limits: { maxIterations: num("max-iterations"), maxMinutes: num("max-minutes"), maxTokens: num("max-tokens") },
+        allowHomeFolder: Boolean(parsed.values["allow-home-folder"]),
         clientVersion: VERSION
       });
     }
@@ -2473,6 +2490,7 @@ async function main(argv) {
           sandbox: parsed.values.sandbox,
           resume: parsed.values.resume,
           last: parsed.values.last,
+          allowHomeFolder: Boolean(parsed.values["allow-home-folder"]),
           clientVersion: VERSION
         });
       }
@@ -2494,6 +2512,7 @@ async function main(argv) {
         model: parsed.values.model,
         sandbox: parsed.values.sandbox,
         resume: parsed.values.resume,
+        allowHomeFolder: Boolean(parsed.values["allow-home-folder"]),
         clientVersion: VERSION
       });
     }
@@ -2506,6 +2525,7 @@ async function main(argv) {
         model: parsed.values.model,
         sandbox: parsed.values.sandbox,
         json: parsed.values.json || false,
+        allowHomeFolder: Boolean(parsed.values["allow-home-folder"]),
         clientVersion: VERSION
       });
     }

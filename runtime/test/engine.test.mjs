@@ -314,6 +314,8 @@ test("complete() runs isolated: hooks off and every MCP server disabled for its 
       "features.hooks": false,
       "mcp_servers.agent-daemon-memory.enabled": false,
       "mcp_servers.playwright.enabled": false,
+      // In the launch folder (no cwd given) its root is the folder itself (P0.2a).
+      project_root_markers: [],
     });
   });
 });

@@ -193,6 +193,24 @@ Unattended runs also switch off every MCP server except the daemon's memory, and
 
 **Keys.** OpenRouter keys are stored with DPAPI on Windows, libsecret on Linux (falling back to a 0600 file) and a 0600 file on macOS. They never go into config or argv, and `OPENROUTER_API_KEY` is removed from the agent's shell. ChatGPT / OpenAI logins are kept by the engine in the harness home (`auth.json`).
 
+### Working in your home folder
+
+Open ad in a project folder. If you start it in your home folder and your own `~/.codex/` (from your own install of the engine ad runs on) has skills, `ad` first shows **Pick a project folder**: your last project is selected, so Enter opens it. The engine would otherwise load those skills into every conversation there, because it reads a folder's `.codex/` as project settings, and it adds that folder's skills even while the folder isn't trusted.
+
+- The same applies to any folder under a home folder that is a git repository, since the repository's root is then your home.
+- A `~/.codex/` with no skills (or no `~/.codex/` at all) is never a reason: ad opens directly. One exception: if your home folder is a git repository and `~/.codex/config.toml` has settings, ad doesn't offer to trust a folder inside it that has no git repository of its own, because trusting that folder would also apply those settings there. A folder trusted that way earlier gets the launcher.
+- `/cd` into such a folder is refused with the same reason. `ad run`, `ad chat` and `ad loop` still run there in 3.0.x and say so once per folder. From 3.1 they need `--allow-home-folder`. `ad schedule add` there needs the flag now. Scheduled jobs and team workers that already worked there keep running, with a note, and `ad doctor` lists them under "Home-folder jobs".
+- To work there anyway, use one of the overrides. Each makes ad print one note saying your skills load in that session:
+  - `--allow-home-folder` on `ad`, `ad tui`, `ad chat`, `ad run`, `ad loop` or `ad schedule add`;
+  - `AD_ALLOW_HOME_FOLDER=1`;
+  - the launcher's **Always open home without asking**. It saves `"allowHomeFolder": true` in `~/.agent-daemon/tui/prefs.json`; delete the key to undo.
+
+ad never uses folder trust for this. It doesn't mark your home folder `untrusted`, which would change the approvals and sandbox there. If ad's engine settings trust your home folder (from an older version or the engine's own UI), ad removes that entry when it starts and says so once. Folders you trusted yourself are unchanged.
+
+`~/.agents/skills` and a project's own `.codex/` and `AGENTS.md` still load: `~/.agents/skills` is the folder agents share on purpose. On Windows the engine finds `~/.agents/skills` in your real profile folder even when `HOME` or `USERPROFILE` point elsewhere.
+
+The engine process itself runs in an empty folder, `~/.agent-daemon/launch`, never in your project. So `/mcp` lists the MCP servers from ad's own settings. Servers from a project's `.codex/config.toml` start with that project's conversations, once the project is trusted. To add a server for every project, add it to ad's engine settings (`ad about` shows the path).
+
 ---
 
 ## Memory, hooks and skills inside the harness
@@ -232,6 +250,7 @@ Loop and worker prompts are marked as non-user (`AD_WORKER=1`), so they never en
 | Variable | Effect |
 |---|---|
 | `AD_TUI` | `0`: bare `ad` prints the help instead of opening the terminal UI (`ad tui` still opens it). `1`: the default behaviour |
+| `AD_ALLOW_HOME_FOLDER` | `1`: work in a folder that would load your own `~/.codex` skills, like `--allow-home-folder` (see "Working in your home folder") |
 | `AD_ENGINE_DIR` (old name `AD_CODEX_HOME`, still read) | use another engine home (never your own `~/.codex` or `CODEX_HOME`: refused) |
 | `AD_ENGINE_BIN` (old name `AD_CODEX_BIN`, still read) | run a specific engine binary instead of the pinned one (testing) |
 | `CODEX_HOME` and similar (yours) | not passed to the harness's engine, so they can't point it at your own state; `CODEX_CA_CERTIFICATE` is kept |

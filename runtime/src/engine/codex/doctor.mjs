@@ -3,9 +3,9 @@
 import { execFileSync } from "node:child_process";
 import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { pinnedCodexVersion, resolveCodexCommand } from "./app-server.mjs";
-import { codexEnv, homeOverride, isManagedHome } from "./home.mjs";
+import { canonicalPath, codexEnv, homeLayerRisk, homeOverride, isManagedHome, riskUserHomes } from "./home.mjs";
 import { entryKind, homeFacts, linkTarget, OLD_HOME_NAME, resolveHomeState } from "./home-resolve.mjs";
 
 export function parseCodexVersion(text) {
@@ -124,6 +124,12 @@ export async function engineLiveChecks({ env = process.env, engineFactory, platf
       const trusted = ours.filter((h) => h.trustStatus === "trusted").length;
       checks.push({ code: "engine.hooks", ok: trusted === ours.length, data: { trusted, total: ours.length } });
     }
+    // Start-up isolation (P0.2a): would the user's own ~/.codex load anywhere, and is the home folder trusted?
+    const homes = riskUserHomes(env).filter((h) => basename(h) === ".codex");
+    const homeDirs = new Set(homes.map((h) => canonicalPath(dirname(h))));
+    const trustedHome = Object.entries(cfg.projects ?? {}).some(([k, v]) => v?.trust_level === "trusted" && homeDirs.has(canonicalPath(k)));
+    const loadable = homes.some((h) => homeLayerRisk({ cwd: dirname(h), markers: [], userHomes: [h] }));
+    checks.push({ code: "engine.homeFolder", ok: !trustedHome, data: { trusted: trustedHome, loadable, settingsPath: join(home, "config.toml") } });
     if (platform === "win32") {
       const status = await engine.sandbox.readiness();
       checks.push({ code: "engine.windowsSandbox", ok: status === "ready", data: { status, mode: cfg.windows?.sandbox ?? null } });

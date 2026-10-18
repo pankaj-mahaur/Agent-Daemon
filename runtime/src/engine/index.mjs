@@ -6,11 +6,12 @@
 import { EventEmitter } from "node:events";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { CodexAppServer, installedCodexVersion, pinnedCodexVersion } from "./codex/app-server.mjs";
 import { engineError } from "./codex/errors.mjs";
 import { APPROVAL_METHODS, approvalResponse } from "./codex/approvals.mjs";
-import { canonicalPath, codexEnv, defaultCodexHome, ensureCodexHome, homeOverride, isManagedHome, prepareDefaultHome, MANAGED_MARKER } from "./codex/home.mjs";
+import { canonicalPath, codexEnv, defaultCodexHome, ensureCodexHome, homeLayerRisk, homeOverride, isManagedHome, launchDir, prepareDefaultHome, riskUserHomes, userCodexHomes, MANAGED_MARKER } from "./codex/home.mjs";
+import { homeDoctorNote, homeFolderRefusal } from "./attribution.mjs";
 import { defaultRoot, entryKind, homeFacts, linkTarget, NEW_HOME_NAME, OLD_HOME_NAME, removeLink, createLegacyLink, resolveHomeState, sameFolder } from "./codex/home-resolve.mjs";
 import { acquireLock, acquireLockWithin, defaultLockDir } from "../lock.mjs";
 import { randomBytes } from "node:crypto";
@@ -191,6 +192,9 @@ export class Engine extends EventEmitter {
     // the default one is resolved again under the migrate lock in start().
     this.#defaultHome = opts.home === undefined && !homeOverride(this.env);
     this.home = resolve(opts.cwd ?? process.cwd(), opts.home ?? defaultCodexHome(this.env, { root: opts.homeRoot }));
+    // Start-up isolation (P0.2a): a thread whose folder would load the user's
+    // own ~/.codex as a project layer is refused unless this is set.
+    this.allowHomeFolder = opts.allowHomeFolder === true;
     this.onApproval = opts.onApproval ?? (() => "decline");
     // Front ends that handle every server request themselves (the TUI) set
     // onRequest(PendingRequest) → answer. Without it the old behaviour stays:
@@ -210,8 +214,10 @@ export class Engine extends EventEmitter {
       resume: (threadId, o) => this.resumeThread(threadId, o),
       /** → the engine's answer ({thread, …}). */
       fork: async (threadId, { memoryProject, ...o } = {}) => {
-        const config = await this.#withMemoryScope(memoryProject === undefined ? o.cwd : memoryProject, o.config);
-        return this.#request("thread/fork", clean({ threadId, ...o, config }));
+        const folder = await this.#refuseHomeFolder(o.cwd, threadId);
+        const config = await this.#threadConfig(await this.#withMemoryScope(memoryProject === undefined ? (o.cwd ?? folder) : memoryProject, o.config));
+        const params = clean({ threadId, ...o, config });
+        return this.#request("thread/fork", params).catch((err) => this.#homeError(err, params));
       },
       inject: (threadId, items) => this.#request("thread/inject_items", { threadId, items }),
       /** → {status: "unsubscribed" | "notLoaded" | …}. */
@@ -310,7 +316,8 @@ export class Engine extends EventEmitter {
       setup: async ({ mode = "unelevated", cwd, timeoutMs = 10 * 60_000 } = {}) => {
         const done = this.#waitFor("windowsSandbox/setupCompleted", () => true, { timeoutMs });
         done.catch(() => {}); // awaited below; no unhandled rejection if setupStart throws
-        const started = await this.#request("windowsSandbox/setupStart", clean({ mode, cwd: cwd || undefined }));
+        // The work folder, never the engine's launch folder (its fallback without one).
+        const started = await this.#request("windowsSandbox/setupStart", clean({ mode, cwd: cwd || this.opts.cwd || undefined }));
         if (!started?.started) throw engineError("SANDBOX_NOT_STARTED", "the engine did not start the sandbox setup");
         return done;
       },
@@ -518,12 +525,16 @@ export class Engine extends EventEmitter {
     }
     // Tests only: run something in the gap after `migrate` is released.
     await this.opts.testHooks?.afterMigrateRelease?.();
+    // The engine process runs in a neutral folder outside every project, so
+    // nothing under the user's home loads at start-up (P0.2a); opts.cwd is only
+    // the default folder of new threads.
+    this.launch = this.opts.launch ?? launchDir();
     this.#server = new CodexAppServer({
       command: this.opts.command,
-      cwd: this.opts.cwd,
+      cwd: this.launch.dir,
       clientVersion: this.opts.clientVersion,
       detached: this.opts.detached,
-      codexArgs: this.opts.engineArgs ?? this.opts.codexArgs,
+      codexArgs: [...this.launch.codexArgs, ...(this.opts.engineArgs ?? this.opts.codexArgs ?? [])],
       // Only the terminal UI opts into the experimental allowlist (codex-parity-2 P0).
       capabilities: this.opts.experimental ? experimentalCapabilities() : undefined,
       env: { ...(this.opts.env ?? {}), CODEX_HOME: this.home },
@@ -550,7 +561,49 @@ export class Engine extends EventEmitter {
     // OS start, so the one-sided identity rule holds; no identity lookup here.
     const childPid = this.#server.child?.pid;
     if (childPid && this.#lease) this.#lease.updateMeta({ child: { pid: childPid, startedAt: Date.now() } });
+    if (isManagedHome(this.home)) await this.#removeHomeTrust();
     return this;
+  }
+
+  // Trust is never how ad keeps the user's ~/.codex out (P0.2a point 3): any
+  // `trusted` entry in ad's engine settings for a folder holding a user Codex
+  // home (in any spelling) is deleted, whoever wrote it; `untrusted` is never
+  // written (it has side effects). Key paths are JSON-quoted, which the engine
+  // reads as one key (S-HOME h); keys a delete left behind are removed by
+  // replacing the table with expectedVersion, once more on a version conflict.
+  // homeEvents gets {type: "trustRemoved", keys} for the front end's one-time note.
+  async #removeHomeTrust() {
+    const homes = new Set(userCodexHomes(this.env).filter((h) => basename(h) === ".codex").map((h) => canonicalPath(dirname(h))));
+    const doomed = (projects) => Object.entries(projects ?? {}).filter(([k, v]) => v?.trust_level === "trusted" && homes.has(canonicalPath(k))).map(([k]) => k);
+    try {
+      let layer = await this.#readUserLayer();
+      if (layer.missing) return; // no settings file of ad's own: nothing to remove
+      const keys = doomed(layer.config?.projects);
+      if (!keys.length) return;
+      try {
+        await this.writeConfig(keys.map((k) => [`projects.${JSON.stringify(k)}`, null]));
+      } catch (err) {
+        // A key path this engine won't take: the replace below still removes the entries.
+        this.#memoryConfig = null;
+        this.#userLayer = null;
+        this.emit("warning", `deleting the trusted home entry by key failed (${err.message}); replacing the table instead`);
+      }
+      for (let attempt = 0; attempt < 2; attempt++) {
+        layer = await this.#readUserLayer();
+        if (!doomed(layer.config?.projects).length) break;
+        const kept = Object.fromEntries(Object.entries(layer.config?.projects ?? {}).filter(([k]) => !keys.includes(k) && !doomed({ [k]: layer.config.projects[k] }).length));
+        try {
+          this.#memoryConfig = null;
+          this.#userLayer = null;
+          await this.#request("config/batchWrite", { edits: [{ keyPath: "projects", value: kept, mergeStrategy: "replace" }], expectedVersion: layer.version, reloadUserConfig: true });
+        } catch (err) {
+          if (!/modified since last read/i.test(err.message) || attempt === 1) throw err;
+        }
+      }
+      (this.homeEvents ??= []).push({ type: "trustRemoved", keys });
+    } catch (err) {
+      this.emit("warning", `could not remove the engine's trust for your home folder: ${err.message}`);
+    }
   }
 
   // {account: {type, email?, planType?} | null, requiresOpenaiAuth}
@@ -568,6 +621,7 @@ export class Engine extends EventEmitter {
   // itself so we never hand-edit TOML that Codex also writes.
   writeConfig(edits, { reload = true } = {}) {
     this.#memoryConfig = null;
+    this.#userLayer = null;
     return this.#request("config/batchWrite", {
       edits: edits.map(([keyPath, value, strategy]) => ({ keyPath, value, mergeStrategy: strategy === "upsert" ? "upsert" : "replace" })),
       reloadUserConfig: reload,
@@ -627,15 +681,26 @@ export class Engine extends EventEmitter {
   // memoryProject: the folder this thread's memory server is bound to
   // (default: cwd; a team worker passes its parent repo, since its worktree
   // lives inside ad's own folder; null for none).
-  async startThread({ cwd, model, sandbox = DEFAULT_SANDBOX, approvalPolicy = DEFAULT_APPROVAL_POLICY, ephemeral, developerInstructions, config, sessionStartSource, memoryProject } = {}) {
+  // rootMarkers: this thread's project root markers instead of ad's own ([] for a
+  // system thread in the launch folder: its root is then the folder itself).
+  async startThread({ cwd, model, sandbox = DEFAULT_SANDBOX, approvalPolicy = DEFAULT_APPROVAL_POLICY, ephemeral, developerInstructions, config, sessionStartSource, memoryProject, rootMarkers } = {}) {
+    // The engine runs in its launch folder: a thread's folder is always sent.
+    cwd ??= this.opts.cwd ?? process.cwd();
+    await this.#refuseHomeFolder(cwd, null, { markers: rootMarkers });
     config = await this.#withMemoryScope(memoryProject === undefined ? cwd : memoryProject, config);
-    const r = await this.#request("thread/start", clean({ cwd, model, sandbox, approvalPolicy, ephemeral, developerInstructions, config, sessionStartSource }));
+    config = rootMarkers ? { ...(config ?? {}), project_root_markers: rootMarkers } : await this.#threadConfig(config);
+    const params = clean({ cwd, model, sandbox, approvalPolicy, ephemeral, developerInstructions, config, sessionStartSource });
+    const r = await this.#request("thread/start", params).catch((err) => this.#homeError(err, params));
     return { threadId: r.thread.id, model: r.model, modelProvider: r.modelProvider, thread: r.thread };
   }
 
   async resumeThread(threadId, { memoryProject, ...overrides } = {}) {
-    const config = await this.#withMemoryScope(memoryProject === undefined ? overrides.cwd : memoryProject, overrides.config);
-    const r = await this.#request("thread/resume", clean({ threadId, ...overrides, config }));
+    // No default folder: the engine keeps the thread's stored one, and the
+    // check applies to the folder the thread will actually run in.
+    const folder = await this.#refuseHomeFolder(overrides.cwd, threadId);
+    const config = await this.#threadConfig(await this.#withMemoryScope(memoryProject === undefined ? (overrides.cwd ?? folder) : memoryProject, overrides.config));
+    const params = clean({ threadId, ...overrides, config });
+    const r = await this.#request("thread/resume", params).catch((err) => this.#homeError(err, params));
     return { threadId: r.thread.id, model: r.model, modelProvider: r.modelProvider, thread: r.thread, collaborationMode: collaborationMode(r.collaborationMode) };
   }
 
@@ -656,6 +721,110 @@ export class Engine extends EventEmitter {
     }
     const scope = memoryScopeConfig(folder, await this.#memoryConfig);
     return Object.keys(scope).length ? { ...scope, ...(config ?? {}) } : config;
+  }
+
+  // ---- Start-up isolation (P0.2a) ----
+
+  // ad's own settings layer (config/read with layers), read once and again after
+  // a config write: its project_root_markers and projects (trust) table.
+  #userLayer = null;
+  #readUserLayer() {
+    this.#userLayer ??= this.#request("config/read", { includeLayers: true }).then(
+      // No user layer (ad's settings file is missing): nothing of ad's own, never the effective config.
+      (r) => (r?.layers ?? []).find((l) => l?.name?.type === "user") ?? { config: {}, missing: true },
+      (err) => {
+        this.#userLayer = null;
+        throw err;
+      },
+    );
+    return this.#userLayer;
+  }
+
+  // For the checks: a settings read that fails leaves the default markers and
+  // no trust (skills still refuse), never a failed thread.
+  async #userLayerOrEmpty() {
+    try {
+      return await this.#readUserLayer();
+    } catch (err) {
+      this.emit("warning", `could not read the engine settings for the home-folder check: ${err.message}`);
+      return { config: {} };
+    }
+  }
+
+  async #userMarkers() {
+    const markers = (await this.#userLayerOrEmpty()).config?.project_root_markers;
+    return Array.isArray(markers) ? markers.filter((m) => typeof m === "string") : [".git"];
+  }
+
+  // Launched with project_root_markers=[] (no neutral folder outside a repo):
+  // every thread that is created or reopened passes the real markers back, or
+  // a new thread in a repo subfolder would lose its repo's .codex, AGENTS.md
+  // and skills (S-HOME f).
+  async #threadConfig(config) {
+    if (this.launch?.mode !== "markers-off") return config;
+    return { project_root_markers: await this.#userMarkers(), ...(config ?? {}) };
+  }
+
+  /** {kind, dir, dotCodex, loads} when `folder` would load a user Codex home, else null (always null with allowHomeFolder). */
+  // markers: the project root markers the thread will run with (default: ad's own settings).
+  async homeFolderRisk(folder, { markers, ignoreAllow = false } = {}) {
+    if ((this.allowHomeFolder && !ignoreAllow) || !folder || !(await this.#anyHomeLoadable())) return null;
+    return homeLayerRisk({ cwd: folder, markers: markers ?? (await this.#userMarkers()), userHomes: riskUserHomes(this.env), isTrusted: await this.#trusted() });
+  }
+
+  // Trusted folders from ad's engine settings (the projects table), canonical.
+  async #trustedList() {
+    const layer = await this.#userLayerOrEmpty();
+    return Object.entries(layer.config?.projects ?? {}).filter(([, v]) => v?.trust_level === "trusted").map(([k]) => canonicalPath(k));
+  }
+
+  async #trusted() {
+    const trusted = await this.#trustedList();
+    return (d) => trusted.includes(canonicalPath(d));
+  }
+
+  // Cheap first: nothing loadable in any user home → no folder can be at risk.
+  // Skills always count; settings count when any folder at or under the home's
+  // parent is trusted (the engine trusts a layer through the thread's folder,
+  // its project root or its repo root).
+  async #anyHomeLoadable() {
+    const homes = riskUserHomes(this.env);
+    if (!homes.length) return false;
+    const trusted = await this.#trustedList();
+    const under = (d) => {
+      const c = canonicalPath(d);
+      return trusted.some((t) => t === c || t.startsWith(c.endsWith(sep) ? c : c + sep));
+    };
+    return homes.some((h) => homeLayerRisk({ cwd: dirname(h), markers: [], userHomes: [h], isTrusted: under }));
+  }
+
+  // The folder a thread will run in: the explicit one, else (resume, fork) the
+  // stored one. Throws HOME_FOLDER_REFUSED when it would load a user Codex home.
+  // → the folder (null when none was given and nothing could be at risk).
+  async #refuseHomeFolder(cwd, threadId, { markers } = {}) {
+    if (this.allowHomeFolder) return cwd ?? null;
+    let folder = cwd ?? null;
+    if (!folder && threadId) {
+      if (!(await this.#anyHomeLoadable())) return null;
+      // No stored folder in the answer: the engine would use its own default, so check ad's work folder.
+      folder = (await this.#request("thread/read", { threadId, includeTurns: false }))?.thread?.cwd ?? this.opts.cwd ?? null;
+    }
+    const risk = await this.homeFolderRisk(folder, { markers });
+    if (risk) throw engineError("HOME_FOLDER_REFUSED", homeFolderRefusal(risk), { risk, folder });
+    return folder;
+  }
+
+  // A thread request that failed on a user Codex home's config.toml: a trusted
+  // project layer is parsed strictly, and a key this engine doesn't know fails
+  // the whole thread (S-HOME b). Said as guidance, not a parse error. Always throws.
+  #homeError(err, params) {
+    const raw = String(err?.raw ?? err?.message ?? "");
+    const homes = userCodexHomes(this.env).filter((h) => basename(h) === ".codex");
+    const named = homes.some((h) => raw.toLowerCase().includes(join(h, "config.toml").toLowerCase()));
+    if (named && /failed to load configuration|invalid configuration/i.test(raw)) {
+      throw engineError("HOME_FOLDER_REFUSED", homeFolderRefusal({ loads: ["settings"] }), { raw, folder: params?.cwd ?? null });
+    }
+    throw err;
   }
 
   /**
@@ -806,14 +975,20 @@ export class Engine extends EventEmitter {
       }
     }
     try {
+      // A system thread: in the caller's folder unless that would load a user
+      // Codex home, else the launch folder (nothing project-level there).
+      let cwd = opts.cwd ?? this.launch?.dir ?? tmpdir();
+      if (cwd !== this.launch?.dir && (await this.homeFolderRisk(cwd))) cwd = this.launch?.dir ?? tmpdir();
       const { threadId } = await this.startThread({
-        cwd: opts.cwd ?? tmpdir(),
+        cwd,
+        // In the launch folder the root is the folder itself, whatever the mode.
+        rootMarkers: cwd === this.launch?.dir ? [] : undefined,
         model,
         ephemeral: true,
         sandbox: "read-only",
         approvalPolicy: "never",
         developerInstructions: system,
-        config: await this.#isolatedThreadConfig(),
+        config: await this.#isolatedThreadConfig(cwd),
         memoryProject: null, // a system thread: every MCP server is off anyway
       });
       const r = await this.turn({ threadId, text: user, outputSchema: schema, timeoutMs: opts.timeoutMs ?? 120_000 });
@@ -845,6 +1020,10 @@ export class Engine extends EventEmitter {
   async structuredRequest({ cwd, model, modelProvider, text, outputSchema, config = {}, timeoutMs = 30_000 }) {
     let deadline = Date.now() + timeoutMs;
     const left = () => Math.max(1, deadline - Date.now());
+    // A system thread: never in a folder that would load a user Codex home.
+    if (!cwd || (cwd !== this.launch?.dir && (await this.homeFolderRisk(cwd)))) cwd = this.launch?.dir ?? cwd;
+    // In the launch folder the root is the folder itself (markers []), whatever the mode.
+    config = this.launch && cwd === this.launch.dir ? { ...config, project_root_markers: [] } : await this.#threadConfig(config);
     const read = await this.#request("config/read", { includeLayers: false, cwd }, { timeoutMs: left() });
     const overrides = { ...config };
     for (const id of Object.keys(read?.config?.mcp_servers ?? {})) overrides[`mcp_servers.${id}.enabled`] = false;
@@ -913,11 +1092,12 @@ export class Engine extends EventEmitter {
   // inject memory into GEPA prompts and re-extract "corrections" from the
   // transcript being analysed) and no MCP servers. Dotted keys are what
   // thread/start's config override honours (verified on codex 0.159.2).
-  async #isolatedThreadConfig() {
+  async #isolatedThreadConfig(cwd) {
     const config = { "features.hooks": false };
     let cfg = {};
     try {
-      cfg = await this.readConfig();
+      // With the folder: project-layer MCP servers are listed too.
+      cfg = (await this.#request("config/read", clean({ includeLayers: false, cwd })))?.config ?? {};
     } catch (err) {
       this.emit("warning", `could not read config to disable MCP servers: ${err.message}`);
     }
@@ -1040,6 +1220,16 @@ export const engineHome = {
   ensure: (dir, o) => ensureCodexHome(dir, o),
   env: (o) => codexEnv(o),
   MANAGED_MARKER,
+  /**
+   * Would `cwd` load a user Codex home as a project layer (P0.2a)? Before an
+   * engine runs: markers [".git"] and no trust (start-up removes it). → null
+   * or {kind: "home" | "home-repo", dir, dotCodex, loads}. The engine checks
+   * again with its real settings on every thread.
+   */
+  homeLayerRisk: (cwd, { markers, env = process.env, trusted = [] } = {}) => {
+    const t = trusted.map((d) => canonicalPath(d));
+    return homeLayerRisk({ cwd, markers, userHomes: riskUserHomes(env), isTrusted: (d) => t.includes(canonicalPath(d)) });
+  },
   /** The user's own folder from AD_ENGINE_DIR / AD_CODEX_HOME, or null (throws HOME_CONFLICT, HOME_STRAY_STAMP). */
   override: (env = process.env) => homeOverride(env),
   /** Where the folder is and in which state (read-only). {path, state: "custom" | "fresh" | "old" | "new" | "two-folders", …}. */
@@ -1139,6 +1329,7 @@ const DOCTOR_WORDS = {
   "engine.compat": (d) => ({ name: "Engine compatibility", note: `tested: ${d.tested.join(", ")}. ${d.note}` }),
   "engine.login": (d) => ({ name: "Engine sign-in", note: d.loggedIn ? d.label : "not signed in. Run: ad auth login chatgpt" }),
   "engine.hooks": (d) => ({ name: "Engine hooks", note: `${d.trusted}/${d.total} trusted${d.trusted < d.total ? "; the next ad run trusts them again" : ""}` }),
+  "engine.homeFolder": (d) => ({ name: "Home folder", note: homeDoctorNote(d) }),
   "engine.windowsSandbox": (d) => ({ name: "Windows sandbox", note: d.status === "ready" ? `ready (${d.mode ?? "?"})` : `${d.status}. Run: ad sandbox setup` }),
   "engine.unreachable": (d) => {
     const err = { ...d, message: d.error };

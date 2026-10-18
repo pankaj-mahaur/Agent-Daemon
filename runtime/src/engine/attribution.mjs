@@ -122,6 +122,61 @@ export function ownEngineHomeStartRefusal(dir) {
   return `ad won't run the engine in ${dir}: that is your own ${ENGINE.name} home. Choose another folder with AD_ENGINE_DIR.`;
 }
 
+// ── start-up isolation (P0.2a): a working folder whose project layer is the user's own ~/.codex ──
+
+const homeLoads = (loads = ["skills"]) => `your own ${ENGINE.name} ${loads.includes("skills") && loads.includes("settings") ? "skills and settings" : loads.includes("settings") ? "settings" : "skills"}`;
+
+/** ad run/chat/loop (strict, from 3.1), acp and web: the folder is refused. */
+export function homeFolderRefusal({ loads } = {}) {
+  return `Run this in a project folder: ~/${projectConfigFolder} in your home folder has ${homeLoads(loads)}, which ad would load here. Use --cwd <project>, or add --allow-home-folder.`;
+}
+
+/** The launcher's one dim line. */
+export function homeLauncherWhy({ loads } = {}) {
+  return `Your home folder's ~/${projectConfigFolder} has ${homeLoads(loads)}; ad would load them here.`;
+}
+
+/** The launcher's "Open home anyway" hint. */
+export function homeOpenAnywayHint({ loads } = {}) {
+  return `loads ${homeLoads(loads)} from ~/${projectConfigFolder}`;
+}
+
+/** /cd into a refused folder. */
+export function homeCdRefusal({ loads } = {}) {
+  return `That folder would load ${homeLoads(loads)} from ~/${projectConfigFolder} into this session. Pick a project folder, or allow it: start ad with --allow-home-folder, or choose Always open home in the launcher.`;
+}
+
+/** One transcript note when the override is on and something loads. */
+export function homeOverrideNote({ loads } = {}) {
+  return `Working in your home folder: ${homeLoads(loads)} from ~/${projectConfigFolder} load in this session.`;
+}
+
+/** The trust question is skipped: trusting this folder (under a git home) would apply the home's settings. */
+export const homeTrustSkippedNote = `ad didn't offer to trust this folder: your home folder is a git repository, so trusting a folder in it would also apply your own ${ENGINE.name} settings from ~/${projectConfigFolder} here. Give the project its own git repository to trust it.`;
+
+/** A one-time note when ad removed a trusted home entry from its engine settings. */
+export const homeTrustRemovedNote = `ad removed the trust its engine had for your home folder, so your own ${ENGINE.name} settings no longer apply in ad. Folders you trusted are unchanged.`;
+
+/** A 3.0 scheduled job in the home folder, kept running (one note per job). */
+export function homeJobNote(id) {
+  return `Scheduled job ${id} runs in your home folder, where your own ${ENGINE.name} skills load. Move it with ad schedule add --cwd <project>, or keep it as is.`;
+}
+
+/** A team worker started in the caller's home folder (worktree: false). */
+export function homeWorkerNote(name) {
+  return `Worker ${name} runs in your home folder, where your own ${ENGINE.name} skills load. Give the team a project folder, or keep it as is.`;
+}
+
+/** ad doctor's "Home folder" row (doctor rows never name the engine). */
+export function homeDoctorNote({ trusted, loadable, settingsPath }) {
+  if (trusted) return `your home folder is trusted in ${settingsPath}, so your own engine settings there would apply; the next ad start removes that trust`;
+  if (loadable) return "refused as a working folder: your own skills there would load (override: --allow-home-folder, AD_ALLOW_HOME_FOLDER=1 or the allowHomeFolder pref)";
+  return "nothing from your own engine install would load there";
+}
+
+/** Non-interactive ad run/chat/loop in a refused folder during 3.0.x (one note per folder). */
+export const homeCliGraceNote = `ad ran in your home folder, where your own ${ENGINE.name} skills load. From 3.1 this needs --allow-home-folder.`;
+
 /** `ad watch` reads the user's own engine conversations, like Claude Code's and Cursor's. */
 export const ownEngineSessionsNote = `ad watch also reads your own ${ENGINE.name} conversations in ~/${projectConfigFolder}/sessions, if you have ${ENGINE.name} installed; ad never writes there.`;
 
@@ -221,6 +276,7 @@ export function brandPatterns() {
     new RegExp(`your own ${name} conversations in ~/${escapeRe(projectConfigFolder)}/sessions, if you have ${name} installed`),
     new RegExp(`the default \\(~/${escapeRe(projectConfigFolder)}\\) belongs to your own ${name} install\\.`),
     new RegExp(`: that is your own ${name} home\\. Choose another folder with AD_ENGINE_DIR\\.`),
+    new RegExp(`your own ${name} (?:skills and settings|skills|settings)`),
     /AD_CODEX_[A-Z_]+ still works \(its new name is AD_ENGINE_[A-Z_]+\)\./,
     /\) and AD_CODEX_HOME \(/,
     /`ad codex` was removed in 3\.0\./,
@@ -247,6 +303,15 @@ export function renderedSamples() {
     sandboxConsentBody,
     ownEngineHomeRefusal("~/.codex"),
     ownEngineHomeDefaultRefusal,
+    ...[["skills"], ["settings"], ["skills", "settings"]].flatMap((loads) => [homeFolderRefusal({ loads }), homeLauncherWhy({ loads }), homeOpenAnywayHint({ loads }), homeCdRefusal({ loads }), homeOverrideNote({ loads })]),
+    homeTrustRemovedNote,
+    homeTrustSkippedNote,
+    homeJobNote("nightly"),
+    homeWorkerNote("w1"),
+    homeDoctorNote({ trusted: true, settingsPath: "~/.agent-daemon/engine/config.toml" }),
+    homeDoctorNote({ loadable: true }),
+    homeDoctorNote({}),
+    homeCliGraceNote,
     ownEngineHomeStartRefusal("C:\\Users\\me\\.codex"),
     ownEngineSessionsNote,
     tombstoneEngineUiCommand(p),

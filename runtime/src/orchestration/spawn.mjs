@@ -22,6 +22,8 @@ import { sendMessage, createInbox } from "./inbox.mjs";
 import { productValue } from "../product-values.mjs";
 import { commitWorktree, runEngineWorker } from "./engine-worker.mjs";
 import { acquireLock, liveLocks } from "../lock.mjs";
+import { engineHome } from "../engine/index.mjs";
+import { homeWorkerNote } from "../engine/attribution.mjs";
 import { checkModel, checkName, CLAUDE_TOO_OLD, claudeLacksPromptFile, resolveClaude, resolveGit, spawnResolved, withPromptFile } from "../safe-spawn.mjs";
 
 const MAX_CONCURRENT_AGENTS = 8;
@@ -189,6 +191,13 @@ export async function spawnAgent(opts) {
 
   if (engine === "ad") {
     let r;
+    // A worker in the caller's own folder (worktree: false) that would load the
+    // user's own engine home keeps running, with a note (P0.2a, as 3.0 jobs).
+    let engineOpts = opts.engineOpts;
+    if (opts.worktree === false && engineHome.homeLayerRisk(worktreePath)) {
+      process.stderr.write(`[agent-daemon] ${homeWorkerNote(agentName)}\n`);
+      engineOpts = { ...(engineOpts ?? {}), allowHomeFolder: true };
+    }
     try {
       await updateAgentStatus(opts.teamId, agentName, "running", null, process.pid);
       r = await (opts.runWorker ?? runEngineWorker)({
@@ -197,7 +206,7 @@ export async function spawnAgent(opts) {
         userMessage,
         model: opts.model,
         timeoutMs,
-        engineOpts: opts.engineOpts,
+        engineOpts,
         memoryProject: opts.cwd,
       });
       // The worker can't touch .git (see engine-worker.mjs); commit its work

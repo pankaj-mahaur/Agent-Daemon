@@ -34,6 +34,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_APPROVAL_POLICY, DEFAULT_SANDBOX, engineEvents, engineHome, isAutoModel, engineErrorText, engineErrorDetail, engineNoticeText } from "../engine/index.mjs";
 import { acquireLock, DEFAULT_LOCK_DIR, defaultLockDir } from "../lock.mjs";
+import { homeCdRefusal } from "../engine/attribution.mjs";
 
 export { DEFAULT_LOCK_DIR };
 const NOTICE_CAP = 50;
@@ -1040,6 +1041,9 @@ export function createSession({
     async changeDir(dir) {
       if (closed) throw new Error("session closed");
       if (state.activeTurnId || state.starting || state.queue.length || threadStarting) throw new Error("Changing directories requires an idle primary session without queued input.");
+      // A folder that would load the user's own engine home (P0.2a), also before any thread exists.
+      const risk = await eng.homeFolderRisk?.(dir);
+      if (risk) throw Object.assign(new Error(homeCdRefusal(risk)), { code: "HOME_FOLDER_REFUSED" });
       const from = state.thread;
       // No thread, or one with nothing in it yet (/clear, /new): the engine hasn't saved
       // it, so there is nothing to fork; as the engine does, the next thread starts there.

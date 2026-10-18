@@ -694,6 +694,20 @@ For "The engine reported a problem", inspect those details first. `ad doctor` sh
 
 **Fix:** set `EDITOR` to the editor's `.exe` (for VS Code: `"C:\Users\<you>\AppData\Local\Programs\Microsoft VS Code\Code.exe" --wait`), or use an editor whose command is an `.exe`. `The editor "x" isn't on PATH` means ad looked only on PATH (never in the current folder): set `EDITOR` to the full path.
 
+## 48. `Pick a project folder`, or `Run this in a project folder`
+
+**Symptom:** `ad` opens a "Pick a project folder" list instead of the composer; `/cd` says "That folder would load your own … skills from ~/.codex"; `ad run`/`chat`/`loop` print "ad ran in your home folder, where your own … skills load"; `ad schedule add` refuses; a resumed conversation or a web/editor client gets the "Run this in a project folder" text (code `HOME_FOLDER_REFUSED`).
+
+**Cause:** the folder is your home folder, or a folder under a home folder that is a git repository, and your own `~/.codex/` (from your own install of the engine ad runs on) has skills, or settings that ad's engine trusts. The engine reads a folder's `.codex/` as that project's settings and loads its skills even while the folder isn't trusted, so your own install's skills would join every conversation there. A resumed conversation is checked against the folder it was started in.
+
+**Fix:**
+- Open ad in a project folder: in the list, Enter opens your last one; or `cd` to the project first, or pass `--cwd <project>`.
+- To work there anyway, add `--allow-home-folder`, or set `AD_ALLOW_HOME_FOLDER=1`. Choosing **Always open home without asking** in the list saves `"allowHomeFolder": true` in `~/.agent-daemon/tui/prefs.json`.
+- Scheduled jobs from 3.0 in that folder keep running; `ad doctor` lists them under "Home-folder jobs". To move one, remove it and add it again with `--cwd <project>`.
+- If your home folder itself must be a git repository, keep projects in their own repositories; a project with its own `.git` is never affected. In such a home, ad also doesn't ask to trust a folder without its own repository ("ad didn't offer to trust this folder"): trusting it would apply your own settings from `~/.codex/config.toml` there.
+
+See [harness.md](harness.md#working-in-your-home-folder).
+
 ---
 
 For harness problems, the [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill walks through login → hooks → sandbox → the engine's own log. See also [harness.md](harness.md) and, for the terminal UI, [tui.md](tui.md).

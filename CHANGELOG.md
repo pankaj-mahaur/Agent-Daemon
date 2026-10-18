@@ -17,6 +17,7 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 - **Nothing goes global by itself.** Notes that sound global stay in their project and are marked for promotion (a later release adds `ad memory promote`); nothing is appended to `~/.agent-daemon/user.md` automatically. User facts are served only in the projects that observed them. Notes ad 3.0 stored as global are served only in the project whose session wrote them. Older ad versions still show those older notes and all user facts everywhere.
 - Two folders whose paths map to the same memory key (`/x/a/b` and `/x/a-b`) are withheld from the MCP server, SessionStart and prompt recall until each project gets its own ID.
 - ad's engine tool shells carry `AD_TOOL_SHELL=1`, so the memory review commands refuse to run from an agent's shell.
+- **Your own Codex install stays out of ad.** Started in your home folder (or under a home folder that is a git repository), the engine loaded your own `~/.codex` as project settings: its skills always, and its model, MCP servers and other settings when ad's engine trusted that folder. Now the engine runs in an empty launch folder, ad doesn't work in such a folder while your `~/.codex` has skills (see Changed), and a `trusted` entry for your home folder in ad's engine settings is removed at start, with a one-time note. ad never marks it `untrusted`, and folders you trusted are unchanged.
 
 ### Added
 
@@ -38,6 +39,8 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 ### Changed
 
+- **Home folder.** `ad` started where your own `~/.codex` skills would load shows **Pick a project folder** (your last project first; Enter opens it). `/cd` there is refused, and so is `ad schedule add`. `ad run`, `ad chat` and `ad loop` still run there in 3.0.x, with a one-time note per folder; **from 3.1 they need `--allow-home-folder`**. The overrides are `--allow-home-folder`, `AD_ALLOW_HOME_FOLDER=1`, and the pref `allowHomeFolder` (the launcher's "Always open home without asking"). Each prints one note saying your skills load. A `~/.codex` without skills changes nothing. Scheduled jobs from 3.0 in such a folder keep running, with a note, and `ad doctor` lists them ("Home-folder jobs"); team workers without a worktree there do the same. `~/.agents/skills` still loads everywhere. In a home folder that is a git repository with your own engine settings in `~/.codex/config.toml`, ad no longer offers to trust a folder without its own repository, since trusting it would apply those settings there.
+- The engine process starts in `~/.agent-daemon/launch` instead of your project, so `/mcp` lists the MCP servers in ad's own settings; a trusted project's own servers start with its conversations.
 - Agent Daemon is a personal open-source project: the MIT licence now names its author, Pankaj Kumar (Pankaj Mahaur). Security reports go to pankajmahaur2003@gmail.com or a private GitHub security advisory.
 
 ## [3.0.0] — 2026-10-17

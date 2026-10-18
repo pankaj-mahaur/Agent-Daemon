@@ -414,3 +414,95 @@ test("the agent-shell marker: a tool shell carries AD_TOOL_SHELL=1 from shell_en
     assert.match(exec.aggregatedOutput ?? "", /\[1\]/, `output: ${exec.aggregatedOutput}`);
   }, { script: envScript, extraConfig: () => `[shell_environment_policy.set]\nAD_TOOL_SHELL = "1"` });
 });
+
+// ---- Start-up isolation (P0.2a, S-HOME): the user's own ~/.codex never reaches the model ----
+
+const SENTINELS = /SENTINEL_[A-Z_]+|sentinel-model-zz/g;
+// A temp user home (HOME/USERPROFILE for ad and the engine): a git repo whose
+// ~/.codex has a sentinel skill and settings, and is trusted in ad's engine
+// settings; a project inside it with its own .git and a repo skill.
+async function withIsolationTree(fn) {
+  const { createEngine } = await import("../src/engine/index.mjs");
+  const root = mkdtempSync(join(tmpdir(), "ad-real-iso-"));
+  const home = join(root, "home");
+  const put = (p, s) => {
+    mkdirSync(join(p, ".."), { recursive: true });
+    appendFileSync(p, s);
+  };
+  put(join(home, ".git", "HEAD"), "ref: refs/heads/main\n");
+  put(join(home, ".codex", "config.toml"), 'model = "sentinel-model-zz"\n');
+  put(join(home, ".codex", "skills", "sentinel-a", "SKILL.md"), "---\nname: sentinel-a\ndescription: SENTINEL_SKILL_A\n---\nbody\n");
+  const proj = join(home, "shop-app");
+  put(join(proj, ".git", "HEAD"), "ref: refs/heads/main\n");
+  put(join(proj, ".codex", "skills", "repo-skill", "SKILL.md"), "---\nname: repo-skill\ndescription: SENTINEL_REPO_SKILL\n---\nbody\n");
+  mkdirSync(join(proj, "src"), { recursive: true });
+  mkdirSync(join(home, "notes"), { recursive: true });
+  const bodies = [];
+  const mock = await startMockResponses({ script: (body) => (bodies.push(JSON.stringify(body)), [ev.created(), ev.message("pong"), ev.completed()]) });
+  const engineHome = writeMockCodexHome(join(root, "engine"), { url: mock.url });
+  appendFileSync(join(engineHome, "config.toml"), `\n[projects.'${home}']\ntrust_level = "trusted"\n`);
+  appendFileSync(join(engineHome, ".agent-daemon-managed"), "test\n");
+  const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  const engines = [];
+  const make = async (o = {}) => {
+    const e = await createEngine({ home: engineHome, command: PINNED, cwd: proj, clientVersion: "test", ...o });
+    engines.push(e);
+    return e;
+  };
+  const sentinelsOf = (from) => [...new Set(bodies.slice(from).join("\n").match(SENTINELS) ?? [])].sort();
+  const turnSentinels = async (engine, threadId) => {
+    const from = bodies.length;
+    const r = await engine.turn({ threadId, text: "PING", timeoutMs: TURN_TIMEOUT_MS });
+    assert.equal(r.status, "completed", JSON.stringify(r.error));
+    return sentinelsOf(from);
+  };
+  try {
+    await fn({ make, home, proj, root, engineHome, turnSentinels });
+  } finally {
+    for (const e of engines) await e.close().catch(() => {});
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    await mock.close();
+    await removeWithRetry(root);
+  }
+}
+
+test("start-up isolation: the user's settings and skills never reach the model (P0.2, S-HOME)", { skip, timeout: START_TIMEOUT_MS * 3 + TURN_TIMEOUT_MS * 4 }, async () => {
+  await withIsolationTree(async ({ make, home, proj, turnSentinels }) => {
+    const engine = await make();
+    // The trusted home entry is gone, whoever wrote it.
+    const projects = (await engine.readConfig()).projects ?? {};
+    assert.ok(!Object.keys(projects).some((k) => k.toLowerCase().replace(/[\/]+$/, "") === home.toLowerCase()), `projects: ${Object.keys(projects)}`);
+    assert.ok(engine.homeEvents?.some((e) => e.type === "trustRemoved"));
+    // From the repo project: its own skill, nothing from ~/.codex.
+    const { threadId } = await engine.startThread({ cwd: join(proj, "src") });
+    assert.deepEqual(await turnSentinels(engine, threadId), ["SENTINEL_REPO_SKILL"]);
+    // The home folder and a non-git subfolder of the git home are refused.
+    await assert.rejects(engine.startThread({ cwd: home }), { code: "HOME_FOLDER_REFUSED" });
+    await assert.rejects(engine.startThread({ cwd: join(home, "notes") }), { code: "HOME_FOLDER_REFUSED" });
+    // Control: with the override the probe sees the leak (so the assertions above can fail).
+    const open = await make({ allowHomeFolder: true });
+    const t2 = await open.startThread({ cwd: join(home, "notes") });
+    assert.ok((await turnSentinels(open, t2.threadId)).includes("SENTINEL_SKILL_A"), "the control shows sentinel-a");
+  });
+});
+
+test("start-up isolation, markers-off launch: a resumed thread in a repo subfolder still loads its repo's .codex", { skip, timeout: START_TIMEOUT_MS * 3 + TURN_TIMEOUT_MS * 3 }, async () => {
+  await withIsolationTree(async ({ make, home, proj, turnSentinels }) => {
+    // The launch folder inside the git home: only -c project_root_markers=[] keeps ~/.codex out.
+    const launchAt = join(home, "launch-here");
+    mkdirSync(launchAt, { recursive: true });
+    const launch = { dir: launchAt, codexArgs: ["-c", "project_root_markers=[]"], mode: "markers-off" };
+    const first = await make({ launch });
+    const { threadId } = await first.startThread({ cwd: join(proj, "src") });
+    assert.deepEqual(await turnSentinels(first, threadId), ["SENTINEL_REPO_SKILL"]);
+    await first.close();
+    const again = await make({ launch });
+    await again.resumeThread(threadId);
+    assert.deepEqual(await turnSentinels(again, threadId), ["SENTINEL_REPO_SKILL"], "resumed with the real markers");
+  });
+});

@@ -38,6 +38,9 @@ import { preflight } from "./preflight.mjs";
 import { T } from "./view/theme.mjs";
 import { harnessIdentity, skillRoots } from "../harness/setup.mjs";
 import { setSyntaxTheme } from "./view/highlight.mjs";
+import { homeFolderAllowed, recentProjects } from "../harness/home-folder.mjs";
+import { launcherItems, LAUNCHER_TITLE } from "./home-launcher.mjs";
+import { homeFolderRefusal, homeLauncherWhy, homeTrustSkippedNote } from "../engine/attribution.mjs";
 
 /* ------------------------------------------------------------------ */
 /* Small terminal helpers                                              */
@@ -297,7 +300,29 @@ export async function cmdTui(opts = {}) {
     await renderer.start();
     renderer.frame({ lines: [[{ text: "Starting the engine\u{2026}", style: T.dim }]] });
 
-    const start = () => startHarnessEngine({ cwd, home: opts.home, command: opts.command, clientVersion: opts.clientVersion, store: opts.store, err: sink, detached: true, experimental: true, interactive: true });
+    // A folder that would load the user's own engine home (P0.2a): pick a project
+    // folder first, unless an override allows it (flag, AD_ALLOW_HOME_FOLDER, pref).
+    let allowHomeFolder = homeFolderAllowed({ flag: opts.allowHomeFolder === true, prefsFile: opts.prefsFile }).allowed;
+    // → false when the user left (Esc); else cwd or allowHomeFolder is updated.
+    const pickHomeFolder = async (risk) => {
+      const recent = recentProjects(readState(opts.stateFile ?? DEFAULT_STATE_FILE), { exclude: [cwd] });
+      const choice = await pickOnce({ io, renderer, title: LAUNCHER_TITLE, intro: [[{ text: homeLauncherWhy(risk), style: T.dim }]], items: launcherItems({ recent, risk }) });
+      if (!choice) {
+        renderer.frame({ lines: [] });
+        exitHint = homeFolderRefusal(risk);
+        return false;
+      }
+      if (choice.cwd) cwd = path.resolve(choice.cwd);
+      else {
+        allowHomeFolder = true;
+        if (choice.always) adPrefs.set("allowHomeFolder", true);
+      }
+      return true;
+    };
+    // Before the engine starts: skills (and settings with no trust) need no engine.
+    const homeRisk = engineHome.homeLayerRisk(cwd);
+    if (homeRisk && !allowHomeFolder && !(await pickHomeFolder(homeRisk))) return 2;
+    const start = () => startHarnessEngine({ cwd, home: opts.home, command: opts.command, clientVersion: opts.clientVersion, store: opts.store, err: sink, detached: true, experimental: true, interactive: true, allowHomeFolder });
     let started = await start();
     while (!started.engine && started.code === 2 && /Not logged in/.test(started.error ?? "")) {
       const choice = await pickOnce({
@@ -321,12 +346,38 @@ export async function cmdTui(opts = {}) {
       return started.code ?? 2;
     }
     engine = started.engine;
+    // Again with ad's real settings: a trusted folder under a git home applies the home's settings.
+    // Another folder picked here: the engine starts again there (its default
+    // folder and setup follow the work folder), and that folder is checked too.
+    while (!allowHomeFolder) {
+      const late = await engine.homeFolderRisk(cwd);
+      if (!late) break;
+      const before = cwd;
+      if (!(await pickHomeFolder(late))) return 2;
+      if (allowHomeFolder) {
+        engine.allowHomeFolder = true;
+        break;
+      }
+      if (cwd === before) continue;
+      await engine.close();
+      engine = null;
+      started = await start();
+      if (!started.engine) {
+        renderer.frame({ lines: [] });
+        exitHint = started.error;
+        return started.code ?? 2;
+      }
+      engine = started.engine;
+    }
 
-    // Folder trust (S3): asked once per folder, kept in ad's engine home.
+    // Folder trust (S3): asked once per folder, kept in ad's engine home. Never
+    // offered where trusting would also apply the user's own engine settings (P0.2a).
     const config = await engine.readConfig().catch(() => ({}));
     const projects = config.projects ?? {};
     const known = Object.keys(projects).find((k) => engineHome.canonical(k) === engineHome.canonical(cwd));
-    if (!known && engineHome.canonical(cwd) !== engineHome.canonical(homedir())) {
+    const trustLoadsHome = engineHome.homeLayerRisk(cwd, { trusted: [cwd] })?.loads.includes("settings") && !allowHomeFolder;
+    if (trustLoadsHome && !known) setupNotes.push(homeTrustSkippedNote);
+    if (!known && !trustLoadsHome && engineHome.canonical(cwd) !== engineHome.canonical(homedir())) {
       const trust = await pickOnce({
         io,
         renderer,
@@ -495,7 +546,7 @@ export async function cmdTui(opts = {}) {
     // `ad tui "<prompt>"`: the first prompt is sent right away.
     if (opts.prompt) app.send(opts.prompt);
     await app.done;
-    state[key] = { lastSeen: Date.now() };
+    state[key] = { lastSeen: Date.now(), path: cwd }; // path: as typed, for the launcher's list
     await writeState(stateFile, state);
     const tid = session.state.thread?.id;
     const total = session.state.tokens?.total?.total;

@@ -125,7 +125,7 @@ export async function cmdLoop(objective, opts = {}) {
   try {
     // UNATTENDED_ENV: our re-prompts echo the agent's own status text —
     // hooks must not store that as the user's corrections.
-    const started = await startHarnessEngine({ cwd, home: opts.home, command: opts.command, clientVersion: opts.clientVersion, store: opts.store, platform: opts.platform, err, requireSandbox: true, env: UNATTENDED_ENV });
+    const started = await startHarnessEngine({ cwd, home: opts.home, command: opts.command, clientVersion: opts.clientVersion, store: opts.store, platform: opts.platform, err, requireSandbox: true, env: UNATTENDED_ENV, allowHomeFolder: opts.allowHomeFolder === true, homePolicy: "grace" });
     if (!started.engine) {
       err.write(started.error + "\n");
       return started.code;
