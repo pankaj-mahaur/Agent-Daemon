@@ -326,7 +326,7 @@ Write invisible characters (zero-width, bidi, control) as braced escapes such as
 
 - GitHub Issues for bugs / feature requests
 - Pull request comments for code review
-- `pankaj@mobiux.in` for security issues (see [SECURITY.md](../SECURITY.md))
+- `pankajmahaur2003@gmail.com` for security issues (see [SECURITY.md](../SECURITY.md))
 
 ---
 

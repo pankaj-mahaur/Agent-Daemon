@@ -4,6 +4,10 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Changed
+
+- Agent Daemon is a personal open-source project: the MIT licence now names its author, Pankaj Kumar (Pankaj Mahaur). Security reports go to pankajmahaur2003@gmail.com or a private GitHub security advisory.
+
 ## [3.0.0] — 2026-10-17
 
 Agent Daemon 3.0: ad is its own product. Same agent and sign-in; conversations, skills and settings carry over.

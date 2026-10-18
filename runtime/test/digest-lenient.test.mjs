@@ -304,7 +304,7 @@ test("schema drift: too-short text after fallback to `lessons` still rejected (m
 
 /* ------------------------------------------------------------------ */
 /* Bug B3 regression: sanitizeLearnings accepts `lesson` (singular).    */
-/* Mobiux session 2026-05-22 emitted entries like                       */
+/* A real session on 2026-05-22 emitted entries like                    */
 /*   {"lesson":"...","tag":"..."} — singular, not the plural `lessons`. */
 /* Pre-fix: all such entries silently dropped.                          */
 /* ------------------------------------------------------------------ */
