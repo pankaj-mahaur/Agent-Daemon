@@ -66,6 +66,7 @@ The fake answers an unknown method with -32600, like the real engine. Tests reac
 - On GitHub's Windows runner, the pinned engine (0.160.0)'s non-admin sandbox refuses a background command (`exec_command` with `yield_time_ms`) outright: "cannot enforce split writable root sets directly; refusing to run unsandboxed", with no "retry without sandbox?". The Part 5 live test skips there on exactly that message; any other failure still fails.
 - On Linux, the engine's sandbox gives a command its own PID namespace: a pid the command writes isn't the host's. Check a background process by what it does (a file it keeps writing), never with `process.kill(pid, 0)`.
 - A test that waits on a file's modification time must set it (`utimesSync`): a fast runner writes two versions in the same millisecond.
+- **A step that stalls** (a patch or a background command that never finishes): its timeout message ends with the process tree under the pseudo-terminal (name, pid, CPU seconds), which shows what is still alive: a sandbox helper, a hook (`node … hook`), PowerShell or git. `AD_LIVE_KEEP=1` keeps each test's temp world and prints its path. `AD_PROFILE=minimal` in the world removes ad's tool hooks, to rule them in or out. One such stall on a Windows developer machine (October 2026) went away on its own while the code stayed the same; CI's per-test results are the proof either way.
 
 ## Keeping tests honest
 

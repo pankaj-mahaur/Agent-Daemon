@@ -840,3 +840,35 @@ for (const [name, make, reflow] of SCREENS) {
     }
   });
 }
+
+// A frame drawn while commits wait for their batch (no ?2026) takes them along:
+// otherwise a turn's answer, already gone from the live region, is missing from
+// the screen until the batch timer fires (the "prompt at the bottom" live flake).
+for (const pinBottom of [false, true]) {
+  test(`without ?2026, a frame writes the waiting commits first (pinBottom ${pinBottom})`, async () => {
+    let t = 1000;
+    const timers = [];
+    const scr = xtermScreen({ cols: 40, rows: 10, sync: false });
+    const r = createRenderer({
+      io: scr.io,
+      pinBottom,
+      now: () => t,
+      setTimeout: (fn, ms) => {
+        const h = { fn, at: t + ms };
+        timers.push(h);
+        return h;
+      },
+      clearTimeout: (h) => timers.splice(timers.indexOf(h), 1),
+    });
+    await r.start();
+    r.frame({ lines: ["streaming answer", "> composer"] });
+    r.commit(["a warning"]); // goes out now
+    r.commit(["the answer"]); // waits for the batch
+    r.frame({ lines: ["> composer"] }); // the turn ended: the answer left the live region
+    await scr.settle();
+    assert.ok(scr.lines().includes("the answer"), `the answer is on screen without waiting: ${JSON.stringify(scr.lines())}`);
+    assert.equal(r.state.queued, 0);
+    assert.equal(timers.length, 0, "the batch timer was cancelled");
+    assert.deepEqual(scr.lines().filter(Boolean).slice(-3), ["a warning", "the answer", "> composer"]);
+  });
+}

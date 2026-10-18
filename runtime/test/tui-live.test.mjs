@@ -30,7 +30,28 @@ const wanted = process.env.AD_REAL_ENGINE === "1";
 const skip = !wanted ? "set AD_REAL_ENGINE=1 to run ad tui on the real engine binary" : resolveCodexCommand({}).source !== "pinned" ? "the pinned engine binary isn't installed" : false;
 const STEP_MS = 90_000; // a first engine start can be slow while antivirus scans the binary
 
+// The process tree under `pid` (name, pid, CPU seconds), for a timeout message:
+// which helper is alive when a step stalls (P0.6). Read-only and best effort.
+function processTree(pid) {
+  if (!pid) return "";
+  try {
+    if (process.platform === "win32") {
+      const ps = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+      const script = `$all = Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,KernelModeTime,UserModeTime; $out = @(); $q = @(${Number(pid)}); while ($q.Count) { $p = $q[0]; $q = @($q | Select-Object -Skip 1); foreach ($c in $all | Where-Object ParentProcessId -eq $p) { $out += "$($c.Name) pid=$($c.ProcessId) parent=$p cpu=$([math]::Round(($c.KernelModeTime + $c.UserModeTime) / 1e7, 1))s"; $q += $c.ProcessId } }; $out -join [Environment]::NewLine`;
+      return `\n--- processes under the pty (pid ${pid}) ---\n${execFileSync(ps, ["-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8", timeout: 15000, windowsHide: true }).trim()}`;
+    }
+    return `\n--- processes ---\n${execFileSync("/bin/ps", ["-A", "-o", "pid,ppid,time,comm"], { encoding: "utf8", timeout: 15000 }).split("\n").filter((l) => new RegExp(`node|${ENGINE.processName}|bwrap|sandbox|git|sh\\b`).test(l)).join("\n")}`;
+  } catch (err) {
+    return `\n--- process tree unavailable: ${err.message} ---`;
+  }
+}
+
+// AD_LIVE_KEEP=1 keeps every test's temp world for inspection (P0.6).
 async function removeWithRetry(dir) {
+  if (process.env.AD_LIVE_KEEP === "1") {
+    process.stderr.write(`[tui-live] kept ${dir}\n`);
+    return;
+  }
   for (let i = 0; i < 40; i++) {
     try {
       rmSync(dir, { recursive: true, force: true });
@@ -105,7 +126,7 @@ async function launch(w, args = [], { cols = 100, rows = 30 } = {}) {
       const t = text();
       if (typeof pred === "function" ? pred(t) : pred.test(t)) return t;
       if (exited && !(typeof pred === "function")) throw new Error(`ad tui exited (${JSON.stringify(exited)}) waiting for ${what}\n--- screen ---\n${t.slice(-3000)}`);
-      if (Date.now() > end) throw new Error(`timed out waiting for ${what}\n--- screen ---\n${t.slice(-3000)}`);
+      if (Date.now() > end) throw new Error(`timed out waiting for ${what}\n--- screen ---\n${t.slice(-3000)}${processTree(child.pid)}`);
       await new Promise((r) => setTimeout(r, 100));
     }
   };
@@ -858,7 +879,8 @@ test("prompt at the bottom live: the composer starts on the last rows and stays 
     await t.until(/pong/, "the answer");
     await t.until(() => t.idle(), "idle after the turn");
     assert.match(lastRow(), /\? shortcuts/, "still on the last row after a turn");
-    assert.ok(t.text().indexOf("pong") > t.text().indexOf(">_ Agent Daemon"), "the answer below the header");
+    const shown = t.text();
+    assert.ok(shown.indexOf("pong") > shown.indexOf(">_ Agent Daemon"), `the answer below the header (pong at ${shown.indexOf("pong")}, header at ${shown.indexOf(">_ Agent Daemon")})\n--- screen ---\n${shown.slice(-3000)}`);
     t.type("/quit\r");
     await t.exit;
     t.kill();
