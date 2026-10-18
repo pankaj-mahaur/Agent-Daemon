@@ -98,7 +98,7 @@ export async function runSessionStart(opts) {
   if (qmdAvailable) {
     const activeContext = await tryRead(path.join(opts.cwd, ".agent-daemon", "memory", "activeContext.md"));
     if (activeContext) {
-      sections.push(`<!-- memory: activeContext.md -->\n### activeContext.md\n\n${neutralizeMemoryFile(activeContext)}`);
+      sections.push(`<!-- memory: activeContext.md -->\n### activeContext.md\n\n${neutralizeMemoryFile(fitActiveContext(activeContext))}`);
     }
     sections.push([
       `<!-- memory retrieval (QMD) -->`,
@@ -108,11 +108,9 @@ export async function runSessionStart(opts) {
       `Do not read memory files directly — QMD provides ranked, compressed results at ~10x lower token cost.`
     ].join("\n"));
   } else {
-    // Fallback: bulk-load memory files (pre-QMD behavior)
-    const userMd = await tryRead(path.join(homeDir(), ".agent-daemon", "user.md"));
-    if (userMd) {
-      sections.push(`<!-- ~/.agent-daemon/user.md (cross-project user profile) -->\n${neutralizeMemoryFile(userMd)}`);
-    }
+    // Fallback: bulk-load memory files (pre-QMD behavior). The project's own
+    // memory goes first, so the memory group's cap never cuts activeContext.md
+    // for the global user.md; user.md (pushed after this block) gets what remains.
 
     const memoryLocations = [
       path.join(opts.cwd, ".agent-daemon", "memory"),
@@ -135,6 +133,11 @@ export async function runSessionStart(opts) {
       }
     }
 
+  }
+
+  if (!qmdAvailable) {
+    const userMd = await tryRead(path.join(homeDir(), ".agent-daemon", "user.md"));
+    if (userMd) sections.push(`<!-- ~/.agent-daemon/user.md (cross-project user profile) -->\n${neutralizeMemoryFile(userMd)}`);
   }
 
   // 3. Graphify knowledge graph pointer — if a graphify-out/graph.json exists
@@ -425,6 +428,47 @@ export async function spawnDigestSweep(opts) {
   return true;
 }
 
+const ACTIVE_CONTEXT_FIT_BYTES = 3200;
+const KEY_SECTIONS = ["Now", "Open issues", "Rules"];
+
+/**
+ * activeContext.md within its budget. A file over it keeps its title, its
+ * `## Now`, `## Open issues` and `## Rules` sections, then the newest lines
+ * from its end (new knowledge is appended there), after a marker. A file
+ * without those headings is returned as is (the group cap cuts its head).
+ */
+export function fitActiveContext(text, capBytes = ACTIVE_CONTEXT_FIT_BYTES) {
+  const bytes = (s) => Buffer.byteLength(s, "utf8");
+  if (bytes(text) <= capBytes) return text;
+  const lines = text.split(/\r?\n/);
+  const heads = lines.map((l, i) => [l, i]).filter(([l]) => /^## /.test(l)).map(([l, i]) => ({ name: l.slice(3).trim(), i }));
+  const keep = heads.filter((h) => KEY_SECTIONS.includes(h.name));
+  if (!keep.length) return text;
+  const firstHead = heads.length ? heads[0].i : lines.length;
+  const parts = [lines.slice(0, firstHead).join("\n").trim()];
+  for (const h of keep) {
+    const next = heads.find((x) => x.i > h.i);
+    parts.push(lines.slice(h.i, next ? next.i : lines.length).join("\n").trim());
+  }
+  let out = parts.filter(Boolean).join("\n\n");
+  const marker = "<!-- older lines: activeContext.md -->";
+  const covered = new Set(keep.flatMap((h) => {
+    const next = heads.find((x) => x.i > h.i);
+    return Array.from({ length: (next ? next.i : lines.length) - h.i }, (_, k) => h.i + k);
+  }));
+  const tail = [];
+  let room = capBytes - bytes(out) - bytes(marker) - 4;
+  for (let i = lines.length - 1; i >= firstHead && room > 0; i--) {
+    if (covered.has(i)) continue;
+    const b = bytes(lines[i]) + 1;
+    if (b > room) break;
+    tail.unshift(lines[i]);
+    room -= b;
+  }
+  if (tail.some((l) => l.trim())) out += `\n\n${marker}\n${tail.join("\n").trim()}`;
+  return out;
+}
+
 async function readMemoryDir(memDir) {
   try {
     const entries = await fs.readdir(memDir);
@@ -442,7 +486,7 @@ async function readMemoryDir(memDir) {
     for (const f of ordered) {
       const text = await tryRead(path.join(memDir, f));
       if (text) {
-        blocks.push(`### ${f}\n\n${neutralizeMemoryFile(text)}`);
+        blocks.push(`### ${f}\n\n${neutralizeMemoryFile(/^activeContext\.md$/i.test(f) ? fitActiveContext(text) : text)}`);
         if (text.includes("{{")) hasPlaceholders = true;
       }
     }

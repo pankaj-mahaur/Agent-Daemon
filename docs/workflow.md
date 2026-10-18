@@ -239,6 +239,17 @@ ad status        # list queued proposals
 ad review        # interactive accept / reject
 ```
 
+## Compacting project memory
+
+`.agent-daemon/memory/activeContext.md` grows as digests append to it. SessionStart injects at most about 4 KB of memory, so `ad doctor` flags "Session context budget" when the file passes 4,100 bytes. When it does:
+
+1. Copy the file to `.agent-daemon/archive/activeContext-<date>-pre-compact.md` (SessionStart never reads `archive/`).
+2. Move each durable fact to where it belongs: engine behaviour to the `engine-upgrade` skill, terminal-UI facts to `ad-tui-dev`, test lessons to [testing.md](testing.md) ("Pitfalls met in practice"), user-facing errors to [troubleshooting.md](troubleshooting.md). Drop what the CHANGELOG or git history already records, and duplicates.
+3. Rewrite the file, aiming for 3,200 bytes or less, with these sections: `## Now` (the current state and work), `## Open issues`, `## Rules` (how to work in this repo), `## Pointers` (which skill or doc holds what), and `## Inbox` (where new digests land).
+4. Run `ad doctor`: the row turns ✓.
+
+If the file grows past the budget again, SessionStart still injects `## Now`, `## Open issues` and `## Rules` first, then the newest lines from the end of the file, so new knowledge isn't cut. Without a global QMD setup, the project's own memory goes before the global `~/.agent-daemon/user.md`.
+
 ---
 
 ## Multi-project workflow

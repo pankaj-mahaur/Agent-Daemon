@@ -1136,7 +1136,7 @@ async function cmdDoctor({ cwd = process.cwd(), tokens, limit, model } = {}) {
     checks.push({
       name: "Session context budget",
       ok: activeBytes <= 4100,
-      note: activeBytes <= 4100 ? `activeContext.md ${activeBytes}B within priority allocation` : `activeContext.md ${activeBytes}B exceeds 4100B priority allocation; compact memory`
+      note: activeBytes <= 4100 ? `activeContext.md ${activeBytes}B within priority allocation` : `activeContext.md ${activeBytes}B exceeds 4100B priority allocation; compact it (docs/workflow.md, "Compacting project memory")`
     });
   } catch {
     checks.push({ name: "Project memory bootstrap", ok: false, note: "missing .agent-daemon/memory — run ad init" });

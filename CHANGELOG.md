@@ -27,6 +27,7 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 - `ad tui`: key settings the engine leaves unset no longer show up as "Settings ad couldn't use" (the engine writes an unset action as `null`). Key settings ad really can't use (a chord, a leader key, a non-key value) are summed up in one line in `/warnings`; `/keymap` lists each.
 - `ad init` writes Claude Code's `~/.claude/settings.json` and `~/.claude.json` atomically (a temp file, then a rename), so a crash or Claude Code reading at the same moment never sees half a file. A `settings.json` or `~/.claude.json` ad can't parse is left untouched (it used to be replaced, keeping only ad's hooks).
 - The manual's memory paragraph said `ad init` registers the memory MCP server for Claude Code; it doesn't. It now gives the `claude mcp add … agent-daemon-memory-mcp --host claude-code` command.
+- SessionStart: a project's `activeContext.md` is no longer cut off by a large global `~/.agent-daemon/user.md` (without QMD, the project's memory now comes first). A file over its budget keeps its `## Now`, `## Open issues` and `## Rules` sections and its newest lines, instead of only its oldest ones. `ad doctor` points to the compaction recipe in `docs/workflow.md`.
 - `ad tui`: the same engine warning repeated (a config warning per conversation, a deprecation per turn) shows once, with a count in `/warnings`, instead of a new row each time.
 
 ### Changed
