@@ -15,6 +15,7 @@ import path from "node:path";
 import {
   checkModel,
   checkName,
+  editorInvocation,
   resolveCommand,
   resolveGit,
   resolvedArgv,
@@ -155,6 +156,44 @@ test("spawnResolved refuses a shell, a missing command and (on Windows) a relati
   assert.throws(() => spawnResolved({ cmd: process.execPath, prefix: [] }, ["-v"], { shell: true }), /shell/);
   assert.throws(() => spawnResolved({ cmd: null, via: "missing" }, []), /missing/);
   if (isWin) assert.throws(() => spawnResolved({ cmd: "node", prefix: [] }, ["-v"]), /absolute/);
+});
+
+// ---------- P0.7b: editors and openers ----------
+
+test("editorInvocation: an .exe editor starts directly; a .cmd editor goes through cmd.exe by full path; unsafe arguments are refused", () => {
+  const exe = editorInvocation("ed", ["C:\\t\\prompt.md"], { platform: "win32", resolve: () => ({ cmd: "C:\\Ed\\ed.exe", prefix: [], via: "exe" }) });
+  assert.deepEqual(exe, { cmd: "C:\\Ed\\ed.exe", args: ["C:\\t\\prompt.md"] });
+  const shim = { cmd: null, via: "unreadable-shim", file: "C:\\VS Code\\bin\\code.cmd" };
+  const viaCmd = editorInvocation("code", ["--wait", "C:\\t\\p.md"], { platform: "win32", resolve: () => shim, cmdExe: "C:\\Windows\\System32\\cmd.exe" });
+  assert.equal(viaCmd.cmd, "C:\\Windows\\System32\\cmd.exe");
+  assert.deepEqual(viaCmd.args.slice(0, 4), ["/d", "/v:off", "/s", "/c"]);
+  for (const bad of ["C:\\t\\%PATH%\\p.md", 'C:\\t\\a"b.md', "C:\\t\\a\nb.md"]) {
+    assert.throws(() => editorInvocation("code", [bad], { platform: "win32", resolve: () => shim, cmdExe: "C:\\cmd.exe" }), /can't take that file name safely/);
+  }
+  assert.throws(() => editorInvocation("nope", [], { platform: "win32", resolve: () => ({ cmd: null, via: "missing" }) }), /isn't on PATH/);
+  assert.deepEqual(editorInvocation("vi", ["f"], { platform: "linux" }), { cmd: "vi", args: ["f"] });
+});
+
+test("openPath / openUrl: the target is one argument, no shell; only absolute existing files and https URLs", async () => {
+  const { openPath, openUrl } = await import("../src/harness/io.mjs");
+  const dir = mkdtempSync(path.join(tmpdir(), "ad-open-"));
+  try {
+    const name = isWin ? "out & calc.html" : "$(touch m).html";
+    const file = path.join(dir, name);
+    writeFileSync(file, "<p>x</p>");
+    const seen = [];
+    const run = (cmd, args, opts, cb) => { seen.push({ cmd, args, shell: opts.shell }); cb(null); };
+    assert.equal(await openPath(file, { run }), true);
+    assert.equal(seen[0].shell, false);
+    assert.equal(seen[0].args.at(-1), file, "the file name is one argument, untouched");
+    if (isWin) assert.match(seen[0].cmd, /^[A-Za-z]:\\.*\\System32\\rundll32\.exe$/i);
+    assert.equal(await openPath("relative.html", { run }), false);
+    assert.equal(await openPath(path.join(dir, "missing.html"), { run }), false);
+    assert.equal(await openUrl("http://example.com", { run }), false, "https only");
+    assert.equal(seen.length, 1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 // ---------- names ----------

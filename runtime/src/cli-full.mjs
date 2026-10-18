@@ -5,7 +5,6 @@
 
 import { parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
-import { exec } from "node:child_process";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { LEGACY } from "./engine/attribution.mjs";
@@ -78,6 +77,7 @@ Commands:
   review                 Interactively accept/reject queued proposals
   query-retrieve         Extract keywords from user prompt and inject relevant past learnings (UserPromptSubmit hook)
   memory stats           Episodic store row counts + retrieval telemetry (truncation rate, injected bytes)
+  memory scan            Check older memory notes once: hold back rows with a provider key or an injection
   memory consolidate     Hermes-style evolution pass: near-duplicate merges, stale archive, contradictions
                          → proposals only; --apply-merges / --apply-stale execute after review
                          --all-projects       span every project (default: current --cwd only)
@@ -308,9 +308,7 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
   // Detect QMD on PATH so we can offer to register it as an MCP server
   // and create a project collection. Best-effort — failure is non-fatal.
   // Skip the detection entirely if the profile disables the QMD feature.
-  const qmdOnPath = resolved.features.qmd === false ? false : await new Promise(resolve => {
-    exec("qmd --version", (err) => resolve(!err));
-  });
+  const qmdOnPath = resolved.features.qmd === false ? false : (await runQmd(["--version"])).ok;
   let qmdNeedsMcpRegister = false;
   let qmdCollectionMissing = false;
   let qmdProjName = "";
@@ -324,17 +322,20 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
     } catch {
       qmdNeedsMcpRegister = true;
     }
-    qmdCollectionMissing = await new Promise(resolve => {
-      exec("qmd collection list", (err, stdout) => {
-        if (err) return resolve(false);
-        resolve(!stdout.includes(`${qmdProjName} (qmd://`));
-      });
-    });
+    const list = await runQmd(["collection", "list"]);
+    qmdCollectionMissing = list.ok && !list.stdout.includes(`${qmdProjName} (qmd://`);
   }
   let existingSettings = {};
   try {
     existingSettings = JSON.parse(await fs.readFile(globalSettingsPath, "utf8"));
-  } catch { /* no settings.json yet */ }
+  } catch (e) {
+    // Only a missing file starts empty: a settings.json ad can't parse (a
+    // hand edit, or Claude Code mid-write) must never be replaced with ad's hooks alone.
+    if (e.code !== "ENOENT") {
+      console.error(`agent-daemon init: ~/.claude/settings.json couldn't be read (${e.message}). Nothing was changed; fix the file (or close Claude Code) and run ad init again.`);
+      return 1;
+    }
+  }
   const existingHooksMap = existingSettings.hooks || {};
 
   // Determine which profile-specified hooks are missing from the user's settings.
@@ -594,7 +595,9 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
       existingSettings.hooks = hooks;
 
       await fs.mkdir(path.join(home, ".claude"), { recursive: true });
-      await fs.writeFile(globalSettingsPath, JSON.stringify(existingSettings, null, 2), "utf8");
+      // Atomic: Claude Code reads this file while it runs.
+      const { writeJsonAtomic } = await import("./atomic-write.mjs");
+      await writeJsonAtomic(globalSettingsPath, existingSettings);
       if (hasLegacySessionEndCommand) console.log("  ✓ Replaced direct SessionEnd digest command with stdin-aware hook");
       if (hooksToAdd.length > 0) console.log(`  ✓ Added ${hooksToAdd.length} hook(s) to ~/.claude/settings.json`);
       for (const h of hooksToAdd) console.log(`      ${h.event} ← ${h.id}`);
@@ -691,12 +694,19 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
   if (qmdOnPath) {
     if (qmdNeedsMcpRegister) {
       try {
+        // Only a missing file starts empty: an unreadable one (Claude Code
+        // mid-write) is left alone rather than replaced.
         let cfg = {};
-        try { cfg = JSON.parse(await fs.readFile(claudeJsonPath, "utf8")); } catch {}
+        try {
+          cfg = JSON.parse(await fs.readFile(claudeJsonPath, "utf8"));
+        } catch (e) {
+          if (e.code !== "ENOENT") throw new Error(`~/.claude.json couldn't be read (${e.message}); left unchanged`);
+        }
         cfg.mcpServers = cfg.mcpServers || {};
         if (!cfg.mcpServers.qmd) {
           cfg.mcpServers.qmd = { type: "stdio", command: "qmd", args: ["mcp"], env: {} };
-          await fs.writeFile(claudeJsonPath, JSON.stringify(cfg, null, 2), "utf8");
+          const { writeJsonAtomic } = await import("./atomic-write.mjs");
+          await writeJsonAtomic(claudeJsonPath, cfg);
           console.log("  ✓ Registered QMD MCP server in ~/.claude.json (user scope)");
         }
       } catch (err) {
@@ -705,12 +715,12 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
     }
     if (qmdCollectionMissing) {
       try {
-        await new Promise(resolve => {
-          exec(`qmd collection add "${cwd}" --name ${qmdProjName}`, () => resolve());
-        });
+        // The folder is one argument: no shell reads it.
+        const added = await runQmd(["collection", "add", cwd, "--name", qmdProjName]);
+        if (!added.ok) throw new Error(added.stderr || "qmd collection add failed");
         console.log(`  ✓ Created QMD collection '${qmdProjName}' for this project`);
         // Background embed — don't block init. User can also run `qmd embed` later.
-        exec("qmd embed", () => {});
+        runQmd(["embed"], { background: true });
         console.log("  ✓ Triggered background embed (qmd embed)");
       } catch (err) {
         console.error(`  ⚠ Could not set up QMD collection: ${err.message}`);
@@ -1256,19 +1266,48 @@ async function cmdDoctor({ cwd = process.cwd(), tokens, limit, model } = {}) {
   return allOk ? 0 : 1;
 }
 
+// qmd without a shell, by full path from PATH (an npm qmd.cmd runs its script
+// with our node). → {ok, stdout, stderr}; a missing qmd is ok:false.
+async function runQmd(args, { background = false } = {}) {
+  const { resolveCommand, spawnResolved } = await import("./safe-spawn.mjs");
+  const r = resolveCommand("qmd");
+  if (!r.cmd) return { ok: false, stdout: "", stderr: "qmd isn't on PATH" };
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawnResolved(r, args, { stdio: background ? "ignore" : ["ignore", "pipe", "pipe"], detached: background });
+    } catch (e) {
+      resolve({ ok: false, stdout: "", stderr: e.message });
+      return;
+    }
+    if (background) {
+      child.on("error", () => {});
+      child.unref();
+      resolve({ ok: true, stdout: "", stderr: "" });
+      return;
+    }
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (c) => (stdout += c));
+    child.stderr.on("data", (c) => (stderr += c));
+    child.on("error", (e) => resolve({ ok: false, stdout, stderr: e.message }));
+    child.on("close", (code) => resolve({ ok: code === 0, stdout, stderr }));
+  });
+}
+
 async function checkBinary(name, purpose) {
-  const { spawn } = await import("node:child_process");
+  // The same lookup ad uses to start it (PATH only, never the current folder).
+  const { resolveCommand } = await import("./safe-spawn.mjs");
+  const { statSync } = await import("node:fs");
+  if (process.platform !== "win32") {
+    const dirs = String(process.env.PATH || "").split(path.delimiter).filter((d) => path.isAbsolute(d));
+    const hit = dirs.map((d) => path.join(d, name)).find((p) => { try { return statSync(p).isFile(); } catch { return false; } });
+    return { name: `${name} on PATH`, ok: Boolean(hit), note: hit ? `${hit} (${purpose})` : `not found (${purpose})` };
+  }
+  const r = resolveCommand(name);
   return new Promise(resolve => {
-    const child = spawn(process.platform === "win32" ? "where" : "which", [name], { stdio: "pipe" });
-    let out = "";
-    child.stdout.on("data", c => out += c);
-    child.on("close", code => {
-      const ok = code === 0 && out.trim().length > 0;
-      resolve({ name: `${name} on PATH`, ok, note: ok ? `${out.trim().split(/\s+/)[0]} (${purpose})` : `not found (${purpose})` });
-    });
-    child.on("error", () => {
-      resolve({ name: `${name} on PATH`, ok: false, note: `error checking PATH (${purpose})` });
-    });
+    if (r.cmd) resolve({ name: `${name} on PATH`, ok: true, note: `${r.file ?? r.cmd}${r.via === "npm-shim" ? ` → node ${r.prefix[0]}` : ""} (${purpose})` });
+    else resolve({ name: `${name} on PATH`, ok: false, note: r.via === "unreadable-shim" ? `${r.file}: ad can't tell what it runs without a shell (${purpose})` : `not found (${purpose})` });
   });
 }
 
@@ -1486,6 +1525,32 @@ async function cmdRoute(sub, opts) {
 
 async function cmdMemory(sub, opts) {
   switch (sub) {
+    case "scan": {
+      // One-time check of notes stored before the secret filter (runs once;
+      // later runs say so). Hooks never run it.
+      const ep = await import("./memory/episodic.mjs");
+      const { runSafetyScan } = await import("./memory/safety.mjs");
+      const handle = await ep.db();
+      if (!handle) {
+        console.error("agent-daemon: better-sqlite3 not installed — no episodic store to check");
+        return 1;
+      }
+      const r = runSafetyScan(handle);
+      if (opts.outputJson) {
+        console.log(JSON.stringify(r));
+        return 0;
+      }
+      if (r.busy) {
+        console.error("Memory is busy (another ad process is writing). Try again in a moment.");
+        return 1;
+      }
+      if (r.skipped) {
+        console.log("Older memory notes were already checked.");
+        return 0;
+      }
+      console.log(`Checked ${r.checked} notes: ${r.learnings + r.facts} held back.`);
+      return 0;
+    }
     case "stats": {
       const ep = await import("./memory/episodic.mjs");
       const s = await ep.stats();
@@ -1582,12 +1647,10 @@ async function cmdViewer(opts) {
   console.log(`agent-daemon: viewer → ${outPath}`);
 
   if (opts.open) {
-    const cmd = process.platform === "win32" ? `start "" "${outPath}"`
-      : process.platform === "darwin" ? `open "${outPath}"`
-      : `xdg-open "${outPath}"`;
-    exec(cmd, (err) => {
-      if (err) console.error(`agent-daemon: could not auto-open (${err.message}) — open ${outPath} manually`);
-    });
+    // The path is one argument to the OS opener; no shell reads it (an --out
+    // name with & or $(…) stays a file name).
+    const { openPath } = await import("./harness/io.mjs");
+    if (!(await openPath(outPath))) console.error(`agent-daemon: could not auto-open — open ${outPath} manually`);
   }
   return 0;
 }

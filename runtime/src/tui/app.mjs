@@ -1587,7 +1587,13 @@ export function createApp({
       case "remember":
         if (!arg) return warn("/remember <what to remember>");
         if (!actions.remember) return warn("Memory isn't available here.");
-        return Promise.resolve(actions.remember(arg)).then(() => commitCell(renderAdRow("learned", arg, { width: width() })), fail);
+        // The saved text has secrets redacted; say so when it did.
+        return Promise.resolve(actions.remember(arg)).then((r) => {
+          const kinds = r?.kinds ?? [];
+          const shown = r?.text ?? arg;
+          const note = kinds.length ? `  Saved (removed ${kinds.length} secret${kinds.length > 1 ? "s" : ""}: ${kinds.join(", ")}).` : "";
+          return commitCell(renderAdRow("learned", shown + note, { width: width() }));
+        }, fail);
       case "memory": {
         if (!actions.ad?.memory) return warn("Memory isn't available here.");
         const [sub, ...rest] = arg.split(/\s+/);
@@ -1648,7 +1654,8 @@ export function createApp({
     const kept = [...st.notices, ...commandErrors].filter((n) => n.level !== "info" || n.detail).sort((a, b) => (a.at ?? 0) - (b.at ?? 0));
     const unknown = Object.entries(session.engine?.unknownCounts?.() ?? {});
     const unused = [
-      ...(keymap.warnings ?? []),
+      // One line here; /keymap lists each key setting ad can't use.
+      ...(keymap.summary ? [keymap.summary] : []),
       ...(() => {
         const th = settings?.engine?.get?.("tui.theme");
         return th && !SYNTAX_THEMES.includes(th) ? [`tui.theme: ad doesn't ship "${th}"; it shows code in ansi`] : [];
@@ -1659,7 +1666,7 @@ export function createApp({
     if (!kept.length && !unknown.length && !unused.length) return renderNotice({ level: "info", message: "No warnings in this session." }, { width: width() });
     const out = [[{ text: "Warnings", style: T.bold }]];
     for (const n of kept.slice(-20)) {
-      out.push(...renderNotice(n, { width: width() }));
+      out.push(...renderNotice(n.count > 1 ? { ...n, message: `${n.message} ×${n.count}` } : n, { width: width() }));
       if (n.detail) for (const line of String(n.detail).split("\n").slice(0, 8)) out.push(truncate([{ text: `    details: ${clean(line)}`, style: DIM }], width()));
     }
     if (unknown.length) {

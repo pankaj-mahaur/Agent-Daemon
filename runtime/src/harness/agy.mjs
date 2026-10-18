@@ -12,6 +12,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import { resolveCommand } from "../safe-spawn.mjs";
 
 export const AGY_NOTICE = `ad agy runs your own Antigravity CLI (agy) with its own login. Agent Daemon
 never touches your Google credentials, but Google's terms for scripting agy
@@ -33,7 +34,10 @@ export function agyArgs({ prompt, model, edits, timeoutS = DEFAULT_TIMEOUT_S }) 
 
 const errorText = (e) => (typeof e === "string" ? e : e?.message ?? (e ? JSON.stringify(e) : null));
 
-export function runAgy({ prompt, cwd, model, edits, timeoutS = DEFAULT_TIMEOUT_S, command = { cmd: "agy", prefix: [] }, spawnFn = spawn }) {
+// command: agy by its full path from PATH (safe-spawn.mjs), never a bare name
+// Windows could find in the working folder first.
+export function runAgy({ prompt, cwd, model, edits, timeoutS = DEFAULT_TIMEOUT_S, command = resolveCommand("agy"), spawnFn = spawn }) {
+  if (!command?.cmd) return Promise.resolve({ ok: false, error: "agy isn't on PATH." });
   return new Promise((resolve) => {
     let settled = false;
     const done = (r) => {

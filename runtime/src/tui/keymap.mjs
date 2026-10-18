@@ -62,7 +62,7 @@ const DECODER = { esc: "escape", "page-up": "pageup", "page-down": "pagedown", m
 export function parseKey(spec) {
   const raw = String(spec ?? "").trim().toLowerCase();
   if (!raw) throw new Error("empty keybinding");
-  if (/\s/.test(raw)) throw new Error(`key chords like "${spec}" aren't supported in ad yet`);
+  if (/\s/.test(raw)) throw new Error(`"${spec}": ad doesn't support chords or leader keys yet`);
   // "-" alone (or as the last character, "ctrl--") is the minus key.
   const parts = raw === "-" ? ["-"] : raw.endsWith("--") ? [...raw.slice(0, -2).split("-"), "-"] : raw.split("-").filter(Boolean);
   const mods = { ctrl: false, alt: false, shift: false };
@@ -128,8 +128,10 @@ export function createKeymap({ overrides = null } = {}) {
     for (const [action, value] of Object.entries(actions)) {
       // An action ad doesn't have (or a context it doesn't use) is the stock UI's business.
       if (!map[ctx]?.[action] && !(ctx === FALLBACK && Object.values(map).some((c) => c[action]))) continue;
+      // The engine serialises an unset action as null: that's the default, not a mistake.
+      if (value === null || value === undefined) continue;
       const list = asList(value);
-      if (!list) {
+      if (!list || list.some((k) => typeof k !== "string")) {
         warnings.push(`tui.keymap.${ctx}.${action}: not a key or a list of keys; ad keeps its default`);
         continue;
       }
@@ -177,6 +179,8 @@ export function createKeymap({ overrides = null } = {}) {
   for (const [ctx, actions] of Object.entries(map)) parsed[ctx] = Object.fromEntries(Object.entries(actions).map(([a, b]) => [a, b.keys.map(parseKey)]));
   return {
     warnings,
+    /** One line for /warnings (null when every key setting was usable); /keymap lists each. */
+    summary: warnings.length ? `tui.keymap: ${warnings.length} key setting(s) ad can't use; it keeps its defaults. /keymap lists them.` : null,
     /** Every binding: [{ctx, action, keys, custom}], contexts and actions in ad's order. */
     bindings() {
       return Object.entries(map).flatMap(([ctx, actions]) => Object.entries(actions).map(([action, b]) => ({ ctx, action, keys: [...b.keys], custom: b.custom })));

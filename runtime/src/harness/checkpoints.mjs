@@ -26,7 +26,7 @@
 // left out, or a directory standing where a file was, is a conflict, and
 // nothing is undone (force overrides only the "changed since…" kinds).
 
-import { spawn } from "node:child_process";
+import { resolveGit, spawnResolved } from "../safe-spawn.mjs";
 import { existsSync, lstatSync, rmSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import path from "node:path";
@@ -51,7 +51,7 @@ export function runGit(args, { cwd, env = {}, input = null, timeoutMs = 60_000 }
   return new Promise((resolve) => {
     let child;
     try {
-      child = spawn("git", args, { cwd, env: { ...process.env, ...env, GIT_TERMINAL_PROMPT: "0" }, windowsHide: true });
+      child = spawnResolved(resolveGit(), args, { cwd, env: { ...process.env, ...env, GIT_TERMINAL_PROMPT: "0" } });
     } catch (err) {
       return resolve({ code: 127, stdout: "", stderr: err.message });
     }

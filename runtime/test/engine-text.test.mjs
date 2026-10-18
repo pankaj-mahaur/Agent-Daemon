@@ -67,11 +67,14 @@ test("global and thread engine notices keep their unmodified raw text", async ()
         ["deprecationNotice", "deprecation", { summary: `${LEGACY.productValue} is old`, details: "raw details" }],
         ["configWarning", "config", { summary: `${LEGACY.productValue} config issue`, path: "/fake/config.toml", details: "raw config details" }],
       ]) {
-        const before = session.state.notices.length;
+        // The second round repeats the first: the same notice counts up instead of a new row.
+        const seen = () => session.state.notices.find((n) => n.code === code);
+        const before = seen()?.count ?? (seen() ? 1 : 0);
         engine.testNotify(method, { ...body, ...(threadId ? { threadId } : {}) });
         const end = Date.now() + 3000;
-        while (session.state.notices.length === before && Date.now() < end) await new Promise((r) => setTimeout(r, 10));
-        const notice = session.state.notices.at(-1);
+        while ((seen()?.count ?? (seen() ? 1 : 0)) === before && Date.now() < end) await new Promise((r) => setTimeout(r, 10));
+        const notice = seen();
+        assert.equal(notice.count ?? 1, before + 1, "one notice, counted");
         assert.equal(notice.code, code);
         assert.equal(notice.message, engineNoticeText({ code }));
         assert.equal(notice.detail.split("\n")[0], body.message ?? body.summary);

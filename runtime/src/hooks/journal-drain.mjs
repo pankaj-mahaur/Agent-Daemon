@@ -186,12 +186,15 @@ async function readJournalFile(file) {
  * @param {object} e
  * @returns {import("../digest/extract.mjs").Learning}
  */
-function toLearning(e) {
+export function toLearning(e) {
   return {
     type: e.type || "pattern",
     text: String(e.text || "").trim(),
     evidence_quote: String(e.evidence_quote || "").slice(0, 400),
     evidence_speaker: e.evidence_speaker === "agent" ? "agent" : "user",
+    // Who wrote the words (user-prompt-extract stamps it): an assistant-turn
+    // note is the agent's, and waits for review (apply.mjs originOf).
+    ...(e.source_speaker === "user" || e.source_speaker === "agent" ? { source_speaker: e.source_speaker } : {}),
     scope: e.scope === "global" ? "global" : "project",
     confidence: typeof e.confidence === "number" ? Math.max(0, Math.min(1, e.confidence)) : 0.5,
     tags: Array.isArray(e.tags) ? e.tags.slice(0, 12) : []

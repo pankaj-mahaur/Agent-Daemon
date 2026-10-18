@@ -430,3 +430,41 @@ test("doctor words for the folder states never name the engine", async () => {
     for (const d of [oldRoot, newRoot, twoRoot]) rmSync(d, { recursive: true, force: true });
   }
 });
+
+// The memory scope contract (plan §M): each thread's memory server is bound to
+// its folder through a per-thread override, but only when the home configures
+// that server — an override for a missing server breaks the thread's config.
+test("memory scope: no override in a home without the memory server", async () => {
+  await withEngine({}, async (engine) => {
+    const { threadId } = await engine.threads.start({ cwd: "/work/a" });
+    assert.ok(!JSON.stringify((await debug(engine)).lastParams["thread/start"]?.config ?? {}).includes("AD_MEMORY_PROJECT"));
+    await engine.threads.resume(threadId, { cwd: "/work/b" });
+    assert.ok(!JSON.stringify((await debug(engine)).lastParams["thread/resume"]?.config ?? {}).includes("AD_MEMORY_PROJECT"));
+    await engine.threads.fork(threadId, { cwd: "/work/c" });
+    assert.ok(!JSON.stringify((await debug(engine)).lastParams["thread/fork"]?.config ?? {}).includes("AD_MEMORY_PROJECT"));
+  });
+});
+
+test("memory scope: with the server configured, start/resume/fork bind it to the thread's folder; other overrides stay", async () => {
+  await withEngine({}, async (engine) => {
+    const KEY = "mcp_servers.agent-daemon-memory.env.AD_MEMORY_PROJECT";
+    await engine.threads.start({ cwd: "/work/a" }); // config read before setup: no server yet
+    await engine.writeConfig([["mcp_servers.agent-daemon-memory.command", "node"]]);
+    const { threadId } = await engine.threads.start({ cwd: "/work/a", config: { "features.x": true } });
+    let p = (await debug(engine)).lastParams["thread/start"];
+    assert.equal(p.config[KEY], "/work/a", "re-read after setup wrote the server");
+    assert.equal(p.config["features.x"], true);
+    await engine.threads.resume(threadId, { cwd: "/work/b" });
+    assert.equal((await debug(engine)).lastParams["thread/resume"].config[KEY], "/work/b");
+    await engine.threads.fork(threadId, { cwd: "/work/c" });
+    assert.equal((await debug(engine)).lastParams["thread/fork"].config[KEY], "/work/c");
+    // A worker: its memory belongs to the parent repo, not the worktree.
+    await engine.threads.start({ cwd: "/home/.agent-daemon/worktrees/w1", memoryProject: "/work/repo" });
+    assert.equal((await debug(engine)).lastParams["thread/start"].config[KEY], "/work/repo");
+    // A caller's own value wins; null means none.
+    await engine.threads.start({ cwd: "/work/a", config: { [KEY]: "/explicit" } });
+    assert.equal((await debug(engine)).lastParams["thread/start"].config[KEY], "/explicit");
+    await engine.threads.start({ cwd: "/work/a", memoryProject: null });
+    assert.ok(!JSON.stringify((await debug(engine)).lastParams["thread/start"].config ?? {}).includes("AD_MEMORY_PROJECT"));
+  });
+});

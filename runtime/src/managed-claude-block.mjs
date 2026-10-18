@@ -125,7 +125,7 @@ export function renderAdInstructions(startMarker, endMarker) {
     "",
     "## Recalling memory mid-session + privacy",
     "",
-    "You don't have to wait for SessionStart injection — query past project memory mid-task via the `agent-daemon-memory` MCP server (`ad init` registers it). It uses a token-cheap **progressive-disclosure** flow:",
+    "You don't have to wait for SessionStart injection — query past project memory mid-task via the `agent-daemon-memory` MCP server. ad's own agent has it built in. In Claude Code, add it once: `claude mcp add --scope user agent-daemon-memory -- agent-daemon-memory-mcp --host claude-code` (on Windows: `claude mcp add --scope user agent-daemon-memory -- cmd /c agent-daemon-memory-mcp --host claude-code`, because npm installs the command as a `.cmd` file). It serves only the open project's notes. It uses a token-cheap **progressive-disclosure** flow:",
     "",
     "1. **Index (cheap):** `memory_search(query)`, `memory_recent`, or `memory_files(path)` → compact `[id …]` lines.",
     "2. **Context:** `memory_timeline(id)` → the originating session + the sibling learnings around a hit.",

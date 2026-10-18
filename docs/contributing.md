@@ -264,7 +264,7 @@ Body should explain **why**, not what. The diff shows what.
 - Open PRs early as drafts if you want feedback
 - Squash-merge into `main` (we prefer linear history)
 - Every PR to `main` must pass CI: `npm test` + the skill linter + the brand lint (report mode, see [testing](./testing.md#the-brand-lint)) on Ubuntu / macOS / Windows × Node 22. The `engine-real` job (real engine vs a mock model, plus the live terminal UI tests) runs alongside; it is non-blocking (`continue-on-error`) while each platform's sandbox behaviour is being recorded, so read its result.
-- Before pushing, check the doc links: `node runtime/scripts/check-doc-links.mjs` (every relative link must point at a file git tracks, and no `## ` section appears twice).
+- Before pushing, check the doc links: `node runtime/scripts/check-doc-links.mjs` (every relative link must point at a file git tracks, and no `## ` section appears twice). CI runs the same check on all three OSes.
 - Before pushing to a PR or releasing, run the CI pipeline locally too: the [`ad-ci-readiness`](../.claude/skills/ad-ci-readiness/SKILL.md) project skill mirrors it on your machine and in a Linux container, and holds the release-readiness checklist.
 
 ---

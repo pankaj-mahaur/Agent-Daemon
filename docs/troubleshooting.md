@@ -664,6 +664,36 @@ For "The engine reported a problem", inspect those details first. `ad doctor` sh
 
 **Fix:** `claude update`, then retry.
 
+## 44. Memory tools say "This memory server isn't bound to a project"
+
+**Cause:** the memory server serves one project, chosen when it starts, and couldn't tell which: no `--project`, no project from ad or Claude Code, and its working folder isn't inside a git repo and holds no `.agent-daemon` folder. Home, a drive root, system folders and ad's own folders never count. It serves nothing rather than guess.
+
+**Fix:** open the session in the project folder (a git repo). For Claude Code, register the server with `--host claude-code` (see [mcp/agent-daemon-memory/README.md](../mcp/agent-daemon-memory/README.md#install-claude-code)); for another host, pass `--project <folder>` in its server config.
+
+## 45. A note I expected doesn't show up in memory
+
+**Cause:** one of these, by design:
+- it was written by the agent about itself (from its own turn), so it waits as **pending** for your review;
+- the injection screen flagged it, or it held a provider key, so it is **held back** (`ad memory scan` holds back older notes like this once);
+- it belongs to another project, or it was a "global" note from ad 3.0 written in another project (those stay in their project);
+- it is a user fact observed in another project.
+
+**Fix:** say it again in your own words in this project, or use `/remember` in `ad tui`: what you type yourself applies at once. A command to review pending and held notes comes in a later release.
+
+## 46. `ad doctor` or memory says two folders share one memory key
+
+**Symptom:** the memory server answers "This folder shares its memory key with another folder…", and SessionStart shows no learnings there.
+
+**Cause:** memory keys come from folder paths with `/`, `\` and `:` turned into `-`, so `/x/a/b` and `/x/a-b` get the same key. Serving it would mix two projects' notes, so ad keeps both out.
+
+**Fix:** nothing is lost; the notes stay in the database. A later release gives each project its own ID and ends this. Renaming one of the folders also separates them for new notes.
+
+## 47. `This editor runs through cmd.exe, which can't take that file name safely`
+
+**Cause:** your `EDITOR` (or `VISUAL`) is a `.cmd` file, such as VS Code's `code.cmd`, which only `cmd.exe` can start, and the file ad asked it to open has `%`, `"` or a line break in its path. `cmd.exe` would read those as commands or variables, so ad refuses instead of guessing.
+
+**Fix:** set `EDITOR` to the editor's `.exe` (for VS Code: `"C:\Users\<you>\AppData\Local\Programs\Microsoft VS Code\Code.exe" --wait`), or use an editor whose command is an `.exe`. `The editor "x" isn't on PATH` means ad looked only on PATH (never in the current folder): set `EDITOR` to the full path.
+
 ---
 
 For harness problems, the [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill walks through login → hooks → sandbox → the engine's own log. See also [harness.md](harness.md) and, for the terminal UI, [tui.md](tui.md).

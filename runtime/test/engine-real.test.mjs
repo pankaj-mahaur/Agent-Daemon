@@ -9,7 +9,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CodexAppServer, resolveCodexCommand } from "../src/engine/codex/app-server.mjs";
@@ -18,6 +18,8 @@ import { defaultScript, ev, lastUserText, startMockResponses, writeMockCodexHome
 import { adaptNotification as adapt } from "../src/engine/codex/events.mjs";
 import { waitFor } from "../testkit/wait.mjs";
 import { experimentalCapabilities } from "../src/engine/codex/surface.mjs";
+import { fileURLToPath } from "node:url";
+import { projectSlug } from "../src/memory/episodic.mjs";
 
 const PINNED = resolveCodexCommand({});
 const wanted = process.env.AD_REAL_ENGINE === "1";
@@ -43,9 +45,10 @@ async function removeWithRetry(dir) {
 }
 
 // One mock + one real app-server per test, in fresh dirs.
-async function withRealEngine(fn, { codexArgs, capabilities, script } = {}) {
+async function withRealEngine(fn, { codexArgs, capabilities, script, extraConfig } = {}) {
   const mock = await startMockResponses(script ? { script } : {});
   const home = writeMockCodexHome(mkdtempSync(join(tmpdir(), "ad-real-home-")), { url: mock.url });
+  if (extraConfig) appendFileSync(join(home, "config.toml"), `\n${extraConfig(home)}\n`);
   const cwd = mkdtempSync(join(tmpdir(), "ad-real-work-"));
   const requests = [];
   const server = new CodexAppServer({
@@ -348,4 +351,66 @@ test("/recap's temporary thread: Codex takes its tool-off config and starts it r
     assert.equal(r.thread.path ?? null, null, "an ephemeral thread has no rollout file");
     assert.equal((await server.request("thread/unsubscribe", { threadId: r.thread.id })).status, "unsubscribed");
   });
+});
+
+// ---------- the memory scope contract (plan §M, P0.8a) ----------
+
+const MEMORY_SERVER = fileURLToPath(new URL("../src/mcp/memory-server.mjs", import.meta.url));
+const MEM_KEY = "mcp_servers.agent-daemon-memory.env.AD_MEMORY_PROJECT";
+const tomlStr = (s) => JSON.stringify(s); // a TOML basic string
+const memoryServerToml = (fakeHome) => [
+  `[mcp_servers.agent-daemon-memory]`,
+  `command = ${tomlStr(process.execPath)}`,
+  `args = [${tomlStr(MEMORY_SERVER)}]`,
+  `startup_timeout_sec = 30`,
+  ``,
+  `[mcp_servers.agent-daemon-memory.env]`,
+  `HOME = ${tomlStr(fakeHome)}`,
+  `USERPROFILE = ${tomlStr(fakeHome)}`,
+].join("\n");
+
+test("memory scope: a bare home (no memory server) starts threads; the façade adds no override there", opts, async () => {
+  await withRealEngine(async ({ server, cwd }) => {
+    const { thread } = await server.request("thread/start", { cwd });
+    assert.ok(thread.id);
+    // Why the façade checks first: an override for a server that isn't configured
+    // makes the engine reject the thread's whole config.
+    await assert.rejects(server.request("thread/start", { cwd, config: { [MEM_KEY]: cwd } }));
+  });
+});
+
+test("memory scope: each thread's memory server binds to the folder ad passes (AD_MEMORY_PROJECT)", { skip, timeout: START_TIMEOUT_MS + 60_000 }, async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), "ad-real-memhome-"));
+  const P = join(fakeHome, "work", "p");
+  const Q = join(fakeHome, "work", "q");
+  for (const d of [P, Q]) mkdirSync(join(d, ".git"), { recursive: true });
+  const dbg = (n) => join(fakeHome, `scope-${n}.json`);
+  try {
+    await withRealEngine(async ({ server, cwd }) => {
+      for (const [n, dir] of [["p", P], ["q", Q]]) {
+        await server.request("thread/start", { cwd, config: { [MEM_KEY]: dir, "mcp_servers.agent-daemon-memory.env.AD_MEMORY_DEBUG_FILE": dbg(n) } });
+        await waitFor(() => existsSync(dbg(n)), { timeoutMs: 20_000, what: `memory server debug file for ${n}` });
+        const seen = JSON.parse(readFileSync(dbg(n), "utf8"));
+        assert.equal(seen.source, "env:AD_MEMORY_PROJECT");
+        assert.equal(seen.key, projectSlug(dir));
+      }
+    }, { extraConfig: () => memoryServerToml(fakeHome) });
+  } finally {
+    await removeWithRetry(fakeHome);
+  }
+});
+
+const lastIsToolOutput = (body) => Array.isArray(body?.input) && body.input[body.input.length - 1]?.type === "function_call_output";
+const envScript = (body) => (!lastIsToolOutput(body) && lastUserText(body).includes("ENVSHELL")
+  ? [ev.created(), ev.functionCall("call-env", "exec_command", { cmd: process.platform === "win32" ? "cmd.exe /d /c echo [%AD_TOOL_SHELL%]" : "echo [$AD_TOOL_SHELL]" }), ev.completed()]
+  : defaultScript(body));
+
+test("the agent-shell marker: a tool shell carries AD_TOOL_SHELL=1 from shell_environment_policy.set", opts, async () => {
+  await withRealEngine(async ({ server, cwd, notes }) => {
+    const { thread } = await server.request("thread/start", { cwd });
+    const { items } = await runTurn(server, notes, thread.id, "ENVSHELL");
+    const exec = items.find((i) => i.type === "commandExecution");
+    assert.ok(exec, "a commandExecution item completed");
+    assert.match(exec.aggregatedOutput ?? "", /\[1\]/, `output: ${exec.aggregatedOutput}`);
+  }, { script: envScript, extraConfig: () => `[shell_environment_policy.set]\nAD_TOOL_SHELL = "1"` });
 });

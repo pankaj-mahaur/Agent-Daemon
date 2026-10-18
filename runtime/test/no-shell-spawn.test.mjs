@@ -10,7 +10,8 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
+import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SRC = new URL("../src/", import.meta.url);
@@ -42,6 +43,8 @@ const RULES = [
   { name: "exec() on child_process", re: /\b(child_process|cp|childProcess|proc)\s*\.\s*exec(Sync)?\s*\(/ },
   // spawn("git", …), execFileSync('./claude', …): any string literal as the program.
   { name: "a literal program name", re: /\b(spawn|spawnSync|execFile|execFileSync|execFileSyncNoShell)\s*\(\s*(["'`])[^"'`]*\2/ },
+  // A Windows system tool named as a call's first argument (run("schtasks", …) through a helper): use systemTool().
+  { name: "a Windows tool by bare name", re: /(?<!systemTool)\(\s*(["'`])(schtasks|taskkill|attrib|where|cmd|powershell|pwsh|rundll32|reg|icacls|netsh|wmic|tasklist)(\.exe)?\1\s*,/i },
 ];
 const CHILD_PROCESS = /(\bfrom\s*["'](node:)?child_process["'])|(\brequire\s*\(\s*["'](node:)?child_process["']\s*\))|(\bimport\s*\(\s*["'](node:)?child_process["']\s*\))/;
 
@@ -109,6 +112,33 @@ test("the guard itself catches each dangerous shape and ignores comments", () =>
     "const m = re.exec(text);",
   ];
   for (const f of fine) assert.deepEqual(findViolations(f, "x.mjs"), [], f);
+});
+
+test("nowhere in runtime/src: no shell, no exec(), no literal program name (allowlist aside)", () => {
+  const allow = JSON.parse(readFileSync(fileURLToPath(new URL("./fixtures/spawn-allowlist.json", import.meta.url)), "utf8"));
+  const srcDir = fileURLToPath(SRC);
+  const files = [];
+  const walk = (d) => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      const p = join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.name.endsWith(".mjs")) files.push(p);
+    }
+  };
+  walk(srcDir);
+  const all = [];
+  const used = new Set();
+  for (const f of files) {
+    const rel = relative(srcDir, f).replace(/\\/g, "/");
+    for (const v of findViolations(readFileSync(f, "utf8"), `runtime/src/${rel}`).filter((v) => !/child_process/.test(v))) {
+      const hit = allow.findIndex((a) => a.file === rel && v.includes(a.match));
+      if (hit >= 0) used.add(hit);
+      else all.push(v);
+    }
+  }
+  assert.deepEqual(all, [], `\n${all.join("\n")}`);
+  assert.deepEqual(allow.map((a, i) => (used.has(i) ? null : a.file)).filter(Boolean), [], "a stale allowlist entry");
+  for (const a of allow) assert.ok(a.reason, `${a.file}: every allowlist entry says why`);
 });
 
 test("worker-path files start no shell and no bare program", () => {

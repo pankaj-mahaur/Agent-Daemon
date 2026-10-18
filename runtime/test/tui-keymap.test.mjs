@@ -140,3 +140,19 @@ test("the keymap example parses: its action binds its key, and the footer shows 
   assert.match(out, /\[tui\.keymap\.global\]/);
   assert.match(out, /open_transcript = "alt-y"/);
 });
+
+// P0.2b: every shape the engine serialises is parsed; unusable settings are reported once.
+test("unset actions (null, as the engine writes them) keep their default with no warning", () => {
+  const km = createKeymap({ overrides: { global: { open_transcript: null, copy: undefined }, chat: { interrupt_turn: null } } });
+  assert.deepEqual(km.warnings, []);
+  assert.equal(km.summary, null);
+  assert.ok(km.is("global", "copy", key("o", { ctrl: true })));
+});
+
+test("objects, non-string items, chords and leader keys: one warning each, and one summary line", () => {
+  const km = createKeymap({ overrides: { global: { copy: { key: "ctrl-x" }, toggle_raw_output: ["ctrl-r", 7], open_transcript: "ctrl-x ctrl-s" }, chat: { interrupt_turn: "leader q" } } });
+  assert.equal(km.warnings.length, 4, km.warnings.join("; "));
+  assert.equal(km.warnings.filter((w) => /ad doesn.t support chords or leader keys yet/.test(w)).length, 2);
+  assert.equal(km.summary, "tui.keymap: 4 key setting(s) ad can't use; it keeps its defaults. /keymap lists them.");
+  assert.ok(km.is("global", "copy", key("o", { ctrl: true })), "defaults kept");
+});

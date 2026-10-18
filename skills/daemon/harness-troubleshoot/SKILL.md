@@ -61,6 +61,9 @@ Any harness command errors out, hangs, or finishes without doing the work ("my s
 | engine not installed — run: cd runtime && npm install | the pinned engine is missing; ad never falls back to the user's own install | re-run the installer or `cd runtime && npm install` |
 | `401 Unauthorized` on `plugins/featured` in the log | the engine warming its plugin list | harmless, ignore |
 | `Shell snapshot not supported yet for PowerShell` (WARN) | engine feature not available on Windows shells | harmless, ignore |
+| memory tools answer "isn't bound to a project" | the server binds at start to one project (`--project`, `AD_MEMORY_PROJECT` from ad's façade, `CLAUDE_PROJECT_DIR` only with `--host claude-code`, else a git/`.agent-daemon` working folder); home, roots, system folders, ad's own folders and the install folder never count | open the project folder; Claude Code: `--host claude-code`; other hosts: `--project <folder>` (troubleshooting #44) |
+| a learning is missing from memory | agent-origin notes are `pending`, injection/secret hits `quarantined`, 3.0 global rows serve only in their session's project, user facts only where observed | by design (troubleshooting #45); the user can restate it or `/remember` it |
+| "shares its memory key with another folder" | two paths map to one `project_slug` (`/x/a/b`, `/x/a-b`); the key is withheld everywhere | by design until stable project IDs (troubleshooting #46) |
 
 ### `ad tui`
 

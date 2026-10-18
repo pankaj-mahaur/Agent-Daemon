@@ -12,6 +12,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { systemTool } from "../safe-spawn.mjs";
 import { fileURLToPath } from "node:url";
 
 const SERVICE_NAME = "agent-daemon-watch";
@@ -119,9 +120,19 @@ WantedBy=default.target
 /* OS dispatch                                                         */
 /* ------------------------------------------------------------------ */
 
+// OS service tools by full path: schtasks from %SystemRoot%\System32,
+// launchctl from /bin; systemctl through execvp (POSIX searches PATH only).
+const toolPath = (cmd) => {
+  if (process.platform === "win32") return systemTool(`${cmd}.exe`);
+  if (cmd === "launchctl") return "/bin/launchctl";
+  return cmd;
+};
+
 function run(cmd, args) {
   return new Promise((resolve) => {
-    const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const exe = toolPath(cmd);
+    if (!exe) return resolve({ code: -1, out: "", err: `${cmd} not found in %SystemRoot%\\System32` });
+    const child = spawn(exe, args, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
     let out = "", err = "";
     child.stdout.on("data", (c) => out += c);
     child.stderr.on("data", (c) => err += c);

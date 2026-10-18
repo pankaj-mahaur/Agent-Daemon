@@ -15,6 +15,13 @@ import path from "node:path";
 import os from "node:os";
 import { applyLearnings } from "../src/digest/apply.mjs";
 
+// Isolation: the drain and apply write the episodic DB (and user.md) under
+// HOME; point it at a temp folder so the real ~/.agent-daemon is never touched.
+const FAKE_HOME = await fs.mkdtemp(path.join(os.tmpdir(), "ad-test-home-"));
+process.env.HOME = FAKE_HOME;
+process.env.USERPROFILE = FAKE_HOME;
+delete process.env.AD_ROOT;
+
 async function makeTmp() {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ad-apply-dedup-"));
   await fs.mkdir(path.join(dir, ".agent-daemon", "memory"), { recursive: true });
@@ -30,7 +37,8 @@ function makeClassified(type, text, opts = {}) {
       type,
       text,
       evidence_quote: opts.evidence || "test evidence",
-      evidence_speaker: opts.speaker || "agent",
+      // The user's own words apply at once; agent-written notes wait (pending).
+      evidence_speaker: opts.speaker || "user",
       scope: "project",
       confidence: opts.confidence ?? 0.7,
       tags: opts.tags || []

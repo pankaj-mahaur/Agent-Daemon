@@ -50,7 +50,9 @@ export function commitWorktree(worktreePath, message, run = execFileSyncNoShell)
 /**
  * @returns {Promise<{ok: boolean, status?: string, output?: string, threadId?: string, error?: string}>}
  */
-export async function runEngineWorker({ worktreePath, systemPrompt, userMessage, model, timeoutMs, engineOpts = {}, onEvent, err = process.stderr }) {
+// memoryProject: the repo the worker's memory belongs to (spawnAgent's cwd).
+// The worktree itself lives inside ad's own folder, which never binds memory.
+export async function runEngineWorker({ worktreePath, systemPrompt, userMessage, model, timeoutMs, engineOpts = {}, onEvent, err = process.stderr, memoryProject }) {
   let engine;
   try {
     const prefixed = { write: (s) => err.write(String(s).replace(/^\[agent-daemon\]/gm, "[agent-daemon worker]")) };
@@ -66,6 +68,7 @@ export async function runEngineWorker({ worktreePath, systemPrompt, userMessage,
       approvalPolicy: "never",
       developerInstructions: `${systemPrompt}\n\n${WORKER_COMMIT_NOTE}`,
       config: await unattendedThreadConfig(engine),
+      memoryProject: memoryProject ?? worktreePath,
     });
     const r = await engine.turn({ threadId, text: userMessage, timeoutMs, sandboxPolicy: WORKER_SANDBOX_POLICY, onEvent });
     return { ok: r.status === "completed", status: r.status, output: r.output, threadId, error: r.status === "completed" ? undefined : r.error?.message ?? `turn ${r.status}` };

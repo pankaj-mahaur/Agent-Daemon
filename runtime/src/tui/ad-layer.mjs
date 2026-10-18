@@ -15,6 +15,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { journalPath } from "../hooks/journal.mjs";
 import { sanitize } from "./terminal/sanitize.mjs";
+import { redactSecrets } from "../security/secret-patterns.mjs";
 
 const clean = (t) => sanitize(String(t ?? ""), "transcript").replace(/\s*\n\s*/g, " ").replace(/\t/g, " ");
 const short = (t, n = 140) => {
@@ -30,7 +31,9 @@ export function createAdLayer({ cwd, home = homedir(), memory = null, cli = null
   /* Memory                                                        */
   /* ------------------------------------------------------------ */
 
-  const row = (l) => `#${l.id} [${clean(l.category)}] ${short(l.text)}`;
+  // Older notes may hold a secret stored before the filter: mask when shown.
+  const masked = (t) => redactSecrets(String(t ?? "")).text;
+  const row = (l) => `#${l.id} [${clean(l.category)}] ${short(masked(l.text))}`;
 
   // What ad's hooks captured but hasn't saved yet: the project's learning
   // journal, drained into memory when ad (or Claude Code) next starts.
@@ -66,7 +69,7 @@ export function createAdLayer({ cwd, home = homedir(), memory = null, cli = null
       const rows = await memory.listRecentLearnings({ limit: 10, projectSlug: slug });
       const waiting = pending().slice(-10).reverse();
       const out = rows.length ? ["Recent learnings:", ...rows.map(row)] : [];
-      if (waiting.length) out.push("Captured, saved to memory when ad next starts:", ...waiting.map((e) => `  [${clean(e.type ?? "note")}] ${short(e.text)}`));
+      if (waiting.length) out.push("Captured, saved to memory when ad next starts:", ...waiting.map((e) => `  [${clean(e.type ?? "note")}] ${short(masked(e.text))}`));
       return out.length ? out : ["No learnings yet for this project."];
     }
     if (s === "forget") {
@@ -81,7 +84,7 @@ export function createAdLayer({ cwd, home = homedir(), memory = null, cli = null
     }
     if (s === "profile") {
       const profile = await memory.buildUserRepresentation({ projectSlug: slug });
-      const md = memory.representationToMarkdown(profile, { compact: true });
+      const md = memory.representationToMarkdown(profile, { compact: true, neutralize: masked });
       const lines = clean(md) ? sanitize(md, "transcript").split("\n").filter((l) => l.trim()) : [];
       return lines.length ? lines.slice(0, 30) : ["No profile yet: ad builds one as you work."];
     }
@@ -98,7 +101,7 @@ export function createAdLayer({ cwd, home = homedir(), memory = null, cli = null
     const handle = memory ? await memory.db() : null;
     if (handle) {
       try {
-        rows = handle.all("SELECT id, text FROM learnings WHERE session_id = ? AND created_at > ? AND status = 'active' ORDER BY id", [threadId, sinceIso]);
+        rows = handle.all("SELECT id, text FROM learnings WHERE session_id = ? AND created_at > ? AND status = 'active' AND COALESCE(applied_to, '') NOT LIKE 'quarantined%' ORDER BY id", [threadId, sinceIso]);
       } catch {
         rows = [];
       }

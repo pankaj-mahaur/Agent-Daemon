@@ -12,6 +12,7 @@
 // (missed runs are not replayed one by one).
 
 import { spawn } from "node:child_process";
+import { systemTool } from "../safe-spawn.mjs";
 import { randomBytes } from "node:crypto";
 import { createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -269,7 +270,9 @@ export function startScheduler({ home, intervalMs = 30_000, log = () => {} } = {
   return () => {
     clearInterval(t);
     for (const [id, child] of running) {
-      if (process.platform === "win32" && child.pid) spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true }).on("error", () => child.kill());
+      const taskkill = process.platform === "win32" && child.pid ? systemTool("taskkill.exe") : null;
+      if (taskkill) spawn(taskkill, ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true }).on("error", () => child.kill());
+      else if (process.platform === "win32") child.kill();
       else child.kill();
       recordExit(id, "aborted", home);
     }

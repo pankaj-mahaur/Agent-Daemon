@@ -191,6 +191,7 @@ export async function spawnAgent(opts) {
         model: opts.model,
         timeoutMs,
         engineOpts: opts.engineOpts,
+        memoryProject: opts.cwd,
       });
       // The worker can't touch .git (see engine-worker.mjs); commit its work
       // here, outside the sandbox, on its own branch.

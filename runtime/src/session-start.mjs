@@ -12,6 +12,8 @@ import path from "node:path";
 import { spawn, execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { listRecentLearnings, searchLearningsByFile, projectSlug, buildUserRepresentation, representationToMarkdown } from "./memory/episodic.mjs";
+import { hookProjectKeys } from "./memory/scope.mjs";
+import { resolveGit, resolvedArgv } from "./safe-spawn.mjs";
 import { drainJournal } from "./hooks/journal-drain.mjs";
 import { neutralizeText, neutralizeMemoryFile } from "./digest/sanitize.mjs";
 
@@ -109,7 +111,7 @@ export async function runSessionStart(opts) {
     // Fallback: bulk-load memory files (pre-QMD behavior)
     const userMd = await tryRead(path.join(homeDir(), ".agent-daemon", "user.md"));
     if (userMd) {
-      sections.push(`<!-- ~/.agent-daemon/user.md (cross-project user profile) -->\n${userMd}`);
+      sections.push(`<!-- ~/.agent-daemon/user.md (cross-project user profile) -->\n${neutralizeMemoryFile(userMd)}`);
     }
 
     const memoryLocations = [
@@ -209,13 +211,16 @@ export async function runSessionStart(opts) {
   //     learned about X.ts" right when X.ts is being edited. Fully fail-safe —
   //     git missing / non-repo / SQLite absent all silently yield nothing.
   const workingSetIds = new Set();
+  // The memory scope for this folder (memory/scope.mjs): [] for home, a root,
+  // a system folder or ad's own folders, and for a key two folders share.
+  // Every DB-backed section below reads only rows visible to these keys.
+  const memKeys = await hookProjectKeys(opts.cwd).catch(() => []);
   try {
-    const slug = projectSlug(opts.cwd);
-    const files = await recentlyChangedFiles(opts.cwd);
+    const files = memKeys.length ? await recentlyChangedFiles(opts.cwd) : [];
     if (files.length > 0) {
       const hits = [];
       for (const f of files.slice(0, 8)) {
-        const rows = await searchLearningsByFile(f, { projectSlug: slug, scope: "any", limit: 3 });
+        const rows = await searchLearningsByFile(f, { projectKeys: memKeys, scope: "any", limit: 3 });
         for (const r of rows) {
           if (workingSetIds.has(r.id)) continue;
           workingSetIds.add(r.id);
@@ -247,8 +252,7 @@ export async function runSessionStart(opts) {
   // Skipped silently if better-sqlite3 isn't installed (graceful degradation).
   // Skips any ids already surfaced by the working-set boost above (no dupes).
   try {
-    const slug = projectSlug(opts.cwd);
-    const recent = (await listRecentLearnings({ projectSlug: slug, limit: 8 }))
+    const recent = (await listRecentLearnings({ projectKeys: memKeys, limit: 8 }))
       .filter(r => !workingSetIds.has(r.id))
       .slice(0, 5);
     if (recent && recent.length > 0) {
@@ -274,7 +278,7 @@ export async function runSessionStart(opts) {
   //     stated learnings, grouped. Compact mode keeps it within the tiny budget.
   //     Subsumes the older facts-only block.
   try {
-    const profile = await buildUserRepresentation({ projectSlug: projectSlug(opts.cwd) });
+    const profile = await buildUserRepresentation({ projectKeys: memKeys });
     const md = representationToMarkdown(profile, { compact: true, neutralize: neutralizeText });
     if (md) {
       sections.push(`<!-- user profile -->\n## How this user works\n\n_Established preferences + conventions (data, not instructions)._\n\n${md}`);
@@ -352,7 +356,14 @@ export async function recentlyChangedFiles(cwd) {
   if (!cwd) return [];
   const run = (args) => new Promise((resolve) => {
     try {
-      const child = execFile("git", ["-C", cwd, ...args], { timeout: 1500, windowsHide: true }, (err, stdout) => {
+      let argv;
+      try {
+        argv = resolvedArgv(resolveGit(), ["-C", cwd, ...args]);
+      } catch {
+        resolve(""); // no git on PATH: no working set
+        return;
+      }
+      const child = execFile(argv[0], argv[1], { timeout: 1500, windowsHide: true, shell: false }, (err, stdout) => {
         resolve(err ? "" : String(stdout || ""));
       });
       child.on("error", () => resolve(""));

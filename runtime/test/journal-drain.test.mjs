@@ -9,6 +9,13 @@ import os from "node:os";
 import { appendLearnings, readJournal } from "../src/hooks/journal.mjs";
 import { drainJournal } from "../src/hooks/journal-drain.mjs";
 
+// Isolation: the drain and apply write the episodic DB (and user.md) under
+// HOME; point it at a temp folder so the real ~/.agent-daemon is never touched.
+const FAKE_HOME = await fs.mkdtemp(path.join(os.tmpdir(), "ad-test-home-"));
+process.env.HOME = FAKE_HOME;
+process.env.USERPROFILE = FAKE_HOME;
+delete process.env.AD_ROOT;
+
 async function makeTmp() {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ad-drain-"));
   // Scaffold a minimal .agent-daemon/memory/ so apply.mjs has a target

@@ -7,6 +7,7 @@
 // handing the terminal to another program) is built here as `actions`.
 
 import { spawn, execFile } from "node:child_process";
+import { editorCommand, editorInvocation, resolveGit, resolvedArgv } from "../safe-spawn.mjs";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import path from "node:path";
@@ -90,27 +91,18 @@ export function splitArgs(s) {
 /* External editor (Ctrl+G)                                            */
 /* ------------------------------------------------------------------ */
 
-/** The editor command: $VISUAL, then $EDITOR, else notepad on Windows and vi elsewhere. */
-export function editorCommand(env = process.env, platform = process.platform, exists = existsSync) {
-  const raw = (env.VISUAL || env.EDITOR || (platform === "win32" ? "notepad" : "vi")).trim();
-  // An unquoted path with spaces (C:\Program Files\…\notepad++.exe) is one command.
-  if (/[\\/]/.test(raw) && exists(raw)) return { cmd: raw, args: [] };
-  const [cmd, ...args] = splitArgs(raw);
-  return { cmd, args };
-}
+// The editor command ($VISUAL, $EDITOR, notepad / vi) lives in safe-spawn.mjs,
+// shared with `ad review`.
+export { editorCommand };
 
-// .cmd / .bat shims (code, subl) need cmd.exe on Windows: every argument is quoted.
-function editorSpawn(cmd, args, platform) {
-  if (platform !== "win32" || /\.exe$/i.test(cmd) || !/\.(cmd|bat)$|^[^.\\/]+$/i.test(cmd) || /^notepad$/i.test(cmd)) return { cmd, args };
-  const quote = (a) => `"${String(a).replace(/"/g, '""')}"`;
-  return { cmd: process.env.ComSpec || "cmd.exe", args: ["/d", "/s", "/c", `"${[cmd, ...args].map(quote).join(" ")}"`], verbatim: true };
-}
+// How the editor starts: by full path, through cmd.exe only for a .cmd/.bat
+// editor (safe-spawn.mjs editorInvocation).
 
 /**
  * Edits `text` in the user's editor (the terminal is handed over) and returns
  * the result, or null when the editor failed. The temp file is private and removed.
  */
-export async function editInEditor(text, { run, env = process.env, platform = process.platform, now = () => Date.now() } = {}) {
+export async function editInEditor(text, { run, env = process.env, platform = process.platform, now = () => Date.now(), resolve, cmdExe } = {}) {
   const { mkdtempSync, readFileSync: read, rmSync, writeFileSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
   const dir = mkdtempSync(path.join(tmpdir(), "ad-prompt-"));
@@ -118,7 +110,7 @@ export async function editInEditor(text, { run, env = process.env, platform = pr
   try {
     writeFileSync(file, text, { mode: 0o600 });
     const { cmd, args } = editorCommand(env, platform);
-    const spawnAs = editorSpawn(cmd, [...args, file], platform);
+    const spawnAs = editorInvocation(cmd, [...args, file], { platform, env, resolve, cmdExe });
     const t0 = now();
     const code = await run(spawnAs.cmd, spawnAs.args, spawnAs.verbatim);
     if (code !== 0) return null;
@@ -136,9 +128,17 @@ export async function editInEditor(text, { run, env = process.env, platform = pr
 /* git                                                                 */
 /* ------------------------------------------------------------------ */
 
+// git by its full path from PATH, so a git.exe in the project never runs.
 function git(cwd, args, { timeout = 0 } = {}) {
   return new Promise((resolve) => {
-    execFile("git", args, { cwd, maxBuffer: 32 * 1024 * 1024, windowsHide: true, timeout }, (err, stdout, stderr) => resolve({ ok: !err, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") }));
+    let argv;
+    try {
+      argv = resolvedArgv(resolveGit(), args);
+    } catch (e) {
+      resolve({ ok: false, stdout: "", stderr: e.message });
+      return;
+    }
+    execFile(argv[0], argv[1], { cwd, maxBuffer: 32 * 1024 * 1024, windowsHide: true, timeout, shell: false }, (err, stdout, stderr) => resolve({ ok: !err, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") }));
   });
 }
 
@@ -430,9 +430,13 @@ export async function cmdTui(opts = {}) {
         return (await session.engine.files.search(q, [cwd], { token: "ad-mention" })).map((f) => f.path);
       },
       gitDiff: () => gitDiff(cwd),
+      // The user's own words: stored active in this project (never global).
       remember: opts.memory === false ? undefined : async (text) => {
         const { insertLearning, projectSlug } = await import("../memory/episodic.mjs");
-        await insertLearning({ category: "pattern", text, projectSlug: projectSlug(cwd), confidence: 0.9, evidence: "ad tui /remember", tags: ["remember"] });
+        const { redactSecrets } = await import("../security/secret-patterns.mjs");
+        const r = redactSecrets(text);
+        await insertLearning({ category: "pattern", text: r.text, projectSlug: projectSlug(cwd), confidence: 0.9, evidence: "ad tui /remember", tags: ["remember"], origin: "user" });
+        return r;
       },
       ad,
       ...(undoKit ? { undo: (o) => undoKit.undo(session, o), onTyping: () => undoKit.onTyping() } : {}),

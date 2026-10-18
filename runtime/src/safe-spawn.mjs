@@ -228,5 +228,42 @@ export function resolveGit(opts = {}) {
   return r;
 }
 
+/** The editor command: $VISUAL, then $EDITOR, else notepad on Windows and vi elsewhere. */
+export function editorCommand(env = process.env, platform = process.platform, exists = fs.existsSync) {
+  const raw = (env.VISUAL || env.EDITOR || (platform === "win32" ? "notepad" : "vi")).trim();
+  // An unquoted path with spaces (C:\Program Files\…\notepad++.exe) is one command.
+  if (/[\\/]/.test(raw) && exists(raw)) return { cmd: raw, args: [] };
+  const [cmd, ...args] = [...raw.matchAll(/"([^"]*)"|'([^']*)'|(\S+)/g)].map((m) => m[1] ?? m[2] ?? m[3]);
+  return { cmd, args };
+}
+
+export const EDITOR_UNSAFE_ARG = "This editor runs through cmd.exe, which can't take that file name safely. Set EDITOR to the editor's .exe.";
+
+/**
+ * How to start an editor (`cmd` + `args`, from $VISUAL/$EDITOR) without a
+ * shell where possible. On Windows the editor is resolved to a full path: an
+ * .exe (or an npm shim's script) starts directly; a .cmd/.bat editor that
+ * isn't an npm shim (code.cmd, subl.cmd) is the one deliberate cmd.exe use,
+ * by full path, with /d /v:off and every argument quoted. Arguments cmd.exe
+ * can't carry safely (%, ", CR, LF) are refused instead of escaped.
+ *
+ * @returns {{cmd:string, args:string[], verbatim?:boolean}}
+ */
+export function editorInvocation(cmd, args, { platform = process.platform, env = process.env, resolve, cmdExe } = {}) {
+  if (platform !== "win32") return { cmd, args };
+  // A full path is classified as given; a bare name is looked up on PATH only.
+  const byPath = (n) => (winAbsolute(n) ? resolveCommand(n, { env: { AD_EDITOR_PATH: n }, overrideVar: "AD_EDITOR_PATH", platform }) : resolveCommand(n, { env, platform }));
+  const r = (resolve ?? byPath)(cmd);
+  if (r.cmd) return { cmd: r.cmd, args: [...(r.prefix ?? []), ...args] };
+  if (r.via === "unreadable-shim" && /\.(cmd|bat)$/i.test(r.file ?? "")) {
+    const all = [r.file, ...args];
+    if (all.some((a) => /[%"\r\n]/.test(String(a)))) throw new Error(EDITOR_UNSAFE_ARG);
+    const shell = cmdExe ?? systemTool("cmd.exe", { env, platform });
+    if (!shell) throw new Error("cmd.exe isn't in %SystemRoot%\\System32, so ad can't start this editor.");
+    return { cmd: shell, args: ["/d", "/v:off", "/s", "/c", `"${all.map((a) => `"${a}"`).join(" ")}"`], verbatim: true };
+  }
+  throw new Error(`The editor "${cmd}" isn't on PATH. Set EDITOR to its full path.`);
+}
+
 /** True when Claude Code's stderr says it doesn't know the -file flag. */
 export const claudeLacksPromptFile = (stderr) => /unknown option[^\n]*--append-system-prompt-file/i.test(String(stderr ?? ""));

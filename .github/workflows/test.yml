@@ -47,6 +47,10 @@ jobs:
         run: node runtime/scripts/check-brand.mjs --strict --tracked
         # The engine's name stays in its allowed zone (runtime/scripts/brand-allowlist.json; docs/testing.md).
 
+      - name: Doc links
+        run: node runtime/scripts/check-doc-links.mjs
+        # Every relative link in a tracked Markdown file points at a tracked file.
+
       - name: Smoke `ad doctor`
         run: node runtime/src/cli.mjs doctor || true
         # Doctor reports missing optional things (e.g. claude CLI on CI) — that's

@@ -14,7 +14,7 @@
 //   memory_files(path)                    — learnings touching a given file (index)
 //   memory_timeline(id, limit?)           — the session + sibling learnings around a hit (context)
 //   memory_get(ids)                       — full detail + provenance for kept IDs (detail)
-//   memory_stats()                        — store counts + retrieval telemetry
+//   memory_stats()                        — the bound scope + this project's counts
 //   user_facts_list()                     — cross-project user profile facts
 //   memory_feedback(id, verdict)          — mark a learning useful|stale|wrong
 //                                           (writes the usefulness signal the
@@ -25,9 +25,18 @@
 // (and memory_get's retrieval write-back). Blast radius: local read of
 // ~/.agent-daemon/episodic.db; no network.
 //
+// Scope (memory/scope.mjs): one server process is bound to one project, at
+// start, and no tool argument changes it: --project <dir>, else
+// AD_MEMORY_PROJECT (ad's engine, per thread), else CLAUDE_PROJECT_DIR (only
+// with --host claude-code), else a working folder that looks like a project.
+// Unbound, or sharing its memory key with another folder: it serves nothing.
+// Every tool sees only rows visible to that project (episodic.mjs
+// learningVisibility): an id from another project returns nothing.
+//
 // Register (Claude Code):
-//   claude mcp add agent-daemon-memory -- node <abs path to this file>
+//   claude mcp add agent-daemon-memory -- node <abs path to this file> --host claude-code
 
+import fs from "node:fs";
 import readline from "node:readline";
 import {
   searchLearnings,
@@ -38,11 +47,50 @@ import {
   markRetrieved,
   buildUserRepresentation,
   representationToMarkdown,
-  stats,
-  projectSlug,
+  projectStats,
+  listUserFacts,
+  recordFeedback,
   db
 } from "../memory/episodic.mjs";
+import { resolveMemoryScope } from "../memory/scope.mjs";
+import { slugCollides } from "../memory/safety.mjs";
 import { neutralizeText } from "../digest/sanitize.mjs";
+
+export const UNBOUND_TEXT = "This memory server isn't bound to a project (the host didn't say which folder is open), so it shows nothing. Open a project folder, or pass --project.";
+export const COLLISION_TEXT = "This folder shares its memory key with another folder, so ad keeps its notes out until each project gets its own ID. See ad doctor.";
+
+const argValue = (name) => {
+  const i = process.argv.indexOf(name);
+  return i >= 0 ? process.argv[i + 1] : undefined;
+};
+
+// The in-flight promise is cached, so concurrent first calls resolve once.
+let SCOPE_PROMISE = null;
+function memoryScope() {
+  SCOPE_PROMISE ??= bindScope();
+  return SCOPE_PROMISE;
+}
+async function bindScope() {
+  const handle = await db();
+  const SCOPE = resolveMemoryScope({
+    project: argValue("--project"),
+    env: process.env,
+    cwd: process.cwd(),
+    host: argValue("--host"),
+    collides: handle ? (key, dir) => slugCollides(handle, key, dir) : undefined,
+  });
+  // Tests only: where the server bound itself.
+  if (process.env.AD_MEMORY_DEBUG_FILE) {
+    try {
+      fs.writeFileSync(process.env.AD_MEMORY_DEBUG_FILE, JSON.stringify({ kind: SCOPE.kind, source: SCOPE.source, key: SCOPE.keys[0] ?? null }));
+    } catch (e) {
+      process.stderr.write(`[agent-daemon memory] debug file: ${e.message}\n`);
+    }
+  }
+  return SCOPE;
+}
+// Bind at start (one scope per process), not on the first tool call.
+memoryScope().catch((e) => process.stderr.write(`[agent-daemon memory] scope: ${e.message}\n`));
 
 const MAX_RESULTS = 5;
 const MAX_RESPONSE_BYTES = 4096;
@@ -205,38 +253,45 @@ function renderTimeline(tl) {
 }
 
 async function callTool(name, args) {
-  const cwd = process.env.CLAUDE_PROJECT_DIR || process.cwd();
+  const s = await memoryScope();
+  if (name === "memory_stats" && s.kind !== "project") return `scope: ${s.kind}`;
+  if (s.kind === "collision") return COLLISION_TEXT;
+  if (s.kind !== "project") return UNBOUND_TEXT;
+  const projectKeys = s.keys;
+  // 1..MAX_RESULTS whatever the agent sends (a negative LIMIT is unlimited in SQLite).
+  const clampLimit = (n) => Math.max(1, Math.min(MAX_RESULTS, Math.trunc(Number(n)) || MAX_RESULTS));
+  const scopeArg = ["project", "global", "any"].includes(args.scope) ? args.scope : "any";
   switch (name) {
     case "memory_search": {
       const rows = await searchLearnings(String(args.query || ""), {
-        projectSlug: projectSlug(cwd),
-        scope: args.scope || "any",
-        limit: Math.min(MAX_RESULTS, args.limit || MAX_RESULTS)
+        projectKeys,
+        scope: scopeArg,
+        limit: clampLimit(args.limit)
       });
       return renderLearnings(rows);
     }
     case "memory_recent": {
       const rows = await listRecentLearnings({
-        projectSlug: projectSlug(cwd),
-        limit: Math.min(MAX_RESULTS, args.limit || MAX_RESULTS)
+        projectKeys,
+        limit: clampLimit(args.limit)
       });
       return renderLearnings(rows);
     }
     case "memory_files": {
       const rows = await searchLearningsByFile(String(args.path || ""), {
-        projectSlug: projectSlug(cwd),
-        scope: args.scope || "any",
-        limit: Math.min(MAX_RESULTS, args.limit || MAX_RESULTS)
+        projectKeys,
+        scope: scopeArg,
+        limit: clampLimit(args.limit)
       });
       return renderLearnings(rows);
     }
     case "memory_timeline": {
-      const tl = await learningTimeline(args.id, { limit: args.limit });
+      const tl = await learningTimeline(args.id, { limit: args.limit, projectKeys });
       return renderTimeline(tl);
     }
     case "memory_get": {
       const ids = Array.isArray(args.ids) ? args.ids : [];
-      const rows = await getLearningsByIds(ids);
+      const rows = await getLearningsByIds(ids, { projectKeys });
       // Retrieval write-back: expanding a learning is a real "this was useful
       // enough to read in full" signal — feeds freshness-aware ranking.
       if (rows.length) {
@@ -245,7 +300,7 @@ async function callTool(name, args) {
       return renderDetailed(rows);
     }
     case "memory_profile": {
-      const profile = await buildUserRepresentation({ projectSlug: projectSlug(cwd) });
+      const profile = await buildUserRepresentation({ projectKeys });
       if (!profile) return "(no user representation yet — not enough facts/learnings recorded)";
       let out = representationToMarkdown(profile, { neutralize: neutralizeText });
       out += `\n\n_(derived deterministically from ${profile.counts.facts} user fact(s) + ${profile.counts.learnings} learning(s))_`;
@@ -253,44 +308,25 @@ async function callTool(name, args) {
       return out;
     }
     case "memory_stats": {
-      const s = await stats();
-      if (!s.driver) return "episodic store unavailable (better-sqlite3 not installed)";
-      const counts = Object.entries(s.counts).map(([t, n]) => `${t}: ${n}`).join(", ");
-      const ret = s.retrieval
-        ? ` | retrieval 7d: ${s.retrieval.events} events, ${(s.retrieval.truncationRate * 100).toFixed(0)}% truncated`
-        : "";
-      return `${counts}${ret}`;
+      // Counts for this project only: database-wide counts would describe other projects.
+      const st = await projectStats({ projectKeys });
+      if (!st) return "episodic store unavailable (better-sqlite3 not installed)";
+      return `scope: project (${s.source}) | learnings: ${st.learnings}, user facts: ${st.facts}`;
     }
     case "user_facts_list": {
-      const handle = await db();
-      if (!handle) return "episodic store unavailable";
-      const rows = handle.all(
-        `SELECT id, category, text, confidence, observed_count
-           FROM user_facts WHERE status = 'active'
-          ORDER BY confidence DESC, observed_count DESC LIMIT 20`
-      );
+      const rows = await listUserFacts({ projectKeys });
       return rows.length
         ? rows.map(r => `[fact ${r.id}] ${r.category} (conf ${Number(r.confidence).toFixed(2)}, seen ${r.observed_count}×): ${neutralizeText(r.text)}`).join("\n")
         : "(no user facts recorded yet)";
     }
     case "memory_feedback": {
-      const handle = await db();
-      if (!handle) return "episodic store unavailable";
       const id = Number(args.id);
       const verdict = String(args.verdict);
       if (!Number.isInteger(id) || !["useful", "stale", "wrong"].includes(verdict)) {
         throw new Error("memory_feedback requires an integer id and verdict useful|stale|wrong");
       }
-      // usefulness is a running average in [-1, 1]: useful=+1, stale=-0.5, wrong=-1
-      const delta = verdict === "useful" ? 1 : verdict === "stale" ? -0.5 : -1;
-      const r = handle.run(
-        `UPDATE learnings
-            SET usefulness = COALESCE((COALESCE(usefulness, 0) + ?) / 2.0, ?),
-                last_verified_at = CASE WHEN ? > 0 THEN ? ELSE last_verified_at END
-          WHERE id = ?`,
-        [delta, delta, delta, new Date().toISOString(), id]
-      );
-      return r.changes > 0 ? `recorded: learning ${id} → ${verdict}` : `no learning with id ${id}`;
+      const { changed } = await recordFeedback({ id, verdict, projectKeys });
+      return changed ? `recorded: learning ${id} → ${verdict}` : `No learning #${id} in this project.`;
     }
     default:
       throw new Error(`unknown tool: ${name}`);

@@ -2,7 +2,7 @@
   "mcpServers": {
     "agent-daemon-memory": {
       "command": "node",
-      "args": ["<repo>/runtime/src/mcp/memory-server.mjs"]
+      "args": ["<repo>/runtime/src/mcp/memory-server.mjs", "--host", "claude-code"]
     }
   }
 }

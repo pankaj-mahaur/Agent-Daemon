@@ -184,6 +184,10 @@ export async function ensureHarnessSetup(engine, { cwd = process.cwd(), profile 
     for (const key of PROVIDER_ENV_KEYS) {
       if (config.shell_environment_policy?.filters?.[key] !== "exclude") edits.push([`shell_environment_policy.filters.${key}`, "exclude"]);
     }
+    // The agent-shell marker (security/agent-shell.mjs): every tool shell of
+    // ad's engine carries AD_TOOL_SHELL=1, so memory accept/promote commands
+    // refuse to run from it. Field-level: the user's own `set` entries stay.
+    if (config.shell_environment_policy?.set?.AD_TOOL_SHELL !== "1") edits.push(["shell_environment_policy.set.AD_TOOL_SHELL", "1"]);
     if (edits.length) {
       await engine.writeConfig(edits);
       await engine.reloadMcpServers();

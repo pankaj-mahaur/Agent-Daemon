@@ -12,6 +12,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { sampleSkillExecutions } from "../../memory/episodic.mjs";
+import { redactSecrets } from "../../security/secret-patterns.mjs";
 
 /**
  * Export skill execution traces to a JSONL file the active Claude session
@@ -47,8 +48,9 @@ export async function exportSkillTraces(opts) {
       session_id:     t.session_id,
       skill_name:     t.skill_name,
       succeeded:      t.succeeded === 1 ? true : (t.succeeded === 0 ? false : null),
-      failure_reason: t.failure_reason,
-      trigger_text:   t.trigger_text,
+      // Rows written before the secret filter are masked on the way out.
+      failure_reason: t.failure_reason ? redactSecrets(t.failure_reason).text : t.failure_reason,
+      trigger_text:   t.trigger_text ? redactSecrets(t.trigger_text).text : t.trigger_text,
       invocation_source: t.invocation_source,
       outcome_source: t.outcome_source,
       completed_at:   t.completed_at,

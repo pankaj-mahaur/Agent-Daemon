@@ -86,6 +86,7 @@ Engine-originated failures must retain their classification through wrappers: us
      - history is committed by overpainting, also with autowrap off (lines are pre-wrapped);
      - width: measure with `tui/terminal/width.mjs`, which defaults to the `codepoint` profile (safe). Use `grapheme` only for Windows Terminal or after the CPR probe;
      - without 2026, commit at most every 150 ms.
+   - The engine's own *inline* mode does not pin the prompt (`insert_history.rs` at 0.160 moves the viewport down only by the inserted rows); the bottom prompt comes from its fullscreen mode, which ad's `pinBottom` reproduces inline.
    - **Prompt at the bottom** (`pinBottom`, on unless `prompt.atBottom` is false in prefs.json): the live region ends on the last row; `gap` (blank rows between history and the live top) and `slack` (blank rows below the live region or the empty cursor row) are lower bounds. A width change re-anchors with `gap` 0, because a reflow may have moved history into those rows; suspend and dispose erase the gap, so what follows starts right after history. The renderer tests and their property test run both with and without it.
    - **Resize:** pause, wait 75 ms, then re-anchor with a cursor-position query and the terminal's reflow model. Ctrl+L is re-anchor plus redraw.
      - The rows-above-cursor estimate must be a lower bound: an over-count erases history, an under-count only leaves a ghost row.

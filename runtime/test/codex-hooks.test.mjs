@@ -209,9 +209,20 @@ test("ensureHarnessSetup wires hooks, AGENTS.md, memory MCP and env filters, and
     assert.match(cfg.mcp_servers[MEMORY_SERVER_ID].args[0], /memory-server\.mjs$/);
     assert.equal(cfg.mcp_servers[MEMORY_SERVER_ID].default_tools_approval_mode, "approve", "ad's own memory tools don't ask each time");
     assert.equal(cfg.shell_environment_policy.filters.OPENROUTER_API_KEY, "exclude");
+    assert.equal(cfg.shell_environment_policy.set.AD_TOOL_SHELL, "1", "the agent-shell marker is in every tool shell");
 
     const again = await ensureHarnessSetup(engine, { cwd: tmpdir(), roots: [], profile: "developer" });
     assert.deepEqual([again.hooksWritten, again.agentsWritten, again.configWritten, again.trusted], [false, false, false, 0], "idempotent");
+  });
+});
+
+test("the agent-shell marker keeps the user's own shell_environment_policy.set entries", async () => {
+  await withEngine(async (engine) => {
+    await engine.writeConfig([["shell_environment_policy.set.MY_VAR", "mine"]]);
+    await ensureHarnessSetup(engine, { cwd: tmpdir(), roots: [], profile: "developer" });
+    const set = (await engine.readConfig()).shell_environment_policy.set;
+    assert.equal(set.MY_VAR, "mine");
+    assert.equal(set.AD_TOOL_SHELL, "1");
   });
 });
 

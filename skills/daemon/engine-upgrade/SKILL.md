@@ -17,6 +17,7 @@ The harness pins `@openai/codex` exactly (`runtime/package.json`). Each upgrade 
 ## When to use
 
 - A PR titled `chore(engine): bump the engine to <version>` opened by `.github/workflows/engine-upgrade.yml`.
+- The bot opens no PR at all: GitHub refuses PRs from `GITHUB_TOKEN` unless the repo setting "Allow GitHub Actions to create and approve pull requests" is on, or the `ENGINE_UPGRADE_TOKEN` secret (a repo-scoped fine-grained PAT) is set; the setting and the PAT are the owner's. The bot skips a version only while an open or merged PR exists for its branch, so a closed attempt is retried by the next run (or `gh workflow run engine-upgrade.yml -f version=<v>`).
 - The user asks to move the pin by hand (`npm install --save-exact @openai/codex@<v>` in `runtime/`).
 
 ## Procedure
@@ -64,6 +65,10 @@ The harness pins `@openai/codex` exactly (`runtime/package.json`). Each upgrade 
 5. **Ship.** Bump the patch/minor version in `runtime/package.json` + `package-lock.json`, add a CHANGELOG entry naming the new engine version, then hand off to `release-flow`. Tag only after the user merges.
 
 ## Known gotchas (check these first)
+
+- **Unknown method** (0.160): the engine answers `-32600 "Invalid request: unknown variant …"`, not `-32601`; the façade classifies by that shape.
+- **Hooks see the engine's whole environment** (0.163): hook processes inherit the engine's full env whatever `shell_environment_policy` filters say, so a key in the engine's env reaches every hook. Keys stay out of the engine env (the provider gateway, plan P3.3).
+- **A per-thread config override for an MCP server that isn't configured** makes the engine reject the thread's whole config (`thread/start` fails). ad's façade sends the memory-scope override only when the home configures `agent-daemon-memory` (real-engine test "memory scope: a bare home…").
 
 - **Store pwsh.** The engine runs commands in the first `pwsh.exe` on PATH. The Store's PowerShell is an app alias (`...\Microsoft\WindowsApps\pwsh.exe`) and an MSIX package (`C:\Program Files\WindowsApps\Microsoft.PowerShell_…`, which PowerShell 7 puts first on its children's PATH); the sandbox's restricted token can launch neither (`CreateProcessAsUserW failed: 5` / `-1073283067`). `withoutStoreAliases()` in `app-server.mjs` drops every PATH entry with a `WindowsApps` segment (2.0.1 dropped only the alias folder, so starting ad *from* Store PowerShell still broke until 2.1.1). If commands are denied again, check whether the engine changed how it picks a shell.
 - **Engine behaviours ad depends on** (re-check on a bump; the live tests exercise each):

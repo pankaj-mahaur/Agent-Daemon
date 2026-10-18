@@ -146,3 +146,11 @@ test("renderAdInstructions: idempotent — same input produces same output", () 
   const b = renderAdInstructions(START, END);
   assert.equal(a, b);
 });
+
+// P0.5: the manual no longer claims `ad init` registers the memory server; it names the real command.
+test("the manual's memory paragraph names agent-daemon-memory-mcp and not 'ad init registers it'", () => {
+  const text = renderAdInstructions ? renderAdInstructions({}) : renderManagedClaudeBlock({});
+  const all = typeof text === "string" ? text : JSON.stringify(text);
+  assert.ok(!/ad init` registers it/.test(all));
+  assert.match(all, /agent-daemon-memory-mcp --host claude-code/);
+});

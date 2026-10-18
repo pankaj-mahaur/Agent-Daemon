@@ -27,6 +27,21 @@ export { engineError };
 // these; the raw text goes to /warnings (terminal UI) or a "details:" line (CLI).
 const ENGINE_CODES = new Set(["ENGINE_EXITED", "ENGINE_SPAWN_FAILED", "ENGINE_TIMEOUT", "ENGINE_NOT_STARTED"]);
 
+/**
+ * The per-thread memory scope override (plan §M): bind that thread's
+ * agent-daemon-memory server to `folder`. {} when the home doesn't configure
+ * the server — an override for a missing server makes the engine reject the
+ * thread config ("invalid transport"); same shape as unattendedThreadConfig.
+ *
+ * @param {string|undefined|null} folder
+ * @param {object} cfg  the effective config (config/read)
+ * @returns {Record<string,string>}
+ */
+export function memoryScopeConfig(folder, cfg) {
+  if (!folder || !cfg?.mcp_servers?.["agent-daemon-memory"]) return {};
+  return { "mcp_servers.agent-daemon-memory.env.AD_MEMORY_PROJECT": folder };
+}
+
 /** True for an error that came from the engine (its numeric JSON-RPC codes) or from talking to it. */
 export const isEngineError = (err) => typeof err?.code === "number" || ENGINE_CODES.has(err?.code);
 
@@ -187,7 +202,10 @@ export class Engine extends EventEmitter {
       start: (o) => this.startThread(o),
       resume: (threadId, o) => this.resumeThread(threadId, o),
       /** → the engine's answer ({thread, …}). */
-      fork: (threadId, o = {}) => this.#request("thread/fork", clean({ threadId, ...o })),
+      fork: async (threadId, { memoryProject, ...o } = {}) => {
+        const config = await this.#withMemoryScope(memoryProject === undefined ? o.cwd : memoryProject, o.config);
+        return this.#request("thread/fork", clean({ threadId, ...o, config }));
+      },
       inject: (threadId, items) => this.#request("thread/inject_items", { threadId, items }),
       /** → {status: "unsubscribed" | "notLoaded" | …}. */
       unsubscribe: (threadId) => this.#request("thread/unsubscribe", { threadId }),
@@ -513,6 +531,7 @@ export class Engine extends EventEmitter {
   // strategy "upsert" merges a table into what is there. Goes through Codex
   // itself so we never hand-edit TOML that Codex also writes.
   writeConfig(edits, { reload = true } = {}) {
+    this.#memoryConfig = null;
     return this.#request("config/batchWrite", {
       edits: edits.map(([keyPath, value, strategy]) => ({ keyPath, value, mergeStrategy: strategy === "upsert" ? "upsert" : "replace" })),
       reloadUserConfig: reload,
@@ -536,6 +555,7 @@ export class Engine extends EventEmitter {
 
   // Re-read mcp_servers after a config change so new servers start.
   reloadMcpServers() {
+    this.#memoryConfig = null;
     return this.#request("config/mcpServer/reload", {});
   }
 
@@ -568,14 +588,38 @@ export class Engine extends EventEmitter {
     return this.#waitFor(method, predicate, { timeoutMs });
   }
 
-  async startThread({ cwd, model, sandbox = DEFAULT_SANDBOX, approvalPolicy = DEFAULT_APPROVAL_POLICY, ephemeral, developerInstructions, config, sessionStartSource } = {}) {
+  // memoryProject: the folder this thread's memory server is bound to
+  // (default: cwd; a team worker passes its parent repo, since its worktree
+  // lives inside ad's own folder; null for none).
+  async startThread({ cwd, model, sandbox = DEFAULT_SANDBOX, approvalPolicy = DEFAULT_APPROVAL_POLICY, ephemeral, developerInstructions, config, sessionStartSource, memoryProject } = {}) {
+    config = await this.#withMemoryScope(memoryProject === undefined ? cwd : memoryProject, config);
     const r = await this.#request("thread/start", clean({ cwd, model, sandbox, approvalPolicy, ephemeral, developerInstructions, config, sessionStartSource }));
     return { threadId: r.thread.id, model: r.model, modelProvider: r.modelProvider, thread: r.thread };
   }
 
-  async resumeThread(threadId, overrides = {}) {
-    const r = await this.#request("thread/resume", clean({ threadId, ...overrides }));
+  async resumeThread(threadId, { memoryProject, ...overrides } = {}) {
+    const config = await this.#withMemoryScope(memoryProject === undefined ? overrides.cwd : memoryProject, overrides.config);
+    const r = await this.#request("thread/resume", clean({ threadId, ...overrides, config }));
     return { threadId: r.thread.id, model: r.model, modelProvider: r.modelProvider, thread: r.thread, collaborationMode: collaborationMode(r.collaborationMode) };
+  }
+
+  // The memory scope contract (plan §M): bind this thread's memory server to
+  // `folder` through a per-thread config override, merged under the caller's
+  // own overrides. Only when the home configures that server: an override for
+  // a missing server makes the engine reject the thread's whole config. The
+  // config is read once and again after any config write or MCP reload.
+  #memoryConfig = null;
+  async #withMemoryScope(folder, config) {
+    if (!folder) return config;
+    if (!this.#memoryConfig) {
+      this.#memoryConfig = this.readConfig().catch((err) => {
+        this.#memoryConfig = null;
+        this.emit("warning", `could not read config for the memory scope: ${err.message}`);
+        return {};
+      });
+    }
+    const scope = memoryScopeConfig(folder, await this.#memoryConfig);
+    return Object.keys(scope).length ? { ...scope, ...(config ?? {}) } : config;
   }
 
   /**
@@ -734,6 +778,7 @@ export class Engine extends EventEmitter {
         approvalPolicy: "never",
         developerInstructions: system,
         config: await this.#isolatedThreadConfig(),
+        memoryProject: null, // a system thread: every MCP server is off anyway
       });
       const r = await this.turn({ threadId, text: user, outputSchema: schema, timeoutMs: opts.timeoutMs ?? 120_000 });
       if (r.status !== "completed") {
