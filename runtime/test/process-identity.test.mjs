@@ -187,3 +187,22 @@ test("under node --test with the real home, defaultLockDir() is a temp folder; w
     rmSync(fake, { recursive: true, force: true });
   }
 });
+
+test("assertFakeHome fails with the real home and passes with a faked one", async () => {
+  const { assertFakeHome } = await import("../testkit/real-home-guard.mjs");
+  const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  try {
+    delete process.env.HOME;
+    delete process.env.USERPROFILE;
+    if (process.platform !== "win32") process.env.HOME = (await import("node:os")).userInfo().homedir;
+    else process.env.USERPROFILE = (await import("node:os")).userInfo().homedir;
+    assert.throws(() => assertFakeHome(), /must set HOME\/USERPROFILE to a temp folder/);
+    const fake = mkdtempSync(join(tmpdir(), "ad-fakehome-"));
+    process.env.HOME = fake;
+    process.env.USERPROFILE = fake;
+    assertFakeHome();
+    rmSync(fake, { recursive: true, force: true });
+  } finally {
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+});

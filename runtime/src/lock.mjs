@@ -54,6 +54,21 @@ const cachedIdentityOf = (pid) => {
 // live: held whatever the heartbeat; dead/reused: free; unknown: the heartbeat decides.
 const holdsLock = (kind, fresh) => kind === "live" || (kind === "unknown" && fresh);
 
+// A lease (an engine, a scheduled job, an agent) is held while its Node holder
+// OR the child it recorded is live: a holder killed with its engine still
+// running keeps the folder busy. Both proven gone → free; otherwise unknown.
+const LEASE_KINDS = new Set(["engine", "schedule", "agent"]);
+function holderKind(holder, deps) {
+  const own = classifyHolder(holder, deps);
+  if (!LEASE_KINDS.has(holder?.kind) || !holder.child) return own;
+  const child = classifyHolder(holder.child, deps);
+  if (own === "live" || child === "live") return "live";
+  if ((own === "dead" || own === "reused") && (child === "dead" || child === "reused")) return "dead";
+  return "unknown";
+}
+const META_KEYS = ["kind", "home", "child"];
+const pickMeta = (meta = {}) => Object.fromEntries(META_KEYS.filter((k) => meta[k] !== undefined).map((k) => [k, meta[k]]));
+
 function alive(pid) {
   try {
     process.kill(pid, 0);
@@ -87,7 +102,8 @@ export function acquireLock(name, opts = {}) {
   mkdirSync(dir, { recursive: true });
   const file = join(dir, `${String(name).replace(/[^A-Za-z0-9_.-]/g, "_")}.lock`);
   const token = randomUUID();
-  const me = JSON.stringify({ pid, ...self(), threadId: name, token });
+  let record = { pid, ...self(), threadId: name, token, ...pickMeta(opts.meta) };
+  const me = JSON.stringify(record);
   const busy = (holder) => busyError(holder ?? { pid: "unknown" });
   try {
     writeFileSync(file, me, { flag: "wx" });
@@ -123,7 +139,7 @@ export function acquireLock(name, opts = {}) {
         }
       }
       if (!holder && fresh) throw busy(null);
-      if (holder && holdsLock(classifyHolder(holder, { isAlive, identityOf }), fresh)) throw busy(holder);
+      if (holder && holdsLock(holderKind(holder, { isAlive, identityOf }), fresh)) throw busy(holder);
       if (gone) {
         // Released meanwhile: another process may have just taken it with O_EXCL. Never overwrite that.
         try {
@@ -147,7 +163,7 @@ export function acquireLock(name, opts = {}) {
   }, heartbeatMs);
   beat.unref?.();
   let released = false;
-  return () => {
+  const release = () => {
     if (released) return;
     released = true;
     clearInterval(beat);
@@ -157,6 +173,57 @@ export function acquireLock(name, opts = {}) {
       // Already gone, or someone else's now.
     }
   };
+  /** Merge meta (kind, home, child) into the lock, under the same token; false when it is no longer ours. */
+  release.updateMeta = (meta) => {
+    if (released) return false;
+    try {
+      if (JSON.parse(readFileSync(file, "utf8")).token !== token) return false;
+    } catch {
+      return false;
+    }
+    record = { ...record, ...pickMeta(meta) };
+    writeFileSync(file, JSON.stringify(record));
+    return true;
+  };
+  release.file = file;
+  return release;
+}
+
+/**
+ * Remove lease files (kind engine / schedule / agent) whose holder and child
+ * are both proven gone. A lease anyone might still hold is left alone.
+ * @returns {number} how many were removed
+ */
+export function sweepDeadLeases({ dir = defaultLockDir(), isAlive = alive, identityOf = cachedIdentityOf } = {}) {
+  let files;
+  try {
+    files = readdirSync(dir);
+  } catch {
+    return 0;
+  }
+  let removed = 0;
+  for (const f of files) {
+    if (!f.endsWith(".lock")) continue;
+    const file = join(dir, f);
+    let holder;
+    try {
+      holder = JSON.parse(readFileSync(file, "utf8"));
+    } catch {
+      continue; // mid-write
+    }
+    if (!LEASE_KINDS.has(holder?.kind)) continue;
+    if (holderKind(holder, { isAlive, identityOf }) !== "dead") continue;
+    try {
+      // Only the file as read: a new holder's lease has a new token.
+      if (JSON.parse(readFileSync(file, "utf8")).token === holder.token) {
+        rmSync(file, { force: true });
+        removed++;
+      }
+    } catch {
+      // gone meanwhile
+    }
+  }
+  return removed;
 }
 
 /**
@@ -190,7 +257,7 @@ export function liveLocks({ dir = defaultLockDir(), except = [], isAlive = alive
       if (fresh) held.push({ name: f.slice(0, -5), pid: "unknown" }); // mid-write: someone is taking it
       continue;
     }
-    if (holdsLock(classifyHolder(holder, { isAlive, identityOf }), fresh)) held.push({ name: holder.threadId ?? f.slice(0, -5), pid: holder.pid });
+    if (holdsLock(holderKind(holder, { isAlive, identityOf }), fresh)) held.push({ name: holder.threadId ?? f.slice(0, -5), pid: holder.pid, ...pickMeta(holder) });
   }
   return held;
 }

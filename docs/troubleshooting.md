@@ -610,9 +610,9 @@ Other choices: `nvim`, `vim`, `nano`, or Notepad++ with `-multiInst -nosession`.
 
 **Symptom:** "Not moved: something is using … Nothing changed.", or "Not moved: an ad session is running (pid …)."
 
-**Cause:** a file or working folder inside is held open: another Agent Daemon window, an editor's agent panel, a background loop, a terminal, or antivirus. The second text means an ad session holds a conversation open.
+**Cause:** a file or working folder inside is held open: another Agent Daemon window, an editor's agent panel, a background loop, a terminal, or antivirus. The second text means an ad process is using the engine: a session (even one with no conversation yet, or one suspended with Ctrl+Z), `ad run`, `ad loop`, a team worker, a digest, or `ad engine ui`. When it names an `engine pid`, that engine is still running even if the ad that started it has gone.
 
-**Fix:** close it and run `ad migrate` (or `ad migrate --undo`) again.
+**Fix:** close it and run `ad migrate` (or `ad migrate --undo`) again. An engine whose ad crashed: end that engine pid (Task Manager, or `kill <pid>`). Records of processes that are gone are cleared by the next `ad migrate` by itself.
 
 ---
 

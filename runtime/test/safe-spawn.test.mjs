@@ -356,6 +356,24 @@ test("an unwritable temp folder fails the spawn and frees the agent slot", async
   }
 });
 
+test("P0.3b: the running-agents count ignores a lease whose pid was reused", async () => {
+  const r = fakeClaudeRoot();
+  const other = (await import("node:child_process")).spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], { stdio: "ignore" });
+  try {
+    await new Promise((res) => other.once("spawn", res));
+    await withEnv(homeEnv(r), async () => {
+      const { getActiveAgentCount } = await import("../src/orchestration/spawn.mjs");
+      const dir = path.join(r.home, ".agent-daemon", "running-agents");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(path.join(dir, "agent-old.lock"), JSON.stringify({ pid: other.pid, startedAt: Date.now() - 3_600_000, threadId: "agent-old", token: "t", kind: "agent" }));
+      assert.equal(getActiveAgentCount(), 0, "a live but unrelated process doesn't count");
+    });
+  } finally {
+    other.kill();
+    rmSync(r.root, { recursive: true, force: true });
+  }
+});
+
 test("a role with metacharacters never reaches git or the team registry", async () => {
   const r = fakeClaudeRoot();
   const repo = path.join(r.root, "repo");

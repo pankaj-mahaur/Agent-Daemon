@@ -12,7 +12,14 @@ import { engineError } from "./codex/errors.mjs";
 import { APPROVAL_METHODS, approvalResponse } from "./codex/approvals.mjs";
 import { canonicalPath, codexEnv, defaultCodexHome, ensureCodexHome, homeOverride, isManagedHome, prepareDefaultHome, MANAGED_MARKER } from "./codex/home.mjs";
 import { defaultRoot, entryKind, homeFacts, linkTarget, NEW_HOME_NAME, OLD_HOME_NAME, removeLink, createLegacyLink, resolveHomeState, sameFolder } from "./codex/home-resolve.mjs";
-import { acquireLockWithin } from "../lock.mjs";
+import { acquireLock, acquireLockWithin, defaultLockDir } from "../lock.mjs";
+import { randomBytes } from "node:crypto";
+
+// Leases this process holds; released on exit if an Engine is never closed.
+const LIVE_LEASES = new Set();
+process.once("exit", () => {
+  for (const release of LIVE_LEASES) release();
+});
 import { adaptNotification, classifyRequest, collaborationMode, elicitationResponse, execDisplay, guardianDenialEvent, normalizeItem } from "./codex/events.mjs";
 import { experimentalCapabilities } from "./codex/surface.mjs";
 import { codexHooksForProfile } from "./codex/hooks-config.mjs";
@@ -474,25 +481,43 @@ export class Engine extends EventEmitter {
     return [...this.pendingRequests.values()].map((e) => e.request);
   }
 
+  // The engine's lease (lock.mjs, kind "engine"): held from before the
+  // `migrate` lock is released until the engine process has closed, so
+  // `ad migrate` sees every running engine (a TUI before its first thread,
+  // ad run, workers, one suspended with Ctrl+Z, or a holder killed with its
+  // engine still running).
+  #lease = null;
+  #releaseLease() {
+    if (!this.#lease) return;
+    this.#lease();
+    LIVE_LEASES.delete(this.#lease);
+    this.#lease = null;
+  }
+
   async start() {
-    if (this.#defaultHome) {
-      let release;
-      try {
-        release = await acquireLockWithin("migrate", { dir: this.opts.lockDir, waitMs: this.opts.lockWaitMs ?? 5000 });
-      } catch (err) {
-        if (err.code === "LOCK_BUSY") throw engineError("HOME_BUSY", "Another ad is moving the engine's folder. Try again in a minute.");
-        throw err;
-      }
-      try {
+    const lockDir = this.opts.lockDir ?? defaultLockDir();
+    let release;
+    try {
+      release = await acquireLockWithin("migrate", { dir: lockDir, waitMs: this.opts.lockWaitMs ?? 5000 });
+    } catch (err) {
+      if (err.code === "LOCK_BUSY") throw engineError("HOME_BUSY", "Another ad is moving the engine's folder. Try again in a minute.");
+      throw err;
+    }
+    try {
+      if (this.#defaultHome) {
         // What happened to the folders on the way ({type: "setAside" | "linkFailed", …}): the caller tells the user.
         this.homeEvents = [];
         this.home = prepareDefaultHome({ root: this.opts.homeRoot, autoPickEmpty: this.opts.interactive === true, env: this.env, onEvent: (e) => this.homeEvents.push(e) });
-      } finally {
-        release();
+      } else {
+        ensureCodexHome(this.home);
       }
-    } else {
-      ensureCodexHome(this.home);
+      this.#lease = acquireLock(`engine-${process.pid}-${randomBytes(4).toString("hex")}`, { dir: lockDir, meta: { kind: "engine", home: this.home } });
+      LIVE_LEASES.add(this.#lease);
+    } finally {
+      release();
     }
+    // Tests only: run something in the gap after `migrate` is released.
+    await this.opts.testHooks?.afterMigrateRelease?.();
     this.#server = new CodexAppServer({
       command: this.opts.command,
       cwd: this.opts.cwd,
@@ -513,7 +538,18 @@ export class Engine extends EventEmitter {
     });
     this.#server.on("notification", (msg) => this.#route(msg));
     this.#server.on("exit", () => this.#cancelRequests(() => true, "engine exited"));
-    this.initInfo = await this.#server.start();
+    // The lease ends when the engine process has closed, not when close() resolves.
+    this.#server.on("exit", () => this.#releaseLease());
+    try {
+      this.initInfo = await this.#server.start();
+    } catch (err) {
+      this.#releaseLease();
+      throw err;
+    }
+    // Record the engine child: Date.now() after spawn is an upper bound on its
+    // OS start, so the one-sided identity rule holds; no identity lookup here.
+    const childPid = this.#server.child?.pid;
+    if (childPid && this.#lease) this.#lease.updateMeta({ child: { pid: childPid, startedAt: Date.now() } });
     return this;
   }
 
@@ -832,6 +868,7 @@ export class Engine extends EventEmitter {
   }
 
   close() {
+    if (!this.#server) this.#releaseLease();
     return this.#server?.close();
   }
 

@@ -21,15 +21,17 @@ import crypto from "node:crypto";
 import { sendMessage, createInbox } from "./inbox.mjs";
 import { productValue } from "../product-values.mjs";
 import { commitWorktree, runEngineWorker } from "./engine-worker.mjs";
+import { acquireLock, liveLocks } from "../lock.mjs";
 import { checkModel, checkName, CLAUDE_TOO_OLD, claudeLacksPromptFile, resolveClaude, resolveGit, spawnResolved, withPromptFile } from "../safe-spawn.mjs";
 
 const MAX_CONCURRENT_AGENTS = 8;
 const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
 const MAX_STDOUT_BYTES = 512 * 1024; // 512KB cap on buffered output
 // Running agents across ALL ad processes (each `ad spawn` is its own
-// process): one pid file per agent in ~/.agent-daemon/running-agents,
-// holding the pid of the ad process supervising it. Stale files (dead
-// pids) are dropped when counted.
+// process): one lease per agent in ~/.agent-daemon/running-agents (lock.mjs,
+// kind "agent"), held by the ad process supervising it. A holder is judged by
+// its process start identity, so a reused pid doesn't count. 3.0's .pid
+// files are counted while their pid lives and dropped once it doesn't.
 const runningDir = () => path.join(os.homedir(), ".agent-daemon", "running-agents");
 function pidAlive(pid) {
   try {
@@ -39,16 +41,21 @@ function pidAlive(pid) {
     return e.code === "EPERM";
   }
 }
+const agentLeases = new Map();
 const activeAgents = {
   add(name) {
-    fsSync.mkdirSync(runningDir(), { recursive: true });
-    fsSync.writeFileSync(path.join(runningDir(), `${name}.pid`), String(process.pid));
+    try {
+      agentLeases.set(name, acquireLock(`agent-${name}`, { dir: runningDir(), meta: { kind: "agent" } }));
+    } catch (e) {
+      process.stderr.write(`[spawn] couldn't record ${name} as running: ${e.message}\n`);
+    }
   },
   delete(name) {
-    fsSync.rmSync(path.join(runningDir(), `${name}.pid`), { force: true });
+    agentLeases.get(name)?.();
+    agentLeases.delete(name);
   },
   get size() {
-    let n = 0;
+    let legacy = 0;
     let files = [];
     try {
       files = fsSync.readdirSync(runningDir()).filter((f) => f.endsWith(".pid"));
@@ -58,10 +65,10 @@ const activeAgents = {
     for (const f of files) {
       const p = path.join(runningDir(), f);
       const pid = Number(fsSync.readFileSync(p, "utf8"));
-      if (pid && pidAlive(pid)) n++;
+      if (pid && pidAlive(pid)) legacy++;
       else fsSync.rmSync(p, { force: true });
     }
-    return n;
+    return legacy + liveLocks({ dir: runningDir() }).filter((h) => h.kind === "agent").length;
   },
 };
 

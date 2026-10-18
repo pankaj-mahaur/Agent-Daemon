@@ -13,8 +13,9 @@
 
 import { spawn } from "node:child_process";
 import { systemTool } from "../safe-spawn.mjs";
+import { acquireLock, liveLocks } from "../lock.mjs";
 import { randomBytes } from "node:crypto";
-import { createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -147,8 +148,13 @@ export function jobArgs(job) {
 }
 
 // Cross-process "running" lock: a job must not overlap itself even across
-// two daemons, a restart, or `ad schedule run` while the daemon runs it.
-const lockFile = (id, home) => path.join(scheduleDir(home), "schedule-locks", `${id}.pid`);
+// two daemons, a restart, or `ad schedule run` while the daemon runs it. A
+// lease (lock.mjs, kind "schedule"): the daemon holds it and records the
+// job's child, so a job still running after the daemon died or restarted
+// keeps its lock, and a reused pid never blocks a job.
+const lockDirOf = (home) => path.join(scheduleDir(home), "schedule-locks");
+const leaseName = (id) => `schedule-${id}`;
+const legacyLockFile = (id, home) => path.join(lockDirOf(home), `${id}.pid`);
 function pidAlive(pid) {
   try {
     process.kill(pid, 0);
@@ -158,21 +164,28 @@ function pidAlive(pid) {
   }
 }
 export function jobLocked(id, home) {
-  const f = lockFile(id, home);
-  if (!existsSync(f)) return false;
-  const pid = Number(readFileSync(f, "utf8"));
-  if (pid && pidAlive(pid)) return true;
-  rmSync(f, { force: true }); // stale lock from a dead process
-  return false;
+  // A 3.0 .pid file: busy while its pid lives and the file is recent, else gone.
+  const legacy = legacyLockFile(id, home);
+  if (existsSync(legacy)) {
+    const pid = Number(readFileSync(legacy, "utf8"));
+    let fresh = false;
+    try {
+      fresh = Date.now() - statSync(legacy).mtimeMs < 120_000;
+    } catch { /* gone */ }
+    if (pid && pidAlive(pid) && fresh) return true;
+    rmSync(legacy, { force: true });
+  }
+  return liveLocks({ dir: lockDirOf(home) }).some((h) => h.name === leaseName(id));
 }
 
 function runJob(job, { home, spawnFn = spawn, onExit } = {}) {
   let finished = false;
+  let lease = null;
   const finish = (code, note) => {
     if (finished) return; // 'error' and 'close' can both fire
     finished = true;
     running.delete(job.id);
-    rmSync(lockFile(job.id, home), { force: true });
+    lease?.();
     log.end(`=== ${note}\n`);
     onExit?.(code);
   };
@@ -186,9 +199,16 @@ function runJob(job, { home, spawnFn = spawn, onExit } = {}) {
     queueMicrotask(() => finish(-1, `folder no longer exists: ${job.cwd}`));
     return null;
   }
+  // O_EXCL: of two runners for one job, exactly one gets the lease.
+  try {
+    lease = acquireLock(leaseName(job.id), { dir: lockDirOf(home), meta: { kind: "schedule" } });
+  } catch (err) {
+    if (err.code !== "LOCK_BUSY") throw err;
+    queueMicrotask(() => { finished = true; log.end(`=== skipped: already running elsewhere (pid ${err.holder?.pid})\n`); });
+    return null;
+  }
   const child = spawnFn(process.execPath, jobArgs(job), { cwd: job.cwd, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
-  mkdirSync(path.dirname(lockFile(job.id, home)), { recursive: true });
-  writeFileSync(lockFile(job.id, home), String(child.pid ?? process.pid));
+  if (child.pid) lease.updateMeta({ child: { pid: child.pid, startedAt: Date.now() } });
   child.stdout?.pipe(log, { end: false });
   child.stderr?.pipe(log, { end: false });
   running.set(job.id, child);

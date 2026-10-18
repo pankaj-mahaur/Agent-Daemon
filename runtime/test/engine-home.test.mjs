@@ -408,18 +408,24 @@ test("22: an engine without a home refuses while another process moves the folde
   }
 });
 
-test("23: an engine with a home never touches the root or the lock dir", async () => {
+test("23: an engine with a home never touches the root; it holds a lease while it runs and leaves none after", async () => {
   const root = tempRoot();
   try {
     const home = makeHome(join(root, "custom"));
-    const engine = await createEngine({ home, homeRoot: join(root, "nope"), lockDir: join(root, "nope-locks"), command: FAKE, env: { ...SCRUB } });
+    const locks = join(root, "nope-locks");
+    const engine = await createEngine({ home, homeRoot: join(root, "nope"), lockDir: locks, command: FAKE, env: { ...SCRUB } });
     try {
       assert.equal(engine.home, home);
+      const leases = readdirSync(locks).filter((f) => /^engine-.*\.lock$/.test(f));
+      assert.equal(leases.length, 1, "one lease while running");
+      assert.equal(JSON.parse(readFileSync(join(locks, leases[0]), "utf8")).home, home);
     } finally {
       await engine.close();
     }
     assert.equal(existsSync(join(root, "nope")), false);
-    assert.equal(existsSync(join(root, "nope-locks")), false);
+    const end = Date.now() + 10_000;
+    while (readdirSync(locks).some((f) => /^engine-.*\.lock$/.test(f)) && Date.now() < end) await new Promise((r) => setTimeout(r, 50));
+    assert.deepEqual(readdirSync(locks).filter((f) => f.endsWith(".lock")), [], "no lease left after close");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

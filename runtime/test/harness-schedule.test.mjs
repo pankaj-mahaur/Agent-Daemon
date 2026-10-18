@@ -136,3 +136,76 @@ test("cmdSchedule add / list / disable / remove", async () => {
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+// ---------- P0.3b: schedule locks are leases ----------
+import { spawn as spawnProc } from "node:child_process";
+import { mkdirSync as mkdirP, utimesSync as setTimes, writeFileSync as writeF } from "node:fs";
+import { jobLocked } from "../src/harness/schedule.mjs";
+import { acquireLock as takeLock } from "../src/lock.mjs";
+
+const lockDirFor = (home) => join(home, ".agent-daemon", "schedule-locks");
+const aged = (file) => { const t = new Date(Date.now() - 600_000); setTimes(file, t, t); };
+
+test("P0.3b: a job lock whose pid was reused doesn't block the job", async () => {
+  const home = mkdtempSync(join(tmpdir(), "ad-sched-lease-"));
+  const other = spawnProc(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], { stdio: "ignore" });
+  try {
+    await new Promise((r) => other.once("spawn", r));
+    mkdirP(lockDirFor(home), { recursive: true });
+    // A lease that names a live pid which started long after the lease was written: reused.
+    writeF(join(lockDirFor(home), "schedule-j1.lock"), JSON.stringify({ pid: other.pid, startedAt: Date.now() - 3_600_000, threadId: "schedule-j1", token: "t", kind: "schedule" }));
+    assert.equal(jobLocked("j1", home), false);
+  } finally {
+    other.kill();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("P0.3b: a held lease blocks the job; two runners can't both hold it", () => {
+  const home = mkdtempSync(join(tmpdir(), "ad-sched-lease-"));
+  try {
+    const release = takeLock("schedule-j2", { dir: lockDirFor(home), meta: { kind: "schedule" } });
+    try {
+      assert.equal(jobLocked("j2", home), true);
+      assert.throws(() => takeLock("schedule-j2", { dir: lockDirFor(home), meta: { kind: "schedule" } }), (e) => e.code === "LOCK_BUSY");
+    } finally {
+      release();
+    }
+    assert.equal(jobLocked("j2", home), false);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("P0.3b: the daemon died while the job's child still runs: the job stays locked", async () => {
+  const home = mkdtempSync(join(tmpdir(), "ad-sched-lease-"));
+  const child = spawnProc(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], { stdio: "ignore" });
+  try {
+    await new Promise((r) => child.once("spawn", r));
+    mkdirP(lockDirFor(home), { recursive: true });
+    const f = join(lockDirFor(home), "schedule-j3.lock");
+    writeF(f, JSON.stringify({ pid: 2_000_000_000, startedAt: Date.now() - 60_000, threadId: "schedule-j3", token: "t", kind: "schedule", child: { pid: child.pid, startedAt: Date.now() } }));
+    aged(f); // the dead daemon's heartbeat stopped
+    assert.equal(jobLocked("j3", home), true, "the live child keeps it");
+    child.kill();
+    await new Promise((r) => child.once("exit", r));
+    assert.equal(jobLocked("j3", home), false);
+  } finally {
+    try { child.kill(); } catch { /* gone */ }
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("P0.3b: a 3.0 .pid file with a live pid blocks while recent, and is dropped once stale", () => {
+  const home = mkdtempSync(join(tmpdir(), "ad-sched-lease-"));
+  try {
+    mkdirP(lockDirFor(home), { recursive: true });
+    const f = join(lockDirFor(home), "j4.pid");
+    writeF(f, String(process.pid));
+    assert.equal(jobLocked("j4", home), true);
+    aged(f);
+    assert.equal(jobLocked("j4", home), false);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
