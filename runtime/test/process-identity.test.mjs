@@ -150,11 +150,28 @@ test("macOS lstart is parsed as UTC (a DST fall-back hour doesn't shift it), fro
   assert.deepEqual(seen[0], { cmd: "/bin/ps", args: ["-o", "lstart=", "-p", "55"], tz: "UTC", lc: "C" });
 });
 
+test("the lookup's time budget: 3 s on Windows and 2 s on macOS unless a caller gives its own", () => {
+  const budgets = [];
+  const spy = (out) => (cmd, args, opts) => {
+    budgets.push(opts.timeout);
+    return out;
+  };
+  const env = { SystemRoot: process.env.SystemRoot ?? "C:\\Windows" };
+  identityOf(55, { platform: "win32", env, run: spy("2026-10-19T10:00:00.0000000Z") });
+  identityOf(55, { platform: "win32", env, run: spy("2026-10-19T10:00:00.0000000Z"), timeoutMs: 30_000 });
+  identityOf(55, { platform: "darwin", run: spy("Mon Oct 19 10:00:00 2026") });
+  identityOf(55, { platform: "darwin", run: spy("Mon Oct 19 10:00:00 2026"), timeoutMs: 9000 });
+  // A Windows box without PowerShell found never runs the spy: compare what ran.
+  assert.deepEqual(budgets.filter((b) => b !== undefined), budgets.length === 4 ? [3000, 30_000, 2000, 9000] : [2000, 9000]);
+});
+
 test("identityOf on this OS: a live child is found", { skip: !["win32", "linux", "darwin"].includes(process.platform) && "no lookup here" }, async () => {
   const child = longChild();
   try {
     await waitSpawn(child);
-    const id = identityOf(child.pid);
+    // The real lookup, with a budget a loaded machine meets (the 3 s default on
+    // Windows is what ad uses: slower means "unknown" and the heartbeat decides).
+    const id = identityOf(child.pid, { timeoutMs: 30_000 });
     assert.ok(!id.unknown, JSON.stringify(id));
     if (id.startedAt) assert.ok(Math.abs(id.startedAt - Date.now()) < 60_000, new Date(id.startedAt).toISOString());
   } finally {

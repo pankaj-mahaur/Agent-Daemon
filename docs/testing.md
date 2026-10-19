@@ -111,6 +111,7 @@ Run the same pipeline before pushing, on this machine and in a Linux container, 
 
 | Symptom | Cause | Fix |
 |---|---|---|
+| A lock or lease test passes alone, fails in the full suite on Windows | the process-identity lookup (PowerShell, 3 s budget) times out under load, returns "unknown", and a fresh lease counts as live, which is the designed fallback | inject `identityOf` where the test is about counting or classifying; give a real-lookup test its own budget (`identityOf(pid, { timeoutMs })`) |
 | `ENOTEMPTY` removing a temp repo on Linux | a big commit started git's background auto-gc, still writing | `git config gc.auto 0` in test repos; retry `rmSync` |
 | A test file never exits | an open pseudo-terminal or a long timer | close ptys in `finally`; keep fake timers short |
 | Strings with `\` or `$` mangled in an edit | bash heredocs and `node -e` eat backslashes | edit with an editor tool or a script file; build escape bytes with `"\x1b"` |

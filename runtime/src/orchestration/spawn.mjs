@@ -57,6 +57,10 @@ const activeAgents = {
     agentLeases.delete(name);
   },
   get size() {
+    return this.count();
+  },
+  /** @param {{identityOf?: Function}} [o] identityOf: who holds each lease (lock.mjs; tests pass their own) */
+  count({ identityOf } = {}) {
     let legacy = 0;
     let files = [];
     try {
@@ -70,7 +74,7 @@ const activeAgents = {
       if (pid && pidAlive(pid)) legacy++;
       else fsSync.rmSync(p, { force: true });
     }
-    return legacy + liveLocks({ dir: runningDir() }).filter((h) => h.kind === "agent").length;
+    return legacy + liveLocks({ dir: runningDir(), ...(identityOf ? { identityOf } : {}) }).filter((h) => h.kind === "agent").length;
   },
 };
 
@@ -491,8 +495,8 @@ async function updateAgentStatus(teamId, agentName, status, error, pid) {
   await atomicWriteJson(p, agents);
 }
 
-export function getActiveAgentCount() {
-  return activeAgents.size;
+export function getActiveAgentCount(opts) {
+  return activeAgents.count(opts);
 }
 
 export async function removeWorktree(cwd, branch) {
