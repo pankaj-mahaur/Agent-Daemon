@@ -43,6 +43,22 @@ The fake answers an unknown method with -32600, like the real engine. Tests reac
 
 `testkit/mock-responses.mjs` stands in for the OpenAI Responses API. A keyword in the prompt picks the reply: `PING` (a streamed "pong"), and in `tui-live`'s own script `SPAWNONE` (the engine's `spawn_agent`; 0.160–0.163 namespace the agent tools as `multi_agent_v1`, so the call carries `namespace`) and the engine's recap prompt (an answer in its schema), `SHELL` / `ESCALATE` (a command, the second asking to leave the sandbox), `PATCH` (an `apply_patch` adding `hello.txt`), `FAIL`, `HOLD` (streams, then waits for `mock.release()`). A test can pass its own script; the live test adds `STEERED`, `QUEUED` and `EDITMATH` (an Update File patch).
 
+### Mock providers and auth
+
+For accounts and providers (M3), the testkit has:
+- `mock-providers.mjs` `startMockProvider({ personality, keys, models, script })`: an OpenAI-, OpenRouter- or generic-shaped API on the same scripted stream.
+  - It records each request's headers, model and tools, and what a tool printed (`functionOutputs`). The key itself is never recorded: the bearer becomes `{ scheme, matchesKey, sha256 }`.
+  - It answers a wrong key with that provider's 401 and serves `/models` (OpenRouter: with pricing and `GET /api/v1/key`).
+  - `setQuota` gives each provider's 429 body; `setFault` gives a 5xx with Retry-After, a stream cut after the first delta, a slow stream or a reset socket.
+- `mock-auth.mjs` `startMockAuth()`: ChatGPT-style token refresh with rotation; a refresh token used twice answers `refresh_token_reused`.
+- `gateway-proto.mjs`: the loopback gateway prototype (P3.1; P3.3 builds the real one). The engine holds only a gateway token; the gateway swaps it for the account key and decodes compressed upstream bodies.
+- `probes.mjs`: an environment dump that runs as a hook or a stdio MCP server, tool-shell probe commands, and `scanForSecrets`, which reports which fake secret appeared and never prints one.
+
+Rules: fake keys only (`sk-test-…`, built by joining parts so no scanner mistakes them for real ones), a fake home for every engine run, and nothing about a request is written to disk. `test/engine-real-accounts.test.mjs` (`AD_REAL_ENGINE=1`) runs the pinned engine through the gateway:
+- two providers in one engine;
+- a resume that changes the provider;
+- the key-isolation probes, with a control that puts the key in the engine's environment to prove the hook probe can see one.
+
 ## The live terminal UI tests
 
 `test/tui-live.test.mjs` runs `node src/cli.mjs tui` in a pseudo-terminal (`@lydell/node-pty`; ConPTY on Windows, the same path Windows Terminal uses) and feeds its output to `@xterm/headless`, which also answers the UI's terminal queries. The engine is the real pinned engine; the model is the mock.

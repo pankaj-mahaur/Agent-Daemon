@@ -46,6 +46,10 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 - `/subagents` shows each subagent's model and reasoning effort when the engine reports them.
 - `ad memory held` lists the memory notes waiting for you (agent-written) or held back (flagged), for this project or `--all-projects`. `ad memory held accept|release|drop <id>` run only in your own terminal and ask you to type the id; a note holding a secret can be dropped, never released. `ad status` and `ad doctor` say how many are waiting; doctor also flags folders that share one memory key. `ad` and `ad doctor` run the one-time check of older notes, and SessionStart reminds you when it hasn't run yet.
 
+### Internal
+
+- A mock provider and auth kit for account and provider tests (mock OpenAI/OpenRouter APIs with faults and quotas, a token-refresh server, a loopback gateway prototype, key-isolation probes), and real-engine tests showing two providers in one engine and no provider key in any tool shell, hook or MCP server.
+
 ### Fixed
 
 - One state root for everything ad keeps: MCP audit logs now go to `~/.agent-daemon/audit/` (or `AD_ROOT`) instead of following `AGENT_DAEMON_HOME`, which names the runtime folder (`ad doctor` points at old logs), and the digest's global memory, its queue and the skill manifest no longer land in a second folder when `HOME` and `USERPROFILE` differ (Git Bash on Windows).

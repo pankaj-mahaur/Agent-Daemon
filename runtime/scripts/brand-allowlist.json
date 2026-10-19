@@ -154,6 +154,11 @@
       "reason": "tests of the adapter: they assert what the adapter sends to and reads from the engine"
     },
     {
+      "path": "runtime/test/engine-real-accounts.test.mjs",
+      "rules": ["A", "B"],
+      "reason": "P3.1: real-engine account cases; like engine-real, it starts the pinned binary and speaks the protocol to it on purpose"
+    },
+    {
       "path": "runtime/test/engine-real.test.mjs",
       "rules": ["A", "B"],
       "reason": "the real-engine suite: it starts the pinned binary and speaks the protocol to it on purpose"
