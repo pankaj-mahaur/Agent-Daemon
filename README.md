@@ -528,6 +528,8 @@ ad skill list [--available] [--json]   # Installed skills (both lanes) with prov
 ad skill remove <name> [--force]       # Manifest-aware removal
 ad skill search <query>                # Search the bundled catalog
 ad skill propose <name> --file <path>  # Queue a SKILL.md change for ad review (applies nothing)
+ad memory migrate                      # Give older memory rows their project id (also runs by itself once)
+ad memory assign --list | <table>:<id> --project <dir>   # Place a note two folders shared (typed confirmation)
 ad skill history <name>                # Every accepted version, with where it came from
 ad skill diff <name> [--from a --to b] [--bundled]   # Between versions, or against this release
 ad skill undo <name> [--to n]          # An older version becomes current (typed confirmation)

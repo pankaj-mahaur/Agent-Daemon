@@ -109,8 +109,8 @@ What a bound server serves:
 Notes an agent wrote about itself wait as **pending** (only this project's
 `memory_search` and `memory_get` show them, marked unreviewed), and notes the
 injection screen or the secret check flagged are **held back** and never served. Two
-folders whose paths map to the same memory key (`/x/a/b` and `/x/a-b`) are both
-withheld until each project gets its own ID.
+folders whose paths map to the same memory key (`/x/a/b` and `/x/a-b`) are told apart
+by their project ids; older notes nothing ties to either reach neither (`ad memory assign`).
 
 ## Security blast radius
 

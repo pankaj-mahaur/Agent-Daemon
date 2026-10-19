@@ -297,7 +297,7 @@ test("the scan handles 20,000 clean rows in under 2 s", async () => {
   assert.ok(Date.now() - t0 < 2000 * (process.env.CI ? 3 : 1), `${Date.now() - t0} ms`);
 });
 
-test("two folders sharing one memory key: neither is served", async () => {
+test("two folders sharing one memory key: a note neither can be told apart by is served to neither", async () => {
   const x1 = path.join(HOME, "c", "a", "b");
   const x2 = path.join(HOME, "c", "a-b");
   for (const d of [x1, x2]) mkdirSync(path.join(d, ".git"), { recursive: true });
@@ -306,7 +306,8 @@ test("two folders sharing one memory key: neither is served", async () => {
   await ep.upsertSession({ id: "sX2", projectPath: x2, startedAt: "2026-10-01T00:00:00.000Z" });
   await ep.insertLearning({ projectSlug: ep.projectSlug(x1), category: "gotcha", text: "collided lesson visible nowhere", confidence: 0.9 });
   const r = await withDbClosed(() => drive([{ id: 1, name: "memory_search", args: { query: "collided lesson" } }], { args: ["--project", x1] }));
-  assert.match(r[1], /shares its memory key/);
+  // P7.1a: each folder is served by its project id; the shared, unattributed note by neither.
+  assert.doesNotMatch(r[1], /collided lesson/);
   ep.closeDb();
   const ss = spawnSync(process.execPath, [CLI, "session-start", "--cwd", x2], { env: serverEnv(), encoding: "utf8", input: "{}" });
   assert.equal(ss.status, 0, ss.stderr);

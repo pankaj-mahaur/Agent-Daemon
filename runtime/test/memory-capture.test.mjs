@@ -22,7 +22,7 @@ for (const k of ["AD_MEMORY_DB", "AD_MEMORY_PROJECT", "CLAUDE_PROJECT_DIR", "AD_
 const CLI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "src", "cli.mjs");
 const ep = await import("../src/memory/episodic.mjs");
 const { captureExplicit, createLimiter, writeHeartbeat, TEXTS } = await import("../src/memory/capture.mjs");
-const { projectFolderName, projectDataDir, IGNORE_LINES } = await import("../src/memory/project-dir.mjs");
+const { projectFolderName, projectDataDir, outsideDir, IGNORE_LINES } = await import("../src/memory/project-dir.mjs");
 const { runMemoryMaintenance, backfillNormKeys, SCRUB_STEP } = await import("../src/memory/maintenance.mjs");
 const { hostId } = await import("../src/memory/host-ids.mjs");
 
@@ -156,7 +156,9 @@ test("capture in a repo without ad init: no .agent-daemon in the repo, and no ra
   const r = await prompt(dir, `Actually, we use the token ${token} here, not the old one.`);
   assert.equal(r.code, 0, r.out);
   assert.equal(existsSync(path.join(dir, ".agent-daemon")), false, "capture never creates a folder in the repo");
-  const journal = path.join(process.env.AD_ROOT, "projects", projectFolderName(dir), "learning-journal.jsonl");
+  // Outside the repo: adRoot()/projects/<project id> (P7.1a).
+  const journal = path.join(outsideDir(dir), "learning-journal.jsonl");
+  assert.match(path.basename(outsideDir(dir)), /^prj_/);
   assert.ok(existsSync(journal), `journal under ad's root: ${journal}`);
   assert.match(readFileSync(journal, "utf8"), /\[redacted:/);
   for (const f of [...filesUnder(dir), ...filesUnder(HOME)]) {
@@ -347,7 +349,7 @@ test("a project that gets its own .agent-daemon later takes over what was captur
   const r = await captureExplicit({ ...learning("captured before ad init was run here"), scope, mode: "tools", limiter: createLimiter() });
   assert.equal(r.status, "saved");
   await prompt(dir, "Actually, we use bun here, not npm.");
-  const outside = path.join(process.env.AD_ROOT, "projects", projectFolderName(dir));
+  const outside = outsideDir(dir);
   assert.ok(existsSync(path.join(outside, "learning-journal.jsonl")));
   await fs.mkdir(path.join(outside, "notes"), { recursive: true });
   await fs.writeFile(path.join(outside, "notes", "same.md"), "outside copy");

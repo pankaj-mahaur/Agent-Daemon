@@ -12,24 +12,35 @@
 import { refuseInAgentShell, confirmTyped } from "../security/agent-shell.mjs";
 import { redactSecrets } from "../security/secret-patterns.mjs";
 import { neutralizeText } from "../digest/sanitize.mjs";
+import { isProjectId, projectClause } from "./projects.mjs";
 
 const preview = (t) => neutralizeText(redactSecrets(String(t ?? "")).text).replace(/\s+/g, " ").slice(0, 100);
 
-function keyClause(keys, col) {
+// A project's rows by id, or by slug where they have none yet (projects.mjs, P7.1a).
+// A fact of this project: by id (project_ids) or by a readable slug (projects).
+function factClause(keys) {
   if (keys === null) return { sql: "1", params: [] };
-  if (!keys.length) return { sql: "0", params: [] };
-  return { sql: `${col} IN (${keys.map(() => "?").join(",")})`, params: [...keys] };
+  const ids = keys.filter(isProjectId);
+  const slugs = keys.filter((k) => !isProjectId(k) && !k.startsWith("~"));
+  const parts = [];
+  if (ids.length) parts.push(`EXISTS (SELECT 1 FROM json_each(COALESCE(project_ids, '[]')) WHERE value IN (${ids.map(() => "?").join(",")}))`);
+  if (slugs.length) parts.push(`EXISTS (SELECT 1 FROM json_each(COALESCE(projects, '[]')) WHERE value IN (${slugs.map(() => "?").join(",")}))`);
+  return parts.length ? { sql: `(${parts.join(" OR ")})`, params: [...ids, ...slugs] } : { sql: "0", params: [] };
+}
+
+function keyClause(keys) {
+  return projectClause("", keys);
 }
 
 /** Held learnings ("L<id>") and user facts ("F<id>") for `keys` (null = every project). */
 export function heldNotes(handle, keys) {
-  const lk = keyClause(keys, "project_slug");
+  const lk = keyClause(keys);
   const learnings = handle.all(
     `SELECT id, project_slug, status, quarantine_reason, origin, created_at, text FROM learnings
       WHERE status IN ('pending', 'quarantined') AND ${lk.sql} ORDER BY id`,
     lk.params
   ).map((r) => ({ ref: `L${r.id}`, kind: "learning", id: r.id, project: r.project_slug, status: r.status, why: r.quarantine_reason ?? (r.origin === "agent" ? "written by the agent" : r.status), at: r.created_at, preview: preview(r.text) }));
-  const fk = keys === null ? { sql: "1", params: [] } : keys.length ? { sql: `EXISTS (SELECT 1 FROM json_each(COALESCE(projects, '[]')) WHERE value IN (${keys.map(() => "?").join(",")}))`, params: [...keys] } : { sql: "0", params: [] };
+  const fk = factClause(keys);
   const facts = handle.all(
     `SELECT id, status, quarantine_reason, origin, created_at, text FROM user_facts
       WHERE status IN ('pending', 'quarantined') AND ${fk.sql} ORDER BY id`,

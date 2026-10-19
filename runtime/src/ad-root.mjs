@@ -6,6 +6,7 @@
 // differ, so legacyAdRoots() names that second location too: the memory
 // scope treats both as ad's own, never as a project.
 
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,6 +29,20 @@ export function legacyAdRoots({ env = process.env, homedir = os.homedir, platfor
     if (!same(p, root, platform) && !out.some((o) => same(o, p, platform))) out.push(p);
   }
   return out;
+}
+
+/**
+ * A file under ad's root (P7.1a: one state root). A file only an older ad wrote under
+ * a HOME-based root (legacyAdRoots) is still found there, until ad writes the new one.
+ */
+export function statePath(rel, { env = process.env, homedir = os.homedir, platform = process.platform, exists = fs.existsSync } = {}) {
+  const main = path.join(adRoot({ env, homedir }), rel);
+  if (exists(main)) return main;
+  for (const r of legacyAdRoots({ env, homedir, platform })) {
+    const p = path.join(r, rel);
+    if (exists(p)) return p;
+  }
+  return main;
 }
 
 /** The installed runtime package folder (the one holding package.json). */

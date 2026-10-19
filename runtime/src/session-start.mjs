@@ -303,7 +303,7 @@ export async function runSessionStart(opts) {
       // The memory file is shown too: its lessons count as shown (matched to their rows).
       const fileText = await tryRead(path.join(projectDataDir(opts.cwd), "memory", "activeContext.md"));
       const ids = [...shownIds, ...lessonIdsInFile(handle, memKeys, fileText)];
-      recordInjections(handle, { captureRef: opts.sessionId || null, projectKey: memKeys[0], ids, surface: "session-start", host: hostId(hookHost()) });
+      recordInjections(handle, { captureRef: opts.sessionId || null, keys: memKeys, ids, surface: "session-start", host: hostId(hookHost()) });
     } catch {
       // telemetry only
     }

@@ -12,8 +12,12 @@ steering it, and where the limits are. The threat model behind it is in
 - **Folders that never bind.** Home, a filesystem root, system folders and ad's
   own folders never bind. Neither does a plugin's folder (Agent Plugins hosts):
   such a server shows and stores nothing.
-- **A shared key.** Two folders whose paths map to the same memory key are both
-  withheld until each gets its own ID. This is a known limit of path-based keys.
+- **One id per project.** Each project has an id (`~/.agent-daemon/projects.json`;
+  a project ad was set up in also keeps it in `.agent-daemon/project.json`, kept out
+  of git), so a moved folder keeps its memory. Two folders whose paths once mapped to
+  the same key (`/x/a/b` and `/x/a-b`) are told apart by id. Older notes that
+  nothing ties to one of them reach neither; `ad memory assign` places one by hand,
+  from your own terminal only.
 
 ## What an agent can and can't do
 

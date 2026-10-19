@@ -17,9 +17,12 @@ import path from "node:path";
 import { normKey } from "./sqlite.mjs";
 import { redactSecrets } from "../security/secret-patterns.mjs";
 import { PROJECT_FOLDER, rootProjectDirs } from "./project-dir.mjs";
+import { backfillProjectIds } from "./project-db.mjs";
 
 export const NORM_KEY_STEP = "norm-key-v1";
 export const SCRUB_STEP = "journal-scrub-v1";
+// P7.1a: give older rows their project id (once; new rows get theirs as they are written).
+export const PROJECT_IDS_STEP = "project-ids-v1";
 const LOCK_STALE_MS = 10 * 60 * 1000;
 const BATCH = 2000;
 
@@ -164,6 +167,7 @@ export async function runMemoryMaintenance({ handle, budgetMs = 5000 } = {}) {
     for (const [step, work] of [
       [NORM_KEY_STEP, () => backfillNormKeys(handle, { budgetMs })],
       [SCRUB_STEP, () => ({ ...scrubJournals(handle), finished: true })],
+      [PROJECT_IDS_STEP, () => ({ ...backfillProjectIds(handle), finished: true })],
     ]) {
       if (done(handle, step) || !takeLock(handle, step)) continue;
       try {

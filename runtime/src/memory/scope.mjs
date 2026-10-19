@@ -21,6 +21,8 @@ import os from "node:os";
 import path from "node:path";
 import { adPackageRoot, adRoot, legacyAdRoots } from "../ad-root.mjs";
 import { projectSlug } from "./episodic.mjs";
+import { withProjectId } from "./projects.mjs";
+import { syncProjectKeys } from "./project-db.mjs";
 
 const norm = (p, platform) => {
   const r = path.resolve(p).replace(/[\\/]+$/, "") || path.resolve(p);
@@ -125,7 +127,8 @@ const isDir = (p) => {
 /**
  * The project keys a hook (SessionStart, query-retrieve) may read for the
  * folder the host gave it: [] when that folder is never valid (home, a root,
- * a system folder, ad's own folders) or shares its key with another folder.
+ * a system folder, ad's own folders). With the project's id (P7.1a): a folder
+ * that shares its slug with another reads by id only (projects.mjs withProjectId).
  *
  * @param {string|undefined} cwd
  * @returns {Promise<string[]>}
@@ -136,7 +139,17 @@ export async function hookProjectKeys(cwd, { env = process.env } = {}) {
   const { slugCollides } = await import("./safety.mjs");
   const handle = await db().catch(() => null);
   const s = resolveMemoryScope({ project: cwd, env: { ...env, AD_MEMORY_PROJECT: undefined }, cwd, collides: handle ? (k, d) => slugCollides(handle, k, d) : undefined, note: () => {} });
-  return s.keys;
+  const bound = withProjectId(s, { env });
+  // A project the registry just learned of: the database's mirror follows, so rows
+  // written in this process get its id.
+  if (handle?.raw && bound !== s) {
+    try {
+      syncProjectKeys(handle.raw, { env });
+    } catch {
+      // a busy store: the next open mirrors it
+    }
+  }
+  return bound.keys;
 }
 
 /**

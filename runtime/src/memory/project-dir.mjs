@@ -16,6 +16,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { adRoot } from "../ad-root.mjs";
+import { projectIdOf } from "./projects.mjs";
 
 export const PROJECT_FOLDER = ".agent-daemon";
 export const IGNORE_LINES = ["learning-journal*.jsonl", "*.draining-*.jsonl", "proposed/", "applied/"];
@@ -54,10 +55,36 @@ export function projectFolderName(dir, { platform = process.platform } = {}) {
   return `${slug}-${hash}`;
 }
 
+/**
+ * The folder outside the project for its capture files: adRoot()/projects/<project id>
+ * (P7.1a); a folder from before ids (projects/<path key>) is used until the backfill
+ * (project-db.mjs, a long-lived process) moves it to the id.
+ */
+export function outsideDir(cwd) {
+  const legacy = path.join(root(), "projects", projectFolderName(cwd));
+  const id = projectIdOf(path.resolve(cwd), { create: !isDir(legacy) });
+  if (!id) return legacy;
+  const byId = path.join(root(), "projects", id);
+  return isDir(byId) || !isDir(legacy) ? byId : legacy;
+}
+
+/** Move a project's folder from its path key to its id (the backfill). Best effort. */
+export function moveToIdFolder(dir, id) {
+  const legacy = path.join(root(), "projects", projectFolderName(dir));
+  const byId = path.join(root(), "projects", id);
+  if (!isDir(legacy) || isDir(byId)) return false;
+  try {
+    fs.renameSync(legacy, byId);
+    return true;
+  } catch {
+    return false; // in use: next time
+  }
+}
+
 /** @returns {string} where this project's capture files go (not created) */
 export function projectDataDir(cwd) {
   const own = path.join(path.resolve(cwd), PROJECT_FOLDER);
-  const outside = path.join(root(), "projects", projectFolderName(cwd));
+  const outside = outsideDir(cwd);
   if (!isDir(own)) return outside;
   // The project got its own folder (ad init) after capture started outside it:
   // bring those files in, so no journal, proposal or memory file is stranded.

@@ -294,6 +294,8 @@ Agent-Daemon/                       # The cloned repo
 ├── locks/                          # Conversation locks (one ad per conversation); a holder is judged by its process start time, so a reused pid is free at once and a suspended session keeps its lock
 ├── skill-manifest.json             # Provenance of skills installed with ad skill install
 ├── skills/<name>/                  # Accepted skill versions: current/, versions/<n>/, meta.json (ad review, ad skill undo)
+├── projects.json                   # Project ids: paths, slugs, git remote (memory/projects.mjs); memory rows carry project_id
+├── projects/<project id>/          # Capture files of a project without ad init (journals, proposals, memory)
 ├── teams/                          # Team state + inboxes
 └── worktrees/                      # Worker git worktrees
 

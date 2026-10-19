@@ -28,6 +28,7 @@ import { screenLearning, stripPrivate, neutralizeText } from "../digest/sanitize
 import { writeMemoryProposal } from "../digest/proposals.mjs";
 import { ensureProjectDataDir } from "./project-dir.mjs";
 import { classifyCorrection, mcpCaptureRef } from "./metrics.mjs";
+import { idOfKeys, isProjectId, slugOfKeys } from "./projects.mjs";
 
 export const LEARNING_KINDS = Object.freeze(["pattern", "gotcha", "decision", "tool"]);
 const WINDOW_MS = 10 * 60 * 1000;
@@ -169,9 +170,12 @@ export async function captureExplicit({ kind, fields, scope, host = null, mode =
   }
 
   const nk = normKey(text);
-  for (const key of scope.keys) {
-    if (sameNote(handle, key, text, nk)) return { status: "duplicate", message: TEXTS.duplicate(neutralizeText(text)) };
+  // The project's readable slugs, and its id (P7.1a): a ~slug two folders share is never read.
+  const projectId = idOfKeys(scope.keys);
+  for (const key of scope.keys.filter((k) => !isProjectId(k) && !k.startsWith("~"))) {
+    if (sameNote(handle, key, text, nk, projectId)) return { status: "duplicate", message: TEXTS.duplicate(neutralizeText(text)) };
   }
+  if (projectId && sameNote(handle, slugOfKeys(scope.keys), text, nk, projectId)) return { status: "duplicate", message: TEXTS.duplicate(neutralizeText(text)) };
   if (!limiter.take(now)) return { status: "rate-limited", message: TEXTS.rateLimited };
 
   // This server process, never an id the agent supplied: session identity behind the
@@ -179,7 +183,8 @@ export async function captureExplicit({ kind, fields, scope, host = null, mode =
   const captureRef = mcpCaptureRef();
   const row = {
     sessionId: null,
-    projectSlug: scope.keys[0],
+    projectSlug: slugOfKeys(scope.keys),
+    projectId,
     projectPath: scope.dir,
     category: note.category,
     text,

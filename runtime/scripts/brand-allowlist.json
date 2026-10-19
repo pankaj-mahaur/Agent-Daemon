@@ -497,6 +497,11 @@
       "rules": ["A"],
       "match": "\\| Codex \\| `\\$CODEX_HOME/skills/<name>` \\(default `~/\\.codex/skills`\\) \\|",
       "reason": "P5.7: the row saying where an accepted skill goes in the user's own Codex CLI (its folder and CODEX_HOME)"
+    },
+    {
+      "path": "runtime/test/skill-library.test.mjs",
+      "rules": ["A"],
+      "reason": "P5.7: a test that a failed write to a host's skill folder (Codex's, in a temp home) still files the proposal"
     }
   ]
 }

@@ -39,7 +39,7 @@ export function createMemoryService({ scope, host = null, maxResults = 5, maxTim
   const projectKeys = scope.kind === "cross-project" ? null : scope.keys;
   // What this server process showed (P5.5): one capture ref per process.
   const shown = async (rows, surface) => {
-    if (rows?.length && projectKeys) recordInjections(await db(), { captureRef: mcpCaptureRef(), projectKey: projectKeys[0], ids: rows.map((r) => r.id), surface, host });
+    if (rows?.length && projectKeys) recordInjections(await db(), { captureRef: mcpCaptureRef(), keys: projectKeys, ids: rows.map((r) => r.id), surface, host });
     return rows;
   };
   return {

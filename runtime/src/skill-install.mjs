@@ -20,6 +20,7 @@ import { resolveGit, spawnResolved } from "./safe-spawn.mjs";
 import { buildSkillIndex, resolveSkillSource } from "./skills-source.mjs";
 import { parseFrontmatter, validateSkill, unquote } from "./skill-lint.mjs";
 import { rebuildRouteMaps } from "./route-map.mjs";
+import { statePath } from "./ad-root.mjs";
 
 // file:// included for local-repo installs and tests; C:\ paths can't match
 // because the alternatives are anchored to URL schemes.
@@ -31,7 +32,7 @@ function homeDir() {
 }
 
 function manifestPath() {
-  return path.join(homeDir(), ".agent-daemon", "skill-manifest.json");
+  return statePath("skill-manifest.json");
 }
 
 /* ------------------------------------------------------------------ */

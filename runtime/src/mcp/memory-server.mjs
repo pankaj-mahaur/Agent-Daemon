@@ -36,6 +36,8 @@ import { createRequire } from "node:module";
 import readline from "node:readline";
 import { db, representationToMarkdown } from "../memory/episodic.mjs";
 import { resolveMemoryScope, withAliasKeys } from "../memory/scope.mjs";
+import { withProjectId } from "../memory/projects.mjs";
+import { syncProjectKeys } from "../memory/project-db.mjs";
 import { slugCollides } from "../memory/safety.mjs";
 import { safeNoteText } from "../memory/render-safe.mjs";
 import { createMemoryService } from "../memory/service.mjs";
@@ -101,7 +103,19 @@ async function bindScope() {
   const collides = handle_ ? (key, dir) => slugCollides(handle_, key, dir) : undefined;
   let scope;
   if (process.argv.includes("--allow-cross-project")) scope = { kind: "cross-project", dir: null, keys: null, source: "--allow-cross-project" };
-  else scope = withAliasKeys(resolveMemoryScope({ project: argValue("--project"), env: process.env, cwd: process.cwd(), host: argValue("--host"), collides }), { collides });
+  else {
+    scope = withAliasKeys(resolveMemoryScope({ project: argValue("--project"), env: process.env, cwd: process.cwd(), host: argValue("--host"), collides }), { collides });
+    // The project's id (P7.1a): a folder sharing its slug with another is served by id.
+    const bound = withProjectId(scope);
+    if (bound !== scope && handle_?.raw) {
+      try {
+        syncProjectKeys(handle_.raw);
+      } catch {
+        // the next open mirrors it
+      }
+    }
+    scope = bound;
+  }
   // Tests only: where the server bound itself.
   if (process.env.AD_MEMORY_DEBUG_FILE) {
     try {

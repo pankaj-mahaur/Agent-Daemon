@@ -85,7 +85,7 @@ export async function runQueryRetrieve(opts = {}) {
     const { recordInjections } = await import("./memory/metrics.mjs");
     const { hostId } = await import("./memory/host-ids.mjs");
     const { hookHost } = await import("./hooks/io.mjs");
-    recordInjections(await db(), { captureRef: sessionId, projectKey: projectKeys[0], ids: results.map((r) => r.id).filter(Boolean), surface: "query-retrieve", host: hostId(hookHost()) });
+    recordInjections(await db(), { captureRef: sessionId, keys: projectKeys, ids: results.map((r) => r.id).filter(Boolean), surface: "query-retrieve", host: hostId(hookHost()) });
   } catch { /* best-effort */ }
 
   if (opts.outputJson) {

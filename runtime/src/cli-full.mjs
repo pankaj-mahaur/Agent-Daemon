@@ -1193,10 +1193,15 @@ async function cmdDoctor({ cwd = process.cwd(), tokens, limit, model } = {}) {
         const held = heldNotes(handle, [projectSlug(cwd)]).length;
         checks.push({ name: "Memory notes held", ok: true, note: held ? `${held} waiting or held back — review: ad memory held` : "none waiting or held back" });
         const collisions = findSlugCollisions(handle);
+        // P7.1a: projects have ids; only notes written before, that nothing ties to one
+        // of the folders, stay out of both.
+        const { unassignedCounts } = await import("./memory/project-db.mjs");
+        const left = collisions.length ? unassignedCounts(handle) : {};
+        const nLeft = Object.values(left).reduce((s, x) => s + x, 0);
         checks.push({
           name: "Memory keys",
-          ok: collisions.length === 0,
-          note: collisions.length ? `these folders share one memory key, so ad keeps their notes out of both until a later release gives each project its own ID: ${collisions.map((c) => c.paths.join(", ")).join("; ")}` : "every project has its own key",
+          ok: nLeft === 0,
+          note: nLeft ? `${nLeft} older row(s) from folders that shared one key (${collisions.map((c) => c.paths.join(", ")).join("; ")}) can't be told apart and reach neither: place them with ad memory assign --list` : collisions.length ? "folders that shared a key now each have their own project id" : "every project has its own key",
         });
       }
     } catch (e) {
@@ -1209,6 +1214,11 @@ async function cmdDoctor({ cwd = process.cwd(), tokens, limit, model } = {}) {
     });
   } catch {
     checks.push({ name: "Project memory bootstrap", ok: false, note: "missing .agent-daemon/memory — run ad init" });
+  }
+  // P7.1a: MCP audit logs go to ad's state root; AGENT_DAEMON_HOME is the runtime folder.
+  if (process.env.AGENT_DAEMON_HOME && (await fs.stat(path.join(process.env.AGENT_DAEMON_HOME, "audit")).catch(() => null))) {
+    const { adRoot } = await import("./ad-root.mjs");
+    checks.push({ name: "MCP audit logs", ok: true, note: `Old MCP audit logs are in ${path.join(process.env.AGENT_DAEMON_HOME, "audit")}; new ones go to ${path.join(adRoot(), "audit")}.` });
   }
 
   // A project's own .agent-daemon in a git repo needs its ignore file, or capture
@@ -1656,9 +1666,31 @@ async function cmdMemory(sub, opts) {
         console.error("agent-daemon: the memory store is unavailable (run ad doctor)");
         return 1;
       }
-      if (opts.outputJson || opts.json) console.log(JSON.stringify(r));
-      else console.log(Object.keys(r).length ? `Memory upkeep: ${Object.entries(r).map(([k, v]) => `${k} ${JSON.stringify(v)}`).join("; ")}` : "Memory upkeep: nothing left to do.");
-      return 0;
+      if (opts.outputJson || opts.json) {
+        console.log(JSON.stringify(r));
+        return 0;
+      }
+      console.log(Object.keys(r).length ? `Memory upkeep: ${Object.entries(r).map(([k, v]) => `${k} ${JSON.stringify(v)}`).join("; ")}` : "Memory upkeep: nothing left to do.");
+      // P7.1a: project ids for any row still without one, and what is left to place by hand.
+      const handle = await (await import("./memory/episodic.mjs")).db();
+      return handle ? (await import("./memory/assign.mjs")).memoryMigrate({ handle }) : 0;
+    }
+    case "assign": {
+      const ep = await import("./memory/episodic.mjs");
+      const handle = await ep.db();
+      if (!handle) {
+        console.error("agent-daemon: better-sqlite3 not installed — no episodic store");
+        return 1;
+      }
+      const readline = await import("node:readline/promises");
+      const io = {
+        ask: async (q) => {
+          const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+          try { return await rl.question(q); } finally { rl.close(); }
+        },
+      };
+      const [ref] = opts.rest ?? [];
+      return (await import("./memory/assign.mjs")).memoryAssign({ ref, project: opts.projectDir, list: opts.list || false, handle, io });
     }
     case "scan": {
       // One-time check of notes stored before the secret filter (runs once;
@@ -2494,6 +2526,9 @@ async function main(argv) {
       json: parsed.values.json || false,
       days: parsed.values.days,
       share: parsed.values.share || false,
+      list: parsed.values.list || false,
+      // ad memory assign <ref> --project <folder>: --project is a flag elsewhere, so its folder is the next word.
+      projectDir: typeof parsed.values.project === "string" ? parsed.values.project : parsed.values.project ? parsed.positionals?.[2] : undefined,
       rest: parsed.positionals?.slice(1) ?? []
     });
     case "route":          return cmdRoute(parsed.positionals?.[0], { ...opts, days: parsed.values.days, json: parsed.values.json });

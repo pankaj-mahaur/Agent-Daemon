@@ -680,13 +680,13 @@ For "The engine reported a problem", inspect those details first. `ad doctor` sh
 
 **Fix:** `ad memory held` lists what is waiting or held back in this project. Run it in your own terminal: `ad memory held accept L12` serves a waiting note, `release` brings back one the injection screen held (never one holding a secret), `drop` clears it; each asks you to type the id. Or say it again in your own words, or use `/remember` in `ad tui`: what you type yourself applies at once.
 
-## 46. `ad doctor` or memory says two folders share one memory key
+## 46. `ad doctor` says older notes from folders that shared one key reach neither
 
-**Symptom:** the memory server answers "This folder shares its memory key with another folder…", and SessionStart shows no learnings there.
+**Symptom:** `ad doctor`'s "Memory keys" line names two folders and a count of rows that "can't be told apart".
 
-**Cause:** memory keys come from folder paths with `/`, `\` and `:` turned into `-`, so `/x/a/b` and `/x/a-b` get the same key. Serving it would mix two projects' notes, so ad keeps both out.
+**Cause:** memory keys used to come from folder paths with `/`, `\` and `:` turned into `-`, so `/x/a/b` and `/x/a-b` got the same key. Each project now has its own id, and older notes are given theirs by the session or folder they were recorded in (`ad memory migrate`). A note with neither can't be placed, so it reaches neither folder.
 
-**Fix:** nothing is lost; the notes stay in the database. A later release gives each project its own ID and ends this. Renaming one of the folders also separates them for new notes.
+**Fix:** nothing is lost. List them with `ad memory assign --list`, then place one with `ad memory assign learnings:<id> --project <folder>` in your own terminal (you type the id to confirm).
 
 ## 47. `This editor runs through cmd.exe, which can't take that file name safely`
 
