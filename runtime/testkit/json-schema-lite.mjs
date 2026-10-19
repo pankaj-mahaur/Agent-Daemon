@@ -1,13 +1,14 @@
 // A small JSON Schema (2020-12) validator for the vendored host-package schemas:
 // type, properties, required, additionalProperties (false or a schema), const,
-// enum, minLength, maxLength, pattern, items, oneOf, not, propertyNames and
-// local $ref ("#/$defs/…"). An unknown keyword throws, so a schema update that
-// needs more is noticed instead of silently passing.
+// enum, minLength, maxLength, pattern, items, oneOf, anyOf, allOf, not,
+// propertyNames and local $ref ("#/$defs/…", "#/definitions/…"). `format`,
+// `default` and examples are annotations, as in 2020-12. An unknown keyword
+// throws, so a schema update that needs more is noticed instead of silently passing.
 //
 //   validate(schema, value) → [] when valid, else ["<path>: <problem>", …]
 
-const ANNOTATIONS = new Set(["$schema", "$id", "title", "description", "$defs", "$comment"]);
-const KEYWORDS = new Set(["type", "properties", "required", "additionalProperties", "const", "enum", "minLength", "maxLength", "pattern", "items", "oneOf", "not", "propertyNames", "$ref"]);
+const ANNOTATIONS = new Set(["$schema", "$id", "title", "description", "$defs", "definitions", "$comment", "format", "default", "example", "examples", "readOnly", "deprecated"]);
+const KEYWORDS = new Set(["type", "properties", "required", "additionalProperties", "const", "enum", "minLength", "maxLength", "pattern", "items", "oneOf", "anyOf", "allOf", "not", "propertyNames", "$ref"]);
 
 const typeOf = (v) => (v === null ? "null" : Array.isArray(v) ? "array" : Number.isInteger(v) ? "integer" : typeof v);
 const isType = (v, t) => (t === "number" ? typeof v === "number" : t === "integer" ? Number.isInteger(v) : typeOf(v) === t);
@@ -59,6 +60,15 @@ function check(root, schema, value, at, out) {
     }).length;
     if (passing !== 1) out.push(`${at || "/"}: must match exactly one schema in oneOf (matches ${passing})`);
   }
+  if (schema.anyOf) {
+    const passing = schema.anyOf.some((s) => {
+      const sub = [];
+      check(root, s, value, at, sub);
+      return sub.length === 0;
+    });
+    if (!passing) out.push(`${at || "/"}: must match at least one schema in anyOf`);
+  }
+  for (const s of schema.allOf ?? []) check(root, s, value, at, out);
   if (schema.not) {
     const sub = [];
     check(root, schema.not, value, at, sub);

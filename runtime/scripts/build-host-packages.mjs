@@ -31,11 +31,12 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { closure } from "./build-memory-package.mjs";
+import { renderAll } from "./render-copy.mjs";
 
 const RUNTIME = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const REPO = path.resolve(RUNTIME, "..");
 export const NAME = "agent-daemon-memory";
-export const TARGETS = ["claude-code", "agent-plugin", "cursor", "gemini"];
+export const TARGETS = ["claude-code", "agent-plugin", "cursor", "gemini", "registry"];
 const SERVER_ENTRIES = ["src/mcp/memory-server.mjs", "src/memory/plugin-hook.mjs"];
 const SKILL = path.join(REPO, "skills", "daemon", "agent-daemon-memory", "SKILL.md");
 const DESCRIPTION = "Local memory for coding agents: lessons and corrections from past sessions in this project, recalled when they matter. Nothing leaves your computer.";
@@ -206,7 +207,44 @@ function buildGemini(out, version) {
   return root;
 }
 
-const BUILDERS = { "claude-code": buildClaudeCode, "agent-plugin": buildAgentPlugin, cursor: buildCursor, gemini: buildGemini };
+// The MCP Registry entry (P5.6): the npm package at this exact version, started
+// with `serve`. name = the package's mcpName (the Registry checks npm ownership by it).
+export const REGISTRY_SCHEMA = "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json";
+function buildRegistry(out, version) {
+  const pkg = JSON.parse(fs.readFileSync(path.join(REPO, "packages", NAME, "package.json"), "utf8"));
+  if (!pkg.mcpName) throw new Error(`packages/${NAME}/package.json has no mcpName`);
+  // The short copy, rendered and checked like every listing (render-copy.mjs).
+  const short = renderAll()["short.txt"].trim();
+  const dir = path.join(out, "registry");
+  writeJson(path.join(dir, "server.json"), {
+    $schema: REGISTRY_SCHEMA,
+    name: pkg.mcpName,
+    title: "Agent Daemon memory",
+    description: short,
+    version,
+    repository: { url: REPOSITORY, source: "github" },
+    websiteUrl: `${REPOSITORY}/blob/main/docs/memory/README.md`,
+    packages: [
+      {
+        registryType: "npm",
+        registryBaseUrl: "https://registry.npmjs.org",
+        identifier: pkg.name,
+        version,
+        transport: { type: "stdio" },
+        // A client that knows the open folder passes it; else the server binds to the
+        // folder it starts in, if that is a project, or serves nothing.
+        packageArguments: [
+          { type: "positional", value: "serve" },
+          { type: "named", name: "--project", description: "The project folder whose memory to serve (an absolute path)", isRequired: false, format: "filepath" },
+        ],
+        environmentVariables: [{ name: "AD_ROOT", description: "Where ad keeps its state, the memory database included: an absolute path (default ~/.agent-daemon; a relative path is ignored)", isRequired: false, isSecret: false }],
+      },
+    ],
+  });
+  return dir;
+}
+
+const BUILDERS = { "claude-code": buildClaudeCode, "agent-plugin": buildAgentPlugin, cursor: buildCursor, gemini: buildGemini, registry: buildRegistry };
 
 // A folder this script made: only such a folder (or an empty one) is ever emptied.
 export const BUILD_MARK = ".agent-daemon-host-build";

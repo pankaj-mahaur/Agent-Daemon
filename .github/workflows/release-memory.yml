@@ -52,7 +52,7 @@ jobs:
         working-directory: runtime
         env:
           AD_SQLITE_DRIVER: node:sqlite
-        run: node --test --test-force-exit test/host-packages.test.mjs test/memory-package.test.mjs
+        run: node --test --test-force-exit test/host-packages.test.mjs test/memory-package.test.mjs test/listings.test.mjs
 
       - name: Build every artifact
         id: build
@@ -69,6 +69,8 @@ jobs:
           (cd "$OUT/hosts/cursor" && zip -qrX "$OUT/dist/agent-daemon-memory-cursor-$V.zip" agent-daemon-memory)
           (cd "$OUT/hosts" && zip -qrX "$OUT/dist/agent-daemon-memory-claude-code-marketplace-$V.zip" claude-code)
           (cd "$OUT/hosts" && zip -qrX "$OUT/dist/agent-daemon-memory-gemini-extension-$V.zip" gemini)
+          cp "$OUT/hosts/registry/server.json" "$OUT/dist/server.json"
+          node runtime/scripts/render-copy.mjs --out "$OUT/listing"
           (cd "$OUT/dist" && sha256sum -- * > SHA256SUMS)
           cat "$OUT/dist/SHA256SUMS"
 
@@ -79,6 +81,7 @@ jobs:
           path: |
             ${{ runner.temp }}/out/dist
             ${{ runner.temp }}/out/hosts
+            ${{ runner.temp }}/out/listing
           if-no-files-found: error
 
   publish:

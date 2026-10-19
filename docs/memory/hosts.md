@@ -2,7 +2,7 @@
 
 ad's memory reaches other agents two ways:
 
-- **The installer** (`npx agent-daemon-memory install`, see [the installer guide](memory-install.md)) writes one entry into each host's settings. It works for every supported host and always knows which project is open.
+- **The installer** (`npx agent-daemon-memory install`, see [the installer guide](install.md)) writes one entry into each host's settings. It works for every supported host and always knows which project is open.
 - **A plugin** from the host's own plugin gallery. One build makes every package from the same code, so they behave the same.
 
 | Host | Plugin | Capture | Which project | Use it when |

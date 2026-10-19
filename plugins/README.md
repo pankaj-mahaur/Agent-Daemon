@@ -6,7 +6,7 @@ The memory plugins aren't kept in this folder: `runtime/scripts/build-host-packa
 builds them from the runtime's own code (a Claude Code marketplace tree and an
 Agent Plugins package), so every package behaves like the others and like the
 installer. What they contain, which hosts take them and their limits:
-[Memory as host plugins](../docs/memory-plugins.md).
+[Memory as host plugins](../docs/memory/hosts.md).
 
 ```bash
 node runtime/scripts/build-host-packages.mjs --out <dir>

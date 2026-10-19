@@ -408,7 +408,7 @@
       "reason": "the CI step for the memory package's Codex host acceptance (gate b)"
     },
     {
-      "path": "docs/memory-install.md",
+      "path": "docs/memory/install.md",
       "rules": ["A"],
       "reason": "the memory installer's guide: Codex is one of the three hosts it installs into (the user's own Codex CLI, not ad's engine)"
     },
@@ -449,10 +449,28 @@
       "reason": "the heading naming the hosts the installer covers"
     },
     {
-      "path": "docs/memory-plugins.md",
+      "path": "docs/memory/hosts.md",
       "rules": ["A"],
       "match": "\\| Codex \\| not yet: its public directory",
       "reason": "the plugin guide's table row for the Codex host, whose plugin comes later (the user's own Codex CLI, not ad's engine)"
+    },
+    {
+      "path": "docs/memory/faq.md",
+      "rules": ["A"],
+      "match": "Claude Code, Codex, Cursor, VS Code and Gemini CLI",
+      "reason": "the hosts the memory installer supports (the user's own Codex CLI, not ad's engine)"
+    },
+    {
+      "path": "docs/support-matrix.md",
+      "rules": ["A"],
+      "match": "\\| Codex \\| installer \\| tested live|the real Codex binary|memory-host-codex\\.test\\.mjs",
+      "reason": "the support matrix's evidence row for the Codex host (the user's own Codex CLI, whose real binary CI starts)"
+    },
+    {
+      "path": "runtime/scripts/render-copy.mjs",
+      "rules": ["A"],
+      "match": "\"Codex\"",
+      "reason": "the claims rule's list of host names that listing templates may not name by hand"
     }
   ]
 }

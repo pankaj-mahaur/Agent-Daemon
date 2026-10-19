@@ -183,6 +183,17 @@ test("unexpanded variables: an unexpanded script path fails in Node (the install
   assert.match(r.stderr, /agent-daemon-memory: the host didn't expand \$\{PLUGIN_DATA\}\/memory\.db; this host needs the installer route\./);
   const p = await startServer(path.join(AP, "server", "server.mjs"), ["serve", "--host", "cursor", "--project", "${workspaceFolder}"], env);
   assert.ok(p.out.includes('"id":1'), `an unexpanded --project doesn't stop the server: ${p.err}`);
+  // The MCP Registry passes a named argument joined: --project=<value>.
+  const joined = await startServer(path.join(AP, "server", "server.mjs"), ["serve", "--host", "cursor", "--project=${workspaceFolder}"], env);
+  assert.ok(joined.out.includes('"id":1'), `an unexpanded --project=… doesn't stop the server either: ${joined.err}`);
+  const { h, env: env2 } = tempHome();
+  const repo = path.join(h, "work", "shop-app");
+  fs.mkdirSync(path.join(repo, ".git"), { recursive: true });
+  const dbg = path.join(h, "scope.json");
+  // agent-plugins never binds its working folder: only the argument can bind here.
+  await startServer(path.join(AP, "server", "server.mjs"), ["serve", "--host", "agent-plugins", `--project=${repo}`], { ...env2, AD_MEMORY_DEBUG_FILE: dbg });
+  const bound = JSON.parse(fs.readFileSync(dbg, "utf8"));
+  assert.deepEqual([bound.kind, bound.source], ["project", "arg"], "--project=<dir> binds like --project <dir>");
 });
 
 function runHook(name, env, payload, cwd) {

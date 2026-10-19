@@ -145,9 +145,9 @@ npx agent-daemon-memory install     # or, with ad installed: ad memory install
 ```
 
 It adds the server to each host it finds, after showing the plan; see
-[docs/memory-install.md](../../docs/memory-install.md) (doctor, repair,
+[docs/memory/install.md](../../docs/memory/install.md) (doctor, repair,
 uninstall, and what it never changes). As a host plugin (Claude Code's
-marketplace, Agent Plugins): [docs/memory-plugins.md](../../docs/memory-plugins.md).
+marketplace, Agent Plugins): [docs/memory/hosts.md](../../docs/memory/hosts.md).
 
 ### By hand (Claude Code)
 

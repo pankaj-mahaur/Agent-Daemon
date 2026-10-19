@@ -668,7 +668,7 @@ For "The engine reported a problem", inspect those details first. `ad doctor` sh
 
 **Cause:** the memory server serves one project, chosen when it starts, and couldn't tell which: no `--project`, no project from ad or Claude Code, and its working folder isn't inside a git repo and holds no `.agent-daemon` folder. Home, a drive root, system folders and ad's own folders never count. It serves nothing rather than guess.
 
-**Fix:** open the session in the project folder (a git repo). In ad's own engine, each conversation binds to its folder, or to the project ad passes (`AD_MEMORY_PROJECT`). A desktop app whose working folder is its install folder never binds by itself: give it `--project <folder>` (`${workspaceFolder}` in hosts that expand it). For Claude Code, register the server with `--host claude-code` (see [mcp/agent-daemon-memory/README.md](../mcp/agent-daemon-memory/README.md#install-claude-code)); for another host, pass `--project <folder>` in its server config.
+**Fix:** open the session in the project folder (a git repo). In ad's own engine, each conversation binds to its folder, or to the project ad passes (`AD_MEMORY_PROJECT`). A desktop app whose working folder is its install folder never binds by itself: give it `--project <folder>` (`${workspaceFolder}` in hosts that expand it). For Claude Code, register the server with `--host claude-code` (see [mcp/agent-daemon-memory/README.md](../mcp/agent-daemon-memory/README.md#by-hand-claude-code)); for another host, pass `--project <folder>` in its server config.
 
 ## 45. A note I expected doesn't show up in memory
 
