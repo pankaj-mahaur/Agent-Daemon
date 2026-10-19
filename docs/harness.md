@@ -203,6 +203,8 @@ Unattended runs also switch off every MCP server except the daemon's memory, and
 
 **Accounts.** ad keeps a list of accounts (`~/.agent-daemon/accounts/registry.json`): each has an id, a label, an owner tag and where its credential lives, and never the credential itself (an API key shows only its last 4 characters). ad 3.0's sign-in and OpenRouter key become accounts by themselves, without moving or rewriting anything 3.0 uses, so going back to 3.0 still works. An interrupted sign-in or key change leaves something `ad auth repair` finishes (it asks before deleting a key).
 
+**Adding accounts.** `ad auth login <provider>` adds an API key (OpenAI, OpenRouter, Kimi, Moonshot, xAI, Fireworks), your own endpoint or a local server; see [accounts.md](accounts.md) for providers, free models and what ad doesn't offer.
+
 **Which account a conversation uses.** ad decides before any engine starts, and the first message already goes to that account. The first of these that names an account wins:
 1. `--account <provider>/<label>` (or `/model`, `/account` in the terminal UI);
 2. what this window picked;

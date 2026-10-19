@@ -68,6 +68,10 @@ Any harness command errors out, hangs, or finishes without doing the work ("my s
 | "Pick a project folder" / `HOME_FOLDER_REFUSED` / "Run this in a project folder" | the folder (home, or under a git home) would load the user's own `~/.codex` as a project layer: skills even untrusted, settings when trusted (`homeLayerRisk`, `engine/codex/home.mjs`); resume/fork are checked against the thread's stored folder | open a project folder; overrides `--allow-home-folder`, `AD_ALLOW_HOME_FOLDER=1`, pref `allowHomeFolder`; 3.0 jobs are grandfathered and listed by doctor (troubleshooting #48) |
 | "ad auth: <account> needs its key again" | the picked account (--account, AD_ACCOUNT, project, default) has no working key | the command it names; or another --account (troubleshooting #60) |
 | "The engine kept this conversation on …" / "still busy" | a move to another account while a turn or background terminal runs | wait, switch again, or a new conversation (troubleshooting #61) |
+| "The key was refused (HTTP 401), so it wasn't saved" | the provider refused the key | copy it again; the command it names (troubleshooting #63) |
+| "Couldn't reach <host> … The key is saved" | no network while adding a key | `ad auth test <provider>/<label>` later (troubleshooting #64) |
+| "This endpoint speaks only Chat Completions" | the endpoint has no Responses API | Ollama 0.13.3+, LM Studio, vLLM or OpenRouter (troubleshooting #65) |
+| "Ollama isn't answering on localhost:11434" | the local server isn't running | `ollama serve` / `lms server start` (troubleshooting #66) |
 | "This conversation used an account you removed" | its API account is gone | a new conversation (troubleshooting #62) |
 | "ad: couldn't reach <host>" | ad's gateway couldn't connect to the provider (network, proxy, company certificate) | `NODE_EXTRA_CA_CERTS` for a company CA; the gateway can't use an HTTP proxy yet (troubleshooting #58) |
 | "ad: the provider redirected" | the endpoint redirects; ad never follows a redirect with a key | use the provider's final `/v1` address (troubleshooting #59) |

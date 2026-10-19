@@ -10,10 +10,11 @@
 //   engineEnvFor({ gateway, env })   → { AD_GATEWAY_TOKEN, NO_PROXY, no_proxy }: never a key
 // Nothing here is written to config.toml: the port changes every run.
 
-export const PRESETS = Object.freeze({
-  openrouter: { name: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1" },
-  openai: { name: "OpenAI", baseUrl: "https://api.openai.com/v1" },
-});
+import { PROVIDER_PRESETS, providerName } from "../providers/registry.mjs";
+
+// The provider registry's presets (P3.5), as the gateway needs them: name and upstream.
+// A custom endpoint has no preset base: its account's endpoint is used.
+export const PRESETS = Object.freeze(Object.fromEntries(PROVIDER_PRESETS.filter((p) => p.upstreamBase).map((p) => [p.id, Object.freeze({ name: p.name, baseUrl: p.upstreamBase })])));
 
 const LOOPBACK = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?(\/|$)/i;
 const toml = (s) => JSON.stringify(String(s));
@@ -34,9 +35,9 @@ export function gatewayTable(doc, { presets = PRESETS } = {}) {
       auth: a.method === "none" ? { kind: "none" } : { kind: "static-key", scheme: "bearer" },
       headers: {},
       strip: [],
-      label: preset?.name ?? a.provider,
+      label: preset?.name ?? providerName(a.provider),
       allowHttp: LOOPBACK.test(upstreamBase) || Boolean(a.insecure),
-      displayName: `${preset?.name ?? a.provider} · ${a.label}`,
+      displayName: `${preset?.name ?? providerName(a.provider)} · ${a.label}`,
     });
   }
   return table;

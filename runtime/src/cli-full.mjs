@@ -2412,6 +2412,15 @@ async function main(argv) {
         limit:        { type: "string" },
         model:        { type: "string" },
         account:      { type: "string" },
+        label:        { type: "string" },
+        owner:        { type: "string" },
+        "base-url":   { type: "string" },
+        preset:       { type: "string" },
+        oauth:        { type: "boolean" },
+        insecure:     { type: "boolean" },
+        stdin:        { type: "boolean" },
+        "no-test":    { type: "boolean" },
+        "no-key":     { type: "boolean" },
         template:     { type: "string" },
         task:         { type: "string" },
         team:         { type: "string" },
@@ -2577,6 +2586,15 @@ async function main(argv) {
         model: parsed.values.model,
         device: parsed.values.device || false,
         force: parsed.values.force || false,
+        label: parsed.values.label,
+        owner: parsed.values.owner,
+        baseUrl: parsed.values["base-url"],
+        oauth: Boolean(parsed.values.oauth),
+        insecure: Boolean(parsed.values.insecure),
+        noTest: Boolean(parsed.values["no-test"]),
+        noKey: Boolean(parsed.values["no-key"]),
+        // A key typed as a flag (--key …) is refused, never echoed (P3.5).
+        rawValues: parsed.values,
         clientVersion: VERSION
       });
     }

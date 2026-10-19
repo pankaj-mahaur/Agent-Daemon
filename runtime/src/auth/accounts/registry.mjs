@@ -30,18 +30,18 @@ export const REGISTRY_SCHEMA_VERSION = 1;
 export const REGISTRY_TEXTS = Object.freeze({
   REGISTRY_CORRUPT: (file, reason) => `ad can't read its account list (${file}: ${reason}). Your keys are untouched. Run: ad auth repair`,
   REGISTRY_NEWER: (n) => `This account list was written by a newer ad (schema ${n}). Update ad to change accounts; this version only reads what it understands.`,
-  REGISTRY_CONFLICT: "The account list changed while you were choosing. Look again: ad auth list",
+  REGISTRY_CONFLICT: "The account list changed while you were choosing. Look again: ad auth status",
   REGISTRY_BUSY: "Another ad is updating the account list. Try again in a moment.",
   REGISTRY_INVALID: (problems) => `ad refused to save an account list that doesn't hold together: ${problems.join("; ")}`,
-  ACCOUNT_NOT_FOUND: (ref) => `No account matches ${JSON.stringify(ref)}. See: ad auth list`,
-  ACCOUNT_AMBIGUOUS: (ref, n) => `${n} accounts match ${JSON.stringify(ref)}. Name one as <provider>/<label>, or by its id. See: ad auth list`,
+  ACCOUNT_NOT_FOUND: (ref) => `No account matches ${JSON.stringify(ref)}. See: ad auth status`,
+  ACCOUNT_AMBIGUOUS: (ref, n) => `${n} accounts match ${JSON.stringify(ref)}. Name one as <provider>/<label>, or by its id. See: ad auth status`,
 });
 
 const fail = (code, message) => Object.assign(new Error(message), { code });
 
 /** Provider ids and the words that name them: never an account label (LABEL_RESERVED). */
 export const PROVIDER_NAMES = Object.freeze([
-  "openai", "chatgpt", "openrouter", "kimi", "moonshot", "xai", "grok", "fireworks", "ollama", "lmstudio", "lm-studio", "opencode", "opencode-go", "custom", "local", "api",
+  "openai", "chatgpt", "openrouter", "kimi", "kimi-code", "moonshot", "xai", "grok", "fireworks", "ollama", "lmstudio", "lm-studio", "opencode", "opencode-go", "custom", "local", "api",
 ]);
 export const METHODS = Object.freeze(["api-key", "api-key-engine", "engine-login", "openrouter-oauth", "none"]);
 export const STATUSES = Object.freeze(["pending", "ready", "needs-sign-in", "disabled", "error", "removing"]);

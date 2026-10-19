@@ -84,21 +84,24 @@ export function createAccountService({ root = adRoot(), store = createSecretStor
 
     /**
      * Add an API-key account. test(key) → resolves (works) or rejects (why); it runs
-     * outside the registry lock. → the ready record
+     * outside the registry lock. It may resolve to { status, detail }: the key is kept
+     * with that status (P3.5: "error" when the provider couldn't be reached).
+     * extra: more fields for the record (insecure). → the record
      */
-    async addApiKey({ provider, label, owner = "", endpoint = null, key, test = async () => {}, defaultModel = null }) {
+    async addApiKey({ provider, label, owner = "", endpoint = null, key, test = async () => {}, defaultModel = null, extra = {} }) {
       const { id, attemptId } = await service.reserve({ provider, label, owner, method: "api-key", endpoint, defaultModel });
       crash("afterReserve");
       const ref = secretRef(id);
       store.set(ref, key);
       crash("afterSecret");
+      let verdict;
       try {
-        await test(key);
+        verdict = await test(key);
       } catch (e) {
         await service.abandon(id, attemptId);
         throw fail("KEY_TEST_FAILED", SERVICE_TEXTS.KEY_TEST_FAILED(e.message));
       }
-      return service.finalize(id, attemptId, { keyHint: keyHintOf(key), credential: { kind: "secret", ref } });
+      return service.finalize(id, attemptId, { ...extra, keyHint: keyHintOf(key), credential: { kind: "secret", ref }, ...(verdict?.status ? { status: verdict.status, statusDetail: verdict.detail ?? null } : {}) });
     },
 
     /** A new key for an existing API-key account; the old one works until the new one passes. */

@@ -18,6 +18,9 @@ import { signInNoteBrowser, signInNoteDevice } from "../engine/attribution.mjs";
 import { PROVIDERS, useProviderEdits } from "../auth/providers.mjs";
 import { createSecretStore } from "../auth/secrets.mjs";
 import { openUrl, readSecret } from "./io.mjs";
+import { cmdAuthAccounts, legacyUseTarget } from "./auth-accounts.mjs";
+import { readRegistry } from "../auth/accounts/registry.mjs";
+import { accountName } from "../auth/accounts/target.mjs";
 import { syncAccountsFromEngine } from "./accounts-sync.mjs";
 
 export function maskEmail(email) {
@@ -41,11 +44,25 @@ export async function cmdAuth(sub, args = [], opts = {}) {
   const out = opts.stdout ?? process.stdout;
   const err = opts.stderr ?? process.stderr;
   const store = opts.store ?? createSecretStore();
-  const usage = "Usage: ad auth login <chatgpt|openai|openrouter> | use <openai|openrouter> | status | logout [openrouter]\n";
+  const usage = "Usage: ad auth login <chatgpt|openai|openrouter|kimi-code|moonshot|xai|fireworks|custom|ollama|lmstudio> [--label <l>] | use <account> | test <account> | status | logout [openrouter]\n";
 
-  if (!["login", "use", "status", "logout"].includes(sub)) {
+  if (!["login", "use", "status", "logout", "test"].includes(sub)) {
     err.write(usage);
     return 1;
+  }
+  // Accounts (P3.5): API keys, your own endpoint, local servers; ChatGPT stays below.
+  if (["login", "use", "test"].includes(sub)) {
+    try {
+      const r = await cmdAuthAccounts(sub, args, { ...opts, stdout: out, stderr: err, store });
+      if (r !== null) return r;
+    } catch (e) {
+      err.write(cliErrorLines("auth", e));
+      return 1;
+    }
+    if (sub === "test") {
+      err.write(usage);
+      return 1;
+    }
   }
 
   let engine;
@@ -72,6 +89,12 @@ export async function cmdAuth(sub, args = [], opts = {}) {
       for (const p of Object.values(PROVIDERS).filter((p) => p.secret)) {
         out.write(`${(p.id + " key:").padEnd(16)}${store.has(p.secret) ? `stored (${store.backend})` : "not set"}\n`);
       }
+      if (!opts.home) {
+        // Accounts (P3.5): names, status and the last 4 characters of a key, never more.
+        const doc = readRegistry();
+        const def = doc.defaults?.target?.account;
+        for (const a of doc.accounts) out.write(`${"account:".padEnd(16)}${accountName(a)}  ${a.status}${a.keyHint ? `  key …${a.keyHint}` : ""}${a.id === def ? "  (default)" : ""}\n`);
+      }
       return 0;
     }
 
@@ -82,6 +105,7 @@ export async function cmdAuth(sub, args = [], opts = {}) {
         return 1;
       }
       await engine.writeConfig(useProviderEdits(id, { model: opts.model }));
+      if (!opts.home) await legacyUseTarget(id, opts.model);
       out.write(`active provider: ${id}${opts.model ? ` (model ${opts.model})` : ""}\n`);
       return 0;
     }

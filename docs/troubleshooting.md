@@ -782,7 +782,7 @@ See [harness.md](harness.md#working-in-your-home-folder).
 
 **Cause:** the account ad picked (from `--account`, `AD_ACCOUNT`, the project's choice or your default) has no working key or sign-in, so ad stops before starting anything.
 
-**Fix:** run the command the message names (`ad auth login <provider> --label <label>`), or pick another account with `--account`. `ad auth list` shows them all.
+**Fix:** run the command the message names (`ad auth login <provider> --label <label>`), or pick another account with `--account`. `ad auth status` shows them all.
 
 ## 61. "The engine kept this conversation on <account>" / "This conversation is still busy"
 
@@ -795,6 +795,30 @@ See [harness.md](harness.md#working-in-your-home-folder).
 **Cause:** the conversation ran on an API-key account that is no longer in your account list.
 
 **Fix:** start a new conversation. Carrying it over to another account comes in a later release.
+
+## 63. "The key was refused (HTTP 401), so it wasn't saved"
+
+**Cause:** the provider said no to the key: a typo, a revoked key, or a key for another provider.
+
+**Fix:** copy the key again from the provider's site and run the command the message names (`ad auth login <provider> --label <label>`). ad never keeps a refused key.
+
+## 64. "Couldn't reach <host> (…). The key is saved; test it later"
+
+**Cause:** ad couldn't talk to the provider while adding the key (no network, a proxy, the provider down). The key is stored and the account waits.
+
+**Fix:** when the network is back, run `ad auth test <provider>/<label>`. Behind a proxy, see #58.
+
+## 65. "This endpoint speaks only Chat Completions"
+
+**Cause:** your endpoint has no Responses API, which ad's engine needs.
+
+**Fix:** use a server with the Responses API (Ollama 0.13.3+, LM Studio, vLLM) or OpenRouter. Chat-only endpoints work once ad's chat bridge ships.
+
+## 66. "Ollama isn't answering on localhost:11434" (or LM Studio on localhost:1234)
+
+**Cause:** the local server isn't running, or listens on another port.
+
+**Fix:** start it (`ollama serve`, `lms server start`) and run the login again. A server on another port: `ad auth login custom --base-url http://127.0.0.1:<port>/v1 --no-key`.
 
 ---
 

@@ -19,28 +19,20 @@
 // was meant for another account. A target is captured when a thread starts (D08).
 
 import { findAccount } from "./registry.mjs";
+import { providerName } from "../../providers/registry.mjs";
 
-export const PROVIDER_DISPLAY = Object.freeze({
-  chatgpt: "ChatGPT",
-  openai: "OpenAI",
-  openrouter: "OpenRouter",
-  kimi: "Kimi",
-  xai: "xAI",
-  fireworks: "Fireworks",
-  ollama: "Ollama",
-  lmstudio: "LM Studio",
-  "opencode-go": "OpenCode Go",
-  custom: "Custom",
-});
+// Display names come from the provider registry (P3.5); ChatGPT accounts are "ChatGPT".
+const DISPLAY_OVERRIDES = { openai: "OpenAI", chatgpt: "ChatGPT" };
+export const providerDisplay = (id) => DISPLAY_OVERRIDES[id] ?? providerName(id);
 
 /** "OpenRouter · work" */
-export const accountName = (a) => `${PROVIDER_DISPLAY[a.provider] ?? a.provider} · ${a.label}`;
+export const accountName = (a) => `${providerDisplay(a.provider)} · ${a.label}`;
 
 export const TARGET_TEXTS = Object.freeze({
   TARGET_NOT_READY: (a) =>
     a.status === "needs-sign-in"
       ? `ad auth: ${accountName(a)} needs ${a.method === "api-key" ? "its key" : "a sign-in"} again: ad auth login ${a.provider} --label ${a.label}`
-      : `ad auth: ${accountName(a)} isn't ready (${a.status}). See: ad auth list`,
+      : `ad auth: ${accountName(a)} isn't ready (${a.status}). See: ad auth status`,
   PROJECT_PICKS: (a) => `This project picks ${accountName(a)} (.agent-daemon/config.json).`,
   ACCOUNT_IGNORED: (source, ref, why) => `ad ignored ${source === "env" ? "AD_ACCOUNT" : "this window's account"} ${JSON.stringify(ref)}: ${why}`,
   PROJECT_IGNORED: (why) => `ad ignored this project's account choice (.agent-daemon/config.json): ${why}.`,
