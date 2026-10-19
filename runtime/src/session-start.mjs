@@ -17,6 +17,7 @@ import { resolveGit, resolvedArgv } from "./safe-spawn.mjs";
 import { drainJournal } from "./hooks/journal-drain.mjs";
 import { neutralizeMemoryFile } from "./digest/sanitize.mjs";
 import { safeNoteText } from "./memory/render-safe.mjs";
+import { projectDataDir } from "./memory/project-dir.mjs";
 
 const MAX_OUTPUT_BYTES = 9000;
 const SWEEP_THROTTLE_MS = 10 * 60 * 1000;
@@ -97,7 +98,7 @@ export async function runSessionStart(opts) {
   //    of loading all memory files. Falls back to bulk-load if QMD isn't installed.
   const qmdAvailable = await detectQmd(opts.cwd);
   if (qmdAvailable) {
-    const activeContext = await tryRead(path.join(opts.cwd, ".agent-daemon", "memory", "activeContext.md"));
+    const activeContext = await tryRead(path.join(projectDataDir(opts.cwd), "memory", "activeContext.md"));
     if (activeContext) {
       sections.push(`<!-- memory: activeContext.md -->\n### activeContext.md\n\n${neutralizeMemoryFile(fitActiveContext(activeContext))}`);
     }
@@ -114,7 +115,7 @@ export async function runSessionStart(opts) {
     // for the global user.md; user.md (pushed after this block) gets what remains.
 
     const memoryLocations = [
-      path.join(opts.cwd, ".agent-daemon", "memory"),
+      path.join(projectDataDir(opts.cwd), "memory"),
       path.join(opts.cwd, ".claude", "memory"),
       path.join(homeDir(), ".claude", "projects", encodeProjectPath(opts.cwd), "memory"),
       path.join(homeDir(), ".agent-daemon", "memory")
@@ -681,7 +682,7 @@ export async function recordSessionStartTelemetry(opts, budgetStats) {
 
   // JSONL file (works even without better-sqlite3)
   try {
-    const telDir = path.join(opts.cwd, ".agent-daemon", "telemetry");
+    const telDir = path.join(projectDataDir(opts.cwd), "telemetry");
     await fs.mkdir(telDir, { recursive: true });
     const telFile = path.join(telDir, "session-start.jsonl");
     try {
@@ -737,7 +738,7 @@ const ROTATE_AGE_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 export async function rotateActiveContextIfNeeded(cwd, verbose = false) {
   if (!cwd) return { rotated: false, reason: "no cwd" };
 
-  const memDir   = path.join(cwd, ".agent-daemon", "memory");
+  const memDir   = path.join(projectDataDir(cwd), "memory");
   const filePath = path.join(memDir, "activeContext.md");
 
   let stat;
@@ -768,7 +769,7 @@ export async function rotateActiveContextIfNeeded(cwd, verbose = false) {
   const oldest = lines.slice(0, mid).join("\n");
   const newest = lines.slice(mid).join("\n");
 
-  const archiveDir  = path.join(cwd, ".agent-daemon", "archive");
+  const archiveDir  = path.join(projectDataDir(cwd), "archive");
   const dateStamp   = new Date().toISOString().slice(0, 10);  // YYYY-MM-DD
   const archivePath = path.join(archiveDir, `activeContext-${dateStamp}.md`);
 

@@ -7,6 +7,7 @@
 
 import path from "node:path";
 import fs from "node:fs/promises";
+import { ensureProjectDataDir } from "../memory/project-dir.mjs";
 
 const MAX_BYTES = 5 * 1024 * 1024;  // 5 MB — rotate before unbounded growth
 const KEEP_ROTATIONS = 2;            // keep .1 and .2, discard older
@@ -59,8 +60,8 @@ export function buildEntry(state) {
 export async function appendSessionLog({ cwd, entry }) {
   if (!cwd) return { ok: false, error: "cwd required" };
   try {
-    const dir = path.join(cwd, ".agent-daemon");
-    await fs.mkdir(dir, { recursive: true });
+    // The project's capture folder: never a new .agent-daemon in a repo (P5.2).
+    const dir = ensureProjectDataDir(cwd);
     const logPath = path.join(dir, "sessions.jsonl");
 
     // Rotate before write if the existing file is too big.

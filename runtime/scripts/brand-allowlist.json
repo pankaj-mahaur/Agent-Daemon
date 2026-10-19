@@ -346,6 +346,18 @@
       "rules": ["A"],
       "match": "CODEX_MCP_PROTOCOL_VERSION",
       "reason": "the engine environment variable a user sets to turn on the MCP 2026-07-28 handshake for this server; its exact name is the instruction"
+    },
+    {
+      "path": "runtime/src/memory/host-ids.mjs",
+      "rules": ["A"],
+      "match": "\"codex\"",
+      "reason": "the id of the other host this memory server installs into (--host codex); an identifier, not prose about ad's engine"
+    },
+    {
+      "path": "mcp/agent-daemon-memory/README.md",
+      "rules": ["A"],
+      "match": "`codex`",
+      "reason": "the --host id a user passes for that host; the exact value is the instruction"
     }
   ]
 }

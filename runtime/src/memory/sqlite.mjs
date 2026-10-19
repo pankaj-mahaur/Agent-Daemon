@@ -184,7 +184,7 @@ END;
 CREATE TRIGGER IF NOT EXISTS learnings_fts_delete AFTER DELETE ON learnings BEGIN
   INSERT INTO learnings_fts(learnings_fts, rowid, text, evidence, tags) VALUES('delete', old.id, old.text, old.evidence, old.tags);
 END;
-CREATE TRIGGER IF NOT EXISTS learnings_fts_update AFTER UPDATE ON learnings BEGIN
+CREATE TRIGGER IF NOT EXISTS learnings_fts_update AFTER UPDATE OF text, evidence, tags ON learnings BEGIN
   INSERT INTO learnings_fts(learnings_fts, rowid, text, evidence, tags) VALUES('delete', old.id, old.text, old.evidence, old.tags);
   INSERT INTO learnings_fts(rowid, text, evidence, tags) VALUES (new.id, new.text, new.evidence, new.tags);
 END;
@@ -385,6 +385,7 @@ export async function open(opts = {}) {
   migrateSkillRouteEvents(raw);
   migrateRetrievalEvents(raw);
   migrateMemoryContract(raw);
+  migrateLearningsCapture(raw);
 
   return {
     raw,
@@ -590,6 +591,60 @@ export function migrateMemoryContract(raw) {
     done_at TEXT NOT NULL,
     result  TEXT
   )`);
+}
+
+/**
+ * Idempotent migration (P5.2): capture keys on learnings, and the hooks' heartbeats.
+ *   norm_key      one note per project whoever records it: normKey(text)
+ *   capture_ref   the host's session id, or proc:<pid>; deduplication only, so no
+ *                 foreign key (a host's session id needn't be one of ad's sessions)
+ *   project_path  the folder the note was recorded in
+ *   capture_heartbeats  a host's hooks ran in a project; the record tools defer to them
+ * Additive only: older ad ignores the columns and the table.
+ *
+ * @param {any} raw
+ */
+export function migrateLearningsCapture(raw) {
+  const cols = new Set(raw.prepare("PRAGMA table_info(learnings)").all().map((c) => c.name));
+  for (const [col, type] of [["norm_key", "TEXT"], ["capture_ref", "TEXT"], ["project_path", "TEXT"]]) {
+    if (!cols.has(col)) raw.exec(`ALTER TABLE learnings ADD COLUMN ${col} ${type}`);
+  }
+  raw.exec(`CREATE INDEX IF NOT EXISTS idx_learnings_norm ON learnings(project_slug, norm_key);
+    CREATE TABLE IF NOT EXISTS capture_heartbeats (
+      host         TEXT NOT NULL,
+      project_slug TEXT NOT NULL,
+      capture_ref  TEXT,
+      last_seen    TEXT NOT NULL,
+      PRIMARY KEY (host, project_slug)
+    );
+    INSERT OR IGNORE INTO schema_version (version) VALUES (2);`);
+  // The search index only needs the indexed columns: an update of a counter or a
+  // key (retrieval counts, the norm_key backfill) no longer rewrites its index row.
+  const trig = raw.prepare("SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = 'learnings_fts_update'").get();
+  if (trig && !/UPDATE OF text, evidence, tags/i.test(trig.sql)) {
+    // One transaction, so two processes upgrading at once can't leave it missing or fail on it.
+    raw.transaction(() => {
+      raw.exec(`DROP TRIGGER IF EXISTS learnings_fts_update;
+        CREATE TRIGGER learnings_fts_update AFTER UPDATE OF text, evidence, tags ON learnings BEGIN
+          INSERT INTO learnings_fts(learnings_fts, rowid, text, evidence, tags) VALUES('delete', old.id, old.text, old.evidence, old.tags);
+          INSERT INTO learnings_fts(rowid, text, evidence, tags) VALUES (new.id, new.text, new.evidence, new.tags);
+        END;`);
+    }).immediate();
+  }
+}
+
+/**
+ * One note per project: the text lowercased (Unicode NFKC), spacing collapsed and
+ * end punctuation dropped, hashed. "Use pnpm." and "use  pnpm" are one note.
+ */
+export function normKey(text) {
+  const n = String(text ?? "").normalize("NFKC").toLowerCase().replace(/\s+/g, " ").replace(/[.,;:!?]+$/, "").trim();
+  return createHash("sha256").update(n).digest("hex").slice(0, 16);
+}
+
+/** The content hash a new row gets: project rows are scoped to their project, global rows not. */
+export function scopedContentHash(projectKey, text) {
+  return projectKey ? learningContentHash(`${projectKey}\u{0}${String(text ?? "").trim()}`) : learningContentHash(text);
 }
 
 /**

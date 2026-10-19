@@ -15,8 +15,19 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const CLI = path.resolve(__dirname, "..", "src", "cli.mjs");
 
+// The hook opens the memory store (heartbeats): a temp home and ad root for
+// every spawned hook, never the real ones.
+const FAKE_HOME = await fs.mkdtemp(path.join(os.tmpdir(), "ad-uph-home-"));
+process.env.HOME = FAKE_HOME;
+process.env.USERPROFILE = FAKE_HOME;
+process.env.AD_ROOT = path.join(FAKE_HOME, ".agent-daemon");
+delete process.env.AD_MEMORY_DB;
+
+// A project the user set up (its own .agent-daemon): capture files go there.
 async function makeTmp() {
-  return await fs.mkdtemp(path.join(os.tmpdir(), "ad-uph-"));
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ad-uph-"));
+  await fs.mkdir(path.join(dir, ".agent-daemon"));
+  return dir;
 }
 
 /** @returns {Promise<{code: number, stdout: string, stderr: string}>} */

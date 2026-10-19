@@ -28,11 +28,13 @@ export function capBytes(s, max) {
 
 const head = (body) => `${UNTRUSTED_HEADER}\n${body}`;
 const conf = (c) => Number(c).toFixed(2);
+// A note an agent recorded that the user hasn't accepted yet (P5.2).
+const unreviewed = (r) => (r.status === "pending" ? " (unreviewed)" : "");
 
 /** INDEX layer: one line per learning. */
 export function renderLearnings(rows) {
   if (!rows.length) return "(no results)";
-  return capBytes(head(rows.map((r) => `[id ${r.id}] ${r.category} (conf ${conf(r.confidence)}): ${safeNoteText(r.text, { evidence: r.evidence })}`).join("\n")), MAX_RESPONSE_BYTES);
+  return capBytes(head(rows.map((r) => `[id ${r.id}] ${r.category}${unreviewed(r)} (conf ${conf(r.confidence)}): ${safeNoteText(r.text, { evidence: r.evidence })}`).join("\n")), MAX_RESPONSE_BYTES);
 }
 
 /** The JSON tags column as a clean string[] (best effort). */
@@ -52,7 +54,7 @@ export function renderDetailed(rows) {
   const blocks = rows.map((r) => {
     const tier = r.derivation ? `, ${r.derivation}` : "";
     const lines = [
-      `[id ${r.id}] ${r.category}${tier} (conf ${conf(r.confidence)}, seen ${r.observed_count ?? 1}×, retrieved ${r.retrieval_count ?? 0}×)`,
+      `[id ${r.id}] ${r.category}${tier}${unreviewed(r)} (conf ${conf(r.confidence)}, seen ${r.observed_count ?? 1}×, retrieved ${r.retrieval_count ?? 0}×)`,
       safeNoteText(r.text, { maxChars: MAX_DETAIL_TEXT_CHARS, evidence: r.evidence }),
     ];
     if (r.evidence) lines.push(`evidence: ${safeNoteText(r.evidence, { maxChars: 400 })}`);

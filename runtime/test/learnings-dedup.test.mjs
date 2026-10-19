@@ -264,7 +264,7 @@ test("insertLearnings batch: dedupes within the batch AND against existing rows"
   }
 });
 
-test("dedup is case-sensitive (matches hash semantics)", async () => {
+test("dedup: one note per project whatever the case or spacing (norm_key, P5.2)", async () => {
   const t = await mkTmpDb();
   const prevHome = process.env.HOME;
   const prevUP = process.env.USERPROFILE;
@@ -274,9 +274,11 @@ test("dedup is case-sensitive (matches hash semantics)", async () => {
   const mod = await import(`../src/memory/episodic.mjs?cachebust=${Date.now()}`);
   try {
     const a = await mod.insertLearning({ category: "pattern", text: "Use pnpm" });
-    const b = await mod.insertLearning({ category: "pattern", text: "use pnpm" });
+    const b = await mod.insertLearning({ category: "pattern", text: "use  pnpm." });
     assert.ok(typeof a === "number");
-    assert.ok(typeof b === "number", "different case → different hash → both insert");
+    assert.equal(b, null, "the same note, re-observed: reinforced, not stored twice");
+    const c = await mod.insertLearning({ category: "pattern", text: "use pnpm", projectSlug: "-other" });
+    assert.ok(typeof c === "number", "another project keeps its own note");
     mod.closeDb();
   } finally {
     process.env.HOME = prevHome;

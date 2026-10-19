@@ -10,8 +10,10 @@
 //   memory_search(query, scope?, limit?), memory_recent(limit?), memory_files(path)
 //   memory_timeline(id, limit?), memory_get(ids), memory_profile(), memory_stats()
 //   user_facts_list(), memory_feedback(id, verdict)
-// Read-only except memory_feedback and memory_get's retrieval counter. Local
-// read of ~/.agent-daemon/episodic.db; no network.
+// With --capture auto|tools (P5.2): memory_record_correction, memory_record_learning,
+// whose notes wait for the user's review (memory/capture.mjs).
+// Read-only except memory_feedback, memory_get's retrieval counter and the record
+// tools' pending notes. Local ~/.agent-daemon/episodic.db; no network.
 //
 // Scope (memory/scope.mjs, plan §M): one process is bound to one project at
 // start and no tool argument changes it: --project <dir>, else
@@ -38,7 +40,10 @@ import { slugCollides } from "../memory/safety.mjs";
 import { safeNoteText } from "../memory/render-safe.mjs";
 import { createMemoryService } from "../memory/service.mjs";
 import { createSession, handle } from "./protocol.mjs";
-import { MAX_IDS, MAX_RESULTS, MAX_TIMELINE, TOOLS } from "./tools.mjs";
+import { CAPTURE_MODES, MAX_IDS, MAX_RESULTS, MAX_TIMELINE, toolsFor } from "./tools.mjs";
+import { captureExplicit } from "../memory/capture.mjs";
+import { hostId } from "../memory/host-ids.mjs";
+import { runMemoryMaintenance } from "../memory/maintenance.mjs";
 import { renderDetailed, renderFacts, renderLearnings, renderProfile, renderTimeline } from "./render.mjs";
 
 export const UNBOUND_TEXT = "This memory server isn't bound to a project (the host didn't say which folder is open), so it shows nothing. Open a project folder, or pass --project.";
@@ -60,6 +65,17 @@ const VERSION = (() => {
   }
 })();
 const serverInfo = { name: "agent-daemon-memory", version: VERSION };
+
+// --capture: auto (default; the record tools defer to live hooks), tools, hooks or off.
+const CAPTURE = (() => {
+  const v = argValue("--capture");
+  if (v === undefined) return "auto";
+  if (CAPTURE_MODES.includes(v)) return v;
+  process.stderr.write(`[agent-daemon memory] ignoring --capture ${v} (auto, tools, hooks, off)\n`);
+  return "auto";
+})();
+const HOST = hostId(argValue("--host"));
+const RECORDERS = { memory_record_correction: "correction", memory_record_learning: "learning" };
 
 // The in-flight promise is cached, so concurrent first calls resolve once.
 let SCOPE_PROMISE = null;
@@ -85,10 +101,15 @@ async function bindScope() {
 }
 // Bind at start (one scope per process), not on the first tool call.
 memoryScope().catch((e) => process.stderr.write(`[agent-daemon memory] scope: ${e.message}\n`));
+// A long-lived process: the one-time memory upkeep runs here, never in a hook.
+// It is synchronous: a short budget, after the first requests (the rest next start).
+setTimeout(() => runMemoryMaintenance({ budgetMs: 1000 }).catch(() => {}), 2000).unref();
 
 let SERVICE = null;
 async function callTool(name, args) {
   const s = await memoryScope();
+  // Record tools: memory/capture.mjs decides (an unbound server records nothing).
+  if (RECORDERS[name]) return (await captureExplicit({ kind: RECORDERS[name], fields: args, scope: s, host: HOST, mode: CAPTURE })).message;
   if (name === "memory_stats" && s.kind !== "project" && s.kind !== "cross-project") return `scope: ${s.kind}${s.kind === "unbound" ? " (no project signal)" : ""}`;
   if (s.kind === "collision") return COLLISION_TEXT;
   if (s.kind !== "project" && s.kind !== "cross-project") return UNBOUND_TEXT;
@@ -133,7 +154,8 @@ async function callTool(name, args) {
 /* ------------------------------------------------------------------ */
 
 const session = createSession();
-const ctx = { serverInfo, instructions: INSTRUCTIONS, listTools: () => TOOLS, callTool };
+const LISTED = toolsFor(CAPTURE);
+const ctx = { serverInfo, instructions: INSTRUCTIONS, listTools: () => LISTED, callTool };
 const pending = new Set();
 const rl = readline.createInterface({ input: process.stdin, terminal: false });
 

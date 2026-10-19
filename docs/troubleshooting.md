@@ -708,6 +708,32 @@ For "The engine reported a problem", inspect those details first. `ad doctor` sh
 
 See [harness.md](harness.md#working-in-your-home-folder).
 
+## 49. The record tool says "This host's hooks already capture corrections; nothing extra saved."
+
+**Cause:** the memory server runs with `--capture auto` (the default), and this host's ad hooks ran in this project in the last 30 minutes. The hooks already capture what you type, so the record tools don't save a second copy of the agent's version.
+
+**Fix:** nothing to do: the prompt hook has the correction. To record through the tools anyway (for example in a host whose hooks capture nothing), start the server with `--capture tools`.
+
+## 50. `Not saved: that looks like it contains a secret (…)`
+
+**Cause:** the text the agent tried to record holds something shaped like a key, token, password or `user:pass@` URL. A memory note is never the place for one, so nothing was stored.
+
+**Fix:** tell the agent the lesson without the secret ("the staging key is in the vault under `staging/api`", not the key itself). If it isn't a secret at all, say the lesson in your own words: the prompt hook redacts only the secret-shaped part.
+
+## 51. My note isn't used yet
+
+**Symptom:** the agent said `Saved for review: …`, and the next session doesn't know it.
+
+**Cause:** a note the agent recorded is **pending** until you accept it: only this project's `memory_search` and `memory_get` show it, marked `(unreviewed)`. A note it asked to make cross-project also waits for a second OK.
+
+**Fix:** run `ad review` in your own terminal and accept it (type `accept`), or `ad review --accept <file>` / `--accept-all`. Saying the same note yourself also accepts it.
+
+## 52. `ad review: accepting notes can't run from the agent's own shell` or `… needs an interactive terminal`
+
+**Cause:** accepting a memory note changes what reaches your sessions, so only you can do it. `ad review` (and `ad memory promote`, `ad memory held accept`) refuse inside ad's engine tool shells and when stdin or stdout isn't a terminal; there is no `--yes` and no environment variable that skips it.
+
+**Fix:** run it yourself in a terminal window (not through the agent, not piped). Listing works anywhere: plain `ad review` without a terminal lists what is queued.
+
 ---
 
 For harness problems, the [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill walks through login → hooks → sandbox → the engine's own log. See also [harness.md](harness.md) and, for the terminal UI, [tui.md](tui.md).

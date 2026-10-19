@@ -36,13 +36,14 @@ export function createMemoryService({ scope, maxResults = 5, maxTimeline = 50, m
   if (scope?.kind !== "project" && scope?.kind !== "cross-project") throw new Error("the memory service needs a project scope");
   const projectKeys = scope.kind === "cross-project" ? null : scope.keys;
   return {
-    search: ({ query, scope: s, limit } = {}) => searchLearnings(String(query ?? ""), { projectKeys, scope: scopeArg(s), limit: clampLimit(limit, maxResults) }),
+    // The pull tools (search, get) also see this project's pending notes, labelled unreviewed.
+    search: ({ query, scope: s, limit } = {}) => searchLearnings(String(query ?? ""), { projectKeys, scope: scopeArg(s), limit: clampLimit(limit, maxResults), includePending: true }),
     recent: ({ limit } = {}) => listRecentLearnings({ projectKeys, limit: clampLimit(limit, maxResults) }),
     files: ({ path, scope: s, limit } = {}) => searchLearningsByFile(String(path ?? ""), { projectKeys, scope: scopeArg(s), limit: clampLimit(limit, maxResults) }),
     timeline: ({ id, limit } = {}) => (Number.isInteger(id) && id > 0 ? learningTimeline(id, { limit: clampLimit(limit, maxTimeline, 10), projectKeys }) : null),
     /** Reading a learning in full counts it as retrieved (ranking signal). */
     async get({ ids: list } = {}) {
-      const rows = await getLearningsByIds(ids(list, maxIds), { projectKeys });
+      const rows = await getLearningsByIds(ids(list, maxIds), { projectKeys, includePending: true });
       if (rows.length) {
         try {
           await markRetrieved(rows.map((r) => r.id));

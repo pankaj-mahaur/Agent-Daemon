@@ -14,6 +14,7 @@ import { applyLearnings } from "./apply.mjs";
 import { upsertSession, findSkillsNeedingEvolution } from "../memory/episodic.mjs";
 import { appendSessionLog, buildEntry as buildSessionLogEntry } from "./session-log.mjs";
 import { patchPaths } from "../hooks/io.mjs";
+import { projectDataDir } from "../memory/project-dir.mjs";
 
 // File-bearing tools — their inputs name the files in play during the session.
 const FILE_TOOLS = new Set(["Edit", "Write", "NotebookEdit", "MultiEdit", "Read"]);
@@ -342,7 +343,7 @@ async function loadEvolveConfig() {
 }
 
 async function writeFailureReport(opts, summary, t, extractResult) {
-  const reportDir = path.join(opts.cwd, ".agent-daemon", "logs");
+  const reportDir = path.join(projectDataDir(opts.cwd), "logs");
   await fs.mkdir(reportDir, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const reportPath = path.join(reportDir, `digest-failure-${stamp}.md`);

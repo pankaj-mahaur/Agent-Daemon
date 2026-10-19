@@ -151,7 +151,7 @@ export async function evolveSkill(opts) {
     return { runId, skillName: opts.skillName, scored, winners, proposalPath: null, status: "proposed", reason: "[dry-run] no proposal written", totalCostUsd: totalCost };
   }
 
-  const proposedDir = opts.proposedDir || path.join(process.cwd(), ".agent-daemon", "proposed");
+  const proposedDir = opts.proposedDir || path.join((await import("../../memory/project-dir.mjs")).projectDataDir(process.cwd()), "proposed");
   await fs.mkdir(proposedDir, { recursive: true });
   const proposalPath = path.join(proposedDir, `skill-${opts.skillName}-${runId}.md`);
 

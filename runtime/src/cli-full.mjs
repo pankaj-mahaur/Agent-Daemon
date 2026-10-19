@@ -75,6 +75,8 @@ Commands:
                          --plan               print actions without applying
   status                 Show queued proposals (skill diffs, constitution rule additions)
   review                 Interactively accept/reject queued proposals
+                         --accept <file> / --accept-all   accept memory proposals (asks you to type it)
+                         --global             notes from older versions that apply in every project
   query-retrieve         Extract keywords from user prompt and inject relevant past learnings (UserPromptSubmit hook)
   memory stats           Episodic store row counts + retrieval telemetry (truncation rate, injected bytes)
   memory scan            Check older memory notes once: hold back rows with a provider key or an injection
@@ -945,7 +947,8 @@ async function countTemplates(dir) {
 }
 
 async function cmdStatus({ cwd = process.cwd() }) {
-  const proposed = path.join(cwd, ".agent-daemon", "proposed");
+  const { projectDataDir } = await import("./memory/project-dir.mjs");
+  const proposed = path.join(projectDataDir(cwd), "proposed");
   try {
     const entries = await fs.readdir(proposed);
     const diffs = entries.filter(e => e.endsWith(".diff") || e.endsWith(".md"));
@@ -1167,6 +1170,8 @@ async function cmdDoctor({ cwd = process.cwd(), tokens, limit, model } = {}) {
       const { heldNotes } = await import("./memory/held.mjs");
       const { db, projectSlug } = await import("./memory/episodic.mjs");
       await runSafetyScanOnce();
+      // The one-time memory upkeep (P5.2): long-lived commands run it, hooks never do.
+      await (await import("./memory/maintenance.mjs")).runMemoryMaintenance();
       const handle = await db();
       if (handle) {
         const held = heldNotes(handle, [projectSlug(cwd)]).length;
@@ -1188,6 +1193,18 @@ async function cmdDoctor({ cwd = process.cwd(), tokens, limit, model } = {}) {
     });
   } catch {
     checks.push({ name: "Project memory bootstrap", ok: false, note: "missing .agent-daemon/memory — run ad init" });
+  }
+
+  // A project's own .agent-daemon in a git repo needs its ignore file, or capture
+  // files (the learning journal, proposals) could be committed (P5.2).
+  {
+    const own = path.join(cwd, ".agent-daemon");
+    const inGit = await fs.access(path.join(cwd, ".git")).then(() => true, () => false);
+    const hasOwn = await fs.access(own).then(() => true, () => false);
+    if (inGit && hasOwn) {
+      const ignored = await fs.access(path.join(own, ".gitignore")).then(() => true, () => false);
+      checks.push({ name: "Capture files ignored", ok: ignored, note: ignored ? ".agent-daemon/.gitignore keeps the journal and proposals out of git" : ".agent-daemon/.gitignore is missing: ad writes it on the next capture, or add learning-journal*.jsonl, *.draining-*.jsonl, proposed/ and applied/ to it" });
+    }
   }
 
   if (skillExecutionCount !== null) {
@@ -1593,6 +1610,37 @@ async function cmdMemory(sub, opts) {
         },
       };
       return memoryHeld(action, { ref, keys, handle, json: opts.json, io });
+    }
+    case "promote": {
+      // A user fact made cross-project: only from your own terminal, typed.
+      const ep = await import("./memory/episodic.mjs");
+      const { promoteFact } = await import("./review.mjs");
+      const handle = await ep.db();
+      if (!handle) {
+        console.error("agent-daemon: better-sqlite3 not installed — no episodic store");
+        return 1;
+      }
+      const readline = await import("node:readline/promises");
+      const io = {
+        ask: async (q) => {
+          const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+          try { return await rl.question(q); } finally { rl.close(); }
+        },
+      };
+      return promoteFact({ ref: opts.rest?.[0], handle, io });
+    }
+    case "migrate": {
+      // The one-time upkeep after an upgrade (note keys, the journal secret scrub),
+      // all of it now. ad also runs it from long-lived commands; hooks never do.
+      const { runMemoryMaintenance } = await import("./memory/maintenance.mjs");
+      const r = await runMemoryMaintenance({ budgetMs: 10 * 60 * 1000 });
+      if (!r) {
+        console.error("agent-daemon: the memory store is unavailable (run ad doctor)");
+        return 1;
+      }
+      if (opts.outputJson || opts.json) console.log(JSON.stringify(r));
+      else console.log(Object.keys(r).length ? `Memory upkeep: ${Object.entries(r).map(([k, v]) => `${k} ${JSON.stringify(v)}`).join("; ")}` : "Memory upkeep: nothing left to do.");
+      return 0;
     }
     case "scan": {
       // One-time check of notes stored before the secret filter (runs once;
@@ -2339,7 +2387,10 @@ async function main(argv) {
         "accept-risk":    { type: "boolean" },
         port:             { type: "string" },
         edits:            { type: "boolean" },
-        "allow-home-folder": { type: "boolean" }
+        "allow-home-folder": { type: "boolean" },
+        accept:           { type: "string" },
+        "accept-all":     { type: "boolean" },
+        global:           { type: "boolean" }
       },
       allowPositionals: true,
       strict: false
@@ -2393,7 +2444,7 @@ async function main(argv) {
     case "checkpoint":     return cmdCheckpoint(opts);
     case "init":           return cmdInit({ ...opts, profile: parsed.values.profile, plan: parsed.values.plan, skillsMode: parsed.values["skills-mode"] });
     case "status":         return cmdStatus(opts);
-    case "review":         return cmdReview(opts);
+    case "review":         return cmdReview({ ...opts, accept: parsed.values.accept, acceptAll: parsed.values["accept-all"] || false, global: parsed.values.global || false, yes: parsed.values.yes || false });
     case "watch":          return cmdWatch({ ...opts, logFile: parsed.values["log-file"] });
     case "query-retrieve": return cmdQueryRetrieve(opts);
     case "memory":         return cmdMemory(parsed.positionals?.[0], {
@@ -2483,6 +2534,7 @@ async function main(argv) {
       if (!parsed.values.preview) {
         // The one-time check of older memory notes (never from a hook).
         await (await import("./memory/safety.mjs")).runSafetyScanOnce();
+        await (await import("./memory/maintenance.mjs")).runMemoryMaintenance();
         const { cmdTui } = await import("./tui/main.mjs");
         return cmdTui({
           cwd: parsed.values.cwd || process.cwd(),
@@ -2610,7 +2662,7 @@ async function cmdEvolve(opts) {
     skillName: opts.skillName,
     dryRun: opts.dryRun,
     verbose: opts.verbose,
-    proposedDir: path.join(opts.cwd, ".agent-daemon", "proposed")
+    proposedDir: path.join((await import("./memory/project-dir.mjs")).projectDataDir(opts.cwd), "proposed")
   });
 
   // Auth-fallback messaging: if GEPA failed because of missing auth, surface

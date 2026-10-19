@@ -197,6 +197,8 @@ export function toLearning(e) {
     ...(e.source_speaker === "user" || e.source_speaker === "agent" ? { source_speaker: e.source_speaker } : {}),
     scope: e.scope === "global" ? "global" : "project",
     confidence: typeof e.confidence === "number" ? Math.max(0, Math.min(1, e.confidence)) : 0.5,
-    tags: Array.isArray(e.tags) ? e.tags.slice(0, 12) : []
+    tags: Array.isArray(e.tags) ? e.tags.slice(0, 12) : [],
+    // The host's session id: deduplication only (P5.2), never a foreign key.
+    ...(typeof e.sessionId === "string" && e.sessionId ? { capture_ref: e.sessionId.slice(0, 128) } : {})
   };
 }

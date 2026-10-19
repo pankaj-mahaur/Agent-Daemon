@@ -40,6 +40,7 @@ import { harnessIdentity, skillRoots } from "../harness/setup.mjs";
 import { setSyntaxTheme } from "./view/highlight.mjs";
 import { homeFolderAllowed, recentProjects } from "../harness/home-folder.mjs";
 import { launcherItems, LAUNCHER_TITLE } from "./home-launcher.mjs";
+import { projectDataDir } from "../memory/project-dir.mjs";
 import { homeFolderRefusal, homeLauncherWhy, homeTrustSkippedNote } from "../engine/attribution.mjs";
 
 /* ------------------------------------------------------------------ */
@@ -227,7 +228,7 @@ export async function sinceLastTime({ cwd, since = 0, home } = {}) {
     // no schedules
   }
   try {
-    const dir = path.join(cwd, ".agent-daemon", "proposed");
+    const dir = path.join(projectDataDir(cwd), "proposed");
     const n = existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".md")).length : 0;
     if (n) parts.push(`${n} skill proposal${n === 1 ? "" : "s"} to review (/ad review)`);
   } catch {

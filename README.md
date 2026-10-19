@@ -405,6 +405,7 @@ Mid-session recall is pull-based too — an **MCP memory server** (read-only exc
 - **Detail:** `memory_get(ids)` — full text + evidence + provenance + derivation tier for the few ids you keep (write-back marks them retrieved)
 - **Profile:** `memory_profile()` — a deterministic "how this user works" rollup (identity / prefers / tools / conventions / watch-out)
 - Plus `memory_stats`, `user_facts_list`, and `memory_feedback`. Index tools cap at 5 results / 4 KB; `memory_get` at 8 KB.
+- **Record (hosts without hooks):** `memory_record_correction` and `memory_record_learning` save what the user just taught the agent **for your review**: pending until you accept it in `ad review`, never reinforced by repetition, never global by itself.
 
 ```bash
 claude mcp add agent-daemon-memory -- node /path/to/Agent-Daemon/runtime/src/mcp/memory-server.mjs --host claude-code
@@ -488,7 +489,9 @@ ad service status
 ad evolve <skill>                      # GEPA self-evolution run for a skill (needs auth)
                                        #   --list-candidates [--json]  list skills with ≥3 failures in 30d (no auth)
                                        #   --export-traces             export JSONL traces for inline GEPA (no auth)
-ad review                              # Accept/reject queued skill proposals
+ad review                              # Accept/reject queued proposals (skills, and notes an agent recorded)
+                                       #   --accept <file> | --accept-all   accept memory proposals (you type the confirmation)
+                                       #   --global           older "global" notes: every project, or only their own
 ad init                                # Scaffold .agent-daemon/ + AD-INSTRUCTIONS.md in project
                                        #   --profile <name>     minimal | developer (default) | security
                                        #   --skills-mode <m>    smart (default — stack-detect) | all | minimal | manual
@@ -500,6 +503,8 @@ ad query-retrieve                      # Keyword extraction + learning injection
 ad memory stats                        # Row counts + retrieval telemetry (truncation rate, bytes)
 ad memory scan                         # Check older notes once: hold back rows holding a key or an injection
 ad memory held                         # Notes memory keeps back; accept|release|drop <id> from your own terminal
+ad memory promote fact:<id>            # Make a user fact apply in every project (your own terminal, typed)
+ad memory migrate                      # Run the one-time upkeep now (note keys, journal secret scrub)
 ad memory consolidate                  # Evolution pass: near-dup merges, stale archive, contradictions
                                        #   proposals only — --apply-merges / --apply-stale execute
                                        #   --all-projects     span every project (default: --cwd only)

@@ -87,7 +87,7 @@ export async function analyzeRouting({ days = 30 } = {}) {
  */
 export async function writeRoutingProposal(analysis, { cwd, days, dryRun }) {
   if (analysis.findings.length === 0) return null;
-  const proposedDir = path.join(cwd, ".agent-daemon", "proposed");
+  const proposedDir = path.join((await import("../../memory/project-dir.mjs")).projectDataDir(cwd), "proposed");
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const p = path.join(proposedDir, `routing-edit-${stamp}.md`);
 
