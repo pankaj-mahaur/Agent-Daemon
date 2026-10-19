@@ -972,31 +972,22 @@ async function countTemplates(dir) {
 }
 
 async function cmdStatus({ cwd = process.cwd() }) {
-  const { projectDataDir } = await import("./memory/project-dir.mjs");
-  const proposed = path.join(projectDataDir(cwd), "proposed");
-  try {
-    const entries = await fs.readdir(proposed);
-    const diffs = entries.filter(e => e.endsWith(".diff") || e.endsWith(".md"));
-    if (diffs.length === 0) {
-      console.log("No queued proposals.");
-      return 0;
-    }
-    console.log(`${diffs.length} queued proposal(s):`);
-    for (const d of diffs) {
-      const stat = await fs.stat(path.join(proposed, d));
-      console.log(`  ${d}  (${stat.size} bytes, ${stat.mtime.toISOString()})`);
-    }
-    console.log("\nReview with: agent-daemon review");
+  // The same queues ad review reads: this project's and ad's global folder.
+  const { listProposals } = await import("./review.mjs");
+  const entries = await listProposals(cwd);
+  if (entries.length === 0) {
+    console.log("No queued proposals.");
     await printHeldLine(cwd);
     return 0;
-  } catch (err) {
-    if (err.code === "ENOENT") {
-      console.log("No queued proposals.");
-      await printHeldLine(cwd);
-      return 0;
-    }
-    throw err;
   }
+  console.log(`${entries.length} queued proposal(s):`);
+  for (const e of entries) {
+    const stat = await fs.stat(e.file);
+    console.log(`  ${e.name}  (${stat.size} bytes, ${stat.mtime.toISOString()})`);
+  }
+  console.log("\nReview with: ad review");
+  await printHeldLine(cwd);
+  return 0;
 }
 
 // "<n> memory notes are waiting or held back. Review: ad memory held" (ad status).
@@ -1526,7 +1517,9 @@ async function cmdSkill(sub, opts) {
       return 0;
     }
     default:
-      console.error(`agent-daemon skill: unknown subcommand "${sub || ""}" (use install | list | remove | search)`);
+      // The skill library (P5.7): propose | history | diff | undo | publish.
+      if (["propose", "history", "diff", "undo", "publish"].includes(sub)) return (await import("./skills/cli.mjs")).runSkillCommand(sub, { ...opts, name: opts.spec });
+      console.error(`agent-daemon skill: unknown subcommand "${sub || ""}" (use install | list | remove | search | propose | history | diff | undo | publish)`);
       return 1;
   }
 }
@@ -2421,7 +2414,16 @@ async function main(argv) {
         accept:           { type: "string" },
         "accept-all":     { type: "boolean" },
         global:           { type: "boolean" },
-        share:            { type: "boolean" }
+        share:            { type: "boolean" },
+        reject:           { type: "string" },
+        list:             { type: "boolean" },
+        to:               { type: "string" },
+        from:             { type: "string" },
+        bundled:          { type: "boolean" },
+        file:             { type: "string" },
+        origin:           { type: "string" },
+        replace:          { type: "boolean" },
+        remove:           { type: "boolean" }
       },
       allowPositionals: true,
       strict: false
@@ -2475,7 +2477,7 @@ async function main(argv) {
     case "checkpoint":     return cmdCheckpoint(opts);
     case "init":           return cmdInit({ ...opts, profile: parsed.values.profile, plan: parsed.values.plan, skillsMode: parsed.values["skills-mode"] });
     case "status":         return cmdStatus(opts);
-    case "review":         return cmdReview({ ...opts, accept: parsed.values.accept, acceptAll: parsed.values["accept-all"] || false, global: parsed.values.global || false, yes: parsed.values.yes || false });
+    case "review":         return cmdReview({ ...opts, accept: parsed.values.accept, acceptAll: parsed.values["accept-all"] || false, global: parsed.values.global || false, yes: parsed.values.yes || false, reject: parsed.values.reject, list: parsed.values.list || false });
     case "watch":          return cmdWatch({ ...opts, logFile: parsed.values["log-file"] });
     case "query-retrieve": return cmdQueryRetrieve(opts);
     case "memory":
@@ -2501,7 +2503,17 @@ async function main(argv) {
       project: parsed.values.project || false,
       available: parsed.values.available || false,
       skill: parsed.values.skill,
-      json: parsed.values.json
+      json: parsed.values.json,
+      to: parsed.values.to,
+      from: parsed.values.from,
+      bundled: parsed.values.bundled || false,
+      file: parsed.values.file,
+      origin: parsed.values.origin,
+      yes: parsed.values.yes || false,
+      host: parsed.values.host,
+      replace: parsed.values.replace || false,
+      remove: parsed.values.remove || false,
+      dryRun: parsed.values["dry-run"] || false
     });
     case "doctor":         return cmdDoctor({ ...opts, tokens: parsed.values.tokens, limit: parsed.values.limit, model: parsed.values.model });
     case "about": {
@@ -2688,13 +2700,23 @@ async function cmdEvolve(opts) {
     console.error("  --export-traces      export skill traces for inline evolution (no auth needed)");
     return 1;
   }
+  // Evolve the copy hosts load (the project's .claude/skills, else ~/.claude/skills,
+  // else the bundled source): the proposal's checksum is that file's, so ad review
+  // applies it there (P5.7).
   const skillsSrc = path.join(opts.projectRoot, "skills");
-  const skillDir = await resolveSkillSource(skillsSrc, opts.skillName);
-  if (!skillDir) {
-    console.error(`agent-daemon evolve: no such skill "${opts.skillName}" under ${skillsSrc}`);
+  const bundledDir = await resolveSkillSource(skillsSrc, opts.skillName);
+  const { loadedCopy } = await import("./skills/library.mjs");
+  const { isSkillName } = await import("./skills/proposal.mjs");
+  if (!isSkillName(opts.skillName)) {
+    console.error(`agent-daemon evolve: "${opts.skillName}" isn't a skill name (kebab-case)`);
     return 1;
   }
-  const skillPath = path.join(skillDir, "SKILL.md");
+  const loaded = loadedCopy(opts.skillName, { cwd: opts.cwd, bundled: new Map(bundledDir ? [[opts.skillName, bundledDir]] : []) });
+  if (!loaded) {
+    console.error(`agent-daemon evolve: no such skill "${opts.skillName}" (not installed, not under ${skillsSrc})`);
+    return 1;
+  }
+  const skillPath = path.join(loaded.dir, "SKILL.md");
 
   const result = await evolveSkill({
     skillPath,

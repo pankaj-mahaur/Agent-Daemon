@@ -754,6 +754,18 @@ See [harness.md](harness.md#working-in-your-home-folder).
 
 **Fix:** `install --host claude-code --capture hooks` (or `repair`). With the default `auto`, the record tools stand down while the hooks are capturing.
 
+## 56. `ad skill publish` says a folder "was changed outside ad, so it wasn't overwritten"
+
+**Cause:** the skill's folder in that host (for example `~/.codex/skills/<name>`) has no `.ad-skill.json` from ad, or its SKILL.md changed since ad wrote it. ad never overwrites a folder it doesn't own.
+
+**Fix:** keep your version, or replace it with the accepted one: `ad skill publish <name> --host <id> --replace`. The old folder is backed up to `~/.agent-daemon/memory/backups/<host>/` first.
+
+## 57. `ad review` says a proposal is "in an old format ad can't apply"
+
+**Cause:** the proposal was written before skill proposals had a format ad can check (or by hand).
+
+**Fix:** apply the change to the SKILL.md yourself, then accept to file it; or reject it and run `/evolve` again, which now queues through `ad skill propose`. A file that says it is damaged (its checksum doesn't match) was changed after it was written: reject it.
+
 ---
 
 For harness problems, the [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill walks through login → hooks → sandbox → the engine's own log. See also [harness.md](harness.md) and, for the terminal UI, [tui.md](tui.md).

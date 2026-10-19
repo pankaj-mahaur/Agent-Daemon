@@ -492,6 +492,8 @@ ad evolve <skill>                      # GEPA self-evolution run for a skill (ne
                                        #   --list-candidates [--json]  list skills with ≥3 failures in 30d (no auth)
                                        #   --export-traces             export JSONL traces for inline GEPA (no auth)
 ad review                              # Accept/reject queued proposals (skills, and notes an agent recorded)
+                                       #   skill changes show as a diff; a typed accept applies them
+                                       #   --list, --reject <file> (both work without a terminal)
                                        #   --accept <file> | --accept-all   accept memory proposals (you type the confirmation)
                                        #   --global           older "global" notes: every project, or only their own
 ad init                                # Scaffold .agent-daemon/ + AD-INSTRUCTIONS.md in project
@@ -525,6 +527,12 @@ ad skill install <name|path|git-url>   # Lint-gated install with provenance mani
 ad skill list [--available] [--json]   # Installed skills (both lanes) with provenance
 ad skill remove <name> [--force]       # Manifest-aware removal
 ad skill search <query>                # Search the bundled catalog
+ad skill propose <name> --file <path>  # Queue a SKILL.md change for ad review (applies nothing)
+ad skill history <name>                # Every accepted version, with where it came from
+ad skill diff <name> [--from a --to b] [--bundled]   # Between versions, or against this release
+ad skill undo <name> [--to n]          # An older version becomes current (typed confirmation)
+ad skill publish [<name>] [--host <id>] [--replace] [--dry-run]   # Write accepted skills to the hosts
+                                       #   --host agents --remove: stop the opt-in ~/.agents/skills copy
 ad route stats [--days N] [--json]     # Advice effectiveness: advised/followed/diverged/ignored
 ad route rebuild                       # Recompile route maps from installed skills
 ad route show                          # Print the merged compiled route map

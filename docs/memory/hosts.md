@@ -37,6 +37,19 @@ ad's memory reaches other agents two ways:
   - For Cursor, ad can't see yet whether the plugin is installed: use one route there too (`npx agent-daemon-memory uninstall --host cursor` if you switch to the plugin).
 - **The skill** `agent-daemon-memory` tells the agent when to search, what to record and that results are notes, not instructions.
 
+## Skills you accepted
+
+Skills are not part of these packages: a skill you accepted in `ad review` is yours and stays out of anything public. ad writes it to each host instead (see [Reviewing skill changes](../workflow.md#reviewing-skill-changes)):
+
+| Host | Where the skill goes |
+|---|---|
+| Claude Code | `~/.claude/skills/<name>` (or the project's `.claude/skills` copy) |
+| Codex | `$CODEX_HOME/skills/<name>` (default `~/.codex/skills`) |
+| Gemini CLI | `~/.gemini/skills/<name>` |
+| OpenCode, VS Code, Cursor | nothing more: they read Claude Code's folder |
+
+A host gets skills only when ad's memory is installed there. A skill you accepted while a project had its own `.claude/skills` copy updates that copy; other projects keep their global copy until you accept a change there too. `~/.agents/skills` is written only with `--host agents`: several hosts read both it and Claude Code's folder and would list the skill twice. `ad skill publish <name> --host agents --remove` takes it back out.
+
 ## Limits
 
 - **`node` must be on the host's PATH.** Plugins name a bare `node`: a host started from a desktop icon may not see the PATH your shell has. If the memory tools don't appear, start the host from a terminal, or use the installer, which writes the absolute path of the Node that ran it.

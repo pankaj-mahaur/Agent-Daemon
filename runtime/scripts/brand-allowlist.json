@@ -471,6 +471,32 @@
       "rules": ["A"],
       "match": "\"Codex\"",
       "reason": "the claims rule's list of host names that listing templates may not name by hand"
+    },
+    {
+      "path": "runtime/src/hosts/skill-formats.mjs",
+      "rules": ["A"],
+      "reason": "P5.7: the table of each host's user skill folder names each host and its folder (CODEX_HOME, ~/.codex/skills) by design, like memory-install/hosts.mjs"
+    },
+    {
+      "path": "runtime/src/skills/publish.mjs",
+      "rules": ["A", "C"],
+      "reason": "P5.7: the messages that tell the user which hosts got an accepted skill name those hosts"
+    },
+    {
+      "path": "runtime/test/skill-publish.test.mjs",
+      "rules": ["A"],
+      "reason": "P5.7: tests that a skill reaches each host's own folder in a temp home"
+    },
+    {
+      "path": "runtime/test/skills-cross-host.test.mjs",
+      "rules": ["A"],
+      "reason": "P5.7: the cross-host test checks each host's folder in a temp home"
+    },
+    {
+      "path": "docs/memory/hosts.md",
+      "rules": ["A"],
+      "match": "\\| Codex \\| `\\$CODEX_HOME/skills/<name>` \\(default `~/\\.codex/skills`\\) \\|",
+      "reason": "P5.7: the row saying where an accepted skill goes in the user's own Codex CLI (its folder and CODEX_HOME)"
     }
   ]
 }

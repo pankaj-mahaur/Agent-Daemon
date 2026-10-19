@@ -239,6 +239,27 @@ ad status        # list queued proposals
 ad review        # interactive accept / reject
 ```
 
+## Reviewing skill changes
+
+Skill changes come from three places: `ad evolve <skill>`, `/evolve` in a session (it queues its result with `ad skill propose`), and the digest, which proposes a lesson for a skill it recognised. None of them changes a skill: each queues a proposal.
+
+`ad review` shows a skill proposal as a diff against the SKILL.md your sessions load today (the project's `.claude/skills` copy, else `~/.claude/skills`, else the bundled one). Type `accept` to apply it:
+- it becomes a new version in `~/.agent-daemon/skills/<name>/` (the first accept also keeps the version before it);
+- it is written to the copy Claude Code loads (ad's engine follows it), and to every other agent ad's memory is installed in ([which folder each gets](memory/hosts.md#skills-you-accepted)) (`ad skill publish`). OpenCode, VS Code and Cursor read Claude Code's folder, so they get it too;
+- the proposal moves to `applied/`.
+
+A rejected proposal moves to `rejected/`. When the skill changed since the proposal was made, review says so and asks before applying. A lesson that names no skill asks which skill it belongs to.
+
+Accepting and `ad skill undo` need you at a real terminal: both refuse inside an agent's own shell and without a terminal, and there is no `--yes`.
+
+```sh
+ad skill history debug-triage      # every version, with where it came from
+ad skill diff debug-triage         # the last change
+ad skill undo debug-triage         # the previous version becomes current (as a new version)
+```
+
+`ad init` keeps a skill you accepted a change to, even after an upgrade ships a newer one: it says so, and `ad skill diff <name> --bundled` compares the two.
+
 ## Compacting project memory
 
 `.agent-daemon/memory/activeContext.md` grows as digests append to it. SessionStart injects at most about 4 KB of memory, so `ad doctor` flags "Session context budget" when the file passes 4,100 bytes. When it does:

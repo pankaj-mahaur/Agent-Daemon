@@ -409,6 +409,8 @@ export async function uninstall(opts = {}) {
     const rec = ledger.hosts[id];
     try {
       const msg = rec.driver === "cli" ? await removeCli(ctx, rec) : await removeFile(ctx, host, rec);
+      // Skill folders ad published there (P5.7), when nobody changed them.
+      for (const line of (await import("../skills/publish.mjs")).removePublishedSkills(rec)) out(`· ${host.name}: ${line}`);
       delete ledger.hosts[id];
       await writeLedger(ctx.root, ledger);
       out(`✓ ${host.name}: ${msg}`);

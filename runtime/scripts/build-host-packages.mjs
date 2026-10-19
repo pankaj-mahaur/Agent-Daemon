@@ -32,6 +32,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { closure } from "./build-memory-package.mjs";
 import { renderAll } from "./render-copy.mjs";
+import { renderSkill } from "../src/hosts/skill-formats.mjs";
 
 const RUNTIME = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const REPO = path.resolve(RUNTIME, "..");
@@ -77,10 +78,15 @@ export function writeServer(dir, version) {
   return c.files.length + 3;
 }
 
+// The one public skill, from the repo's source only (never the user's skill library:
+// accepted skills are personal and stay out of public packages).
 function writeSkill(pluginDir) {
-  const dest = path.join(pluginDir, "skills", NAME, "SKILL.md");
-  fs.mkdirSync(path.dirname(dest), { recursive: true });
-  fs.copyFileSync(SKILL, dest);
+  const dest = path.join(pluginDir, "skills", NAME);
+  // SKILL.md only: nothing else in that folder (a local note) can reach a public package.
+  for (const f of renderSkill("claude-code", path.dirname(SKILL)).filter((x) => x.path === "SKILL.md")) {
+    fs.mkdirSync(path.dirname(path.join(dest, f.path)), { recursive: true });
+    fs.writeFileSync(path.join(dest, f.path), f.bytes);
+  }
 }
 
 function writeCommon(pluginDir, version) {

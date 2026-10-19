@@ -293,12 +293,14 @@ Agent-Daemon/                       # The cloned repo
 ├── tui/                            # Terminal UI: prompt history (0600), per-folder state
 ├── locks/                          # Conversation locks (one ad per conversation); a holder is judged by its process start time, so a reused pid is free at once and a suspended session keeps its lock
 ├── skill-manifest.json             # Provenance of skills installed with ad skill install
+├── skills/<name>/                  # Accepted skill versions: current/, versions/<n>/, meta.json (ad review, ad skill undo)
 ├── teams/                          # Team state + inboxes
 └── worktrees/                      # Worker git worktrees
 
 <project>/.agent-daemon/            # Per-project state (per-codebase)
 ├── memory/                         # Project memory markdown files
-├── proposed/                       # Queued diffs for review (ad status / ad review)
+├── proposed/                       # Queued proposals for review (ad status / ad review)
+├── applied/, rejected/             # Proposals after review, kept as a record
 ├── sessions.jsonl                  # Per-session audit ledger
 ├── loops/                          # ad loop iteration logs
 ├── loop-tui.log                    # Output of a /loop started from ad tui

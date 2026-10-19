@@ -694,3 +694,32 @@ test("P5.1: the 2026-07-28 path (feature + CODEX_MCP_PROTOCOL_VERSION): ad's mem
     await removeWithRetry(w.fakeHome);
   }
 });
+
+test("P5.7: after an accept in ad review's library, the engine's skills/list shows the accepted description", { skip, timeout: START_TIMEOUT_MS + 60_000 }, async () => {
+  const { renderSkillProposal, skillSha } = await import("../src/skills/proposal.mjs");
+  const { applySkillProposal } = await import("../src/skills/library.mjs");
+  const home = mkdtempSync(join(tmpdir(), "ad-real-skill-home-"));
+  const env = { AD_ROOT: join(home, ".agent-daemon") };
+  const skill = (d) => `---\nname: demo-skill\ndescription: Use when checking the real engine (${d}).\n---\n\n# Demo\n`;
+  try {
+    const installed = join(home, ".claude", "skills", "demo-skill");
+    mkdirSync(installed, { recursive: true });
+    const { writeFileSync } = await import("node:fs");
+    writeFileSync(join(installed, "SKILL.md"), skill("A"));
+    const work = join(home, "work");
+    mkdirSync(join(work, ".agent-daemon", "proposed"), { recursive: true });
+    const file = join(work, ".agent-daemon", "proposed", "skill-demo-skill-1.md");
+    writeFileSync(file, renderSkillProposal({ skill: "demo-skill", base: skillSha(skill("A")), body: skill("SENTINEL_ACCEPTED_B"), origin: "gepa", host: "claude-code" }));
+    const r = await applySkillProposal(file, { cwd: work, home, env, bundled: new Map() });
+    assert.equal(r.ok, true, r.text);
+    await withRealEngine(async ({ server, cwd }) => {
+      await server.request("skills/extraRoots/set", { extraRoots: [join(home, ".claude", "skills")] });
+      const listed = JSON.stringify(await server.request("skills/list", { cwds: [cwd] }));
+      assert.match(listed, /demo-skill/);
+      assert.match(listed, /SENTINEL_ACCEPTED_B/);
+      assert.doesNotMatch(listed, /checking the real engine \(A\)/);
+    });
+  } finally {
+    await removeWithRetry(home);
+  }
+});
