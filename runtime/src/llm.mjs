@@ -93,8 +93,12 @@ export function engineModelFor(model, env = process.env) {
 }
 
 async function callEngine(opts, { engineFactory } = {}) {
-  const [{ createEngine }, { providerEnv }] = await Promise.all([import("./engine/index.mjs"), import("./auth/providers.mjs")]);
-  const factory = engineFactory ?? ((o) => createEngine({ env: providerEnv(), ...o }));
+  const [{ createEngine }, { gatewayEngineOpts }] = await Promise.all([import("./engine/index.mjs"), import("./harness/gateway-runtime.mjs")]);
+  // API keys stay in ad's gateway (P3.3); P3.4's manager takes this over.
+  const factory = engineFactory ?? (async (o) => {
+    const gw = await gatewayEngineOpts({});
+    return createEngine({ env: gw.env, engineArgs: gw.args, ...o });
+  });
   let engine;
   try {
     engine = await factory({});

@@ -7,7 +7,7 @@ import { createEngine, engineVersion, engineErrorText, engineErrorDetail } from 
 import { envRenameNote, homeCliGraceNote, homeOverrideNote, homeTrustRemovedNote, LEGACY, migrateMessages } from "../engine/attribution.mjs";
 import { engineHome } from "../engine/index.mjs";
 import { homeFolderAllowed } from "./home-folder.mjs";
-import { providerEnv } from "../auth/providers.mjs";
+import { gatewayEngineOpts } from "./gateway-runtime.mjs";
 import { noteOnce } from "./notes.mjs";
 import { ensureHarnessSetup } from "./setup.mjs";
 import { needsWindowsSandbox, sandboxReadiness } from "./sandbox.mjs";
@@ -34,7 +34,9 @@ export async function startHarnessEngine({ cwd, home, command, clientVersion, st
   const v = engineVersion.check({ installed: engineVersion.installed().version });
   if (v.code === "untested") err.write(`[agent-daemon] the engine is version ${v.installed}; ad was tested with ${v.tested.join(", ")}. Run: cd runtime && npm install\n`);
   let allowed = homeFolderAllowed({ flag: allowHomeFolder, env: e }).allowed;
-  const engineOpts = { cwd, home, command, clientVersion, detached, engineArgs, experimental, interactive, env: { ...providerEnv(store), ...(env ?? {}) }, onApproval, allowHomeFolder: allowed };
+  // API keys stay in ad's gateway (P3.3): the engine gets a token and provider entries.
+  const gw = await gatewayEngineOpts({ home, store, env: e, err });
+  const engineOpts = { cwd, home, command, clientVersion, detached, engineArgs: [...(engineArgs ?? []), ...gw.args], experimental, interactive, env: { ...gw.env, ...(env ?? {}) }, onApproval, allowHomeFolder: allowed };
   let engine = await createEngine(engineOpts);
   let homeRisk = null;
   try {

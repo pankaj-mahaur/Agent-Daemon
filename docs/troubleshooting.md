@@ -766,6 +766,18 @@ See [harness.md](harness.md#working-in-your-home-folder).
 
 **Fix:** apply the change to the SKILL.md yourself, then accept to file it; or reject it and run `/evolve` again, which now queues through `ad skill propose`. A file that says it is damaged (its checksum doesn't match) was changed after it was written: reject it.
 
+## 58. "ad: couldn't reach <host>"
+
+**Cause:** ad's gateway couldn't connect to the provider: no network, a proxy it doesn't know about, or a certificate your company adds that Node doesn't trust.
+
+**Fix:** check the network first. Behind a proxy, set `HTTPS_PROXY` (and `NO_PROXY`) where you start ad; ad keeps `127.0.0.1` and `localhost` out of the proxy itself. A company certificate: point `NODE_EXTRA_CA_CERTS` at it (a `CODEX_CA_CERTIFICATE` you set for the engine is used too).
+
+## 59. "ad: the provider redirected; ad doesn't send keys across redirects"
+
+**Cause:** the provider's address answered with a redirect. ad never follows one with your key, since it could send the key somewhere else.
+
+**Fix:** use the address the provider documents (for a custom endpoint, the final URL with `/v1`), then sign in again with it.
+
 ---
 
 For harness problems, the [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill walks through login → hooks → sandbox → the engine's own log. See also [harness.md](harness.md) and, for the terminal UI, [tui.md](tui.md).

@@ -15,7 +15,6 @@ function isBrokenLink(p) {
 }
 import { homedir } from "node:os";
 import path from "node:path";
-import { providerEnv } from "../../auth/providers.mjs";
 import { CODEX_MISSING, resolveCodexCommand, withoutStoreAliases } from "./app-server.mjs";
 import { codexEnv, defaultCodexHome, ensureCodexHome, homeLayerRisk, riskUserHomes } from "./home.mjs";
 import { engineError } from "./errors.mjs";
@@ -118,7 +117,8 @@ export function runStockUi({ args = [], threadId = null, cwd = process.cwd(), ho
   } catch (err) {
     process.stderr.write(`[agent-daemon] skills not mirrored: ${err.message}\n`);
   }
-  const childEnv = withoutStoreAliases(codexEnv({ home, base: env, extra: providerEnv(store), cwd }));
+  // The maintainer-only engine UI gets no API accounts (P3.3): no key ever goes into an engine env.
+  const childEnv = withoutStoreAliases(codexEnv({ home, base: env, extra: {}, cwd }));
   // A lease while it runs, so `ad migrate` sees it like any engine (lock.mjs).
   let lease = null;
   try {

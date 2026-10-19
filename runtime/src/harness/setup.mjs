@@ -15,7 +15,6 @@ import { existsSync, readFileSync, realpathSync, renameSync, writeFileSync } fro
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { PROVIDER_ENV_KEYS } from "../auth/providers.mjs";
 import { identityBlock } from "../engine/attribution.mjs";
 import { engineDebugUi, engineHome, engineHooks, engineVersion, engineErrorText, engineErrorDetail } from "../engine/index.mjs";
 import { needsWindowsSandbox, setupWindowsSandbox } from "./sandbox.mjs";
@@ -183,7 +182,8 @@ export async function ensureHarnessSetup(engine, { cwd = process.cwd(), profile 
     if (current.default_tools_approval_mode == null || current.default_tools_approval_mode === "auto") {
       edits.push([`mcp_servers.${MEMORY_SERVER_ID}.default_tools_approval_mode`, "approve"]);
     }
-    for (const key of PROVIDER_ENV_KEYS) {
+    // Defence in depth (D05): the gateway token, and 3.0's key variable, never reach a tool shell.
+    for (const key of ["AD_GATEWAY_TOKEN", "OPENROUTER_API_KEY"]) {
       if (config.shell_environment_policy?.filters?.[key] !== "exclude") edits.push([`shell_environment_policy.filters.${key}`, "exclude"]);
     }
     // The agent-shell marker (security/agent-shell.mjs): every tool shell of

@@ -507,6 +507,12 @@
       "path": "runtime/test/skill-library.test.mjs",
       "rules": ["A"],
       "reason": "P5.7: a test that a failed write to a host's skill folder (Codex's, in a temp home) still files the proposal"
+    },
+    {
+      "path": "runtime/src/gateway/client.mjs",
+      "rules": ["A"],
+      "match": "env.CODEX_CA_CERTIFICATE",
+      "reason": "P3.3: the engine's own CA variable, which users already set; the gateway honours it so provider calls work behind the same company certificate"
     }
   ]
 }

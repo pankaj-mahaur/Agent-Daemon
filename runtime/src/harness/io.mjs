@@ -6,6 +6,7 @@ import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { systemTool } from "../safe-spawn.mjs";
+import { redact } from "../auth/redact.mjs";
 
 const READ_TIMEOUT_MS = 5 * 60_000;
 
@@ -105,7 +106,7 @@ function openWith(target, run) {
 
 /** "ad <cmd>: <ad's words>" and, for an engine error, "  details: <the engine's raw text>". */
 export function cliErrorLines(cmd, err) {
-  const lines = [`ad ${cmd}: ${isEngineError(err) ? engineErrorText(err, { details: null }) : err?.message ?? String(err)}`];
+  const lines = [`ad ${cmd}: ${isEngineError(err) ? engineErrorText(err, { details: null }) : redact(err?.message ?? String(err))}`];
   const raw = engineErrorDetail(err);
   if (raw) for (const l of String(raw).split("\n").slice(0, 8)) lines.push(`  details: ${l}`);
   return lines.join("\n") + "\n";

@@ -109,7 +109,8 @@ export async function repairAccounts(findings, { root = adRoot(), store, confirm
         store.delete(f.ref);
         break;
       case "legacy-unadopted":
-        await syncLegacyAccounts({ root, store, legacy: { account: null, config: {} }, now });
+        // The sign-in isn't known here: only the key is adopted.
+        await syncLegacyAccounts({ root, store, legacy: { account: undefined, config: {} }, now });
         break;
     }
     out.push({ kind: f.kind, done: true, text: f.text });

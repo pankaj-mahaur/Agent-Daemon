@@ -255,3 +255,91 @@ test("S-OAUTH: two browser logins from two processes: the second takes the port 
     await s2.request("account/login/cancel", { loginId: l2.loginId }).catch(() => {});
   });
 });
+
+// P3.3: the real gateway (gateway/client.mjs, a child process), not the prototype.
+async function withRealGateway(fn, { upstream, accountKey = KEY_A, entry = "ad-openrouter-aaaa1111" }) {
+  const { startGateway } = await import("../src/gateway/client.mjs");
+  const { engineProviderArgs, engineEnvFor } = await import("../src/gateway/table.mjs");
+  const table = new Map([[entry, { accountId: "acct-x", upstreamBase: upstream, mode: "passthrough", auth: { kind: "static-key", scheme: "bearer" }, headers: {}, strip: [], label: "OpenRouter", allowHttp: true, displayName: "OpenRouter · default" }]]);
+  const gw = await startGateway({ table, getKeys: async () => ({ "acct-x": accountKey }) });
+  const doc = { accounts: [{ id: "acct-x", migratedFrom: "3.0-openrouter", providerEntry: entry, label: "default" }] };
+  try {
+    await fn({ gw, args: engineProviderArgs(table, { gateway: gw, doc }), env: engineEnvFor({ gateway: gw, env: {} }) });
+  } finally {
+    await gw.close();
+  }
+}
+
+test("P3.3: a 3.0 conversation resumes through the real gateway's openrouter alias with the adopted key", { skip, timeout: TIMEOUT }, async () => {
+  const root = mkdtempSync(join(tmpdir(), "ad-real-gw30-"));
+  const home = join(root, "home");
+  const cwd = join(root, "work");
+  mkdirSync(cwd, { recursive: true });
+  const up = await startMockProvider({ personality: "openrouter", keys: [KEY_A] });
+  writeMockCodexHome(home, { url: up.url });
+  appendFileSync(join(home, "config.toml"), `\n[model_providers.openrouter]\nname = "OpenRouter"\nbase_url = "${up.url}"\nenv_key = "OPENROUTER_API_KEY"\nwire_api = "responses"\nrequest_max_retries = 0\nstream_max_retries = 0\nsupports_websockets = false\n`);
+  const start = async (env, args = []) => {
+    const notes = [];
+    const s = new CodexAppServer({ command: resolveCodexCommand({}), cwd, env: { CODEX_HOME: home, ...env }, clientVersion: "test", codexArgs: args, initTimeoutMs: 120_000 });
+    s.on("notification", (n) => notes.push(n));
+    await s.start();
+    s.turn = async (threadId, text) => {
+      const from = notes.length;
+      const done = new Promise((resolve, reject) => {
+        const t = setTimeout(() => reject(new Error("turn timeout")), 90_000);
+        const iv = setInterval(() => {
+          const c = notes.slice(from).find((n) => n.method === "turn/completed" && n.params?.threadId === threadId);
+          if (c) {
+            clearTimeout(t);
+            clearInterval(iv);
+            resolve(c);
+          }
+        }, 50);
+      });
+      await s.request("turn/start", { threadId, input: [{ type: "text", text }] });
+      return done;
+    };
+    return s;
+  };
+  try {
+    // ad 3.0: the key in the engine's environment.
+    let s = await start({ OPENROUTER_API_KEY: KEY_A });
+    const t = (await s.request("thread/start", { cwd, modelProvider: "openrouter" })).thread;
+    await s.turn(t.id, "PING from 3.0");
+    await s.close();
+    // ad now: no key in the engine; the alias through the gateway.
+    await withRealGateway(async ({ args, env, gw }) => {
+      s = await start(env, args);
+      try {
+        await s.request("thread/resume", { threadId: t.id });
+        const before = up.requests.length;
+        await s.turn(t.id, "PING after the upgrade");
+        assert.ok(up.requests.length > before, "the next turn reached the provider");
+        assert.equal(up.requests.at(-1).auth.matchesKey, 0, "with the adopted key, added by the gateway");
+        assert.ok(up.requests.at(-1).userTexts.join("|").includes("3.0"), "history kept");
+        assert.equal(gw.last("acct-x")?.status, 200);
+      } finally {
+        await s.close();
+      }
+    }, { upstream: up.url });
+  } finally {
+    await up.close();
+    rmSync(root, { recursive: true, force: true, maxRetries: 5 });
+  }
+});
+
+test("P3.3: an unreachable provider fails the turn with ad's message, no endless retry", { skip, timeout: TIMEOUT }, async () => {
+  const dead = (await import("node:http")).createServer();
+  await new Promise((r) => dead.listen(0, "127.0.0.1", r));
+  const port = dead.address().port;
+  await new Promise((r) => dead.close(r));
+  await withRealGateway(async ({ args, env }) => {
+    await withEngine(async ({ server, turn, cwd }) => {
+      const t = (await server.request("thread/start", { cwd, modelProvider: "ad-openrouter-aaaa1111" })).thread;
+      const t0 = Date.now();
+      const done = await turn(t.id, "PING nobody home");
+      assert.ok(Date.now() - t0 < 60_000, "bounded");
+      assert.equal(done.params?.turn?.status, "failed");
+    }, { args: [...args, "-c", "features.unbounded_connection_retries=false"], env });
+  }, { upstream: `http://127.0.0.1:${port}/v1` });
+});

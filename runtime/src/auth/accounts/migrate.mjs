@@ -18,10 +18,12 @@ import { newAccount, readRegistry, transact } from "./registry.mjs";
 
 /**
  * @param {{ root?: string, store: any, legacy: { account: any, config: any }, now?: Date }} o
- *   legacy.account: the default home's `account/read` result; legacy.config: its config
+ *   legacy.account: the default home's `account/read` result (undefined: not known yet, so
+ *   the sign-in rules are skipped, as before the engine starts); legacy.config: its config
  * @returns {Promise<{ created: number, updated: number }>}
  */
 export async function syncLegacyAccounts({ root = adRoot(), store, legacy: { account, config = {} } = {}, now = new Date() }) {
+  const accountKnown = account !== undefined;
   const signIn = account?.account ?? null;
   const hasOpenrouter = (() => {
     try {
@@ -59,7 +61,9 @@ export async function syncLegacyAccounts({ root = adRoot(), store, legacy: { acc
 
     // 1. The default home's sign-in.
     const home = find("3.0-default-home");
-    if (signIn) {
+    if (!accountKnown) {
+      // the engine hasn't said who is signed in yet: leave the sign-in record as it is
+    } else if (signIn) {
       const provider = signIn.type === "chatgpt" ? "chatgpt" : "openai";
       const method = signIn.type === "chatgpt" ? "engine-login" : "api-key-engine";
       if (!home) {
@@ -86,8 +90,8 @@ export async function syncLegacyAccounts({ root = adRoot(), store, legacy: { acc
     doc.engines ??= { api: { home: null } };
     doc.engines.api ??= { home: null };
     const chatgptHere = signIn?.type === "chatgpt";
-    if (!doc.engines.api.home) doc.engines.api.home = chatgptHere ? "api" : "@default";
-    else if (doc.engines.api.home === "@default" && chatgptHere) doc.engines.api.home = "api";
+    if (accountKnown && !doc.engines.api.home) doc.engines.api.home = chatgptHere ? "api" : "@default";
+    else if (accountKnown && doc.engines.api.home === "@default" && chatgptHere) doc.engines.api.home = "api";
 
     // 4. The default target, only when none is chosen.
     doc.defaults ??= { target: null, digest: null };

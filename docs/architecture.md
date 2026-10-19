@@ -181,6 +181,10 @@ Bare `ad` / `ad tui`: an inline terminal UI on the session controller. `terminal
 
 ---
 
+### The provider gateway (P3.3)
+
+API keys live in the secret store and in one place at run time: ad's gateway, a child process (`runtime/src/gateway/`) listening on `127.0.0.1`. The engine gets a per-run token and, per ready API account, a `-c model_providers.<entry>={ base_url = "http://127.0.0.1:<port>/p/<entry>/v1", env_key = "AD_GATEWAY_TOKEN" }`; the gateway swaps the token for the account's key, forwards `POST responses` and `GET models`, decodes a body the provider compressed anyway, and emits one observation per request (status, limits, usage, the error's class) for ad's own use. ad 3.0's provider name `openrouter` is pointed at the same route, so 3.0 conversations resume. Nothing about it is written to `config.toml`.
+
 ## Data flow — a single session, start to finish
 
 ```

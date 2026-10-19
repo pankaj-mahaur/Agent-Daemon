@@ -12,7 +12,6 @@ after(() => fs.rm(TMP, { recursive: true, force: true, maxRetries: 10, retryDela
 const { syncLegacyAccounts } = await import("../src/auth/accounts/migrate.mjs");
 const reg = await import("../src/auth/accounts/registry.mjs");
 const { createSecretStore, fileBackend } = await import("../src/auth/secrets.mjs");
-const { providerEnv } = await import("../src/auth/providers.mjs");
 
 const KEY = ["sk", "or", "v1", "cccccccccccccccc3333"].join("-");
 const chatgpt = { account: { type: "chatgpt", email: "sam@example.com", planType: "plus" } };
@@ -59,14 +58,14 @@ test("3.0 and 3.3 alternating: a ChatGPT sign-in in the default home later moves
   assert.equal(doc(root).engines.api.home, "api", "one way");
 });
 
-test("twice → same revision; openrouter adopted in place, providerEnv still finds it", async () => {
+test("twice → same revision; openrouter adopted in place, the key still under its 3.0 name", async () => {
   const { root, store } = fresh({ openrouter: true });
   const legacy = { account: chatgpt, config: {} };
   await syncLegacyAccounts({ root, store, legacy });
   const rev = doc(root).revision;
   const again = await syncLegacyAccounts({ root, store, legacy });
   assert.deepEqual([again.created, again.updated, doc(root).revision], [0, 0, rev]);
-  assert.equal(providerEnv(store).OPENROUTER_API_KEY, KEY);
+  assert.equal(store.get("openrouter"), KEY);
   assert.deepEqual(store.list(), ["openrouter"], "no copy made");
 });
 

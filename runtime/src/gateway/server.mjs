@@ -1,0 +1,311 @@
+// The provider gateway's loopback server (P3.3, D18). Runs inside the gateway child
+// (main.mjs); keys arrive over IPC and live only in this process's memory.
+//
+// Per request, in order:
+//   1. the capability token (SHA-256 digests compared in constant time); 401 with no
+//      detail otherwise, before anything else is looked at
+//   2. the raw path /p/<entry>/v1/<rest>: dot segments, %2e, %2f, %5c, backslashes and
+//      empty segments → 400; a query string only on GET models
+//   3. only POST responses and GET models → else 403 (the engine calls nothing else,
+//      S-GATEWAY G4); unknown entry → 404 with ad's text
+//   4. body cap → 413; in-flight cap → 503
+//   5. the route's upstream (passthrough), with the account's auth and
+//      accept-encoding: identity; a body the provider compressed anyway is decoded and
+//      sent on without content-encoding (the engine doesn't decompress, S-GATEWAY G11)
+//   6. never a redirect (502); never plain http unless the route allows it; an
+//      unreachable upstream → 502 (the engine retries an HTTP error a bounded number of
+//      times, a refused connection without end)
+//   7. a 429/503 asking to wait longer than the cap → an immediate 429 the engine treats
+//      as final for the turn, so no turn sleeps for an hour; the real wait goes to the event
+// Exactly one onUpstream event per request (status, limits, usage, classified error,
+// timings) when it ends or fails: never content, a key or the token.
+
+import { createServer } from "node:http";
+import { Readable } from "node:stream";
+import { createHash, timingSafeEqual } from "node:crypto";
+import { ulid } from "../ids.mjs";
+import { errorFromBody, observedHeaders, retryAfterSeconds, sseTap } from "./observe.mjs";
+
+const ENTRY_RE = /^[a-z0-9-]{1,64}$/;
+const HOP = new Set(["authorization", "host", "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade", "content-length", "accept-encoding", "expect"]);
+const OUT_DROP = new Set(["connection", "keep-alive", "transfer-encoding", "set-cookie", "content-encoding", "content-length", "upgrade", "trailer"]);
+const REFRESH_MARGIN_MS = 60_000;
+const ERROR_BODY_CAP = 1024 * 1024;
+
+const digest = (s) => createHash("sha256").update(String(s)).digest();
+const json = (res, status, body, headers = {}) => {
+  if (res.headersSent) return void res.destroy();
+  res.writeHead(status, { "content-type": "application/json", ...headers }).end(JSON.stringify(body));
+};
+const adError = (res, status, message, extra = {}) => json(res, status, { error: { type: status >= 500 ? "server_error" : "invalid_request_error", message, ...extra } });
+
+/** The rest of a /p/<entry>/v1/<rest> path, or a refusal. */
+export function parseTarget(rawUrl) {
+  const q = rawUrl.indexOf("?");
+  const pathPart = q >= 0 ? rawUrl.slice(0, q) : rawUrl;
+  const query = q >= 0 ? rawUrl.slice(q) : "";
+  const m = /^\/p\/([^/]+)\/v1\/(.*)$/.exec(pathPart);
+  if (!m) return { error: 404 };
+  const [, entry, rest] = m;
+  if (!ENTRY_RE.test(entry)) return { error: 400 };
+  if (/\\/.test(pathPart) || /%(2e|2f|5c)/i.test(pathPart)) return { error: 400 };
+  const segs = rest.split("/");
+  if (!rest || segs.some((s) => s === "" || s === "." || s === "..")) return { error: 400 };
+  return { entry, rest, query };
+}
+
+/**
+ * @param {{ token: string, table: Map<string, any>, keys: Record<string,string>, onUpstream?: (e:any)=>void,
+ *           retryAfterCapS?: number, maxInFlight?: number, maxBodyBytes?: number, idleTimeoutMs?: number,
+ *           connectTimeoutMs?: number, fetchImpl?: typeof fetch }} o
+ */
+export function createGatewayServer({ token, table, keys = {}, onUpstream = () => {}, retryAfterCapS = 60, maxInFlight = 16, maxBodyBytes = 64 * 2 ** 20, idleTimeoutMs = 300_000, connectTimeoutMs = 15_000, fetchImpl = fetch }) {
+  const tokenDigest = digest(token);
+  let routes = table;
+  let keyMap = new Map(Object.entries(keys));
+  const tokens = new Map(); // route entry → { token, expiresAt } (token-provider auth)
+  let inFlight = 0;
+
+  async function authHeader(entry, route, { force = false } = {}) {
+    const a = route.auth ?? { kind: "static-key", scheme: "bearer" };
+    if (a.kind === "none") return {};
+    if (a.kind === "static-key") {
+      const key = keyMap.get(route.accountId);
+      if (!key) return null;
+      return a.scheme === "header" ? { [a.header]: key } : { authorization: `Bearer ${key}` };
+    }
+    if (a.kind === "token-provider") {
+      let t = tokens.get(entry);
+      if (!t && !force) t = await a.provider.getToken({ force: false });
+      // Forced (a 401), or close to expiry (also a token that arrives that way): refresh.
+      if (force || !t || t.expiresAt - Date.now() < REFRESH_MARGIN_MS) t = await a.provider.getToken({ force: true });
+      tokens.set(entry, t);
+      return { authorization: `Bearer ${t.token}` };
+    }
+    return null;
+  }
+
+  const server = createServer(async (req, res) => {
+    // 1. The token, first.
+    const m = /^Bearer\s+(.+)$/.exec(String(req.headers.authorization ?? ""));
+    if (!m || !timingSafeEqual(digest(m[1]), tokenDigest)) return void res.writeHead(401).end();
+    // 2-3. The path.
+    const t = parseTarget(req.url ?? "");
+    if (t.error === 400) return void adError(res, 400, "ad: this path isn't allowed");
+    if (t.error) return void adError(res, 404, "ad: this account isn't available any more");
+    const isResponses = req.method === "POST" && t.rest === "responses";
+    const isModels = req.method === "GET" && t.rest === "models";
+    if (t.query && !isModels) return void adError(res, 400, "ad: this path isn't allowed");
+    if (!isResponses && !isModels) return void adError(res, 403, "ad: the gateway doesn't forward this request");
+    const route = routes.get(t.entry);
+    if (!route) return void adError(res, 404, "ad: this account isn't available any more");
+    if (route.mode !== "passthrough") return void adError(res, 502, "ad: this version can't talk to this provider's API yet");
+
+    const at = new Date();
+    const ev = { requestId: ulid(), upstreamRequestId: null, at: at.toISOString(), accountId: route.accountId, providerEntry: t.entry, path: t.rest, status: null, headers: {}, retryAfterS: null, rateLimit: {}, usage: null, error: null, firstByteMs: null, durationMs: null, aborted: false };
+    let emitted = false;
+    const emit = () => {
+      if (emitted) return;
+      emitted = true;
+      ev.durationMs = Date.now() - at.getTime();
+      try {
+        onUpstream(ev);
+      } catch {
+        // an observer's failure never touches the request
+      }
+    };
+
+    // 4. Caps.
+    if (inFlight >= maxInFlight) {
+      ev.status = 503;
+      emit();
+      return void adError(res, 503, "ad: too many requests at once");
+    }
+    inFlight++;
+    const done = () => {
+      inFlight--;
+      emit();
+    };
+    let body = Buffer.alloc(0);
+    if (isResponses) {
+      const chunks = [];
+      let size = 0;
+      let over = false;
+      for await (const c of req) {
+        size += c.length;
+        if (size > maxBodyBytes) {
+          over = true;
+          break;
+        }
+        chunks.push(c);
+      }
+      if (over) {
+        ev.status = 413;
+        done();
+        return void adError(res, 413, "ad: the request is too large");
+      }
+      body = Buffer.concat(chunks);
+      if (route.strip?.length) {
+        try {
+          const j = JSON.parse(body.toString("utf8"));
+          for (const k of route.strip) delete j[k];
+          body = Buffer.from(JSON.stringify(j));
+        } catch {
+          // not JSON: forwarded as it is; the provider answers
+        }
+      }
+    }
+
+    // 5. Upstream.
+    let target;
+    try {
+      target = new URL(`${String(route.upstreamBase).replace(/\/+$/, "")}/${t.rest}${t.query}`);
+    } catch {
+      ev.status = 502;
+      done();
+      return void adError(res, 502, "ad: this account's endpoint isn't a valid address");
+    }
+    if (target.protocol !== "https:" && !route.allowHttp) {
+      ev.status = 502;
+      done();
+      return void adError(res, 502, `ad: ${target.host} isn't https, so ad won't send a key to it (add the account with --insecure if it is local)`);
+    }
+    const headers = {};
+    for (const [k, v] of Object.entries(req.headers)) if (!HOP.has(k)) headers[k] = v;
+    headers["accept-encoding"] = "identity";
+    Object.assign(headers, route.headers ?? {});
+
+    const ac = new AbortController();
+    let clientGone = false;
+    res.on("close", () => {
+      if (!res.writableFinished) {
+        clientGone = true;
+        ev.aborted = true;
+        ac.abort();
+      }
+    });
+    const send = async (auth) => {
+      const connect = setTimeout(() => ac.abort(new Error("connect timeout")), connectTimeoutMs);
+      try {
+        return await fetchImpl(target, { method: req.method, headers: { ...headers, ...auth }, body: isResponses ? body : undefined, redirect: "manual", signal: ac.signal });
+      } finally {
+        clearTimeout(connect);
+      }
+    };
+
+    let up;
+    try {
+      let auth = await authHeader(t.entry, route);
+      if (!auth) {
+        ev.status = 502;
+        done();
+        return void adError(res, 502, "ad: this account's key isn't available (run: ad auth status)");
+      }
+      up = await send(auth);
+      // token-provider: one refresh and one retry on 401, then the 401 passes through.
+      if (up.status === 401 && route.auth?.kind === "token-provider") {
+        await up.body?.cancel().catch(() => {});
+        auth = await authHeader(t.entry, route, { force: true });
+        up = await send(auth);
+      }
+    } catch (e) {
+      ev.status = 502;
+      if (clientGone) {
+        done();
+        return;
+      }
+      const reason = e?.cause?.code ?? e?.code ?? (String(e?.message ?? e).includes("timeout") ? "timed out" : "network error");
+      ev.error = { status: 502, type: "server_error", code: String(reason), message: `couldn't reach ${target.host}`, class: "server" };
+      done();
+      return void adError(res, 502, `ad: couldn't reach ${target.host} (${reason})`);
+    }
+    ev.firstByteMs = Date.now() - at.getTime();
+    ev.status = up.status;
+    ev.headers = observedHeaders(up.headers);
+    ev.upstreamRequestId = up.headers.get("x-request-id") ?? up.headers.get("request-id") ?? null;
+    ev.retryAfterS = retryAfterSeconds(up.headers.get("retry-after"));
+    for (const [k, v] of Object.entries(ev.headers)) if (/ratelimit/.test(k)) ev.rateLimit[k] = v;
+
+    // 6. Never a redirect with a key.
+    if (up.status >= 300 && up.status < 400) {
+      await up.body?.cancel().catch(() => {});
+      ev.error = { status: up.status, type: null, code: "redirect", message: "redirect refused", class: "server" };
+      done();
+      return void adError(res, 502, "ad: the provider redirected; ad doesn't send keys across redirects");
+    }
+
+    const outHeaders = {};
+    for (const [k, v] of up.headers) if (!OUT_DROP.has(k)) outHeaders[k] = v;
+
+    // Errors: read (≤ 1 MB), observe, then cap or forward.
+    if (up.status >= 400) {
+      let text = "";
+      try {
+        const buf = Buffer.from(await up.arrayBuffer());
+        text = buf.subarray(0, ERROR_BODY_CAP).toString("utf8");
+      } catch {
+        text = "";
+      }
+      ev.error = errorFromBody(up.status, text);
+      // 7. The Retry-After cap.
+      if ((up.status === 429 || up.status === 503) && ev.retryAfterS !== null && ev.retryAfterS > retryAfterCapS) {
+        const mins = Math.ceil(ev.retryAfterS / 60);
+        const until = new Date(Date.now() + ev.retryAfterS * 1000);
+        const hhmm = `${String(until.getHours()).padStart(2, "0")}:${String(until.getMinutes()).padStart(2, "0")}`;
+        done();
+        return void json(res, 429, { error: { type: "insufficient_quota", code: "insufficient_quota", message: `${route.label ?? "The provider"} asks to wait ${mins} min (until ${hhmm}).` } }, { "retry-after": "0" });
+      }
+      done();
+      return void res.writeHead(up.status, outHeaders).end(text);
+    }
+
+    // Success: stream with backpressure; tap the events; idle timeout.
+    res.writeHead(up.status, outHeaders);
+    const tap = sseTap();
+    let idle = setTimeout(() => ac.abort(new Error("idle")), idleTimeoutMs);
+    const stream = up.body ? Readable.fromWeb(up.body) : null;
+    if (!stream) {
+      clearTimeout(idle);
+      res.end();
+      return void done();
+    }
+    stream.on("data", (chunk) => {
+      clearTimeout(idle);
+      idle = setTimeout(() => ac.abort(new Error("idle")), idleTimeoutMs);
+      tap.push(chunk);
+      if (!res.write(chunk)) {
+        stream.pause();
+        res.once("drain", () => stream.resume());
+      }
+    });
+    stream.on("end", () => {
+      clearTimeout(idle);
+      const seen = tap.result();
+      ev.usage = seen.usage;
+      if (seen.error) ev.error = seen.error;
+      res.end();
+      done();
+    });
+    stream.on("error", () => {
+      clearTimeout(idle);
+      if (clientGone) ev.aborted = true;
+      res.destroy();
+      done();
+    });
+  });
+
+  return {
+    listen: () => new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve(server.address().port))),
+    /** A new table and the keys of its accounts; keys of accounts that left are dropped. */
+    setTable(nextTable, nextKeys = {}) {
+      routes = nextTable;
+      keyMap = new Map(Object.entries(nextKeys));
+      for (const e of [...tokens.keys()]) if (!routes.has(e)) tokens.delete(e);
+    },
+    keyCount: () => keyMap.size,
+    close: () => {
+      server.closeAllConnections?.();
+      return new Promise((resolve) => server.close(() => resolve()));
+    },
+  };
+}

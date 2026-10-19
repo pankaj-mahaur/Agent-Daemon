@@ -28,6 +28,7 @@ import { codexCompat, engineChecks, engineLiveChecks, parseCodexVersion, probeVe
 import { MIRROR_MARKER, MIRRORED_FLAG, runStockUi, stockUiArgs, syncSkills } from "./codex/stock-ui.mjs";
 import PINNED_SNAPSHOT from "./codex/protocol-snapshot.json" with { type: "json" };
 import UPSTREAM_COMMANDS from "./codex/upstream-commands.json" with { type: "json" };
+import { redact } from "../auth/redact.mjs";
 
 export { engineError };
 
@@ -71,14 +72,15 @@ export function engineErrorText(err, { details = "/warnings" } = {}) {
     case "ENGINE_NOT_STARTED":
       return "The engine isn't running.";
     default:
-      return err?.message ?? String(err); // ad's own words (HOME_*, FEATURE_UNAVAILABLE, ENGINE_NOT_INSTALLED, …), or not an engine error
+      return redact(err?.message ?? String(err)); // ad's own words (HOME_*, FEATURE_UNAVAILABLE, ENGINE_NOT_INSTALLED, …), or not an engine error
   }
 }
 
-/** The engine's raw text for an error, unmodified, or null. */
+/** The engine's raw text for an error, or null: unmodified but for secrets (P3.3 redactor). */
 export function engineErrorDetail(err) {
   if (!isEngineError(err)) return null;
-  return err.raw ?? err.stderr ?? err.message ?? null;
+  const raw = err.raw ?? err.stderr ?? err.message ?? null;
+  return raw === null ? null : redact(raw);
 }
 
 /** ad's words for a notice the engine sent (events.mjs codes: warning, deprecation, config, …). */

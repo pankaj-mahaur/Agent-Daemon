@@ -193,6 +193,14 @@ Unattended runs also switch off every MCP server except the daemon's memory, and
 
 **Keys.** OpenRouter keys are stored with DPAPI on Windows, libsecret on Linux (falling back to a 0600 file), and on macOS in the keychain when the optional `@napi-rs/keyring` module is installed (else a 0600 file; `ad doctor` says which). They never go into config or argv, and `OPENROUTER_API_KEY` is removed from the agent's shell. ChatGPT / OpenAI logins are kept by the engine in the harness home (`auth.json`).
 
+**The gateway.** API keys never reach the engine, its hooks or the tools it runs:
+- **How it works.** ad starts a small local gateway (a child process on `127.0.0.1`) and gives the engine only a per-run token (`AD_GATEWAY_TOKEN`) and an address per account. The gateway checks the token, adds the account's key on the way out, and streams the answer back unchanged.
+- **What it watches.** Each answer's status, rate limits and usage; that is how ad can later say "OpenRouter's free limit resets at 05:30".
+- **What the token can do.** Spend through the gateway while this ad runs. It can never reveal a key, and tool shells don't get it.
+- **What can see the token.** Hook processes inherit it with the engine's environment, and an MCP server sees it only if a config names it in `env_vars`.
+- **Its limits.** It never follows a redirect with a key, and sends keys over https only (a local endpoint may use http).
+- **Long waits.** A provider asking to wait longer than a minute ends the turn at once with the provider's own message, instead of sleeping for an hour.
+
 **Accounts.** ad keeps a list of accounts (`~/.agent-daemon/accounts/registry.json`): each has an id, a label, an owner tag and where its credential lives, and never the credential itself (an API key shows only its last 4 characters). ad 3.0's sign-in and OpenRouter key become accounts by themselves, without moving or rewriting anything 3.0 uses, so going back to 3.0 still works. An interrupted sign-in or key change leaves something `ad auth repair` finishes (it asks before deleting a key).
 
 **What a tool can still reach.** The file backend's keys and the `.dpapi` files can be read (and DPAPI files decrypted) by programs the agent runs as you, until ad can deny those reads to its tools (planned with the gateway). `ad doctor` notes this on the Secret store line.
@@ -246,6 +254,7 @@ Loop and worker prompts are marked as non-user (`AD_WORKER=1`), so they never en
 |---|---|
 | `~/.agent-daemon/engine/` (new installs; older installs: `codex-home/`) | engine home: `config.toml`, `hooks.json`, `AGENTS.md`, login `auth.json`, `sessions/` rollouts, `logs_2.sqlite` (see "The engine's folder" below) |
 | `~/.agent-daemon/secrets/` | provider keys (file backends) |
+| `~/.agent-daemon/accounts/` | the account list (`registry.json`, its `.bak`); never a key |
 | `~/.agent-daemon/schedules.json`, `schedule-logs/` | scheduled jobs and their output |
 | `<project>/.agent-daemon/loops/` | `ad loop` iteration logs |
 | `<project>/.agent-daemon/STOP` | stop file for loops in this project |

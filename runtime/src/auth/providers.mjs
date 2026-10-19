@@ -4,10 +4,7 @@
 //               both owned by the engine (tokens live in the engine home).
 //   openrouter  Responses-API endpoint (beta, stateless) — reaches Claude,
 //               Gemini and others with one key. Key lives in our secret
-//               store and is injected as an env var at spawn; config.toml
-//               only names the variable.
-
-import { createSecretStore } from "./secrets.mjs";
+//               store; ad's gateway adds it on the way out (P3.3).
 
 export const PROVIDERS = {
   openai: {
@@ -31,27 +28,8 @@ export const PROVIDERS = {
   },
 };
 
-// Env vars carrying stored provider keys, for the engine's child process.
-// A secret that can't be read (corrupt, other user's DPAPI blob) is skipped
-// with a warning — it must not block runs that don't need it.
-export function providerEnv(store = createSecretStore(), warn = (m) => process.stderr.write(`[agent-daemon] ${m}\n`)) {
-  const env = {};
-  for (const p of Object.values(PROVIDERS)) {
-    if (!p.secret) continue;
-    try {
-      const value = store.get(p.secret);
-      if (value) env[p.envKey] = value;
-    } catch (err) {
-      warn(`could not read stored ${p.id} key (${err.message.split("\n")[0]}); re-add it with: ad auth login ${p.id} --model <slug>`);
-    }
-  }
-  return env;
-}
-
-// Env var names the engine must strip from the agent's shell commands. The
-// engine keeps *KEY*/*SECRET*/*TOKEN* vars by default (ignore_default_excludes =
-// true), so without this a prompt-injected `printenv` would leak the key.
-export const PROVIDER_ENV_KEYS = Object.values(PROVIDERS).filter((p) => p.envKey).map((p) => p.envKey);
+// Keys never go into an engine's environment (P3.3): ad's gateway adds them on the way
+// out (gateway/), and the engine holds only a per-run token.
 
 // Config edits that make `provider` the active one.
 export function useProviderEdits(providerId, { model } = {}) {
