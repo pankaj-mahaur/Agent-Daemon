@@ -22,7 +22,7 @@ import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { describeItem } from "./run.mjs";
-import { startHarnessEngine } from "./start.mjs";
+import { launchHarness } from "./engines.mjs";
 import { UNATTENDED_ENV, UNATTENDED_SANDBOX_POLICY, unattendedThreadConfig } from "./unattended.mjs";
 
 export const LOOP_DEFAULTS = {
@@ -120,19 +120,23 @@ export async function cmdLoop(objective, opts = {}) {
   }
 
   let engine;
+  let release = null;
   let threadId;
   let goalSet = false;
   try {
     // UNATTENDED_ENV: our re-prompts echo the agent's own status text —
     // hooks must not store that as the user's corrections.
-    const started = await startHarnessEngine({ cwd, home: opts.home, command: opts.command, clientVersion: opts.clientVersion, store: opts.store, platform: opts.platform, err, requireSandbox: true, env: UNATTENDED_ENV, allowHomeFolder: opts.allowHomeFolder === true, homePolicy: "grace" });
+    // The account first (P3.4): the engine that serves it starts.
+    const started = await launchHarness({ cwd, account: opts.account, model: opts.model, home: opts.home, command: opts.command, clientVersion: opts.clientVersion, store: opts.store, platform: opts.platform, err, requireSandbox: true, env: UNATTENDED_ENV, allowHomeFolder: opts.allowHomeFolder === true, homePolicy: "grace" });
     if (!started.engine) {
       err.write(started.error + "\n");
       return started.code;
     }
     engine = started.engine;
+    release = started.release;
     const threadOpts = { cwd, model: opts.model, sandbox: "workspace-write", approvalPolicy: "never", developerInstructions: LOOP_PROTOCOL, config: await unattendedThreadConfig(engine) };
-    ({ threadId } = opts.resume ? await engine.resumeThread(opts.resume, threadOpts) : await engine.startThread(threadOpts));
+    // A resumed thread keeps its own account; a new one starts on the resolved one.
+    ({ threadId } = opts.resume ? await engine.resumeThread(opts.resume, threadOpts) : await engine.startThread({ ...threadOpts, model: started.params.model, modelProvider: started.params.modelProvider }));
     if (objective?.trim()) {
       await engine
         .setGoal(threadId, objective, limits.maxTokens ? { tokenBudget: limits.maxTokens } : {})
@@ -179,7 +183,8 @@ export async function cmdLoop(objective, opts = {}) {
     // An active goal could let the engine keep driving the thread on its own,
     // outside our brakes; the loop owns the goal only while it runs.
     if (goalSet) await engine.clearGoal(threadId).catch((e) => err.write("[loop] could not clear the thread goal\n" + cliErrorLines("loop", e)));
-    await engine?.close();
+    if (release) await release();
+    else await engine?.close();
   }
 }
 

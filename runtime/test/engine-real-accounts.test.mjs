@@ -343,3 +343,43 @@ test("P3.3: an unreachable provider fails the turn with ad's message, no endless
     }, { args: [...args, "-c", "features.unbounded_connection_retries=false"], env });
   }, { upstream: `http://127.0.0.1:${port}/v1` });
 });
+
+// P3.4: an account switch within one provider forks the conversation onto the new
+// account: the history comes along, the new key serves the next turn, an active goal is
+// paused and moved, and the old thread is let go.
+test("P3.4: a same-provider switch by fork continues with the history on the new key", { skip, timeout: TIMEOUT }, async () => {
+  const { createEngine, switchThread } = await import("../src/engine/index.mjs");
+  const root = mkdtempSync(join(tmpdir(), "ad-real-switch-"));
+  const home = join(root, "home");
+  const cwd = join(root, "work");
+  mkdirSync(cwd, { recursive: true });
+  const A = await startMockProvider({ keys: [KEY_A] });
+  const B = await startMockProvider({ keys: [KEY_B] });
+  const gw = await startGatewayProto({ entries: { "ad-aaaa": { upstream: A.url, key: KEY_A }, "ad-bbbb": { upstream: B.url, key: KEY_B } } });
+  writeMockCodexHome(home, { url: A.url, approvalPolicy: "never", sandboxMode: "read-only" });
+  let engine;
+  try {
+    engine = await createEngine({ home, cwd, command: resolveCodexCommand({}), clientVersion: "test", experimental: true, env: { AD_GATEWAY_TOKEN: gw.token }, engineArgs: ["-c", gw.providerConfig("ad-aaaa"), "-c", gw.providerConfig("ad-bbbb")] });
+    const { threadId } = await engine.startThread({ cwd, modelProvider: "ad-aaaa", approvalPolicy: "never", sandbox: "read-only" });
+    const first = await engine.turn({ threadId, text: "PING remember the word banana", timeoutMs: 90_000 });
+    assert.equal(first.status, "completed");
+    await engine.threads.goal.set(threadId, "finish the fruit list", { status: "paused" });
+    const r = await switchThread({ engine, threadId, target: { modelProvider: "ad-bbbb" } });
+    assert.notEqual(r.threadId, threadId);
+    assert.equal(r.goalMoved, true);
+    assert.equal((await engine.threads.goal.get(r.threadId))?.status, "paused");
+    const before = A.requests.length;
+    const next = await engine.turn({ threadId: r.threadId, text: "PING after the switch", timeoutMs: 90_000 });
+    assert.equal(next.status, "completed");
+    const onB = B.requests.find((x) => x.text === "PING after the switch");
+    assert.ok(onB, "the new account's key served the turn");
+    assert.equal(onB.auth.matchesKey, 0);
+    assert.ok(onB.userTexts.some((t) => t.includes("banana")), "the history came along");
+    assert.equal(A.requests.length, before, "nothing more on the old account");
+    assert.ok(!(await engine.threads.loaded()).includes(threadId), "the old thread was let go");
+  } finally {
+    await engine?.close().catch(() => {});
+    for (const m of [A, B, gw]) await m.close();
+    rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  }
+});

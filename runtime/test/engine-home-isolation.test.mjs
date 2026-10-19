@@ -135,7 +135,8 @@ test("in markers-off mode, start, resume, fork, the completion thread and struct
     const launch = { dir: root, codexArgs: ["-c", "project_root_markers=[]"], mode: "markers-off" };
     await withHome({ config, launch }, async ({ engine, project }) => {
       const { argv } = await engine.testRequest("debug/processCwd", {});
-      assert.deepEqual(argv.slice(-3), ["app-server", "-c", "project_root_markers=[]"]);
+      // The launch's own -c comes first, then every engine's unload setting (P3.4).
+      assert.deepEqual(argv.slice(-5), ["app-server", "-c", "project_root_markers=[]", "-c", "thread_unload_delay_secs=0"]);
       const { threadId } = await engine.threads.start({});
       await engine.threads.resume(threadId);
       await engine.threads.fork(threadId);

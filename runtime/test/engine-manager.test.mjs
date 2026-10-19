@@ -176,3 +176,14 @@ test("closeAll during a start: the starting engine is closed and the acquire rej
   assert.equal(made.length, 1);
   assert.equal(made[0].running, false);
 });
+
+test("idleMs 0: the last release stops the engine and returns the stop to wait on", async () => {
+  const s = stubFactory({ closeMs: 20 });
+  const m = createEngineManager({ factory: s.factory, idleMs: 0 });
+  const a = await m.acquire("api");
+  const b = await m.acquire("api");
+  assert.equal(b.release(), undefined, "another lease holds it");
+  await a.release();
+  assert.equal(s.live().length, 0);
+  await m.closeAll();
+});

@@ -70,3 +70,18 @@ test("ad's prefs: defaults when missing or broken; saved at once, atomically, ow
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("on another home the TUI reads [tui] from the settings record, not from that home's copy; its [tui] writes go through the record (P3.4)", async () => {
+  const writes = [];
+  const recorded = [];
+  const engine = { readConfig: async () => ({ tui: { theme: "stale-copy", status_line: ["model"] }, model: "m" }), writeConfig: async (e) => void writes.push(...e) };
+  const s = createEngineSettings({ engine: () => engine, record: () => ({ theme: "from-record" }), write: async (e) => void recorded.push(...e) });
+  await s.load();
+  assert.equal(s.get("tui.theme"), "from-record");
+  assert.deepEqual(s.get("tui.status_line"), ["model"], "keys the record lacks still come from the engine");
+  await s.set("tui.theme", "dark");
+  assert.deepEqual(recorded, [["tui.theme", "dark"]]);
+  assert.deepEqual(writes, []);
+  await s.set("model_reasoning_effort", "high");
+  assert.deepEqual(writes, [["model_reasoning_effort", "high"]], "other settings go to the window's engine");
+});

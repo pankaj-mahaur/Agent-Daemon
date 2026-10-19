@@ -66,7 +66,8 @@ export function mergeManagedBlock(existing, block) {
  */
 export async function harnessIdentity(engine) {
   const [acct, cfg] = [await engine.account(), await engine.readConfig()];
-  const signIn = cfg.model_provider === "openrouter" ? "openrouter" : acct.account?.type === "chatgpt" ? "chatgpt" : "openai-key";
+  // An ad account entry ("ad-<provider>-<id>", P3.3) means the api home: any account the user picked.
+  const signIn = /^ad-/.test(cfg.model_provider ?? "") ? "account" : cfg.model_provider === "openrouter" ? "openrouter" : acct.account?.type === "chatgpt" ? "chatgpt" : "openai-key";
   return identityBlock({ adVersion: engine.opts?.clientVersion || "unknown", engineVersion: engineVersion.installed().version ?? engineVersion.pinned() ?? "unknown", signIn });
 }
 

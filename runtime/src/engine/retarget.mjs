@@ -3,7 +3,8 @@
 // on resume), so the façade checks the answer of every resume and fork that names a
 // provider or model (resumeThread, threads.fork).
 
-import { engineError } from "./codex/errors.mjs";
+// The façade's engineError (a re-export; the cycle with index.mjs is safe: used at call time).
+import { engineError } from "./index.mjs";
 
 export const RETARGET_IGNORED_TEXT = (old) => `The engine kept this conversation on ${old}. Start a new conversation, or switch with /model.`;
 export const RETARGET_BUSY_TEXT = "This conversation is still busy (a turn or a background terminal runs). Wait for it to finish, then switch.";

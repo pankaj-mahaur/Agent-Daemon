@@ -203,6 +203,16 @@ Unattended runs also switch off every MCP server except the daemon's memory, and
 
 **Accounts.** ad keeps a list of accounts (`~/.agent-daemon/accounts/registry.json`): each has an id, a label, an owner tag and where its credential lives, and never the credential itself (an API key shows only its last 4 characters). ad 3.0's sign-in and OpenRouter key become accounts by themselves, without moving or rewriting anything 3.0 uses, so going back to 3.0 still works. An interrupted sign-in or key change leaves something `ad auth repair` finishes (it asks before deleting a key).
 
+**Which account a conversation uses.** ad decides before any engine starts, and the first message already goes to that account. The first of these that names an account wins:
+1. `--account <provider>/<label>` (or `/model`, `/account` in the terminal UI);
+2. what this window picked;
+3. `AD_ACCOUNT` (with `AD_MODEL`), a default for whatever you launch;
+4. the project's `.agent-daemon/config.json` `"target": {"provider", "label", "model", "effort"}`, read only in a folder you trusted, and shown as "This project picks …";
+5. the default account;
+6. what ad 3.0 used.
+
+An account that needs its key or sign-in again stops the start with the command that fixes it. A conversation keeps the account it started on. Switching to another account of the same provider (same model) continues it as a copy on the new account; anything else starts a new conversation. Background terminals keep running in the old one, and `/undo` checkpoints stay with it.
+
 **What a tool can still reach.** The file backend's keys and the `.dpapi` files can be read (and DPAPI files decrypted) by programs the agent runs as you, until ad can deny those reads to its tools (planned with the gateway). `ad doctor` notes this on the Secret store line.
 
 ### Working in your home folder
@@ -254,7 +264,9 @@ Loop and worker prompts are marked as non-user (`AD_WORKER=1`), so they never en
 |---|---|
 | `~/.agent-daemon/engine/` (new installs; older installs: `codex-home/`) | engine home: `config.toml`, `hooks.json`, `AGENTS.md`, login `auth.json`, `sessions/` rollouts, `logs_2.sqlite` (see "The engine's folder" below) |
 | `~/.agent-daemon/secrets/` | provider keys (file backends) |
-| `~/.agent-daemon/accounts/` | the account list (`registry.json`, its `.bak`); never a key |
+| `~/.agent-daemon/accounts/` | the account list (`registry.json`, its `.bak`) and `settings-record.json` (your `[tui]` settings and folder trust, copied from the engine's folder); never a key |
+| `~/.agent-daemon/api/` | the engine folder for API-key accounts once the main one holds a ChatGPT sign-in (see "The engine's folder") |
+| `<project>/.agent-daemon/config.json` | `target`: the account this project picks (trusted folders only) |
 | `~/.agent-daemon/schedules.json`, `schedule-logs/` | scheduled jobs and their output |
 | `<project>/.agent-daemon/loops/` | `ad loop` iteration logs |
 | `<project>/.agent-daemon/STOP` | stop file for loops in this project |
@@ -274,12 +286,22 @@ Loop and worker prompts are marked as non-user (`AD_WORKER=1`), so they never en
 | `AD_HOOK_HOST` | `ad` for hook input/output adaptation |
 | `AD_ENGINE_MODEL` (old name `AD_CODEX_LLM_MODEL`, still read) | model for those calls when they run on the engine |
 | `AD_SECRETS_BACKEND=file` | store keys in plain 0600 files instead of the OS store |
+| `AD_ACCOUNT`, `AD_MODEL` | the account (`<provider>/<label>`, a label, or an id) and model for what you launch, below a window's own choice and `--account` |
 
 ## The engine's folder
 
 New installs keep the engine's folder at `~/.agent-daemon/engine/`, plus a link named `codex-home` pointing at it (a rolled-back ad 2.x finds the same folder). Installs from before 3.0 keep their `codex-home/` folder untouched; `ad doctor` calls it the older folder name and says `ad migrate` is optional.
 
 `ad migrate` (interactive terminal only) renames `codex-home/` to `engine/` and leaves the link; `ad migrate --undo` reverses it. Nothing is ever moved without you running it: no other command renames the folder, and a folder you chose with `AD_ENGINE_DIR` is never touched. In Git Bash run `winpty ad migrate` (or use PowerShell or Windows Terminal). Both refuse while an ad session is running; close it first.
+
+Which folder runs what:
+
+| Engine folder | Runs |
+|---|---|
+| `engine/` (the main one) | ad 3.0's sign-in; a ChatGPT sign-in made there; every API-key account while it holds no ChatGPT sign-in |
+| `api/` | every API-key account once the main folder holds a ChatGPT sign-in. New API conversations never start next to a ChatGPT sign-in. API conversations 3.0 already wrote there still continue there |
+
+Your `[tui]` settings and folder trust live in the main folder's settings file. Other folders get a copy each time their engine starts, so a hand edit there is overwritten. Edit the main folder's settings: other folders pick your edit up the next time ad starts an engine on the main folder.
 
 What a start does with these names:
 

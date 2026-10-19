@@ -32,7 +32,7 @@ export const legacyHomeName = "codex-home";
 export const projectConfigFolder = ".codex";
 
 /** The sign-in routes the identity block knows. */
-export const SIGN_IN_ROUTES = Object.freeze(["chatgpt", "openai-key", "openrouter"]);
+export const SIGN_IN_ROUTES = Object.freeze(["chatgpt", "openai-key", "openrouter", "account"]);
 
 /** Files that reproduce upstream's text verbatim; their first lines must keep this attribution (Apache-2.0 §4(c)). */
 export const ATTRIBUTED_FILES = Object.freeze([
@@ -79,12 +79,14 @@ const SIGN_IN_CLAUSES = Object.freeze({
   chatgpt: `a ChatGPT plan, so the model is ${ENGINE.vendor}'s`,
   "openai-key": `an ${ENGINE.vendor} key, so the model is ${ENGINE.vendor}'s unless the key was pointed at another endpoint`,
   openrouter: "OpenRouter, so the model may come from any provider",
+  // ad's api home (P3.4): every API account the user added runs here, through ad's gateway.
+  account: "an account the user picked in ad (provider and model show in /status)",
 });
 
 /**
  * What the agent knows about itself. No model name: the model is known only
  * after a thread starts and changes with /model; the text says when to name one.
- * @param {{adVersion: string, engineVersion: string, signIn: "chatgpt"|"openai-key"|"openrouter"}} p
+ * @param {{adVersion: string, engineVersion: string, signIn: "chatgpt"|"openai-key"|"openrouter"|"account"}} p
  */
 export function identityBlock({ adVersion, engineVersion, signIn } = {}) {
   const clause = SIGN_IN_CLAUSES[signIn];

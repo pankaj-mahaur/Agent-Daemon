@@ -117,6 +117,8 @@ Agent harness (ad's engine; ad about):
   run "<prompt>"         One non-interactive agent turn (approvals are declined)
                          --cwd <dir>  --model <name>  --json
                          --sandbox <mode>     read-only | workspace-write (default) | danger-full-access
+                         --account <provider>/<label>  (ad, tui, chat, loop, run, spawn) the account to run on
+                                              (AD_ACCOUNT: a default; docs/harness.md)
                          --allow-home-folder  (ad, tui, chat, loop, run, schedule add) work in a folder that
                                               would load skills from your own engine install (docs/harness.md)
   auth login chatgpt     Sign in with your ChatGPT subscription (browser; --device for a code)
@@ -2327,6 +2329,7 @@ async function cmdSpawn(opts) {
     instructions: roleDef?.instructions,
     skills: roleDef?.skills,
     model: opts.model,
+    account: opts.account,
     cwd: opts.cwd,
     worktree: true,
     leader: leader?.name || null,
@@ -2408,6 +2411,7 @@ async function main(argv) {
         tokens:       { type: "boolean" },
         limit:        { type: "string" },
         model:        { type: "string" },
+        account:      { type: "string" },
         template:     { type: "string" },
         task:         { type: "string" },
         team:         { type: "string" },
@@ -2607,6 +2611,7 @@ async function main(argv) {
       return cmdLoop(parsed.positionals.join(" "), {
         cwd: parsed.values.cwd || process.cwd(),
         model: parsed.values.model,
+        account: parsed.values.account,
         resume: parsed.values.resume,
         limits: { maxIterations: num("max-iterations"), maxMinutes: num("max-minutes"), maxTokens: num("max-tokens") },
         allowHomeFolder: Boolean(parsed.values["allow-home-folder"]),
@@ -2636,6 +2641,7 @@ async function main(argv) {
         return cmdTui({
           cwd: parsed.values.cwd || process.cwd(),
           model: parsed.values.model,
+          account: parsed.values.account,
           sandbox: parsed.values.sandbox,
           resume: parsed.values.resume,
           last: parsed.values.last,
@@ -2659,6 +2665,7 @@ async function main(argv) {
       return cmdChat({
         cwd: parsed.values.cwd || process.cwd(),
         model: parsed.values.model,
+        account: parsed.values.account,
         sandbox: parsed.values.sandbox,
         resume: parsed.values.resume,
         allowHomeFolder: Boolean(parsed.values["allow-home-folder"]),
@@ -2672,6 +2679,7 @@ async function main(argv) {
         // workspace-write sandbox must be rooted where the user actually is.
         cwd: parsed.values.cwd || process.cwd(),
         model: parsed.values.model,
+        account: parsed.values.account,
         sandbox: parsed.values.sandbox,
         json: parsed.values.json || false,
         allowHomeFolder: Boolean(parsed.values["allow-home-folder"]),
@@ -2679,7 +2687,7 @@ async function main(argv) {
       });
     }
     case "team":           return cmdTeam(parsed.positionals?.[0], { ...opts, template: parsed.values.template, task: parsed.values.task, team: parsed.values.team, agent: parsed.values.agent, model: parsed.values.model });
-    case "spawn":          return cmdSpawn({ ...opts, team: parsed.values.team, role: parsed.values.role, task: parsed.values.task, model: parsed.values.model, engine: parsed.values.engine });
+    case "spawn":          return cmdSpawn({ ...opts, team: parsed.values.team, role: parsed.values.role, task: parsed.values.task, model: parsed.values.model, account: parsed.values.account, engine: parsed.values.engine });
     case "hook":           return cmdHook(parsed.positionals?.[0]);
     default:
       console.error(`agent-daemon: unknown command "${command}"`);

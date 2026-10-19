@@ -143,7 +143,9 @@ export function engineIdFor(account) {
 
 /** Where an engine runs: "@default" (the default home), "api" (<root>/api) or an account home. */
 export function engineHomeFor(engineId, doc) {
-  if (engineId === "api") return doc.engines?.api?.home ?? "@default";
+  // Not known yet (no engine on the default home has said who is signed in there): api/,
+  // so new API work never starts next to a ChatGPT sign-in (D15).
+  if (engineId === "api") return doc.engines?.api?.home ?? "api";
   const a = (doc.accounts ?? []).find((x) => x.id === engineId);
   return a?.credential?.home ?? "@default";
 }
@@ -151,8 +153,10 @@ export function engineHomeFor(engineId, doc) {
 export function engineParamsFor(target, doc) {
   const a = target.account;
   const engineId = a ? engineIdFor(a, doc) : "api";
-  // An account home's own provider needs no entry; an API account is its gateway entry.
-  const modelProvider = a && !ownsHome(a) ? a.providerEntry ?? undefined : undefined;
+  // An account home signs in with the engine's built-in "openai" provider (ChatGPT or a key
+  // the engine keeps); an API account is its gateway entry. Always explicit: a home may
+  // also carry a default provider (-c model_provider) for another account.
+  const modelProvider = !a ? undefined : ownsHome(a) ? "openai" : a.providerEntry ?? undefined;
   return { engineId, modelProvider, model: target.model, effort: target.effort };
 }
 

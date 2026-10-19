@@ -209,6 +209,7 @@ export async function spawnAgent(opts) {
         systemPrompt,
         userMessage,
         model: opts.model,
+        account: opts.account,
         timeoutMs,
         engineOpts,
         memoryProject: opts.cwd,

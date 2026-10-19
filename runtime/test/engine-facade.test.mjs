@@ -545,3 +545,24 @@ test("goals: get, set with status paused; a fork holding the goal back needs the
     assert.equal((await debug(engine)).lastParams["thread/fork"].deferGoalContinuation, true);
   });
 });
+
+test("every engine ad starts unloads an unsubscribed thread at once; every thread list asks for every provider", async () => {
+  await withEngine({}, async (engine) => {
+    const { argv } = await engine.testRequest("debug/processCwd", {});
+    const at = argv.indexOf("thread_unload_delay_secs=0");
+    assert.ok(at > 0 && argv[at - 1] === "-c", `argv: ${argv.join(" ")}`);
+    await engine.threads.list({ cwd: "/work" });
+    assert.deepEqual((await debug(engine)).lastParams["thread/list"].modelProviders, []);
+    await engine.listThreads({ cwd: "/work" });
+    assert.deepEqual((await debug(engine)).lastParams["thread/list"].modelProviders, []);
+    // A caller may still narrow it.
+    await engine.threads.list({ modelProviders: ["ad-a"] });
+    assert.deepEqual((await debug(engine)).lastParams["thread/list"].modelProviders, ["ad-a"]);
+  });
+});
+
+test("source scan: thread/list is sent only by the façade's two list helpers", () => {
+  const src = readFileSync(new URL("../src/engine/index.mjs", import.meta.url), "utf8");
+  assert.equal(src.split('"thread/list"').length - 1, 2);
+  for (const m of src.matchAll(/"thread\/list", clean\(([^)]*)\)/g)) assert.match(m[1], /modelProviders/);
+});

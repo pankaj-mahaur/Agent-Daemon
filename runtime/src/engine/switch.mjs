@@ -20,7 +20,8 @@
 //    reported, and once its last terminal ends (or the thread closes, or the engine
 //    exits) the watch ends and it is unsubscribed. No step waits on thread/closed.
 
-import { engineError } from "./codex/errors.mjs";
+// The façade's engineError (a re-export; the cycle with index.mjs is safe: used at call time).
+import { engineError } from "./index.mjs";
 
 export const SWITCH_TEXTS = Object.freeze({
   GOAL_ACTIVE: "Pause the goal first (/goal pause), then switch.",

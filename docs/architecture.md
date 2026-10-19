@@ -207,6 +207,14 @@ API keys live in the secret store and in one place at run time: ad's gateway, a 
   - Leases are in-process. An unleased engine stops after an idle period unless it was pinned.
   - An acquire during that stop waits for it, so there are never two processes on one id.
   - When the gateway entries change, `restartIfStale` restarts the engine, and only when no turn runs.
+- **Launch** (`runtime/src/harness/engines.mjs`). Every entry point (the terminal UI, `ad run`/`chat`/`loop`, `ad web`, `ad acp`, workers) calls `launchHarness`:
+  1. adopt 3.0's key as an account;
+  2. resolve the target;
+  3. acquire the engine of the home that serves it (`@default`, `api`, `a/<id>`) from the process's EngineManager;
+  4. start threads with that account's provider entry.
+
+  A home a command or test chose (`--home`-style options) runs as before, with no accounts. `--resume`/`--last` look in the other homes too.
+- **Settings record** (`runtime/src/harness/settings-sync.mjs`). The default home is the record for `[tui]` and folder trust. It is read through the engine's `config/read` (no TOML parser) into `accounts/settings-record.json`, mirrored into `api/` and `a/<id>` at each engine start, and edits made elsewhere wait as `pending` for the default home's next start.
 - **Switching** (`runtime/src/engine/switch.mjs`). A loaded, subscribed or running thread keeps its provider on `thread/resume` even though the answer says success. So:
   - `resumeThread` with a provider or model first refuses a running thread, or one whose background terminals the caller names (`RETARGET_BUSY`). Otherwise it unsubscribes, waits for the unload, and checks the answer (`RETARGET_IGNORED`). A fork that names a provider or model is checked the same way.
   - Switching to another account of the same provider forks:

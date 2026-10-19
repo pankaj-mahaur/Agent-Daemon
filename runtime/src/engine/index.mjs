@@ -241,8 +241,9 @@ export class Engine extends EventEmitter {
       inject: (threadId, items) => this.#request("thread/inject_items", { threadId, items }),
       /** → {status: "unsubscribed" | "notLoaded" | …}. */
       unsubscribe: (threadId) => this.#request("thread/unsubscribe", { threadId }),
-      /** → [thread]; o: {cwd, limit, modelProviders, sourceKinds, archived}. */
-      list: async (o = {}) => (await this.#request("thread/list", clean(o)))?.data ?? [],
+      /** → [thread]; o: {cwd, limit, modelProviders, sourceKinds, archived}. modelProviders defaults
+       *  to [] (every provider): with -c model_provider set the engine lists only that one's (N15). */
+      list: async (o = {}) => (await this.#request("thread/list", clean({ ...o, modelProviders: o.modelProviders ?? [] })))?.data ?? [],
       archive: (threadId) => this.#request("thread/archive", { threadId }),
       /** → the engine's answer ({thread}). */
       unarchive: (threadId) => this.#request("thread/unarchive", { threadId }),
@@ -559,7 +560,9 @@ export class Engine extends EventEmitter {
       cwd: this.launch.dir,
       clientVersion: this.opts.clientVersion,
       detached: this.opts.detached,
-      codexArgs: [...this.launch.codexArgs, ...(this.opts.engineArgs ?? this.opts.codexArgs ?? [])],
+      // An unsubscribed idle thread unloads at once (P3.4, S-THREADCFG Q10): a switch never
+      // leaves the old thread loaded for the engine's default 30 minutes.
+      codexArgs: [...this.launch.codexArgs, "-c", "thread_unload_delay_secs=0", ...(this.opts.engineArgs ?? this.opts.codexArgs ?? [])],
       // Only the terminal UI opts into the experimental allowlist (codex-parity-2 P0).
       capabilities: this.opts.experimental ? experimentalCapabilities() : undefined,
       env: { ...(this.opts.env ?? {}), CODEX_HOME: this.home },
@@ -985,7 +988,7 @@ export class Engine extends EventEmitter {
   // Recent threads (newest first): [{id, preview, cwd, updatedAt, name?}]
   // sourceKinds: omitted = Codex's default (interactive sources only).
   async listThreads({ cwd, limit = 20, sourceKinds } = {}) {
-    const r = await this.#request("thread/list", clean({ cwd, limit, sourceKinds }));
+    const r = await this.#request("thread/list", clean({ cwd, limit, sourceKinds, modelProviders: [] }));
     return r.data ?? [];
   }
 

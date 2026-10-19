@@ -67,6 +67,8 @@ export function createEngineManager({ factory, homeFor = () => null, envFor = ()
   function armIdle(entry) {
     clearIdle(entry);
     if (entry.leases.size || entry.pinned || closed || !entry.engine) return;
+    // idleMs 0 (one-shot commands): stop now, and let the caller wait for it.
+    if (idleMs <= 0) return stop(entry, "idle");
     entry.idleTimer = setTimeout(() => stop(entry, "idle"), idleMs);
     entry.idleTimer.unref?.();
   }
@@ -138,12 +140,13 @@ export function createEngineManager({ factory, homeFor = () => null, envFor = ()
         lease.busy = Boolean(on);
         entry.busy += on ? 1 : -1;
       },
+      /** → the stop's promise when this release stops the engine (idleMs 0), else undefined. */
       release() {
         if (lease.released) return;
         lease.released = true;
         if (lease.busy) entry.busy--;
         entry.leases.delete(lease);
-        armIdle(entry);
+        return armIdle(entry);
       },
     };
   }

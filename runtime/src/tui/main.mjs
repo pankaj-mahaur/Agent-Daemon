@@ -13,7 +13,8 @@ import { homedir, hostname } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { cliErrorLines } from "../harness/io.mjs";
-import { startHarnessEngine } from "../harness/start.mjs";
+import { closeHarnessEngines, findThreadHome, launchHarness, newestThreadAcrossHomes, removedAccountText, resumeHint, windowTarget } from "../harness/engines.mjs";
+import { readRecord, recordSettings } from "../harness/settings-sync.mjs";
 import { createSession } from "../harness/session.mjs";
 import { engineHome, engineVersion, engineErrorText, engineErrorDetail } from "../engine/index.mjs";
 import { createIo } from "./terminal/io.mjs";
@@ -288,6 +289,7 @@ export async function cmdTui(opts = {}) {
   let renderer;
   let adPrefs;
   let engine;
+  let launched = null; // launchHarness's answer for this window's engine
   let session;
   let app;
   let exitHint = null;
@@ -323,7 +325,12 @@ export async function cmdTui(opts = {}) {
     // Before the engine starts: skills (and settings with no trust) need no engine.
     const homeRisk = engineHome.homeLayerRisk(cwd);
     if (homeRisk && !allowHomeFolder && !(await pickHomeFolder(homeRisk))) return 2;
-    const start = () => startHarnessEngine({ cwd, home: opts.home, command: opts.command, clientVersion: opts.clientVersion, store: opts.store, err: sink, detached: true, experimental: true, interactive: true, allowHomeFolder });
+    // The account first (P3.4): the engine that serves it starts; this window holds it.
+    const start = async () => {
+      const r = await launchHarness({ cwd, account: opts.account, model: opts.model, home: opts.home, command: opts.command, clientVersion: opts.clientVersion, store: opts.store, err: sink, detached: true, experimental: true, interactive: true, allowHomeFolder, idleMs: 5 * 60_000 });
+      if (r.engine) launched = r;
+      return r;
+    };
     let started = await start();
     while (!started.engine && started.code === 2 && /Not logged in/.test(started.error ?? "")) {
       const choice = await pickOnce({
@@ -360,8 +367,11 @@ export async function cmdTui(opts = {}) {
         break;
       }
       if (cwd === before) continue;
-      await engine.close();
+      // Another folder: its engine starts there (the old one is stopped, not kept).
+      if (launched?.lease) await closeHarnessEngines();
+      else await engine.close();
       engine = null;
+      launched = null;
       started = await start();
       if (!started.engine) {
         renderer.frame({ lines: [] });
@@ -389,24 +399,37 @@ export async function cmdTui(opts = {}) {
           { label: "No", hint: "ignore its hooks and settings", value: "untrusted" },
         ],
       });
-      if (trust) await engine.writeConfig([["projects", { [cwd]: { trust_level: trust } }, "upsert"]]).catch((e) => setupNotes.push(`trust not saved: ${keepStartupError(e)}`));
+      if (trust) {
+        await engine
+          .writeConfig([["projects", { [cwd]: { trust_level: trust } }, "upsert"]])
+          // The settings record learns it too: every home gets the answer (P3.4).
+          // Not for a home a command chose: its answers stay in it.
+          .then(() => (opts.home ? null : recordSettings([[`projects.${JSON.stringify(cwd)}.trust_level`, trust]], { engine, written: true })))
+          .catch((e) => setupNotes.push(`trust not saved: ${keepStartupError(e)}`));
+      }
     }
 
-    const restart = async () => {
-      const again = await start();
-      if (!again.engine) throw new Error(again.error);
-      return again.engine;
-    };
+    // The same home's engine again (the manager's restart; a chosen home starts anew).
+    const restart = () => launched.restart();
     // Checkpoints for /undo, in a git repo only (plan Part 10).
     const { createCheckpoints } = await import("../harness/checkpoints.mjs");
     const { checkpointWiring } = await import("./undo.mjs");
     let cp = createCheckpoints({ cwd });
     let undoKit = (await cp.repo().catch(() => null)) ? checkpointWiring(cp, { cwd }) : null;
     // Settings: the engine's own (its config.toml in ad's home) and ad's (prefs.json).
-    const settings = { engine: createEngineSettings({ engine: () => session.engine }), ad: adPrefs };
+    // [tui] comes from the settings record when this window runs on another home (P3.4).
+    const onDefaultHome = () => engineHome.canonical(session.engine.home) === engineHome.canonical(engineHome.defaultPath());
+    const settings = {
+      engine: createEngineSettings({
+        engine: () => session.engine,
+        record: () => (opts.home || onDefaultHome() ? null : readRecord().tui),
+        write: opts.home ? null : (edits) => recordSettings(edits, { engine: session.engine }),
+      }),
+      ad: adPrefs,
+    };
     // modes: the plan mode, on the experimental allowlist this engine opted into (parity P0).
     // Default's mask keeps the configured effort, as the engine's own Default mode does.
-    session = createSession({ engine, cwd, model: opts.model, sandbox: opts.sandbox, restart, maxRestarts: 3, hooks: undoKit?.hooks ?? {}, modes: true, planEffort: () => settings.engine.get("plan_mode_reasoning_effort") ?? null, configEffort: () => settings.engine.get("model_reasoning_effort") ?? null, ...(opts.lockDir ? { lockDir: opts.lockDir } : {}), identity: engineHome.isManaged(engine.home) ? null : await harnessIdentity(engine).catch(() => null) }); // no identity: the session starts without it
+    session = createSession({ engine, cwd, model: started.params.model, modelProvider: started.params.modelProvider, homeKey: launched?.homeKey ?? null, provider: launched?.target?.account?.provider ?? null, release: launched?.release ?? null, sandbox: opts.sandbox, restart, maxRestarts: 3, hooks: undoKit?.hooks ?? {}, modes: true, planEffort: () => settings.engine.get("plan_mode_reasoning_effort") ?? null, configEffort: () => settings.engine.get("model_reasoning_effort") ?? null, ...(opts.lockDir ? { lockDir: opts.lockDir } : {}), identity: engineHome.isManaged(engine.home) ? null : await harnessIdentity(engine).catch(() => null) }); // no identity: the session starts without it
     await session.init();
     await settings.engine.load();
 
@@ -454,12 +477,37 @@ export async function cmdTui(opts = {}) {
     for (const n of setupNotes.filter(Boolean)) intro.push([{ text: `  ${sanitize(n, "transcript")}`, style: T.warning }]);
 
     if (opts.resume || opts.last) {
+      const couldNot = (text) => intro.push([{ text: `  Could not resume: ${sanitize(text, "transcript")}`, style: T.warning }]);
       let id = opts.resume;
-      if (!id) {
-        const listed = await engine.threads.list({ cwd, limit: 1, modelProviders: [], sourceKinds: ["cli", "vscode", "exec", "appServer"] }).catch(() => null);
-        id = listed?.[0]?.id ?? null;
+      let home = launched?.homeKey ?? null;
+      // --last: the newest conversation for this folder in any home (P3.4).
+      if (!id) ({ threadId: id = null, homeKey: home = home } = (await newestThreadAcrossHomes({ currentKey: launched?.homeKey ?? null, engine, cwd, profile: launched?.profile }).catch(() => null)) ?? {});
+      // In another home: this window moves to that home's engine, then continues there.
+      const moveTo = async (found) => {
+        const removedThere = removedAccountText(found.thread?.modelProvider);
+        if (removedThere) {
+          await found.release();
+          return couldNot(removedThere);
+        }
+        return session.useEngine({ engine: found.engine, release: found.release, restart: found.restart }, { homeKey: found.homeKey, ...windowTarget(found.thread?.modelProvider) }, { threadId: id });
+      };
+      if (id) {
+        const here = await session.engine.threads.read(id).catch(() => null);
+        const removed = removedAccountText(here?.modelProvider);
+        if (removed) couldNot(removed);
+        else if (home !== (launched?.homeKey ?? null)) {
+          const found = await findThreadHome(id, { currentKey: launched?.homeKey ?? null, cwd, profile: launched?.profile }).catch(() => null);
+          if (found) await moveTo(found).catch((e) => couldNot(keepStartupError(e)));
+          else couldNot("that conversation wasn't found");
+        } else {
+          await session.resume(id).catch(async (e) => {
+            // Not in this home: look in the others (--resume <tid> without --account).
+            const found = launched?.lease ? await findThreadHome(id, { currentKey: launched.homeKey, cwd, profile: launched.profile }).catch(() => null) : null;
+            if (found) await moveTo(found).catch((e2) => couldNot(keepStartupError(e2)));
+            else couldNot(keepStartupError(e));
+          });
+        }
       }
-      if (id) await session.resume(id).catch((e) => intro.push([{ text: `  Could not resume: ${sanitize(keepStartupError(e), "transcript")}`, style: T.warning }]));
     }
 
     for (const detail of setupDetails.slice(-50)) session.state.notices.push({ level: "info", code: "startup.details", message: "Engine startup details. Details: /warnings", detail, at: Date.now() });
@@ -551,7 +599,7 @@ export async function cmdTui(opts = {}) {
     await writeState(stateFile, state);
     const tid = session.state.thread?.id;
     const total = session.state.tokens?.total?.total;
-    exitHint = tid ? `To continue: ad tui --resume ${tid}${total ? `   (${total.toLocaleString("en-US")} tokens)` : ""}` : null;
+    exitHint = tid ? `To continue: ${resumeHint(tid, session.state.thread?.modelProvider ?? session.state.config.modelProvider)}${total ? `   (${total.toLocaleString("en-US")} tokens)` : ""}` : null;
     if (ad.loop.state.running) {
       const loopNote = "A loop is still working in the background (log: .agent-daemon/loop-tui.log). To stop it, create .agent-daemon/STOP.";
       exitHint = exitHint ? `${exitHint}\n${loopNote}` : loopNote;
@@ -568,8 +616,11 @@ export async function cmdTui(opts = {}) {
     const live = session?.engine;
     session?.close();
     await io?.close();
-    if (live && live !== engine) await live.close().catch(() => {});
-    await engine?.close();
+    if (launched?.lease) await closeHarnessEngines().catch(() => {});
+    else {
+      if (live && live !== engine) await live.close().catch(() => {});
+      await engine?.close();
+    }
     if (exitHint) out.write(`${exitHint}\n`);
   }
 }

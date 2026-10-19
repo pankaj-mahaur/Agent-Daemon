@@ -13,7 +13,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { startHarnessEngine } from "../harness/start.mjs";
+import { launchHarness } from "../harness/engines.mjs";
 import { UNATTENDED_ENV, UNATTENDED_SANDBOX_POLICY, unattendedThreadConfig } from "../harness/unattended.mjs";
 import { execFileSyncNoShell, resolveGit, resolvedArgv } from "../safe-spawn.mjs";
 
@@ -52,18 +52,24 @@ export function commitWorktree(worktreePath, message, run = execFileSyncNoShell)
  */
 // memoryProject: the repo the worker's memory belongs to (spawnAgent's cwd).
 // The worktree itself lives inside ad's own folder, which never binds memory.
-export async function runEngineWorker({ worktreePath, systemPrompt, userMessage, model, timeoutMs, engineOpts = {}, onEvent, err = process.stderr, memoryProject }) {
+// account: the parent's account (P3.4): a worker runs on what its leader chose, never on
+// whatever the default home holds.
+export async function runEngineWorker({ worktreePath, systemPrompt, userMessage, model, account, timeoutMs, engineOpts = {}, onEvent, err = process.stderr, memoryProject }) {
   let engine;
+  let release = null;
   try {
     const prefixed = { write: (s) => err.write(String(s).replace(/^\[agent-daemon\]/gm, "[agent-daemon worker]")) };
     // AD_WORKER: the prompt is the leader's task, not the user speaking —
     // hooks must not capture it as the user's corrections.
-    const started = await startHarnessEngine({ cwd: worktreePath, err: prefixed, requireSandbox: true, ...engineOpts, env: { ...UNATTENDED_ENV, ...(engineOpts.env ?? {}) } });
+    const wanted = CLAUDE_ALIASES.has(model) ? undefined : model; // `--model sonnet` from Claude-mode habits
+    const started = await launchHarness({ cwd: worktreePath, err: prefixed, requireSandbox: true, account, model: wanted, ...engineOpts, env: { ...UNATTENDED_ENV, ...(engineOpts.env ?? {}) } });
     if (!started.engine) return { ok: false, error: started.error };
     engine = started.engine;
+    release = started.release;
     const { threadId } = await engine.startThread({
       cwd: worktreePath,
-      model: CLAUDE_ALIASES.has(model) ? undefined : model, // `--model sonnet` from Claude-mode habits
+      model: started.params.model,
+      modelProvider: started.params.modelProvider,
       sandbox: "workspace-write",
       approvalPolicy: "never",
       developerInstructions: `${systemPrompt}\n\n${WORKER_COMMIT_NOTE}`,
@@ -75,6 +81,7 @@ export async function runEngineWorker({ worktreePath, systemPrompt, userMessage,
   } catch (e) {
     return { ok: false, error: e.message };
   } finally {
-    await engine?.close();
+    if (release) await release();
+    else await engine?.close();
   }
 }

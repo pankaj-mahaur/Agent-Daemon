@@ -6,7 +6,8 @@
 
 import { engineError } from "../engine/index.mjs";
 import { cliErrorLines } from "./io.mjs";
-import { NOT_LOGGED_IN, startHarnessEngine } from "./start.mjs";
+import { NOT_LOGGED_IN } from "./start.mjs";
+import { launchHarness } from "./engines.mjs";
 
 export { NOT_LOGGED_IN };
 
@@ -29,14 +30,18 @@ export async function cmdRun(prompt, opts = {}) {
   const out = opts.stdout ?? process.stdout;
   const err = opts.stderr ?? process.stderr;
   if (!prompt?.trim()) {
-    err.write('Usage: ad run "<prompt>" [--cwd <dir>] [--model <m>] [--sandbox read-only|workspace-write|danger-full-access] [--json]\n');
+    err.write('Usage: ad run "<prompt>" [--cwd <dir>] [--account <provider/label>] [--model <m>] [--sandbox read-only|workspace-write|danger-full-access] [--json]\n');
     return 1;
   }
 
   let engine;
+  let release = null;
   try {
-    const started = await startHarnessEngine({
+    // The account first (P3.4): the engine that serves it starts, never the default one by chance.
+    const started = await launchHarness({
       cwd: opts.cwd ?? process.cwd(),
+      account: opts.account,
+      model: opts.model,
       home: opts.home,
       command: opts.command,
       clientVersion: opts.clientVersion,
@@ -56,7 +61,8 @@ export async function cmdRun(prompt, opts = {}) {
       return started.code;
     }
     engine = started.engine;
-    const { threadId } = await engine.startThread({ cwd: opts.cwd, model: opts.model, sandbox: opts.sandbox });
+    release = started.release;
+    const { threadId } = await engine.startThread({ cwd: opts.cwd, model: started.params.model, modelProvider: started.params.modelProvider, sandbox: opts.sandbox });
     const streamed = new Set();
     const r = await engine.turn({
       threadId,
@@ -89,6 +95,7 @@ export async function cmdRun(prompt, opts = {}) {
     err.write(cliErrorLines("run", e));
     return 1;
   } finally {
-    await engine?.close();
+    if (release) await release();
+    else await engine?.close();
   }
 }

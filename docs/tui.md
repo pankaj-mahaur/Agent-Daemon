@@ -44,14 +44,15 @@ ad tui --cwd ../other-repo --model <name> --sandbox read-only
 |---|---|
 | `"<prompt>"` | sent as the first prompt as soon as the UI is up |
 | `--last` | resumes the newest conversation for this folder |
-| `--resume <id>` | resumes that conversation |
+| `--resume <id>` | resumes that conversation (in whichever engine folder holds it) |
+| `--account <provider>/<label>` | the account for new conversations (see [harness.md](harness.md#safety-model)) |
 | `--cwd <dir>` | works in another folder |
 | `--model <name>` | the model for new turns (`/model` changes it later) |
 | `--sandbox <mode>` | `read-only`, `workspace-write` (default) or `danger-full-access` |
 
 A conversation is open in one `ad` at a time. Resuming one that another `ad` has open says so and changes nothing.
 
-On exit, ad prints how to continue: `ad tui --resume <id>`, with the tokens used.
+On exit, ad prints how to continue: `ad tui --resume <id>`, with the tokens used, and `--account <provider>/<label>` when the conversation isn't on your default account.
 
 **Bare `ad`** (and `ad --last`) opens the TUI whenever the terminal can show it. `ad chat` stays the plain line mode.
 - `AD_TUI=0` turns that off: bare `ad` prints the help. `ad --last` exits (code 2) saying that `ad tui --last` still reopens the last conversation in the TUI.

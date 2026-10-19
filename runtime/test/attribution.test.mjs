@@ -207,3 +207,11 @@ test("S5: brandPatterns() covers every rendered text, each pattern is rendered s
   assert.equal(screenHits("Try /review · /codex = stock Codex UI", { allow }).length, 1);
   assert.equal(screenHits("model: codex-mini-latest · gpt-5.x-codex", { allow }).length, 0);
 });
+
+test("the api home's identity route is account: any engine whose provider is an ad account entry", async () => {
+  const { harnessIdentity } = await import("../src/harness/setup.mjs");
+  const stub = (provider, type = null) => ({ opts: { clientVersion: "3.1.0" }, account: async () => ({ account: type ? { type } : null }), readConfig: async () => ({ model_provider: provider }) });
+  assert.match(await harnessIdentity(stub("ad-openrouter-abcd1234")), /signed in with an account the user picked in ad/);
+  assert.match(await harnessIdentity(stub("openrouter")), /signed in with OpenRouter/);
+  assert.match(await harnessIdentity(stub(undefined, "chatgpt")), /signed in with a ChatGPT plan/);
+});

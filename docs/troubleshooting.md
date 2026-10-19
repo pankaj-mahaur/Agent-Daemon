@@ -778,6 +778,24 @@ See [harness.md](harness.md#working-in-your-home-folder).
 
 **Fix:** use the address the provider documents (for a custom endpoint, the final URL with `/v1`), then sign in again with it.
 
+## 60. "ad auth: <account> needs its key again"
+
+**Cause:** the account ad picked (from `--account`, `AD_ACCOUNT`, the project's choice or your default) has no working key or sign-in, so ad stops before starting anything.
+
+**Fix:** run the command the message names (`ad auth login <provider> --label <label>`), or pick another account with `--account`. `ad auth list` shows them all.
+
+## 61. "The engine kept this conversation on <account>" / "This conversation is still busy"
+
+**Cause:** a conversation was asked to move to another account. The engine moves a conversation only when nothing runs in it, and keeps the old account otherwise.
+
+**Fix:** wait for the turn (or a background terminal) to finish, then switch again; or start a new conversation on the other account.
+
+## 62. "This conversation used an account you removed"
+
+**Cause:** the conversation ran on an API-key account that is no longer in your account list.
+
+**Fix:** start a new conversation. Carrying it over to another account comes in a later release.
+
 ---
 
 For harness problems, the [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill walks through login → hooks → sandbox → the engine's own log. See also [harness.md](harness.md) and, for the terminal UI, [tui.md](tui.md).

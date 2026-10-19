@@ -1163,3 +1163,124 @@ test("changeDir into a folder that would load the user's own ~/.codex is refused
     rmSync(userHome, { recursive: true, force: true });
   }
 });
+
+// ---- P3.4: accounts in a window ----
+
+test("retarget to another account of the same provider forks the conversation onto it; to another provider the next prompt starts anew", async () => {
+  await withSession(
+    () => ({ modelProvider: "ad-openrouter-a", homeKey: "api", provider: "openrouter" }),
+    async ({ session, engine }) => {
+      await session.submit("early-complete").done;
+      const first = session.state.thread.id;
+      assert.equal((await debugState(engine)).lastParams["thread/start"].modelProvider, "ad-openrouter-a");
+      const b = { modelProvider: "ad-openrouter-b", homeKey: "api", provider: "openrouter", passthrough: true };
+      assert.equal(session.retarget.plan(b), "continues");
+      const r = await session.retarget(b);
+      assert.equal(r.kind, "continues");
+      assert.notEqual(session.state.thread.id, first);
+      assert.equal((await debugState(engine)).lastParams["thread/fork"].modelProvider, "ad-openrouter-b");
+      assert.equal(session.state.config.modelProvider, "ad-openrouter-b");
+      // Another provider: no fork, a new thread at the next prompt.
+      const k = { modelProvider: "ad-kimi-c", homeKey: "api", provider: "kimi", passthrough: true };
+      assert.equal(session.retarget.plan(k), "new");
+      assert.equal((await session.retarget(k)).kind, "new");
+      assert.equal(session.state.thread, null);
+      await session.submit("early-complete").done;
+      assert.equal((await debugState(engine)).lastParams["thread/start"].modelProvider, "ad-kimi-c");
+      // Another model id is a new conversation too (M3's "same model family").
+      assert.equal(session.retarget.plan({ modelProvider: "ad-kimi-d", homeKey: "api", provider: "kimi", model: "other/model" }), "new");
+    },
+  );
+});
+
+test("retarget refuses while a turn runs", async () => {
+  await withSession(
+    () => ({ modelProvider: "ad-a", homeKey: "api", provider: "openrouter" }),
+    async ({ session }) => {
+      session.submit("hang");
+      await until(() => session.state.activeTurnId, "the turn to start");
+      await assert.rejects(session.retarget({ modelProvider: "ad-b", homeKey: "api", provider: "openrouter" }), { code: "RETARGET_RUNNING" });
+      await session.interrupt();
+    },
+  );
+});
+
+test("useEngine with a threadId attaches that thread in the new engine with its lock and no provider override; without one the next prompt starts there", async () => {
+  let released = 0;
+  await withSession(() => ({ release: async () => void released++ }), async ({ session, engine, make, lockDir }) => {
+    await session.submit("early-complete").done;
+    const tid = session.state.thread.id;
+    const other = await make();
+    await session.useEngine({ engine: other }, { modelProvider: "ad-openrouter-a", homeKey: "api", provider: "openrouter" }, { threadId: tid });
+    assert.equal(released, 1, "the old lease is released");
+    assert.equal(session.engine, other);
+    assert.equal(session.state.thread.id, tid);
+    const resumed = (await debugState(other)).lastParams["thread/resume"];
+    assert.equal(resumed.threadId, tid);
+    assert.equal(resumed.modelProvider, undefined, "a plain resume");
+    assert.throws(() => lockThread(tid, { dir: lockDir }), SessionLockedError);
+    // Without a thread: the next prompt starts on the new engine with its provider.
+    const third = await make();
+    await session.useEngine({ engine: third }, { modelProvider: "ad-openrouter-b" });
+    assert.equal(session.state.thread, null);
+    await session.submit("early-complete").done;
+    assert.equal((await debugState(third)).lastParams["thread/start"].modelProvider, "ad-openrouter-b");
+    assert.equal((await debugState(engine)).calls.filter((m) => m === "thread/start").length, 1);
+  });
+});
+
+test("a resumed thread keeps its own account, and the next new conversation is on the window's (D15)", async () => {
+  await withSession(
+    () => ({ modelProvider: "ad-openrouter-a", homeKey: "api", provider: "openrouter" }),
+    async ({ session, engine }) => {
+      await session.submit("early-complete").done;
+      const mine = session.state.thread.id;
+      // Another account's thread, started elsewhere in this engine.
+      const other = (await engine.threads.start({ cwd: "/w", modelProvider: "ad-openrouter-b" })).threadId;
+      await engine.threads.unsubscribe(other);
+      await session.resume(other);
+      assert.equal(session.state.thread.modelProvider, "ad-openrouter-b");
+      assert.equal(session.state.config.modelProvider, "ad-openrouter-a");
+      session.newThread();
+      await session.submit("early-complete").done;
+      assert.equal((await debugState(engine)).lastParams["thread/start"].modelProvider, "ad-openrouter-a");
+      assert.notEqual(session.state.thread.id, mine);
+    },
+  );
+});
+
+test("a prompt sent while a switch runs waits and then runs on the fork", async () => {
+  await withSession(
+    () => ({ modelProvider: "ad-openrouter-a", homeKey: "api", provider: "openrouter" }),
+    async ({ session, engine }) => {
+      await session.submit("early-complete").done;
+      const old = session.state.thread.id;
+      const switching = session.retarget({ modelProvider: "ad-openrouter-b", homeKey: "api", provider: "openrouter", passthrough: true });
+      const sent = session.submit("early-complete");
+      assert.equal((await sent.accepted).queued, true);
+      await assert.rejects(session.retarget({ modelProvider: "ad-openrouter-c", homeKey: "api", provider: "openrouter" }), { code: "RETARGET_RUNNING" });
+      const r = await switching;
+      await until(() => session.state.turns.length > 0 && session.state.turns.every((x) => x.status !== "inProgress"), "the queued prompt to run");
+      const starts = (await debugState(engine)).notifications ?? [];
+      assert.notEqual(r.threadId, old);
+      assert.equal((await debugState(engine)).lastParams["turn/start"].threadId, r.threadId, "it ran on the fork");
+      void starts;
+    },
+  );
+});
+
+test("switching a resumed thread compares with the thread's own account, not the window's", async () => {
+  await withSession(
+    () => ({ modelProvider: "ad-openrouter-a", homeKey: "api", provider: "openrouter" }),
+    async ({ session, engine }) => {
+      const other = (await engine.threads.start({ cwd: "/w", modelProvider: "ad-openrouter-b" })).threadId;
+      await engine.threads.unsubscribe(other);
+      await session.resume(other);
+      // The window's account isn't the thread's: moving the thread to it is a fork.
+      const r = await session.retarget({ modelProvider: "ad-openrouter-a", homeKey: "api", provider: "openrouter", passthrough: true });
+      assert.equal(r.kind, "continues");
+      assert.notEqual(r.threadId, other);
+      assert.equal((await debugState(engine)).lastParams["thread/fork"].modelProvider, "ad-openrouter-a");
+    },
+  );
+});

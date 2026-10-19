@@ -463,7 +463,7 @@ ad auth login openai|openrouter|chatgpt   # ad auth use / status / logout
 ad [--last]                                    # terminal UI (AD_TUI=0: bare ad prints the help)
 ad tui ["<prompt>"] [--last | --resume <id>]   # terminal UI (docs/tui.md)
 ad about                                     # what ad runs on: versions, the engine, licenses, settings path
-ad chat | ad run "<prompt>" | ad loop "<objective>"
+ad chat | ad run "<prompt>" | ad loop "<objective>"   # --account <provider>/<label> picks the account (AD_ACCOUNT: a default)
 ad schedule add|list|remove|enable|disable|run|tick
 ad web | ad acp | ad tools list|enable|disable | ad sandbox setup|status | ad agy "<prompt>"
 ad spawn ... --engine ad|claude     # team workers (default: sandboxed engine thread)

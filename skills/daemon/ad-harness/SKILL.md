@@ -39,9 +39,10 @@ Don't delegate one-line edits or anything that needs back-and-forth design. Do t
    | the user wants to work with the agent themselves, watching and approving | tell them to run `ad tui` (`ad tui --last` continues). It needs an interactive terminal, so you can't drive it from a tool call. Guide: `docs/tui.md` |
 
 3. **Write the prompt as a spec:** the goal, the files involved, how to verify ("`node --test` passes"), and what *not* to touch. For `ad loop`, state a verifiable finish line. The loop stops only when the agent reports `done` + `exit_signal`, or a brake trips.
-4. **Set brakes.** Always pass `--max-iterations` / `--max-minutes` for loops. Default sandbox is `workspace-write`; never pass `--sandbox danger-full-access` unless the user asked for it.
-5. **Verify yourself.** Read the diff (`git diff`), run the tests, and report what actually changed. The agent's summary is a claim, not proof. Exit codes: `ad run` 0 = turn completed; `ad loop` 0 = done, 3 = a brake stopped it.
-6. **Stop a runaway loop:** `touch .agent-daemon/STOP` (delete it before the next loop).
+4. **Pick the account** when the user named one: `--account <provider>/<label>` on `ad run`, `ad loop` and `ad sp` (workers run on it too), or `AD_ACCOUNT` for a scheduled job. Without either, ad uses the project's choice (trusted folders) or the default account. An account that needs its key again stops the start: tell the user the command it prints.
+5. **Set brakes.** Always pass `--max-iterations` / `--max-minutes` for loops. Default sandbox is `workspace-write`; never pass `--sandbox danger-full-access` unless the user asked for it.
+6. **Verify yourself.** Read the diff (`git diff`), run the tests, and report what actually changed. The agent's summary is a claim, not proof. Exit codes: `ad run` 0 = turn completed; `ad loop` 0 = done, 3 = a brake stopped it.
+7. **Stop a runaway loop:** `touch .agent-daemon/STOP` (delete it before the next loop).
 
 ## Examples
 

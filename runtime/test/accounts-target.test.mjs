@@ -133,10 +133,10 @@ test("engineIdFor: api for API accounts (on @default or api/), the account id fo
   assert.equal(engineHomeFor(personal.id, doc), "@default");
 });
 
-test("engineParamsFor: an API account's provider entry; an account home sends none", () => {
+test("engineParamsFor: an API account's provider entry; an account home names the engine's own openai provider", () => {
   const { doc, work, team } = fixture();
   assert.deepEqual(engineParamsFor({ account: work, model: "m" }, doc), { engineId: "api", modelProvider: work.providerEntry, model: "m", effort: undefined });
-  assert.deepEqual(engineParamsFor({ account: team, model: undefined }, doc), { engineId: team.id, modelProvider: undefined, model: undefined, effort: undefined });
+  assert.deepEqual(engineParamsFor({ account: team, model: undefined }, doc), { engineId: team.id, modelProvider: "openai", model: undefined, effort: undefined });
 });
 
 test("accountForProviderId: an entry, 3.0's openrouter → the adopted key, openai → @default, unknown → null", () => {
@@ -162,4 +162,10 @@ test("a stale AD_ACCOUNT or window account never breaks a flag; without a flag i
   t = resolveTarget({ window: { account: "default" }, doc });
   assert.equal(t.notes[0].code, "ACCOUNT_IGNORED");
   assert.throws(() => resolveTarget({ explicit: { account: "default" }, doc }), { code: "ACCOUNT_AMBIGUOUS" });
+});
+
+test("engineHomeFor: an api home ad doesn't know yet is api/, never the default home (D15)", () => {
+  const { doc } = fixture();
+  doc.engines.api.home = null;
+  assert.equal(engineHomeFor("api", doc), "api");
 });

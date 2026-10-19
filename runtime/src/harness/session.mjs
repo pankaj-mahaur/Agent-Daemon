@@ -32,7 +32,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_APPROVAL_POLICY, DEFAULT_SANDBOX, engineEvents, engineHome, isAutoModel, engineErrorText, engineErrorDetail, engineNoticeText } from "../engine/index.mjs";
+import { DEFAULT_APPROVAL_POLICY, DEFAULT_SANDBOX, engineEvents, engineHome, isAutoModel, engineErrorText, engineErrorDetail, engineNoticeText, switchThread } from "../engine/index.mjs";
 import { acquireLock, DEFAULT_LOCK_DIR, defaultLockDir } from "../lock.mjs";
 import { homeCdRefusal } from "../engine/attribution.mjs";
 
@@ -94,10 +94,21 @@ You may perform non-mutating inspection, including reading or searching files an
 
 Do not modify files, source, git state, permissions, configuration, or any other workspace state unless the user explicitly requests that mutation in this side conversation. Do not request escalated permissions or broader sandbox access unless the user explicitly requests a mutation that requires it. If the user explicitly requests a mutation, keep it minimal, local to the request, and avoid disrupting the main thread.`;
 
+export const RETARGET_RUNNING_TEXT = "Wait for the turn to finish (or Esc) before switching accounts.";
+
 export function createSession({
   engine,
   cwd,
   model,
+  // The account's provider entry (P3.4): every new thread starts on it (a target is
+  // captured when a thread starts and never changes under it).
+  modelProvider,
+  // Where this window runs (P3.4): the engine's home key and the account's provider id,
+  // so retarget can tell a fork switch (same provider, same engine) from a new thread.
+  homeKey = null,
+  provider = null,
+  // The first engine's lease (the EngineManager's release): let go when useEngine moves on.
+  release: initialRelease = null,
   sandbox = DEFAULT_SANDBOX,
   approvalPolicy = DEFAULT_APPROVAL_POLICY,
   hooks: initialHooks = {},
@@ -131,7 +142,7 @@ export function createSession({
     starting: false, // a turn/start is on its way
     requests: [], // [{request, resolve}] in arrival order
     queue: [], // [{id, input, text}]
-    config: { model: model ?? null, effort: null, sandbox, approvalPolicy, cwd },
+    config: { model: model ?? null, modelProvider: modelProvider ?? null, homeKey, provider, effort: null, sandbox, approvalPolicy, cwd },
     account: null,
     goal: null,
     // This conversation's subagents (the engine's /subagents rows), first seen first:
@@ -587,10 +598,10 @@ export function createSession({
     if (threadStarting) return threadStarting;
     const e = epoch;
     const p = (async () => {
-      const t = await eng.startThread({ cwd: state.config.cwd, model: state.config.model ?? undefined, sandbox: state.config.sandbox, approvalPolicy: state.config.approvalPolicy, ...extra });
+      const t = await eng.startThread({ cwd: state.config.cwd, model: state.config.model ?? undefined, modelProvider: state.config.modelProvider ?? undefined, sandbox: state.config.sandbox, approvalPolicy: state.config.approvalPolicy, ...extra });
       if (stale(e)) throw new Error("the session moved on before the thread started");
       state.config.model ??= t.model ?? null;
-      attach(t.threadId, t.thread);
+      attach(t.threadId, { ...(t.thread ?? {}), modelProvider: t.modelProvider ?? t.thread?.modelProvider ?? null });
       change("thread");
       if (identity && !engineHome.isManaged(eng.home)) {
         // A home ad didn't create gets no managed instructions file, so the agent learns who it is here (design D5).
@@ -714,7 +725,7 @@ export function createSession({
     if (state.activeTurnId) return steer(input);
     const cid = randomUUID();
     // While a turn is starting or the engine is restarting, the prompt waits in the queue.
-    if (state.starting || state.engine.state !== "ready") {
+    if (state.starting || switching || state.engine.state !== "ready") {
       const accepted = Promise.resolve({ queued: true, index: queue(input) });
       return { clientUserMessageId: cid, accepted, done: accepted };
     }
@@ -765,7 +776,7 @@ export function createSession({
   }
 
   function drainQueue() {
-    if (closed || state.engine.state !== "ready" || state.activeTurnId || state.starting || !state.queue.length) return;
+    if (closed || switching || state.engine.state !== "ready" || state.activeTurnId || state.starting || !state.queue.length) return;
     const next = state.queue.shift();
     change("queue");
     const cid = randomUUID();
@@ -867,6 +878,137 @@ export function createSession({
     change("config");
   }
 
+  /* -------------------------------------------------------------- */
+  /* Accounts (P3.4)                                                */
+  /* -------------------------------------------------------------- */
+
+  // A target: { modelProvider, model, effort, homeKey, provider, passthrough }.
+  // "continues": the same account (only the model changes), or another account of the
+  // same provider in the same engine on a passthrough route with the same model id
+  // (M3's "same model family"): the conversation is forked onto it. Anything else
+  // starts a new conversation.
+  // The account the open conversation is on (its own), else the window's.
+  const currentProvider = () => state.thread?.modelProvider ?? state.config.modelProvider ?? null;
+
+  function retargetPlan(t = {}) {
+    const c = state.config;
+    if ((t.modelProvider ?? null) === currentProvider()) return "continues";
+    const sameEngine = (t.homeKey ?? null) === (c.homeKey ?? null);
+    const sameProvider = Boolean(t.provider) && t.provider === c.provider;
+    const sameModel = (t.model ?? c.model ?? null) === (c.model ?? null);
+    return sameEngine && sameProvider && t.passthrough !== false && sameModel ? "continues" : "new";
+  }
+
+  let switching = false;
+  let oldWatch = null; // the switch's watch on a thread whose background terminals still run
+  function busyGuard() {
+    if (state.activeTurnId || state.starting || switching) throw Object.assign(new Error(RETARGET_RUNNING_TEXT), { code: "RETARGET_RUNNING" });
+  }
+
+  function takeTarget(t) {
+    for (const k of ["modelProvider", "homeKey", "provider"]) if (t[k] !== undefined) state.config[k] = t[k] ?? null;
+    if (t.model !== undefined) state.config.model = t.model ?? null;
+    change("config");
+  }
+
+  // Moves this window to a target in the same engine, at idle only. A thread already
+  // started keeps its account (D08): a switch forks it, or the next prompt starts anew.
+  async function retarget(t = {}) {
+    if (closed) throw new Error("session closed");
+    busyGuard();
+    const same = (t.modelProvider ?? null) === currentProvider();
+    if (same) {
+      setNextTurn({ ...(t.model !== undefined ? { model: t.model } : {}), ...(t.effort !== undefined ? { effort: t.effort } : {}) });
+      return { kind: "same", threadId: state.thread?.id ?? null };
+    }
+    if (retargetPlan(t) === "new" || !state.thread) {
+      if (state.thread) {
+        detach();
+        resetThreadState();
+        change("thread");
+      }
+      takeTarget(t);
+      return { kind: state.thread ? "continues" : "new", threadId: null };
+    }
+    const old = state.thread.id;
+    // Until the move is done, a prompt waits in the queue (it would run on the old thread).
+    switching = true;
+    try {
+      const r = await switchThread({
+        engine: eng,
+        threadId: old,
+        target: { modelProvider: t.modelProvider, model: t.model },
+        terminals: () => [...state.terminals.values()].map((x) => x.itemId),
+        onViolation: (v) => notice("warn", "switch.violation", v.text),
+      });
+      // The fork is locked before the old thread is let go; if it can't be, it is dropped.
+      let release;
+      try {
+        release = lockThread(r.threadId, { dir: lockDir });
+      } catch (err) {
+        await r.stop?.();
+        await eng.threads.archive(r.threadId).catch(() => {});
+        throw err;
+      }
+      const waiting = state.queue;
+      detach();
+      resetThreadState();
+      state.queue = waiting;
+      releaseLock = release;
+      state.thread = { id: r.threadId, modelProvider: t.modelProvider ?? null };
+      unsubThread = eng.subscribe(r.threadId, onThreadEvent);
+      await oldWatch?.();
+      oldWatch = r.watching ? r.stop : null;
+      takeTarget(t);
+      await loadTurns(r.threadId, epoch);
+      change("thread");
+      return { kind: "continues", threadId: r.threadId, previous: old, goalMoved: r.goalMoved, watching: r.watching };
+    } finally {
+      switching = false;
+      queueMicrotask(drainQueue);
+    }
+  }
+  retarget.plan = retargetPlan;
+
+  let engineRelease = initialRelease;
+  // Another engine for this window (another home): the thread is let go (its lock too),
+  // the old engine's lease released. With threadId the new engine then continues that
+  // thread (lock first, a plain resume: never a provider override); without, the next
+  // prompt starts a new one there.
+  async function useEngine({ engine: next, release: nextRelease = null, restart: nextRestart = null } = {}, t = {}, { threadId } = {}) {
+    if (closed) throw new Error("session closed");
+    busyGuard();
+    detach();
+    resetThreadState();
+    unwire();
+    const prev = { eng, engineRelease, restart };
+    try {
+      eng = next;
+      engineRelease = nextRelease;
+      if (nextRestart) restart = nextRestart;
+      wire();
+    } catch (err) {
+      // Back on the old engine; the new one's lease is let go.
+      eng = prev.eng;
+      engineRelease = prev.engineRelease;
+      restart = prev.restart;
+      wire();
+      await nextRelease?.();
+      throw err;
+    }
+    const oldRelease = prev.engineRelease;
+    await oldWatch?.();
+    oldWatch = null;
+    takeTarget(t);
+    const acct = await eng.account().catch(() => null);
+    state.account = acct ? { ...(acct.account ?? {}), requiresOpenaiAuth: Boolean(acct.requiresOpenaiAuth) } : null;
+    change("engine");
+    change("thread");
+    await oldRelease?.();
+    if (threadId) await api.resume(threadId);
+    return { threadId: state.thread?.id ?? null };
+  }
+
   async function loadTurns(threadId, e) {
     const turns = [];
     let cursor = null;
@@ -933,6 +1075,8 @@ export function createSession({
     interrupt,
     resolve,
     setNextTurn,
+    retarget,
+    useEngine,
     /** Switches the collaboration mode ("plan" | "default") → {ok, message?}. Callers check busy rules. */
     setMode,
     /** The next preset in the engine's order (Shift+Tab) → {ok, message?}. */
@@ -1196,7 +1340,9 @@ export function createSession({
       // The mode the thread is in (a plan stays a plan).
       state.mode = { ...state.mode, kind: t.collaborationMode?.mode ?? "default" };
       releaseLock = release;
-      state.thread = { ...(t.thread ?? {}), id: t.threadId };
+      // A resumed thread keeps its own account; the window's choice (config) is untouched,
+      // so the next new conversation still starts on it.
+      state.thread = { ...(t.thread ?? {}), id: t.threadId, modelProvider: t.modelProvider ?? t.thread?.modelProvider ?? null };
       unsubThread = eng.subscribe(t.threadId, onThreadEvent);
       await loadTurns(t.threadId, e);
       change("thread");
@@ -1207,6 +1353,8 @@ export function createSession({
       closed = true;
       // A side conversation's thread is let go: ephemeral, it ends with it.
       const sideThread = secondary ? state.thread?.id : null;
+      oldWatch?.();
+      oldWatch = null;
       detach("closed");
       if (sideThread) eng.threads.unsubscribe(sideThread).catch(() => {});
       state.queue = [];
