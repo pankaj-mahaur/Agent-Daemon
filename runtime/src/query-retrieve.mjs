@@ -81,6 +81,11 @@ export async function runQueryRetrieve(opts = {}) {
       groups: [{ label: "learnings", bytesIn: consideredBytes, bytesKept: Buffer.byteLength(context, "utf8"), truncated }]
     });
     await markRetrieved(results.map(r => r.id).filter(Boolean));
+    const { db } = await import("./memory/episodic.mjs");
+    const { recordInjections } = await import("./memory/metrics.mjs");
+    const { hostId } = await import("./memory/host-ids.mjs");
+    const { hookHost } = await import("./hooks/io.mjs");
+    recordInjections(await db(), { captureRef: sessionId, projectKey: projectKeys[0], ids: results.map((r) => r.id).filter(Boolean), surface: "query-retrieve", host: hostId(hookHost()) });
   } catch { /* best-effort */ }
 
   if (opts.outputJson) {

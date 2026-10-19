@@ -15,6 +15,7 @@ const USAGE = `agent-daemon-memory: ad's memory server for Claude Code, Codex an
   doctor [--json]  ·  repair [--host <id>]  ·  status [--json]
   uninstall [--host <id> …] [--purge-data [--force]]
   review [--accept <file>] [--accept-all] [--global]   (in your own terminal)
+  report [--days 30] [--all-projects] [--json] [--share]   is memory working here
 Hosts: claude-code, codex, cursor. Memory stays on this computer.`;
 
 /** --flag values: repeated --host collects; booleans are present or not. */
@@ -68,6 +69,20 @@ export async function main(argv = process.argv.slice(2), { log = (l) => console.
   if (!cmd || cmd === "help" || cmd === "--help" || cmd === "-h") {
     log(USAGE);
     return cmd ? 0 : 1;
+  }
+  if (cmd === "report") {
+    const r = { cwd: process.cwd(), out: log };
+    for (let i = 0; i < rest.length; i++) {
+      if (rest[i] === "--days") r.days = rest[++i];
+      else if (rest[i] === "--all-projects") r.allProjects = true;
+      else if (rest[i] === "--json") r.json = true;
+      else if (rest[i] === "--share") r.share = true;
+      else {
+        log(`unknown option ${rest[i]}`);
+        return 1;
+      }
+    }
+    return (await import("../memory/report.mjs")).reportCommand(r);
   }
   if (cmd === "review") {
     // The same guarded review as `ad review` (D49: your own terminal, typed).

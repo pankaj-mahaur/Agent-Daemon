@@ -14,7 +14,7 @@
 //      request also a memory-promote proposal. Only the user's guarded accept
 //      (ad review) makes it active or global.
 //
-//   captureExplicit({kind, fields, scope, host, mode, processId, now, limiter})
+//   captureExplicit({kind, fields, scope, host, mode, now, limiter})
 //     → {status, id?, proposalPaths?, message}
 //   kind "correction": fields {wrong, right, user_words?, scope?, files?, session_id?}
 //   kind "learning":   fields {text, kind, evidence?, scope?, files?, session_id?}
@@ -27,6 +27,7 @@ import { findSecrets } from "../security/secret-patterns.mjs";
 import { screenLearning, stripPrivate, neutralizeText } from "../digest/sanitize.mjs";
 import { writeMemoryProposal } from "../digest/proposals.mjs";
 import { ensureProjectDataDir } from "./project-dir.mjs";
+import { classifyCorrection, mcpCaptureRef } from "./metrics.mjs";
 
 export const LEARNING_KINDS = Object.freeze(["pattern", "gotcha", "decision", "tool"]);
 const WINDOW_MS = 10 * 60 * 1000;
@@ -61,6 +62,7 @@ export function createLimiter() {
   };
 }
 const DEFAULT_LIMITER = createLimiter();
+const eventLimiter = createLimiter();
 
 const oneLine = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
 
@@ -136,7 +138,7 @@ export function writeHeartbeat(handle, { host, projectKey, captureRef, now = Dat
   }
 }
 
-export async function captureExplicit({ kind, fields, scope, host = null, mode = "auto", processId = process.pid, now = Date.now(), limiter = DEFAULT_LIMITER }) {
+export async function captureExplicit({ kind, fields, scope, host = null, mode = "auto", now = Date.now(), limiter = DEFAULT_LIMITER }) {
   const note = parseFields(kind, fields);
   if (scope?.kind !== "project" || !scope.keys?.length || !scope.dir) return { status: "rejected-unbound", message: TEXTS.unbound };
 
@@ -150,13 +152,31 @@ export async function captureExplicit({ kind, fields, scope, host = null, mode =
   if (!handle) throw new Error("Memory store unavailable (better-sqlite3 not installed). Run ad doctor.");
   if (mode === "auto" && hooksActive(handle, host, scope.keys, now)) return { status: "hooks-active", message: TEXTS.hooksActive };
 
+  // Corrections feed the repeat metric (P5.5), duplicates included: a repeat is the signal.
+  // The process ref ties them to what this server showed (it never learns the host session).
+  // An agent can't inflate the report: one event per text per process (metrics.mjs),
+  // a reword needs two different sessions, and events are capped like saves.
+  if (note.category === "correction" && eventLimiter.take(now)) {
+    const r = classifyCorrection(handle, { keys: scope.keys, text, captureRef: mcpCaptureRef(), source: "tools", host, now });
+    if (r.reword) {
+      const old = handle.get("SELECT text FROM learnings WHERE id = ?", [r.learningId]);
+      try {
+        await writeMemoryProposal({ kind: "memory-reword", learningId: r.learningId, text: old.text, evidence: `repeated twice after being shown; last time: ${text}`, origin: "ad (the same correction came back after the lesson was shown)", proposedDir: path.join(ensureProjectDataDir(scope.dir), "proposed") });
+      } catch {
+        // the metric never blocks capture
+      }
+    }
+  }
+
   const nk = normKey(text);
   for (const key of scope.keys) {
     if (sameNote(handle, key, text, nk)) return { status: "duplicate", message: TEXTS.duplicate(neutralizeText(text)) };
   }
   if (!limiter.take(now)) return { status: "rate-limited", message: TEXTS.rateLimited };
 
-  const captureRef = note.sessionRef || `proc:${processId}`;
+  // This server process, never an id the agent supplied: session identity behind the
+  // repeat metric can't be chosen by the agent (session_id only deduplicated).
+  const captureRef = mcpCaptureRef();
   const row = {
     sessionId: null,
     projectSlug: scope.keys[0],

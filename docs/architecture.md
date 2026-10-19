@@ -131,6 +131,7 @@ transcript.jsonl
 - `sessions` — one row per digested session
 - `learnings` — one row per extracted learning, queryable by tag / scope / confidence
 - `skill_failures` — feedback signal for the GEPA evolve loop
+- `injections`, `correction_events`, `feedback` — what each session was shown, each correction and whether it repeated a lesson, and memory_feedback verdicts; read by `ad memory report` ([Memory metrics](memory-metrics.md))
 
 ### 5. Watch daemon (`runtime/src/daemon/watch.mjs`)
 

@@ -92,7 +92,18 @@ export function describeMemory(handle, meta, keys) {
   if (!row || !keys.includes(row.project_slug)) return { ok: false, text: `Learning #${meta.learning} isn't a note of this project.` };
   if (meta.kind === "memory-add" && row.status !== "pending") return { ok: false, text: `Learning #${row.id} isn't waiting for review (${row.status}): nothing to accept.` };
   if (meta.kind === "memory-promote" && (row.promote_request !== "global" || !["pending", "active"].includes(row.status))) return { ok: false, text: `Learning #${row.id} didn't ask to become a cross-project note: nothing to accept.` };
-  const action = meta.kind === "memory-add" ? "use in this project" : "use in every project";
+  if (meta.kind === "memory-reword" && row.status !== "active") return { ok: false, text: `Learning #${row.id} isn't in use (${row.status}): nothing to reword.` };
+  let action = { "memory-add": "use in this project", "memory-promote": "use in every project", "memory-reword": "rewrite in your words" }[meta.kind];
+  if (meta.kind === "memory-reword") {
+    // What the reword rests on: shown, and the same correction came back anyway.
+    try {
+      const e = handle.get("SELECT COUNT(DISTINCT capture_ref) AS n FROM correction_events WHERE matched_learning_id = ? AND was_injected = 'yes'", [row.id]);
+      const shown = handle.get("SELECT MAX(ts) AS t FROM injections WHERE learning_id = ?", [row.id]);
+      action += `; shown and still repeated in ${e.n} sessions${shown?.t ? `, last shown ${String(shown.t).slice(0, 10)}` : ""}`;
+    } catch {
+      // older store: the bare line
+    }
+  }
   return { ok: true, row, line: `#${row.id} (${action}): ${preview(row.text)}` };
 }
 
@@ -100,10 +111,11 @@ export function describeMemory(handle, meta, keys) {
  * Apply an accepted memory proposal to the store. → {ok, text} (text says what happened).
  * keys: the project keys this review is bound to; a proposal for another project's note is refused.
  */
-export async function acceptMemory(handle, meta, { cwd, keys, now = new Date() }) {
+export async function acceptMemory(handle, meta, { cwd, keys, now = new Date(), editText = editInEditor }) {
   const d = describeMemory(handle, meta, keys);
   if (!d.ok) return d;
   const row = d.row;
+  if (meta.kind === "memory-reword") return rewordLearning(handle, row, { editText, cwd });
   if (meta.kind === "memory-add") {
     handle.run("UPDATE learnings SET status = 'active', applied_to = 'memory:project' WHERE id = ?", [row.id]);
     const { resolveProjectMemoryPath } = await import("./digest/apply.mjs");
@@ -153,7 +165,53 @@ export function rejectMemory(handle, meta, { keys }) {
   const row = learningRow(handle, meta.learning);
   if (!row || !keys.includes(row.project_slug)) return;
   if (meta.kind === "memory-add") handle.run("UPDATE learnings SET status = 'rejected' WHERE id = ? AND status = 'pending'", [row.id]);
-  else handle.run("UPDATE learnings SET promote_request = NULL WHERE id = ?", [row.id]);
+  else if (meta.kind === "memory-promote") handle.run("UPDATE learnings SET promote_request = NULL WHERE id = ?", [row.id]);
+  // memory-reword rejected: the lesson stays as it is.
+}
+
+/**
+ * memory-reword (P5.5): the user rewrites a lesson that was shown and still repeated.
+ * The new text is screened like any capture; it becomes a new accepted lesson and
+ * the old one is superseded by it.
+ */
+async function rewordLearning(handle, row, { editText, cwd }) {
+  const oneLine = (t) => String(t ?? "").split(/\s+/).filter(Boolean).join(" ");
+  const edited = oneLine(await editText(row.text));
+  const { normKey } = await import("./memory/sqlite.mjs");
+  if (!edited || normKey(edited) === normKey(row.text)) return { ok: false, text: `Learning #${row.id}: the text wasn't changed, so nothing was saved.` };
+  const { findSecrets } = await import("./security/secret-patterns.mjs");
+  const { screenLearning } = await import("./digest/sanitize.mjs");
+  const secret = findSecrets(edited)[0];
+  if (secret) return { ok: false, text: `Not saved: the new text looks like it contains a secret (${secret.kind}).` };
+  if (screenLearning({ text: edited, evidence_quote: "", tags: [] }).verdict === "suspicious") return { ok: false, text: "Not saved: the new text reads like an instruction to an agent, not a lesson." };
+  const { insertLearning } = await import("./memory/episodic.mjs");
+  const id = await insertLearning({ projectSlug: row.project_slug, category: row.category, text: edited, evidence: `reworded in ad review (was #${row.id})`, confidence: row.confidence, origin: "user" });
+  if (!id) return { ok: false, text: `Learning #${row.id}: that wording is already a lesson in this project.` };
+  handle.run("UPDATE learnings SET status = 'superseded', superseded_by = ? WHERE id = ?", [Number(id), row.id]);
+  // The memory file shows lessons too: its line gets the new words.
+  try {
+    const { resolveProjectMemoryPath } = await import("./digest/apply.mjs");
+    const { rewordInFile } = await import("./memory/metrics.mjs");
+    const file = await resolveProjectMemoryPath(cwd);
+    const next = rewordInFile(await fs.readFile(file, "utf8"), row.text, edited);
+    if (next !== null) await fs.writeFile(file, next);
+  } catch {
+    // no memory file: nothing to update
+  }
+  return { ok: true, text: `Reworded: #${id} replaces #${row.id} from the next session.` };
+}
+
+// The default editor step: the lesson in a temp file, opened in $EDITOR.
+async function editInEditor(text) {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ad-reword-"));
+  const file = path.join(dir, "lesson.txt");
+  try {
+    await fs.writeFile(file, String(text) + os.EOL);
+    await openInEditor(file);
+    return await fs.readFile(file, "utf8");
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
 }
 
 /** 3.0's automatic global notes ("global pending"), with the project each came from. */
@@ -280,7 +338,7 @@ async function acceptByFlag({ entries, opts, handle, keys, question, out }) {
   }
   let failed = refused;
   for (const { e, meta } of memory) {
-    const r = await acceptMemory(handle, meta, { cwd: opts.cwd, keys });
+    const r = await acceptMemory(handle, meta, { cwd: opts.cwd, keys, ...(opts.editText ? { editText: opts.editText } : {}) });
     out(r.text);
     if (r.ok) await moveToApplied(e);
     else failed++;
@@ -412,7 +470,7 @@ async function reviewLoop({ entries, opts, store, question, out, env, isTTY }) {
         out("· not confirmed — skipped");
         stats.skipped++;
       } else {
-        const r = await acceptMemory(db.handle, meta, { cwd: opts.cwd, keys: db.keys });
+        const r = await acceptMemory(db.handle, meta, { cwd: opts.cwd, keys: db.keys, ...(opts.editText ? { editText: opts.editText } : {}) });
         out(r.ok ? `✓ ${r.text}` : `  ${r.text}`);
         if (r.ok) {
           await moveToApplied(entries[i]);

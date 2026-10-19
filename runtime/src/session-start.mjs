@@ -216,6 +216,8 @@ export async function runSessionStart(opts) {
   //     learned about X.ts" right when X.ts is being edited. Fully fail-safe —
   //     git missing / non-repo / SQLite absent all silently yield nothing.
   const workingSetIds = new Set();
+  // The lessons this session is shown (P5.5's injection ledger).
+  const shownIds = [];
   // The memory scope for this folder (memory/scope.mjs): [] for home, a root,
   // a system folder or ad's own folders, and for a key two folders share.
   // Every DB-backed section below reads only rows visible to these keys.
@@ -241,6 +243,7 @@ export async function runSessionStart(opts) {
         if (hits.length >= 5) break;
       }
       if (hits.length > 0) {
+        shownIds.push(...hits.slice(0, 5).map((r) => r.id));
         const block = hits.slice(0, 5)
           .map(r => `- **${r.category}** (conf ${r.confidence.toFixed(2)}): ${safeNoteText(r.text, { evidence: r.evidence })}`)
           .join("\n");
@@ -268,6 +271,7 @@ export async function runSessionStart(opts) {
       .filter(r => !workingSetIds.has(r.id))
       .slice(0, 5);
     if (recent && recent.length > 0) {
+      shownIds.push(...recent.map((r) => r.id));
       const sorted = [...recent].sort((a, b) => a.text.localeCompare(b.text));
       const block = sorted.map(r => {
         return `- **${r.category}** (conf ${r.confidence.toFixed(2)}): ${safeNoteText(r.text, { evidence: r.evidence })}`;
@@ -283,6 +287,21 @@ export async function runSessionStart(opts) {
     }
   } catch {
     // SQLite optional — silent skip
+  }
+  if (memKeys.length) {
+    try {
+      const { db } = await import("./memory/episodic.mjs");
+      const { recordInjections, lessonIdsInFile } = await import("./memory/metrics.mjs");
+      const { hostId } = await import("./memory/host-ids.mjs");
+      const { hookHost } = await import("./hooks/io.mjs");
+      const handle = await db();
+      // The memory file is shown too: its lessons count as shown (matched to their rows).
+      const fileText = await tryRead(path.join(projectDataDir(opts.cwd), "memory", "activeContext.md"));
+      const ids = [...shownIds, ...lessonIdsInFile(handle, memKeys, fileText)];
+      recordInjections(handle, { captureRef: opts.sessionId || null, projectKey: memKeys[0], ids, surface: "session-start", host: hostId(hookHost()) });
+    } catch {
+      // telemetry only
+    }
   }
 
   // 5b. User representation — the deterministic "how this user works" rollup

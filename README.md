@@ -508,6 +508,7 @@ ad memory held                         # Notes memory keeps back; accept|release
 ad memory promote fact:<id>            # Make a user fact apply in every project (your own terminal, typed)
 ad memory install [--host <id>]        # Add the memory server to Claude Code, Codex, Cursor (docs/memory-install.md)
 ad memory doctor | repair | status | uninstall
+ad memory report [--days 30] [--share]  # Is memory working: repeated corrections, what was shown, feedback (docs/memory-metrics.md)
 ad memory migrate                      # Run the one-time upkeep now (note keys, journal secret scrub)
 ad memory consolidate                  # Evolution pass: near-dup merges, stale archive, contradictions
                                        #   proposals only — --apply-merges / --apply-stale execute
@@ -939,6 +940,7 @@ Copy-paste configuration templates:
 - [Skill Anatomy](docs/skill-anatomy.md) — How SKILL.md works, frontmatter fields, trigger system
 - [Harness design](docs/harness-design.md) — The engine boundary, isolation from your own install, the safety model, staying current with the engine
 - [Terminal UI architecture](docs/tui-architecture.md) — How `ad tui` is built, the `/undo` safety model, decisions
+- [Memory metrics](docs/memory-metrics.md) — `ad memory report`: repeated corrections, what was shown, feedback, rewording proposals
 - [Testing](docs/testing.md) — The test layers, the live terminal UI tests, mutation checks, CI
 - [Manual test](docs/manual-test.md) — End-to-end checklist (Claude Code mode + harness + terminal UI)
 - [Ecosystem](docs/ecosystem.md) — Hermes interop, cross-agent awareness

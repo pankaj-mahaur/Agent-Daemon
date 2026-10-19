@@ -81,7 +81,7 @@ test("an agent promoting its own note: one pending row, never reinforced, never 
   assert.equal(r[0].status, "pending");
   assert.equal(r[0].observed_count, 1, "a second session never reinforces an agent's note");
   assert.equal(r[0].origin, "agent");
-  assert.equal(r[0].capture_ref, "A");
+  assert.match(r[0].capture_ref, /^proc:/, "this server process, never the id the agent supplied");
   assert.equal(r[0].project_path, dir);
   // 3.0's readers serve only active rows.
   assert.equal(handle.all("SELECT id FROM learnings WHERE status = 'active' AND text = ?", [text]).length, 0);

@@ -13,7 +13,7 @@ import { neutralizeText } from "./sanitize.mjs";
 // The first line of a memory proposal: what ad review acts on. Only the first
 // line counts, so text quoted further down can't pose as one.
 const META_RE = /^<!-- agent-daemon:proposal (\{[^\n]*\}) -->\r?(?:\n|$)/;
-export const MEMORY_KINDS = Object.freeze(["memory-add", "memory-promote"]);
+export const MEMORY_KINDS = Object.freeze(["memory-add", "memory-promote", "memory-reword"]);
 
 /** {kind, learning} from a memory proposal's first line, or null. */
 export function readProposalMeta(content) {
@@ -37,9 +37,11 @@ export async function writeMemoryProposal({ kind, learningId, text, evidence, or
   if (!MEMORY_KINDS.includes(kind)) throw new Error(`not a memory proposal kind: ${kind}`);
   // memory-promote sorts after memory-add for the same note.
   const filename = `${kind}-${String(learningId).padStart(6, "0")}-${stamp.replace(/[:.]/g, "-")}.md`;
-  const action = kind === "memory-add"
-    ? "Accept to let this note reach your sessions in this project; reject to drop it."
-    : "Accept to make this note apply in every project; reject to keep it in this project only.";
+  const action = {
+    "memory-add": "Accept to let this note reach your sessions in this project; reject to drop it.",
+    "memory-promote": "Accept to make this note apply in every project; reject to keep it in this project only.",
+    "memory-reword": "This lesson was shown and the same correction still came back twice. Accept to rewrite it in your words (your editor opens); reject to keep it as it is.",
+  }[kind];
   const content = [
     `<!-- agent-daemon:proposal ${JSON.stringify({ kind, learning: learningId })} -->`,
     `# Proposal — ${kind}`,

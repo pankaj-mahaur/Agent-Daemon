@@ -378,6 +378,7 @@ export async function open(opts = {}) {
       migrateRetrievalEvents(raw);
       migrateMemoryContract(raw);
       migrateLearningsCapture(raw);
+      migrateLearningValue(raw);
       break;
     } catch (e) {
       try {
@@ -635,6 +636,58 @@ export function migrateLearningsCapture(raw) {
         END;`);
     }).immediate();
   }
+}
+
+/**
+ * Idempotent migration (P5.5): what memory showed, which corrections came back,
+ * and feedback per project. Additive DDL only; nothing is backfilled.
+ *   injections         a lesson shown to a session (capture_ref = the host session
+ *                      id for hooks, proc:<pid>-<start> for one memory-server process)
+ *   correction_events  every correction captured, and whether it repeated an
+ *                      accepted lesson from an earlier session (match_kind exact |
+ *                      similar | null; was_injected yes | no | unknown | null)
+ *   feedback           memory_feedback verdicts, per calling project: a global lesson
+ *                      ranks by its own project's verdicts only
+ *
+ * @param {any} raw
+ */
+export function migrateLearningValue(raw) {
+  raw.exec(`
+    CREATE TABLE IF NOT EXISTS injections (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts           TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      capture_ref  TEXT,
+      project_slug TEXT,
+      learning_id  INTEGER NOT NULL,
+      surface      TEXT NOT NULL,
+      host         TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_injections_ref ON injections(capture_ref, learning_id);
+    CREATE INDEX IF NOT EXISTS idx_injections_project ON injections(project_slug, ts);
+    CREATE TABLE IF NOT EXISTS correction_events (
+      id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts                  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      capture_ref         TEXT,
+      project_slug        TEXT,
+      norm_key            TEXT,
+      source              TEXT,
+      matched_learning_id INTEGER,
+      match_kind          TEXT,
+      was_injected        TEXT,
+      host                TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_correction_events_project ON correction_events(project_slug, ts);
+    CREATE INDEX IF NOT EXISTS idx_correction_events_match ON correction_events(matched_learning_id, was_injected);
+    CREATE TABLE IF NOT EXISTS feedback (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts           TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      project_slug TEXT,
+      learning_id  INTEGER NOT NULL,
+      verdict      TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_feedback_learning ON feedback(learning_id, project_slug);
+    INSERT OR IGNORE INTO schema_version (version) VALUES (3);
+  `);
 }
 
 /**
