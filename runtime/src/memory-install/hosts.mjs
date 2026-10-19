@@ -122,7 +122,9 @@ export const HOSTS = Object.freeze([
     // Gemini CLI: ~/.gemini/settings.json (GEMINI_CLI_HOME moves the .gemini
     // folder). `gemini mcp add` defaults to the project scope and overwrites an
     // existing name, so ad edits the user file itself, its own entry only. The
-    // server starts in the CLI's folder and binds to that project.
+    // server starts in the CLI's folder and binds to that project. Gemini passes MCP
+    // servers only safe variables (HOME, PATH, TMPDIR…), so an AD_ROOT you set goes
+    // into the entry's env, as for Codex.
     id: "gemini",
     name: "Gemini CLI",
     driver: "json",
@@ -131,7 +133,11 @@ export const HOSTS = Object.freeze([
       return { found: Boolean(ctx.resolve("gemini")) || exists(path.dirname(this.file(ctx))) };
     },
     defaultCapture: () => "tools",
-    entry: (ctx, capture) => ({ command: ctx.node, args: args(ctx, "gemini", capture) }),
+    entry(ctx, capture) {
+      const e = { command: ctx.node, args: args(ctx, "gemini", capture) };
+      if (ctx.env.AD_ROOT && path.isAbsolute(ctx.env.AD_ROOT)) e.env = { AD_ROOT: ctx.env.AD_ROOT };
+      return e;
+    },
     where: (ctx) => ctx.display(HOSTS[4].file(ctx)),
   },
 ]);

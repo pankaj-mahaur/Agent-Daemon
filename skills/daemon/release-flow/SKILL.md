@@ -43,6 +43,13 @@ by hand if absent).
   CHANGELOG, docs)
 - exit checkpoint: `FLOW release-flow 3/3 reviewed: <findings>`
 
+### The memory package and host plugins (agent-daemon only)
+Released separately, by `.github/workflows/release-memory.yml`, which runs only when the owner dispatches it:
+1. Dispatch it with `dry_run` on (the default). Read the job, download the artifacts and check `SHA256SUMS`.
+2. Install from the built trees on each host and record the result (host acceptance).
+3. Only on the owner's explicit OK, dispatch again with `dry_run` off and approve the `release-memory` environment. The npm package publishes first; then the marketplace and Gemini trees are pushed and the GitHub release is made.
+4. Never publish from a laptop. The package version must equal the runtime's: the build refuses otherwise.
+
 ## Go / No-Go
 
 End with a one-screen summary: version, changelog highlights, verification

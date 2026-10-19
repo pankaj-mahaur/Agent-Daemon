@@ -112,6 +112,7 @@ test("P5.4: VS Code (the portable Copilot file) and Gemini CLI (user settings): 
   assert.deepEqual(g.general, { vimMode: true });
   assert.ok(g.mcpServers["agent-daemon-memory"].args.includes("gemini"));
   assert.equal(g.mcpServers["agent-daemon-memory"].type, undefined, "Gemini's entry has no type field");
+  assert.deepEqual(g.mcpServers["agent-daemon-memory"].env, { AD_ROOT: t.env.AD_ROOT }, "Gemini passes servers only safe variables");
   assert.deepEqual(Object.keys(readLedger(t.env.AD_ROOT).hosts).sort(), ["gemini", "vscode"]);
   assert.equal(await uninstall({ ctx: t.ctx }), 0, t.text());
   assert.equal(fs.readFileSync(path.join(t.h, ".copilot", "mcp-config.json"), "utf8"), vscodeText);

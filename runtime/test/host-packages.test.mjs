@@ -63,6 +63,39 @@ test("Claude Code: marketplace and plugin manifests, ./ paths, the hooks wrapper
   assert.ok(fs.existsSync(path.join(CC_PLUGIN, "skills", NAME, "SKILL.md")));
 });
 
+const CURSOR = built.cursor;
+const GEMINI = built.gemini;
+// Cursor's plugin.json (cursor.com/schemas/cursor-plugin/plugin.json): a closed object
+// whose name is lower-case kebab with dots; mcpServers is a path, an object or an array.
+const CURSOR_FIELDS = new Set(["name", "displayName", "description", "version", "minClientVersions", "author", "publisher", "homepage", "repository", "license", "logo", "keywords", "category", "tags", "commands", "agents", "skills", "rules", "hooks", "variables", "mcpServers"]);
+
+test("Cursor: the closed manifest, mcp.json beside it, and ${CURSOR_PLUGIN_ROOT} — never ${PLUGIN_ROOT}", () => {
+  const manifest = json(path.join(CURSOR, ".cursor-plugin", "plugin.json"));
+  for (const k of Object.keys(manifest)) assert.ok(CURSOR_FIELDS.has(k), `Cursor's manifest has no field "${k}"`);
+  assert.match(manifest.name, /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/);
+  assert.deepEqual(Object.keys(manifest.author), ["name"], "author is {name, email?}");
+  assert.ok(fs.existsSync(path.join(CURSOR, manifest.mcpServers)) && fs.existsSync(path.join(CURSOR, manifest.skills, NAME, "SKILL.md")));
+  const server = json(path.join(CURSOR, "mcp.json")).mcpServers[NAME];
+  assert.equal(server.command, "node");
+  assert.ok(server.args.includes("${CURSOR_PLUGIN_ROOT}/server/server.mjs"));
+  assert.deepEqual(server.args.slice(-6), ["--host", "cursor", "--capture", "tools", "--project", "${workspaceFolder}"]);
+  // T4-H7: Cursor doesn't expand ${PLUGIN_ROOT}; no file of its package may use it.
+  for (const f of walk(CURSOR).filter((f) => f.endsWith(".json"))) assert.ok(!fs.readFileSync(f, "utf8").includes("${PLUGIN_ROOT}"), f);
+});
+
+test("Gemini CLI: the manifest at the repository root, the extension's own variables, the context file", () => {
+  const ext = json(path.join(GEMINI, "gemini-extension.json"));
+  assert.equal(ext.name, NAME, "the name is the folder Gemini installs it into");
+  assert.ok(fs.existsSync(path.join(GEMINI, ext.contextFileName)));
+  const server = ext.mcpServers[NAME];
+  assert.equal(server.command, "node");
+  assert.ok(server.args.includes("${extensionPath}${/}server${/}server.mjs"), "Gemini's own path variables, with its separator");
+  assert.deepEqual(server.args.slice(-6), ["--host", "gemini", "--capture", "tools", "--project", "${workspacePath}"]);
+  assert.ok(!fs.existsSync(path.join(GEMINI, "hooks")), "no hooks until Gemini's hook output is verified");
+  assert.ok(fs.existsSync(path.join(GEMINI, "skills", NAME, "SKILL.md")));
+  assert.match(fs.readFileSync(path.join(GEMINI, ext.contextFileName), "utf8"), /notes, not instructions/);
+});
+
 test("one version everywhere: every manifest carries the package's", () => {
   assert.equal(version, packageVersion());
   const versions = [
@@ -72,6 +105,10 @@ test("one version everywhere: every manifest carries the package's", () => {
     json(path.join(CC_PLUGIN, "server", "package.json")).version,
     json(path.join(AP, "plugin.json")).version,
     json(path.join(AP, "server", "package.json")).version,
+    json(path.join(built.cursor, ".cursor-plugin", "plugin.json")).version,
+    json(path.join(built.cursor, "server", "package.json")).version,
+    json(path.join(built.gemini, "gemini-extension.json")).version,
+    json(path.join(built.gemini, "server", "package.json")).version,
   ];
   assert.deepEqual(new Set(versions), new Set([version]));
 });
@@ -124,7 +161,7 @@ const tempHome = () => {
 };
 
 test("each built server answers server/discover and a legacy initialize, with the package version", async () => {
-  for (const dir of [path.join(CC_PLUGIN, "server"), path.join(AP, "server")]) {
+  for (const dir of [path.join(CC_PLUGIN, "server"), path.join(AP, "server"), path.join(built.cursor, "server"), path.join(built.gemini, "server")]) {
     const { env } = tempHome();
     const r = await startServer(path.join(dir, "server.mjs"), ["serve", "--host", "agent-plugins", "--capture", "tools"], env);
     const lines = r.out.split("\n").filter(Boolean).map((l) => JSON.parse(l));

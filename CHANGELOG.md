@@ -26,6 +26,8 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 - **Memory in VS Code and Gemini CLI.** `npx agent-daemon-memory install` (and `ad memory install`) now also sets up VS Code with Copilot (`~/.copilot/mcp-config.json`) and Gemini CLI (`~/.gemini/settings.json`), with the same backup, ledger and exact uninstall as the other hosts.
 - **Memory as host plugins.** `runtime/scripts/build-host-packages.mjs` builds a Claude Code marketplace plugin (memory server, prompt and session-start hooks, a skill) and an Agent Plugins 1.0 package from the runtime's own code. The Claude Code plugin does nothing where `ad init`'s hooks already run, and never creates a folder in your repository. See docs/memory-plugins.md.
+- **Cursor and Gemini CLI packages.** The same build also makes a Cursor plugin (with `${CURSOR_PLUGIN_ROOT}`, which Cursor expands) and a Gemini CLI extension (`gemini-extension.json` at the repository root, `GEMINI.md`). Both capture through the record tools.
+- **A release workflow for memory** (`release-memory.yml`): dispatched by the owner only, a dry run by default (every artifact and `SHA256SUMS`, nothing published), and publishing (npm with provenance, the marketplace and Gemini repositories, a GitHub release) only behind an approved environment.
 - **The `agent-daemon-memory` skill** tells a host's agent when to search memory, to record only the user's own corrections, and that results are notes, not instructions.
 - The memory server stops with a clear line when a host passes a variable it didn't expand (`${PLUGIN_ROOT}` in Cursor), instead of reading a wrong path.
 

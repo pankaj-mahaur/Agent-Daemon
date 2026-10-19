@@ -451,8 +451,8 @@
     {
       "path": "docs/memory-plugins.md",
       "rules": ["A"],
-      "match": "Cursor, Gemini CLI, Codex",
-      "reason": "the plugin guide's table row for the hosts whose plugins come later (the user's own Codex CLI, not ad's engine)"
+      "match": "\\| Codex \\| not yet: its public directory",
+      "reason": "the plugin guide's table row for the Codex host, whose plugin comes later (the user's own Codex CLI, not ad's engine)"
     }
   ]
 }
