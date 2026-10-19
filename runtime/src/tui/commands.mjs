@@ -53,6 +53,9 @@ export function renderKeymap(keymap, { width = 80, label = (k) => k, settingsPat
     }
     out.push(row(width, { text: `    ${b.action}`.padEnd(32) }, { text: b.keys.length ? b.keys.map(label).join(", ") : "unbound", style: b.keys.length ? T.code : DIM }, ...(b.custom ? [{ text: "  (yours)", style: DIM }] : [])));
   }
+  // The leader key (engine 0.163+): what "leader <key>" bindings start with.
+  const leader = keymap.leader?.();
+  out.push(row(width, { text: "  leader".padEnd(34) }, { text: leader ? label(leader) : "none", style: leader ? T.code : DIM }, { text: "  (global.leader; \"leader c\" = the leader, then c)", style: DIM }));
   for (const w of keymap.warnings ?? []) out.push(row(width, { text: `  ${clean(w)}`, style: T.warning }));
   const foot = [
     "  Keys are set in the engine's settings file, under [tui.keymap]" + (settingsPath ? `: ${settingsPath}` : "."),

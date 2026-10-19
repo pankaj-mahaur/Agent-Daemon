@@ -1,5 +1,5 @@
 // The Vim mode for the composer (parity Part 8), after the engine
-// 0.160's textarea/vim.rs, vim_commands.rs and vim_search.rs:
+// 0.160–0.163's textarea/vim.rs, vim_commands.rs and vim_search.rs (0.163 only adds: Enter is ignored in single-line editors, which ad's composer isn't):
 //
 //   - Normal, Insert and Replace. No counts, no Visual mode, no `P`, `X`,
 //     `;` or `,` (upstream has none of them).

@@ -1,5 +1,5 @@
 {
-  "codexVersion": "0.160.0",
+  "codexVersion": "0.163.0",
   "methods": {
     "clientRequests": [
       "account/gatewayOAuth/cancel",
@@ -76,6 +76,7 @@
       "thread/attachment/add",
       "thread/attachment/list",
       "thread/attachment/remove",
+      "thread/attachmentOwner/list",
       "thread/compact/start",
       "thread/delete",
       "thread/fork",
@@ -179,8 +180,10 @@
       "thread/goal/cleared",
       "thread/goal/updated",
       "thread/name/updated",
+      "thread/prediction/updated",
       "thread/project/updated",
       "thread/queue/changed",
+      "thread/readState/changed",
       "thread/realtime/closed",
       "thread/realtime/error",
       "thread/realtime/item/completed",
@@ -304,8 +307,10 @@
       "thread/goal/cleared": "ThreadGoalClearedNotification",
       "thread/goal/updated": "ThreadGoalUpdatedNotification",
       "thread/name/updated": "ThreadNameUpdatedNotification",
+      "thread/prediction/updated": "ThreadPredictionUpdatedNotification",
       "thread/project/updated": "ThreadProjectUpdatedNotification",
       "thread/queue/changed": "ThreadQueueChangedNotification",
+      "thread/readState/changed": "ThreadReadStateChangedNotification",
       "thread/realtime/closed": "ThreadRealtimeClosedNotification",
       "thread/realtime/error": "ThreadRealtimeErrorNotification",
       "thread/realtime/item/completed": "ThreadRealtimeItemCompletedNotification",
@@ -1252,12 +1257,14 @@
       ],
       "props": [
         "error",
+        "loginId",
         "name",
         "success",
         "threadId"
       ],
       "types": {
         "error": "null|string",
+        "loginId": "null|string",
         "name": "string",
         "success": "boolean",
         "threadId": "null|string"
@@ -2026,11 +2033,19 @@
         "threadId"
       ],
       "props": [
+        "origin",
         "threadId"
       ],
       "types": {
+        "origin": "ThreadGoalMutationOrigin|null",
         "threadId": "string"
       }
+    },
+    "ThreadGoalMutationOrigin": {
+      "enum": [
+        "automatic",
+        "user"
+      ]
     },
     "ThreadGoalSetParams": {
       "required": [
@@ -2038,12 +2053,14 @@
       ],
       "props": [
         "objective",
+        "origin",
         "status",
         "threadId",
         "tokenBudget"
       ],
       "types": {
         "objective": "null|string",
+        "origin": "ThreadGoalMutationOrigin|null",
         "status": "ThreadGoalStatus|null",
         "threadId": "string",
         "tokenBudget": "integer|null"
@@ -2112,6 +2129,23 @@
         "threadName": "null|string"
       }
     },
+    "ThreadPredictionUpdatedNotification": {
+      "required": [
+        "result",
+        "sourceTurnId",
+        "threadId"
+      ],
+      "props": [
+        "result",
+        "sourceTurnId",
+        "threadId"
+      ],
+      "types": {
+        "result": "ThreadPredictionResult",
+        "sourceTurnId": "string",
+        "threadId": "string"
+      }
+    },
     "ThreadProjectUpdatedNotification": {
       "required": [
         "projectId",
@@ -2147,6 +2181,20 @@
       ],
       "types": {
         "includeTurns": "boolean",
+        "threadId": "string"
+      }
+    },
+    "ThreadReadStateChangedNotification": {
+      "required": [
+        "readState",
+        "threadId"
+      ],
+      "props": [
+        "readState",
+        "threadId"
+      ],
+      "types": {
+        "readState": "ThreadReadState",
         "threadId": "string"
       }
     },
@@ -2685,12 +2733,14 @@
       "props": [
         "name",
         "namespace",
-        "output"
+        "output",
+        "retain"
       ],
       "types": {
         "name": "string",
         "namespace": "null|string",
-        "output": "FunctionCallOutputBody"
+        "output": "FunctionCallOutputBody",
+        "retain": "boolean"
       }
     },
     "WarningNotification": {
@@ -3031,7 +3081,9 @@
         "input",
         "model",
         "outputSchema",
+        "parentTurnId",
         "personality",
+        "rootTurnId",
         "sandboxPolicy",
         "serviceTier",
         "serviceTierForTurn",
@@ -3050,7 +3102,9 @@
         "input": "array<UserInput>",
         "model": "null|string",
         "outputSchema": "any",
+        "parentTurnId": "null|string",
         "personality": "Personality|null",
+        "rootTurnId": "null|string",
         "sandboxPolicy": "SandboxPolicy|null",
         "serviceTier": "null|string",
         "serviceTierForTurn": "null|string",
@@ -3145,6 +3199,7 @@
         "id",
         "items",
         "itemsView",
+        "rootTurnId",
         "startedAt",
         "status"
       ],
@@ -3155,6 +3210,7 @@
         "id": "string",
         "items": "array<ThreadItem>",
         "itemsView": "TurnItemsView",
+        "rootTurnId": "null|string",
         "startedAt": "integer|null",
         "status": "TurnStatus"
       }
@@ -3582,6 +3638,8 @@
             "agentThreadId",
             "id",
             "kind",
+            "model",
+            "reasoningEffort",
             "type"
           ],
           "types": {
@@ -3589,6 +3647,8 @@
             "agentThreadId": "string",
             "id": "string",
             "kind": "SubAgentActivityKind",
+            "model": "null|string",
+            "reasoningEffort": "ReasoningEffort|null",
             "type": "enum(subAgentActivity)"
           }
         },
@@ -4087,6 +4147,7 @@
         "archived",
         "cursor",
         "cwd",
+        "excludedThreadIds",
         "limit",
         "modelProviders",
         "originators",
@@ -4101,6 +4162,7 @@
         "archived": "boolean|null",
         "cursor": "null|string",
         "cwd": "ThreadListCwdFilter|null",
+        "excludedThreadIds": "array<string>|null",
         "limit": "integer|null",
         "modelProviders": "array<string>|null",
         "originators": "array<string>|null",

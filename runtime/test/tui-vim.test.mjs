@@ -1,5 +1,5 @@
 // the engine's Vim mode in the composer (tui/view/vim.mjs, terminal UI plan Part 8):
-// a binding table after the engine 0.160's textarea/vim*.rs and its tests. Cases
+// a binding table after the engine 0.160–0.163's textarea/vim*.rs and its tests. Cases
 // are "text with | at the cursor", keys in a small notation (<esc> <cr> <bs>
 // <c-r> <c-k> <a-b> <up> <down> <left> <right>), and the expected draft.
 
@@ -176,7 +176,7 @@ const TABLE = [
   ["", "!ls<esc>", "!l|s"],
 ];
 
-test("vim binding table (engine 0.160's semantics)", () => {
+test("vim binding table (engine 0.160–0.163's semantics)", () => {
   const failures = [];
   for (const [start, keys, expected, mode = "normal"] of TABLE) {
     const { c } = run(start, keys);

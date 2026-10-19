@@ -1,5 +1,5 @@
 {
-  "codexVersion": "0.160.0",
+  "codexVersion": "0.163.0",
   "source": "codex-rs/app-server-protocol/src/protocol/common.rs",
   "stable": [
     "error",
@@ -67,6 +67,8 @@
     "account/login/completed"
   ],
   "experimental": [
+    "thread/readState/changed",
+    "thread/prediction/updated",
     "thread/queue/changed",
     "project/changed",
     "thread/project/updated",

@@ -3,7 +3,7 @@
 //
 // Same handlers as the Claude Code install (runtime/profiles/profiles.json,
 // resolved by profiles.mjs), with Codex differences applied (verified live
-// against codex 0.159.2):
+// against 0.163.0: tui-live FC4 shows the learned row a hook wrote):
 //   - commands run through PowerShell on Windows → `commandWindows` with `&`
 //     and single-quoted paths; POSIX gets a sh-quoted `command`
 //   - apply_patch edits match `Edit|Write` (no MultiEdit tool)

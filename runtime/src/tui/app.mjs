@@ -135,7 +135,14 @@ export const NOT_IN_AD = {
   "test-approval": "/test-approval is a debug command of the engine's own UI.",
   "debug-m-drop": "/debug-m-drop is a debug command of the engine's own UI.",
   "debug-m-update": "/debug-m-update is a debug command of the engine's own UI.",
+  // 0.163.
+  config: "/config isn't in ad: /theme, /statusline, /title, /keymap and /vim change those settings, and /debug-config shows where each comes from.",
+  daybreak: "/daybreak isn't in ad yet: it turns on the engine's broader access for cybersecurity work, for eligible accounts.",
 };
+
+// Engine commands the engine allows during a task that ad runs only after it:
+// /archive (0.163 allows it mid-turn; ad's session leaves a conversation only when idle).
+export const WAITS_FOR_TASK = new Set(["archive"]);
 
 /** What ad says for an upstream command it doesn't run, by any of its spellings. */
 export function notInAd(name) {
@@ -211,6 +218,11 @@ export function createApp({
   let confirm = null; // {view, resolve}: a question of ad's own (openConfirm, openChoice)
   let planReady = null; // {turnId, text}: a Plan-mode turn proposed a plan; "Implement this plan?" opens when nothing is in the way
   let overlay = false; // the ? shortcuts
+  // Key chords and the leader (P1.2): matched before any layer; a completed one
+  // is routed as {type: "chord", ctx, action}, which keymap.is() answers.
+  const chordKeys = keymap.chords();
+  let chordHint = null; // the footer's hint while a chord is pending
+  let chordTimer = null; // clears an ordinary chord's hint when it expires
   let note = null; // one transient line above the composer
   let lastCtrlC = -Infinity;
   let lastEsc = -Infinity;
@@ -521,7 +533,7 @@ export function createApp({
     const running = turnActive();
     const vim = composer.vim;
     // The engine's gg chord hint replaces the hints while the second g is awaited.
-    const hints = vim?.hint ? [vim.hint] : running ? ["enter steer", "tab queue", `${newline} newline`] : ["? shortcuts", "@ files", `${newline} newline`];
+    const hints = chordHint ? chordHint.map((h, i) => (i === 0 ? `${h.keys} …` : `${h.keys} ${h.label}`)) : vim?.hint ? [vim.hint] : running ? ["enter steer", "tab queue", `${newline} newline`] : ["? shortcuts", "@ files", `${newline} newline`];
     const own = [];
     // The engine's mode indicator, first so it's the last to go when the footer is narrow.
     const mode = st.mode?.kind === "plan" ? [{ full: "Plan mode (shift+tab to cycle)", short: "Plan mode", style: T.planMode }] : [];
@@ -701,7 +713,7 @@ export function createApp({
         const ids = [...st.agents.keys()];
         const a = st.agents.get(pager.agent);
         const state = a?.closed ? "closed" : a?.running ? "running" : "idle";
-        lines.push(truncate([{ text: `${clean(agentName(a))} \u{b7} ${state} \u{b7} ${ids.indexOf(pager.agent) + 1} of ${ids.length}  `, style: T.bold }, { text: `${AGENT_KEYS} other agents \u{b7} \u{2191}\u{2193} pgup pgdn \u{b7} q or esc closes`, style: DIM }], w));
+        lines.push(truncate([{ text: `${clean(agentName(a))}${agentModel(a) ? ` \u{b7} ${clean(agentModel(a))}` : ""} \u{b7} ${state} \u{b7} ${ids.indexOf(pager.agent) + 1} of ${ids.length}  `, style: T.bold }, { text: `${AGENT_KEYS} other agents \u{b7} \u{2191}\u{2193} pgup pgdn \u{b7} q or esc closes`, style: DIM }], w));
       } else {
         const where = pager.lines.length ? `Transcript ${pager.top + 1}\u{2013}${Math.min(pager.lines.length, pager.top + view)} of ${pager.lines.length}  ` : "The transcript is empty  ";
         lines.push(truncate([{ text: where, style: T.bold }, { text: "\u{2191}\u{2193} pgup pgdn home end \u{b7} q or esc closes", style: DIM }], w));
@@ -824,6 +836,8 @@ export function createApp({
 
   // The engine's names for its rows: a path, "Nick [role]", "Nick", "[role]", else "Agent".
   const agentName = (a) => a?.path?.trim() || (a?.nickname && a?.role ? `${a.nickname} [${a.role}]` : a?.nickname || (a?.role ? `[${a.role}]` : "Agent"));
+  // "gpt-5.4 high" when the engine reported them (0.163+), else "".
+  const agentModel = (a) => [a?.model, a?.reasoningEffort].filter(Boolean).join(" ");
   const AGENT_KEYS = process.platform === "darwin" ? "\u{2325}\u{2190} \u{2325}\u{2192}" : "alt+\u{2190} alt+\u{2192}";
   const isAgentKey = (ev) => ev.type === "key" && ev.alt && !ev.ctrl && (ev.name === "left" || ev.name === "right");
 
@@ -857,7 +871,7 @@ export function createApp({
     }
     const items = [
       { label: "Main [default]", hint: st.thread?.id ?? "", value: null },
-      ...[...st.agents].map(([id, a]) => ({ label: agentName(a), hint: `${id}${a.closed ? " \u{b7} closed" : a.running ? " \u{b7} running" : ""}`, value: id })),
+      ...[...st.agents].map(([id, a]) => ({ label: agentName(a), hint: `${id}${agentModel(a) ? ` \u{b7} ${agentModel(a)}` : ""}${a.closed ? " \u{b7} closed" : a.running ? " \u{b7} running" : ""}`, value: id })),
     ];
     const keys = process.platform === "darwin" ? "\u{2325}\u{2190} previous, \u{2325}\u{2192} next" : "alt+\u{2190} previous, alt+\u{2192} next";
     openPicker("subagents", items, (id) => watchAgent(id), { title: "Subagents", placeholder: `Select an agent to watch. ${keys}.`, initial: pager?.agent ?? null });
@@ -1888,7 +1902,7 @@ export function createApp({
       }
       if (cmd) {
         // The rule for upstream commands: some wait for the task to end. The draft stays.
-        if (cmd.source === "upstream" && upstream && !upstream.duringTask && (side?.focus === "side" ? Boolean(side.session.state.activeTurnId || side.session.state.starting) : turnActive())) {
+        if (cmd.source === "upstream" && upstream && (!upstream.duringTask || WAITS_FOR_TASK.has(cmd.name)) && (side?.focus === "side" ? Boolean(side.session.state.activeTurnId || side.session.state.starting) : turnActive())) {
           composer.set(text);
           return warn(`'/${name}' is disabled while a task is in progress.`);
         }
@@ -1973,6 +1987,28 @@ export function createApp({
 
   function onInput(ev) {
     if (quitting) return;
+    if (ev.type === "key" || ev.type === "text") {
+      // No chords under a modal, ad's confirm or the key inspector (their keys are theirs).
+      const contexts = modal || confirm || inspector ? [] : pager ? ["global", "pager"] : ["global", "chat", "composer"];
+      const r = chordKeys.feed(ev, contexts, Date.now());
+      const was = chordHint;
+      chordHint = r.kind === "pending" ? r.hint : null;
+      clearT(chordTimer);
+      // An ordinary chord gives up after a second: so does its hint, as in the engine.
+      const expiresAt = r.kind === "pending" ? chordKeys.pending()?.expiresAt : null;
+      if (expiresAt != null) {
+        chordTimer = setT(() => {
+          if (chordKeys.expire(Date.now())) {
+            chordHint = null;
+            draw();
+          }
+        }, Math.max(0, expiresAt - Date.now()) + 5);
+        chordTimer.unref?.();
+      }
+      if (r.kind === "pending" || r.kind === "cancelled") return draw();
+      if (r.kind === "done") ev = r.ev;
+      else if (was) draw(); // the hint goes; the key itself is handled below
+    }
     // /keymap debug: every key is shown, not acted on; Ctrl+C closes.
     if (inspector && !modal && !confirm) {
       if (ev.type === "key" && ev.ctrl && ev.name === "c") inspector = null;
@@ -2147,6 +2183,8 @@ export function createApp({
       restartEngine();
       return draw();
     }
+    // A completed chord whose action didn't apply here (no turn to interrupt) types nothing.
+    if (ev.type === "chord") return draw();
     const r = composer.handle(ev);
     if (r?.submit != null) dispatch(r.submit);
     syncTokenPopup();
@@ -2213,7 +2251,7 @@ export function createApp({
       draw();
     },
     get state() {
-      return { composer: composer.text, modal: modal?.view.kind ?? null, confirm: Boolean(confirm), pager: Boolean(pager), popup: popup?.kind ?? null, overlay, note: note?.text ?? null, committed: committed.size };
+      return { composer: composer.text, modal: modal?.view.kind ?? null, confirm: Boolean(confirm), pager: Boolean(pager), popup: popup?.kind ?? null, overlay, note: note?.text ?? null, committed: committed.size, chord: Boolean(chordKeys.pending()) };
     },
     /** Around a handoff (the editor): the title goes back to the terminal's, then ours again. */
     holdTitle(hold) {
@@ -2227,6 +2265,7 @@ export function createApp({
       restoreTitle();
       clearT(drawTimer);
       clearT(hintTimer);
+      clearT(chordTimer);
       clearT(searchTimer);
       clearI(ticker);
       offChange();

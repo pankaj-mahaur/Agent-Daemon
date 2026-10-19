@@ -1027,6 +1027,8 @@ export class Engine extends EventEmitter {
     const read = await this.#request("config/read", { includeLayers: false, cwd }, { timeoutMs: left() });
     const overrides = { ...config };
     for (const id of Object.keys(read?.config?.mcp_servers ?? {})) overrides[`mcp_servers.${id}.enabled`] = false;
+    // Since 0.163 upstream inherits the server's approval policy for this thread;
+    // ad keeps "never" (read-only and never asked is stricter).
     const r = await this.#request(
       "thread/start",
       clean({ model, modelProvider, cwd, approvalPolicy: "never", sandbox: "read-only", ephemeral: true, threadSource: "system", config: overrides }),
@@ -1091,7 +1093,7 @@ export class Engine extends EventEmitter {
   // A completion is a pure function call: no harness hooks (they would
   // inject memory into GEPA prompts and re-extract "corrections" from the
   // transcript being analysed) and no MCP servers. Dotted keys are what
-  // thread/start's config override honours (verified on codex 0.159.2).
+  // thread/start's config override honours (verified on 0.163.0: engine-real "a per-thread mcp_servers.<id>.enabled=false keeps the server off" and "/recap's temporary thread").
   async #isolatedThreadConfig(cwd) {
     const config = { "features.hooks": false };
     let cfg = {};

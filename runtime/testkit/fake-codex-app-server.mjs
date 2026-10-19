@@ -331,7 +331,7 @@ async function runScriptedTurn(threadId, turn, params) {
     notify("item/completed", { threadId: one, turnId: t1.id, item: { type: "agentMessage", id: "one-msg", text: "Read src/app.js: the bug is in login()." } });
     notify("turn/completed", { threadId: one, turn: { ...t1, status: "completed" } });
     // A late "started" hint about the finished agent: Codex ignores it, so must ad.
-    notify("item/completed", { threadId, turnId: turn.id, item: { type: "subAgentActivity", id: "act-one-late", agentThreadId: one, agentPath: null, kind: "started" } });
+    notify("item/completed", { threadId, turnId: turn.id, item: { type: "subAgentActivity", id: "act-one-late", agentThreadId: one, agentPath: null, kind: "started", model: "gpt-5.4-mini", reasoningEffort: "low" } }); // model and effort: engine 0.163+
     const t2 = { id: `${two}-t`, status: "inProgress", items: [] };
     notify("turn/started", { threadId: two, turn: t2 });
     notify("item/agentMessage/delta", { threadId: two, turnId: t2.id, itemId: "two-msg", delta: "Reviewing the diff" });

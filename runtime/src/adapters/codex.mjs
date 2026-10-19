@@ -5,7 +5,7 @@
 // (the harness CODEX_HOME is ~/.agent-daemon/codex-home). Each line is
 //   { timestamp, type, payload }
 // with type one of session_meta | turn_context | response_item | event_msg
-// | compacted | world_state | … (shapes verified against codex 0.155–0.159
+// | compacted | world_state | … (shapes verified against codex 0.155–0.159; 0.163 sends its base instructions as a developer message, which this adapter doesn't read,
 // rollouts; Codex documents the format as unstable, so unknown lines are
 // ignored rather than rejected).
 //

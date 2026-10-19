@@ -9,7 +9,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CodexAppServer, resolveCodexCommand } from "../src/engine/codex/app-server.mjs";
@@ -505,4 +505,122 @@ test("start-up isolation, markers-off launch: a resumed thread in a repo subfold
     await again.resumeThread(threadId);
     assert.deepEqual(await turnSentinels(again, threadId), ["SENTINEL_REPO_SKILL"], "resumed with the real markers");
   });
+});
+
+// ---- 0.163 checks (P1.1, change table) ----
+
+// A folder's identity for comparing with what a child process reports as its
+// cwd: macOS tmpdir() is /var/… while getcwd() says /private/var/…, and a
+// Windows runner's TEMP can be an 8.3 short name.
+const samePath = (a, b) => {
+  const id = (p) => {
+    let r = p;
+    try {
+      r = realpathSync.native(p);
+    } catch {
+      // gone: compare as given
+    }
+    return process.platform === "win32" ? r.toLowerCase() : r;
+  };
+  return id(a) === id(b);
+};
+
+// An MCP server that records the folder it was started in, then exits.
+function cwdProbe(dir) {
+  const script = join(dir, "cwd-probe.mjs");
+  const log = join(dir, "cwd-probe.log");
+  appendFileSync(script, `import { appendFileSync } from "node:fs"; appendFileSync(${JSON.stringify(log)}, process.cwd() + String.fromCharCode(10)); process.exit(1);\n`);
+  const seen = () => (existsSync(log) ? readFileSync(log, "utf8").trim().split("\n") : []);
+  const startedIn = (folder) => seen().some((p) => samePath(p, folder));
+  const toml = [`[mcp_servers.cwd_probe]`, `command = ${tomlStr(process.execPath)}`, `args = [${tomlStr(script)}]`, `startup_timeout_sec = 5`].join("\n");
+  return { toml, seen, startedIn };
+}
+
+test("0.163: each thread starts its MCP servers in the thread's folder", { skip, timeout: START_TIMEOUT_MS + 60_000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ad-real-mcpcwd-"));
+  const a = join(dir, "a");
+  const b = join(dir, "b");
+  for (const d of [a, b]) mkdirSync(d, { recursive: true });
+  const probe = cwdProbe(dir);
+  try {
+    await withRealEngine(async ({ server, notes }) => {
+      const ta = await server.request("thread/start", { cwd: a });
+      await runTurn(server, notes, ta.thread.id, "PING");
+      await waitFor(() => probe.startedIn(a), { timeoutMs: 20_000, what: "the probe for thread a" });
+      const tb = await server.request("thread/start", { cwd: b });
+      await runTurn(server, notes, tb.thread.id, "PING");
+      await waitFor(() => probe.startedIn(b), { timeoutMs: 20_000, what: "the probe for thread b" });
+    }, { extraConfig: () => probe.toml });
+  } finally {
+    await removeWithRetry(dir);
+  }
+});
+
+test("0.163: a per-thread mcp_servers.<id>.enabled=false keeps the server off, also after an MCP reload", { skip, timeout: START_TIMEOUT_MS + 90_000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ad-real-mcpoff-"));
+  const off = join(dir, "off");
+  mkdirSync(off, { recursive: true });
+  const probe = cwdProbe(dir);
+  try {
+    await withRealEngine(async ({ server, notes }) => {
+      const { thread } = await server.request("thread/start", { cwd: off, config: { "mcp_servers.cwd_probe.enabled": false, "features.hooks": false } });
+      await runTurn(server, notes, thread.id, "PING");
+      await server.request("config/batchWrite", { edits: [{ keyPath: "mcp_servers.cwd_probe.startup_timeout_sec", value: 6, mergeStrategy: "replace" }], reloadUserConfig: true });
+      await server.request("config/mcpServer/reload", {});
+      await runTurn(server, notes, thread.id, "PING");
+      // Control: a thread without the override does start it, so the probe can see a start.
+      const on = join(dir, "on");
+      mkdirSync(on, { recursive: true });
+      const t2 = await server.request("thread/start", { cwd: on });
+      await runTurn(server, notes, t2.thread.id, "PING");
+      await waitFor(() => probe.startedIn(on), { timeoutMs: 20_000, what: "the control start" });
+      assert.ok(!probe.startedIn(off), `started in ${probe.seen()}`);
+    }, { extraConfig: () => probe.toml });
+  } finally {
+    await removeWithRetry(dir);
+  }
+});
+
+test("0.163: two tool calls in one response both run and complete, each item once", opts, async () => {
+  const outputs = [];
+  const twoCalls = (body) => {
+    const input = Array.isArray(body?.input) ? body.input : [];
+    const outs = input.filter((i) => i?.type === "function_call_output");
+    if (outs.length) {
+      outputs.splice(0, outputs.length, ...outs.map((o) => o.call_id));
+      return outs.length >= 2 ? [ev.created(), ev.message("both done"), ev.completed()] : [ev.created(), ev.completed()];
+    }
+    const echo = (t) => (process.platform === "win32" ? `cmd.exe /d /c echo ${t}` : `echo ${t}`);
+    return [ev.created(), ev.functionCall("call-one", "exec_command", { cmd: echo("one") }), ev.functionCall("call-two", "exec_command", { cmd: echo("two") }), ev.completed()];
+  };
+  await withRealEngine(async ({ server, cwd, notes }) => {
+    const { thread } = await server.request("thread/start", { cwd });
+    const { items } = await runTurn(server, notes, thread.id, "TWO");
+    const execs = items.filter((i) => i.type === "commandExecution");
+    assert.equal(execs.length, 2, `items: ${items.map((i) => i.type)}`);
+    assert.equal(new Set(execs.map((i) => i.id)).size, 2, "each item once");
+    for (const [word, e] of [["one", execs.find((x) => /one/.test(x.command))], ["two", execs.find((x) => /two/.test(x.command))]]) {
+      assert.ok(e, `the "${word}" command`);
+      assert.equal(e.exitCode, 0, `${word}: ${e.aggregatedOutput}`);
+      assert.match(e.aggregatedOutput ?? "", new RegExp(word));
+    }
+    assert.deepEqual([...outputs].sort(), ["call-one", "call-two"], "the model got both outputs");
+    assert.match(items.find((i) => i.type === "agentMessage")?.text ?? "", /both done/);
+  }, { script: twoCalls });
+});
+
+test("0.163: with mcp_2026_07_28 on, ad's memory server still starts and binds", { skip, timeout: START_TIMEOUT_MS + 60_000 }, async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), "ad-real-mem2026-"));
+  const P = join(fakeHome, "work", "p");
+  mkdirSync(join(P, ".git"), { recursive: true });
+  const dbg = join(fakeHome, "scope.json");
+  try {
+    await withRealEngine(async ({ server, cwd }) => {
+      await server.request("thread/start", { cwd, config: { [MEM_KEY]: P, "mcp_servers.agent-daemon-memory.env.AD_MEMORY_DEBUG_FILE": dbg } });
+      await waitFor(() => existsSync(dbg), { timeoutMs: 20_000, what: "memory server debug file" });
+      assert.equal(JSON.parse(readFileSync(dbg, "utf8")).key, projectSlug(P));
+    }, { extraConfig: () => memoryServerToml(fakeHome), codexArgs: ["-c", "features.mcp_2026_07_28=true"] });
+  } finally {
+    await removeWithRetry(fakeHome);
+  }
 });

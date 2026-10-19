@@ -220,6 +220,17 @@ ad reads them and never writes them. A key ad can't use there (a chord like `ctr
 
 The status line, the window title, the keys and the theme are stored in the engine's settings file (`config.toml` in the engine home; `ad about` shows where). ad reads them and never writes `tui.keymap`; `/warnings` lists what ad can't show.
 
+**Chords and the leader key** work as in the engine's own UI (0.163):
+- A binding can be two keys, `"ctrl-x ctrl-s"`, or the **leader** then a key, `"leader c"`.
+- The leader is `tui.keymap.global.leader`. Its default is `ctrl-x`, unless you bound `ctrl-x` to something else. A character leader needs ctrl or alt, and `ctrl-z` can't be the leader outside Windows.
+- After the first key, the footer lists what can follow (`ctrl+x … c copy · esc cancel`).
+- A leader chord waits until you press its second key. Any other two-key chord gives up after one second.
+- Esc, or the leader again, cancels a waiting chord.
+- A key that completes nothing works as it normally would, so typing is never lost.
+- Chords are off while an approval or one of ad's questions is open.
+- `/keymap` lists your chords and names the leader.
+- Not in ad: the engine's leader menu panel, and keys `f13`–`f24`.
+
 ---
 
 ## Approvals and questions

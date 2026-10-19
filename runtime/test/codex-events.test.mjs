@@ -399,3 +399,11 @@ test("item events carry their timestamps; reasoning deltas their index; audio an
   assert.equal(adaptNotification("thread/reverted", { threadId: "t" })[0].thread, undefined, "the notification carries no thread");
   assert.ok(adaptNotification("model/safetyBuffering/updated", { showBufferingUi: false })[0].message.length > 0);
 });
+
+test("subAgentActivity carries model and reasoningEffort (null when absent; engine 0.163+)", () => {
+  const base = { type: "subAgentActivity", id: "a1", agentThreadId: "t1", agentPath: null, kind: "started" };
+  assert.deepEqual(
+    [normalizeItem({ ...base, model: "gpt-5.4-mini", reasoningEffort: "low" }), normalizeItem(base)].map((i) => [i.model, i.reasoningEffort]),
+    [["gpt-5.4-mini", "low"], [null, null]],
+  );
+});

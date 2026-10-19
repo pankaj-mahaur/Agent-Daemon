@@ -1,8 +1,8 @@
-// /recap, as Codex 0.160 does it (codex-parity-2 Part 10): the prompt, the
+// /recap, as Codex 0.163.0 does it (codex-parity-2 Part 10): the prompt, the
 // conversation it reads, the output schema and the strict parse of the
 // answer. Codex's texts are from openai/codex (Apache-2.0):
 // codex-rs/context-fragments/src/recap_prompt.rs, tui/src/app/recap.rs and
-// tui/src/app/recap_history.rs at rust-v0.160.0.
+// tui/src/app/recap_history.rs at rust-v0.163.0 (unchanged since rust-v0.160.0).
 //
 //   recapHistory([{role: "user"|"assistant", text}]) → the history text ("" = nothing to recap)
 //   RECAP_PROMPT_PREFIX + history → the prompt; RECAP_SCHEMA → turn/start's outputSchema
