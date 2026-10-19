@@ -22,7 +22,7 @@ low: search for compact ids, then expand only the few worth reading in full.
 | `memory_profile()` | deterministic "how this user works" rollup (identity / prefers / tools / conventions / watch-out) from user facts + stated learnings — the no-LLM analog of a user model | no |
 | `memory_stats()` | the scope it is bound to, and this project's learning and fact counts | no |
 | `user_facts_list()` | user profile facts observed in this project (or accepted as global) | no |
-| `memory_feedback(id, verdict)` | mark a learning `useful` / `stale` / `wrong` | **yes** — `usefulness` column only |
+| `memory_feedback(id, verdict)` | mark a learning `useful` / `stale` / `wrong`: it ranks higher or lower in search (for a cross-project learning, only in the project that gave the verdict) | **yes** — the verdict, kept per project |
 | `memory_record_correction(wrong, right, user_words?, scope?, files?, session_id?)` | save a correction the user just gave, **for the user's review** | **yes** — a pending note |
 | `memory_record_learning(text, kind, evidence?, scope?, files?, session_id?)` | save a lasting project fact the user stated, **for the user's review** | **yes** — a pending note |
 
@@ -115,8 +115,9 @@ withheld until each project gets its own ID.
 ## Security blast radius
 
 - Reads `~/.agent-daemon/episodic.db` (local SQLite). No network access.
-- Three narrow write surfaces: `memory_feedback` updates one numeric column
-  (`usefulness`) + `last_verified_at`; `memory_get` bumps retrieval counters
+- Three narrow write surfaces: `memory_feedback` records a verdict for the
+  calling project (and a project learning's `usefulness`), which moves search
+  ranking by at most ×0.7–1.3; `memory_get` bumps retrieval counters
   (`retrieval_count`, `last_retrieved_at`) on the rows it returns; the record
   tools insert **pending** notes (and their proposal files), which no push
   surface serves until the user accepts them. No tool deletes or alters a note.

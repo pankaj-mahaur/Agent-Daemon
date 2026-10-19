@@ -114,7 +114,7 @@ async function callTool(name, args) {
   if (s.kind === "collision") return COLLISION_TEXT;
   if (s.kind !== "project" && s.kind !== "cross-project") return UNBOUND_TEXT;
   if (!(await db())) throw new Error(storeUnavailable("better-sqlite3 not installed"));
-  SERVICE ??= createMemoryService({ scope: s, maxResults: MAX_RESULTS, maxTimeline: MAX_TIMELINE, maxIds: MAX_IDS });
+  SERVICE ??= createMemoryService({ scope: s, host: HOST, maxResults: MAX_RESULTS, maxTimeline: MAX_TIMELINE, maxIds: MAX_IDS });
   const svc = SERVICE;
   switch (name) {
     case "memory_search":

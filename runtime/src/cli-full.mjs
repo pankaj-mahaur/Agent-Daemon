@@ -84,6 +84,7 @@ Commands:
   memory consolidate     Hermes-style evolution pass: near-duplicate merges, stale archive, contradictions
                          → proposals only; --apply-merges / --apply-stale execute after review
   memory install [--host <id>] [--yes] [--dry-run]   Add ad's memory server to other agents (doctor, repair, status, uninstall)
+  memory report [--days 30] [--all-projects] [--json] [--share]   Is memory working: repeated corrections, what was shown, feedback
                          --all-projects       span every project (default: current --cwd only)
   route stats            Route-advice effectiveness: advised / followed / diverged / ignored per skill
                          --days <n>           window (default 30); --json for machine output
@@ -1692,6 +1693,11 @@ async function cmdMemory(sub, opts) {
       console.log(`Checked ${r.checked} notes: ${r.learnings + r.facts} held back.`);
       return 0;
     }
+    case "report": {
+      // Is memory working here? Repeated corrections, what was shown, feedback (P5.5).
+      const { reportCommand } = await import("./memory/report.mjs");
+      return reportCommand({ cwd: opts.cwd, days: opts.days, allProjects: opts.allProjects, json: opts.json || opts.outputJson, share: opts.share });
+    }
     case "stats": {
       const ep = await import("./memory/episodic.mjs");
       const s = await ep.stats();
@@ -2414,7 +2420,8 @@ async function main(argv) {
         "allow-home-folder": { type: "boolean" },
         accept:           { type: "string" },
         "accept-all":     { type: "boolean" },
-        global:           { type: "boolean" }
+        global:           { type: "boolean" },
+        share:            { type: "boolean" }
       },
       allowPositionals: true,
       strict: false
@@ -2483,6 +2490,8 @@ async function main(argv) {
       applyStale: parsed.values["apply-stale"] || false,
       allProjects: parsed.values["all-projects"] || false,
       json: parsed.values.json || false,
+      days: parsed.values.days,
+      share: parsed.values.share || false,
       rest: parsed.positionals?.slice(1) ?? []
     });
     case "route":          return cmdRoute(parsed.positionals?.[0], { ...opts, days: parsed.values.days, json: parsed.values.json });

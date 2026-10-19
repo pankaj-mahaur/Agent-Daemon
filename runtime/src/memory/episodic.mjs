@@ -436,20 +436,25 @@ export async function searchLearnings(query, opts = {}) {
   // Ranking = BM25 relevance × 90-day freshness half-life × a small derivation
   // factor (directly-stated facts edge out inferred generalizations on ties).
   // Honcho-inspired, fully deterministic — no embeddings.
+  // × usefulness (P5.5): 1 + 0.3·u, u in [-1, 1] from memory_feedback — the row's
+  // own value for a project lesson; for a cross-project lesson only the reading
+  // project's verdicts, so one project can't sink a lesson for every project.
+  const fb = usefulnessFactor("l", keys);
   const rows = handle.all(
     `SELECT l.id, l.text, l.evidence, l.category, l.confidence, l.project_slug, l.created_at, l.derivation, l.status,
             -bm25(learnings_fts) *
               pow(0.5, (julianday('now') - julianday(
                 MAX(COALESCE(l.last_verified_at, l.created_at), COALESCE(l.last_retrieved_at, l.created_at))
               )) / 90.0) *
-              (CASE WHEN l.derivation = 'inferred' THEN 0.9 ELSE 1.0 END)
+              (CASE WHEN l.derivation = 'inferred' THEN 0.9 ELSE 1.0 END) *
+              ${fb.sql}
               AS score
        FROM learnings_fts
        JOIN learnings l ON l.id = learnings_fts.rowid
       WHERE ${where}
       ORDER BY score DESC, l.confidence DESC
       LIMIT ?`,
-    [...params, limit]
+    [...fb.params, ...params, limit]
   );
   return rows;
 }
@@ -875,17 +880,44 @@ export async function recordFeedback({ id, verdict, projectKeys }) {
   const handle = await db();
   const lid = Number(id);
   if (!handle || !Number.isInteger(lid)) return { changed: false };
-  const delta = verdict === "useful" ? 1 : verdict === "stale" ? -0.5 : verdict === "wrong" ? -1 : 0;
+  const delta = VERDICT_VALUE[verdict] ?? 0;
   if (!delta) return { changed: false };
-  const vis = learningVisibility("", keysOf({ projectKeys }) ?? []);
-  const r = handle.run(
-    `UPDATE learnings
-        SET usefulness = COALESCE((COALESCE(usefulness, 0) + ?) / 2.0, ?),
-            last_verified_at = CASE WHEN ? > 0 THEN ? ELSE last_verified_at END
-      WHERE id = ? AND status = 'active' AND ${vis.sql}`,
-    [delta, delta, delta, new Date().toISOString(), lid, ...vis.params]
-  );
-  return { changed: r.changes > 0 };
+  const keys = keysOf({ projectKeys }) ?? [];
+  const vis = learningVisibility("", keys);
+  const row = handle.get(`SELECT id, project_slug FROM learnings WHERE id = ? AND status = 'active' AND ${vis.sql}`, [lid, ...vis.params]);
+  if (!row) return { changed: false };
+  // Every verdict is kept per calling project (P5.5); a project lesson's own value
+  // moves too: the first verdict sets it, later ones average in.
+  try {
+    handle.run("INSERT INTO feedback (project_slug, learning_id, verdict) VALUES (?, ?, ?)", [keys[0] ?? null, lid, verdict]);
+  } catch {
+    // a store without the table (older schema): the row's value still moves below
+  }
+  if (row.project_slug !== null) {
+    handle.run(
+      `UPDATE learnings
+          SET usefulness = CASE WHEN usefulness IS NULL THEN ? ELSE (usefulness + ?) / 2.0 END,
+              last_verified_at = CASE WHEN ? > 0 THEN ? ELSE last_verified_at END
+        WHERE id = ?`,
+      [delta, delta, delta, new Date().toISOString(), lid]
+    );
+  }
+  return { changed: true };
+}
+
+export const VERDICT_VALUE = Object.freeze({ useful: 1, stale: -0.5, wrong: -1 });
+
+/** SQL for the ranking factor 1 + 0.3·u (0.7 … 1.3); see searchLearnings. */
+export function usefulnessFactor(alias, keys) {
+  const a = `${alias}.`;
+  const verdicts = `CASE f.verdict WHEN 'useful' THEN 1.0 WHEN 'stale' THEN -0.5 WHEN 'wrong' THEN -1.0 END`;
+  const globalU = keys?.length
+    ? { sql: `(SELECT AVG(${verdicts}) FROM feedback f WHERE f.learning_id = ${a}id AND f.project_slug IN (${keys.map(() => "?").join(",")}))`, params: [...keys] }
+    : { sql: "NULL", params: [] };
+  return {
+    sql: `(1 + 0.3 * MAX(-1.0, MIN(1.0, COALESCE(CASE WHEN ${a}project_slug IS NULL THEN ${globalU.sql} ELSE ${a}usefulness END, 0))))`,
+    params: globalU.params,
+  };
 }
 
 /**

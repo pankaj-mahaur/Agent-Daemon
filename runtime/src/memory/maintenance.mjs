@@ -174,6 +174,13 @@ export async function runMemoryMaintenance({ handle, budgetMs = 5000 } = {}) {
         releaseLock(handle, step);
       }
     }
+    // Every run (not once): the injection ledger keeps 90 days (P5.5).
+    try {
+      const pruned = handle.run("DELETE FROM injections WHERE datetime(ts) < datetime('now', '-90 days')").changes;
+      if (pruned) ran.injectionsPruned = pruned;
+    } catch {
+      // older store without the table
+    }
     return ran;
   } catch {
     return null;

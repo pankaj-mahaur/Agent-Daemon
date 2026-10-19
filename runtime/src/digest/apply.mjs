@@ -20,7 +20,7 @@ import path from "node:path";
 import { insertLearnings, projectSlug, observeUserFact } from "../memory/episodic.mjs";
 import { screenLearning, neutralizeText } from "./sanitize.mjs";
 import { redactSecrets } from "../security/secret-patterns.mjs";
-import { appendToMemory, writeProposal } from "./proposals.mjs";
+import { appendToMemory, writeMemoryProposal, writeProposal } from "./proposals.mjs";
 import { ensureProjectDataDir, projectDataDir } from "../memory/project-dir.mjs";
 
 /**
@@ -162,6 +162,9 @@ export async function applyLearnings(opts) {
       continue;
     }
 
+    // Did the user have to say this again? (P5.5's repeat-correction metric)
+    if (item.learning.type === "correction" && !opts.dryRun) await noteCorrection(opts, slug, item.learning, path.join(projectDataDir(opts.cwd), "proposed"));
+
     if (item.targets.includes("episodic-only")) result.episodicOnly++;
 
     if (item.targets.includes("memory:project")) {
@@ -270,6 +273,27 @@ export async function applyLearnings(opts) {
   }
 
   return result;
+}
+
+// A correction in the user's words: record its event; a lesson shown twice and
+// still repeated gets a memory-reword proposal. Telemetry: never fails the apply.
+async function noteCorrection(opts, slug, l, proposedDir) {
+  try {
+    const { db } = await import("../memory/episodic.mjs");
+    const { classifyCorrection } = await import("../memory/metrics.mjs");
+    const handle = await db();
+    const { hookProjectKeys } = await import("../memory/scope.mjs");
+    // A folder that shares its key with another (or is never a project) gets no metric.
+    const keys = await hookProjectKeys(opts.cwd).catch(() => []);
+    if (!keys.length) return;
+    const r = classifyCorrection(handle, { keys, text: l.text, captureRef: l.capture_ref || opts.sessionId || null, source: opts.sessionId ? "digest" : "hooks" });
+    if (r.reword) {
+      const row = handle.get("SELECT text, evidence FROM learnings WHERE id = ?", [r.learningId]);
+      await writeMemoryProposal({ kind: "memory-reword", learningId: r.learningId, text: row.text, evidence: `repeated twice after being shown; last time: ${l.text}`, origin: "ad (the same correction came back after the lesson was shown)", proposedDir });
+    }
+  } catch {
+    // the metric never blocks capture
+  }
 }
 
 // Secrets out of text, evidence and tags (secret-patterns.mjs).

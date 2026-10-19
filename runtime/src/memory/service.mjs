@@ -15,6 +15,8 @@ import {
   searchLearnings,
   searchLearningsByFile,
 } from "./episodic.mjs";
+import { db } from "./episodic.mjs";
+import { mcpCaptureRef, recordInjections } from "./metrics.mjs";
 
 /** An integer 1..max; anything else (negative, NaN, a string, huge) → dflt or max. */
 export function clampLimit(v, max, dflt = max) {
@@ -31,19 +33,24 @@ const ids = (list, max) => (Array.isArray(list) ? list : []).filter((v) => Numbe
  * {kind: "cross-project"} from --allow-cross-project. Every reader gets those keys;
  * nothing here widens them.
  */
-export function createMemoryService({ scope, maxResults = 5, maxTimeline = 50, maxIds = 20 }) {
+export function createMemoryService({ scope, host = null, maxResults = 5, maxTimeline = 50, maxIds = 20 }) {
   // --allow-cross-project (launch config only): keys null = every project's non-quarantined notes.
   if (scope?.kind !== "project" && scope?.kind !== "cross-project") throw new Error("the memory service needs a project scope");
   const projectKeys = scope.kind === "cross-project" ? null : scope.keys;
+  // What this server process showed (P5.5): one capture ref per process.
+  const shown = async (rows, surface) => {
+    if (rows?.length && projectKeys) recordInjections(await db(), { captureRef: mcpCaptureRef(), projectKey: projectKeys[0], ids: rows.map((r) => r.id), surface, host });
+    return rows;
+  };
   return {
     // The pull tools (search, get) also see this project's pending notes, labelled unreviewed.
-    search: ({ query, scope: s, limit } = {}) => searchLearnings(String(query ?? ""), { projectKeys, scope: scopeArg(s), limit: clampLimit(limit, maxResults), includePending: true }),
+    search: async ({ query, scope: s, limit } = {}) => shown(await searchLearnings(String(query ?? ""), { projectKeys, scope: scopeArg(s), limit: clampLimit(limit, maxResults), includePending: true }), "mcp-search"),
     recent: ({ limit } = {}) => listRecentLearnings({ projectKeys, limit: clampLimit(limit, maxResults) }),
     files: ({ path, scope: s, limit } = {}) => searchLearningsByFile(String(path ?? ""), { projectKeys, scope: scopeArg(s), limit: clampLimit(limit, maxResults) }),
     timeline: ({ id, limit } = {}) => (Number.isInteger(id) && id > 0 ? learningTimeline(id, { limit: clampLimit(limit, maxTimeline, 10), projectKeys }) : null),
     /** Reading a learning in full counts it as retrieved (ranking signal). */
     async get({ ids: list } = {}) {
-      const rows = await getLearningsByIds(ids(list, maxIds), { projectKeys, includePending: true });
+      const rows = await shown(await getLearningsByIds(ids(list, maxIds), { projectKeys, includePending: true }), "mcp-get");
       if (rows.length) {
         try {
           await markRetrieved(rows.map((r) => r.id));
