@@ -768,7 +768,7 @@ function migrateSkillRouteEvents(raw) {
 export async function checkDriver() {
   try {
     const drivers = await availableDrivers();
-    if (!drivers.length) return { installed: false, drivers, error: "no SQLite driver: better-sqlite3 not installed (run: cd runtime && npm install) and node:sqlite needs Node 22.13+" };
+    if (!drivers.length) return { installed: false, drivers, error: "no SQLite driver: better-sqlite3 not installed (run: cd runtime && npm install) and node:sqlite needs Node 22.16+ (full-text search)" };
     // Probe the one open() will use.
     const db = await openDatabase(":memory:");
     const driver = db.driver;

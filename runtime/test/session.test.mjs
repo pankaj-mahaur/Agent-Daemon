@@ -134,10 +134,13 @@ test("a thread held by a live process can't be opened; a stale lock is taken ove
     writeFileSync(join(dir, "t2.lock"), "not json");
     assert.throws(() => lockThread("t2", { dir, pid: 333, isAlive: () => true }), SessionLockedError);
     lockThread("t2", { dir, pid: 333, isAlive: () => true, now: () => Date.now() + 200_000 })();
-    // A live pid whose heartbeat stopped (a reused pid) doesn't keep the lock.
-    lockThread("t3", { dir, pid: 444, isAlive: () => true });
-    assert.throws(() => lockThread("t3", { dir, pid: 555, isAlive: () => true }), SessionLockedError);
-    lockThread("t3", { dir, pid: 555, isAlive: () => true, now: () => Date.now() + 200_000 })();
+    // A live pid whose heartbeat stopped (a reused pid) doesn't keep the lock. The OS
+    // can't say who pid 444 is here (on a Mac it is a real boot-time daemon, whose
+    // start a real lookup would read as "older than the lock, so the same process").
+    const unknownOs = () => ({ unknown: "test pid" });
+    lockThread("t3", { dir, pid: 444, isAlive: () => true, identityOf: unknownOs });
+    assert.throws(() => lockThread("t3", { dir, pid: 555, isAlive: () => true, identityOf: unknownOs }), SessionLockedError);
+    lockThread("t3", { dir, pid: 555, isAlive: () => true, identityOf: unknownOs, now: () => Date.now() + 200_000 })();
     // The same process can't hold one thread twice.
     const mine = lockThread("t4", { dir });
     assert.throws(() => lockThread("t4", { dir }), SessionLockedError);

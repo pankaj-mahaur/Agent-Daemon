@@ -21,8 +21,9 @@ test("HOME ≠ USERPROFILE: the HOME-based location is listed as a legacy root",
   const roots = legacyAdRoots({ env, homedir: () => env.USERPROFILE, platform: process.platform });
   assert.deepEqual(roots, [path.join(env.HOME, ".agent-daemon")]);
   assert.deepEqual(legacyAdRoots({ env: { HOME: abs("u"), USERPROFILE: abs("u") }, homedir: () => abs("u") }), []);
-  // Windows compares case-insensitively.
-  assert.deepEqual(legacyAdRoots({ env: { HOME: "C:\\Users\\U", USERPROFILE: "C:\\Users\\u" }, homedir: () => "C:\\Users\\u", platform: "win32" }).length, process.platform === "win32" ? 0 : 1);
+  // Windows compares case-insensitively; elsewhere a different case is a different folder.
+  if (process.platform === "win32") assert.equal(legacyAdRoots({ env: { HOME: "C:\\Users\\U", USERPROFILE: "C:\\Users\\u" }, homedir: () => "C:\\Users\\u", platform: "win32" }).length, 0);
+  else assert.equal(legacyAdRoots({ env: { HOME: "/Users/U", USERPROFILE: "/Users/u" }, homedir: () => "/Users/u", platform: process.platform }).length, 1);
 });
 
 test("defaultRoot() is adRoot()", () => {

@@ -49,8 +49,19 @@ function systemFolders(env, platform) {
     if (local) out.push(path.join(local, "Programs"));
     return out.filter((p) => path.isAbsolute(p));
   }
-  if (platform === "darwin") return ["/System", "/Library", "/Applications", "/usr", "/bin", "/sbin", "/private", "/opt/homebrew"];
+  // macOS: /etc and /var are links into /private; /tmp too, and the per-user
+  // temp folder lives in /private/var/folders (exempt below), so not all of /private.
+  if (platform === "darwin") return ["/System", "/Library", "/Applications", "/usr", "/bin", "/sbin", "/etc", "/var", "/private/etc", "/private/var", "/opt/homebrew"];
   return ["/usr", "/bin", "/sbin", "/etc", "/opt", "/var", "/proc", "/sys", "/snap"];
+}
+
+// Temp folders inside a system folder are where people (and tests) make scratch
+// projects: the OS temp folder and macOS's per-user ones are never "system".
+function tempFolders(platform) {
+  if (platform === "win32") return [];
+  const out = [os.tmpdir(), "/var/tmp", "/private/var/tmp"];
+  if (platform === "darwin") out.push("/var/folders", "/private/var/folders");
+  return out;
 }
 
 // A path and, when it exists, its real path (a junction, a short 8.3 name or
@@ -80,7 +91,7 @@ function neverValidOne(dir, { env = process.env, home = os.homedir(), platform =
   if (isRoot(dir)) return "a filesystem root";
   if (home && spellings(home).some((h) => norm(dir, platform) === norm(h, platform))) return "the home folder";
   const inside = (ref) => spellings(ref).some((r) => within(dir, r, platform));
-  for (const sys of systemFolders(env, platform)) if (inside(sys)) return "a system folder";
+  if (!tempFolders(platform).some((t) => inside(t))) for (const sys of systemFolders(env, platform)) if (inside(sys)) return "a system folder";
   for (const r of [adRoot({ env, homedir: () => home }), ...legacyAdRoots({ env, homedir: () => home, platform })]) {
     if (inside(r)) return "ad's own folder";
   }

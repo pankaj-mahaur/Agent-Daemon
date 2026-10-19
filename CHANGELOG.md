@@ -37,6 +37,8 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 ### Fixed
 
+- macOS: memory works in a project under a temp folder (`/tmp`, `/var/folders/…`). Every folder under `/private` was taken for a system folder, so memory served and stored nothing there; plain `/etc` and `/var` are now system folders as they should be.
+- The memory package needs Node 22.16 or newer (was 22.13): Node's built-in SQLite has full-text search from 22.16, and on 22.13–22.15 every memory write failed with "no such module: fts5". An older Node now reports that no SQLite driver is available, with the version it needs.
 - An npm-installed Claude Code (`claude.cmd`) works for digest calls, which used to fail with `ENOENT`, and starts Claude workers without `cmd.exe`. `AD_CLAUDE_BIN` picks a specific Claude Code.
 - A conversation lock left by a crashed ad no longer blocks for up to two minutes when the OS has given its process number to another program: ad checks when the process holding that number started, and takes the lock at once if it isn't the one that wrote it.
 - A session suspended with Ctrl+Z (or paused in a debugger) keeps its conversation lock: another ad no longer takes over a live session whose heartbeat stopped.

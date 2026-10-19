@@ -8,7 +8,7 @@ import { test } from "node:test";
 import { projectConfigFolder } from "../src/engine/attribution.mjs";
 const DOT = projectConfigFolder; // the engine's per-project folder name
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -59,7 +59,8 @@ test("the engine is launched in the neutral folder, not the work folder", async 
   await withHome({}, async ({ engine, project, home }) => {
     const { cwd } = await engine.testRequest("debug/processCwd", {});
     assert.equal(cwd, engine.launch.dir);
-    assert.equal(engine.launch.dir, join(home, ".agent-daemon", "launch"));
+    // The engine resolves the real path (on macOS the temp folder is under /private).
+    assert.equal(engine.launch.dir, realpathSync.native(join(home, ".agent-daemon", "launch")));
     assert.notEqual(cwd, project);
     assert.equal(engine.launch.mode, "root");
   });

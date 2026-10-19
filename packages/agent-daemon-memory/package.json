@@ -12,7 +12,7 @@
     "LICENSE"
   ],
   "engines": {
-    "node": ">=22.13"
+    "node": ">=22.16"
   },
   "dependencies": {
     "jsonc-parser": "3.3.1",

@@ -97,7 +97,7 @@ The allowed zone and the other legitimate places are `runtime/scripts/brand-allo
 |---|---|
 | `ubuntu / macos / windows · node 22` | `npm test`, the skill linter, the brand lint (strict), the doc-link check, and smoke runs of `ad doctor`, `ad init --plan` and the skills-diff script |
 | `real engine · ubuntu / macos / windows` | `engine-real`, `tui-live` and the correction benchmark's driver smoke with `AD_REAL_ENGINE=1` (on Linux after allowing unprivileged user namespaces for the engine's bubblewrap sandbox) |
-| `memory install · ubuntu / macos / windows · node 22.13 / 24` | the memory tests on `node:sqlite` (`AD_SQLITE_DRIVER=node:sqlite`); the installer's config matrix, `runtime/scripts/memory-install-matrix.mjs` (release gate a: ≥ 95% and no uninstall-integrity failure); the package build and `npm pack --dry-run`; `test/memory-host-codex.test.mjs`, the real Codex binary loading the installed entry (gate b) |
+| `memory install · ubuntu / macos / windows · node 22.16 / 24` | the memory tests on `node:sqlite` (`AD_SQLITE_DRIVER=node:sqlite`); the installer's config matrix, `runtime/scripts/memory-install-matrix.mjs` (release gate a: ≥ 95% and no uninstall-integrity failure); the package build and `npm pack --dry-run`; `test/memory-host-codex.test.mjs`, the real Codex binary loading the installed entry (gate b) |
 
 Installer tests run in fake homes only (HOME, USERPROFILE, APPDATA, XDG_CONFIG_HOME, CODEX_HOME, CLAUDE_CONFIG_DIR, AD_ROOT) with a fake `claude` (`testkit/fake-claude.mjs`); they never read a real host config.
 

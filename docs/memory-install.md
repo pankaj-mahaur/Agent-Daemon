@@ -41,7 +41,7 @@ installer (GUI apps often don't have your shell's PATH). The npx install copies
 the package to `~/.agent-daemon/memory/pkg/<version>/` and points hosts at a
 launcher (`~/.agent-daemon/memory/bin/launch.mjs`), so hosts never run `npx`
 and an upgrade only changes which version the launcher starts. It needs Node
-22.13 or newer and builds nothing: memory runs on Node's built-in SQLite.
+22.16 or newer and builds nothing: memory runs on Node's built-in SQLite.
 
 ## What it never does
 

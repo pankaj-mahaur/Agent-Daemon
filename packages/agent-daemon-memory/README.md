@@ -29,4 +29,4 @@ you accept it with `npx agent-daemon-memory review` (or `ad review`) in your own
 terminal. Accepting refuses inside an agent's shell and asks you to type `accept`.
 
 Part of [agent-daemon](https://github.com/pankaj-mahaur/Agent-Daemon). Needs
-Node 22.13 or newer; no native build.
+Node 22.16 or newer; no native build.

@@ -11,7 +11,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -87,6 +87,18 @@ function world(mockUrl) {
   for (const k of Object.keys(env)) if (new RegExp(`^${ENGINE.name.toUpperCase()}_`).test(k) || k === "AD_CODEX_BIN") delete env[k];
   delete env.CI; // the TUI is interactive here
   return { root, home, codexHome, cwd, env, git };
+}
+
+// Every learning journal of the world's project, as one text. Capture files sit in
+// the project's own .agent-daemon after `ad init`, else in ad's root
+// (projects/<name>, P5.2): read every journal (and draining copy) in both.
+function journalTextOf(w) {
+  const projects = join(w.home, ".agent-daemon", "projects");
+  const dirs = [join(w.cwd, ".agent-daemon"), ...(existsSync(projects) ? readdirSync(projects).map((n) => join(projects, n)) : [])];
+  return dirs
+    .filter((d) => existsSync(d))
+    .flatMap((d) => readdirSync(d).filter((n) => n.startsWith("learning-journal")).map((n) => readFileSync(join(d, n), "utf8")))
+    .join("\n");
 }
 
 // Every pty started, so a test can close them all (an open ConPTY keeps node alive).
@@ -658,8 +670,7 @@ test("Part 6 live: /cd forks the conversation into another folder, and the next 
 test("Part 7 live: a side question while the main turn runs; the side runs without ad's hooks; nothing merges back", { skip, timeout: 10 * 60_000 }, async () => {
   const mock = await startMockResponses({ script: liveScript });
   const w = world(mock.url);
-  const journal = join(w.cwd, ".agent-daemon", "learning-journal.jsonl");
-  const journalText = () => (existsSync(journal) ? readFileSync(journal, "utf8") : "");
+  const journalText = () => journalTextOf(w);
   let t;
   try {
     t = await start(w);
@@ -780,8 +791,7 @@ test("Part 9 live: /theme saves tui.theme through the real engine, and code is c
 test("Part 10 live: /recap from a temporary thread with no tools or hooks; /subagents watches a real subagent", { skip, timeout: 10 * 60_000 }, async () => {
   const mock = await startMockResponses({ script: liveScript });
   const w = world(mock.url);
-  const journal = join(w.cwd, ".agent-daemon", "learning-journal.jsonl");
-  const journalText = () => (existsSync(journal) ? readFileSync(journal, "utf8") : "");
+  const journalText = () => journalTextOf(w);
   let t;
   try {
     t = await start(w);

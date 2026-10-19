@@ -132,6 +132,13 @@ test("system folders never bind, with or without .git inside", { skip: false }, 
   }
 });
 
+test("macOS: system folders refuse, but its temp folders (inside /private) are ordinary folders", () => {
+  // Paths that don't exist on this machine: only their own spelling is judged, on every OS.
+  const o = { env: { HOME: "/Users/u" }, home: "/Users/u", platform: "darwin" };
+  for (const d of ["/etc/x", "/private/etc/hosts.d", "/var/db/x", "/private/var/root", "/usr/local/x", "/System/Library", "/Library/Caches", "/opt/homebrew/y"]) assert.ok(neverValid(d, o), d);
+  for (const d of ["/var/folders/n6/abc/T/ad-x/repo", "/private/var/folders/n6/abc/T/ad-x/repo", "/private/var/tmp/scratch", "/tmp/scratch", "/private/tmp/scratch", "/Users/u/work/app"]) assert.equal(neverValid(d, o), null, d);
+});
+
 test("a link (junction) into ad's own folder or home never binds", () => {
   const f = fixture();
   try {

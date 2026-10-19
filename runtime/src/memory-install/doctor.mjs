@@ -86,7 +86,7 @@ export async function doctor(opts = {}) {
 
   add("node.version", nodeOk(process.versions.node), `Node ${process.versions.node}${nodeOk(process.versions.node) ? "" : ` (needs ${MIN_NODE.join(".")} or newer)`}`);
   const drivers = await availableDrivers();
-  add("sqlite.driver", drivers.length > 0, drivers.length ? drivers.join(", ") : "no SQLite driver: needs Node 22.13+ (node:sqlite)");
+  add("sqlite.driver", drivers.length > 0, drivers.length ? drivers.join(", ") : "no SQLite driver: needs Node 22.16+ (node:sqlite with full-text search)");
   try {
     const { open } = await import("../memory/sqlite.mjs");
     const db = await open({ dbPath: path.join(ctx.root, "episodic.db"), prefer: "node:sqlite" });

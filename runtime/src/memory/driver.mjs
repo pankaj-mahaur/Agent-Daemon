@@ -3,7 +3,7 @@
 //   db.exec(sql), db.prepare(sql) → { run(...p) → {changes, lastInsertRowid}, get(...p), all(...p) },
 //   db.transaction(fn) → a function (also .deferred / .immediate / .exclusive), db.close()
 //
-//   node:sqlite      built into Node 22.13+: no native build, so the memory package
+//   node:sqlite      built into Node 22.16+ (FTS5): no native build, so the memory package
 //                    installs anywhere with npx. Transactions are BEGIN IMMEDIATE
 //                    (nested ones are savepoints), busy timeout 5 s, rows are plain
 //                    objects, `undefined` binds as NULL, a locked database throws
@@ -34,12 +34,38 @@ async function loadNodeSqlite() {
     return emit.call(process, warning, ...rest);
   };
   try {
-    return (await import("node:sqlite")).DatabaseSync ?? null;
+    const DatabaseSync = (await import("node:sqlite")).DatabaseSync ?? null;
+    return DatabaseSync && hasFts5(DatabaseSync) ? DatabaseSync : null;
   } catch {
     return null;
   } finally {
     process.emitWarning = emit;
   }
+}
+
+// Memory search is full-text (FTS5). Node's built-in SQLite has it from 22.16
+// (nodejs/node#57621); 22.13–22.15 load but fail on the first write, so such a
+// build counts as no driver at all.
+const fts5Seen = new WeakMap();
+export function hasFts5(DatabaseSync) {
+  if (fts5Seen.has(DatabaseSync)) return fts5Seen.get(DatabaseSync);
+  let db = null;
+  let ok = false;
+  try {
+    db = new DatabaseSync(":memory:");
+    db.exec("CREATE VIRTUAL TABLE temp.fts5_probe USING fts5(x)");
+    ok = true;
+  } catch {
+    // no FTS5 in this build
+  } finally {
+    try {
+      db?.close();
+    } catch {
+      // nothing to close
+    }
+  }
+  fts5Seen.set(DatabaseSync, ok);
+  return ok;
 }
 
 /** The driver names that load here, in preference order. */
