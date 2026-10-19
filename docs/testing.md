@@ -28,6 +28,7 @@ Install with `npm ci` (or `npm install`) in `runtime/`, devDependencies included
 | Vim, highlighting, recap | `test/tui-vim`, `tui-highlight`, `tui-recap` | the engine's Vim binding table; each language's lexer, hostile input at the caps, a style golden per theme; the recap history budget and strict parse |
 | Keys, styles, settings | `test/tui-keymap`, `tui-styles`, `tui-dialogs`, `tui-prefs`, `tui-status` | the engine's key spelling and `tui.keymap` overrides; a golden that keeps every span's style (and no colour outside `view/theme.mjs`); the confirm and checklist; settings files; status-line and title items, `titleSafe` |
 | The key routing table | `test/tui-app.test.mjs` ("key routing table") | for each layer (approval, ad's confirm, pager, shortcuts, popup, checklist, composer idle or running), what Esc, Ctrl+C, Tab, Shift+Tab, Enter and PgUp do |
+| The correction benchmark | `bench/correction-bench/test/` (run by `test/correction-bench.test.mjs`); `smoke-real.test.mjs` in the real-engine job | each dev family's oracle on its violating and compliant example; the statistics on synthetic data with known answers (a 40% → 20% effect, an effect held by one family); the episode flow; the driver smoke: the real engine with a scripted model, the correction turn, ad's hooks, capture and the lesson in session 2. See [`bench/correction-bench/PROTOCOL.md`](../bench/correction-bench/PROTOCOL.md) |
 | Engine pin bookkeeping | `test/tui-resilience.test.mjs` | ad's slash commands don't collide with the engine's (`src/engine/codex/upstream-commands.json` must match the pinned tag); `src/engine/codex/compat.json` lists the pin as tested, with a "what changed" note (`AD_COMPAT_NOTE_PENDING=1` lets the upgrade bot's run pass until a person writes it) |
 
 ### The fake engine speaks the pinned protocol
@@ -95,7 +96,7 @@ The allowed zone and the other legitimate places are `runtime/scripts/brand-allo
 | Job | Runs |
 |---|---|
 | `ubuntu / macos / windows · node 22` | `npm test`, the skill linter, the brand lint (strict), the doc-link check, and smoke runs of `ad doctor`, `ad init --plan` and the skills-diff script |
-| `real engine · ubuntu / macos / windows` | `engine-real` and `tui-live` with `AD_REAL_ENGINE=1` (on Linux after allowing unprivileged user namespaces for the engine's bubblewrap sandbox) |
+| `real engine · ubuntu / macos / windows` | `engine-real`, `tui-live` and the correction benchmark's driver smoke with `AD_REAL_ENGINE=1` (on Linux after allowing unprivileged user namespaces for the engine's bubblewrap sandbox) |
 | `memory install · ubuntu / macos / windows · node 22.13 / 24` | the memory tests on `node:sqlite` (`AD_SQLITE_DRIVER=node:sqlite`); the installer's config matrix, `runtime/scripts/memory-install-matrix.mjs` (release gate a: ≥ 95% and no uninstall-integrity failure); the package build and `npm pack --dry-run`; `test/memory-host-codex.test.mjs`, the real Codex binary loading the installed entry (gate b) |
 
 Installer tests run in fake homes only (HOME, USERPROFILE, APPDATA, XDG_CONFIG_HOME, CODEX_HOME, CLAUDE_CONFIG_DIR, AD_ROOT) with a fake `claude` (`testkit/fake-claude.mjs`); they never read a real host config.

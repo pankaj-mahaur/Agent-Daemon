@@ -1,0 +1,42 @@
+{
+  "id": "http",
+  "split": "dev",
+  "convention": "Call other services with request(service, path, opts) from src/lib/api.js; never fetch, axios or http.request elsewhere.",
+  "oracle": {
+    "kind": "grep",
+    "files": [
+      "src/**/*.{js,mjs,cjs,ts}"
+    ],
+    "except": [
+      "src/lib/api.js"
+    ],
+    "forbid": [
+      "\\bfetch\\(",
+      "\\baxios\\b",
+      "\\bhttps?\\.request\\(",
+      "XMLHttpRequest"
+    ]
+  },
+  "sessions": [
+    {
+      "fixture": "shop-app",
+      "task": "When an order is placed, send it to the payments service (POST /charges) from src/orders.js."
+    },
+    {
+      "fixture": "shop-app",
+      "task": "Add sendWelcomeMail(user) in a new src/mail.js: it posts to the mail service at /send."
+    },
+    {
+      "fixture": "shop-app",
+      "task": "Add refreshRates() in a new src/rates.js: it gets /rates from the payments service."
+    }
+  ],
+  "examples": {
+    "violating": {
+      "src/mail.js": "export const sendWelcomeMail = (user) => fetch(\"http://localhost:4002/send\", { method: \"POST\", body: JSON.stringify({ to: user.email }) });\n"
+    },
+    "compliant": {
+      "src/mail.js": "import { request } from \"#app/lib/api.js\";\n\nexport const sendWelcomeMail = (user) => request(\"mail\", \"/send\", { method: \"POST\", body: { to: user.email } });\n"
+    }
+  }
+}

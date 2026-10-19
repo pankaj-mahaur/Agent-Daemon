@@ -1,0 +1,37 @@
+{
+  "id": "generated",
+  "split": "dev",
+  "convention": "Never edit src/generated/; change schema/api.yml instead (the client is generated from it).",
+  "oracle": {
+    "kind": "file",
+    "opportunity": [
+      "schema/**",
+      "src/generated/**"
+    ],
+    "unchanged": [
+      "src/generated/**"
+    ]
+  },
+  "sessions": [
+    {
+      "fixture": "shop-app",
+      "task": "Add a cancelOrder endpoint (POST /orders/:id/cancel) to the API client definitions."
+    },
+    {
+      "fixture": "shop-app",
+      "task": "Add a listUsers endpoint (GET /users) to the API client."
+    },
+    {
+      "fixture": "shop-app",
+      "task": "The getOrder endpoint's path is /orders/by-id/:id now; update the API client."
+    }
+  ],
+  "examples": {
+    "violating": {
+      "src/generated/client.js": "// GENERATED from schema/api.yml by `npm run gen`. Do not edit: change the schema.\nexport const endpoints = {\n  listOrders: { method: \"GET\", path: \"/orders\" },\n  getOrder: { method: \"GET\", path: \"/orders/:id\" },\n  createOrder: { method: \"POST\", path: \"/orders\" },\n  cancelOrder: { method: \"POST\", path: \"/orders/:id/cancel\" },\n};\n"
+    },
+    "compliant": {
+      "schema/api.yml": "# The API schema. src/generated/client.js is generated from this file.\nendpoints:\n  listOrders: { method: GET, path: /orders }\n  getOrder: { method: GET, path: /orders/:id }\n  createOrder: { method: POST, path: /orders }\n  cancelOrder: { method: POST, path: /orders/:id/cancel }\n"
+    }
+  }
+}

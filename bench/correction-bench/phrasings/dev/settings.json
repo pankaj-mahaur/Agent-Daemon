@@ -1,0 +1,30 @@
+{
+  "family": "settings",
+  "phrasings": [
+    {
+      "id": "settings-a1",
+      "text": "Actually we read config with settings.get() from src/lib/settings.js, not process.env.",
+      "writer": "author"
+    },
+    {
+      "id": "settings-a2",
+      "text": "process.env is only read in lib/settings.js. Add the key there and use settings.get.",
+      "writer": "author"
+    },
+    {
+      "id": "settings-a3",
+      "text": "Please remember: configuration goes through settings.get, never process.env in the code.",
+      "writer": "author"
+    },
+    {
+      "id": "settings-a4",
+      "text": "no process.env outside settings.js",
+      "writer": "author"
+    },
+    {
+      "id": "settings-a5",
+      "text": "Put the value in src/lib/settings.js and read it with settings.get(\"...\").",
+      "writer": "author"
+    }
+  ]
+}

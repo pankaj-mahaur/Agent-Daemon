@@ -1,0 +1,30 @@
+{
+  "family": "dates",
+  "phrasings": [
+    {
+      "id": "dates-a1",
+      "text": "Actually we use fmtDate from src/lib/dates.js for every date, not toLocaleDateString.",
+      "writer": "author"
+    },
+    {
+      "id": "dates-a2",
+      "text": "Dates always go through fmtDate() in lib/dates.js; the locale functions give different text on every machine.",
+      "writer": "author"
+    },
+    {
+      "id": "dates-a3",
+      "text": "Please remember: format dates with fmtDate, never toLocaleString or toISOString slices.",
+      "writer": "author"
+    },
+    {
+      "id": "dates-a4",
+      "text": "no toLocaleDateString — use fmtDate",
+      "writer": "author"
+    },
+    {
+      "id": "dates-a5",
+      "text": "Use the dates helper (fmtDate) for that, we never format dates by hand.",
+      "writer": "author"
+    }
+  ]
+}

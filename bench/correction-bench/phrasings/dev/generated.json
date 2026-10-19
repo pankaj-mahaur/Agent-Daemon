@@ -1,0 +1,30 @@
+{
+  "family": "generated",
+  "phrasings": [
+    {
+      "id": "generated-a1",
+      "text": "Actually we never edit src/generated, the schema in schema/api.yml is the source.",
+      "writer": "author"
+    },
+    {
+      "id": "generated-a2",
+      "text": "Don't touch src/generated/client.js, it's overwritten by the generator. Change schema/api.yml.",
+      "writer": "author"
+    },
+    {
+      "id": "generated-a3",
+      "text": "Please remember: generated files are off limits, edit schema/api.yml.",
+      "writer": "author"
+    },
+    {
+      "id": "generated-a4",
+      "text": "that file is generated, edit the schema instead",
+      "writer": "author"
+    },
+    {
+      "id": "generated-a5",
+      "text": "src/generated gets regenerated from the yml; put the endpoint in schema/api.yml.",
+      "writer": "author"
+    }
+  ]
+}

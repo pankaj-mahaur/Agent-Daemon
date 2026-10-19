@@ -1,0 +1,38 @@
+{
+  "id": "imports",
+  "split": "dev",
+  "convention": "Import app modules with the #app/ alias (\"#app/lib/log.js\"); never relative paths that climb with ../.",
+  "oracle": {
+    "kind": "grep",
+    "files": [
+      "src/**/*.{js,mjs,cjs,ts}"
+    ],
+    "forbid": [
+      "from\\s+[\"']\\.\\./",
+      "import\\(\\s*[\"']\\.\\./",
+      "require\\(\\s*[\"']\\.\\./"
+    ]
+  },
+  "sessions": [
+    {
+      "fixture": "shop-app",
+      "task": "Add src/routes/users.js with a handler that answers with a user by id."
+    },
+    {
+      "fixture": "shop-app",
+      "task": "Add src/reports/daily.js: list today's orders for a user."
+    },
+    {
+      "fixture": "shop-app",
+      "task": "Add src/routes/carts.js with a handler that answers ok with an empty cart."
+    }
+  ],
+  "examples": {
+    "violating": {
+      "src/routes/users.js": "import { ok } from \"../lib/envelope.js\";\nimport { getUser } from \"../users.js\";\n\nexport const handleGetUser = (req, res) => ok(res, getUser(req.params.id));\n"
+    },
+    "compliant": {
+      "src/routes/users.js": "import { ok } from \"#app/lib/envelope.js\";\nimport { getUser } from \"#app/users.js\";\n\nexport const handleGetUser = (req, res) => ok(res, getUser(req.params.id));\n"
+    }
+  }
+}

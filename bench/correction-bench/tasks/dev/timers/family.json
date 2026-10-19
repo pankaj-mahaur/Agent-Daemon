@@ -1,0 +1,39 @@
+{
+  "id": "timers",
+  "split": "dev",
+  "convention": "Wait or repeat with wait(ms)/every(ms, fn) from src/lib/time.js; never setTimeout or setInterval in src/.",
+  "oracle": {
+    "kind": "grep",
+    "files": [
+      "src/**/*.{js,mjs,cjs,ts}"
+    ],
+    "except": [
+      "src/lib/time.js"
+    ],
+    "forbid": [
+      "\\bset(Timeout|Interval)\\("
+    ]
+  },
+  "sessions": [
+    {
+      "fixture": "shop-app",
+      "task": "Add retry(fn, times) in a new src/retry.js: it waits half a second between attempts."
+    },
+    {
+      "fixture": "shop-app",
+      "task": "Add a job in a new src/jobs.js that expires unpaid orders every minute."
+    },
+    {
+      "fixture": "shop-app",
+      "task": "In src/users.js, add welcomeLater(user): it waits two seconds, then logs that the welcome mail is due."
+    }
+  ],
+  "examples": {
+    "violating": {
+      "src/retry.js": "export async function retry(fn, times) {\n  for (let i = 0; ; i++) {\n    try {\n      return await fn();\n    } catch (e) {\n      if (i + 1 >= times) throw e;\n      await new Promise((r) => setTimeout(r, 500));\n    }\n  }\n}\n"
+    },
+    "compliant": {
+      "src/retry.js": "import { wait } from \"#app/lib/time.js\";\n\nexport async function retry(fn, times) {\n  for (let i = 0; ; i++) {\n    try {\n      return await fn();\n    } catch (e) {\n      if (i + 1 >= times) throw e;\n      await wait(500);\n    }\n  }\n}\n"
+    }
+  }
+}

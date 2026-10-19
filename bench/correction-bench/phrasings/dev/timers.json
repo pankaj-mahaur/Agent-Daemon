@@ -1,0 +1,30 @@
+{
+  "family": "timers",
+  "phrasings": [
+    {
+      "id": "timers-a1",
+      "text": "Actually we use wait() and every() from src/lib/time.js, not setTimeout.",
+      "writer": "author"
+    },
+    {
+      "id": "timers-a2",
+      "text": "Timers go through lib/time.js (wait, every) so the tests can fake time.",
+      "writer": "author"
+    },
+    {
+      "id": "timers-a3",
+      "text": "Please remember: no setTimeout or setInterval in src, use the time helper.",
+      "writer": "author"
+    },
+    {
+      "id": "timers-a4",
+      "text": "use wait(ms) instead of setTimeout",
+      "writer": "author"
+    },
+    {
+      "id": "timers-a5",
+      "text": "We never call setInterval directly; every(ms, fn) from src/lib/time.js.",
+      "writer": "author"
+    }
+  ]
+}

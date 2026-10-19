@@ -941,6 +941,7 @@ Copy-paste configuration templates:
 - [Harness design](docs/harness-design.md) — The engine boundary, isolation from your own install, the safety model, staying current with the engine
 - [Terminal UI architecture](docs/tui-architecture.md) — How `ad tui` is built, the `/undo` safety model, decisions
 - [Memory metrics](docs/memory-metrics.md) — `ad memory report`: repeated corrections, what was shown, feedback, rewording proposals
+- [Correction benchmark](bench/correction-bench/README.md) — Does an agent repeat a corrected mistake, with and without ad's memory? Protocol, drivers, analysis
 - [Testing](docs/testing.md) — The test layers, the live terminal UI tests, mutation checks, CI
 - [Manual test](docs/manual-test.md) — End-to-end checklist (Claude Code mode + harness + terminal UI)
 - [Ecosystem](docs/ecosystem.md) — Hermes interop, cross-agent awareness

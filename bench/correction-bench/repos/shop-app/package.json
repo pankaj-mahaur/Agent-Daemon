@@ -1,0 +1,8 @@
+{
+  "name": "shop-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "imports": { "#app/*": "./src/*" },
+  "scripts": { "test": "node --test spec/*.spec.js" }
+}

@@ -342,6 +342,12 @@
       "reason": "tests may name the engine's API tokens and files they exercise"
     },
     {
+      "path": "bench/correction-bench/**",
+      "rules": ["A"],
+      "match": "[a-z][A-Za-z0-9]*Codex[A-Za-z0-9]*|CODEX_[A-Z_]+|AD_CODEX_[A-Z_]+",
+      "reason": "the benchmark's runner and tests isolate an episode from the user's engine folder (its environment variables) and use the mock model's engine-home writer from runtime/testkit"
+    },
+    {
       "path": "mcp/agent-daemon-memory/README.md",
       "rules": ["A"],
       "match": "CODEX_MCP_PROTOCOL_VERSION",

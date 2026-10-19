@@ -1,0 +1,30 @@
+{
+  "family": "logger",
+  "phrasings": [
+    {
+      "id": "logger-a1",
+      "text": "Actually we use logInfo from src/lib/log.js for logging, not console.log.",
+      "writer": "author"
+    },
+    {
+      "id": "logger-a2",
+      "text": "No console.log in src please, everything goes through the logger in src/lib/log.js.",
+      "writer": "author"
+    },
+    {
+      "id": "logger-a3",
+      "text": "Please remember: logs go through logInfo/logWarn from the lib logger, never console output.",
+      "writer": "author"
+    },
+    {
+      "id": "logger-a4",
+      "text": "use our logger (lib/log.js) instead of console.log",
+      "writer": "author"
+    },
+    {
+      "id": "logger-a5",
+      "text": "We don't print with console here. logInfo or logWarn from src/lib/log.js.",
+      "writer": "author"
+    }
+  ]
+}

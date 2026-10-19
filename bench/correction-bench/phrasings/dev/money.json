@@ -1,0 +1,30 @@
+{
+  "family": "money",
+  "phrasings": [
+    {
+      "id": "money-a1",
+      "text": "Actually we use Money.cents and Money.format from src/lib/money.js, not floats.",
+      "writer": "author"
+    },
+    {
+      "id": "money-a2",
+      "text": "Amounts are integer cents. Parse with Money.cents(\"4.99\") and print with Money.format.",
+      "writer": "author"
+    },
+    {
+      "id": "money-a3",
+      "text": "Please remember: never parseFloat or toFixed money, use the Money helper.",
+      "writer": "author"
+    },
+    {
+      "id": "money-a4",
+      "text": "money is cents, use Money.cents",
+      "writer": "author"
+    },
+    {
+      "id": "money-a5",
+      "text": "We keep money in cents through lib/money.js; floats lose pennies.",
+      "writer": "author"
+    }
+  ]
+}

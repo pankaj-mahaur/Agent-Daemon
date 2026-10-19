@@ -1,0 +1,47 @@
+{
+  "id": "test-layout",
+  "split": "dev",
+  "convention": "Tests live in spec/ and are named <name>.spec.js; never a test/, tests/ or __tests__ folder and never a .test.js file.",
+  "oracle": {
+    "kind": "file",
+    "opportunity": [
+      "**/*.{spec,test}.{js,mjs,cjs,ts}",
+      "test/**",
+      "tests/**",
+      "**/__tests__/**"
+    ],
+    "confine": {
+      "files": [
+        "**/*.{spec,test}.{js,mjs,cjs,ts}",
+        "test/**",
+        "tests/**",
+        "**/__tests__/**"
+      ],
+      "to": [
+        "spec/**/*.spec.{js,mjs}"
+      ]
+    }
+  },
+  "sessions": [
+    {
+      "fixture": "shop-app",
+      "task": "Add a test for addUser in src/users.js: it returns a user with the given email."
+    },
+    {
+      "fixture": "shop-app",
+      "task": "Add a test that placeOrder refuses an order with more items than allowed."
+    },
+    {
+      "fixture": "shop-app",
+      "task": "Write a test for the Money helper: Money.cents(\"3.5\") is 350."
+    }
+  ],
+  "examples": {
+    "violating": {
+      "test/users.test.js": "import { test } from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { addUser } from \"#app/users.js\";\n\ntest(\"addUser keeps the email\", () => assert.equal(addUser(\"a@b.c\").email, \"a@b.c\"));\n"
+    },
+    "compliant": {
+      "spec/users.spec.js": "import { test } from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { addUser } from \"#app/users.js\";\n\ntest(\"addUser keeps the email\", () => assert.equal(addUser(\"a@b.c\").email, \"a@b.c\"));\n"
+    }
+  }
+}

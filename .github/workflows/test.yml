@@ -162,9 +162,10 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
-      # engine-real: the protocol; tui-live: the FC3 script, the real ad tui in a pty.
+      # engine-real: the protocol; tui-live: the FC3 script, the real ad tui in a pty;
+      # smoke-real: the correction benchmark's driver (hooks, capture, the lesson in session 2).
       - name: Real engine vs mock model
         working-directory: runtime
         env:
           AD_REAL_ENGINE: "1"
-        run: node --test --test-concurrency=1 --test-force-exit test/engine-real.test.mjs test/tui-live.test.mjs
+        run: node --test --test-concurrency=1 --test-force-exit test/engine-real.test.mjs test/tui-live.test.mjs ../bench/correction-bench/test/smoke-real.test.mjs

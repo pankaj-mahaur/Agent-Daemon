@@ -1,0 +1,30 @@
+{
+  "family": "error-envelope",
+  "phrasings": [
+    {
+      "id": "error-envelope-a1",
+      "text": "Actually we use fail(res, status, code, message) from the envelope helper for errors, not res.status().json().",
+      "writer": "author"
+    },
+    {
+      "id": "error-envelope-a2",
+      "text": "Errors have to use the envelope: fail(res, 404, \"not_found\", ...). Clients parse { ok, error: { code, message } }.",
+      "writer": "author"
+    },
+    {
+      "id": "error-envelope-a3",
+      "text": "Please remember: every error answer goes through fail() in src/lib/envelope.js.",
+      "writer": "author"
+    },
+    {
+      "id": "error-envelope-a4",
+      "text": "use fail() for errors, not res.status",
+      "writer": "author"
+    },
+    {
+      "id": "error-envelope-a5",
+      "text": "Our handlers never build error bodies by hand; call fail from lib/envelope.js.",
+      "writer": "author"
+    }
+  ]
+}

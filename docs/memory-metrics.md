@@ -63,3 +63,6 @@ one project can't sink a lesson for every other project.
 - "Lessons shown per session" counts sessions whose host passed an id.
 - "Similar" is a word-overlap test, not a meaning test: a rephrased correction
   with different words can be missed.
+- The report counts what happens in your projects; it can't say what would have
+  happened without memory. The controlled comparison (no memory, the host's own
+  memory, a rules file, ad) is the [correction benchmark](../bench/correction-bench/PROTOCOL.md).

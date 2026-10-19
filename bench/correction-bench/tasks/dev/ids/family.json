@@ -1,0 +1,43 @@
+{
+  "id": "ids",
+  "split": "dev",
+  "convention": "Make ids with newId(prefix) from src/lib/ids.js; never Math.random, crypto.randomUUID, uuid or nanoid.",
+  "oracle": {
+    "kind": "grep",
+    "files": [
+      "src/**/*.{js,mjs,cjs,ts}"
+    ],
+    "except": [
+      "src/lib/ids.js"
+    ],
+    "forbid": [
+      "Math\\.random\\(",
+      "randomUUID\\(",
+      "from\\s+[\"'](uuid|nanoid)[\"']",
+      "require\\(\\s*[\"'](uuid|nanoid)[\"']\\s*\\)",
+      "\\b(uuidv4|nanoid)\\("
+    ]
+  },
+  "sessions": [
+    {
+      "fixture": "shop-app",
+      "task": "Add carts: createCart(userId) in a new src/carts.js returns a cart with a unique id."
+    },
+    {
+      "fixture": "shop-app",
+      "task": "Give each line item a unique id when an order is placed in src/orders.js."
+    },
+    {
+      "fixture": "shop-app",
+      "task": "Add issueCoupon(userId) in a new src/coupons.js: it returns a coupon with a unique code."
+    }
+  ],
+  "examples": {
+    "violating": {
+      "src/carts.js": "import { randomUUID } from \"node:crypto\";\n\nexport const createCart = (userId) => ({ id: randomUUID(), userId, items: [] });\n"
+    },
+    "compliant": {
+      "src/carts.js": "import { newId } from \"#app/lib/ids.js\";\n\nexport const createCart = (userId) => ({ id: newId(\"cart\"), userId, items: [] });\n"
+    }
+  }
+}

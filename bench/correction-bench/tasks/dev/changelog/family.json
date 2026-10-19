@@ -1,0 +1,32 @@
+{
+  "id": "changelog",
+  "split": "dev",
+  "convention": "Every change to src/ adds a line under \"## Unreleased\" in CHANGES.md.",
+  "oracle": {
+    "kind": "command",
+    "script": "check-changes.mjs"
+  },
+  "sessions": [
+    {
+      "fixture": "shop-app",
+      "task": "Add countOrders(userId) to src/orders.js."
+    },
+    {
+      "fixture": "shop-app",
+      "task": "Make addUser in src/users.js store the email in lower case."
+    },
+    {
+      "fixture": "shop-app",
+      "task": "Add a \"shipped\" status and shipOrder(id) to src/orders.js."
+    }
+  ],
+  "examples": {
+    "violating": {
+      "src/count.js": "export const countOrders = (orders) => orders.length;\n"
+    },
+    "compliant": {
+      "src/count.js": "export const countOrders = (orders) => orders.length;\n",
+      "CHANGES.md": "# Changes\n\n## Unreleased\n\n- Added countOrders.\n\n## 0.1.0\n\n- First version.\n"
+    }
+  }
+}

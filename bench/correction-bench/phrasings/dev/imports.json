@@ -1,0 +1,30 @@
+{
+  "family": "imports",
+  "phrasings": [
+    {
+      "id": "imports-a1",
+      "text": "Actually we import with the #app/ alias, not ../ paths.",
+      "writer": "author"
+    },
+    {
+      "id": "imports-a2",
+      "text": "Imports use #app/... (see package.json \"imports\"), never ../",
+      "writer": "author"
+    },
+    {
+      "id": "imports-a3",
+      "text": "Please remember: always import app modules as #app/<path>.",
+      "writer": "author"
+    },
+    {
+      "id": "imports-a4",
+      "text": "use #app/ imports",
+      "writer": "author"
+    },
+    {
+      "id": "imports-a5",
+      "text": "We don't climb with ../ in imports here, the #app alias is set up for that.",
+      "writer": "author"
+    }
+  ]
+}
