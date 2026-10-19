@@ -78,10 +78,11 @@ test("migration backfills derivation on legacy NULL rows at reopen", async () =>
 
 test("buildUserRepresentation groups facts + high-confidence learnings", async () => {
   const profile = await withEpisodic(async (mod) => {
-    await mod.observeUserFact({ category: "identity", text: "prefers concise replies", confidence: 0.8 });
-    await mod.observeUserFact({ category: "tool", text: "uses pnpm", confidence: 0.8 });
-    await mod.observeUserFact({ category: "anti-preference", text: "no emojis in code", confidence: 0.8 });
+    // Facts are served in the projects that observed them.
     const slug = mod.projectSlug("/tmp/projR");
+    await mod.observeUserFact({ category: "identity", text: "prefers concise replies", confidence: 0.8, projectSlug: slug });
+    await mod.observeUserFact({ category: "tool", text: "uses pnpm", confidence: 0.8, projectSlug: slug });
+    await mod.observeUserFact({ category: "anti-preference", text: "no emojis in code", confidence: 0.8, projectSlug: slug });
     await mod.insertLearning({ category: "decision", text: "we chose fastify over express", projectSlug: slug, confidence: 0.8 });
     await mod.insertLearning({ category: "gotcha", text: "windows crlf breaks the shell script", projectSlug: slug, confidence: 0.8 });
     await mod.insertLearning({ category: "pattern", text: "we always run tests before claiming done", projectSlug: slug, confidence: 0.8 });

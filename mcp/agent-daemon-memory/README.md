@@ -20,9 +20,40 @@ low: search for compact ids, then expand only the few worth reading in full.
 | `memory_timeline(id, limit?)` | **context** — the originating session + sibling learnings around a hit | no |
 | `memory_get(ids)` | **detail** — full text + evidence + provenance + derivation tier for the given ids (≤8KB) | **yes** — retrieval write-back (`retrieval_count`, `last_retrieved_at`) |
 | `memory_profile()` | deterministic "how this user works" rollup (identity / prefers / tools / conventions / watch-out) from user facts + stated learnings — the no-LLM analog of a user model | no |
-| `memory_stats()` | row counts + retrieval telemetry | no |
-| `user_facts_list()` | active cross-project user profile facts | no |
+| `memory_stats()` | the scope it is bound to, and this project's learning and fact counts | no |
+| `user_facts_list()` | user profile facts observed in this project (or accepted as global) | no |
 | `memory_feedback(id, verdict)` | mark a learning `useful` / `stale` / `wrong` | **yes** — `usefulness` column only |
+
+## Which project it serves
+
+One server process is bound to **one project**, chosen when it starts. No tool
+argument changes it, so an agent (or text injected into one) can't read another
+project's notes.
+
+1. `--project <folder>` in the server's command line, else
+2. `AD_MEMORY_PROJECT` (ad's own engine sets it per conversation), else
+3. `CLAUDE_PROJECT_DIR`, only with `--host claude-code` (another host started from
+   a Claude Code shell inherits that variable, so it doesn't count there), else
+4. the server's working folder, **if it looks like a project**: inside a git repo,
+   or holding a `.agent-daemon` folder.
+
+Otherwise the server is **unbound** and every tool answers that it isn't bound to
+a project: it serves nothing, not even global notes. Home, a drive root, system
+folders (`C:\Windows`, `Program Files`, `/usr`, …), ad's own folders and its install
+folder never count as a project.
+
+What a bound server serves:
+- the project's own notes; ids from another project return nothing, and
+  `memory_feedback` on one changes nothing;
+- notes accepted as global (none are, until a later release adds `ad memory promote`);
+- older notes from ad 3.0 that were stored as "global" are served only in the
+  project whose session wrote them;
+- user facts observed in this project.
+
+Notes an agent wrote about itself wait as **pending**, and notes the injection
+screen or the secret check flagged are **held back**: neither is ever served. Two
+folders whose paths map to the same memory key (`/x/a/b` and `/x/a-b`) are both
+withheld until each project gets its own ID.
 
 ## Security blast radius
 
@@ -44,12 +75,14 @@ and sets `default_tools_approval_mode = "approve"`, so the agent's memory
 lookups and feedback don't ask each time. If you set another approval mode for
 this server yourself (anything but `auto`), ad keeps it. Unattended runs
 (`ad loop`, team workers, scheduled loops) turn every other MCP server off but
-keep this one.
+keep this one. Each conversation's server is bound to that conversation's folder
+(`AD_MEMORY_PROJECT`); a team worker's to the repo it was spawned from, not its
+worktree.
 
 ## Install (Claude Code)
 
 ```sh
-claude mcp add agent-daemon-memory -- node <repo>/runtime/src/mcp/memory-server.mjs
+claude mcp add agent-daemon-memory -- node <repo>/runtime/src/mcp/memory-server.mjs --host claude-code
 ```
 
 Or merge into `.mcp.json` (project scope):
@@ -59,11 +92,16 @@ Or merge into `.mcp.json` (project scope):
   "mcpServers": {
     "agent-daemon-memory": {
       "command": "node",
-      "args": ["<repo>/runtime/src/mcp/memory-server.mjs"]
+      "args": ["<repo>/runtime/src/mcp/memory-server.mjs", "--host", "claude-code"]
     }
   }
 }
 ```
+
+`--host claude-code` lets the server use `CLAUDE_PROJECT_DIR` to find the open
+project. Without it (a registration made before this change), the server uses its
+working folder, if that looks like a project; otherwise it is unbound. Re-run the
+`claude mcp add` line above to add the flag.
 
 `claude-code.json` in this directory carries the same snippet with a relative
 path placeholder — replace `<repo>` with your clone path.

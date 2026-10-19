@@ -109,6 +109,7 @@ const notify = (method, params) => send({ method, params });
 
 // Collaboration modes per thread, as Codex keeps them (developer instructions filled in).
 const threadModes = new Map(); // threadId → CollaborationMode
+const threadCwds = new Map(); // threadId → the folder it was started in (thread/read)
 let optedOut = new Set();
 const withInstructions = (cm) => ({ mode: cm.mode, settings: { ...cm.settings, developer_instructions: cm.settings?.developer_instructions ?? (cm.mode === "plan" ? "# Plan Mode (fake)" : "") } });
 function setThreadMode(threadId, cm) {
@@ -425,6 +426,8 @@ async function onRequest({ id, method, params }) {
       return;
     case "debug/state":
       return send({ id, result: { notifications, lastParams, calls, env: { CODEX_HOME: process.env.CODEX_HOME, hasOpenRouterKey: Boolean(process.env.OPENROUTER_API_KEY) } } });
+    case "debug/processCwd":
+      return send({ id, result: { cwd: process.cwd(), argv: process.argv.slice(2) } });
     case "account/read":
       return send({ id, result: { account: state.account, requiresOpenaiAuth: (state.config.model_provider ?? "openai") === "openai" } });
     case "account/login/start": {
@@ -487,7 +490,11 @@ async function onRequest({ id, method, params }) {
     case "configRequirements/read":
       return send({ id, result: { requirements: process.env.FAKE_REQUIREMENTS ? JSON.parse(process.env.FAKE_REQUIREMENTS) : null } });
     case "config/batchWrite":
+      // FAKE_NULL_DELETE_FAIL=1: a delete (null value) is rejected, as a key path the engine won't parse.
+      if (process.env.FAKE_NULL_DELETE_FAIL === "1" && params.edits.some((e) => e.value === null)) return send({ id, error: { code: -32600, message: "invalid key path" } });
       for (const e of params.edits) {
+        // FAKE_NULL_DELETE_NOOP=1: a delete (null value) changes nothing, as a key path the engine doesn't match.
+        if (e.value === null && process.env.FAKE_NULL_DELETE_NOOP === "1") continue;
         const cur = e.keyPath.split(".").reduce((o, k) => (o && typeof o === "object" ? o[k] : undefined), state.config);
         const merge = e.mergeStrategy === "upsert" && cur && typeof cur === "object" && e.value && typeof e.value === "object";
         setPath(state.config, e.keyPath, merge ? { ...cur, ...e.value } : e.value);
@@ -498,9 +505,13 @@ async function onRequest({ id, method, params }) {
       // As Codex: an ephemeral thread has no rollout file; the sandbox the thread got comes back.
       const tid = `thread-${++threadSeq}`;
       const sandbox = { "read-only": { type: "readOnly" }, "danger-full-access": { type: "dangerFullAccess" } }[params?.sandbox] ?? { type: "workspaceWrite" };
-      const thread = { id: tid, ephemeral: Boolean(params?.ephemeral), path: params?.ephemeral ? null : `/fake/sessions/rollout-${tid}.jsonl` };
+      const thread = { id: tid, ephemeral: Boolean(params?.ephemeral), path: params?.ephemeral ? null : `/fake/sessions/rollout-${tid}.jsonl`, cwd: params?.cwd ?? process.cwd() };
+      threadCwds.set(tid, thread.cwd);
       return send({ id, result: { thread, model: params?.model ?? "fake-model", modelProvider: "fake", sandbox } });
     }
+    case "thread/read":
+      // FAKE_THREAD_CWD: a stored folder for threads this fake didn't start (a resume after restart).
+      return send({ id, result: { thread: fullThread({ id: params.threadId, cwd: threadCwds.get(params.threadId) ?? process.env.FAKE_THREAD_CWD ?? process.cwd() }) } });
     case "thread/resume":
       return send({ id, result: { thread: { id: params.threadId }, model: "fake-model", modelProvider: "fake", ...(threadModes.has(params.threadId) ? { collaborationMode: threadModes.get(params.threadId) } : {}) } });
     case "turn/start": {
@@ -634,6 +645,7 @@ async function onRequest({ id, method, params }) {
       const src = turnsOf(params.threadId);
       const cut = params.lastTurnId ? src.findIndex((t) => t.id === params.lastTurnId) + 1 : src.length;
       history.set(forkId, src.slice(0, cut > 0 ? cut : src.length).map((t) => ({ ...t, items: [...t.items] })));
+      threadCwds.set(forkId, params.cwd ?? threadCwds.get(params.threadId) ?? process.cwd());
       return send({ id, result: { thread: { id: forkId, forkedFromId: params.threadId }, model: "fake-model", modelProvider: "fake" } });
     }
     case "mcpServerStatus/list":

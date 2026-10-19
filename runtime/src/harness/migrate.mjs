@@ -9,7 +9,7 @@ import * as realFs from "node:fs";
 import { join } from "node:path";
 import { LEGACY, migrateMessages, twoHomesRefusal } from "../engine/attribution.mjs";
 import { engineHome } from "../engine/index.mjs";
-import { acquireLock, liveLocks } from "../lock.mjs";
+import { acquireLock, liveLocks, sweepDeadLeases } from "../lock.mjs";
 
 const BUSY = new Set(["EPERM", "EBUSY", "EACCES"]);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -72,11 +72,24 @@ function notAFolder(p, kind) {
 
 // Running sessions keep files open in the folder; on Windows that blocks the
 // rename, elsewhere it would split their conversations across two folders.
-function runningSessions(lockDir, command) {
-  const held = liveLocks({ dir: lockDir, except: ["migrate"] });
+// Every running ad that could be using the engine's folder: conversation
+// locks plus engine leases (a TUI before its first thread, ad run, workers,
+// one suspended with Ctrl+Z, a holder killed while its engine lives). Leases
+// proven dead are swept first; a lease for a custom home (AD_ENGINE_DIR
+// elsewhere) doesn't block. One process holding a lease and a thread lock
+// counts once.
+function runningSessions(lockDir, command, root) {
+  sweepDeadLeases({ dir: lockDir });
+  const defaults = root ? [join(root, engineHome.OLD_NAME), join(root, engineHome.NEW_NAME)] : [];
+  const isDefault = (home) => !home || !defaults.length || defaults.some((d) => engineHome.sameFolder(home, d) || String(home).toLowerCase() === d.toLowerCase());
+  const held = liveLocks({ dir: lockDir, except: ["migrate"] }).filter((h) => h.kind !== "engine" || isDefault(h.home));
   if (held.length === 0) return null;
-  const pids = [...new Set(held.map((h) => h.pid))].join(", ");
-  return `Not moved: ${held.length === 1 ? "an ad session is" : `${held.length} ad sessions are`} running (pid ${pids}). Nothing changed. Close ${held.length === 1 ? "it" : "them"} and run \`${command}\` again.`;
+  const pids = [...new Set(held.map((h) => h.pid))];
+  const n = pids.length;
+  // An engine lease also names the engine process, which may outlive its holder.
+  const engines = [...new Set(held.filter((h) => h.child?.pid).map((h) => h.child.pid))];
+  const extra = engines.length ? `; engine pid ${engines.join(", ")}` : "";
+  return `Not moved: ${n === 1 ? "an ad session is" : `${n} ad sessions are`} running (pid ${pids.join(", ")}${extra}). Nothing changed. Close ${n === 1 ? "it" : "them"} and run \`${command}\` again.`;
 }
 
 async function migrate({ fs, root, say, fail, platform, today, lockDir }) {
@@ -100,7 +113,7 @@ async function migrate({ fs, root, say, fail, platform, today, lockDir }) {
   }
   if (o === "link") return say(`Nothing to move: ${oldP} is your own link to ${engineHome.linkTarget(oldP)}; ad leaves a folder you placed where it is.`), 0;
   if (o !== "dir") return say("Nothing to move: ad hasn't created the engine's folder yet."), 0;
-  const running = runningSessions(lockDir, "ad migrate");
+  const running = runningSessions(lockDir, "ad migrate", root);
   if (running) return fail(running);
 
   // 1. A copy of the sign-in, kept until the move is verified.
@@ -161,7 +174,7 @@ async function undo({ fs, root, say, fail, lockDir }) {
   if (broken) return fail(`${broken} Nothing changed; ad leaves links it didn't make alone.`, 2);
   if (o === "dir") return fail(twoHomesRefusal({ oldPath: oldP, newPath: newP }), 2);
   if (o === "link" && !engineHome.sameFolder(oldP, newP)) return fail(`${oldP} is a link to ${engineHome.linkTarget(oldP)}, not to ${newP}. Nothing changed; ad leaves links it didn't make alone.`, 2);
-  const running = runningSessions(lockDir, "ad migrate --undo");
+  const running = runningSessions(lockDir, "ad migrate --undo", root);
   if (running) return fail(running);
   const hadLink = o === "link";
   if (hadLink) (fs.removeLink ?? engineHome.removeLink)(oldP);

@@ -394,7 +394,7 @@ Learnings live a lifecycle instead of accumulating forever:
 - **Reinforce** — re-observing a known learning bumps confidence (+0.1, capped 0.95) and `observed_count` instead of being silently deduped away.
 - **Decay** — search ranking multiplies BM25 relevance by a 90-day half-life on last-verified/last-retrieved time, so stale entries sink without being deleted.
 - **Consolidate** — `ad memory consolidate` proposes near-duplicate merges (token Jaccard ≥ 0.8), stale archives, and contradiction candidates. Nothing applies without explicit acceptance (`--apply-merges` / `--apply-stale`).
-- **User facts** — durable preferences observed across ≥2 projects promote into a cross-project profile injected at session start.
+- **User facts** — preferences are observed per project and served in the projects that observed them; nothing becomes cross-project by itself.
 - **Typed observations** ([Honcho](https://github.com/plastic-labs/honcho)-inspired, deterministic) — each learning is tagged `explicit` (directly stated) vs `inferred` (generalized pattern); recall and the representation prefer stated facts. We keep the honest 2-way split — distinguishing deductive from inductive reliably needs an LLM, so we don't fake it.
 - **User representation** — `buildUserRepresentation()` rolls facts + high-confidence stated learnings into a "how this user works" profile, surfaced at SessionStart and via the `memory_profile` MCP tool — the no-LLM analog of Honcho's dialectic.
 
@@ -407,8 +407,10 @@ Mid-session recall is pull-based too — an **MCP memory server** (read-only exc
 - Plus `memory_stats`, `user_facts_list`, and `memory_feedback`. Index tools cap at 5 results / 4 KB; `memory_get` at 8 KB.
 
 ```bash
-claude mcp add agent-daemon-memory -- node /path/to/Agent-Daemon/runtime/src/mcp/memory-server.mjs
+claude mcp add agent-daemon-memory -- node /path/to/Agent-Daemon/runtime/src/mcp/memory-server.mjs --host claude-code
 ```
+
+**One project per server.** The server serves only the project it was started for (`--project`, ad's per-conversation folder, Claude Code's project folder, or a working folder inside a git repo); an id from another project returns nothing, and a server that can't tell the project serves nothing. Notes an agent wrote about itself wait for your review, notes the injection screen flagged are held back, and secrets (API keys, tokens, passwords) are removed before anything is stored. Details: [mcp/agent-daemon-memory/README.md](mcp/agent-daemon-memory/README.md#which-project-it-serves).
 
 **File-aware memory** — the digest pipeline tags every learning with the files in play that session, so `memory_files("auth.ts")` recalls "what we learned about auth.ts", and SessionStart auto-boosts learnings tied to the files you're currently editing (from `git diff`/`status`).
 
@@ -496,6 +498,8 @@ ad query-retrieve                      # Keyword extraction + learning injection
 
 # Memory
 ad memory stats                        # Row counts + retrieval telemetry (truncation rate, bytes)
+ad memory scan                         # Check older notes once: hold back rows holding a key or an injection
+ad memory held                         # Notes memory keeps back; accept|release|drop <id> from your own terminal
 ad memory consolidate                  # Evolution pass: near-dup merges, stale archive, contradictions
                                        #   proposals only — --apply-merges / --apply-stale execute
                                        #   --all-projects     span every project (default: --cwd only)

@@ -1,15 +1,18 @@
 // Spawn protocol — launch Claude Code instances as team workers.
 //
 // Each spawned agent runs in an isolated git worktree with role-specific
-// instructions injected via --append-system-prompt. On completion, the
+// instructions injected via --append-system-prompt-file. On completion, the
 // agent writes a task-complete message to the leader's inbox.
 //
 // This extends the existing claude.mjs headless spawner with:
 //   - Git worktree creation per agent
 //   - Role/team context injection
 //   - Inbox-based completion reporting
+//
+// No child here gets a shell or a bare program name (see safe-spawn.mjs):
+// the task text reaches Claude only through stdin and a prompt file, and
+// names that end up in git refs and paths are checked first.
 
-import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import fsSync from "node:fs";
 import os from "node:os";
@@ -18,14 +21,19 @@ import crypto from "node:crypto";
 import { sendMessage, createInbox } from "./inbox.mjs";
 import { productValue } from "../product-values.mjs";
 import { commitWorktree, runEngineWorker } from "./engine-worker.mjs";
+import { acquireLock, liveLocks } from "../lock.mjs";
+import { engineHome } from "../engine/index.mjs";
+import { homeWorkerNote } from "../engine/attribution.mjs";
+import { checkModel, checkName, CLAUDE_TOO_OLD, claudeLacksPromptFile, resolveClaude, resolveGit, spawnResolved, withPromptFile } from "../safe-spawn.mjs";
 
 const MAX_CONCURRENT_AGENTS = 8;
 const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
 const MAX_STDOUT_BYTES = 512 * 1024; // 512KB cap on buffered output
 // Running agents across ALL ad processes (each `ad spawn` is its own
-// process): one pid file per agent in ~/.agent-daemon/running-agents,
-// holding the pid of the ad process supervising it. Stale files (dead
-// pids) are dropped when counted.
+// process): one lease per agent in ~/.agent-daemon/running-agents (lock.mjs,
+// kind "agent"), held by the ad process supervising it. A holder is judged by
+// its process start identity, so a reused pid doesn't count. 3.0's .pid
+// files are counted while their pid lives and dropped once it doesn't.
 const runningDir = () => path.join(os.homedir(), ".agent-daemon", "running-agents");
 function pidAlive(pid) {
   try {
@@ -35,16 +43,21 @@ function pidAlive(pid) {
     return e.code === "EPERM";
   }
 }
+const agentLeases = new Map();
 const activeAgents = {
   add(name) {
-    fsSync.mkdirSync(runningDir(), { recursive: true });
-    fsSync.writeFileSync(path.join(runningDir(), `${name}.pid`), String(process.pid));
+    try {
+      agentLeases.set(name, acquireLock(`agent-${name}`, { dir: runningDir(), meta: { kind: "agent" } }));
+    } catch (e) {
+      process.stderr.write(`[spawn] couldn't record ${name} as running: ${e.message}\n`);
+    }
   },
   delete(name) {
-    fsSync.rmSync(path.join(runningDir(), `${name}.pid`), { force: true });
+    agentLeases.get(name)?.();
+    agentLeases.delete(name);
   },
   get size() {
-    let n = 0;
+    let legacy = 0;
     let files = [];
     try {
       files = fsSync.readdirSync(runningDir()).filter((f) => f.endsWith(".pid"));
@@ -54,10 +67,10 @@ const activeAgents = {
     for (const f of files) {
       const p = path.join(runningDir(), f);
       const pid = Number(fsSync.readFileSync(p, "utf8"));
-      if (pid && pidAlive(pid)) n++;
+      if (pid && pidAlive(pid)) legacy++;
       else fsSync.rmSync(p, { force: true });
     }
-    return n;
+    return legacy + liveLocks({ dir: runningDir() }).filter((h) => h.kind === "agent").length;
   },
 };
 
@@ -97,14 +110,25 @@ export async function spawnAgent(opts) {
   if (!opts.task) throw new Error("spawnAgent: task is required");
   if (!opts.cwd) throw new Error("spawnAgent: cwd is required");
 
-  validateName(opts.teamId, "teamId");
-  validateName(opts.role, "role");
+  checkName(opts.teamId, "teamId");
+  checkName(opts.role, "role");
+  if (opts.model !== undefined && opts.model !== null && opts.model !== "") checkModel(opts.model);
+
+  // Default worker: ad's own engine (sandboxed, no approvals needed); "claude" runs headless Claude Code.
+  const engine = productValue(opts.engine ?? process.env.AD_AGENT_ENGINE ?? "ad");
+  let claude = null;
+  if (engine === "claude") {
+    const r = resolveClaude();
+    if (r.error) return { ok: false, agentName: opts.agentName || opts.role, error: r.error };
+    claude = r.resolved;
+  }
 
   if (activeAgents.size >= MAX_CONCURRENT_AGENTS) {
     return { ok: false, agentName: opts.role, error: `concurrent agent limit reached (${MAX_CONCURRENT_AGENTS}). Wait for running agents to finish.` };
   }
 
-  const agentName = opts.agentName || `${opts.role}-${crypto.randomBytes(3).toString("hex")}`;
+  // The role is cut so "<role>-<6 hex>" stays within the 64-character name limit.
+  const agentName = checkName(opts.agentName || `${opts.role.slice(0, 57)}-${crypto.randomBytes(3).toString("hex")}`, "agentName");
   const branch = `team/${opts.teamId}/${agentName}`;
   const timeoutMs = opts.timeoutMs || DEFAULT_TIMEOUT_MS;
 
@@ -143,19 +167,6 @@ export async function spawnAgent(opts) {
     skills: opts.skills
   });
 
-  const args = [
-    "--print",
-    "--output-format", "json",
-    "--no-session-persistence",
-    "--dangerously-skip-permissions",
-    "--append-system-prompt", systemPrompt,
-    "--input-format", "text"
-  ];
-
-  if (opts.model) {
-    args.push("--model", opts.model);
-  }
-
   if (opts.verbose) {
     process.stderr.write(`[spawn] ${agentName} (${opts.role}) in ${worktreePath} [timeout=${Math.round(timeoutMs/1000)}s]\n`);
   }
@@ -178,10 +189,15 @@ export async function spawnAgent(opts) {
 
   activeAgents.add(agentName);
 
-  // Default worker: ad's own engine (sandboxed, no approvals needed); "claude" runs headless Claude Code.
-  const engine = productValue(opts.engine ?? process.env.AD_AGENT_ENGINE ?? "ad");
   if (engine === "ad") {
     let r;
+    // A worker in the caller's own folder (worktree: false) that would load the
+    // user's own engine home keeps running, with a note (P0.2a, as 3.0 jobs).
+    let engineOpts = opts.engineOpts;
+    if (opts.worktree === false && engineHome.homeLayerRisk(worktreePath)) {
+      process.stderr.write(`[agent-daemon] ${homeWorkerNote(agentName)}\n`);
+      engineOpts = { ...(engineOpts ?? {}), allowHomeFolder: true };
+    }
     try {
       await updateAgentStatus(opts.teamId, agentName, "running", null, process.pid);
       r = await (opts.runWorker ?? runEngineWorker)({
@@ -190,7 +206,8 @@ export async function spawnAgent(opts) {
         userMessage,
         model: opts.model,
         timeoutMs,
-        engineOpts: opts.engineOpts,
+        engineOpts,
+        memoryProject: opts.cwd,
       });
       // The worker can't touch .git (see engine-worker.mjs); commit its work
       // here, outside the sandbox, on its own branch.
@@ -225,8 +242,21 @@ export async function spawnAgent(opts) {
     return { ok: false, agentName, error: `unknown engine "${engine}" (use ad or claude)` };
   }
 
-  return new Promise((resolve) => {
+  // The system prompt (it holds the task) goes in a temp file, removed when
+  // the worker ends, times out or fails to start; the user message on stdin.
+  // If the temp file can't be written, the slot is freed and the agent marked.
+  try {
+    return await runClaudeWorker();
+  } catch (err) {
+    activeAgents.delete(agentName);
+    await updateAgentStatus(opts.teamId, agentName, "error", err.message).catch(() => {});
+    return { ok: false, agentName, error: `spawn failed: ${err.message}` };
+  }
+
+  function runClaudeWorker() {
+  return withPromptFile(systemPrompt, (promptFile) => new Promise((resolve) => {
     let settled = false;
+    let timer;
     const finish = (result) => {
       if (settled) return;
       settled = true;
@@ -235,11 +265,27 @@ export async function spawnAgent(opts) {
       resolve(result);
     };
 
-    const child = spawn("claude", args, {
-      cwd: worktreePath,
-      stdio: ["pipe", "pipe", "pipe"],
-      shell: process.platform === "win32"
-    });
+    const args = [
+      "--print",
+      "--output-format", "json",
+      "--no-session-persistence",
+      "--dangerously-skip-permissions",
+      "--append-system-prompt-file", promptFile,
+      "--input-format", "text"
+    ];
+    if (opts.model) args.push("--model", opts.model);
+
+    let child;
+    try {
+      child = spawnResolved(claude, args, {
+        cwd: worktreePath,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+    } catch (err) {
+      updateAgentStatus(opts.teamId, agentName, "error", err.message).catch(() => {});
+      finish({ ok: false, agentName, error: `spawn failed: ${err.message}` });
+      return;
+    }
 
     let stdout = "";
     let stderr = "";
@@ -255,14 +301,18 @@ export async function spawnAgent(opts) {
       if (stderrBytes <= MAX_STDOUT_BYTES) stderr += c.toString();
     });
 
-    const pid = child.pid;
-    updateAgentStatus(opts.teamId, agentName, "running", null, pid).catch(() => {});
+    // Status writes are best-effort here: a failed write must not leave the
+    // promise unsettled (and the prompt file with the task on disk).
+    const setStatus = (...a) => updateAgentStatus(opts.teamId, agentName, ...a).catch((e) => process.stderr.write(`[spawn] status update failed: ${e.message}\n`));
 
-    const timer = setTimeout(async () => {
+    const pid = child.pid;
+    setStatus("running", null, pid);
+
+    timer = setTimeout(async () => {
       if (settled) return;
       try { child.kill("SIGTERM"); } catch {}
       setTimeout(() => { try { child.kill("SIGKILL"); } catch {} }, 5000);
-      await updateAgentStatus(opts.teamId, agentName, "error", `killed: timeout after ${Math.round(timeoutMs/1000)}s`);
+      await setStatus("error", `killed: timeout after ${Math.round(timeoutMs/1000)}s`);
       if (opts.leader) {
         await sendMessage({
           teamId: opts.teamId, from: agentName, to: opts.leader,
@@ -274,7 +324,7 @@ export async function spawnAgent(opts) {
     }, timeoutMs);
 
     child.on("error", async (err) => {
-      await updateAgentStatus(opts.teamId, agentName, "error", err.message);
+      await setStatus("error", err.message);
       finish({ ok: false, agentName, error: `spawn failed: ${err.message}` });
     });
 
@@ -289,7 +339,9 @@ export async function spawnAgent(opts) {
 
       const ok = code === 0;
       const status = ok ? "completed" : "error";
-      await updateAgentStatus(opts.teamId, agentName, status, ok ? null : `exit code ${code}`);
+      const tooOld = !ok && claudeLacksPromptFile(stderr);
+      const error = ok ? undefined : tooOld ? CLAUDE_TOO_OLD : `claude exited ${code}`;
+      await setStatus(status, ok ? null : tooOld ? CLAUDE_TOO_OLD : `exit code ${code}`);
 
       if (opts.leader) {
         await sendMessage({
@@ -315,19 +367,16 @@ export async function spawnAgent(opts) {
         worktreePath,
         branch,
         pid,
-        error: ok ? undefined : `claude exited ${code}`
+        error
       });
     });
 
+    // A child that exits before reading stdin (EPIPE) is reported by "close".
+    child.stdin.on("error", () => {});
     child.stdin.write(userMessage);
     child.stdin.end();
-  });
-}
-
-function validateName(value, label) {
-  if (typeof value !== "string" || value.length === 0) throw new Error(`${label} must be a non-empty string`);
-  if (value.length > 128) throw new Error(`${label} too long (max 128 chars)`);
-  if (/[\/\\:*?"<>|]/.test(value) && label !== "teamId") throw new Error(`${label} contains invalid path characters`);
+  }));
+  }
 }
 
 function buildSystemPrompt({ teamId, agentName, role, task, instructions, leader, skills }) {
@@ -369,15 +418,11 @@ async function createWorktree(cwd, branch) {
 
   await fs.mkdir(path.dirname(worktreePath), { recursive: true });
 
+  const git = resolveGit();
   return new Promise((resolve, reject) => {
-    const isWin = process.platform === "win32";
-    const wtArg = isWin ? `"${worktreePath}"` : worktreePath;
-    const args = ["worktree", "add", "-b", branch, wtArg];
-
-    const child = spawn("git", args, {
+    const child = spawnResolved(git, ["worktree", "add", "-b", branch, "--", worktreePath], {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
-      shell: isWin
     });
 
     let stderr = "";
@@ -451,12 +496,12 @@ export function getActiveAgentCount() {
 }
 
 export async function removeWorktree(cwd, branch) {
+  let git;
+  try { git = resolveGit(); } catch { return; }
   return new Promise((resolve) => {
-    const isWin = process.platform === "win32";
-    const child = spawn("git", ["worktree", "remove", "--force", branch], {
+    const child = spawnResolved(git, ["worktree", "remove", "--force", "--", branch], {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
-      shell: isWin
     });
     child.on("close", () => resolve());
     child.on("error", () => resolve());
@@ -542,11 +587,12 @@ export async function cleanupWorktrees(cwd, opts = {}) {
   }
 
   // Also run git worktree prune on the main repo
-  await new Promise((resolve) => {
-    const child = spawn("git", ["worktree", "prune"], {
+  let git = null;
+  try { git = resolveGit(); } catch (e) { process.stderr.write(`[agent-daemon] git worktree prune skipped: ${e.message}\n`); }
+  if (git) await new Promise((resolve) => {
+    const child = spawnResolved(git, ["worktree", "prune"], {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
-      shell: process.platform === "win32"
     });
     child.on("close", () => resolve());
     child.on("error", () => resolve());

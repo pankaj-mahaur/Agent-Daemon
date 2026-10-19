@@ -33,10 +33,12 @@ import { mkdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } 
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_APPROVAL_POLICY, DEFAULT_SANDBOX, engineEvents, engineHome, isAutoModel, engineErrorText, engineErrorDetail, engineNoticeText } from "../engine/index.mjs";
-import { acquireLock, DEFAULT_LOCK_DIR } from "../lock.mjs";
+import { acquireLock, DEFAULT_LOCK_DIR, defaultLockDir } from "../lock.mjs";
+import { homeCdRefusal } from "../engine/attribution.mjs";
 
 export { DEFAULT_LOCK_DIR };
 const NOTICE_CAP = 50;
+const REPEATABLE_NOTICES = new Set(["warning", "config", "deprecation"]);
 const MAX_DENIALS = 10; // the engine's RecentAutoReviewDenials
 
 export class SessionLockedError extends Error {
@@ -99,7 +101,7 @@ export function createSession({
   sandbox = DEFAULT_SANDBOX,
   approvalPolicy = DEFAULT_APPROVAL_POLICY,
   hooks: initialHooks = {},
-  lockDir = DEFAULT_LOCK_DIR,
+  lockDir = defaultLockDir(),
   restart = null,
   maxRestarts = 3,
   // The engine's collaboration modes (plan mode, parity Part 4): only a
@@ -170,6 +172,18 @@ export function createSession({
 
   const change = (what) => emitter.emit("change", { what, state });
   const notice = (level, code, message, detail = null) => {
+    // The engine repeats some notices (a config warning per thread, a shell
+    // deprecation per turn): the same one again only counts up.
+    if (REPEATABLE_NOTICES.has(code)) {
+      const d = detail ? String(detail) : undefined;
+      const prev = state.notices.find((n) => n.code === code && n.message === message && n.detail === d);
+      if (prev) {
+        prev.count = (prev.count ?? 1) + 1;
+        prev.at = Date.now();
+        change("notices");
+        return;
+      }
+    }
     state.notices.push({ level, code, message, ...(detail ? { detail: String(detail) } : {}), at: Date.now() });
     if (state.notices.length > NOTICE_CAP) state.notices.splice(0, state.notices.length - NOTICE_CAP);
     change("notices");
@@ -1011,7 +1025,8 @@ export function createSession({
     async fork(throughTurnId = null) {
       if (!state.thread) throw new Error("nothing to fork yet");
       if (state.activeTurnId || state.starting) throw new Error("wait for the turn to finish first");
-      const r = await eng.threads.fork(state.thread.id, throughTurnId ? { lastTurnId: throughTurnId } : {});
+      // The fork keeps its source's folder; its memory server binds there too.
+      const r = await eng.threads.fork(state.thread.id, { ...(throughTurnId ? { lastTurnId: throughTurnId } : {}), memoryProject: state.config.cwd });
       const id = r?.thread?.id;
       if (!id) throw new Error("The engine didn't return the new thread");
       return api.resume(id);
@@ -1026,6 +1041,9 @@ export function createSession({
     async changeDir(dir) {
       if (closed) throw new Error("session closed");
       if (state.activeTurnId || state.starting || state.queue.length || threadStarting) throw new Error("Changing directories requires an idle primary session without queued input.");
+      // A folder that would load the user's own engine home (P0.2a), also before any thread exists.
+      const risk = await eng.homeFolderRisk?.(dir);
+      if (risk) throw Object.assign(new Error(homeCdRefusal(risk)), { code: "HOME_FOLDER_REFUSED" });
       const from = state.thread;
       // No thread, or one with nothing in it yet (/clear, /new): the engine hasn't saved
       // it, so there is nothing to fork; as the engine does, the next thread starts there.
@@ -1084,6 +1102,7 @@ export function createSession({
         sandbox: "read-only",
         approvalPolicy: "never",
         config: { "features.hooks": false },
+        memoryProject: state.config.cwd, // a fork keeps its source's folder
         ...(state.config.model ? { model: state.config.model } : {}),
       });
       const id = r?.thread?.id;

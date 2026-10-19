@@ -17,7 +17,11 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { providerEnv } from "../../auth/providers.mjs";
 import { CODEX_MISSING, resolveCodexCommand, withoutStoreAliases } from "./app-server.mjs";
-import { codexEnv, defaultCodexHome, ensureCodexHome } from "./home.mjs";
+import { codexEnv, defaultCodexHome, ensureCodexHome, homeLayerRisk, riskUserHomes } from "./home.mjs";
+import { engineError } from "./errors.mjs";
+import { homeFolderRefusal } from "../attribution.mjs";
+import { acquireLock, defaultLockDir } from "../../lock.mjs";
+import { randomBytes } from "node:crypto";
 
 export const MIRROR_MARKER = ".ad-mirror";
 export const MIRRORED_FLAG = ".ad-mirrored-claude-skills";
@@ -99,9 +103,15 @@ export function stockUiArgs({ args = [], threadId = null, cwd = null } = {}) {
  * Runs the stock UI in the foreground and resolves with its exit code. The
  * caller owns the terminal handoff (io.handoff in the TUI).
  */
-export function runStockUi({ args = [], threadId = null, cwd = process.cwd(), home = defaultCodexHome(), store, env = process.env, spawnFn = spawn, skillsFrom } = {}) {
+export function runStockUi({ args = [], threadId = null, cwd = process.cwd(), home = defaultCodexHome(), store, env = process.env, spawnFn = spawn, skillsFrom, lockDir } = {}) {
   const cmd = resolveCodexCommand(env);
   if (!cmd.cmd) return Promise.reject(new Error(CODEX_MISSING));
+  // The engine's own UI runs in the folder it is given: never one that loads the
+  // user's own ~/.codex (P0.2a), unless --allow-home-folder.
+  const allowHome = args.includes("--allow-home-folder");
+  args = args.filter((a) => a !== "--allow-home-folder");
+  const risk = allowHome ? null : homeLayerRisk({ cwd, userHomes: riskUserHomes(env) });
+  if (risk) return Promise.reject(engineError("HOME_FOLDER_REFUSED", homeFolderRefusal(risk)));
   ensureCodexHome(home, { env });
   try {
     syncSkills({ home, from: skillsFrom });
@@ -109,9 +119,23 @@ export function runStockUi({ args = [], threadId = null, cwd = process.cwd(), ho
     process.stderr.write(`[agent-daemon] skills not mirrored: ${err.message}\n`);
   }
   const childEnv = withoutStoreAliases(codexEnv({ home, base: env, extra: providerEnv(store), cwd }));
+  // A lease while it runs, so `ad migrate` sees it like any engine (lock.mjs).
+  let lease = null;
+  try {
+    lease = acquireLock(`engine-ui-${process.pid}-${randomBytes(4).toString("hex")}`, { dir: lockDir ?? defaultLockDir(), meta: { kind: "engine", home } });
+  } catch (err) {
+    process.stderr.write(`[agent-daemon] couldn't record the engine UI as running: ${err.message}\n`);
+  }
   return new Promise((resolve, reject) => {
     const child = spawnFn(cmd.cmd, [...cmd.prefix, ...stockUiArgs({ args, threadId, cwd })], { stdio: "inherit", env: childEnv, cwd });
-    child.on("error", reject);
-    child.on("exit", (code, signal) => resolve(code ?? (signal ? 1 : 0)));
+    if (child.pid) lease?.updateMeta({ child: { pid: child.pid, startedAt: Date.now() } });
+    child.on("error", (err) => {
+      lease?.();
+      reject(err);
+    });
+    child.on("exit", (code, signal) => {
+      lease?.();
+      resolve(code ?? (signal ? 1 : 0));
+    });
   });
 }

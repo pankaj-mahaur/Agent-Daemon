@@ -4,7 +4,8 @@
 //
 // Targets:
 //   - "memory:project"     → append to project's activeContext.md (low risk, auto-apply)
-//   - "memory:global"      → append to ~/.agent-daemon/user.md (low risk, auto-apply)
+//   (no automatic global: a global-sounding item goes to memory:project with
+//    promote_request "global" and waits for the user; plan §M)
 //   - "skill-edit"         → propose a SKILL.md edit (high risk, queue for review)
 //   - "constitution-add"   → propose a constitution rule addition (high risk, queue)
 //   - "user-fact"          → upsert into the cross-project user_facts table
@@ -28,7 +29,7 @@
  *
  *   2. type='correction' AND scope='global' AND confidence ≥ 0.85
  *      → constitution-add (queue) IF it sounds like a universal rule
- *      → otherwise memory:global
+ *      → otherwise memory:project (promote_request "global")
  *
  *   3. type='correction' AND scope='project'
  *      → memory:project
@@ -40,7 +41,7 @@
  *      → skill-edit (queue)
  *
  *   6. type='tool' AND scope='global'
- *      → memory:global
+ *      → memory:project (promote_request "global")
  *
  *   7. type='tool' AND scope='project'
  *      → memory:project
@@ -56,9 +57,13 @@ export function classify(learnings, opts = {}) {
   return learnings.map(learning => classifyOne(learning, skills));
 }
 
-function classifyOne(learning, skills) {
+function classifyOne(input, skills) {
   const targets = ["episodic-only"];  // always
   const reasons = [];
+  // Automatic global is off (plan §M): nothing goes to user.md or a global
+  // row by itself. A global-sounding item is routed as a project item and
+  // carries promote_request "global" until the user promotes it.
+  const learning = input.scope === "global" ? { ...input, promote_request: "global" } : input;
 
   if (learning.confidence < 0.5) {
     reasons.push(`low confidence (${learning.confidence.toFixed(2)}) — episodic only`);
@@ -80,8 +85,8 @@ function classifyOne(learning, skills) {
       targets.push("constitution-add");
       reasons.push(`global high-confidence correction with rule-shaped text → queue constitution addition`);
     } else {
-      targets.push("memory:global");
-      reasons.push(`global correction → user.md`);
+      targets.push("memory:project");
+      reasons.push(`global correction → project memory, waits for promotion`);
     }
   }
 
@@ -101,8 +106,8 @@ function classifyOne(learning, skills) {
   // Tools
   if (learning.type === "tool") {
     if (learning.scope === "global") {
-      targets.push("memory:global");
-      reasons.push(`global tool tip → user.md`);
+      targets.push("memory:project");
+      reasons.push(`global tool tip → project memory, waits for promotion`);
     } else {
       targets.push("memory:project");
       reasons.push(`project tool tip → techContext.md / activeContext.md`);

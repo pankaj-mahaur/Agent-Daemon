@@ -119,7 +119,8 @@ export async function callLlm(opts, deps = {}) {
   if (backend === "ad") return callEngine(opts, deps);
   const claude = deps.callClaude ?? callHeadlessClaude;
   const r = withParsedJson(await claude(opts), { schema: opts.jsonSchema });
-  if (backend === "auto" && !r.ok && /spawn failed: .*ENOENT/.test(r.error ?? "")) {
+  // Claude Code missing (or an unreadable claude.cmd) → ad's engine instead.
+  if (backend === "auto" && !r.ok && (r.missing || /spawn failed: .*ENOENT/.test(r.error ?? ""))) {
     if (opts.verbose) process.stderr.write("[agent-daemon] claude CLI not found; using ad's engine\n");
     return callEngine(opts, deps);
   }

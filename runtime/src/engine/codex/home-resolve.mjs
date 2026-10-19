@@ -6,14 +6,15 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmdirSync, statSync, symlinkSync, unlinkSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { adRoot } from "../../ad-root.mjs";
+import { systemTool } from "../../safe-spawn.mjs";
 import { legacyHomeName, twoHomesRefusal } from "../attribution.mjs";
 import { engineError } from "./errors.mjs";
 
 export const NEW_HOME_NAME = "engine";
 export const OLD_HOME_NAME = legacyHomeName; // "codex-home"
-export const defaultRoot = () => join(homedir(), ".agent-daemon");
+export const defaultRoot = () => adRoot();
 
 /**
  * "missing" | "dir" | "link" (to an existing folder) | "dangling" (a link whose
@@ -91,7 +92,8 @@ export function removeLink(p) {
 export function createLegacyLink(target, link, { hide = true } = {}) {
   symlinkSync(target, link, process.platform === "win32" ? "junction" : "dir");
   // Hidden on the link itself (/L), never on its target. Best effort: a visible link works the same.
-  if (hide && process.platform === "win32") spawnSync("attrib", ["+h", "/L", link], { windowsHide: true, stdio: "ignore" });
+  const attrib = hide && process.platform === "win32" ? systemTool("attrib.exe") : null;
+  if (attrib) spawnSync(attrib, ["+h", "/L", link], { windowsHide: true, stdio: "ignore" });
 }
 
 const ROLLOUT = /^rollout-.*\.jsonl$/i;

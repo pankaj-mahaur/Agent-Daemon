@@ -70,10 +70,11 @@ jobs:
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # Skip only when a PR already exists — a pushed branch without a PR
-          # (e.g. gh pr create failed last week) must be retried, not skipped.
+          # Skip only when an open or merged PR exists — a pushed branch without
+          # a PR (e.g. gh pr create failed last week), or one whose PR was
+          # closed unmerged, must be retried, not skipped forever.
           # A failing gh call stops the job instead of skipping silently.
-          count=$(gh pr list --head "$branch" --state all --json number --jq length)
+          count=$(gh pr list --head "$branch" --state all --json state --jq '[.[] | select(.state != "CLOSED")] | length')
           if [ "$count" != "0" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
           fi

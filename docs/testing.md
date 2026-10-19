@@ -66,13 +66,14 @@ The fake answers an unknown method with -32600, like the real engine. Tests reac
 - On GitHub's Windows runner, the pinned engine (0.160.0)'s non-admin sandbox refuses a background command (`exec_command` with `yield_time_ms`) outright: "cannot enforce split writable root sets directly; refusing to run unsandboxed", with no "retry without sandbox?". The Part 5 live test skips there on exactly that message; any other failure still fails.
 - On Linux, the engine's sandbox gives a command its own PID namespace: a pid the command writes isn't the host's. Check a background process by what it does (a file it keeps writing), never with `process.kill(pid, 0)`.
 - A test that waits on a file's modification time must set it (`utimesSync`): a fast runner writes two versions in the same millisecond.
+- **A step that stalls** (a patch or a background command that never finishes): its timeout message ends with the process tree under the pseudo-terminal (name, pid, CPU seconds), which shows what is still alive: a sandbox helper, a hook (`node … hook`), PowerShell or git. `AD_LIVE_KEEP=1` keeps each test's temp world and prints its path. `AD_PROFILE=minimal` in the world removes ad's tool hooks, to rule them in or out. One such stall on a Windows developer machine (October 2026) went away on its own while the code stayed the same; CI's per-test results are the proof either way.
 
 ## Keeping tests honest
 
 - **Mutation checks.** For a guard that matters (a safety check, a fix), break it on purpose (delete the condition, flip it) and run its test: the test must fail. If it passes, the test doesn't cover the guard; add the case that would. Keep the mutation script out of the repo (a scratch file that patches, runs `node --test <file>`, and restores in `finally`).
 - **Assert the observable the bug moves.** A count that stays the same with the bug present proves nothing; assert the text, the file contents, the exit code.
 - **Reproduce before fixing.** A failing live test or a user's transcript is first reproduced in a temp home (same shell, same PATH), then fixed, then checked with the same reproduction.
-- **Never touch real user state.** Tests use temp homes for `~/.agent-daemon`, the engine home, the clipboard and the editor. Never start the real engine outside `codexEnv()`.
+- **Never touch real user state.** Tests use temp homes for `~/.agent-daemon`, the engine home, the clipboard and the editor. Never start the real engine outside `codexEnv()`. A test that writes memory sets a temp `HOME`/`USERPROFILE` before the first write (the episodic DB path is read from HOME when it opens). Locks are covered automatically: under `node --test`, when the home isn't faked, `defaultLockDir()` (`runtime/src/lock.mjs`) returns a per-process temp folder. New tests that create engines or locks call `assertFakeHome()` (`testkit/real-home-guard.mjs`).
 
 ## The brand lint
 
@@ -93,7 +94,7 @@ The allowed zone and the other legitimate places are `runtime/scripts/brand-allo
 
 | Job | Runs |
 |---|---|
-| `ubuntu / macos / windows · node 22` | `npm test`, the skill linter, the brand lint (strict), and smoke runs of `ad doctor`, `ad init --plan` and the skills-diff script |
+| `ubuntu / macos / windows · node 22` | `npm test`, the skill linter, the brand lint (strict), the doc-link check, and smoke runs of `ad doctor`, `ad init --plan` and the skills-diff script |
 | `real engine · ubuntu / macos / windows` | `engine-real` and `tui-live` with `AD_REAL_ENGINE=1` (on Linux after allowing unprivileged user namespaces for the engine's bubblewrap sandbox) |
 
 The real-engine job is non-blocking (`continue-on-error`): **read its result**, don't rely on the run's overall status.
@@ -115,3 +116,9 @@ Run the same pipeline before pushing, on this machine and in a Linux container, 
 | A test passes alone, fails under load | a short real-time wait (a 50 ms terminal-query timeout, an arm delay of 60 ms that has passed before the "too soon" key) | give waits that only end early on success a generous cap; use a long arm delay where "too soon" is asserted |
 | `until(async () => …)` returns at once | an async predicate is a truthy Promise | the helper awaits the predicate's result |
 | A guard's mutation isn't caught | the test's setup makes the old and new behaviour look alike (a cursor that is on the same row either way) | change the setup until the mutation fails the test |
+| A mutation run with `--test-name-pattern` "fails" for the wrong reason, or passes vacuously | a pattern that matches no subtest passes; a matched test that needs an earlier test's fixture fails with the guard intact | run each pattern unmutated first; make tests set up their own fixtures; prefer the whole file |
+| A mutation run reports no failure, but nothing was mutated | a `perl -0pi` or `sed` pattern spanning a newline misses a CRLF working-tree file | patch with a script that matches the file's own line ending and fails when the pattern isn't found; never revert with `git checkout -- <file>` (it drops every other uncommitted change in that file) |
+| A test file is red with every subtest green: `RemoveEnvironmentCleanupHook` (SIGABRT) at exit | a better-sqlite3 build for another Node major tearing down | run with the Node major CI uses; after switching OS on a shared checkout, `npm rebuild better-sqlite3` and `npm install` in `runtime/`; compare with a pristine worktree of the base before blaming the change |
+| A live colour assertion fails only under an agent | the agent runner exports `NO_COLOR=1` / `TERM=dumb` | give the test an explicitly colour-capable temp terminal; never weaken the assertion |
+| Timing tests (the highlight speed budget, a lock race) fail once | the full suite ran while another suite or a reviewer's probes loaded the machine | rerun the file alone; run the full suite after other test runs finish |
+| A probe's output carries a child's stderr you didn't ask for | `execFileSync` echoes the child's stderr unless `stdio` is explicit | pass `stdio: ["ignore", "pipe", "pipe"]` and keep the stderr as labelled detail |

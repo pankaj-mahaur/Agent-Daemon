@@ -2,6 +2,8 @@
 // subscriber on the fake engine: no UI anywhere, which is the point.
 
 import { test } from "node:test";
+import { projectConfigFolder } from "../src/engine/attribution.mjs";
+const DOT = projectConfigFolder; // the engine's per-project folder name
 import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -1129,5 +1131,32 @@ test("identity is injected on an unmanaged home's new threads, never on a manage
     }
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// P0.2a: a folder that would load the user's own ~/.codex.
+test("changeDir into a folder that would load the user's own ~/.codex is refused, before and after a thread", async () => {
+  const userHome = mkdtempSync(join(tmpdir(), "ad-session-userhome-"));
+  mkdirSync(join(userHome, DOT, "skills", "mine"), { recursive: true });
+  writeFileSync(join(userHome, DOT, "skills", "mine", "SKILL.md"), "---\nname: mine\ndescription: x\n---\n");
+  const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  process.env.HOME = userHome;
+  process.env.USERPROFILE = userHome;
+  try {
+    await withSession(none, async ({ session, engine }) => {
+      await assert.rejects(session.changeDir(userHome), (err) => err.code === "HOME_FOLDER_REFUSED" && /That folder would load your own \S+ skills from ~\/\.\w+/.test(err.message));
+      await session.submit("fail-turn").done;
+      await assert.rejects(session.changeDir(userHome), { code: "HOME_FOLDER_REFUSED" });
+      assert.ok(!(await debugState(engine)).calls.includes("thread/fork"), "nothing was forked");
+    });
+    await withSession(none, async ({ session }) => {
+      assert.equal(await session.changeDir(userHome), null, "allowed with the override");
+    }, { engineOpts: { allowHomeFolder: true } });
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    rmSync(userHome, { recursive: true, force: true });
   }
 });

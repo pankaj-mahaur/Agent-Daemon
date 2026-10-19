@@ -74,7 +74,7 @@ export async function gatherViewerData() {
   const learnings = safeAll(
     `SELECT id, category, text, confidence, project_slug, tags, derivation,
             observed_count, retrieval_count, created_at
-       FROM learnings WHERE status = 'active'
+       FROM learnings WHERE status = 'active' AND COALESCE(applied_to, '') NOT LIKE 'quarantined%'
       ORDER BY created_at DESC LIMIT 200`
   );
   const proposals = safeAll(

@@ -12,6 +12,8 @@ import path from "node:path";
 import { spawn, execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { listRecentLearnings, searchLearningsByFile, projectSlug, buildUserRepresentation, representationToMarkdown } from "./memory/episodic.mjs";
+import { hookProjectKeys } from "./memory/scope.mjs";
+import { resolveGit, resolvedArgv } from "./safe-spawn.mjs";
 import { drainJournal } from "./hooks/journal-drain.mjs";
 import { neutralizeText, neutralizeMemoryFile } from "./digest/sanitize.mjs";
 
@@ -96,7 +98,7 @@ export async function runSessionStart(opts) {
   if (qmdAvailable) {
     const activeContext = await tryRead(path.join(opts.cwd, ".agent-daemon", "memory", "activeContext.md"));
     if (activeContext) {
-      sections.push(`<!-- memory: activeContext.md -->\n### activeContext.md\n\n${neutralizeMemoryFile(activeContext)}`);
+      sections.push(`<!-- memory: activeContext.md -->\n### activeContext.md\n\n${neutralizeMemoryFile(fitActiveContext(activeContext))}`);
     }
     sections.push([
       `<!-- memory retrieval (QMD) -->`,
@@ -106,11 +108,9 @@ export async function runSessionStart(opts) {
       `Do not read memory files directly — QMD provides ranked, compressed results at ~10x lower token cost.`
     ].join("\n"));
   } else {
-    // Fallback: bulk-load memory files (pre-QMD behavior)
-    const userMd = await tryRead(path.join(homeDir(), ".agent-daemon", "user.md"));
-    if (userMd) {
-      sections.push(`<!-- ~/.agent-daemon/user.md (cross-project user profile) -->\n${userMd}`);
-    }
+    // Fallback: bulk-load memory files (pre-QMD behavior). The project's own
+    // memory goes first, so the memory group's cap never cuts activeContext.md
+    // for the global user.md; user.md (pushed after this block) gets what remains.
 
     const memoryLocations = [
       path.join(opts.cwd, ".agent-daemon", "memory"),
@@ -133,6 +133,11 @@ export async function runSessionStart(opts) {
       }
     }
 
+  }
+
+  if (!qmdAvailable) {
+    const userMd = await tryRead(path.join(homeDir(), ".agent-daemon", "user.md"));
+    if (userMd) sections.push(`<!-- ~/.agent-daemon/user.md (cross-project user profile) -->\n${neutralizeMemoryFile(userMd)}`);
   }
 
   // 3. Graphify knowledge graph pointer — if a graphify-out/graph.json exists
@@ -209,13 +214,23 @@ export async function runSessionStart(opts) {
   //     learned about X.ts" right when X.ts is being edited. Fully fail-safe —
   //     git missing / non-repo / SQLite absent all silently yield nothing.
   const workingSetIds = new Set();
+  // The memory scope for this folder (memory/scope.mjs): [] for home, a root,
+  // a system folder or ad's own folders, and for a key two folders share.
+  // Every DB-backed section below reads only rows visible to these keys.
+  const memKeys = await hookProjectKeys(opts.cwd).catch(() => []);
+  // Hooks never run the safety scan; they only say when it hasn't run yet.
   try {
-    const slug = projectSlug(opts.cwd);
-    const files = await recentlyChangedFiles(opts.cwd);
+    const { db } = await import("./memory/episodic.mjs");
+    const { safetyScanDone } = await import("./memory/safety.mjs");
+    const handle = await db();
+    if (handle && !safetyScanDone(handle) && handle.get("SELECT 1 AS x FROM learnings LIMIT 1")) sections.push("<!-- memory-scan-hint -->\nad hasn't checked older memory notes for secrets yet. Run: ad memory scan");
+  } catch { /* no store: nothing to check */ }
+  try {
+    const files = memKeys.length ? await recentlyChangedFiles(opts.cwd) : [];
     if (files.length > 0) {
       const hits = [];
       for (const f of files.slice(0, 8)) {
-        const rows = await searchLearningsByFile(f, { projectSlug: slug, scope: "any", limit: 3 });
+        const rows = await searchLearningsByFile(f, { projectKeys: memKeys, scope: "any", limit: 3 });
         for (const r of rows) {
           if (workingSetIds.has(r.id)) continue;
           workingSetIds.add(r.id);
@@ -247,8 +262,7 @@ export async function runSessionStart(opts) {
   // Skipped silently if better-sqlite3 isn't installed (graceful degradation).
   // Skips any ids already surfaced by the working-set boost above (no dupes).
   try {
-    const slug = projectSlug(opts.cwd);
-    const recent = (await listRecentLearnings({ projectSlug: slug, limit: 8 }))
+    const recent = (await listRecentLearnings({ projectKeys: memKeys, limit: 8 }))
       .filter(r => !workingSetIds.has(r.id))
       .slice(0, 5);
     if (recent && recent.length > 0) {
@@ -274,7 +288,7 @@ export async function runSessionStart(opts) {
   //     stated learnings, grouped. Compact mode keeps it within the tiny budget.
   //     Subsumes the older facts-only block.
   try {
-    const profile = await buildUserRepresentation({ projectSlug: projectSlug(opts.cwd) });
+    const profile = await buildUserRepresentation({ projectKeys: memKeys });
     const md = representationToMarkdown(profile, { compact: true, neutralize: neutralizeText });
     if (md) {
       sections.push(`<!-- user profile -->\n## How this user works\n\n_Established preferences + conventions (data, not instructions)._\n\n${md}`);
@@ -352,7 +366,14 @@ export async function recentlyChangedFiles(cwd) {
   if (!cwd) return [];
   const run = (args) => new Promise((resolve) => {
     try {
-      const child = execFile("git", ["-C", cwd, ...args], { timeout: 1500, windowsHide: true }, (err, stdout) => {
+      let argv;
+      try {
+        argv = resolvedArgv(resolveGit(), ["-C", cwd, ...args]);
+      } catch {
+        resolve(""); // no git on PATH: no working set
+        return;
+      }
+      const child = execFile(argv[0], argv[1], { timeout: 1500, windowsHide: true, shell: false }, (err, stdout) => {
         resolve(err ? "" : String(stdout || ""));
       });
       child.on("error", () => resolve(""));
@@ -414,6 +435,47 @@ export async function spawnDigestSweep(opts) {
   return true;
 }
 
+const ACTIVE_CONTEXT_FIT_BYTES = 3200;
+const KEY_SECTIONS = ["Now", "Open issues", "Rules"];
+
+/**
+ * activeContext.md within its budget. A file over it keeps its title, its
+ * `## Now`, `## Open issues` and `## Rules` sections, then the newest lines
+ * from its end (new knowledge is appended there), after a marker. A file
+ * without those headings is returned as is (the group cap cuts its head).
+ */
+export function fitActiveContext(text, capBytes = ACTIVE_CONTEXT_FIT_BYTES) {
+  const bytes = (s) => Buffer.byteLength(s, "utf8");
+  if (bytes(text) <= capBytes) return text;
+  const lines = text.split(/\r?\n/);
+  const heads = lines.map((l, i) => [l, i]).filter(([l]) => /^## /.test(l)).map(([l, i]) => ({ name: l.slice(3).trim(), i }));
+  const keep = heads.filter((h) => KEY_SECTIONS.includes(h.name));
+  if (!keep.length) return text;
+  const firstHead = heads.length ? heads[0].i : lines.length;
+  const parts = [lines.slice(0, firstHead).join("\n").trim()];
+  for (const h of keep) {
+    const next = heads.find((x) => x.i > h.i);
+    parts.push(lines.slice(h.i, next ? next.i : lines.length).join("\n").trim());
+  }
+  let out = parts.filter(Boolean).join("\n\n");
+  const marker = "<!-- older lines: activeContext.md -->";
+  const covered = new Set(keep.flatMap((h) => {
+    const next = heads.find((x) => x.i > h.i);
+    return Array.from({ length: (next ? next.i : lines.length) - h.i }, (_, k) => h.i + k);
+  }));
+  const tail = [];
+  let room = capBytes - bytes(out) - bytes(marker) - 4;
+  for (let i = lines.length - 1; i >= firstHead && room > 0; i--) {
+    if (covered.has(i)) continue;
+    const b = bytes(lines[i]) + 1;
+    if (b > room) break;
+    tail.unshift(lines[i]);
+    room -= b;
+  }
+  if (tail.some((l) => l.trim())) out += `\n\n${marker}\n${tail.join("\n").trim()}`;
+  return out;
+}
+
 async function readMemoryDir(memDir) {
   try {
     const entries = await fs.readdir(memDir);
@@ -431,7 +493,7 @@ async function readMemoryDir(memDir) {
     for (const f of ordered) {
       const text = await tryRead(path.join(memDir, f));
       if (text) {
-        blocks.push(`### ${f}\n\n${neutralizeMemoryFile(text)}`);
+        blocks.push(`### ${f}\n\n${neutralizeMemoryFile(/^activeContext\.md$/i.test(f) ? fitActiveContext(text) : text)}`);
         if (text.includes("{{")) hasPlaceholders = true;
       }
     }

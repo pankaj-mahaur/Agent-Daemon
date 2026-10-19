@@ -11,6 +11,7 @@
 
 import path from "node:path";
 import { open, learningContentHash } from "./sqlite.mjs";
+import { redactSecrets } from "../security/secret-patterns.mjs";
 
 /* ------------------------------------------------------------------ */
 /* Lifecycle                                                           */
@@ -196,36 +197,67 @@ export function deriveTier(category) {
 export async function insertLearning(learning) {
   const handle = await db();
   if (!handle) return null;
-  const tagsJson = learning.tags ? JSON.stringify(learning.tags) : null;
-  const contentHash = learningContentHash(learning.text);
+  const l = redactLearning(learning);
+  const contentHash = learningContentHash(l.text);
   // INSERT OR IGNORE: same text from a different session collides on the
   // partial unique index `idx_learnings_content_hash` and is skipped.
   // (We use OR IGNORE instead of ON CONFLICT(col) because SQLite's
   // UPSERT requires a FULL unique constraint as the conflict target —
   // partial indexes don't qualify. OR IGNORE works with either.)
-  const result = handle.run(
-    `INSERT OR IGNORE INTO learnings (session_id, project_slug, category, text, evidence, confidence, tags, applied_to, content_hash, derivation)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      learning.sessionId || null,
-      learning.projectSlug || null,
-      learning.category,
-      learning.text,
-      learning.evidence || null,
-      learning.confidence ?? 0.5,
-      tagsJson,
-      learning.appliedTo || null,
-      contentHash,
-      deriveTier(learning.category)
-    ]
-  );
+  const result = handle.run(INSERT_LEARNING_SQL, learningRow(l, contentHash));
   // Hash collision = the same lesson re-observed in a later session — the
   // strongest confirmation signal we get. Reinforce instead of discarding.
   if (!result.changes) {
+    if (l.origin === "user") acceptPendingByUser(handle, contentHash, l.projectSlug);
     reinforceLearning(handle, contentHash);
     return null;  // null still signals "dedup" to callers counting inserts
   }
   return result.lastInsertRowid;
+}
+
+// Every learning write redacts secrets in text, evidence and tags first.
+// status: 'active' (accepted), 'pending' (waits for the user: agent-written
+// notes) or 'quarantined' (held back: injection screen, secrets).
+const INSERT_LEARNING_SQL = `INSERT OR IGNORE INTO learnings
+  (session_id, project_slug, category, text, evidence, confidence, tags, applied_to, content_hash, derivation, status, origin, quarantine_reason, promote_request)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+
+const LEARNING_STATUSES = new Set(["active", "pending", "quarantined"]);
+
+function redactLearning(l) {
+  const r = (s) => (typeof s === "string" ? redactSecrets(s).text : s);
+  return { ...l, text: r(l.text), evidence: r(l.evidence), tags: Array.isArray(l.tags) ? l.tags.map(r) : l.tags };
+}
+
+function learningRow(l, contentHash) {
+  return [
+    l.sessionId || null,
+    l.projectSlug || null,
+    l.category,
+    l.text,
+    l.evidence || null,
+    l.confidence ?? 0.5,
+    l.tags ? JSON.stringify(l.tags) : null,
+    l.appliedTo || null,
+    contentHash,
+    deriveTier(l.category),
+    LEARNING_STATUSES.has(l.status) ? l.status : "active",
+    ["user", "agent", "unknown"].includes(l.origin) ? l.origin : null,
+    l.quarantineReason || null,
+    l.promoteRequest || null,
+  ];
+}
+
+// The user typed what an agent noted (same text, same project): that is the
+// user's acceptance, so the pending row becomes theirs and active.
+function acceptPendingByUser(handle, contentHash, projectSlug) {
+  try {
+    handle.run(
+      `UPDATE learnings SET status = 'active', origin = 'user', applied_to = NULL
+        WHERE content_hash = ? AND status = 'pending' AND project_slug IS ?`,
+      [contentHash, projectSlug || null]
+    );
+  } catch { /* pre-migration DB: no pending rows to accept */ }
 }
 
 /**
@@ -260,15 +292,12 @@ export async function insertLearnings(learnings) {
   if (!handle) return [];
   const ids = [];
   handle.transaction(() => {
-    for (const l of learnings) {
-      const tagsJson = l.tags ? JSON.stringify(l.tags) : null;
+    for (const raw of learnings) {
+      const l = redactLearning(raw);
       const contentHash = learningContentHash(l.text);
-      const r = handle.run(
-        `INSERT OR IGNORE INTO learnings (session_id, project_slug, category, text, evidence, confidence, tags, applied_to, content_hash, derivation)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [l.sessionId || null, l.projectSlug || null, l.category, l.text, l.evidence || null, l.confidence ?? 0.5, tagsJson, l.appliedTo || null, contentHash, deriveTier(l.category)]
-      );
+      const r = handle.run(INSERT_LEARNING_SQL, learningRow(l, contentHash));
       // Dedup = re-observation → reinforce confidence instead of discarding.
+      if (!r.changes && l.origin === "user") acceptPendingByUser(handle, contentHash, l.projectSlug);
       if (!r.changes) reinforceLearning(handle, contentHash);
       ids.push(r.changes ? r.lastInsertRowid : null);
     }
@@ -276,11 +305,63 @@ export async function insertLearnings(learnings) {
   return ids;
 }
 
+/* ------------------------------------------------------------------ */
+/* Visibility (the memory scope contract, plan §M)                     */
+/* ------------------------------------------------------------------ */
+
+// Rows held back from every reader: quarantined by status, or by the 3.0
+// marker (applied_to 'quarantined…' on an 'active' row).
+const NOT_QUARANTINED = (a) => `COALESCE(${a}applied_to, '') NOT LIKE 'quarantined%'`;
+
+/** The project keys a reader is bound to: projectKeys, else [projectSlug], else null (internal listing). */
+export function keysOf(opts = {}) {
+  if (Array.isArray(opts.projectKeys)) return opts.projectKeys.filter((k) => typeof k === "string" && k);
+  if (opts.projectSlug) return [opts.projectSlug];
+  return null;
+}
+
+/**
+ * SQL for "this learning may be served to a reader bound to `keys`".
+ *   - a project row: project_slug IN keys
+ *   - a row with no project (NULL slug): accepted as global (global_accepted_at
+ *     set), or — 3.0's automatic globals, now "global pending" — its session
+ *     belongs to one of keys
+ *   scope 'project' → project rows; 'global' → accepted globals; 'any' → both.
+ * Without keys (internal listings) only the quarantine rule applies.
+ *
+ * @returns {{sql: string, params: any[]}}
+ */
+export function learningVisibility(alias, keys, scope = "any") {
+  const a = `${alias || "learnings"}.`;
+  const notQ = NOT_QUARANTINED(a);
+  if (keys === null) return { sql: notQ, params: [] };
+  if (keys.length === 0) return { sql: "0", params: [] };
+  const ph = keys.map(() => "?").join(",");
+  const project = `${a}project_slug IN (${ph})`;
+  const accepted = `(${a}project_slug IS NULL AND ${a}global_accepted_at IS NOT NULL)`;
+  const pendingHere = `(${a}project_slug IS NULL AND ${a}global_accepted_at IS NULL AND EXISTS (SELECT 1 FROM sessions s WHERE s.id = ${a}session_id AND s.project_slug IN (${ph})))`;
+  if (scope === "project") return { sql: `${notQ} AND ${project}`, params: [...keys] };
+  if (scope === "global") return { sql: `${notQ} AND ${accepted}`, params: [] };
+  return { sql: `${notQ} AND (${project} OR ${accepted} OR ${pendingHere})`, params: [...keys, ...keys] };
+}
+
+/** SQL for "this user fact may be served to a reader bound to `keys`". */
+export function factVisibility(alias, keys) {
+  const a = `${alias || "user_facts"}.`;
+  if (keys === null) return { sql: "1", params: [] };
+  if (keys.length === 0) return { sql: "0", params: [] };
+  const ph = keys.map(() => "?").join(",");
+  return {
+    sql: `(${a}global_accepted_at IS NOT NULL OR EXISTS (SELECT 1 FROM json_each(COALESCE(${a}projects, '[]')) WHERE value IN (${ph})))`,
+    params: [...keys],
+  };
+}
+
 /**
  * BM25 search over learnings via FTS5.
  *
  * @param {string} query                                     - free text
- * @param {{projectSlug?: string, scope?: 'project'|'global'|'any', limit?: number, status?: string}} [opts]
+ * @param {{projectKeys?: string[], projectSlug?: string, scope?: 'project'|'global'|'any', limit?: number, status?: string}} [opts]
  * @returns {Promise<Array<{id: number, text: string, evidence: string|null, category: string, confidence: number, project_slug: string|null, created_at: string, score: number}>>}
  */
 export async function searchLearnings(query, opts = {}) {
@@ -288,25 +369,17 @@ export async function searchLearnings(query, opts = {}) {
   if (!handle) return [];
 
   const limit = opts.limit ?? 5;
-  const status = opts.status ?? "active";
+  const keys = keysOf(opts);
+  // A bound reader only ever sees active rows.
+  const status = keys ? "active" : opts.status ?? "active";
 
   // FTS5 "MATCH" syntax — escape special chars by quoting tokens
   const safeQuery = sanitizeFtsQuery(query);
   if (!safeQuery) return [];
 
-  let where = "learnings_fts MATCH ? AND l.status = ?";
-  const params = [safeQuery, status];
-
-  if (opts.projectSlug && opts.scope !== "global") {
-    if (opts.scope === "project") {
-      where += " AND l.project_slug = ?";
-      params.push(opts.projectSlug);
-    } else {
-      // 'any' (default) — prefer project, fall back to global
-      where += " AND (l.project_slug = ? OR l.project_slug IS NULL)";
-      params.push(opts.projectSlug);
-    }
-  }
+  const vis = learningVisibility("l", keys, opts.scope ?? "any");
+  const where = `learnings_fts MATCH ? AND l.status = ? AND ${vis.sql}`;
+  const params = [safeQuery, status, ...vis.params];
 
   // Freshness decay at rank time (non-destructive): bm25 score × a half-life
   // factor on the most recent of last_verified_at / last_retrieved_at /
@@ -342,12 +415,9 @@ export async function listRecentLearnings(opts = {}) {
   const handle = await db();
   if (!handle) return [];
   const limit = opts.limit ?? 10;
-  let where = "status = 'active'";
-  const params = [];
-  if (opts.projectSlug) {
-    where += " AND (project_slug = ? OR project_slug IS NULL)";
-    params.push(opts.projectSlug);
-  }
+  const vis = learningVisibility("", keysOf(opts), opts.scope ?? "any");
+  let where = `status = 'active' AND ${vis.sql}`;
+  const params = [...vis.params];
   if (opts.category) {
     where += " AND category = ?";
     params.push(opts.category);
@@ -369,8 +439,11 @@ export async function listRecentLearnings(opts = {}) {
  * (session_id, created_at) + evolution counters. Order matches the input ids
  * is not guaranteed; rows come back id-ascending.
  *
+ * A bound reader (projectKeys / projectSlug) gets only rows visible to it:
+ * an id from another project returns nothing.
+ *
  * @param {Array<number|string>} ids
- * @param {{limit?: number}} [opts]
+ * @param {{limit?: number, projectKeys?: string[], projectSlug?: string}} [opts]
  * @returns {Promise<Array<object>>}
  */
 export async function getLearningsByIds(ids, opts = {}) {
@@ -380,14 +453,16 @@ export async function getLearningsByIds(ids, opts = {}) {
   const clean = [...new Set(ids.map(n => Number(n)).filter(Number.isInteger))].slice(0, cap);
   if (clean.length === 0) return [];
   const placeholders = clean.map(() => "?").join(",");
+  const keys = keysOf(opts);
+  const vis = keys ? learningVisibility("", keys) : { sql: "1", params: [] };
   return handle.all(
     `SELECT id, session_id, project_slug, category, text, evidence, confidence,
             observed_count, retrieval_count, usefulness, tags, applied_to, status,
             created_at, last_verified_at, derivation
        FROM learnings
-      WHERE id IN (${placeholders})
+      WHERE id IN (${placeholders})${keys ? ` AND status = 'active' AND ${vis.sql}` : ""}
       ORDER BY id ASC`,
-    clean
+    [...clean, ...vis.params]
   );
 }
 
@@ -408,11 +483,14 @@ export async function learningTimeline(id, opts = {}) {
   const lid = Number(id);
   if (!Number.isInteger(lid)) return null;
   const limit = Math.min(50, Math.max(1, opts.limit ?? 10));
+  const keys = keysOf(opts);
+  const vis = keys ? learningVisibility("", keys) : { sql: "1", params: [] };
+  const nvis = learningVisibility("", keys);
 
   const learning = handle.get(
     `SELECT id, session_id, project_slug, category, text, confidence, created_at
-       FROM learnings WHERE id = ? LIMIT 1`,
-    [lid]
+       FROM learnings WHERE id = ?${keys ? ` AND status = 'active' AND ${vis.sql}` : ""} LIMIT 1`,
+    [lid, ...vis.params]
   );
   if (!learning) return null;
 
@@ -427,10 +505,10 @@ export async function learningTimeline(id, opts = {}) {
     neighbors = handle.all(
       `SELECT id, category, text, confidence, created_at
          FROM learnings
-        WHERE session_id = ? AND id != ? AND status = 'active'
+        WHERE session_id = ? AND id != ? AND status = 'active' AND ${nvis.sql}
         ORDER BY created_at ASC, id ASC
         LIMIT ?`,
-      [learning.session_id, lid, limit]
+      [learning.session_id, lid, ...nvis.params, limit]
     );
   }
   return { learning, session, neighbors };
@@ -456,18 +534,10 @@ export async function searchLearningsByFile(file, opts = {}) {
   if (!norm) return [];
   const base = norm.split("/").pop();
 
-  let where = "tags IS NOT NULL AND (tags LIKE ? OR tags LIKE ?) AND status = ?";
-  const params = [`%${norm}%`, `%"${base}"%`, status];
-
-  if (opts.projectSlug && opts.scope !== "global") {
-    if (opts.scope === "project") {
-      where += " AND project_slug = ?";
-      params.push(opts.projectSlug);
-    } else {
-      where += " AND (project_slug = ? OR project_slug IS NULL)";
-      params.push(opts.projectSlug);
-    }
-  }
+  const keys = keysOf(opts);
+  const vis = learningVisibility("", keys, opts.scope ?? "any");
+  const where = `tags IS NOT NULL AND (tags LIKE ? OR tags LIKE ?) AND status = ? AND ${vis.sql}`;
+  const params = [`%${norm}%`, `%"${base}"%`, keys ? "active" : status, ...vis.params];
 
   return handle.all(
     `SELECT id, category, text, evidence, confidence, project_slug, created_at, tags
@@ -508,8 +578,8 @@ export async function recordSkillExecution(row) {
        (session_id, skill_name, skill_version, trigger_text, succeeded, failure_reason, trace_path, invocation_source, outcome_source, completed_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
-      row.sessionId, row.skillName, row.skillVersion || null, row.triggerText || null,
-      succeeded, row.failureReason || null, row.tracePath || null,
+      row.sessionId, row.skillName, row.skillVersion || null, row.triggerText ? redactSecrets(row.triggerText).text : null,
+      succeeded, row.failureReason ? redactSecrets(row.failureReason).text : null, row.tracePath || null,
       row.invocationSource || null, row.outcomeSource || null, row.completedAt || null
     ]
   );
@@ -532,7 +602,7 @@ export async function markRecentSkillFailure({ sessionId, failureReason, outcome
            AND created_at >= datetime('now', '-10 minutes')
          ORDER BY id DESC LIMIT 1
       )`,
-    [failureReason, outcomeSource, new Date().toISOString(), sessionId]
+    [redactSecrets(failureReason).text, outcomeSource, new Date().toISOString(), sessionId]
   );
   return r.changes > 0;
 }
@@ -643,9 +713,12 @@ export async function stats() {
  * }} fact
  * @returns {Promise<{ id: number | null, observed: number, projects: string[] } | null>}
  */
-export async function observeUserFact(fact) {
+export async function observeUserFact(input) {
+  // Agent-written text never becomes a fact about the user.
+  if (input.origin === "agent") return null;
   const handle = await db();
   if (!handle) return null;
+  const fact = { ...input, text: redactSecrets(input.text).text, evidence: redactSecrets(input.evidence).text };
   const contentHash = learningContentHash(fact.text);
   const now = new Date().toISOString();
 
@@ -673,8 +746,8 @@ export async function observeUserFact(fact) {
 
   const projects = fact.projectSlug ? [fact.projectSlug] : [];
   const r = handle.run(
-    `INSERT INTO user_facts (category, text, evidence, confidence, source_session, observed_count, last_observed_at, projects, content_hash)
-     VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+    `INSERT INTO user_facts (category, text, evidence, confidence, source_session, observed_count, last_observed_at, projects, content_hash, origin)
+     VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
     [
       fact.category,
       fact.text,
@@ -683,7 +756,8 @@ export async function observeUserFact(fact) {
       fact.sessionId || null,
       now,
       JSON.stringify(projects),
-      contentHash
+      contentHash,
+      fact.origin === "user" ? "user" : "unknown"
     ]
   );
   return { id: r.lastInsertRowid, observed: 1, projects };
@@ -694,16 +768,73 @@ export async function observeUserFact(fact) {
  *
  * @param {{ limit?: number }} [opts]
  */
-export async function topUserFacts({ limit = 5 } = {}) {
+export async function topUserFacts({ limit = 5, projectKeys, projectSlug } = {}) {
   const handle = await db();
   if (!handle) return [];
+  const vis = factVisibility("", keysOf({ projectKeys, projectSlug }));
   return handle.all(
     `SELECT id, category, text, confidence, observed_count
-       FROM user_facts WHERE status = 'active'
+       FROM user_facts WHERE status = 'active' AND ${vis.sql}
       ORDER BY confidence DESC, observed_count DESC
       LIMIT ?`,
-    [limit]
+    [...vis.params, limit]
   );
+}
+
+/** Learnings and user facts visible to a reader bound to projectKeys (memory_stats). */
+export async function projectStats({ projectKeys }) {
+  const handle = await db();
+  if (!handle) return null;
+  const keys = keysOf({ projectKeys }) ?? [];
+  const lv = learningVisibility("", keys);
+  const fv = factVisibility("", keys);
+  return {
+    learnings: handle.get(`SELECT COUNT(*) AS n FROM learnings WHERE status = 'active' AND ${lv.sql}`, lv.params).n,
+    facts: handle.get(`SELECT COUNT(*) AS n FROM user_facts WHERE status = 'active' AND ${fv.sql}`, fv.params).n,
+  };
+}
+
+/**
+ * User facts visible to a reader bound to projectKeys (the MCP
+ * `user_facts_list` tool): facts observed in one of those projects, or
+ * accepted as global.
+ */
+export async function listUserFacts({ projectKeys, limit = 20 } = {}) {
+  const handle = await db();
+  if (!handle) return [];
+  const vis = factVisibility("", keysOf({ projectKeys }) ?? []);
+  return handle.all(
+    `SELECT id, category, text, confidence, observed_count, last_observed_at
+       FROM user_facts WHERE status = 'active' AND ${vis.sql}
+      ORDER BY confidence DESC, observed_count DESC LIMIT ?`,
+    [...vis.params, limit]
+  );
+}
+
+/**
+ * Record usefulness feedback on a learning the reader can see. An id from
+ * another project (or a held-back row) changes nothing.
+ *
+ * usefulness is a running average in [-1, 1]: useful=+1, stale=-0.5, wrong=-1.
+ *
+ * @param {{id:number|string, verdict:"useful"|"stale"|"wrong", projectKeys:string[]}} opts
+ * @returns {Promise<{changed:boolean}>}
+ */
+export async function recordFeedback({ id, verdict, projectKeys }) {
+  const handle = await db();
+  const lid = Number(id);
+  if (!handle || !Number.isInteger(lid)) return { changed: false };
+  const delta = verdict === "useful" ? 1 : verdict === "stale" ? -0.5 : verdict === "wrong" ? -1 : 0;
+  if (!delta) return { changed: false };
+  const vis = learningVisibility("", keysOf({ projectKeys }) ?? []);
+  const r = handle.run(
+    `UPDATE learnings
+        SET usefulness = COALESCE((COALESCE(usefulness, 0) + ?) / 2.0, ?),
+            last_verified_at = CASE WHEN ? > 0 THEN ? ELSE last_verified_at END
+      WHERE id = ? AND status = 'active' AND ${vis.sql}`,
+    [delta, delta, delta, new Date().toISOString(), lid, ...vis.params]
+  );
+  return { changed: r.changes > 0 };
 }
 
 /**
@@ -716,22 +847,21 @@ export async function topUserFacts({ limit = 5 } = {}) {
  * @param {{ projectSlug?: string, factLimit?: number, learningLimit?: number }} [opts]
  * @returns {Promise<{identity:string[],preferences:string[],tools:string[],conventions:string[],gotchas:string[],counts:object}|null>}
  */
-export async function buildUserRepresentation({ projectSlug, factLimit = 8, learningLimit = 12 } = {}) {
+export async function buildUserRepresentation({ projectSlug, projectKeys, factLimit = 8, learningLimit = 12 } = {}) {
   const handle = await db();
   if (!handle) return null;
+  const keys = keysOf({ projectKeys, projectSlug });
 
+  const fvis = factVisibility("", keys);
   const facts = handle.all(
-    `SELECT category, text FROM user_facts WHERE status = 'active'
+    `SELECT category, text FROM user_facts WHERE status = 'active' AND ${fvis.sql}
       ORDER BY confidence DESC, observed_count DESC LIMIT ?`,
-    [factLimit]
+    [...fvis.params, factLimit]
   );
 
-  let where = "status = 'active' AND confidence >= 0.6";
-  const params = [];
-  if (projectSlug) {
-    where += " AND (project_slug = ? OR project_slug IS NULL)";
-    params.push(projectSlug);
-  }
+  const vis = learningVisibility("", keys);
+  const where = `status = 'active' AND confidence >= 0.6 AND ${vis.sql}`;
+  const params = [...vis.params];
   // Explicit (stated) facts first, then by confidence + reinforcement.
   const learnings = handle.all(
     `SELECT category, text FROM learnings

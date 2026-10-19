@@ -96,3 +96,21 @@ test("ad init creates, refreshes, and preserves project CLAUDE.md content", asyn
     await fs.rm(root, { recursive: true, force: true });
   }
 });
+
+// P0.5: a settings.json ad can't parse is never replaced by ad's hooks alone.
+test("ad init leaves an unreadable ~/.claude/settings.json byte-identical and says so", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "ad-init-badjson-"));
+  const project = path.join(root, "project");
+  await fs.mkdir(project);
+  await fs.mkdir(path.join(root, ".claude"), { recursive: true });
+  const file = path.join(root, ".claude", "settings.json");
+  const broken = '{ "model": "opus", // a comment Claude Code tolerates\n  "hooks": {} ,}\n';
+  await fs.writeFile(file, broken);
+  try {
+    const result = await runInit(project, root);
+    assert.notEqual(result.code, 0);
+    assert.equal(await fs.readFile(file, "utf8"), broken);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});

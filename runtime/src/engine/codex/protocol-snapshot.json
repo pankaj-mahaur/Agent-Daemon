@@ -234,6 +234,7 @@
       "thread/inject_items": "ThreadInjectItemsParams",
       "thread/list": "ThreadListParams",
       "thread/name/set": "ThreadSetNameParams",
+      "thread/read": "ThreadReadParams",
       "thread/resume": "ThreadResumeParams",
       "thread/revert": "ThreadRevertParams",
       "thread/shellCommand": "ThreadShellCommandParams",
@@ -2133,6 +2134,19 @@
         "threadId"
       ],
       "types": {
+        "threadId": "string"
+      }
+    },
+    "ThreadReadParams": {
+      "required": [
+        "threadId"
+      ],
+      "props": [
+        "includeTurns",
+        "threadId"
+      ],
+      "types": {
+        "includeTurns": "boolean",
         "threadId": "string"
       }
     },

@@ -290,7 +290,7 @@ Agent-Daemon/                       # The cloned repo
 ├── secrets/                        # Provider keys (file backends)
 ├── schedules.json, schedule-logs/  # ad schedule jobs + output
 ├── tui/                            # Terminal UI: prompt history (0600), per-folder state
-├── locks/                          # Conversation locks (one ad per conversation)
+├── locks/                          # Conversation locks (one ad per conversation); a holder is judged by its process start time, so a reused pid is free at once and a suspended session keeps its lock
 ├── skill-manifest.json             # Provenance of skills installed with ad skill install
 ├── teams/                          # Team state + inboxes
 └── worktrees/                      # Worker git worktrees

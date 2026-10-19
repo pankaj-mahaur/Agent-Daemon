@@ -8,6 +8,7 @@
 
 import path from "node:path";
 import fs from "node:fs/promises";
+import { redactSecrets } from "../security/secret-patterns.mjs";
 
 const MAX_BYTES = 5 * 1024 * 1024;       // 5 MB — rotate before unbounded growth
 const JOURNAL_FILE = "learning-journal.jsonl";
@@ -49,8 +50,9 @@ export async function appendLearnings({ cwd, entries }) {
     // Rotate if too big (move current → archive, append to fresh)
     await maybeRotate({ cwd, file });
 
+    // Secrets never reach the journal: text, evidence and tags are redacted.
     const lines = entries
-      .map(e => JSON.stringify(stamp(e)))
+      .map(e => JSON.stringify(stamp(redactEntry(e))))
       .join("\n") + "\n";
     await fs.appendFile(file, lines, "utf8");
     return { ok: true, written: entries.length, path: file };
@@ -120,6 +122,11 @@ export async function archiveJournal({ cwd, file }) {
   } catch (err) {
     return { ok: false, error: err.message };
   }
+}
+
+function redactEntry(e) {
+  const r = (s) => (typeof s === "string" ? redactSecrets(s).text : s);
+  return { ...e, text: r(e.text), evidence_quote: r(e.evidence_quote), ...(Array.isArray(e.tags) ? { tags: e.tags.map(r) } : {}) };
 }
 
 function stamp(e) {

@@ -43,6 +43,9 @@ export async function cmdRun(prompt, opts = {}) {
       store: opts.store,
       platform: opts.platform,
       err,
+      // 3.0.x: a script in the home folder still runs, with a one-time note (strict from 3.1).
+      allowHomeFolder: opts.allowHomeFolder === true,
+      homePolicy: "grace",
       onApproval: (req) => {
         err.write(`[declined ${req.kind} — ad run is non-interactive; use ad chat to approve]\n`);
         return "decline";

@@ -375,6 +375,7 @@ export async function open(opts = {}) {
   migrateSkillExecutionTelemetry(raw);
   migrateSkillRouteEvents(raw);
   migrateRetrievalEvents(raw);
+  migrateMemoryContract(raw);
 
   return {
     raw,
@@ -548,6 +549,38 @@ function migrateLearningsEvolution(raw) {
   if (!ufCols.has("content_hash")) {
     raw.exec("ALTER TABLE user_facts ADD COLUMN content_hash TEXT");
   }
+}
+
+/**
+ * Idempotent migration: the memory scope and promotion contract (plan §M).
+ * Columns only; no data is rewritten. Readers apply the visibility rule
+ * (episodic.mjs learningVisibility / factVisibility):
+ *   - status 'active' (accepted), 'pending' (waits for the user) or
+ *     'quarantined' (held back); older ad serves only 'active', so it never
+ *     shows pending or quarantined rows;
+ *   - origin: who wrote it ('user' | 'agent' | 'unknown');
+ *   - global_accepted_at: set only when the user accepts a row as global; a
+ *     NULL-project row without it is "global pending", served only in the
+ *     project its session came from;
+ *   - promote_request 'global': the classifier thought it was global; it waits
+ *     for the user's promotion instead of going global by itself.
+ *
+ * @param {any} raw
+ */
+export function migrateMemoryContract(raw) {
+  for (const table of ["learnings", "user_facts"]) {
+    const cols = new Set(raw.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name));
+    const want = [["quarantine_reason", "TEXT"], ["origin", "TEXT"], ["global_accepted_at", "TEXT"]];
+    if (table === "learnings") want.push(["promote_request", "TEXT"]);
+    for (const [col, type] of want) {
+      if (!cols.has(col)) raw.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`);
+    }
+  }
+  raw.exec(`CREATE TABLE IF NOT EXISTS memory_maintenance (
+    name    TEXT PRIMARY KEY,
+    done_at TEXT NOT NULL,
+    result  TEXT
+  )`);
 }
 
 /**

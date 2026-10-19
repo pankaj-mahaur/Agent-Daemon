@@ -15,7 +15,7 @@ import { createMarkdownStream, renderMarkdown } from "./view/markdown.mjs";
 import { isExploring, renderAdRow, renderBackgroundTerminals, renderCell, renderDiff, renderExploring, renderNotice, renderPlan, renderRecap } from "./view/cells.mjs";
 import { parseRecap, RECAP_PROMPT_PREFIX, RECAP_SCHEMA, recapHistory, TEMPORARY_THREAD_CONFIG } from "./recap.mjs";
 import { createChecklist, createPicker, renderFooter, renderShortcuts, renderStatus } from "./view/chrome.mjs";
-import { formAutoCancel, LEGACY, ownEngineHomeRefusal, projectConfigFolder, sandboxConsentBody, tombstoneEngineUiSlash } from "../engine/attribution.mjs";
+import { formAutoCancel, homeCdRefusal, homeTrustSkippedNote, LEGACY, ownEngineHomeRefusal, projectConfigFolder, sandboxConsentBody, tombstoneEngineUiSlash } from "../engine/attribution.mjs";
 import { ARM_MS, createChoice, createConfirm, createRequestModal } from "./view/modals.mjs";
 import { PLAN_CLEAR_CONTEXT_PREFIX } from "../hooks/generated-prompts.mjs";
 import { sanitize } from "./terminal/sanitize.mjs";
@@ -1090,10 +1090,16 @@ export function createApp({
     if (actions.ad?.loop?.state?.running) return warn("An ad loop is working in this folder: /loop stop first.");
     // The check at the app level: no other agent (a subagent's thread) may be at work.
     if (agentRunning()) return warn("Cannot change: another agent is running.");
+    // A folder that would load the user's own engine home (P0.2a): refused before any trust is written.
+    const homeRisk = await session.engine.homeFolderRisk?.(dir);
+    if (homeRisk) return warn(homeCdRefusal(homeRisk));
     // Trust, as on ad's first start in a folder (kept in ad's engine home).
     const config = await session.engine.readConfig().catch(() => ({}));
     const known = Object.keys(config.projects ?? {}).some((k) => real(k) === real(dir));
-    if (!known && real(dir) !== real(homedir())) {
+    // Never offered where trusting would also apply the user's own engine settings (a folder under a git home).
+    const trustLoadsHome = !session.engine.allowHomeFolder && engineHome.homeLayerRisk(dir, { trusted: [dir] })?.loads.includes("settings");
+    if (!known && trustLoadsHome) info0(homeTrustSkippedNote);
+    if (!known && !trustLoadsHome && real(dir) !== real(homedir())) {
       const trust = await openChoice({
         title: `Do you trust ${clean(dir)}?`,
         body: "Trusted folders can run their own hooks, skills and settings. Trust only projects you know.",
@@ -1587,7 +1593,13 @@ export function createApp({
       case "remember":
         if (!arg) return warn("/remember <what to remember>");
         if (!actions.remember) return warn("Memory isn't available here.");
-        return Promise.resolve(actions.remember(arg)).then(() => commitCell(renderAdRow("learned", arg, { width: width() })), fail);
+        // The saved text has secrets redacted; say so when it did.
+        return Promise.resolve(actions.remember(arg)).then((r) => {
+          const kinds = r?.kinds ?? [];
+          const shown = r?.text ?? arg;
+          const note = kinds.length ? `  Saved (removed ${kinds.length} secret${kinds.length > 1 ? "s" : ""}: ${kinds.join(", ")}).` : "";
+          return commitCell(renderAdRow("learned", shown + note, { width: width() }));
+        }, fail);
       case "memory": {
         if (!actions.ad?.memory) return warn("Memory isn't available here.");
         const [sub, ...rest] = arg.split(/\s+/);
@@ -1648,7 +1660,8 @@ export function createApp({
     const kept = [...st.notices, ...commandErrors].filter((n) => n.level !== "info" || n.detail).sort((a, b) => (a.at ?? 0) - (b.at ?? 0));
     const unknown = Object.entries(session.engine?.unknownCounts?.() ?? {});
     const unused = [
-      ...(keymap.warnings ?? []),
+      // One line here; /keymap lists each key setting ad can't use.
+      ...(keymap.summary ? [keymap.summary] : []),
       ...(() => {
         const th = settings?.engine?.get?.("tui.theme");
         return th && !SYNTAX_THEMES.includes(th) ? [`tui.theme: ad doesn't ship "${th}"; it shows code in ansi`] : [];
@@ -1659,7 +1672,7 @@ export function createApp({
     if (!kept.length && !unknown.length && !unused.length) return renderNotice({ level: "info", message: "No warnings in this session." }, { width: width() });
     const out = [[{ text: "Warnings", style: T.bold }]];
     for (const n of kept.slice(-20)) {
-      out.push(...renderNotice(n, { width: width() }));
+      out.push(...renderNotice(n.count > 1 ? { ...n, message: `${n.message} ×${n.count}` } : n, { width: width() }));
       if (n.detail) for (const line of String(n.detail).split("\n").slice(0, 8)) out.push(truncate([{ text: `    details: ${clean(line)}`, style: DIM }], width()));
     }
     if (unknown.length) {

@@ -17,6 +17,7 @@ import { createInterface } from "node:readline";
 import { approvalResponse, isApprovalMethod } from "./approvals.mjs";
 import { engineError } from "./errors.mjs";
 import { codexEnv } from "./home.mjs";
+import { systemTool } from "../../safe-spawn.mjs";
 
 export { engineError };
 
@@ -198,8 +199,10 @@ export class CodexAppServer extends EventEmitter {
   }
 
   #killTree() {
-    if (process.platform === "win32" && this.child.pid) {
-      spawn("taskkill", ["/pid", String(this.child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true })
+    // taskkill by full path (%SystemRoot%\System32), never a bare name.
+    const taskkill = process.platform === "win32" && this.child.pid ? systemTool("taskkill.exe") : null;
+    if (taskkill) {
+      spawn(taskkill, ["/pid", String(this.child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true })
         .on("error", () => this.child.kill())
         .on("exit", (code) => {
           if (code !== 0) this.child.kill();

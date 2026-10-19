@@ -1,0 +1,6 @@
+[
+  { "file": "auth/secrets.mjs", "match": "spawn(\"secret-tool\"", "reason": "Linux only (libsecret); execvp searches PATH only, never the working folder" },
+  { "file": "tui/view/highlight.mjs", "match": "shell:", "reason": "a syntax-highlighting language key, not a spawn option" },
+  { "file": "daemon/service.mjs", "match": "(\"schtasks\",", "reason": "run() resolves the name with toolPath() to %SystemRoot%\\System32\\schtasks.exe before spawning" },
+  { "file": "tui/view/vim.mjs", "match": "(\"cmd\",", "reason": "a Vim mode name, not a program" }
+]

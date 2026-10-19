@@ -5,7 +5,6 @@
 
 import { parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
-import { exec } from "node:child_process";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { LEGACY } from "./engine/attribution.mjs";
@@ -78,6 +77,8 @@ Commands:
   review                 Interactively accept/reject queued proposals
   query-retrieve         Extract keywords from user prompt and inject relevant past learnings (UserPromptSubmit hook)
   memory stats           Episodic store row counts + retrieval telemetry (truncation rate, injected bytes)
+  memory scan            Check older memory notes once: hold back rows with a provider key or an injection
+  memory held [accept|release|drop <id>]  Notes memory keeps back (agent-written, flagged); accept/release/drop need your own terminal and the typed id
   memory consolidate     Hermes-style evolution pass: near-duplicate merges, stale archive, contradictions
                          → proposals only; --apply-merges / --apply-stale execute after review
                          --all-projects       span every project (default: current --cwd only)
@@ -112,6 +113,8 @@ Agent harness (ad's engine; ad about):
   run "<prompt>"         One non-interactive agent turn (approvals are declined)
                          --cwd <dir>  --model <name>  --json
                          --sandbox <mode>     read-only | workspace-write (default) | danger-full-access
+                         --allow-home-folder  (ad, tui, chat, loop, run, schedule add) work in a folder that
+                                              would load skills from your own engine install (docs/harness.md)
   auth login chatgpt     Sign in with your ChatGPT subscription (browser; --device for a code)
   auth login openai      Use an OpenAI API key (hidden prompt, or pipe it on stdin)
   auth login openrouter  Store an OpenRouter key and make it active (needs --model <slug>)
@@ -308,9 +311,7 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
   // Detect QMD on PATH so we can offer to register it as an MCP server
   // and create a project collection. Best-effort — failure is non-fatal.
   // Skip the detection entirely if the profile disables the QMD feature.
-  const qmdOnPath = resolved.features.qmd === false ? false : await new Promise(resolve => {
-    exec("qmd --version", (err) => resolve(!err));
-  });
+  const qmdOnPath = resolved.features.qmd === false ? false : (await runQmd(["--version"])).ok;
   let qmdNeedsMcpRegister = false;
   let qmdCollectionMissing = false;
   let qmdProjName = "";
@@ -324,17 +325,20 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
     } catch {
       qmdNeedsMcpRegister = true;
     }
-    qmdCollectionMissing = await new Promise(resolve => {
-      exec("qmd collection list", (err, stdout) => {
-        if (err) return resolve(false);
-        resolve(!stdout.includes(`${qmdProjName} (qmd://`));
-      });
-    });
+    const list = await runQmd(["collection", "list"]);
+    qmdCollectionMissing = list.ok && !list.stdout.includes(`${qmdProjName} (qmd://`);
   }
   let existingSettings = {};
   try {
     existingSettings = JSON.parse(await fs.readFile(globalSettingsPath, "utf8"));
-  } catch { /* no settings.json yet */ }
+  } catch (e) {
+    // Only a missing file starts empty: a settings.json ad can't parse (a
+    // hand edit, or Claude Code mid-write) must never be replaced with ad's hooks alone.
+    if (e.code !== "ENOENT") {
+      console.error(`agent-daemon init: ~/.claude/settings.json couldn't be read (${e.message}). Nothing was changed; fix the file (or close Claude Code) and run ad init again.`);
+      return 1;
+    }
+  }
   const existingHooksMap = existingSettings.hooks || {};
 
   // Determine which profile-specified hooks are missing from the user's settings.
@@ -594,7 +598,9 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
       existingSettings.hooks = hooks;
 
       await fs.mkdir(path.join(home, ".claude"), { recursive: true });
-      await fs.writeFile(globalSettingsPath, JSON.stringify(existingSettings, null, 2), "utf8");
+      // Atomic: Claude Code reads this file while it runs.
+      const { writeJsonAtomic } = await import("./atomic-write.mjs");
+      await writeJsonAtomic(globalSettingsPath, existingSettings);
       if (hasLegacySessionEndCommand) console.log("  ✓ Replaced direct SessionEnd digest command with stdin-aware hook");
       if (hooksToAdd.length > 0) console.log(`  ✓ Added ${hooksToAdd.length} hook(s) to ~/.claude/settings.json`);
       for (const h of hooksToAdd) console.log(`      ${h.event} ← ${h.id}`);
@@ -691,12 +697,19 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
   if (qmdOnPath) {
     if (qmdNeedsMcpRegister) {
       try {
+        // Only a missing file starts empty: an unreadable one (Claude Code
+        // mid-write) is left alone rather than replaced.
         let cfg = {};
-        try { cfg = JSON.parse(await fs.readFile(claudeJsonPath, "utf8")); } catch {}
+        try {
+          cfg = JSON.parse(await fs.readFile(claudeJsonPath, "utf8"));
+        } catch (e) {
+          if (e.code !== "ENOENT") throw new Error(`~/.claude.json couldn't be read (${e.message}); left unchanged`);
+        }
         cfg.mcpServers = cfg.mcpServers || {};
         if (!cfg.mcpServers.qmd) {
           cfg.mcpServers.qmd = { type: "stdio", command: "qmd", args: ["mcp"], env: {} };
-          await fs.writeFile(claudeJsonPath, JSON.stringify(cfg, null, 2), "utf8");
+          const { writeJsonAtomic } = await import("./atomic-write.mjs");
+          await writeJsonAtomic(claudeJsonPath, cfg);
           console.log("  ✓ Registered QMD MCP server in ~/.claude.json (user scope)");
         }
       } catch (err) {
@@ -705,12 +718,12 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
     }
     if (qmdCollectionMissing) {
       try {
-        await new Promise(resolve => {
-          exec(`qmd collection add "${cwd}" --name ${qmdProjName}`, () => resolve());
-        });
+        // The folder is one argument: no shell reads it.
+        const added = await runQmd(["collection", "add", cwd, "--name", qmdProjName]);
+        if (!added.ok) throw new Error(added.stderr || "qmd collection add failed");
         console.log(`  ✓ Created QMD collection '${qmdProjName}' for this project`);
         // Background embed — don't block init. User can also run `qmd embed` later.
-        exec("qmd embed", () => {});
+        runQmd(["embed"], { background: true });
         console.log("  ✓ Triggered background embed (qmd embed)");
       } catch (err) {
         console.error(`  ⚠ Could not set up QMD collection: ${err.message}`);
@@ -946,14 +959,27 @@ async function cmdStatus({ cwd = process.cwd() }) {
       console.log(`  ${d}  (${stat.size} bytes, ${stat.mtime.toISOString()})`);
     }
     console.log("\nReview with: agent-daemon review");
+    await printHeldLine(cwd);
     return 0;
   } catch (err) {
     if (err.code === "ENOENT") {
       console.log("No queued proposals.");
+      await printHeldLine(cwd);
       return 0;
     }
     throw err;
   }
+}
+
+// "<n> memory notes are waiting or held back. Review: ad memory held" (ad status).
+async function printHeldLine(cwd) {
+  try {
+    const { db, projectSlug } = await import("./memory/episodic.mjs");
+    const { heldNotes, heldLine } = await import("./memory/held.mjs");
+    const handle = await db();
+    const n = handle ? heldNotes(handle, [projectSlug(cwd)]).length : 0;
+    if (n) console.log(heldLine(n));
+  } catch { /* memory store unavailable: nothing to add */ }
 }
 
 async function cmdReview(opts) {
@@ -986,6 +1012,19 @@ async function cmdDoctor({ cwd = process.cwd(), tokens, limit, model } = {}) {
   const { engineDoctor } = await import("./engine/index.mjs");
   checks.push(...engineDoctor.checks());
   checks.push(...(await engineDoctor.liveChecks()));
+  // Jobs and folders that keep running in a folder loading the user's own engine home (P0.2a).
+  try {
+    const { homeFolderJobs } = await import("./harness/schedule.mjs");
+    const { homeGraceFolders } = await import("./harness/home-folder.mjs");
+    const jobs = homeFolderJobs();
+    const folders = homeGraceFolders();
+    if (jobs.length || folders.length) {
+      const parts = [...jobs.map((j) => `job ${j.id} (${j.cwd}${j.allowHomeFolder === "grandfathered" ? ", kept from 3.0" : ""})`), ...folders.map((f) => `ad run/chat/loop in ${f}`)];
+      checks.push({ name: "Home-folder jobs", ok: true, note: `${parts.join("; ")}. Move them to a project folder (ad schedule add --cwd <project>); from 3.1 ad run/chat/loop there need --allow-home-folder` });
+    }
+  } catch (e) {
+    checks.push({ name: "Home-folder jobs", ok: true, note: `could not read the schedule: ${e.message}` });
+  }
 
   // Check 2b: Auth — ANTHROPIC_API_KEY or OAuth/keychain
   // As of v0.5, --bare is no longer used. OAuth/keychain auth works for GEPA.
@@ -1123,10 +1162,29 @@ async function cmdDoctor({ cwd = process.cwd(), tokens, limit, model } = {}) {
       ok: placeholders === 0,
       note: placeholders === 0 ? "no template placeholders" : `${placeholders} file(s) contain placeholders — bootstrap daemon memory`
     });
+    try {
+      const { runSafetyScanOnce, findSlugCollisions } = await import("./memory/safety.mjs");
+      const { heldNotes } = await import("./memory/held.mjs");
+      const { db, projectSlug } = await import("./memory/episodic.mjs");
+      await runSafetyScanOnce();
+      const handle = await db();
+      if (handle) {
+        const held = heldNotes(handle, [projectSlug(cwd)]).length;
+        checks.push({ name: "Memory notes held", ok: true, note: held ? `${held} waiting or held back — review: ad memory held` : "none waiting or held back" });
+        const collisions = findSlugCollisions(handle);
+        checks.push({
+          name: "Memory keys",
+          ok: collisions.length === 0,
+          note: collisions.length ? `these folders share one memory key, so ad keeps their notes out of both until a later release gives each project its own ID: ${collisions.map((c) => c.paths.join(", ")).join("; ")}` : "every project has its own key",
+        });
+      }
+    } catch (e) {
+      checks.push({ name: "Memory notes held", ok: true, note: `not checked (${e.message})` });
+    }
     checks.push({
       name: "Session context budget",
       ok: activeBytes <= 4100,
-      note: activeBytes <= 4100 ? `activeContext.md ${activeBytes}B within priority allocation` : `activeContext.md ${activeBytes}B exceeds 4100B priority allocation; compact memory`
+      note: activeBytes <= 4100 ? `activeContext.md ${activeBytes}B within priority allocation` : `activeContext.md ${activeBytes}B exceeds 4100B priority allocation; compact it (docs/workflow.md, "Compacting project memory")`
     });
   } catch {
     checks.push({ name: "Project memory bootstrap", ok: false, note: "missing .agent-daemon/memory — run ad init" });
@@ -1256,19 +1314,48 @@ async function cmdDoctor({ cwd = process.cwd(), tokens, limit, model } = {}) {
   return allOk ? 0 : 1;
 }
 
+// qmd without a shell, by full path from PATH (an npm qmd.cmd runs its script
+// with our node). → {ok, stdout, stderr}; a missing qmd is ok:false.
+async function runQmd(args, { background = false } = {}) {
+  const { resolveCommand, spawnResolved } = await import("./safe-spawn.mjs");
+  const r = resolveCommand("qmd");
+  if (!r.cmd) return { ok: false, stdout: "", stderr: "qmd isn't on PATH" };
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawnResolved(r, args, { stdio: background ? "ignore" : ["ignore", "pipe", "pipe"], detached: background });
+    } catch (e) {
+      resolve({ ok: false, stdout: "", stderr: e.message });
+      return;
+    }
+    if (background) {
+      child.on("error", () => {});
+      child.unref();
+      resolve({ ok: true, stdout: "", stderr: "" });
+      return;
+    }
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (c) => (stdout += c));
+    child.stderr.on("data", (c) => (stderr += c));
+    child.on("error", (e) => resolve({ ok: false, stdout, stderr: e.message }));
+    child.on("close", (code) => resolve({ ok: code === 0, stdout, stderr }));
+  });
+}
+
 async function checkBinary(name, purpose) {
-  const { spawn } = await import("node:child_process");
+  // The same lookup ad uses to start it (PATH only, never the current folder).
+  const { resolveCommand } = await import("./safe-spawn.mjs");
+  const { statSync } = await import("node:fs");
+  if (process.platform !== "win32") {
+    const dirs = String(process.env.PATH || "").split(path.delimiter).filter((d) => path.isAbsolute(d));
+    const hit = dirs.map((d) => path.join(d, name)).find((p) => { try { return statSync(p).isFile(); } catch { return false; } });
+    return { name: `${name} on PATH`, ok: Boolean(hit), note: hit ? `${hit} (${purpose})` : `not found (${purpose})` };
+  }
+  const r = resolveCommand(name);
   return new Promise(resolve => {
-    const child = spawn(process.platform === "win32" ? "where" : "which", [name], { stdio: "pipe" });
-    let out = "";
-    child.stdout.on("data", c => out += c);
-    child.on("close", code => {
-      const ok = code === 0 && out.trim().length > 0;
-      resolve({ name: `${name} on PATH`, ok, note: ok ? `${out.trim().split(/\s+/)[0]} (${purpose})` : `not found (${purpose})` });
-    });
-    child.on("error", () => {
-      resolve({ name: `${name} on PATH`, ok: false, note: `error checking PATH (${purpose})` });
-    });
+    if (r.cmd) resolve({ name: `${name} on PATH`, ok: true, note: `${r.file ?? r.cmd}${r.via === "npm-shim" ? ` → node ${r.prefix[0]}` : ""} (${purpose})` });
+    else resolve({ name: `${name} on PATH`, ok: false, note: r.via === "unreadable-shim" ? `${r.file}: ad can't tell what it runs without a shell (${purpose})` : `not found (${purpose})` });
   });
 }
 
@@ -1486,6 +1573,53 @@ async function cmdRoute(sub, opts) {
 
 async function cmdMemory(sub, opts) {
   switch (sub) {
+    case "held": {
+      // What memory keeps back; accept / release / drop only from your own terminal.
+      const ep = await import("./memory/episodic.mjs");
+      const { hookProjectKeys } = await import("./memory/scope.mjs");
+      const { memoryHeld } = await import("./memory/held.mjs");
+      const handle = await ep.db();
+      if (!handle) {
+        console.error("agent-daemon: better-sqlite3 not installed — no episodic store");
+        return 1;
+      }
+      const keys = opts.allProjects ? null : await hookProjectKeys(opts.cwd);
+      const [action, ref] = opts.rest ?? [];
+      const readline = await import("node:readline/promises");
+      const io = {
+        ask: async (q) => {
+          const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+          try { return await rl.question(q); } finally { rl.close(); }
+        },
+      };
+      return memoryHeld(action, { ref, keys, handle, json: opts.json, io });
+    }
+    case "scan": {
+      // One-time check of notes stored before the secret filter (runs once;
+      // later runs say so). Hooks never run it.
+      const ep = await import("./memory/episodic.mjs");
+      const { runSafetyScan } = await import("./memory/safety.mjs");
+      const handle = await ep.db();
+      if (!handle) {
+        console.error("agent-daemon: better-sqlite3 not installed — no episodic store to check");
+        return 1;
+      }
+      const r = runSafetyScan(handle);
+      if (opts.outputJson) {
+        console.log(JSON.stringify(r));
+        return 0;
+      }
+      if (r.busy) {
+        console.error("Memory is busy (another ad process is writing). Try again in a moment.");
+        return 1;
+      }
+      if (r.skipped) {
+        console.log("Older memory notes were already checked.");
+        return 0;
+      }
+      console.log(`Checked ${r.checked} notes: ${r.learnings + r.facts} held back.`);
+      return 0;
+    }
     case "stats": {
       const ep = await import("./memory/episodic.mjs");
       const s = await ep.stats();
@@ -1582,12 +1716,10 @@ async function cmdViewer(opts) {
   console.log(`agent-daemon: viewer → ${outPath}`);
 
   if (opts.open) {
-    const cmd = process.platform === "win32" ? `start "" "${outPath}"`
-      : process.platform === "darwin" ? `open "${outPath}"`
-      : `xdg-open "${outPath}"`;
-    exec(cmd, (err) => {
-      if (err) console.error(`agent-daemon: could not auto-open (${err.message}) — open ${outPath} manually`);
-    });
+    // The path is one argument to the OS opener; no shell reads it (an --out
+    // name with & or $(…) stays a file name).
+    const { openPath } = await import("./harness/io.mjs");
+    if (!(await openPath(outPath))) console.error(`agent-daemon: could not auto-open — open ${outPath} manually`);
   }
   return 0;
 }
@@ -2009,9 +2141,16 @@ async function cmdSpawn(opts) {
     console.error("agent-daemon spawn: --task is required");
     return 1;
   }
-  if (opts.role.length > 64 || /[\/\\:*?"<>|]/.test(opts.role)) {
-    console.error("agent-daemon spawn: --role contains invalid characters or is too long");
-    return 1;
+  {
+    const { checkModel, checkName } = await import("./safe-spawn.mjs");
+    try {
+      checkName(opts.team, "--team");
+      checkName(opts.role, "--role");
+      if (opts.model) checkModel(opts.model);
+    } catch (e) {
+      console.error(`agent-daemon spawn: ${e.message}`);
+      return 1;
+    }
   }
 
   const { loadTeam, listTasks } = await import("./orchestration/team.mjs");
@@ -2199,7 +2338,8 @@ async function main(argv) {
         "max-tokens":     { type: "string" },
         "accept-risk":    { type: "boolean" },
         port:             { type: "string" },
-        edits:            { type: "boolean" }
+        edits:            { type: "boolean" },
+        "allow-home-folder": { type: "boolean" }
       },
       allowPositionals: true,
       strict: false
@@ -2260,7 +2400,9 @@ async function main(argv) {
       ...opts,
       applyMerges: parsed.values["apply-merges"] || false,
       applyStale: parsed.values["apply-stale"] || false,
-      allProjects: parsed.values["all-projects"] || false
+      allProjects: parsed.values["all-projects"] || false,
+      json: parsed.values.json || false,
+      rest: parsed.positionals?.slice(1) ?? []
     });
     case "route":          return cmdRoute(parsed.positionals?.[0], { ...opts, days: parsed.values.days, json: parsed.values.json });
     case "skill":          return cmdSkill(parsed.positionals?.[0], {
@@ -2305,7 +2447,7 @@ async function main(argv) {
     }
     case "schedule": {
       const { cmdSchedule } = await import("./harness/schedule.mjs");
-      return cmdSchedule(parsed.positionals[0], parsed.positionals.slice(1), { cwd: parsed.values.cwd || process.cwd() });
+      return cmdSchedule(parsed.positionals[0], parsed.positionals.slice(1), { cwd: parsed.values.cwd || process.cwd(), allowHomeFolder: Boolean(parsed.values["allow-home-folder"]) });
     }
     case "tools": {
       const { cmdTools } = await import("./harness/tools.mjs");
@@ -2319,6 +2461,7 @@ async function main(argv) {
         model: parsed.values.model,
         resume: parsed.values.resume,
         limits: { maxIterations: num("max-iterations"), maxMinutes: num("max-minutes"), maxTokens: num("max-tokens") },
+        allowHomeFolder: Boolean(parsed.values["allow-home-folder"]),
         clientVersion: VERSION
       });
     }
@@ -2338,6 +2481,8 @@ async function main(argv) {
     }
     case "tui": {
       if (!parsed.values.preview) {
+        // The one-time check of older memory notes (never from a hook).
+        await (await import("./memory/safety.mjs")).runSafetyScanOnce();
         const { cmdTui } = await import("./tui/main.mjs");
         return cmdTui({
           cwd: parsed.values.cwd || process.cwd(),
@@ -2345,6 +2490,7 @@ async function main(argv) {
           sandbox: parsed.values.sandbox,
           resume: parsed.values.resume,
           last: parsed.values.last,
+          allowHomeFolder: Boolean(parsed.values["allow-home-folder"]),
           clientVersion: VERSION
         });
       }
@@ -2366,6 +2512,7 @@ async function main(argv) {
         model: parsed.values.model,
         sandbox: parsed.values.sandbox,
         resume: parsed.values.resume,
+        allowHomeFolder: Boolean(parsed.values["allow-home-folder"]),
         clientVersion: VERSION
       });
     }
@@ -2378,6 +2525,7 @@ async function main(argv) {
         model: parsed.values.model,
         sandbox: parsed.values.sandbox,
         json: parsed.values.json || false,
+        allowHomeFolder: Boolean(parsed.values["allow-home-folder"]),
         clientVersion: VERSION
       });
     }

@@ -483,3 +483,117 @@ test("25: a real folder that appears at codex-home mid-move is never removed by 
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// ---------- P0.3b: the engine lease ----------
+import { spawn as spawnChild } from "node:child_process";
+import { fileURLToPath as toPath } from "node:url";
+import { createEngine } from "../src/engine/index.mjs";
+import { sweepDeadLeases } from "../src/lock.mjs";
+
+const FAKE_SERVER = { cmd: process.execPath, prefix: [toPath(new URL("../testkit/fake-codex-app-server.mjs", import.meta.url))], source: "test-double" };
+
+test("P0.3b: an engine with no thread holds a lease, and migrate refuses until it closes", async () => {
+  const root = tempRoot();
+  try {
+    shape2_2(join(root, "codex-home"));
+    const engine = await createEngine({ homeRoot: root, lockDir: join(root, "locks"), command: FAKE_SERVER });
+    try {
+      const { code, err } = await run(root);
+      assert.equal(code, 1);
+      assert.match(err, /an ad session is running \(pid \d+/);
+    } finally {
+      await engine.close();
+    }
+    const end = Date.now() + 10_000;
+    while (readdirSync(join(root, "locks")).some((f) => f.startsWith("engine-")) && Date.now() < end) await new Promise((r) => setTimeout(r, 50));
+    assert.equal((await run(root)).code, 0, "after close the move goes ahead");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("P0.3b: a migrate in the gap right after an engine releases the migrate lock still sees the engine", async () => {
+  const root = tempRoot();
+  try {
+    shape2_2(join(root, "codex-home"));
+    let inGap = null;
+    const engine = await createEngine({
+      homeRoot: root,
+      lockDir: join(root, "locks"),
+      command: FAKE_SERVER,
+      testHooks: { afterMigrateRelease: async () => { inGap = await run(root); } },
+    });
+    await engine.close();
+    assert.equal(inGap.code, 1, "the lease existed before migrate was released");
+    assert.match(inGap.err, /an ad session is running/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("P0.3b: an engine with an explicit home takes the migrate lock too", async () => {
+  const root = tempRoot();
+  try {
+    const home = join(root, "custom");
+    mkdirSync(home, { recursive: true });
+    const hold = acquireLock("migrate", { dir: join(root, "locks") });
+    try {
+      await assert.rejects(createEngine({ home, lockDir: join(root, "locks"), lockWaitMs: 200, command: FAKE_SERVER }), (e) => e.code === "HOME_BUSY");
+    } finally {
+      hold();
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("P0.3b: the holder died but its engine child lives: migrate still refuses; once the child is gone the lease is swept", async () => {
+  const root = tempRoot();
+  const child = spawnChild(process.execPath, ["-e", "setTimeout(() => {}, 120000)"], { stdio: "ignore" });
+  try {
+    shape2_2(join(root, "codex-home"));
+    await new Promise((r) => child.once("spawn", r));
+    mkdirSync(join(root, "locks"), { recursive: true });
+    const lease = join(root, "locks", "engine-1-dead.lock");
+    // A holder pid that no longer runs (very large), its engine child alive.
+    writeFileSync(lease, JSON.stringify({ pid: 2_000_000_000, startedAt: Date.now() - 60_000, threadId: "engine-1-dead", token: "t", kind: "engine", home: join(root, "codex-home"), child: { pid: child.pid, startedAt: Date.now() } }));
+    // A stale heartbeat (the holder is gone): only the live child keeps it held.
+    const old = new Date(Date.now() - 600_000);
+    realFs.utimesSync(lease, old, old);
+    const { code, err } = await run(root);
+    assert.equal(code, 1);
+    assert.match(err, new RegExp(`engine pid ${child.pid}`));
+    child.kill();
+    await new Promise((r) => child.once("exit", r));
+    assert.equal(sweepDeadLeases({ dir: join(root, "locks") }), 1);
+    assert.equal(existsSync(lease), false);
+  } finally {
+    try { child.kill(); } catch { /* gone */ }
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("P0.3b: a lease plus a thread lock from one process count as one session; a lease for a custom home doesn't block", async () => {
+  const root = tempRoot();
+  try {
+    shape2_2(join(root, "codex-home"));
+    const lockDir = join(root, "locks");
+    const a = acquireLock("engine-x", { dir: lockDir, meta: { kind: "engine", home: join(root, "codex-home") } });
+    const b = acquireLock("thread-1", { dir: lockDir });
+    try {
+      const { err } = await run(root);
+      assert.match(err, /an ad session is running \(pid \d+\)/, "one session, not two");
+    } finally {
+      a();
+      b();
+    }
+    const custom = acquireLock("engine-y", { dir: lockDir, meta: { kind: "engine", home: join(root, "elsewhere") } });
+    try {
+      assert.equal((await run(root)).code, 0, "a custom home's engine doesn't block the move");
+    } finally {
+      custom();
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

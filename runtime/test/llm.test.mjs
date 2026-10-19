@@ -88,6 +88,27 @@ test("legacy backend: a non-strict schema is embedded in the prompt, not sent as
   }
 });
 
+test("auto: the real 'claude isn't on PATH' result falls back to the engine", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ad-llm-"));
+  const seen = [];
+  const { callHeadlessClaude } = await import("../src/claude.mjs");
+  const saved = process.env.AD_CLAUDE_BIN;
+  process.env.AD_CLAUDE_BIN = join(root, "no-such-claude.exe");
+  try {
+    const missing = await callHeadlessClaude({ userMessage: "q", systemPromptText: "s" });
+    assert.equal(missing.ok, false);
+    assert.equal(missing.missing, true);
+    assert.match(missing.error, /claude isn't on PATH/);
+    const r = await callLlm({ userMessage: "q" }, { callClaude: callHeadlessClaude, engineFactory: fakeFactory(root, seen) });
+    assert.equal(r.ok, true, r.error);
+    assert.equal(seen.length, 1, "the engine answered");
+  } finally {
+    if (saved === undefined) delete process.env.AD_CLAUDE_BIN;
+    else process.env.AD_CLAUDE_BIN = saved;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("auto: the fallback note names ad's engine", async () => {
   const root = mkdtempSync(join(tmpdir(), "ad-llm-"));
   const seen = [];

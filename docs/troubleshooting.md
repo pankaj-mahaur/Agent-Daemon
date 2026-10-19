@@ -610,9 +610,9 @@ Other choices: `nvim`, `vim`, `nano`, or Notepad++ with `-multiInst -nosession`.
 
 **Symptom:** "Not moved: something is using … Nothing changed.", or "Not moved: an ad session is running (pid …)."
 
-**Cause:** a file or working folder inside is held open: another Agent Daemon window, an editor's agent panel, a background loop, a terminal, or antivirus. The second text means an ad session holds a conversation open.
+**Cause:** a file or working folder inside is held open: another Agent Daemon window, an editor's agent panel, a background loop, a terminal, or antivirus. The second text means an ad process is using the engine: a session (even one with no conversation yet, or one suspended with Ctrl+Z), `ad run`, `ad loop`, a team worker, a digest, or `ad engine ui`. When it names an `engine pid`, that engine is still running even if the ad that started it has gone.
 
-**Fix:** close it and run `ad migrate` (or `ad migrate --undo`) again.
+**Fix:** close it and run `ad migrate` (or `ad migrate --undo`) again. An engine whose ad crashed: end that engine pid (Task Manager, or `kill <pid>`). Records of processes that are gone are cleared by the next `ad migrate` by itself.
 
 ---
 
@@ -641,6 +641,72 @@ For "The engine reported a problem", inspect those details first. `ad doctor` sh
 **Cause:** `codex-home` (or `engine`) is a link you made, to a drive or folder that isn't there right now: a USB drive, an encrypted volume that isn't unlocked yet, a network share. ad never replaces a link it didn't make, so it doesn't start over in a new, empty folder. It can also be ad's own link from before `~/.agent-daemon` moved (a renamed user profile): it still points at the old place.
 
 **Fix:** connect or unlock the drive and start ad again. If that folder is gone for good, or the link points at your old profile, remove the link (`rmdir codex-home` in `~/.agent-daemon` on Windows, `rm codex-home` elsewhere; this removes only the link). The next start makes the link again, or a new folder if there is none.
+
+## 41. `ad sp`: a name "can only use letters, digits, ".", "_" and "-""
+
+**Symptom:** `agent-daemon spawn: --role "dev ops" can only use letters, digits, ".", "_" and "-" (max 64).` (or `--team`, `agentName`), or `--model "…" isn't a model name ad can pass on.`
+
+**Cause:** the team id, role and agent name become a git branch (`team/<team>/<agent>`) and a folder name, so ad accepts only plain names: letters, digits, `.`, `_` and `-`, starting with a letter or digit, at most 64 characters, not ending in `.` or `.lock`. Model ids may also use `:`, `/`, `@` and `+`.
+
+**Fix:** rename the role in the team (for example `dev-ops`), or pass a plain `--model` id.
+
+## 42. Claude workers: `claude isn't on PATH`, or `Found claude.cmd, but ad can't tell what it runs`
+
+**Symptom:** `ad sp --engine claude` (or a digest that uses Claude Code) says `claude isn't on PATH. Install Claude Code, or set AD_CLAUDE_BIN to its path.`, or `Found …\claude.cmd, but ad can't tell what it runs without a shell. …`
+
+**Cause:** ad starts Claude Code without a shell and, on Windows, only by its full path from PATH (never from the current folder). An npm-installed `claude.cmd` is read to find the `cli.js` it runs; a `.cmd` of another shape can't be run safely without `cmd.exe`, so ad refuses it.
+
+**Fix:** install Claude Code's native build (`claude.exe`), or set `AD_CLAUDE_BIN` to the full path of `claude.exe` or of the `cli.js` your `claude.cmd` starts. `git isn't on PATH.` has the same cause for git: install Git for Windows, or add its `cmd` folder to PATH.
+
+## 43. Claude workers: `Your Claude Code doesn't know --append-system-prompt-file`
+
+**Cause:** ad passes a worker's instructions in a temporary file, not on the command line, and older Claude Code versions don't have that option.
+
+**Fix:** `claude update`, then retry.
+
+## 44. Memory tools say "This memory server isn't bound to a project"
+
+**Cause:** the memory server serves one project, chosen when it starts, and couldn't tell which: no `--project`, no project from ad or Claude Code, and its working folder isn't inside a git repo and holds no `.agent-daemon` folder. Home, a drive root, system folders and ad's own folders never count. It serves nothing rather than guess.
+
+**Fix:** open the session in the project folder (a git repo). For Claude Code, register the server with `--host claude-code` (see [mcp/agent-daemon-memory/README.md](../mcp/agent-daemon-memory/README.md#install-claude-code)); for another host, pass `--project <folder>` in its server config.
+
+## 45. A note I expected doesn't show up in memory
+
+**Cause:** one of these, by design:
+- it was written by the agent about itself (from its own turn), so it waits as **pending** for your review;
+- the injection screen flagged it, or it held a provider key, so it is **held back** (`ad memory scan` holds back older notes like this once);
+- it belongs to another project, or it was a "global" note from ad 3.0 written in another project (those stay in their project);
+- it is a user fact observed in another project.
+
+**Fix:** `ad memory held` lists what is waiting or held back in this project. Run it in your own terminal: `ad memory held accept L12` serves a waiting note, `release` brings back one the injection screen held (never one holding a secret), `drop` clears it; each asks you to type the id. Or say it again in your own words, or use `/remember` in `ad tui`: what you type yourself applies at once.
+
+## 46. `ad doctor` or memory says two folders share one memory key
+
+**Symptom:** the memory server answers "This folder shares its memory key with another folder…", and SessionStart shows no learnings there.
+
+**Cause:** memory keys come from folder paths with `/`, `\` and `:` turned into `-`, so `/x/a/b` and `/x/a-b` get the same key. Serving it would mix two projects' notes, so ad keeps both out.
+
+**Fix:** nothing is lost; the notes stay in the database. A later release gives each project its own ID and ends this. Renaming one of the folders also separates them for new notes.
+
+## 47. `This editor runs through cmd.exe, which can't take that file name safely`
+
+**Cause:** your `EDITOR` (or `VISUAL`) is a `.cmd` file, such as VS Code's `code.cmd`, which only `cmd.exe` can start, and the file ad asked it to open has `%`, `"` or a line break in its path. `cmd.exe` would read those as commands or variables, so ad refuses instead of guessing.
+
+**Fix:** set `EDITOR` to the editor's `.exe` (for VS Code: `"C:\Users\<you>\AppData\Local\Programs\Microsoft VS Code\Code.exe" --wait`), or use an editor whose command is an `.exe`. `The editor "x" isn't on PATH` means ad looked only on PATH (never in the current folder): set `EDITOR` to the full path.
+
+## 48. `Pick a project folder`, or `Run this in a project folder`
+
+**Symptom:** `ad` opens a "Pick a project folder" list instead of the composer; `/cd` says "That folder would load your own … skills from ~/.codex"; `ad run`/`chat`/`loop` print "ad ran in your home folder, where your own … skills load"; `ad schedule add` refuses; a resumed conversation or a web/editor client gets the "Run this in a project folder" text (code `HOME_FOLDER_REFUSED`).
+
+**Cause:** the folder is your home folder, or a folder under a home folder that is a git repository, and your own `~/.codex/` (from your own install of the engine ad runs on) has skills, or settings that ad's engine trusts. The engine reads a folder's `.codex/` as that project's settings and loads its skills even while the folder isn't trusted, so your own install's skills would join every conversation there. A resumed conversation is checked against the folder it was started in.
+
+**Fix:**
+- Open ad in a project folder: in the list, Enter opens your last one; or `cd` to the project first, or pass `--cwd <project>`.
+- To work there anyway, add `--allow-home-folder`, or set `AD_ALLOW_HOME_FOLDER=1`. Choosing **Always open home without asking** in the list saves `"allowHomeFolder": true` in `~/.agent-daemon/tui/prefs.json`.
+- Scheduled jobs from 3.0 in that folder keep running; `ad doctor` lists them under "Home-folder jobs". To move one, remove it and add it again with `--cwd <project>`.
+- If your home folder itself must be a git repository, keep projects in their own repositories; a project with its own `.git` is never affected. In such a home, ad also doesn't ask to trust a folder without its own repository ("ad didn't offer to trust this folder"): trusting it would apply your own settings from `~/.codex/config.toml` there.
+
+See [harness.md](harness.md#working-in-your-home-folder).
 
 ---
 

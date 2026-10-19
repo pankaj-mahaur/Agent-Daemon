@@ -7,6 +7,7 @@
 // handing the terminal to another program) is built here as `actions`.
 
 import { spawn, execFile } from "node:child_process";
+import { editorCommand, editorInvocation, resolveGit, resolvedArgv } from "../safe-spawn.mjs";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import path from "node:path";
@@ -37,6 +38,9 @@ import { preflight } from "./preflight.mjs";
 import { T } from "./view/theme.mjs";
 import { harnessIdentity, skillRoots } from "../harness/setup.mjs";
 import { setSyntaxTheme } from "./view/highlight.mjs";
+import { homeFolderAllowed, recentProjects } from "../harness/home-folder.mjs";
+import { launcherItems, LAUNCHER_TITLE } from "./home-launcher.mjs";
+import { homeFolderRefusal, homeLauncherWhy, homeTrustSkippedNote } from "../engine/attribution.mjs";
 
 /* ------------------------------------------------------------------ */
 /* Small terminal helpers                                              */
@@ -90,27 +94,18 @@ export function splitArgs(s) {
 /* External editor (Ctrl+G)                                            */
 /* ------------------------------------------------------------------ */
 
-/** The editor command: $VISUAL, then $EDITOR, else notepad on Windows and vi elsewhere. */
-export function editorCommand(env = process.env, platform = process.platform, exists = existsSync) {
-  const raw = (env.VISUAL || env.EDITOR || (platform === "win32" ? "notepad" : "vi")).trim();
-  // An unquoted path with spaces (C:\Program Files\…\notepad++.exe) is one command.
-  if (/[\\/]/.test(raw) && exists(raw)) return { cmd: raw, args: [] };
-  const [cmd, ...args] = splitArgs(raw);
-  return { cmd, args };
-}
+// The editor command ($VISUAL, $EDITOR, notepad / vi) lives in safe-spawn.mjs,
+// shared with `ad review`.
+export { editorCommand };
 
-// .cmd / .bat shims (code, subl) need cmd.exe on Windows: every argument is quoted.
-function editorSpawn(cmd, args, platform) {
-  if (platform !== "win32" || /\.exe$/i.test(cmd) || !/\.(cmd|bat)$|^[^.\\/]+$/i.test(cmd) || /^notepad$/i.test(cmd)) return { cmd, args };
-  const quote = (a) => `"${String(a).replace(/"/g, '""')}"`;
-  return { cmd: process.env.ComSpec || "cmd.exe", args: ["/d", "/s", "/c", `"${[cmd, ...args].map(quote).join(" ")}"`], verbatim: true };
-}
+// How the editor starts: by full path, through cmd.exe only for a .cmd/.bat
+// editor (safe-spawn.mjs editorInvocation).
 
 /**
  * Edits `text` in the user's editor (the terminal is handed over) and returns
  * the result, or null when the editor failed. The temp file is private and removed.
  */
-export async function editInEditor(text, { run, env = process.env, platform = process.platform, now = () => Date.now() } = {}) {
+export async function editInEditor(text, { run, env = process.env, platform = process.platform, now = () => Date.now(), resolve, cmdExe } = {}) {
   const { mkdtempSync, readFileSync: read, rmSync, writeFileSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
   const dir = mkdtempSync(path.join(tmpdir(), "ad-prompt-"));
@@ -118,7 +113,7 @@ export async function editInEditor(text, { run, env = process.env, platform = pr
   try {
     writeFileSync(file, text, { mode: 0o600 });
     const { cmd, args } = editorCommand(env, platform);
-    const spawnAs = editorSpawn(cmd, [...args, file], platform);
+    const spawnAs = editorInvocation(cmd, [...args, file], { platform, env, resolve, cmdExe });
     const t0 = now();
     const code = await run(spawnAs.cmd, spawnAs.args, spawnAs.verbatim);
     if (code !== 0) return null;
@@ -136,9 +131,17 @@ export async function editInEditor(text, { run, env = process.env, platform = pr
 /* git                                                                 */
 /* ------------------------------------------------------------------ */
 
+// git by its full path from PATH, so a git.exe in the project never runs.
 function git(cwd, args, { timeout = 0 } = {}) {
   return new Promise((resolve) => {
-    execFile("git", args, { cwd, maxBuffer: 32 * 1024 * 1024, windowsHide: true, timeout }, (err, stdout, stderr) => resolve({ ok: !err, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") }));
+    let argv;
+    try {
+      argv = resolvedArgv(resolveGit(), args);
+    } catch (e) {
+      resolve({ ok: false, stdout: "", stderr: e.message });
+      return;
+    }
+    execFile(argv[0], argv[1], { cwd, maxBuffer: 32 * 1024 * 1024, windowsHide: true, timeout, shell: false }, (err, stdout, stderr) => resolve({ ok: !err, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") }));
   });
 }
 
@@ -297,7 +300,29 @@ export async function cmdTui(opts = {}) {
     await renderer.start();
     renderer.frame({ lines: [[{ text: "Starting the engine\u{2026}", style: T.dim }]] });
 
-    const start = () => startHarnessEngine({ cwd, home: opts.home, command: opts.command, clientVersion: opts.clientVersion, store: opts.store, err: sink, detached: true, experimental: true, interactive: true });
+    // A folder that would load the user's own engine home (P0.2a): pick a project
+    // folder first, unless an override allows it (flag, AD_ALLOW_HOME_FOLDER, pref).
+    let allowHomeFolder = homeFolderAllowed({ flag: opts.allowHomeFolder === true, prefsFile: opts.prefsFile }).allowed;
+    // → false when the user left (Esc); else cwd or allowHomeFolder is updated.
+    const pickHomeFolder = async (risk) => {
+      const recent = recentProjects(readState(opts.stateFile ?? DEFAULT_STATE_FILE), { exclude: [cwd] });
+      const choice = await pickOnce({ io, renderer, title: LAUNCHER_TITLE, intro: [[{ text: homeLauncherWhy(risk), style: T.dim }]], items: launcherItems({ recent, risk }) });
+      if (!choice) {
+        renderer.frame({ lines: [] });
+        exitHint = homeFolderRefusal(risk);
+        return false;
+      }
+      if (choice.cwd) cwd = path.resolve(choice.cwd);
+      else {
+        allowHomeFolder = true;
+        if (choice.always) adPrefs.set("allowHomeFolder", true);
+      }
+      return true;
+    };
+    // Before the engine starts: skills (and settings with no trust) need no engine.
+    const homeRisk = engineHome.homeLayerRisk(cwd);
+    if (homeRisk && !allowHomeFolder && !(await pickHomeFolder(homeRisk))) return 2;
+    const start = () => startHarnessEngine({ cwd, home: opts.home, command: opts.command, clientVersion: opts.clientVersion, store: opts.store, err: sink, detached: true, experimental: true, interactive: true, allowHomeFolder });
     let started = await start();
     while (!started.engine && started.code === 2 && /Not logged in/.test(started.error ?? "")) {
       const choice = await pickOnce({
@@ -321,12 +346,38 @@ export async function cmdTui(opts = {}) {
       return started.code ?? 2;
     }
     engine = started.engine;
+    // Again with ad's real settings: a trusted folder under a git home applies the home's settings.
+    // Another folder picked here: the engine starts again there (its default
+    // folder and setup follow the work folder), and that folder is checked too.
+    while (!allowHomeFolder) {
+      const late = await engine.homeFolderRisk(cwd);
+      if (!late) break;
+      const before = cwd;
+      if (!(await pickHomeFolder(late))) return 2;
+      if (allowHomeFolder) {
+        engine.allowHomeFolder = true;
+        break;
+      }
+      if (cwd === before) continue;
+      await engine.close();
+      engine = null;
+      started = await start();
+      if (!started.engine) {
+        renderer.frame({ lines: [] });
+        exitHint = started.error;
+        return started.code ?? 2;
+      }
+      engine = started.engine;
+    }
 
-    // Folder trust (S3): asked once per folder, kept in ad's engine home.
+    // Folder trust (S3): asked once per folder, kept in ad's engine home. Never
+    // offered where trusting would also apply the user's own engine settings (P0.2a).
     const config = await engine.readConfig().catch(() => ({}));
     const projects = config.projects ?? {};
     const known = Object.keys(projects).find((k) => engineHome.canonical(k) === engineHome.canonical(cwd));
-    if (!known && engineHome.canonical(cwd) !== engineHome.canonical(homedir())) {
+    const trustLoadsHome = engineHome.homeLayerRisk(cwd, { trusted: [cwd] })?.loads.includes("settings") && !allowHomeFolder;
+    if (trustLoadsHome && !known) setupNotes.push(homeTrustSkippedNote);
+    if (!known && !trustLoadsHome && engineHome.canonical(cwd) !== engineHome.canonical(homedir())) {
       const trust = await pickOnce({
         io,
         renderer,
@@ -430,9 +481,13 @@ export async function cmdTui(opts = {}) {
         return (await session.engine.files.search(q, [cwd], { token: "ad-mention" })).map((f) => f.path);
       },
       gitDiff: () => gitDiff(cwd),
+      // The user's own words: stored active in this project (never global).
       remember: opts.memory === false ? undefined : async (text) => {
         const { insertLearning, projectSlug } = await import("../memory/episodic.mjs");
-        await insertLearning({ category: "pattern", text, projectSlug: projectSlug(cwd), confidence: 0.9, evidence: "ad tui /remember", tags: ["remember"] });
+        const { redactSecrets } = await import("../security/secret-patterns.mjs");
+        const r = redactSecrets(text);
+        await insertLearning({ category: "pattern", text: r.text, projectSlug: projectSlug(cwd), confidence: 0.9, evidence: "ad tui /remember", tags: ["remember"], origin: "user" });
+        return r;
       },
       ad,
       ...(undoKit ? { undo: (o) => undoKit.undo(session, o), onTyping: () => undoKit.onTyping() } : {}),
@@ -491,7 +546,7 @@ export async function cmdTui(opts = {}) {
     // `ad tui "<prompt>"`: the first prompt is sent right away.
     if (opts.prompt) app.send(opts.prompt);
     await app.done;
-    state[key] = { lastSeen: Date.now() };
+    state[key] = { lastSeen: Date.now(), path: cwd }; // path: as typed, for the launcher's list
     await writeState(stateFile, state);
     const tid = session.state.thread?.id;
     const total = session.state.tokens?.total?.total;

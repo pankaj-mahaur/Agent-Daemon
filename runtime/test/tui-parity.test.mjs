@@ -160,21 +160,24 @@ test("editor: $VISUAL, then $EDITOR (with its arguments), else notepad / vi; a f
   assert.ok(!existsSync(seenFile), "the temp file is removed");
   assert.equal(await editInEditor("draft", { env: { EDITOR: "x" }, platform: "linux", run: async () => 1 }), null);
   // An editor that returns at once with nothing changed didn't wait: the prompt is kept, with a reason.
-  await assert.rejects(editInEditor("draft", { env: { EDITOR: "notepad" }, platform: "win32", run: async () => 0 }), /didn't wait|without waiting/);
-  // .cmd shims (code, subl) go through cmd.exe with every argument quoted.
+  await assert.rejects(editInEditor("draft", { env: { EDITOR: "notepad" }, platform: "win32", resolve: () => ({ cmd: "C:\\Windows\\System32\\notepad.exe", prefix: [], via: "exe" }), run: async () => 0 }), /didn't wait|without waiting/);
+  // .cmd editors that aren't npm shims (code, subl) go through cmd.exe, by full path, with every argument quoted.
   let seen = null;
   await editInEditor("d", {
     env: { EDITOR: "code --wait" },
     platform: "win32",
+    resolve: () => ({ cmd: null, via: "unreadable-shim", file: "C:\\Tools\\VS Code\\bin\\code.cmd" }),
+    cmdExe: "C:\\Windows\\System32\\cmd.exe",
     now: (() => {
       let t = 0;
       return () => (t += 5000);
     })(),
     run: async (cmd, args, verbatim) => ((seen = { cmd, args, verbatim }), 0),
   });
-  assert.match(seen.cmd, /cmd(\.exe)?$/i);
+  assert.equal(seen.cmd, "C:\\Windows\\System32\\cmd.exe");
   assert.equal(seen.verbatim, true);
-  assert.match(seen.args.at(-1), /^""code" "--wait" ".*prompt\.md""$/);
+  assert.deepEqual(seen.args.slice(0, 4), ["/d", "/v:off", "/s", "/c"]);
+  assert.match(seen.args.at(-1), /^""C:\\Tools\\VS Code\\bin\\code\.cmd" "--wait" ".*prompt\.md""$/);
   // An unquoted path with spaces is one command when it exists.
   assert.deepEqual(editorCommand({ EDITOR: "C:/Program Files/Ed/ed.exe" }, "win32", () => true), { cmd: "C:/Program Files/Ed/ed.exe", args: [] });
 });

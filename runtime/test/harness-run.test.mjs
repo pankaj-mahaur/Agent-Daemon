@@ -3,6 +3,8 @@
 // and said so on stderr; stdout carries only the agent's text (pipeable).
 
 import { test } from "node:test";
+import { projectConfigFolder } from "../src/engine/attribution.mjs";
+const DOT = projectConfigFolder; // the engine's per-project folder name
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -67,4 +69,72 @@ test("describeItem summarizes tool activity", () => {
 test("ad run prints a message that arrives whole (no deltas)", async () => {
   const r = await run("edit-file");
   assert.equal(r.stdout, "edit[decline]\n");
+});
+
+// P0.2a: in a folder that would load the user's own ~/.codex, ad run keeps
+// working during 3.0.x with a note; the override says what loads.
+async function inFakeHome(fn) {
+  const { mkdirSync, writeFileSync } = await import("node:fs");
+  const home = mkdtempSync(join(tmpdir(), "ad-run-userhome-"));
+  mkdirSync(join(home, DOT, "skills", "mine"), { recursive: true });
+  writeFileSync(join(home, DOT, "skills", "mine", "SKILL.md"), "---\nname: mine\ndescription: x\n---\n");
+  const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  try {
+    return await fn(home);
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+
+test("P0.2a: a non-interactive run in a refused folder prints the 3.0.x note and runs", async () => {
+  await inFakeHome(async (home) => {
+    const r = await run("do the thing", { cwd: home });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stderr, /From 3\.1 this needs --allow-home-folder/);
+    assert.equal(r.stdout, "pong[decline]\n");
+  });
+});
+
+test("P0.2a: --allow-home-folder runs there with the note that says what loads", async () => {
+  await inFakeHome(async (home) => {
+    const r = await run("do the thing", { cwd: home, allowHomeFolder: true });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stderr, /Working in your home folder: your own \S+ skills from ~\/\.\w+ load in this session/);
+    assert.doesNotMatch(r.stderr, /From 3\.1/);
+  });
+});
+
+test("P0.2a: a trusted folder under a git home with only home settings gets the 3.0.x grace too (judged with ad's trust)", async () => {
+  const { mkdirSync, writeFileSync } = await import("node:fs");
+  const user = mkdtempSync(join(tmpdir(), "ad-run-githome-"));
+  mkdirSync(join(user, ".git"), { recursive: true });
+  writeFileSync(join(user, ".git", "HEAD"), "ref: refs/heads/main\n");
+  mkdirSync(join(user, DOT), { recursive: true });
+  writeFileSync(join(user, DOT, "config.toml"), 'model = "mine"\n');
+  const work = join(user, "work");
+  mkdirSync(work, { recursive: true });
+  const engineHome = join(user, "engine-home");
+  mkdirSync(engineHome, { recursive: true });
+  writeFileSync(join(engineHome, "fake-config.json"), JSON.stringify({ projects: { [work]: { trust_level: "trusted" } } }));
+  writeFileSync(join(engineHome, ".agent-daemon-managed"), "test\n");
+  const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  process.env.HOME = user;
+  process.env.USERPROFILE = user;
+  try {
+    const r = await run("do the thing", { cwd: work, home: engineHome });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stderr, /From 3\.1 this needs --allow-home-folder/);
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    rmSync(user, { recursive: true, force: true });
+  }
 });

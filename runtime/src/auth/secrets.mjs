@@ -14,6 +14,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { systemTool } from "../safe-spawn.mjs";
 
 const NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const SERVICE = "agent-daemon";
@@ -46,8 +47,13 @@ const PS_PROTECT =
 const PS_UNPROTECT =
   "$ErrorActionPreference='Stop'; $c=[Console]::In.ReadToEnd().Trim(); $ss=ConvertTo-SecureString -String $c; " +
   "$b=[Runtime.InteropServices.Marshal]::SecureStringToBSTR($ss); try { [Console]::Out.Write([Runtime.InteropServices.Marshal]::PtrToStringBSTR($b)) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($b) }";
-const powershell = (script, input) =>
-  run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], input, windowsPowerShellEnv());
+// By absolute path: it receives secret values on stdin, so a powershell.exe
+// planted in the folder `ad auth` runs from must never be the one started.
+const powershell = (script, input) => {
+  const exe = systemTool("powershell.exe");
+  if (!exe) throw new Error("Windows PowerShell isn't in %SystemRoot%\\System32, so ad can't encrypt or read the secret.");
+  return run(exe, ["-NoProfile", "-NonInteractive", "-Command", script], input, windowsPowerShellEnv());
+};
 
 // Write a file that is 0600 from its first byte (an existing, wider file is
 // removed first rather than overwritten in place).

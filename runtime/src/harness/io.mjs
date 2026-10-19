@@ -3,6 +3,9 @@
 
 import { isEngineError, engineErrorText, engineErrorDetail } from "../engine/index.mjs";
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
+import path from "node:path";
+import { systemTool } from "../safe-spawn.mjs";
 
 const READ_TIMEOUT_MS = 5 * 60_000;
 
@@ -71,14 +74,32 @@ export function readSecret(prompt, { stdin = process.stdin, stderr = process.std
 // involved (cmd.exe `start` would interpret & in query strings). Resolves
 // true when the opener launched; on Windows that does not prove a browser
 // actually appeared, so callers should print the URL too.
-export function openUrl(url) {
+export function openUrl(url, { run = execFile } = {}) {
+  if (!/^https:\/\//i.test(url)) return Promise.resolve(false);
+  return openWith(url, run);
+}
+
+/**
+ * Open a local file (the viewer's HTML) with the OS's default app: an
+ * absolute path that exists, passed as one argument, no shell.
+ */
+export function openPath(file, { run = execFile } = {}) {
+  if (!file || !path.isAbsolute(file) || !existsSync(file)) return Promise.resolve(false);
+  return openWith(file, run);
+}
+
+// The OS opener, by full path where there is one (rundll32 in System32,
+// /usr/bin/open); xdg-open from PATH (execvp: PATH only).
+function openWith(target, run) {
   return new Promise((resolve) => {
-    if (!/^https:\/\//i.test(url)) return resolve(false);
-    const [cmd, args] =
-      process.platform === "win32" ? ["rundll32.exe", ["url.dll,FileProtocolHandler", url]]
-      : process.platform === "darwin" ? ["open", [url]]
-      : ["xdg-open", [url]];
-    execFile(cmd, args, { windowsHide: true }, (err) => resolve(!err));
+    let opener;
+    if (process.platform === "win32") {
+      const rundll = systemTool("rundll32.exe");
+      opener = rundll ? [rundll, ["url.dll,FileProtocolHandler", target]] : null;
+    } else if (process.platform === "darwin") opener = ["/usr/bin/open", [target]];
+    else opener = ["xdg-open", [target]];
+    if (!opener) return resolve(false);
+    run(opener[0], opener[1], { windowsHide: true, shell: false }, (err) => resolve(!err));
   });
 }
 

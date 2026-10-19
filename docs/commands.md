@@ -53,7 +53,7 @@ The engine's own rules come with the commands:
 | `/status` | yes | yes | account, model, sandbox, tokens, limits |
 | `/daemon` | no | yes | manages the engine's background server; `ad` runs its own engine and never uses it |
 | `/warnings` | yes | yes | notices kept from this session, unknown events, settings `ad` couldn't use |
-| `/cd` | yes | no | continue the conversation in another folder (the engine forks it there); asks first if the folder isn't trusted yet |
+| `/cd` | yes | no | continue the conversation in another folder (the engine forks it there); asks first if the folder isn't trusted yet. Refused for a folder that would load your own `~/.codex` skills (see [harness.md](harness.md#working-in-your-home-folder)) |
 | `/pwd`, `/cwd` | yes | yes | show the current working directory |
 | `/usage` | yes | yes | usage limits and tokens |
 | `/debug-config` | yes | yes | config layers (lowest precedence first) and requirements, from the engine; values under secret-named keys, header and env maps, URL credentials and token-like arguments masked (the engine prints them). Hidden from the popup, as in the engine's own UI |
@@ -61,7 +61,7 @@ The engine's own rules come with the commands:
 | `/statusline` | yes | yes | choose what the status line shows |
 | `/theme` | yes | no | choose the syntax colours, with a live preview: `ansi` (your terminal's colours, the default) or the engine's `catppuccin-mocha` / `catppuccin-latte`; saved as `tui.theme`. A theme `ad` doesn't ship shows as `ansi` in `ad` (the engine's own UI still uses it) |
 | `/pets`, `/pet` | no | no | `ad` doesn't draw terminal pets (they need Kitty or Sixel images) |
-| `/mcp` | yes | yes | MCP servers and their status |
+| `/mcp` | yes | yes | MCP servers and their status: ad's own settings (the engine runs in an empty launch folder), plus a trusted project's once its conversation starts |
 | `/apps` | not yet | yes | aren't planned for `ad` |
 | `/plugins` | not yet | yes | aren't planned for `ad`. `/mcp` lists MCP servers; add one in the engine's settings file |
 | `/logout` | yes | no | sign out in `ad`'s home |

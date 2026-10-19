@@ -15,6 +15,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { insertLearnings, projectSlug, observeUserFact } from "../memory/episodic.mjs";
 import { screenLearning, neutralizeText } from "./sanitize.mjs";
+import { redactSecrets } from "../security/secret-patterns.mjs";
 
 /**
  * @typedef {import("./classify.mjs").ClassifiedLearning} ClassifiedLearning
@@ -74,7 +75,21 @@ export async function applyLearnings(opts) {
   const globalAppends  = [];
   const sqliteRows     = [];
 
-  for (const item of opts.classified) {
+  for (const raw of opts.classified) {
+    // Secrets go first, before any surface (SQLite, memory files, proposals,
+    // the pending queue) sees the text.
+    const item = redactItem(raw);
+    // Who wrote it: the user's own words apply at once within their project;
+    // agent-written notes (assistant turns, agent evidence) wait as 'pending'
+    // and touch no memory file, mirror or user fact.
+    const origin = originOf(item.learning);
+    // Automatic global is off: a global target becomes a project row that
+    // asks the user for promotion (promote_request 'global').
+    const wantsGlobal = item.targets.includes("memory:global") || item.learning.scope === "global" || item.learning.promote_request === "global";
+    if (wantsGlobal) {
+      item.targets = [...new Set(item.targets.map((t) => (t === "memory:global" ? "memory:project" : t)))];
+      item.learning = { ...item.learning, scope: "project" };
+    }
     // Injection screen — the single choke point (covers both the digest path
     // and journal-drain, which bypasses extract.mjs). Suspicious learnings
     // never reach memory surfaces: they go to proposals for human review and
@@ -99,16 +114,39 @@ export async function applyLearnings(opts) {
         console.error(`agent-daemon: quarantined learning (${screen.reasons.join(", ")}) → ${path.basename(proposalPath)}`);
       }
       const l = item.learning;
+      // status 'quarantined': held back from every reader, older ad included.
       sqliteRows.push({
         sessionId: opts.sessionId || null,
-        projectSlug: l.scope === "project" ? slug : null,
+        projectSlug: slug,
         category: l.type,
         text: neutralizeText(l.text),
         evidence: neutralizeText(l.evidence_quote || ""),
         confidence: l.confidence,
         tags: l.tags,
-        appliedTo: "quarantined"
+        appliedTo: "quarantined",
+        status: "quarantined",
+        quarantineReason: `injection:${screen.reasons.join(",")}`,
+        origin
       });
+      continue;
+    }
+
+    if (origin === "agent") {
+      const l = item.learning;
+      sqliteRows.push({
+        sessionId: opts.sessionId || null,
+        projectSlug: slug,
+        category: l.type,
+        text: l.text,
+        evidence: l.evidence_quote,
+        confidence: l.confidence,
+        tags: mergeFileTags(l.tags, sessionFiles),
+        appliedTo: "pending",
+        status: "pending",
+        origin,
+        promoteRequest: wantsGlobal ? "global" : null
+      });
+      result.pending = (result.pending || 0) + 1;
       continue;
     }
 
@@ -140,24 +178,27 @@ export async function applyLearnings(opts) {
           evidence: neutralizeText(l.evidence_quote || ""),
           confidence: l.confidence,
           sessionId: opts.sessionId,
-          projectSlug: slug
+          projectSlug: slug,
+          origin
         });
         result.userFactsObserved = (result.userFactsObserved || 0) + 1;
       } catch { /* user-fact observation is best-effort */ }
     }
 
     // Build SQLite row — every learning lands in the audit trail
+    // Every new row belongs to its project; nothing is written global any more.
     const l = item.learning;
-    const isProjectScoped = item.targets.includes("memory:project") || (l.scope === "project");
     sqliteRows.push({
       sessionId: opts.sessionId || null,
-      projectSlug: isProjectScoped ? slug : null,
+      projectSlug: slug,
       category: l.type,
       text: l.text,
       evidence: l.evidence_quote,
       confidence: l.confidence,
       tags: mergeFileTags(l.tags, sessionFiles),
-      appliedTo: item.targets.filter(t => t !== "episodic-only").join(",") || "episodic"
+      appliedTo: item.targets.filter(t => t !== "episodic-only").join(",") || "episodic",
+      origin,
+      promoteRequest: wantsGlobal ? "global" : null
     });
   }
 
@@ -215,6 +256,24 @@ export async function applyLearnings(opts) {
   }
 
   return result;
+}
+
+// Secrets out of text, evidence and tags (secret-patterns.mjs).
+function redactItem(item) {
+  const l = item.learning ?? {};
+  const r = (s) => (typeof s === "string" ? redactSecrets(s).text : s);
+  return {
+    ...item,
+    targets: [...(item.targets ?? [])],
+    learning: { ...l, text: r(l.text), evidence_quote: r(l.evidence_quote), evidence: r(l.evidence), tags: Array.isArray(l.tags) ? l.tags.map(r) : l.tags },
+  };
+}
+
+// The writer of a learning: source_speaker (who said the words), else
+// evidence_speaker; "user" | "agent" | "unknown".
+export function originOf(l) {
+  const s = l?.source_speaker ?? l?.evidence_speaker;
+  return s === "user" || s === "agent" ? s : "unknown";
 }
 
 async function loadConfig() {

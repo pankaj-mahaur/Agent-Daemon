@@ -16,7 +16,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
-import { spawn } from "node:child_process";
+import { resolveGit, spawnResolved } from "./safe-spawn.mjs";
 import { buildSkillIndex, resolveSkillSource } from "./skills-source.mjs";
 import { parseFrontmatter, validateSkill, unquote } from "./skill-lint.mjs";
 import { rebuildRouteMaps } from "./route-map.mjs";
@@ -108,7 +108,7 @@ export async function resolveInstallSource(spec, { projectRoot, skillFilter }) {
   // Git URL — shallow clone, then index the clone like a local path.
   if (GIT_URL_RE.test(spec)) {
     const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "ad-skill-git-"));
-    const clone = await runGit(["clone", "--depth", "1", spec, tmp]);
+    const clone = await runGit(["clone", "--depth", "1", "--", spec, tmp]);
     if (clone.code !== 0) {
       await fs.rm(tmp, { recursive: true, force: true }).catch(() => {});
       throw new Error(`git clone failed: ${clone.err || clone.out || `exit ${clone.code}`}`);
@@ -171,9 +171,17 @@ async function indexLocalSource(dir, skillFilter) {
   return index;
 }
 
+// No shell (a spec like `https://x/y&calc` stays one argument) and git by its
+// full path from PATH (safe-spawn.mjs).
 function runGit(args) {
   return new Promise((resolve) => {
-    const child = spawn("git", args, { stdio: ["ignore", "pipe", "pipe"], shell: process.platform === "win32" });
+    let child;
+    try {
+      child = spawnResolved(resolveGit(), args, { stdio: ["ignore", "pipe", "pipe"] });
+    } catch (e) {
+      resolve({ code: -1, out: "", err: e.message });
+      return;
+    }
     let out = "", err = "";
     child.stdout.on("data", c => out += c);
     child.stderr.on("data", c => err += c);

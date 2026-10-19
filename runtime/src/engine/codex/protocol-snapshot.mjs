@@ -98,6 +98,7 @@ export const SENT_METHODS = [
   "thread/inject_items",
   "thread/list",
   "thread/name/set",
+  "thread/read",
   "thread/resume",
   "thread/revert",
   "thread/shellCommand",

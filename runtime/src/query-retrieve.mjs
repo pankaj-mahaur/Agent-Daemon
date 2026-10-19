@@ -9,7 +9,8 @@
 // Output (--output-json):
 //   { "hookSpecificOutput": { "hookEventName": "UserPromptSubmit", "additionalContext": "<markdown string>" } }
 
-import { searchLearnings, projectSlug, recordRetrievalEvent, markRetrieved } from "./memory/episodic.mjs";
+import { searchLearnings, recordRetrievalEvent, markRetrieved } from "./memory/episodic.mjs";
+import { hookProjectKeys } from "./memory/scope.mjs";
 import { readStdinJson } from "./hooks/io.mjs";
 import { neutralizeText } from "./digest/sanitize.mjs";
 
@@ -35,12 +36,13 @@ export async function runQueryRetrieve(opts = {}) {
   }
 
   const query = keywords.join(" ");
-  const slug = cwd ? projectSlug(cwd) : null;
+  // No folder, home, a system folder, or a shared key: no keys, nothing served.
+  const projectKeys = await hookProjectKeys(cwd).catch(() => []);
 
   let results;
   try {
     results = await searchLearnings(query, {
-      projectSlug: slug,
+      projectKeys,
       scope: "any",
       limit: MAX_RESULTS
     });

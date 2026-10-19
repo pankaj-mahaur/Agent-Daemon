@@ -248,7 +248,7 @@ export async function cmdChat(opts = {}) {
   let engine;
   let rl;
   try {
-    const started = await startHarnessEngine({ cwd, home: opts.home, command: opts.command, clientVersion: opts.clientVersion, store: opts.store, platform: opts.platform, err, interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY) });
+    const started = await startHarnessEngine({ cwd, home: opts.home, command: opts.command, clientVersion: opts.clientVersion, store: opts.store, platform: opts.platform, err, interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY), allowHomeFolder: opts.allowHomeFolder === true, homePolicy: "grace" });
     if (!started.engine) {
       err.write(started.error + "\n");
       return started.code;

@@ -20,9 +20,9 @@ const SERVER = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", 
  * a response for every request `id` has arrived (or on timeout). Returns a map
  * of id → response object.
  */
-function driveServer(env, requests, timeoutMs = 8000) {
+export function driveServer(env, requests, timeoutMs = 8000, { args = [], cwd } = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [SERVER], { env, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(process.execPath, [SERVER, ...args], { env, cwd, stdio: ["pipe", "pipe", "pipe"] });
     const wanted = new Set(requests.filter(r => r.id !== undefined).map(r => r.id));
     const responses = {};
     let buf = "";
@@ -74,13 +74,17 @@ test("memory MCP: tools/list advertises the progressive-disclosure tools, and ge
   try {
     // Seed a tmp DB via episodic (same HOME the server will resolve).
     const mod = await import(`../src/memory/episodic.mjs?cachebust=${Date.now()}-${Math.random()}`);
-    await mod.upsertSession({ id: "sess-X", projectPath: "/tmp/mcpproj", startedAt: "2026-06-10T09:00:00.000Z" });
-    id1 = await mod.insertLearning({ sessionId: "sess-X", category: "gotcha", text: "mcp detail learning", evidence: "the evidence", tags: ["src/mcp/thing.ts"], confidence: 0.7 });
+    const proj = path.join(dir, "mcpproj");
+    await fs.mkdir(path.join(proj, ".git"), { recursive: true });
+    const slug = mod.projectSlug(proj);
+    await mod.upsertSession({ id: "sess-X", projectPath: proj, startedAt: "2026-06-10T09:00:00.000Z" });
+    // A project row, and a 3.0-style NULL-project row from this project's session.
+    id1 = await mod.insertLearning({ sessionId: "sess-X", projectSlug: slug, category: "gotcha", text: "mcp detail learning", evidence: "the evidence", tags: ["src/mcp/thing.ts"], confidence: 0.7 });
     id2 = await mod.insertLearning({ sessionId: "sess-X", category: "pattern", text: "mcp sibling learning", confidence: 0.6 });
-    await mod.observeUserFact({ category: "tool", text: "prefers pnpm", confidence: 0.8 });
+    await mod.observeUserFact({ category: "tool", text: "prefers pnpm", confidence: 0.8, projectSlug: slug, origin: "user" });
     mod.closeDb();
 
-    const env = { ...process.env, HOME: dir, USERPROFILE: dir, CLAUDE_PROJECT_DIR: "/tmp/mcpproj" };
+    const env = { ...process.env, HOME: dir, USERPROFILE: dir, AD_ROOT: undefined, CLAUDE_PROJECT_DIR: undefined, AD_MEMORY_PROJECT: undefined };
     const responses = await driveServer(env, [
       { jsonrpc: "2.0", id: 1, method: "initialize", params: {} },
       { jsonrpc: "2.0", id: 2, method: "tools/list" },
@@ -89,7 +93,7 @@ test("memory MCP: tools/list advertises the progressive-disclosure tools, and ge
       { jsonrpc: "2.0", id: 5, method: "tools/call", params: { name: "memory_files", arguments: { path: "thing.ts" } } },
       { jsonrpc: "2.0", id: 6, method: "tools/call", params: { name: "memory_get", arguments: { ids: [987654] } } },
       { jsonrpc: "2.0", id: 7, method: "tools/call", params: { name: "memory_profile", arguments: {} } }
-    ]);
+    ], 8000, { args: ["--project", proj] });
 
     toolNames = (responses[2]?.result?.tools || []).map(t => t.name);
     getText = callText(responses[3]);

@@ -89,6 +89,8 @@ Each spawned agent gets:
 - Role-specific instructions from the template
 - Automatic completion reporting to leader inbox
 
+Role and team names may use only letters, digits, `.`, `_` and `-` (max 64): they become the branch `team/<team>/<agent>`. Any text is fine in `--task`; it reaches the worker as data, never through a shell.
+
 ### Step 6 — Monitor
 
 ```bash

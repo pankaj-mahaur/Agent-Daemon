@@ -21,6 +21,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import readline from "node:readline/promises";
 import { spawn } from "node:child_process";
+import os from "node:os";
+import { editorCommand, editorInvocation } from "./safe-spawn.mjs";
 import { stdin as input, stdout as output } from "node:process";
 
 const DIVIDER = "─".repeat(72);
@@ -143,19 +145,27 @@ function summarize(stats, remaining) {
  * Open a file in the user's $EDITOR (or sensible default).
  * Blocks until the editor process exits.
  *
+ * No shell: the editor starts by full path (safe-spawn.mjs editorInvocation).
+ * It edits a temp copy, copied back afterwards, so the project's own path
+ * (which may hold characters cmd.exe can't take) never reaches the editor's
+ * command line.
+ *
  * @param {string} filePath
  */
 async function openInEditor(filePath) {
-  const editor =
-    process.env.VISUAL ||
-    process.env.EDITOR ||
-    (process.platform === "win32" ? "notepad" : "vi");
-  return new Promise((resolve, reject) => {
-    const child = spawn(editor, [filePath], {
-      stdio: "inherit",
-      shell: process.platform === "win32"
+  const { cmd, args } = editorCommand();
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ad-review-"));
+  const copy = path.join(dir, path.basename(filePath));
+  try {
+    await fs.copyFile(filePath, copy);
+    const inv = editorInvocation(cmd, [...args, copy]);
+    await new Promise((resolve, reject) => {
+      const child = spawn(inv.cmd, inv.args, { stdio: "inherit", shell: false, windowsVerbatimArguments: Boolean(inv.verbatim) });
+      child.on("close", () => resolve());
+      child.on("error", (err) => reject(err));
     });
-    child.on("close", () => resolve());
-    child.on("error", (err) => reject(err));
-  });
+    await fs.copyFile(copy, filePath);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true, maxRetries: 3 });
+  }
 }

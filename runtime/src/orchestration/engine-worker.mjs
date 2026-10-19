@@ -10,12 +10,12 @@
 // branches. The worker's changes are committed afterwards by us
 // (commitWorktree), outside the sandbox, on the worker's own branch only.
 
-import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { startHarnessEngine } from "../harness/start.mjs";
 import { UNATTENDED_ENV, UNATTENDED_SANDBOX_POLICY, unattendedThreadConfig } from "../harness/unattended.mjs";
+import { execFileSyncNoShell, resolveGit, resolvedArgv } from "../safe-spawn.mjs";
 
 export const WORKER_SANDBOX_POLICY = UNATTENDED_SANDBOX_POLICY;
 const CLAUDE_ALIASES = new Set(["haiku", "sonnet", "opus"]);
@@ -30,11 +30,13 @@ export const WORKER_COMMIT_NOTE = "Do not run git commit or change git config â€
 // lint-staged, pre-commit configs) live in the worktree the worker edits.
 // Every git call gets hooks pointed at an empty directory, fsmonitor off
 // and no verification hooks â€” `--no-verify` alone would still run
-// post-commit.
-export function commitWorktree(worktreePath, message, run = execFileSync) {
+// post-commit. git itself is started by absolute path (resolveGit), so a
+// git.exe the worker left in the worktree or the current folder never runs.
+export function commitWorktree(worktreePath, message, run = execFileSyncNoShell) {
+  const resolved = resolveGit();
   const noHooks = mkdtempSync(path.join(tmpdir(), "ad-nohooks-"));
   const safe = ["-c", `core.hooksPath=${noHooks}`, "-c", "core.fsmonitor=false", "-c", "commit.gpgSign=false"];
-  const git = (...args) => run("git", ["-C", worktreePath, ...safe, ...args], { encoding: "utf8", windowsHide: true }).trim();
+  const git = (...args) => run(...resolvedArgv(resolved, ["-C", worktreePath, ...safe, ...args]), { encoding: "utf8", windowsHide: true }).trim();
   try {
     if (!git("status", "--porcelain")) return null;
     git("add", "-A");
@@ -48,7 +50,9 @@ export function commitWorktree(worktreePath, message, run = execFileSync) {
 /**
  * @returns {Promise<{ok: boolean, status?: string, output?: string, threadId?: string, error?: string}>}
  */
-export async function runEngineWorker({ worktreePath, systemPrompt, userMessage, model, timeoutMs, engineOpts = {}, onEvent, err = process.stderr }) {
+// memoryProject: the repo the worker's memory belongs to (spawnAgent's cwd).
+// The worktree itself lives inside ad's own folder, which never binds memory.
+export async function runEngineWorker({ worktreePath, systemPrompt, userMessage, model, timeoutMs, engineOpts = {}, onEvent, err = process.stderr, memoryProject }) {
   let engine;
   try {
     const prefixed = { write: (s) => err.write(String(s).replace(/^\[agent-daemon\]/gm, "[agent-daemon worker]")) };
@@ -64,6 +68,7 @@ export async function runEngineWorker({ worktreePath, systemPrompt, userMessage,
       approvalPolicy: "never",
       developerInstructions: `${systemPrompt}\n\n${WORKER_COMMIT_NOTE}`,
       config: await unattendedThreadConfig(engine),
+      memoryProject: memoryProject ?? worktreePath,
     });
     const r = await engine.turn({ threadId, text: userMessage, timeoutMs, sandboxPolicy: WORKER_SANDBOX_POLICY, onEvent });
     return { ok: r.status === "completed", status: r.status, output: r.output, threadId, error: r.status === "completed" ? undefined : r.error?.message ?? `turn ${r.status}` };

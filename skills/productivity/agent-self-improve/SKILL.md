@@ -93,6 +93,7 @@ You may skip the block for trivial sessions; the daemon's triage gate would also
 - **Don't claim certainty you don't have.** The extractor amplifies whatever confidence you express. A confident wrong claim becomes a confident wrong memory.
 - **Don't reference memory as if you remember it.** Memory loaded at session start is loaded *via the hook*, not via your weights. Cite it: *"Per the project's `activeContext.md`, X is the active branch."* Don't say *"I remember X is the active branch."*
 - **Don't try to write directly to memory files mid-session.** The pipeline writes them. If you edit `activeContext.md` mid-stream, you'll fight the pipeline.
+- **Don't expect notes about yourself to apply.** A "remember: …" in your own turn is stored as pending and served nowhere until the user accepts it; only the user's own words apply at once. Ask the user to state a durable rule themselves (or `/remember` it) when it matters.
 - **Don't generate fake "lessons learned" to make the close summary look thorough.** A session where nothing was learned should say so. The pipeline will skip.
 
 ---

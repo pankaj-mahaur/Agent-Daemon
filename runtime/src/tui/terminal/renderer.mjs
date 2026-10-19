@@ -394,6 +394,9 @@ export function createRenderer({
       if (disposed) return;
       current = { lines, cursor: cursor ?? { row: Math.max(0, lines.length - 1), col: 0 } };
       if (!started || paused) return;
+      // Commits waiting for their batch go out with this frame, in its one write:
+      // a turn's answer that just left the live region is never missing from the screen.
+      if (queued.length) return flushCommits();
       drawFrame();
     },
     commit(lines) {

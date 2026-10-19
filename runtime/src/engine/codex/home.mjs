@@ -8,8 +8,8 @@
 // app-server's own `config/batchWrite`, so we never hand-edit TOML that
 // Codex also writes (hook trust, login state).
 
-import { existsSync, mkdirSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
-import { homedir, userInfo } from "node:os";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir, userInfo } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { ownEngineHomeDefaultRefusal, ownEngineHomeStartRefusal, envConflictRefusal } from "../attribution.mjs";
 import { engineError } from "./errors.mjs";
@@ -165,6 +165,182 @@ export function codexEnv({ home, base = process.env, extra = {}, cwd = process.c
   return env;
 }
 
+
+// ---- Start-up isolation (P0.2a) ----
+//
+// The engine loads every `<dir>/.codex` from a working folder's project root
+// down to the folder as a project layer. When one of them is the user's own
+// ~/.codex, its skills load even with the layer disabled (untrusted), and its
+// settings load when the folder is trusted. ad must never do either, so it
+// works out what would load the same way the engine does: the walk uses the
+// path as given (no link resolution), the root is the nearest ancestor with a
+// marker (`.git` must be a file or a folder with HEAD), and with no marker, or
+// markers [], the root is the folder itself (S-HOME).
+
+const MAX_SKILL_DEPTH = 6; // folders below skills/ the engine searches
+
+function hasMarker(dir, markers) {
+  for (const m of markers) {
+    const p = join(dir, m);
+    try {
+      const st = statSync(p);
+      if (m === ".git" && st.isDirectory()) {
+        if (existsSync(join(p, "HEAD"))) return true;
+      } else return true;
+    } catch {
+      // not there
+    }
+  }
+  return false;
+}
+
+/** The engine's project root for `cwd`: the nearest ancestor (as given) holding a marker, else cwd. */
+export function projectRoot(cwd, markers = [".git"]) {
+  if (!markers.length) return cwd;
+  for (let dir = cwd; ; dir = dirname(dir)) {
+    if (hasMarker(dir, markers)) return dir;
+    if (dirname(dir) === dir) return cwd;
+  }
+}
+
+// A SKILL.md below `dir` within the engine's depth, following links (each real
+// folder once), skipping the engine's own bundled `.system` folder at the top.
+function hasSkill(dir, depth = 0, seen = new Map()) {
+  let real;
+  try {
+    real = realpathSync.native(dir);
+  } catch {
+    return false;
+  }
+  // Each real folder once per depth reached: one seen deeper first is searched again from higher up.
+  if (seen.has(real) && seen.get(real) <= depth) return false;
+  seen.set(real, depth);
+  let entries;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+  for (const e of entries) {
+    if (e.name === "SKILL.md" && depth > 0) {
+      try {
+        if (statSync(join(dir, e.name)).isFile()) return true;
+      } catch {
+        // a dangling link
+      }
+    }
+  }
+  if (depth >= MAX_SKILL_DEPTH) return false;
+  for (const e of entries) {
+    if (depth === 0 && e.name === ".system") continue;
+    const p = join(dir, e.name);
+    let isDir = e.isDirectory();
+    if (!isDir && e.isSymbolicLink()) {
+      try {
+        isDir = statSync(p).isDirectory();
+      } catch {
+        isDir = false;
+      }
+    }
+    if (isDir && hasSkill(p, depth + 1, seen)) return true;
+  }
+  return false;
+}
+
+function nonEmptyFile(p) {
+  try {
+    return statSync(p).isFile() && readFileSync(p, "utf8").trim() !== "";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Would the engine load a user Codex home as a project layer for `cwd`?
+ * → null, or {kind: "home" | "home-repo", dir, dotCodex, loads: ["skills"?, "settings"?]}.
+ * `loads` is never empty: a ~/.codex with nothing loadable is no reason to
+ * refuse. isTrusted(dir) says whether ad's engine config trusts a folder
+ * (asked for the layer's folder and the project root).
+ */
+/**
+ * The user homes whose content the isolation check looks into. Under node
+ * --test the OS account's real ~/.codex is left out (a test that hasn't faked
+ * HOME must not read it), as defaultLockDir() keeps tests out of real locks.
+ */
+export function riskUserHomes(env = process.env) {
+  const homes = userCodexHomes(env);
+  if (!process.env.NODE_TEST_CONTEXT) return homes;
+  let real = null;
+  try {
+    real = canonicalPath(join(userInfo().homedir, ".codex"));
+  } catch {
+    return homes;
+  }
+  return homes.filter((h) => canonicalPath(h) !== real);
+}
+
+export function homeLayerRisk({ cwd, markers = [".git"], userHomes = riskUserHomes(), isTrusted = () => false } = {}) {
+  const given = resolve(cwd);
+  const homes = new Set(userHomes.filter((h) => basename(h) === ".codex").map((h) => canonicalPath(h)));
+  if (!homes.size) return null;
+  const root = projectRoot(given, markers);
+  const chain = [];
+  for (let dir = given; ; dir = dirname(dir)) {
+    chain.unshift(dir);
+    if (dir === root || dirname(dir) === dir) break;
+  }
+  for (const dir of chain) {
+    const dotCodex = join(dir, ".codex");
+    if (!existsSync(dotCodex) || !homes.has(canonicalPath(dotCodex))) continue;
+    const loads = [];
+    if (hasSkill(join(dotCodex, "skills"))) loads.push("skills");
+    // The engine trusts a layer through the thread's folder, its project root or its repo root.
+    if (nonEmptyFile(join(dotCodex, "config.toml")) && (isTrusted(given) || isTrusted(dir) || isTrusted(root))) loads.push("settings");
+    if (loads.length) return { kind: dir === given ? "home" : "home-repo", dir, dotCodex, loads };
+  }
+  return null;
+}
+
+/**
+ * The folder the engine process is launched in: outside every project, so
+ * nothing under the user's home loads at start-up.
+ * → {dir, codexArgs, mode: "root" | "temp" | "markers-off"}:
+ *   root: <ad root>/launch, created empty and never written again;
+ *   temp (POSIX): a fresh mkdtemp folder, so no one can plant a fixed name;
+ *   markers-off: <ad root>/launch with `-c project_root_markers=[]` (every
+ *   thread then passes the real markers; see Engine #threadConfig).
+ */
+/** Where launchDir() looks first: ad's root; a per-process temp folder under node --test with the real home. */
+export function defaultLaunchRoot() {
+  const home = homedir();
+  if (process.env.NODE_TEST_CONTEXT) {
+    let real = null;
+    try {
+      real = userInfo().homedir;
+    } catch {
+      // no passwd entry: treat as faked
+    }
+    if (real && real === home) return join(tmpdir(), `ad-test-launch-${process.pid}`);
+  }
+  return defaultRoot();
+}
+
+export function launchDir({ adRoot = defaultLaunchRoot(), platform = process.platform, tmp = tmpdir(), markers = [".git"] } = {}) {
+  const outside = (dir) => projectRoot(dir, markers) === dir && !hasMarker(dir, markers);
+  const own = join(adRoot, "launch");
+  mkdirSync(own, { recursive: true });
+  if (outside(own)) return { dir: own, codexArgs: [], mode: "root" };
+  if (platform !== "win32") {
+    try {
+      const dir = mkdtempSync(join(tmp, "agent-daemon-launch-"));
+      if (outside(dir)) return { dir, codexArgs: [], mode: "temp" };
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // no usable temp folder
+    }
+  }
+  return { dir: own, codexArgs: ["-c", "project_root_markers=[]"], mode: "markers-off" };
+}
 
 export const MANAGED_MARKER = ".agent-daemon-managed";
 
