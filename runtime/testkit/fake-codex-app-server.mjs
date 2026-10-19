@@ -110,6 +110,14 @@ const notify = (method, params) => send({ method, params });
 // Collaboration modes per thread, as Codex keeps them (developer instructions filled in).
 const threadModes = new Map(); // threadId → CollaborationMode
 const threadCwds = new Map(); // threadId → the folder it was started in (thread/read)
+// As 0.163 (P3.4, S-THREADCFG Q5): a thread's provider and model, and whether it is
+// loaded and subscribed. thread/resume applies modelProvider/model only to a thread
+// that is not loaded, or loaded with no subscriber and not running; otherwise it keeps
+// the old ones and still answers success.
+const threadTargets = new Map(); // threadId → { modelProvider, model }
+const loaded = new Set();
+const subscribed = new Set();
+const goals = new Map(); // threadId → { objective, status }
 let optedOut = new Set();
 const withInstructions = (cm) => ({ mode: cm.mode, settings: { ...cm.settings, developer_instructions: cm.settings?.developer_instructions ?? (cm.mode === "plan" ? "# Plan Mode (fake)" : "") } });
 function setThreadMode(threadId, cm) {
@@ -136,6 +144,7 @@ function setThreadMode(threadId, cm) {
 // past the turn, ended by thread/backgroundTerminals/clean (item/completed, failed, exit -1).
 const terminals = new Map(); // threadId → [{item, turnId, timer}]
 let terminalSeq = 0;
+const killedTerminals = []; // {threadId, id}: ended because their thread unloaded (0.163 terminate_all_processes)
 function startTerminal(threadId, turnId, n, id = null) {
   const item = { type: "commandExecution", id: id ?? `bg-${turnId}-${n}`, command: `/bin/bash -lc 'npm run dev:${n}'`, cwd: process.cwd(), processId: String(4242 + (id ? 100 + terminalSeq++ : n)), source: "unifiedExecStartup", status: "inProgress", commandActions: [{ type: "unknown", command: `npm run dev:${n}` }], aggregatedOutput: null, exitCode: null, durationMs: null };
   notify("item/started", { threadId, turnId, item });
@@ -426,6 +435,19 @@ async function onRequest({ id, method, params }) {
       return;
     case "debug/state":
       return send({ id, result: { notifications, lastParams, calls, env: { CODEX_HOME: process.env.CODEX_HOME, hasOpenRouterKey: Boolean(process.env.OPENROUTER_API_KEY) } } });
+    // A thread's background terminals: running ids, and ids killed by an unload.
+    case "debug/terminals":
+      return send({ id, result: { running: (terminals.get(params.threadId) ?? []).map((x) => x.item.id), killed: killedTerminals.filter((k) => k.threadId === params.threadId).map((k) => k.id) } });
+    // A background terminal's command ends on its own (exit 0).
+    case "debug/terminal/exit": {
+      send({ id, result: {} });
+      for (const x of terminals.get(params.threadId) ?? []) {
+        clearInterval(x.timer);
+        notify("item/completed", { threadId: params.threadId, turnId: x.turnId, item: { ...x.item, status: "completed", exitCode: 0 } });
+      }
+      terminals.delete(params.threadId);
+      return;
+    }
     case "debug/processCwd":
       return send({ id, result: { cwd: process.cwd(), argv: process.argv.slice(2) } });
     case "account/read":
@@ -507,13 +529,39 @@ async function onRequest({ id, method, params }) {
       const sandbox = { "read-only": { type: "readOnly" }, "danger-full-access": { type: "dangerFullAccess" } }[params?.sandbox] ?? { type: "workspaceWrite" };
       const thread = { id: tid, ephemeral: Boolean(params?.ephemeral), path: params?.ephemeral ? null : `/fake/sessions/rollout-${tid}.jsonl`, cwd: params?.cwd ?? process.cwd() };
       threadCwds.set(tid, thread.cwd);
-      return send({ id, result: { thread, model: params?.model ?? "fake-model", modelProvider: "fake", sandbox } });
+      threadTargets.set(tid, { modelProvider: params?.modelProvider ?? "fake", model: params?.model ?? "fake-model" });
+      loaded.add(tid);
+      subscribed.add(tid);
+      return send({ id, result: { thread, model: threadTargets.get(tid).model, modelProvider: threadTargets.get(tid).modelProvider, sandbox } });
     }
     case "thread/read":
       // FAKE_THREAD_CWD: a stored folder for threads this fake didn't start (a resume after restart).
-      return send({ id, result: { thread: fullThread({ id: params.threadId, cwd: threadCwds.get(params.threadId) ?? process.env.FAKE_THREAD_CWD ?? process.cwd() }) } });
-    case "thread/resume":
-      return send({ id, result: { thread: { id: params.threadId }, model: "fake-model", modelProvider: "fake", ...(threadModes.has(params.threadId) ? { collaborationMode: threadModes.get(params.threadId) } : {}) } });
+      return send({
+        id,
+        result: {
+          thread: fullThread({
+            id: params.threadId,
+            cwd: threadCwds.get(params.threadId) ?? process.env.FAKE_THREAD_CWD ?? process.cwd(),
+            ...(threadTargets.has(params.threadId) ? { modelProvider: threadTargets.get(params.threadId).modelProvider } : {}),
+            status: !loaded.has(params.threadId) && threadTargets.has(params.threadId) ? { type: "notLoaded" } : turnsOf(params.threadId).some((x) => x.status === "inProgress") ? { type: "active", activeFlags: [] } : { type: "idle" },
+            ...(params.includeTurns ? { turns: turnsOf(params.threadId).map((x) => ({ ...x, items: [] })) } : {}),
+          }),
+        },
+      });
+    case "thread/resume": {
+      const tid = params.threadId;
+      const cur = threadTargets.get(tid) ?? { modelProvider: "fake", model: "fake-model" };
+      const running = turnsOf(tid).some((x) => x.status === "inProgress");
+      // Overrides apply only when the thread isn't loaded, or is loaded with no subscriber and idle.
+      const applies = !loaded.has(tid) || (!subscribed.has(tid) && !running);
+      const next = applies ? { modelProvider: params.modelProvider ?? cur.modelProvider, model: params.model ?? cur.model } : cur;
+      threadTargets.set(tid, next);
+      loaded.add(tid);
+      subscribed.add(tid);
+      return send({ id, result: { thread: { id: tid }, model: next.model, modelProvider: next.modelProvider, ...(threadModes.has(tid) ? { collaborationMode: threadModes.get(tid) } : {}) } });
+    }
+    case "thread/loaded/list":
+      return send({ id, result: { data: [...loaded] } });
     case "turn/start": {
       const threadId = params.threadId;
       // A turn/start Codex rejects (as for a bad input or a thread it lost).
@@ -627,14 +675,35 @@ async function onRequest({ id, method, params }) {
       return notify("thread/reverted", { threadId: params.threadId });
     }
     case "thread/goal/clear":
+      goals.delete(params.threadId);
       return send({ id, result: {} });
-    case "thread/goal/set":
-      return send({ id, result: { goal: { threadId: params.threadId, objective: params.objective, status: "active", tokensUsed: 0, timeUsedSeconds: 0, createdAt: 0, updatedAt: 0 } } });
+    case "thread/goal/set": {
+      const prev = goals.get(params.threadId);
+      const g = { objective: params.objective ?? prev?.objective ?? "", status: params.status ?? "active" };
+      goals.set(params.threadId, g);
+      return send({ id, result: { goal: { threadId: params.threadId, objective: g.objective, status: g.status, tokensUsed: 0, timeUsedSeconds: 0, createdAt: 0, updatedAt: 0 } } });
+    }
+    case "thread/goal/get":
+      return send({ id, result: { goal: goals.has(params.threadId) ? { threadId: params.threadId, ...goals.get(params.threadId) } : null } });
     case "thread/unsubscribe": {
       // Codex unloads an idle thread with no subscribers (ad runs with
       // thread_unload_delay_secs=0) and tells every connection.
       const known = /^thread-/.test(params.threadId);
-      if (known) setTimeout(() => notify("thread/closed", { threadId: params.threadId }), 10);
+      // FAKE_OTHER_SUBSCRIBER: another connection still watches every thread, so none unloads.
+      if (process.env.FAKE_OTHER_SUBSCRIBER) return send({ id, result: { status: known ? "unsubscribed" : "notLoaded" } });
+      subscribed.delete(params.threadId);
+      // Unloaded at once when idle (ad runs with thread_unload_delay_secs=0).
+      if (known && !turnsOf(params.threadId).some((x) => x.status === "inProgress")) {
+        setTimeout(() => {
+          loaded.delete(params.threadId);
+          for (const x of terminals.get(params.threadId) ?? []) {
+            clearInterval(x.timer);
+            killedTerminals.push({ threadId: params.threadId, id: x.item.id });
+          }
+          terminals.delete(params.threadId);
+          notify("thread/closed", { threadId: params.threadId });
+        }, 10);
+      }
       return send({ id, result: { status: known ? "unsubscribed" : "notLoaded" } });
     }
     case "thread/name/set":
@@ -646,7 +715,28 @@ async function onRequest({ id, method, params }) {
       const cut = params.lastTurnId ? src.findIndex((t) => t.id === params.lastTurnId) + 1 : src.length;
       history.set(forkId, src.slice(0, cut > 0 ? cut : src.length).map((t) => ({ ...t, items: [...t.items] })));
       threadCwds.set(forkId, params.cwd ?? threadCwds.get(params.threadId) ?? process.cwd());
-      return send({ id, result: { thread: { id: forkId, forkedFromId: params.threadId }, model: "fake-model", modelProvider: "fake" } });
+      const from = threadTargets.get(params.threadId) ?? { modelProvider: "fake", model: "fake-model" };
+      // FAKE_FORK_KEEPS_PROVIDER: an engine that ignores the requested provider (RETARGET_IGNORED tests).
+      const forkTarget = process.env.FAKE_FORK_KEEPS_PROVIDER ? from : { modelProvider: params.modelProvider ?? from.modelProvider, model: params.model ?? from.model };
+      threadTargets.set(forkId, forkTarget);
+      loaded.add(forkId);
+      subscribed.add(forkId);
+      // A goal is copied to the fork. An idle thread whose goal is still active continues
+      // it on its own (a turn the user didn't start): the source at once, and the fork
+      // too unless deferGoalContinuation. Such turns run until interrupted.
+      const g = goals.get(params.threadId);
+      if (g) goals.set(forkId, { ...g });
+      const continueGoal = (tid) => {
+        const cont = { id: `turn-cont-${tid}`, status: "inProgress", items: [] };
+        turnsOf(tid).push(cont);
+        hung.set(cont.id, { threadId: tid, turn: cont });
+        setTimeout(() => notify("turn/started", { threadId: tid, turn: cont }), 5);
+      };
+      if (g?.status === "active") {
+        continueGoal(params.threadId);
+        if (!params.deferGoalContinuation) continueGoal(forkId);
+      }
+      return send({ id, result: { thread: { id: forkId, forkedFromId: params.threadId }, model: forkTarget.model, modelProvider: forkTarget.modelProvider } });
     }
     case "mcpServerStatus/list":
       return send({ id, result: { data: [{ name: "memory", runtimeStatus: "ready", pluginId: null, httpOrigin: null, serverInfo: null }, { name: "broken", runtimeStatus: "failed", pluginId: null, httpOrigin: null, serverInfo: null }], nextCursor: null } });

@@ -185,6 +185,39 @@ Bare `ad` / `ad tui`: an inline terminal UI on the session controller. `terminal
 
 API keys live in the secret store and in one place at run time: ad's gateway, a child process (`runtime/src/gateway/`) listening on `127.0.0.1`. The engine gets a per-run token and, per ready API account, a `-c model_providers.<entry>={ base_url = "http://127.0.0.1:<port>/p/<entry>/v1", env_key = "AD_GATEWAY_TOKEN" }`; the gateway swaps the token for the account's key, forwards `POST responses` and `GET models`, decodes a body the provider compressed anyway, and emits one observation per request (status, limits, usage, the error's class) for ad's own use. ad 3.0's provider name `openrouter` is pointed at the same route, so 3.0 conversations resume. Nothing about it is written to `config.toml`.
 
+### Accounts, engines and switching (P3.4)
+
+- **Target** (`runtime/src/auth/accounts/target.mjs`). Which account and model a conversation starts on is resolved before any engine starts, in this order:
+  1. a flag or command;
+  2. this window's choice;
+  3. `AD_ACCOUNT`/`AD_MODEL`;
+  4. the project's `.agent-daemon/config.json` `target`, read only in a trusted folder;
+  5. the registry's default;
+  6. 3.0's settings.
+
+  The level that names the account also bounds the model. A target is fixed when its thread starts.
+- **Engines** (`runtime/src/engine/manager.mjs`).
+
+  | Engine id | Home | Serves |
+  |---|---|---|
+  | `api` | `@default` (no ChatGPT sign-in there) or `api/` | every API-key account, through the gateway |
+  | an account id | that account's own home | a ChatGPT account (or an OpenAI key the engine keeps) |
+
+  The EngineManager runs one process per engine id per ad process:
+  - Leases are in-process. An unleased engine stops after an idle period unless it was pinned.
+  - An acquire during that stop waits for it, so there are never two processes on one id.
+  - When the gateway entries change, `restartIfStale` restarts the engine, and only when no turn runs.
+- **Switching** (`runtime/src/engine/switch.mjs`). A loaded, subscribed or running thread keeps its provider on `thread/resume` even though the answer says success. So:
+  - `resumeThread` with a provider or model first refuses a running thread, or one whose background terminals the caller names (`RETARGET_BUSY`). Otherwise it unsubscribes, waits for the unload, and checks the answer (`RETARGET_IGNORED`). A fork that names a provider or model is checked the same way.
+  - Switching to another account of the same provider forks:
+    1. pause the goal;
+    2. confirm the thread is idle;
+    3. fork with `deferGoalContinuation` and check the fork took the target;
+    4. move the goal to the fork: an active goal is paused there, any other status is kept.
+
+    If any step fails, the goal ad paused is active again, and a fork that ignored the target is archived.
+  - After the fork, the old thread is unsubscribed. If background terminals still run in it, it stays subscribed and watched until they end, because unloading would kill them. A turn the engine starts on it is stopped and reported.
+
 ## Data flow — a single session, start to finish
 
 ```
