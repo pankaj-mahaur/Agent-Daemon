@@ -169,7 +169,9 @@ export async function ensureHarnessSetup(engine, { cwd = process.cwd(), profile 
     // Field-level writes: a user's own env/enabled on this server survive.
     const want = {
       command: process.execPath,
-      args: [MEMORY_SERVER],
+      // --host ad: ad's engine binds each thread through AD_MEMORY_PROJECT (the façade),
+      // else the thread's folder; capture runs through ad's hooks (P5.2).
+      args: [MEMORY_SERVER, "--host", "ad", "--capture", "hooks"],
       startup_timeout_sec: 20,
       env_vars: ["USERPROFILE", "HOME", "APPDATA", "LOCALAPPDATA"],
     };

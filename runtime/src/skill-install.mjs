@@ -27,7 +27,7 @@ const GIT_URL_RE = /^(https?:\/\/|git@|ssh:\/\/|file:\/\/)/;
 const BUNDLED_NAME_RE = /^[a-z][a-z0-9-]*$/;
 
 function homeDir() {
-  return process.env.HOME || process.env.USERPROFILE || ".";
+  return process.env.HOME || process.env.USERPROFILE || os.homedir();
 }
 
 function manifestPath() {

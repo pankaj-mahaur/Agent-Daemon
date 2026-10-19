@@ -12,6 +12,7 @@
 // for retrieval-augmented context loading.
 
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { insertLearnings, projectSlug, observeUserFact } from "../memory/episodic.mjs";
 import { screenLearning, neutralizeText } from "./sanitize.mjs";
@@ -56,7 +57,7 @@ export async function applyLearnings(opts) {
     memoryFilesTouched: []
   };
 
-  const home = process.env.HOME || process.env.USERPROFILE || ".";
+  const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
   const stamp = new Date().toISOString();
   const dateOnly = stamp.slice(0, 10);
   const slug = projectSlug(opts.cwd);
@@ -277,7 +278,7 @@ export function originOf(l) {
 }
 
 async function loadConfig() {
-  const home = process.env.HOME || process.env.USERPROFILE || ".";
+  const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
   const configPath = path.join(home, ".agent-daemon", "config.json");
   try {
     return JSON.parse(await fs.readFile(configPath, "utf8"));
@@ -346,7 +347,7 @@ const MAX_PENDING_ENTRIES = 100;
 const MAX_PENDING_AGE_DAYS = 14;
 
 function pendingArchivePath() {
-  const home = process.env.HOME || process.env.USERPROFILE || ".";
+  const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
   return path.join(home, ".agent-daemon", "pending_messages.archive.jsonl");
 }
 
@@ -359,7 +360,7 @@ async function archivePendingEntries(entries, reason) {
 }
 
 async function queuePendingMessages(rows, sessionId, errorMsg) {
-  const home = process.env.HOME || process.env.USERPROFILE || ".";
+  const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
   const queueDir = path.join(home, ".agent-daemon");
   const queueFile = path.join(queueDir, "pending_messages.json");
   await fs.mkdir(queueDir, { recursive: true });
@@ -386,7 +387,7 @@ async function queuePendingMessages(rows, sessionId, errorMsg) {
 }
 
 async function drainPendingMessages(verbose) {
-  const home = process.env.HOME || process.env.USERPROFILE || ".";
+  const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
   const queueFile = path.join(home, ".agent-daemon", "pending_messages.json");
 
   let pending;
@@ -441,7 +442,7 @@ async function drainPendingMessages(verbose) {
  * @param {string} cwd
  */
 async function resolveProjectMemoryPath(cwd) {
-  const home = process.env.HOME || process.env.USERPROFILE || ".";
+  const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
   const candidates = [
     path.join(cwd, ".agent-daemon", "memory", "activeContext.md"),
     path.join(cwd, ".claude", "memory", "MEMORY.md"),

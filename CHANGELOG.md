@@ -6,6 +6,7 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 ### Security
 
+- One safe way to show memory to an agent: a note that reads like an instruction (an injection, or a command it tells the agent to run, such as notes ad 3.0 stored before its screen) is withheld in the memory tools, at session start and in prompt recall, and every memory result is headed as data, not instructions. `memory_files` treats `%` and `_` in a path literally.
 - Claude Code team workers (`ad sp --engine claude`) no longer start through `cmd.exe` on Windows, so a task containing `&`, `|` or `%VAR%` can't run commands on your machine before Claude starts. The task goes to Claude on stdin and in a temporary system-prompt file (`--append-system-prompt-file`), never on the command line. Digest calls through Claude Code do the same.
 - On Windows, the worker path starts `claude` and `git`, and the key store starts Windows PowerShell, by full path, so a `claude.exe`, `git.exe` or `powershell.exe` in the repo or the current folder never runs instead.
 - `ad sp` checks team ids, roles, agent names and `--model` before anything starts: names can use only letters, digits, `.`, `_` and `-` (max 64).
@@ -21,6 +22,7 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 ### Added
 
+- The memory MCP server speaks MCP 2026-07-28 (no `initialize`; `_meta` on every request; `server/discover`) as well as 2024-11-05 to 2025-11-25. Its tools carry titles, closed input schemas and annotations; a failing tool answers with `isError`, and calls in flight are answered when the client hangs up. `--allow-cross-project` and `--db` are new launch flags.
 - `ad tui` follows key chords and the leader key from `tui.keymap`, as the engine's own UI does: `"ctrl-x ctrl-s"`, or `"leader c"` with `global.leader` (default `ctrl-x`). While a chord waits, the footer shows what can follow; Esc cancels. `/keymap` names the leader.
 - `/subagents` shows each subagent's model and reasoning effort when the engine reports them.
 - `ad memory held` lists the memory notes waiting for you (agent-written) or held back (flagged), for this project or `--all-projects`. `ad memory held accept|release|drop <id>` run only in your own terminal and ask you to type the id; a note holding a secret can be dropped, never released. `ad status` and `ad doctor` say how many are waiting; doctor also flags folders that share one memory key. `ad` and `ad doctor` run the one-time check of older notes, and SessionStart reminds you when it hasn't run yet.

@@ -536,8 +536,10 @@ export async function searchLearningsByFile(file, opts = {}) {
 
   const keys = keysOf(opts);
   const vis = learningVisibility("", keys, opts.scope ?? "any");
-  const where = `tags IS NOT NULL AND (tags LIKE ? OR tags LIKE ?) AND status = ? AND ${vis.sql}`;
-  const params = [`%${norm}%`, `%"${base}"%`, keys ? "active" : status, ...vis.params];
+  // LIKE wildcards in the path are literal ("%" must not match every tagged row).
+  const lit = (v) => v.replace(/[\\%_]/g, (c) => "\\" + c);
+  const where = `tags IS NOT NULL AND (tags LIKE ? ESCAPE '\\' OR tags LIKE ? ESCAPE '\\') AND status = ? AND ${vis.sql}`;
+  const params = [`%${lit(norm)}%`, `%"${lit(base)}"%`, keys ? "active" : status, ...vis.params];
 
   return handle.all(
     `SELECT id, category, text, evidence, confidence, project_slug, created_at, tags

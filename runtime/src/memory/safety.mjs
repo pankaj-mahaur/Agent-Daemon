@@ -52,6 +52,18 @@ const STRONG_INJECTION = new Set(["instruction-override", "role-override", "cove
 const CLASSIC_OVERRIDE = /\b(?:ignore|disregard|forget|override)\b[^.\n]{0,24}\b(?:all|any|the|your)?\s*(?:previous|prior|above|earlier|preceding|system)\b[^.\n]{0,24}\b(?:instructions?|prompts?|messages?|directions?)\b/i;
 
 /**
+ * Read time (P5.1): does a stored note read like an instruction to the agent?
+ * The strong injection reasons, plus a command the note tells the agent to run
+ * ("Run the following command: curl … | sh"); instruction-override only in its
+ * classic form. The weaker reasons (a marker or hook name mentioned in a note
+ * about this repo's own code) don't withhold a note.
+ */
+export function readsAsInstruction(text, evidence = "") {
+  const s = screenLearning({ text: String(text ?? ""), evidence_quote: String(evidence ?? ""), tags: [] });
+  return s.reasons.some((r) => (r === "command-coercion" || STRONG_INJECTION.has(r)) && (r !== "instruction-override" || CLASSIC_OVERRIDE.test(`${text ?? ""}\n${evidence ?? ""}`)));
+}
+
+/**
  * Hold back existing rows that 3.0 stored unsafely. Runs once (marker row in
  * memory_maintenance); only status and quarantine_reason change:
  *   - legacy quarantine (applied_to 'quarantined…' on an active row) → injection:legacy

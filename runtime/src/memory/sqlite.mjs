@@ -18,6 +18,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
+import { adRoot, legacyAdRoots } from "../ad-root.mjs";
 
 /**
  * Full schema (idempotent — uses IF NOT EXISTS everywhere).
@@ -307,9 +309,16 @@ CREATE INDEX IF NOT EXISTS idx_proposals_kind   ON proposals(kind, status);
  *
  * @returns {string}
  */
+// AD_MEMORY_DB (the memory server's --db) names the file. Else an existing DB, looked
+// for first where every earlier ad put it (HOME, then USERPROFILE: Git Bash's HOME can
+// differ), so an install keeps the DB it has; a new install gets one in ad's root (plan §M).
+// Hooks and the memory server all resolve through here, so they share one file.
 export function defaultDbPath() {
-  const home = process.env.HOME || process.env.USERPROFILE || ".";
-  return path.join(home, ".agent-daemon", "episodic.db");
+  if (process.env.AD_MEMORY_DB && path.isAbsolute(process.env.AD_MEMORY_DB)) return process.env.AD_MEMORY_DB;
+  const earlier = process.env.HOME || process.env.USERPROFILE;
+  const roots = [...new Set([...(earlier ? [path.join(earlier, ".agent-daemon")] : []), adRoot(), ...legacyAdRoots()])];
+  const found = roots.map((r) => path.join(r, "episodic.db")).find((p) => existsSync(p));
+  return found ?? path.join(adRoot(), "episodic.db");
 }
 
 /**

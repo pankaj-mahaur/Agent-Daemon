@@ -127,3 +127,62 @@ test("memory MCP: tools/list advertises the progressive-disclosure tools, and ge
   assert.match(profileText, /pnpm/, "user fact surfaced in the representation");
   assert.match(profileText, /derived deterministically/);
 });
+
+// P5.1: a 2026-07-28 client (as the engine at 0.163 with mcp_2026_07_28: server/discover
+// first, _meta on every request), and answers drained when stdin ends.
+const MODERN_META = { "io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientInfo": { name: "t", version: "0" }, "io.modelcontextprotocol/clientCapabilities": {} };
+
+async function modernHome() {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ad-mcp-modern-"));
+  const proj = path.join(dir, "proj");
+  await fs.mkdir(path.join(proj, ".git"), { recursive: true });
+  const env = { ...process.env, HOME: dir, USERPROFILE: dir, AD_ROOT: undefined, CLAUDE_PROJECT_DIR: undefined, AD_MEMORY_PROJECT: undefined };
+  return { dir, proj, env, done: () => fs.rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }) };
+}
+
+test("memory MCP, modern: server/discover, tools/list and tools/call with _meta; annotations on every tool", async () => {
+  const h = await modernHome();
+  try {
+    const r = await driveServer(h.env, [
+      { jsonrpc: "2.0", id: 1, method: "server/discover", params: { _meta: MODERN_META } },
+      { jsonrpc: "2.0", id: 2, method: "tools/list", params: { _meta: MODERN_META } },
+      { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "memory_stats", arguments: {}, _meta: MODERN_META } },
+    ], 8000, { args: ["--project", h.proj] });
+    assert.deepEqual(r[1].result.supportedVersions, ["2026-07-28"]);
+    assert.equal(r[1].result.ttlMs, 3600000);
+    assert.equal(r[1].result.cacheScope, "private");
+    assert.equal(r[1].result._meta["io.modelcontextprotocol/serverInfo"].name, "agent-daemon-memory");
+    const tools = r[2].result.tools;
+    assert.equal(r[2].result.resultType, "complete");
+    for (const t of tools) {
+      assert.ok(t.title && t.annotations, t.name);
+      assert.equal(t.inputSchema.additionalProperties, false, t.name);
+    }
+    assert.equal(tools.find((t) => t.name === "memory_search").annotations.readOnlyHint, true);
+    assert.equal(tools.find((t) => t.name === "memory_get").annotations.readOnlyHint, false, "it bumps retrieval counters");
+    assert.equal(tools.find((t) => t.name === "memory_feedback").annotations.readOnlyHint, false);
+    assert.equal(r[3].result.resultType, "complete");
+    assert.match(r[3].result.content[0].text, /^scope: project \(arg\)/);
+  } finally {
+    await h.done();
+  }
+});
+
+test("memory MCP: a call in flight when stdin ends is still answered", async () => {
+  const h = await modernHome();
+  try {
+    const { spawn: sp } = await import("node:child_process");
+    const child = sp(process.execPath, [SERVER, "--project", h.proj], { env: h.env, stdio: ["pipe", "pipe", "pipe"] });
+    let out = "";
+    child.stdout.on("data", (c) => (out += c));
+    child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18" } }) + "\n");
+    for (let i = 2; i <= 101; i++) child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: i, method: "tools/call", params: { name: "memory_search", arguments: { query: `note ${i}` } } }) + "\n");
+    child.stdin.end(); // with up to 100 calls still in flight
+    const code = await new Promise((r) => child.on("exit", r));
+    assert.equal(code, 0);
+    const ids = out.trim().split("\n").filter(Boolean).map((l) => JSON.parse(l).id);
+    assert.deepEqual(ids.sort((a, b) => a - b), Array.from({ length: 101 }, (_, i) => i + 1), "every call was answered before exit");
+  } finally {
+    await h.done();
+  }
+});

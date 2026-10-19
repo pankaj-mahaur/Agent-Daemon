@@ -340,6 +340,12 @@
       "rules": ["A"],
       "match": "[a-z][A-Za-z0-9]*Codex[A-Za-z0-9]*|Codex[A-Z][A-Za-z0-9]*|codex[A-Z][A-Za-z0-9]*|CODEX_[A-Z_]+|AD_CODEX_[A-Z_]+|codex app-server|engine/codex/|@openai/codex|~/\\.codex|codex-home|\\.codex/|codex-rs/|codex-version|codex\\.exe|codex-session-end\\.mjs|upstream-commands\\.json|codex-slash\\.mjs|codex-schema-snapshot\\.mjs|codex-notifications\\.mjs|fake-codex-app-server\\.mjs|codex-[a-z-]+\\.test\\.mjs|gpt-[\\w.-]*codex[\\w.-]*",
       "reason": "tests may name the engine's API tokens and files they exercise"
+    },
+    {
+      "path": "mcp/agent-daemon-memory/README.md",
+      "rules": ["A"],
+      "match": "CODEX_MCP_PROTOCOL_VERSION",
+      "reason": "the engine environment variable a user sets to turn on the MCP 2026-07-28 handshake for this server; its exact name is the instruction"
     }
   ]
 }

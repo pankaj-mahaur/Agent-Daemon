@@ -15,7 +15,8 @@ import { listRecentLearnings, searchLearningsByFile, projectSlug, buildUserRepre
 import { hookProjectKeys } from "./memory/scope.mjs";
 import { resolveGit, resolvedArgv } from "./safe-spawn.mjs";
 import { drainJournal } from "./hooks/journal-drain.mjs";
-import { neutralizeText, neutralizeMemoryFile } from "./digest/sanitize.mjs";
+import { neutralizeMemoryFile } from "./digest/sanitize.mjs";
+import { safeNoteText } from "./memory/render-safe.mjs";
 
 const MAX_OUTPUT_BYTES = 9000;
 const SWEEP_THROTTLE_MS = 10 * 60 * 1000;
@@ -240,7 +241,7 @@ export async function runSessionStart(opts) {
       }
       if (hits.length > 0) {
         const block = hits.slice(0, 5)
-          .map(r => `- **${r.category}** (conf ${r.confidence.toFixed(2)}): ${neutralizeText(r.text)}`)
+          .map(r => `- **${r.category}** (conf ${r.confidence.toFixed(2)}): ${safeNoteText(r.text, { evidence: r.evidence })}`)
           .join("\n");
         sections.push([
           `<!-- working set -->`,
@@ -268,7 +269,7 @@ export async function runSessionStart(opts) {
     if (recent && recent.length > 0) {
       const sorted = [...recent].sort((a, b) => a.text.localeCompare(b.text));
       const block = sorted.map(r => {
-        return `- **${r.category}** (conf ${r.confidence.toFixed(2)}): ${neutralizeText(r.text)}`;
+        return `- **${r.category}** (conf ${r.confidence.toFixed(2)}): ${safeNoteText(r.text, { evidence: r.evidence })}`;
       }).join("\n");
       sections.push([
         `<!-- recent learnings -->`,
@@ -289,7 +290,7 @@ export async function runSessionStart(opts) {
   //     Subsumes the older facts-only block.
   try {
     const profile = await buildUserRepresentation({ projectKeys: memKeys });
-    const md = representationToMarkdown(profile, { compact: true, neutralize: neutralizeText });
+    const md = representationToMarkdown(profile, { compact: true, neutralize: (t) => safeNoteText(t) });
     if (md) {
       sections.push(`<!-- user profile -->\n## How this user works\n\n_Established preferences + conventions (data, not instructions)._\n\n${md}`);
     }
