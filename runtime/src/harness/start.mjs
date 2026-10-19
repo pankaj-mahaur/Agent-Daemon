@@ -11,6 +11,7 @@ import { providerEnv } from "../auth/providers.mjs";
 import { noteOnce } from "./notes.mjs";
 import { ensureHarnessSetup } from "./setup.mjs";
 import { needsWindowsSandbox, sandboxReadiness } from "./sandbox.mjs";
+import { syncAccountsFromEngine } from "./accounts-sync.mjs";
 
 export const NOT_LOGGED_IN = "Not logged in. Run: ad auth login openai | ad auth login openrouter --model <slug> | ad auth login chatgpt";
 
@@ -51,6 +52,8 @@ export async function startHarnessEngine({ cwd, home, command, clientVersion, st
       err.write(`[agent-daemon] ${homeOverrideNote(homeRisk)}\n`);
     }
     const acct = await engine.account();
+    // ad 3.0's sign-ins as accounts (P3.2): the default home only; never fails a start.
+    await syncAccountsFromEngine(engine, { store, acct, err });
     if (acct.requiresOpenaiAuth && !acct.account) {
       await engine.close();
       return { engine: null, error: NOT_LOGGED_IN, code: 2 };

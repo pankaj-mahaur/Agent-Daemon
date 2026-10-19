@@ -124,6 +124,7 @@ Agent harness (ad's engine; ad about):
   auth login openrouter  Store an OpenRouter key and make it active (needs --model <slug>)
   auth use <provider>    Switch active provider: openai | openrouter [--model <slug>]
   auth status            Show the harness login + active provider (no secrets)
+  auth repair            Fix interrupted sign-ins and keys without an account (--yes: answer yes)
   auth logout [openrouter]
   schedule add "<cron>" run|loop "<prompt>"   Recurring job, run by "ad watch" / the service  [--cwd dir]
   schedule list | remove|enable|disable|run <id> | tick
@@ -1214,6 +1215,14 @@ async function cmdDoctor({ cwd = process.cwd(), tokens, limit, model } = {}) {
     });
   } catch {
     checks.push({ name: "Project memory bootstrap", ok: false, note: "missing .agent-daemon/memory — run ad init" });
+  }
+  // P3.2: accounts and the secret store (counts and names only, never a value).
+  try {
+    const { accountRows } = await import("./auth/accounts/reconcile.mjs");
+    const { createSecretStore } = await import("./auth/secrets.mjs");
+    checks.push(...accountRows({ store: createSecretStore() }));
+  } catch (e) {
+    checks.push({ name: "Accounts", ok: true, note: `not checked (${e.message})` });
   }
   // P7.1a: MCP audit logs go to ad's state root; AGENT_DAEMON_HOME is the runtime folder.
   if (process.env.AGENT_DAEMON_HOME && (await fs.stat(path.join(process.env.AGENT_DAEMON_HOME, "audit")).catch(() => null))) {
@@ -2557,6 +2566,8 @@ async function main(argv) {
     }
     case "viewer":         return cmdViewer({ ...opts, out: parsed.values.out, open: parsed.values.open || false });
     case "auth": {
+      // P3.2: fix interrupted sign-ins and keys without an account.
+      if (parsed.positionals[0] === "repair") return (await import("./harness/auth-repair.mjs")).cmdAuthRepair({ yes: parsed.values.yes || false });
       const { cmdAuth } = await import("./harness/auth.mjs");
       return cmdAuth(parsed.positionals[0], parsed.positionals.slice(1), {
         model: parsed.values.model,

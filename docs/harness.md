@@ -191,7 +191,11 @@ Unattended runs also switch off every MCP server except the daemon's memory, and
 
 `--sandbox danger-full-access` turns the sandbox off for `ad run` / `ad chat`. Use it only in a throwaway environment.
 
-**Keys.** OpenRouter keys are stored with DPAPI on Windows, libsecret on Linux (falling back to a 0600 file) and a 0600 file on macOS. They never go into config or argv, and `OPENROUTER_API_KEY` is removed from the agent's shell. ChatGPT / OpenAI logins are kept by the engine in the harness home (`auth.json`).
+**Keys.** OpenRouter keys are stored with DPAPI on Windows, libsecret on Linux (falling back to a 0600 file), and on macOS in the keychain when the optional `@napi-rs/keyring` module is installed (else a 0600 file; `ad doctor` says which). They never go into config or argv, and `OPENROUTER_API_KEY` is removed from the agent's shell. ChatGPT / OpenAI logins are kept by the engine in the harness home (`auth.json`).
+
+**Accounts.** ad keeps a list of accounts (`~/.agent-daemon/accounts/registry.json`): each has an id, a label, an owner tag and where its credential lives, and never the credential itself (an API key shows only its last 4 characters). ad 3.0's sign-in and OpenRouter key become accounts by themselves, without moving or rewriting anything 3.0 uses, so going back to 3.0 still works. An interrupted sign-in or key change leaves something `ad auth repair` finishes (it asks before deleting a key).
+
+**What a tool can still reach.** The file backend's keys and the `.dpapi` files can be read (and DPAPI files decrypted) by programs the agent runs as you, until ad can deny those reads to its tools (planned with the gateway). `ad doctor` notes this on the Secret store line.
 
 ### Working in your home folder
 

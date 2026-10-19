@@ -28,22 +28,10 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { adRoot } from "../ad-root.mjs";
 import { acquireLock } from "../lock.mjs";
+import { ulid } from "../ids.mjs";
 
 export const PROJECT_ID_RE = /^prj_[0-9A-HJKMNP-TV-Z]{26}$/;
-const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-
-/** A ULID (time-ordered, 26 Crockford base-32 characters). */
-export function ulid(now = Date.now(), rand = crypto.randomBytes(16)) {
-  let t = now;
-  let time = "";
-  for (let i = 0; i < 10; i++) {
-    time = CROCKFORD[t % 32] + time;
-    t = Math.floor(t / 32);
-  }
-  let r = "";
-  for (let i = 0; i < 16; i++) r += CROCKFORD[rand[i] % 32];
-  return time + r;
-}
+export { ulid };
 export const newProjectId = (now) => `prj_${ulid(now)}`;
 
 /** The same slug episodic.projectSlug makes (kept here so this module has no DB import). */

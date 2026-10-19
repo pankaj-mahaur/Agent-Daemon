@@ -18,6 +18,7 @@ import { signInNoteBrowser, signInNoteDevice } from "../engine/attribution.mjs";
 import { PROVIDERS, useProviderEdits } from "../auth/providers.mjs";
 import { createSecretStore } from "../auth/secrets.mjs";
 import { openUrl, readSecret } from "./io.mjs";
+import { syncAccountsFromEngine } from "./accounts-sync.mjs";
 
 export function maskEmail(email) {
   if (!email || !email.includes("@")) return email ?? "";
@@ -57,6 +58,8 @@ export async function cmdAuth(sub, args = [], opts = {}) {
       // stored key must not block the very commands that repair it.
       env: opts.env,
     });
+    // ad 3.0's sign-ins as accounts (P3.2), before and after any change below.
+    await syncAccountsFromEngine(engine, { store, err });
     if (sub !== "status" && !engineHome.isManaged(engine.home) && !opts.force) {
       err.write(`Refusing to change ${engine.home}: ad didn't create it (it may belong to another program). Re-run with --force to proceed.\n`);
       return 2;
@@ -126,6 +129,7 @@ export async function cmdAuth(sub, args = [], opts = {}) {
     err.write(cliErrorLines("auth", e));
     return 1;
   } finally {
+    if (engine && sub !== "status") await syncAccountsFromEngine(engine, { store, err });
     await engine?.close();
   }
 }
