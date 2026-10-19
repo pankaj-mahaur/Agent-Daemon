@@ -734,6 +734,26 @@ See [harness.md](harness.md#working-in-your-home-folder).
 
 **Fix:** run it yourself in a terminal window (not through the agent, not piped). Listing works anywhere: plain `ad review` without a terminal lists what is queued.
 
+## 53. The memory installer refused my config
+
+**Symptom:** `✗ Codex: …; add this yourself:` or `✗ Cursor: …` followed by a snippet.
+
+**Cause:** the installer changes only its own entry, and only when it can do that safely. It refuses when the file doesn't parse, when Codex's `mcp_servers` isn't a table, when `agent-daemon-memory` is already defined there and isn't ad's (a TOML table, dotted keys or an inline table all count), when the file is read-only, or when the config is ad's own engine home. The file is left exactly as it was.
+
+**Fix:** fix the file (doctor's `config.parse` shows the parse error), or remove your own `agent-daemon-memory` entry and run `install` again, or paste the printed snippet yourself. If the entry is one ad wrote earlier and you want ad to manage it again: `repair --adopt`.
+
+## 54. The memory tools don't show up after installing
+
+**Cause:** hosts read their MCP config when they start.
+
+**Fix:** restart the host (Claude Code: start a new session, or `/mcp`; Cursor: reload the window; Codex: start a new session). Then `npx agent-daemon-memory doctor` (or `ad memory doctor`): `smoke.legacy` and `smoke.modern` start the entry the way the host does. A failing `node.path` means the Node the entry names moved (a Node upgrade): run `repair`.
+
+## 55. Doctor says `capture.double`
+
+**Cause:** in Claude Code, ad's hooks capture what you type, and the memory server was installed with `--capture tools`, so the agent's record tools save corrections as well.
+
+**Fix:** `install --host claude-code --capture hooks` (or `repair`). With the default `auto`, the record tools stand down while the hooks are capturing.
+
 ---
 
 For harness problems, the [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill walks through login → hooks → sandbox → the engine's own log. See also [harness.md](harness.md) and, for the terminal UI, [tui.md](tui.md).

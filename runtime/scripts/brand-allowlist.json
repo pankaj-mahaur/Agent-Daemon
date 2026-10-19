@@ -358,6 +358,89 @@
       "rules": ["A"],
       "match": "`codex`",
       "reason": "the --host id a user passes for that host; the exact value is the instruction"
+    },
+    {
+      "path": "runtime/src/memory-install/**",
+      "rules": ["A", "C"],
+      "reason": "the memory installer adds ad's memory server to the user's own Codex CLI as one of three hosts: it must name that host, its config file and CODEX_HOME. This is the user's separate install, not ad's engine"
+    },
+    {
+      "path": "packages/agent-daemon-memory/**",
+      "rules": ["A"],
+      "reason": "the memory package's npm page names the hosts it installs into, Codex among them"
+    },
+    {
+      "path": "runtime/scripts/memory-install-matrix.mjs",
+      "rules": ["A"],
+      "reason": "the installer's config matrix sets up a fake Codex home per case"
+    },
+    {
+      "path": "runtime/scripts/build-memory-package.mjs",
+      "rules": ["A"],
+      "match": "engine\\\\?/codex|@openai/codex",
+      "reason": "it forbids the package from importing the engine adapter and the engine package; the names are the rule"
+    },
+    {
+      "path": "runtime/test/memory-install*.test.mjs",
+      "rules": ["A"],
+      "reason": "installer tests write and read a fake Codex home (the Codex host's config.toml)"
+    },
+    {
+      "path": "runtime/test/memory-package.test.mjs",
+      "rules": ["A"],
+      "reason": "package tests check the closure excludes the engine adapter and set a fake CODEX_HOME"
+    },
+    {
+      "path": "runtime/test/memory-host-codex.test.mjs",
+      "rules": ["A", "B"],
+      "reason": "release gate (b) for the Codex host: it starts the pinned binary (the Codex CLI) directly and speaks the protocol to it on purpose, as engine-real does"
+    },
+    {
+      "path": ".github/workflows/test.yml",
+      "rules": ["A"],
+      "match": "Codex binary loading the installed entry|Codex loads the installed entry|memory-host-codex\\.test\\.mjs",
+      "reason": "the CI step for the memory package's Codex host acceptance (gate b)"
+    },
+    {
+      "path": "docs/memory-install.md",
+      "rules": ["A"],
+      "reason": "the memory installer's guide: Codex is one of the three hosts it installs into (the user's own Codex CLI, not ad's engine)"
+    },
+    {
+      "path": "README.md",
+      "rules": ["A"],
+      "match": "Claude Code, Codex and Cursor|Claude Code, Codex, Cursor",
+      "reason": "the hosts the memory installer adds ad's memory to"
+    },
+    {
+      "path": "DEPENDENCIES.md",
+      "rules": ["A"],
+      "match": "Codex's `config.toml`",
+      "reason": "why the installer needs a TOML parser: the Codex host's config"
+    },
+    {
+      "path": "SECURITY.md",
+      "rules": ["A"],
+      "match": "Codex's TOML",
+      "reason": "the installer's threat-model row names the host configs it edits"
+    },
+    {
+      "path": "docs/testing.md",
+      "rules": ["A"],
+      "match": "the real Codex binary loading the installed entry|memory-host-codex\\.test\\.mjs",
+      "reason": "the CI job that checks the Codex host loads the installer's entry"
+    },
+    {
+      "path": "docs/troubleshooting.md",
+      "rules": ["A"],
+      "match": "✗ Codex: …|Codex's `mcp_servers`|Codex: start a new session",
+      "reason": "the memory installer's messages and the Codex host's restart step"
+    },
+    {
+      "path": "mcp/agent-daemon-memory/README.md",
+      "rules": ["A"],
+      "match": "Install \\(Claude Code, Codex, Cursor\\)",
+      "reason": "the heading naming the hosts the installer covers"
     }
   ]
 }

@@ -83,6 +83,7 @@ Commands:
   memory held [accept|release|drop <id>]  Notes memory keeps back (agent-written, flagged); accept/release/drop need your own terminal and the typed id
   memory consolidate     Hermes-style evolution pass: near-duplicate merges, stale archive, contradictions
                          → proposals only; --apply-merges / --apply-stale execute after review
+  memory install [--host <id>] [--yes] [--dry-run]   Add ad's memory server to other agents (doctor, repair, status, uninstall)
                          --all-projects       span every project (default: current --cwd only)
   route stats            Route-advice effectiveness: advised / followed / diverged / ignored per skill
                          --days <n>           window (default 30); --json for machine output
@@ -856,7 +857,30 @@ Session logs:
                                          "log tokens" / "close session" / "new session" triggers.
 
 ${memoryStatus}`);
+  if (!dryRun) await offerMemoryInstall({ yes });
   return 0;
+}
+
+// ad init's last step (P5.3): offer ad's memory server for Claude Code through the
+// installer (claude mcp add, user scope). Asked only in a terminal; default yes.
+async function offerMemoryInstall({ yes }) {
+  const { resolveClaude } = await import("./safe-spawn.mjs");
+  const { readLedger } = await import("./memory-install/ledger.mjs");
+  const { adRoot } = await import("./ad-root.mjs");
+  if (!resolveClaude().resolved || readLedger(adRoot()).hosts["claude-code"]) return;
+  // Scripts and CI (no terminal) only get the hint: nothing runs `claude` behind their back.
+  if (!(process.stdin.isTTY && process.stdout.isTTY)) {
+    console.log("\nTo let Claude Code search this memory mid-task: ad memory install --host claude-code");
+    return;
+  }
+  if (!yes) {
+    const readline = await import("node:readline/promises");
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    const a = (await rl.question("\nAdd ad's memory server to Claude Code too (claude mcp add, user scope)? [Y/n] ")).trim().toLowerCase();
+    rl.close();
+    if (a && a !== "y" && a !== "yes") return;
+  }
+  await (await import("./memory-install/cli.mjs")).main(["install", "--host", "claude-code", "--yes"]);
 }
 
 /**
@@ -1048,12 +1072,12 @@ async function cmdDoctor({ cwd = process.cwd(), tokens, limit, model } = {}) {
     }
   }
 
-  // Check 2c: better-sqlite3 native binding (episodic memory)
+  // Check 2c: the SQLite driver (better-sqlite3, else node:sqlite) for episodic memory
   try {
     const sqliteMod = await import("./memory/sqlite.mjs");
     const driver = await sqliteMod.checkDriver();
     if (driver.installed) {
-      checks.push({ name: "better-sqlite3 (episodic memory)", ok: true, note: "installed" });
+      checks.push({ name: "SQLite driver (episodic memory)", ok: true, note: `${driver.driver}${driver.drivers.length > 1 ? ` (also: ${driver.drivers.filter((d) => d !== driver.driver).join(", ")})` : ""}` });
       // Quick stats if DB exists
       try {
         const ep = await import("./memory/episodic.mjs");
@@ -1065,10 +1089,10 @@ async function cmdDoctor({ cwd = process.cwd(), tokens, limit, model } = {}) {
         }
       } catch { /* DB not yet created — fine */ }
     } else {
-      checks.push({ name: "better-sqlite3 (episodic memory)", ok: false, note: driver.error || "not installed (cd runtime && npm install)" });
+      checks.push({ name: "SQLite driver (episodic memory)", ok: false, note: driver.error || "not installed (cd runtime && npm install)" });
     }
   } catch (err) {
-    checks.push({ name: "better-sqlite3 (episodic memory)", ok: false, note: `error: ${err.message}` });
+    checks.push({ name: "SQLite driver (episodic memory)", ok: false, note: `error: ${err.message}` });
   }
 
   // Check 3: settings.json exists and parses
@@ -2447,7 +2471,13 @@ async function main(argv) {
     case "review":         return cmdReview({ ...opts, accept: parsed.values.accept, acceptAll: parsed.values["accept-all"] || false, global: parsed.values.global || false, yes: parsed.values.yes || false });
     case "watch":          return cmdWatch({ ...opts, logFile: parsed.values["log-file"] });
     case "query-retrieve": return cmdQueryRetrieve(opts);
-    case "memory":         return cmdMemory(parsed.positionals?.[0], {
+    case "memory":
+      // The memory installer for other hosts (same code as npx agent-daemon-memory; P5.3).
+      if (["install", "doctor", "repair", "status", "uninstall"].includes(parsed.positionals?.[0])) {
+        const sub = parsed.positionals[0];
+        return (await import("./memory-install/cli.mjs")).main([sub, ...rest.slice(rest.indexOf(sub) + 1)]);
+      }
+      return cmdMemory(parsed.positionals?.[0], {
       ...opts,
       applyMerges: parsed.values["apply-merges"] || false,
       applyStale: parsed.values["apply-stale"] || false,

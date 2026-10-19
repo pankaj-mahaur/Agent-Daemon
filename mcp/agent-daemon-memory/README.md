@@ -137,7 +137,17 @@ keep this one. Each conversation's server is bound to that conversation's folder
 (`AD_MEMORY_PROJECT`); a team worker's to the repo it was spawned from, not its
 worktree.
 
-## Install (Claude Code)
+## Install (Claude Code, Codex, Cursor)
+
+```sh
+npx agent-daemon-memory install     # or, with ad installed: ad memory install
+```
+
+It adds the server to each host it finds, after showing the plan; see
+[docs/memory-install.md](../../docs/memory-install.md) (doctor, repair,
+uninstall, and what it never changes).
+
+### By hand (Claude Code)
 
 ```sh
 claude mcp add agent-daemon-memory -- node <repo>/runtime/src/mcp/memory-server.mjs --host claude-code

@@ -20,6 +20,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { adRoot, legacyAdRoots } from "../ad-root.mjs";
+import { availableDrivers, openDatabase } from "./driver.mjs";
 
 /**
  * Full schema (idempotent — uses IF NOT EXISTS everywhere).
@@ -333,21 +334,6 @@ export async function dumpSchema(outPath) {
   await fs.writeFile(outPath, SCHEMA, "utf8");
 }
 
-/**
- * Lazy-load better-sqlite3. Returns null if the module isn't installed —
- * callers handle gracefully so the runtime keeps working without the
- * native binding (digest still writes markdown; only SQLite features fail).
- *
- * @returns {Promise<any | null>}
- */
-async function loadDriver() {
-  try {
-    const mod = await import("better-sqlite3");
-    return mod.default || mod;
-  } catch (err) {
-    return null;
-  }
-}
 
 /**
  * @typedef {Object} Db
@@ -367,29 +353,47 @@ async function loadDriver() {
  * @param {{dbPath?: string}} [opts]
  * @returns {Promise<Db | null>}
  */
-export async function open(opts = {}) {
-  const Database = await loadDriver();
-  if (!Database) return null;
+// SQLITE_BUSY, SQLITE_LOCKED and SQLITE_IOERR (its extended codes keep the low byte 10).
+const transientOpenError = (e) => e?.code === "SQLITE_BUSY" || /^SQLITE_IOERR/.test(String(e?.code ?? "")) || [5, 6, 10].includes(Number(e?.errcode) & 0xff);
 
+export async function open(opts = {}) {
   const dbPath = opts.dbPath || defaultDbPath();
   await fs.mkdir(path.dirname(dbPath), { recursive: true });
 
-  const raw = new Database(dbPath);
-  raw.exec(SCHEMA);
-
-  // Run migrations AFTER SCHEMA exec. Each migration is idempotent + safe to
-  // re-run on already-migrated DBs.
-  migrateLearningsContentHash(raw);
-  migrateLearningsEvolution(raw);
-  migrateSkillExecutionTelemetry(raw);
-  migrateSkillRouteEvents(raw);
-  migrateRetrievalEvents(raw);
-  migrateMemoryContract(raw);
-  migrateLearningsCapture(raw);
+  // better-sqlite3 or node:sqlite (memory/driver.mjs); null when neither loads.
+  // A process that just closed or died can leave the WAL's shared memory busy for
+  // a moment (Windows: "disk I/O error" under node:sqlite): retry those briefly.
+  let raw;
+  for (let attempt = 0; ; attempt++) {
+    raw = await openDatabase(dbPath, { prefer: opts.prefer });
+    if (!raw) return null;
+    try {
+      raw.exec(SCHEMA);
+      // Run migrations AFTER SCHEMA exec. Each migration is idempotent + safe to
+      // re-run on already-migrated DBs.
+      migrateLearningsContentHash(raw);
+      migrateLearningsEvolution(raw);
+      migrateSkillExecutionTelemetry(raw);
+      migrateSkillRouteEvents(raw);
+      migrateRetrievalEvents(raw);
+      migrateMemoryContract(raw);
+      migrateLearningsCapture(raw);
+      break;
+    } catch (e) {
+      try {
+        raw.close();
+      } catch {
+        // already unusable
+      }
+      if (attempt >= 4 || !transientOpenError(e)) throw e;
+      await new Promise((r) => setTimeout(r, 100 * (attempt + 1)));
+    }
+  }
 
   return {
     raw,
     path: dbPath,
+    driver: raw.driver,
     run: (sql, params = []) => raw.prepare(sql).run(...params),
     all: (sql, params = []) => raw.prepare(sql).all(...params),
     get: (sql, params = []) => raw.prepare(sql).get(...params),
@@ -706,18 +710,17 @@ function migrateSkillRouteEvents(raw) {
 }
 
 /**
- * @returns {Promise<{installed: boolean, version?: string, error?: string}>}
+ * @returns {Promise<{installed: boolean, driver?: string, drivers?: string[], error?: string}>}
  */
 export async function checkDriver() {
   try {
-    const Database = await loadDriver();
-    if (!Database) {
-      return { installed: false, error: "better-sqlite3 not installed (run: cd runtime && npm install)" };
-    }
-    // Probe by opening an in-memory db
-    const db = new Database(":memory:");
+    const drivers = await availableDrivers();
+    if (!drivers.length) return { installed: false, drivers, error: "no SQLite driver: better-sqlite3 not installed (run: cd runtime && npm install) and node:sqlite needs Node 22.13+" };
+    // Probe the one open() will use.
+    const db = await openDatabase(":memory:");
+    const driver = db.driver;
     db.close();
-    return { installed: true };
+    return { installed: true, driver, drivers };
   } catch (err) {
     return { installed: false, error: err.message };
   }

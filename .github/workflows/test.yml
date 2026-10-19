@@ -78,6 +78,57 @@ jobs:
             });
           "
 
+  memory-install:
+    # The agent-daemon-memory package (P5.3): memory on node:sqlite (no native
+    # build), the installer's config matrix (release gate a), the package build,
+    # and the real Codex binary loading the installed entry (gate b).
+    name: memory install / ${{ matrix.os }} / node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: ["22.13", "24"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js ${{ matrix.node }}
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: runtime/package-lock.json
+
+      - name: Install runtime deps
+        working-directory: runtime
+        run: npm ci
+
+      - name: Memory tests on node:sqlite
+        working-directory: runtime
+        shell: bash
+        env:
+          AD_SQLITE_DRIVER: "node:sqlite"
+        run: node --test --test-force-exit test/memory-*.test.mjs test/mcp-*.test.mjs test/episodic-progressive.test.mjs test/review-guard.test.mjs
+
+      - name: Installer config matrix (gate a)
+        run: node runtime/scripts/memory-install-matrix.mjs
+
+      - name: Build and pack the package
+        shell: bash
+        run: |
+          set -e
+          node runtime/scripts/build-memory-package.mjs
+          cd packages/agent-daemon-memory && npm pack --dry-run
+
+      - name: Codex loads the installed entry (gate b)
+        working-directory: runtime
+        env:
+          AD_REAL_ENGINE: "1"
+        run: node --test --test-force-exit test/memory-host-codex.test.mjs
+
   engine-real:
     # The real pinned engine binary against a mock model (runtime/testkit/mock-responses.mjs).
     # continue-on-error while each platform's sandbox behaviour is being learned (docs/testing.md).
