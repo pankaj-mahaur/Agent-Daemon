@@ -311,7 +311,8 @@ const ITEM_NORMALIZERS = {
     receiverThreadIds: i.receiverThreadIds ?? [],
     agents: i.agentsStates ?? null,
   }),
-  subAgentActivity: (i) => ({ agentPath: i.agentPath ?? null, agentThreadId: i.agentThreadId ?? null, activity: i.kind ?? null }),
+  // model and reasoningEffort: since engine 0.163.
+  subAgentActivity: (i) => ({ agentPath: i.agentPath ?? null, agentThreadId: i.agentThreadId ?? null, activity: i.kind ?? null, model: i.model ?? null, reasoningEffort: i.reasoningEffort ?? null }),
   webSearch: (i) => ({ query: i.query ?? null, action: i.action ?? null }),
   imageView: (i) => ({ path: i.path ?? null }),
   sleep: (i) => ({ durationMs: i.durationMs ?? null }),

@@ -10,7 +10,8 @@
 // A key spec is the engine's: modifiers `ctrl-` `alt-` `shift-` (in that order),
 // then a printable character or a key name (enter, tab, backspace, esc,
 // delete, up, down, left, right, home, end, page-up, page-down, space, minus,
-// f1–f12). Several strokes (`ctrl-x f`, a chord) aren't supported by ad yet.
+// f1–f12). A binding may also be a two-stroke chord (`ctrl-x ctrl-s`) or a
+// leader chord (`leader c`); see parseBinding and chords().
 
 // The engine's defaults for the actions ad has. The comment names what ad does.
 export const DEFAULT_KEYMAP = Object.freeze({
@@ -113,15 +114,48 @@ export function eventSpec(ev) {
 export const keyLabel = (spec) => (spec === "-" ? "-" : spec.replace(/-(?=.)/g, "+").replace(/^shift\+\?$/, "?").replace("page+up", "pgup").replace("page+down", "pgdn"));
 
 /**
+ * A binding in the engine's spelling → {leader, strokes}: one stroke
+ * ("ctrl-t"), a two-stroke chord ("ctrl-x ctrl-s"), or a leader chord
+ * ("leader c": the global.leader key, then c). Throws on what the engine
+ * refuses: more than two strokes, `leader` without exactly one key, plain
+ * esc in a chord (it cancels a pending chord).
+ */
+export function parseBinding(spec) {
+  const raw = String(spec ?? "").trim().toLowerCase();
+  if (!raw) throw new Error("empty keybinding");
+  const words = raw.split(/\s+/);
+  const leader = words[0] === "leader";
+  const rest = leader ? words.slice(1) : words;
+  if (leader && rest.length === 0) throw new Error(`"${spec}": leader needs one key after it`);
+  if (words.length > 2) throw new Error(`"${spec}": key chords may have at most 2 strokes`);
+  const strokes = rest.map(parseKey);
+  if ((leader || strokes.length === 2) && strokes.some(isPlainEsc)) throw new Error(`"${spec}": plain esc cancels a pending chord, so it can't be in one`);
+  return { leader, strokes };
+}
+
+const isPlainEsc = (s) => s.key === "esc" && !s.ctrl && !s.alt && !s.shift;
+const isCharacter = (s) => s.key.length === 1 || s.key === "space";
+const strokeId = (s) => JSON.stringify(s);
+const isChordSpec = (spec) => /\s/.test(spec.trim());
+const normSpec = (spec) => spec.trim().toLowerCase().split(/\s+/).join(" ");
+
+// The engine's chord timeout (keymap/chords.rs KEY_CHORD_TIMEOUT); leader chords don't expire.
+export const CHORD_TIMEOUT_MS = 1000;
+const DEFAULT_LEADER = "ctrl-x";
+
+/**
  * The keymap with `overrides` (the `tui.keymap` table) on top of ad's
  * defaults. An override that can't be read, or that would give one key two
  * meanings where they're live together, is dropped with a warning and the
- * default kept.
+ * default kept (one warning per bad value). Chords follow the engine's 0.163
+ * rules (keymap/chords.rs, leader.rs); chords() matches them as keys arrive.
  */
-export function createKeymap({ overrides = null } = {}) {
+export function createKeymap({ overrides = null, platform = process.platform } = {}) {
   const warnings = [];
   const map = {};
   for (const [ctx, actions] of Object.entries(DEFAULT_KEYMAP)) map[ctx] = Object.fromEntries(Object.entries(actions).map(([a, keys]) => [a, { keys: [...keys], custom: false }]));
+  const restore = (ctx, action) => (map[ctx][action] = { keys: [...DEFAULT_KEYMAP[ctx][action]], custom: false });
+  const singles = (b) => b.keys.filter((k) => !isChordSpec(k));
   const asList = (v) => (Array.isArray(v) ? v : typeof v === "string" ? [v] : null);
   for (const [ctx, actions] of Object.entries(overrides && typeof overrides === "object" ? overrides : {})) {
     if (!actions || typeof actions !== "object") continue;
@@ -136,23 +170,23 @@ export function createKeymap({ overrides = null } = {}) {
         continue;
       }
       try {
-        list.forEach(parseKey);
+        list.forEach(parseBinding);
       } catch (err) {
         warnings.push(`tui.keymap.${ctx}.${action}: ${err.message}; ad keeps its default`);
         continue;
       }
       const targets = map[ctx]?.[action] ? [[ctx, action]] : Object.entries(map).filter(([c, acts]) => c !== FALLBACK && acts[action] && !overrides?.[c]?.[action]).map(([c]) => [c, action]);
-      for (const [c, a] of targets) map[c][a] = { keys: list.map((k) => k.trim().toLowerCase()), custom: true };
+      for (const [c, a] of targets) map[c][a] = { keys: list.map(normSpec), custom: true };
     }
   }
   // A custom key the composer or ad already uses for something else gives way.
-  const reserved = new Set(RESERVED.map((k) => JSON.stringify(parseKey(k))));
+  const reserved = new Set(RESERVED.map((k) => strokeId(parseKey(k))));
   for (const ctx of TOGETHER[0]) {
     for (const [action, b] of Object.entries(map[ctx])) {
-      const taken = b.custom && b.keys.find((k) => reserved.has(JSON.stringify(parseKey(k))));
+      const taken = b.custom && singles(b).find((k) => reserved.has(strokeId(parseKey(k))));
       if (!taken) continue;
       warnings.push(`tui.keymap.${ctx}.${action}: "${taken}" is one of ad's editing keys; ad keeps its default`);
-      map[ctx][action] = { keys: [...DEFAULT_KEYMAP[ctx][action]], custom: false };
+      restore(ctx, action);
     }
   }
   // One key, two actions, in contexts that are live together: the custom one gives way.
@@ -160,8 +194,8 @@ export function createKeymap({ overrides = null } = {}) {
     const owner = new Map();
     for (const ctx of group) {
       for (const [action, b] of Object.entries(map[ctx] ?? {})) {
-        for (const k of b.keys) {
-          const id = JSON.stringify(parseKey(k));
+        for (const k of singles(b)) {
+          const id = strokeId(parseKey(k));
           const prev = owner.get(id);
           if (!prev) {
             owner.set(id, { ctx, action, b });
@@ -170,13 +204,96 @@ export function createKeymap({ overrides = null } = {}) {
           const loser = b.custom ? { ctx, action } : prev.b.custom ? prev : null;
           if (!loser) continue;
           warnings.push(`tui.keymap.${loser.ctx}.${loser.action}: "${k}" is already ${loser === prev ? `${ctx}.${action}` : `${prev.ctx}.${prev.action}`}; ad keeps its default`);
-          map[loser.ctx][loser.action] = { keys: [...DEFAULT_KEYMAP[loser.ctx][loser.action]], custom: false };
+          restore(loser.ctx, loser.action);
         }
       }
     }
   }
+
+  // The leader (keymap/leader.rs): global.leader, else ctrl-x unless a configured
+  // key or chord already uses ctrl-x. It must be one key, with ctrl or alt when it
+  // is a character; ctrl-z suspends on Unix; ad's reserved keys can't be it.
+  const usesCtrlX = Object.values(map).some((acts) => Object.values(acts).some((b) => b.custom && b.keys.some((k) => {
+    const p = parseBinding(k);
+    return !p.leader && strokeId(p.strokes[0]) === strokeId(parseKey(DEFAULT_LEADER));
+  })));
+  const leaderSetting = overrides?.global?.leader;
+  let leaders = [];
+  if (leaderSetting === null || leaderSetting === undefined) {
+    if (!usesCtrlX) leaders = [DEFAULT_LEADER];
+  } else {
+    const list = asList(leaderSetting);
+    const why = (() => {
+      if (!list || list.some((k) => typeof k !== "string")) return "not a key or a list of keys";
+      for (const spec of list) {
+        if (/\s/.test(spec.trim())) return "use a single prefix key";
+        let s;
+        try {
+          s = parseKey(spec);
+        } catch (err) {
+          return err.message;
+        }
+        if (isCharacter(s) && !s.ctrl && !s.alt) return `"${spec}": use ctrl, alt, or a non-character key so typing isn't intercepted`;
+        if (platform !== "win32" && s.key === "z" && s.ctrl && !s.alt && !s.shift) return `"${spec}": ctrl-z suspends the terminal`;
+        if (reserved.has(strokeId(s))) return `"${spec}" is one of ad's editing keys`;
+      }
+      return null;
+    })();
+    if (why) warnings.push(`tui.keymap.global.leader: ${why}; ad has no leader key`);
+    else leaders = list.map((k) => k.trim().toLowerCase());
+  }
+  const leaderStrokes = leaders.map(parseKey);
+
+  // Chords: the shapes the engine refuses, the leader with no key, a prefix that
+  // shadows a single key live in the same place, the same chord twice.
+  const groupsOf = (ctx) => TOGETHER.filter((g) => g.includes(ctx));
+  const liveTogether = (a, b) => a === b || groupsOf(a).some((g) => g.includes(b));
+  const chordList = [];
+  for (const [ctx, actions] of Object.entries(map)) {
+    for (const [action, b] of Object.entries(actions)) {
+      if (!b.custom) continue;
+      const mine = [];
+      let bad = null;
+      for (const spec of b.keys.filter(isChordSpec)) {
+        const p = parseBinding(spec);
+        const completion = p.strokes.at(-1);
+        const completionSpec = spec.split(" ").at(-1);
+        const prefix = p.leader ? null : p.strokes[0];
+        const prefixSpec = p.leader ? null : spec.split(" ")[0];
+        if (p.leader && !leaderStrokes.length) bad = `"${spec}": global.leader has no key, so the chord can't start`;
+        else if (prefix && isCharacter(prefix) && !prefix.ctrl && !prefix.alt) bad = `"${spec}": a chord's first key needs ctrl, alt, or a non-character key so typing isn't intercepted`;
+        else if (TOGETHER[0].includes(ctx) && [prefix, completion].some((s) => s && reserved.has(strokeId(s)))) bad = `"${spec}" uses one of ad's editing keys`;
+        else if (p.leader && leaderStrokes.some((l) => strokeId(l) === strokeId(completion))) bad = `"${spec}": the leader again cancels a pending chord`;
+        else if (platform !== "win32" && p.strokes.some((s) => s.key === "z" && s.ctrl && !s.alt && !s.shift)) bad = `"${spec}": ctrl-z suspends the terminal`;
+        if (!bad && prefix) {
+          for (const [c2, acts] of Object.entries(map)) {
+            if (!liveTogether(ctx, c2)) continue;
+            const hit = Object.entries(acts).find(([, b2]) => singles(b2).some((k) => strokeId(parseKey(k)) === strokeId(prefix)));
+            if (hit) {
+              bad = `"${spec}": its first key is already ${c2}.${hit[0]}`;
+              break;
+            }
+          }
+        }
+        if (!bad) {
+          const dup = chordList.find((o) => liveTogether(o.ctx, ctx) && o.leader === p.leader && strokeId(o.prefix) === strokeId(prefix) && strokeId(o.completion) === strokeId(completion));
+          if (dup) bad = `"${spec}": the same chord is already ${dup.ctx}.${dup.action}`;
+        }
+        if (bad) break;
+        mine.push({ ctx, action, leader: p.leader, prefix, prefixSpec, completion, completionSpec, spec });
+      }
+      if (bad) {
+        warnings.push(`tui.keymap.${ctx}.${action}: ${bad}; ad keeps its default`);
+        restore(ctx, action);
+      } else chordList.push(...mine);
+    }
+  }
+
   const parsed = {};
-  for (const [ctx, actions] of Object.entries(map)) parsed[ctx] = Object.fromEntries(Object.entries(actions).map(([a, b]) => [a, b.keys.map(parseKey)]));
+  for (const [ctx, actions] of Object.entries(map)) parsed[ctx] = Object.fromEntries(Object.entries(actions).map(([a, b]) => [a, singles(b).map(parseKey)]));
+  // A chord's first keys: the leader's for a leader chord, else its own.
+  const startsOf = (c) => (c.leader ? leaders.map((spec, i) => ({ stroke: leaderStrokes[i], spec })) : [{ stroke: c.prefix, spec: c.prefixSpec }]);
+  const label = (spec) => (isChordSpec(spec) ? spec.split(" ").map((w) => (w === "leader" ? (leaders[0] ? keyLabel(leaders[0]) : "leader") : keyLabel(w))).join(" ") : keyLabel(spec));
   return {
     warnings,
     /** One line for /warnings (null when every key setting was usable); /keymap lists each. */
@@ -185,20 +302,83 @@ export function createKeymap({ overrides = null } = {}) {
     bindings() {
       return Object.entries(map).flatMap(([ctx, actions]) => Object.entries(actions).map(([action, b]) => ({ ctx, action, keys: [...b.keys], custom: b.custom })));
     },
-    /** Does `ev` press `action` in `ctx`? */
+    /** Does `ev` press `action` in `ctx`? A completed chord ({type: "chord", ctx, action}) does too. */
     is(ctx, action, ev) {
       const ks = parsed[ctx]?.[action];
       if (!ks) throw new Error(`no action ${ctx}.${action} in ad's keymap`);
+      if (ev?.type === "chord") return ev.ctx === ctx && ev.action === action;
       return ks.some((k) => matchKey(ev, k));
     },
     /** Its keys in the engine's spelling ([] when unbound). */
     keys(ctx, action) {
       return [...(map[ctx]?.[action]?.keys ?? [])];
     },
-    /** How ad shows its keys: "ctrl+t", "alt+, / alt+.", or "" when unbound. */
+    /** How ad shows its keys: "ctrl+t", "alt+, / alt+.", "ctrl+x c", or "" when unbound. */
     label(ctx, action, { all = false } = {}) {
       const ks = map[ctx]?.[action]?.keys ?? [];
-      return (all ? ks : ks.slice(0, 1)).map(keyLabel).join(" / ");
+      return (all ? ks : ks.slice(0, 1)).map(label).join(" / ");
+    },
+    /** The leader key in the engine's spelling, or null. */
+    leader() {
+      return leaders[0] ?? null;
+    },
+    /**
+     * Chord matching, one stroke at a time: feed(ev, contexts, now) →
+     *   {kind: "pass"}: not part of a chord, handle ev as usual;
+     *   {kind: "pending", hint}: a chord started (the key is used);
+     *   {kind: "done", ev: {type: "chord", ctx, action}}: route ev like a key;
+     *   {kind: "cancelled"}: Esc, or the leader again, ended a pending chord.
+     * A second key that completes nothing is passed through (it may start
+     * another chord); a pending chord ends when `contexts` change, and an
+     * ordinary one 1 s after its first stroke.
+     */
+    chords() {
+      let pending = null;
+      const active = (c, contexts) => contexts.includes(c.ctx);
+      const hint = (start, contexts) => [
+        { keys: keyLabel(start.spec), label: "then" },
+        ...chordList.filter((c) => active(c, contexts) && startsOf(c).some((s) => strokeId(s.stroke) === strokeId(start.stroke))).slice(0, 6).map((c) => ({ keys: keyLabel(c.completionSpec), label: c.action.replace(/_/g, " ") })),
+        { keys: "esc", label: "cancel" },
+      ];
+      return {
+        feed(ev, contexts, now) {
+          if (!ev || (ev.type !== "key" && ev.type !== "text")) return { kind: "pass" };
+          if (pending && (pending.contexts.join() !== contexts.join() || (pending.startedAt !== null && now - pending.startedAt >= CHORD_TIMEOUT_MS))) pending = null;
+          if (pending) {
+            const p = pending;
+            pending = null;
+            const esc = ev.type === "key" && ev.name === "escape" && !ev.ctrl && !ev.alt && !ev.shift;
+            if (esc || (p.persistent && matchKey(ev, p.start.stroke))) return { kind: "cancelled" };
+            const done = chordList.find((c) => active(c, contexts) && startsOf(c).some((s) => strokeId(s.stroke) === strokeId(p.start.stroke)) && matchKey(ev, c.completion));
+            if (done) return { kind: "done", ev: { type: "chord", ctx: done.ctx, action: done.action } };
+          }
+          for (const c of chordList) {
+            if (!active(c, contexts)) continue;
+            const start = startsOf(c).find((s) => matchKey(ev, s.stroke));
+            if (!start) continue;
+            // As the engine: a chord that starts with the leader key waits for its second key
+            // (spelled "leader c", or with the leader written out in a global context).
+            const isLeader = leaderStrokes.some((l) => strokeId(l) === strokeId(start.stroke));
+            const persistent = chordList.some((o) => active(o, contexts) && startsOf(o).some((s) => strokeId(s.stroke) === strokeId(start.stroke)) && (o.leader || (isLeader && contexts.includes("global"))));
+            pending = { start, contexts: [...contexts], startedAt: persistent ? null : now, persistent };
+            return { kind: "pending", hint: hint(start, contexts) };
+          }
+          return { kind: "pass" };
+        },
+        /** The pending chord ({keys, hint}) or null. */
+        pending() {
+          return pending ? { keys: keyLabel(pending.start.spec), hint: hint(pending.start, pending.contexts), expiresAt: pending.startedAt === null ? null : pending.startedAt + CHORD_TIMEOUT_MS } : null;
+        },
+        cancel() {
+          pending = null;
+        },
+        /** Drops a pending ordinary chord whose time is up (for a timer); → whether it did. */
+        expire(now) {
+          if (!pending || pending.startedAt === null || now - pending.startedAt < CHORD_TIMEOUT_MS) return false;
+          pending = null;
+          return true;
+        },
+      };
     },
   };
 }

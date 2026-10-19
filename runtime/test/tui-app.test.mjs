@@ -20,7 +20,7 @@ const FAKE = fileURLToPath(new URL("../testkit/fake-codex-app-server.mjs", impor
 const command = { cmd: process.execPath, prefix: [FAKE] };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function withApp(fn, { cols = 70, rows = 20, actions = {}, armMs = 60, sessionOpts = {}, restartable = false, settings = null, modes = false, env = null, depth = 0, platform = undefined } = {}) {
+async function withApp(fn, { cols = 70, rows = 20, actions = {}, armMs = 60, sessionOpts = {}, restartable = false, settings = null, modes = false, env = null, depth = 0, platform = undefined, keymap = undefined } = {}) {
   const root = mkdtempSync(join(tmpdir(), "ad-app-"));
   const engines = [];
   const make = async () => {
@@ -48,7 +48,7 @@ async function withApp(fn, { cols = 70, rows = 20, actions = {}, armMs = 60, ses
   };
   const committed = () => scrollback.join("\n");
   const bells = [];
-  const app = createApp({ io, renderer, session, cwd: root, header: [[{ text: "HEADER" }]], armMs, settings, ...(platform ? { platform } : {}), actions: { bell: (o) => bells.push(o), ...actions } });
+  const app = createApp({ io, renderer, session, cwd: root, header: [[{ text: "HEADER" }]], armMs, settings, ...(platform ? { platform } : {}), ...(keymap ? { keymap } : {}), actions: { bell: (o) => bells.push(o), ...actions } });
   const text = () => scr.lines().join("\n");
   const until = async (pred, what, ms = 10000) => {
     const end = Date.now() + ms;
@@ -705,8 +705,9 @@ test("/subagents: the engine's picker (main first, agents as first seen) watches
       await until(() => app.state.popup === "subagents" && /Subagents/.test(text()), "the picker");
       assert.match(text(), /Select an agent to watch\. (alt\+\u{2190} previous, alt\+\u{2192} next|\u{2325}\u{2190} previous, \u{2325}\u{2192} next)\./u);
       assert.match(text(), /Main \[default\][\s\S]*Ada \[explorer\][\s\S]*\[reviewer\]\s+agent-two-\S+ \u{b7} running/u);
+      assert.match(text(), /Ada \[explorer\]\s+agent-one-\S+ \u{b7} gpt-5\.4-mini low/u, "the model and effort the engine reported (0.163+)");
       type("\x1b[B\r"); // Ada
-      await until(() => app.state.pager && /Ada \[explorer\] \u{b7} idle \u{b7} 1 of 2/u.test(text()), "watching Ada");
+      await until(() => app.state.pager && /Ada \[explorer\] \u{b7} gpt-5\.4-mini low \u{b7} idle \u{b7} 1 of 2/u.test(text()), "watching Ada");
       assert.match(text(), /Read src\/app\.js: the bug is in login\(\)\./);
       type("\x1b[1;3C"); // alt+→
       await until(() => /\[reviewer\] \u{b7} running \u{b7} 2 of 2/u.test(text()) && /Reviewing the diff/.test(text()), "the next one, live");
@@ -1655,4 +1656,60 @@ test("review: side warning details remain available while active and after close
     type("/warnings\r");
     await until(() => committed().split(`details: ${raw}`).length > before, "side details after closing");
   }, { cols: 110, rows: 30 });
+});
+
+// Key chords and the leader (P1.2).
+test("a completed leader chord opens the transcript (global.open_transcript = 'leader t'); the hint shows while it waits", async () => {
+  const { createKeymap: km } = await import("../src/tui/keymap.mjs");
+  await withApp(async ({ app, type, until, text }) => {
+    type("\x14"); // Ctrl+T no longer opens it
+    await sleep(100);
+    assert.ok(!app.state.pager);
+    type("\x18"); // Ctrl+X: the leader
+    await until(() => /ctrl\+x …[\s\S]*t open transcript[\s\S]*esc cancel/.test(text()), "the pending hint");
+    type("t");
+    await until(() => app.state.pager, "the pager");
+    assert.equal(app.state.composer, "", "the t typed nothing");
+  }, { keymap: km({ overrides: { global: { open_transcript: "leader t" } } }) });
+});
+
+test("while a chord waits, a key that completes nothing goes through (Enter submits); Esc cancels; typing works after", async () => {
+  const { createKeymap: km } = await import("../src/tui/keymap.mjs");
+  await withApp(async ({ app, type, until, text, engine }) => {
+    type("early-complete"); // a turn that ends at once (no approval modal)
+    type("\x18");
+    await until(() => /esc cancel/.test(text()), "pending");
+    const before = await sent(engine, "turn/start");
+    type("\r"); // completes nothing: passed through, so it submits as Enter would
+    await until(async () => (await sent(engine, "turn/start")) > before, "Enter went through");
+    type("\x18");
+    await until(() => /esc cancel/.test(text()), "pending again");
+    type("\x1b");
+    await until(() => !/esc cancel/.test(text()), "cancelled");
+    type("z");
+    await until(() => app.state.composer === "z", "typing works");
+  }, { keymap: km({ overrides: { global: { copy: "leader c" } } }) });
+});
+
+test("chords are off while an approval modal is open", async () => {
+  const { createKeymap: km } = await import("../src/tui/keymap.mjs");
+  await withApp(async ({ app, type, until, text }) => {
+    type("hello\r");
+    await until(() => app.state.modal === "approval-exec", "the approval modal");
+    type("\x18");
+    await sleep(100);
+    assert.doesNotMatch(text(), /esc cancel/, "no chord hint under the modal");
+    assert.equal(app.state.chord, false, "no chord started under the modal");
+    assert.equal(app.state.modal, "approval-exec");
+  }, { keymap: km({ overrides: { global: { copy: "leader c" } } }) });
+});
+
+test("an ordinary chord's hint goes away after a second, as the chord does", async () => {
+  const { createKeymap: km } = await import("../src/tui/keymap.mjs");
+  await withApp(async ({ app, type, until, text }) => {
+    type("\x1bk"); // alt+k
+    await until(() => /alt\+k …/.test(text()), "the hint");
+    assert.equal(app.state.chord, true);
+    await until(() => !/alt\+k …/.test(text()) && !app.state.chord, "the hint gone after the timeout", 3000);
+  }, { keymap: km({ overrides: { global: { copy: "alt-k alt-c" } } }) });
 });

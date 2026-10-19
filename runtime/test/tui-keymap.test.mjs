@@ -70,7 +70,7 @@ test("tui.keymap overrides: replace, a list, unbind, global fallback; unknown ac
 test("overrides ad can't use are dropped with a warning, and the default kept", () => {
   const km = createKeymap({
     overrides: {
-      global: { copy: "ctrl-x f", toggle_raw_output: 42 },
+      global: { copy: "ctrl-x f g", toggle_raw_output: 42 }, // three strokes: chords have at most two
       chat: { interrupt_turn: "ctrl-t" }, // already open_transcript
       composer: { toggle_shortcuts: "ctrl-a" }, // the composer's line start
       pager: { close: "hyper-q" },
@@ -112,6 +112,10 @@ test("docs/tui.md names every default key of every action ad has", () => {
     }
   }
   assert.deepEqual(missing, [], "add these to the Keys section of docs/tui.md");
+  // Chords and the leader (P1.2): the default leader and how to cancel are documented.
+  assert.match(keys, /global\.leader/);
+  assert.match(keys, /`ctrl-x`/);
+  assert.match(keys, /Esc, or the leader again, cancels/);
 });
 
 test("eventSpec and bindings(): what /keymap and its inspector show", async () => {
@@ -149,19 +153,20 @@ test("unset actions (null, as the engine writes them) keep their default with no
   assert.ok(km.is("global", "copy", key("o", { ctrl: true })));
 });
 
-test("objects, non-string items, chords and leader keys: one warning each, and one summary line", () => {
+test("objects, non-string items and a leader chord without a leader: one warning each, and one summary line", () => {
+  // A ctrl-x chord takes ctrl-x, so the default leader yields and "leader q" can't start.
   const km = createKeymap({ overrides: { global: { copy: { key: "ctrl-x" }, toggle_raw_output: ["ctrl-r", 7], open_transcript: "ctrl-x ctrl-s" }, chat: { interrupt_turn: "leader q" } } });
-  assert.equal(km.warnings.length, 4, km.warnings.join("; "));
-  assert.equal(km.warnings.filter((w) => /ad doesn.t support chords or leader keys yet/.test(w)).length, 2);
-  assert.equal(km.summary, "tui.keymap: 4 key setting(s) ad can't use; it keeps its defaults. /keymap lists them.");
+  assert.equal(km.warnings.length, 3, km.warnings.join("; "));
+  assert.equal(km.warnings.filter((w) => /global.leader has no key/.test(w)).length, 1);
+  assert.equal(km.summary, "tui.keymap: 3 key setting(s) ad can't use; it keeps its defaults. /keymap lists them.");
+  assert.equal(km.leader(), null);
   assert.ok(km.is("global", "copy", key("o", { ctrl: true })), "defaults kept");
 });
 
-test("a 0.163 keymap with leader and agents actions loads with one warning (P1.1)", () => {
+test("a 0.163 keymap with leader and agents actions loads with no warning; agents.* is the stock UI's (P1.1, P1.2)", () => {
   // 0.163: global.leader (default ctrl-x), "leader <key>" bindings, agents.fork / toggle_pin.
   const km = createKeymap({ overrides: { global: { leader: "ctrl-x", copy: "leader c" }, agents: { fork: "f", toggle_pin: "p" } } });
-  assert.equal(km.warnings.length, 1, km.warnings.join("\n"));
-  assert.match(km.warnings[0], /global\.copy/);
-  assert.match(km.warnings[0], /leader/);
-  assert.ok(km.is("global", "copy", key("o", { ctrl: true })), "global.copy keeps ctrl-o");
+  assert.deepEqual(km.warnings, []);
+  assert.equal(km.leader(), "ctrl-x");
+  assert.ok(!km.is("global", "copy", key("o", { ctrl: true })), "leader c replaced ctrl-o");
 });

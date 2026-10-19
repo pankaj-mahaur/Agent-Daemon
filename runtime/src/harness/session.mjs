@@ -325,7 +325,7 @@ export function createSession({
   // agent tool call names, a sub-agent activity item; and whether it runs.
   function noteAgent(id, info = {}) {
     if (typeof id !== "string" || !id || id === state.thread?.id) return;
-    const prev = state.agents.get(id) ?? { label: null, nickname: null, role: null, path: null, parentThreadId: null, running: false, stopped: false, closed: false };
+    const prev = state.agents.get(id) ?? { label: null, nickname: null, role: null, path: null, parentThreadId: null, model: null, reasoningEffort: null, running: false, stopped: false, closed: false };
     const next = { ...prev };
     for (const [k, v] of Object.entries(info)) if (v !== undefined && v !== null) next[k] = v;
     next.label = next.nickname ?? next.role ?? null;
@@ -344,7 +344,9 @@ export function createSession({
       // As the engine does: a "started" hint for a thread whose turn already ended is late, and ignored.
       const stopped = state.agents.get(it.agentThreadId)?.stopped;
       const run = it.activity === "started" ? (stopped ? {} : { running: true }) : it.activity === "completed" || it.activity === "interrupted" ? { running: false, stopped: true } : {};
-      noteAgent(it.agentThreadId, { path: it.agentPath, ...run });
+      // The model and effort it runs with (engine 0.163+): the first ones reported stay.
+      const known = state.agents.get(it.agentThreadId);
+      noteAgent(it.agentThreadId, { path: it.agentPath, model: known?.model ?? it.model, reasoningEffort: known?.reasoningEffort ?? it.reasoningEffort, ...run });
     }
     if (root || !state.agents.has(ev.threadId)) return;
     if (ev.type === "turn.started") noteAgent(ev.threadId, { running: true, stopped: false });

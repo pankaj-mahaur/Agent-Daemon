@@ -81,6 +81,8 @@ Why not a fullscreen (alternate-screen) UI: it hides the terminal's own scrollba
 
 ### Keys and terminals
 
+Key chords (`"ctrl-x ctrl-s"`, `"leader c"`) are matched before every layer by `keymap.chords().feed(ev, contexts, now)` (`tui/keymap.mjs`). The result is pass, pending (the footer shows the hint), cancelled, or done. A done chord becomes a synthetic `{type: "chord", ctx, action}` event, routed through `onInput` like a key, and `keymap.is()` answers it, so no call site changes. The contexts are `[]` under a modal, ad's confirm or the key inspector.
+
 - Input is decoded from raw bytes (keys, bracketed paste, terminal replies), so a reply to a query or a pasted text is never taken for keystrokes.
 - On Windows, Node 22.17+ (or 24.2+) is needed for bracketed paste in raw mode; `preflight.mjs` says so instead of misbehaving.
 - Shift+Enter isn't distinguishable from Enter in some terminals; Ctrl+J always inserts a newline, and `/terminal-setup` explains the per-terminal fix.
