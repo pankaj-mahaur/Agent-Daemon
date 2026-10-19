@@ -7,7 +7,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CodexAppServer, resolveCodexCommand } from "../src/engine/codex/app-server.mjs";
@@ -171,4 +171,87 @@ test("S-GATEWAY: no probe (tool shell, hook, MCP server) sees the key; the no-ga
   const control = await probeRun({ keyInEngine: true });
   assert.ok(control.hook !== null, "the hook probe ran");
   assert.deepEqual(probes.scanForSecrets(control.hook, [KEY_A]), [0], "the control: a key in the engine's environment reaches a hook");
+});
+
+// S-OAUTH (offline): two engine homes keep their sign-ins apart.
+async function withHomes(fn) {
+  const root = mkdtempSync(join(tmpdir(), "ad-real-oauth-"));
+  const cwd = join(root, "work");
+  mkdirSync(cwd, { recursive: true });
+  // The default (OpenAI) provider: only then does the engine report OpenAI sign-ins.
+  const home = (name) => {
+    const d = join(root, name);
+    mkdirSync(d, { recursive: true });
+    writeFileSync(join(d, "config.toml"), ["check_for_update_on_startup = false", 'cli_auth_credentials_store = "file"', "", "[features]", "plugins = false", "apps = false", ""].join("\n"));
+    return d;
+  };
+  const servers = [];
+  const start = async (h) => {
+    const notes = [];
+    const s = new CodexAppServer({ command: resolveCodexCommand({}), cwd, env: { CODEX_HOME: h }, clientVersion: "test", initTimeoutMs: 120_000 });
+    s.on("notification", (n) => notes.push(n));
+    await s.start();
+    s.notes = notes;
+    servers.push(s);
+    return s;
+  };
+  try {
+    await fn({ home, start });
+  } finally {
+    for (const s of servers) await s.close().catch(() => {});
+    for (let i = 0; i < 10; i++) {
+      try {
+        rmSync(root, { recursive: true, force: true });
+        break;
+      } catch {
+        await new Promise((r) => setTimeout(r, 200));
+      }
+    }
+  }
+}
+const filesOf = (dir) => {
+  const out = {};
+  const walk = (d) => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      const p = join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (!/sqlite|\.db|\.wal|\.shm|\.log$/.test(e.name)) out[p] = readFileSync(p, "utf8");
+    }
+  };
+  walk(dir);
+  return out;
+};
+
+test("S-OAUTH: an API-key login in one home is invisible to another; logout in one leaves the other", { skip, timeout: TIMEOUT }, async () => {
+  await withHomes(async ({ home, start }) => {
+    const h1 = home("h1");
+    const h2 = home("h2");
+    const s1 = await start(h1);
+    const s2 = await start(h2);
+    await s1.request("account/login/start", { type: "apiKey", apiKey: KEY_A });
+    await new Promise((r) => setTimeout(r, 800));
+    assert.equal((await s1.request("account/read", {})).account?.type, "apiKey");
+    assert.equal((await s2.request("account/read", {})).account, null);
+    const before = filesOf(h2);
+    assert.ok(!JSON.stringify(before).includes(KEY_A), "the key never lands in the other home");
+    await s1.request("account/logout", {});
+    await new Promise((r) => setTimeout(r, 500));
+    assert.deepEqual(filesOf(h2), before, "H2 byte-identical after H1's logout");
+  });
+});
+
+test("S-OAUTH: two browser logins from two processes: the second takes the port and the first is cancelled", { skip, timeout: TIMEOUT }, async () => {
+  await withHomes(async ({ home, start }) => {
+    const s1 = await start(home("h1"));
+    const s2 = await start(home("h2"));
+    const l1 = await s1.request("account/login/start", { type: "chatgpt" });
+    await new Promise((r) => setTimeout(r, 1500));
+    const l2 = await s2.request("account/login/start", { type: "chatgpt" });
+    for (let i = 0; i < 60 && !s1.notes.some((n) => n.method === "account/login/completed" && n.params?.loginId === l1.loginId); i++) await new Promise((r) => setTimeout(r, 100));
+    const first = s1.notes.find((n) => n.method === "account/login/completed" && n.params?.loginId === l1.loginId);
+    assert.equal(first?.params?.success, false, "the first login is cancelled");
+    assert.match(first.params.error, /cancel/i);
+    assert.match(l2.authUrl, /localhost%3A1455|localhost:1455|127\.0\.0\.1%3A1455/, "the second holds the port");
+    await s2.request("account/login/cancel", { loginId: l2.loginId }).catch(() => {});
+  });
 });
