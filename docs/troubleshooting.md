@@ -770,7 +770,7 @@ See [harness.md](harness.md#working-in-your-home-folder).
 
 **Cause:** ad's gateway couldn't connect to the provider: no network, a proxy it doesn't know about, or a certificate your company adds that Node doesn't trust.
 
-**Fix:** check the network first. Behind a proxy, set `HTTPS_PROXY` (and `NO_PROXY`) where you start ad; ad keeps `127.0.0.1` and `localhost` out of the proxy itself. A company certificate: point `NODE_EXTRA_CA_CERTS` at it (a `CODEX_CA_CERTIFICATE` you set for the engine is used too).
+**Fix:** check the network first. A company certificate: point `NODE_EXTRA_CA_CERTS` at it (a `CODEX_CA_CERTIFICATE` you set for the engine is used too). An HTTP proxy: ad's gateway can't go through one yet (it connects directly; support is planned), so API accounts need a direct connection to the provider for now. ad keeps `127.0.0.1` and `localhost` out of any proxy the engine uses.
 
 ## 59. "ad: the provider redirected; ad doesn't send keys across redirects"
 
