@@ -55,6 +55,16 @@ const argValue = (name) => {
   const i = process.argv.indexOf(name);
   return i >= 0 ? process.argv[i + 1] : undefined;
 };
+// A host that didn't expand a variable in its config (Cursor leaves ${PLUGIN_ROOT}
+// as it is, P5.4): stop with a clear line instead of reading a wrong path. The
+// --project value is the exception: a window with no folder open can leave
+// ${workspaceFolder} as it is, and an invalid project is already skipped, with a note.
+const unexpanded = process.argv.slice(2).find((a, i, all) => a.includes("${") && all[i - 1] !== "--project");
+if (unexpanded !== undefined) {
+  process.stderr.write(`agent-daemon-memory: the host didn't expand ${unexpanded}; this host needs the installer route.\n`);
+  process.exit(2);
+}
+
 if (argValue("--db")) process.env.AD_MEMORY_DB = argValue("--db");
 
 const VERSION = (() => {

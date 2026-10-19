@@ -91,6 +91,65 @@ test("install sets up all three hosts, through each host's own route, and is ide
   assert.equal(status({ ctx: t.ctx }), 0);
 });
 
+test("P5.4: VS Code (the portable Copilot file) and Gemini CLI (user settings): add, keep the rest, restore byte for byte", async () => {
+  const vscodeText = '{\n  // personal servers\n  "mcpServers": {\n    "github": { "type": "stdio", "command": "gh-mcp" }\n  }\n}\n';
+  const geminiText = '{\n  "theme": "Dracula",\n  "general": { "vimMode": true }\n}\n';
+  const t = home({ claude: false, claudeDir: false, codex: false, cursor: false });
+  fs.mkdirSync(path.join(t.h, ".copilot"));
+  fs.mkdirSync(path.join(t.h, ".gemini"));
+  fs.writeFileSync(path.join(t.h, ".copilot", "mcp-config.json"), vscodeText);
+  fs.writeFileSync(path.join(t.h, ".gemini", "settings.json"), geminiText);
+  assert.equal(await install({ ctx: t.ctx, yes: true }), 0, t.text());
+  assert.match(t.text(), /Found: VS Code, Gemini CLI\./);
+  const v = parseJsonc(fs.readFileSync(path.join(t.h, ".copilot", "mcp-config.json"), "utf8"));
+  assert.equal(v.mcpServers["agent-daemon-memory"].type, "stdio");
+  assert.equal(v.mcpServers["agent-daemon-memory"].command, process.execPath);
+  assert.ok(v.mcpServers["agent-daemon-memory"].args.includes("vscode"));
+  assert.ok(v.mcpServers.github, "the user's server stays");
+  assert.ok(fs.readFileSync(path.join(t.h, ".copilot", "mcp-config.json"), "utf8").includes("// personal servers"));
+  const g = JSON.parse(fs.readFileSync(path.join(t.h, ".gemini", "settings.json"), "utf8"));
+  assert.equal(g.theme, "Dracula");
+  assert.deepEqual(g.general, { vimMode: true });
+  assert.ok(g.mcpServers["agent-daemon-memory"].args.includes("gemini"));
+  assert.equal(g.mcpServers["agent-daemon-memory"].type, undefined, "Gemini's entry has no type field");
+  assert.deepEqual(Object.keys(readLedger(t.env.AD_ROOT).hosts).sort(), ["gemini", "vscode"]);
+  assert.equal(await uninstall({ ctx: t.ctx }), 0, t.text());
+  assert.equal(fs.readFileSync(path.join(t.h, ".copilot", "mcp-config.json"), "utf8"), vscodeText);
+  assert.equal(fs.readFileSync(path.join(t.h, ".gemini", "settings.json"), "utf8"), geminiText);
+});
+
+test("P5.4: one route per host — with the Claude Code plugin enabled, the installer leaves Claude Code alone and doctor flags both", async () => {
+  const t = home({ codex: false, cursor: false });
+  fs.writeFileSync(path.join(t.h, ".claude", "settings.json"), JSON.stringify({ enabledPlugins: { "agent-daemon-memory@agent-daemon": true, "other@x": true } }));
+  assert.equal(await install({ ctx: t.ctx, yes: true }), 0, t.text());
+  assert.match(t.text(), /Claude Code\s+leaves it: ad's memory is already enabled here as a plugin \(agent-daemon-memory@agent-daemon\)/);
+  assert.equal(t.claudeLog().filter((a) => a[1] === "add").length, 0, "no second server");
+  // A disabled plugin doesn't count.
+  const u = home({ codex: false, cursor: false });
+  fs.writeFileSync(path.join(u.h, ".claude", "settings.json"), JSON.stringify({ enabledPlugins: { "agent-daemon-memory@agent-daemon": false } }));
+  assert.equal(await install({ ctx: u.ctx, yes: true }), 0, u.text());
+  assert.equal(u.claudeLog().filter((a) => a[1] === "add").length, 1);
+  // Installed first, plugin enabled later: doctor says both serve memory.
+  fs.writeFileSync(path.join(u.h, ".claude", "settings.json"), JSON.stringify({ enabledPlugins: { "agent-daemon-memory@agent-daemon": true } }));
+  u.lines.length = 0;
+  await doctor({ ctx: u.ctx, json: true });
+  assert.match(u.text(), /route\.double/);
+  assert.match(u.text(), /the agent-daemon-memory@agent-daemon plugin also serves memory here/);
+});
+
+test("P5.4: COPILOT_HOME and GEMINI_CLI_HOME move the files; VS Code is found by its user data folder too", async () => {
+  const t = home({ claude: false, claudeDir: false, codex: false, cursor: false });
+  t.env.COPILOT_HOME = path.join(t.h, "copilot-elsewhere");
+  t.env.GEMINI_CLI_HOME = path.join(t.h, "gemini-home");
+  fs.mkdirSync(path.join(t.env.GEMINI_CLI_HOME, ".gemini"), { recursive: true });
+  // No ~/.copilot yet: VS Code is found by its user data folder.
+  fs.mkdirSync(path.join(t.env.XDG_CONFIG_HOME, "Code - Insiders", "User"), { recursive: true });
+  assert.equal(await install({ ctx: t.ctx, yes: true }), 0, t.text());
+  assert.ok(fs.existsSync(path.join(t.env.COPILOT_HOME, "mcp-config.json")));
+  assert.ok(fs.existsSync(path.join(t.env.GEMINI_CLI_HOME, ".gemini", "settings.json")));
+  assert.ok(!fs.existsSync(path.join(t.h, ".copilot")) && !fs.existsSync(path.join(t.h, ".gemini")));
+});
+
 test("uninstall restores untouched configs byte for byte, and keeps hand edits", async () => {
   const codexText = '# my config\nmodel = "o5"\n\n[mcp_servers.github]\ncommand = "gh-mcp" # keep me\n';
   const cursorText = '{\n  // mine\n  "mcpServers": {\n    "github": { "command": "gh-mcp" }\n  }\n}\n';

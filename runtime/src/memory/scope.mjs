@@ -162,7 +162,9 @@ export function resolveMemoryScope({ project, env = process.env, cwd, host, home
     picked = { dir: path.resolve(value), source };
     break;
   }
-  if (!picked && cwd && path.isAbsolute(cwd) && !neverValid(cwd, o) && looksLikeProject(cwd, o)) {
+  // Agent Plugins hosts start servers in the plugin's own folder, which may sit in a
+  // git clone of a marketplace: the working folder is never the user's project there.
+  if (!picked && host !== "agent-plugins" && cwd && path.isAbsolute(cwd) && !neverValid(cwd, o) && looksLikeProject(cwd, o)) {
     picked = { dir: path.resolve(cwd), source: "cwd" };
   }
   if (!picked) return { kind: "unbound", dir: null, keys: [], source: "none" };

@@ -20,8 +20,14 @@ function format(text) {
   return { eol, insertSpaces: !indent.startsWith("\t"), tabSize: indent.startsWith("\t") ? 1 : indent.length };
 }
 
+// A UTF-8 byte order mark (Windows PowerShell 5 writes one): parsed without it,
+// and kept on the edited file.
+const BOM = "\u{FEFF}";
+const splitBom = (t) => (String(t ?? "").startsWith(BOM) ? [BOM, String(t).slice(1)] : ["", String(t ?? "")]);
+
 /** The parsed document: {ok, root} or {ok:false, error}. An empty file is an empty object. */
 export function parseJson(text) {
+  text = splitBom(text)[1];
   if (!String(text ?? "").trim()) return { ok: true, root: undefined };
   const errors = [];
   const root = parse(text, errors, { allowTrailingComma: true, disallowComments: false });
@@ -92,6 +98,12 @@ function verify(before, candidate, want) {
  * @param {{owned?: boolean}} [opts] owned: the entry there is the one ad wrote (ledger hash matches)
  */
 export function planJsonAdd(text, entry, { owned = false } = {}) {
+  const [bom, body] = splitBom(text);
+  const r = planJsonAddBody(body, entry, { owned });
+  return r.text === undefined ? r : { ...r, text: bom + r.text };
+}
+
+function planJsonAddBody(text, entry, { owned }) {
   const p = parseJson(text);
   if (!p.ok) return { action: "refuse", reason: p.error };
   const current = p.root?.mcpServers?.[ENTRY_KEY];
@@ -108,6 +120,12 @@ export function planJsonAdd(text, entry, { owned = false } = {}) {
  * @param {{entry?: object}} [opts] entry: what ad wrote; a different entry there is the user's edit and stays
  */
 export function planJsonRemove(text, { entry } = {}) {
+  const [bom, body] = splitBom(text);
+  const r = planJsonRemoveBody(body, { entry });
+  return r.text === undefined ? r : { ...r, text: bom + r.text };
+}
+
+function planJsonRemoveBody(text, { entry }) {
   const p = parseJson(text);
   if (!p.ok) return { action: "refuse", reason: p.error };
   const current = p.root?.mcpServers?.[ENTRY_KEY];

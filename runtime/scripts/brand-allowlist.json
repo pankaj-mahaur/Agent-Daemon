@@ -445,8 +445,14 @@
     {
       "path": "mcp/agent-daemon-memory/README.md",
       "rules": ["A"],
-      "match": "Install \\(Claude Code, Codex, Cursor\\)",
+      "match": "Install \\(Claude Code, Codex, Cursor(, VS Code, Gemini CLI)?\\)",
       "reason": "the heading naming the hosts the installer covers"
+    },
+    {
+      "path": "docs/memory-plugins.md",
+      "rules": ["A"],
+      "match": "Cursor, Gemini CLI, Codex",
+      "reason": "the plugin guide's table row for the hosts whose plugins come later (the user's own Codex CLI, not ad's engine)"
     }
   ]
 }

@@ -407,7 +407,7 @@ Mid-session recall is pull-based too — an **MCP memory server** (read-only exc
 - Plus `memory_stats`, `user_facts_list`, and `memory_feedback`. Index tools cap at 5 results / 4 KB; `memory_get` at 8 KB.
 - **Record (hosts without hooks):** `memory_record_correction` and `memory_record_learning` save what the user just taught the agent **for your review**: pending until you accept it in `ad review`, never reinforced by repetition, never global by itself.
 
-Add it to Claude Code, Codex and Cursor with one command (it shows the plan first, keeps a backup, and removes exactly what it added; see [docs/memory-install.md](docs/memory-install.md)):
+Add it to Claude Code, Codex, Cursor, VS Code and Gemini CLI with one command (it shows the plan first, keeps a backup, and removes exactly what it added; see [docs/memory-install.md](docs/memory-install.md)):
 
 ```bash
 npx agent-daemon-memory install    # or, with ad installed: ad memory install
@@ -506,7 +506,7 @@ ad memory stats                        # Row counts + retrieval telemetry (trunc
 ad memory scan                         # Check older notes once: hold back rows holding a key or an injection
 ad memory held                         # Notes memory keeps back; accept|release|drop <id> from your own terminal
 ad memory promote fact:<id>            # Make a user fact apply in every project (your own terminal, typed)
-ad memory install [--host <id>]        # Add the memory server to Claude Code, Codex, Cursor (docs/memory-install.md)
+ad memory install [--host <id>]        # Add the memory server to Claude Code, Codex, Cursor, VS Code, Gemini CLI (docs/memory-install.md)
 ad memory doctor | repair | status | uninstall
 ad memory report [--days 30] [--share]  # Is memory working: repeated corrections, what was shown, feedback (docs/memory-metrics.md)
 ad memory migrate                      # Run the one-time upkeep now (note keys, journal secret scrub)
@@ -940,6 +940,7 @@ Copy-paste configuration templates:
 - [Skill Anatomy](docs/skill-anatomy.md) — How SKILL.md works, frontmatter fields, trigger system
 - [Harness design](docs/harness-design.md) — The engine boundary, isolation from your own install, the safety model, staying current with the engine
 - [Terminal UI architecture](docs/tui-architecture.md) — How `ad tui` is built, the `/undo` safety model, decisions
+- [Memory as host plugins](docs/memory-plugins.md) — The Claude Code plugin and the Agent Plugins package, built from one source; when to use the installer instead
 - [Memory metrics](docs/memory-metrics.md) — `ad memory report`: repeated corrections, what was shown, feedback, rewording proposals
 - [Correction benchmark](bench/correction-bench/README.md) — Does an agent repeat a corrected mistake, with and without ad's memory? Protocol, drivers, analysis
 - [Testing](docs/testing.md) — The test layers, the live terminal UI tests, mutation checks, CI

@@ -20,7 +20,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { adRoot } from "../ad-root.mjs";
 import { resolveCommand } from "../safe-spawn.mjs";
-import { HOSTS, SERVER_NAME, hostById } from "./hosts.mjs";
+import { HOSTS, SERVER_NAME, claudePluginEnabled, hostById } from "./hosts.mjs";
 import { backup, inspect, sha256, writeChecked } from "./fsx.mjs";
 import { readLedger, writeLedger } from "./ledger.mjs";
 import { jsonEntry, planJsonAdd, planJsonRemove } from "./edit-json.mjs";
@@ -172,6 +172,8 @@ async function planHost(ctx, host, { capture, adopt, ledger }) {
   const rec = ledger.hosts[host.id];
   const item = { host, entry, capture: cap };
   if (host.driver === "cli") {
+    const plugin = claudePluginEnabled(ctx.home, ctx.env);
+    if (plugin) return { ...item, action: "plugin", reason: plugin };
     const det = host.detect(ctx);
     if (det.manualOnly) return { ...item, action: "manual", reason: det.why, snippet: claudeSnippet(entry) };
     const resolved = ctx.resolve("claude");
@@ -218,6 +220,8 @@ function planLine(ctx, p) {
       return `  ${name} already set up.`;
     case "manual":
       return `  ${name} ${p.reason}: add it yourself (shown below).`;
+    case "plugin":
+      return `  ${name} leaves it: ad's memory is already enabled here as a plugin (${p.reason}). One route per host.`;
     default:
       return `  ${name} won't change it: ${p.reason}.`;
   }
@@ -294,6 +298,11 @@ export async function install(opts = {}) {
         ledger.hosts[p.host.id] = { ...fileRecord(ctx, p, sha256(p.target.bytes)), preBytesSha256: undefined, originalBackup: null, restorable: false };
         await writeLedger(ctx.root, ledger);
       }
+      okCount++;
+      continue;
+    }
+    if (p.action === "plugin") {
+      out(`· ${p.host.name}: memory comes from the ${p.reason} plugin; nothing added`);
       okCount++;
       continue;
     }

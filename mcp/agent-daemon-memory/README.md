@@ -138,7 +138,7 @@ keep this one. Each conversation's server is bound to that conversation's folder
 (`AD_MEMORY_PROJECT`); a team worker's to the repo it was spawned from, not its
 worktree.
 
-## Install (Claude Code, Codex, Cursor)
+## Install (Claude Code, Codex, Cursor, VS Code, Gemini CLI)
 
 ```sh
 npx agent-daemon-memory install     # or, with ad installed: ad memory install
@@ -146,7 +146,8 @@ npx agent-daemon-memory install     # or, with ad installed: ad memory install
 
 It adds the server to each host it finds, after showing the plan; see
 [docs/memory-install.md](../../docs/memory-install.md) (doctor, repair,
-uninstall, and what it never changes).
+uninstall, and what it never changes). As a host plugin (Claude Code's
+marketplace, Agent Plugins): [docs/memory-plugins.md](../../docs/memory-plugins.md).
 
 ### By hand (Claude Code)
 

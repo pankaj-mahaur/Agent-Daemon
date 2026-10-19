@@ -1,6 +1,6 @@
 # Memory in other agents: the installer
 
-ad's memory server gives Claude Code, Codex and Cursor the lessons and
+ad's memory server gives Claude Code, Codex, Cursor, VS Code and Gemini CLI the lessons and
 corrections from your past sessions in the same project. One command adds it to
 each host you have:
 
@@ -31,8 +31,10 @@ Then restart each host. Exit code: 0 all set up, 2 some hosts refused, 1 nothing
 | Claude Code | `claude mcp add --scope user` (ad never edits `~/.claude.json`, which Claude Code rewrites itself) | ad's hooks when `ad init` set them up, else the record tools | the open project (`CLAUDE_PROJECT_DIR`) |
 | Codex | `~/.codex/config.toml` (or `$CODEX_HOME`), between ad's markers | the record tools | the session's folder |
 | Cursor | `~/.cursor/mcp.json` | the record tools | `${workspaceFolder}`, else the working folder if it is a project |
+| VS Code (Copilot) | `~/.copilot/mcp-config.json` (or `$COPILOT_HOME`), the personal file VS Code's docs prefer | the record tools | the open workspace folder (VS Code starts the server there) |
+| Gemini CLI | `~/.gemini/settings.json` (or under `$GEMINI_CLI_HOME`); ad edits the file itself, its own entry only (`gemini mcp add` defaults to the project scope) | the record tools | the folder Gemini runs in, if it is a project |
 
-`--host <id>` (`claude-code`, `codex`, `cursor`) picks hosts; `--capture
+`--host <id>` (`claude-code`, `codex`, `cursor`, `vscode`, `gemini`) picks hosts; `--capture
 auto|hooks|tools` overrides the capture mode; `--dry-run` shows the plan and the
 snippets and writes nothing; `--yes` skips the question.
 
@@ -42,6 +44,10 @@ the package to `~/.agent-daemon/memory/pkg/<version>/` and points hosts at a
 launcher (`~/.agent-daemon/memory/bin/launch.mjs`), so hosts never run `npx`
 and an upgrade only changes which version the launcher starts. It needs Node
 22.16 or newer and builds nothing: memory runs on Node's built-in SQLite.
+
+Gemini CLI disconnects local servers in folders you haven't trusted: trust the project folder in Gemini if the memory tools are missing.
+
+With ad's memory plugin enabled in Claude Code, install leaves Claude Code alone (one route per host). Plugins (Claude Code's marketplace, Agent Plugins for VS Code and others) are the other way in: [Memory as host plugins](memory-plugins.md).
 
 ## What it never does
 
@@ -74,7 +80,7 @@ npx agent-daemon-memory uninstall     # --host <id> for one host
 `doctor` starts each installed entry the way the host does and talks to it with
 both MCP handshakes. Its codes: `node.version`, `node.path`, `sqlite.driver`,
 `db.open`, `db.schema`, `db.stray`, and per host `config.parse`, `entry`,
-`command.exists`, `smoke.legacy`, `smoke.modern`, `capture.double`,
+`command.exists`, `smoke.legacy`, `smoke.modern`, `capture.double`, `route.double` (Claude Code: the installer's entry and the plugin both serve memory),
 `entry.duplicate`; `pkg.stale` when an older version is installed.
 
 `uninstall` puts a file back exactly as it was when nothing else ever changed

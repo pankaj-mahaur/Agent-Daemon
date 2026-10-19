@@ -60,6 +60,19 @@ test("json: refuses a file it can't parse, a non-object, and an entry someone el
   assert.equal(planJsonAdd(theirs, JENTRY, { owned: true }).action, "update", "ad's own older entry is updated");
 });
 
+test("json: a byte order mark (Windows PowerShell 5) is read past and kept", () => {
+  const bom = String.fromCharCode(0xfeff);
+  const text = bom + JSON_FIXTURES.others;
+  const add = planJsonAdd(text, JENTRY);
+  assert.equal(add.action, "add", add.reason);
+  assert.ok(add.text.startsWith(bom) && add.text.charCodeAt(1) !== 0xfeff, "one BOM, kept");
+  assert.equal(planJsonAdd(add.text, JENTRY).action, "same");
+  const rm = planJsonRemove(add.text, { entry: JENTRY });
+  assert.equal(rm.action, "remove");
+  assert.ok(rm.text.startsWith(bom));
+  assert.deepEqual(parseJsonc(rm.text.slice(1)), parseJsonc(JSON_FIXTURES.others));
+});
+
 test("json: an entry the user edited is kept on uninstall", () => {
   const add = planJsonAdd(JSON_FIXTURES.others, JENTRY);
   const edited = add.text.replace('"tools"', '"hooks"');

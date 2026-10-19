@@ -8,7 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { availableDrivers } from "../memory/driver.mjs";
-import { HOSTS, SERVER_NAME, claudeHasAdHooks, hostById } from "./hosts.mjs";
+import { HOSTS, SERVER_NAME, claudeHasAdHooks, claudePluginEnabled, hostById } from "./hosts.mjs";
 import { readLedger } from "./ledger.mjs";
 import { inspect } from "./fsx.mjs";
 import { jsonEntry } from "./edit-json.mjs";
@@ -148,6 +148,9 @@ export async function doctor(opts = {}) {
     if (id === "claude-code") {
       const double = claudeHasAdHooks(ctx.home) && rec.capture === "tools";
       add("capture.double", !double, double ? "ad's hooks and the record tools both capture here: run install --capture hooks" : "one capture path", id);
+      // The installer's entry and the plugin both serve memory: tools twice, notes twice.
+      const plugin = claudePluginEnabled(ctx.home, ctx.env);
+      add("route.double", !plugin, plugin ? `the ${plugin} plugin also serves memory here: keep one (uninstall --host claude-code, or disable the plugin)` : "one route", id);
     }
     if (id === "cursor") {
       const proj = path.join(opts.cwd ?? process.cwd(), ".cursor", "mcp.json");

@@ -10,13 +10,13 @@
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const USAGE = `agent-daemon-memory: ad's memory server for Claude Code, Codex and Cursor.
+const USAGE = `agent-daemon-memory: ad's memory server for Claude Code, Codex, Cursor, VS Code and Gemini CLI.
   install [--host <id> …] [--yes] [--dry-run] [--capture auto|hooks|tools]
   doctor [--json]  ·  repair [--host <id>]  ·  status [--json]
   uninstall [--host <id> …] [--purge-data [--force]]
   review [--accept <file>] [--accept-all] [--global]   (in your own terminal)
   report [--days 30] [--all-projects] [--json] [--share]   is memory working here
-Hosts: claude-code, codex, cursor. Memory stays on this computer.`;
+Hosts: claude-code, codex, cursor, vscode, gemini. Memory stays on this computer.`;
 
 /** --flag values: repeated --host collects; booleans are present or not. */
 export function parseFlags(argv) {

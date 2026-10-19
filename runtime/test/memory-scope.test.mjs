@@ -50,6 +50,10 @@ test("order: --project, then AD_MEMORY_PROJECT, then CLAUDE_PROJECT_DIR (Claude 
     s = resolveMemoryScope(opts(f, { env: f.env, cwd: f.wt }));
     assert.deepEqual([s.kind, s.source, s.dir], ["project", "cwd", f.wt]);
     assert.deepEqual(s.keys, [projectSlug(f.wt)]);
+    // An Agent Plugins host starts the server in the plugin's folder (maybe inside a
+    // git clone): the working folder never binds there; an explicit project still does.
+    assert.equal(resolveMemoryScope(opts(f, { env: f.env, cwd: f.sub, host: "agent-plugins" })).kind, "unbound");
+    assert.equal(resolveMemoryScope(opts(f, { env: f.env, project: f.repoA, cwd: f.sub, host: "agent-plugins" })).kind, "project");
   } finally { f.cleanup(); }
 });
 
