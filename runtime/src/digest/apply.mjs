@@ -2,20 +2,26 @@
 //
 // Targets behavior:
 //   - episodic-only       → SQLite-only insert (low-risk audit trail)
-//   - memory:project      → SQLite + append to <cwd>/.agent-daemon/memory/activeContext.md
+//   - memory:project      → SQLite + append to <data>/memory/activeContext.md
 //   - memory:global       → SQLite + append to ~/.agent-daemon/user.md
-//   - skill-edit          → SQLite + write a proposal markdown to .agent-daemon/proposed/
-//   - constitution-add    → SQLite + write a proposal markdown to .agent-daemon/proposed/
+//   - skill-edit          → SQLite + write a proposal markdown to <data>/proposed/
+//   - constitution-add    → SQLite + write a proposal markdown to <data>/proposed/
+//
+// <data> is the project's capture folder (memory/project-dir.mjs): its own
+// .agent-daemon when the user set one up, else a folder under ad's root.
 //
 // Every learning lands in SQLite (the durable audit trail), regardless of which
 // markdown surface it also writes to. SQLite reads are used by session-start
 // for retrieval-augmented context loading.
 
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { insertLearnings, projectSlug, observeUserFact } from "../memory/episodic.mjs";
 import { screenLearning, neutralizeText } from "./sanitize.mjs";
 import { redactSecrets } from "../security/secret-patterns.mjs";
+import { appendToMemory, writeProposal } from "./proposals.mjs";
+import { ensureProjectDataDir, projectDataDir } from "../memory/project-dir.mjs";
 
 /**
  * @typedef {import("./classify.mjs").ClassifiedLearning} ClassifiedLearning
@@ -56,7 +62,7 @@ export async function applyLearnings(opts) {
     memoryFilesTouched: []
   };
 
-  const home = process.env.HOME || process.env.USERPROFILE || ".";
+  const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
   const stamp = new Date().toISOString();
   const dateOnly = stamp.slice(0, 10);
   const slug = projectSlug(opts.cwd);
@@ -68,7 +74,9 @@ export async function applyLearnings(opts) {
   // Resolve memory locations
   const projectMemoryPath = await resolveProjectMemoryPath(opts.cwd);
   const globalMemoryPath  = path.join(home, ".agent-daemon", "user.md");
-  const proposedDir       = path.join(opts.cwd, ".agent-daemon", "proposed");
+  const proposedDir       = path.join(projectDataDir(opts.cwd), "proposed");
+
+  if (!opts.dryRun && opts.classified.length) ensureProjectDataDir(opts.cwd);
 
   // Group learnings by target file so we batch one append per file
   const projectAppends = [];
@@ -126,7 +134,9 @@ export async function applyLearnings(opts) {
         appliedTo: "quarantined",
         status: "quarantined",
         quarantineReason: `injection:${screen.reasons.join(",")}`,
-        origin
+        origin,
+        captureRef: l.capture_ref,
+        projectPath: path.resolve(opts.cwd)
       });
       continue;
     }
@@ -144,7 +154,9 @@ export async function applyLearnings(opts) {
         appliedTo: "pending",
         status: "pending",
         origin,
-        promoteRequest: wantsGlobal ? "global" : null
+        promoteRequest: wantsGlobal ? "global" : null,
+        captureRef: l.capture_ref,
+        projectPath: path.resolve(opts.cwd)
       });
       result.pending = (result.pending || 0) + 1;
       continue;
@@ -198,7 +210,9 @@ export async function applyLearnings(opts) {
       tags: mergeFileTags(l.tags, sessionFiles),
       appliedTo: item.targets.filter(t => t !== "episodic-only").join(",") || "episodic",
       origin,
-      promoteRequest: wantsGlobal ? "global" : null
+      promoteRequest: wantsGlobal ? "global" : null,
+      captureRef: l.capture_ref,
+      projectPath: path.resolve(opts.cwd)
     });
   }
 
@@ -277,7 +291,7 @@ export function originOf(l) {
 }
 
 async function loadConfig() {
-  const home = process.env.HOME || process.env.USERPROFILE || ".";
+  const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
   const configPath = path.join(home, ".agent-daemon", "config.json");
   try {
     return JSON.parse(await fs.readFile(configPath, "utf8"));
@@ -346,7 +360,7 @@ const MAX_PENDING_ENTRIES = 100;
 const MAX_PENDING_AGE_DAYS = 14;
 
 function pendingArchivePath() {
-  const home = process.env.HOME || process.env.USERPROFILE || ".";
+  const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
   return path.join(home, ".agent-daemon", "pending_messages.archive.jsonl");
 }
 
@@ -359,7 +373,7 @@ async function archivePendingEntries(entries, reason) {
 }
 
 async function queuePendingMessages(rows, sessionId, errorMsg) {
-  const home = process.env.HOME || process.env.USERPROFILE || ".";
+  const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
   const queueDir = path.join(home, ".agent-daemon");
   const queueFile = path.join(queueDir, "pending_messages.json");
   await fs.mkdir(queueDir, { recursive: true });
@@ -386,7 +400,7 @@ async function queuePendingMessages(rows, sessionId, errorMsg) {
 }
 
 async function drainPendingMessages(verbose) {
-  const home = process.env.HOME || process.env.USERPROFILE || ".";
+  const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
   const queueFile = path.join(home, ".agent-daemon", "pending_messages.json");
 
   let pending;
@@ -433,17 +447,18 @@ async function drainPendingMessages(verbose) {
 
 /**
  * Choose where project memory lives. Preference order:
- *   1. <cwd>/.agent-daemon/memory/activeContext.md
+ *   1. <data>/memory/activeContext.md (the capture folder, memory/project-dir.mjs)
  *   2. <cwd>/.claude/memory/MEMORY.md
  *   3. ~/.claude/projects/<encoded>/memory/MEMORY.md
- *   4. <cwd>/.agent-daemon/memory/activeContext.md (created if missing)
+ *   4. <data>/memory/activeContext.md (created if missing)
  *
  * @param {string} cwd
  */
-async function resolveProjectMemoryPath(cwd) {
-  const home = process.env.HOME || process.env.USERPROFILE || ".";
+export async function resolveProjectMemoryPath(cwd) {
+  const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
+  const own = path.join(projectDataDir(cwd), "memory", "activeContext.md");
   const candidates = [
-    path.join(cwd, ".agent-daemon", "memory", "activeContext.md"),
+    own,
     path.join(cwd, ".claude", "memory", "MEMORY.md"),
     path.join(home, ".claude", "projects", encodeProjectPath(cwd), "memory", "MEMORY.md")
   ];
@@ -457,154 +472,9 @@ async function resolveProjectMemoryPath(cwd) {
     }
   }
   // Fall through — return the canonical project location; we'll create it.
-  return path.join(cwd, ".agent-daemon", "memory", "activeContext.md");
+  return own;
 }
 
 function encodeProjectPath(p) {
   return p.replace(/[\\/:]/g, "-");
-}
-
-async function appendToMemory(memPath, items, sessionId, stamp) {
-  await fs.mkdir(path.dirname(memPath), { recursive: true });
-
-  // Read existing content (if any) — used both to seed a fresh file AND to
-  // dedup against entries already present from previous sessions. Without
-  // this, real-world dogfood runs accumulate the same "pattern: X" /
-  // "decision: Y" line 4-5 times across a week's sessions because SQLite's
-  // content-hash uniqueness only gates the episodic store, not this markdown.
-  let existing = "";
-  try {
-    existing = await fs.readFile(memPath, "utf8");
-  } catch { /* file doesn't exist yet */ }
-
-  const initial = existing
-    ? ""
-    : `# Memory\n\n_Auto-managed by agent-daemon. Hand-edits welcome._\n\n`;
-
-  // Build the set of (type, text-prefix) tuples already in the file. The
-  // markdown shape we append is `- **<type>** (conf X.XX): <text>` so we
-  // match on that prefix to extract previously-written learnings. Match by
-  // first ~80 chars of text (case-insensitive, whitespace-collapsed) so
-  // near-identical drift ("X is the cause" vs "X is the cause.") still
-  // dedupes.
-  const seen = collectSeenLearnings(existing);
-  const fresh = items.filter((it) => {
-    const key = makeDedupKey(it.learning.type, it.learning.text);
-    if (seen.has(key)) return false;
-    seen.add(key);  // also dedup within the batch in case classify produced near-dupes
-    return true;
-  });
-
-  if (fresh.length === 0 && !initial) return;  // nothing new, nothing to seed
-
-  const block = fresh.length > 0
-    ? renderMemoryBlock(fresh, sessionId, stamp)
-    : "";
-  await fs.appendFile(memPath, initial + block, "utf8");
-}
-
-/**
- * Walk an existing memory markdown file and return the set of dedup keys
- * for learnings already recorded. Format we recognise:
- *   - **<type>** (conf 0.NN): <text...>
- *
- * @param {string} content
- * @returns {Set<string>}
- */
-function collectSeenLearnings(content) {
-  const seen = new Set();
-  if (!content) return seen;
-  const re = /^-\s+\*\*([a-z]+)\*\*\s+\(conf\s+\d+\.\d+\)\s*:\s*(.+)$/gim;
-  let m;
-  while ((m = re.exec(content)) !== null) {
-    seen.add(makeDedupKey(m[1], m[2]));
-  }
-  return seen;
-}
-
-function makeDedupKey(type, text) {
-  const normText = String(text || "")
-    .toLowerCase()
-    .replace(/\s+/g, " ")
-    .replace(/[.,;:!?]+$/, "")
-    .trim()
-    .slice(0, 80);
-  return `${type}|${normText}`;
-}
-
-function renderMemoryBlock(items, sessionId, stamp) {
-  const lines = [];
-  lines.push("");
-  // Full ISO stamp — same-day appends from different sessions stay distinguishable.
-  lines.push(`<!-- agent-daemon: digested ${stamp}${sessionId ? ` (session ${sessionId.slice(0, 8)})` : ""} -->`);
-  for (const it of items) {
-    const l = it.learning;
-    const tagPart = l.tags && l.tags.length > 0 ? `  _tags: ${l.tags.map(t => neutralizeText(t)).join(", ")}_` : "";
-    lines.push(`- **${l.type}** (conf ${l.confidence.toFixed(2)}): ${neutralizeText(l.text).replace(/\s+/g, " ").trim()}${tagPart}`);
-    if (l.evidence_quote) {
-      lines.push(`  > ${neutralizeText(l.evidence_quote).replace(/\s+/g, " ").trim()}`);
-    }
-  }
-  lines.push("");
-  return lines.join("\n");
-}
-
-async function writeProposal({ item, proposedDir, sessionId, stamp, dryRun, kindOverride, quarantineReasons }) {
-  const safeStamp = stamp.replace(/[:.]/g, "-");
-  const kind = kindOverride || (item.targets.includes("skill-edit") ? "skill-edit" : "constitution-add");
-  const slug = (item.learning.tags?.[0] || item.learning.type).replace(/[^a-z0-9-]/gi, "-").slice(0, 32);
-  const filename = `${kind}-${slug}-${safeStamp}.md`;
-  const filePath = path.join(proposedDir, filename);
-
-  const content = renderProposalMd(item, sessionId, kind, quarantineReasons);
-
-  if (!dryRun) {
-    await fs.mkdir(proposedDir, { recursive: true });
-    await fs.writeFile(filePath, content, "utf8");
-  }
-
-  return filePath;
-}
-
-function renderProposalMd(item, sessionId, kind, quarantineReasons) {
-  const l = item.learning;
-  // Proposals quote transcript-derived text — neutralize so a quarantined
-  // injection can't fire from the proposal file itself.
-  const safeText = neutralizeText(l.text);
-  const safeEvidence = neutralizeText(l.evidence_quote || "");
-  const actionByKind = {
-    "skill-edit": "Review, then either:\n- Apply the suggested change to the relevant `skills/<name>/SKILL.md`, OR\n- Reject by deleting this file.",
-    "constitution-add": "Review, then either:\n- Promote to a constitution rule by editing `constitution/core.md`, OR\n- Reject by deleting this file.",
-    "quarantined-learning": "This learning matched injection-screen patterns and was NOT written to memory.\nReview, then either:\n- Confirm it is benign and manually add it to the right memory file, OR\n- Reject by deleting this file."
-  };
-  const lines = [
-    `# Proposal — ${kind}`,
-    "",
-    `_Generated: ${new Date().toISOString()}_  ${sessionId ? `· _Source session: ${sessionId}_` : ""}`,
-    "",
-    ...(quarantineReasons && quarantineReasons.length > 0
-      ? ["## Quarantine reasons", "", ...quarantineReasons.map(r => `- ${r}`), ""]
-      : []),
-    "## Summary",
-    "",
-    safeText,
-    "",
-    "## Evidence",
-    "",
-    `> ${safeEvidence}`,
-    "",
-    `_(${l.evidence_speaker}, confidence ${l.confidence.toFixed(2)})_`,
-    "",
-    "## Routing",
-    "",
-    `- **Targets:** ${item.targets.join(", ")}`,
-    `- **Reason:** ${item.routeReason}`,
-    `- **Tags:** ${(l.tags || []).join(", ") || "(none)"}`,
-    "",
-    "## Action",
-    "",
-    actionByKind[kind] || actionByKind["constitution-add"],
-    ""
-  ];
-  return lines.join("\n");
 }

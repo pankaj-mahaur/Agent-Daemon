@@ -1,0 +1,34 @@
+{
+  "name": "agent-daemon-memory",
+  "version": "3.0.0",
+  "description": "Local memory for Claude Code, Codex and Cursor: lessons and corrections from past sessions, one MCP server, one install command.",
+  "type": "module",
+  "bin": {
+    "agent-daemon-memory": "dist/cli.mjs"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22.13"
+  },
+  "dependencies": {
+    "jsonc-parser": "3.3.1",
+    "smol-toml": "1.9.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pankaj-mahaur/Agent-Daemon.git",
+    "directory": "packages/agent-daemon-memory"
+  },
+  "keywords": [
+    "mcp",
+    "memory",
+    "claude-code",
+    "cursor",
+    "agent"
+  ]
+}

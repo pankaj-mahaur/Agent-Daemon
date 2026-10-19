@@ -159,3 +159,24 @@ export function resolveMemoryScope({ project, env = process.env, cwd, host, home
   if (collides && collides(key, picked.dir)) return { kind: "collision", dir: picked.dir, keys: [], source: picked.source };
   return { kind: "project", dir: picked.dir, keys: [key], source: picked.source };
 }
+
+/**
+ * The scope plus alias keys: the same folder's key under the other drive-letter
+ * case (Windows) and under its real path, when no other folder owns that key.
+ */
+export function withAliasKeys(scope, { platform = process.platform, collides = () => false, realpath = (p) => fs.realpathSync.native(p) } = {}) {
+  if (scope.kind !== "project" || !scope.dir) return scope;
+  const spellings = new Set([scope.dir]);
+  try {
+    spellings.add(realpath(scope.dir));
+  } catch {
+    // gone or unreadable: no real-path alias
+  }
+  if (platform === "win32") for (const d of [...spellings]) if (/^[a-z]:/i.test(d)) spellings.add((d[0] === d[0].toUpperCase() ? d[0].toLowerCase() : d[0].toUpperCase()) + d.slice(1));
+  const keys = [...scope.keys];
+  for (const d of spellings) {
+    const k = projectSlug(d);
+    if (!keys.includes(k) && !collides(k, d)) keys.push(k);
+  }
+  return { ...scope, keys };
+}

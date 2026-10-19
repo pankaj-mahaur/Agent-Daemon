@@ -18,6 +18,9 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
+import { adRoot, legacyAdRoots } from "../ad-root.mjs";
+import { availableDrivers, openDatabase } from "./driver.mjs";
 
 /**
  * Full schema (idempotent — uses IF NOT EXISTS everywhere).
@@ -182,7 +185,7 @@ END;
 CREATE TRIGGER IF NOT EXISTS learnings_fts_delete AFTER DELETE ON learnings BEGIN
   INSERT INTO learnings_fts(learnings_fts, rowid, text, evidence, tags) VALUES('delete', old.id, old.text, old.evidence, old.tags);
 END;
-CREATE TRIGGER IF NOT EXISTS learnings_fts_update AFTER UPDATE ON learnings BEGIN
+CREATE TRIGGER IF NOT EXISTS learnings_fts_update AFTER UPDATE OF text, evidence, tags ON learnings BEGIN
   INSERT INTO learnings_fts(learnings_fts, rowid, text, evidence, tags) VALUES('delete', old.id, old.text, old.evidence, old.tags);
   INSERT INTO learnings_fts(rowid, text, evidence, tags) VALUES (new.id, new.text, new.evidence, new.tags);
 END;
@@ -307,9 +310,16 @@ CREATE INDEX IF NOT EXISTS idx_proposals_kind   ON proposals(kind, status);
  *
  * @returns {string}
  */
+// AD_MEMORY_DB (the memory server's --db) names the file. Else an existing DB, looked
+// for first where every earlier ad put it (HOME, then USERPROFILE: Git Bash's HOME can
+// differ), so an install keeps the DB it has; a new install gets one in ad's root (plan §M).
+// Hooks and the memory server all resolve through here, so they share one file.
 export function defaultDbPath() {
-  const home = process.env.HOME || process.env.USERPROFILE || ".";
-  return path.join(home, ".agent-daemon", "episodic.db");
+  if (process.env.AD_MEMORY_DB && path.isAbsolute(process.env.AD_MEMORY_DB)) return process.env.AD_MEMORY_DB;
+  const earlier = process.env.HOME || process.env.USERPROFILE;
+  const roots = [...new Set([...(earlier ? [path.join(earlier, ".agent-daemon")] : []), adRoot(), ...legacyAdRoots()])];
+  const found = roots.map((r) => path.join(r, "episodic.db")).find((p) => existsSync(p));
+  return found ?? path.join(adRoot(), "episodic.db");
 }
 
 /**
@@ -324,21 +334,6 @@ export async function dumpSchema(outPath) {
   await fs.writeFile(outPath, SCHEMA, "utf8");
 }
 
-/**
- * Lazy-load better-sqlite3. Returns null if the module isn't installed —
- * callers handle gracefully so the runtime keeps working without the
- * native binding (digest still writes markdown; only SQLite features fail).
- *
- * @returns {Promise<any | null>}
- */
-async function loadDriver() {
-  try {
-    const mod = await import("better-sqlite3");
-    return mod.default || mod;
-  } catch (err) {
-    return null;
-  }
-}
 
 /**
  * @typedef {Object} Db
@@ -358,28 +353,47 @@ async function loadDriver() {
  * @param {{dbPath?: string}} [opts]
  * @returns {Promise<Db | null>}
  */
-export async function open(opts = {}) {
-  const Database = await loadDriver();
-  if (!Database) return null;
+// SQLITE_BUSY, SQLITE_LOCKED and SQLITE_IOERR (its extended codes keep the low byte 10).
+const transientOpenError = (e) => e?.code === "SQLITE_BUSY" || /^SQLITE_IOERR/.test(String(e?.code ?? "")) || [5, 6, 10].includes(Number(e?.errcode) & 0xff);
 
+export async function open(opts = {}) {
   const dbPath = opts.dbPath || defaultDbPath();
   await fs.mkdir(path.dirname(dbPath), { recursive: true });
 
-  const raw = new Database(dbPath);
-  raw.exec(SCHEMA);
-
-  // Run migrations AFTER SCHEMA exec. Each migration is idempotent + safe to
-  // re-run on already-migrated DBs.
-  migrateLearningsContentHash(raw);
-  migrateLearningsEvolution(raw);
-  migrateSkillExecutionTelemetry(raw);
-  migrateSkillRouteEvents(raw);
-  migrateRetrievalEvents(raw);
-  migrateMemoryContract(raw);
+  // better-sqlite3 or node:sqlite (memory/driver.mjs); null when neither loads.
+  // A process that just closed or died can leave the WAL's shared memory busy for
+  // a moment (Windows: "disk I/O error" under node:sqlite): retry those briefly.
+  let raw;
+  for (let attempt = 0; ; attempt++) {
+    raw = await openDatabase(dbPath, { prefer: opts.prefer });
+    if (!raw) return null;
+    try {
+      raw.exec(SCHEMA);
+      // Run migrations AFTER SCHEMA exec. Each migration is idempotent + safe to
+      // re-run on already-migrated DBs.
+      migrateLearningsContentHash(raw);
+      migrateLearningsEvolution(raw);
+      migrateSkillExecutionTelemetry(raw);
+      migrateSkillRouteEvents(raw);
+      migrateRetrievalEvents(raw);
+      migrateMemoryContract(raw);
+      migrateLearningsCapture(raw);
+      break;
+    } catch (e) {
+      try {
+        raw.close();
+      } catch {
+        // already unusable
+      }
+      if (attempt >= 4 || !transientOpenError(e)) throw e;
+      await new Promise((r) => setTimeout(r, 100 * (attempt + 1)));
+    }
+  }
 
   return {
     raw,
     path: dbPath,
+    driver: raw.driver,
     run: (sql, params = []) => raw.prepare(sql).run(...params),
     all: (sql, params = []) => raw.prepare(sql).all(...params),
     get: (sql, params = []) => raw.prepare(sql).get(...params),
@@ -584,6 +598,60 @@ export function migrateMemoryContract(raw) {
 }
 
 /**
+ * Idempotent migration (P5.2): capture keys on learnings, and the hooks' heartbeats.
+ *   norm_key      one note per project whoever records it: normKey(text)
+ *   capture_ref   the host's session id, or proc:<pid>; deduplication only, so no
+ *                 foreign key (a host's session id needn't be one of ad's sessions)
+ *   project_path  the folder the note was recorded in
+ *   capture_heartbeats  a host's hooks ran in a project; the record tools defer to them
+ * Additive only: older ad ignores the columns and the table.
+ *
+ * @param {any} raw
+ */
+export function migrateLearningsCapture(raw) {
+  const cols = new Set(raw.prepare("PRAGMA table_info(learnings)").all().map((c) => c.name));
+  for (const [col, type] of [["norm_key", "TEXT"], ["capture_ref", "TEXT"], ["project_path", "TEXT"]]) {
+    if (!cols.has(col)) raw.exec(`ALTER TABLE learnings ADD COLUMN ${col} ${type}`);
+  }
+  raw.exec(`CREATE INDEX IF NOT EXISTS idx_learnings_norm ON learnings(project_slug, norm_key);
+    CREATE TABLE IF NOT EXISTS capture_heartbeats (
+      host         TEXT NOT NULL,
+      project_slug TEXT NOT NULL,
+      capture_ref  TEXT,
+      last_seen    TEXT NOT NULL,
+      PRIMARY KEY (host, project_slug)
+    );
+    INSERT OR IGNORE INTO schema_version (version) VALUES (2);`);
+  // The search index only needs the indexed columns: an update of a counter or a
+  // key (retrieval counts, the norm_key backfill) no longer rewrites its index row.
+  const trig = raw.prepare("SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = 'learnings_fts_update'").get();
+  if (trig && !/UPDATE OF text, evidence, tags/i.test(trig.sql)) {
+    // One transaction, so two processes upgrading at once can't leave it missing or fail on it.
+    raw.transaction(() => {
+      raw.exec(`DROP TRIGGER IF EXISTS learnings_fts_update;
+        CREATE TRIGGER learnings_fts_update AFTER UPDATE OF text, evidence, tags ON learnings BEGIN
+          INSERT INTO learnings_fts(learnings_fts, rowid, text, evidence, tags) VALUES('delete', old.id, old.text, old.evidence, old.tags);
+          INSERT INTO learnings_fts(rowid, text, evidence, tags) VALUES (new.id, new.text, new.evidence, new.tags);
+        END;`);
+    }).immediate();
+  }
+}
+
+/**
+ * One note per project: the text lowercased (Unicode NFKC), spacing collapsed and
+ * end punctuation dropped, hashed. "Use pnpm." and "use  pnpm" are one note.
+ */
+export function normKey(text) {
+  const n = String(text ?? "").normalize("NFKC").toLowerCase().replace(/\s+/g, " ").replace(/[.,;:!?]+$/, "").trim();
+  return createHash("sha256").update(n).digest("hex").slice(0, 16);
+}
+
+/** The content hash a new row gets: project rows are scoped to their project, global rows not. */
+export function scopedContentHash(projectKey, text) {
+  return projectKey ? learningContentHash(`${projectKey}\u{0}${String(text ?? "").trim()}`) : learningContentHash(text);
+}
+
+/**
  * Idempotent migration: retrieval_events table — measurement-first telemetry
  * for what SessionStart / query-retrieve considered, injected, and truncated
  * (scalable-memory-retrieval plan, Phase 1).
@@ -642,18 +710,17 @@ function migrateSkillRouteEvents(raw) {
 }
 
 /**
- * @returns {Promise<{installed: boolean, version?: string, error?: string}>}
+ * @returns {Promise<{installed: boolean, driver?: string, drivers?: string[], error?: string}>}
  */
 export async function checkDriver() {
   try {
-    const Database = await loadDriver();
-    if (!Database) {
-      return { installed: false, error: "better-sqlite3 not installed (run: cd runtime && npm install)" };
-    }
-    // Probe by opening an in-memory db
-    const db = new Database(":memory:");
+    const drivers = await availableDrivers();
+    if (!drivers.length) return { installed: false, drivers, error: "no SQLite driver: better-sqlite3 not installed (run: cd runtime && npm install) and node:sqlite needs Node 22.13+" };
+    // Probe the one open() will use.
+    const db = await openDatabase(":memory:");
+    const driver = db.driver;
     db.close();
-    return { installed: true };
+    return { installed: true, driver, drivers };
   } catch (err) {
     return { installed: false, error: err.message };
   }

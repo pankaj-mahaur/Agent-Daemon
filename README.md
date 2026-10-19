@@ -405,9 +405,12 @@ Mid-session recall is pull-based too — an **MCP memory server** (read-only exc
 - **Detail:** `memory_get(ids)` — full text + evidence + provenance + derivation tier for the few ids you keep (write-back marks them retrieved)
 - **Profile:** `memory_profile()` — a deterministic "how this user works" rollup (identity / prefers / tools / conventions / watch-out)
 - Plus `memory_stats`, `user_facts_list`, and `memory_feedback`. Index tools cap at 5 results / 4 KB; `memory_get` at 8 KB.
+- **Record (hosts without hooks):** `memory_record_correction` and `memory_record_learning` save what the user just taught the agent **for your review**: pending until you accept it in `ad review`, never reinforced by repetition, never global by itself.
+
+Add it to Claude Code, Codex and Cursor with one command (it shows the plan first, keeps a backup, and removes exactly what it added; see [docs/memory-install.md](docs/memory-install.md)):
 
 ```bash
-claude mcp add agent-daemon-memory -- node /path/to/Agent-Daemon/runtime/src/mcp/memory-server.mjs --host claude-code
+npx agent-daemon-memory install    # or, with ad installed: ad memory install
 ```
 
 **One project per server.** The server serves only the project it was started for (`--project`, ad's per-conversation folder, Claude Code's project folder, or a working folder inside a git repo); an id from another project returns nothing, and a server that can't tell the project serves nothing. Notes an agent wrote about itself wait for your review, notes the injection screen flagged are held back, and secrets (API keys, tokens, passwords) are removed before anything is stored. Details: [mcp/agent-daemon-memory/README.md](mcp/agent-daemon-memory/README.md#which-project-it-serves).
@@ -488,7 +491,9 @@ ad service status
 ad evolve <skill>                      # GEPA self-evolution run for a skill (needs auth)
                                        #   --list-candidates [--json]  list skills with ≥3 failures in 30d (no auth)
                                        #   --export-traces             export JSONL traces for inline GEPA (no auth)
-ad review                              # Accept/reject queued skill proposals
+ad review                              # Accept/reject queued proposals (skills, and notes an agent recorded)
+                                       #   --accept <file> | --accept-all   accept memory proposals (you type the confirmation)
+                                       #   --global           older "global" notes: every project, or only their own
 ad init                                # Scaffold .agent-daemon/ + AD-INSTRUCTIONS.md in project
                                        #   --profile <name>     minimal | developer (default) | security
                                        #   --skills-mode <m>    smart (default — stack-detect) | all | minimal | manual
@@ -500,6 +505,10 @@ ad query-retrieve                      # Keyword extraction + learning injection
 ad memory stats                        # Row counts + retrieval telemetry (truncation rate, bytes)
 ad memory scan                         # Check older notes once: hold back rows holding a key or an injection
 ad memory held                         # Notes memory keeps back; accept|release|drop <id> from your own terminal
+ad memory promote fact:<id>            # Make a user fact apply in every project (your own terminal, typed)
+ad memory install [--host <id>]        # Add the memory server to Claude Code, Codex, Cursor (docs/memory-install.md)
+ad memory doctor | repair | status | uninstall
+ad memory migrate                      # Run the one-time upkeep now (note keys, journal secret scrub)
 ad memory consolidate                  # Evolution pass: near-dup merges, stale archive, contradictions
                                        #   proposals only — --apply-merges / --apply-stale execute
                                        #   --all-projects     span every project (default: --cwd only)

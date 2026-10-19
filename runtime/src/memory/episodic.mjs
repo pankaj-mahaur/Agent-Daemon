@@ -10,7 +10,7 @@
 // All writes use prepared statements + transactions for safety.
 
 import path from "node:path";
-import { open, learningContentHash } from "./sqlite.mjs";
+import { open, learningContentHash, normKey, scopedContentHash } from "./sqlite.mjs";
 import { redactSecrets } from "../security/secret-patterns.mjs";
 
 /* ------------------------------------------------------------------ */
@@ -197,30 +197,59 @@ export function deriveTier(category) {
 export async function insertLearning(learning) {
   const handle = await db();
   if (!handle) return null;
-  const l = redactLearning(learning);
-  const contentHash = learningContentHash(l.text);
-  // INSERT OR IGNORE: same text from a different session collides on the
-  // partial unique index `idx_learnings_content_hash` and is skipped.
-  // (We use OR IGNORE instead of ON CONFLICT(col) because SQLite's
-  // UPSERT requires a FULL unique constraint as the conflict target —
-  // partial indexes don't qualify. OR IGNORE works with either.)
-  const result = handle.run(INSERT_LEARNING_SQL, learningRow(l, contentHash));
-  // Hash collision = the same lesson re-observed in a later session — the
-  // strongest confirmation signal we get. Reinforce instead of discarding.
+  return writeLearning(handle, learning);
+}
+
+/**
+ * One note per project (P5.2): the same note already in the learning's project
+ * (by norm_key, or by its text under the plain or the project-scoped hash) is a
+ * re-observation — the strongest confirmation signal we get — so it is
+ * reinforced instead of stored again. A new project row gets a content hash
+ * scoped to its project, so the same text in another project is its own row.
+ * Returns the new id, or null (a re-observation; callers count inserts by it).
+ */
+function writeLearning(handle, raw) {
+  const l = redactLearning(raw);
+  const nk = normKey(l.text);
+  const same = sameNote(handle, l.projectSlug, l.text, nk);
+  if (same) {
+    if (l.origin === "user" && same.status === "pending") acceptPendingById(handle, same.id);
+    // An agent saying something again is no confirmation: only other origins reinforce.
+    if (l.origin !== "agent") reinforceById(handle, same.id);
+    return null;
+  }
+  const contentHash = scopedContentHash(l.projectSlug, l.text);
+  // INSERT OR IGNORE: a 3.0 row holding this text under the plain hash
+  // collides on the partial unique index `idx_learnings_content_hash` (OR
+  // IGNORE because SQLite's UPSERT can't target a partial index).
+  const result = handle.run(INSERT_LEARNING_SQL, learningRow(l, contentHash, nk));
   if (!result.changes) {
     if (l.origin === "user") acceptPendingByUser(handle, contentHash, l.projectSlug);
-    reinforceLearning(handle, contentHash);
-    return null;  // null still signals "dedup" to callers counting inserts
+    if (l.origin !== "agent") reinforceLearning(handle, contentHash);
+    return null;
   }
   return result.lastInsertRowid;
+}
+
+/** The row holding this note in `projectKey` (null = global), or null. */
+export function sameNote(handle, projectKey, text, nk = normKey(text)) {
+  try {
+    return handle.get(
+      `SELECT id, status, origin, capture_ref FROM learnings
+        WHERE project_slug IS ? AND (norm_key = ? OR content_hash IN (?, ?)) ORDER BY id LIMIT 1`,
+      [projectKey || null, nk, learningContentHash(text), scopedContentHash(projectKey, text)]
+    ) ?? null;
+  } catch {
+    return null; // a store without the P5.2 columns: the unique index still deduplicates
+  }
 }
 
 // Every learning write redacts secrets in text, evidence and tags first.
 // status: 'active' (accepted), 'pending' (waits for the user: agent-written
 // notes) or 'quarantined' (held back: injection screen, secrets).
 const INSERT_LEARNING_SQL = `INSERT OR IGNORE INTO learnings
-  (session_id, project_slug, category, text, evidence, confidence, tags, applied_to, content_hash, derivation, status, origin, quarantine_reason, promote_request)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+  (session_id, project_slug, category, text, evidence, confidence, tags, applied_to, content_hash, derivation, status, origin, quarantine_reason, promote_request, norm_key, capture_ref, project_path)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
 const LEARNING_STATUSES = new Set(["active", "pending", "quarantined"]);
 
@@ -229,7 +258,7 @@ function redactLearning(l) {
   return { ...l, text: r(l.text), evidence: r(l.evidence), tags: Array.isArray(l.tags) ? l.tags.map(r) : l.tags };
 }
 
-function learningRow(l, contentHash) {
+function learningRow(l, contentHash, nk) {
   return [
     l.sessionId || null,
     l.projectSlug || null,
@@ -245,11 +274,26 @@ function learningRow(l, contentHash) {
     ["user", "agent", "unknown"].includes(l.origin) ? l.origin : null,
     l.quarantineReason || null,
     l.promoteRequest || null,
+    nk,
+    typeof l.captureRef === "string" && l.captureRef ? redactSecrets(l.captureRef.slice(0, 160)).text : null,
+    l.projectPath || null,
   ];
 }
 
 // The user typed what an agent noted (same text, same project): that is the
 // user's acceptance, so the pending row becomes theirs and active.
+function acceptPendingById(handle, id) {
+  handle.run("UPDATE learnings SET status = 'active', origin = 'user', applied_to = NULL WHERE id = ? AND status = 'pending'", [id]);
+}
+
+function reinforceById(handle, id) {
+  handle.run(
+    `UPDATE learnings SET confidence = MIN(0.95, confidence + 0.1), observed_count = observed_count + 1, last_verified_at = ?
+      WHERE id = ? AND status = 'active'`,
+    [new Date().toISOString(), id]
+  );
+}
+
 function acceptPendingByUser(handle, contentHash, projectSlug) {
   try {
     handle.run(
@@ -292,15 +336,7 @@ export async function insertLearnings(learnings) {
   if (!handle) return [];
   const ids = [];
   handle.transaction(() => {
-    for (const raw of learnings) {
-      const l = redactLearning(raw);
-      const contentHash = learningContentHash(l.text);
-      const r = handle.run(INSERT_LEARNING_SQL, learningRow(l, contentHash));
-      // Dedup = re-observation → reinforce confidence instead of discarding.
-      if (!r.changes && l.origin === "user") acceptPendingByUser(handle, contentHash, l.projectSlug);
-      if (!r.changes) reinforceLearning(handle, contentHash);
-      ids.push(r.changes ? r.lastInsertRowid : null);
-    }
+    for (const raw of learnings) ids.push(writeLearning(handle, raw));
   });
   return ids;
 }
@@ -345,6 +381,18 @@ export function learningVisibility(alias, keys, scope = "any") {
   return { sql: `${notQ} AND (${project} OR ${accepted} OR ${pendingHere})`, params: [...keys, ...keys] };
 }
 
+/**
+ * SQL for the statuses a bound reader is served: accepted rows; with
+ * includePending (the pull tools memory_search and memory_get, P5.2) also this
+ * project's own pending notes, which the tools label unreviewed. No push
+ * surface passes includePending.
+ */
+export function servedStatus(alias, keys, includePending = false) {
+  const a = `${alias || "learnings"}.`;
+  if (!includePending || !keys?.length) return { sql: `${a}status = 'active'`, params: [] };
+  return { sql: `(${a}status = 'active' OR (${a}status = 'pending' AND ${a}project_slug IN (${keys.map(() => "?").join(",")})))`, params: [...keys] };
+}
+
 /** SQL for "this user fact may be served to a reader bound to `keys`". */
 export function factVisibility(alias, keys) {
   const a = `${alias || "user_facts"}.`;
@@ -370,16 +418,16 @@ export async function searchLearnings(query, opts = {}) {
 
   const limit = opts.limit ?? 5;
   const keys = keysOf(opts);
-  // A bound reader only ever sees active rows.
-  const status = keys ? "active" : opts.status ?? "active";
 
   // FTS5 "MATCH" syntax — escape special chars by quoting tokens
   const safeQuery = sanitizeFtsQuery(query);
   if (!safeQuery) return [];
 
+  // A bound reader sees accepted rows (and, from the pull tools, this project's pending ones).
+  const st = keys ? servedStatus("l", keys, opts.includePending) : { sql: "l.status = ?", params: [opts.status ?? "active"] };
   const vis = learningVisibility("l", keys, opts.scope ?? "any");
-  const where = `learnings_fts MATCH ? AND l.status = ? AND ${vis.sql}`;
-  const params = [safeQuery, status, ...vis.params];
+  const where = `learnings_fts MATCH ? AND ${st.sql} AND ${vis.sql}`;
+  const params = [safeQuery, ...st.params, ...vis.params];
 
   // Freshness decay at rank time (non-destructive): bm25 score × a half-life
   // factor on the most recent of last_verified_at / last_retrieved_at /
@@ -389,7 +437,7 @@ export async function searchLearnings(query, opts = {}) {
   // factor (directly-stated facts edge out inferred generalizations on ties).
   // Honcho-inspired, fully deterministic — no embeddings.
   const rows = handle.all(
-    `SELECT l.id, l.text, l.evidence, l.category, l.confidence, l.project_slug, l.created_at, l.derivation,
+    `SELECT l.id, l.text, l.evidence, l.category, l.confidence, l.project_slug, l.created_at, l.derivation, l.status,
             -bm25(learnings_fts) *
               pow(0.5, (julianday('now') - julianday(
                 MAX(COALESCE(l.last_verified_at, l.created_at), COALESCE(l.last_retrieved_at, l.created_at))
@@ -455,14 +503,15 @@ export async function getLearningsByIds(ids, opts = {}) {
   const placeholders = clean.map(() => "?").join(",");
   const keys = keysOf(opts);
   const vis = keys ? learningVisibility("", keys) : { sql: "1", params: [] };
+  const st = keys ? servedStatus("", keys, opts.includePending) : { sql: "1", params: [] };
   return handle.all(
     `SELECT id, session_id, project_slug, category, text, evidence, confidence,
             observed_count, retrieval_count, usefulness, tags, applied_to, status,
             created_at, last_verified_at, derivation
        FROM learnings
-      WHERE id IN (${placeholders})${keys ? ` AND status = 'active' AND ${vis.sql}` : ""}
+      WHERE id IN (${placeholders})${keys ? ` AND ${st.sql} AND ${vis.sql}` : ""}
       ORDER BY id ASC`,
-    [...clean, ...vis.params]
+    [...clean, ...st.params, ...vis.params]
   );
 }
 
@@ -536,8 +585,10 @@ export async function searchLearningsByFile(file, opts = {}) {
 
   const keys = keysOf(opts);
   const vis = learningVisibility("", keys, opts.scope ?? "any");
-  const where = `tags IS NOT NULL AND (tags LIKE ? OR tags LIKE ?) AND status = ? AND ${vis.sql}`;
-  const params = [`%${norm}%`, `%"${base}"%`, keys ? "active" : status, ...vis.params];
+  // LIKE wildcards in the path are literal ("%" must not match every tagged row).
+  const lit = (v) => v.replace(/[\\%_]/g, (c) => "\\" + c);
+  const where = `tags IS NOT NULL AND (tags LIKE ? ESCAPE '\\' OR tags LIKE ? ESCAPE '\\') AND status = ? AND ${vis.sql}`;
+  const params = [`%${lit(norm)}%`, `%"${lit(base)}"%`, keys ? "active" : status, ...vis.params];
 
   return handle.all(
     `SELECT id, category, text, evidence, confidence, project_slug, created_at, tags

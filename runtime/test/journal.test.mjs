@@ -80,8 +80,13 @@ test("appendLearnings with empty entries is a no-op", async () => {
   assert.equal(res.written, 0);
 });
 
-test("journalPath / archivePath return correct paths", async () => {
-  const cwd = "/tmp/foo";
+test("journalPath / archivePath: the project's own .agent-daemon when it exists, else a folder outside the repo", async () => {
+  const cwd = await makeTmp();
+  // No .agent-daemon: the files live under ad's root, never inside the folder (P5.2).
+  assert.ok(!journalPath(cwd).startsWith(cwd + path.sep), journalPath(cwd));
+  assert.equal(path.basename(journalPath(cwd)), "learning-journal.jsonl");
+  assert.equal(path.dirname(archivePath(cwd)), path.dirname(journalPath(cwd)));
+  await fs.mkdir(path.join(cwd, ".agent-daemon"));
   assert.equal(journalPath(cwd), path.join(cwd, ".agent-daemon", "learning-journal.jsonl"));
   assert.equal(archivePath(cwd), path.join(cwd, ".agent-daemon", "learning-journal.archive.jsonl"));
 });

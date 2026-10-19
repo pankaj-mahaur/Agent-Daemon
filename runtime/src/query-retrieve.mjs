@@ -12,7 +12,7 @@
 import { searchLearnings, recordRetrievalEvent, markRetrieved } from "./memory/episodic.mjs";
 import { hookProjectKeys } from "./memory/scope.mjs";
 import { readStdinJson } from "./hooks/io.mjs";
-import { neutralizeText } from "./digest/sanitize.mjs";
+import { safeNoteText } from "./memory/render-safe.mjs";
 
 const MAX_RESULTS = 3;
 const MAX_OUTPUT_BYTES = 2000;
@@ -57,7 +57,7 @@ export async function runQueryRetrieve(opts = {}) {
   }
 
   const lines = results.map(r =>
-    `- **${r.category}** (conf ${r.confidence.toFixed(2)}): ${neutralizeText(r.text)}`
+    `- **${r.category}** (conf ${r.confidence.toFixed(2)}): ${safeNoteText(r.text, { evidence: r.evidence })}`
   );
   let context = `## Relevant past learnings\n\n${lines.join("\n")}`;
 

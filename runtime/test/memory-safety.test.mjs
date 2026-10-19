@@ -69,7 +69,7 @@ function drive(requests, { args = [], cwd = HOME, env = serverEnv() } = {}) {
         buf = buf.slice(i + 1);
         if (!line) continue;
         const msg = JSON.parse(line);
-        if (msg.id !== undefined) {
+        if (msg.id !== undefined && msg.id !== "init") {
           out[msg.id] = msg.result?.content?.[0]?.text ?? msg.error?.message ?? "";
           wanted.delete(msg.id);
           if (wanted.size === 0) { clearTimeout(timer); child.kill(); resolve(out); }
@@ -77,6 +77,8 @@ function drive(requests, { args = [], cwd = HOME, env = serverEnv() } = {}) {
       }
     });
     child.on("error", reject);
+    // A legacy client: initialize first (the server answers tools only after it, or with _meta).
+    child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: "init", method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "0" } } }) + "\n");
     for (const r of requests) child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: r.id, method: "tools/call", params: { name: r.name, arguments: r.args ?? {} } }) + "\n");
   });
 }

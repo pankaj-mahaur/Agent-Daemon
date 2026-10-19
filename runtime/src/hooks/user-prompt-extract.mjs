@@ -19,10 +19,15 @@
 // extraction failure is silent (per SECURITY.md fail-safe rule).
 
 import fs from "node:fs/promises";
-import { readStdinJson, passthrough } from "./io.mjs";
+import { readStdinJson, passthrough, hookHost } from "./io.mjs";
 import { extractFromText } from "./extractors.mjs";
 import { appendLearnings } from "./journal.mjs";
-import { markRecentSkillFailure } from "../memory/episodic.mjs";
+import { db, markRecentSkillFailure, projectSlug } from "../memory/episodic.mjs";
+import { slugCollides } from "../memory/safety.mjs";
+import { writeHeartbeat } from "../memory/capture.mjs";
+import { withAliasKeys } from "../memory/scope.mjs";
+import path from "node:path";
+import { hostId } from "../memory/host-ids.mjs";
 import { isGeneratedPrompt } from "./generated-prompts.mjs";
 
 // 1 MB: Claude turns fit in 64 KB, but the engine's rollouts can put >64 KB of
@@ -82,7 +87,15 @@ export async function userPromptExtract() {
       }
     }
 
-    if (learnings.length > 0) {
+    // The hooks ran here: the memory server's record tools defer to them (P5.2).
+    // A folder sharing its memory key with another folder gets no capture.
+    const handle = await db().catch(() => null);
+    const key = projectSlug(cwd);
+    // Under every spelling of this folder's key the memory server may be bound to.
+    for (const k of withAliasKeys({ kind: "project", dir: path.resolve(cwd), keys: [key], source: "hook" }).keys) writeHeartbeat(handle, { host: hostId(hookHost()), projectKey: k, captureRef: sessionId });
+    const collides = handle ? slugCollides(handle, key, cwd) : false;
+
+    if (learnings.length > 0 && !collides) {
       await appendLearnings({ cwd, entries: learnings });
     }
   } catch {

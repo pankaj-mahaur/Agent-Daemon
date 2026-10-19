@@ -153,3 +153,42 @@ test("a collision withholds the project", () => {
     assert.deepEqual(s.keys, []);
   } finally { f.cleanup(); }
 });
+
+// ---- P5.1 additions ----
+
+test("P5.1: a fixed GUI launch folder (no .git, no .agent-daemon) binds nothing; --project binds the repo", () => {
+  const f = fixture();
+  try {
+    const opts = { env: f.env, home: f.home, note: () => {} };
+    assert.equal(resolveMemoryScope({ ...opts, cwd: f.plain }).kind, "unbound");
+    const s = resolveMemoryScope({ ...opts, cwd: f.plain, project: f.repoA });
+    assert.equal(s.kind, "project");
+    assert.equal(s.source, "arg");
+    assert.deepEqual(s.keys, [projectSlug(f.repoA)]);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("P5.1: AD_MEMORY_PROJECT is honoured with no flag, even from inside ad's root", () => {
+  const f = fixture();
+  try {
+    const s = resolveMemoryScope({ env: { ...f.env, AD_MEMORY_PROJECT: f.repoB }, home: f.home, cwd: f.insideAdRoot, note: () => {} });
+    assert.equal(s.kind, "project");
+    assert.equal(s.source, "env:AD_MEMORY_PROJECT");
+    assert.deepEqual(s.keys, [projectSlug(f.repoB)]);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("P5.1: alias keys add the other drive-letter case (Windows) and the real path, never a key another folder owns", async () => {
+  const { withAliasKeys } = await import("../src/memory/scope.mjs");
+  const { projectSlug: slug } = await import("../src/memory/episodic.mjs");
+  const alias = (scope, o) => withAliasKeys(scope, o).keys;
+  const scope = { kind: "project", dir: "D:\work\shop", keys: [slug("D:\work\shop")], source: "arg" };
+  const keys = alias(scope, { platform: "win32", realpath: () => "E:\real\shop", collides: (k) => k === slug("e:\real\shop") });
+  assert.ok(keys.includes(slug("d:\work\shop")), "the other drive-letter case");
+  assert.ok(keys.includes(slug("E:\real\shop")), "the real path");
+  assert.ok(!keys.includes(slug("e:\real\shop")), "a key another folder owns is left out");
+});

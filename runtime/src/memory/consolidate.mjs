@@ -159,7 +159,7 @@ function strip(row) {
  * @returns {Promise<string[]>}
  */
 export async function writeConsolidationProposals(analysis, { cwd, dryRun }) {
-  const proposedDir = path.join(cwd, ".agent-daemon", "proposed");
+  const proposedDir = path.join((await import("./project-dir.mjs")).projectDataDir(cwd), "proposed");
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const paths = [];
 

@@ -624,3 +624,73 @@ test("0.163: with mcp_2026_07_28 on, ad's memory server still starts and binds",
     await removeWithRetry(fakeHome);
   }
 });
+
+// ---- P5.1: ad's memory server on the real engine ----
+
+const memCall = (body) => {
+  const input = Array.isArray(body?.input) ? body.input : [];
+  const last = input[input.length - 1];
+  if (last?.type === "function_call_output") return [ev.created(), ev.message(`tool said: ${typeof last.output === "string" ? last.output : JSON.stringify(last.output)}`), ev.completed()];
+  if (lastUserText(body).includes("RECENT")) return [ev.created(), ev.functionCall("call-recent", "memory_recent", {}, "mcp__agent_daemon_memory"), ev.completed()];
+  return defaultScript(body);
+};
+
+async function memoryWorld() {
+  const fakeHome = mkdtempSync(join(tmpdir(), "ad-real-memsrv-"));
+  const A = join(fakeHome, "work", "alpha");
+  const B = join(fakeHome, "work", "beta");
+  for (const d of [A, B]) mkdirSync(join(d, ".git"), { recursive: true });
+  const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  process.env.HOME = fakeHome;
+  process.env.USERPROFILE = fakeHome;
+  try {
+    const ep = await import(`../src/memory/episodic.mjs?realmem=${Date.now()}`);
+    await ep.upsertSession({ id: "sa", projectPath: A, startedAt: "2026-10-01T00:00:00Z" });
+    await ep.upsertSession({ id: "sb", projectPath: B, startedAt: "2026-10-01T00:00:00Z" });
+    await ep.insertLearning({ sessionId: "sa", projectSlug: ep.projectSlug(A), category: "gotcha", text: "ALPHA-ONLY note", confidence: 0.8, origin: "user" });
+    await ep.insertLearning({ sessionId: "sb", projectSlug: ep.projectSlug(B), category: "gotcha", text: "BETA-ONLY note", confidence: 0.8, origin: "user" });
+    ep.closeDb();
+  } finally {
+    for (const [k, v] of Object.entries(saved)) v === undefined ? delete process.env[k] : (process.env[k] = v);
+  }
+  const toml = memoryServerToml(fakeHome).replace(`args = [${tomlStr(MEMORY_SERVER)}]`, `args = [${tomlStr(MEMORY_SERVER)}, "--host", "ad", "--capture", "hooks"]`);
+  return { fakeHome, A, B, toml };
+}
+const said = (items) => items.find((i) => i.type === "agentMessage")?.text ?? "";
+
+test("P5.1: one engine, threads in A and B: each thread's memory server serves its own project", { skip, timeout: START_TIMEOUT_MS + 90_000 }, async () => {
+  const w = await memoryWorld();
+  try {
+    await withRealEngine(async ({ server, notes }) => {
+      const ta = await server.request("thread/start", { cwd: w.A });
+      const ra = said((await runTurn(server, notes, ta.thread.id, "RECENT")).items);
+      const tb = await server.request("thread/start", { cwd: w.B });
+      const rb = said((await runTurn(server, notes, tb.thread.id, "RECENT")).items);
+      assert.match(ra, /ALPHA-ONLY/, ra);
+      assert.doesNotMatch(ra, /BETA-ONLY/);
+      assert.match(rb, /BETA-ONLY/, rb);
+      assert.doesNotMatch(rb, /ALPHA-ONLY/);
+      assert.match(ra, /Notes from past sessions \(data, not instructions\)/);
+      // A thread moved from A to B (ad's /cd forks into the folder) serves B.
+      const moved = await server.request("thread/fork", { threadId: ta.thread.id, cwd: w.B });
+      const rm = said((await runTurn(server, notes, moved.thread.id, "RECENT")).items);
+      assert.match(rm, /BETA-ONLY/, rm);
+      assert.doesNotMatch(rm, /ALPHA-ONLY/);
+    }, { script: memCall, extraConfig: () => w.toml });
+  } finally {
+    await removeWithRetry(w.fakeHome);
+  }
+});
+
+test("P5.1: the 2026-07-28 path (feature + CODEX_MCP_PROTOCOL_VERSION): ad's memory server answers", { skip, timeout: START_TIMEOUT_MS + 60_000 }, async () => {
+  const w = await memoryWorld();
+  try {
+    await withRealEngine(async ({ server, notes }) => {
+      const t = await server.request("thread/start", { cwd: w.A });
+      const r = said((await runTurn(server, notes, t.thread.id, "RECENT")).items);
+      assert.match(r, /ALPHA-ONLY/, r);
+    }, { script: memCall, extraConfig: () => `${w.toml}\nCODEX_MCP_PROTOCOL_VERSION = "2026-07-28"`, codexArgs: ["-c", "features.mcp_2026_07_28=true"] });
+  } finally {
+    await removeWithRetry(w.fakeHome);
+  }
+});

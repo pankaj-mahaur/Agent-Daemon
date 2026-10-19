@@ -668,7 +668,7 @@ For "The engine reported a problem", inspect those details first. `ad doctor` sh
 
 **Cause:** the memory server serves one project, chosen when it starts, and couldn't tell which: no `--project`, no project from ad or Claude Code, and its working folder isn't inside a git repo and holds no `.agent-daemon` folder. Home, a drive root, system folders and ad's own folders never count. It serves nothing rather than guess.
 
-**Fix:** open the session in the project folder (a git repo). For Claude Code, register the server with `--host claude-code` (see [mcp/agent-daemon-memory/README.md](../mcp/agent-daemon-memory/README.md#install-claude-code)); for another host, pass `--project <folder>` in its server config.
+**Fix:** open the session in the project folder (a git repo). In ad's own engine, each conversation binds to its folder, or to the project ad passes (`AD_MEMORY_PROJECT`). A desktop app whose working folder is its install folder never binds by itself: give it `--project <folder>` (`${workspaceFolder}` in hosts that expand it). For Claude Code, register the server with `--host claude-code` (see [mcp/agent-daemon-memory/README.md](../mcp/agent-daemon-memory/README.md#install-claude-code)); for another host, pass `--project <folder>` in its server config.
 
 ## 45. A note I expected doesn't show up in memory
 
@@ -707,6 +707,52 @@ For "The engine reported a problem", inspect those details first. `ad doctor` sh
 - If your home folder itself must be a git repository, keep projects in their own repositories; a project with its own `.git` is never affected. In such a home, ad also doesn't ask to trust a folder without its own repository ("ad didn't offer to trust this folder"): trusting it would apply your own settings from `~/.codex/config.toml` there.
 
 See [harness.md](harness.md#working-in-your-home-folder).
+
+## 49. The record tool says "This host's hooks already capture corrections; nothing extra saved."
+
+**Cause:** the memory server runs with `--capture auto` (the default), and this host's ad hooks ran in this project in the last 30 minutes. The hooks already capture what you type, so the record tools don't save a second copy of the agent's version.
+
+**Fix:** nothing to do: the prompt hook has the correction. To record through the tools anyway (for example in a host whose hooks capture nothing), start the server with `--capture tools`.
+
+## 50. `Not saved: that looks like it contains a secret (…)`
+
+**Cause:** the text the agent tried to record holds something shaped like a key, token, password or `user:pass@` URL. A memory note is never the place for one, so nothing was stored.
+
+**Fix:** tell the agent the lesson without the secret ("the staging key is in the vault under `staging/api`", not the key itself). If it isn't a secret at all, say the lesson in your own words: the prompt hook redacts only the secret-shaped part.
+
+## 51. My note isn't used yet
+
+**Symptom:** the agent said `Saved for review: …`, and the next session doesn't know it.
+
+**Cause:** a note the agent recorded is **pending** until you accept it: only this project's `memory_search` and `memory_get` show it, marked `(unreviewed)`. A note it asked to make cross-project also waits for a second OK.
+
+**Fix:** run `ad review` in your own terminal and accept it (type `accept`), or `ad review --accept <file>` / `--accept-all`. Saying the same note yourself also accepts it.
+
+## 52. `ad review: accepting notes can't run from the agent's own shell` or `… needs an interactive terminal`
+
+**Cause:** accepting a memory note changes what reaches your sessions, so only you can do it. `ad review` (and `ad memory promote`, `ad memory held accept`) refuse inside ad's engine tool shells and when stdin or stdout isn't a terminal; there is no `--yes` and no environment variable that skips it.
+
+**Fix:** run it yourself in a terminal window (not through the agent, not piped). Listing works anywhere: plain `ad review` without a terminal lists what is queued.
+
+## 53. The memory installer refused my config
+
+**Symptom:** `✗ Codex: …; add this yourself:` or `✗ Cursor: …` followed by a snippet.
+
+**Cause:** the installer changes only its own entry, and only when it can do that safely. It refuses when the file doesn't parse, when Codex's `mcp_servers` isn't a table, when `agent-daemon-memory` is already defined there and isn't ad's (a TOML table, dotted keys or an inline table all count), when the file is read-only, or when the config is ad's own engine home. The file is left exactly as it was.
+
+**Fix:** fix the file (doctor's `config.parse` shows the parse error), or remove your own `agent-daemon-memory` entry and run `install` again, or paste the printed snippet yourself. If the entry is one ad wrote earlier and you want ad to manage it again: `repair --adopt`.
+
+## 54. The memory tools don't show up after installing
+
+**Cause:** hosts read their MCP config when they start.
+
+**Fix:** restart the host (Claude Code: start a new session, or `/mcp`; Cursor: reload the window; Codex: start a new session). Then `npx agent-daemon-memory doctor` (or `ad memory doctor`): `smoke.legacy` and `smoke.modern` start the entry the way the host does. A failing `node.path` means the Node the entry names moved (a Node upgrade): run `repair`.
+
+## 55. Doctor says `capture.double`
+
+**Cause:** in Claude Code, ad's hooks capture what you type, and the memory server was installed with `--capture tools`, so the agent's record tools save corrections as well.
+
+**Fix:** `install --host claude-code --capture hooks` (or `repair`). With the default `auto`, the record tools stand down while the hooks are capturing.
 
 ---
 

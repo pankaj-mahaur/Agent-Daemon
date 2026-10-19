@@ -1,4 +1,7 @@
-// Learning journal — append-only JSONL buffer at <cwd>/.agent-daemon/learning-journal.jsonl.
+// Learning journal — append-only JSONL buffer, learning-journal.jsonl in the
+// project's capture folder (memory/project-dir.mjs: <cwd>/.agent-daemon when
+// the user set it up, else a folder under ad's root — never a new folder in
+// the repo).
 //
 // Written by the UserPromptSubmit hook (one line per extracted learning).
 // Drained by the SessionStart hook into memory + episodic SQLite, then archived.
@@ -9,6 +12,7 @@
 import path from "node:path";
 import fs from "node:fs/promises";
 import { redactSecrets } from "../security/secret-patterns.mjs";
+import { ensureProjectDataDir, projectDataDir } from "../memory/project-dir.mjs";
 
 const MAX_BYTES = 5 * 1024 * 1024;       // 5 MB — rotate before unbounded growth
 const JOURNAL_FILE = "learning-journal.jsonl";
@@ -19,7 +23,7 @@ const ARCHIVE_FILE = "learning-journal.archive.jsonl";
  * @returns {string} absolute path to the journal file
  */
 export function journalPath(cwd) {
-  return path.join(cwd, ".agent-daemon", JOURNAL_FILE);
+  return path.join(projectDataDir(cwd), JOURNAL_FILE);
 }
 
 /**
@@ -27,7 +31,7 @@ export function journalPath(cwd) {
  * @returns {string} absolute path to the archive file
  */
 export function archivePath(cwd) {
-  return path.join(cwd, ".agent-daemon", ARCHIVE_FILE);
+  return path.join(projectDataDir(cwd), ARCHIVE_FILE);
 }
 
 /**
@@ -43,8 +47,7 @@ export async function appendLearnings({ cwd, entries }) {
   }
 
   try {
-    const dir = path.join(cwd, ".agent-daemon");
-    await fs.mkdir(dir, { recursive: true });
+    const dir = ensureProjectDataDir(cwd);
     const file = path.join(dir, JOURNAL_FILE);
 
     // Rotate if too big (move current → archive, append to fresh)
