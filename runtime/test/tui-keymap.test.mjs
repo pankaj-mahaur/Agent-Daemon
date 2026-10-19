@@ -156,3 +156,12 @@ test("objects, non-string items, chords and leader keys: one warning each, and o
   assert.equal(km.summary, "tui.keymap: 4 key setting(s) ad can't use; it keeps its defaults. /keymap lists them.");
   assert.ok(km.is("global", "copy", key("o", { ctrl: true })), "defaults kept");
 });
+
+test("a 0.163 keymap with leader and agents actions loads with one warning (P1.1)", () => {
+  // 0.163: global.leader (default ctrl-x), "leader <key>" bindings, agents.fork / toggle_pin.
+  const km = createKeymap({ overrides: { global: { leader: "ctrl-x", copy: "leader c" }, agents: { fork: "f", toggle_pin: "p" } } });
+  assert.equal(km.warnings.length, 1, km.warnings.join("\n"));
+  assert.match(km.warnings[0], /global\.copy/);
+  assert.match(km.warnings[0], /leader/);
+  assert.ok(km.is("global", "copy", key("o", { ctrl: true })), "global.copy keeps ctrl-o");
+});

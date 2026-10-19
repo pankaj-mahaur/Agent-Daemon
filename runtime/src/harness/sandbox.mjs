@@ -1,7 +1,7 @@
 // Windows sandbox for the harness home.
 //
 // The engine confines workspace-write commands on Windows with its own sandbox,
-// which needs a one-time setup per home (verified on 0.159.2):
+// which needs a one-time setup per home (verified on 0.163.0: the tui-live patch and background-terminal steps in fresh homes):
 //   - unelevated: restricted token + ACLs, no admin prompt, weaker network isolation
 //   - elevated:   dedicated sandbox users + firewall rules, needs one UAC approval
 // Setup = config `windows.sandbox = <mode>` + windowsSandbox/setupStart. The

@@ -21,6 +21,8 @@ The engine's own rules come with the commands:
 | `/keymap` | yes | no | shows the keys in effect, yours marked; `/keymap debug` is the engine's Keypress Inspector. Keys are changed in the engine's settings file under `[tui.keymap]` (`ad about` shows where), and `ad` uses them (see [Keys](#keys)) |
 | `/vim` | yes | no | the engine's Vim mode for the prompt (Normal, Insert, Replace; its motions, operators, text objects, search, undo and `.`); `tui.vim_mode_default` starts it on |
 | `/setup-default-sandbox` | yes | no | Windows: set up the engine's elevated sandbox after a confirm that says it is machine-wide (your own install uses it too); then this conversation gets ad's Auto permissions (the "Default" preset: edits here, asks for the rest). Not in an engine home ad didn't create. Elsewhere it says the OS sandbox is used |
+| `/config` | not yet | no | isn't in `ad`: `/theme`, `/statusline`, `/title`, `/keymap` and `/vim` change those settings, and `/debug-config` shows where each comes from |
+| `/daybreak` | not yet | yes | isn't in `ad` yet: it turns on the engine's broader access for cybersecurity work, for eligible accounts |
 | `/experimental` | not yet | no | isn't in `ad`. Features are set under `[features]` in the engine's settings file (`ad about` shows where); features you turned on keep working |
 | `/approve` | yes | yes | **Auto-review Denials**: approve one retry of a recent denial (the last 10 of this conversation) |
 | `/memories` | not yet | no | the engine's own memories; `ad`'s memory is `/memory` |
@@ -30,7 +32,7 @@ The engine's own rules come with the commands:
 | `/review` | yes | no | review your uncommitted changes |
 | `/rename` | yes | yes | name this conversation |
 | `/new` | yes | no | start a new conversation (the scrollback stays) |
-| `/archive` | yes | no | archive this conversation, after asking; `/resume archived` brings it back |
+| `/archive` | yes | yes | archive this conversation, after asking; `/resume archived` brings it back. The engine allows it during a task; `ad` waits until the turn ends |
 | `/delete` | yes | no | delete this conversation for good, after asking |
 | `/resume` | yes | yes | continue an earlier conversation; `/resume archived` for the archived ones |
 | `/fork` | yes | no | continue in a copy of this conversation |

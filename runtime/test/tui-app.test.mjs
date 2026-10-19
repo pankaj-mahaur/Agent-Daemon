@@ -261,6 +261,10 @@ test("engine commands ad doesn't run never reach the model; busy ones wait, and 
     type("/new\r");
     await until(() => /'\/new' is disabled while a task is in progress\./.test(text()), "the busy answer");
     assert.equal(app.state.composer, "/new");
+    // The engine allows /archive mid-turn since 0.163; ad waits for the turn (no confirm that then fails).
+    type("\x15/archive\r");
+    await until(() => /'\/archive' is disabled while a task is in progress\./.test(text()), "archive waits");
+    assert.equal(app.state.composer, "/archive");
     type("\x15/import what about tests?\r");
     await until(() => /\/import isn't planned for ad/.test(text()), "not steered into the turn");
     assert.equal(await sent(), before, "nothing was steered into the running turn");

@@ -5,7 +5,7 @@
 // shift the script.
 //
 // Event shapes follow Codex's own test helpers
-// (codex-rs/core/tests/common/responses.rs at rust-v0.160.0).
+// (codex-rs/core/tests/common/responses.rs at rust-v0.163.0; since 0.163 the base instructions travel as the first developer message, not `instructions`).
 
 import { createServer } from "node:http";
 import { mkdirSync, writeFileSync } from "node:fs";

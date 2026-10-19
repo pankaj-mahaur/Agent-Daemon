@@ -6,7 +6,7 @@
 //     own memory server (read-mostly, local SQLite)
 //   - live web search → back to "cached" (OpenAI's index, no live fetches)
 //   - every turn: workspace-write, no extra writable roots, no network
-// These are per-thread overrides (dotted keys, verified on 0.159.2);
+// These are per-thread overrides (dotted keys, verified on 0.163.0 by the engine-real override cases);
 // the user's config is not changed.
 
 import { MEMORY_SERVER_ID } from "./setup.mjs";

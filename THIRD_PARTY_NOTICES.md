@@ -1,12 +1,12 @@
 # Third-party notices
 
-Agent Daemon runs on a pinned copy of OpenAI's open-source Codex (the engine), npm package `@openai/codex` 0.160.0, licensed under the Apache License 2.0 (`Apache-2.0`): https://github.com/openai/codex
+Agent Daemon runs on a pinned copy of OpenAI's open-source Codex (the engine), npm package `@openai/codex` 0.163.0, licensed under the Apache License 2.0 (`Apache-2.0`): https://github.com/openai/codex
 
 Other third-party code ad vendors is listed in [ATTRIBUTION.md](ATTRIBUTION.md).
 
 ## Upstream text reproduced in this repository
 
-These files contain text copied verbatim from openai/codex at tag `rust-v0.160.0`, under the Apache License 2.0; each keeps its attribution header:
+These files contain text copied verbatim from openai/codex at tag `rust-v0.163.0`, under the Apache License 2.0; each keeps its attribution header:
 
 - `runtime/src/tui/init-prompt.mjs` — the `/init` prompt (`codex-rs/tui/assets/prompt_for_init_command.md`)
 - `runtime/src/tui/recap.mjs` — the `/recap` prompt and schema (`codex-rs/context-fragments/src/recap_prompt.rs`, `tui/src/app/recap.rs`, `tui/src/app/recap_history.rs`)

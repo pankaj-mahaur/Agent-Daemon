@@ -1089,7 +1089,7 @@ export function createSession({
      * returned as a secondary session on the same engine. The fork keeps the
      * history as reference (the model sees it; it isn't loaded here), runs
      * read-only with no approvals and with hooks off, and gets the engine's side
-     * instructions and boundary (inject_items: 0.160 ignores a fork's
+     * instructions and boundary (inject_items, verified on 0.163.0 by the Part 7 live test: 0.160 ignored a fork's
      * own developer instructions, spike S5). Nothing merges back.
      */
     async openSide() {

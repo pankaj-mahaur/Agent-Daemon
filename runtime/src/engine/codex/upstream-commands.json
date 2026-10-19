@@ -1,7 +1,8 @@
 {
-  "tag": "rust-v0.160.0",
+  "tag": "rust-v0.163.0",
   "names": [
     "model",
+    "daybreak",
     "ide",
     "permissions",
     "keymap",
@@ -24,6 +25,7 @@
     "app",
     "init",
     "compact",
+    "config",
     "recap",
     "plan",
     "voice",
@@ -72,6 +74,16 @@
       "name": "model",
       "aliases": [],
       "desc": "choose what model and reasoning effort to use",
+      "args": false,
+      "duringTask": true,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "daybreak",
+      "aliases": [],
+      "desc": "turn Daybreak on or off",
       "args": false,
       "duringTask": true,
       "sideAllowed": false,
@@ -223,7 +235,7 @@
       "aliases": [],
       "desc": "archive this session",
       "args": false,
-      "duringTask": false,
+      "duringTask": true,
       "sideAllowed": false,
       "visible": "always",
       "popup": "shown"
@@ -292,6 +304,16 @@
       "name": "compact",
       "aliases": [],
       "desc": "summarize conversation to prevent hitting the context limit",
+      "args": false,
+      "duringTask": false,
+      "sideAllowed": false,
+      "visible": "always",
+      "popup": "shown"
+    },
+    {
+      "name": "config",
+      "aliases": [],
+      "desc": "configure Codex preferences",
       "args": false,
       "duringTask": false,
       "sideAllowed": false,
@@ -545,7 +567,7 @@
     {
       "name": "mcp",
       "aliases": [],
-      "desc": "list configured MCP tools; use /mcp verbose for details",
+      "desc": "list MCP tools; use /mcp verbose or /mcp login <name>",
       "args": true,
       "duringTask": true,
       "sideAllowed": false,

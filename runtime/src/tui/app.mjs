@@ -135,7 +135,14 @@ export const NOT_IN_AD = {
   "test-approval": "/test-approval is a debug command of the engine's own UI.",
   "debug-m-drop": "/debug-m-drop is a debug command of the engine's own UI.",
   "debug-m-update": "/debug-m-update is a debug command of the engine's own UI.",
+  // 0.163.
+  config: "/config isn't in ad: /theme, /statusline, /title, /keymap and /vim change those settings, and /debug-config shows where each comes from.",
+  daybreak: "/daybreak isn't in ad yet: it turns on the engine's broader access for cybersecurity work, for eligible accounts.",
 };
+
+// Engine commands the engine allows during a task that ad runs only after it:
+// /archive (0.163 allows it mid-turn; ad's session leaves a conversation only when idle).
+export const WAITS_FOR_TASK = new Set(["archive"]);
 
 /** What ad says for an upstream command it doesn't run, by any of its spellings. */
 export function notInAd(name) {
@@ -1888,7 +1895,7 @@ export function createApp({
       }
       if (cmd) {
         // The rule for upstream commands: some wait for the task to end. The draft stays.
-        if (cmd.source === "upstream" && upstream && !upstream.duringTask && (side?.focus === "side" ? Boolean(side.session.state.activeTurnId || side.session.state.starting) : turnActive())) {
+        if (cmd.source === "upstream" && upstream && (!upstream.duringTask || WAITS_FOR_TASK.has(cmd.name)) && (side?.focus === "side" ? Boolean(side.session.state.activeTurnId || side.session.state.starting) : turnActive())) {
           composer.set(text);
           return warn(`'/${name}' is disabled while a task is in progress.`);
         }
