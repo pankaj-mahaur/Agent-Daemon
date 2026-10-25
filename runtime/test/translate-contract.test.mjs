@@ -10,6 +10,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomBytes } from "node:crypto";
 import { prepare } from "../src/gateway/translate/index.mjs";
+import { seal } from "../src/gateway/translate/seal.mjs";
 import { assertGolden } from "../testkit/golden.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -44,13 +45,19 @@ test("every recorded request translates to Chat, and its shape matches the golde
   assertGolden(`translate/engine-${VERSION}-chat.json`, JSON.stringify(out, null, 2));
 });
 
-test("DeepSeek: the recorded tool loop goes as it is; with reasoning ad can't open in it, it is refused", () => {
+test("DeepSeek: the recorded tool loop goes when nothing reasoned before; with reasoning ad can't open in it, it is refused", () => {
   const f = files.find((x) => x.startsWith("deepseek-chat-") && JSON.parse(fs.readFileSync(path.join(DIR, x), "utf8")).body.input.at(-1)?.type === "function_call_output");
   assert.ok(f, "a recorded tool-result request");
-  const { body } = JSON.parse(fs.readFileSync(path.join(DIR, f), "utf8"));
+  const recorded = JSON.parse(fs.readFileSync(path.join(DIR, f), "utf8")).body;
+  // The mock's own reasoning (an earlier turn) isn't DeepSeek's: a model that never reasoned has none.
+  const body = { ...recorded, input: recorded.input.filter((i) => i.type !== "reasoning") };
   const rt = { ...route, provider: "deepseek", quirks: ["deepseek"] };
   assert.doesNotThrow(() => prepare(Buffer.from(JSON.stringify(body)), rt, { sealKey: randomBytes(32) }));
+  // The mock's reasoning (another provider's, as after a switch) is absent, not lost.
+  assert.doesNotThrow(() => prepare(Buffer.from(JSON.stringify(recorded)), rt, { sealKey: randomBytes(32) }), "an earlier turn's foreign reasoning");
+  // Ad's own envelope for this model under a key it no longer has: refused.
   const at = body.input.findLastIndex((i) => i.type === "function_call");
-  const foreign = { ...body, input: [...body.input.slice(0, at), { type: "reasoning", summary: [], encrypted_content: "gAAAA-direct" }, ...body.input.slice(at)] };
-  assert.throws(() => prepare(Buffer.from(JSON.stringify(foreign)), rt, { sealKey: randomBytes(32) }), /DeepSeek lost its reasoning/);
+  const mine = seal(randomBytes(32), { provider: "deepseek", model: body.model }, "old");
+  const lost = { ...body, input: [...body.input.slice(0, at), { type: "reasoning", summary: [], encrypted_content: mine }, ...body.input.slice(at)] };
+  assert.throws(() => prepare(Buffer.from(JSON.stringify(lost)), rt, { sealKey: randomBytes(32) }), /can't read this chat's earlier reasoning/);
 });

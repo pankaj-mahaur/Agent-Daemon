@@ -6,7 +6,11 @@
 // route.model: { vision, strictTools, parallelTools, effort, jsonFormat } (catalog/preset).
 
 import { buildToolMap, refusal } from "./tools.mjs";
-import { open } from "./seal.mjs";
+import { open, sealedFor } from "./seal.mjs";
+
+// The scope extras are sealed under (never a reasoning scope).
+export const extrasScope = ({ provider, model }) => ({ provider, model: `${model}
+extras` });
 
 // Fields with no content for a Chat provider: dropped.
 const DROP = new Set(["store", "include", "prompt_cache_key", "service_tier", "stream", "client_metadata", "metadata", "user", "safety_identifier", "prompt_cache_retention"]);
@@ -46,6 +50,17 @@ const outputText = (output, param) => {
   return JSON.stringify(output ?? "");
 };
 
+// An extras envelope ({"v":2,"x":{callId: data}}), or null.
+function parseExtras(text) {
+  if (typeof text !== "string") return null;
+  try {
+    const j = JSON.parse(text);
+    return j?.v === 2 && j.x && typeof j.x === "object" && !Array.isArray(j.x) ? j.x : null;
+  } catch {
+    return null;
+  }
+}
+
 export function toTurnRequest(body, { route = {}, sealKey = null } = {}) {
   if (!body || typeof body !== "object" || Array.isArray(body)) throw refusal("", "ad expected a JSON request.");
   for (const [k, v] of Object.entries(body)) {
@@ -69,6 +84,7 @@ export function toTurnRequest(body, { route = {}, sealKey = null } = {}) {
   // assistant message carrying it (opened), or marked lost (present but not ad's envelope
   // for this provider and model).
   let pending = null; // { text } | { lost: true }
+  const extrasByCall = {};
   const newAssistant = (content) => {
     const msg = { role: "assistant", content };
     if (pending?.text !== undefined) msg.reasoning = pending.text;
@@ -105,15 +121,23 @@ export function toTurnRequest(body, { route = {}, sealKey = null } = {}) {
       const a = assistant();
       const name = type === "custom_tool_call" ? flatOf("custom", item.name) : flatOf("function", item.name, item.namespace);
       const args = type === "custom_tool_call" ? JSON.stringify({ input: String(item.input ?? "") }) : String(item.arguments ?? "{}");
-      (a.tool_calls ??= []).push({ id: callId(item, param), type: "function", function: { name, arguments: args } });
+      const id = callId(item, param);
+      (a.tool_calls ??= []).push({ id, type: "function", function: { name, arguments: args }, ...(extrasByCall[id] ? { extra_content: extrasByCall[id] } : {}) });
     } else if (type === "function_call_output" || type === "custom_tool_call_output") {
       messages.push({ role: "tool", tool_call_id: callId(item, param), content: outputText(item.output, `${param}.output`) });
     } else if (type === "reasoning") {
       // Hidden reasoning is the provider's own (D11): only ad's envelope for this provider and
       // model comes back; anything else (another provider's, a direct model's) is dropped.
-      const text = sealKey && item.encrypted_content ? open(sealKey, scope, item.encrypted_content) : null;
-      if (text !== null) pending = { text: pending?.text !== undefined ? `${pending.text}\n${text}` : text };
-      else if (pending?.text === undefined) pending = { lost: true };
+      const blob = typeof item.encrypted_content === "string" ? item.encrypted_content : null;
+      // Per-call data the provider wants back (Gemini's thought signatures) is sealed under its
+      // own scope, so reasoning text can never be read as it (whatever the text says).
+      const extras = blob && sealKey ? parseExtras(open(sealKey, extrasScope(scope), blob)) : null;
+      const text = blob && sealKey && !extras ? open(sealKey, scope, blob) : null;
+      if (extras) Object.assign(extrasByCall, extras);
+      else if (text !== null) pending = { text: pending?.text !== undefined ? `${pending.text}\n${text}` : text };
+      // Lost only when it was ad's, for this provider and model, and no longer opens (a
+      // replaced key). Another provider's or model's reasoning is simply absent.
+      else if (blob && sealedFor(scope, blob) && pending?.text === undefined) pending = { lost: true };
     } else if (type === "additional_tools") {
       // merged into the tools above
     } else throw refusal(`${param}.type`, type === "tool_search_call" || type === "tool_search_output" ? "This provider can't take deferred tool search through ad." : `ad can't pass a "${type}" item to this provider.`);
@@ -131,6 +155,10 @@ export function toTurnRequest(body, { route = {}, sealKey = null } = {}) {
     if (!flat) throw refusal("tool_choice", `The tool "${tc.name}" isn't among this request's tools.`);
     toolChoice = { type: "function", function: { name: flat } };
   } else if (tc !== undefined && tc !== null) throw refusal("tool_choice", "This provider can't take that tool choice through ad.");
+  // A provider that takes only some tool choices (Z.ai: auto; MiniMax: auto or none) is told
+  // so before anything is sent.
+  const kind = typeof toolChoice === "string" ? toolChoice : toolChoice ? "function" : null;
+  if (kind && Array.isArray(m.toolChoices) && !m.toolChoices.includes(kind)) throw refusal("tool_choice", `This provider can't be made to call a tool (${kind}) through ad. Ask in words instead, or pick another model.`);
 
   let responseFormat = null;
   const fmt = body.text?.format;

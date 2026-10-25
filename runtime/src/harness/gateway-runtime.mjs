@@ -14,7 +14,7 @@ import { readRegistry } from "../auth/accounts/registry.mjs";
 import { syncLegacyAccounts } from "../auth/accounts/migrate.mjs";
 import { createSecretStore } from "../auth/secrets.mjs";
 import { startGateway } from "../gateway/client.mjs";
-import { engineEnvFor, engineProviderArgs, gatewayTable, TOKEN_HIDDEN_ARGS } from "../gateway/table.mjs";
+import { engineEnvFor, engineProviderArgs, gatewayTable, threadConfigFor, TOKEN_HIDDEN_ARGS } from "../gateway/table.mjs";
 
 let shared = null; // { gateway, tableKey }
 // This ad session's id for providers that want one (OpenCode Go outside a conversation):
@@ -83,7 +83,7 @@ export async function gatewayEngineOpts({ home, store, env = process.env, err = 
   try {
     const s = await gatewayState({ store, env });
     if (!s) return { env: {}, args: [] };
-    return { env: engineEnvFor({ gateway: s.gateway, env }), args: [...engineProviderArgs(s.table, { gateway: s.gateway, doc: s.doc }), ...TOKEN_HIDDEN_ARGS] };
+    return { env: engineEnvFor({ gateway: s.gateway, env }), args: [...engineProviderArgs(s.table, { gateway: s.gateway, doc: s.doc }), ...TOKEN_HIDDEN_ARGS], threadConfigFor: (t) => threadConfigFor(s.table, t) };
   } catch (e) {
     err.write(`[agent-daemon] the provider gateway didn't start (${e.message.split("\n")[0]}); API accounts are unavailable this run\n`);
     return { env: {}, args: [] };

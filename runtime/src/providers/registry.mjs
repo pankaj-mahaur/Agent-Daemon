@@ -32,6 +32,11 @@ const preset = (p) =>
     // ownUserAgent: the gateway sends ad/<version> (the provider asked for the client's own).
     wires: null,
     modelQuirks: null,
+    // Context windows per model (tokens), dated with the preset: until a catalog observes them.
+    contextWindows: null,
+    compactCap: null,
+    // Response headers holding the provider's daily request counter ("0" left → a daily limit).
+    dailyLimitHeaders: null,
     modelsUrl: null,
     sessionHeader: null,
     ownUserAgent: false,
@@ -39,12 +44,20 @@ const preset = (p) =>
     quirks: Object.freeze([]),
     capabilities: null,
     pickerHint: null,
+    // Data terms: trial (development use only), trainsOnData ("no" | "free tier" | "unknown"),
+    // notice (asked once at sign-in, before anything is sent).
+    privacy: null,
+    keyTestModel: null,
+    blockedReason: null,
     status: "candidate",
     acceptance: null,
     ...p,
     methods: Object.freeze([...p.methods]),
     docs: Object.freeze([...(p.docs ?? [])]),
   });
+
+// A Chat Completions provider (P6.2): translated by the gateway, checked on 25 Oct 2026.
+const chatPreset = (p) => preset({ methods: ["api-key"], mode: "chat", upstreamPath: "/chat/completions", checkedAt: "2026-10-25", ...p });
 
 export const PROVIDER_PRESETS = Object.freeze([
   preset({ id: "openai", name: "OpenAI API", methods: ["api-key"], upstreamBase: "https://api.openai.com/v1", docs: ["https://platform.openai.com/docs/api-reference/responses"], checkedAt: "2026-10-19" }),
@@ -100,6 +113,146 @@ export const PROVIDER_PRESETS = Object.freeze([
   preset({ id: "custom", name: "Your own endpoint", methods: ["api-key", "none"], upstreamBase: null, keyTest: "probe", status: "experimental", docs: [], checkedAt: "2026-10-19" }),
   preset({ id: "ollama", name: "Ollama (local)", methods: ["none"], upstreamBase: "http://localhost:11434/v1", auth: "none", local: true, docs: ["https://github.com/ollama/ollama/blob/main/docs/openai.md"], checkedAt: "2026-10-19" }),
   preset({ id: "lmstudio", name: "LM Studio (local)", methods: ["none"], upstreamBase: "http://localhost:1234/v1", auth: "none", local: true, docs: ["https://lmstudio.ai/docs/app/api/endpoints/openai"], checkedAt: "2026-10-19" }),
+  // Wave 2 (P6.2): Chat Completions providers, through the gateway's translation. Facts from
+  // each provider's docs on 25 Oct 2026 (context windows, quota codes, data terms); each stays
+  // a candidate until a real-key acceptance run is recorded. Free tiers and the best-known first.
+  chatPreset({
+    id: "gemini",
+    name: "Gemini API",
+    upstreamBase: "https://generativelanguage.googleapis.com/v1beta/openai",
+    quirks: Object.freeze(["gemini-compat"]),
+    // The free tier's per-minute token limit is far below the 1M window: compact earlier.
+    compactCap: 250000,
+    contextWindows: Object.freeze({ "gemini-3.8-flash": 1048576, "gemini-3.6-flash": 1048576, "gemini-3.5-flash-lite": 1048576, "gemini-4-argon": 1048576 }),
+    privacy: Object.freeze({ trial: false, trainsOnData: "free tier", notice: "With a free Gemini API key, Google may use what you send to improve its products, and people may read it. Use a paid key for code you can't share." }),
+    pickerHint: "Google AI Studio key; free tier",
+    docs: ["https://ai.google.dev/gemini-api/docs/openai", "https://ai.google.dev/gemini-api/terms"],
+  }),
+  chatPreset({
+    id: "groq",
+    name: "Groq",
+    upstreamBase: "https://api.groq.com/openai/v1",
+    // x-ratelimit-*-requests is Groq's per-day request counter.
+    dailyLimitHeaders: Object.freeze(["x-ratelimit-remaining-requests"]),
+    contextWindows: Object.freeze({ "openai/gpt-oss-120b": 131072, "openai/gpt-oss-20b": 131072, "qwen/qwen3.8-27b": 131072, "llama-3.3-70b-versatile": 131072, "llama-3.1-8b-instant": 131072 }),
+    pickerHint: "free tier with daily limits",
+    docs: ["https://console.groq.com/docs/openai", "https://console.groq.com/docs/rate-limits"],
+  }),
+  chatPreset({
+    id: "cerebras",
+    name: "Cerebras",
+    upstreamBase: "https://api.cerebras.ai/v1",
+    // The free trial's windows (paid accounts get more).
+    contextWindows: Object.freeze({ "gpt-oss-120b": 65536, "qwen-3.8-27b": 65536 }),
+    capabilities: Object.freeze({ strictTools: true }),
+    pickerHint: "trial credits",
+    docs: ["https://inference-docs.cerebras.ai/resources/openai", "https://inference-docs.cerebras.ai/support/rate-limits"],
+  }),
+  chatPreset({
+    id: "mistral",
+    name: "Mistral",
+    upstreamBase: "https://api.mistral.ai/v1",
+    quirks: Object.freeze(["mistral"]),
+    contextWindows: Object.freeze({ "mistral-medium-latest": 256000, "mistral-small-latest": 256000, "mistral-large-4": 1000000, "codestral-latest": 128000, "devstral-latest": 256000 }),
+    pickerHint: "free mode for trying it",
+    docs: ["https://docs.mistral.ai/api", "https://docs.mistral.ai/admin/user-management-finops/tier"],
+  }),
+  chatPreset({
+    id: "nvidia",
+    name: "NVIDIA API catalog",
+    upstreamBase: "https://integrate.api.nvidia.com/v1",
+    // Its model list answers without a key: the key is tested with an empty chat request.
+    keyTest: "empty-chat",
+    keyTestModel: "openai/gpt-oss-20b",
+    privacy: Object.freeze({ trial: true, trainsOnData: "unknown", notice: "NVIDIA's hosted models are for trial use. Don't send personal or confidential code." }),
+    pickerHint: "trial use",
+    docs: ["https://docs.api.nvidia.com/nim/reference/llm-apis"],
+  }),
+  chatPreset({
+    id: "anthropic",
+    name: "Anthropic API",
+    upstreamBase: "https://api.anthropic.com/v1",
+    contextWindows: Object.freeze({ "claude-fable-5-1": 1000000, "claude-opus-5-5": 1000000, "claude-sonnet-5-5": 1000000, "claude-haiku-5-5": 1000000 }),
+    // The compat layer: forced tool use errors on the newest models; thinking isn't returned.
+    capabilities: Object.freeze({ parallelTools: true, toolChoices: Object.freeze(["auto", "none"]) }),
+    quotaErrors: Object.freeze(["enforced_spend_limit_reached"]),
+    pickerHint: "Claude API key; experimental: thinking and strict tool schemas aren't kept yet",
+    docs: ["https://docs.claude.com/en/api/openai-sdk", "https://docs.claude.com/en/api/errors"],
+  }),
+  chatPreset({
+    id: "deepseek",
+    name: "DeepSeek",
+    upstreamBase: "https://api.deepseek.com",
+    quirks: Object.freeze(["deepseek"]),
+    contextWindows: Object.freeze({ "deepseek-flash": 1048576, "deepseek-v4-pro": 1048576 }),
+    docs: ["https://api-docs.deepseek.com/guides/thinking_mode", "https://api-docs.deepseek.com/quick_start/error_codes"],
+  }),
+  chatPreset({
+    id: "together",
+    name: "Together AI",
+    upstreamBase: "https://api.together.ai/v1",
+    contextWindows: Object.freeze({ "deepseek-ai/DeepSeek-V4.1-Flash": 1000000, "deepseek-ai/DeepSeek-V4-Pro-0813": 1048576, "zai-org/GLM-5.3": 1048575, "zai-org/GLM-5.3-Flash": 1048575, "MiniMaxAI/MiniMax-M3": 524288, "openai/gpt-oss-120b": 131072 }),
+    docs: ["https://docs.together.ai/docs/openai-api-compatibility", "https://docs.together.ai/docs/error-codes"],
+  }),
+  chatPreset({
+    id: "zai",
+    name: "Z.ai",
+    upstreamBase: "https://api.z.ai/api/paas/v4",
+    contextWindows: Object.freeze({ "glm-5.3": 1000000, "glm-5.2": 1000000, "glm-4.7-flash": 202752, "glm-4.6": 200000 }),
+    capabilities: Object.freeze({ toolChoices: Object.freeze(["auto"]) }),
+    // A used-up balance is a 429 with business code 1113.
+    quotaErrors: Object.freeze(["1113"]),
+    docs: ["https://docs.z.ai/api-reference/llm/chat-completion", "https://docs.z.ai/api-reference/api-code"],
+  }),
+  chatPreset({
+    id: "zai-coding",
+    name: "Z.ai Coding Plan",
+    upstreamBase: "https://api.z.ai/api/coding/paas/v4",
+    status: "blocked",
+    blockedReason: "Z.ai Coding Plan — not available yet: its plan allows only Z.ai's listed coding tools. Use a standard Z.ai key, or another provider.",
+    docs: ["https://docs.z.ai/devpack/usage-policy"],
+  }),
+  chatPreset({
+    id: "huggingface",
+    name: "Hugging Face",
+    upstreamBase: "https://router.huggingface.co/v1",
+    // Its model list answers without a key.
+    keyTest: "empty-chat",
+    keyTestModel: "openai/gpt-oss-120b",
+    contextWindows: Object.freeze({ "deepseek-ai/DeepSeek-V4.1-Flash-1017": 1048576, "zai-org/GLM-5.3": 1048576, "MiniMaxAI/MiniMax-M3": 1000000, "openai/gpt-oss-120b": 131072, "Qwen/Qwen3.8-27B": 1000000, "meta-llama/Llama-3.3-70B-Instruct": 131072 }),
+    pickerHint: "the provider after ':' in a model id receives your prompts",
+    docs: ["https://huggingface.co/docs/inference-providers/tasks/chat-completion", "https://huggingface.co/docs/inference-providers/index"],
+  }),
+  chatPreset({
+    id: "nebius",
+    name: "Nebius Token Factory",
+    upstreamBase: "https://api.tokenfactory.nebius.com/v1",
+    contextWindows: Object.freeze({ "meta-llama/Llama-3.3-70B-Instruct": 131072, "openai/gpt-oss-120b": 131072, "meta-llama/Meta-Llama-3.1-8B-Instruct-fast": 131072 }),
+    docs: ["https://docs.tokenfactory.nebius.com/quickstart", "https://docs.tokenfactory.nebius.com/legal/legal-quick-guide"],
+  }),
+  chatPreset({
+    id: "minimax",
+    name: "MiniMax",
+    upstreamBase: "https://api.minimax.io/v1",
+    // Its models want their reasoning back with the history, like DeepSeek's.
+    quirks: Object.freeze(["deepseek"]),
+    contextWindows: Object.freeze({ "MiniMax-M3.1-Flash": 1000000, "MiniMax-M3": 1000000 }),
+    capabilities: Object.freeze({ toolChoices: Object.freeze(["auto", "none"]) }),
+    quotaErrors: Object.freeze(["1008", "2062"]),
+    docs: ["https://platform.minimax.io/docs/api-reference/text-openai-api", "https://platform.minimax.io/docs/api-reference/errorcode"],
+  }),
+  chatPreset({
+    id: "sambanova",
+    name: "SambaNova",
+    upstreamBase: "https://api.sambanova.ai/v1",
+    dailyLimitHeaders: Object.freeze(["x-ratelimit-remaining-requests-day"]),
+    // Its model list answers without a key.
+    keyTest: "empty-chat",
+    keyTestModel: "Meta-Llama-3.3-70B-Instruct",
+    contextWindows: Object.freeze({ "DeepSeek-V3.1": 131072, "DeepSeek-V3.2": 32768, "Meta-Llama-3.3-70B-Instruct": 131072, "gpt-oss-120b": 131072, "gemma-4-31B-it": 262144 }),
+    pickerHint: "free tier with daily limits",
+    docs: ["https://docs.sambanova.ai/docs/en/features/openai-compatibility", "https://docs.sambanova.ai/docs/en/models/rate-limits"],
+  }),
 ]);
 
 const byId = new Map(PROVIDER_PRESETS.map((p) => [p.id, p]));

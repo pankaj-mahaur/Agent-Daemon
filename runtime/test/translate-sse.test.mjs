@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { createSseParser, sseEvent } from "../src/gateway/translate/sse.mjs";
 import { mintId, mistralIds } from "../src/gateway/translate/ids.mjs";
-import { open, seal } from "../src/gateway/translate/seal.mjs";
+import { open, seal, sealedFor } from "../src/gateway/translate/seal.mjs";
 
 const parse = (chunks) => {
   const out = [];
@@ -70,14 +70,20 @@ test("Mistral ids: 9 characters, stable per call, distinct, reversible", () => {
 test("the envelope opens only for its own provider and model, and hides the text", () => {
   const key = randomBytes(32);
   const blob = seal(key, { provider: "deepseek", model: "deepseek-chat" }, "secret thoughts");
-  assert.match(blob, /^adg1\./);
-  assert.ok(!blob.includes("secret") && !Buffer.from(blob.slice(5), "base64url").toString("latin1").includes("secret"));
+  assert.match(blob, /^adg1\.[0-9a-f]{8}\./);
+  const [, hint, data] = blob.split(".");
+  assert.ok(!blob.includes("secret") && !Buffer.from(data, "base64url").toString("latin1").includes("secret"));
+  assert.ok(sealedFor({ provider: "deepseek", model: "deepseek-chat" }, blob), "names its scope");
+  assert.ok(!sealedFor({ provider: "deepseek", model: "deepseek-reasoner" }, blob));
+  assert.equal(hint.length, 8);
   assert.equal(open(key, { provider: "deepseek", model: "deepseek-chat" }, blob), "secret thoughts");
   assert.equal(open(key, { provider: "deepseek", model: "deepseek-reasoner" }, blob), null);
   assert.equal(open(key, { provider: "mistral", model: "deepseek-chat" }, blob), null);
   assert.equal(open(randomBytes(32), { provider: "deepseek", model: "deepseek-chat" }, blob), null);
-  const raw = Buffer.from(blob.slice(5), "base64url");
+  const raw = Buffer.from(data, "base64url");
   raw[20] ^= 1;
-  assert.equal(open(key, { provider: "deepseek", model: "deepseek-chat" }, `adg1.${raw.toString("base64url")}`), null, "a flipped byte");
+  assert.equal(open(key, { provider: "deepseek", model: "deepseek-chat" }, `adg1.${hint}.${raw.toString("base64url")}`), null, "a flipped byte");
+  // The hint proves nothing: a forged hint on noise still doesn't open.
+  assert.equal(open(key, { provider: "deepseek", model: "deepseek-chat" }, `adg1.${hint}.${Buffer.alloc(40).toString("base64url")}`), null);
   assert.equal(open(key, { provider: "deepseek", model: "deepseek-chat" }, "gAAAAA-foreign"), null);
 });

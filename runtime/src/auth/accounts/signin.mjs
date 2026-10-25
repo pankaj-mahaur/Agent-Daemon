@@ -14,7 +14,7 @@
 // for after the label and address are known to be fine.
 
 import { randomUUID } from "node:crypto";
-import { presetFor } from "../../providers/registry.mjs";
+import { presetFor, PROVIDER_PRESETS } from "../../providers/registry.mjs";
 import { HTTP_TEXTS, isLoopback, providerRequest } from "../../providers/http.mjs";
 import { registerSecret } from "../redact.mjs";
 import { readRegistry } from "./registry.mjs";
@@ -74,7 +74,7 @@ export async function testKey(preset, { key = null, endpoint = null, fetch, clie
       // A model list anyone can read proves nothing about a key: an empty chat request is
       // answered 401 for a wrong key and refused as invalid (no tokens) for a right one.
       const headers = preset.sessionHeader ? { [preset.sessionHeader]: `ad-key-test-${randomUUID()}` } : {};
-      const model = Object.entries(preset.wires ?? {}).find(([, w]) => w === "chat")?.[0] ?? "default";
+      const model = preset.keyTestModel ?? Object.entries(preset.wires ?? {}).find(([, w]) => w === "chat")?.[0] ?? "default";
       const e = await ask(preset.upstreamPath, { method: "POST", body: { model, messages: [], max_tokens: 1 }, headers });
       if (e.status === 401 || e.status === 403) return { status: "refused", http: e.status, detail: null };
       // Ready only when the key got past the door: a success, the empty request refused as
@@ -92,7 +92,13 @@ export async function testKey(preset, { key = null, endpoint = null, fetch, clie
     const m = model ?? (Array.isArray(r.json?.data) ? r.json.data.find((x) => typeof x?.id === "string")?.id : null) ?? "default";
     const p = await ask(preset.upstreamPath, { method: "POST", body: { model: m, input: "ping", max_output_tokens: 1, stream: false } });
     if (p.status === 401 || p.status === 403) return { status: "refused", http: p.status, detail: null };
-    if (p.status === 404 || p.status === 405) return r.status === 200 ? { status: "chat-only", detail: SIGNIN_TEXTS.CHAT_ONLY } : { status: "wrong-address", detail: SIGNIN_TEXTS.WRONG_ADDRESS(host, r.status) };
+    if (p.status === 404 || p.status === 405) {
+      // No Responses API: Chat Completions, through ad's translation (P6.2), "not tested by ad".
+      const c = await ask("/chat/completions", { method: "POST", body: { model: m, messages: [{ role: "user", content: "ping" }], max_tokens: 1, stream: false } });
+      if (c.status === 401 || c.status === 403) return { status: "refused", http: c.status, detail: null };
+      if (c.status >= 200 && c.status < 300) return { status: "ready", detail: null, wire: "chat" };
+      return r.status === 200 ? { status: "chat-only", detail: SIGNIN_TEXTS.CHAT_ONLY } : { status: "wrong-address", detail: SIGNIN_TEXTS.WRONG_ADDRESS(host, r.status) };
+    }
     if (p.status >= 400) return { status: "unreachable", detail: `${host} answered HTTP ${p.status} to a Responses request.` };
     return { status: "ready", detail: null };
   } catch (e) {
@@ -126,7 +132,7 @@ export function keyVerdict(preset, provider, label, opts) {
     if (v.status === "chat-only") throw fail("CHAT_ONLY", SIGNIN_TEXTS.CHAT_ONLY);
     if (v.status === "wrong-address") throw fail("WRONG_ADDRESS", v.detail);
     if (v.status === "unreachable") return { status: "error", detail: SIGNIN_TEXTS.UNREACHABLE_SAVED(v.detail, `${provider}/${label}`) };
-    return null;
+    return v.wire ? { fields: { wire: v.wire } } : null;
   };
 }
 
@@ -150,10 +156,18 @@ async function addKey(service, o, verdict) {
   }
 }
 
-export async function signInApiKey({ service, provider, label, owner = "", readKey, endpoint = null, defaultModel = null, fetch, clientVersion }) {
+export async function signInApiKey({ service, provider, label, owner = "", readKey, endpoint = null, defaultModel = null, fetch, clientVersion, confirmNotice = null }) {
   const preset = presetFor(provider);
   if (!preset.methods.includes("api-key")) throw fail("NO_KEY_METHOD", `${preset.name} doesn't use an API key.`);
+  // A preset ad blocked (its reason), or another preset's address pointing at a blocked one.
+  const blocked = PROVIDER_PRESETS.find((p) => p.status === "blocked" && (p.id === provider || (endpoint && p.upstreamBase && String(endpoint).replace(/\/+$/, "").toLowerCase().startsWith(p.upstreamBase.toLowerCase()))));
+  if (blocked) throw fail("PROVIDER_BLOCKED", blocked.blockedReason ?? `${blocked.name} isn't available.`);
   label = labelOrFail(provider, label);
+  // A trial or data notice comes before anything is sent: no key read, no request, unless yes.
+  if (preset.privacy?.notice) {
+    const yes = confirmNotice ? await confirmNotice(preset.privacy.notice) : false;
+    if (!yes) throw fail("NOTICE_DECLINED", `Not added: ${preset.name}'s notice wasn't accepted (answer it with y, in a terminal: a piped key can't answer it).`);
+  }
   const key = checkKeyText(await readKey());
   return addKey(service, { provider, label, owner, endpoint, key, defaultModel }, keyVerdict(preset, provider, label, { endpoint, fetch, clientVersion }));
 }
@@ -188,7 +202,7 @@ export async function signInCustom({ service, baseUrl, label, owner = "", readKe
     if (v.status === "wrong-address") throw fail("WRONG_ADDRESS", v.detail);
     if (v.status === "unreachable") throw fail("PROVIDER_UNREACHABLE", v.detail);
     const { id, attemptId } = await service.reserve({ provider: "custom", label, owner, method: "none", endpoint, defaultModel: model });
-    return service.finalize(id, attemptId, { credential: { kind: "none" }, ...(insecure ? { insecure: true } : {}), ...(probe ? { probed: true } : {}) });
+    return service.finalize(id, attemptId, { credential: { kind: "none" }, ...(v.wire ? { wire: v.wire } : {}), ...(insecure ? { insecure: true } : {}), ...(probe ? { probed: true } : {}) });
   }
   return addKey(service, { provider: "custom", label, owner, endpoint, key, defaultModel: model, extra: { ...(insecure ? { insecure: true } : {}), ...(probe ? { probed: true } : {}) } }, keyVerdict(preset, "custom", label, { endpoint, fetch, clientVersion, insecure, probe, model }));
 }

@@ -719,6 +719,11 @@ export class Engine extends EventEmitter {
     await this.#refuseHomeFolder(cwd, null, { markers: rootMarkers });
     config = await this.#withMemoryScope(memoryProject === undefined ? cwd : memoryProject, config);
     config = rootMarkers ? { ...(config ?? {}), project_root_markers: rootMarkers } : await this.#threadConfig(config);
+    // What the thread's model needs that the engine can't know (P6.2): a provider ad
+    // translates for has no model metadata in the engine, so its context window comes
+    // from ad's provider presets, and the engine compacts before the provider's limit.
+    const forModel = this.opts.threadConfigFor?.({ model, modelProvider }) ?? null;
+    if (forModel) config = { ...forModel, ...(config ?? {}) };
     const params = clean({ cwd, model, modelProvider, sandbox, approvalPolicy, ephemeral, developerInstructions, config, sessionStartSource });
     const r = await this.#request("thread/start", params).catch((err) => this.#homeError(err, params));
     return { threadId: r.thread.id, model: r.model, modelProvider: r.modelProvider, thread: r.thread };
@@ -742,7 +747,21 @@ export class Engine extends EventEmitter {
     // No default folder: the engine keeps the thread's stored one, and the
     // check applies to the folder the thread will actually run in.
     const folder = await this.#refuseHomeFolder(overrides.cwd, threadId);
-    const config = await this.#threadConfig(await this.#withMemoryScope(memoryProject === undefined ? (overrides.cwd ?? folder) : memoryProject, overrides.config));
+    let config = await this.#threadConfig(await this.#withMemoryScope(memoryProject === undefined ? (overrides.cwd ?? folder) : memoryProject, overrides.config));
+    // A resume onto a translated model (a retarget, a fallback, or a plain reopen after a
+    // restart) gets that model's window too: what the call doesn't name comes from the thread.
+    let forModel = null;
+    if (this.opts.threadConfigFor) {
+      let model = overrides.model ?? overrides.config?.model;
+      let modelProvider = overrides.modelProvider ?? overrides.config?.model_provider;
+      if (!model || !modelProvider) {
+        const t = await this.#request("thread/read", { threadId, includeTurns: false }).catch(() => null);
+        model ??= t?.thread?.model ?? undefined;
+        modelProvider ??= t?.thread?.modelProvider ?? undefined;
+      }
+      forModel = this.opts.threadConfigFor({ model, modelProvider }) ?? null;
+    }
+    if (forModel) config = { ...forModel, ...(config ?? {}) };
     const params = clean({ threadId, ...overrides, config });
     const r = await this.#request("thread/resume", params).catch((err) => this.#homeError(err, params));
     if (retarget) assertRetargeted(r, { modelProvider: overrides.modelProvider ?? overrides.config?.model_provider, model: overrides.model ?? overrides.config?.model });

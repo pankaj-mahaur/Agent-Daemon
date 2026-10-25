@@ -2057,7 +2057,7 @@ export function createApp({
     };
     let a;
     try {
-      a = await actions.accounts.signIn({ provider: row.id, method: row.method, label: label.trim(), owner: owner.trim(), readKey: () => askKey(row.name), baseUrl, noKey: row.method === "none", signal: ac?.signal, out });
+      a = await actions.accounts.signIn({ provider: row.id, method: row.method, label: label.trim(), owner: owner.trim(), readKey: () => askKey(row.name), baseUrl, noKey: row.method === "none", signal: ac?.signal, out, confirmNotice: (text) => openConfirm({ title: text, yes: "Continue", no: "Cancel" }) });
     } catch (err) {
       if (ac?.signal.aborted) return info0("Sign-in cancelled. Nothing was added.");
       throw err;

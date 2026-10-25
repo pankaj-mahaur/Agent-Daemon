@@ -104,20 +104,40 @@ test("reasoning: another provider's blob is dropped; DeepSeek's own comes back a
   const r = req([msg("user", "go"), { type: "reasoning", summary: [], encrypted_content: mine }, { type: "function_call", call_id: "c1", name: "exec_command", arguments: "{}" }, { type: "function_call_output", call_id: "c1", output: "ok" }]);
   const b = body(r, rt, { sealKey: key });
   assert.equal(b.messages[1].reasoning_content, "my thoughts");
-  const r2 = req([msg("user", "go"), { type: "reasoning", encrypted_content: other }, msg("assistant", "x")]);
+  // Without tools DeepSeek needs no reasoning back: another provider's is dropped, not refused.
+  const r2 = req([msg("user", "go"), { type: "reasoning", encrypted_content: other }, msg("assistant", "x")], { tools: [], tool_choice: undefined });
   assert.ok(!("reasoning_content" in body(r2, rt, { sealKey: key }).messages[1]));
   assert.ok(!JSON.stringify(body(r2, route, { sealKey: key })).includes("theirs"));
 });
 
-test("DeepSeek: a tool loop with no reasoning (deepseek-chat) goes; reasoning that can't be opened is refused, not sent", () => {
+test("DeepSeek: no reasoning, or another provider's or model's, goes (empty reasoning_content); its own that no longer opens is refused", () => {
   const rt = { ...route, provider: "deepseek", quirks: ["deepseek"] };
   const loop = (before) => req([msg("user", "go"), ...before, { type: "function_call", call_id: "c1", name: "exec_command", arguments: "{}" }, { type: "function_call_output", call_id: "c1", output: "ok" }]);
   assert.doesNotThrow(() => prepare(Buffer.from(JSON.stringify(loop([]))), rt, { sealKey: randomBytes(32) }));
-  const foreign = loop([{ type: "reasoning", summary: [], encrypted_content: "gAAAA-not-ours" }]);
-  assert.throws(() => prepare(Buffer.from(JSON.stringify(foreign)), rt, { sealKey: randomBytes(32) }), (e) => e.code === "TRANSLATE_REFUSED" && /DeepSeek lost its reasoning/.test(e.message));
-  // A finished turn (a user message after it) needs nothing back.
-  const done = req([msg("user", "go"), { type: "reasoning", encrypted_content: "gAAAA-not-ours" }, { type: "function_call", call_id: "c1", name: "exec_command", arguments: "{}" }, { type: "function_call_output", call_id: "c1", output: "ok" }, msg("user", "next")]);
-  assert.doesNotThrow(() => prepare(Buffer.from(JSON.stringify(done)), rt, { sealKey: randomBytes(32) }));
+  // A switched provider (a foreign blob) or a switched model (ad's envelope, another model): absent.
+  for (const blob of ["gAAAA-not-ours", seal(randomBytes(32), { provider: "deepseek", model: "other-model" }, "x")]) {
+    const b = JSON.parse(prepare(Buffer.from(JSON.stringify(loop([{ type: "reasoning", summary: [], encrypted_content: blob }]))), rt, { sealKey: randomBytes(32) }).body.toString());
+    assert.equal(b.messages.find((m) => m.tool_calls).reasoning_content, "", "sent empty");
+  }
+  // Ad's own envelope for this model, sealed under a key ad no longer has: truly lost.
+  const mine = seal(randomBytes(32), { provider: "deepseek", model: "m" }, "old thoughts");
+  const lost = loop([{ type: "reasoning", summary: [], encrypted_content: mine }]);
+  assert.throws(() => prepare(Buffer.from(JSON.stringify(lost)), rt, { sealKey: randomBytes(32) }), (e) => e.code === "TRANSLATE_REFUSED" && /can't read this chat's earlier reasoning/.test(e.message));
+  // With tools, an earlier finished turn counts too (DeepSeek's docs).
+  const done = req([msg("user", "go"), { type: "reasoning", encrypted_content: mine }, { type: "function_call", call_id: "c1", name: "exec_command", arguments: "{}" }, { type: "function_call_output", call_id: "c1", output: "ok" }, msg("user", "next")]);
+  assert.throws(() => prepare(Buffer.from(JSON.stringify(done)), rt, { sealKey: randomBytes(32) }), /can't read this chat's earlier reasoning/);
+  // Without tools, nothing is needed back.
+  assert.doesNotThrow(() => prepare(Buffer.from(JSON.stringify({ ...done, tools: [], tool_choice: undefined })), rt, { sealKey: randomBytes(32) }));
+});
+
+test("reasoning text that looks like an extras envelope stays reasoning (extras have their own scope)", () => {
+  const key = randomBytes(32);
+  const rt = { ...route, provider: "deepseek", quirks: ["deepseek"] };
+  const tricky = seal(key, { provider: "deepseek", model: "m" }, '{"v":2,"x":{"c1":{"evil":1}}}');
+  const b = body(req([msg("user", "go"), { type: "reasoning", encrypted_content: tricky }, { type: "function_call", call_id: "c1", name: "exec_command", arguments: "{}" }, { type: "function_call_output", call_id: "c1", output: "ok" }]), rt, { sealKey: key });
+  const call = b.messages.find((m) => m.tool_calls);
+  assert.equal(call.reasoning_content, '{"v":2,"x":{"c1":{"evil":1}}}');
+  assert.ok(!("extra_content" in call.tool_calls[0]));
 });
 
 test("reasoning starts its own assistant message; two items join; the quirk order doesn't matter", () => {
@@ -128,7 +148,7 @@ test("reasoning starts its own assistant message; two items join; the quirk orde
     const b = body(r, { ...route, provider: "deepseek", quirks }, { sealKey: key });
     const withCalls = b.messages.find((m) => m.tool_calls);
     assert.equal(withCalls.reasoning_content, "one\ntwo", quirks.join(","));
-    assert.ok(!("reasoning_content" in b.messages.find((m) => m.content === "earlier")));
+    assert.equal(b.messages.find((m) => m.content === "earlier").reasoning_content, "", "no reasoning of its own: sent empty");
     assert.ok(!JSON.stringify(b).includes("reasoningLost") && !JSON.stringify(b).includes('"reasoning"'));
   }
 });

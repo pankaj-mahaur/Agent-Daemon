@@ -19,12 +19,13 @@ const CONTEXT = /context[ _-]?(length|window)|maximum context|too many tokens|pr
 // Gemini's per-minute bodies both do).
 const DAY = /(per[ _-]?day|daily|\bTPD\b|\bRPD\b|PerDay|per_day|free-models-per-day)/i;
 const MONTH = /(monthly|per[ _-]?month|PerMonth)/i;
-const NO_CREDIT = /insufficient[_ ]quota|insufficient[_ ]credits|out of credits|no credits/i;
+const NO_CREDIT = /insufficient[_ ]quota|insufficient[_ ]credits|insufficient[_ ]balance|out of credits|no credits|credit balance is too low/i;
 const DEFAULT_WAIT_S = 10;
 
 function parseError(text) {
   try {
     const j = JSON.parse(text);
+    if (j?.base_resp && Number(j.base_resp.status_code) !== 0) return { code: String(j.base_resp.status_code), type: null, message: String(j.base_resp.status_msg ?? ""), details: null };
     const e = Array.isArray(j) ? j[0]?.error : j?.error;
     if (e && typeof e === "object") return { code: e.code ?? e.status ?? null, type: e.type ?? null, message: String(e.message ?? ""), details: e.details ?? null };
     if (typeof e === "string") return { message: e };
@@ -54,11 +55,12 @@ const msg = (s) => redact(String(s ?? "")).slice(0, 300);
 const quotaPeriod = (text) => (DAY.test(text) ? "day" : MONTH.test(text) ? "month" : null);
 const errBody = (type, code, message) => ({ error: { type, code, message } });
 
-function rateOrQuota(text, wait, { capS, label }) {
-  const periodic = DAY.test(text) || MONTH.test(text) || NO_CREDIT.test(text);
+function rateOrQuota(text, wait, { capS, label, dayExhausted = false }) {
+  // dayExhausted: the provider's own daily counter said 0 left (its header), whatever the text.
+  const periodic = dayExhausted || DAY.test(text) || MONTH.test(text) || NO_CREDIT.test(text);
   if (!periodic && wait === null) wait = DEFAULT_WAIT_S;
   if (periodic || wait > capS) {
-    const period = quotaPeriod(text);
+    const period = dayExhausted ? "day" : quotaPeriod(text);
     const message = period ? `${label}: the ${period === "day" ? "daily" : "monthly"} limit is used up.` : `${label}: the quota is used up.`;
     return { quota: true, message, side: { kind: "quotaExhausted", message, period, retryAfterS: wait } };
   }
@@ -68,7 +70,7 @@ function rateOrQuota(text, wait, { capS, label }) {
 
 /** A provider's own usage-limit error (OpenCode's GoUsageLimitError): over until its reset. */
 function usageLimit(err, quotaNames, retryAfter, label) {
-  if (!quotaNames?.length || ![err?.type, err?.code].some((v) => quotaNames.includes(String(v ?? "")))) return null;
+  if (!quotaNames?.length || ![err?.type, err?.code, err?.details?.error_code].some((v) => quotaNames.includes(String(v ?? "")))) return null;
   const wait = waitSeconds(retryAfter, err);
   const at = wait !== null ? new Date(Date.now() + wait * 1000) : null;
   const hhmm = at ? `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}` : null;
@@ -76,7 +78,7 @@ function usageLimit(err, quotaNames, retryAfter, label) {
   return { message, side: { kind: "quotaExhausted", message, period: null, retryAfterS: wait } };
 }
 
-export function httpFailure(status, text, { retryAfter = null, capS = 60, label = "The provider", quotaNames = [] } = {}) {
+export function httpFailure(status, text, { retryAfter = null, capS = 60, label = "The provider", quotaNames = [], dayExhausted = false } = {}) {
   const err = parseError(text);
   const named = usageLimit(err, quotaNames, retryAfter, label);
   if (named) return { http: { status: 429, body: errBody("insufficient_quota", "insufficient_quota", named.message), headers: { "retry-after": "0" } }, sse: null, side: named.side };
@@ -95,11 +97,16 @@ export function httpFailure(status, text, { retryAfter = null, capS = 60, label 
     return { http: null, sse: { code: "context_length_exceeded", message: `${label}: the conversation is longer than this model takes.` }, side: { kind: "contextOverflow", message: provider } };
   }
   if (status === 429) {
-    const r = rateOrQuota(all, waitSeconds(retryAfter, err), { capS, label });
+    const r = rateOrQuota(all, waitSeconds(retryAfter, err), { capS, label, dayExhausted });
     if (r.quota) return { http: { status: 429, body: errBody("insufficient_quota", "insufficient_quota", r.message), headers: { "retry-after": "0" } }, sse: null, side: r.side };
     return { http: { status: 429, body: errBody("rate_limit_exceeded", "rate_limit_exceeded", r.message), headers: { "retry-after": String(r.side.retryAfterS) } }, sse: null, side: r.side };
   }
   if (status >= 500) return { http: { status: 503, body: errBody("server_error", "server_is_overloaded", `${label} is having trouble (${status}).`), headers: {} }, sse: null, side: { kind: "provider5xx", message: provider } };
+  // No credit said in a 400 (Anthropic's "credit balance is too low"): a quota, not a bad request.
+  if (status === 400 && NO_CREDIT.test(all)) {
+    const message = `${label}: no credit left on this account.`;
+    return { http: { status: 429, body: errBody("insufficient_quota", "insufficient_quota", message), headers: { "retry-after": "0" } }, sse: null, side: { kind: "quotaExhausted", message, period: null } };
+  }
   return { http: { status: 400, body: errBody("invalid_request_error", "invalid_request", `${label}: ${provider}`), headers: {} }, sse: null, side: { kind: "unknown", message: provider } };
 }
 

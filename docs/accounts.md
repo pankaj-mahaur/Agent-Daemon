@@ -90,6 +90,8 @@ ad auth test <account>               # check it (--model: also one small request
 | Ollama | `ollama` | none (local) | `localhost:11434` |
 | LM Studio | `lmstudio` | none (local) | `localhost:1234` |
 
+More providers that speak only Chat Completions (Gemini, Groq, Cerebras, Mistral, NVIDIA, Anthropic, DeepSeek, Together, Z.ai, Hugging Face, Nebius, MiniMax, SambaNova): [providers.md](providers.md).
+
 **What "supported" means.** A provider is *supported* once a real task on a real key passed ad's acceptance run, dated and recorded. *Experimental* means ad's mock contract tests pass plus one real task with known gaps. Until then a provider is a *candidate*: you can add it by id, but pickers and help don't list it unless `AD_SHOW_CANDIDATES=1` is set. Each provider's record is re-run before a release, since providers change their addresses and terms.
 
 To make a record yourself, with one of your own accounts:
@@ -130,7 +132,7 @@ ad auth login custom --base-url http://127.0.0.1:8000/v1 --no-key   # a server o
 - **Addresses ad accepts.** https anywhere. http only on this machine (`localhost`, `127.0.0.1`, `[::1]`), or with `--insecure` for a host you control: http sends your key unencrypted.
 - **Addresses ad refuses.** A user name or password in the address, a `#fragment`, or a key in the query. ad asks for the key separately.
 - **The test.** ad lists the endpoint's models, then asks before sending a one-token request, which may cost a fraction of a cent; `--no-test` skips it.
-- **Chat Completions only.** An endpoint without the Responses API can't be used yet. That works once ad's chat bridge ships; meanwhile use OpenRouter, or a server with the Responses API (Ollama 0.13.3+, LM Studio, vLLM).
+- **Chat Completions only.** An endpoint without the Responses API is added too (after the test): its requests go through ad's chat translation. ad hasn't tested your endpoint, so its quirks are yours to find.
 
 ### Local models
 

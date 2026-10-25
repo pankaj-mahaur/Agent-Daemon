@@ -7,15 +7,17 @@ import { PRESETS } from "../src/gateway/table.mjs";
 import { PROVIDER_NAMES } from "../src/auth/accounts/registry.mjs";
 import { ENGINE } from "../src/engine/attribution.mjs";
 
-test("every preset has id, name, upstream (or is custom), methods, docs and checkedAt; wave 1 is all passthrough", () => {
-  assert.deepEqual(PROVIDER_PRESETS.map((p) => p.id), ["openai", "openrouter", "kimi-code", "moonshot", "xai", "opencode-go", "fireworks", "custom", "ollama", "lmstudio"]);
+const WAVE2 = ["gemini", "groq", "cerebras", "mistral", "nvidia", "anthropic", "deepseek", "together", "zai", "zai-coding", "huggingface", "nebius", "minimax", "sambanova"];
+
+test("every preset has id, name, upstream (or is custom), methods, docs and checkedAt; wave 1 is all passthrough, wave 2 chat", () => {
+  assert.deepEqual(PROVIDER_PRESETS.map((p) => p.id), ["openai", "openrouter", "kimi-code", "moonshot", "xai", "opencode-go", "fireworks", "custom", "ollama", "lmstudio", ...WAVE2]);
   for (const p of PROVIDER_PRESETS) {
     assert.ok(p.id && p.name, p.id);
     assert.ok(p.id === "custom" ? p.upstreamBase === null : /^https?:\/\//.test(p.upstreamBase), `${p.id}: upstream`);
     assert.ok(p.methods.length, `${p.id}: methods`);
     assert.ok(Array.isArray(p.docs) && (p.id === "custom" || p.docs.length), `${p.id}: docs`);
     assert.match(p.checkedAt, /^\d{4}-\d{2}-\d{2}$/);
-    assert.equal(p.mode, p.id === "opencode-go" ? "per-model" : "passthrough");
+    assert.equal(p.mode, p.id === "opencode-go" ? "per-model" : WAVE2.includes(p.id) ? "chat" : "passthrough");
     assert.deepEqual([...p.strip], []);
     assert.ok(PROVIDER_NAMES.includes(p.id), `${p.id} can't be a label`);
     // Remote presets are https; only local ones use http, on loopback.

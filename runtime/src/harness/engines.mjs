@@ -26,7 +26,7 @@ import { readRegistry } from "../auth/accounts/registry.mjs";
 import { syncLegacyAccounts } from "../auth/accounts/migrate.mjs";
 import { accountForProviderId, engineHomeFor, engineIdFor, engineParamsFor, resolveTarget } from "../auth/accounts/target.mjs";
 import { createSecretStore } from "../auth/secrets.mjs";
-import { apiEngineArgs, engineEnvFor, engineProviderArgs } from "../gateway/table.mjs";
+import { apiEngineArgs, engineEnvFor, engineProviderArgs, threadConfigFor } from "../gateway/table.mjs";
 import { gatewayState } from "./gateway-runtime.mjs";
 import { adRoot } from "../ad-root.mjs";
 import { accountHomePath, apiHomePath, folderTrusted } from "./settings-sync.mjs";
@@ -120,12 +120,15 @@ function profileFor({ store, err, env, ...startOpts }) {
 const engineKeyOf = (homeKey, profile) => `${homeKey}#${profile}`;
 const homeOf = (engineKey) => engineKey.slice(0, engineKey.lastIndexOf("#"));
 
+let lastGateway = null; // the gateway state the manager last read (routes for thread config)
+
 function harnessManager({ store, err, idleMs, env }) {
   if (manager) return manager;
   shared = { store, err, env };
   const gw = async () => {
     try {
-      return await gatewayState({ store: shared.store, env: { ...process.env, ...(shared.env ?? {}) } });
+      lastGateway = await gatewayState({ store: shared.store, env: { ...process.env, ...(shared.env ?? {}) } });
+      return lastGateway;
     } catch (e) {
       shared.err.write(`[agent-daemon] the provider gateway didn't start (${e.message.split("\n")[0]}); API accounts are unavailable this run\n`);
       return null;
@@ -151,7 +154,8 @@ function harnessManager({ store, err, idleMs, env }) {
         store: o.store,
         err: o.err,
         env: o.env,
-        gateway: { env: gwEnv, args },
+        // The routes as the gateway last had them: a thread's model gets its window from them.
+        gateway: { env: gwEnv, args, threadConfigFor: (t) => (lastGateway ? threadConfigFor(lastGateway.table, t) : null) },
         // ad's api home holds no engine sign-in: its accounts are ad's own.
         loginGate: homeOf(key) !== "api",
       });

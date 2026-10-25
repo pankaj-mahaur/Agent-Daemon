@@ -30,7 +30,7 @@ import { accountForProviderId, accountName, engineParamsFor } from "../auth/acco
 import { checkKeyText, keyVerdict, signInApiKey, signInCustom, signInLocal } from "../auth/accounts/signin.mjs";
 import { signInOpenRouter } from "../auth/accounts/openrouter-oauth.mjs";
 import { listModels } from "../providers/models.mjs";
-import { presetFor, UNAVAILABLE, visiblePresets } from "../providers/registry.mjs";
+import { presetFor, PROVIDER_PRESETS, UNAVAILABLE, visiblePresets } from "../providers/registry.mjs";
 import { homeKeyFor } from "../harness/engines.mjs";
 import { AUTH_TEXTS } from "../harness/auth-texts.mjs";
 
@@ -173,14 +173,16 @@ export function createTuiAccounts({ session, store, launch, clientVersion, fetch
     },
     providers({ env = process.env } = {}) {
       const rows = visiblePresets({ env }).flatMap((p) => p.methods.map((m) => ({ id: p.id, name: p.name, method: m, label: m === "openrouter-oauth" ? `${p.name} (sign in in the browser)` : p.pickerHint ? `${p.name} · your key` : p.name, ...(p.pickerHint ? { hint: p.pickerHint } : {}) })));
-      return { rows, unavailable: UNAVAILABLE };
+      // Presets ad blocked (their reason) join the sign-ins it doesn't offer.
+      const blocked = PROVIDER_PRESETS.filter((p) => p.status === "blocked").map((p) => ({ id: p.id, text: p.blockedReason ?? `${p.name}: not available yet.` }));
+      return { rows, unavailable: [...UNAVAILABLE, ...blocked] };
     },
     nextLabel(provider) {
       const taken = new Set(live(doc()).filter((a) => a.provider === provider).map((a) => String(a.label).toLowerCase()));
       if (!taken.has("default")) return "default";
       for (let i = 2; ; i++) if (!taken.has(`default-${i}`)) return `default-${i}`;
     },
-    async signIn({ provider, method = "api-key", label, owner = "", readKey, baseUrl, noKey = false, signal, out }) {
+    async signIn({ provider, method = "api-key", label, owner = "", readKey, baseUrl, noKey = false, signal, out, confirmNotice = null }) {
       const service = createAccountService({ store });
       const common = { service, label, owner, fetch, clientVersion };
       const preset = presetFor(provider);
@@ -188,7 +190,7 @@ export function createTuiAccounts({ session, store, launch, clientVersion, fetch
         if (preset.local) return await signInLocal({ ...common, provider });
         if (provider === "custom") return await signInCustom({ ...common, baseUrl, noKey, readKey, confirmProbe: async () => false });
         if (method === "openrouter-oauth") return await signInOpenRouter({ ...common, openBrowser, out, signal });
-        return await signInApiKey({ ...common, provider, readKey });
+        return await signInApiKey({ ...common, provider, readKey, confirmNotice });
       } finally {
         api.refresh();
       }

@@ -812,7 +812,7 @@ See [harness.md](harness.md#working-in-your-home-folder).
 
 **Cause:** your endpoint has no Responses API, which ad's engine needs.
 
-**Fix:** use a server with the Responses API (Ollama 0.13.3+, LM Studio, vLLM) or OpenRouter. Chat-only endpoints work once ad's chat bridge ships.
+**Fix:** let ad test the endpoint when it asks (the one-token test also tries Chat Completions; an endpoint that answers there is added and goes through ad's translation). This message means neither API answered: check the address ends in `/v1`, or use a server with the Responses API (Ollama 0.13.3+, LM Studio, vLLM).
 
 ## 66. "Ollama isn't answering on localhost:11434" (or LM Studio on localhost:1234)
 
@@ -843,6 +843,12 @@ See [harness.md](harness.md#working-in-your-home-folder).
 **Cause:** OpenCode serves that model on an API ad can't speak yet (Anthropic's or Gemini's), or answered that the model isn't on the route ad tried (ad then tries the other route for the rest of this run).
 
 **Fix:** pick another Go model in `/model`. Models marked "coming later" arrive with ad's Anthropic and Gemini support.
+
+## 71. "DeepSeek can't read this chat's earlier reasoning any more (ad's key for it changed)"
+
+**Cause:** DeepSeek (and MiniMax) want their earlier reasoning back with every request that has tools. ad keeps it sealed with a key in your secret store; that key changed (the store was reset, or the chat came from another computer), so ad can't give it back.
+
+**Fix:** start a new chat on that model. Chats that began on another provider or model are not affected: their turns go without reasoning, as DeepSeek allows.
 
 ---
 

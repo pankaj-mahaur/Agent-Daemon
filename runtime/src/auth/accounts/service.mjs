@@ -101,7 +101,7 @@ export function createAccountService({ root = adRoot(), store = createSecretStor
         await service.abandon(id, attemptId);
         throw fail("KEY_TEST_FAILED", SERVICE_TEXTS.KEY_TEST_FAILED(e.message));
       }
-      return service.finalize(id, attemptId, { ...extra, keyHint: keyHintOf(key), credential: { kind: "secret", ref }, ...(verdict?.status ? { status: verdict.status, statusDetail: verdict.detail ?? null } : {}) });
+      return service.finalize(id, attemptId, { ...extra, keyHint: keyHintOf(key), credential: { kind: "secret", ref }, ...(verdict?.fields ?? {}), ...(verdict?.status ? { status: verdict.status, statusDetail: verdict.detail ?? null } : {}) });
     },
 
     /** A new key for an existing API-key account; the old one works until the new one passes. */

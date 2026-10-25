@@ -25,7 +25,7 @@ export const PRESETS = Object.freeze(
   Object.fromEntries(
     PROVIDER_PRESETS.filter((p) => p.upstreamBase).map((p) => [
       p.id,
-      Object.freeze({ name: p.name, baseUrl: p.upstreamBase, mode: p.mode, upstreamPath: p.upstreamPath, quirks: p.quirks ?? [], model: p.capabilities ?? null, headers: { ...(p.headers ?? {}), ...(p.ownUserAgent ? { "user-agent": AD_UA } : {}) }, wires: p.wires ?? null, modelQuirks: p.modelQuirks ?? null, sessionHeader: p.sessionHeader ?? null, quotaErrors: p.quotaErrors ?? [] }),
+      Object.freeze({ name: p.name, baseUrl: p.upstreamBase, mode: p.mode, upstreamPath: p.upstreamPath, quirks: p.quirks ?? [], model: p.capabilities ?? null, headers: { ...(p.headers ?? {}), ...(p.ownUserAgent ? { "user-agent": AD_UA } : {}) }, wires: p.wires ?? null, modelQuirks: p.modelQuirks ?? null, contextWindows: p.contextWindows ?? null, compactCap: p.compactCap ?? null, dailyLimitHeaders: p.dailyLimitHeaders ?? null, sessionHeader: p.sessionHeader ?? null, quotaErrors: p.quotaErrors ?? [] }),
     ]),
   ),
 );
@@ -43,14 +43,18 @@ export function gatewayTable(doc, { presets = PRESETS } = {}) {
     const preset = presets[a.provider];
     const upstreamBase = a.endpoint ?? preset?.baseUrl;
     if (!upstreamBase) continue;
-    const mode = preset?.mode ?? "passthrough";
+    // A custom endpoint that speaks only Chat Completions (its sign-in found it) is translated.
+    const mode = a.provider === "custom" && a.wire === "chat" ? "chat" : (preset?.mode ?? "passthrough");
     table.set(a.providerEntry, {
       accountId: a.id,
       provider: a.provider,
       upstreamBase,
       mode,
-      ...(mode === "passthrough" ? {} : { upstreamPath: preset.upstreamPath, quirks: [...(preset.quirks ?? [])], model: preset.model ?? {} }),
+      ...(mode === "passthrough" ? {} : { upstreamPath: a.wire === "chat" ? "/chat/completions" : preset.upstreamPath, quirks: [...(preset?.quirks ?? [])], model: preset?.model ?? {} }),
       ...(mode === "per-model" ? { wires: { ...(preset.wires ?? {}) }, modelQuirks: Object.fromEntries(Object.entries(preset.modelQuirks ?? {}).map(([k, v]) => [k, [...v]])) } : {}),
+      ...(preset?.contextWindows ? { contextWindows: { ...preset.contextWindows } } : {}),
+      ...(preset?.compactCap ? { compactCap: preset.compactCap } : {}),
+      ...(preset?.dailyLimitHeaders ? { dailyLimitHeaders: [...preset.dailyLimitHeaders] } : {}),
       ...(preset?.sessionHeader ? { sessionHeader: preset.sessionHeader } : {}),
       ...(preset?.quotaErrors?.length ? { quotaErrors: [...preset.quotaErrors] } : {}),
       auth: a.method === "none" ? { kind: "none" } : { kind: "static-key", scheme: "bearer" },
@@ -82,7 +86,13 @@ export function apiEngineArgs(doc, table) {
   const acct = t?.account && doc.accounts.find((a) => a.id === t.account);
   if (acct?.providerEntry && table.has(acct.providerEntry)) {
     args.push("-c", `model_provider=${toml(acct.providerEntry)}`);
-    if (t.model ?? acct.defaultModel) args.push("-c", `model=${toml(t.model ?? acct.defaultModel)}`);
+    const model = t.model ?? acct.defaultModel;
+    if (model) {
+      args.push("-c", `model=${toml(model)}`);
+      // Threads started on this default without naming a model still get its window.
+      const w = threadConfigFor(table, { model, modelProvider: acct.providerEntry });
+      if (w) args.push("-c", `model_context_window=${w.model_context_window}`, "-c", `model_auto_compact_token_limit=${w.model_auto_compact_token_limit}`);
+    }
   }
   return args;
 }
@@ -91,6 +101,21 @@ export function apiEngineArgs(doc, table) {
 // engine needs it, the commands it runs don't. Merged into the user's own
 // shell_environment_policy (a `set` entry), never replacing it.
 export const TOKEN_HIDDEN_ARGS = Object.freeze(["-c", 'shell_environment_policy.set.AD_GATEWAY_TOKEN=""']);
+
+/**
+ * A thread's config for its model on a route ad translates for (P6.2): the model's context
+ * window, so the engine compacts before the provider's limit (it would assume 272K for a
+ * slug it doesn't know). Null for passthrough routes and models without a known window.
+ */
+export function threadConfigFor(table, { model, modelProvider } = {}) {
+  const r = modelProvider ? table?.get(modelProvider) : null;
+  const w = r && model ? r.contextWindows?.[model] : null;
+  if (!Number.isInteger(w) || w <= 0) return null;
+  // A provider whose per-minute token limit is far below the window (Gemini's free tier)
+  // caps when the engine compacts, so one turn never needs more than a minute's tokens.
+  const at = Math.floor(w * 0.8);
+  return { model_context_window: w, model_auto_compact_token_limit: Number.isInteger(r.compactCap) ? Math.min(at, r.compactCap) : at };
+}
 
 export function engineEnvFor({ gateway, env = process.env }) {
   const add = (v) => {

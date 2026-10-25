@@ -11,7 +11,7 @@
 // route: { mode: "chat", provider, upstreamPath?, quirks?, model?, maxArgsBytes?, label }
 
 import { createSseParser, sseEvent } from "./sse.mjs";
-import { chatBody, toTurnRequest } from "./responses-in.mjs";
+import { chatBody, extrasScope, toTurnRequest } from "./responses-in.mjs";
 import { createResponsesWriter } from "./responses-out.mjs";
 import { chatEvents } from "./upstream/chat.mjs";
 import { httpFailure, streamFailure } from "./errors.mjs";
@@ -29,7 +29,7 @@ export function prepare(bodyBuffer, route, { sealKey = null, salt = "" } = {}) {
     throw Object.assign(new Error("ad expected a JSON request."), { code: "TRANSLATE_REFUSED", param: "" });
   }
   const turn = toTurnRequest(body, { route, sealKey });
-  const out = applyQuirks(route.quirks, chatBody(turn, { route }), turn, { salt });
+  const out = applyQuirks(route.quirks, chatBody(turn, { route }), turn, { salt, label: route.provider === "deepseek" || /deepseek/i.test(turn.model) ? "DeepSeek" : (route.label ?? "The model") });
   // ad's own markers (opened reasoning, lost reasoning) never leave the gateway.
   out.messages = out.messages.map(({ reasoning, reasoningLost, ...m }) => m);
   // The engine's thread, so ad can show a failure's reason in that conversation only.
@@ -40,7 +40,8 @@ export function prepare(bodyBuffer, route, { sealKey = null, salt = "" } = {}) {
 
 export const refusalBody = (err) => ({ error: { type: "invalid_request_error", code: "invalid_request", param: err.param ?? null, message: String(err.message) } });
 
-export const failure = (status, text, { retryAfter = null, route = {}, capS = 60 } = {}) => httpFailure(status, text, { retryAfter, capS, label: route.label ?? "The provider", quotaNames: route.quotaErrors ?? [] });
+export const failure = (status, text, { retryAfter = null, route = {}, capS = 60, headers = null } = {}) =>
+  httpFailure(status, text, { retryAfter, capS, label: route.label ?? "The provider", quotaNames: route.quotaErrors ?? [], dayExhausted: (route.dailyLimitHeaders ?? []).some((h) => headers?.get?.(h) === "0") });
 
 export function failedStream(res, { code, message }) {
   const id = mintId("resp_");
@@ -60,6 +61,7 @@ export async function pipeAnswer(upBody, res, { turn, route = {}, sealKey = null
     toolMap: turn.toolMap,
     maxArgsBytes: route.maxArgsBytes ?? route.model?.maxArgsBytes ?? 2 * 2 ** 20,
     sealReasoning: sealKey && reasoningBack(route.quirks) ? (text) => seal(sealKey, scope, text) : null,
+    sealExtras: sealKey && route.quirks?.includes("gemini-compat") ? (x) => seal(sealKey, extrasScope(scope), JSON.stringify({ v: 2, x })) : null,
     label,
     onTerminal: () => {
       try {

@@ -42,6 +42,7 @@ const fail = (code, message) => Object.assign(new Error(message), { code });
 /** Provider ids and the words that name them: never an account label (LABEL_RESERVED). */
 export const PROVIDER_NAMES = Object.freeze([
   "openai", "chatgpt", "openrouter", "kimi", "kimi-code", "moonshot", "xai", "grok", "fireworks", "ollama", "lmstudio", "lm-studio", "opencode", "opencode-go", "custom", "local", "api",
+  "gemini", "google", "anthropic", "claude", "groq", "cerebras", "mistral", "nvidia", "deepseek", "together", "zai", "zai-coding", "huggingface", "nebius", "minimax", "sambanova",
 ]);
 export const METHODS = Object.freeze(["api-key", "api-key-engine", "engine-login", "openrouter-oauth", "none"]);
 export const STATUSES = Object.freeze(["pending", "ready", "needs-sign-in", "disabled", "error", "removing"]);

@@ -43,7 +43,7 @@ export async function startHarnessEngine({ cwd, home, command, clientVersion, st
   const gw = gateway ?? (await gatewayEngineOpts({ home, store, env: e, err }));
   // The engine needs the gateway token; the commands it runs never see its value.
   const hideToken = gw.env?.AD_GATEWAY_TOKEN && !gw.args?.includes(TOKEN_HIDDEN_ARGS[1]) ? TOKEN_HIDDEN_ARGS : [];
-  const engineOpts = { cwd, home, command, clientVersion, detached, engineArgs: [...(engineArgs ?? []), ...gw.args, ...hideToken], experimental, interactive, env: { ...gw.env, ...(env ?? {}) }, onApproval, allowHomeFolder: allowed };
+  const engineOpts = { cwd, home, command, clientVersion, detached, engineArgs: [...(engineArgs ?? []), ...gw.args, ...hideToken], experimental, interactive, env: { ...gw.env, ...(env ?? {}) }, onApproval, allowHomeFolder: allowed, ...(gw.threadConfigFor ? { threadConfigFor: gw.threadConfigFor } : {}) };
   let engine = await createEngine(engineOpts);
   let homeRisk = null;
   try {

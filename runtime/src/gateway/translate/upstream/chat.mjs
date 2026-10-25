@@ -14,6 +14,8 @@ export function chatEvents(data) {
     return [{ t: "error", error: { message: "the provider sent a malformed event" } }];
   }
   if (j?.error) return [{ t: "error", error: j.error }];
+  // MiniMax answers some failures with HTTP 200 and base_resp { status_code, status_msg }.
+  if (j?.base_resp && Number(j.base_resp.status_code) !== 0) return [{ t: "error", error: { code: String(j.base_resp.status_code), message: String(j.base_resp.status_msg ?? "") } }];
   const out = [];
   for (const c of j?.choices ?? []) {
     if ((c.index ?? 0) !== 0) continue; // n = 1 only
@@ -22,7 +24,7 @@ export function chatEvents(data) {
     if (typeof reasoning === "string" && reasoning) out.push({ t: "reasoning", delta: reasoning });
     if (typeof d.content === "string" && d.content) out.push({ t: "text", delta: d.content });
     for (const tc of d.tool_calls ?? []) {
-      out.push({ t: "tool", index: Number.isInteger(tc.index) ? tc.index : null, ...(tc.id ? { id: tc.id } : {}), ...(tc.function?.name ? { name: tc.function.name } : {}), ...(typeof tc.function?.arguments === "string" ? { args: tc.function.arguments } : {}) });
+      out.push({ t: "tool", index: Number.isInteger(tc.index) ? tc.index : null, ...(tc.id ? { id: tc.id } : {}), ...(tc.function?.name ? { name: tc.function.name } : {}), ...(typeof tc.function?.arguments === "string" ? { args: tc.function.arguments } : {}), ...(tc.extra_content ? { extra: tc.extra_content } : {}) });
     }
     if (c.finish_reason) out.push({ t: "finish", reason: c.finish_reason });
   }

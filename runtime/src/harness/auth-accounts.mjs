@@ -36,12 +36,13 @@ export function resolveAccountRef(doc, ref) {
 }
 
 /** Y/n on a terminal; no terminal (a piped key, a script): no. */
-async function askYes(prompt, { stdin = process.stdin, stderr = process.stderr } = {}) {
+// defaultYes false: only a typed yes agrees ([y/N] questions, like a trial notice).
+async function askYes(prompt, { stdin = process.stdin, stderr = process.stderr, defaultYes = true } = {}) {
   if (!stdin.isTTY) return false;
   const rl = createInterface({ input: stdin, output: stderr });
   try {
     const a = await new Promise((resolve) => rl.question(prompt, resolve));
-    return !/^\s*n/i.test(a);
+    return defaultYes ? !/^\s*n/i.test(a) : /^\s*y/i.test(a);
   } finally {
     rl.close();
   }
@@ -125,6 +126,11 @@ export async function cmdAuthAccounts(sub, args = [], opts = {}) {
     return 2;
   }
   const preset = presetFor(id);
+  if (preset.status === "blocked") {
+    err.write(`${preset.blockedReason ?? `${preset.name} isn't available.`}
+`);
+    return 2;
+  }
   const readKey = opts.readKey ?? (() => readSecret(`${preset.name} API key (hidden): `));
   const common = { service, label: opts.label, owner: opts.owner ?? "", fetch: opts.fetch, clientVersion: opts.clientVersion };
   let a;
@@ -148,7 +154,7 @@ export async function cmdAuthAccounts(sub, args = [], opts = {}) {
       } finally {
         done();
       }
-    } else a = await signInApiKey({ ...common, provider: id, readKey, defaultModel: opts.model ?? null });
+    } else a = await signInApiKey({ ...common, provider: id, readKey, defaultModel: opts.model ?? null, confirmNotice: opts.confirmNotice ?? ((text) => askYes(`${text} Continue? [y/N] `, { defaultYes: false })) });
   }
   // The default: this one, when it works and no other ready account could already be it.
   let isDefault = false;

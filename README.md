@@ -941,6 +941,7 @@ Copy-paste configuration templates:
 - [Commands in ad](docs/commands.md) — Every engine slash command: works in ad, or why not yet; keys and settings shared with the engine's own UI
 - [Agent harness guide](docs/harness.md) — `ad auth`, `ad tui`, `ad chat/run/loop/schedule/web/acp`, safety model, Windows notes
 - [Accounts and providers](docs/accounts.md) — Adding API keys, your own endpoint and local models; free models; which sign-ins ad doesn't offer
+- [Chat Completions providers](docs/providers.md) — Gemini, Groq, Cerebras, Mistral, NVIDIA, Anthropic, DeepSeek and more through ad's translation: free tiers, data notes, status
 - [Workflow](docs/workflow.md) — `ad watch` vs `ad digest-latest`, the ending protocol, decision matrix
 - [Troubleshooting](docs/troubleshooting.md) — Symptoms, causes and fixes (watch, digest, harness, Windows sandbox, terminal UI)
 - [Architecture](docs/architecture.md) — Three loops, components, data flow, file-system layout

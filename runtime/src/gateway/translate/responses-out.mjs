@@ -33,7 +33,9 @@ export function responsesUsage(u) {
 
 const TERMINAL = new Set(["response.completed", "response.incomplete", "response.failed"]);
 
-export function createResponsesWriter({ write, toolMap, maxArgsBytes = 2 * 2 ** 20, sealReasoning = null, label = "The provider", onTerminal = null }) {
+// sealExtras: a provider's opaque per-call data (Gemini's thought signatures) → an envelope,
+// handed to the engine as a reasoning item so it comes back with the next request.
+export function createResponsesWriter({ write, toolMap, maxArgsBytes = 2 * 2 ** 20, sealReasoning = null, sealExtras = null, label = "The provider", onTerminal = null }) {
   const id = mintId("resp_");
   let outputIndex = 0;
   let reasoning = null; // { id, index, text }
@@ -130,6 +132,7 @@ export function createResponsesWriter({ write, toolMap, maxArgsBytes = 2 * 2 ** 
         }
         last = c;
         if (e.id && !c.id) c.id = e.id;
+        if (e.extra) c.extra = e.extra;
         // Name fragments join until the first argument fragment; a provider that repeats the
         // whole name in every chunk sends it again unchanged.
         if (e.name && !c.gotArgs && e.name !== c.name) c.name += e.name;
@@ -186,9 +189,18 @@ export function createResponsesWriter({ write, toolMap, maxArgsBytes = 2 * 2 ** 
           send({ type: "response.incomplete", response: { id, incomplete_details: { reason: "max_output_tokens" }, usage } });
           return;
         }
-        items.push(r.item);
+        items.push({ item: r.item, extra: c.extra ?? null });
       }
-      for (const item of items) {
+      const extras = Object.fromEntries(items.filter((x) => x.extra).map((x) => [x.item.call_id, x.extra]));
+      const sealed = Object.keys(extras).length ? sealExtras?.(extras) : null;
+      if (sealed) {
+        const rid = mintId("rs_");
+        const index = outputIndex++;
+        const item = { type: "reasoning", id: rid, summary: [], content: [], encrypted_content: sealed };
+        send({ type: "response.output_item.added", output_index: index, item });
+        send({ type: "response.output_item.done", output_index: index, item });
+      }
+      for (const { item } of items) {
         const index = outputIndex++;
         send({ type: "response.output_item.added", output_index: index, item: { ...item, status: "in_progress" } });
         send({ type: "response.output_item.done", output_index: index, item });

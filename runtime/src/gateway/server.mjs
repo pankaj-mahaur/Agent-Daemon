@@ -38,7 +38,7 @@ const threadOf = (j) => {
   return typeof m.thread_id === "string" ? m.thread_id : typeof m.session_id === "string" ? m.session_id : null;
 };
 // A provider's own quota error by name (OpenCode's GoUsageLimitError) in an error body.
-const namedQuota = (text, names) => names.some((n) => new RegExp(`"(type|code)"\\s*:\\s*"${n}"`).test(text));
+const namedQuota = (text, names) => names.some((n) => new RegExp(`"(type|code|error_code)"\\s*:\\s*"${n}"`).test(text));
 
 // A translated route's side-channel kind → the observation's error class (03-ARCH §H).
 const KIND_CLASS = { quotaExhausted: "quota", rateLimit: "rate-limit", provider5xx: "server", transientNetwork: "server", authExpired: "auth", authRevoked: "auth", contextOverflow: "bad-request", invalidConfig: "bad-request", unknown: "unknown" };
@@ -350,7 +350,7 @@ export function createGatewayServer({ token, table, keys = {}, onUpstream = () =
       }
       if (prepared || (route.quotaErrors?.length && namedQuota(text, route.quotaErrors))) {
         // Only codes the engine knows; the real reason goes to the event.
-        const f = failure(up.status, text, { retryAfter: up.headers.get("retry-after"), route, capS: retryAfterCapS });
+        const f = failure(up.status, text, { retryAfter: up.headers.get("retry-after"), route, capS: retryAfterCapS, headers: up.headers });
         ev.translate = f.side;
         ev.error = { ...ev.error, class: KIND_CLASS[f.side.kind] ?? ev.error.class };
         done();

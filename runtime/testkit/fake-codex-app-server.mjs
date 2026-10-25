@@ -542,7 +542,7 @@ async function onRequest({ id, method, params }) {
           thread: fullThread({
             id: params.threadId,
             cwd: threadCwds.get(params.threadId) ?? process.env.FAKE_THREAD_CWD ?? process.cwd(),
-            ...(threadTargets.has(params.threadId) ? { modelProvider: threadTargets.get(params.threadId).modelProvider } : {}),
+            ...(threadTargets.has(params.threadId) ? { modelProvider: threadTargets.get(params.threadId).modelProvider, model: threadTargets.get(params.threadId).model } : {}),
             status: !loaded.has(params.threadId) && threadTargets.has(params.threadId) ? { type: "notLoaded" } : turnsOf(params.threadId).some((x) => x.status === "inProgress") ? { type: "active", activeFlags: [] } : { type: "idle" },
             ...(params.includeTurns ? { turns: turnsOf(params.threadId).map((x) => ({ ...x, items: [] })) } : {}),
           }),

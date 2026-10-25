@@ -265,3 +265,8 @@ test("OpenCode Go: a chat-routed model completes a tool turn; ad's User-Agent an
     assert.ok(q.keyOk, "the account's key, added by the gateway");
   }
 });
+
+test("a translated model's context window (per-thread config) is accepted and the turn runs", opts, async () => {
+  const r = await turn("PING", { thread: { config: { model_context_window: 100000, model_auto_compact_token_limit: 80000 } } });
+  assert.equal(status(r.completed), "completed", errInfo(r));
+});

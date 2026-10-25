@@ -12,18 +12,30 @@ import { mistralIds } from "./ids.mjs";
 import { refusal } from "./tools.mjs";
 
 const RULES = {
-  deepseek(body) {
-    // Within a tool loop (an assistant message with tool calls answered by tool results,
-    // continued in this request), DeepSeek needs that message's reasoning_content back. A
-    // model that never reasoned (deepseek-chat) has none to give back, and needs none; only
-    // reasoning that was there and can't be opened (another key, another provider) refuses.
+  deepseek(body, _turn, { label } = {}) {
+    // With tools in the request, DeepSeek's thinking models need every earlier assistant
+    // message's reasoning_content back (api-docs.deepseek.com, thinking mode; checked 25 Oct
+    // 2026), not only the current loop's: it answers 400 otherwise. A message that never
+    // reasoned (or reasoned on another provider or model) sends it empty; ad's own reasoning
+    // for this model that no longer opens (its key changed) is refused, with ad's words.
+    const tools = Boolean(body.tools?.length);
     const messages = body.messages.map((m, i, all) => {
       if (m.role !== "assistant") return m;
       if (m.reasoning !== undefined) return { ...m, reasoning_content: m.reasoning };
-      if (m.reasoningLost && m.tool_calls?.length && isLoopTail(all, i)) throw refusal(`messages[${i}]`, "DeepSeek lost its reasoning after a restart. Send the message again.");
+      // A turn from another provider or model reasoned elsewhere: nothing of ours to send.
+      // With tools, the field is still sent, empty, as DeepSeek expects one on every turn.
+      if (!m.reasoningLost && tools) return { ...m, reasoning_content: "" };
+      if (m.reasoningLost && (tools || (m.tool_calls?.length && isLoopTail(all, i)))) throw refusal(`messages[${i}]`, `${label ?? "DeepSeek"} can't read this chat's earlier reasoning any more (ad's key for it changed). Start a new chat.`);
       return m;
     });
     return { ...body, messages };
+  },
+  // Gemini's compat layer: each tool call's thought signature (extra_content) must come
+  // back on that call. The stream writer seals them per call id and the request side puts
+  // them back (responses-in), so nothing changes in the body here. Field per Google's
+  // compat docs as last documented (UNVERIFIED on 25 Oct 2026: the page moved).
+  "gemini-compat"(body) {
+    return body;
   },
   mistral(body, _turn, { salt }) {
     const ids = mistralIds(salt);

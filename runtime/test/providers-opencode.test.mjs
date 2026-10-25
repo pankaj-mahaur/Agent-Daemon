@@ -10,6 +10,8 @@ import { clearModelCache, listModels } from "../src/providers/models.mjs";
 import { testKey } from "../src/auth/accounts/signin.mjs";
 import { createSseParser } from "../src/gateway/translate/sse.mjs";
 import { startMockOpencode } from "../testkit/mock-opencode.mjs";
+import { randomBytes } from "node:crypto";
+import { seal } from "../src/gateway/translate/seal.mjs";
 
 const KEY = ["go", "test", "key", "0123456789abcdef"].join("-");
 const TOKEN = "t".repeat(43);
@@ -194,13 +196,14 @@ test("Go's DeepSeek models get DeepSeek's rule: reasoning ad can't open in a too
       const n = mock.requests.length;
       const input = [
         { type: "message", role: "user", content: [{ type: "input_text", text: "go" }] },
-        { type: "reasoning", summary: [], encrypted_content: "gAAAA-not-ours" },
+        // Ad's own envelope for this provider and model, under a key the gateway doesn't have.
+        { type: "reasoning", summary: [], encrypted_content: seal(randomBytes(32), { provider: "opencode-go", model: "deepseek-v4-pro" }, "old") },
         { type: "function_call", call_id: "c1", name: "exec_command", arguments: "{}" },
         { type: "function_call_output", call_id: "c1", output: "ok" },
       ];
       const r = await fetch(`http://127.0.0.1:${port}/p/${ENTRY}/v1/responses`, { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" }, body: JSON.stringify({ model: "deepseek-v4-pro", input, tools: [{ type: "function", name: "exec_command", parameters: { type: "object" } }], stream: true }) });
       assert.equal(r.status, 400);
-      assert.match((await r.json()).error.message, /DeepSeek lost its reasoning/);
+      assert.match((await r.json()).error.message, /DeepSeek can't read this chat's earlier reasoning/);
       assert.equal(mock.requests.length, n, "nothing sent");
     });
   });
