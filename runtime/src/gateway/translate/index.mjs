@@ -11,15 +11,31 @@
 // route: { mode: "chat", provider, upstreamPath?, quirks?, model?, maxArgsBytes?, label }
 
 import { createSseParser, sseEvent } from "./sse.mjs";
-import { chatBody, extrasScope, toTurnRequest } from "./responses-in.mjs";
+import { chatBody, extrasScope, thinkingScope, toTurnRequest } from "./responses-in.mjs";
 import { createResponsesWriter } from "./responses-out.mjs";
 import { chatEvents } from "./upstream/chat.mjs";
+import { anthropicRequest, createAnthropicParser } from "./upstream/anthropic.mjs";
+import { createGeminiParser, geminiRequest } from "./upstream/gemini.mjs";
 import { httpFailure, streamFailure } from "./errors.mjs";
 import { applyQuirks, reasoningBack } from "./quirks.mjs";
 import { mintId } from "./ids.mjs";
 import { seal } from "./seal.mjs";
 
-export const TRANSLATED_MODES = Object.freeze(["chat"]);
+// chat: Chat Completions (P6.1); anthropic: the Messages API; gemini: streamGenerateContent (P6.4).
+export const TRANSLATED_MODES = Object.freeze(["chat", "anthropic", "gemini"]);
+
+// Without a seal key (the secret store failed), per-call data (Gemini's thought signatures)
+// is kept in this process instead, by ad's own call ids, so tool loops still work for the
+// gateway's life. Bounded; the oldest go first.
+const EXTRAS_MEMORY = new Map();
+const EXTRAS_MEMORY_MAX = 2000;
+function remember(x) {
+  for (const [id, v] of Object.entries(x)) {
+    EXTRAS_MEMORY.delete(id);
+    EXTRAS_MEMORY.set(id, v);
+  }
+  while (EXTRAS_MEMORY.size > EXTRAS_MEMORY_MAX) EXTRAS_MEMORY.delete(EXTRAS_MEMORY.keys().next().value);
+}
 
 export function prepare(bodyBuffer, route, { sealKey = null, salt = "" } = {}) {
   let body;
@@ -29,12 +45,17 @@ export function prepare(bodyBuffer, route, { sealKey = null, salt = "" } = {}) {
     throw Object.assign(new Error("ad expected a JSON request."), { code: "TRANSLATE_REFUSED", param: "" });
   }
   const turn = toTurnRequest(body, { route, sealKey });
-  const out = applyQuirks(route.quirks, chatBody(turn, { route }), turn, { salt, label: route.provider === "deepseek" || /deepseek/i.test(turn.model) ? "DeepSeek" : (route.label ?? "The model") });
-  // ad's own markers (opened reasoning, lost reasoning) never leave the gateway.
-  out.messages = out.messages.map(({ reasoning, reasoningLost, ...m }) => m);
-  // The engine's thread, so ad can show a failure's reason in that conversation only.
   const meta = body.client_metadata && typeof body.client_metadata === "object" ? body.client_metadata : {};
   const threadId = typeof meta.thread_id === "string" ? meta.thread_id : typeof meta.session_id === "string" ? meta.session_id : null;
+  // The native APIs (P6.4): their own request shapes from the same TurnRequest.
+  if (route.mode === "anthropic" || route.mode === "gemini") {
+    const remembered = sealKey ? {} : Object.fromEntries(turn.messages.flatMap((m) => (m.tool_calls ?? []).filter((c) => EXTRAS_MEMORY.has(c.id)).map((c) => [c.id, EXTRAS_MEMORY.get(c.id)])));
+    const r = route.mode === "anthropic" ? anthropicRequest(turn, route) : geminiRequest(turn, route, { extrasByCall: remembered });
+    return { path: r.path, body: Buffer.from(JSON.stringify(r.body)), turn, threadId };
+  }
+  const out = applyQuirks(route.quirks, chatBody(turn, { route }), turn, { salt, label: route.provider === "deepseek" || /deepseek/i.test(turn.model) ? "DeepSeek" : (route.label ?? "The model") });
+  // ad's own markers (opened reasoning, lost reasoning) never leave the gateway.
+  out.messages = out.messages.map(({ reasoning, reasoningLost, thinkingBlocks, ...m }) => m);
   return { path: route.upstreamPath ?? "chat/completions", body: Buffer.from(JSON.stringify(out)), turn, threadId };
 }
 
@@ -56,12 +77,15 @@ export function failedStream(res, { code, message }) {
 export async function pipeAnswer(upBody, res, { turn, route = {}, sealKey = null, capS = 60, signal, onTerminal = null } = {}) {
   const label = route.label ?? "The provider";
   const scope = { provider: route.provider ?? "", model: turn.model };
+  const upstream = route.mode === "anthropic" ? createAnthropicParser() : route.mode === "gemini" ? createGeminiParser() : null;
+  const eventsOf = ({ event, data }) => (route.mode === "anthropic" ? upstream.events(event, data) : route.mode === "gemini" ? upstream.events(data) : chatEvents(data));
   const writer = createResponsesWriter({
     write: (s) => res.write(s),
     toolMap: turn.toolMap,
     maxArgsBytes: route.maxArgsBytes ?? route.model?.maxArgsBytes ?? 2 * 2 ** 20,
-    sealReasoning: sealKey && reasoningBack(route.quirks) ? (text) => seal(sealKey, scope, text) : null,
-    sealExtras: sealKey && route.quirks?.includes("gemini-compat") ? (x) => seal(sealKey, extrasScope(scope), JSON.stringify({ v: 2, x })) : null,
+    // Anthropic's thinking blocks (signatures included) go back whole; DeepSeek's reasoning as text.
+    sealReasoning: !sealKey ? null : route.mode === "anthropic" ? () => seal(sealKey, thinkingScope(scope), JSON.stringify({ blocks: upstream.takeThinking() })) : reasoningBack(route.quirks) ? (text) => seal(sealKey, scope, text) : null,
+    sealExtras: !(route.mode === "gemini" || route.quirks?.includes("gemini-compat")) ? null : sealKey ? (x) => seal(sealKey, extrasScope(scope), JSON.stringify({ v: 2, x })) : (x) => (remember(x), null),
     label,
     onTerminal: () => {
       try {
@@ -80,9 +104,9 @@ export async function pipeAnswer(upBody, res, { turn, route = {}, sealKey = null
     return { ...r, side: side ? { ...side, droppedCalls: r.side.droppedCalls } : r.side.kind ? r.side : null };
   };
   const parser = createSseParser({
-    onEvent: ({ data }) => {
+    onEvent: (ev) => {
       if (done) return;
-      for (const e of chatEvents(data)) {
+      for (const e of eventsOf(ev)) {
         if (e.t === "done") {
           done = true;
           writer.end();

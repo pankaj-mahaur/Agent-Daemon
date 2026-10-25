@@ -8,7 +8,10 @@
 import { buildToolMap, refusal } from "./tools.mjs";
 import { open, sealedFor } from "./seal.mjs";
 
-// The scope extras are sealed under (never a reasoning scope).
+// The scopes extras (per-call data) and Anthropic's thinking blocks are sealed under
+// (never the plain reasoning scope, so neither can be read as the other).
+export const thinkingScope = ({ provider, model }) => ({ provider, model: `${model}
+thinking` });
 export const extrasScope = ({ provider, model }) => ({ provider, model: `${model}
 extras` });
 
@@ -50,6 +53,17 @@ const outputText = (output, param) => {
   return JSON.stringify(output ?? "");
 };
 
+// Anthropic thinking blocks ({"blocks":[…]}), or null.
+function parseThinking(text) {
+  if (typeof text !== "string") return null;
+  try {
+    const j = JSON.parse(text);
+    return Array.isArray(j?.blocks) ? j.blocks.filter((b) => b && (b.type === "thinking" || b.type === "redacted_thinking")) : null;
+  } catch {
+    return null;
+  }
+}
+
 // An extras envelope ({"v":2,"x":{callId: data}}), or null.
 function parseExtras(text) {
   if (typeof text !== "string") return null;
@@ -88,6 +102,7 @@ export function toTurnRequest(body, { route = {}, sealKey = null } = {}) {
   const newAssistant = (content) => {
     const msg = { role: "assistant", content };
     if (pending?.text !== undefined) msg.reasoning = pending.text;
+    if (pending?.blocks?.length) msg.thinkingBlocks = pending.blocks;
     else if (pending?.lost) msg.reasoningLost = true;
     pending = null;
     messages.push(msg);
@@ -132,8 +147,11 @@ export function toTurnRequest(body, { route = {}, sealKey = null } = {}) {
       // Per-call data the provider wants back (Gemini's thought signatures) is sealed under its
       // own scope, so reasoning text can never be read as it (whatever the text says).
       const extras = blob && sealKey ? parseExtras(open(sealKey, extrasScope(scope), blob)) : null;
-      const text = blob && sealKey && !extras ? open(sealKey, scope, blob) : null;
+      const thinking = blob && sealKey && !extras ? parseThinking(open(sealKey, thinkingScope(scope), blob)) : null;
+      const text = blob && sealKey && !extras && !thinking ? open(sealKey, scope, blob) : null;
       if (extras) Object.assign(extrasByCall, extras);
+      // Anthropic's thinking blocks: they go back whole, before that turn's tool calls.
+      else if (thinking) pending = { ...(pending?.text !== undefined ? { text: pending.text } : {}), blocks: [...(pending?.blocks ?? []), ...thinking] };
       else if (text !== null) pending = { text: pending?.text !== undefined ? `${pending.text}\n${text}` : text };
       // Lost only when it was ad's, for this provider and model, and no longer opens (a
       // replaced key). Another provider's or model's reasoning is simply absent.

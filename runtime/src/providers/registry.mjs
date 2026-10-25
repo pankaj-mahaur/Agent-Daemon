@@ -43,6 +43,8 @@ const preset = (p) =>
     quotaErrors: Object.freeze([]),
     quirks: Object.freeze([]),
     capabilities: null,
+    // The key's own header (Anthropic x-api-key, Gemini x-goog-api-key) instead of a Bearer.
+    authHeader: null,
     pickerHint: null,
     // Data terms: trial (development use only), trainsOnData ("no" | "free tier" | "unknown"),
     // notice (asked once at sign-in, before anything is sent).
@@ -119,14 +121,19 @@ export const PROVIDER_PRESETS = Object.freeze([
   chatPreset({
     id: "gemini",
     name: "Gemini API",
-    upstreamBase: "https://generativelanguage.googleapis.com/v1beta/openai",
-    quirks: Object.freeze(["gemini-compat"]),
+    // Native (P6.4b): streamGenerateContent with the key in x-goog-api-key, never the URL.
+    // Thought signatures ride with their function calls.
+    mode: "gemini",
+    upstreamBase: "https://generativelanguage.googleapis.com/v1beta",
+    upstreamPath: "/models",
+    authHeader: "x-goog-api-key",
+    capabilities: Object.freeze({ effort: true, jsonFormat: true, vision: true }),
     // The free tier's per-minute token limit is far below the 1M window: compact earlier.
     compactCap: 250000,
     contextWindows: Object.freeze({ "gemini-3.8-flash": 1048576, "gemini-3.6-flash": 1048576, "gemini-3.5-flash-lite": 1048576, "gemini-4-argon": 1048576 }),
     privacy: Object.freeze({ trial: false, trainsOnData: "free tier", notice: "With a free Gemini API key, Google may use what you send to improve its products, and people may read it. Use a paid key for code you can't share." }),
-    pickerHint: "Google AI Studio key; free tier",
-    docs: ["https://ai.google.dev/gemini-api/docs/openai", "https://ai.google.dev/gemini-api/terms"],
+    pickerHint: "Google AI Studio API key; free tier",
+    docs: ["https://ai.google.dev/api/generate-content", "https://ai.google.dev/gemini-api/docs/thinking", "https://ai.google.dev/gemini-api/terms"],
   }),
   chatPreset({
     id: "groq",
@@ -171,13 +178,18 @@ export const PROVIDER_PRESETS = Object.freeze([
   chatPreset({
     id: "anthropic",
     name: "Anthropic API",
+    // Native (P6.4a): the Messages API, extended thinking kept across tool loops.
+    mode: "anthropic",
     upstreamBase: "https://api.anthropic.com/v1",
+    upstreamPath: "/messages",
+    authHeader: "x-api-key",
+    headers: Object.freeze({ "anthropic-version": "2023-06-01" }),
     contextWindows: Object.freeze({ "claude-fable-5-1": 1000000, "claude-opus-5-5": 1000000, "claude-sonnet-5-5": 1000000, "claude-haiku-5-5": 1000000 }),
-    // The compat layer: forced tool use errors on the newest models; thinking isn't returned.
-    capabilities: Object.freeze({ parallelTools: true, toolChoices: Object.freeze(["auto", "none"]) }),
+    // Forced tool use errors on the newest models (docs): auto and none only.
+    capabilities: Object.freeze({ effort: true, parallelTools: true, vision: true, toolChoices: Object.freeze(["auto", "none"]) }),
     quotaErrors: Object.freeze(["enforced_spend_limit_reached"]),
-    pickerHint: "Claude API key; experimental: thinking and strict tool schemas aren't kept yet",
-    docs: ["https://docs.claude.com/en/api/openai-sdk", "https://docs.claude.com/en/api/errors"],
+    pickerHint: "Claude (Anthropic API key)",
+    docs: ["https://docs.claude.com/en/api/messages", "https://docs.claude.com/en/docs/build-with-claude/extended-thinking", "https://docs.claude.com/en/api/errors"],
   }),
   chatPreset({
     id: "deepseek",

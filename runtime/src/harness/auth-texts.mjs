@@ -31,6 +31,8 @@ const HOW = { "api-key": "an API key", "openrouter-oauth": "--oauth: sign in in 
 // A provider's own help line (`ad auth login <provider> --help`), where it has more to say.
 const PROVIDER_HELP = Object.freeze({
   "opencode-go": "Key from your OpenCode account (opencode.ai). Zen's free models aren't available in other apps.",
+  anthropic: "Use an API key from the Anthropic Console. A Claude Pro or Max subscription can't be used here; to use your subscription, run Claude Code itself as a worker (ad sp --engine claude).",
+  gemini: "Use an API key from Google AI Studio. A Gemini app or Google One AI plan can't be used here.",
 });
 
 /** `ad auth login --help`: one line per provider ad lists, then what it doesn't offer. */

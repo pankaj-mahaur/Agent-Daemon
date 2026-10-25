@@ -17,6 +17,8 @@ import { TOKEN_HIDDEN_ARGS } from "../src/gateway/table.mjs";
 import { chat, defaultChatScript, lastUserText, startMockChat } from "../testkit/mock-chat.mjs";
 import { startMockOpencode } from "../testkit/mock-opencode.mjs";
 import { gatewayTable, PRESETS } from "../src/gateway/table.mjs";
+import { anthropicSse, startMockNative } from "../testkit/mock-native.mjs";
+import { randomBytes } from "node:crypto";
 
 const PINNED = resolveCodexCommand({});
 const wanted = process.env.AD_REAL_ENGINE === "1";
@@ -27,6 +29,38 @@ const KEY = ["gsk", "real", "engine", "4444555566667777"].join("_");
 const ENTRY = "ad-groq-real";
 const GO_ENTRY = "ad-opencode-go-real";
 const GO_KEY = ["go", "real", "engine", "8888999900001111"].join("_");
+const ANTH_ENTRY = "ad-anthropic-real";
+const GEM_ENTRY = "ad-gemini-real";
+const SIG = "anthropic-sig-" + "q".repeat(24);
+
+// The native APIs (P6.4): a SHELL tool call with thinking, then a closing text once the
+// tool's result comes back.
+function nativeScript(req) {
+  const echo = process.platform === "win32" ? "cmd.exe /d /c echo hi" : "echo hi";
+  if (req.url.endsWith("/messages")) {
+    const answered = JSON.stringify(req.body?.messages?.at(-1) ?? {}).includes("tool_result");
+    const start = { type: "message_start", message: { id: "m", usage: { input_tokens: 9, output_tokens: 0 } } };
+    const end = (r) => [{ type: "message_delta", delta: { stop_reason: r }, usage: { output_tokens: 3 } }, { type: "message_stop" }];
+    if (answered) return { events: anthropicSse([start, { type: "content_block_start", index: 0, content_block: { type: "text", text: "done" } }, { type: "content_block_stop", index: 0 }, ...end("end_turn")]) };
+    return {
+      events: anthropicSse([
+        start,
+        { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } },
+        { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "run it" } },
+        { type: "content_block_delta", index: 0, delta: { type: "signature_delta", signature: SIG } },
+        { type: "content_block_stop", index: 0 },
+        { type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "toolu_r", name: "exec_command", input: {} } },
+        { type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: JSON.stringify({ cmd: echo }) } },
+        { type: "content_block_stop", index: 1 },
+        ...end("tool_use"),
+      ]),
+    };
+  }
+  const answered = JSON.stringify(req.body?.contents?.at(-1) ?? {}).includes("functionResponse");
+  const chunk = (parts, extra = {}) => ({ data: { candidates: [{ content: { role: "model", parts }, ...extra }], usageMetadata: { promptTokenCount: 9, candidatesTokenCount: 3, totalTokenCount: 12 } } });
+  if (answered) return { events: [chunk([{ text: "done" }], { finishReason: "STOP" })] };
+  return { events: [chunk([{ text: "run it", thought: true }, { functionCall: { name: "exec_command", args: { cmd: echo } }, thoughtSignature: "gem-sig-1" }], { finishReason: "STOP" })] };
+}
 const PATCH = "*** Begin Patch\n*** Add File: hello.txt\n+hello through the gateway\n*** End Patch";
 const isWin = process.platform === "win32";
 
@@ -48,6 +82,7 @@ function script(body, { count }) {
 
 let mock;
 let goMock;
+let nativeMock;
 let gw;
 let server;
 let home;
@@ -60,8 +95,11 @@ before(async () => {
   goMock = await startMockOpencode({ keys: [GO_KEY] });
   const goRoutes = gatewayTable({ accounts: [{ id: "acct_go", provider: "opencode-go", label: "go", method: "api-key", status: "ready", providerEntry: GO_ENTRY }] }, { presets: { ...PRESETS, "opencode-go": { ...PRESETS["opencode-go"], baseUrl: goMock.base } } });
   for (const r of goRoutes.values()) r.allowHttp = true;
-  const table = new Map([...goRoutes, [ENTRY, { accountId: "acct_real", provider: "groq", upstreamBase: mock.url, mode: "chat", upstreamPath: "/chat/completions", quirks: [], model: {}, auth: { kind: "static-key", scheme: "bearer" }, headers: {}, allowHttp: true, label: "Groq" }]]);
-  gw = createGatewayServer({ token: TOKEN, table, keys: { acct_real: KEY, acct_go: GO_KEY }, onUpstream: (e) => events.push(e) });
+  nativeMock = await startMockNative({ script: nativeScript });
+  const nativeRoutes = gatewayTable({ accounts: [{ id: "acct_anth", provider: "anthropic", label: "a", method: "api-key", status: "ready", providerEntry: ANTH_ENTRY }, { id: "acct_gem", provider: "gemini", label: "g", method: "api-key", status: "ready", providerEntry: GEM_ENTRY }] }, { presets: { ...PRESETS, anthropic: { ...PRESETS.anthropic, baseUrl: nativeMock.url }, gemini: { ...PRESETS.gemini, baseUrl: nativeMock.url } } });
+  for (const r of nativeRoutes.values()) r.allowHttp = true;
+  const table = new Map([...goRoutes, ...nativeRoutes, [ENTRY, { accountId: "acct_real", provider: "groq", upstreamBase: mock.url, mode: "chat", upstreamPath: "/chat/completions", quirks: [], model: {}, auth: { kind: "static-key", scheme: "bearer" }, headers: {}, allowHttp: true, label: "Groq" }]]);
+  gw = createGatewayServer({ token: TOKEN, table, keys: { acct_real: KEY, acct_go: GO_KEY, acct_anth: KEY, acct_gem: KEY }, sealKey: randomBytes(32), onUpstream: (e) => events.push(e) });
   const port = await gw.listen();
   home = mkdtempSync(join(tmpdir(), "ad-tr-home-"));
   cwd = realpathSync(mkdtempSync(join(tmpdir(), "ad-tr-work-")));
@@ -84,6 +122,24 @@ before(async () => {
       "[model_providers.trans]",
       'name = "Groq · test"',
       `base_url = "http://127.0.0.1:${port}/p/${ENTRY}/v1"`,
+      'env_key = "AD_GATEWAY_TOKEN"',
+      'wire_api = "responses"',
+      "request_max_retries = 1",
+      "stream_max_retries = 1",
+      "supports_websockets = false",
+      "",
+      "[model_providers.anth]",
+      'name = "Anthropic · a"',
+      `base_url = "http://127.0.0.1:${port}/p/${ANTH_ENTRY}/v1"`,
+      'env_key = "AD_GATEWAY_TOKEN"',
+      'wire_api = "responses"',
+      "request_max_retries = 1",
+      "stream_max_retries = 1",
+      "supports_websockets = false",
+      "",
+      "[model_providers.gem]",
+      'name = "Gemini · g"',
+      `base_url = "http://127.0.0.1:${port}/p/${GEM_ENTRY}/v1"`,
       'env_key = "AD_GATEWAY_TOKEN"',
       'wire_api = "responses"',
       "request_max_retries = 1",
@@ -122,6 +178,7 @@ after(async () => {
   await gw?.close();
   await mock?.close();
   await goMock?.close();
+  await nativeMock?.close();
   for (const d of [home, cwd]) for (let i = 0; i < 20; i++) {
     try {
       rmSync(d, { recursive: true, force: true });
@@ -269,4 +326,31 @@ test("OpenCode Go: a chat-routed model completes a tool turn; ad's User-Agent an
 test("a translated model's context window (per-thread config) is accepted and the turn runs", opts, async () => {
   const r = await turn("PING", { thread: { config: { model_context_window: 100000, model_auto_compact_token_limit: 80000 } } });
   assert.equal(status(r.completed), "completed", errInfo(r));
+});
+
+test("Anthropic native: a tool turn runs once; its thinking and signature go back whole before the tool_use", opts, async () => {
+  const before = nativeMock.requests.length;
+  const r = await turn("SHELL", { thread: { model: "claude-sonnet-5-5", modelProvider: "anth", config: { model_reasoning_effort: "medium" } } });
+  assert.equal(status(r.completed), "completed", errInfo(r));
+  const sent = nativeMock.requests.slice(before);
+  assert.equal(sent.length, 2, "the call, then its result");
+  assert.equal(sent[0].headers["x-api-key"], KEY);
+  const a = sent[1].body.messages.find((m) => m.role === "assistant");
+  assert.deepEqual(a.content[0], { type: "thinking", thinking: "run it", signature: SIG });
+  assert.equal(a.content[1].type, "tool_use");
+  assert.match(JSON.stringify(sent[1].body.messages.at(-1)), /tool_result.*hi/s);
+});
+
+test("Gemini native: a tool turn runs once; the call's thought signature goes back on its part; no key in any address", opts, async () => {
+  const before = nativeMock.requests.length;
+  const r = await turn("SHELL", { thread: { model: "gemini-3.8-flash", modelProvider: "gem" } });
+  assert.equal(status(r.completed), "completed", errInfo(r));
+  const sent = nativeMock.requests.slice(before);
+  assert.equal(sent.length, 2);
+  for (const q of sent) {
+    assert.ok(!q.url.includes(KEY) && !/key=/i.test(q.url), q.url);
+    assert.equal(q.headers["x-goog-api-key"], KEY);
+  }
+  const part = sent[1].body.contents.find((c) => c.role === "model").parts.find((p) => p.functionCall);
+  assert.equal(part.thoughtSignature, "gem-sig-1");
 });

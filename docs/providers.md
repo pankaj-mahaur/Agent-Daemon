@@ -10,12 +10,12 @@ To see the candidates in `/login` and `ad auth login --help`, set `AD_SHOW_CANDI
 
 | Provider | Id | Free use | Data note | Status |
 |---|---|---|---|---|
-| Gemini API | `gemini` | free tier | free keys: Google may use prompts to improve its products (asked once at sign-in) | candidate; thought signatures follow Google's last documented field (unchecked) |
+| Gemini API | `gemini` | free tier | free keys: Google may use prompts to improve its products (asked once at sign-in) | candidate; native API (thought signatures kept) |
 | Groq | `groq` | free tier with daily limits | — | candidate |
 | Cerebras | `cerebras` | trial credits | — | candidate |
 | Mistral | `mistral` | free mode | — | candidate |
 | NVIDIA API catalog | `nvidia` | trial | for trial use: don't send personal or confidential code (asked once at sign-in) | candidate |
-| Anthropic API | `anthropic` | — | — | candidate; experimental: thinking and strict tool schemas aren't kept yet |
+| Anthropic API | `anthropic` | — | — | candidate; native Messages API (extended thinking kept across tool calls) |
 | DeepSeek | `deepseek` | — | — | candidate |
 | Together AI | `together` | — | — | candidate |
 | Z.ai | `zai` | `glm-4.7-flash` is free | — | candidate |
@@ -26,6 +26,10 @@ To see the candidates in `/login` and `ad auth login --help`, set `AD_SHOW_CANDI
 | SambaNova | `sambanova` | free tier with daily limits | — | candidate |
 
 Acceptance runs: not attempted yet for any of them (no keys).
+
+## Why Claude and Gemini use their own APIs
+
+Claude and Gemini also offer OpenAI-compatible endpoints, but those lose what a coding agent needs: Anthropic's drops extended thinking and ignores strict tool schemas, and Gemini's carries thought signatures and quota detail only through extensions. Losing thinking in the middle of a tool loop degrades or breaks multi-step work. So ad speaks each one's own API (Anthropic's Messages API, Gemini's `streamGenerateContent`) inside its gateway: Claude's thinking and its signature go back exactly as they came, before the next tool call; each Gemini tool call's thought signature goes back on that call. The Gemini key travels in the `x-goog-api-key` header, never in an address. A Claude Pro/Max or Gemini app subscription can't be used here (their terms don't allow other apps).
 
 ## What ad does for each
 

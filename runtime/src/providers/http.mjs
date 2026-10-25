@@ -30,7 +30,8 @@ const reasonOf = (e, aborted) => {
   return typeof code === "string" && /^[A-Z][A-Z0-9_]{2,40}$/.test(code) ? code : "network error";
 };
 
-export async function providerRequest({ url, method = "GET", key = null, body, headers = {}, fetch: f = globalThis.fetch, clientVersion = "dev", timeoutMs = 15_000, insecure = false }) {
+// keyHeader: the provider's own key header (x-api-key, x-goog-api-key) instead of a Bearer.
+export async function providerRequest({ url, method = "GET", key = null, keyHeader = null, body, headers = {}, fetch: f = globalThis.fetch, clientVersion = "dev", timeoutMs = 15_000, insecure = false }) {
   const u = new URL(url);
   if (key && u.protocol !== "https:" && !isLoopback(url) && !insecure) throw fail("INSECURE_URL", HTTP_TEXTS.INSECURE_URL);
   const ac = new AbortController();
@@ -42,7 +43,7 @@ export async function providerRequest({ url, method = "GET", key = null, body, h
         method,
         redirect: "manual",
         signal: ac.signal,
-        headers: { "user-agent": `ad/${clientVersion}`, accept: "application/json", ...(key ? { authorization: `Bearer ${key}` } : {}), ...(body !== undefined ? { "content-type": "application/json" } : {}), ...headers },
+        headers: { "user-agent": `ad/${clientVersion}`, accept: "application/json", ...(key ? (keyHeader ? { [keyHeader]: key } : { authorization: `Bearer ${key}` }) : {}), ...(body !== undefined ? { "content-type": "application/json" } : {}), ...headers },
         ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
       });
     } catch (e) {

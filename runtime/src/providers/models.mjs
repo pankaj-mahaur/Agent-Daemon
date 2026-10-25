@@ -30,10 +30,11 @@ export async function listModels(account, { key = null, preset = presetFor(accou
   if (!refresh && hit && now() - hit.at < CACHE_MS) return hit.models;
   const base = account.endpoint ?? preset.upstreamBase;
   const url = account.endpoint ? `${base}${preset.modelsPath}` : (preset.modelsUrl ?? `${base}${preset.modelsPath}`);
-  const r = await providerRequest({ url, key: preset.auth === "none" ? null : key, fetch, clientVersion, insecure: Boolean(account.insecure) });
+  const r = await providerRequest({ url, key: preset.auth === "none" ? null : key, keyHeader: preset.authHeader ?? null, headers: { ...(preset.headers ?? {}) }, fetch, clientVersion, insecure: Boolean(account.insecure) });
   if (r.status !== 200) throw Object.assign(new Error(`The provider answered HTTP ${r.status} for its model list.`), { code: "MODELS_FAILED", status: r.status });
   const observedAt = now();
-  const rows = Array.isArray(r.json?.data) ? r.json.data : Array.isArray(r.json) ? r.json : [];
+  // Gemini's native list: { models: [{ name: "models/<id>", displayName }] }.
+  const rows = Array.isArray(r.json?.data) ? r.json.data : Array.isArray(r.json?.models) ? r.json.models.map((x) => ({ id: String(x?.name ?? "").replace(/^models\//, ""), name: x?.displayName })) : Array.isArray(r.json) ? r.json : [];
   const models = rows
     .filter((m) => m && typeof m.id === "string")
     .map((m) => {

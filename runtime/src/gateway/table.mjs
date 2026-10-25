@@ -25,7 +25,7 @@ export const PRESETS = Object.freeze(
   Object.fromEntries(
     PROVIDER_PRESETS.filter((p) => p.upstreamBase).map((p) => [
       p.id,
-      Object.freeze({ name: p.name, baseUrl: p.upstreamBase, mode: p.mode, upstreamPath: p.upstreamPath, quirks: p.quirks ?? [], model: p.capabilities ?? null, headers: { ...(p.headers ?? {}), ...(p.ownUserAgent ? { "user-agent": AD_UA } : {}) }, wires: p.wires ?? null, modelQuirks: p.modelQuirks ?? null, contextWindows: p.contextWindows ?? null, compactCap: p.compactCap ?? null, dailyLimitHeaders: p.dailyLimitHeaders ?? null, sessionHeader: p.sessionHeader ?? null, quotaErrors: p.quotaErrors ?? [] }),
+      Object.freeze({ name: p.name, baseUrl: p.upstreamBase, mode: p.mode, upstreamPath: p.upstreamPath, quirks: p.quirks ?? [], model: p.capabilities ?? null, headers: { ...(p.headers ?? {}), ...(p.ownUserAgent ? { "user-agent": AD_UA } : {}) }, authHeader: p.authHeader ?? null, wires: p.wires ?? null, modelQuirks: p.modelQuirks ?? null, contextWindows: p.contextWindows ?? null, compactCap: p.compactCap ?? null, dailyLimitHeaders: p.dailyLimitHeaders ?? null, sessionHeader: p.sessionHeader ?? null, quotaErrors: p.quotaErrors ?? [] }),
     ]),
   ),
 );
@@ -57,7 +57,7 @@ export function gatewayTable(doc, { presets = PRESETS } = {}) {
       ...(preset?.dailyLimitHeaders ? { dailyLimitHeaders: [...preset.dailyLimitHeaders] } : {}),
       ...(preset?.sessionHeader ? { sessionHeader: preset.sessionHeader } : {}),
       ...(preset?.quotaErrors?.length ? { quotaErrors: [...preset.quotaErrors] } : {}),
-      auth: a.method === "none" ? { kind: "none" } : { kind: "static-key", scheme: "bearer" },
+      auth: a.method === "none" ? { kind: "none" } : preset?.authHeader ? { kind: "static-key", scheme: "header", header: preset.authHeader } : { kind: "static-key", scheme: "bearer" },
       headers: { ...(preset?.headers ?? {}) },
       strip: [],
       label: preset?.name ?? providerName(a.provider),

@@ -13,11 +13,11 @@ import { chat, startMockChat } from "../testkit/mock-chat.mjs";
 const TOKEN = "t".repeat(43);
 const KEY = ["prov", "test", "0000111122223333"].join("_");
 
-async function withProvider(id, script, fn) {
+async function withProvider(id, script, fn, { preset = {} } = {}) {
   const mock = await startMockChat({ script });
   const entry = `ad-${id}-test`;
   const doc = { accounts: [{ id: "acct_p", provider: id, label: "t", method: "api-key", status: "ready", providerEntry: entry }] };
-  const table = gatewayTable(doc, { presets: { ...PRESETS, [id]: { ...PRESETS[id], baseUrl: mock.url } } });
+  const table = gatewayTable(doc, { presets: { ...PRESETS, [id]: { ...PRESETS[id], baseUrl: mock.url, ...preset } } });
   for (const r of table.values()) r.allowHttp = true;
   const events = [];
   const gw = createGatewayServer({ token: TOKEN, table, keys: { acct_p: KEY }, onUpstream: (e) => events.push(e), sealKey: randomBytes(32) });
@@ -120,7 +120,7 @@ test("Mistral: tool-call ids on the wire are 9 characters, the same on the call 
   });
 });
 
-test("Gemini: a tool call's thought signature comes back on that call in the next request", async () => {
+test("Gemini compat (a chat route with the gemini-compat quirk): a tool call's thought signature comes back on that call", async () => {
   let turn = 0;
   const script = () => (turn++ === 0 ? { chunks: [{ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "g1", type: "function", function: { name: "exec_command", arguments: '{"cmd":"ls"}' }, extra_content: { google: { thought_signature: "sig-abc" } } }] }, finish_reason: null }] }, chat.finish("tool_calls"), "[DONE]"] } : { chunks: [chat.text("done"), chat.finish("stop"), "[DONE]"] });
   await withProvider("gemini", script, async ({ post, mock }) => {
@@ -133,7 +133,7 @@ test("Gemini: a tool call's thought signature comes back on that call in the nex
     await post(req("gemini-3.8-flash", [{ type: "message", role: "user", content: [{ type: "input_text", text: "list" }] }, envelope, call, { type: "function_call_output", call_id: call.call_id, output: "a.txt" }]));
     const sent = mock.requests[1].body.messages.find((m) => m.tool_calls).tool_calls[0];
     assert.deepEqual(sent.extra_content, { google: { thought_signature: "sig-abc" } });
-  });
+  }, { preset: { mode: "chat", upstreamPath: "/chat/completions", quirks: ["gemini-compat"], authHeader: null } });
 });
 
 test("DeepSeek: its reasoning comes back as reasoning_content on the next request", async () => {
@@ -155,7 +155,7 @@ test("a wave-2 model's context window reaches its thread through the route", () 
 });
 
 test("presets: https, dated docs, a status, windows for listed models; trial and data notices where the terms call for them", () => {
-  const wave2 = PROVIDER_PRESETS.filter((p) => p.mode === "chat");
+  const wave2 = PROVIDER_PRESETS.filter((p) => ["chat", "anthropic", "gemini"].includes(p.mode));
   assert.equal(wave2.length, 14);
   for (const p of wave2) {
     assert.match(p.upstreamBase, /^https:\/\//, p.id);

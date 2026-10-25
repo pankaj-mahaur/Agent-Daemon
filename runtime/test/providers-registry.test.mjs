@@ -17,7 +17,7 @@ test("every preset has id, name, upstream (or is custom), methods, docs and chec
     assert.ok(p.methods.length, `${p.id}: methods`);
     assert.ok(Array.isArray(p.docs) && (p.id === "custom" || p.docs.length), `${p.id}: docs`);
     assert.match(p.checkedAt, /^\d{4}-\d{2}-\d{2}$/);
-    assert.equal(p.mode, p.id === "opencode-go" ? "per-model" : WAVE2.includes(p.id) ? "chat" : "passthrough");
+    assert.equal(p.mode, p.id === "opencode-go" ? "per-model" : p.id === "gemini" || p.id === "anthropic" ? p.id : WAVE2.includes(p.id) ? "chat" : "passthrough");
     assert.deepEqual([...p.strip], []);
     assert.ok(PROVIDER_NAMES.includes(p.id), `${p.id} can't be a label`);
     // Remote presets are https; only local ones use http, on loopback.

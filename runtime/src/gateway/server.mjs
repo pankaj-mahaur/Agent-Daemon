@@ -249,6 +249,13 @@ export function createGatewayServer({ token, table, keys = {}, onUpstream = () =
       done();
       return void adError(res, 502, "ad: this account's endpoint isn't a valid address");
     }
+    // A key never travels in an address (logs and proxies keep URLs): any key-like query
+    // parameter is refused, whoever put it there.
+    if ([...target.searchParams.keys()].some((k) => /^(key|api[_-]?key|access[_-]?token|token)$/i.test(k))) {
+      ev.status = 502;
+      done();
+      return void adError(res, 502, "ad: a key in a request address is never sent");
+    }
     if (target.protocol !== "https:" && !route.allowHttp) {
       ev.status = 502;
       done();

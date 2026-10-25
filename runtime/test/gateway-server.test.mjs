@@ -86,7 +86,7 @@ test("dot segments, %2e, %2f, %5c, backslashes and empty segments → 400; a que
 
 test("unknown entry with the right token → 404 with ad's text; an unknown mode is refused, never passed through", async () => {
   const up = await mock();
-  const { call } = await gateway(new Map([["ad-mock-aaaa", route(up)], ["ad-mock-bbbb", route(up, { mode: "anthropic" })]]));
+  const { call } = await gateway(new Map([["ad-mock-aaaa", route(up)], ["ad-mock-bbbb", route(up, { mode: "no-such-mode" })]]));
   const r = await call("/p/ad-mock-zzzz/v1/responses");
   assert.equal(r.status, 404);
   assert.equal((await r.json()).error.message, "ad: this account isn't available any more");

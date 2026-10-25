@@ -850,6 +850,12 @@ See [harness.md](harness.md#working-in-your-home-folder).
 
 **Fix:** start a new chat on that model. Chats that began on another provider or model are not affected: their turns go without reasoning, as DeepSeek allows.
 
+## 72. "This chat's earlier Gemini steps can't be replayed"
+
+**Cause:** Gemini checks the thought signature on each tool call of the current turn, and this chat has a call without one (it ran on another provider or model, or before ad kept signatures). ad never makes one up.
+
+**Fix:** start a new chat on Gemini, or continue on the model you were using. If `ad doctor` says ad's secret store isn't available, ad keeps Gemini's signatures only while it runs, so a chat in the middle of a tool step can't continue after ad restarts.
+
 ---
 
 For harness problems, the [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill walks through login → hooks → sandbox → the engine's own log. See also [harness.md](harness.md) and, for the terminal UI, [tui.md](tui.md).

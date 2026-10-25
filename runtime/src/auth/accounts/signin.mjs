@@ -67,7 +67,7 @@ const START_HINT = { ollama: "ollama serve", lmstudio: "lms server start" };
 export async function testKey(preset, { key = null, endpoint = null, fetch, clientVersion, insecure = false, probe = false, model = null } = {}) {
   const base = String(endpoint ?? preset.upstreamBase).replace(/\/+$/, "");
   const host = new URL(base).host;
-  const ask = (path, o = {}) => providerRequest({ url: `${base}${path}`, key, fetch, clientVersion, insecure, ...o });
+  const ask = (path, o = {}) => providerRequest({ url: `${base}${path}`, key, keyHeader: preset.authHeader ?? null, fetch, clientVersion, insecure, ...o, headers: { ...(preset.headers ?? {}), ...(o.headers ?? {}) } });
   try {
     if (preset.keyTest === "none") return { status: "ready", detail: null };
     if (preset.keyTest === "empty-chat") {
