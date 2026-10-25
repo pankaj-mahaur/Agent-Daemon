@@ -15,6 +15,9 @@ import { fileURLToPath } from "node:url";
 import { cliErrorLines } from "../harness/io.mjs";
 import { closeHarnessEngines, findThreadHome, launchHarness, newestThreadAcrossHomes, removedAccountText, resumeHint, windowTarget } from "../harness/engines.mjs";
 import { readRecord, recordSettings } from "../harness/settings-sync.mjs";
+import { createTuiAccounts } from "./accounts.mjs";
+import { accountName } from "../auth/accounts/target.mjs";
+import { createSecretStore } from "../auth/secrets.mjs";
 import { createSession } from "../harness/session.mjs";
 import { engineHome, engineVersion, engineErrorText, engineErrorDetail } from "../engine/index.mjs";
 import { createIo } from "./terminal/io.mjs";
@@ -436,7 +439,9 @@ export async function cmdTui(opts = {}) {
     const term = terminalName();
     const newline = newlineHint({ terminal: term, csiU: Boolean(caps.kitty) });
     const st = session.state;
-    const acct = st.account?.type === "chatgpt" ? `ChatGPT ${st.account.planType ?? ""}`.trim() : st.account?.type ?? "provider key";
+    // The account by its name, with where the choice came from when it isn't the user's own (P3.8b).
+    const source = { project: " (project)", env: " (from AD_ACCOUNT)" }[launched?.target?.source] ?? "";
+    const acct = launched?.target?.account ? `${accountName(launched.target.account)}${source}` : st.account?.type === "chatgpt" ? `ChatGPT ${st.account.planType ?? ""}`.trim() : st.account?.type ?? "provider key";
     const branch = (await git(cwd, ["rev-parse", "--abbrev-ref", "HEAD"])).stdout.trim();
     let memoryLine = "not set up";
     try {
@@ -449,7 +454,7 @@ export async function cmdTui(opts = {}) {
     }
     const engineVersionText = engineVersion.pinned() ?? "?";
     // No model configured: name the one the engine will use (its default), not "default".
-    let modelName = config.model ?? opts.model ?? null;
+    let modelName = launched?.params?.model ?? config.model ?? opts.model ?? null;
     if (!modelName) {
       const listed = await Promise.race([engine.models.list().catch(() => null), new Promise((r) => setTimeout(() => r(null), 2000).unref?.())]);
       const def = listed?.find((m) => m.isDefault);
@@ -522,7 +527,19 @@ export async function cmdTui(opts = {}) {
       if (ev.type === "focus") focused = ev.focused;
     });
     const hooksFile = path.join(engine.home, "hooks.json");
+    // Accounts in the UI (P3.8b): only for ad's own homes (a home a command chose has none).
+    const accounts = launched?.lease
+      ? createTuiAccounts({
+          session,
+          store: opts.store ?? createSecretStore(),
+          clientVersion: opts.clientVersion,
+          openBrowser: openUrl,
+          // Another account's engine, started the same way as this window's.
+          launch: (a) => launchHarness({ cwd, account: a.id, command: opts.command, clientVersion: opts.clientVersion, store: opts.store, err: sink, detached: true, experimental: true, interactive: true, allowHomeFolder, idleMs: 5 * 60_000 }),
+        })
+      : null;
     const actions = {
+      accounts,
       bell: (o = {}) => {
         if (!o.unfocusedOnly || !focused) io.write("\x07");
       },

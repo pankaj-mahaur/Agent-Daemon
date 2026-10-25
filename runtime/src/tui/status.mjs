@@ -51,8 +51,9 @@ const homeShort = (p, home) => (home && (p === home || p.startsWith(home + "\\")
 // id → (ctx) → string | {text, warn} | null. Ids missing here are upstream's but not shown by ad.
 const ITEMS = {
   "app-name": (c) => c.app ?? "ad",
-  model: (c) => c.model,
-  "model-with-reasoning": (c) => (c.model ? `${c.model}${c.effort ? ` ${c.effort}` : ""}` : null),
+  // With more than one account ready, the account comes along (P3.8b): "m · OpenRouter · work".
+  model: (c) => (c.model ? `${c.model}${c.account ? ` · ${c.account}` : ""}` : null),
+  "model-with-reasoning": (c) => (c.model ? `${c.model}${c.effort ? ` ${c.effort}` : ""}${c.account ? ` · ${c.account}` : ""}` : null),
   reasoning: (c) => c.effort,
   "current-dir": (c) => (c.cwd ? shortenPath(homeShort(c.cwd, c.home), 40) : null),
   "project-name": (c) => c.project,

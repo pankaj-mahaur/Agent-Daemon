@@ -16,7 +16,10 @@ import { isExploring, renderAdRow, renderBackgroundTerminals, renderCell, render
 import { parseRecap, RECAP_PROMPT_PREFIX, RECAP_SCHEMA, recapHistory, TEMPORARY_THREAD_CONFIG } from "./recap.mjs";
 import { createChecklist, createPicker, renderFooter, renderShortcuts, renderStatus } from "./view/chrome.mjs";
 import { formAutoCancel, homeCdRefusal, homeTrustSkippedNote, LEGACY, ownEngineHomeRefusal, projectConfigFolder, sandboxConsentBody, tombstoneEngineUiSlash } from "../engine/attribution.mjs";
-import { ARM_MS, createChoice, createConfirm, createRequestModal } from "./view/modals.mjs";
+import { ARM_MS, createChoice, createConfirm, createRequestModal, createTextPrompt } from "./view/modals.mjs";
+import { whoOf } from "../harness/auth-list-view.mjs";
+import { accountName, providerDisplay } from "../auth/accounts/target.mjs";
+import { PROVIDER_PRESETS } from "../providers/registry.mjs";
 import { PLAN_CLEAR_CONTEXT_PREFIX } from "../hooks/generated-prompts.mjs";
 import { sanitize } from "./terminal/sanitize.mjs";
 import { lineWidth, truncate } from "./terminal/text.mjs";
@@ -75,8 +78,10 @@ export const SLASH_COMMANDS = [
   { name: "team", source: "ad", desc: "the team board" },
   { name: "schedule", source: "ad", desc: "scheduled jobs (/schedule run <id>)" },
   { name: "tools", source: "ad", desc: "optional agent tools (/tools enable browser)" },
-  { name: "login", source: "ad", desc: "sign in (ChatGPT, OpenAI key, OpenRouter)" },
-  { name: "logout", source: "upstream", desc: "sign out" },
+  { name: "login", source: "ad", desc: "add or sign in an account" },
+  // The engine's own command, run by ad per account (P3.8b).
+  { name: "logout", source: "upstream", desc: "sign out one account" },
+  { name: "account", source: "ad", desc: "pick this window's account" },
   { name: "ad", source: "ad", desc: "run an ad command, e.g. /ad doctor" },
   { name: "fork", source: "upstream", desc: "continue in a copy of this conversation" },
   { name: "rename", source: "upstream", desc: "name this conversation" },
@@ -571,6 +576,8 @@ export function createApp({
       app: "ad",
       model: c.model,
       effort: c.effort,
+      // Only when more than one account is ready (P3.8b).
+      account: actions.accounts?.label?.() ?? null,
       cwd,
       home: statusInfo.home,
       project: path.basename(git.root ?? cwd),
@@ -1217,12 +1224,25 @@ export function createApp({
   // A yes/no question ad asks before acting on its own (/archive, /delete…).
   // → Promise<boolean>. The engine's own requests come first: one that arrives
   // meanwhile is shown, and the question waits under it.
-  function openConfirm(opts) {
+  /** A short text answer (an account's label, a key): no history; masked when asked. → text | null */
+  function openPrompt(opts) {
     confirm?.resolve(false);
     return new Promise((resolve) => {
-      confirm = { view: createConfirm(opts, { now, armMs }), resolve };
+      confirm = { view: createTextPrompt(opts), resolve };
       draw();
     });
+  }
+
+  function openConfirm(opts) {
+    confirm?.resolve(false);
+    const slot = { view: createConfirm(opts, { now, armMs }) };
+    const p = new Promise((resolve) => {
+      slot.resolve = resolve;
+      confirm = slot;
+      draw();
+    });
+    slot.waitFor = p;
+    return p;
   }
 
   // @ and / complete from what is being typed in the composer.
@@ -1296,6 +1316,9 @@ export function createApp({
       const p = popup;
       popup = null;
       p.onSelect(r.select, r.item);
+    } else if (r?.note) {
+      note = { level: "info", text: r.note };
+      draw();
     }
     return true;
   }
@@ -1459,7 +1482,11 @@ export function createApp({
       case "warnings":
         return commitCell(warningsReport());
       case "model":
+        if (arg === "default") return makeDefault();
         return pickModel();
+      case "account":
+        if (!actions.accounts) return warn("/account isn't available here.");
+        return pickAccount();
       case "permissions":
         return openPicker("permissions", PERMISSION_PRESETS.map((p) => ({ label: p.label, hint: p.hint, value: p.value })), (value, item) => {
           session.setNextTurn(value);
@@ -1469,6 +1496,7 @@ export function createApp({
       case "resume":
         return pickThread({ archived: arg === "archived" });
       case "logout":
+        if (actions.accounts) return pickLogout(arg);
         return Promise.resolve(session.engine.logout())
           .then(() => warn("Signed out. /login to sign in again."))
           .catch(fail);
@@ -1653,6 +1681,11 @@ export function createApp({
       case "tools":
         return slash("ad", `tools ${arg || "list"}`);
       case "login":
+        if (actions.accounts && arg !== "chatgpt") {
+          if (turnActive()) return warn("Wait for the turn to finish (or esc), then /login.");
+          return startLogin(arg);
+        }
+      // falls through: ChatGPT (and no account support) sign in through `ad auth login`
       case "ad": {
         const run = { login: actions.login, ad: actions.runAd }[name];
         if (!run) return warn(`/${name} isn't available here.`);
@@ -1767,7 +1800,283 @@ export function createApp({
     draw();
   }
 
+  /* -------------------------------------------------------------- */
+  /* Accounts (P3.8b)                                                */
+  /* -------------------------------------------------------------- */
+
+  const WAIT_SWITCH = "Wait for the turn to finish (or esc), then switch accounts. A model change alone works from the next turn.";
+  const PROVIDER_ORDER = ["chatgpt", ...PROVIDER_PRESETS.map((p) => p.id)];
+
+  // An account row: P3.8a's columns (label, owner when it differs, who, status). What
+  // choosing it does to the open conversation comes first, so 80 columns never cut it.
+  function accountRow(a, snap) {
+    const marks = [a.id === snap.current?.id ? "this window" : null, a.id === snap.defaultId ? "default for new sessions" : null].filter(Boolean);
+    const status = a.status === "ready" ? null : a.status === "needs-sign-in" ? "needs sign-in" : a.status;
+    const consequence = a.status === "ready" && st.thread && a.id !== snap.current?.id ? (actions.accounts.plan(a) === "continues" ? "continues this conversation" : "starts a new conversation") : null;
+    const owner = a.owner && a.owner !== a.label ? a.owner : null;
+    return {
+      label: `${a.id === snap.current?.id ? "\u{25cf} " : "  "}${a.label}${owner ? `  ${owner}` : ""}`,
+      hint: [consequence, whoOf(a), status, ...marks].filter(Boolean).join(" \u{b7} "),
+      value: { account: a },
+      ...(a.status === "ready" || a.status === "needs-sign-in" ? {} : { disabled: true, reason: `${accountName(a)} isn't ready (${a.status}). See: ad auth list` }),
+    };
+  }
+
+  /** /account, and /model with several accounts: accounts by provider, then the extras. */
+  function pickAccount() {
+    const snap = actions.accounts.snapshot();
+    const groups = [...new Set(snap.accounts.map((a) => a.provider))].sort((x, y) => (PROVIDER_ORDER.indexOf(x) + 1 || 99) - (PROVIDER_ORDER.indexOf(y) + 1 || 99));
+    const items = [];
+    for (const p of groups) {
+      items.push({ kind: "header", label: providerDisplay(p) });
+      for (const a of snap.accounts.filter((x) => x.provider === p).sort((x, y) => String(x.label).localeCompare(String(y.label)))) items.push(accountRow(a, snap));
+    }
+    items.push({ kind: "header", label: "More" }, { label: "+ Add an account\u{2026}", value: "add" }, { label: "  Manage accounts\u{2026}", hint: "ad auth list | rename | remove (in a terminal)", value: "manage" }, { label: "  Why isn't Claude, Gemini or OpenCode Zen here?", value: "why" });
+    openPicker(
+      "account",
+      items,
+      (v) => {
+        if (v === "add") return void startLogin("").catch(fail);
+        if (v === "manage") return info0("Manage accounts in a terminal: ad auth list, ad auth rename, ad auth remove (see ad auth --help).");
+        if (v === "why") return info0("Not offered in ad (and what to use instead):", actions.accounts.providers().unavailable.map((r) => clean(r.text)).join("\n"));
+        const a = v.account;
+        if (a.status === "needs-sign-in") return void signInAgain(a).catch(fail);
+        return void pickModelsOf(a).catch(fail);
+      },
+      { title: "Account and model" },
+    );
+  }
+
+  /** An account that needs its key (or sign-in) again: the same account, never a second one. */
+  async function signInAgain(a) {
+    if (a.credential?.kind !== "secret") {
+      if (a.provider !== "chatgpt") return warn(`${accountName(a)} needs signing in again: ad auth login ${a.provider}`);
+      // A ChatGPT sign-in: through the same hand-off as /login chatgpt.
+      const m = await actions.login?.("chatgpt", { threadId: st.thread?.id ?? null });
+      if (m) info0(m);
+      return;
+    }
+    const x = await actions.accounts.reSignIn(a, { readKey: () => askKey(providerDisplay(a.provider)) });
+    if (x?.status && x.status !== "ready") return warn(`${accountName(x)}: ${x.statusDetail ?? x.status}`);
+    info0(`Signed in again: ${accountName(x ?? a)}.`);
+    return pickModelsOf(x ?? a);
+  }
+
+  /** Level 2: the account's models (its engine's when it is this window's own sign-in), then effort. */
+  async function pickModelsOf(a) {
+    const isCurrent = a.id === actions.accounts.current()?.id;
+    // Another account during a turn: say so now, not after a model and an effort.
+    if (!isCurrent && turnActive()) return warn(WAIT_SWITCH);
+    let rows = null;
+    try {
+      rows = await actions.accounts.models(a);
+    } catch (err) {
+      return fail(err);
+    }
+    if (rows === null) {
+      // An engine's own account (ChatGPT): its models come from that engine.
+      if (isCurrent) return pickEngineModels();
+      return void applyChoice(a, {}).catch(fail);
+    }
+    const hours = (ms) => Math.max(0, Math.round((now() - ms) / 3_600_000));
+    const items = rows.map((m) => ({
+      label: clean(m.name || m.id),
+      hint: [
+        !isCurrent && st.thread ? (actions.accounts.plan(a, m.id) === "continues" ? "continues this conversation" : "starts a new conversation") : null,
+        m.free ? (m.priceObservedAt ? `free \u{b7} checked ${hours(m.priceObservedAt)}h ago` : "free") : null,
+        m.dataNote,
+      ]
+        .filter(Boolean)
+        .join(" \u{b7} "),
+      value: m.id,
+    }));
+    if (!items.length) return void applyChoice(a, {}).catch(fail);
+    openPicker(
+      "model",
+      items,
+      // Level 3: effort ("default" keeps the model's own).
+      (model) =>
+        openPicker(
+          "effort",
+          ["default", "low", "medium", "high"].map((e) => ({ label: e, hint: e === "default" ? "the model's own" : "", value: e })),
+          (effort) => void applyChoice(a, { model, effort: effort === "default" ? undefined : effort }).catch(fail),
+          { title: "Reasoning effort" },
+        ),
+      { title: `Model \u{b7} ${accountName(a)}` },
+    );
+  }
+
+  /** The switch table: a model alone any time; another account only at idle, by fork or a new conversation. */
+  async function applyChoice(a, { model, effort } = {}) {
+    const current = actions.accounts.current();
+    if (current && a.id === current.id) {
+      session.setNextTurn({ ...(model ? { model } : {}), ...(effort ? { effort } : {}) });
+      return info0(`Model: ${clean(model ?? st.config.model ?? "(default)")}${effort ? ` ${clean(effort)}` : ""} (from the next turn).`);
+    }
+    if (turnActive()) return warn(WAIT_SWITCH);
+    const plan = actions.accounts.plan(a, model);
+    if (plan === "new" && st.thread) {
+      const yes = await openConfirm({ title: `Start a new conversation on ${accountName(a)}?`, body: "This one stays in /resume.", yes: "Yes, start it", no: "No, stay here" });
+      if (!yes) return info0("Kept this account.");
+    }
+    let r;
+    try {
+      r = await actions.accounts.switchTo(a, { model, effort });
+    } catch (err) {
+      if (err?.code === "SWITCH_GOAL_ACTIVE" || err?.code === "RETARGET_RUNNING") return warn(err.message);
+      return fail(err);
+    }
+    const d = actions.accounts.snapshot().defaultId;
+    const tail = d !== a.id ? " Make it the default for new sessions: /model default" : "";
+    if (r.kind === "continues") info0(`Now on ${accountName(a)}; the conversation continues.${tail}`, "/undo history stays with the previous conversation; its background terminals stop when it is unloaded.");
+    else if (r.kind === "new" && st.thread) info0(`Switched to ${accountName(a)} (new conversation).${tail}`);
+    else info0(`Now on ${accountName(a)}.${tail}`);
+    draw();
+  }
+
+  async function makeDefault() {
+    const a = actions.accounts?.current();
+    if (!a) return warn("This window isn't on an account ad knows. Pick one: /account");
+    await actions.accounts.setDefault(a, st.config.model ?? null);
+    info0(`New sessions now use ${accountName(a)}.`);
+  }
+
+  /** /logout: one account (this window's first). */
+  function pickLogout(arg) {
+    const snap = actions.accounts.snapshot();
+    const signedIn = snap.accounts.filter((a) => a.status === "ready" && (a.credential?.kind === "secret" || (a.credential?.kind === "engine-home" && a.credential.home === "@default")));
+    const run = (a) =>
+      actions.accounts
+        .logout(a)
+        .then((r) => {
+          info0(r.text);
+          if (r.wasCurrent) pickAccount();
+        })
+        .catch((err) => (err?.code === "LOGOUT_ELSEWHERE" || err?.code === "CHATGPT_LATER" ? warn(err.message) : fail(err)));
+    if (arg) {
+      const lower = arg.toLowerCase();
+      const hit = signedIn.filter((a) => `${a.provider}/${a.label}`.toLowerCase() === lower || String(a.label).toLowerCase() === lower);
+      if (hit.length !== 1) return warn(hit.length ? `"${clean(arg)}" matches ${hit.length} accounts; name it as provider/label.` : `No signed-in account matches "${clean(arg)}". /logout lists them.`);
+      return run(hit[0]);
+    }
+    if (!signedIn.length) return info0("No account is signed in.");
+    const order = [...signedIn].sort((x, y) => (x.id === snap.current?.id ? -1 : y.id === snap.current?.id ? 1 : 0));
+    openPicker("logout", order.map((a) => ({ label: accountName(a), hint: [whoOf(a), a.id === snap.current?.id ? "this window" : null].filter(Boolean).join(" \u{b7} "), value: a })), (a) => void run(a), { title: "Sign out" });
+  }
+
+  // The key: a masked field with no history, read only by the sign-in, then dropped.
+  async function askKey(name) {
+    const k = await openPrompt({ title: `${name} API key`, body: "Paste the key. It is stored in ad's secret store and never shown again.", mask: true });
+    if (!k) throw Object.assign(new Error("No key entered; nothing was added."), { code: "NO_KEY" });
+    return k;
+  }
+
+  // A label or owner that looks like a key (pasted into the wrong field) is refused: it would be stored as a name.
+  const keyLike = (s) => /^(sk|xai|fw|or)[-_]|^[A-Za-z0-9_\-.]{32,}$/.test(String(s ?? "").trim());
+
+  /** /login and "+ Add an account…": provider, label and owner, then the key (masked, no history). */
+  function startLogin(arg = "") {
+    const { rows, unavailable } = actions.accounts.providers();
+    const choose = (row) => void loginWith(row).catch(fail);
+    const wanted = String(arg ?? "").trim().toLowerCase();
+    if (wanted) {
+      const blocked = unavailable.find((u) => u.id === wanted);
+      if (blocked) return Promise.resolve(warn(blocked.text));
+      const row = rows.find((r) => r.id === wanted && r.method !== "openrouter-oauth") ?? rows.find((r) => r.id === wanted);
+      if (!row) return Promise.resolve(warn(`ad can't add "${clean(wanted)}" here. /login lists the providers; others: ad auth login --help`));
+      return Promise.resolve(choose(row));
+    }
+    const items = [
+      { label: "ChatGPT", hint: "your ChatGPT plan, in the browser", value: { id: "chatgpt" } },
+      ...rows.map((r) => ({ label: r.label, hint: r.method === "none" ? "on this machine, no key" : r.method === "api-key" ? "an API key" : "", value: r })),
+      { kind: "header", label: "Not offered" },
+      ...unavailable.map((u) => ({ label: String(u.text).split(":")[0], hint: String(u.text).split(": ").slice(1).join(": "), value: u, disabled: true, reason: u.text })),
+    ];
+    openPicker(
+      "login",
+      items,
+      (row) => {
+        if (row.id === "chatgpt") return void Promise.resolve(actions.login?.("chatgpt", { threadId: st.thread?.id ?? null })).then((m) => m && info0(m), fail);
+        choose(row);
+      },
+      { title: "Add an account" },
+    );
+    return Promise.resolve();
+  }
+
+  // A long address a notice would wrap with an indent (and break on copy): rows of its own, no
+  // indent, a link where the terminal has them, and on the clipboard (OSC 52 reaches over SSH).
+  function showAddress(url) {
+    info0("If no browser opened, open this address:");
+    const w = Math.max(20, io.size().cols - 1);
+    const rows = [];
+    for (let i = 0; i < url.length; i += w) rows.push([{ text: url.slice(i, i + w), style: { link: url } }]);
+    commit(rows);
+    Promise.resolve((actions.copy ?? copyText)(url, { write: (d) => io.write(d) }))
+      .then((r) => r?.ok && info0("It is on the clipboard too."))
+      .catch(() => {});
+  }
+
+  async function loginWith(row) {
+    const label = await openPrompt({ title: `A label for this ${row.name} account`, body: "Your own name for it: work, personal, client-a\u{2026}", initial: actions.accounts.nextLabel(row.id) });
+    if (typeof label !== "string" || !label.trim()) return info0("Not added.");
+    if (keyLike(label)) return warn("That looks like a key, not a label. Nothing was added; the key goes in its own hidden field.");
+    const owner = await openPrompt({ title: "Whose is it? (optional)", body: "An owner tag shown in the account list: personal, work, client:acme\u{2026} Enter skips it, Esc cancels." });
+    if (typeof owner !== "string") return info0("Not added.");
+    if (owner.trim() && keyLike(owner)) return warn("That looks like a key, not an owner tag. Nothing was added; the key goes in its own hidden field.");
+    let baseUrl;
+    if (row.id === "custom") {
+      baseUrl = await openPrompt({ title: "Your endpoint's address", body: "The base URL, ending in /v1 (https, or http on this machine).", initial: "https://" });
+      if (typeof baseUrl !== "string" || !baseUrl.trim()) return info0("Not added.");
+    }
+    let waiting = null;
+    let ac = null;
+    let finished = false;
+    if (row.method === "openrouter-oauth") {
+      // A cancellable wait: any answer to it (Esc, "Cancel") stops the sign-in and closes its local server.
+      ac = new AbortController();
+      waiting = openConfirm({ title: "Waiting for the OpenRouter sign-in in your browser\u{2026}", body: "Finish it in the browser. Esc cancels.", yes: "Cancel", no: "Cancel" });
+      waiting.then(() => {
+        if (!finished) ac.abort();
+      });
+    }
+    // The sign-in's own lines carry the address to open when no browser does (SSH, WSL): shown, never dropped.
+    const out = {
+      write: (s) => {
+        const url = String(s).match(/https:\/\/\S+/)?.[0];
+        if (url) showAddress(url);
+        return true;
+      },
+    };
+    let a;
+    try {
+      a = await actions.accounts.signIn({ provider: row.id, method: row.method, label: label.trim(), owner: owner.trim(), readKey: () => askKey(row.name), baseUrl, noKey: row.method === "none", signal: ac?.signal, out });
+    } catch (err) {
+      if (ac?.signal.aborted) return info0("Sign-in cancelled. Nothing was added.");
+      throw err;
+    } finally {
+      finished = true;
+      // The wait ends with the sign-in: its own question goes, never one opened since.
+      if (waiting && confirm?.waitFor === waiting) {
+        const c = confirm;
+        confirm = null;
+        c.resolve(true);
+        draw();
+      }
+    }
+    if (a.status !== "ready") return warn(`${accountName(a)}: ${a.statusDetail ?? a.status}`);
+    info0(`Signed in: ${accountName(a)}.`);
+    const use = await openConfirm({ title: `Use ${accountName(a)} in this window now?`, yes: "Yes", no: "Later" });
+    if (use) await applyChoice(a, {});
+  }
+
+  /** /model: one account → its models (as before); several → accounts first. */
   async function pickModel() {
+    if (actions.accounts && actions.accounts.snapshot().accounts.length > 1) return pickAccount();
+    return pickEngineModels();
+  }
+
+  async function pickEngineModels() {
     let models = [];
     try {
       models = await session.engine.models.list();

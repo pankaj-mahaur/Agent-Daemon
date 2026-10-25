@@ -282,10 +282,11 @@ Type `/` to see them with a one-line hint each. Commands marked "engine" keep th
 
 | Command | What it does |
 |---|---|
-| `/model` | choose the model and reasoning effort (engine) |
+| `/model` | choose the model and reasoning effort; with several accounts, the account first (grouped by provider; each row says whether it continues this conversation or starts a new one). `/model default` makes this window's account and model the default for new sessions |
+| `/account` | pick this window's account (then its model) |
 | `/permissions` | what the engine may do without asking: Read only, Auto (default: edits this folder, asks for the rest), Full access (engine) |
-| `/login [chatgpt\|openai\|openrouter]` | sign in (ChatGPT, OpenAI key, OpenRouter); the engine restarts with the new login |
-| `/logout` | sign out in ad's home (engine) |
+| `/login [provider]` | add or sign in an account: pick the provider, give it a label and an owner, then paste the key into a masked field (never kept in the prompt history). ChatGPT signs in through `ad auth login chatgpt` |
+| `/logout [account]` | sign out one account; the others stay signed in. Signing out this window's account opens `/account` |
 | `/statusline` | choose the status line's items and their order: Space toggles, ← → move, Enter saves, Esc puts it back (engine) |
 | `/title` | choose what the terminal window's title shows, the same way (engine) |
 | `/vim` | toggle the engine's Vim mode for the prompt (engine). See [Vim mode](#vim-mode) |

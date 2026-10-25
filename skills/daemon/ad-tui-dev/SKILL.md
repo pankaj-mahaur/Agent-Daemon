@@ -36,6 +36,7 @@ All paths under `runtime/`.
 | `src/tui/preview.mjs` | `ad tui --preview`, a minimal preview UI on the same engine (the first walking skeleton) |
 | `src/engine/codex/upstream-commands.json` | the engine's slash commands at the pinned tag with their rules: aliases, inline args, allowed during a task, side-conversation allowlist, visibility, popup (`scripts/codex-slash.mjs --file slash_command.rs --popup command_popup.rs`), reached through the façade as `engineCommands` |
 | `src/tui/terminal/` | `io` (raw mode, caps, handoff, restore), `input` (bytes → key/text/paste events), `renderer` (inline), `sanitize`, `text` (spans, SGR, wrap), `width` + `width-table` (generated), `detect` (terminal name, reflow model, width profile) |
+| `src/tui/accounts.mjs` | the window's accounts (P3.8b): snapshot, plan, switchTo (retarget in the same home, useEngine for another), logout, signIn; app.mjs only calls it, so tests stub it |
 | `src/tui/view/` | pure views: `composer`, `markdown` (streaming), `cells` (items, diffs, ad rows), `chrome` (header, status, footer, shortcuts, picker), `modals` (approvals with arming, questions, forms) |
 | `src/harness/session.mjs` | UI-agnostic session controller: submit / steer / queue, requests, restarts, thread locks (`~/.agent-daemon/locks`) |
 | `src/harness/checkpoints.mjs` | git-tree snapshots under `refs/ad/checkpoints/`, private index, restore with conflict check, `UNDO_LIMITS` |
@@ -45,6 +46,12 @@ All paths under `runtime/`.
 | `testkit/golden.mjs` | byte-for-byte goldens; `AD_UPDATE_GOLDEN=1` rewrites them |
 | `testkit/screen.mjs` | test terminals: `xtermScreen` (xterm.js, reflows) and `modelScreen` (clips); `cprDelayMs` for races |
 | `scripts/tui-probe.mjs`, `scripts/tui-demo.mjs` | live probes (`keys`, `screen`, `screen --bottom`) and the engine-free renderer demo |
+
+## Accounts (P3.8b) rules
+
+- An API key is typed only into `createTextPrompt({mask: true})`, a composer with **no history**, and is dropped on answer. It must never reach the main composer, history.jsonl, the transcript, notices or the title (test: tui-accounts "masked field").
+- Switching accounts goes through `session.retarget` (fork, same provider/engine/model) or `session.useEngine` (a new conversation on another home), never `thread/resume` with a new provider.
+- Picker rows may be `{kind: "header"}` (skipped by the cursor, kept only while a row in their group matches the filter) or `{disabled: true, reason}`, where Enter shows the reason in the note line.
 
 ## Tests and goldens
 

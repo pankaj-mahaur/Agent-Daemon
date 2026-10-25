@@ -248,37 +248,78 @@ export function createChecklist({ items = [], title = "", reorder = false, onCha
  * ↑/↓ move, Enter picks, Esc closes.
  * items: [{label, hint?, value}]
  */
+// Rows: {label, hint, value}; {kind: "header", label} groups the rows after it (never
+// under the cursor, kept by the filter only while one of its rows matches); {disabled: true,
+// reason} rows are dim, and Enter on one gives {note: reason} instead of a selection.
 export function createPicker({ items = [], title = "", placeholder = "type to filter", showQuery = true, initial = null, onChange = null } = {}) {
   const query = createComposer();
-  let index = Math.max(0, items.findIndex((it) => it.value === initial));
+  const selectable = (it) => it && it.kind !== "header";
+  let index = Math.max(0, items.findIndex((it) => selectable(it) && it.value === initial));
+  if (!selectable(items[index])) index = Math.max(0, items.findIndex(selectable));
   let top = 0;
 
   const filtered = () => {
     const words = query.text.toLowerCase().split(/\s+/).filter(Boolean);
-    return items.filter((it) => {
+    const hit = (it) => {
       const hay = `${clean(it.label)} ${clean(it.hint ?? "")}`.toLowerCase();
       return words.every((w) => hay.includes(w));
-    });
+    };
+    const out = [];
+    let header = null;
+    for (const it of items) {
+      if (it.kind === "header") {
+        header = it;
+        continue;
+      }
+      if (!hit(it)) continue;
+      if (header) {
+        out.push(header);
+        header = null;
+      }
+      out.push(it);
+    }
+    return out;
+  };
+  // The nearest selectable row from i, going dir (wrapping), or -1.
+  const step = (list, i, dir) => {
+    for (let n = 0; n < list.length; n++) {
+      i = (i + dir + list.length) % list.length;
+      if (selectable(list[i])) return i;
+    }
+    return -1;
+  };
+  const settle = (list) => {
+    index = Math.min(index, Math.max(0, list.length - 1));
+    if (!selectable(list[index])) {
+      const next = step(list, index - 1, 1);
+      index = next === -1 ? 0 : next;
+    }
   };
 
   return {
     handle(ev) {
       if (ev.type === "key" && (ev.name === "escape" || (ev.ctrl && ev.name === "c"))) return { cancel: true };
       const list = filtered();
+      settle(list);
       const was = list[index]?.value;
       // A live preview (/theme) hears about the item under the cursor.
       const moved = () => {
-        const now = filtered()[index]?.value;
+        const l = filtered();
+        settle(l);
+        const now = l[index]?.value;
         if (now !== was && now !== undefined) onChange?.(now);
       };
       if (ev.type === "key" && (ev.name === "up" || ev.name === "down")) {
-        if (list.length) index = (index + (ev.name === "up" ? -1 : 1) + list.length) % list.length;
+        const next = step(list, index, ev.name === "up" ? -1 : 1);
+        if (next !== -1) index = next;
         moved();
         return { changed: true };
       }
       if (ev.type === "key" && (ev.name === "enter" || ev.name === "tab") && !ev.alt) {
         const it = list[index];
-        return it ? { select: it.value, item: it } : { changed: false };
+        if (!selectable(it)) return { changed: false };
+        if (it.disabled) return { changed: true, note: it.reason ?? "Not available." };
+        return { select: it.value, item: it };
       }
       const typed = query.text;
       const r = query.handle(ev);
@@ -292,18 +333,24 @@ export function createPicker({ items = [], title = "", placeholder = "type to fi
     },
     render({ width = 80, height = 10 } = {}) {
       const list = filtered();
-      index = Math.min(index, Math.max(0, list.length - 1));
+      settle(list);
       const rows = Math.max(1, height - (showQuery ? 2 : 1));
       if (index < top) top = index;
       if (index >= top + rows) top = index - rows + 1;
+      // A header just above the cursor's page stays in view with it.
+      if (top > 0 && list[top - 1]?.kind === "header" && index - (top - 1) < rows) top -= 1;
       const out = [];
       const q = query.render({ width, prompt: title ? `${clean(title)} \u{203a} ` : "\u{203a} ", placeholder });
       if (showQuery) out.push(...q.lines.slice(0, 1));
       if (!list.length) out.push([{ text: "  no matches", style: S.dim }]);
       for (let i = top; i < Math.min(list.length, top + rows); i++) {
         const it = list[i];
+        if (it.kind === "header") {
+          out.push(truncate([{ text: ` ${clean(it.label)}`, style: S.title }], width));
+          continue;
+        }
         const cur = i === index;
-        const line = [{ text: cur ? "\u{203a} " : "  ", style: S.sel }, { text: clean(it.label), style: cur ? S.sel : undefined }];
+        const line = [{ text: cur ? "\u{203a} " : "  ", style: S.sel }, { text: clean(it.label), style: it.disabled ? S.dim : cur ? S.sel : undefined }];
         if (it.hint) line.push({ text: `  ${clean(it.hint)}`, style: S.dim });
         out.push(truncate(line, width));
       }
@@ -315,7 +362,9 @@ export function createPicker({ items = [], title = "", placeholder = "type to fi
     },
     /** The value under the cursor. */
     get current() {
-      return filtered()[index]?.value;
+      const l = filtered();
+      settle(l);
+      return selectable(l[index]) ? l[index]?.value : undefined;
     },
   };
 }

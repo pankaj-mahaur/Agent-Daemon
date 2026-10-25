@@ -66,6 +66,15 @@ ad auth test <account>               # check it (--model: also one small request
 | `logout` | signs out the sign-in in ad's main engine folder only |
 | `logout openrouter` | signs out the one OpenRouter account: its key is deleted, the account stays |
 
+## In the terminal UI
+
+- **`/model`.** With several accounts, `/model` lists them first, grouped by provider. `●` marks this window's account. Each row says before you choose whether the conversation continues or a new one starts. A model alone changes from the next turn, even while a turn runs; an account change waits for the turn to end.
+- **Switching within one provider.** Moving to another account of the same provider with the same model continues the conversation as a copy on that account. Any other move asks first, then starts a new conversation; the old one stays in `/resume`.
+- **`/account`.** It opens the account list directly. `/model default` makes this window's account the default for new sessions.
+- **`/login`.** Adds an account without leaving ad. The key goes into a masked field that never reaches the prompt history, the transcript or the window title. The OpenRouter browser sign-in shows its address in case no browser opens (over SSH, say); Esc cancels it. An account that needs signing in again takes its new key the same way and keeps its label.
+- **`/logout`.** Signs out one account.
+- **Each window keeps its own choice.** Another window's `/model` doesn't change it, and `ad auth use` doesn't either. The footer names the account when more than one is ready.
+
 ## Providers
 
 | Provider | Id | How | Notes |
