@@ -88,8 +88,8 @@ export function createAccountService({ root = adRoot(), store = createSecretStor
      * with that status (P3.5: "error" when the provider couldn't be reached).
      * extra: more fields for the record (insecure). → the record
      */
-    async addApiKey({ provider, label, owner = "", endpoint = null, key, test = async () => {}, defaultModel = null, extra = {} }) {
-      const { id, attemptId } = await service.reserve({ provider, label, owner, method: "api-key", endpoint, defaultModel });
+    async addApiKey({ provider, label, owner = "", endpoint = null, key, test = async () => {}, defaultModel = null, extra = {}, method = "api-key" }) {
+      const { id, attemptId } = await service.reserve({ provider, label, owner, method, endpoint, defaultModel });
       crash("afterReserve");
       const ref = secretRef(id);
       store.set(ref, key);

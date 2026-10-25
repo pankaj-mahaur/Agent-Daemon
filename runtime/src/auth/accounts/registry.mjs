@@ -118,7 +118,7 @@ export function newAccount({ provider, label, owner = "", method, credential = n
     label,
     owner,
     method,
-    credential: credential ?? (method === "api-key" ? { kind: "secret", ref: secretRef(id) } : method === "none" ? { kind: "none" } : null),
+    credential: credential ?? (method === "api-key" || method === "openrouter-oauth" ? { kind: "secret", ref: secretRef(id) } : method === "none" ? { kind: "none" } : null),
     keyHint: null,
     credentialRevision: 1,
     providerEntry: entry,

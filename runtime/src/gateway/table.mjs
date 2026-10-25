@@ -24,7 +24,8 @@ export function gatewayTable(doc, { presets = PRESETS } = {}) {
   const table = new Map();
   for (const a of doc.accounts ?? []) {
     if (a.status !== "ready" || !a.providerEntry) continue;
-    if (!["api-key", "none"].includes(a.method)) continue;
+    // A key from OpenRouter's own sign-in is an ordinary OpenRouter key.
+    if (!["api-key", "openrouter-oauth", "none"].includes(a.method)) continue;
     const preset = presets[a.provider];
     const upstreamBase = a.endpoint ?? preset?.baseUrl;
     if (!upstreamBase) continue;

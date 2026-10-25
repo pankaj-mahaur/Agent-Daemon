@@ -95,7 +95,7 @@ export function labelFor(provider, label, { doc } = {}) {
 }
 
 const LABEL_NEEDED = (provider) => `${provider} already has an account. Name the new one: ad auth login ${provider} --label <label>`;
-const labelOrFail = (provider, label) => {
+export const labelOrFail = (provider, label) => {
   const l = labelFor(provider, label);
   if (!l) throw fail("LABEL_NEEDED", LABEL_NEEDED(provider));
   // Taken already: said before the key is asked for.
@@ -104,7 +104,7 @@ const labelOrFail = (provider, label) => {
 };
 
 // addApiKey's test: refused → thrown (not saved); unreachable → kept as "error".
-function keyVerdict(preset, provider, label, opts) {
+export function keyVerdict(preset, provider, label, opts) {
   return async (key) => {
     const v = await testKey(preset, { ...opts, key });
     if (v.status === "refused") throw fail("KEY_REFUSED", SIGNIN_TEXTS.KEY_REFUSED(v.http, provider, label));

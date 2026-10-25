@@ -5,6 +5,7 @@
 //     an API key (hidden prompt, or the first line of piped stdin), never on the command line
 //   ad auth login custom --base-url <url> [--no-key] [--insecure] [--no-test] [--model <m>]
 //   ad auth login ollama | lmstudio                       a local server, no key
+//   ad auth login openrouter --oauth                      OpenRouter's own sign-in in the browser
 //   ad auth use <account> [--model <m>]                   the default account
 //   ad auth test <account>                                check a stored key again
 // A first account becomes the default when it is ready and no other ready account exists
@@ -18,9 +19,8 @@ import { refuseKeyArgs, signInApiKey, signInCustom, signInLocal, SIGNIN_TEXTS, t
 import { createSecretStore } from "../auth/secrets.mjs";
 import { redact } from "../auth/redact.mjs";
 import { presetFor, UNAVAILABLE } from "../providers/registry.mjs";
-import { readSecret } from "./io.mjs";
-
-const OAUTH_LATER = "OpenRouter sign-in in the browser comes in the next update. Meanwhile add a key: ad auth login openrouter";
+import { openUrl, readSecret } from "./io.mjs";
+import { signInOpenRouter } from "../auth/accounts/openrouter-oauth.mjs";
 
 /** An account by reference, or by provider id when that provider has one account (or one labelled default). */
 export function resolveAccountRef(doc, ref) {
@@ -129,10 +129,20 @@ export async function cmdAuthAccounts(sub, args = [], opts = {}) {
     a = await signInCustom({ ...common, baseUrl: opts.baseUrl, noKey: Boolean(opts.noKey), insecure: Boolean(opts.insecure), model: opts.model ?? null, confirmProbe, readKey });
   } else {
     if (opts.oauth) {
-      err.write(`${OAUTH_LATER}\n`);
-      return 2;
-    }
-    a = await signInApiKey({ ...common, provider: id, readKey, defaultModel: opts.model ?? null });
+      if (id !== "openrouter") throw Object.assign(new Error(`${preset.name} has no sign-in in the browser; add a key: ad auth login ${id}`), { code: "NO_OAUTH" });
+      // Ctrl+C during the wait ends it, closes the local server and saves nothing; once
+      // the wait is over, Ctrl+C is the process's own again.
+      const ac = new AbortController();
+      const onInt = () => ac.abort();
+      const own = !opts.signal;
+      if (own) process.once("SIGINT", onInt);
+      const done = () => own && process.off("SIGINT", onInt);
+      try {
+        a = await signInOpenRouter({ ...common, openBrowser: opts.openBrowser ?? openUrl, out, signal: opts.signal ?? ac.signal, onWaitEnd: done, ...(opts.oauthUrls ?? {}) });
+      } finally {
+        done();
+      }
+    } else a = await signInApiKey({ ...common, provider: id, readKey, defaultModel: opts.model ?? null });
   }
   // The default: this one, when it works and no other ready account could already be it.
   let isDefault = false;

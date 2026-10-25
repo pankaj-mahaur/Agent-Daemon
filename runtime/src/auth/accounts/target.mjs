@@ -31,7 +31,7 @@ export const accountName = (a) => `${providerDisplay(a.provider)} · ${a.label}`
 export const TARGET_TEXTS = Object.freeze({
   TARGET_NOT_READY: (a) =>
     a.status === "needs-sign-in"
-      ? `ad auth: ${accountName(a)} needs ${a.method === "api-key" ? "its key" : "a sign-in"} again: ad auth login ${a.provider} --label ${a.label}`
+      ? `ad auth: ${accountName(a)} needs ${a.method === "api-key" ? "its key" : "a sign-in"} again: ad auth login ${a.provider}${a.method === "openrouter-oauth" ? " --oauth" : ""} --label ${a.label}`
       : `ad auth: ${accountName(a)} isn't ready (${a.status}). See: ad auth status`,
   PROJECT_PICKS: (a) => `This project picks ${accountName(a)} (.agent-daemon/config.json).`,
   ACCOUNT_IGNORED: (source, ref, why) => `ad ignored ${source === "env" ? "AD_ACCOUNT" : "this window's account"} ${JSON.stringify(ref)}: ${why}`,

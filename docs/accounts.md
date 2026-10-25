@@ -7,6 +7,7 @@ ad runs on the accounts you add: several keys of one provider, several providers
 ```bash
 ad auth login openrouter                  # an API key, asked at a hidden prompt
 ad auth login openrouter --label work     # a second key of the same provider
+ad auth login openrouter --oauth          # or sign in to OpenRouter in the browser
 ad auth login xai
 ad auth login custom --base-url https://llm.example.com/v1
 ad auth login ollama                      # a local server, no key
@@ -21,6 +22,14 @@ ad auth test openrouter/work              # check a stored key again
 - **Checking a key.** ad asks the provider itself, never through the engine. It sends only a `User-Agent: ad/<version>` and the key, over https (or to your own machine), and never follows a redirect with the key.
   - A refused key is not saved.
   - When the provider can't be reached, the key is saved and the account waits for `ad auth test`.
+
+### OpenRouter's own sign-in
+
+`ad auth login openrouter --oauth` signs in on OpenRouter's site, using OpenRouter's official flow for apps (PKCE). No password or key passes through ad: OpenRouter gives ad a key for you, stored like any other.
+
+1. ad opens the page in your browser and prints the address, in case the browser doesn't open.
+2. ad waits for OpenRouter to send you back to a page on your own machine (127.0.0.1).
+3. Ctrl+C, or 10 minutes without an answer, ends the sign-in and saves nothing.
 
 ## Providers
 
@@ -37,6 +46,22 @@ ad auth test openrouter/work              # check a stored key again
 | LM Studio | `lmstudio` | none (local) | `localhost:1234` |
 
 **What "supported" means.** A provider is *supported* once a real task on a real key passed ad's acceptance run, dated and recorded. *Experimental* means ad's mock contract tests pass plus one real task with known gaps. Until then a provider is a *candidate*: you can add it by id, but pickers and help don't list it unless `AD_SHOW_CANDIDATES=1` is set. Each provider's record is re-run before a release, since providers change their addresses and terms.
+
+To make a record yourself, with one of your own accounts:
+
+```bash
+node runtime/scripts/provider-accept.mjs --account openrouter/work [--model <id>] [--out <dir>]
+```
+
+- **What it runs.** One real coding task (a failing test to fix) in a throwaway folder, through ad's own path: the account's engine, then ad's gateway, then the provider.
+- **What it writes.** A dated record of:
+  - the models listed and which are free;
+  - the tools the agent called and the turn's status;
+  - the last limits the gateway saw;
+  - the time taken and the versions in use.
+
+  It never holds the key. The lines only a person can check are marked `(fill in)`: the official docs, the price source and the data terms. The status stays *candidate* until someone reviews the record.
+- **Where it runs.** On your machine only: the script refuses under CI.
 
 **Retries.** A provider that fails ends the turn quickly and says so: each provider ad adds allows one retry of a request and one of a broken stream, and nothing more.
 
