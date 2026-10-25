@@ -40,7 +40,7 @@ export function prepare(bodyBuffer, route, { sealKey = null, salt = "" } = {}) {
 
 export const refusalBody = (err) => ({ error: { type: "invalid_request_error", code: "invalid_request", param: err.param ?? null, message: String(err.message) } });
 
-export const failure = (status, text, { retryAfter = null, route = {}, capS = 60 } = {}) => httpFailure(status, text, { retryAfter, capS, label: route.label ?? "The provider" });
+export const failure = (status, text, { retryAfter = null, route = {}, capS = 60 } = {}) => httpFailure(status, text, { retryAfter, capS, label: route.label ?? "The provider", quotaNames: route.quotaErrors ?? [] });
 
 export function failedStream(res, { code, message }) {
   const id = mintId("resp_");
@@ -88,7 +88,7 @@ export async function pipeAnswer(upBody, res, { turn, route = {}, sealKey = null
         }
         if (e.t === "error") {
           done = true;
-          const f = streamFailure(e.error, { capS, label });
+          const f = streamFailure(e.error, { capS, label, quotaNames: route.quotaErrors ?? [] });
           side = f.side;
           writer.fail(f.code, f.message);
           return;

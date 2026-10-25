@@ -116,7 +116,7 @@ export async function cmdAuth(sub, args = [], opts = {}) {
   };
 
   if (!sub || sub === "help" || opts.help) {
-    if (sub === "login") out.write(loginHelp());
+    if (sub === "login") out.write(loginHelp({ provider: args[0] ?? null }));
     else out.write(usage);
     return sub || opts.help ? 0 : 1;
   }

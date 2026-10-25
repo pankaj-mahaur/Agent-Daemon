@@ -1894,6 +1894,8 @@ export function createApp({
         .filter(Boolean)
         .join(" \u{b7} "),
       value: m.id,
+      // A model ad can't speak to yet (OpenCode Go's messages and Gemini routes): shown, not offered.
+      ...(m.available === false ? { disabled: true, reason: `${clean(m.name || m.id)} is ${m.dataNote}.` } : {}),
     }));
     if (!items.length) return void applyChoice(a, {}).catch(fail);
     openPicker(
@@ -1993,7 +1995,7 @@ export function createApp({
     }
     const items = [
       { label: "ChatGPT", hint: "your ChatGPT plan, in the browser", value: { id: "chatgpt" } },
-      ...rows.map((r) => ({ label: r.label, hint: r.method === "none" ? "on this machine, no key" : r.method === "api-key" ? "an API key" : "", value: r })),
+      ...rows.map((r) => ({ label: r.label, hint: r.hint ?? (r.method === "none" ? "on this machine, no key" : r.method === "api-key" ? "an API key" : ""), value: r })),
       { kind: "header", label: "Not offered" },
       ...unavailable.map((u) => ({ label: String(u.text).split(":")[0], hint: String(u.text).split(": ").slice(1).join(": "), value: u, disabled: true, reason: u.text })),
     ];

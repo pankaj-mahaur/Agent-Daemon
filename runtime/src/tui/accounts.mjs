@@ -172,7 +172,7 @@ export function createTuiAccounts({ session, store, launch, clientVersion, fetch
       return { wasCurrent, text: wasCurrent ? `Signed out of ${accountName(a)}. Pick an account to keep working.` : `Signed out: ${accountName(a)}. This window keeps ${now ? accountName(now) : "its account"}.` };
     },
     providers({ env = process.env } = {}) {
-      const rows = visiblePresets({ env }).flatMap((p) => p.methods.map((m) => ({ id: p.id, name: p.name, method: m, label: m === "openrouter-oauth" ? `${p.name} (sign in in the browser)` : p.name })));
+      const rows = visiblePresets({ env }).flatMap((p) => p.methods.map((m) => ({ id: p.id, name: p.name, method: m, label: m === "openrouter-oauth" ? `${p.name} (sign in in the browser)` : p.pickerHint ? `${p.name} · your key` : p.name, ...(p.pickerHint ? { hint: p.pickerHint } : {}) })));
       return { rows, unavailable: UNAVAILABLE };
     },
     nextLabel(provider) {

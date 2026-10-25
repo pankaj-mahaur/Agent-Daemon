@@ -28,8 +28,14 @@ Providers and how to sign in: ad auth login --help
 
 const HOW = { "api-key": "an API key", "openrouter-oauth": "--oauth: sign in in the browser", none: "no key (local)" };
 
+// A provider's own help line (`ad auth login <provider> --help`), where it has more to say.
+const PROVIDER_HELP = Object.freeze({
+  "opencode-go": "Key from your OpenCode account (opencode.ai). Zen's free models aren't available in other apps.",
+});
+
 /** `ad auth login --help`: one line per provider ad lists, then what it doesn't offer. */
-export function loginHelp({ env = process.env } = {}) {
+export function loginHelp({ env = process.env, provider = null } = {}) {
+  if (provider && PROVIDER_HELP[provider]) return `Usage: ad auth login ${provider} [--label <name>] [--owner <text>]\n\n${PROVIDER_HELP[provider]}\n`;
   const shown = visiblePresets({ env });
   const rows = [["chatgpt", "ChatGPT", "your ChatGPT plan, in the browser (--device: a code)"], ...shown.map((p) => [p.id, p.name, p.methods.map((m) => HOW[m] ?? m).join(", ")])];
   const hidden = PROVIDER_PRESETS.filter((p) => !shown.includes(p)).map((p) => p.id);

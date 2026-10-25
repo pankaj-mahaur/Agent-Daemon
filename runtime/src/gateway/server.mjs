@@ -22,10 +22,23 @@
 
 import { createServer } from "node:http";
 import { Readable } from "node:stream";
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { ulid } from "../ids.mjs";
 import { errorFromBody, observedHeaders, retryAfterSeconds, sseTap } from "./observe.mjs";
 import { TRANSLATED_MODES, failedStream, failure, pipeAnswer, prepare, refusalBody } from "./translate/index.mjs";
+
+// Per-model routes (P3.6): a model the provider serves on another wire answers like this.
+// The refusal must be about the model (not a parameter: "reasoning_effort is not
+// supported for this endpoint" leaves the wire alone).
+const ENDPOINT_REFUSAL = /\bmodel\b[^.]*\bnot (available|supported) (on|for|via) this endpoint/i;
+const notYet = (route) => `This ${route.label ?? "provider's"} model isn't available to ad yet. Pick another with /model.`;
+// The engine's conversation id, from the request's metadata.
+const threadOf = (j) => {
+  const m = j?.client_metadata && typeof j.client_metadata === "object" ? j.client_metadata : {};
+  return typeof m.thread_id === "string" ? m.thread_id : typeof m.session_id === "string" ? m.session_id : null;
+};
+// A provider's own quota error by name (OpenCode's GoUsageLimitError) in an error body.
+const namedQuota = (text, names) => names.some((n) => new RegExp(`"(type|code)"\\s*:\\s*"${n}"`).test(text));
 
 // A translated route's side-channel kind → the observation's error class (03-ARCH §H).
 const KIND_CLASS = { quotaExhausted: "quota", rateLimit: "rate-limit", provider5xx: "server", transientNetwork: "server", authExpired: "auth", authRevoked: "auth", contextOverflow: "bad-request", invalidConfig: "bad-request", unknown: "unknown" };
@@ -64,7 +77,7 @@ export function parseTarget(rawUrl) {
  *           retryAfterCapS?: number, maxInFlight?: number, maxBodyBytes?: number, idleTimeoutMs?: number,
  *           connectTimeoutMs?: number, fetchImpl?: typeof fetch }} o
  */
-export function createGatewayServer({ token, table, keys = {}, onUpstream = () => {}, retryAfterCapS = 60, maxInFlight = 16, maxBodyBytes = 64 * 2 ** 20, idleTimeoutMs = 300_000, connectTimeoutMs = 15_000, fetchImpl = fetch, sealKey = null, translate = true }) {
+export function createGatewayServer({ token, table, keys = {}, onUpstream = () => {}, retryAfterCapS = 60, maxInFlight = 16, maxBodyBytes = 64 * 2 ** 20, idleTimeoutMs = 300_000, connectTimeoutMs = 15_000, fetchImpl = fetch, sealKey = null, translate = true, sessionId = randomUUID() }) {
   // The reasoning envelope's key: 32 bytes, or their base64 (as it crosses IPC).
   const seal = !sealKey ? null : typeof sealKey === "string" ? Buffer.from(sealKey, "base64") : Buffer.from(sealKey);
   const salt = token.slice(0, 16); // per run: Mistral's call ids are derived within one request anyway
@@ -115,8 +128,10 @@ export function createGatewayServer({ token, table, keys = {}, onUpstream = () =
     if (!isResponses && !isModels) return void adError(res, 403, "ad: the gateway doesn't forward this request");
     const route = routes.get(t.entry);
     if (!route) return void adError(res, 404, "ad: this account isn't available any more");
-    const translated = TRANSLATED_MODES.includes(route.mode);
-    if (route.mode !== "passthrough" && !translated) return void adError(res, 502, "ad: this version can't talk to this provider's API yet");
+    // per-model (OpenCode Go): passthrough or chat by the requested model's wire, below.
+    const perModel = route.mode === "per-model";
+    let translated = TRANSLATED_MODES.includes(route.mode);
+    if (route.mode !== "passthrough" && !translated && !perModel) return void adError(res, 502, "ad: this version can't talk to this provider's API yet");
     if (translated && !translate) return void adError(res, 502, "ad: providers that need translation are turned off (AD_TRANSLATE=0)");
 
     const at = new Date();
@@ -146,6 +161,10 @@ export function createGatewayServer({ token, table, keys = {}, onUpstream = () =
     };
     let body = Buffer.alloc(0);
     let prepared = null;
+    let conversation = null; // the engine's thread: the session header's value
+    let reqModel = "";
+    let wire = null;
+    let tRoute = route; // the route as this request's model needs it (per-model quirks)
     if (isResponses) {
       const chunks = [];
       let size = 0;
@@ -164,10 +183,40 @@ export function createGatewayServer({ token, table, keys = {}, onUpstream = () =
         return void adError(res, 413, "ad: the request is too large");
       }
       body = Buffer.concat(chunks);
+      if (perModel || route.sessionHeader) {
+        let j = null;
+        try {
+          j = JSON.parse(body.toString("utf8"));
+        } catch {
+          j = null;
+        }
+        conversation = threadOf(j);
+        reqModel = typeof j?.model === "string" ? j.model : "";
+      }
+      if (perModel) {
+        wire = route.learned?.get(reqModel) ?? route.wires?.[reqModel] ?? "chat";
+        if (wire !== "responses" && wire !== "chat") {
+          const message = notYet(route);
+          ev.status = 400;
+          ev.translate = { kind: "invalidConfig", message };
+          ev.error = { status: 400, type: null, code: "invalid_request", message, class: "bad-request" };
+          done();
+          return void json(res, 400, { error: { type: "invalid_request_error", code: "invalid_request", param: "model", message } });
+        }
+        translated = wire === "chat";
+        // A model's own rules (DeepSeek's reasoning replay on OpenCode Go's DeepSeek models).
+        const own = route.modelQuirks?.[reqModel];
+        if (own?.length) tRoute = { ...route, quirks: [...(route.quirks ?? []), ...own] };
+        if (translated && !translate) {
+          ev.status = 502;
+          done();
+          return void adError(res, 502, "ad: providers that need translation are turned off (AD_TRANSLATE=0)");
+        }
+      }
       if (translated) {
         // Responses → Chat; what can't be carried is refused here, before any upstream call.
         try {
-          prepared = prepare(body, route, { sealKey: seal, salt });
+          prepared = prepare(body, tRoute, { sealKey: seal, salt });
           body = prepared.body;
           ev.threadId = prepared.threadId;
         } catch (e) {
@@ -213,6 +262,9 @@ export function createGatewayServer({ token, table, keys = {}, onUpstream = () =
       headers.accept = "text/event-stream";
     }
     Object.assign(headers, route.headers ?? {});
+    // A stable id per conversation (the provider routes and caches by it); outside a
+    // conversation (the model list), this gateway's own.
+    if (route.sessionHeader) headers[route.sessionHeader] = conversation ?? sessionId;
 
     const ac = new AbortController();
     let clientGone = false;
@@ -286,7 +338,17 @@ export function createGatewayServer({ token, table, keys = {}, onUpstream = () =
         text = "";
       }
       ev.error = errorFromBody(up.status, text);
-      if (prepared) {
+      if (perModel && (up.status === 400 || up.status === 404) && ENDPOINT_REFUSAL.test(String(ev.error?.message ?? ""))) {
+        // The model lives on the other wire, said plainly. Only a model the dated table
+        // doesn't list is tried on the other wire for the rest of this run; a listed one
+        // keeps its wire (a parameter error must never move it).
+        if (!route.wires?.[reqModel]) (route.learned ??= new Map()).set(reqModel, wire === "responses" ? "chat" : "responses");
+        const message = notYet(route);
+        ev.translate = { kind: "invalidConfig", message };
+        done();
+        return void json(res, 400, { error: { type: "invalid_request_error", code: "invalid_request", param: "model", message } });
+      }
+      if (prepared || (route.quotaErrors?.length && namedQuota(text, route.quotaErrors))) {
         // Only codes the engine knows; the real reason goes to the event.
         const f = failure(up.status, text, { retryAfter: up.headers.get("retry-after"), route, capS: retryAfterCapS });
         ev.translate = f.side;
@@ -350,7 +412,7 @@ export function createGatewayServer({ token, table, keys = {}, onUpstream = () =
         emit();
       };
       try {
-        observe(await pipeAnswer(watched(), res, { turn: prepared.turn, route, sealKey: seal, capS: retryAfterCapS, signal: ac.signal, onTerminal: observe }));
+        observe(await pipeAnswer(watched(), res, { turn: prepared.turn, route: tRoute, sealKey: seal, capS: retryAfterCapS, signal: ac.signal, onTerminal: observe }));
       } finally {
         clearTimeout(idle);
         done();

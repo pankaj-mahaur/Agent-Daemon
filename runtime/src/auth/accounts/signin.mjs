@@ -13,6 +13,7 @@
 // Keys come only from readKey (a hidden prompt, or the first line of piped stdin), asked
 // for after the label and address are known to be fine.
 
+import { randomUUID } from "node:crypto";
 import { presetFor } from "../../providers/registry.mjs";
 import { HTTP_TEXTS, isLoopback, providerRequest } from "../../providers/http.mjs";
 import { registerSecret } from "../redact.mjs";
@@ -69,6 +70,20 @@ export async function testKey(preset, { key = null, endpoint = null, fetch, clie
   const ask = (path, o = {}) => providerRequest({ url: `${base}${path}`, key, fetch, clientVersion, insecure, ...o });
   try {
     if (preset.keyTest === "none") return { status: "ready", detail: null };
+    if (preset.keyTest === "empty-chat") {
+      // A model list anyone can read proves nothing about a key: an empty chat request is
+      // answered 401 for a wrong key and refused as invalid (no tokens) for a right one.
+      const headers = preset.sessionHeader ? { [preset.sessionHeader]: `ad-key-test-${randomUUID()}` } : {};
+      const model = Object.entries(preset.wires ?? {}).find(([, w]) => w === "chat")?.[0] ?? "default";
+      const e = await ask(preset.upstreamPath, { method: "POST", body: { model, messages: [], max_tokens: 1 }, headers });
+      if (e.status === 401 || e.status === 403) return { status: "refused", http: e.status, detail: null };
+      // Ready only when the key got past the door: a success, the empty request refused as
+      // invalid, or a limit. A moved path, a missing header or a 5xx proves nothing.
+      const errType = String(e.json?.error?.type ?? e.json?.type ?? "");
+      const invalid = (e.status === 400 && e.json && !/MissingSessionID/i.test(errType)) || e.status === 422;
+      if ((e.status >= 200 && e.status < 300) || invalid || e.status === 429) return { status: "ready", detail: null };
+      return { status: "unreachable", detail: `${host} answered HTTP ${e.status}${errType ? ` (${errType})` : ""}; the key wasn't checked.` };
+    }
     const r = await ask(preset.keyTest === "key-endpoint" ? "/key" : preset.modelsPath);
     if (r.status === 401 || r.status === 403) return { status: "refused", http: r.status, detail: null };
     if (r.status >= 500) return { status: "unreachable", detail: `${host} answered HTTP ${r.status}.` };

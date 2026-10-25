@@ -8,7 +8,7 @@
 // IPC only. The child's env is minimal: PATH, the OS basics, proxy and CA settings.
 
 import { fork } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { registerSecret } from "../auth/redact.mjs";
 
@@ -28,7 +28,10 @@ const accountsOf = (table) => [...new Set([...table.values()].filter((r) => r.au
 // Functions (token providers) can't cross IPC: only static-key and none routes go there.
 const wire = (table) => [...table.entries()].filter(([, r]) => r.auth?.kind !== "token-provider");
 
-export async function startGateway({ table = new Map(), getKeys = async () => ({}), onUpstream = () => {}, env = process.env, startTimeoutMs = 15_000, ...opts } = {}) {
+// sessionId: this ad session's id for providers that want one per session (OpenCode Go's
+// x-opencode-session outside a conversation); made here, so it is ad's, not the child's.
+export async function startGateway({ table = new Map(), getKeys = async () => ({}), onUpstream = () => {}, env = process.env, startTimeoutMs = 15_000, sessionId = randomUUID(), ...rest } = {}) {
+  const opts = { ...rest, sessionId };
   const token = randomBytes(32).toString("base64url");
   registerSecret(token, "gateway token");
   const keys = await getKeys(accountsOf(table));

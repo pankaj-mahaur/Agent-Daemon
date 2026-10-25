@@ -15,6 +15,8 @@ import { approvalResponse, isApprovalMethod } from "../src/engine/codex/approval
 import { createGatewayServer } from "../src/gateway/server.mjs";
 import { TOKEN_HIDDEN_ARGS } from "../src/gateway/table.mjs";
 import { chat, defaultChatScript, lastUserText, startMockChat } from "../testkit/mock-chat.mjs";
+import { startMockOpencode } from "../testkit/mock-opencode.mjs";
+import { gatewayTable, PRESETS } from "../src/gateway/table.mjs";
 
 const PINNED = resolveCodexCommand({});
 const wanted = process.env.AD_REAL_ENGINE === "1";
@@ -23,6 +25,8 @@ const TURN_MS = 90_000;
 const TOKEN = ["gw", "token", "a".repeat(30)].join("-");
 const KEY = ["gsk", "real", "engine", "4444555566667777"].join("_");
 const ENTRY = "ad-groq-real";
+const GO_ENTRY = "ad-opencode-go-real";
+const GO_KEY = ["go", "real", "engine", "8888999900001111"].join("_");
 const PATCH = "*** Begin Patch\n*** Add File: hello.txt\n+hello through the gateway\n*** End Patch";
 const isWin = process.platform === "win32";
 
@@ -43,6 +47,7 @@ function script(body, { count }) {
 }
 
 let mock;
+let goMock;
 let gw;
 let server;
 let home;
@@ -52,8 +57,11 @@ const events = [];
 before(async () => {
   if (!wanted) return;
   mock = await startMockChat({ script });
-  const table = new Map([[ENTRY, { accountId: "acct_real", provider: "groq", upstreamBase: mock.url, mode: "chat", upstreamPath: "/chat/completions", quirks: [], model: {}, auth: { kind: "static-key", scheme: "bearer" }, headers: {}, allowHttp: true, label: "Groq" }]]);
-  gw = createGatewayServer({ token: TOKEN, table, keys: { acct_real: KEY }, onUpstream: (e) => events.push(e) });
+  goMock = await startMockOpencode({ keys: [GO_KEY] });
+  const goRoutes = gatewayTable({ accounts: [{ id: "acct_go", provider: "opencode-go", label: "go", method: "api-key", status: "ready", providerEntry: GO_ENTRY }] }, { presets: { ...PRESETS, "opencode-go": { ...PRESETS["opencode-go"], baseUrl: goMock.base } } });
+  for (const r of goRoutes.values()) r.allowHttp = true;
+  const table = new Map([...goRoutes, [ENTRY, { accountId: "acct_real", provider: "groq", upstreamBase: mock.url, mode: "chat", upstreamPath: "/chat/completions", quirks: [], model: {}, auth: { kind: "static-key", scheme: "bearer" }, headers: {}, allowHttp: true, label: "Groq" }]]);
+  gw = createGatewayServer({ token: TOKEN, table, keys: { acct_real: KEY, acct_go: GO_KEY }, onUpstream: (e) => events.push(e) });
   const port = await gw.listen();
   home = mkdtempSync(join(tmpdir(), "ad-tr-home-"));
   cwd = realpathSync(mkdtempSync(join(tmpdir(), "ad-tr-work-")));
@@ -82,6 +90,15 @@ before(async () => {
       "stream_max_retries = 1",
       "supports_websockets = false",
       "",
+      "[model_providers.go]",
+      'name = "OpenCode Go · go"',
+      `base_url = "http://127.0.0.1:${port}/p/${GO_ENTRY}/v1"`,
+      'env_key = "AD_GATEWAY_TOKEN"',
+      'wire_api = "responses"',
+      "request_max_retries = 1",
+      "stream_max_retries = 1",
+      "supports_websockets = false",
+      "",
     ].join("\n"),
   );
   server = new CodexAppServer({
@@ -104,6 +121,7 @@ after(async () => {
   await server?.close().catch(() => {});
   await gw?.close();
   await mock?.close();
+  await goMock?.close();
   for (const d of [home, cwd]) for (let i = 0; i < 20; i++) {
     try {
       rmSync(d, { recursive: true, force: true });
@@ -114,8 +132,8 @@ after(async () => {
   }
 });
 
-async function turn(text, { interruptWhenHeld = false } = {}) {
-  const { thread } = await server.request("thread/start", { cwd });
+async function turn(text, { interruptWhenHeld = false, thread: threadParams = {} } = {}) {
+  const { thread } = await server.request("thread/start", { cwd, ...threadParams });
   const notes = [];
   const on = (n) => n.params?.threadId === thread.id && notes.push(n);
   server.on("notification", on);
@@ -231,4 +249,19 @@ test("a tool printing its environment shows no key and no token", opts, async ()
   assert.ok(!out.includes(KEY), "the provider key");
   assert.ok(!out.includes(TOKEN), "the gateway token");
   assert.ok(!JSON.stringify(events).includes(KEY) && !JSON.stringify(events).includes(TOKEN));
+});
+
+test("OpenCode Go: a chat-routed model completes a tool turn; ad's User-Agent and the conversation's session id reach Go", opts, async () => {
+  const before = goMock.requests.length;
+  const r = await turn("SHELL", { thread: { model: "glm-5.3", modelProvider: "go" } });
+  assert.equal(status(r.completed), "completed", errInfo(r));
+  const sent = goMock.requests.slice(before);
+  assert.ok(sent.length >= 2, `a call and its result: ${sent.length}`);
+  for (const q of sent) {
+    assert.equal(q.path, "/inference/go/openai/v1/chat/completions");
+    assert.equal(q.session, r.threadId, "the conversation's id");
+    assert.match(q.userAgent, /^ad\/\d/);
+    assert.doesNotMatch(q.userAgent, /opencode/i);
+    assert.ok(q.keyOk, "the account's key, added by the gateway");
+  }
 });

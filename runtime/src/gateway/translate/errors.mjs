@@ -66,8 +66,20 @@ function rateOrQuota(text, wait, { capS, label }) {
   return { quota: false, message, side: { kind: "rateLimit", message, retryAfterS: wait } };
 }
 
-export function httpFailure(status, text, { retryAfter = null, capS = 60, label = "The provider" } = {}) {
+/** A provider's own usage-limit error (OpenCode's GoUsageLimitError): over until its reset. */
+function usageLimit(err, quotaNames, retryAfter, label) {
+  if (!quotaNames?.length || ![err?.type, err?.code].some((v) => quotaNames.includes(String(v ?? "")))) return null;
+  const wait = waitSeconds(retryAfter, err);
+  const at = wait !== null ? new Date(Date.now() + wait * 1000) : null;
+  const hhmm = at ? `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}` : null;
+  const message = hhmm ? `${label}'s usage limit is reached. It resets at ${hhmm}; until then pick another account with /model.` : `${label}'s usage limit is reached. Until it resets, pick another account with /model.`;
+  return { message, side: { kind: "quotaExhausted", message, period: null, retryAfterS: wait } };
+}
+
+export function httpFailure(status, text, { retryAfter = null, capS = 60, label = "The provider", quotaNames = [] } = {}) {
   const err = parseError(text);
+  const named = usageLimit(err, quotaNames, retryAfter, label);
+  if (named) return { http: { status: 429, body: errBody("insufficient_quota", "insufficient_quota", named.message), headers: { "retry-after": "0" } }, sse: null, side: named.side };
   const all = `${err.code ?? ""} ${err.type ?? ""} ${err.message} ${JSON.stringify(err.details ?? "")}`;
   const provider = msg(err.message) || `HTTP ${status}`;
   if (status === 401 || status === 403) {
@@ -92,8 +104,10 @@ export function httpFailure(status, text, { retryAfter = null, capS = 60, label 
 }
 
 /** An error object inside a 200 stream (Chat providers send {"error": {...}} as a data line). */
-export function streamFailure(error, { capS = 60, label = "The provider" } = {}) {
+export function streamFailure(error, { capS = 60, label = "The provider", quotaNames = [] } = {}) {
   const e = typeof error === "object" && error ? error : { message: String(error ?? "") };
+  const named = usageLimit(e, quotaNames, null, label);
+  if (named) return { code: "insufficient_quota", message: named.message, side: named.side };
   const all = `${e.code ?? ""} ${e.type ?? ""} ${e.message ?? ""} ${JSON.stringify(e.details ?? "")}`;
   if (CONTEXT.test(all)) return { code: "context_length_exceeded", message: `${label}: the conversation is longer than this model takes.`, side: { kind: "contextOverflow", message: msg(e.message) } };
   if (/\brate[ _-]?limit|\b429\b|\bquota\b|too many requests|RESOURCE_EXHAUSTED/i.test(all) || DAY.test(all) || MONTH.test(all) || NO_CREDIT.test(all)) {

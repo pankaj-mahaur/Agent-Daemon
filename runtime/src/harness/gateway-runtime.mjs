@@ -7,7 +7,7 @@
 //     env: AD_GATEWAY_TOKEN and NO_PROXY; never a key
 //     args: a -c provider entry per ready API account, and the 3.0 `openrouter` alias
 
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { engineHome } from "../engine/index.mjs";
 import { registerSecret } from "../auth/redact.mjs";
 import { readRegistry } from "../auth/accounts/registry.mjs";
@@ -17,6 +17,9 @@ import { startGateway } from "../gateway/client.mjs";
 import { engineEnvFor, engineProviderArgs, gatewayTable, TOKEN_HIDDEN_ARGS } from "../gateway/table.mjs";
 
 let shared = null; // { gateway, tableKey }
+// This ad session's id for providers that want one (OpenCode Go outside a conversation):
+// made once per ad process, so a gateway started again sends the same value.
+const SESSION_ID = randomUUID();
 
 // The reasoning envelope's key (P6.1 §7): 32 random bytes per install, in ad's secret store.
 const SEAL_REF = "gateway-seal";
@@ -67,7 +70,7 @@ export async function gatewayState({ store, env = process.env } = {}) {
     return Object.fromEntries([...refs].map(([id, ref]) => [id, values.get(ref)]).filter(([, v]) => v));
   };
   const tableKey = JSON.stringify([...table]);
-  if (!shared) shared = { gateway: await startGateway({ table, getKeys, env, sealKey: sealKeyFrom(store), translate: translateEnabled(env) }), tableKey };
+  if (!shared) shared = { gateway: await startGateway({ table, getKeys, env, sealKey: sealKeyFrom(store), translate: translateEnabled(env), sessionId: SESSION_ID }), tableKey };
   else if (shared.tableKey !== tableKey) {
     await shared.gateway.setTable(table);
     shared.tableKey = tableKey;

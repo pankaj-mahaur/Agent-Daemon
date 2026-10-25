@@ -832,6 +832,18 @@ See [harness.md](harness.md#working-in-your-home-folder).
 
 **Fix:** wait for the provider's reset, switch accounts (`/model`), or add credit. A per-minute limit is different: ad waits the time the provider asks (up to 60 s) and the turn goes on.
 
+## 69. "OpenCode Go's usage limit is reached"
+
+**Cause:** your Go plan's allowance for that model is used up for its 5-hour, weekly or monthly window. ad stops the turn instead of retrying.
+
+**Fix:** wait for the reset time shown, pick another model or account with `/model`, or turn on Extra Usage on OpenCode's Go page (it then spends your OpenCode balance).
+
+## 70. "This OpenCode Go model isn't available to ad yet. Pick another with /model."
+
+**Cause:** OpenCode serves that model on an API ad can't speak yet (Anthropic's or Gemini's), or answered that the model isn't on the route ad tried (ad then tries the other route for the rest of this run).
+
+**Fix:** pick another Go model in `/model`. Models marked "coming later" arrive with ad's Anthropic and Gemini support.
+
 ---
 
 For harness problems, the [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill walks through login → hooks → sandbox → the engine's own log. See also [harness.md](harness.md) and, for the terminal UI, [tui.md](tui.md).

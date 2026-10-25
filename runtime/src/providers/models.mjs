@@ -14,6 +14,7 @@ export const FREE_TTL_MS = 24 * 60 * 60_000;
 const CACHE_MS = 10 * 60_000;
 // Wording checked against OpenRouter's free-model docs at execution (unverified today).
 export const FREE_DATA_NOTE = "Free models may log or train on prompts, depending on the provider behind them.";
+export const COMING_LATER = "not available in ad yet (coming later)";
 
 const cache = new Map(); // accountId → { at, models }
 
@@ -28,7 +29,8 @@ export async function listModels(account, { key = null, preset = presetFor(accou
   const hit = cache.get(account.id);
   if (!refresh && hit && now() - hit.at < CACHE_MS) return hit.models;
   const base = account.endpoint ?? preset.upstreamBase;
-  const r = await providerRequest({ url: `${base}${preset.modelsPath}`, key: preset.auth === "none" ? null : key, fetch, clientVersion, insecure: Boolean(account.insecure) });
+  const url = account.endpoint ? `${base}${preset.modelsPath}` : (preset.modelsUrl ?? `${base}${preset.modelsPath}`);
+  const r = await providerRequest({ url, key: preset.auth === "none" ? null : key, fetch, clientVersion, insecure: Boolean(account.insecure) });
   if (r.status !== 200) throw Object.assign(new Error(`The provider answered HTTP ${r.status} for its model list.`), { code: "MODELS_FAILED", status: r.status });
   const observedAt = now();
   const rows = Array.isArray(r.json?.data) ? r.json.data : Array.isArray(r.json) ? r.json : [];
@@ -36,13 +38,18 @@ export async function listModels(account, { key = null, preset = presetFor(accou
     .filter((m) => m && typeof m.id === "string")
     .map((m) => {
       const free = preset.freeSource === "openrouter-pricing" ? isFree(m, { observedAt, now: observedAt }) : false;
+      // A per-model provider (OpenCode Go): each model's wire from the preset's dated table;
+      // one ad can't speak yet (messages, gemini) is listed as coming later, not offered.
+      const wire = preset.wires ? (preset.wires[m.id] ?? "unknown") : null;
+      const later = wire === "messages" || wire === "gemini";
       return {
         id: m.id,
         name: typeof m.name === "string" ? m.name : m.id,
         free,
         local: Boolean(preset.local),
         priceObservedAt: preset.freeSource ? observedAt : null,
-        dataNote: free ? FREE_DATA_NOTE : null,
+        dataNote: later ? COMING_LATER : free ? FREE_DATA_NOTE : null,
+        ...(wire ? { wire, observedAt, available: !later } : {}),
       };
     });
   cache.set(account.id, { at: observedAt, models });

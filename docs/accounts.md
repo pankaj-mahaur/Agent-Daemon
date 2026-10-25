@@ -84,6 +84,7 @@ ad auth test <account>               # check it (--model: also one small request
 | Kimi Code | `kimi-code` | API key | |
 | Moonshot (Kimi API) | `moonshot` | API key | |
 | xAI | `xai` | API key | |
+| OpenCode Go | `opencode-go` | API key | OpenCode's paid plan; its open models (GLM, Kimi, DeepSeek…) through ad's chat translation (below) |
 | Fireworks | `fireworks` | API key | |
 | Your own endpoint | `custom` | API key, or none on this machine | must speak the Responses API (below) |
 | Ollama | `ollama` | none (local) | `localhost:11434` |
@@ -108,6 +109,16 @@ node runtime/scripts/provider-accept.mjs --account openrouter/work [--model <id>
 - **Where it runs.** On your machine only: the script refuses under CI.
 
 **Retries.** A provider that fails ends the turn quickly and says so: each provider ad adds allows one retry of a request and one of a broken stream, and nothing more.
+
+### OpenCode Go
+
+`ad auth login opencode-go` takes the API key from your OpenCode account (opencode.ai, with a Go or Go Plus plan). OpenCode Go welcomes other coding agents that name themselves, so ad sends its own User-Agent (`ad/<version>`) and each conversation's id as OpenCode's session header; ad never presents itself as OpenCode.
+
+- **Which models work.** Models OpenCode serves on the Responses API (GPT, Grok, Muse Spark) go through as they are. Models it serves on Chat Completions (GLM, Kimi, DeepSeek, MiMo, MiniMax M3.1 Flash, LongCat, Hy, Step, Beam Free) go through ad's chat translation. Models on Anthropic's or Gemini's API (Claude Haiku, Qwen, MiniMax M3, Gemini) show as "coming later" in `/model`.
+- **Usage limits.** Go limits each model per 5 hours, week and month. When one is reached, the turn stops with "OpenCode Go's usage limit is reached" and the reset time if OpenCode gives one; switch with `/model` or wait. ad doesn't switch for you.
+- **Zen's free models** are not available: OpenCode allows them only in its own app. For free models in ad, use OpenRouter's free models or a local model (Ollama, LM Studio).
+- **Status.** A candidate until its acceptance run on a real Go key is recorded; until then add it with `AD_SHOW_CANDIDATES=1` to see it in pickers.
+- **Known limits.** OpenCode doesn't publish each model's context size, so ad can't yet tell the engine when to compact on Go's chat models: a very long session may end with a context error instead (start a new conversation, or `/compact` earlier). On the Responses models, a usage limit reached in the middle of an answer is retried once before the turn stops.
 
 ### Your own endpoint
 
@@ -135,6 +146,7 @@ These sign-ins aren't open to other apps, so ad doesn't use them:
 - **Claude Pro/Max.** Anthropic doesn't allow other apps to use it. Claude models work now through OpenRouter; an Anthropic API key comes later.
 - **Gemini CLI.** Google doesn't allow other apps to use it. Gemini models work now through OpenRouter; a Gemini API key comes later.
 - **GitHub Copilot and xAI SuperGrok.** Only partner apps may use them. Use an xAI API key.
+- **OpenCode Zen free models.** OpenCode allows them only in its own app. Free alternatives in ad: OpenRouter's free models and local models (Ollama, LM Studio). OpenCode Go (paid) works with your own key.
 - **Nous Portal.** Not available yet: Nous hasn't published a way for other apps to sign in. Hermes models are open: run them with Ollama, or use them through OpenRouter.
 
 ## Switching accounts

@@ -10,7 +10,12 @@
 //   engineEnvFor({ gateway, env })   → { AD_GATEWAY_TOKEN, NO_PROXY, no_proxy }: never a key
 // Nothing here is written to config.toml: the port changes every run.
 
+import { createRequire } from "node:module";
 import { PROVIDER_PRESETS, providerName } from "../providers/registry.mjs";
+
+// ad's own User-Agent, for providers that ask each client to name itself (OpenCode Go):
+// never the engine's, never another product's.
+const AD_UA = `ad/${createRequire(import.meta.url)("../../package.json").version}`;
 
 // The provider registry's presets (P3.5), as the gateway needs them: name and upstream.
 // A custom endpoint has no preset base: its account's endpoint is used.
@@ -18,7 +23,10 @@ import { PROVIDER_PRESETS, providerName } from "../providers/registry.mjs";
 // capabilities; headers it requires go on every request.
 export const PRESETS = Object.freeze(
   Object.fromEntries(
-    PROVIDER_PRESETS.filter((p) => p.upstreamBase).map((p) => [p.id, Object.freeze({ name: p.name, baseUrl: p.upstreamBase, mode: p.mode, upstreamPath: p.upstreamPath, quirks: p.quirks ?? [], model: p.capabilities ?? null, headers: p.headers ?? {} })]),
+    PROVIDER_PRESETS.filter((p) => p.upstreamBase).map((p) => [
+      p.id,
+      Object.freeze({ name: p.name, baseUrl: p.upstreamBase, mode: p.mode, upstreamPath: p.upstreamPath, quirks: p.quirks ?? [], model: p.capabilities ?? null, headers: { ...(p.headers ?? {}), ...(p.ownUserAgent ? { "user-agent": AD_UA } : {}) }, wires: p.wires ?? null, modelQuirks: p.modelQuirks ?? null, sessionHeader: p.sessionHeader ?? null, quotaErrors: p.quotaErrors ?? [] }),
+    ]),
   ),
 );
 
@@ -42,6 +50,9 @@ export function gatewayTable(doc, { presets = PRESETS } = {}) {
       upstreamBase,
       mode,
       ...(mode === "passthrough" ? {} : { upstreamPath: preset.upstreamPath, quirks: [...(preset.quirks ?? [])], model: preset.model ?? {} }),
+      ...(mode === "per-model" ? { wires: { ...(preset.wires ?? {}) }, modelQuirks: Object.fromEntries(Object.entries(preset.modelQuirks ?? {}).map(([k, v]) => [k, [...v]])) } : {}),
+      ...(preset?.sessionHeader ? { sessionHeader: preset.sessionHeader } : {}),
+      ...(preset?.quotaErrors?.length ? { quotaErrors: [...preset.quotaErrors] } : {}),
       auth: a.method === "none" ? { kind: "none" } : { kind: "static-key", scheme: "bearer" },
       headers: { ...(preset?.headers ?? {}) },
       strip: [],

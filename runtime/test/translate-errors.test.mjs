@@ -74,3 +74,11 @@ test("errors inside the stream", () => {
   assert.equal(streamFailure({ message: "Rate limit. Please try again in 3s." }).code, "rate_limit_exceeded");
   assert.equal(streamFailure({ message: "upstream reset" }).code, "ad_upstream_disconnected");
 });
+
+test("a provider's named usage limit, in type or in code, is a quota with the reset time", () => {
+  for (const body of [{ type: "error", error: { type: "GoUsageLimitError", message: "limit" } }, { error: { code: "GoUsageLimitError", message: "limit" } }]) {
+    const f = httpFailure(429, JSON.stringify(body), { retryAfter: "120", label: "OpenCode Go", quotaNames: ["GoUsageLimitError"] });
+    assert.equal(f.http.body.error.code, "insufficient_quota");
+    assert.match(f.http.body.error.message, /^OpenCode Go's usage limit is reached\. It resets at \d\d:\d\d/);
+  }
+});
