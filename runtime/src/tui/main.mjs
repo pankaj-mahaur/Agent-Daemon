@@ -12,7 +12,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { cliErrorLines } from "../harness/io.mjs";
+import { cliErrorLines, openUrl } from "../harness/io.mjs";
 import { closeHarnessEngines, findThreadHome, launchHarness, newestThreadAcrossHomes, removedAccountText, resumeHint, windowTarget } from "../harness/engines.mjs";
 import { readRecord, recordSettings } from "../harness/settings-sync.mjs";
 import { createTuiAccounts } from "./accounts.mjs";
@@ -295,6 +295,7 @@ export async function cmdTui(opts = {}) {
   let engine;
   let launched = null; // launchHarness's answer for this window's engine
   let session;
+  let ledger = null; // the session ledger's coordinator (P4.1)
   let app;
   let exitHint = null;
   try {
@@ -433,7 +434,21 @@ export async function cmdTui(opts = {}) {
     };
     // modes: the plan mode, on the experimental allowlist this engine opted into (parity P0).
     // Default's mask keeps the configured effort, as the engine's own Default mode does.
-    session = createSession({ engine, cwd, model: started.params.model, modelProvider: started.params.modelProvider, homeKey: launched?.homeKey ?? null, provider: launched?.target?.account?.provider ?? null, release: launched?.release ?? null, sandbox: opts.sandbox, restart, maxRestarts: 3, hooks: undoKit?.hooks ?? {}, modes: true, planEffort: () => settings.engine.get("plan_mode_reasoning_effort") ?? null, configEffort: () => settings.engine.get("model_reasoning_effort") ?? null, ...(opts.lockDir ? { lockDir: opts.lockDir } : {}), identity: engineHome.isManaged(engine.home) ? null : await harnessIdentity(engine).catch(() => null) }); // no identity: the session starts without it
+    // The session ledger (P4.1): which account and model ran each turn, what each tool did.
+    const { createCoordinator, ledgerEnabled, ledgerHome, ledgerTarget } = await import("../sessions/coordinator.mjs");
+    let ledgerAccount = () => launched?.target?.account ?? null;
+    ledger = createCoordinator({
+      cwd,
+      origin: "tui",
+      root: opts.adRoot,
+      enabled: ledgerEnabled(opts),
+      homeKey: () => ledgerHome(session?.state.config.homeKey),
+      targetOf: () => {
+        const c = session.state.config;
+        return ledgerTarget({ account: ledgerAccount(), provider: c.provider, model: c.model, effort: c.effort });
+      },
+    });
+    session = createSession({ observer: ledger.observer, engine, cwd, model: started.params.model, modelProvider: started.params.modelProvider, homeKey: launched?.homeKey ?? null, provider: launched?.target?.account?.provider ?? null, release: launched?.release ?? null, sandbox: opts.sandbox, restart, maxRestarts: 3, hooks: undoKit?.hooks ?? {}, modes: true, planEffort: () => settings.engine.get("plan_mode_reasoning_effort") ?? null, configEffort: () => settings.engine.get("model_reasoning_effort") ?? null, ...(opts.lockDir ? { lockDir: opts.lockDir } : {}), identity: engineHome.isManaged(engine.home) ? null : await harnessIdentity(engine).catch(() => null) }); // no identity: the session starts without it
     await session.init();
     await settings.engine.load();
 
@@ -539,8 +554,10 @@ export async function cmdTui(opts = {}) {
           launch: (a) => launchHarness({ cwd, account: a.id, command: opts.command, clientVersion: opts.clientVersion, store: opts.store, err: sink, detached: true, experimental: true, interactive: true, allowHomeFolder, idleMs: 5 * 60_000 }),
         })
       : null;
+    if (accounts) ledgerAccount = () => accounts.current() ?? launched?.target?.account ?? null;
     const actions = {
       accounts,
+      ledger: () => ledger?.status() ?? null,
       gatewayReason: (threadId, sinceMs) => gatewayReason({ threadId, sinceMs }),
       bell: (o = {}) => {
         if (!o.unfocusedOnly || !focused) io.write("\x07");
@@ -634,6 +651,7 @@ export async function cmdTui(opts = {}) {
     renderer?.dispose();
     const live = session?.engine;
     session?.close();
+    await ledger?.close().catch(() => {});
     await io?.close();
     if (launched?.lease) await closeHarnessEngines().catch(() => {});
     else {

@@ -53,6 +53,15 @@ All paths under `runtime/`.
 - Switching accounts goes through `session.retarget` (fork, same provider/engine/model) or `session.useEngine` (a new conversation on another home), never `thread/resume` with a new provider.
 - Picker rows may be `{kind: "header"}` (skipped by the cursor, kept only while a row in their group matches the filter) or `{disabled: true, reason}`, where Enter shows the reason in the note line.
 
+## The session ledger's observer (P4.1)
+
+- `createSession({ observer })` is the ledger's seam; the `hooks` object stays `/undo`'s. `observe(ev)` sees every thread event (top of `onThreadEvent`), each user message once (`user.message` with `via` submit / steer / queue), `request.answered` with the **decision only** (a question's or form's answer becomes `"answered"`), `thread.attached` / `thread.detached` and `engine.exited`. A new path that sends a prompt, answers a request or swaps the thread must call it too.
+- It runs synchronously inside try/catch: its first throw is one notice (`session.record`, or the error's own `notice` text) and the session goes on. It may return `{ notice }` for a one-time message (the torn-tail repair).
+- Thread events carry **normalized** items (`kind`, `actions`), not the engine's `type` / `commandActions`; `sessions/coordinator.mjs` `asRaw` bridges them for `effects.mjs`. Tests that feed the coordinator by hand can use either shape; one test must go through a real session (sessions-coordinator "through a real session").
+- `ad run` / `ad loop` have no session: `recordEngineThread` feeds the same coordinator from `engine.subscribe`, and must `stop()` before the engine is released (else the release reads as a lost engine).
+- Tests that pass an engine `home` record nothing unless they pass `adRoot` too (`ledgerEnabled`), so no test writes the real `~/.agent-daemon/sessions/`.
+- `main.mjs`'s start-up on ad's own homes (the `launched.lease` path) is covered only by `tui-live.test.mjs`: an identifier used there without its import (P3.8b's `openUrl`) passed the whole unit suite and crashed every `ad tui` start. Run the live suite after any `main.mjs` change.
+
 ## Tests and goldens
 
 - **TUI tests** (`runtime/test/`): `tui-input`, `tui-io`, `tui-detect`, `tui-width`, `tui-text`, `tui-sanitize`, `tui-renderer` (terminal layer); `tui-composer`, `tui-markdown`, `tui-cells`, `tui-chrome`, `tui-modals` (views); `tui-app`, `tui-main`, `tui-parity`, `tui-ad`, `tui-hardening`, `tui-resilience`, `tui-preview`, `tui-pty-smoke`. Also `session`, `checkpoints`, `codex-events.test.mjs`, `codex-protocol-snapshot.test.mjs`, `engine-real` and `tui-live` (both `AD_REAL_ENGINE=1`; `tui-live` is the FC3/FC4 script on the real `ad tui` in a pty: run it after any app, session or view change).

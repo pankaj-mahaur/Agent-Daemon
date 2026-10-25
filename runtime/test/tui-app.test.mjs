@@ -954,14 +954,14 @@ function stubSession(state) {
   };
 }
 
-async function withStub(session, fn, { cols = 70, rows = 20 } = {}) {
+async function withStub(session, fn, { cols = 70, rows = 20, actions } = {}) {
   const scr = modelScreen({ cols, rows });
   const listeners = new Set();
   const io = { ...scr.io, onInput: (f) => (listeners.add(f), () => listeners.delete(f)) };
   const decoder = createInputDecoder({ onEvent: (e) => listeners.forEach((f) => f(e)), escTimeoutMs: 5 });
   const renderer = createRenderer({ io, reflow: "none" });
   await renderer.start();
-  const app = createApp({ io, renderer, session, cwd: "/x", armMs: 0 });
+  const app = createApp({ io, renderer, session, cwd: "/x", armMs: 0, ...(actions ? { actions } : {}) });
   try {
     await fn({ app, type: (s) => decoder.feed(s), text: () => scr.lines().join("\n") });
   } finally {
@@ -1000,7 +1000,16 @@ test("/status shows the tokens used", async () => {
     type("/status\r");
     await sleep(20);
     assert.match(text(), /1,234 tokens used/);
+    assert.doesNotMatch(text(), /session /, "no session row before the ledger has one");
   });
+});
+
+test("/status names the session and its binding (P4.1)", async () => {
+  await withStub(stubSession({}), async ({ type, text }) => {
+    type("/status\r");
+    await sleep(20);
+    assert.match(text(), /session +ses_01TEST \u{b7} binding 2/u);
+  }, { actions: { ledger: () => ({ sessionId: "ses_01TEST", gen: 2 }) } });
 });
 
 test("/undo: files back and the prompt returns; typing takes the next turn's snapshot early", async () => {

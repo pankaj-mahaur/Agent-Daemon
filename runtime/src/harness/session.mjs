@@ -130,6 +130,10 @@ export function createSession({
   // Who the agent is (attribution.mjs identityBlock), for a home ad didn't
   // create: injected into each new thread, since there's no managed file.
   identity = null,
+  // The session ledger's observer (P4.1): sees every thread event, each user message once,
+  // request decisions (never a question's answer), thread changes and engine exits. Called
+  // synchronously; its failure is one notice, never the session's.
+  observer = null,
 } = {}) {
   let eng = engine;
   const emitter = new EventEmitter();
@@ -182,6 +186,19 @@ export function createSession({
   const doneWaiters = new Map(); // turnId → [resolve]
 
   const change = (what) => emitter.emit("change", { what, state });
+  let observerFailed = false;
+  const observe = (ev) => {
+    if (!observer || secondary) return;
+    try {
+      // It may hand back one notice of its own ({ notice: { level, code, message } }).
+      const n = observer(ev)?.notice;
+      if (n) notice(n.level ?? "info", n.code ?? "session.record", n.message);
+    } catch (err) {
+      if (observerFailed) return;
+      observerFailed = true;
+      notice("warn", "session.record", typeof err?.notice === "string" ? err.notice : "ad couldn't write this session's record (details: /warnings); the conversation goes on.", String(err?.stack ?? err));
+    }
+  };
   const notice = (level, code, message, detail = null) => {
     // The engine repeats some notices (a config warning per thread, a shell
     // deprecation per turn): the same one again only counts up.
@@ -366,6 +383,7 @@ export function createSession({
   }
 
   function onThreadEvent(ev) {
+    observe(ev);
     const root = ev.threadId === state.thread?.id;
     if (root && trackTerminal(ev)) change("terminals");
     trackAgents(ev, root);
@@ -472,6 +490,7 @@ export function createSession({
   // engine can't resume is dropped: the next prompt starts a new one.
   async function onExit(info, from) {
     if (closed || from !== eng || restarting) return;
+    observe({ type: "engine.exited", code: info?.code ?? null });
     state.engine = { ...state.engine, state: "crashed", exitCode: info?.code ?? null };
     if (eng.exitError) notice("error", "engine.exited", engineErrorText(eng.exitError), engineErrorDetail(eng.exitError));
     // The running turn won't complete: end it as failed for whoever waits.
@@ -534,13 +553,16 @@ export function createSession({
             }
             notice("warn", "thread.notResumed", `The conversation could not be resumed (${engineErrorText(err, { details: null })}); the next prompt starts a new one.`, engineErrorDetail(err));
             const queued = state.queue;
-            detach();
+            detach("abandoned", "notResumed");
             resetThreadState();
             state.queue = queued;
             change("thread");
           }
           if (closed) return void (await eng.close?.());
-          if (state.thread?.id === id) unsubThread = eng.subscribe(id, onThreadEvent);
+          if (state.thread?.id === id) {
+            unsubThread = eng.subscribe(id, onThreadEvent);
+            observe({ type: "thread.attached", threadId: id, thread: state.thread, how: "continuation" });
+          }
         }
         // Overrides go again on the next turn, in case the engine lost them.
         nextTurn = { ...sticky, ...nextTurn };
@@ -569,15 +591,19 @@ export function createSession({
   /* Threads                                                        */
   /* -------------------------------------------------------------- */
 
-  function attach(threadId, thread) {
+  function attach(threadId, thread, how = "new") {
     if (!secondary) releaseLock = lockThread(threadId, { dir: lockDir });
     state.thread = { ...(thread ?? {}), id: threadId };
     unsubThread = eng.subscribe(threadId, onThreadEvent);
+    observe({ type: "thread.attached", threadId, thread: state.thread, how });
   }
 
   // Leaves the current thread: a running turn is interrupted (it would go on
   // writing files unobserved) and its waiters settle as "abandoned".
-  function detach(status = "abandoned") {
+  // why (for the ledger): "abandoned" (a new conversation comes next), "switched" (the work
+  // moves to another thread), "notResumed", "closed".
+  function detach(status = "abandoned", why = status) {
+    if (state.thread) observe({ type: "thread.detached", threadId: state.thread.id, reason: why });
     epoch++;
     threadStarting = null;
     pendingInterrupt = false;
@@ -695,6 +721,7 @@ export function createSession({
       } catch (err) {
         if (!stale(e)) state.echoes.delete(cid);
         hooks.turnStartFailed?.({ error: err, session: api });
+        observe({ type: "turn.startFailed", clientId: cid });
         throw err;
       } finally {
         if (!stale(e)) {
@@ -731,6 +758,7 @@ export function createSession({
     }
     state.echoes.set(cid, inputText(input));
     change("echoes");
+    observe({ type: "user.message", clientId: cid, input: inputText(input), via: "submit" });
     return { clientUserMessageId: cid, ...startTurn(input, cid) };
   }
 
@@ -743,7 +771,10 @@ export function createSession({
     const accepted = eng.turns
       .steer(state.thread.id, turnId, toInput(input), { clientUserMessageId: cid })
       .then(
-        (r) => ({ steered: true, turnId: r?.turnId ?? turnId }),
+        (r) => {
+          observe({ type: "user.message", clientId: cid, input: inputText(input), via: "steer", turnId: r?.turnId ?? turnId });
+          return { steered: true, turnId: r?.turnId ?? turnId };
+        },
         () => {
           // Not steerable (review, compact) or the turn just ended: keep it as
           // a queued prompt, which runs as soon as the thread is idle.
@@ -781,6 +812,7 @@ export function createSession({
     change("queue");
     const cid = randomUUID();
     state.echoes.set(cid, next.text);
+    observe({ type: "user.message", clientId: cid, input: next.text, via: "queue" });
     startTurn(next.input, cid).accepted.catch((err) => notice("error", "turn.start", engineErrorText(err), engineErrorDetail(err)));
   }
 
@@ -800,6 +832,8 @@ export function createSession({
     const i = state.requests.findIndex((r) => r.request.id === requestId);
     if (i < 0) return false;
     const [r] = state.requests.splice(i, 1);
+    // The decision only: a question's or a form's answer is the user's, never recorded.
+    observe({ type: "request.answered", request: { kind: r.request.kind, itemId: r.request.itemId ?? null, turnId: r.request.turnId ?? null, threadId: r.request.threadId ?? null }, decision: typeof answer === "string" ? answer : answer == null ? "withdrawn" : typeof answer?.decision === "string" ? answer.decision : typeof answer?.action === "string" ? answer.action : "answered" });
     r.resolve(answer);
     change("requests");
     return true;
@@ -951,7 +985,7 @@ export function createSession({
         throw err;
       }
       const waiting = state.queue;
-      detach();
+      detach("abandoned", "switched");
       resetThreadState();
       state.queue = waiting;
       releaseLock = release;
@@ -960,6 +994,8 @@ export function createSession({
       await oldWatch?.();
       oldWatch = r.watching ? r.stop : null;
       takeTarget(t);
+      // After the target is taken: the new binding records the new model and account.
+      observe({ type: "thread.attached", threadId: r.threadId, thread: state.thread, how: "fork" });
       await loadTurns(r.threadId, epoch);
       change("thread");
       return { kind: "continues", threadId: r.threadId, previous: old, goalMoved: r.goalMoved, watching: r.watching };
@@ -1216,11 +1252,11 @@ export function createSession({
       if (state.activeTurnId || state.starting || state.queue.length) drop("Changing directories requires an idle primary session without queued input.");
       if (r.cwd && engineHome.canonical(r.cwd) !== engineHome.canonical(dir)) drop("Requested directory or permissions not applied.");
       const kind = state.mode.kind; // the fork keeps the thread's mode
-      detach();
+      detach("abandoned", "switched");
       resetThreadState();
       state.mode = { ...state.mode, kind };
       state.config.cwd = dir;
-      attach(id, r.thread);
+      attach(id, r.thread, "fork");
       change("thread");
       return id;
     },
@@ -1344,6 +1380,7 @@ export function createSession({
       // so the next new conversation still starts on it.
       state.thread = { ...(t.thread ?? {}), id: t.threadId, modelProvider: t.modelProvider ?? t.thread?.modelProvider ?? null };
       unsubThread = eng.subscribe(t.threadId, onThreadEvent);
+      observe({ type: "thread.attached", threadId: t.threadId, thread: state.thread, how: "resume" });
       await loadTurns(t.threadId, e);
       change("thread");
       return t.threadId;

@@ -908,3 +908,58 @@ test("prompt at the bottom live: the composer starts on the last rows and stays 
     await removeWithRetry(w.root);
   }
 });
+
+// P4.1 Done-when: one ad tui conversation with a command and a patch is recorded, and
+// `ad sessions show --last --json` reads it back; the record holds no reasoning or key.
+test("P4.1 live: a command and a patch in ad tui are in the session record; ad sessions show --last --json", { skip, timeout: 10 * 60_000 }, async () => {
+  const mock = await startMockResponses({ script: liveScript });
+  const w = world(mock.url);
+  const key = ["sk", "test", "LIVEKEY0123456789abcdefghij"].join("-");
+  let t;
+  try {
+    t = await start(w);
+    const answer = async (doneRe, what) => {
+      const end = Date.now() + 180_000;
+      while (!doneRe.test(t.text())) {
+        if (Date.now() > end) throw new Error(`no ${what}\n${t.text().slice(-2000)}`);
+        if (/retry without sandbox\?|Apply file changes\?|Run this command\?|Allow command\?/i.test(t.screen()) && /\(y\)|No, and stop/.test(t.screen())) {
+          await settle(600);
+          t.type("y");
+        }
+        await settle(300);
+      }
+      await t.until(() => t.idle(), `idle after ${what}`);
+    };
+    t.type(`SHELL with ${key}\r`);
+    await answer(/done after call-shell/, "the command");
+    t.type("PATCH please\r");
+    await answer(/done after call-patch/, "the patch");
+    t.type("/status\r");
+    await t.until(/session\s+ses_\w+ \u{b7} binding 1/u, "the session row in /status");
+    t.type("\x03");
+    await settle(200);
+    t.type("\x03");
+    assert.equal((await t.exit).exitCode, 0);
+
+    const shown = execFileSync(process.execPath, [CLI, "sessions", "show", "--last", "--json"], { cwd: w.cwd, env: w.env, encoding: "utf8" });
+    const s = JSON.parse(shown);
+    assert.equal(s.origin, "tui");
+    assert.equal(s.state, "closed");
+    assert.equal(s.bindings.length, 1, JSON.stringify(s.bindings));
+    assert.ok(s.bindings[0].target?.key, "the binding's target");
+    const tools = s.turns.flatMap((x) => x.tools);
+    assert.ok(tools.some((x) => x.effect === "exec" && x.status === "succeeded"), JSON.stringify(tools));
+    assert.ok(tools.some((x) => x.effect === "write" && x.status === "succeeded"), JSON.stringify(tools));
+    assert.deepEqual([...new Set(s.turns.map((x) => x.trigger))], ["user"]);
+    const dir = join(w.home, ".agent-daemon", "sessions");
+    const raw = readdirSync(dir).filter((n) => n.endsWith(".jsonl")).map((n) => readFileSync(join(dir, n), "utf8")).join("\n");
+    for (const bad of ["encrypted_content", "summaryText", key, "sk-test-"]) assert.ok(!raw.includes(bad), `the record holds ${bad}`);
+  } catch (err) {
+    err.message += `\n--- model requests ---\n${mock.requests.map((r) => JSON.stringify(r.text)).join("\n")}`;
+    throw err;
+  } finally {
+    for (const k of launched.splice(0)) k();
+    await mock.close();
+    await removeWithRetry(w.root);
+  }
+});

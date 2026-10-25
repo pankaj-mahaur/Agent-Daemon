@@ -179,6 +179,20 @@ Opt-in, and it uses *your* installed Antigravity CLI and its login. The daemon n
 
 ---
 
+### The session record: `ad sessions show`
+
+```bash
+ad sessions show --last          # the newest session: bindings, turns, tool calls
+ad sessions show ses_01J… --json # one session as JSON
+```
+
+ad keeps its own record of each conversation you start in `ad tui`, `ad run` or `ad loop`, from the first prompt on. It says which engine home, conversation and target (account, provider, model, effort) ran each turn, who started the turn (`user`, `ad`, `goal`, `subagent` or `engine`), and what each tool call did: its effect (`read`, `exec`, `write`, `external`, `agent`) and how it ended (`succeeded`, `failed`, `declined`, or `unknown` when the turn or the engine ended first). Switching accounts later (M4) builds on it.
+
+- **What it never holds:** never reasoning, a question's or form's answer, file contents, command output, headers or keys. Prompts, summaries and error messages are cut to size and have keys redacted; a `/private` prompt is stored without its text. Paths in the project are relative; others under your home folder start with `~`.
+- **A command is a read only when ad can prove it.** ad checks the command line itself (no redirect, no `tee`, no `find -delete`, only known read commands); the engine's own summary of a command never makes it a read.
+- **One window per session.** A second window on the same conversation says "This session is open in another ad window" and records nothing.
+- **Off switch:** `AD_LEDGER=0`. Deleting `~/.agent-daemon/sessions/` loses only this record; conversations stay in the engine's folder.
+
 ## Safety model
 
 | Mode | Used by | Sandbox | Approvals |
@@ -272,10 +286,12 @@ Loop and worker prompts are marked as non-user (`AD_WORKER=1`), so they never en
 | `~/.agent-daemon/schedules.json`, `schedule-logs/` | scheduled jobs and their output |
 | `<project>/.agent-daemon/loops/` | `ad loop` iteration logs |
 | `<project>/.agent-daemon/STOP` | stop file for loops in this project |
+| `~/.agent-daemon/sessions/` | the session record: `ses_<id>.jsonl` per session and `index.json` (owner-only); never reasoning, a question's or form's answer, file contents, command output, headers or keys (see "The session record") |
 | `~/.agent-daemon/tui/`, `~/.agent-daemon/locks/` | `ad tui` prompt history and per-folder state; conversation locks (see [tui.md](tui.md#files-ad-writes)) |
 
 | Variable | Effect |
 |---|---|
+| `AD_LEDGER` | `0`: ad keeps no session record (`~/.agent-daemon/sessions/`) |
 | `AD_TUI` | `0`: bare `ad` prints the help instead of opening the terminal UI (`ad tui` still opens it). `1`: the default behaviour |
 | `AD_ALLOW_HOME_FOLDER` | `1`: work in a folder that would load your own `~/.codex` skills, like `--allow-home-folder` (see "Working in your home folder") |
 | `AD_ENGINE_DIR` (old name `AD_CODEX_HOME`, still read) | use another engine home (never your own `~/.codex` or `CODEX_HOME`: refused) |

@@ -1284,3 +1284,81 @@ test("switching a resumed thread compares with the thread's own account, not the
     },
   );
 });
+
+/* ------------------------------------------------------------------ */
+/* The ledger's observer (P4.1)                                        */
+/* ------------------------------------------------------------------ */
+
+test("observer receives user messages once each", async () => {
+  const seen = [];
+  await withSession(() => ({ observer: (ev) => seen.push(ev) }), async ({ session }) => {
+    await session.submit("early-complete").done;
+    const running = session.submit("hang");
+    await running.accepted;
+    session.queue("fail-turn");
+    await session.interrupt();
+    await until(() => session.state.queue.length === 0 && session.state.turns.length === 3 && session.state.turns.every((t) => t.status !== "inProgress"), "the queue to drain");
+    const users = seen.filter((e) => e.type === "user.message");
+    assert.deepEqual(users.map((e) => `${e.via}:${e.input}`), ["submit:early-complete", "submit:hang", "queue:fail-turn"]);
+    assert.equal(new Set(users.map((e) => e.clientId)).size, 3);
+    assert.ok(seen.some((e) => e.type === "thread.attached" && e.how === "new"));
+    assert.ok(seen.some((e) => e.type === "turn.completed"), "thread events reach it too");
+  });
+});
+
+test("observer sees request answers but never question answers' text", async () => {
+  const seen = [];
+  await withSession(() => ({ observer: (ev) => seen.push(ev) }), async ({ session }) => {
+    session.on("change", () => {
+      for (const r of [...session.state.requests]) session.resolve(r.request.id, r.request.kind === "user-input" ? { q: ["my secret answer"] } : "accept");
+    });
+    await session.submit("edit-file").done;
+    await session.submit("user-input").done;
+    const answers = seen.filter((e) => e.type === "request.answered");
+    assert.deepEqual(answers.map((e) => e.decision), ["accept", "answered"]);
+    assert.ok(!JSON.stringify(answers).includes("my secret answer"));
+    assert.ok(!JSON.stringify(answers).includes("Which one?"), "nor the question");
+  });
+});
+
+test("an observer that throws gives one notice and the turn completes", async () => {
+  await withSession(() => ({ observer: () => { throw new Error("disk full"); } }), async ({ session }) => {
+    await session.submit("early-complete").done;
+    await session.submit("fail-turn").done;
+    assert.equal(session.state.turns.length, 2);
+    assert.ok(session.state.turns.every((t) => t.status !== "inProgress"), "both turns ended");
+    const n = session.state.notices.filter((x) => x.code === "session.record");
+    assert.equal(n.length, 1);
+    assert.match(n[0].message, /couldn't write this session's record/);
+  });
+});
+
+let session_ = null; // the observer below reads the session it is passed to
+test("observer: a restart attaches the same thread again", async () => {
+  const seen = [];
+  await withSession((make) => ({ restart: make, maxRestarts: 2, modelProvider: "ad-openrouter-a", homeKey: "api", provider: "openrouter", observer: (ev) => seen.push({ ...ev, provider: ev.type === "thread.attached" ? session_.state.config.modelProvider : undefined }) }), async ({ session, engines }) => {
+    session_ = session;
+    const s = session.submit("hang");
+    await s.accepted;
+    const threadId = session.state.thread.id;
+    engines[0].testRequest("test/crash", {}).catch(() => {});
+    await s.done;
+    await until(() => session.state.engine.state === "ready" && session.state.engine.restarts === 1, "the restart");
+    const back = seen.filter((e) => e.type === "thread.attached" && e.how === "continuation");
+    assert.deepEqual(back.map((e) => e.threadId), [threadId], "the restart re-attaches the thread");
+    assert.ok(seen.findIndex((e) => e.type === "engine.exited") < seen.indexOf(back[0]));
+  });
+});
+
+test("observer: a switch is seen after the new target is taken, as a switch", async () => {
+  const seen = [];
+  await withSession(() => ({ modelProvider: "ad-openrouter-a", homeKey: "api", provider: "openrouter", observer: (ev) => seen.push({ ...ev, provider: ev.type === "thread.attached" ? session_.state.config.modelProvider : undefined }) }), async ({ session }) => {
+    session_ = session;
+    await session.submit("early-complete").done;
+    const r = await session.retarget({ modelProvider: "ad-openrouter-b", homeKey: "api", provider: "openrouter", passthrough: true });
+    assert.equal(r.kind, "continues");
+    const fork = seen.filter((e) => e.type === "thread.attached" && e.how === "fork").at(-1);
+    assert.equal(fork.provider, "ad-openrouter-b", "observed after takeTarget");
+    assert.equal(seen.filter((e) => e.type === "thread.detached").at(-1).reason, "switched");
+  });
+});

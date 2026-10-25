@@ -9,7 +9,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CodexAppServer, resolveCodexCommand } from "../src/engine/codex/app-server.mjs";
@@ -607,6 +607,39 @@ test("0.163: two tool calls in one response both run and complete, each item onc
     assert.deepEqual([...outputs].sort(), ["call-one", "call-two"], "the model got both outputs");
     assert.match(items.find((i) => i.type === "agentMessage")?.text ?? "", /both done/);
   }, { script: twoCalls });
+});
+
+// P4.1: what the session ledger maps. AD_WRITE_FIXTURE=1 refreshes the fixture the pure tests read.
+test("tool items carry the statuses and command actions the ledger maps", opts, async () => {
+  const { effectOf, toolStatus } = await import("../src/sessions/effects.mjs");
+  const CMDS = { ECHO: "echo hi", LIST: "ls", DELETE: "find . -name x -delete" };
+  const script = (body) => {
+    const input = Array.isArray(body?.input) ? body.input : [];
+    if (input.at(-1)?.type === "function_call_output") return [ev.created(), ev.message("ok"), ev.completed()];
+    const text = lastUserText(body);
+    const name = Object.keys(CMDS).find((k) => text.includes(k));
+    return name ? [ev.created(), ev.functionCall(`call-${name}`, "exec_command", { cmd: CMDS[name] }), ev.completed()] : defaultScript(body);
+  };
+  await withRealEngine(async ({ server, cwd, notes }) => {
+    const { thread } = await server.request("thread/start", { cwd });
+    const seen = {};
+    for (const name of [...Object.keys(CMDS), "PATCH"]) {
+      const { items } = await runTurn(server, notes, thread.id, name);
+      const it = items.find((i) => i.type === "commandExecution" || i.type === "fileChange");
+      assert.ok(it, `${name}: items ${items.map((i) => i.type)}`);
+      seen[name] = { type: it.type, status: it.status, exitCode: it.exitCode ?? null, command: it.command ?? null, commandActions: (it.commandActions ?? []).map((a) => ({ type: a.type })) };
+    }
+    // The engine may call `find -delete` a search; ad never calls it a read.
+    assert.equal(effectOf(seen.DELETE), "exec", JSON.stringify(seen.DELETE));
+    assert.equal(effectOf(seen.ECHO), "exec");
+    assert.equal(effectOf(seen.PATCH), "write");
+    assert.equal(toolStatus(seen.PATCH), "succeeded");
+    for (const s of Object.values(seen)) assert.ok(["completed", "failed"].includes(s.status), JSON.stringify(s));
+    if (process.env.AD_WRITE_FIXTURE === "1") {
+      const out = fileURLToPath(new URL("./fixtures/engine-items-0.163.json", import.meta.url));
+      writeFileSync(out, `${JSON.stringify({ engine: "0.163.0", platform: process.platform, items: seen }, null, 2)}\n`);
+    }
+  }, { script });
 });
 
 test("0.163: with mcp_2026_07_28 on, ad's memory server still starts and binds", { skip, timeout: START_TIMEOUT_MS + 60_000 }, async () => {

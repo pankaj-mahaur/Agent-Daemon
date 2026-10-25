@@ -1748,6 +1748,7 @@ export function createApp({
       ["sandbox", `${c.sandbox} \u{b7} ${c.approvalPolicy}`],
       ["directory", c.cwd ?? cwd],
       ["conversation", st.thread?.id ?? "(new)"],
+      ...(actions.ledger?.() ? [["session", `${actions.ledger().sessionId} \u{b7} binding ${actions.ledger().gen}`]] : []),
       ["tokens", tokens],
     ];
     const rl = st.rateLimits?.primary;

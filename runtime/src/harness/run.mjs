@@ -8,6 +8,7 @@ import { engineError } from "../engine/index.mjs";
 import { cliErrorLines } from "./io.mjs";
 import { NOT_LOGGED_IN } from "./start.mjs";
 import { launchHarness } from "./engines.mjs";
+import { createCoordinator, ledgerEnabled, ledgerHome, ledgerTarget, recordEngineThread } from "../sessions/coordinator.mjs";
 import { gatewayReason } from "./gateway-runtime.mjs";
 
 export { NOT_LOGGED_IN };
@@ -37,6 +38,7 @@ export async function cmdRun(prompt, opts = {}) {
 
   let engine;
   let release = null;
+  let record = null; // the session ledger (P4.1)
   try {
     // The account first (P3.4): the engine that serves it starts, never the default one by chance.
     const started = await launchHarness({
@@ -54,6 +56,7 @@ export async function cmdRun(prompt, opts = {}) {
       homePolicy: "grace",
       onApproval: (req) => {
         err.write(`[declined ${req.kind} — ad run is non-interactive; use ad chat to approve]\n`);
+        record?.answered(req, "decline");
         return "decline";
       },
     });
@@ -64,6 +67,9 @@ export async function cmdRun(prompt, opts = {}) {
     engine = started.engine;
     release = started.release;
     const { threadId } = await engine.startThread({ cwd: opts.cwd, model: started.params.model, modelProvider: started.params.modelProvider, sandbox: opts.sandbox });
+    const ledger = createCoordinator({ cwd: opts.cwd ?? process.cwd(), origin: "run", root: opts.adRoot, enabled: ledgerEnabled(opts), homeKey: () => ledgerHome(started.homeKey), targetOf: () => ledgerTarget({ account: started.target?.account, model: started.params.model ?? opts.model, effort: started.params.effort }) });
+    record = recordEngineThread(ledger, { engine, threadId, warn: (m) => err.write(`ad run: ${m}\n`) });
+    record.prompt(prompt);
     const streamed = new Set();
     const turnStart = Date.now();
     const r = await engine.turn({
@@ -100,6 +106,7 @@ export async function cmdRun(prompt, opts = {}) {
     err.write(cliErrorLines("run", e));
     return 1;
   } finally {
+    await record?.stop();
     if (release) await release();
     else await engine?.close();
   }

@@ -115,6 +115,7 @@ Agent harness (ad's engine; ad about):
   loop "<objective>"     Autonomous loop until done (dual exit, circuit breaker, budgets, STOP file)
                          --max-iterations 20  --max-minutes 60  --max-tokens <n>  --resume <thread-id>
   run "<prompt>"         One non-interactive agent turn (approvals are declined)
+  sessions show [<id>|--last] [--json]  One session's record: bindings, targets, turns and tool calls (read-only)
                          --cwd <dir>  --model <name>  --json
                          --sandbox <mode>     read-only | workspace-write (default) | danger-full-access
                          --account <provider>/<label>  (ad, tui, chat, loop, run, spawn) the account to run on
@@ -2449,6 +2450,7 @@ async function main(argv) {
         "list-candidates": { type: "boolean" },
         "export-traces": { type: "boolean" },
         json:         { type: "boolean" },
+        last:         { type: "boolean" },
         "exclude-session": { type: "string" },
         "log-file":   { type: "string" },
         "log-dir":    { type: "string" },
@@ -2711,6 +2713,10 @@ async function main(argv) {
         allowHomeFolder: Boolean(parsed.values["allow-home-folder"]),
         clientVersion: VERSION
       });
+    }
+    case "sessions": {
+      const { cmdSessions } = await import("./sessions/show.mjs");
+      return cmdSessions(parsed.positionals?.[0], { id: parsed.positionals?.[1], last: Boolean(parsed.values.last), json: Boolean(parsed.values.json) });
     }
     case "run": {
       const { cmdRun } = await import("./harness/run.mjs");

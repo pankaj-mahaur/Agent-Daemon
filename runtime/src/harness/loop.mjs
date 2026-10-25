@@ -23,6 +23,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { describeItem } from "./run.mjs";
 import { launchHarness } from "./engines.mjs";
+import { createCoordinator, ledgerEnabled, ledgerHome, ledgerTarget, recordEngineThread } from "../sessions/coordinator.mjs";
 import { UNATTENDED_ENV, UNATTENDED_SANDBOX_POLICY, unattendedThreadConfig } from "./unattended.mjs";
 
 export const LOOP_DEFAULTS = {
@@ -123,6 +124,7 @@ export async function cmdLoop(objective, opts = {}) {
   let release = null;
   let threadId;
   let goalSet = false;
+  let ledgerRec = null; // the session ledger (P4.1)
   try {
     // UNATTENDED_ENV: our re-prompts echo the agent's own status text —
     // hooks must not store that as the user's corrections.
@@ -137,6 +139,8 @@ export async function cmdLoop(objective, opts = {}) {
     const threadOpts = { cwd, model: opts.model, sandbox: "workspace-write", approvalPolicy: "never", developerInstructions: LOOP_PROTOCOL, config: await unattendedThreadConfig(engine) };
     // A resumed thread keeps its own account; a new one starts on the resolved one.
     ({ threadId } = opts.resume ? await engine.resumeThread(opts.resume, threadOpts) : await engine.startThread({ ...threadOpts, model: started.params.model, modelProvider: started.params.modelProvider }));
+    const ledger = createCoordinator({ cwd, origin: "loop", root: opts.adRoot, enabled: ledgerEnabled(opts), homeKey: () => ledgerHome(started.homeKey), targetOf: () => ledgerTarget({ account: started.target?.account, model: started.params.model ?? opts.model, effort: started.params.effort }) });
+    ledgerRec = recordEngineThread(ledger, { engine, threadId, how: opts.resume ? "resume" : "new", warn: (m) => err.write(`ad loop: ${m}\n`) });
     if (objective?.trim()) {
       await engine
         .setGoal(threadId, objective, limits.maxTokens ? { tokenBudget: limits.maxTokens } : {})
@@ -156,7 +160,10 @@ export async function cmdLoop(objective, opts = {}) {
     while (!decision.stop) {
       const i = history.length + 1;
       if (i > 1 && limits.compactEvery && (i - 1) % limits.compactEvery === 0) await compact(engine, threadId, err);
-      const record = await runIteration(engine, { threadId, text: nextPrompt(objective, history.at(-1)), stopRequested, err, limits, t0 });
+      const text = nextPrompt(objective, history.at(-1));
+      // The objective is the user's; every later prompt is ad's own.
+      ledgerRec?.prompt(text, i === 1 && objective?.trim() ? "submit" : "ad");
+      const record = await runIteration(engine, { threadId, text, stopRequested, err, limits, t0 });
       if (record.threadTotal != null) {
         baseline ??= record.baseline ?? 0;
         record.tokens = record.threadTotal - (threadTotal ?? baseline);
@@ -183,6 +190,7 @@ export async function cmdLoop(objective, opts = {}) {
     // An active goal could let the engine keep driving the thread on its own,
     // outside our brakes; the loop owns the goal only while it runs.
     if (goalSet) await engine.clearGoal(threadId).catch((e) => err.write("[loop] could not clear the thread goal\n" + cliErrorLines("loop", e)));
+    await ledgerRec?.stop();
     if (release) await release();
     else await engine?.close();
   }

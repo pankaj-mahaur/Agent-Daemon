@@ -858,6 +858,14 @@ See [harness.md](harness.md#working-in-your-home-folder).
 
 ---
 
+## 73. "This session is open in another ad window", or "ad couldn't write this session's record"
+
+**Cause:** ad keeps a record of each session in `~/.agent-daemon/sessions/` (see [harness.md](harness.md#the-session-record-ad-sessions-show)). Only one window writes a session: a second `ad` on the same conversation (a `/resume` of it, or the same thread in two windows) gets the first message, and that window records nothing. The second message means a write failed (a full disk, a folder ad can't write); the details are in `/warnings`. "Repaired the session record after an unclean exit" means ad or the machine stopped in the middle of a write and ad dropped the half line.
+
+**Fix:** nothing is lost from the conversation itself, which goes on in both cases. Close the other window to record the session again. For a failed write, check that `~/.agent-daemon/sessions/` exists and is writable. `AD_LEDGER=0` turns the record off.
+
+---
+
 For harness problems, the [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill walks through login → hooks → sandbox → the engine's own log. See also [harness.md](harness.md) and, for the terminal UI, [tui.md](tui.md).
 
 ## Still stuck?
