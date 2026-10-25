@@ -1,0 +1,1982 @@
+{
+  "deepseek-chat-01.json": {
+    "keys": [
+      "messages",
+      "model",
+      "parallel_tool_calls",
+      "stream",
+      "stream_options",
+      "tool_choice",
+      "tools"
+    ],
+    "tools": [
+      "exec_command",
+      "write_stdin",
+      "request_user_input",
+      "view_image",
+      "multi_agent_v1__close_agent",
+      "multi_agent_v1__resume_agent",
+      "multi_agent_v1__send_input",
+      "multi_agent_v1__spawn_agent",
+      "multi_agent_v1__wait_agent",
+      "get_goal",
+      "create_goal",
+      "update_goal"
+    ],
+    "messages": [
+      {
+        "role": "system",
+        "content": "{ELIDED 17174 chars sha256:f6d6b8750560}"
+      },
+      {
+        "role": "system",
+        "content": "{ELIDED 7756 chars sha256:23d0b9eadc78}\n\n{ELIDED 3939 chars "
+      },
+      {
+        "role": "user",
+        "content": "<environment_context>\n  <cwd>{TMP}</cwd>\n  <shell>powershell"
+      },
+      {
+        "role": "user",
+        "content": "PING"
+      }
+    ]
+  },
+  "deepseek-chat-02.json": {
+    "keys": [
+      "messages",
+      "model",
+      "parallel_tool_calls",
+      "stream",
+      "stream_options",
+      "tool_choice",
+      "tools"
+    ],
+    "tools": [
+      "exec_command",
+      "write_stdin",
+      "request_user_input",
+      "view_image",
+      "multi_agent_v1__close_agent",
+      "multi_agent_v1__resume_agent",
+      "multi_agent_v1__send_input",
+      "multi_agent_v1__spawn_agent",
+      "multi_agent_v1__wait_agent",
+      "get_goal",
+      "create_goal",
+      "update_goal"
+    ],
+    "messages": [
+      {
+        "role": "system",
+        "content": "{ELIDED 17174 chars sha256:f6d6b8750560}"
+      },
+      {
+        "role": "system",
+        "content": "{ELIDED 7756 chars sha256:23d0b9eadc78}\n\n{ELIDED 3939 chars "
+      },
+      {
+        "role": "user",
+        "content": "<environment_context>\n  <cwd>{TMP}</cwd>\n  <shell>powershell"
+      },
+      {
+        "role": "user",
+        "content": "PING"
+      },
+      {
+        "role": "assistant",
+        "content": "pong"
+      },
+      {
+        "role": "user",
+        "content": "SHELL"
+      }
+    ]
+  },
+  "deepseek-chat-03.json": {
+    "keys": [
+      "messages",
+      "model",
+      "parallel_tool_calls",
+      "stream",
+      "stream_options",
+      "tool_choice",
+      "tools"
+    ],
+    "tools": [
+      "exec_command",
+      "write_stdin",
+      "request_user_input",
+      "view_image",
+      "multi_agent_v1__close_agent",
+      "multi_agent_v1__resume_agent",
+      "multi_agent_v1__send_input",
+      "multi_agent_v1__spawn_agent",
+      "multi_agent_v1__wait_agent",
+      "get_goal",
+      "create_goal",
+      "update_goal"
+    ],
+    "messages": [
+      {
+        "role": "system",
+        "content": "{ELIDED 17174 chars sha256:f6d6b8750560}"
+      },
+      {
+        "role": "system",
+        "content": "{ELIDED 7756 chars sha256:23d0b9eadc78}\n\n{ELIDED 3939 chars "
+      },
+      {
+        "role": "user",
+        "content": "<environment_context>\n  <cwd>{TMP}</cwd>\n  <shell>powershell"
+      },
+      {
+        "role": "user",
+        "content": "PING"
+      },
+      {
+        "role": "assistant",
+        "content": "pong"
+      },
+      {
+        "role": "user",
+        "content": "SHELL"
+      },
+      {
+        "role": "assistant",
+        "calls": [
+          "call-shell exec_command {\"cmd\":\"cmd.exe /d /c echo hi\"}"
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "Chunk ID: 4fbf3c\nWall time: 0.7143 seconds\nProcess exited wi",
+        "for": "call-shell"
+      }
+    ]
+  },
+  "deepseek-chat-04.json": {
+    "keys": [
+      "messages",
+      "model",
+      "parallel_tool_calls",
+      "stream",
+      "stream_options",
+      "tool_choice",
+      "tools"
+    ],
+    "tools": [
+      "exec_command",
+      "write_stdin",
+      "request_user_input",
+      "view_image",
+      "multi_agent_v1__close_agent",
+      "multi_agent_v1__resume_agent",
+      "multi_agent_v1__send_input",
+      "multi_agent_v1__spawn_agent",
+      "multi_agent_v1__wait_agent",
+      "get_goal",
+      "create_goal",
+      "update_goal"
+    ],
+    "messages": [
+      {
+        "role": "system",
+        "content": "{ELIDED 17174 chars sha256:f6d6b8750560}"
+      },
+      {
+        "role": "system",
+        "content": "{ELIDED 7756 chars sha256:23d0b9eadc78}\n\n{ELIDED 3939 chars "
+      },
+      {
+        "role": "user",
+        "content": "<environment_context>\n  <cwd>{TMP}</cwd>\n  <shell>powershell"
+      },
+      {
+        "role": "user",
+        "content": "PING"
+      },
+      {
+        "role": "assistant",
+        "content": "pong"
+      },
+      {
+        "role": "user",
+        "content": "SHELL"
+      },
+      {
+        "role": "assistant",
+        "calls": [
+          "call-shell exec_command {\"cmd\":\"cmd.exe /d /c echo hi\"}"
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "Chunk ID: 4fbf3c\nWall time: 0.7143 seconds\nProcess exited wi",
+        "for": "call-shell"
+      },
+      {
+        "role": "assistant",
+        "content": "done after call-shell"
+      },
+      {
+        "role": "user",
+        "content": "FREEFORM"
+      }
+    ]
+  },
+  "deepseek-chat-05.json": {
+    "keys": [
+      "messages",
+      "model",
+      "parallel_tool_calls",
+      "stream",
+      "stream_options",
+      "tool_choice",
+      "tools"
+    ],
+    "tools": [
+      "exec_command",
+      "write_stdin",
+      "request_user_input",
+      "view_image",
+      "multi_agent_v1__close_agent",
+      "multi_agent_v1__resume_agent",
+      "multi_agent_v1__send_input",
+      "multi_agent_v1__spawn_agent",
+      "multi_agent_v1__wait_agent",
+      "get_goal",
+      "create_goal",
+      "update_goal"
+    ],
+    "messages": [
+      {
+        "role": "system",
+        "content": "{ELIDED 17174 chars sha256:f6d6b8750560}"
+      },
+      {
+        "role": "system",
+        "content": "{ELIDED 7756 chars sha256:23d0b9eadc78}\n\n{ELIDED 3939 chars "
+      },
+      {
+        "role": "user",
+        "content": "<environment_context>\n  <cwd>{TMP}</cwd>\n  <shell>powershell"
+      },
+      {
+        "role": "user",
+        "content": "PING"
+      },
+      {
+        "role": "assistant",
+        "content": "pong"
+      },
+      {
+        "role": "user",
+        "content": "SHELL"
+      },
+      {
+        "role": "assistant",
+        "calls": [
+          "call-shell exec_command {\"cmd\":\"cmd.exe /d /c echo hi\"}"
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "Chunk ID: 4fbf3c\nWall time: 0.7143 seconds\nProcess exited wi",
+        "for": "call-shell"
+      },
+      {
+        "role": "assistant",
+        "content": "done after call-shell"
+      },
+      {
+        "role": "user",
+        "content": "FREEFORM"
+      },
+      {
+        "role": "assistant",
+        "calls": [
+          "call-freeform apply_patch {\"input\":\"*** Begin Patch\\n*** Add File: hello.txt\\n+hello f"
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "unsupported custom tool call: apply_patch",
+        "for": "call-freeform"
+      }
+    ]
+  },
+  "deepseek-chat-06.json": {
+    "keys": [
+      "messages",
+      "model",
+      "parallel_tool_calls",
+      "stream",
+      "stream_options",
+      "tool_choice",
+      "tools"
+    ],
+    "tools": [
+      "exec_command",
+      "write_stdin",
+      "request_user_input",
+      "view_image",
+      "multi_agent_v1__close_agent",
+      "multi_agent_v1__resume_agent",
+      "multi_agent_v1__send_input",
+      "multi_agent_v1__spawn_agent",
+      "multi_agent_v1__wait_agent",
+      "get_goal",
+      "create_goal",
+      "update_goal"
+    ],
+    "messages": [
+      {
+        "role": "system",
+        "content": "{ELIDED 17174 chars sha256:f6d6b8750560}"
+      },
+      {
+        "role": "system",
+        "content": "{ELIDED 7756 chars sha256:23d0b9eadc78}\n\n{ELIDED 3939 chars "
+      },
+      {
+        "role": "user",
+        "content": "<environment_context>\n  <cwd>{TMP}</cwd>\n  <shell>powershell"
+      },
+      {
+        "role": "user",
+        "content": "PING"
+      },
+      {
+        "role": "assistant",
+        "content": "pong"
+      },
+      {
+        "role": "user",
+        "content": "SHELL"
+      },
+      {
+        "role": "assistant",
+        "calls": [
+          "call-shell exec_command {\"cmd\":\"cmd.exe /d /c echo hi\"}"
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "Chunk ID: 4fbf3c\nWall time: 0.7143 seconds\nProcess exited wi",
+        "for": "call-shell"
+      },
+      {
+        "role": "assistant",
+        "content": "done after call-shell"
+      },
+      {
+        "role": "user",
+        "content": "FREEFORM"
+      },
+      {
+        "role": "assistant",
+        "calls": [
+          "call-freeform apply_patch {\"input\":\"*** Begin Patch\\n*** Add File: hello.txt\\n+hello f"
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "unsupported custom tool call: apply_patch",
+        "for": "call-freeform"
+      },
+      {
+        "role": "assistant",
+        "content": "done after call-freeform"
+      },
+      {
+        "role": "user",
+        "content": "PING again"
+      }
+    ]
+  },
+  "gemini-2.5-flash-01.json": {
+    "keys": [
+      "messages",
+      "model",
+      "parallel_tool_calls",
+      "stream",
+      "stream_options",
+      "tool_choice",
+      "tools"
+    ],
+    "tools": [
+      "exec_command",
+      "write_stdin",
+      "request_user_input",
+      "view_image",
+      "multi_agent_v1__close_agent",
+      "multi_agent_v1__resume_agent",
+      "multi_agent_v1__send_input",
+      "multi_agent_v1__spawn_agent",
+      "multi_agent_v1__wait_agent",
+      "get_goal",
+      "create_goal",
+      "update_goal"
+    ],
+    "messages": [
+      {
+        "role": "system",
+        "content": "{ELIDED 17174 chars sha256:f6d6b8750560}"
+      },
+      {
+        "role": "system",
+        "content": "{ELIDED 7756 chars sha256:23d0b9eadc78}\n\n{ELIDED 3939 chars "
+      },
+      {
+        "role": "user",
+        "content": "<environment_context>\n  <cwd>{TMP}</cwd>\n  <shell>powershell"
+      },
+      {
+        "role": "user",
+        "content": "PING"
+      }
+    ]
+  },
+  "gemini-2.5-flash-02.json": {
+    "keys": [
+      "messages",
+      "model",
+      "parallel_tool_calls",
+      "stream",
+      "stream_options",
+      "tool_choice",
+      "tools"
+    ],
+    "tools": [
+      "exec_command",
+      "write_stdin",
+      "request_user_input",
+      "view_image",
+      "multi_agent_v1__close_agent",
+      "multi_agent_v1__resume_agent",
+      "multi_agent_v1__send_input",
+      "multi_agent_v1__spawn_agent",
+      "multi_agent_v1__wait_agent",
+      "get_goal",
+      "create_goal",
+      "update_goal"
+    ],
+    "messages": [
+      {
+        "role": "system",
+        "content": "{ELIDED 17174 chars sha256:f6d6b8750560}"
+      },
+      {
+        "role": "system",
+        "content": "{ELIDED 7756 chars sha256:23d0b9eadc78}\n\n{ELIDED 3939 chars "
+      },
+      {
+        "role": "user",
+        "content": "<environment_context>\n  <cwd>{TMP}</cwd>\n  <shell>powershell"
+      },
+      {
+        "role": "user",
+        "content": "PING"
+      },
+      {
+        "role": "assistant",
+        "content": "pong"
+      },
+      {
+        "role": "user",
+        "content": "SHELL"
+      }
+    ]
+  },
+  "gemini-2.5-flash-03.json": {
+    "keys": [
+      "messages",
+      "model",
+      "parallel_tool_calls",
+      "stream",
+      "stream_options",
+      "tool_choice",
+      "tools"
+    ],
+    "tools": [
+      "exec_command",
+      "write_stdin",
+      "request_user_input",
+      "view_image",
+      "multi_agent_v1__close_agent",
+      "multi_agent_v1__resume_agent",
+      "multi_agent_v1__send_input",
+      "multi_agent_v1__spawn_agent",
+      "multi_agent_v1__wait_agent",
+      "get_goal",
+      "create_goal",
+      "update_goal"
+    ],
+    "messages": [
+      {
+        "role": "system",
+        "content": "{ELIDED 17174 chars sha256:f6d6b8750560}"
+      },
+      {
+        "role": "system",
+        "content": "{ELIDED 7756 chars sha256:23d0b9eadc78}\n\n{ELIDED 3939 chars "
+      },
+      {
+        "role": "user",
+        "content": "<environment_context>\n  <cwd>{TMP}</cwd>\n  <shell>powershell"
+      },
+      {
+        "role": "user",
+        "content": "PING"
+      },
+      {
+        "role": "assistant",
+        "content": "pong"
+      },
+      {
+        "role": "user",
+        "content": "SHELL"
+      },
+      {
+        "role": "assistant",
+        "calls": [
+          "call-shell exec_command {\"cmd\":\"cmd.exe /d /c echo hi\"}"
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "Chunk ID: 37f02b\nWall time: 0.7460 seconds\nProcess exited wi",
+        "for": "call-shell"
+      }
+    ]
+  },
+  "gemini-2.5-flash-04.json": {
+    "keys": [
+      "messages",
+      "model",
+      "parallel_tool_calls",
+      "stream",
+      "stream_options",
+      "tool_choice",
+      "tools"
+    ],
+    "tools": [
+      "exec_command",
+      "write_stdin",
+      "request_user_input",
+      "view_image",
+      "multi_agent_v1__close_agent",
+      "multi_agent_v1__resume_agent",
+      "multi_agent_v1__send_input",
+      "multi_agent_v1__spawn_agent",
+      "multi_agent_v1__wait_agent",
+      "get_goal",
+      "create_goal",
+      "update_goal"
+    ],
+    "messages": [
+      {
+        "role": "system",
+        "content": "{ELIDED 17174 chars sha256:f6d6b8750560}"
+      },
+      {
+        "role": "system",
+        "content": "{ELIDED 7756 chars sha256:23d0b9eadc78}\n\n{ELIDED 3939 chars "
+      },
+      {
+        "role": "user",
+        "content": "<environment_context>\n  <cwd>{TMP}</cwd>\n  <shell>powershell"
+      },
+      {
+        "role": "user",
+        "content": "PING"
+      },
+      {
+        "role": "assistant",
+        "content": "pong"
+      },
+      {
+        "role": "user",
+        "content": "SHELL"
+      },
+      {
+        "role": "assistant",
+        "calls": [
+          "call-shell exec_command {\"cmd\":\"cmd.exe /d /c echo hi\"}"
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "Chunk ID: 37f02b\nWall time: 0.7460 seconds\nProcess exited wi",
+        "for": "call-shell"
+      },
+      {
+        "role": "assistant",
+        "content": "done after call-shell"
+      },
+      {
+        "role": "user",
+        "content": "FREEFORM"
+      }
+    ]
+  },
+  "gemini-2.5-flash-05.json": {
+    "keys": [
+      "messages",
+      "model",
+      "parallel_tool_calls",
+      "stream",
+      "stream_options",
+      "tool_choice",
+      "tools"
+    ],
+    "tools": [
+      "exec_command",
+      "write_stdin",
+      "request_user_input",
+      "view_image",
+      "multi_agent_v1__close_agent",
+      "multi_agent_v1__resume_agent",
+      "multi_agent_v1__send_input",
+      "multi_agent_v1__spawn_agent",
+      "multi_agent_v1__wait_agent",
+      "get_goal",
+      "create_goal",
+      "update_goal"
+    ],
+    "messages": [
+      {
+        "role": "system",
+        "content": "{ELIDED 17174 chars sha256:f6d6b8750560}"
+      },
+      {
+        "role": "system",
+        "content": "{ELIDED 7756 chars sha256:23d0b9eadc78}\n\n{ELIDED 3939 chars "
+      },
+      {
+        "role": "user",
+        "content": "<environment_context>\n  <cwd>{TMP}</cwd>\n  <shell>powershell"
+      },
+      {
+        "role": "user",
+        "content": "PING"
+      },
+      {
+        "role": "assistant",
+        "content": "pong"
+      },
+      {
+        "role": "user",
+        "content": "SHELL"
+      },
+      {
+        "role": "assistant",
+        "calls": [
+          "call-shell exec_command {\"cmd\":\"cmd.exe /d /c echo hi\"}"
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "Chunk ID: 37f02b\nWall time: 0.7460 seconds\nProcess exited wi",
+        "for": "call-shell"
+      },
+      {
+        "role": "assistant",
+        "content": "done after call-shell"
+      },
+      {
+        "role": "user",
+        "content": "FREEFORM"
+      },
+      {
+        "role": "assistant",
+        "calls": [
+          "call-freeform apply_patch {\"input\":\"*** Begin Patch\\n*** Add File: hello.txt\\n+hello f"
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "unsupported custom tool call: apply_patch",
+        "for": "call-freeform"
+      }
+    ]
+  },
+  "gemini-2.5-flash-06.json": {
+    "keys": [
+      "messages",
+      "model",
+      "parallel_tool_calls",
+      "stream",
+      "stream_options",
+      "tool_choice",
+      "tools"
+    ],
+    "tools": [
+      "exec_command",
+      "write_stdin",
+      "request_user_input",
+      "view_image",
+      "multi_agent_v1__close_agent",
+      "multi_agent_v1__resume_agent",
+      "multi_agent_v1__send_input",
+      "multi_agent_v1__spawn_agent",
+      "multi_agent_v1__wait_agent",
+      "get_goal",
+      "create_goal",
+      "update_goal"
+    ],
+    "messages": [
+      {
+        "role": "system",
+        "content": "{ELIDED 17174 chars sha256:f6d6b8750560}"
+      },
+      {
+        "role": "system",
+        "content": "{ELIDED 7756 chars sha256:23d0b9eadc78}\n\n{ELIDED 3939 chars "
+      },
+      {
+        "role": "user",
+        "content": "<environment_context>\n  <cwd>{TMP}</cwd>\n  <shell>powershell"
+      },
+      {
+        "role": "user",
+        "content": "PING"
+      },
+      {
+        "role": "assistant",
+        "content": "pong"
+      },
+      {
+        "role": "user",
+        "content": "SHELL"
+      },
+      {
+        "role": "assistant",
+        "calls": [
+          "call-shell exec_command {\"cmd\":\"cmd.exe /d /c echo hi\"}"
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "Chunk ID: 37f02b\nWall time: 0.7460 seconds\nProcess exited wi",
+        "for": "call-shell"
+      },
+      {
+        "role": "assistant",
+        "content": "done after call-shell"
+      },
+      {
+        "role": "user",
+        "content": "FREEFORM"
+      },
+      {
+        "role": "assistant",
+        "calls": [
+          "call-freeform apply_patch {\"input\":\"*** Begin Patch\\n*** Add File: hello.txt\\n+hello f"
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "unsupported custom tool call: apply_patch",
+        "for": "call-freeform"
+      },
+      {
+        "role": "assistant",
+        "content": "done after call-freeform"
+      },
+      {
+        "role": "user",
+        "content": "PING again"
+      }
+    ]
+  },
+  "gpt-5.1-codex-01.json": {
+    "keys": [
+      "messages",
+      "model",
+      "parallel_tool_calls",
+      "stream",
+      "stream_options",
+      "tool_choice",
+      "tools"
+    ],
+    "tools": [
+      "exec_command",
+      "write_stdin",
+      "request_user_input",
+      "view_image",
+      "multi_agent_v1__close_agent",
+      "multi_agent_v1__resume_agent",
+      "multi_agent_v1__send_input",
+      "multi_agent_v1__spawn_agent",
+      "multi_agent_v1__wait_agent",
+      "get_goal",
+      "create_goal",
+      "update_goal"
+    ],
+    "messages": [
+      {
+        "role": "system",
+        "content": "{ELIDED 17174 chars sha256:f6d6b8750560}"
+      },
+      {
+        "role": "system",
+        "content": "{ELIDED 7756 chars sha256:23d0b9eadc78}\n\n{ELIDED 3939 chars "
+      },
+      {
+        "role": "user",
+        "content": "<environment_context>\n  <cwd>{TMP}</cwd>\n  <shell>powershell"
+      },
+      {
+        "role": "user",
+        "content": "PING"
+      }
+    ]
+  },
+  "gpt-5.1-codex-02.json": {
+    "keys": [
+      "messages",
+      "model",
+      "parallel_tool_calls",
+      "stream",
+      "stream_options",
+      "tool_choice",
+      "tools"
+    ],
+    "tools": [
+      "exec_command",
+      "write_stdin",
+      "request_user_input",
+      "view_image",
+      "multi_agent_v1__close_agent",
+      "multi_agent_v1__resume_agent",
+      "multi_agent_v1__send_input",
+      "multi_agent_v1__spawn_agent",
+      "multi_agent_v1__wait_agent",
+      "get_goal",
+      "create_goal",
+      "update_goal"
+    ],
+    "messages": [
+      {
+        "role": "system",
+        "content": "{ELIDED 17174 chars sha256:f6d6b8750560}"
+      },
+      {
+        "role": "system",
+        "content": "{ELIDED 7756 chars sha256:23d0b9eadc78}\n\n{ELIDED 3939 chars "
+      },
+      {
+        "role": "user",
+        "content": "<environment_context>\n  <cwd>{TMP}</cwd>\n  <shell>powershell"
+      },
+      {
+        "role": "user",
+        "content": "PING"
+      },
+      {
+        "role": "assistant",
+        "content": "pong"
+      },
+      {
+        "role": "user",
+        "content": "SHELL"
+      }
+    ]
+  },
+  "gpt-5.1-codex-03.json": {
+    "keys": [
+      "messages",
+      "model",
+      "parallel_tool_calls",
+      "stream",
+      "stream_options",
+      "tool_choice",
+      "tools"
+    ],
+    "tools": [
+      "exec_command",
+      "write_stdin",
+      "request_user_input",
+      "view_image",
+      "multi_agent_v1__close_agent",
+      "multi_agent_v1__resume_agent",
+      "multi_agent_v1__send_input",
+      "multi_agent_v1__spawn_agent",
+      "multi_agent_v1__wait_agent",
+      "get_goal",
+      "create_goal",
+      "update_goal"
+    ],
+    "messages": [
+      {
+        "role": "system",
+        "content": "{ELIDED 17174 chars sha256:f6d6b8750560}"
+      },
+      {
+        "role": "system",
+        "content": "{ELIDED 7756 chars sha256:23d0b9eadc78}\n\n{ELIDED 3939 chars "
+      },
+      {
+        "role": "user",
+        "content": "<environment_context>\n  <cwd>{TMP}</cwd>\n  <shell>powershell"
+      },
+      {
+        "role": "user",
+        "content": "PING"
+      },
+      {
+        "role": "assistant",
+        "content": "pong"
+      },
+      {
+        "role": "user",
+        "content": "SHELL"
+      },
+      {
+        "role": "assistant",
+        "calls": [
+          "call-shell exec_command {\"cmd\":\"cmd.exe /d /c echo hi\"}"
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "Chunk ID: 3ca07f\nWall time: 0.6726 seconds\nProcess exited wi",
+        "for": "call-shell"
+      }
+    ]
+  },
+  "gpt-5.1-codex-04.json": {
+    "keys": [
+      "messages",
+      "model",
+      "parallel_tool_calls",
+      "stream",
+      "stream_options",
+      "tool_choice",
+      "tools"
+    ],
+    "tools": [
+      "exec_command",
+      "write_stdin",
+      "request_user_input",
+      "view_image",
+      "multi_agent_v1__close_agent",
+      "multi_agent_v1__resume_agent",
+      "multi_agent_v1__send_input",
+      "multi_agent_v1__spawn_agent",
+      "multi_agent_v1__wait_agent",
+      "get_goal",
+      "create_goal",
+      "update_goal"
+    ],
+    "messages": [
+      {
+        "role": "system",
+        "content": "{ELIDED 17174 chars sha256:f6d6b8750560}"
+      },
+      {
+        "role": "system",
+        "content": "{ELIDED 7756 chars sha256:23d0b9eadc78}\n\n{ELIDED 3939 chars "
+      },
+      {
+        "role": "user",
+        "content": "<environment_context>\n  <cwd>{TMP}</cwd>\n  <shell>powershell"
+      },
+      {
+        "role": "user",
+        "content": "PING"
+      },
+      {
+        "role": "assistant",
+        "content": "pong"
+      },
+      {
+        "role": "user",
+        "content": "SHELL"
+      },
+      {
+        "role": "assistant",
+        "calls": [
+          "call-shell exec_command {\"cmd\":\"cmd.exe /d /c echo hi\"}"
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "Chunk ID: 3ca07f\nWall time: 0.6726 seconds\nProcess exited wi",
+        "for": "call-shell"
+      },
+      {
+        "role": "assistant",
+        "content": "done after call-shell"
+      },
+      {
+        "role": "user",
+        "content": "FREEFORM"
+      }
+    ]
+  },
+  "gpt-5.1-codex-05.json": {
+    "keys": [
+      "messages",
+      "model",
+      "parallel_tool_calls",
+      "stream",
+      "stream_options",
+      "tool_choice",
+      "tools"
+    ],
+    "tools": [
+      "exec_command",
+      "write_stdin",
+      "request_user_input",
+      "view_image",
+      "multi_agent_v1__close_agent",
+      "multi_agent_v1__resume_agent",
+      "multi_agent_v1__send_input",
+      "multi_agent_v1__spawn_agent",
+      "multi_agent_v1__wait_agent",
+      "get_goal",
+      "create_goal",
+      "update_goal"
+    ],
+    "messages": [
+      {
+        "role": "system",
+        "content": "{ELIDED 17174 chars sha256:f6d6b8750560}"
+      },
+      {
+        "role": "system",
+        "content": "{ELIDED 7756 chars sha256:23d0b9eadc78}\n\n{ELIDED 3939 chars "
+      },
+      {
+        "role": "user",
+        "content": "<environment_context>\n  <cwd>{TMP}</cwd>\n  <shell>powershell"
+      },
+      {
+        "role": "user",
+        "content": "PING"
+      },
+      {
+        "role": "assistant",
+        "content": "pong"
+      },
+      {
+        "role": "user",
+        "content": "SHELL"
+      },
+      {
+        "role": "assistant",
+        "calls": [
+          "call-shell exec_command {\"cmd\":\"cmd.exe /d /c echo hi\"}"
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "Chunk ID: 3ca07f\nWall time: 0.6726 seconds\nProcess exited wi",
+        "for": "call-shell"
+      },
+      {
+        "role": "assistant",
+        "content": "done after call-shell"
+      },
+      {
+        "role": "user",
+        "content": "FREEFORM"
+      },
+      {
+        "role": "assistant",
+        "calls": [
+          "call-freeform apply_patch {\"input\":\"*** Begin Patch\\n*** Add File: hello.txt\\n+hello f"
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "unsupported custom tool call: apply_patch",
+        "for": "call-freeform"
+      }
+    ]
+  },
+  "gpt-5.1-codex-06.json": {
+    "keys": [
+      "messages",
+      "model",
+      "parallel_tool_calls",
+      "stream",
+      "stream_options",
+      "tool_choice",
+      "tools"
+    ],
+    "tools": [
+      "exec_command",
+      "write_stdin",
+      "request_user_input",
+      "view_image",
+      "multi_agent_v1__close_agent",
+      "multi_agent_v1__resume_agent",
+      "multi_agent_v1__send_input",
+      "multi_agent_v1__spawn_agent",
+      "multi_agent_v1__wait_agent",
+      "get_goal",
+      "create_goal",
+      "update_goal"
+    ],
+    "messages": [
+      {
+        "role": "system",
+        "content": "{ELIDED 17174 chars sha256:f6d6b8750560}"
+      },
+      {
+        "role": "system",
+        "content": "{ELIDED 7756 chars sha256:23d0b9eadc78}\n\n{ELIDED 3939 chars "
+      },
+      {
+        "role": "user",
+        "content": "<environment_context>\n  <cwd>{TMP}</cwd>\n  <shell>powershell"
+      },
+      {
+        "role": "user",
+        "content": "PING"
+      },
+      {
+        "role": "assistant",
+        "content": "pong"
+      },
+      {
+        "role": "user",
+        "content": "SHELL"
+      },
+      {
+        "role": "assistant",
+        "calls": [
+          "call-shell exec_command {\"cmd\":\"cmd.exe /d /c echo hi\"}"
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "Chunk ID: 3ca07f\nWall time: 0.6726 seconds\nProcess exited wi",
+        "for": "call-shell"
+      },
+      {
+        "role": "assistant",
+        "content": "done after call-shell"
+      },
+      {
+        "role": "user",
+        "content": "FREEFORM"
+      },
+      {
+        "role": "assistant",
+        "calls": [
+          "call-freeform apply_patch {\"input\":\"*** Begin Patch\\n*** Add File: hello.txt\\n+hello f"
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "unsupported custom tool call: apply_patch",
+        "for": "call-freeform"
+      },
+      {
+        "role": "assistant",
+        "content": "done after call-freeform"
+      },
+      {
+        "role": "user",
+        "content": "PING again"
+      }
+    ]
+  },
+  "mistral-large-latest-01.json": {
+    "keys": [
+      "messages",
+      "model",
+      "parallel_tool_calls",
+      "stream",
+      "stream_options",
+      "tool_choice",
+      "tools"
+    ],
+    "tools": [
+      "exec_command",
+      "write_stdin",
+      "request_user_input",
+      "view_image",
+      "multi_agent_v1__close_agent",
+      "multi_agent_v1__resume_agent",
+      "multi_agent_v1__send_input",
+      "multi_agent_v1__spawn_agent",
+      "multi_agent_v1__wait_agent",
+      "get_goal",
+      "create_goal",
+      "update_goal"
+    ],
+    "messages": [
+      {
+        "role": "system",
+        "content": "{ELIDED 17174 chars sha256:f6d6b8750560}"
+      },
+      {
+        "role": "system",
+        "content": "{ELIDED 7756 chars sha256:23d0b9eadc78}\n\n{ELIDED 3939 chars "
+      },
+      {
+        "role": "user",
+        "content": "<environment_context>\n  <cwd>{TMP}</cwd>\n  <shell>powershell"
+      },
+      {
+        "role": "user",
+        "content": "PING"
+      }
+    ]
+  },
+  "mistral-large-latest-02.json": {
+    "keys": [
+      "messages",
+      "model",
+      "parallel_tool_calls",
+      "stream",
+      "stream_options",
+      "tool_choice",
+      "tools"
+    ],
+    "tools": [
+      "exec_command",
+      "write_stdin",
+      "request_user_input",
+      "view_image",
+      "multi_agent_v1__close_agent",
+      "multi_agent_v1__resume_agent",
+      "multi_agent_v1__send_input",
+      "multi_agent_v1__spawn_agent",
+      "multi_agent_v1__wait_agent",
+      "get_goal",
+      "create_goal",
+      "update_goal"
+    ],
+    "messages": [
+      {
+        "role": "system",
+        "content": "{ELIDED 17174 chars sha256:f6d6b8750560}"
+      },
+      {
+        "role": "system",
+        "content": "{ELIDED 7756 chars sha256:23d0b9eadc78}\n\n{ELIDED 3939 chars "
+      },
+      {
+        "role": "user",
+        "content": "<environment_context>\n  <cwd>{TMP}</cwd>\n  <shell>powershell"
+      },
+      {
+        "role": "user",
+        "content": "PING"
+      },
+      {
+        "role": "assistant",
+        "content": "pong"
+      },
+      {
+        "role": "user",
+        "content": "SHELL"
+      }
+    ]
+  },
+  "mistral-large-latest-03.json": {
+    "keys": [
+      "messages",
+      "model",
+      "parallel_tool_calls",
+      "stream",
+      "stream_options",
+      "tool_choice",
+      "tools"
+    ],
+    "tools": [
+      "exec_command",
+      "write_stdin",
+      "request_user_input",
+      "view_image",
+      "multi_agent_v1__close_agent",
+      "multi_agent_v1__resume_agent",
+      "multi_agent_v1__send_input",
+      "multi_agent_v1__spawn_agent",
+      "multi_agent_v1__wait_agent",
+      "get_goal",
+      "create_goal",
+      "update_goal"
+    ],
+    "messages": [
+      {
+        "role": "system",
+        "content": "{ELIDED 17174 chars sha256:f6d6b8750560}"
+      },
+      {
+        "role": "system",
+        "content": "{ELIDED 7756 chars sha256:23d0b9eadc78}\n\n{ELIDED 3939 chars "
+      },
+      {
+        "role": "user",
+        "content": "<environment_context>\n  <cwd>{TMP}</cwd>\n  <shell>powershell"
+      },
+      {
+        "role": "user",
+        "content": "PING"
+      },
+      {
+        "role": "assistant",
+        "content": "pong"
+      },
+      {
+        "role": "user",
+        "content": "SHELL"
+      },
+      {
+        "role": "assistant",
+        "calls": [
+          "call-shell exec_command {\"cmd\":\"cmd.exe /d /c echo hi\"}"
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "Chunk ID: 2aafa0\nWall time: 0.6167 seconds\nProcess exited wi",
+        "for": "call-shell"
+      }
+    ]
+  },
+  "mistral-large-latest-04.json": {
+    "keys": [
+      "messages",
+      "model",
+      "parallel_tool_calls",
+      "stream",
+      "stream_options",
+      "tool_choice",
+      "tools"
+    ],
+    "tools": [
+      "exec_command",
+      "write_stdin",
+      "request_user_input",
+      "view_image",
+      "multi_agent_v1__close_agent",
+      "multi_agent_v1__resume_agent",
+      "multi_agent_v1__send_input",
+      "multi_agent_v1__spawn_agent",
+      "multi_agent_v1__wait_agent",
+      "get_goal",
+      "create_goal",
+      "update_goal"
+    ],
+    "messages": [
+      {
+        "role": "system",
+        "content": "{ELIDED 17174 chars sha256:f6d6b8750560}"
+      },
+      {
+        "role": "system",
+        "content": "{ELIDED 7756 chars sha256:23d0b9eadc78}\n\n{ELIDED 3939 chars "
+      },
+      {
+        "role": "user",
+        "content": "<environment_context>\n  <cwd>{TMP}</cwd>\n  <shell>powershell"
+      },
+      {
+        "role": "user",
+        "content": "PING"
+      },
+      {
+        "role": "assistant",
+        "content": "pong"
+      },
+      {
+        "role": "user",
+        "content": "SHELL"
+      },
+      {
+        "role": "assistant",
+        "calls": [
+          "call-shell exec_command {\"cmd\":\"cmd.exe /d /c echo hi\"}"
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "Chunk ID: 2aafa0\nWall time: 0.6167 seconds\nProcess exited wi",
+        "for": "call-shell"
+      },
+      {
+        "role": "assistant",
+        "content": "done after call-shell"
+      },
+      {
+        "role": "user",
+        "content": "FREEFORM"
+      }
+    ]
+  },
+  "mistral-large-latest-05.json": {
+    "keys": [
+      "messages",
+      "model",
+      "parallel_tool_calls",
+      "stream",
+      "stream_options",
+      "tool_choice",
+      "tools"
+    ],
+    "tools": [
+      "exec_command",
+      "write_stdin",
+      "request_user_input",
+      "view_image",
+      "multi_agent_v1__close_agent",
+      "multi_agent_v1__resume_agent",
+      "multi_agent_v1__send_input",
+      "multi_agent_v1__spawn_agent",
+      "multi_agent_v1__wait_agent",
+      "get_goal",
+      "create_goal",
+      "update_goal"
+    ],
+    "messages": [
+      {
+        "role": "system",
+        "content": "{ELIDED 17174 chars sha256:f6d6b8750560}"
+      },
+      {
+        "role": "system",
+        "content": "{ELIDED 7756 chars sha256:23d0b9eadc78}\n\n{ELIDED 3939 chars "
+      },
+      {
+        "role": "user",
+        "content": "<environment_context>\n  <cwd>{TMP}</cwd>\n  <shell>powershell"
+      },
+      {
+        "role": "user",
+        "content": "PING"
+      },
+      {
+        "role": "assistant",
+        "content": "pong"
+      },
+      {
+        "role": "user",
+        "content": "SHELL"
+      },
+      {
+        "role": "assistant",
+        "calls": [
+          "call-shell exec_command {\"cmd\":\"cmd.exe /d /c echo hi\"}"
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "Chunk ID: 2aafa0\nWall time: 0.6167 seconds\nProcess exited wi",
+        "for": "call-shell"
+      },
+      {
+        "role": "assistant",
+        "content": "done after call-shell"
+      },
+      {
+        "role": "user",
+        "content": "FREEFORM"
+      },
+      {
+        "role": "assistant",
+        "calls": [
+          "call-freeform apply_patch {\"input\":\"*** Begin Patch\\n*** Add File: hello.txt\\n+hello f"
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "unsupported custom tool call: apply_patch",
+        "for": "call-freeform"
+      }
+    ]
+  },
+  "mistral-large-latest-06.json": {
+    "keys": [
+      "messages",
+      "model",
+      "parallel_tool_calls",
+      "stream",
+      "stream_options",
+      "tool_choice",
+      "tools"
+    ],
+    "tools": [
+      "exec_command",
+      "write_stdin",
+      "request_user_input",
+      "view_image",
+      "multi_agent_v1__close_agent",
+      "multi_agent_v1__resume_agent",
+      "multi_agent_v1__send_input",
+      "multi_agent_v1__spawn_agent",
+      "multi_agent_v1__wait_agent",
+      "get_goal",
+      "create_goal",
+      "update_goal"
+    ],
+    "messages": [
+      {
+        "role": "system",
+        "content": "{ELIDED 17174 chars sha256:f6d6b8750560}"
+      },
+      {
+        "role": "system",
+        "content": "{ELIDED 7756 chars sha256:23d0b9eadc78}\n\n{ELIDED 3939 chars "
+      },
+      {
+        "role": "user",
+        "content": "<environment_context>\n  <cwd>{TMP}</cwd>\n  <shell>powershell"
+      },
+      {
+        "role": "user",
+        "content": "PING"
+      },
+      {
+        "role": "assistant",
+        "content": "pong"
+      },
+      {
+        "role": "user",
+        "content": "SHELL"
+      },
+      {
+        "role": "assistant",
+        "calls": [
+          "call-shell exec_command {\"cmd\":\"cmd.exe /d /c echo hi\"}"
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "Chunk ID: 2aafa0\nWall time: 0.6167 seconds\nProcess exited wi",
+        "for": "call-shell"
+      },
+      {
+        "role": "assistant",
+        "content": "done after call-shell"
+      },
+      {
+        "role": "user",
+        "content": "FREEFORM"
+      },
+      {
+        "role": "assistant",
+        "calls": [
+          "call-freeform apply_patch {\"input\":\"*** Begin Patch\\n*** Add File: hello.txt\\n+hello f"
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "unsupported custom tool call: apply_patch",
+        "for": "call-freeform"
+      },
+      {
+        "role": "assistant",
+        "content": "done after call-freeform"
+      },
+      {
+        "role": "user",
+        "content": "PING again"
+      }
+    ]
+  },
+  "mock-model-01.json": {
+    "keys": [
+      "messages",
+      "model",
+      "parallel_tool_calls",
+      "stream",
+      "stream_options",
+      "tool_choice",
+      "tools"
+    ],
+    "tools": [
+      "exec_command",
+      "write_stdin",
+      "request_user_input",
+      "view_image",
+      "multi_agent_v1__close_agent",
+      "multi_agent_v1__resume_agent",
+      "multi_agent_v1__send_input",
+      "multi_agent_v1__spawn_agent",
+      "multi_agent_v1__wait_agent",
+      "get_goal",
+      "create_goal",
+      "update_goal"
+    ],
+    "messages": [
+      {
+        "role": "system",
+        "content": "{ELIDED 17174 chars sha256:f6d6b8750560}"
+      },
+      {
+        "role": "system",
+        "content": "{ELIDED 7756 chars sha256:23d0b9eadc78}\n\n{ELIDED 3939 chars "
+      },
+      {
+        "role": "user",
+        "content": "<environment_context>\n  <cwd>{TMP}</cwd>\n  <shell>powershell"
+      },
+      {
+        "role": "user",
+        "content": "PING"
+      }
+    ]
+  },
+  "mock-model-02.json": {
+    "keys": [
+      "messages",
+      "model",
+      "parallel_tool_calls",
+      "stream",
+      "stream_options",
+      "tool_choice",
+      "tools"
+    ],
+    "tools": [
+      "exec_command",
+      "write_stdin",
+      "request_user_input",
+      "view_image",
+      "multi_agent_v1__close_agent",
+      "multi_agent_v1__resume_agent",
+      "multi_agent_v1__send_input",
+      "multi_agent_v1__spawn_agent",
+      "multi_agent_v1__wait_agent",
+      "get_goal",
+      "create_goal",
+      "update_goal"
+    ],
+    "messages": [
+      {
+        "role": "system",
+        "content": "{ELIDED 17174 chars sha256:f6d6b8750560}"
+      },
+      {
+        "role": "system",
+        "content": "{ELIDED 7756 chars sha256:23d0b9eadc78}\n\n{ELIDED 3939 chars "
+      },
+      {
+        "role": "user",
+        "content": "<environment_context>\n  <cwd>{TMP}</cwd>\n  <shell>powershell"
+      },
+      {
+        "role": "user",
+        "content": "PING"
+      },
+      {
+        "role": "assistant",
+        "content": "pong"
+      },
+      {
+        "role": "user",
+        "content": "SHELL"
+      }
+    ]
+  },
+  "mock-model-03.json": {
+    "keys": [
+      "messages",
+      "model",
+      "parallel_tool_calls",
+      "stream",
+      "stream_options",
+      "tool_choice",
+      "tools"
+    ],
+    "tools": [
+      "exec_command",
+      "write_stdin",
+      "request_user_input",
+      "view_image",
+      "multi_agent_v1__close_agent",
+      "multi_agent_v1__resume_agent",
+      "multi_agent_v1__send_input",
+      "multi_agent_v1__spawn_agent",
+      "multi_agent_v1__wait_agent",
+      "get_goal",
+      "create_goal",
+      "update_goal"
+    ],
+    "messages": [
+      {
+        "role": "system",
+        "content": "{ELIDED 17174 chars sha256:f6d6b8750560}"
+      },
+      {
+        "role": "system",
+        "content": "{ELIDED 7756 chars sha256:23d0b9eadc78}\n\n{ELIDED 3939 chars "
+      },
+      {
+        "role": "user",
+        "content": "<environment_context>\n  <cwd>{TMP}</cwd>\n  <shell>powershell"
+      },
+      {
+        "role": "user",
+        "content": "PING"
+      },
+      {
+        "role": "assistant",
+        "content": "pong"
+      },
+      {
+        "role": "user",
+        "content": "SHELL"
+      },
+      {
+        "role": "assistant",
+        "calls": [
+          "call-shell exec_command {\"cmd\":\"cmd.exe /d /c echo hi\"}"
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "Chunk ID: 17cc3a\nWall time: 0.6493 seconds\nProcess exited wi",
+        "for": "call-shell"
+      }
+    ]
+  },
+  "mock-model-04.json": {
+    "keys": [
+      "messages",
+      "model",
+      "parallel_tool_calls",
+      "stream",
+      "stream_options",
+      "tool_choice",
+      "tools"
+    ],
+    "tools": [
+      "exec_command",
+      "write_stdin",
+      "request_user_input",
+      "view_image",
+      "multi_agent_v1__close_agent",
+      "multi_agent_v1__resume_agent",
+      "multi_agent_v1__send_input",
+      "multi_agent_v1__spawn_agent",
+      "multi_agent_v1__wait_agent",
+      "get_goal",
+      "create_goal",
+      "update_goal"
+    ],
+    "messages": [
+      {
+        "role": "system",
+        "content": "{ELIDED 17174 chars sha256:f6d6b8750560}"
+      },
+      {
+        "role": "system",
+        "content": "{ELIDED 7756 chars sha256:23d0b9eadc78}\n\n{ELIDED 3939 chars "
+      },
+      {
+        "role": "user",
+        "content": "<environment_context>\n  <cwd>{TMP}</cwd>\n  <shell>powershell"
+      },
+      {
+        "role": "user",
+        "content": "PING"
+      },
+      {
+        "role": "assistant",
+        "content": "pong"
+      },
+      {
+        "role": "user",
+        "content": "SHELL"
+      },
+      {
+        "role": "assistant",
+        "calls": [
+          "call-shell exec_command {\"cmd\":\"cmd.exe /d /c echo hi\"}"
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "Chunk ID: 17cc3a\nWall time: 0.6493 seconds\nProcess exited wi",
+        "for": "call-shell"
+      },
+      {
+        "role": "assistant",
+        "content": "done after call-shell"
+      },
+      {
+        "role": "user",
+        "content": "FREEFORM"
+      }
+    ]
+  },
+  "mock-model-05.json": {
+    "keys": [
+      "messages",
+      "model",
+      "parallel_tool_calls",
+      "stream",
+      "stream_options",
+      "tool_choice",
+      "tools"
+    ],
+    "tools": [
+      "exec_command",
+      "write_stdin",
+      "request_user_input",
+      "view_image",
+      "multi_agent_v1__close_agent",
+      "multi_agent_v1__resume_agent",
+      "multi_agent_v1__send_input",
+      "multi_agent_v1__spawn_agent",
+      "multi_agent_v1__wait_agent",
+      "get_goal",
+      "create_goal",
+      "update_goal"
+    ],
+    "messages": [
+      {
+        "role": "system",
+        "content": "{ELIDED 17174 chars sha256:f6d6b8750560}"
+      },
+      {
+        "role": "system",
+        "content": "{ELIDED 7756 chars sha256:23d0b9eadc78}\n\n{ELIDED 3939 chars "
+      },
+      {
+        "role": "user",
+        "content": "<environment_context>\n  <cwd>{TMP}</cwd>\n  <shell>powershell"
+      },
+      {
+        "role": "user",
+        "content": "PING"
+      },
+      {
+        "role": "assistant",
+        "content": "pong"
+      },
+      {
+        "role": "user",
+        "content": "SHELL"
+      },
+      {
+        "role": "assistant",
+        "calls": [
+          "call-shell exec_command {\"cmd\":\"cmd.exe /d /c echo hi\"}"
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "Chunk ID: 17cc3a\nWall time: 0.6493 seconds\nProcess exited wi",
+        "for": "call-shell"
+      },
+      {
+        "role": "assistant",
+        "content": "done after call-shell"
+      },
+      {
+        "role": "user",
+        "content": "FREEFORM"
+      },
+      {
+        "role": "assistant",
+        "calls": [
+          "call-freeform apply_patch {\"input\":\"*** Begin Patch\\n*** Add File: hello.txt\\n+hello f"
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "unsupported custom tool call: apply_patch",
+        "for": "call-freeform"
+      }
+    ]
+  },
+  "mock-model-06.json": {
+    "keys": [
+      "messages",
+      "model",
+      "parallel_tool_calls",
+      "stream",
+      "stream_options",
+      "tool_choice",
+      "tools"
+    ],
+    "tools": [
+      "exec_command",
+      "write_stdin",
+      "request_user_input",
+      "view_image",
+      "multi_agent_v1__close_agent",
+      "multi_agent_v1__resume_agent",
+      "multi_agent_v1__send_input",
+      "multi_agent_v1__spawn_agent",
+      "multi_agent_v1__wait_agent",
+      "get_goal",
+      "create_goal",
+      "update_goal"
+    ],
+    "messages": [
+      {
+        "role": "system",
+        "content": "{ELIDED 17174 chars sha256:f6d6b8750560}"
+      },
+      {
+        "role": "system",
+        "content": "{ELIDED 7756 chars sha256:23d0b9eadc78}\n\n{ELIDED 3939 chars "
+      },
+      {
+        "role": "user",
+        "content": "<environment_context>\n  <cwd>{TMP}</cwd>\n  <shell>powershell"
+      },
+      {
+        "role": "user",
+        "content": "PING"
+      },
+      {
+        "role": "assistant",
+        "content": "pong"
+      },
+      {
+        "role": "user",
+        "content": "SHELL"
+      },
+      {
+        "role": "assistant",
+        "calls": [
+          "call-shell exec_command {\"cmd\":\"cmd.exe /d /c echo hi\"}"
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "Chunk ID: 17cc3a\nWall time: 0.6493 seconds\nProcess exited wi",
+        "for": "call-shell"
+      },
+      {
+        "role": "assistant",
+        "content": "done after call-shell"
+      },
+      {
+        "role": "user",
+        "content": "FREEFORM"
+      },
+      {
+        "role": "assistant",
+        "calls": [
+          "call-freeform apply_patch {\"input\":\"*** Begin Patch\\n*** Add File: hello.txt\\n+hello f"
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "unsupported custom tool call: apply_patch",
+        "for": "call-freeform"
+      },
+      {
+        "role": "assistant",
+        "content": "done after call-freeform"
+      },
+      {
+        "role": "user",
+        "content": "PING again"
+      }
+    ]
+  }
+}

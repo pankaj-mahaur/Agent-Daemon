@@ -386,8 +386,13 @@ export function createApp({
       actions.bell?.({ unfocusedOnly: true });
       notePlan(t);
       showLearned(turnStarts.get(t.id) ?? turnStartedAt);
-      if (t.status === "failed" && t.error) commitCell(renderNotice({ level: "error", message: `The turn failed: ${errorText({ ...t.error, code: -32000 })}` }, { width: width() }));
-      else if (t.status === "interrupted") commitCell(renderNotice({ level: "warn", message: "Interrupted. Say what to do differently." }, { width: width() }));
+      if (t.status === "failed" && t.error) {
+        // A provider ad translates for: the gateway's reason, not the engine's generic words
+        // (kept as the hint, and in /warnings).
+        const engineWords = errorText({ ...t.error, code: -32000 });
+        const why = actions.gatewayReason?.(st.thread?.id ?? null, turnStarts.get(t.id) ?? turnStartedAt ?? null);
+        commitCell(renderNotice({ level: "error", message: `The turn failed: ${why ? clean(why) : engineWords}`, ...(why ? { hint: `The engine said: ${engineWords}` } : {}) }, { width: width() }));
+      } else if (t.status === "interrupted") commitCell(renderNotice({ level: "warn", message: "Interrupted. Say what to do differently." }, { width: width() }));
       const started = turnStarts.get(t.id) ?? turnStartedAt;
       turnStarts.delete(t.id);
       if (started != null) {

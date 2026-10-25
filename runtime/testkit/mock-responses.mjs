@@ -152,7 +152,8 @@ export function createResponsesHandler({ script = defaultScript } = {}) {
 
 // Start the mock on a random loopback port. `requests` records every call
 // (path, model, tool names, last user text) for assertions.
-export async function startMockResponses({ script = defaultScript } = {}) {
+// recordBodies: also keep each full request body (the P6.1 recorder's fixtures).
+export async function startMockResponses({ script = defaultScript, recordBodies = false } = {}) {
   const requests = [];
   const handler = createResponsesHandler({ script });
   const server = createServer((req, res) => {
@@ -168,7 +169,7 @@ export async function startMockResponses({ script = defaultScript } = {}) {
         res.writeHead(400, { "content-type": "application/json" }).end(JSON.stringify({ error: { message: "mock: request body is not JSON" } }));
         return;
       }
-      requests.push({ path: req.url, model: body.model, tools: (body.tools ?? []).map((t) => t.name ?? t.type), text: lastUserText(body), mode: collaborationModeSeen(body), userTexts: roleTexts(body, "user"), developerTexts: roleTexts(body, "developer") });
+      requests.push({ path: req.url, model: body.model, tools: (body.tools ?? []).map((t) => t.name ?? t.type), text: lastUserText(body), mode: collaborationModeSeen(body), userTexts: roleTexts(body, "user"), developerTexts: roleTexts(body, "developer"), ...(recordBodies ? { body, headers: req.headers } : {}) });
       if (!/\/responses$/.test(req.url ?? "")) {
         res.writeHead(404).end();
         return;

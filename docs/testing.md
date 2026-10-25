@@ -52,12 +52,17 @@ For accounts and providers (M3), the testkit has:
   - `setQuota` gives each provider's 429 body; `setFault` gives a 5xx with Retry-After, a stream cut after the first delta, a slow stream or a reset socket.
 - `mock-auth.mjs` `startMockAuth()`: ChatGPT-style token refresh with rotation; a refresh token used twice answers `refresh_token_reused`.
 - `gateway-proto.mjs`: the loopback gateway prototype (P3.1; P3.3 builds the real one). The engine holds only a gateway token; the gateway swaps it for the account key and decodes compressed upstream bodies.
+- `mock-chat.mjs` `startMockChat({ script })`: a Chat Completions provider (P6.1). A script answers with stream chunks (split every n bytes, or the socket dropped at the end), an error or redirect status, or a held stream; it counts requests per prompt word and hang-ups.
 - `probes.mjs`: an environment dump that runs as a hook or a stdio MCP server, tool-shell probe commands, and `scanForSecrets`, which reports which fake secret appeared and never prints one.
 
 Rules: fake keys only (`sk-test-…`, built by joining parts so no scanner mistakes them for real ones), a fake home for every engine run, and nothing about a request is written to disk. `test/engine-real-accounts.test.mjs` (`AD_REAL_ENGINE=1`) runs the pinned engine through the gateway:
 - two providers in one engine;
 - a resume that changes the provider;
 - the key-isolation probes, with a control that puts the key in the engine's environment to prove the hook probe can see one.
+
+### Chat translation fixtures
+
+`scripts/record-engine-requests.mjs` drives the pinned engine against the mock and writes what it sends into `test/fixtures/gateway/engine-<version>/` (instructions elided by hash; install id, cache key, timezone, date and temp paths blanked). `test/translate-contract.test.mjs` translates every recorded request and compares the shape with `test/golden/translate/`. Re-record after an engine upgrade and read the diff. `test/engine-real-translate.test.mjs` (`AD_REAL_ENGINE=1`) runs the pinned engine through the gateway to `mock-chat` and counts what ran and how many upstream calls were made: a split tool call runs once, a used-up daily quota is asked once, a cut-off is retried exactly once, and a tool printing its environment sees neither the key nor the gateway token.
 
 ## The live terminal UI tests
 

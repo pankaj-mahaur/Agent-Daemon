@@ -290,6 +290,12 @@ Loop and worker prompts are marked as non-user (`AD_WORKER=1`), so they never en
 | `AD_SECRETS_BACKEND=file` | store keys in plain 0600 files instead of the OS store |
 | `AD_ACCOUNT`, `AD_MODEL` | the account (`<provider>/<label>`, a label, or an id) and model for what you launch, below a window's own choice and `--account` |
 
+## Chat-only providers
+
+Providers that speak only Chat Completions go through a translation in ad's gateway: the engine still sees the Responses API, the provider sees Chat Completions. What a provider can't do is refused before anything is sent, with ad's reason (for example live web search). When such a provider's daily limit is used up, the turn stops at once and ad says so; it isn't retried. `AD_TRANSLATE=0` turns these providers off. Details: [architecture.md](architecture.md#chat-translation-in-the-gateway-p61).
+
+The gateway's token is the engine's only: commands the agent runs see `AD_GATEWAY_TOKEN` empty. This keeps it out of their environment, not out of reach: a process running as you could still read the engine's own environment. The token opens only ad's loopback gateway, for this run.
+
 ## The engine's folder
 
 New installs keep the engine's folder at `~/.agent-daemon/engine/`, plus a link named `codex-home` pointing at it (a rolled-back ad 2.x finds the same folder). Installs from before 3.0 keep their `codex-home/` folder untouched; `ad doctor` calls it the older folder name and says `ad migrate` is optional.

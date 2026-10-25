@@ -8,6 +8,7 @@ import { envRenameNote, homeCliGraceNote, homeOverrideNote, homeTrustRemovedNote
 import { engineHome } from "../engine/index.mjs";
 import { homeFolderAllowed } from "./home-folder.mjs";
 import { gatewayEngineOpts } from "./gateway-runtime.mjs";
+import { TOKEN_HIDDEN_ARGS } from "../gateway/table.mjs";
 import { noteOnce } from "./notes.mjs";
 import { ensureHarnessSetup } from "./setup.mjs";
 import { needsWindowsSandbox, sandboxReadiness } from "./sandbox.mjs";
@@ -40,7 +41,9 @@ export async function startHarnessEngine({ cwd, home, command, clientVersion, st
   let allowed = homeFolderAllowed({ flag: allowHomeFolder, env: e }).allowed;
   // API keys stay in ad's gateway (P3.3): the engine gets a token and provider entries.
   const gw = gateway ?? (await gatewayEngineOpts({ home, store, env: e, err }));
-  const engineOpts = { cwd, home, command, clientVersion, detached, engineArgs: [...(engineArgs ?? []), ...gw.args], experimental, interactive, env: { ...gw.env, ...(env ?? {}) }, onApproval, allowHomeFolder: allowed };
+  // The engine needs the gateway token; the commands it runs never see its value.
+  const hideToken = gw.env?.AD_GATEWAY_TOKEN && !gw.args?.includes(TOKEN_HIDDEN_ARGS[1]) ? TOKEN_HIDDEN_ARGS : [];
+  const engineOpts = { cwd, home, command, clientVersion, detached, engineArgs: [...(engineArgs ?? []), ...gw.args, ...hideToken], experimental, interactive, env: { ...gw.env, ...(env ?? {}) }, onApproval, allowHomeFolder: allowed };
   let engine = await createEngine(engineOpts);
   let homeRisk = null;
   try {

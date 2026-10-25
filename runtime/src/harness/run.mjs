@@ -8,6 +8,7 @@ import { engineError } from "../engine/index.mjs";
 import { cliErrorLines } from "./io.mjs";
 import { NOT_LOGGED_IN } from "./start.mjs";
 import { launchHarness } from "./engines.mjs";
+import { gatewayReason } from "./gateway-runtime.mjs";
 
 export { NOT_LOGGED_IN };
 
@@ -64,6 +65,7 @@ export async function cmdRun(prompt, opts = {}) {
     release = started.release;
     const { threadId } = await engine.startThread({ cwd: opts.cwd, model: started.params.model, modelProvider: started.params.modelProvider, sandbox: opts.sandbox });
     const streamed = new Set();
+    const turnStart = Date.now();
     const r = await engine.turn({
       threadId,
       text: prompt,
@@ -83,10 +85,13 @@ export async function cmdRun(prompt, opts = {}) {
         } else if (evt.type === "error") err.write(cliErrorLines("run", engineError(-32000, evt.message, { raw: evt.message })));
       },
     });
-    if (opts.json) out.write(JSON.stringify({ threadId, turnId: r.turnId, status: r.status, output: r.output, error: r.error }) + "\n");
+    // A provider ad translates for: the gateway's reason beats the engine's generic words.
+    const why = r.status === "failed" ? gatewayReason({ threadId, sinceMs: turnStart }) : null;
+    if (opts.json) out.write(JSON.stringify({ threadId, turnId: r.turnId, status: r.status, output: r.output, error: r.error, ...(why ? { reason: why } : {}) }) + "\n");
     else out.write("\n");
     if (r.status !== "completed") {
       err.write(`[turn ${r.status}]\n`);
+      if (why) err.write(`ad run: ${why}\n`);
       if (r.error?.message) err.write(cliErrorLines("run", engineError(-32000, r.error.message, { raw: r.error.message })));
       return 1;
     }

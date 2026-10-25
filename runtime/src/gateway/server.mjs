@@ -25,12 +25,17 @@ import { Readable } from "node:stream";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { ulid } from "../ids.mjs";
 import { errorFromBody, observedHeaders, retryAfterSeconds, sseTap } from "./observe.mjs";
+import { TRANSLATED_MODES, failedStream, failure, pipeAnswer, prepare, refusalBody } from "./translate/index.mjs";
+
+// A translated route's side-channel kind → the observation's error class (03-ARCH §H).
+const KIND_CLASS = { quotaExhausted: "quota", rateLimit: "rate-limit", provider5xx: "server", transientNetwork: "server", authExpired: "auth", authRevoked: "auth", contextOverflow: "bad-request", invalidConfig: "bad-request", unknown: "unknown" };
 
 const ENTRY_RE = /^[a-z0-9-]{1,64}$/;
 const HOP = new Set(["authorization", "host", "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade", "content-length", "accept-encoding", "expect"]);
 const OUT_DROP = new Set(["connection", "keep-alive", "transfer-encoding", "set-cookie", "content-encoding", "content-length", "upgrade", "trailer"]);
 const REFRESH_MARGIN_MS = 60_000;
 const ERROR_BODY_CAP = 1024 * 1024;
+const JSON_ANSWER_CAP = 16 * 2 ** 20;
 
 const digest = (s) => createHash("sha256").update(String(s)).digest();
 const json = (res, status, body, headers = {}) => {
@@ -59,7 +64,10 @@ export function parseTarget(rawUrl) {
  *           retryAfterCapS?: number, maxInFlight?: number, maxBodyBytes?: number, idleTimeoutMs?: number,
  *           connectTimeoutMs?: number, fetchImpl?: typeof fetch }} o
  */
-export function createGatewayServer({ token, table, keys = {}, onUpstream = () => {}, retryAfterCapS = 60, maxInFlight = 16, maxBodyBytes = 64 * 2 ** 20, idleTimeoutMs = 300_000, connectTimeoutMs = 15_000, fetchImpl = fetch }) {
+export function createGatewayServer({ token, table, keys = {}, onUpstream = () => {}, retryAfterCapS = 60, maxInFlight = 16, maxBodyBytes = 64 * 2 ** 20, idleTimeoutMs = 300_000, connectTimeoutMs = 15_000, fetchImpl = fetch, sealKey = null, translate = true }) {
+  // The reasoning envelope's key: 32 bytes, or their base64 (as it crosses IPC).
+  const seal = !sealKey ? null : typeof sealKey === "string" ? Buffer.from(sealKey, "base64") : Buffer.from(sealKey);
+  const salt = token.slice(0, 16); // per run: Mistral's call ids are derived within one request anyway
   const tokenDigest = digest(token);
   let routes = table;
   let keyMap = new Map(Object.entries(keys));
@@ -85,7 +93,15 @@ export function createGatewayServer({ token, table, keys = {}, onUpstream = () =
     return null;
   }
 
-  const server = createServer(async (req, res) => {
+  // Any failure inside one request ends that request, never the gateway (every account's).
+  const server = createServer((req, res) => {
+    handle(req, res).catch(() => {
+      if (!res.headersSent) adError(res, 502, "ad: the gateway failed on this request");
+      else res.destroy();
+    });
+  });
+
+  async function handle(req, res) {
     // 1. The token, first.
     const m = /^Bearer\s+(.+)$/.exec(String(req.headers.authorization ?? ""));
     if (!m || !timingSafeEqual(digest(m[1]), tokenDigest)) return void res.writeHead(401).end();
@@ -99,7 +115,9 @@ export function createGatewayServer({ token, table, keys = {}, onUpstream = () =
     if (!isResponses && !isModels) return void adError(res, 403, "ad: the gateway doesn't forward this request");
     const route = routes.get(t.entry);
     if (!route) return void adError(res, 404, "ad: this account isn't available any more");
-    if (route.mode !== "passthrough") return void adError(res, 502, "ad: this version can't talk to this provider's API yet");
+    const translated = TRANSLATED_MODES.includes(route.mode);
+    if (route.mode !== "passthrough" && !translated) return void adError(res, 502, "ad: this version can't talk to this provider's API yet");
+    if (translated && !translate) return void adError(res, 502, "ad: providers that need translation are turned off (AD_TRANSLATE=0)");
 
     const at = new Date();
     const ev = { requestId: ulid(), upstreamRequestId: null, at: at.toISOString(), accountId: route.accountId, providerEntry: t.entry, path: t.rest, status: null, headers: {}, retryAfterS: null, rateLimit: {}, usage: null, error: null, firstByteMs: null, durationMs: null, aborted: false };
@@ -127,6 +145,7 @@ export function createGatewayServer({ token, table, keys = {}, onUpstream = () =
       emit();
     };
     let body = Buffer.alloc(0);
+    let prepared = null;
     if (isResponses) {
       const chunks = [];
       let size = 0;
@@ -145,7 +164,21 @@ export function createGatewayServer({ token, table, keys = {}, onUpstream = () =
         return void adError(res, 413, "ad: the request is too large");
       }
       body = Buffer.concat(chunks);
-      if (route.strip?.length) {
+      if (translated) {
+        // Responses → Chat; what can't be carried is refused here, before any upstream call.
+        try {
+          prepared = prepare(body, route, { sealKey: seal, salt });
+          body = prepared.body;
+          ev.threadId = prepared.threadId;
+        } catch (e) {
+          const refused = e?.code === "TRANSLATE_REFUSED";
+          ev.status = refused ? 400 : 502;
+          ev.translate = { kind: "invalidConfig", message: String(e?.message ?? e) };
+          ev.error = { status: ev.status, type: null, code: refused ? "invalid_request" : "translate_config", message: ev.translate.message.slice(0, 300), class: "bad-request" };
+          done();
+          return void (refused ? json(res, 400, refusalBody(e)) : adError(res, 502, `ad: ${ev.translate.message}`));
+        }
+      } else if (route.strip?.length) {
         try {
           const j = JSON.parse(body.toString("utf8"));
           for (const k of route.strip) delete j[k];
@@ -159,7 +192,9 @@ export function createGatewayServer({ token, table, keys = {}, onUpstream = () =
     // 5. Upstream.
     let target;
     try {
-      target = new URL(`${String(route.upstreamBase).replace(/\/+$/, "")}/${t.rest}${t.query}`);
+      // A translated request goes to the preset's path (never one from the request).
+      const rest = prepared ? String(prepared.path).replace(/^\/+/, "") : t.rest;
+      target = new URL(`${String(route.upstreamBase).replace(/\/+$/, "")}/${rest}${prepared ? "" : t.query}`);
     } catch {
       ev.status = 502;
       done();
@@ -173,6 +208,10 @@ export function createGatewayServer({ token, table, keys = {}, onUpstream = () =
     const headers = {};
     for (const [k, v] of Object.entries(req.headers)) if (!HOP.has(k)) headers[k] = v;
     headers["accept-encoding"] = "identity";
+    if (prepared) {
+      headers["content-type"] = "application/json";
+      headers.accept = "text/event-stream";
+    }
     Object.assign(headers, route.headers ?? {});
 
     const ac = new AbortController();
@@ -247,6 +286,15 @@ export function createGatewayServer({ token, table, keys = {}, onUpstream = () =
         text = "";
       }
       ev.error = errorFromBody(up.status, text);
+      if (prepared) {
+        // Only codes the engine knows; the real reason goes to the event.
+        const f = failure(up.status, text, { retryAfter: up.headers.get("retry-after"), route, capS: retryAfterCapS });
+        ev.translate = f.side;
+        ev.error = { ...ev.error, class: KIND_CLASS[f.side.kind] ?? ev.error.class };
+        done();
+        if (f.sse) return void failedStream(res, f.sse);
+        return void json(res, f.http.status, f.http.body, f.http.headers);
+      }
       // 7. The Retry-After cap.
       if ((up.status === 429 || up.status === 503) && ev.retryAfterS !== null && ev.retryAfterS > retryAfterCapS) {
         const mins = Math.ceil(ev.retryAfterS / 60);
@@ -257,6 +305,57 @@ export function createGatewayServer({ token, table, keys = {}, onUpstream = () =
       }
       done();
       return void res.writeHead(up.status, outHeaders).end(text);
+    }
+
+    if (prepared) {
+      // Success on a translated route: Chat stream → Responses stream, with the idle timeout.
+      let idle = setTimeout(() => ac.abort(new Error("idle")), idleTimeoutMs);
+      const isJson = /application\/json/i.test(up.headers.get("content-type") ?? "");
+      async function* watched() {
+        if (isJson) {
+          // A provider that ignored stream: true answers with one JSON completion: read (capped)
+          // and handed on as one compact event; unreadable or too large reads as a cut-off.
+          const chunks = [];
+          let size = 0;
+          for await (const c of Readable.fromWeb(up.body)) {
+            size += c.length;
+            if (size > JSON_ANSWER_CAP) return;
+            chunks.push(c);
+          }
+          let one;
+          try {
+            one = JSON.stringify(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+          } catch {
+            return;
+          }
+          yield Buffer.from(`data: ${one}\n\ndata: [DONE]\n\n`);
+          return;
+        }
+        if (!up.body) return;
+        for await (const chunk of Readable.fromWeb(up.body)) {
+          clearTimeout(idle);
+          idle = setTimeout(() => ac.abort(new Error("idle")), idleTimeoutMs);
+          yield chunk;
+        }
+      }
+      // The observation goes out before the engine reads the turn's end, so ad's reason is
+      // there when the turn's failure is shown.
+      const observe = (r) => {
+        ev.usage = r.usage;
+        if (r.side) {
+          ev.translate = r.side;
+          if (KIND_CLASS[r.side.kind]) ev.error = { status: 200, type: null, code: r.side.kind, message: String(r.side.message ?? "").slice(0, 300), class: KIND_CLASS[r.side.kind] };
+        }
+        if (clientGone) ev.aborted = true;
+        emit();
+      };
+      try {
+        observe(await pipeAnswer(watched(), res, { turn: prepared.turn, route, sealKey: seal, capS: retryAfterCapS, signal: ac.signal, onTerminal: observe }));
+      } finally {
+        clearTimeout(idle);
+        done();
+      }
+      return;
     }
 
     // Success: stream with backpressure; tap the events; idle timeout.
@@ -292,7 +391,7 @@ export function createGatewayServer({ token, table, keys = {}, onUpstream = () =
       res.destroy();
       done();
     });
-  });
+  }
 
   return {
     listen: () => new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve(server.address().port))),

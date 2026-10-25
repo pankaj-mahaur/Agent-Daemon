@@ -14,7 +14,13 @@ import { PROVIDER_PRESETS, providerName } from "../providers/registry.mjs";
 
 // The provider registry's presets (P3.5), as the gateway needs them: name and upstream.
 // A custom endpoint has no preset base: its account's endpoint is used.
-export const PRESETS = Object.freeze(Object.fromEntries(PROVIDER_PRESETS.filter((p) => p.upstreamBase).map((p) => [p.id, Object.freeze({ name: p.name, baseUrl: p.upstreamBase })])));
+// A translated preset (mode "chat", P6.1) also brings its upstream path, quirks and model
+// capabilities; headers it requires go on every request.
+export const PRESETS = Object.freeze(
+  Object.fromEntries(
+    PROVIDER_PRESETS.filter((p) => p.upstreamBase).map((p) => [p.id, Object.freeze({ name: p.name, baseUrl: p.upstreamBase, mode: p.mode, upstreamPath: p.upstreamPath, quirks: p.quirks ?? [], model: p.capabilities ?? null, headers: p.headers ?? {} })]),
+  ),
+);
 
 const LOOPBACK = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?(\/|$)/i;
 const toml = (s) => JSON.stringify(String(s));
@@ -29,12 +35,15 @@ export function gatewayTable(doc, { presets = PRESETS } = {}) {
     const preset = presets[a.provider];
     const upstreamBase = a.endpoint ?? preset?.baseUrl;
     if (!upstreamBase) continue;
+    const mode = preset?.mode ?? "passthrough";
     table.set(a.providerEntry, {
       accountId: a.id,
+      provider: a.provider,
       upstreamBase,
-      mode: "passthrough",
+      mode,
+      ...(mode === "passthrough" ? {} : { upstreamPath: preset.upstreamPath, quirks: [...(preset.quirks ?? [])], model: preset.model ?? {} }),
       auth: a.method === "none" ? { kind: "none" } : { kind: "static-key", scheme: "bearer" },
-      headers: {},
+      headers: { ...(preset?.headers ?? {}) },
       strip: [],
       label: preset?.name ?? providerName(a.provider),
       allowHttp: LOOPBACK.test(upstreamBase) || Boolean(a.insecure),
@@ -66,6 +75,11 @@ export function apiEngineArgs(doc, table) {
   }
   return args;
 }
+
+// The token lets anything holding it spend the accounts' quota through the gateway: the
+// engine needs it, the commands it runs don't. Merged into the user's own
+// shell_environment_policy (a `set` entry), never replacing it.
+export const TOKEN_HIDDEN_ARGS = Object.freeze(["-c", 'shell_environment_policy.set.AD_GATEWAY_TOKEN=""']);
 
 export function engineEnvFor({ gateway, env = process.env }) {
   const add = (v) => {

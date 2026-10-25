@@ -46,6 +46,7 @@ import { homeFolderAllowed, recentProjects } from "../harness/home-folder.mjs";
 import { launcherItems, LAUNCHER_TITLE } from "./home-launcher.mjs";
 import { projectDataDir } from "../memory/project-dir.mjs";
 import { homeFolderRefusal, homeLauncherWhy, homeTrustSkippedNote } from "../engine/attribution.mjs";
+import { gatewayReason } from "../harness/gateway-runtime.mjs";
 
 /* ------------------------------------------------------------------ */
 /* Small terminal helpers                                              */
@@ -540,6 +541,7 @@ export async function cmdTui(opts = {}) {
       : null;
     const actions = {
       accounts,
+      gatewayReason: (threadId, sinceMs) => gatewayReason({ threadId, sinceMs }),
       bell: (o = {}) => {
         if (!o.unfocusedOnly || !focused) io.write("\x07");
       },

@@ -6,6 +6,7 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 ### Security
 
+- Commands the agent runs no longer see the gateway's token (`AD_GATEWAY_TOKEN` is empty in their environment). Before, a tool could read it and spend your API accounts' quota through ad's gateway.
 - One safe way to show memory to an agent: a note that reads like an instruction (an injection, or a command it tells the agent to run, such as notes ad 3.0 stored before its screen) is withheld in the memory tools, at session start and in prompt recall, and every memory result is headed as data, not instructions. `memory_files` treats `%` and `_` in a path literally.
 - Claude Code team workers (`ad sp --engine claude`) no longer start through `cmd.exe` on Windows, so a task containing `&`, `|` or `%VAR%` can't run commands on your machine before Claude starts. The task goes to Claude on stdin and in a temporary system-prompt file (`--append-system-prompt-file`), never on the command line. Digest calls through Claude Code do the same.
 - On Windows, the worker path starts `claude` and `git`, and the key store starts Windows PowerShell, by full path, so a `claude.exe`, `git.exe` or `powershell.exe` in the repo or the current folder never runs instead.
@@ -54,6 +55,7 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 ### Internal
 
+- Chat translation in the provider gateway: providers that speak only Chat Completions can be routed through ad (presets come in the next wave). Tool calls are handed to the engine only whole, quota and rate limits reach it as codes it handles without re-asking an exhausted provider, and the TUI and `ad run` show the provider's real reason. `AD_TRANSLATE=0` turns it off. Recorded engine fixtures and a contract test catch wire changes at an engine upgrade.
 - A mock provider and auth kit for account and provider tests (mock OpenAI/OpenRouter APIs with faults and quotas, a token-refresh server, a loopback gateway prototype, key-isolation probes), and real-engine tests showing two providers in one engine and no provider key in any tool shell, hook or MCP server.
 
 ### Fixed

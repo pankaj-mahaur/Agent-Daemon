@@ -185,6 +185,17 @@ Bare `ad` / `ad tui`: an inline terminal UI on the session controller. `terminal
 
 API keys live in the secret store and in one place at run time: ad's gateway, a child process (`runtime/src/gateway/`) listening on `127.0.0.1`. The engine gets a per-run token and, per ready API account, a `-c model_providers.<entry>={ base_url = "http://127.0.0.1:<port>/p/<entry>/v1", env_key = "AD_GATEWAY_TOKEN" }`; the gateway swaps the token for the account's key, forwards `POST responses` and `GET models`, decodes a body the provider compressed anyway, and emits one observation per request (status, limits, usage, the error's class) for ad's own use. ad 3.0's provider name `openrouter` is pointed at the same route, so 3.0 conversations resume. Nothing about it is written to `config.toml`.
 
+### Chat translation in the gateway (P6.1)
+
+Some providers speak only Chat Completions; the engine speaks only the Responses API. A route whose preset says `mode: "chat"` is translated inside the gateway (`runtime/src/gateway/translate/`), so keys, the token check, the address allowlist and the redirect refusal stay the gateway's:
+
+- **Request.** The engine's Responses request becomes a Chat body (`responses-in.mjs`). Namespaced and custom tools get flat names that map back exactly (`tools.mjs`). Anything with content ad can't carry is refused with HTTP 400 naming the field, never dropped. The engine's default cached web search is left out: it only works on OpenAI's own servers.
+- **Answer.** The Chat stream becomes the engine's Responses events in its exact item shapes (`responses-out.mjs`). A tool call is handed over only whole, with its arguments parsed and its namespace or custom shape restored. A stream cut off mid-call, a length stop or an unmappable call runs nothing.
+- **Failures.** Only codes the engine knows reach it (`errors.mjs`): a used-up daily or monthly limit is `insufficient_quota` (asked once, never retried), a per-minute limit `rate_limit_exceeded` with its wait, a too-long context the stream form of `context_length_exceeded`, a cut-off an unknown code (exactly one retry). The provider's real reason goes to the gateway's observation, and the TUI's failed-turn line and `ad run` show it instead of the engine's generic words.
+- **Hidden reasoning** a provider wants back (DeepSeek's) travels in the engine's `encrypted_content` as an AES-256-GCM envelope bound to provider and model, under a per-install key in the secret store (`gateway-seal`).
+- **Contract.** `scripts/record-engine-requests.mjs` records what the pinned engine sends into `test/fixtures/gateway/engine-<version>/`; `translate-contract.test.mjs` translates every recorded request. An engine upgrade that changes the wire fails there first.
+- `AD_TRANSLATE=0` turns translated routes off (they answer 502 with the reason).
+
 ### Accounts, engines and switching (P3.4)
 
 - **Target** (`runtime/src/auth/accounts/target.mjs`). Which account and model a conversation starts on is resolved before any engine starts, in this order:

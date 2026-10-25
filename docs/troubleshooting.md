@@ -820,6 +820,18 @@ See [harness.md](harness.md#working-in-your-home-folder).
 
 **Fix:** start it (`ollama serve`, `lms server start`) and run the login again. A server on another port: `ad auth login custom --base-url http://127.0.0.1:<port>/v1 --no-key`.
 
+## 67. "This provider can't take … through ad" / "ad can't pass … to this provider"
+
+**Cause:** the provider speaks only Chat Completions, and the request needs something ad can't carry across (live web search, a stored response, an image for a model without vision).
+
+**Fix:** turn that feature off for this chat (for live web search: `ad tools disable web-search`), or pick a model or provider that has it (`/model`).
+
+## 68. "<provider>: the daily limit is used up" (or "the monthly limit")
+
+**Cause:** the provider's free or paid quota for the period is spent. ad stops the turn at once instead of retrying, so it isn't asked again.
+
+**Fix:** wait for the provider's reset, switch accounts (`/model`), or add credit. A per-minute limit is different: ad waits the time the provider asks (up to 60 s) and the turn goes on.
+
 ---
 
 For harness problems, the [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill walks through login → hooks → sandbox → the engine's own log. See also [harness.md](harness.md) and, for the terminal UI, [tui.md](tui.md).

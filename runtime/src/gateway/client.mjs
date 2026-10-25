@@ -36,10 +36,16 @@ export async function startGateway({ table = new Map(), getKeys = async () => ({
   const child = fork(MAIN, [], { detached: process.platform !== "win32", windowsHide: true, stdio: ["pipe", "ignore", "pipe", "ipc"], env: gatewayEnv(env), execArgv: [] });
   child.stderr?.resume();
   const last = new Map();
+  const byThread = new Map(); // the engine's thread → its last translated request's event (≤ 256)
   let closing = false;
   child.on("message", (m) => {
     if (m?.type !== "upstream") return;
     last.set(m.event.accountId, m.event);
+    if (m.event.threadId) {
+      byThread.delete(m.event.threadId);
+      byThread.set(m.event.threadId, m.event);
+      if (byThread.size > 256) byThread.delete(byThread.keys().next().value);
+    }
     try {
       onUpstream(m.event);
     } catch {
@@ -84,6 +90,8 @@ export async function startGateway({ table = new Map(), getKeys = async () => ({
       });
     },
     last: (accountId) => last.get(accountId) ?? null,
+    /** The last translated request's event for a conversation (the engine's thread id). */
+    lastForThread: (threadId) => (threadId ? (byThread.get(threadId) ?? null) : null),
     async close() {
       closing = true;
       if (child.exitCode !== null) return;

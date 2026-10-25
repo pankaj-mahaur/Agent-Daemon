@@ -66,6 +66,9 @@ The harness pins `@openai/codex` exactly (`runtime/package.json`). Each upgrade 
 
 ## Known gotchas (check these first)
 
+- **The chat translation's wire contract** (P6.1): after a bump, run `node scripts/record-engine-requests.mjs` (pinned binary, mock only) and `node --test test/translate-contract.test.mjs`. A new top-level field or input item type is refused by the translation until mapped; read the fixture diff, map it (or add it to the dropped list when it carries no content), then refresh the golden with AD_UPDATE_GOLDEN=1. Also run `AD_REAL_ENGINE=1 node --test --test-concurrency=1 --test-force-exit test/engine-real-translate.test.mjs`.
+- **On a custom provider the engine advertises no freeform apply_patch** (0.163, every slug): a `custom_tool_call` apply_patch gets "unsupported custom tool call"; edits go through exec_command (`apply_patch <<EOF`). Its default `web_search` tool is the cached kind (`external_web_access: false`), which only OpenAI serves.
+- **The gateway token reaches tool processes** unless hidden: the engine needs `AD_GATEWAY_TOKEN`, so start.mjs adds `-c shell_environment_policy.set.AD_GATEWAY_TOKEN=""` whenever the env carries it (real-engine test "a tool printing its environment").
 - **Unknown method** (0.160): the engine answers `-32600 "Invalid request: unknown variant …"`, not `-32601`; the façade classifies by that shape.
 - **Hooks see the engine's whole environment** (0.163): hook processes inherit the engine's full env whatever `shell_environment_policy` filters say, so a key in the engine's env reaches every hook. Keys stay out of the engine env (the provider gateway, plan P3.3).
 - **A per-thread config override for an MCP server that isn't configured** makes the engine reject the thread's whole config (`thread/start` fails). ad's façade sends the memory-scope override only when the home configures `agent-daemon-memory` (real-engine test "memory scope: a bare home…").

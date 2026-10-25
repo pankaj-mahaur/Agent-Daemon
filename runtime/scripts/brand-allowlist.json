@@ -159,6 +159,21 @@
       "reason": "P3.1: real-engine account cases; like engine-real, it starts the pinned binary and speaks the protocol to it on purpose"
     },
     {
+      "path": "runtime/test/engine-real-translate.test.mjs",
+      "rules": ["A", "B"],
+      "reason": "P6.1: real-engine translation cases; like engine-real, it starts the pinned binary and speaks the protocol to it on purpose"
+    },
+    {
+      "path": "runtime/scripts/record-engine-requests.mjs",
+      "rules": ["A", "B"],
+      "reason": "P6.1: records what the pinned binary sends on the wire; it starts that binary (from its npm package) and speaks the protocol to it on purpose"
+    },
+    {
+      "path": "runtime/test/fixtures/gateway/",
+      "rules": ["A"],
+      "reason": "P6.1: recorded engine requests; the model slug gpt-5.1-codex is a real model name the recording used"
+    },
+    {
       "path": "runtime/test/engine-real.test.mjs",
       "rules": ["A", "B"],
       "reason": "the real-engine suite: it starts the pinned binary and speaks the protocol to it on purpose"

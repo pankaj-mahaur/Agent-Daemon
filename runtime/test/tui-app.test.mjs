@@ -1713,3 +1713,17 @@ test("an ordinary chord's hint goes away after a second, as the chord does", asy
     await until(() => !/alt\+k …/.test(text()) && !app.state.chord, "the hint gone after the timeout", 3000);
   }, { keymap: km({ overrides: { global: { copy: "alt-k alt-c" } } }) });
 });
+
+test("a translated provider's failed turn shows ad's reason, the engine's words as the hint", async () => {
+  const asked = [];
+  const gatewayReason = (threadId, since) => (asked.push([threadId, since]), "Groq: the daily limit is used up.");
+  await withApp(
+    async ({ type, until, committed }) => {
+      type("fail-turn\r");
+      await until(() => /The turn failed: Groq: the daily limit is used up\./.test(committed()), "ad's reason");
+      assert.match(committed(), /The engine said:/);
+      assert.ok(asked.length === 1 && typeof asked[0][0] === "string" && typeof asked[0][1] === "number" && asked[0][1] > 0, "asked for this thread, since the turn's start");
+    },
+    { cols: 120, actions: { gatewayReason } },
+  );
+});
