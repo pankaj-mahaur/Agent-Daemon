@@ -292,7 +292,7 @@ Error: write EOF
 
 **Symptom:** `ad chat`, `ad run`, `ad loop` (and the other harness commands) exit with code 2.
 
-**Fix:** log the harness in once. It keeps its own login in `~/.agent-daemon/codex-home`, separate from your own `~/.codex`.
+**Fix:** log the harness in once. It keeps its own login in `~/.agent-daemon/codex-home`, separate from your own `~/.codex`. With several accounts, `ad auth list` shows which ones need signing in again, and `ad auth login <provider> --label <label>` brings one back ([accounts.md](accounts.md)).
 
 ```sh
 ad auth login openai                           # OpenAI API key

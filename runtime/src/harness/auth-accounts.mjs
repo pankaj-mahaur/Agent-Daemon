@@ -20,6 +20,7 @@ import { createSecretStore } from "../auth/secrets.mjs";
 import { redact } from "../auth/redact.mjs";
 import { presetFor, UNAVAILABLE } from "../providers/registry.mjs";
 import { openUrl, readSecret } from "./io.mjs";
+import { accountJson, resolveAccount } from "./auth-commands.mjs";
 import { signInOpenRouter } from "../auth/accounts/openrouter-oauth.mjs";
 
 /** An account by reference, or by provider id when that provider has one account (or one labelled default). */
@@ -90,25 +91,30 @@ export async function cmdAuthAccounts(sub, args = [], opts = {}) {
 
   if (sub === "test") {
     if (!args[0]) return null;
-    const a = resolveAccountRef(readRegistry(), args[0]);
+    const a = resolveAccount(readRegistry(), args[0]);
     const preset = presetFor(a.provider);
+    const say = (ok, text) => {
+      if (opts.json) out.write(`${JSON.stringify({ ok, detail: text, account: accountJson({ ...a, status: ok ? "ready" : a.status }) })}\n`);
+      else (ok ? out : err).write(`${text}\n`);
+    };
     const key = a.credential?.kind === "secret" ? store.get(a.credential.ref) : null;
     if (a.credential?.kind === "secret" && !key) {
       const text = `The stored key for ${accountName(a)} is missing. Add it again: ad auth login ${a.provider} --label ${a.label}`;
       await service.setStatus(a.id, "needs-sign-in", text);
-      err.write(`${text}\n`);
+      say(false, text);
       return 1;
     }
     // An endpoint that passed the one-token test at login is tested that way again.
-    const v = await testKey(preset, { key, endpoint: a.endpoint, fetch: opts.fetch, clientVersion: opts.clientVersion, insecure: Boolean(a.insecure), probe: Boolean(a.probed) });
+    // --model: one small Responses request as well (a few tokens).
+    const v = await testKey(preset, { key, endpoint: a.endpoint, fetch: opts.fetch, clientVersion: opts.clientVersion, insecure: Boolean(a.insecure), probe: Boolean(a.probed || opts.model), model: opts.model ?? null });
     if (v.status === "ready") {
       await service.setStatus(a.id, "ready");
-      out.write(`${accountName(a)} works.\n`);
+      say(true, `${accountName(a)} works.`);
       return 0;
     }
     const text = v.status === "refused" ? `The key was refused (HTTP ${v.http}). Add it again: ad auth login ${a.provider} --label ${a.label}` : v.detail;
     await service.setStatus(a.id, v.status === "refused" ? "needs-sign-in" : "error", text);
-    err.write(`${text}\n`);
+    say(false, text);
     return 1;
   }
 

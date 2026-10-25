@@ -121,6 +121,8 @@ Agent harness (ad's engine; ad about):
                                               (AD_ACCOUNT: a default; docs/harness.md)
                          --allow-home-folder  (ad, tui, chat, loop, run, schedule add) work in a folder that
                                               would load skills from your own engine install (docs/harness.md)
+  auth login <provider>  Add an account (API key at a hidden prompt or --stdin; ChatGPT in the browser or --device; OpenRouter --oauth)
+  auth list | use | status | logout | remove | rename | test | repair   Manage accounts: ad auth --help
   auth login chatgpt     Sign in with your ChatGPT subscription (browser; --device for a code)
   auth login openai      Use an OpenAI API key (hidden prompt, or pipe it on stdin)
   auth login openrouter  Store an OpenRouter key and make it active (needs --model <slug>)
@@ -2359,7 +2361,8 @@ async function main(argv) {
   // Only before "--": after it everything is a positional (e.g. a scheduled
   // job's prompt that happens to be "-h").
   const flagsPart = argv.includes("--") ? argv.slice(0, argv.indexOf("--")) : argv;
-  if (argv.length === 0 || flagsPart.includes("--help") || flagsPart.includes("-h")) {
+  // `ad auth --help` is the auth command's own help (P3.8a).
+  if (argv.length === 0 || ((flagsPart.includes("--help") || flagsPart.includes("-h")) && flagsPart[0] !== "auth")) {
     console.log(HELP);
     return 0;
   }
@@ -2421,6 +2424,15 @@ async function main(argv) {
         stdin:        { type: "boolean" },
         "no-test":    { type: "boolean" },
         "no-key":     { type: "boolean" },
+        provider:     { type: "string" },
+        effort:       { type: "string" },
+        global:       { type: "boolean" },
+        session:      { type: "boolean" },
+        digest:       { type: "boolean" },
+        wide:         { type: "boolean" },
+        "show-emails": { type: "boolean" },
+        "delete-conversations": { type: "boolean" },
+        help:         { type: "boolean", short: "h" },
         template:     { type: "string" },
         task:         { type: "string" },
         team:         { type: "string" },
@@ -2580,7 +2592,8 @@ async function main(argv) {
     case "viewer":         return cmdViewer({ ...opts, out: parsed.values.out, open: parsed.values.open || false });
     case "auth": {
       // P3.2: fix interrupted sign-ins and keys without an account.
-      if (parsed.positionals[0] === "repair") return (await import("./harness/auth-repair.mjs")).cmdAuthRepair({ yes: parsed.values.yes || false });
+      // `ad auth repair -h` is help, never a repair (P3.8a).
+      if (parsed.positionals[0] === "repair" && !parsed.values.help) return (await import("./harness/auth-repair.mjs")).cmdAuthRepair({ yes: parsed.values.yes || false });
       const { cmdAuth } = await import("./harness/auth.mjs");
       return cmdAuth(parsed.positionals[0], parsed.positionals.slice(1), {
         model: parsed.values.model,
@@ -2593,6 +2606,15 @@ async function main(argv) {
         insecure: Boolean(parsed.values.insecure),
         noTest: Boolean(parsed.values["no-test"]),
         noKey: Boolean(parsed.values["no-key"]),
+        provider: parsed.values.provider,
+        effort: parsed.values.effort,
+        // use: one scope (the default is global)
+        scope: ["global", "project", "session", "digest"].filter((s) => parsed.values[s]).length > 1 ? "conflict" : parsed.values.project ? "project" : parsed.values.session ? "session" : parsed.values.digest ? "digest" : "global",
+        wide: Boolean(parsed.values.wide),
+        json: Boolean(parsed.values.json),
+        yes: Boolean(parsed.values.yes),
+        help: Boolean(parsed.values.help),
+        width: process.stdout.columns ?? 80,
         // A key typed as a flag (--key …) is refused, never echoed (P3.5).
         rawValues: parsed.values,
         clientVersion: VERSION

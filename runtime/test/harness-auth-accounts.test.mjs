@@ -64,27 +64,31 @@ test("login openrouter --model: a ready account, the default; a second with --la
   assert.equal(doc.defaults.target.account, doc.accounts.find((a) => a.label === "work").id);
   assert.equal(doc.defaults.target.model, "m/x");
   r = await auth("status");
-  assert.match(r.out, /account:\s+OpenRouter · work {2}ready {2}key …8888 {2}\(default\)/);
+  assert.match(r.out, /active:\s+OpenRouter · work, model m\/x \(global default\)/);
+  // the two keys, and the engine's own 3.0 sign-in the status run syncs in
+  assert.match(r.out, /accounts:\s+3 \(3 ready\)\. List them: ad auth list/);
   assert.ok(!r.out.includes(K2));
 });
 
 test("a key typed on the command line is refused and never echoed; an unavailable sign-in names the alternative", async () => {
   const n = readRegistry().accounts.length;
   let r = await auth("login", ["openrouter", K1], { label: "x", readKey: async () => assert.fail("must not prompt") });
-  assert.equal(r.code, 1);
+  assert.equal(r.code, 2);
   assert.match(r.err, /ad never takes a key on the command line/);
   assert.equal(readRegistry().accounts.length, n, "nothing saved");
   // The key in the provider's place (ad auth login <key>): refused, never quoted.
   const bare = "Q".repeat(36);
   r = await auth("login", [bare]);
-  assert.equal(r.code, 1);
+  assert.equal(r.code, 2);
   assert.match(r.err, /ad never takes a key on the command line/);
   assert.ok(!r.err.includes(bare) && !r.err.includes(bare.toLowerCase()));
   r = await auth("use", [bare]);
+  assert.equal(r.code, 2);
+  assert.match(r.err, /ad never takes a key on the command line/);
   assert.ok(!r.err.includes(bare) && !r.err.includes(bare.toLowerCase()));
   assert.ok(!r.err.includes(K1));
   r = await auth("login", ["openrouter"], { rawValues: { key: true }, readKey: async () => assert.fail("must not prompt") });
-  assert.equal(r.code, 1);
+  assert.equal(r.code, 2);
   r = await auth("login", ["claude"]);
   assert.equal(r.code, 2);
   assert.match(r.err, /Claude models work now through OpenRouter/);

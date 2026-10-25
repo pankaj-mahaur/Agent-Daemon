@@ -7,8 +7,14 @@ import { stdin as input, stdout as output } from "node:process";
 import { createSecretStore } from "../auth/secrets.mjs";
 import { inspectAccounts, repairAccounts } from "../auth/accounts/reconcile.mjs";
 import { adRoot } from "../ad-root.mjs";
+import { AUTH_TEXTS } from "./auth-texts.mjs";
 
-export async function cmdAuthRepair({ root = adRoot(), store = createSecretStore(), out = process.stdout, err = process.stderr, yes = false, isTTY = () => Boolean(input.isTTY && output.isTTY), ask } = {}) {
+export async function cmdAuthRepair({ root = adRoot(), store = createSecretStore(), out = process.stdout, err = process.stderr, yes = false, isTTY = () => Boolean(input.isTTY && output.isTTY), ask, env = process.env } = {}) {
+  // D49: account changes refuse in the agent's own shell (P3.8a).
+  if (env.AD_TOOL_SHELL === "1") {
+    err.write(`ad auth: ${AUTH_TEXTS.TOOL_SHELL}\n`);
+    return 2;
+  }
   const findings = inspectAccounts({ root, store });
   if (!findings.length) {
     out.write("Nothing to repair: every account and stored key is in order.\n");

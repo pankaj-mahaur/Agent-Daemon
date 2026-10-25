@@ -31,6 +31,41 @@ ad auth test openrouter/work              # check a stored key again
 2. ad waits for OpenRouter to send you back to a page on your own machine (127.0.0.1).
 3. Ctrl+C, or 10 minutes without an answer, ends the sign-in and saves nothing.
 
+## Managing accounts
+
+```bash
+ad auth list                         # your accounts, grouped by provider (--wide: method and last use; --json)
+ad auth use openrouter/work          # the default for new sessions (--model, --effort)
+ad auth use openrouter/work --project   # this project prefers it (in a folder you trust)
+ad auth use openrouter/work --session   # prints the line that sets it for this terminal only
+ad auth use openrouter/work --digest    # the account ad's own session digests may use
+ad auth rename openrouter/work acme --owner "Acme Ltd"
+ad auth logout openrouter/acme       # its key is deleted from this computer; the account stays (needs sign-in)
+ad auth remove openrouter/acme       # forget it (asks; --yes in scripts)
+ad auth status [<account>]           # what ad uses now; one account in detail
+ad auth test <account>               # check it (--model: also one small request)
+```
+
+- **Naming an account.** `<account>` is `provider/label`, a provider with one account (`openrouter`), a label used once, or an account id. A label can't be a provider's name, so `logout chatgpt` can never reach an OpenRouter key.
+- **The list.** It fits an 80-column terminal:
+  - `●` marks the default;
+  - the owner column shows only when it differs from the label;
+  - "who" is the masked email and plan for a sign-in, `key …1234` for a key, `local` for your own machine;
+  - "limits" shows a limit the provider just reported.
+- **Scripting.** `--json` is the scripting contract. It is built from a fixed list of fields, and never holds a key, its storage name, a full email or an engine folder path. With `--json`, any error comes back as `{"error": {"code", "message"}}` with the same exit code.
+- **Logout vs remove.** `logout` signs one account out and keeps its name, so `ad auth login <provider> --label <label>` brings it back. `remove` forgets it. `logout` alone signs out the ChatGPT or OpenAI sign-in in ad's main engine folder, as in 3.0.
+- **Not from the agent's own shell.** `login`, `use`, `rename`, `logout`, `remove` and `repair` refuse to run there (exit 2), so an accident or a naive prompt injection can't change your accounts. `list`, `status` and `test` work everywhere. This is a guard, not a wall: a determined process on your machine can still read ad's files.
+
+### From ad 3.0
+
+| 3.0 command | Now |
+|---|---|
+| `login openai`, `login openrouter --model m` | adds an account (label `default`, or `--label`); `--model` is optional |
+| `use openai` / `use openrouter` | that provider's account, if it has only one (two or more: name it as `provider/label`) |
+| `status` | the same first two lines, then a summary of your accounts |
+| `logout` | signs out the sign-in in ad's main engine folder only |
+| `logout openrouter` | signs out the one OpenRouter account: its key is deleted, the account stays |
+
 ## Providers
 
 | Provider | Id | How | Notes |
