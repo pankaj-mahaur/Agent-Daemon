@@ -12,6 +12,9 @@
 //     models(a)             [{ id, name, free, priceObservedAt, dataNote }] (API accounts), or
 //                           null for an engine's own account
 //     switchTo(a, { model, effort })   → { kind: "same" | "continues" | "new" }
+//     targetFor(a, model, effort)   a switch's target (P4.2): the session's fields plus label, key, account
+//     currentTarget()       the window's own, the same shape
+//     prepare(target)       the target's engine for a switch: { engine, release, restart, sameEngine }
 //     setDefault(a, model)  the default for new sessions
 //     logout(a)             → { text, wasCurrent }
 //     providers()           what /login offers, then the unavailable rows
@@ -26,7 +29,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { accountsDir, readRegistry, transact } from "../auth/accounts/registry.mjs";
 import { createAccountService } from "../auth/accounts/service.mjs";
-import { accountForProviderId, accountName, engineParamsFor } from "../auth/accounts/target.mjs";
+import { accountForProviderId, accountName, engineParamsFor, targetKey } from "../auth/accounts/target.mjs";
 import { checkKeyText, keyVerdict, signInApiKey, signInCustom, signInLocal } from "../auth/accounts/signin.mjs";
 import { signInOpenRouter } from "../auth/accounts/openrouter-oauth.mjs";
 import { listModels } from "../providers/models.mjs";
@@ -104,6 +107,44 @@ export function createTuiAccounts({ session, store, launch, clientVersion, fetch
         cachedLabel = s.ready > 1 && s.current ? accountName(s.current) : null;
       }
       return cachedLabel;
+    },
+    targetFor(a, model, effort) {
+      const t = targetOf(a, model);
+      const m = model ?? (t.homeKey === homeNow() && a.id === api.current()?.id ? session.state.config.model : null) ?? null;
+      return { ...t, ...(m ? { model: m } : {}), ...(effort ? { effort } : {}), label: `${accountName(a)}${m ? ` \u{b7} ${m}` : ""}`, key: targetKey({ account: a, model: m, effort }), account: a };
+    },
+    currentTarget() {
+      const c = session.state.config;
+      const a = api.current();
+      let passthrough = true;
+      try {
+        if (a) passthrough = presetFor(a.provider).mode === "passthrough";
+      } catch {
+        // an engine's own account
+      }
+      const label = a ? `${accountName(a)}${c.model ? ` \u{b7} ${c.model}` : ""}` : c.model ?? "this account";
+      return { modelProvider: providerNow(), homeKey: c.homeKey ?? null, provider: a?.provider ?? c.provider ?? null, model: c.model ?? null, effort: c.effort ?? null, passthrough, label, key: a ? targetKey({ account: a, model: c.model, effort: c.effort }) : null, account: a ?? null };
+    },
+    /** The target's engine for a switch's continuation; an error's .reason says why not. */
+    async prepare(t) {
+      const a = t.account;
+      if (!a) throw Object.assign(new Error("no account"), { reason: "engine" });
+      if (a.status && a.status !== "ready") throw Object.assign(new Error(`${accountName(a)} isn't ready`), { reason: "signIn" });
+      // The model, when the account lists its models (an engine's own account lists none here).
+      if (t.model) {
+        const listed = await api.models(a).catch(() => null);
+        if (listed?.length && !listed.some((m) => m.id === t.model)) throw Object.assign(new Error(`${t.model} isn't listed for ${accountName(a)}`), { reason: "model" });
+      }
+      if (t.homeKey === homeNow()) return { sameEngine: true };
+      const next = await launch(a);
+      if (!next?.engine) throw Object.assign(new Error(next?.error ?? "the engine for that account didn't start"), { reason: "engine" });
+      let released = false;
+      const release = async () => {
+        if (released) return;
+        released = true;
+        await next.release?.();
+      };
+      return { engine: next.engine, release, restart: next.restart, sameEngine: false };
     },
     plan(a, model) {
       if (!session.state.thread) return "new";

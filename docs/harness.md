@@ -104,8 +104,11 @@ To try the terminal layer on its own, with no engine and no login, run `node run
 ```bash
 ad run "fix the failing test in math.test.js"
 ad run "summarize the open TODOs" --sandbox read-only
-ad run "…" --json                # one JSON line: threadId, turnId, status, output, error
+ad run "…" --json                # one JSON line: threadId, turnId, status, output, error, target
+ad run "…" --account openrouter/work --model qwen3-coder --effort high
 ```
+
+`--account` takes `provider/label`, a label, or an id (`ad auth list`); an unknown or ambiguous one exits 2 and says what to type. The account and model that run the turn are printed on stderr (`target: OpenRouter · work · qwen3-coder`). `ad loop` and `ad tui` take the same three flags.
 
 Nobody can answer approvals in `ad run`, so anything that needs one is declined and the agent works around it. Exit code: `0` when the turn completed, `1` otherwise.
 

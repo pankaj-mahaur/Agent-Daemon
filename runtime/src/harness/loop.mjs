@@ -129,7 +129,7 @@ export async function cmdLoop(objective, opts = {}) {
     // UNATTENDED_ENV: our re-prompts echo the agent's own status text —
     // hooks must not store that as the user's corrections.
     // The account first (P3.4): the engine that serves it starts.
-    const started = await launchHarness({ cwd, account: opts.account, model: opts.model, home: opts.home, command: opts.command, clientVersion: opts.clientVersion, store: opts.store, platform: opts.platform, err, requireSandbox: true, env: UNATTENDED_ENV, allowHomeFolder: opts.allowHomeFolder === true, homePolicy: "grace" });
+    const started = await launchHarness({ cwd, account: opts.account, model: opts.model, effort: opts.effort, home: opts.home, command: opts.command, clientVersion: opts.clientVersion, store: opts.store, platform: opts.platform, err, requireSandbox: true, env: UNATTENDED_ENV, allowHomeFolder: opts.allowHomeFolder === true, homePolicy: "grace" });
     if (!started.engine) {
       err.write(started.error + "\n");
       return started.code;
@@ -163,7 +163,7 @@ export async function cmdLoop(objective, opts = {}) {
       const text = nextPrompt(objective, history.at(-1));
       // The objective is the user's; every later prompt is ad's own.
       ledgerRec?.prompt(text, i === 1 && objective?.trim() ? "submit" : "ad");
-      const record = await runIteration(engine, { threadId, text, stopRequested, err, limits, t0 });
+      const record = await runIteration(engine, { threadId, text, stopRequested, err, limits, t0, effort: started.params.effort ?? null });
       if (record.threadTotal != null) {
         baseline ??= record.baseline ?? 0;
         record.tokens = record.threadTotal - (threadTotal ?? baseline);
@@ -209,7 +209,7 @@ async function compact(engine, threadId, err) {
   }
 }
 
-async function runIteration(engine, { threadId, text, stopRequested, err, limits, t0 }) {
+async function runIteration(engine, { threadId, text, stopRequested, err, limits, t0, effort = null }) {
   let fileChanges = 0;
   let commands = 0;
   let threadTotal = null;
@@ -232,6 +232,7 @@ async function runIteration(engine, { threadId, text, stopRequested, err, limits
       text,
       timeoutMs: 0,
       sandboxPolicy: UNATTENDED_SANDBOX_POLICY, // every turn, whatever config.toml says
+      ...(effort ? { effort } : {}),
       onEvent: (evt) => {
         if (evt.type === "turnStarted") turnId = evt.turnId;
         else if (evt.type === "item" && evt.item?.type === "fileChange") fileChanges += evt.item.changes?.length || 1;

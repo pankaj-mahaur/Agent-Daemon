@@ -1362,3 +1362,121 @@ test("observer: a switch is seen after the new target is taken, as a switch", as
     assert.equal(seen.filter((e) => e.type === "thread.detached").at(-1).reason, "switched");
   });
 });
+
+/* ------------------------------------------------------------------ */
+/* P4.2: a switch moves this window to another thread                  */
+/* ------------------------------------------------------------------ */
+
+test("while held, Enter queues (also over a running turn) and nothing starts; let go, the queue runs once", async () => {
+  await withSession(none, async ({ session, engine }) => {
+    await session.submit("early-complete").done;
+    session.hold(true);
+    const r = session.submit("early-complete");
+    assert.deepEqual(await r.accepted, { queued: true, index: 0 });
+    await sleep(80);
+    assert.equal(session.state.queue.length, 1, "nothing ran");
+    assert.equal(session.state.turns.length, 1);
+    session.hold(false);
+    await until(() => session.state.queue.length === 0 && session.state.turns.length === 2 && session.state.turns.every((t) => t.status !== "inProgress"), "the queued prompt");
+    assert.equal((await debugState(engine)).calls.filter((c) => c === "turn/start").length, 2, "once");
+  });
+});
+
+test("useEngine with a thread keeps the queue and runs it once on the new engine; the lock moves; the old engine's late events change nothing", async () => {
+  await withSession(none, async ({ session, engine, make, lockDir }) => {
+    await session.submit("early-complete").done;
+    const oldId = session.state.thread.id;
+    session.hold(true);
+    session.submit("early-complete");
+    const other = await make();
+    await other.startThread({ cwd: session.state.config.cwd }); // the fake numbers threads per engine: not the old one's id
+    const started = await other.startThread({ cwd: session.state.config.cwd });
+    assert.notEqual(started.threadId, oldId);
+    await other.threads.inject(started.threadId, [{ type: "message", role: "developer", content: [{ type: "input_text", text: "note" }] }]);
+    const before = (await debugState(engine)).calls.filter((c) => c === "turn/start").length;
+    const r = await session.useEngine({ engine: other }, { modelProvider: "ad-b", homeKey: "a/b" }, { threadId: started.threadId, thread: started.thread });
+    assert.equal(r.threadId, started.threadId);
+    assert.equal(session.state.thread.id, started.threadId);
+    assert.equal(session.state.queue.length, 1, "still held: the queue waits");
+    session.hold(false);
+    await until(() => session.state.queue.length === 0 && session.state.turns.some((t) => t.status === "completed"), "the queued prompt on the new engine");
+    assert.equal((await debugState(other)).calls.filter((c) => c === "turn/start").length, 1, "once, on the new engine");
+    assert.equal((await debugState(engine)).calls.filter((c) => c === "turn/start").length, before, "none on the old one");
+    // The lock moved with the conversation.
+    assert.throws(() => lockThread(started.threadId, { dir: lockDir }), SessionLockedError);
+    lockThread(oldId, { dir: lockDir })();
+    // A late event from the old engine's thread: nothing in this window changes.
+    const turns = session.state.turns.length;
+    await engine.testRequest("test/error-notification", { threadId: oldId }).catch(() => {});
+    await sleep(80);
+    assert.equal(session.state.turns.length, turns);
+    assert.ok(!session.state.notices.some((n) => /error-notification|test error/i.test(n.message)), JSON.stringify(session.state.notices));
+  });
+});
+
+test("adoptThread: a continuation on the same engine; the queue and mode carry over; the old live terminals are listed apart", async () => {
+  await withSession(none, async ({ session, engine }) => {
+    await session.submit("early-complete").done;
+    session.state.terminals.set("bg@t", { key: "bg@t", itemId: "bg", command: "npm run dev", lines: [] });
+    session.hold(true);
+    session.submit("early-complete");
+    const started = await engine.startThread({ cwd: session.state.config.cwd });
+    session.adoptThread(started.threadId, started.thread, { modelProvider: "ad-c", model: "m-c" });
+    assert.equal(session.state.thread.id, started.threadId);
+    assert.equal(session.state.config.model, "m-c");
+    assert.deepEqual(session.state.priorTerminals.map((t) => t.command), ["npm run dev"]);
+    assert.equal(session.state.terminals.size, 0);
+    session.hold(false);
+    await until(() => session.state.queue.length === 0 && session.state.turns.some((t) => t.status === "completed"), "the queued prompt");
+  });
+});
+
+test("Plan mask uses the target's model after a provider switch", async () => {
+  await withModes(none, async ({ session, engine }) => {
+    await session.modesReady;
+    await session.submit("fail-turn").done;
+    assert.equal((await turnMask(engine)).settings.model, "engine-default-model", "the preset's model on the default provider");
+    const started = await engine.startThread({ cwd: session.state.config.cwd });
+    session.adoptThread(started.threadId, started.thread, { modelProvider: "ad-or-b", model: "qwen3-coder" });
+    session.setMode("plan");
+    await session.submit("fail-turn").done;
+    assert.equal((await turnMask(engine)).settings.model, "qwen3-coder");
+  }, { env: { FAKE_MODES_MODEL: "engine-default-model" } });
+});
+
+test("a switch's target replaces a /model choice made for the old provider: its model and effort reach the next turn", async () => {
+  await withSession(none, async ({ session, engine }) => {
+    await session.submit("early-complete").done;
+    session.setNextTurn({ model: "gpt-5", effort: "xhigh" });
+    const a = await engine.startThread({ cwd: session.state.config.cwd });
+    session.adoptThread(a.threadId, a.thread, { modelProvider: "ad-or-b", model: "qwen3-coder", effort: "low" });
+    await session.submit("fail-turn").done;
+    let p = (await debugState(engine)).lastParams["turn/start"];
+    assert.equal(p.model, "qwen3-coder");
+    assert.equal(p.effort, "low");
+    // Another provider with no model named: no model or effort from the old one is sent.
+    const b = await engine.startThread({ cwd: session.state.config.cwd });
+    session.adoptThread(b.threadId, b.thread, { modelProvider: "ad-oa-c" });
+    await session.submit("fail-turn").done;
+    p = (await debugState(engine)).lastParams["turn/start"];
+    assert.equal(p.model, undefined);
+    assert.equal(p.effort, undefined);
+    assert.equal(session.state.config.effort, null);
+  });
+});
+
+test("a continuation whose new engine can't be wired leaves the window on its conversation, history and queue included", async () => {
+  await withSession(none, async ({ session }) => {
+    await session.submit("early-complete").done;
+    const old = session.state.thread.id;
+    session.hold(true);
+    session.submit("early-complete");
+    const busy = { onRequest: () => {} }; // an engine another session already wired
+    await assert.rejects(session.useEngine({ engine: busy }, { modelProvider: "x", homeKey: "a/x" }, { threadId: "t-new", thread: { id: "t-new" } }), /already has a session/);
+    assert.equal(session.state.thread.id, old);
+    assert.equal(session.state.queue.length, 1);
+    await until(() => session.state.turns.length >= 1, "the history back");
+    session.hold(false);
+    await until(() => session.state.queue.length === 0, "the queue runs here");
+  });
+});

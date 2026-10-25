@@ -97,6 +97,8 @@ export async function startMockProvider({ personality = "generic", keys = [], mo
         functionOutputs: input.filter((i) => i?.type === "function_call_output").map((i) => ({ callId: i.call_id, output: typeof i.output === "string" ? i.output : JSON.stringify(i.output) })),
         text: body ? lastUserText(body) : "",
         userTexts: body ? roleTexts(body, "user") : [],
+        // Each input item's shape (never its text): what a switch carries to a provider.
+        items: input.map((i) => ({ type: i?.type ?? null, role: i?.role ?? null, encrypted: Boolean(i?.encrypted_content), callId: i?.call_id ?? null })),
         invalidJson: Boolean(body?.invalidJson) || undefined,
       });
       const f = takeFault();

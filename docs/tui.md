@@ -46,6 +46,7 @@ ad tui --cwd ../other-repo --model <name> --sandbox read-only
 | `--last` | resumes the newest conversation for this folder |
 | `--resume <id>` | resumes that conversation (in whichever engine folder holds it) |
 | `--account <provider>/<label>` | the account for new conversations (see [harness.md](harness.md#safety-model)) |
+| `--effort <level>` | the reasoning effort with `--model` |
 | `--cwd <dir>` | works in another folder |
 | `--model <name>` | the model for new turns (`/model` changes it later) |
 | `--sandbox <mode>` | `read-only`, `workspace-write` (default) or `danger-full-access` |
@@ -282,7 +283,7 @@ Type `/` to see them with a one-line hint each. Commands marked "engine" keep th
 
 | Command | What it does |
 |---|---|
-| `/model` | choose the model and reasoning effort; with several accounts, the account first (grouped by provider; each row says whether it continues this conversation or starts a new one). `/model default` makes this window's account and model the default for new sessions |
+| `/model` | choose the model and reasoning effort; with several accounts, the account first (grouped by provider; each row says how this conversation continues there; see [Switching model, account or provider](#switching-model-account-or-provider)). `/model default` makes this window's account and model the default for new sessions |
 | `/account` | pick this window's account (then its model) |
 | `/permissions` | what the engine may do without asking: Read only, Auto (default: edits this folder, asks for the rest), Full access (engine) |
 | `/login [provider]` | add or sign in an account: pick the provider, give it a label and an owner, then paste the key into a masked field (never kept in the prompt history). ChatGPT signs in through `ad auth login chatgpt` |
@@ -359,6 +360,21 @@ Model, effort and permission changes apply from the next turn.
 A command ad doesn't have yet is never sent to the model as a prompt. It answers in one line why ("/import isn't planned for ad."), and what you typed stays in the prompt. Where the engine's own UI can't help either (`/ide`, `/app`, `/daemon`), the answer says so instead. Upstream commands keep upstream's rules: the ones disabled while a task runs (`/new`, `/fork`, `/compact`, `/init`, `/export`, `/review`, `/logout`, …) answer "'/new' is disabled while a task is in progress.", and the draft stays. Upstream's aliases work (`/cwd`, `/clean` for `/stop`, `/pet`), and `/quit` shows in the popup only once you type it.
 
 ---
+
+## Switching model, account or provider
+
+Pick another account (or its model) in `/model` or `/account` while a conversation is open, and it moves there, mid-task, with its history. Each row says what Enter does: "continues this conversation" or "continues in a new conversation (history carried over)".
+
+- **How it moves.** Another model on the same account takes effect from the next turn. Another key of the same provider, same model, continues in a copy of the conversation (a fork). Anything else (another provider, a ChatGPT account, ad's chat translation on either side, another model with the account) starts a new conversation on that account, seeded with the history so far as ad's note plus the messages; the old one stays in `/resume`.
+- **When.** At a safe point: idle, no open approval, no subagent still working. During a turn you choose **Switch after this turn** or **Stop the turn and switch now** (ad then tells the new model to continue). Prompts you send meanwhile wait and run once, on the new account. The footer says **switch pending**; `/model` or `/account` then offers to cancel it.
+- **What carries over.** The history (as text: tools as `[done] $ npm test → exit 1` lines, no reasoning, no internal ids), the folder, permissions, the queue and the mode. Files on disk are as they are.
+- **Goals** pause during the switch and resume after the first answer on the new account; no turn starts there by itself first.
+- **Background terminals** keep running with the old conversation. The new model is told which they are and not to restart them; `/ps` lists them under "Still running from before the switch" and `/stop` ends them too.
+- **Not carried:** "for this session" approvals, the side conversation, `/undo` of turns from before the switch ("That turn ran before the switch to …").
+- **When a tool's end is unknown** (the last turn may still have started `npm run deploy`), ad asks first: **Switch anyway** or **Cancel**.
+- **If it can't**, nothing moves: "Couldn't switch to … Still on …" says why (sign-in, model, engine, the engine kept the old provider). See [troubleshooting #74](troubleshooting.md#74-couldnt-switch-to--still-on-).
+- `/status` shows `session ses_… · binding 2 (switched 14:02, you asked)`; `ad sessions show --last` lists the bindings.
+- **Turn it off:** `"switching.crossAccount": false` in `~/.agent-daemon/tui/prefs.json` brings back P3.8b's behaviour (another provider starts a new, empty conversation; the row says "starts a new conversation").
 
 ## Plan mode
 
@@ -574,6 +590,7 @@ Everything else (conversations, logs, login) is the engine's own, in ad's engine
 | "The engine reported a problem", or an upstream name in raw details or an OS prompt | [#39](troubleshooting.md#39-what-ad-cant-rename) |
 | "Pick a project folder" at start, or `/cd` says a folder would load your own skills from `~/.codex/` | [#48](troubleshooting.md#48-pick-a-project-folder-or-run-this-in-a-project-folder) |
 | "This session is open in another ad window", "couldn't write this session's record" | [#73](troubleshooting.md#73-this-session-is-open-in-another-ad-window-or-ad-couldnt-write-this-sessions-record) |
+| "Couldn't switch to …", "the engine kept the old provider", "history carried over … left out" | [#74](troubleshooting.md#74-couldnt-switch-to--still-on-) |
 | an engine command says "isn't in ad yet" | [commands.md](commands.md) |
 | not signed in, sandbox, hooks, your own install's home refused | [harness.md](harness.md#when-something-goes-wrong), troubleshooting #14–21 |
 

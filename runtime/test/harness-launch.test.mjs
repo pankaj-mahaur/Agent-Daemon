@@ -85,9 +85,30 @@ test("an account that needs its key again fails before any engine starts", async
 test("ad run --account runs its turn on that account", async () => {
   const out = sink();
   const err = sink();
-  const code = await cmdRun("hello", { cwd: project, account: "openrouter/work", command, store, stdout: out, stderr: err, json: true });
+  const code = await cmdRun("hello", { cwd: project, account: "openrouter/work", effort: "high", command, store, stdout: out, stderr: err, json: true });
   assert.equal(code, 0, err.text());
-  assert.equal(JSON.parse(out.text()).status, "completed");
+  const j = JSON.parse(out.text());
+  assert.equal(j.status, "completed");
+  // P4.2: the target, with its effort, is named on stderr and in --json.
+  assert.equal(j.target, "OpenRouter · work · or/work-model high");
+  assert.ok(err.text().split("\n").includes("target: OpenRouter · work · or/work-model high"), err.text());
+});
+
+test("ad run --account: an unknown account and an ambiguous label exit 2 before any engine starts, saying what to type", async () => {
+  const err = sink();
+  assert.equal(await cmdRun("hello", { cwd: project, account: "nope", command, store, stdout: sink(), stderr: err }), 2);
+  assert.ok(err.text().includes('No account matches "nope". See: ad auth status'), err.text());
+  const other = reg.newAccount({ provider: "xai", label: "work", method: "api-key" });
+  await reg.transact((doc) => void doc.accounts.push({ ...other, status: "ready", keyHint: "5555" }));
+  try {
+    const err2 = sink();
+    assert.equal(await cmdRun("hello", { cwd: project, account: "work", command, store, stdout: sink(), stderr: err2 }), 2);
+    assert.ok(err2.text().includes('2 accounts match "work". Name one as <provider>/<label>, or by its id'), err2.text());
+  } finally {
+    await reg.transact((doc) => {
+      doc.accounts = doc.accounts.filter((x) => x.id !== other.id);
+    });
+  }
 });
 
 test("a project selector counts only in a folder the settings record trusts", async () => {

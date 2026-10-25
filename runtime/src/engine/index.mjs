@@ -33,7 +33,7 @@ import { redact } from "../auth/redact.mjs";
 
 export { engineError };
 export { assertRetargeted, RETARGET_BUSY_TEXT, RETARGET_IGNORED_TEXT } from "./retarget.mjs";
-export { switchThread, SWITCH_TEXTS } from "./switch.mjs";
+export { letGo, switchThread, SWITCH_TEXTS } from "./switch.mjs";
 export { createEngineManager } from "./manager.mjs";
 
 // The engine's errors and notices in ad's words (design G2): the screen shows

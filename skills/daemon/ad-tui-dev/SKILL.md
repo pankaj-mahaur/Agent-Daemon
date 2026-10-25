@@ -62,6 +62,15 @@ All paths under `runtime/`.
 - Tests that pass an engine `home` record nothing unless they pass `adRoot` too (`ledgerEnabled`), so no test writes the real `~/.agent-daemon/sessions/`.
 - `main.mjs`'s start-up on ad's own homes (the `launched.lease` path) is covered only by `tui-live.test.mjs`: an identifier used there without its import (P3.8b's `openUrl`) passed the whole unit suite and crashed every `ad tui` start. Run the live suite after any `main.mjs` change.
 
+## Switching a conversation (P4.2)
+
+- `sessions/switch.mjs` decides (pure: `switchHow`, `safePoint`, `step`, `recoverSwitch`); `sessions/switch-runner.mjs` does it; `sessions/capsule.mjs` builds the continuation's history. The fork and same-account paths are `session.retarget` (P3.4's one routine); only the continuation path is new, and it reuses `engine/switch.mjs` `letGo` for the old thread. Never a second copy of the routine.
+- The runner's effects run in a promise chain; an effect that dispatches must **not** await `dispatch` (it would wait on its own chain). `hold(true)` applies synchronously at the request, or a prompt sent right after it steers the running turn.
+- `safePoint` checks open requests **before** the running turn: a turn waiting on an approval can't end, so mode "now" withdraws the request first.
+- Session seams: `hold(on)` (Enter queues, the queue doesn't drain), `useEngine(…, { threadId, thread, keepOld })` and `adoptThread` carry the queue, the mode and the old live terminals (`state.priorTerminals`, shown by `/ps`, stopped by `/stop` through their own engine), and detach with why "switched" so the ledger keeps the session. The Plan mask uses `state.config.model` whenever the binding names its own provider.
+- The capsule drops reasoning itself: the engine accepts and forwards a foreign `reasoning` item in `thread/inject_items` (S-RESUME).
+- Fake engine: `early-complete` never sends `turn/started` (use `fail-turn` when the ledger must see the turn); `test/start-turn` starts a turn by itself; fakes number threads from 1 per engine, so start a throwaway thread on a second fake before comparing ids or taking locks.
+
 ## Tests and goldens
 
 - **TUI tests** (`runtime/test/`): `tui-input`, `tui-io`, `tui-detect`, `tui-width`, `tui-text`, `tui-sanitize`, `tui-renderer` (terminal layer); `tui-composer`, `tui-markdown`, `tui-cells`, `tui-chrome`, `tui-modals` (views); `tui-app`, `tui-main`, `tui-parity`, `tui-ad`, `tui-hardening`, `tui-resilience`, `tui-preview`, `tui-pty-smoke`. Also `session`, `checkpoints`, `codex-events.test.mjs`, `codex-protocol-snapshot.test.mjs`, `engine-real` and `tui-live` (both `AD_REAL_ENGINE=1`; `tui-live` is the FC3/FC4 script on the real `ad tui` in a pty: run it after any app, session or view change).

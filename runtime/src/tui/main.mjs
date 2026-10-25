@@ -296,6 +296,7 @@ export async function cmdTui(opts = {}) {
   let launched = null; // launchHarness's answer for this window's engine
   let session;
   let ledger = null; // the session ledger's coordinator (P4.1)
+  let switchRunnerRef = null; // its switch runner (P4.2), closed with the window
   let app;
   let exitHint = null;
   try {
@@ -332,7 +333,7 @@ export async function cmdTui(opts = {}) {
     if (homeRisk && !allowHomeFolder && !(await pickHomeFolder(homeRisk))) return 2;
     // The account first (P3.4): the engine that serves it starts; this window holds it.
     const start = async () => {
-      const r = await launchHarness({ cwd, account: opts.account, model: opts.model, home: opts.home, command: opts.command, clientVersion: opts.clientVersion, store: opts.store, err: sink, detached: true, experimental: true, interactive: true, allowHomeFolder, idleMs: 5 * 60_000 });
+      const r = await launchHarness({ cwd, account: opts.account, model: opts.model, effort: opts.effort, home: opts.home, command: opts.command, clientVersion: opts.clientVersion, store: opts.store, err: sink, detached: true, experimental: true, interactive: true, allowHomeFolder, idleMs: 5 * 60_000 });
       if (r.engine) launched = r;
       return r;
     };
@@ -448,8 +449,16 @@ export async function cmdTui(opts = {}) {
         return ledgerTarget({ account: ledgerAccount(), provider: c.provider, model: c.model, effort: c.effort });
       },
     });
-    session = createSession({ observer: ledger.observer, engine, cwd, model: started.params.model, modelProvider: started.params.modelProvider, homeKey: launched?.homeKey ?? null, provider: launched?.target?.account?.provider ?? null, release: launched?.release ?? null, sandbox: opts.sandbox, restart, maxRestarts: 3, hooks: undoKit?.hooks ?? {}, modes: true, planEffort: () => settings.engine.get("plan_mode_reasoning_effort") ?? null, configEffort: () => settings.engine.get("model_reasoning_effort") ?? null, ...(opts.lockDir ? { lockDir: opts.lockDir } : {}), identity: engineHome.isManaged(engine.home) ? null : await harnessIdentity(engine).catch(() => null) }); // no identity: the session starts without it
+    // A switch (P4.2) sees the same events first; the app shows its notices and choices.
+    let switchRunner = null;
+    const switchUi = { notify: () => {}, ask: () => {} };
+    const observer = (ev) => {
+      switchRunner?.onEvent(ev);
+      return ledger.observer(ev);
+    };
+    session = createSession({ observer, engine, cwd, model: started.params.model, modelProvider: started.params.modelProvider, homeKey: launched?.homeKey ?? null, provider: launched?.target?.account?.provider ?? null, release: launched?.release ?? null, sandbox: opts.sandbox, restart, maxRestarts: 3, hooks: undoKit?.hooks ?? {}, modes: true, planEffort: () => settings.engine.get("plan_mode_reasoning_effort") ?? null, configEffort: () => settings.engine.get("model_reasoning_effort") ?? null, ...(opts.lockDir ? { lockDir: opts.lockDir } : {}), identity: engineHome.isManaged(engine.home) ? null : await harnessIdentity(engine).catch(() => null) }); // no identity: the session starts without it
     await session.init();
+    if (launched?.params?.effort) session.setNextTurn({ effort: launched.params.effort });
     await settings.engine.load();
 
     const term = terminalName();
@@ -555,9 +564,38 @@ export async function cmdTui(opts = {}) {
         })
       : null;
     if (accounts) ledgerAccount = () => accounts.current() ?? launched?.target?.account ?? null;
+    // Switching a conversation to another account or provider (P4.2): only with ad's accounts.
+    if (accounts) {
+      const { createSwitchRunner } = await import("../sessions/switch-runner.mjs");
+      const shortstat = async () => (await git(cwd, ["diff", "--shortstat", "HEAD"]).catch(() => ({ stdout: "" }))).stdout.trim();
+      const num = (s, re) => Number(re.exec(s)?.[1] ?? 0);
+      switchRunner = createSwitchRunner({
+        session,
+        ledger,
+        current: () => accounts.currentTarget(),
+        prepare: (t) => accounts.prepare(t),
+        git: async () => {
+          const branch = (await git(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]).catch(() => ({ stdout: "" }))).stdout.trim();
+          if (!branch) return null;
+          const s = await shortstat();
+          return { branch, files: num(s, /(\d+) files? changed/), added: num(s, /(\d+) insertion/), deleted: num(s, /(\d+) deletion/) };
+        },
+        // /undo's snapshot (uncommitted edits included) when the folder has checkpoints, else HEAD.
+        checkpoint: async () => {
+          const snap = undoKit ? await cp.snapshot().catch(() => null) : null;
+          const ref = snap?.tree ?? (await git(cwd, ["rev-parse", "--short", "HEAD"]).catch(() => ({ stdout: "" }))).stdout.trim();
+          return ref ? { ref, diffStat: (await shortstat()) || null } : null;
+        },
+        notify: (...a) => switchUi.notify(...a),
+        ask: (...a) => switchUi.ask(...a),
+      });
+    }
     const actions = {
       accounts,
       ledger: () => ledger?.status() ?? null,
+      // Another model on the same account: the same thread on a new binding (P4.2 nextTurn).
+      onModelChange: () => ledger?.rebind("nextTurn"),
+      switching: (switchRunnerRef = switchRunner) ? { runner: switchRunner, ui: switchUi } : null,
       gatewayReason: (threadId, sinceMs) => gatewayReason({ threadId, sinceMs }),
       bell: (o = {}) => {
         if (!o.unfocusedOnly || !focused) io.write("\x07");
@@ -651,6 +689,7 @@ export async function cmdTui(opts = {}) {
     renderer?.dispose();
     const live = session?.engine;
     session?.close();
+    await switchRunnerRef?.dispose().catch(() => {});
     await ledger?.close().catch(() => {});
     await io?.close();
     if (launched?.lease) await closeHarnessEngines().catch(() => {});

@@ -303,7 +303,10 @@ async function runScriptedTurn(threadId, turn, params) {
     const item = { type: "fileChange", id: "fc-1", status: "inProgress", changes: [{ path: "src/app.js", kind: { type: "update" }, diff: "-a\n+b" }] };
     notify("item/started", { threadId, turnId: turn.id, item });
     const reply = await askClient("item/fileChange/requestApproval", { threadId, turnId: turn.id, itemId: "fc-1", reason: "apply fix" });
-    agentMessage(threadId, turn.id, `edit[${reply.result.decision}]`);
+    // As the engine: the item ends with the answer (declined unless accepted).
+    const ok = /^accept/.test(reply.result?.decision ?? "");
+    notify("item/completed", { threadId, turnId: turn.id, item: { ...item, status: ok ? "completed" : "declined" } });
+    agentMessage(threadId, turn.id, `edit[${reply.result?.decision}]`);
     return complete(threadId, turn);
   }
   if (text === "ask-permission" || text === "legacy-approval") {
@@ -428,7 +431,8 @@ async function onRequest({ id, method, params }) {
     case "collaborationMode/list":
       if (process.env.FAKE_NO_MODES === "1") return send({ id, error: { code: -32603, message: "no modes here" } });
       if (process.env.FAKE_MODES_SLOW === "1") return;
-      return send({ id, result: { data: [{ name: "Plan", mode: "plan", model: null, reasoning_effort: "medium" }, { name: "Default", mode: "default", model: null, reasoning_effort: null }] } });
+      // FAKE_MODES_MODEL: presets that name a model (the engine default provider's).
+      return send({ id, result: { data: [{ name: "Plan", mode: "plan", model: process.env.FAKE_MODES_MODEL ?? null, reasoning_effort: "medium" }, { name: "Default", mode: "default", model: process.env.FAKE_MODES_MODEL ?? null, reasoning_effort: null }] } });
     case "thread/settings/update":
       send({ id, result: {} });
       if (params.collaborationMode) setThreadMode(params.threadId, params.collaborationMode);
@@ -566,6 +570,8 @@ async function onRequest({ id, method, params }) {
       const threadId = params.threadId;
       // A turn/start Codex rejects (as for a bad input or a thread it lost).
       if ((params.input?.[0]?.text ?? "") === "reject-start") return send({ id, error: { code: -32600, message: "turn/start rejected" } });
+      // The same, refused only after a while (a client waits on a start that never becomes a turn).
+      if ((params.input?.[0]?.text ?? "") === "reject-slow") return setTimeout(() => send({ id, error: { code: -32600, message: "turn/start rejected" } }), 400);
       const turn = { id: `turn-${RUN}-${++turnSeq}`, status: "inProgress", items: [] };
       const text = params.input?.[0]?.text ?? "";
       // A mask that differs from the thread's mode changes it, as in Codex.
@@ -779,6 +785,15 @@ async function onRequest({ id, method, params }) {
       return send({ id, result: { ok: true } });
     case "test/silent":
       return; // never answers — exercises client timeouts
+    case "test/start-turn": {
+      // A turn the engine starts by itself (a goal continuation, a subagent wake-up): runs until interrupted.
+      const tid = params.threadId;
+      const cont = { id: `turn-self-${++turnSeq}`, status: "inProgress", items: [] };
+      turnsOf(tid).push(cont);
+      hung.set(cont.id, { threadId: tid, turn: cont });
+      notify("turn/started", { threadId: tid, turn: cont });
+      return send({ id, result: { turnId: cont.id } });
+    }
     default:
       // As the real engine (0.160.0, spike S6): an unknown method is an invalid request.
       return send({ id, error: { code: -32600, message: `Invalid request: unknown variant \`${method}\`` } });

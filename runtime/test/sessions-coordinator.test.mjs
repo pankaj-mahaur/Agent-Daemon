@@ -439,3 +439,17 @@ test("a subagent spawned in one root turn that works on during the next stays li
   assert.equal(readLedger(c.sessionId()).find((e) => e.turnId === "k").parentTurnId, "r1");
   await c.close();
 });
+
+test("a switch a crash left open says how it ended when the session reopens (P4.2)", async () => {
+  const a = make();
+  start(a, "crash1");
+  a.record({ type: "switchRequested", target: "k", how: "continuation" });
+  const id = a.sessionId();
+  await a.close();
+  const b = make();
+  b.observer({ type: "thread.attached", threadId: "crash1", how: "resume" });
+  b.observer({ type: "user.message", clientId: "z", input: "back", via: "submit" });
+  const ev = readLedger(id);
+  assert.ok(ev.some((e) => e.type === "switchAborted" && e.reason === "crash"), ev.map((e) => e.type).join());
+  await b.close();
+});

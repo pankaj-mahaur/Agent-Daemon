@@ -53,7 +53,7 @@ async function settleIdle(engine, threadId, { timeoutMs }) {
  *   terminals: the item ids of background terminals still running in the thread (the
  *   session's own tracking: the engine's thread data has no terminal field)
  */
-export async function switchThread({ engine, threadId, target = {}, terminals = () => [], onViolation = () => {}, idleTimeoutMs = 10_000 }) {
+export async function switchThread({ engine, threadId, target = {}, terminals = () => [], onViolation = () => {}, onItemDone, onDone, idleTimeoutMs = 10_000 }) {
   const want = {};
   if (target.modelProvider !== undefined) want.modelProvider = target.modelProvider;
   if (target.model !== undefined) want.model = target.model;
@@ -92,19 +92,44 @@ export async function switchThread({ engine, threadId, target = {}, terminals = 
   }
 
   // 6. The old thread.
+  const old = await letGo({ engine, threadId, terminals, onViolation, onItemDone, onDone });
+  return { threadId: newId, goalMoved, ...old };
+}
+
+/**
+ * Step 6 alone (also P4.2's continuation): the old thread is unsubscribed (it unloads at
+ * once), or, while background terminals still run in it, kept subscribed and watched: a
+ * turn the engine starts there is interrupted and reported; the watch ends with the last
+ * terminal, the thread's close or the engine's exit. Never waits on thread/closed.
+ * onItemDone(itemId): a watched terminal ended (or died with the thread); onDone(): the
+ * watch ended (the caller can let the old engine go).
+ *   → { watching, stop() }
+ */
+export async function letGo({ engine, threadId, terminals = () => [], onViolation = () => {}, onItemDone = () => {}, onDone = () => {} }) {
   const live = new Set(terminals(threadId) ?? []);
   if (!live.size) {
     await engine.threads.unsubscribe(threadId);
-    return { threadId: newId, goalMoved, watching: false, stop: async () => {} };
+    return { watching: false, stop: async () => {} };
   }
   let offEvents = null;
   const onExit = () => done(false);
+  const quietly = (fn, ...a) => {
+    try {
+      fn(...a);
+    } catch {
+      // the caller's failure is its own
+    }
+  };
   const done = async (unsubscribe = true) => {
     if (!offEvents) return;
     offEvents();
     offEvents = null;
     engine.off?.("exit", onExit);
+    // Whatever still ran in it ended with the thread (or the engine).
+    for (const id of live) quietly(onItemDone, id);
+    live.clear();
     if (unsubscribe) await engine.threads.unsubscribe(threadId).catch(() => {});
+    quietly(onDone);
   };
   offEvents = engine.subscribe(threadId, (ev) => {
     if (ev.threadId && ev.threadId !== threadId) return; // a subagent's events
@@ -118,8 +143,11 @@ export async function switchThread({ engine, threadId, target = {}, terminals = 
       return;
     }
     if (ev.type === "thread.closed") return done(false);
-    if (ev.type === "item.completed" && live.delete(ev.itemId) && !live.size) done();
+    if (ev.type === "item.completed" && live.delete(ev.itemId)) {
+      quietly(onItemDone, ev.itemId);
+      if (!live.size) done();
+    }
   });
   engine.once?.("exit", onExit);
-  return { threadId: newId, goalMoved, watching: true, stop: () => done() };
+  return { watching: true, stop: () => done() };
 }

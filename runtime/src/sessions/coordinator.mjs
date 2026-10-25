@@ -18,6 +18,7 @@ import { targetKey } from "../auth/accounts/target.mjs";
 import { openLedger, readLedger, SESSION_TEXTS } from "./ledger.mjs";
 import { readIndex, sessionForThread, threadKey, updateIndex } from "./index.mjs";
 import { effectOf, innerCommand, settleTurn, toolStatus } from "./effects.mjs";
+import { recoverSwitch } from "./switch.mjs";
 import { adRoot } from "../ad-root.mjs";
 import { ulid } from "../ids.mjs";
 
@@ -136,6 +137,7 @@ export function createCoordinator({ cwd, origin = "tui", root = adRoot(), homeKe
   const childRoot = new Map(); // child thread → root turn id
   const turnRoot = new Map(); // turn id → root turn id
   const tools = new Map(); // key → { rootTurnId, status, background, turnId, itemId }
+  let lastSwitch = null; // { at, reason } of this session's last switch (for /status)
 
   const target = () => targetOf() ?? null;
   const write = (ev) => ledger?.append(ev);
@@ -202,6 +204,7 @@ export function createCoordinator({ cwd, origin = "tui", root = adRoot(), homeKe
     adNext = false;
     activeRoot = null;
     lastRoot = null;
+    lastSwitch = null;
     for (const m of [former, childRoot, turnRoot, tools]) m.clear();
     const done = index((ix) => {
       if (ix.sessions[id]) Object.assign(ix.sessions[id], { state: "closed", updatedAt: new Date().toISOString() });
@@ -211,9 +214,9 @@ export function createCoordinator({ cwd, origin = "tui", root = adRoot(), homeKe
   }
 
   // The last generation in a session's ledger (the index may lag it).
-  function lastGen(id) {
+  function lastGen(events) {
     let g = 0;
-    for (const e of readLedger(id, { root })) if (e.type === "bindingStarted" || e.type === "bindingEnded") g = Math.max(g, e.gen ?? e.binding?.gen ?? 0);
+    for (const e of events) if (e.type === "bindingStarted" || e.type === "bindingEnded") g = Math.max(g, e.gen ?? e.binding?.gen ?? 0);
     return g;
   }
 
@@ -225,7 +228,12 @@ export function createCoordinator({ cwd, origin = "tui", root = adRoot(), homeKe
     if (known) {
       ledger = open(known);
       sessionId = lastId = known;
-      gen = lastGen(known);
+      const events = readLedger(known, { root });
+      gen = lastGen(events);
+      // A switch a crash left open says how it ended (P4.2): moved if its binding was written.
+      const unfinished = recoverSwitch(events);
+      if (unfinished?.abort) write({ type: "switchAborted", reason: unfinished.abort, target: null });
+      else if (unfinished?.commit) write({ type: "switchCommitted", recovered: true, gen: unfinished.commit.gen });
       startBinding(attached, "continuation");
       return true;
     }
@@ -255,9 +263,10 @@ export function createCoordinator({ cwd, origin = "tui", root = adRoot(), homeKe
     const thread = ev.threadId !== binding?.threadId ? ev.threadId : undefined;
     const background = item.type === "commandExecution" && item.source === "unifiedExecStartup";
     if (!tools.has(key)) {
-      tools.set(key, { rootTurnId, status: "running", background, turnId, itemId: item.id });
+      const summary = summaryOf(item, cwd);
+      tools.set(key, { rootTurnId, status: "running", background, turnId, itemId: item.id, effect, summary });
       const paths = item.type === "fileChange" ? (item.changes ?? []).slice(0, 20).map((c) => rel(c.path, cwd)) : undefined;
-      write({ type: "toolIntent", turnId, rootTurnId, ...(thread ? { thread } : {}), itemId: item.id, key, kind: item.type, effect, summary: summaryOf(item, cwd), ...(paths ? { paths } : {}), ...(background ? { background: true } : {}) });
+      write({ type: "toolIntent", turnId, rootTurnId, ...(thread ? { thread } : {}), itemId: item.id, key, kind: item.type, effect, summary, ...(paths ? { paths } : {}), ...(background ? { background: true } : {}) });
     }
     // A collab call names its child threads: their turns belong to this root turn.
     for (const child of item.receiverThreadIds ?? []) childRoot.set(child, rootTurnId);
@@ -419,7 +428,25 @@ export function createCoordinator({ cwd, origin = "tui", root = adRoot(), homeKe
       adNext = true;
     },
     sessionId: () => sessionId ?? lastId,
-    status: () => (sessionId ? { sessionId, gen } : null),
+    /** A switch's own events (P4.2): switchRequested / Committed / Aborted, checkpoint. */
+    record(ev) {
+      if (!ledger) return;
+      write(ev);
+      if (ev.type === "switchCommitted") lastSwitch = { at: Date.now(), reason: ev.reason ?? "user" };
+    },
+    /** The last root turn's tools that may have changed something and whose end is unknown. */
+    unknownNonRead() {
+      return [...tools.values()].filter((t) => t.status === "unknown" && t.effect !== "read" && !t.background && (t.rootTurnId === lastRoot || t.rootTurnId === activeRoot)).map((t) => t.summary);
+    },
+    /** The same thread on a new target (a model change on the same account): a new binding. */
+    rebind(how = "nextTurn") {
+      if (!ledger || !binding) return;
+      const id = binding.threadId;
+      endBinding("switch");
+      former.delete(id);
+      startBinding(id, how);
+    },
+    status: () => (sessionId ? { sessionId, gen, ...(lastSwitch ? { switchedAt: lastSwitch.at, switchReason: lastSwitch.reason } : {}) } : null),
     /** Settles pending index writes (tests, shutdown). */
     flush: () => indexChain,
     async close() {

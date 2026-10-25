@@ -160,3 +160,37 @@ test("the terminal watch ends when the old thread closes", async () => {
     await r.stop();
   });
 });
+
+test("letGo (P4.2): a watched old thread reports each terminal's end and the watch's end, once", async () => {
+  const { letGo } = await import("../src/engine/switch.mjs");
+  const subs = [];
+  const calls = [];
+  const engine = {
+    subscribe: (_tid, fn) => (subs.push(fn), () => subs.splice(subs.indexOf(fn), 1)),
+    threads: { unsubscribe: async (tid) => calls.push(["unsubscribe", tid]) },
+    turns: { interrupt: async () => {} },
+    once: () => {},
+    off: () => {},
+  };
+  const items = [];
+  let done = 0;
+  const r = await letGo({ engine, threadId: "old", terminals: () => ["t1", "t2"], onItemDone: (id) => items.push(id), onDone: () => done++ });
+  assert.equal(r.watching, true);
+  subs[0]({ type: "item.completed", threadId: "old", itemId: "t1" });
+  assert.deepEqual(items, ["t1"]);
+  assert.equal(done, 0);
+  subs[0]({ type: "item.completed", threadId: "old", itemId: "t2" });
+  await new Promise((res) => setTimeout(res, 10));
+  assert.deepEqual(items, ["t1", "t2"]);
+  assert.equal(done, 1);
+  assert.deepEqual(calls, [["unsubscribe", "old"]]);
+  await r.stop();
+  assert.equal(done, 1, "once");
+  // A thread that closes with terminals still running: they ended with it.
+  const items2 = [];
+  const r2 = await letGo({ engine, threadId: "old2", terminals: () => ["x"], onItemDone: (id) => items2.push(id) });
+  subs.at(-1)({ type: "thread.closed", threadId: "old2" });
+  await new Promise((res) => setTimeout(res, 10));
+  assert.deepEqual(items2, ["x"]);
+  assert.equal(r2.watching, true);
+});

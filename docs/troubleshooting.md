@@ -866,6 +866,19 @@ See [harness.md](harness.md#working-in-your-home-folder).
 
 ---
 
+## 74. "Couldn't switch to … Still on …"
+
+**Cause:** moving a conversation to another account (P4.2) stopped before anything moved, for the reason in the message:
+- "that account needs signing in again": its key or sign-in expired; run the `ad auth login` it names;
+- "that model isn't available on that account": pick one of the account's models;
+- "the engine for that account didn't start": details in `/warnings`; `ad doctor` checks the engine;
+- "the engine kept the old provider": the engine answered the fork on the old provider, so ad dropped the copy; switch again (it then starts a new conversation with the history), and report it;
+- "the conversation kept starting turns by itself": a goal or a subagent kept starting turns; stop it (`/goal pause`, `/subagents`), then switch.
+
+**Fix:** nothing changed: the conversation, its goal and its files are as they were. Fix the reason and pick the account again. "History carried over: 14 turns, 3 left out" after a switch is not an error: the oldest turns didn't fit the new model's context; they're in the previous conversation (`/resume`).
+
+---
+
 For harness problems, the [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill walks through login → hooks → sandbox → the engine's own log. See also [harness.md](harness.md) and, for the terminal UI, [tui.md](tui.md).
 
 ## Still stuck?

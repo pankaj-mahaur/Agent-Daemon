@@ -556,6 +556,7 @@ export function createApp({
     const n = st.terminals?.size ?? 0;
     if (n) own.unshift({ full: `${n} background terminal${n === 1 ? "" : "s"} running \u{b7} /ps to view \u{b7} /stop to close`, short: `${n} background terminal${n === 1 ? "" : "s"}` });
     if (privateMode) own.push({ full: "private", short: "P" });
+    if (st.held) own.push({ full: "switch pending", short: "switching" });
     const loop = actions.ad?.loop?.state;
     if (loop?.running) own.push({ full: `loop ${loop.iterations}`, short: `L${loop.iterations}` });
     return renderFooter({ hints, chips: [...mode, ...chips(), ...own] }, { width: width() });
@@ -1334,6 +1335,20 @@ export function createApp({
 
   const info0 = (text, hint) => commitCell(renderNotice({ level: "info", message: text, hint }, { width: width() }));
   const warn = (text) => commitCell(renderNotice({ level: "warn", message: text }, { width: width() }));
+
+  // A switch's notices and choices (P4.2): the commit line, the abort reason, "Not switched yet".
+  if (actions.switching) {
+    actions.switching.ui.notify = (level, text, o = {}) => {
+      if (o.line) info0(`\u{2500}\u{2500} ${text} \u{2500}\u{2500}`);
+      else if (level === "warn" || level === "error") warn(text);
+      else info0(text);
+      draw();
+    };
+    actions.switching.ui.ask = (text, choices = ["cancel"]) => {
+      const options = [...(choices.includes("anyway") ? [{ label: "Switch anyway", value: "anyway" }] : []), { label: "Cancel", value: "cancel", safe: true }];
+      void openChoice({ title: "Not switched yet", body: text, options }).then((v) => actions.switching.runner.answer(v === "anyway" ? "anyway" : "cancel"));
+    };
+  }
   function collectSideDiagnostics() {
     for (const n of side?.session.state.notices ?? []) {
       if (!n.detail || commandErrors.some((d) => d.message === n.message && d.detail === n.detail)) continue;
@@ -1488,9 +1503,11 @@ export function createApp({
         return commitCell(warningsReport());
       case "model":
         if (arg === "default") return makeDefault();
+        if (await pendingSwitch()) return;
         return pickModel();
       case "account":
         if (!actions.accounts) return warn("/account isn't available here.");
+        if (await pendingSwitch()) return;
         return pickAccount();
       case "permissions":
         return openPicker("permissions", PERMISSION_PRESETS.map((p) => ({ label: p.label, hint: p.hint, value: p.value })), (value, item) => {
@@ -1519,7 +1536,12 @@ export function createApp({
         return session.fork().then(() => info0("Forked: you are in the copy now; the original is unchanged."), fail);
       case "ps":
         // The engine's /ps: the background terminals of this conversation, with their last lines.
-        return commitCell([[{ text: "/ps", style: DIM }], ...renderBackgroundTerminals([...st.terminals.values()], { width: width() })]);
+        return commitCell([
+          [{ text: "/ps", style: DIM }],
+          ...renderBackgroundTerminals([...st.terminals.values()], { width: width() }),
+          // Left running in the conversation before a switch (P4.2): /stop ends them too.
+          ...(st.priorTerminals?.length ? [[], [{ text: "Still running from before the switch", style: DIM }], ...renderBackgroundTerminals(st.priorTerminals, { width: width() })] : []),
+        ]);
       case "stop":
         // The engine's /stop (/clean): ends them all. Off when the pinned protocol lacks it (G5).
         try {
@@ -1738,6 +1760,13 @@ export function createApp({
     return out;
   }
 
+  // "ses_… · binding 2 (switched 14:02, you asked)"
+  function sessionRow(l) {
+    const when = l.switchedAt ? new Date(l.switchedAt) : null;
+    const hhmm = when ? `${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}` : null;
+    return `${l.sessionId} \u{b7} binding ${l.gen}${hhmm ? ` (switched ${hhmm}, ${l.switchReason === "user" ? "you asked" : l.switchReason})` : ""}`;
+  }
+
   function statusReport() {
     const c = st.config;
     const acct = st.account?.type ? (st.account.type === "chatgpt" ? `ChatGPT ${st.account.planType ?? ""}`.trim() : st.account.type) : st.account?.requiresOpenaiAuth ? "not signed in" : "provider key";
@@ -1748,7 +1777,7 @@ export function createApp({
       ["sandbox", `${c.sandbox} \u{b7} ${c.approvalPolicy}`],
       ["directory", c.cwd ?? cwd],
       ["conversation", st.thread?.id ?? "(new)"],
-      ...(actions.ledger?.() ? [["session", `${actions.ledger().sessionId} \u{b7} binding ${actions.ledger().gen}`]] : []),
+      ...(actions.ledger?.() ? [["session", sessionRow(actions.ledger())]] : []),
       ["tokens", tokens],
     ];
     const rl = st.rateLimits?.primary;
@@ -1818,7 +1847,7 @@ export function createApp({
   function accountRow(a, snap) {
     const marks = [a.id === snap.current?.id ? "this window" : null, a.id === snap.defaultId ? "default for new sessions" : null].filter(Boolean);
     const status = a.status === "ready" ? null : a.status === "needs-sign-in" ? "needs sign-in" : a.status;
-    const consequence = a.status === "ready" && st.thread && a.id !== snap.current?.id ? (actions.accounts.plan(a) === "continues" ? "continues this conversation" : "starts a new conversation") : null;
+    const consequence = a.status === "ready" && st.thread && a.id !== snap.current?.id ? rowHint(a) : null;
     const owner = a.owner && a.owner !== a.label ? a.owner : null;
     return {
       label: `${a.id === snap.current?.id ? "\u{25cf} " : "  "}${a.label}${owner ? `  ${owner}` : ""}`,
@@ -1871,8 +1900,9 @@ export function createApp({
   /** Level 2: the account's models (its engine's when it is this window's own sign-in), then effort. */
   async function pickModelsOf(a) {
     const isCurrent = a.id === actions.accounts.current()?.id;
-    // Another account during a turn: say so now, not after a model and an effort.
-    if (!isCurrent && turnActive()) return warn(WAIT_SWITCH);
+    // Another account during a turn: say so now, not after a model and an effort (with
+    // switching on, the switch dialog offers "after this turn" instead).
+    if (!isCurrent && turnActive() && !switchingOn()) return warn(WAIT_SWITCH);
     let rows = null;
     try {
       rows = await actions.accounts.models(a);
@@ -1888,7 +1918,7 @@ export function createApp({
     const items = rows.map((m) => ({
       label: clean(m.name || m.id),
       hint: [
-        !isCurrent && st.thread ? (actions.accounts.plan(a, m.id) === "continues" ? "continues this conversation" : "starts a new conversation") : null,
+        !isCurrent && st.thread ? rowHint(a, m.id) : null,
         m.free ? (m.priceObservedAt ? `free \u{b7} checked ${hours(m.priceObservedAt)}h ago` : "free") : null,
         m.dataNote,
       ]
@@ -1914,12 +1944,70 @@ export function createApp({
     );
   }
 
-  /** The switch table: a model alone any time; another account only at idle, by fork or a new conversation. */
+  // Moving the open conversation to another account or provider (P4.2) is on unless the
+  // pref switching.crossAccount is false (then another provider means a new conversation).
+  const switchingOn = () => Boolean(actions.switching) && settings?.ad?.get?.("switching.crossAccount", true) !== false;
+
+  /** What Enter on an account or model row does to the open conversation. */
+  function rowHint(a, model) {
+    if (switchingOn()) return actions.switching.runner.how(actions.accounts.targetFor(a, model)) === "continuation" ? "continues in a new conversation (history carried over)" : "continues this conversation";
+    return actions.accounts.plan(a, model) === "continues" ? "continues this conversation" : "starts a new conversation";
+  }
+
+  // While a switch waits (for a turn's end, a subagent…), /model and /account offer to give it up.
+  async function pendingSwitch() {
+    if (!actions.switching?.runner.pending?.()) return false;
+    if (actions.switching.runner.finishing?.()) {
+      info0("The switch is finishing; it can't be cancelled now.");
+      return true;
+    }
+    const stop = await openConfirm({ title: "A switch is pending. Cancel it?", body: "The conversation stays where it is; prompts you queued run here.", yes: "Yes, cancel the switch", no: "No, let it finish" });
+    if (stop) await actions.switching.runner.cancel();
+    return true;
+  }
+
+  /** The switch dialog (P4.2): idle → Switch / new conversations only / Cancel; busy → after this turn / now / Cancel. */
+  function chooseSwitch(t, how) {
+    const busy = turnActive();
+    const n = st.terminals?.size ?? 0;
+    const lines = [
+      "It continues there with its history; files stay as they are.",
+      how === "fork" ? "It continues in a copy of this conversation." : "It moves to a new conversation on that account (the old one stays in /resume).",
+      ...(n ? [`${n} background terminal${n === 1 ? " keeps" : "s keep"} running with the old conversation; the new model is told not to restart them.`] : []),
+      ...(side ? ["The side conversation closes."] : []),
+      ...(st.goal?.status === "active" ? ["Your goal pauses during the switch and resumes after the first answer there."] : []),
+      ...(busy ? ["Prompts you queue now run after the switch."] : []),
+    ];
+    const options = [
+      ...(busy ? [{ label: "Switch after this turn", value: "wait" }, { label: "Stop the turn and switch now", value: "now" }] : [{ label: "Switch", value: "wait" }, { label: "Use it for new conversations only", value: "newOnly" }]),
+      { label: "Cancel", value: "cancel", safe: true },
+    ];
+    void openChoice({ title: `Switch this conversation to ${clean(t.label)}?`, body: lines.join("\n"), options }).then((v) => {
+      if (v === "wait" || v === "now") {
+        actions.switching.runner.request(t, { mode: v, reason: "user" });
+        return draw();
+      }
+      if (v === "newOnly")
+        return void actions.accounts
+          .setDefault(t.account, t.model ?? null)
+          .then(() => info0(`New conversations use ${clean(t.label)}; this one stays here.`))
+          .catch(fail);
+      info0("Not switched.");
+    });
+  }
+
+  /** The switch table: a model alone any time; another account moves the conversation (P4.2), or starts a new one. */
   async function applyChoice(a, { model, effort } = {}) {
     const current = actions.accounts.current();
     if (current && a.id === current.id) {
       session.setNextTurn({ ...(model ? { model } : {}), ...(effort ? { effort } : {}) });
+      actions.onModelChange?.();
       return info0(`Model: ${clean(model ?? st.config.model ?? "(default)")}${effort ? ` ${clean(effort)}` : ""} (from the next turn).`);
+    }
+    if (st.thread && switchingOn() && a.status === "ready") {
+      const t = actions.accounts.targetFor(a, model, effort);
+      const how = actions.switching.runner.how(t);
+      if (how === "fork" || how === "continuation") return chooseSwitch(t, how);
     }
     if (turnActive()) return warn(WAIT_SWITCH);
     const plan = actions.accounts.plan(a, model);

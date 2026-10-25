@@ -531,3 +531,157 @@ test("glue: the footer's account follows the window (a /resume or /new moves it)
   session.state.thread = { modelProvider: two.providerEntry };
   assert.equal(accounts.label(), "OpenRouter · two");
 });
+
+/* ------------------------------------------------------------------ */
+/* P4.2: moving the open conversation to another account               */
+/* ------------------------------------------------------------------ */
+
+function stubSwitching(hows = {}) {
+  const calls = [];
+  const ui = { notify: () => {}, ask: () => {} };
+  return {
+    calls,
+    ui,
+    runner: {
+      how: (t) => hows[t.account?.id] ?? "continuation",
+      request: (t, o) => calls.push(["request", t.account.id, o.mode]),
+      answer: (v) => calls.push(["answer", v]),
+    },
+  };
+}
+const withTargets = (accounts) => ({ ...accounts, targetFor: (a, model) => ({ account: a, model: model ?? null, label: `${a.provider === "chatgpt" ? "ChatGPT" : "OpenRouter"} \u{b7} ${a.label}` }) });
+
+test("switching on: rows say how the conversation continues; an idle switch asks first and runs the switch", async () => {
+  const accounts = withTargets(stubAccounts({ models: [] }));
+  const switching = stubSwitching({ [A.client.id]: "fork", [A.personal.id]: "continuation" });
+  await withApp(
+    async ({ type, text, until, committed, session }) => {
+      await session.submit("early-complete").done;
+      type("/account\r");
+      await until(() => /Account and model/.test(text()), "the picker");
+      assert.match(text(), /client-a.*continues this conversation/);
+      assert.match(text(), /personal.*continues in a new conversation \(history carried over\)/);
+      type("personal");
+      type("\r");
+      await until(() => /Switch this conversation to ChatGPT · personal\?/.test(text()), "the switch dialog");
+      const s = text();
+      assert.match(s, /It continues there with its history; files stay as they are\./);
+      assert.match(s, /It moves to a new conversation on that account \(the old one stays in \/resume\)\./);
+      assert.match(s, /Switch[\s\S]*Use it for new conversations only[\s\S]*Cancel/);
+      type("\r");
+      await until(() => switching.calls.length === 1, "the request");
+      assert.deepEqual(switching.calls[0], ["request", A.personal.id, "wait"]);
+      // The runner's lines show in the transcript.
+      switching.ui.notify("info", "Switched to ChatGPT · personal (you asked). History carried over: 1 turn.", { line: true });
+      await until(() => /── Switched to ChatGPT · personal \(you asked\)\. History carried over: 1 turn\. ──/.test(committed()), "the commit line");
+      switching.ui.notify("warn", "Couldn't switch to X: that model isn't available on that account. Still on Y.");
+      await until(() => /Couldn't switch to X: that model isn't available on that account\. Still on Y\./.test(committed()), "the abort line");
+      assert.equal(accounts.calls.filter((c) => c[0] === "switchTo").length, 0, "the old switch table isn't used");
+    },
+    { accounts, actions: { switching } },
+  );
+});
+
+test("switching during a turn: after this turn, now, or Cancel; the footer says a switch is pending while held", async () => {
+  const accounts = withTargets(stubAccounts({ models: [] }));
+  const switching = stubSwitching({ [A.personal.id]: "continuation" });
+  await withApp(
+    async ({ type, text, until, session }) => {
+      session.submit("hang");
+      await until(() => session.state.activeTurnId, "the turn");
+      type("/account\r");
+      await until(() => /Account and model/.test(text()), "the picker");
+      type("personal");
+      type("\r");
+      await until(() => /Switch after this turn[\s\S]*Stop the turn and switch now[\s\S]*Cancel/.test(text()), "three choices");
+      assert.match(text(), /Prompts you queue now run after the switch\./);
+      type("\x1b[B\r");
+      await until(() => switching.calls.length === 1, "the request");
+      assert.deepEqual(switching.calls[0], ["request", A.personal.id, "now"]);
+      session.hold(true);
+      await until(() => /switch pending/.test(text()), "the footer");
+      session.hold(false);
+      await session.interrupt();
+    },
+    { accounts, actions: { switching } },
+  );
+});
+
+test("'Not switched yet': Switch anyway and Cancel answer the runner", async () => {
+  const accounts = withTargets(stubAccounts({ models: [] }));
+  const switching = stubSwitching();
+  await withApp(
+    async ({ type, text, until }) => {
+      switching.ui.ask("Not switched yet: `npm run deploy` may still be running from the last turn (ad can't tell whether it finished). Check it, then choose Switch anyway.", ["anyway", "cancel"]);
+      await until(() => /npm run deploy[\s\S]*Switch anyway[\s\S]*Cancel/.test(text()), "the choice");
+      type("\r");
+      await until(() => switching.calls.length === 1, "the answer");
+      assert.deepEqual(switching.calls[0], ["answer", "anyway"]);
+      switching.ui.ask("the conversation didn't stop in time; stop it and try again", ["cancel"]);
+      await until(() => /didn't stop in time/.test(text()), "the second");
+      type("\x1b");
+      await until(() => switching.calls.length === 2, "cancelled");
+      assert.deepEqual(switching.calls[1], ["answer", "cancel"]);
+    },
+    { accounts, actions: { switching } },
+  );
+});
+
+test("Use it for new conversations only: the default changes, this conversation stays", async () => {
+  const accounts = withTargets(stubAccounts({ models: [] }));
+  const switching = stubSwitching({ [A.personal.id]: "continuation" });
+  await withApp(
+    async ({ type, text, until, committed, session }) => {
+      await session.submit("early-complete").done;
+      type("/account\r");
+      await until(() => /Account and model/.test(text()), "the picker");
+      type("personal");
+      type("\r");
+      await until(() => /Use it for new conversations only/.test(text()), "the dialog");
+      type("\x1b[B\r");
+      await until(() => /New conversations use ChatGPT · personal; this one stays here\./.test(committed()), "the text");
+      assert.deepEqual(accounts.calls.find((c) => c[0] === "setDefault"), ["setDefault", A.personal.id, null]);
+      assert.equal(switching.calls.length, 0);
+    },
+    { accounts, actions: { switching } },
+  );
+});
+
+test("/ps lists the terminals still running from before a switch, apart from this conversation's", async () => {
+  const accounts = withTargets(stubAccounts({ models: [] }));
+  await withApp(
+    async ({ type, until, committed, session }) => {
+      session.state.priorTerminals = [{ key: "bg@t", itemId: "bg", command: "npm run dev", lines: ["ready on :3000"] }];
+      type("/ps\r");
+      await until(() => /Still running from before the switch[\s\S]*npm run dev/.test(committed()), "the old terminals");
+    },
+    { accounts, actions: { switching: stubSwitching() } },
+  );
+});
+
+test("glue: a switch's target is checked first: an account that needs sign-in, a model it doesn't list; another home starts its engine", async () => {
+  const reg = await import("../src/auth/accounts/registry.mjs");
+  const { createTuiAccounts } = await import("../src/tui/accounts.mjs");
+  const { createSecretStore, fileBackend } = await import("../src/auth/secrets.mjs");
+  fs.mkdirSync(path.join(process.env.AD_ROOT, "secrets"), { recursive: true });
+  const store = createSecretStore(fileBackend(path.join(process.env.AD_ROOT, "secrets")));
+  const a = { ...reg.newAccount({ provider: "openrouter", label: "prep-a", method: "api-key" }), status: "ready", keyHint: "1111" };
+  store.set(a.credential.ref, ["sk", "or", "v1", "prep0000prep0000prep"].join("-"));
+  const root = fs.mkdtempSync(path.join(TMP, "prep-"));
+  const engine = await createEngine({ home: path.join(root, "home"), command });
+  const session = createSession({ engine, cwd: root, lockDir: path.join(root, "locks"), homeKey: "api", provider: "openrouter" });
+  const fetch = async () => new Response(JSON.stringify({ data: [{ id: "or/listed", name: "Listed" }] }), { status: 200, headers: { "content-type": "application/json" } });
+  const launched = [];
+  try {
+    const accounts = createTuiAccounts({ session, store, fetch, launch: async (x) => (launched.push(x.id), { engine, release: async () => {} }) });
+    await assert.rejects(accounts.prepare({ account: { ...a, status: "needs-sign-in" }, homeKey: "api" }), { reason: "signIn" });
+    await assert.rejects(accounts.prepare({ account: a, model: "or/missing", homeKey: "api" }), { reason: "model" });
+    assert.deepEqual(await accounts.prepare({ account: a, model: "or/listed", homeKey: "api" }), { sameEngine: true });
+    const other = await accounts.prepare({ account: a, model: "or/listed", homeKey: "a/zzzz" });
+    assert.equal(other.sameEngine, false);
+    assert.deepEqual(launched, [a.id]);
+  } finally {
+    session.close();
+    await engine.close();
+  }
+});

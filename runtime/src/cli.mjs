@@ -20,7 +20,8 @@ const version = () => {
 
 const TUI_USAGE = `Usage: ad tui ["<first prompt>"] [options]
   --cwd <dir>          the folder to work in (default: this one)
-  --model <name>       the model to start with
+  --account <ref>      the account: provider/label, a label or an id (ad auth list)
+  --model <name>       the model to start with;  --effort <e>  its reasoning effort
   --sandbox <mode>     read-only | workspace-write (default) | danger-full-access
   --resume <thread-id> continue a conversation;  --last  the newest one here
   --preview            a minimal preview UI on the same engine instead
@@ -44,6 +45,8 @@ async function tui(args) {
       options: {
         cwd: { type: "string" },
         model: { type: "string" },
+        account: { type: "string" },
+        effort: { type: "string" },
         sandbox: { type: "string" },
         resume: { type: "string" },
         last: { type: "boolean" },
@@ -66,7 +69,7 @@ async function tui(args) {
     return cmdTuiPreview({ cwd: values.cwd || process.cwd(), model: values.model, sandbox: values.sandbox, clientVersion: version() });
   }
   const { cmdTui } = await import("./tui/main.mjs");
-  return cmdTui({ cwd: values.cwd || process.cwd(), model: values.model, sandbox: values.sandbox, resume: values.resume, last: values.last, prompt: positionals.join(" ").trim() || null, clientVersion: version() });
+  return cmdTui({ cwd: values.cwd || process.cwd(), model: values.model, account: values.account, effort: values.effort, sandbox: values.sandbox, resume: values.resume, last: values.last, prompt: positionals.join(" ").trim() || null, clientVersion: version() });
 }
 
 async function launch() {

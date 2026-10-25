@@ -10,6 +10,7 @@ import { NOT_LOGGED_IN } from "./start.mjs";
 import { launchHarness } from "./engines.mjs";
 import { createCoordinator, ledgerEnabled, ledgerHome, ledgerTarget, recordEngineThread } from "../sessions/coordinator.mjs";
 import { gatewayReason } from "./gateway-runtime.mjs";
+import { accountName } from "../auth/accounts/target.mjs";
 
 export { NOT_LOGGED_IN };
 
@@ -28,11 +29,19 @@ export function describeItem(item) {
   }
 }
 
+// "OpenRouter · work · qwen3-coder": the account (when ad resolved one) and the model.
+function targetLine(started, opts) {
+  const a = started.target?.account;
+  const model = started.params?.model ?? opts.model ?? null;
+  if (!a) return model;
+  return `${accountName(a)}${model ? ` \u{b7} ${model}` : ""}${started.params?.effort ? ` ${started.params.effort}` : ""}`;
+}
+
 export async function cmdRun(prompt, opts = {}) {
   const out = opts.stdout ?? process.stdout;
   const err = opts.stderr ?? process.stderr;
   if (!prompt?.trim()) {
-    err.write('Usage: ad run "<prompt>" [--cwd <dir>] [--account <provider/label>] [--model <m>] [--sandbox read-only|workspace-write|danger-full-access] [--json]\n');
+    err.write('Usage: ad run "<prompt>" [--cwd <dir>] [--account <provider/label>] [--model <m>] [--effort <e>] [--sandbox read-only|workspace-write|danger-full-access] [--json]\n');
     return 1;
   }
 
@@ -45,6 +54,7 @@ export async function cmdRun(prompt, opts = {}) {
       cwd: opts.cwd ?? process.cwd(),
       account: opts.account,
       model: opts.model,
+      effort: opts.effort,
       home: opts.home,
       command: opts.command,
       clientVersion: opts.clientVersion,
@@ -69,12 +79,16 @@ export async function cmdRun(prompt, opts = {}) {
     const { threadId } = await engine.startThread({ cwd: opts.cwd, model: started.params.model, modelProvider: started.params.modelProvider, sandbox: opts.sandbox });
     const ledger = createCoordinator({ cwd: opts.cwd ?? process.cwd(), origin: "run", root: opts.adRoot, enabled: ledgerEnabled(opts), homeKey: () => ledgerHome(started.homeKey), targetOf: () => ledgerTarget({ account: started.target?.account, model: started.params.model ?? opts.model, effort: started.params.effort }) });
     record = recordEngineThread(ledger, { engine, threadId, warn: (m) => err.write(`ad run: ${m}\n`) });
+    // Which account and model run it (P4.2), on stderr: stdout stays the agent's text.
+    const target = targetLine(started, opts);
+    if (target) err.write(`target: ${target}\n`);
     record.prompt(prompt);
     const streamed = new Set();
     const turnStart = Date.now();
     const r = await engine.turn({
       threadId,
       text: prompt,
+      ...(started.params.effort ? { effort: started.params.effort } : {}),
       onEvent: (evt) => {
         if (opts.json) return;
         if (evt.type === "delta") {
@@ -93,7 +107,7 @@ export async function cmdRun(prompt, opts = {}) {
     });
     // A provider ad translates for: the gateway's reason beats the engine's generic words.
     const why = r.status === "failed" ? gatewayReason({ threadId, sinceMs: turnStart }) : null;
-    if (opts.json) out.write(JSON.stringify({ threadId, turnId: r.turnId, status: r.status, output: r.output, error: r.error, ...(why ? { reason: why } : {}) }) + "\n");
+    if (opts.json) out.write(JSON.stringify({ threadId, turnId: r.turnId, status: r.status, output: r.output, error: r.error, ...(why ? { reason: why } : {}), ...(targetLine(started, opts) ? { target: targetLine(started, opts) } : {}) }) + "\n");
     else out.write("\n");
     if (r.status !== "completed") {
       err.write(`[turn ${r.status}]\n`);

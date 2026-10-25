@@ -114,7 +114,7 @@ Agent harness (ad's engine; ad about):
                          --preview            a minimal preview UI on the same engine instead
   loop "<objective>"     Autonomous loop until done (dual exit, circuit breaker, budgets, STOP file)
                          --max-iterations 20  --max-minutes 60  --max-tokens <n>  --resume <thread-id>
-  run "<prompt>"         One non-interactive agent turn (approvals are declined)
+  run "<prompt>"         One non-interactive agent turn (approvals are declined); --account/--model/--effort pick the target
   sessions show [<id>|--last] [--json]  One session's record: bindings, targets, turns and tool calls (read-only)
                          --cwd <dir>  --model <name>  --json
                          --sandbox <mode>     read-only | workspace-write (default) | danger-full-access
@@ -2654,6 +2654,7 @@ async function main(argv) {
         cwd: parsed.values.cwd || process.cwd(),
         model: parsed.values.model,
         account: parsed.values.account,
+        effort: parsed.values.effort,
         resume: parsed.values.resume,
         limits: { maxIterations: num("max-iterations"), maxMinutes: num("max-minutes"), maxTokens: num("max-tokens") },
         allowHomeFolder: Boolean(parsed.values["allow-home-folder"]),
@@ -2726,6 +2727,7 @@ async function main(argv) {
         cwd: parsed.values.cwd || process.cwd(),
         model: parsed.values.model,
         account: parsed.values.account,
+        effort: parsed.values.effort,
         sandbox: parsed.values.sandbox,
         json: parsed.values.json || false,
         allowHomeFolder: Boolean(parsed.values["allow-home-folder"]),
