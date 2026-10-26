@@ -1,5 +1,5 @@
 {
-  "codexVersion": "0.163.0",
+  "codexVersion": "0.164.0",
   "methods": {
     "clientRequests": [
       "account/gatewayOAuth/cancel",
@@ -32,6 +32,7 @@
       "externalAgentConfig/import",
       "externalAgentConfig/import/readHistories",
       "externalAgentConfig/import/recordHistory",
+      "feedback/save",
       "feedback/upload",
       "fs/copy",
       "fs/createDirectory",
@@ -3524,7 +3525,7 @@
           "props": [
             "failure",
             "id",
-            "result",
+            "inputImages",
             "revisedPrompt",
             "savedPath",
             "status",
@@ -3534,7 +3535,7 @@
           "types": {
             "failure": "ImageGenerationFailure|null",
             "id": "string",
-            "result": "string",
+            "inputImages": "array<ImageGenerationInputImage>",
             "revisedPrompt": "null|string",
             "savedPath": "AbsolutePathBuf|null",
             "status": "string",

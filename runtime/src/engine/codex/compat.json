@@ -1,9 +1,10 @@
 {
-  "pinned": "0.163.0",
+  "pinned": "0.164.0",
   "tested": [
     "0.159.2",
     "0.160.0",
-    "0.163.0"
+    "0.163.0",
+    "0.164.0"
   ],
   "whatChanged": {
     "0.163.0": "Protocol additions only. Two new engine commands ad answers with a note (/config, /daybreak); /archive is allowed during a task by the engine, ad still waits for the turn; keymap leader bindings. ad maps all 63 stable notifications; the 24 experimental ones are ignored on purpose.",

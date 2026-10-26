@@ -25,7 +25,7 @@
     "node": ">=22.0.0"
   },
   "dependencies": {
-    "@openai/codex": "0.163.0",
+    "@openai/codex": "0.164.0",
     "better-sqlite3": "^11.5.0",
     "chokidar": "^4.0.1",
     "jsonc-parser": "3.3.1",

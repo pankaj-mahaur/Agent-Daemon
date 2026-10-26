@@ -1,5 +1,5 @@
 {
-  "codexVersion": "0.163.0",
+  "codexVersion": "0.164.0",
   "source": "codex-rs/app-server-protocol/src/protocol/common.rs",
   "stable": [
     "error",
