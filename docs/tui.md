@@ -391,6 +391,7 @@ When a model's limit runs out or its provider fails, ad can continue the task on
 - **The line says what happened:** `↪ Switched to Gemini API · gemini-2.5-flash: OpenRouter's daily limit is used up (resets 05:30). Fallback 1 of 3.` It replaces the engine's own message, which can mislead (a free daily limit arrives as "Quota exceeded. Check your plan and billing details."); that message stays in `/warnings`. The bell rings when the terminal isn't focused.
 - **ad continues the work there:** the next model gets the conversation (tools that ran are marked done, never run again) and one line from ad asking it to carry on. That line shows as `• Fallback: ad continued the task here`, never as your words, and ad's memory never learns from it. Prompts you queued run after it, once.
 - **Another account of the provider that ran out is never next:** every account of it waits for the reset, in every window.
+- **A ChatGPT sign-in is checked first:** ad asks its engine who is signed in before moving there. A signed-out one is skipped (`Couldn't switch to …: that account needs signing in again: ad auth login <name>`).
 - **A short wait instead of a move:** a rate limit with a known wait of 30 s or less is retried once on the same model (`↻ Rate limited by OpenRouter; retrying in 8 s (1 of 1).`).
 - **Before your prompt:** if the model you are on ran out since (or the provider of a model fallback chose was benched), ad switches first and your prompt runs there (`↪ Using … for this prompt: …`). A model you picked yourself is kept, with one notice.
 

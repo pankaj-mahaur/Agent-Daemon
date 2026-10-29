@@ -146,6 +146,18 @@ export function createTuiAccounts({ session, store, launch, clientVersion, fetch
         released = true;
         await next.release?.();
       };
+      // A sign-in's engine says who is signed in now (P4.5): a signed-out home is no target,
+      // nor, once ad has recorded who signed in (P3.7), someone else's.
+      if (ownsHome(a)) {
+        const who = await next.engine.account?.().catch(() => null);
+        const email = String(who?.account?.email ?? "").toLowerCase();
+        const recorded = String(a.identity?.email ?? "").toLowerCase();
+        const why = who && !who.account && who.requiresOpenaiAuth ? "signIn" : recorded && email && email !== recorded ? "identity" : null;
+        if (why) {
+          await release();
+          throw Object.assign(new Error(why === "signIn" ? `${accountName(a)} is signed out` : `${accountName(a)} is signed in as another account`), { reason: why });
+        }
+      }
       return { engine: next.engine, release, restart: next.restart, sameEngine: false };
     },
     plan(a, model) {

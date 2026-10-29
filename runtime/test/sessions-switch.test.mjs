@@ -122,6 +122,16 @@ test("step: a failure before commit aborts: the goal resumes on the old thread, 
   assert.equal(r.effects.at(-1).text, SWITCH_TEXTS.ABORT("OpenRouter · work · qwen3-coder", SWITCH_TEXTS.REASONS.kept, "OpenAI · me · gpt-5"));
 });
 
+test("step: a sign-in reason names the account to sign in again, never the reason's code", () => {
+  const base = { state: "TARGET_READY", mode: "wait", target: { label: "OpenAI · work · gpt-5", account: { label: "work" } }, from: { label: "OpenAI · me · gpt-5" }, how: "continuation", restarts: 0 };
+  for (const reason of ["signIn", "identity"]) {
+    const text = step(base, { type: "fail", reason }).effects.at(-1).text;
+    assert.equal(text, SWITCH_TEXTS.ABORT("OpenAI · work · gpt-5", SWITCH_TEXTS.REASONS[reason]("work"), "OpenAI · me · gpt-5"));
+    assert.match(text, /ad auth login work\. Still on/);
+    assert.doesNotMatch(text, /=>/);
+  }
+});
+
 test("step: a second request while one runs is refused; events outside a switch change nothing", () => {
   const busy = step({ state: "QUIESCING", mode: "now", target: {}, how: "fork", restarts: 0 }, { type: "request", target: {}, mode: "now", how: "fork" });
   assert.equal(busy.state.state, "QUIESCING");

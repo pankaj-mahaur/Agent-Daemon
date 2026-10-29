@@ -24,6 +24,7 @@ export const SWITCH_TEXTS = Object.freeze({
   HISTORY_CARRIED: (turns, left) => `History carried over: ${turns} turn${turns === 1 ? "" : "s"}${left ? `, ${left} left out` : ""}.`,
   REASONS: Object.freeze({
     signIn: (label) => `that account needs signing in again: ad auth login ${label}`,
+    identity: (label) => `someone else is signed in there now: check with ad auth status, then ad auth login ${label}`,
     model: "that model isn't available on that account",
     engine: "the engine for that account didn't start (details: /warnings)",
     kept: "the engine kept the old provider (details: /warnings)",
@@ -65,7 +66,9 @@ const ACTIVE = new Set(["QUIESCING", "SAFE_POINT", "TARGET_READY", "BINDING_STAR
 const MAX_RESTARTS = 3;
 
 function abort(s, reason) {
-  const text = SWITCH_TEXTS.ABORT(s.target?.label ?? "that target", SWITCH_TEXTS.REASONS[reason] ?? reason, s.from?.label ?? "the current one");
+  const r = SWITCH_TEXTS.REASONS[reason] ?? reason;
+  const why = typeof r === "function" ? r(s.target?.account?.label ?? s.target?.label ?? "") : r;
+  const text = SWITCH_TEXTS.ABORT(s.target?.label ?? "that target", why, s.from?.label ?? "the current one");
   return {
     state: { state: "RUNNING" },
     effects: [

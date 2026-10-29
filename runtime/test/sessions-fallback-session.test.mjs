@@ -57,7 +57,7 @@ const RUNNER = {
 };
 const ORDER = [{ account: "acct_a", model: "fake-model" }, { account: "acct_b", model: "fake-model" }, { account: "acct_c", model: "fake-model" }];
 
-async function withRig(fn, { policyPatch = {}, env = {}, windowOn = () => true, engineEnv = {} } = {}) {
+async function withRig(fn, { policyPatch = {}, env = {}, windowOn = () => true, engineEnv = {}, refuse = {}, homes = {}, retryObservation = null } = {}) {
   const root = fs.mkdtempSync(path.join(TMP, "rig-"));
   process.env.AD_ROOT = path.join(root, ".agent-daemon");
   const at = new Date().toISOString();
@@ -87,8 +87,9 @@ async function withRig(fn, { policyPatch = {}, env = {}, windowOn = () => true, 
     policy: () => readPolicy({ root: process.env.AD_ROOT, lenient: true }),
     routing,
     current: () => ({ account: byId(currentId()), model: "fake-model", label: RUNNER[currentId()].label }),
-    toSwitchTarget: async (t) => RUNNER[t.account] ?? null,
+    toSwitchTarget: async (t) => (RUNNER[t.account] ? { ...RUNNER[t.account], ...(homes[t.account] ? { homeKey: homes[t.account] } : {}) } : null),
     classify: ({ error, status, fallbackInterrupt }) => classifyTurnError({ error, status, fallbackInterrupt }),
+    ...(retryObservation ? { retryObservation } : {}),
     events: () => (ledger.sessionId() ? readLedger(ledger.sessionId()) : []),
     notify: (level, text, o) => notices.push({ level, text, ...o }),
     env: { ...env },
@@ -117,6 +118,7 @@ async function withRig(fn, { policyPatch = {}, env = {}, windowOn = () => true, 
     ledger,
     current: () => ({ ...RUNNER[currentId()], ...session.state.config, passthrough: true, label: RUNNER[currentId()].label }),
     prepare: async (t) => {
+      if (refuse[t.key]) throw Object.assign(new Error("refused"), { reason: refuse[t.key] });
       if (t.homeKey === session.state.config.homeKey) return { sameEngine: true };
       const e = await make(t.homeKey.replace("/", "-"));
       await e.startThread({ cwd: root });
@@ -469,4 +471,42 @@ test("the session index says paused (and why) while fallback holds the conversat
     assert.equal(readIndex().sessions[id].state, "open");
     assert.equal(readIndex().sessions[id].pausedReason, undefined);
   });
+});
+
+test("a target that refuses for itself (signed out) is skipped: the next one in the order takes over", async () => {
+  await withRig(async ({ session, events, notices, controller, currentId }) => {
+    session.submit("server-fail");
+    await until(() => events().some((e) => e.type === "switchCommitted"), "the switch to C");
+    assert.equal(currentId(), "acct_c", "B refused, C took over");
+    assert.ok(events().some((e) => e.type === "switchAborted" && e.reason === "signIn"), "B's refusal is recorded");
+    assert.ok(notices.some((n) => /^Couldn't switch to OpenAI · b · fake-model: that account needs signing in again/.test(n.text)), JSON.stringify(notices));
+    assert.equal(controller().state().paused, null);
+    await until(() => events().some((e) => e.type === "turnCompleted" && e.status === "completed"), "ad's continuation on C");
+  }, { refuse: { "acct_b/openai/fake-model/-": "signIn" }, homes: { acct_b: "b/bbbb" } });
+});
+
+test("a target whose switch fails for another reason pauses (no endless loop through the order)", async () => {
+  await withRig(async ({ session, controller, currentId }) => {
+    session.submit("server-fail");
+    await until(() => controller().state().paused, "the pause");
+    assert.equal(controller().state().paused.code, "switchFailed");
+    assert.equal(currentId(), "acct_a");
+  }, { refuse: { "acct_b/openai/fake-model/-": "engine" }, homes: { acct_b: "b/bbbb" } });
+});
+
+test("a retry notice's cause that the gateway reports late is picked up on the next tick: a long Retry-After interrupts early, as a rate limit", async () => {
+  let reported = null;
+  await withRig(async ({ session, events, controller, currentId }) => {
+    session.submit("one-retry-notice");
+    await until(() => controller().state().watching, "the watch");
+    await sleep(300); // the engine's one notice, with no cause yet
+    controller().tick();
+    assert.ok(!events().some((e) => e.type === "fallbackInterrupt"), "nothing to act on yet");
+    reported = { class: "rateLimit", period: null, retryAfterMs: 3_600_000, resetsAt: null, source: "gateway" };
+    controller().tick();
+    await until(() => events().some((e) => e.type === "switchCommitted"), "the switch after the interrupt");
+    const int = events().find((e) => e.type === "fallbackInterrupt");
+    assert.equal(int.cause.class, "rateLimit", "the gateway's cause, not the watchdog's fallback");
+    assert.equal(currentId(), "acct_b");
+  }, { retryObservation: () => reported });
 });

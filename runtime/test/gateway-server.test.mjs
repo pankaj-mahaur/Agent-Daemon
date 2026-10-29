@@ -7,7 +7,7 @@ import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { gzipSync } from "node:zlib";
-import { createGatewayServer } from "../src/gateway/server.mjs";
+import { createGatewayServer, threadOfTail } from "../src/gateway/server.mjs";
 import { startMockProvider } from "../testkit/mock-providers.mjs";
 import { sse, ev } from "../testkit/mock-responses.mjs";
 
@@ -208,6 +208,26 @@ test("every request yields exactly one onUpstream event with its requestId; usag
   assert.deepEqual([events[2].status, events[2].error.class], [503, "server"]);
   const text = JSON.stringify(events);
   for (const s of [KEY, KEY2, TOKEN, "PING"]) assert.ok(!text.includes(s), s.slice(0, 6));
+});
+
+test("a passthrough request's event names its conversation, read from the body's last field (client_metadata)", async () => {
+  const up = await mock();
+  const { call, events } = await gateway(new Map([["ad-mock-aaaa", route(up)]]));
+  const input = [{ type: "message", role: "user", content: [{ type: "input_text", text: 'a decoy: "client_metadata":{"thread_id":"not-this-one"}' }] }];
+  await (await call("/p/ad-mock-aaaa/v1/responses", { body: { model: "m", input, client_metadata: { thread_id: "th-1", "x-turn": "t" } } })).text();
+  await (await call("/p/ad-mock-aaaa/v1/responses", { body: { model: "m", input } })).text();
+  assert.deepEqual(events.map((e) => e.threadId), ["th-1", null]);
+});
+
+test("threadOfTail: thread_id, else session_id, from the last client_metadata; null when there is none or it isn't an object", () => {
+  const b = (o) => Buffer.from(JSON.stringify(o));
+  assert.equal(threadOfTail(b({ model: "m", input: [], client_metadata: { session_id: "s-1" } })), "s-1");
+  assert.equal(threadOfTail(b({ model: "m", input: [{ text: "x".repeat(10_000) }], client_metadata: { thread_id: "t-2", session_id: "s-2" } })), "t-2", "a big body: only the tail is read");
+  // As the pinned engine writes it: one value is JSON of its own, braces included.
+  assert.equal(threadOfTail(b({ model: "m", client_metadata: { "x-turn-metadata": JSON.stringify({ thread_id: "inner", nested: { a: "}" } }), thread_id: "t-3" } })), "t-3");
+  assert.equal(threadOfTail(b({ model: "m", input: [] })), null);
+  assert.equal(threadOfTail(b({ model: "m", client_metadata: "{CLIENT_METADATA}" })), null);
+  assert.equal(threadOfTail(Buffer.from('{"client_metadata":{"thread_id":')), null, "cut short");
 });
 
 test("keys come from the table's accounts; an account that leaves the table loses its route and key", async () => {

@@ -205,6 +205,11 @@ export const IDENTITY_UNKNOWN = "ad can't tell yet which account is signed in he
 
 const tupleOf = (t, a) => [t.account, t.model ?? null, t.effort ?? null, t.billing ?? null, t.trialConsent ?? null, a?.provider ?? null, a?.endpoint ?? null, fingerprint(a), a?.credentialRevision ?? null, a?.credential?.home ?? a?.credential?.ref ?? null];
 const sha = (v) => createHash("sha256").update(JSON.stringify(v)).digest("hex");
+// Unkeyed on purpose (P4.5's decision): a process that can write ~/.agent-daemon runs as the
+// user, and as the user it can read ad's secret store too (DPAPI, libsecret, the file), so
+// an HMAC key would stop nothing it couldn't take. What holds instead: the engine's sandbox
+// keeps ~/.agent-daemon out of a workspace-write agent's reach, and every automatic decision
+// re-validates the file against its own rules (a forged hash still meets the cost rules).
 
 /** Every destination fact the user confirmed; a change leaves fallback off until confirmed again. */
 export function consentHash(p, accounts = []) {

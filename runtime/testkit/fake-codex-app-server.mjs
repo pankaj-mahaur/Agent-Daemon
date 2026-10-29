@@ -24,12 +24,14 @@
 //                        or thread/reverted ends while it is open
 //   "quota-fail" / "plan-fail" → the turn fails with the engine's quota error or its
 //                        plan-limit error (P4.5 B1: fallback classifies both)
+//   "server-fail"         → the turn fails with the engine's internal-server error (a provider 5xx)
 //   "quota-after-command" → a command completes, then the quota failure (the tool ran)
 //   "quota-command-running" → a foreground command with no end yet, then the quota failure
 //   "quota-background-running" → a background terminal still running, then the quota failure
 //   "[ad: automatic continuation] …" → answers "continued" (ad's continuation after a switch)
 //   "endless-reconnect"   → a retry notice every 100 ms until the turn is interrupted
 //                        (it then completes "interrupted", as a turn that keeps retrying)
+//   "one-retry-notice"    → one retry notice, then silence until the turn is interrupted
 //   (outputSchema)    → final agent message is JSON `{"answer":42}`
 //   anything else     → "po"+"ng", an `error` notification, a command
 //                        approval, then "[<decision>]"
@@ -274,6 +276,7 @@ async function runScriptedTurn(threadId, turn, params) {
   }
   if (text === "quota-fail") return complete(threadId, turn, { status: "failed", error: { message: QUOTA_MESSAGE, codexErrorInfo: "usageLimitExceeded" } });
   if (text === "plan-fail") return complete(threadId, turn, { status: "failed", error: { message: PLAN_MESSAGE, codexErrorInfo: "usageLimitExceeded" } });
+  if (text === "server-fail") return complete(threadId, turn, { status: "failed", error: { message: "Internal server error", codexErrorInfo: "internalServerError" } });
   if (text === "quota-after-command") {
     const item = { type: "commandExecution", id: "call_0", command: "echo done", cwd: process.cwd(), processId: "9002", source: "unifiedExecStartup", status: "inProgress", commandActions: [{ type: "unknown", command: "echo done" }], aggregatedOutput: null, exitCode: null, durationMs: null };
     notify("item/started", { threadId, turnId: turn.id, item });
@@ -289,6 +292,11 @@ async function runScriptedTurn(threadId, turn, params) {
     // A background terminal (unified exec) still running when the turn fails.
     notify("item/started", { threadId, turnId: turn.id, item: { type: "commandExecution", id: "call_1", command: "./migrate.sh", cwd: process.cwd(), processId: "9004", source: "unifiedExecStartup", status: "inProgress", commandActions: [{ type: "unknown", command: "./migrate.sh" }], aggregatedOutput: null, exitCode: null, durationMs: null } });
     return complete(threadId, turn, { status: "failed", error: { message: QUOTA_MESSAGE, codexErrorInfo: "usageLimitExceeded" } });
+  }
+  if (text === "one-retry-notice") {
+    // The engine's single retry notice (a long Retry-After), then silence until interrupted.
+    notify("error", { threadId, turnId: turn.id, error: { message: "Rate limited. Retrying in 3600s" }, willRetry: true });
+    return hung.set(turn.id, { threadId, turn });
   }
   if (text === "endless-reconnect") {
     // A provider that never answers: a retry notice every 100 ms until the turn is interrupted.

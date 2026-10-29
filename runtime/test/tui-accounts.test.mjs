@@ -680,6 +680,15 @@ test("glue: a switch's target is checked first: an account that needs sign-in, a
     const other = await accounts.prepare({ account: a, model: "or/listed", homeKey: "a/zzzz" });
     assert.equal(other.sameEngine, false);
     assert.deepEqual(launched, [a.id]);
+    // A sign-in's engine is asked who is signed in, at decision time (P4.5).
+    const g = { ...reg.newAccount({ provider: "openai", label: "prep-g", method: "engine-login" }), status: "ready" };
+    const released = [];
+    const signedIn = (who) => createTuiAccounts({ session, store, fetch, launch: async () => ({ engine: { account: async () => who }, release: async () => void released.push(1) }) });
+    await assert.rejects(signedIn({ account: null, requiresOpenaiAuth: true }).prepare({ account: g, homeKey: "g/gggg" }), { reason: "signIn" });
+    await assert.rejects(signedIn({ account: { type: "chatgpt", email: "other@example.com" }, requiresOpenaiAuth: true }).prepare({ account: { ...g, identity: { email: "Sam@example.com" } }, homeKey: "g/gggg" }), { reason: "identity" });
+    assert.equal(released.length, 2, "a refused engine is released");
+    assert.equal((await signedIn({ account: { type: "chatgpt", email: "sam@example.com" }, requiresOpenaiAuth: true }).prepare({ account: { ...g, identity: { email: "Sam@example.com" } }, homeKey: "g/gggg" })).sameEngine, false, "the same person, any case");
+    assert.equal((await signedIn({ account: { type: "chatgpt", email: "sam@example.com" }, requiresOpenaiAuth: true }).prepare({ account: g, homeKey: "g/gggg" })).sameEngine, false, "no identity recorded yet (before P3.7): signed in is enough");
   } finally {
     session.close();
     await engine.close();

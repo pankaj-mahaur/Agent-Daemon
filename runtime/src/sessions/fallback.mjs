@@ -12,7 +12,7 @@
 
 import { FALLBACK_ON, keepRunningMatches, targetKey, validatePolicy } from "../routing/policy.mjs";
 import { consentState } from "../routing/store.mjs";
-import { isReadOnlyCommand } from "./effects.mjs";
+import { innerCommand, isReadOnlyCommand } from "./effects.mjs";
 import { providerDisplay } from "../auth/accounts/target.mjs";
 import { AD_CONTINUATION_PREFIX } from "../hooks/generated-prompts.mjs";
 
@@ -277,8 +277,11 @@ export function boundaryCheck({ tools = [], terminals = [], requests = 0, subage
   // S-RECOVERY decides; until then a failed turn that ran a non-read tool pauses.
   if (!switchAfterToolCalls && tools.some((t) => t.effect && t.effect !== "read" && !t.background)) return { pause: "toolCalls", text: FALLBACK_RUN_TEXTS.TOOL_CALLS };
   for (const t of terminals) {
-    if (!isReadOnlyCommand(t.command) && !keepRunningMatches(allowRunningBackground, t.command)) {
-      return { pause: "background", text: FALLBACK_RUN_TEXTS.BACKGROUND(t.command) };
+    // The engine reports the shell around it (`powershell.exe -Command '…'`, `bash -lc '…'`);
+    // the list names what the user typed.
+    const inner = innerCommand(t.command);
+    if (!isReadOnlyCommand(t.command) && !keepRunningMatches(allowRunningBackground, t.command) && !keepRunningMatches(allowRunningBackground, inner)) {
+      return { pause: "background", text: FALLBACK_RUN_TEXTS.BACKGROUND(inner || t.command) };
     }
   }
   if (subagents > 0) return { wait: "subagent" };

@@ -460,6 +460,17 @@ test("boundary: a non-allowlisted background command pauses; an allowlisted one 
     { ok: true, keep: [{ command: "git status" }] }, "a read-only terminal needs no allowlist entry");
 });
 
+test("boundary: the keep-running list matches the command inside the engine's shell wrapper, and the pause names that command", () => {
+  // As the pinned engine reports a command on Windows and elsewhere (F11 on the real engine).
+  const ps = `"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command 'npm run dev -- --port 3000'`;
+  const sh = "/bin/bash -lc 'npm run dev -- --port 3000'";
+  for (const command of [ps, sh]) {
+    assert.deepEqual(boundaryCheck({ terminals: [{ command }], allowRunningBackground: ["npm run dev"] }), { ok: true, keep: [{ command }] }, command);
+  }
+  assert.deepEqual(boundaryCheck({ terminals: [{ command: `"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command './migrate.sh'` }], allowRunningBackground: ["npm run dev"] }),
+    { pause: "background", text: TXT.BACKGROUND("./migrate.sh") }, "the user's words, not the wrapper");
+});
+
 test("boundary: pause reasons word for word", () => {
   assert.equal(boundaryCheck({ tools: [tool({ status: "unknown", effect: "write", summary: "npm run deploy" })] }).text,
     "`npm run deploy` may still be running from the failed turn (ad can't tell whether it finished)");

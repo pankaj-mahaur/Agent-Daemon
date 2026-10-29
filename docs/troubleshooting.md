@@ -913,7 +913,7 @@ See [harness.md](harness.md#working-in-your-home-folder).
 
 **Cause:** a background command from the conversation (a server, a watcher, a migration) is still running, and it isn't on the order's keep-running list. Another model might start it a second time.
 
-**Fix:** stop it in `/ps` and `/retry`. If it is a dev server or a watcher you always run, add it to the keep-running list (`ad fallback set keep-running "npm run dev"`, or the rules line in `/fallback`): the next model is then told it is running and not to start it again.
+**Fix:** stop it in `/ps` and `/retry`. If it is a dev server or a watcher you always run, add it to the keep-running list (`ad fallback set keep-running "npm run dev"`, or the rules line in `/fallback`): the next model is then told it is running and not to start it again. Write the command as you typed it (the pause names it that way): ad matches it inside the shell the engine runs it in (`powershell.exe -Command '…'` on Windows, `bash -lc '…'` elsewhere).
 
 ## 81. Fallback paused: "switching too often" or "the fallback budget is used up"
 

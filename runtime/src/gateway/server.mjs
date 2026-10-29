@@ -37,6 +37,34 @@ const threadOf = (j) => {
   const m = j?.client_metadata && typeof j.client_metadata === "object" ? j.client_metadata : {};
   return typeof m.thread_id === "string" ? m.thread_id : typeof m.session_id === "string" ? m.session_id : null;
 };
+// The same from a request ad passes through unparsed (P4.5: a retry notice's cause is looked up
+// by conversation): the engine writes client_metadata as the body's last field, so only the
+// tail is read. Null when it isn't there.
+export function threadOfTail(buf) {
+  const s = buf.subarray(Math.max(0, buf.length - 16_384)).toString("utf8");
+  const at = s.lastIndexOf('"client_metadata"');
+  const open = at < 0 ? -1 : s.indexOf("{", at);
+  if (open < 0 || !/^"client_metadata"\s*:\s*$/.test(s.slice(at, open))) return null;
+  // Its end, past strings that hold JSON of their own (the engine's turn metadata does).
+  let depth = 0;
+  let inString = false;
+  for (let i = open; i < s.length; i++) {
+    const c = s[i];
+    if (inString) {
+      if (c === "\\") i++;
+      else if (c === '"') inString = false;
+    } else if (c === '"') inString = true;
+    else if (c === "{") depth++;
+    else if (c === "}" && --depth === 0) {
+      try {
+        return threadOf({ client_metadata: JSON.parse(s.slice(open, i + 1)) });
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+}
 // A provider's own quota error by name (OpenCode's GoUsageLimitError) in an error body.
 const namedQuota = (text, names) => names.some((n) => new RegExp(`"(type|code|error_code)"\\s*:\\s*"${n}"`).test(text));
 
@@ -187,6 +215,7 @@ export function createGatewayServer({ token, table, keys = {}, onUpstream = () =
       // For spend (P4.3): the request's size and model, never its content.
       ev.requestBytes = body.length;
       ev.model = /"model"\s*:\s*"([^"\\]{1,200})"/.exec(body.subarray(0, 4096).toString("utf8"))?.[1] ?? null;
+      ev.threadId = threadOfTail(body);
       if (perModel || route.sessionHeader) {
         let j = null;
         try {

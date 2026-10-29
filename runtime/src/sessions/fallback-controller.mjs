@@ -20,6 +20,7 @@ const LIMITS = new Set(["rateLimit", "quotaExhausted"]);
 const GOAL_PAUSE_MS = 5000;
 const WAIT_POLL_MS = 250;
 const SWITCH_WAIT_MS = 120_000; // a switch that neither commits nor aborts by then: pause, never hang
+const TARGET_REFUSALS = new Set(["signIn", "identity", "model"]); // the runner's abort reasons that are the target's own
 
 export function createFallbackController({
   session,
@@ -45,6 +46,7 @@ export function createFallbackController({
   benched = (key, ctx) => benchedUntil(key, { now: ctx.now, root: ctx.root }),
 } = {}) {
   let watch = null; // part A's watchdog over the running root turn
+  let noticeOf = null; // the thread of a retry notice whose cause the gateway hadn't reported yet
   let ticker = null;
   const interrupts = new Map(); // turnId → { turnId, cause }: ad's own interrupts
   const sessionLimited = new Map(); // benchKey → untilMs
@@ -138,6 +140,15 @@ export function createFallbackController({
 
   function tick() {
     if (disposed || !watch) return;
+    // The gateway's report comes from another process and can land after the engine's retry
+    // notice: until the watched turn has a cause, look again.
+    if (noticeOf && !watch.lastCause) {
+      const failure = retryObservation(noticeOf, startedAt.get(watch.turnId) ?? null);
+      if (failure) {
+        noticeOf = null;
+        return step({ type: "notice", at: now(), failure });
+      }
+    }
     step({ type: "tick", at: now() });
   }
 
@@ -146,6 +157,7 @@ export function createFallbackController({
     const id = tid();
     if (ev.type === "turn.started" && ev.threadId === id) {
       watch = watchdogStart({ turnId: ev.turnId, at: now() });
+      noticeOf = null;
       startedAt.set(ev.turnId, now());
       // The goal as the engine has it when the turn starts: resumed on the target after a switch.
       const turnId = ev.turnId;
@@ -170,7 +182,11 @@ export function createFallbackController({
       watch = null;
       return;
     }
-    if (ev.type === "notice" && ev.code === "turn.retrying") return step({ type: "notice", at: now(), failure: retryObservation(ev.threadId, startedAt.get(ev.turnId) ?? null) });
+    if (ev.type === "notice" && ev.code === "turn.retrying") {
+      const failure = retryObservation(ev.threadId, startedAt.get(ev.turnId) ?? null);
+      noticeOf = failure ? null : ev.threadId;
+      return step({ type: "notice", at: now(), failure });
+    }
     step({ type: "event", at: now() });
   }
 
@@ -266,43 +282,51 @@ export function createFallbackController({
       await wait(WAIT_POLL_MS);
       if (disposed) return;
     }
-    // 4. The next target in the user's order.
-    const ctx = routing();
-    const r = nextTarget(p, { from: routeOf(from), failure: failure.class, tried: episode.tried, hops: episode.hops, switchesLastHour: lastHour, sessionLimitedProviders: sessionLimited }, ctx);
-    if (r.none) {
-      const skipped = (r.skipped ?? [])
-        .filter((s) => !s.reasons.includes("tried"))
-        .slice(0, 3)
-        .map((s) => {
-          const info = targetInfo(s.target, ctx);
-          return `${info.label}: ${reasonText(s.reasons[0], info, { now: ctx.now, root: ctx.root })}`;
-        });
-      return pause("noneLeft", FALLBACK_RUN_TEXTS.NONE_LEFT(why, skipped.length ? skipped.join("; ") : "none listed"));
+    for (;;) {
+      // 4. The next target in the user's order.
+      const ctx = routing();
+      const r = nextTarget(p, { from: routeOf(from), failure: failure.class, tried: episode.tried, hops: episode.hops, switchesLastHour: lastHour, sessionLimitedProviders: sessionLimited }, ctx);
+      if (r.none) {
+        const skipped = (r.skipped ?? [])
+          .filter((s) => !s.reasons.includes("tried"))
+          .slice(0, 3)
+          .map((s) => {
+            const info = targetInfo(s.target, ctx);
+            return `${info.label}: ${reasonText(s.reasons[0], info, { now: ctx.now, root: ctx.root })}`;
+          });
+        return pause("noneLeft", FALLBACK_RUN_TEXTS.NONE_LEFT(why, skipped.length ? skipped.join("; ") : "none listed"));
+      }
+      // 5. Switch: the runner holds, quiesces, binds, queues ad's continuation first, releases.
+      const target = await toSwitchTarget(r.target);
+      if (!target) return pause("noneLeft", FALLBACK_RUN_TEXTS.NONE_LEFT(why, "none listed"));
+      await runner.request(target, {
+        mode: "wait",
+        reason: "policy",
+        fallback:
+          mode === "prompt"
+            ? { line: FALLBACK_RUN_TEXTS.USING_FOR_PROMPT(target.label, why), continuation: null, resumeGoal: null }
+            : { line: FALLBACK_RUN_TEXTS.SWITCHED(target.label, why, episode.hops + 1, p.maxHops), continuation: FALLBACK_RUN_TEXTS.CONTINUATION(from.label, why), resumeGoal: goalBefore },
+      });
+      // The switch ends later than the request's first effects: wait for its commit or abort.
+      const outcome = await Promise.race([runner.whenOutcome(), wait(SWITCH_WAIT_MS).then(() => null)]);
+      if (disposed) return;
+      if (outcome?.kind === "committed") {
+        episode = afterSwitch(episode, r.target);
+        chosenBy = "fallback";
+        switches += 1;
+        lastSwitch = { at: now(), why };
+        return;
+      }
+      // The runner said why (its own notice); keep the queue held.
+      session.hold(true);
+      // A target that refused for itself (signed out, someone else signed in, its model gone)
+      // is tried: the next one in the order may take over.
+      if (outcome?.kind === "aborted" && TARGET_REFUSALS.has(outcome.reason)) {
+        episode = { ...episode, tried: [...episode.tried, targetKey(r.target)] };
+        continue;
+      }
+      return pause("switchFailed", `the switch to ${target.label} didn't work (details above)`);
     }
-    // 5. Switch: the runner holds, quiesces, binds, queues ad's continuation first, releases.
-    const target = await toSwitchTarget(r.target);
-    if (!target) return pause("noneLeft", FALLBACK_RUN_TEXTS.NONE_LEFT(why, "none listed"));
-    await runner.request(target, {
-      mode: "wait",
-      reason: "policy",
-      fallback:
-        mode === "prompt"
-          ? { line: FALLBACK_RUN_TEXTS.USING_FOR_PROMPT(target.label, why), continuation: null, resumeGoal: null }
-          : { line: FALLBACK_RUN_TEXTS.SWITCHED(target.label, why, episode.hops + 1, p.maxHops), continuation: FALLBACK_RUN_TEXTS.CONTINUATION(from.label, why), resumeGoal: goalBefore },
-    });
-    // The switch ends later than the request's first effects: wait for its commit or abort.
-    const outcome = await Promise.race([runner.whenOutcome(), wait(SWITCH_WAIT_MS).then(() => null)]);
-    if (disposed) return;
-    if (outcome?.kind === "committed") {
-      episode = afterSwitch(episode, r.target);
-      chosenBy = "fallback";
-      switches += 1;
-      lastSwitch = { at: now(), why };
-      return;
-    }
-    // The runner said why (its own notice); keep the queue held for the user.
-    session.hold(true);
-    return pause("switchFailed", `the switch to ${target.label} didn't work (details above)`);
   }
 
   /**
