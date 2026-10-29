@@ -61,6 +61,10 @@ Released separately, by `.github/workflows/release-memory.yml`, which runs only 
    Gallery submissions (Claude Code directory, Cursor marketplace) are the owner's, after the privacy and terms pages exist.
 5. Never publish from a laptop. The package version must equal the runtime's: the build refuses otherwise.
 
+### Launch checks, every release (P8.4)
+- `node --test runtime/test/launch-checks.test.mjs runtime/test/support-matrix.test.mjs`: privacy and security pages, MIT everywhere, no analytics, no network in the memory package, and no matrix row that overstates its evidence.
+- After an engine upgrade: `AD_REAL_ENGINE=1 node --test runtime/test/engine-network.test.mjs`. A new host it reaches means a new engine setting to turn off in `ENGINE_PRIVACY` (`runtime/src/harness/setup.mjs`), or a line on `docs/privacy.md`.
+
 ## Go / No-Go
 
 End with a one-screen summary: version, changelog highlights, verification

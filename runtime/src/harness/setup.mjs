@@ -22,6 +22,14 @@ import { needsWindowsSandbox, setupWindowsSandbox } from "./sandbox.mjs";
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 export const MEMORY_SERVER = path.join(REPO_ROOT, "runtime", "src", "mcp", "memory-server.mjs");
 export const MEMORY_SERVER_ID = "agent-daemon-memory";
+// The engine's own calls home (verified on the pinned engine: each value is accepted), with what
+// the config says now: [key, the off value, the current value].
+export const ENGINE_PRIVACY = (config) => [
+  ["analytics.enabled", false, config.analytics?.enabled],
+  ["feedback.enabled", false, config.feedback?.enabled],
+  ["otel.exporter", "none", config.otel?.exporter],
+  ["otel.metrics_exporter", "none", config.otel?.metrics_exporter],
+];
 
 const START = "<!-- agent-daemon:start -->";
 const END = "<!-- agent-daemon:end -->";
@@ -191,6 +199,11 @@ export async function ensureHarnessSetup(engine, { cwd = process.cwd(), profile 
     // ad's engine carries AD_TOOL_SHELL=1, so memory accept/promote commands
     // refuse to run from it. Field-level: the user's own `set` entries stay.
     if (config.shell_environment_policy?.set?.AD_TOOL_SHELL !== "1") edits.push(["shell_environment_policy.set.AD_TOOL_SHELL", "1"]);
+    // Privacy (P8.4b E1, docs/privacy.md): the engine's own analytics, feedback uploads and
+    // telemetry exporters are off unless you set them yourself; ad pins the engine's version,
+    // so its update check is always off.
+    for (const [key, value, now] of ENGINE_PRIVACY(config)) if (now == null) edits.push([key, value]);
+    if (config.check_for_update_on_startup !== false) edits.push(["check_for_update_on_startup", false]);
     if (edits.length) {
       await engine.writeConfig(edits);
       await engine.reloadMcpServers();

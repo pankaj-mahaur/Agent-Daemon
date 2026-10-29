@@ -19,7 +19,7 @@ Everything stays in folders on your computer:
 - **The memory server makes no network calls.** The package contains no network code; a test fails if any is added.
 - **ad's agent harness** (`ad`, `ad run`, `ad loop`) talks to the model provider you choose (for example OpenAI, OpenRouter or a local model), through a gateway that runs on your own computer. Your prompts, code context and tool results go to that provider, under its terms. ad also reads the provider's own model list and limits (for example OpenRouter's `/key`) when you ask for them.
 - **Signing in** opens the provider's own sign-in page (for example OpenAI or OpenRouter) in your browser.
-- **The engine** (the open-source agent engine ad runs) may make calls of its own. ad hasn't yet listed and switched off each of them; until it has, this line stays here.
+- **The engine** (the open-source agent engine ad runs) has settings of its own for analytics, feedback uploads, telemetry exporters and an update check. ad turns each of them off in its engine folders, unless you set one yourself. A test runs a real turn through a recording proxy and checks that, with an API key, the engine reaches no host but the model provider. With a ChatGPT sign-in, the engine also talks to OpenAI's ChatGPT services (your provider in that case); ad can't test that without a sign-in.
 - Nothing else: no update check, no analytics, no crash reports.
 
 ## Telemetry

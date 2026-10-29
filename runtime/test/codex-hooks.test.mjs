@@ -315,3 +315,23 @@ test("hookHost reads AD_HOOK_HOST with the old value as an alias", async () => {
     else process.env.AD_HOOK_HOST = prev;
   }
 });
+
+test("P8.4b E1: the engine's analytics, feedback uploads, telemetry exporters and update check are off; a user's own choice is kept", async () => {
+  await withEngine(async (engine) => {
+    await ensureHarnessSetup(engine, { cwd: tmpdir(), roots: [], profile: "developer" });
+    const cfg = await engine.readConfig();
+    assert.equal(cfg.analytics?.enabled, false);
+    assert.equal(cfg.feedback?.enabled, false);
+    assert.equal(cfg.otel?.exporter, "none");
+    assert.equal(cfg.otel?.metrics_exporter, "none");
+    assert.equal(cfg.check_for_update_on_startup, false);
+  });
+  await withEngine(async (engine) => {
+    await engine.writeConfig([["analytics.enabled", true], ["otel.exporter", "otlp-http"]]);
+    await ensureHarnessSetup(engine, { cwd: tmpdir(), roots: [], profile: "developer" });
+    const cfg = await engine.readConfig();
+    assert.equal(cfg.analytics.enabled, true, "you chose it");
+    assert.equal(cfg.otel.exporter, "otlp-http", "you chose it");
+    assert.equal(cfg.feedback.enabled, false);
+  });
+});
