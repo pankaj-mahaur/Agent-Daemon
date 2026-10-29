@@ -10,6 +10,7 @@
 //   recordObservations(list, { root, waitMs })   readStore({ root })
 //   stateAt(observation, now)  limitState(accountId, { now, root })  "ok" | "near" | "limited" | "exhausted" | "unknown"
 //   benchProvider(provider, { until, reason, accountId }, { root, now })   benchedUntil(provider, { now, root })
+//   noticesShown({ root })   markNoticed(keys, { root, now })      the limit notices already shown (P4.6)
 //
 // Reading rule: past its reset, or older than 6 h with no reset → unknown, never ok.
 
@@ -230,4 +231,16 @@ export function benchedUntil(provider, { now = Date.now(), root = adRoot() } = {
   const b = readStore({ root }).bench[provider];
   const until = Date.parse(b?.until ?? "");
   return Number.isFinite(until) && until > now ? until : null;
+}
+
+// The limit notices already shown (P4.6), so a restart doesn't repeat one: key → when.
+// Marks older than 8 days are dropped (every window resets within a week).
+const NOTICE_KEEP_MS = 8 * 24 * 60 * 60_000;
+export const noticesShown = ({ root = adRoot() } = {}) => readStore({ root }).notices ?? {};
+export function markNoticed(keys, { root = adRoot(), now = Date.now(), waitMs } = {}) {
+  if (!keys?.length) return Promise.resolve();
+  return update((doc) => {
+    const kept = Object.entries(doc.notices ?? {}).filter(([, at]) => now - Date.parse(at) < NOTICE_KEEP_MS);
+    doc.notices = Object.fromEntries([...kept, ...keys.map((k) => [k, new Date(now).toISOString()])]);
+  }, { root, waitMs });
 }

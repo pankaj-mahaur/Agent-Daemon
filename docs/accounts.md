@@ -35,6 +35,7 @@ ad auth test openrouter/work              # check a stored key again
 
 ```bash
 ad auth list                         # your accounts, grouped by provider (--wide: method and last use; --json)
+ad auth list --refresh               # read OpenRouter's limits now (--refresh=all: ChatGPT sign-ins too)
 ad auth use openrouter/work          # the default for new sessions (--model, --effort)
 ad auth use openrouter/work --project   # this project prefers it (in a folder you trust)
 ad auth use openrouter/work --session   # prints the line that sets it for this terminal only
@@ -51,7 +52,8 @@ ad auth test <account>               # check it (--model: also one small request
   - `●` marks the default;
   - the owner column shows only when it differs from the label;
   - "who" is the masked email and plan for a sign-in, `key …1234` for a key, `local` for your own machine;
-  - "limits" shows a limit the provider just reported.
+  - "limits" shows what ad last heard from the provider: `5h 64% wk 22%` for a ChatGPT sign-in, `today 41/50` for OpenRouter's free requests, `$3.20 left` for credits, `out → 05:30` when one ran out (until 05:30). Blank means the provider didn't say (or what it said is out of date): ad never guesses, and never shows `0%` for "unknown".
+- **Fresh limits.** `--refresh` reads OpenRouter's own numbers for each OpenRouter key now. A ChatGPT sign-in's limits come from its engine: a window you have open keeps them current; `--refresh=all` starts the engine of each sign-in no window is using, one at a time, and says so (`Checking ChatGPT · work (starts its engine)…`). A sign-in in use elsewhere keeps its last known numbers (`work: in use in another window`): ad never starts a second engine on it.
 - **Scripting.** `--json` is the scripting contract. It is built from a fixed list of fields, and never holds a key, its storage name, a full email or an engine folder path. With `--json`, any error comes back as `{"error": {"code", "message"}}` with the same exit code.
 - **Logout vs remove.** `logout` signs one account out and keeps its name, so `ad auth login <provider> --label <label>` brings it back. `remove` forgets it. `logout` alone signs out the ChatGPT or OpenAI sign-in in ad's main engine folder, as in 3.0.
 - **Not from the agent's own shell.** `login`, `use`, `rename`, `logout`, `remove` and `repair` refuse to run there (exit 2), so an accident or a naive prompt injection can't change your accounts. `list`, `status` and `test` work everywhere. This is a guard, not a wall: a determined process on your machine can still read ad's files.

@@ -331,3 +331,83 @@ test("review: `logout openrouter` with no OpenRouter account never signs out Cha
   const u = await auth("use", ["or-team"]);
   assert.equal(u.code, 0, u.err);
 });
+
+// ---- P4.6: limits in the list -------------------------------------------------------------
+const quotaMod = await import("../src/providers/quota.mjs");
+const { cmdList } = await import("../src/harness/auth-commands.mjs");
+const resetQuota = () => fs.rmSync(path.join(process.env.AD_ROOT, "quota"), { recursive: true, force: true });
+const keyJson = (used, limit = 50) => ({ data: { label: "mock", free_model_daily_requests: { used, limit, remaining: limit - used } } });
+
+test("the list fits 80 columns with limits, in P3.8a's columns: the cell starts at column 67 and is at most 13 characters", async () => {
+  resetQuota();
+  const now = Date.now();
+  await quotaMod.recordObservations([
+    ...quotaMod.fromChatgpt({ primary: { usedPercent: 64, windowDurationMins: 300, resetsAt: Math.floor(now / 1000) + 3600 }, secondary: { usedPercent: 22, windowDurationMins: 10080, resetsAt: Math.floor(now / 1000) + 86400 * 3 } }, { accountId: ids.personal, now }),
+    ...quotaMod.fromOpenRouterKey(keyJson(41), { accountId: ids.client, now }).observations,
+    ...quotaMod.fromOpenRouterKey(keyJson(50), { accountId: ids.default, now }).observations,
+  ]);
+  const r = await auth("list");
+  assert.equal(r.code, 0, r.err);
+  for (const l of r.out.split("\n")) assert.ok([...l].length <= 80, `${[...l].length}: ${l}`);
+  const row = (label) => r.out.split("\n").find((l) => l.slice(2).startsWith(label));
+  assert.equal(row("personal").slice(67), "5h 64% wk 22%");
+  assert.equal(row("client-a").slice(67), "today 41/50");
+  assert.match(row("default").slice(67), /^out → \d{2}:\d{2}$/);
+  assert.equal(row("work").length <= 67, true, "unknown limits are a blank cell, never 0%");
+  resetQuota();
+});
+
+test("list --json's quota has the documented keys; an account with nothing known has state unknown and no windows", async () => {
+  resetQuota();
+  await quotaMod.recordObservations(quotaMod.fromOpenRouterKey(keyJson(41), { accountId: ids.client }).observations);
+  const j = JSON.parse((await auth("list", [], { json: true })).out);
+  const client = j.accounts.find((a) => a.label === "client-a");
+  assert.deepEqual(Object.keys(client.quota).sort(), ["benchedUntil", "observedAt", "source", "state", "windows"]);
+  assert.deepEqual(Object.keys(client.quota.windows[0]).sort(), ["confidence", "kind", "limit", "remaining", "resetsAt", "state", "usedPercent", "used", "window"].sort());
+  assert.deepEqual([client.quota.windows[0].used, client.quota.windows[0].limit], [41, 50]);
+  const lab = j.accounts.find((a) => a.label === "lab");
+  assert.deepEqual(lab.quota, { state: "unknown", windows: [], benchedUntil: null, observedAt: null, source: null });
+  resetQuota();
+});
+
+test("--refresh reads OpenRouter's /key for each OpenRouter key now; the key is never printed", async () => {
+  resetQuota();
+  const asked = [];
+  const fetch = async (url, init) => {
+    asked.push({ url: String(url), redirect: init?.redirect ?? null, auth: String(init?.headers?.authorization ?? init?.headers?.Authorization ?? "") });
+    return new Response(JSON.stringify(keyJson(46)), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  const r = await auth("list", [], { refresh: true, fetch });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(asked.length, 2, "both OpenRouter keys, nothing else");
+  assert.ok(asked.every((a) => a.url === "https://openrouter.ai/api/v1/key"));
+  assert.match(r.out, /client-a.*today 46\/50/);
+  assert.match(r.out, /ChatGPT limits come from a running window; ad auth list --refresh=all checks them now\./);
+  for (const k of Object.values(keys)) assert.ok(!r.out.includes(k) && !r.err.includes(k));
+  resetQuota();
+});
+
+test("--refresh=all with a live lease on a ChatGPT home spawns no engine there; a free home is checked, one at a time", async () => {
+  resetQuota();
+  const { homePathFor } = await import("../src/harness/engines.mjs");
+  const { engineHome } = await import("../src/engine/index.mjs");
+  const workHome = engineHome.canonical(homePathFor("a/h1")); // work's own home
+  const started = [];
+  const out = sink();
+  await cmdList({
+    out,
+    refresh: true,
+    refreshAll: true,
+    provider: "chatgpt",
+    store,
+    refreshOpts: {
+      liveHomes: () => new Set([workHome]),
+      readLimits: async (a) => (started.push(a.label), { rateLimits: { primary: { usedPercent: 12, windowDurationMins: 300, resetsAt: Math.floor(Date.now() / 1000) + 3600 } } }),
+    },
+  });
+  assert.deepEqual(started, ["personal"], "never the home in use");
+  assert.match(out.text, /work: in use in another window; showing the last known\./);
+  assert.match(out.text, /Checking ChatGPT · personal \(starts its engine\)…/);
+  assert.match(out.text, /personal.*5h 12%/);
+  resetQuota();
+});

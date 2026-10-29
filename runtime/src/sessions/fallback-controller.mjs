@@ -4,7 +4,7 @@
 // that keeps retrying is interrupted at the end of the budget, the goal paused first.
 //
 //   createFallbackController(deps) → { onEvent(ev), turnCompleted({ turn, status }), tick(), resume(), retry(),
-//                                      handled(turnId), state(), settled(), dispose() }
+//                                      handled(turnId), state(), gateOn(), nextLabel(), settled(), dispose() }
 //
 // Every exit of a triggered turn either switches or pauses; a pause keeps the session held until
 // resume() (B2 wires /retry, a manual switch and the user's own prompt to it).
@@ -385,6 +385,16 @@ export function createFallbackController({
     /** Whether fallback acted on this turn (the TUI then shows ad's line, not the engine's). */
     handled: (turnId) => handled.has(turnId),
     state: () => ({ episode, paused, chosenBy, watching: Boolean(watch), switches, lastSwitch }),
+    /** Whether fallback may act in this window now (the policy is read: callers cache it). */
+    gateOn: () => !disposed && gate().on,
+    /** Where fallback would continue if the current target ran out now (P4.6's notice), or null. */
+    nextLabel() {
+      const from = current();
+      if (disposed || !from?.account || !gate().on) return null;
+      const ctx = routing();
+      const r = nextTarget(policy(), { from: routeOf(from), failure: "quotaExhausted", tried: [], hops: 0, switchesLastHour: 0, sessionLimitedProviders: sessionLimited }, ctx);
+      return r.none ? null : targetInfo(r.target, ctx).label;
+    },
     /** Settles the work started so far (tests). */
     settled: () => work,
     dispose() {

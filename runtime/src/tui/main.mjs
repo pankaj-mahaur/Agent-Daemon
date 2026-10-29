@@ -651,6 +651,32 @@ export async function cmdTui(opts = {}) {
         windowOn: () => fallbackWindowOn(),
       });
     }
+    const { quotaView } = await import("../providers/quota-view.mjs");
+    const { markNoticed, noticesShown, readStore } = await import("../providers/quota.mjs");
+    const { refreshOpenRouterKey } = await import("../providers/upstream.mjs");
+    let quotaAt = -Infinity;
+    let quotaDoc = null;
+    let keyReadAt = -Infinity;
+    const quotaStore = () => {
+      if (Date.now() - quotaAt > 2000) {
+        quotaAt = Date.now();
+        quotaDoc = readStore();
+      }
+      return quotaDoc;
+    };
+    let factsAt = -Infinity;
+    let facts = { on: false, next: null };
+    const fallbackFacts = () => {
+      if (fallbackController && Date.now() - factsAt > 5000) {
+        factsAt = Date.now();
+        try {
+          facts = { on: fallbackController.gateOn(), next: fallbackController.nextLabel() };
+        } catch {
+          facts = { on: false, next: null };
+        }
+      }
+      return facts;
+    };
     const actions = {
       accounts,
       ledger: () => ledger?.status() ?? null,
@@ -684,7 +710,34 @@ export async function cmdTui(opts = {}) {
         handled: (turnId) => fallbackController?.handled(turnId) ?? false,
         beforePrompt: () => fallbackController?.beforePrompt() ?? null,
         status: () => (fallbackController ? fallbackController.state() : null),
+        // For the status line and the limit notices (P4.6): read the policy at most every 5 s.
+        on: () => fallbackFacts().on,
+        nextLabel: () => fallbackFacts().next,
       },
+      // Limits as last seen (P4.6): the current account's view over the QuotaStore (re-read at
+      // most every 2 s), the notices already shown, and OpenRouter's /key read for /usage.
+      quota: accounts
+        ? {
+            view: () => {
+              const a = accounts.current();
+              return a ? quotaView(a.id, { store: quotaStore(), provider: a.provider }) : null;
+            },
+            name: () => {
+              const a = accounts.current();
+              return a ? accountName(a) : null;
+            },
+            seen: () => noticesShown(),
+            mark: (keys) => markNoticed(keys).catch(() => {}),
+            refresh: async () => {
+              const a = accounts.current();
+              if (!a || Date.now() - keyReadAt < 30_000) return false;
+              keyReadAt = Date.now();
+              const done = await refreshOpenRouterKey(a, { store: opts.store ?? createSecretStore(), clientVersion: opts.clientVersion }).catch(() => false);
+              if (done) quotaAt = -Infinity;
+              return done;
+            },
+          }
+        : null,
       ...(undoKit ? { undo: (o) => undoKit.undo(session, o), onTyping: () => undoKit.onTyping() } : {}),
       // /cd: ad's memory project and /undo's checkpoints follow the new folder.
       setCwd: async (dir) => {

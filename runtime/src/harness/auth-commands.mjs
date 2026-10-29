@@ -23,6 +23,11 @@ import { presetFor, PROVIDER_PRESETS } from "../providers/registry.mjs";
 import { lastUpstream } from "./gateway-runtime.mjs";
 import { AUTH_TEXTS } from "./auth-texts.mjs";
 import { listLines } from "./auth-list-view.mjs";
+import { defaultLockDir, liveLocks } from "../lock.mjs";
+import { createSecretStore } from "../auth/secrets.mjs";
+import { fromChatgpt, readStore, recordObservations } from "../providers/quota.mjs";
+import { listCell, quotaJson, quotaView } from "../providers/quota-view.mjs";
+import { refreshOpenRouterKey } from "../providers/upstream.mjs";
 
 const fail = (code, message, exit = 1) => Object.assign(new Error(message), { code, exit });
 const refOf = (a) => `${a.provider}/${a.label}`;
@@ -65,7 +70,7 @@ const maskEmail = (e) => {
  * One account for --json, from an allowlist: never the credential (secret ref, home
  * path), the salt, an identity key, an attempt or a full email. Later parts extend it here.
  */
-export function accountJson(a, { defaultId = null, upstream = lastUpstream } = {}) {
+export function accountJson(a, { defaultId = null, upstream = lastUpstream, quota = () => null } = {}) {
   const obs = upstream(a.id);
   return {
     id: a.id,
@@ -85,7 +90,7 @@ export function accountJson(a, { defaultId = null, upstream = lastUpstream } = {
     createdAt: a.createdAt ?? null,
     lastUsedAt: a.lastUsedAt ?? null,
     lastUpstream: obs ? { status: obs.status ?? null, retryAfterS: obs.retryAfterS ?? null, at: obs.at ?? null } : null,
-    quota: null,
+    quota: quotaJson(quota(a)),
   };
 }
 
@@ -98,11 +103,64 @@ export function listJson(doc, ctx = {}) {
   };
 }
 
-export function cmdList({ out, json = false, provider = null, wide = false, width = process.stdout.columns ?? 80, upstream = lastUpstream }) {
+// The live engines' homes (P0.3 leases), in any ad window on this machine.
+function liveEngineHomes() {
+  return new Set(liveLocks({ dir: defaultLockDir() }).filter((h) => h.kind === "engine" && h.home).map((h) => engineHome.canonical(h.home)));
+}
+const signedIn = (a) => a.method === "engine-login" || a.credential?.kind === "engine-home";
+
+// A ChatGPT sign-in's limits through its own engine (--refresh=all), started and stopped here.
+async function readSignInLimits(a, { store } = {}) {
+  const { closeHarnessEngines, launchHarness } = await import("./engines.mjs");
+  const sink = { write: () => true };
+  const h = await launchHarness({ cwd: os.tmpdir(), account: a.id, store, err: sink, purpose: "limits" });
+  try {
+    return await h.engine.usage.limits();
+  } finally {
+    await h.release();
+    await closeHarnessEngines();
+  }
+}
+
+/**
+ * --refresh (P4.6): OpenRouter's /key for each OpenRouter key now, in parallel (5 s each).
+ * --refresh=all also asks each ChatGPT sign-in's engine, one at a time, and only for a home no
+ * window holds: never a second engine on a live home.
+ */
+export async function refreshLimits(accounts, { out, all = false, store, fetch, clientVersion, doc = readRegistry(), liveHomes = liveEngineHomes, readLimits = readSignInLimits, root } = {}) {
+  await Promise.all(
+    accounts
+      .filter((a) => a.provider === "openrouter")
+      .map((a) => refreshOpenRouterKey(a, { store, fetch, clientVersion, ...(root ? { root } : {}) }).catch((e) => out.write(`${a.label}: OpenRouter didn't answer${e?.status ? ` (HTTP ${e.status})` : ""}; showing the last known.\n`))),
+  );
+  const signIns = accounts.filter(signedIn);
+  if (!signIns.length) return;
+  if (!all) return void out.write("ChatGPT limits come from a running window; ad auth list --refresh=all checks them now.\n");
+  const { homeKeyFor, homePathFor } = await import("./engines.mjs");
+  const live = liveHomes();
+  for (const a of signIns) {
+    // The sign-in's own home ("@default", "a/<id>"), else where ad would run it.
+    const key = a.credential?.kind === "engine-home" && a.credential.home ? a.credential.home : homeKeyFor({ account: a.id }, doc);
+    const home = engineHome.canonical(homePathFor(key) ?? engineHome.defaultPath());
+    if (live.has(home)) {
+      out.write(`${a.label}: in use in another window; showing the last known.\n`);
+      continue;
+    }
+    out.write(`Checking ${accountName(a)} (starts its engine)…\n`);
+    const snap = await readLimits(a, { store }).catch(() => null);
+    if (snap) await recordObservations(fromChatgpt(snap.rateLimits ?? snap, { accountId: a.id, source: "chatgpt:rateLimits/read" }), root ? { root } : {});
+  }
+}
+
+export async function cmdList({ out, json = false, provider = null, wide = false, width = process.stdout.columns ?? 80, upstream = lastUpstream, refresh = false, refreshAll = false, store, fetch, clientVersion, now = Date.now(), refreshOpts = {} }) {
   const doc = readRegistry();
   const pick = (a) => a.status !== "removing" && (!provider || a.provider === String(provider).toLowerCase());
+  if (refresh) await refreshLimits(doc.accounts.filter(pick), { out: json ? { write: () => true } : out, all: refreshAll, store: store ?? createSecretStore(), fetch, clientVersion, doc, ...refreshOpts });
+  // Limits as last seen (P4.6): the QuotaStore, read once.
+  const qs = readStore();
+  const quota = (a) => quotaView(a.id, { store: qs, now, provider: a.provider });
   if (json) {
-    const j = listJson(doc, { upstream });
+    const j = listJson(doc, { upstream, quota });
     j.accounts = j.accounts.filter((a) => !provider || a.provider === String(provider).toLowerCase());
     out.write(`${JSON.stringify(j, null, 2)}\n`);
     return 0;
@@ -112,7 +170,7 @@ export function cmdList({ out, json = false, provider = null, wide = false, widt
     out.write("No accounts yet. Add one: ad auth login <provider> (see: ad auth login --help)\n");
     return 0;
   }
-  const lines = listLines(accounts, { width, wide, defaultId: doc.defaults?.target?.account ?? null, upstream, providerOrder: PROVIDER_ORDER, nameOf: providerDisplay });
+  const lines = listLines(accounts, { width, wide, defaultId: doc.defaults?.target?.account ?? null, upstream, limits: (a) => listCell(quota(a), now), providerOrder: PROVIDER_ORDER, nameOf: providerDisplay, now });
   out.write(`${lines.join("\n")}\n`);
   return 0;
 }

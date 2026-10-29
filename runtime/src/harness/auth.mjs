@@ -37,7 +37,7 @@ const EXIT_2 = new Set(["TOOL_SHELL", "KEY_ON_COMMAND_LINE", "PROVIDER_UNAVAILAB
  * for what 3.0's engine path still does (ChatGPT sign-in, `logout` alone, `status` alone).
  */
 async function accountCommand(sub, args, o) {
-  if (sub === "list") return cmdList({ out: o.out, json: o.json, provider: o.provider, wide: o.wide, width: o.width });
+  if (sub === "list") return cmdList({ out: o.out, json: o.json, provider: o.provider, wide: o.wide, width: o.width, refresh: o.refresh, refreshAll: o.refreshAll, store: o.store, fetch: o.fetch, clientVersion: o.clientVersion });
   if (sub === "rename") {
     if (!args[0] || (!args[1] && o.owner === undefined)) throw Object.assign(new Error("Usage: ad auth rename <account> <new-label> [--owner <text>]"), { code: "USAGE" });
     return cmdRename(args[0], args[1], { out: o.out, owner: o.owner, store: o.store });

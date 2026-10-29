@@ -5,6 +5,7 @@
 //
 //   createUpstreamRecorder({ probeKey, onFailure, root, now }) → record(event) → Promise
 //   probeOpenRouterKey({ key, fetch, clientVersion }) → the /key JSON
+//   refreshOpenRouterKey(account, { store, fetch, root, now }) → records /key now (P4.6)
 // probeKey(accountId) → that JSON or null (the caller reads the key from ad's secret store).
 // Records run one after another; a failure in one never reaches the gateway or the turn.
 
@@ -24,6 +25,19 @@ export async function probeOpenRouterKey({ key, fetch, clientVersion, url = OPEN
   const r = await providerRequest({ url, key, fetch, clientVersion, timeoutMs: 5000 });
   if (r.status !== 200) throw Object.assign(new Error(`OpenRouter answered HTTP ${r.status} for /key.`), { code: "KEY_PROBE_FAILED", status: r.status });
   return r.json;
+}
+
+/**
+ * Reads OpenRouter's /key for one account now and records what it says (P4.6: /usage and
+ * ad auth list --refresh). False when the account isn't an OpenRouter key ad holds.
+ */
+export async function refreshOpenRouterKey(a, { store, fetch, clientVersion, url, root = adRoot(), now = Date.now() } = {}) {
+  if (a?.provider !== "openrouter" || a.endpoint || a.credential?.kind !== "secret" || !a.credential.ref) return false;
+  const key = store?.get(a.credential.ref);
+  if (!key) return false;
+  const json = await probeOpenRouterKey({ key, fetch, clientVersion, url });
+  await recordObservations(fromOpenRouterKey(json, { accountId: a.id, now }).observations, { root });
+  return true;
 }
 
 export function createUpstreamRecorder({ probeKey = null, onFailure = () => {}, root = adRoot(), now = () => Date.now() } = {}) {

@@ -2405,7 +2405,8 @@ async function main(argv) {
   let parsed;
   try {
     parsed = parseArgs({
-      args: rest,
+      // ad auth list --refresh=all (P4.6): its own flag, since --refresh alone takes no value.
+      args: rest.map((a) => (command === "auth" && a === "--refresh=all" ? "--refresh-all" : a)),
       options: {
         transcript:   { type: "string" },
         "session-id": { type: "string" },
@@ -2432,6 +2433,7 @@ async function main(argv) {
         session:      { type: "boolean" },
         digest:       { type: "boolean" },
         wide:         { type: "boolean" },
+        "refresh-all": { type: "boolean" },
         "show-emails": { type: "boolean" },
         "delete-conversations": { type: "boolean" },
         help:         { type: "boolean", short: "h" },
@@ -2634,7 +2636,8 @@ async function main(argv) {
         scope: ["global", "project", "session", "digest"].filter((s) => parsed.values[s]).length > 1 ? "conflict" : parsed.values.project ? "project" : parsed.values.session ? "session" : parsed.values.digest ? "digest" : "global",
         wide: Boolean(parsed.values.wide),
         json: Boolean(parsed.values.json),
-        refresh: Boolean(parsed.values.refresh),
+        refresh: Boolean(parsed.values.refresh || parsed.values["refresh-all"]),
+        refreshAll: Boolean(parsed.values["refresh-all"]),
         yes: Boolean(parsed.values.yes),
         help: Boolean(parsed.values.help),
         width: process.stdout.columns ?? 80,

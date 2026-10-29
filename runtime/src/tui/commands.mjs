@@ -252,12 +252,19 @@ function windowLabel(w) {
   return `${span}: ${Math.round(w.usedPercent ?? 0)}% used${reset}`;
 }
 
-export function renderUsage({ rateLimits, usage, tokens } = {}, { width = 80 } = {}) {
+// limits (P4.6): an API account's windows as ad last saw them ([{ text, warn }]); [] when the
+// provider reports none; null when there is no ad account (the engine's own words then).
+export function renderUsage({ rateLimits, usage, tokens, limits = null } = {}, { width = 80 } = {}) {
   const out = [[{ text: "Usage", style: BOLD }]];
   const rl = rateLimits?.rateLimits ?? rateLimits;
   for (const w of [rl?.primary, rl?.secondary]) {
     const l = windowLabel(w);
     if (l) out.push(row(width, { text: `  ${clean(l)}`, style: (w.usedPercent ?? 0) >= 80 ? T.warning : undefined }));
+  }
+  const engineWindows = out.length > 1;
+  if (!engineWindows && limits) {
+    for (const l of limits) out.push(row(width, { text: `  ${clean(l.text)}`, style: l.warn ? T.warning : undefined }));
+    if (!limits.length) out.push([{ text: "  This provider doesn't report usage to ad.", style: DIM }]);
   }
   if (tokens?.total?.total) out.push(row(width, { text: `  this conversation: ${tokens.total.total.toLocaleString("en-US")} tokens` }));
   const s = usage?.summary;

@@ -1088,7 +1088,7 @@ test("status line: the engine's items under the composer; /statusline previews, 
       type(" "); // model off: the row changes at once (a preview)
       await until(() => !/fake-model ·/.test(text()), "the preview");
       type("\r");
-      await until(() => /Status line: current-dir\. Saved\./.test(text()), "saved");
+      await until(() => /Status line: current-dir, limits \(ad\)\. Saved\./.test(text()), "saved"); // ad's item, on by default (P4.6)
       assert.deepEqual(settings.store.tui.status_line, ["current-dir", "pull-request-number"], "engine's item ad can't show is kept");
       // Esc puts the row back as it was.
       type("/statusline\r");

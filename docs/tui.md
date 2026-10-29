@@ -13,6 +13,7 @@ If something gets in the way, `ad chat` is the plain line mode and stays availab
 - [Approvals and questions](#approvals-and-questions)
 - [Slash commands](#slash-commands)
 - [Switching model, account or provider](#switching-model-account-or-provider)
+- [Limits and usage](#limits-and-usage)
 - [Automatic fallback](#automatic-fallback)
 - [Plan mode](#plan-mode)
 - [Syntax highlighting](#syntax-highlighting)
@@ -127,7 +128,7 @@ On exit, ad prints how to continue: `ad tui --resume <id>`, with the tokens used
 - **Cells.** Prompts (`›`), answers, commands (Explored, Ran, Failed (exit N), Declined, with the last lines of output), edits (`Edited N files (+A -R)` with a diff), the model's checklists (**Updated Plan**, each time it changes them), proposed plans ([Plan mode](#plan-mode)), tool calls and notices. A turn ends with "Worked for Ns".
 - **ad rows** are one dim line each, and only when something happens: recalled learnings, a guard that blocked a command, a hook that failed, what ad learned, loop iterations.
 - **Activity row** (while a turn runs): what the engine is doing, the time, and `esc to interrupt`. Queued prompts are listed under it; the last one says `tab: edit`.
-- **Status line** (under the prompt, from 12 rows): the engine's status line items, joined with ` · `. By default the model and its reasoning effort, the folder, `ctx N%` (the context left in this conversation) and `5h N%` (how much of the current usage window is used); a percentage turns amber at 80 % used. `/statusline` chooses the items and their order, with the engine's ids (`git-branch`, `branch-changes`, `run-state`, `weekly-limit`, `task-progress`, …); it's saved as the engine's `tui.status_line`. When it's too wide, items drop from the end. Under an approval it shows only where the approval doesn't need the room.
+- **Status line** (under the prompt, from 12 rows): the engine's status line items, joined with ` · `. By default the model and its reasoning effort, the folder, `ctx N%` (the context left in this conversation) and `5h N%` (how much of the 5-hour window is used; `wk N%` is the weekly one, each picked by its length); a percentage turns amber at 80 % used. After the engine's items come ad's own: `limits` (on by default: the current account's limit closest to running out, such as `today 41/50` for OpenRouter's free requests, when the engine's items don't already show it), `account` and `fallback` (`fallback on`, or `↪ 2` after two automatic switches). They are listed in `/statusline` as "(ad's item)" and saved in ad's own settings, not the engine's. `/statusline` chooses the items and their order, with the engine's ids (`git-branch`, `branch-changes`, `run-state`, `weekly-limit`, `task-progress`, …); it's saved as the engine's `tui.status_line`. When it's too wide, items drop from the end. Under an approval it shows only where the approval doesn't need the room.
 - **Footer.**
   - Left: key hints. Idle: `? shortcuts · @ files · <newline key> newline`. While a turn runs: `enter steer · tab queue · <newline key> newline`.
   - Right: chips: `private` while `/private` is on, `loop N` while a background loop runs.
@@ -329,7 +330,7 @@ Model, effort and permission changes apply from the next turn.
 | Command | What it does |
 |---|---|
 | `/status` | account, model, sandbox, tokens, limits, and the engine version line (engine) |
-| `/usage` | usage limits and tokens (engine) |
+| `/usage` | usage limits and tokens: ChatGPT's windows, or what an API account's provider last reported (OpenRouter's numbers are read again) |
 | `/mcp` | MCP servers and their status (engine): the ones in ad's engine settings; a trusted project's own start with its conversation |
 | `/hooks` | hooks and whether they are trusted; ad's own are marked (engine) |
 | `/skills` | skills the engine can use here (engine) |
@@ -379,6 +380,16 @@ Pick another account (or its model) in `/model` or `/account` while a conversati
 - **If it can't**, nothing moves: "Couldn't switch to … Still on …" says why (sign-in, model, engine, the engine kept the old provider). See [troubleshooting #74](troubleshooting.md#74-couldnt-switch-to--still-on-).
 - `/status` shows `session ses_… · binding 2 (switched 14:02, you asked)`; `ad sessions show --last` lists the bindings.
 - **Turn it off:** `"switching.crossAccount": false` in `~/.agent-daemon/tui/prefs.json` brings back P3.8b's behaviour (another provider starts a new, empty conversation; the row says "starts a new conversation").
+
+## Limits and usage
+
+ad shows the limits it hears about and never invents one. A ChatGPT sign-in reports its 5-hour and weekly windows; OpenRouter reports its free daily requests and credits (read after a limit and with `/usage`); other providers report rate limits in their answers, or nothing. A number past its reset, or too old, is dropped rather than shown as `0%`.
+
+- **The status line** shows the limit closest to running out (`limits`, see above).
+- **The footer** adds a chip only when it matters: `limit 92% · resets 14:05` at the warning level, `limit used up · resets 05:30` when it ran out.
+- **A notice before it runs out**, once per window and reset period: `ChatGPT · personal: 90% of the 5-hour limit used (resets 14:05).` With fallback on it says where the task continues if it runs out; with other accounts and fallback off it points at `/fallback`. Another notice says when it is used up. A restart doesn't repeat them.
+- **`/status`** has a `limits` row: each window with its reset (`5-hour 64% (resets 14:05, in 1h 10m) · weekly 22% (resets Tue 09:00)`), when ad last heard, and a provider benched by another window (`OpenRouter hit a limit; other OpenRouter accounts aren't used automatically until 05:30`). "not reported by this provider" means there is nothing to show.
+- **The warning level** is `limits.warnAt` in ad's `prefs.json`: a percentage (90 by default) or `"off"` for no notices and no early chip.
 
 ## Automatic fallback
 
@@ -652,6 +663,7 @@ Everything else (conversations, logs, login) is the engine's own, in ad's engine
 | "⏸ Paused: … may still be running from the failed turn" | [#79](troubleshooting.md#79-fallback-paused-may-still-be-running-from-the-failed-turn) |
 | "⏸ Paused: … is still running in the background" | [#80](troubleshooting.md#80-fallback-paused-still-running-in-the-background) |
 | "⏸ Paused: fallback is switching too often", "the fallback budget is used up" | [#81](troubleshooting.md#81-fallback-paused-switching-too-often-or-the-fallback-budget-is-used-up) |
+| `limits` blank, "not reported by this provider" | [#82](troubleshooting.md#82-limits-are-blank-or-not-reported-by-this-provider) |
 | an engine command says "isn't in ad yet" | [commands.md](commands.md) |
 | not signed in, sandbox, hooks, your own install's home refused | [harness.md](harness.md#when-something-goes-wrong), troubleshooting #14–21 |
 

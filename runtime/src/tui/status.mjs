@@ -6,6 +6,7 @@
 //   titleText(ids, ctx) → string                      ids unset → DEFAULT_TITLE
 //   titleSafe(text) → one line, no control characters, at most 80 graphemes
 //   canonical(id) / unsupported(ids, kind)
+//   adSegments(ids, ctx, engineSegs) → ad's own items (account, limits, fallback) from ad's prefs
 //
 // ctx: {app, model, effort, cwd, home, project, hostname, branch, changes,
 //       running, waiting, sandbox, approvalPolicy, tokens, rateLimits,
@@ -14,6 +15,7 @@
 import { sanitize } from "./terminal/sanitize.mjs";
 import { graphemes } from "./terminal/width.mjs";
 import { shortenPath } from "./view/chrome.mjs";
+import { mostConstrained } from "../providers/quota-view.mjs";
 
 // The engine's aliases (codex-rs/tui/src/bottom_pane/status_line_setup.rs, title_setup.rs).
 const ALIASES = { "model-name": "model", project: "project-name", "project-root": "project-name", status: "run-state", approval: "approval-mode", "context-usage": "context-used", "session-id": "thread-id", spinner: "activity" };
@@ -46,6 +48,13 @@ function limit(w, fallback) {
   const label = w.windowDurationMins ? (w.windowDurationMins >= 7 * 24 * 60 ? "wk" : `${Math.round(w.windowDurationMins / 60)}h`) : fallback;
   return { text: `${label} ${pct(w.usedPercent)}`, warn: w.usedPercent >= 80 };
 }
+// A ChatGPT window by its length (300 min, 10080 min), whichever slot it came in: primary isn't
+// always the 5-hour one (P4.6). With no length reported at all, the slot as before.
+function windowOf(rl, mins, slot) {
+  const ws = [rl?.primary, rl?.secondary];
+  if (!ws.some((w) => w?.windowDurationMins)) return rl?.[slot];
+  return ws.find((w) => w?.windowDurationMins === mins) ?? null;
+}
 const homeShort = (p, home) => (home && (p === home || p.startsWith(home + "\\") || p.startsWith(home + "/")) ? `~${p.slice(home.length)}` : p);
 
 // id → (ctx) → string | {text, warn} | null. Ids missing here are upstream's but not shown by ad.
@@ -72,8 +81,8 @@ const ITEMS = {
     return u == null ? null : { text: `ctx ${pct(u)} used`, warn: u >= 80 };
   },
   "context-window-size": (c) => (c.tokens?.contextWindow ? `${k(c.tokens.contextWindow)} window` : null),
-  "five-hour-limit": (c) => limit(c.rateLimits?.primary, "usage"),
-  "weekly-limit": (c) => limit(c.rateLimits?.secondary, "wk"),
+  "five-hour-limit": (c) => limit(windowOf(c.rateLimits, 300, "primary"), "usage"),
+  "weekly-limit": (c) => limit(windowOf(c.rateLimits, 10080, "secondary"), "wk"),
   "codex-version": (c) => (c.engineVersion ? `engine ${c.engineVersion}` : null),
   "used-tokens": (c) => (c.tokens?.last?.total != null ? `${k(c.tokens.last.total)} tokens` : null),
   "total-input-tokens": (c) => (c.tokens?.total?.inputTokens != null ? `${k(c.tokens.total.inputTokens)} in` : null),
@@ -91,6 +100,36 @@ const SPINNER = ["\u{280b}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283c}", "\u
 // What each surface offers (upstream's lists; ad shows the ones it can compute).
 export const STATUS_IDS = ["model-with-reasoning", "model", "reasoning", "current-dir", "project-name", "hostname", "git-branch", "branch-changes", "run-state", "permissions", "approval-mode", "context-remaining", "context-used", "context-window-size", "five-hour-limit", "weekly-limit", "codex-version", "used-tokens", "total-input-tokens", "total-output-tokens", "thread-id", "thread-name", "task-progress"];
 export const TITLE_IDS = ["activity", "app-name", "project-name", "current-dir", "run-state", "thread-name", "git-branch", "context-remaining", "context-used", "five-hour-limit", "weekly-limit", "codex-version", "used-tokens", "total-input-tokens", "total-output-tokens", "thread-id", "model", "model-with-reasoning", "reasoning", "task-progress"];
+
+// ad's own items (P4.6): in ad's prefs (statusExtra), drawn after the engine's, so the engine's
+// UI never meets an id it doesn't know.
+export const AD_STATUS_IDS = ["account", "limits", "fallback"];
+export const DEFAULT_AD_STATUS = ["limits"];
+const usedOf = (w) => w.usedPercent ?? (w.used !== null && w.limit ? (w.used / w.limit) * 100 : null);
+const AD_ITEMS = {
+  // "OpenRouter · work"
+  account: (c) => c.accountName ?? null,
+  // The current account's window closest to running out, unless an engine item shows it.
+  limits: (c, shown) => {
+    const w = mostConstrained(c.quota);
+    if (!w || shown.has(w.window)) return null;
+    return { text: w.short, warn: w.state === "exhausted" || w.state === "limited" || (usedOf(w) ?? 0) >= 80 };
+  },
+  fallback: (c) => (c.fallback?.switches ? `\u{21aa} ${c.fallback.switches}` : c.fallback?.on ? "fallback on" : null),
+};
+
+/** ad's items with a value, in the prefs' order; after `engineSegs` (what they already show). */
+export function adSegments(ids, ctx, engineSegs = []) {
+  const shown = new Set(engineSegs.flatMap((s) => (s.id === "five-hour-limit" ? ["5h"] : s.id === "weekly-limit" ? ["week"] : [])));
+  const out = [];
+  for (const id of Array.isArray(ids) ? ids : DEFAULT_AD_STATUS) {
+    if (!AD_ITEMS[id]) continue;
+    const v = AD_ITEMS[id](ctx, shown);
+    if (v == null || v === "") continue;
+    out.push(typeof v === "object" ? { id, text: titleSafe(v.text), warn: Boolean(v.warn) } : { id, text: titleSafe(v), warn: false });
+  }
+  return out;
+}
 
 /** The ids in a setting ad can't show (upstream's others, or typos): kept in the config, listed in /warnings. */
 export function unsupported(ids, kind = "status") {

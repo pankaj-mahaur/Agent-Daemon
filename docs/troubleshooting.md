@@ -921,6 +921,12 @@ See [harness.md](harness.md#working-in-your-home-folder).
 
 **Fix:** wait for a reset (`ad fallback` shows each target's state), add a target that isn't limited, or raise a limit (`ad fallback set max-hops 4`). `/retry` tries the current model again now.
 
+## 82. Limits are blank, or "not reported by this provider"
+
+**Cause:** ad shows only what a provider told it, and drops a number once its reset passed or it is more than 6 hours old. Many API providers report nothing until a limit is hit; OpenRouter's numbers are read after a limit and on request; a ChatGPT sign-in reports through its engine, so a sign-in no window has open keeps its last numbers.
+
+**Fix:** `/usage` reads OpenRouter's numbers again. `ad auth list --refresh` does it for every OpenRouter key, and `--refresh=all` also starts each ChatGPT sign-in's engine that no window is using. A blank cell is "unknown", never "unlimited": nothing is wrong with the account.
+
 ---
 
 For harness problems, the [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill walks through login → hooks → sandbox → the engine's own log. See also [harness.md](harness.md) and, for the terminal UI, [tui.md](tui.md).

@@ -35,7 +35,8 @@ import { T } from "./view/theme.mjs";
 import { createFallbackEditor } from "./fallback-editor.mjs";
 import { createKeymap, eventSpec, keyLabel } from "./keymap.mjs";
 import { setSyntaxTheme, SYNTAX_THEMES, syntaxTheme, withSyntaxTheme } from "./view/highlight.mjs";
-import { DEFAULT_STATUS, DEFAULT_TITLE, STATUS_IDS, TITLE_IDS, canonical, contextUsedLabel, statusSegments, titleText, unsupported } from "./status.mjs";
+import { AD_STATUS_IDS, DEFAULT_AD_STATUS, DEFAULT_STATUS, DEFAULT_TITLE, STATUS_IDS, TITLE_IDS, adSegments, canonical, contextUsedLabel, statusSegments, titleText, unsupported } from "./status.mjs";
+import { agoText, limitNotices, mostConstrained, resetText, windowLong } from "../providers/quota-view.mjs";
 
 export const FORCE_QUIT_MS = 1500;
 const FRAME_MS = 33;
@@ -463,6 +464,33 @@ export function createApp({
     }
   }
 
+  // Before a limit runs out (P4.6): one notice per account, window and reset period when a
+  // reported window crosses limits.warnAt, one when it is used up. Checked at most every 3 s;
+  // the marks live in the QuotaStore, so a restart doesn't repeat them.
+  let limitsCheckedAt = -Infinity;
+  const limitsShown = new Set();
+  function reportLimits() {
+    if (!actions.quota || now() - limitsCheckedAt < 3000) return;
+    limitsCheckedAt = now();
+    const name = actions.quota.name?.();
+    const v = actions.quota.view?.();
+    if (!name || !v) return;
+    const seen = { ...(actions.quota.seen?.() ?? {}), ...Object.fromEntries([...limitsShown].map((k) => [k, true])) };
+    const due = limitNotices(v, { name, warnAt: warnAt(), seen, now: now() });
+    if (!due.length) return;
+    for (const n of due) {
+      limitsShown.add(n.key);
+      if (n.threshold === 100) {
+        commitCell(renderNotice({ level: "warn", message: n.text }, { width: width() }));
+        continue;
+      }
+      const next = actions.fallbackRun?.on?.() ? actions.fallbackRun.nextLabel?.() : null;
+      const suffix = next ? ` If it runs out, ad continues on ${next} after that turn.` : actions.accounts?.label?.() ? " /fallback can continue on another account when it runs out." : "";
+      commitCell(renderNotice({ level: "info", message: `${n.text}${suffix}` }, { width: width() }));
+    }
+    actions.quota.mark?.(due.map((n) => n.key));
+  }
+
   /* -------------------------------------------------------------- */
   /* Requests                                                        */
   /* -------------------------------------------------------------- */
@@ -570,6 +598,8 @@ export function createApp({
     if (st.held) own.push({ full: "switch pending", short: "switching" });
     const loop = actions.ad?.loop?.state;
     if (loop?.running) own.push({ full: `loop ${loop.iterations}`, short: `L${loop.iterations}` });
+    const limit = limitChip();
+    if (limit) own.push(limit);
     return renderFooter({ hints, chips: [...mode, ...chips(), ...own] }, { width: width() });
   }
 
@@ -613,10 +643,18 @@ export function createApp({
       threadName: privateMode ? null : st.thread?.name || st.thread?.preview,
       plan: st.plan,
       frame: titleFrame,
+      // ad's own items (P4.6).
+      quota: actions.quota?.view?.() ?? null,
+      accountName: actions.quota?.name?.() ?? null,
+      fallback: actions.fallbackRun?.status ? { on: Boolean(actions.fallbackRun.on?.()), switches: actions.fallbackRun.status()?.switches ?? 0 } : null,
     };
   }
+  // ad's items on the status line (P4.6): ad's prefs, or a /statusline preview's "ad:" values.
+  const adStatusIds = () => (preview.status ? preview.status.filter((v) => String(v).startsWith("ad:")).map((v) => v.slice(3)) : (settings?.ad?.get?.("statusExtra", DEFAULT_AD_STATUS) ?? DEFAULT_AD_STATUS));
   function statusRow(w) {
-    const segs = statusSegments(statusIds(), statusCtx());
+    const ctx = statusCtx();
+    const engineSegs = statusSegments(statusIds(), ctx);
+    const segs = [...engineSegs, ...adSegments(adStatusIds(), ctx, engineSegs)];
     if (!segs.length) return null;
     // Items drop from the end until the row fits; the last one left is cut.
     const sep = " \u{b7} ";
@@ -689,14 +727,20 @@ export function createApp({
     const ctx = statusCtx();
     const now_ = (id) => (isTitle ? titleText([id], ctx) : statusSegments([id], ctx)[0]?.text) || "";
     const order = [...chosen.filter((id) => all.includes(id)), ...all.filter((id) => !chosen.includes(id))];
+    // ad's own items (P4.6) come after the engine's, saved in ad's prefs, never the engine's setting.
+    const adChosen = isTitle ? [] : adStatusIds();
+    const adRows = isTitle ? [] : [...adChosen.filter((id) => AD_STATUS_IDS.includes(id)), ...AD_STATUS_IDS.filter((id) => !adChosen.includes(id))].map((id) => ({ label: `${id} (ad's item)`, hint: adSegments([id], ctx)[0]?.text ?? "", value: `ad:${id}`, checked: adChosen.includes(id) }));
     openChecklist(
       kind,
-      order.map((id) => ({ label: id, hint: now_(id), value: id, checked: chosen.includes(id) })),
-      async (values) => {
+      [...order.map((id) => ({ label: id, hint: now_(id), value: id, checked: chosen.includes(id) })), ...adRows],
+      async (all_) => {
         preview = { ...preview, [kind]: null };
+        const values = all_.filter((v) => !String(v).startsWith("ad:"));
+        const ad = all_.filter((v) => String(v).startsWith("ad:")).map((v) => v.slice(3));
         try {
           await settings.engine.set(key, [...values, ...keep]);
-          info0(`${isTitle ? "Title" : "Status line"}: ${values.length ? values.join(", ") : "off"}. Saved.`);
+          if (!isTitle) settings.ad?.set?.("statusExtra", ad);
+          info0(`${isTitle ? "Title" : "Status line"}: ${values.length || ad.length ? [...values, ...ad.map((id) => `${id} (ad)`)].join(", ") : "off"}. Saved.`);
         } catch (err) {
           fail(err);
         }
@@ -717,6 +761,7 @@ export function createApp({
     if (composer.vim?.hint && !hintTimer) hintTimer = setT(() => ((hintTimer = null), draw()), 1050);
     reportPlanUpdates();
     reportNotices();
+    reportLimits();
     reportTurns();
     syncModal();
     maybeOfferPlan();
@@ -1651,7 +1696,14 @@ export function createApp({
       case "usage": {
         const rl = await session.engine.usage.limits().catch(() => st.rateLimits);
         const usage = await session.engine.usage.read().catch(() => null);
-        return commitCell(renderUsage({ rateLimits: rl ?? st.rateLimits, usage, tokens: st.tokens }, { width: width() }));
+        // An ad account (P4.6): OpenRouter's /key now (at most every 30 s), then its windows.
+        let limits = null;
+        if (actions.quota) {
+          await actions.quota.refresh?.();
+          const v = actions.quota.view?.();
+          limits = v ? v.windows.map((w) => ({ text: windowLong(w, now()), warn: limitWarns(w) })) : null;
+        }
+        return commitCell(renderUsage({ rateLimits: rl ?? st.rateLimits, usage, tokens: st.tokens, limits }, { width: width() }));
       }
       case "image": {
         const img = imagePath(arg, cwd);
@@ -1816,6 +1868,50 @@ export function createApp({
     return s.paused ? `${head}; paused: ${s.paused.code}` : head;
   }
 
+  // /status's limits row (P4.6): every known window of the current account, the bench, when
+  // ad last heard; the engine's own window when there is no ad account.
+  function limitsRow() {
+    const v = actions.quota?.view?.();
+    const t = now();
+    if (!v) {
+      const rl = st.rateLimits?.primary;
+      return rl?.usedPercent != null ? `${Math.round(rl.usedPercent)}% of the ${rl.windowDurationMins ? `${Math.round(rl.windowDurationMins / 60)}h` : "current"} window` : null;
+    }
+    const provider = String(actions.quota.name?.() ?? "").split(" \u{b7} ")[0] || "This provider";
+    const parts = v.windows.map((w) => windowLong(w, t));
+    if (parts.length && v.observedAt) parts.push(`checked ${agoText(v.observedAt, t)}`);
+    if (v.benchedUntil) parts.push(`${provider} hit a limit; other ${provider} accounts aren't used automatically until ${resetText(v.benchedUntil, t)}`);
+    return parts.length ? parts.join(" \u{b7} ") : "not reported by this provider";
+  }
+  // A window worth the warning colour: used up, rate-limited, or at 80% and more.
+  function limitWarns(w) {
+    const used = w.usedPercent ?? (w.used !== null && w.limit ? (w.used / w.limit) * 100 : null);
+    return w.state === "exhausted" || w.state === "limited" || (used ?? 0) >= 80;
+  }
+  // ad prefs' limits.warnAt: a number (default 90) or "off".
+  function warnAt() {
+    const v = settings?.ad?.get?.("limits.warnAt", 90);
+    return v === "off" ? "off" : Number.isFinite(Number(v)) ? Number(v) : 90;
+  }
+  // The footer chip (P4.6), only when it matters: at warnAt, or used up.
+  function limitChip() {
+    const v = actions.quota?.view?.();
+    if (!v) return null;
+    const t = now();
+    const w = mostConstrained(v);
+    const out = w && (w.state === "exhausted" || w.state === "limited");
+    if (out || v.benchedUntil) {
+      const at = resetText(out ? w.resetsAt : v.benchedUntil, t);
+      const what = out && w.state === "limited" ? "rate-limited" : "limit used up";
+      return { full: `${what}${at ? ` \u{b7} resets ${at}` : ""}`, short: out && w.state === "limited" ? "limited" : "used up", style: T.warning };
+    }
+    const at_ = warnAt();
+    const used = w ? (w.usedPercent ?? (w.used !== null && w.limit ? (w.used / w.limit) * 100 : null)) : null;
+    if (at_ === "off" || used === null || used < at_) return null;
+    const at = resetText(w.resetsAt, t);
+    return { full: `limit ${Math.round(used)}%${at ? ` \u{b7} resets ${at}` : ""}`, short: `${Math.round(used)}%`, style: T.warning };
+  }
+
   function statusReport() {
     const c = st.config;
     const acct = st.account?.type ? (st.account.type === "chatgpt" ? `ChatGPT ${st.account.planType ?? ""}`.trim() : st.account.type) : st.account?.requiresOpenaiAuth ? "not signed in" : "provider key";
@@ -1830,8 +1926,8 @@ export function createApp({
       ...(actions.fallbackRun?.status?.() ? [["fallback", fallbackRow(actions.fallbackRun.status())]] : []),
       ["tokens", tokens],
     ];
-    const rl = st.rateLimits?.primary;
-    if (rl?.usedPercent != null) rows.push(["usage", `${Math.round(rl.usedPercent)}% of the ${rl.windowDurationMins ? `${Math.round(rl.windowDurationMins / 60)}h` : "current"} window`]);
+    const lim = limitsRow();
+    if (lim) rows.push(["limits", lim]);
     if (info.compat) rows.push(["engine", info.compat]);
     return [[{ text: "Status", style: T.bold }], ...rows.map(([k, v]) => truncate([{ text: `  ${k.padEnd(13)}`, style: DIM }, { text: clean(v) }], width()))];
   }

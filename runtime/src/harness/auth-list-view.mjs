@@ -1,11 +1,11 @@
 // The canonical account list (P3.8a; P4.6 adds columns, never a second layout). Pure:
 // accounts + width → lines. Grouped by provider in the registry's order, sorted by label.
 //
-//   listLines(accounts, { width, wide, defaultId, upstream, providerOrder, nameOf, now })
+//   listLines(accounts, { width, wide, defaultId, upstream, limits, providerOrder, nameOf, now })
 //
 // Columns at 80: marker (● default), label, owner (only when it differs from the label;
 // under 60 columns a dim "owner: …" suffix instead), who (masked email · plan, key …1234,
-// local), status, limits (the gateway's last limit observation). --wide or 120+ columns
+// local), status, limits (P4.6's cell from the QuotaStore, else the gateway's last 429). --wide or 120+ columns
 // add method and last use. Long values are cut with …, never wrapped.
 
 const STATUS = { ready: "ready", "needs-sign-in": "needs sign-in", error: "error", pending: "pending", disabled: "disabled", removing: "removing" };
@@ -55,7 +55,7 @@ const ago = (iso, now) => {
   return `${Math.round(s / 86_400)} d ago`;
 };
 
-export function listLines(accounts, { width = 80, wide = false, defaultId = null, upstream = () => null, providerOrder = [], nameOf = (id) => id, now = Date.now(), showEmails = false, emails = {} } = {}) {
+export function listLines(accounts, { width = 80, wide = false, defaultId = null, upstream = () => null, limits = () => "", providerOrder = [], nameOf = (id) => id, now = Date.now(), showEmails = false, emails = {} } = {}) {
   const w = Math.max(40, width);
   const showWide = wide || w >= 120;
   const narrow = w < 69;
@@ -81,7 +81,7 @@ export function listLines(accounts, { width = 80, wide = false, defaultId = null
       const status = STATUS[a.status] ?? a.status;
       let line;
       if (narrow) line = `${mark}${pad(a.label, col.label)}${pad(who, col.who)}${cut(status, col.status)}${owner ? `  owner: ${owner}` : ""}`;
-      else line = `${mark}${pad(a.label, col.label)}${pad(owner, col.owner)}${pad(who, col.who)}${pad(status, col.status)}${showWide ? `${pad(METHOD[a.method] ?? a.method, col.method)}${pad(ago(a.lastUsedAt, now), col.used)}` : ""}${cut(limitOf(upstream(a.id), now), Math.max(0, col.limits))}`;
+      else line = `${mark}${pad(a.label, col.label)}${pad(owner, col.owner)}${pad(who, col.who)}${pad(status, col.status)}${showWide ? `${pad(METHOD[a.method] ?? a.method, col.method)}${pad(ago(a.lastUsedAt, now), col.used)}` : ""}${cut(limits(a) || limitOf(upstream(a.id), now), Math.max(0, col.limits))}`;
       lines.push(cut(line.trimEnd(), w));
     }
   }
