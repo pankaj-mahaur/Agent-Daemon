@@ -433,3 +433,53 @@ test("a goal still waiting to come back keeps waiting when the next switch abort
     await until(async () => (await engine.threads.goal.get(fork))?.status === "active", "back after the first turn");
   }, { wrapTarget: (e) => intercept(e, async (o, real) => { if (failNext) throw Object.assign(new Error("no"), { reason: "engine" }); return real(o); }) });
 });
+
+// ---- P4.5 B1: the runner's policy path ----
+
+const CONTINUATION = "[ad: automatic continuation] go on";
+
+test("a policy switch shows the fallback line, queues ad's continuation first and once, recorded as ad's", async () => {
+  await withRig(async ({ session, runner, ledger, done, notices }) => {
+    await session.submit("fail-turn").done;
+    runner.request(B_FORK, { reason: "policy", fallback: { line: "\u{21aa} Switched to B: test. Fallback 1 of 3.", continuation: CONTINUATION } });
+    session.submit("after"); // queued while the switch holds
+    await until(done, "the switch");
+    // ad's continuation just answers (the fake's continuation script); "after" asks the fake's
+    // approval before completing.
+    await until(() => session.state.requests.length === 1, "the approval of the queued prompt");
+    session.resolve(session.state.requests[0].request.id, "accept");
+    await until(() => readLedger(ledger.sessionId()).some((e) => e.type === "userMessage" && e.text === "after"), "the queued prompt to run on the fork");
+    const users = readLedger(ledger.sessionId()).filter((e) => e.type === "userMessage");
+    assert.deepEqual(
+      users.filter((u) => u.via === "ad" || u.text === "after").map((u) => u.text),
+      [CONTINUATION, "after"],
+      "the continuation runs first, once",
+    );
+    assert.equal(users.filter((u) => u.text === CONTINUATION).length, 1, "the continuation queues exactly once");
+    assert.ok(users.some((u) => u.via === "ad"), "the continuation is recorded as ad's");
+    assert.equal(readLedger(ledger.sessionId()).filter((e) => e.type === "turnStarted" && e.trigger === "ad").length, 1, "its turn is ad's");
+    assert.ok(notices.some((n) => n.line && n.text === "\u{21aa} Switched to B: test. Fallback 1 of 3."), JSON.stringify(notices));
+    await runner.settled();
+    assert.deepEqual(runner.lastOutcome(), { kind: "committed", reason: "policy" });
+  });
+});
+
+test("a user switch is unchanged: COMMIT words, no continuation unless mode now", async () => {
+  await withRig(async ({ session, runner, ledger, done, notices }) => {
+    await session.submit("fail-turn").done;
+    runner.request(B_FORK, { mode: "wait" }); // the user's own words, no fallback
+    session.submit("after");
+    await until(done, "the switch");
+    await until(() => session.state.requests.length === 1, "the approval of the queued prompt");
+    session.resolve(session.state.requests[0].request.id, "accept");
+    await until(() => readLedger(ledger.sessionId()).some((e) => e.type === "userMessage" && e.text === "after"), "the queued prompt to run on the fork");
+    assert.ok(notices.some((n) => n.line && n.text === "Switched to OpenRouter · b · fake-model (you asked). History kept."), JSON.stringify(notices));
+    const ev = readLedger(ledger.sessionId());
+    const users = ev.filter((e) => e.type === "userMessage");
+    assert.ok(!users.some((u) => u.via === "ad" || (u.text ?? "").includes(CONTINUATION)), "nothing was queued for the user");
+    assert.ok(!ev.some((e) => e.type === "turnStarted" && e.trigger === "ad"), "no turn marked as ad's");
+    assert.equal(users.filter((u) => u.text === "after").length, 1);
+    await runner.settled();
+    assert.deepEqual(runner.lastOutcome(), { kind: "committed", reason: "user" });
+  });
+});

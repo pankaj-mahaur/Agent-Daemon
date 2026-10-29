@@ -803,12 +803,15 @@ export function createSession({
   }
 
   // Queued prompts run in order whenever the thread is idle (edits made in
-  // the same tick still apply).
-  function queue(input) {
-    state.queue.push({ id: randomUUID(), input: toInput(input), text: inputText(input) });
+  // the same tick still apply). An entry can go first (fallback's continuation
+  // must run before prompts already queued) and carries who wrote it (via).
+  function queue(input, { first = false, via = "queue" } = {}) {
+    const entry = { id: randomUUID(), input: toInput(input), text: inputText(input), via };
+    if (first) state.queue.unshift(entry);
+    else state.queue.push(entry);
     change("queue");
     queueMicrotask(drainQueue);
-    return state.queue.length - 1;
+    return first ? 0 : state.queue.length - 1;
   }
 
   function editQueued(index, text) {
@@ -825,7 +828,7 @@ export function createSession({
     change("queue");
     const cid = randomUUID();
     state.echoes.set(cid, next.text);
-    observe({ type: "user.message", clientId: cid, input: next.text, via: "queue" });
+    observe({ type: "user.message", clientId: cid, input: next.text, via: next.via ?? "queue" });
     startTurn(next.input, cid).accepted.catch((err) => notice("error", "turn.start", engineErrorText(err), engineErrorDetail(err)));
   }
 

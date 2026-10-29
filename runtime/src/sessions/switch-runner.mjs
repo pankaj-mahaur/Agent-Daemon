@@ -1,7 +1,7 @@
 // Runs a switch (P4.2): sessions/switch.mjs decides, this does. One per window.
 //
 //   createSwitchRunner({ session, ledger, prepare, current, checkpoint, git, notify, ask, timeouts })
-//     → { request(target, { mode, reason }), answer(choice), onEvent(ev), how(target), state() }
+//     → { request(target, { mode, reason, fallback }), answer(choice), onEvent(ev), how(target), state(), lastOutcome() }
 //
 // session: the harness session (retarget, adoptThread, useEngine, hold, interrupt, resolve,
 // state). ledger: the window's coordinator (record, unknownNonRead, rebind, markAdTurn).
@@ -30,6 +30,8 @@ export function createSwitchRunner({ session, ledger, prepare, current = () => (
   const T = { ...DEFAULT_TIMEOUTS, ...timeouts };
   let s = { state: "RUNNING" };
   let ctx = null; // this switch's working data
+  let outcome = null; // the last request's end: { kind: "committed"|"aborted", reason } (the fallback controller reads it)
+  const outcomeWaiters = []; // whenOutcome() callers: a switch ends later than its request's effects
   let work = Promise.resolve();
   let timer = null;
   let goalResume = null; // { engine, threadId, objective } once the first turn there completes
@@ -49,6 +51,12 @@ export function createSwitchRunner({ session, ledger, prepare, current = () => (
     if (s.state === "RUNNING") clearTimer();
     // Never awaited from inside an effect: the effect is part of the chain it would wait on.
     for (const e of r.effects) {
+      // The last request's ledger end (committed or aborted), known the moment it is written.
+      if (e.type === "ledger") {
+        if (e.event?.type === "switchCommitted") outcome = { kind: "committed", reason: e.event.reason ?? null };
+        else if (e.event?.type === "switchAborted") outcome = { kind: "aborted", reason: e.event.reason ?? null };
+        if (outcome) for (const w of outcomeWaiters.splice(0)) w(outcome);
+      }
       // Holding starts at once: a prompt sent right after the request must already wait.
       if (e.type === "hold" && e.on) {
         session.hold(true);
@@ -274,11 +282,18 @@ export function createSwitchRunner({ session, ledger, prepare, current = () => (
         session.markSwitched?.(ctx?.target?.label ?? "another account");
         // The goal comes back after the first completed turn there (never at once: it would start one).
         if (ctx.goal?.wasActive) goalResume = { engine: eng(), threadId: e.threadId, objective: ctx.goal.objective };
+        // A policy switch (P4.5 B1) hands the conversation over as ad's: the continuation queues first.
+        if (ctx.fallback?.continuation) {
+          ledger?.markAdTurn?.();
+          session.queue(ctx.fallback.continuation, { first: true, via: "ad" });
+        }
         // Stopped mid-turn: ad continues the work there, unless prompts already wait.
-        if (e.mode === "now" && ctx.wasRunning && !session.state.queue.length) {
+        else if (e.mode === "now" && ctx.wasRunning && !session.state.queue.length) {
           ledger?.markAdTurn?.();
           session.queue(CONTINUE_TEXT);
         }
+        // The fallback's goal objective (P4.5 B1): after the first completed turn it becomes active.
+        if (ctx.fallback?.resumeGoal && !goalResume) goalResume = { engine: eng(), threadId: e.threadId, objective: ctx.fallback.resumeGoal };
         ctx = null;
         return;
       }
@@ -306,14 +321,15 @@ export function createSwitchRunner({ session, ledger, prepare, current = () => (
       const st = session.state;
       return switchHow({ from: current(), to: target, goal: Boolean(st.goal), canDefer: Boolean(eng()?.features?.deferGoal?.available) });
     },
-    request(target, { mode = "wait", reason = "user" } = {}) {
+    request(target, { mode = "wait", reason = "user", fallback = null } = {}) {
+      outcome = null; // also for a request queued behind the last switch: never that switch's end
       if (s.state === "RUNNING" && inFlight > 0) {
         // The last switch's effects run first; prompts already wait.
         session.hold(true);
         queued++;
         work = work.then(() => {
           queued--;
-          void api.request(target, { mode, reason });
+          void api.request(target, { mode, reason, fallback });
         });
         return work;
       }
@@ -322,10 +338,15 @@ export function createSwitchRunner({ session, ledger, prepare, current = () => (
         return work;
       }
       const how = api.how(target);
-      ctx = { target, from: current(), since: now(), wasRunning: Boolean(session.state.activeTurnId) };
-      dispatch({ type: "request", target, from: ctx.from, mode, how, reason });
+      ctx = { target, from: current(), since: now(), wasRunning: Boolean(session.state.activeTurnId), fallback };
+      outcome = null;
+      dispatch({ type: "request", target, from: ctx.from, mode, how, reason, line: fallback?.line ?? null });
       return work;
     },
+    /** How the last request ended (P4.5 B1): { kind: "committed"|"aborted", reason } or null. */
+    lastOutcome: () => outcome,
+    /** Resolves when the last request commits or aborts (settled() only covers the effects queued so far). */
+    whenOutcome: () => (outcome ? Promise.resolve(outcome) : new Promise((resolve) => outcomeWaiters.push(resolve))),
     answer(choice) {
       dispatch({ type: choice === "anyway" ? "anyway" : "cancel" });
       return work;

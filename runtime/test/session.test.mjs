@@ -246,6 +246,27 @@ test("queue and editQueued: visible, editable, drained in order", async () => {
   });
 });
 
+test('a queued entry can go first and carries who wrote it: an ad entry is observed with via "ad"', async () => {
+  const seen = [];
+  await withSession(() => ({ observer: (ev) => seen.push(ev) }), async ({ session }) => {
+    // Held: nothing may drain until the release (a switch or fallback holds the queue).
+    session.hold(true);
+    session.queue("second");
+    assert.equal(session.queue("first", { first: true, via: "ad" }), 0, "an entry queued first returns index 0");
+    assert.deepEqual(session.state.queue.map((q) => q.text), ["first", "second"], "the first entry goes in front");
+    session.hold(false);
+    // The fake's plain prompts ask for approval before completing.
+    for (let i = 0; i < 2; i++) {
+      await until(() => session.state.requests.length === 1, `the approval of prompt ${i + 1}`);
+      session.resolve(session.state.requests[0].request.id, "accept");
+    }
+    await until(() => session.state.queue.length === 0 && session.state.turns.length === 2, "the queue to drain in order");
+    const users = seen.filter((e) => e.type === "user.message");
+    assert.deepEqual(users.map((u) => u.input), ["first", "second"], "observed in the run order");
+    assert.deepEqual(users.map((u) => u.via), ["ad", "queue"]);
+  });
+});
+
 test("interrupt before the engine accepted the turn interrupts it as soon as it is accepted", async () => {
   await withSession(none, async ({ session }) => {
     const s = session.submit("slow-start");

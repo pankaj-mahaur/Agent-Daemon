@@ -22,6 +22,14 @@
 //                        both with the item id "call_0" (providers that reuse ids)
 //   "resolved-elsewhere" / "revert-pending" → an approval that serverRequest/resolved
 //                        or thread/reverted ends while it is open
+//   "quota-fail" / "plan-fail" → the turn fails with the engine's quota error or its
+//                        plan-limit error (P4.5 B1: fallback classifies both)
+//   "quota-after-command" → a command completes, then the quota failure (the tool ran)
+//   "quota-command-running" → a foreground command with no end yet, then the quota failure
+//   "quota-background-running" → a background terminal still running, then the quota failure
+//   "[ad: automatic continuation] …" → answers "continued" (ad's continuation after a switch)
+//   "endless-reconnect"   → a retry notice every 100 ms until the turn is interrupted
+//                        (it then completes "interrupted", as a turn that keeps retrying)
 //   (outputSchema)    → final agent message is JSON `{"answer":42}`
 //   anything else     → "po"+"ng", an `error` notification, a command
 //                        approval, then "[<decision>]"
@@ -37,6 +45,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { checkRequest } from "./protocol-check.mjs";
+import { ENGINE } from "../src/engine/attribution.mjs";
 
 const notifications = [];
 const lastParams = {};
@@ -174,6 +183,10 @@ const agentMessage = (threadId, turnId, text) => {
   recordItem(threadId, turnId, item);
   notify("item/completed", { threadId, turnId, item });
 };
+// The real engine's texts for the P4.5 fallback scenarios, built from attribution like tests do
+// (this file is brand-linted; the emitted bytes stay what the engine sends).
+const QUOTA_MESSAGE = "Quota exceeded. Check your plan and billing details.";
+const PLAN_MESSAGE = `To use ${ENGINE.name} with your ChatGPT plan, upgrade to Plus: https://chatgpt.com/explore/plus.`;
 const complete = (threadId, turn, extra = {}) => {
   const done = { ...turn, status: "completed", ...extra };
   const t = turnsOf(threadId).find((x) => x.id === turn.id);
@@ -251,6 +264,41 @@ async function runScriptedTurn(threadId, turn, params) {
     return complete(threadId, turn);
   }
   if (text === "fail-turn") return complete(threadId, turn, { status: "failed", error: { message: process.env.FAKE_TURN_ERROR ?? "model refused" } });
+  // P4.5 fallback scenarios: the same shapes the real engine sends, quoted as it sends them.
+  // ad's own continuation after a fallback switch: the model just answers.
+  if (text.startsWith("[ad: automatic continuation]")) {
+    // FAKE_CONTINUATION_FAIL=1: the target runs out too (one fallback episode, several hops).
+    if (process.env.FAKE_CONTINUATION_FAIL === "1") return complete(threadId, turn, { status: "failed", error: { message: QUOTA_MESSAGE, codexErrorInfo: "usageLimitExceeded" } });
+    agentMessage(threadId, turn.id, "continued");
+    return complete(threadId, turn);
+  }
+  if (text === "quota-fail") return complete(threadId, turn, { status: "failed", error: { message: QUOTA_MESSAGE, codexErrorInfo: "usageLimitExceeded" } });
+  if (text === "plan-fail") return complete(threadId, turn, { status: "failed", error: { message: PLAN_MESSAGE, codexErrorInfo: "usageLimitExceeded" } });
+  if (text === "quota-after-command") {
+    const item = { type: "commandExecution", id: "call_0", command: "echo done", cwd: process.cwd(), processId: "9002", source: "unifiedExecStartup", status: "inProgress", commandActions: [{ type: "unknown", command: "echo done" }], aggregatedOutput: null, exitCode: null, durationMs: null };
+    notify("item/started", { threadId, turnId: turn.id, item });
+    notify("item/completed", { threadId, turnId: turn.id, item: { ...item, status: "completed", exitCode: 0, aggregatedOutput: "done\n", durationMs: 10 } });
+    return complete(threadId, turn, { status: "failed", error: { message: QUOTA_MESSAGE, codexErrorInfo: "usageLimitExceeded" } });
+  }
+  if (text === "quota-command-running") {
+    // A foreground command whose end never comes: its state is uncertain at the boundary.
+    notify("item/started", { threadId, turnId: turn.id, item: { type: "commandExecution", id: "call_0", command: "npm run deploy", cwd: process.cwd(), source: "appServer", status: "inProgress", commandActions: [{ type: "unknown", command: "npm run deploy" }], aggregatedOutput: null, exitCode: null, durationMs: null } });
+    return complete(threadId, turn, { status: "failed", error: { message: QUOTA_MESSAGE, codexErrorInfo: "usageLimitExceeded" } });
+  }
+  if (text === "quota-background-running") {
+    // A background terminal (unified exec) still running when the turn fails.
+    notify("item/started", { threadId, turnId: turn.id, item: { type: "commandExecution", id: "call_1", command: "./migrate.sh", cwd: process.cwd(), processId: "9004", source: "unifiedExecStartup", status: "inProgress", commandActions: [{ type: "unknown", command: "./migrate.sh" }], aggregatedOutput: null, exitCode: null, durationMs: null } });
+    return complete(threadId, turn, { status: "failed", error: { message: QUOTA_MESSAGE, codexErrorInfo: "usageLimitExceeded" } });
+  }
+  if (text === "endless-reconnect") {
+    // A provider that never answers: a retry notice every 100 ms until the turn is interrupted.
+    const t = setInterval(() => {
+      if (!hung.has(turn.id)) return clearInterval(t); // interrupted: stop the noise
+      notify("error", { threadId, turnId: turn.id, error: { message: "Reconnecting... 1/5" }, willRetry: true });
+    }, 100);
+    t.unref?.();
+    return hung.set(turn.id, { threadId, turn });
+  }
   if (params.outputSchema?.properties?.summary) {
     // Codex's /recap schema: FAKE_RECAP sets the answer ("slow:" first waits a while).
     const env = process.env.FAKE_RECAP ?? "";

@@ -85,7 +85,7 @@ function quiesce(s) {
 export function step(s, ev) {
   if (ev.type === "request") {
     if (ACTIVE.has(s.state)) return { state: s, effects: [{ type: "notice", level: "info", text: SWITCH_TEXTS.BUSY }] };
-    const next = { state: "QUIESCING", mode: ev.mode ?? "wait", target: ev.target, from: ev.from ?? null, how: ev.how, reason: ev.reason ?? "user", restarts: 0, anyway: false };
+    const next = { state: "QUIESCING", mode: ev.mode ?? "wait", target: ev.target, from: ev.from ?? null, how: ev.how, reason: ev.reason ?? "user", line: ev.line ?? null, restarts: 0, anyway: false };
     return {
       state: next,
       effects: [
@@ -126,7 +126,8 @@ export function step(s, ev) {
             { type: "commit", how: s.how, threadId: ev.threadId, mode: s.mode },
             { type: "ledger", event: { type: "switchCommitted", target: s.target?.key ?? null, how: s.how, threadId: ev.threadId ?? null, reason: s.reason } },
             { type: "hold", on: false },
-            { type: "notice", level: "info", line: true, text: SWITCH_TEXTS.COMMIT(s.target?.label ?? "the new target", s.reason === "user" ? "you asked" : s.reason, history) },
+            // A policy switch (P4.5 B1) says its own line; the user's switch keeps the COMMIT words.
+            { type: "notice", level: "info", line: true, text: s.line ?? SWITCH_TEXTS.COMMIT(s.target?.label ?? "the new target", s.reason === "user" ? "you asked" : s.reason, history) },
           ],
         };
       }
