@@ -337,6 +337,23 @@ ad state verify ~/ad.adstate          # reads it the way import does; changes no
 - **Safe while ad runs.** The database is copied from a consistent snapshot; nothing of yours is changed. The command refuses to run from an agent's own shell.
 - **Not encrypted.** The file holds your memory and history as plain text: keep it on your own disk or a USB drive, not a shared or synced folder.
 
+On the new computer:
+
+```bash
+ad state import ~/ad.adstate --dry-run          # the plan: where each project goes, what conflicts, nothing written
+ad state import ~/ad.adstate --map app=~/code/app
+ad review --import <importId>                   # accept or reject what came in (--accept-all: everything not held back)
+ad state verify --import <importId>             # counts, the database's integrity, and recall of known lessons
+ad state rollback <importId>                    # undo that import's own writes
+ad state imports                                # every import and its state
+```
+
+- **Where projects go.** A project lands where you map it (`--map <name>=<dir>`), where the same project already lives here, or in the one clone whose git remote matches (`--search <dir>` looks further). One not mapped keeps its memory (searchable by its id) and its files wait under `~/.agent-daemon/imports/<id>/unmapped/`.
+- **Nothing is trusted blindly.** A bundle with names that could leave ad's folders, a database with parts ad didn't make (a trigger, a view, an extra column) or rows of a project it doesn't declare is refused before anything is written. Lessons and facts come in as *pending*: searchable in their project, marked unreviewed, never put into a session until `ad review --import` accepts them (in your own terminal, typing the import id). A memory file that reads like an instruction, or holds something shaped like a key, is held back (`--accept-held` places it).
+- **Your work wins by default.** A file that differs from yours stops the import before any write (`--on-conflict keep-mine`, `take-theirs` or `keep-both`, which writes `<name>.imported-<date>` beside yours). Accounts merge by id (yours keep their sign-in; new ones need one), schedules come in switched off, journals gain only the lines they don't have.
+- **Safe to stop.** Each step is journaled: after a crash, any `ad state` command says so, and `ad state import --resume <id>` finishes it. `ad state rollback <id>` removes exactly what the import wrote; a file you changed since, or a session your newer memory points at, is kept and listed.
+- **A dual boot.** Use one checkout per OS, and `--on-conflict keep-both` for repeated moves between the two.
+
 ## Memory, hooks and skills inside the harness
 
 Every harness run gets the same daemon features as a Claude Code session:

@@ -113,11 +113,13 @@ function parsePax(buf) {
   return out;
 }
 
-export function readArchive(buffer) {
+// maxBytes: the most the bundle may unpack to (import caps it; a gzip bomb stops here).
+export function readArchive(buffer, { maxBytes = 8 * 2 ** 30 } = {}) {
   let tar;
   try {
-    tar = gunzipSync(buffer);
+    tar = gunzipSync(buffer, { maxOutputLength: Math.min(maxBytes, 2 ** 31 - 1) });
   } catch (e) {
+    if (e.code === "ERR_BUFFER_TOO_LARGE" || /maxOutputLength|larger than/i.test(e.message)) throw new ArchiveError(`the bundle unpacks to more than ${maxBytes} bytes`);
     throw new ArchiveError(`the bundle isn't a complete gzip file (${e.code ?? e.message})`);
   }
   const out = [];

@@ -11,6 +11,12 @@ ad state export --out <file.adstate> [--project <dir>]... [--all-projects] [--in
     Writes one bundle. Default: the current folder's project only.
 ad state verify <file.adstate>
     Reads a bundle the way import does and reports problems. Changes nothing.
+ad state import <file.adstate> [--dry-run] [--map <project>=<dir>]... [--search <dir>]... [--on-conflict refuse|keep-mine|take-theirs|keep-both] [--accept-held]
+    Brings a bundle in: memory arrives for review (ad review --import <id>), settings merge, nothing is overwritten unless you say so.
+ad state import --resume <importId>   finish an interrupted import
+ad state imports                      list imports and their state
+ad state rollback <importId>          undo an import's own writes
+ad state verify --import <importId>   counts, integrity and recall on this computer
 `;
 
 function parse(args) {
@@ -26,6 +32,14 @@ function parse(args) {
       redact: { type: "boolean" },
       json: { type: "boolean" },
       help: { type: "boolean", short: "h" },
+      map: { type: "string", multiple: true },
+      search: { type: "string", multiple: true },
+      "dry-run": { type: "boolean" },
+      "on-conflict": { type: "string" },
+      "accept-held": { type: "boolean" },
+      "force-tracked": { type: "boolean" },
+      resume: { type: "string" },
+      import: { type: "string" },
     },
   });
 }
@@ -40,7 +54,10 @@ export async function cmdState(args, { out = process.stdout, err = process.stder
   }
   const [sub, file] = p.positionals;
   const o = { dirs: p.values.project ?? [], allProjects: Boolean(p.values["all-projects"]), include: p.values.include ?? [], exclude: p.values.exclude ?? [], cwd, env };
-  if (p.values.help || !sub) {
+  const imp = await import("./import.mjs");
+  // An interrupted import is said by every ad state command.
+  for (const line of imp.interruptedNotice({ env })) if (sub !== "rollback" && !p.values.resume) err.write(`${line}\n`);
+  if (p.values.help || (!sub && !p.values.resume)) {
     out.write(STATE_HELP);
     return sub ? 0 : 1;
   }
@@ -71,6 +88,53 @@ export async function cmdState(args, { out = process.stdout, err = process.stder
       out.write(`${exportSummary(r)}\n`);
       return 0;
     }
+    if (sub === "import" || p.values.resume) {
+      if (p.values.resume) {
+        const r = await imp.resumeImport(p.values.resume, { env });
+        out.write(`Import ${p.values.resume}: ${r.status}.\n`);
+        return r.status === "complete" ? 0 : 1;
+      }
+      if (!file) {
+        err.write("Usage: ad state import <file.adstate> [--dry-run] [--map <project>=<dir>]...\n");
+        return 2;
+      }
+      const maps = (p.values.map ?? []).map((m) => {
+        const i = m.indexOf("=");
+        return { key: m.slice(0, i), dir: m.slice(i + 1) };
+      });
+      const plan = await imp.planImport({ file, maps, search: p.values.search ?? [], onConflict: p.values["on-conflict"] ?? "refuse", acceptHeld: Boolean(p.values["accept-held"]), forceTracked: Boolean(p.values["force-tracked"]), env });
+      out.write(`${imp.planText(plan, { dryRun: Boolean(p.values["dry-run"]) })}\n`);
+      if (p.values["dry-run"]) {
+        fs.rmSync(plan.dir, { recursive: true, force: true });
+        return 0;
+      }
+      const r = await imp.runImport(plan, { env });
+      out.write(`Imported (${r.importId}). Next: ad review --import ${r.importId} · sign in to each account · run ad init in each project · switch on the schedules you want. Undo: ad state rollback ${r.importId}\n`);
+      return 0;
+    }
+    if (sub === "imports") {
+      const list = imp.listImports({ env });
+      if (!list.length) out.write("No imports yet.\n");
+      for (const i of list) out.write(`${i.importId}  ${i.status.padEnd(11)} ${String(i.createdAt).slice(0, 16)}  from ${i.exportId}\n`);
+      return 0;
+    }
+    if (sub === "rollback") {
+      if (!file) {
+        err.write("Usage: ad state rollback <importId>\n");
+        return 2;
+      }
+      const r = await imp.rollbackImport(file, { env });
+      out.write(`Rolled back ${file}.${r.kept.length ? ` Kept (changed since, or used by newer memory):
+${r.kept.map((k) => `  ${k}`).join("\n")}` : ""}\n`);
+      return 0;
+    }
+    if (sub === "verify" && p.values.import) {
+      const v = await imp.verifyImport(p.values.import, { env });
+      out.write(`Import ${p.values.import}: ${v.status} · database ${v.integrity}\n`);
+      for (const [t, n] of Object.entries(v.landed)) out.write(`  ${t}: ${n} row(s) came in\n`);
+      for (const r of v.recall) out.write(`Recall: ${r.found}/${r.of} lessons found in ${r.project}\n`);
+      return v.integrity === "ok" && v.recall.every((r) => r.found === r.of) ? 0 : 1;
+    }
     if (sub === "verify") {
       if (!file) {
         err.write("Usage: ad state verify <file.adstate>\n");
@@ -88,6 +152,7 @@ export async function cmdState(args, { out = process.stdout, err = process.stder
     err.write(`ad state: unknown command ${sub}\n${STATE_HELP}`);
     return 2;
   } catch (e) {
+    if (e.problems?.length > 1) for (const x of e.problems.slice(1)) err.write(`  also: ${x}\n`);
     if (e.code === "EXPORT_SECRETS") {
       for (const h of e.hits) err.write(`  ${h.where}: looks like ${h.kind}\n`);
     }
@@ -159,3 +224,19 @@ export async function cmdMemoryRedact(ref, { out = process.stdout, err = process
 }
 
 export { EXPORT_TEXTS };
+
+/** ad review --import <id> [--accept-all] (P7.3). */
+export async function cmdReviewImport(importId, { acceptAll = false, out = process.stdout, err = process.stderr, env = process.env } = {}) {
+  const { reviewImport } = await import("./import.mjs");
+  const { createInterface } = await import("node:readline/promises");
+  const rl = process.stdin.isTTY ? createInterface({ input: process.stdin, output: process.stdout }) : null;
+  try {
+    await reviewImport(importId, { acceptAll, env, out, ask: (q) => rl?.question(q) ?? Promise.resolve("") });
+    return 0;
+  } catch (e) {
+    err.write(`${e.message}\n`);
+    return e.exitCode ?? 1;
+  } finally {
+    rl?.close();
+  }
+}

@@ -2497,6 +2497,7 @@ async function main(argv) {
         "allow-home-folder": { type: "boolean" },
         accept:           { type: "string" },
         "accept-all":     { type: "boolean" },
+        import:       { type: "string" },
         global:           { type: "boolean" },
         share:            { type: "boolean" },
         reject:           { type: "string" },
@@ -2564,7 +2565,9 @@ async function main(argv) {
     case "checkpoint":     return cmdCheckpoint(opts);
     case "init":           return cmdInit({ ...opts, profile: parsed.values.profile, plan: parsed.values.plan, skillsMode: parsed.values["skills-mode"] });
     case "status":         return cmdStatus(opts);
-    case "review":         return cmdReview({ ...opts, accept: parsed.values.accept, acceptAll: parsed.values["accept-all"] || false, global: parsed.values.global || false, yes: parsed.values.yes || false, reject: parsed.values.reject, list: parsed.values.list || false });
+    // ad review --import <id> (P7.3): imported lessons and facts, under the same gate.
+    case "review":         if (parsed.values.import) return (await import("./portability/state-cli.mjs")).cmdReviewImport(parsed.values.import, { acceptAll: Boolean(parsed.values["accept-all"]) });
+                           return cmdReview({ ...opts, accept: parsed.values.accept, acceptAll: parsed.values["accept-all"] || false, global: parsed.values.global || false, yes: parsed.values.yes || false, reject: parsed.values.reject, list: parsed.values.list || false });
     case "watch":          return cmdWatch({ ...opts, logFile: parsed.values["log-file"] });
     case "query-retrieve": return cmdQueryRetrieve(opts);
     case "memory":

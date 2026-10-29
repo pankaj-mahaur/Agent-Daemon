@@ -921,6 +921,16 @@ See [harness.md](harness.md#working-in-your-home-folder).
 
 **Fix:** wait for a reset (`ad fallback` shows each target's state), add a target that isn't limited, or raise a limit (`ad fallback set max-hops 4`). `/retry` tries the current model again now.
 
+## 85. An import was refused, interrupted, or held something back
+
+**Cause and fix, by what ad said:**
+- *"Import refused: …"*: the bundle has a name that could leave ad's folders, a file that doesn't match its manifest, a database with parts ad didn't make, or rows of a project it doesn't declare. Nothing was written. Export it again with this ad (`ad state export`), and import only bundles you made.
+- *"This bundle was made by a newer ad"*: update ad here, then import again.
+- *"An import was interrupted (imp_…)"*: finish it with `ad state import --resume imp_…`, or undo it with `ad state rollback imp_…`.
+- *"held back: …"*: a memory file read like an instruction or held something shaped like a key. It waits under `~/.agent-daemon/imports/<id>/held/`; read it, then import again with `--accept-held` if it's fine.
+- *"not mapped"*: ad couldn't tell where a project lives here. Its memory came in (searchable by its id); map it with `ad state import <file> --map <name>=<dir>`.
+- *"… is a link. ad won't write through it."*: that project's `.agent-daemon` points somewhere else. Replace the link with a real folder, then import again.
+
 ## 84. "Export stopped: … look like keys", or a name can't go into a bundle
 
 **Cause:** `ad state export` found text shaped like a key (an API key, a token) in what it would export, or a file whose name another OS can't create (`aux.md`, two names that differ only by case, a name ending in a dot). It lists each one: the row (`learnings #812 (text)`) or the file, never the key itself.
