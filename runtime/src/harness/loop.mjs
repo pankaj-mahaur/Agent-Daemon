@@ -26,6 +26,7 @@ import { launchHarness } from "./engines.mjs";
 import { createCoordinator, ledgerEnabled, ledgerHome, ledgerTarget, recordEngineThread } from "../sessions/coordinator.mjs";
 import { classifyTurnFailure } from "./gateway-runtime.mjs";
 import { UNATTENDED_ENV, UNATTENDED_SANDBOX_POLICY, unattendedThreadConfig } from "./unattended.mjs";
+import { createUnattendedRun, fallbackOptIn, UNATTENDED_TEXTS } from "./unattended-run.mjs";
 
 export const LOOP_DEFAULTS = {
   maxIterations: 20,
@@ -73,7 +74,9 @@ export function loopDecision(history, { limits = LOOP_DEFAULTS, elapsedMs = 0, s
   if (limits.maxMinutes && elapsedMs >= limits.maxMinutes * 60_000) return { stop: true, reason: `time limit (${limits.maxMinutes} min)` };
   if (limits.maxTokens && spentTokens >= limits.maxTokens) return { stop: true, reason: `token budget (${limits.maxTokens})` };
 
-  const tail = (n) => (history.length >= n ? history.slice(-n) : null);
+  // A turn fallback moved to another model (P4.7) is neither a failure nor the same error.
+  const counted = history.filter((h) => h.turnStatus !== "switched");
+  const tail = (n) => (counted.length >= n ? counted.slice(-n) : null);
   const failed = tail(limits.failedTurnLimit);
   if (failed?.every((h) => h.turnStatus !== "completed")) return { stop: true, reason: `${limits.failedTurnLimit} failed turns in a row` };
 
@@ -99,7 +102,7 @@ export function nextPrompt(objective, last) {
   if (!last) return objective?.trim() ? `Objective:\n${objective}` : "Continue working toward this thread's goal.";
   const s = last.status;
   const note = s ? `Last status — progress: ${s.progress || "(none)"}; next: ${s.next || "(unspecified)"}.` : "Your last reply had no LOOP_STATUS line; include one this time.";
-  const err = last.turnStatus !== "completed" ? ` The last turn ended as ${last.turnStatus}${last.error ? ` (${last.error})` : ""}.` : "";
+  const err = last.turnStatus === "switched" ? ` You're now on ${last.switchedTo ?? "another model"} after ${last.switchReason ?? "a limit"}.` : last.turnStatus !== "completed" ? ` The last turn ended as ${last.turnStatus}${last.error ? ` (${last.error})` : ""}.` : "";
   return `Continue toward the objective.${err} ${note}\n${goal}`;
 }
 
@@ -119,6 +122,18 @@ export async function cmdLoop(objective, opts = {}) {
   if (stopRequested()) {
     err.write(`ad loop: a STOP file exists (${stopFiles(cwd, home).join(" or ")}); remove it to start.\n`);
     return 1;
+  }
+  // --fallback (P4.7): the loop may continue on the next model in your order.
+  if (opts.fallback) {
+    const env = opts.env ?? process.env;
+    // A scheduled child uses its job's grant, made in a terminal (P4.7).
+    const { jobGrantsFallback } = await import("./schedule.mjs");
+    const ok = fallbackOptIn({ command: "ad loop", env, grantedElsewhere: jobGrantsFallback(env, opts.userHome) });
+    if (!ok.ok) {
+      err.write(`${ok.text}\n`);
+      return ok.code;
+    }
+    if (ok.on) return loopWithFallback(objective, { ...opts, env, out, err, cwd, userHome: home, limits, stopRequested });
   }
 
   let engine;
@@ -272,4 +287,119 @@ function usageLast(u) {
 
 function pickDefined(o) {
   return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== null && !Number.isNaN(v)));
+}
+
+/**
+ * ad loop --fallback (P4.7): the same loop through the headless fallback runner. A turn that
+ * fallback moved to another model is logged "switched" and never counts toward the failure
+ * brakes; the next prompt says where the loop is now. A pause stops the loop (exit 4). Every
+ * thread, a switch's continuation included, keeps the loop's own settings (LOOP_PROTOCOL,
+ * approval never, workspace-write, the unattended config); the token budget sums every model.
+ */
+async function loopWithFallback(objective, o) {
+  // userHome: where the STOP file lives; o.home is an engine home a caller chose (launchHarness's).
+  const { out, err, cwd, userHome, limits, stopRequested, env } = o;
+  const started = await launchHarness({ cwd, account: o.account, model: o.model, effort: o.effort, home: o.home, command: o.command, clientVersion: o.clientVersion, store: o.store, platform: o.platform, err, requireSandbox: true, env: UNATTENDED_ENV, allowHomeFolder: o.allowHomeFolder === true, homePolicy: "grace" });
+  if (!started.engine) {
+    err.write(started.error + "\n");
+    return started.code;
+  }
+  let run = null;
+  let goalSet = false;
+  let fileChanges = 0;
+  let commands = 0;
+  let spent = 0;
+  try {
+    const { createTuiAccounts } = await import("../tui/accounts.mjs");
+    const { createSecretStore } = await import("../auth/secrets.mjs");
+    run = createUnattendedRun({
+      started,
+      cwd,
+      origin: env.AD_SCHEDULE_JOB ? "schedule" : "loop",
+      adRoot: o.adRoot,
+      env,
+      err,
+      threadOpts: { sandbox: "workspace-write", approvalPolicy: "never", developerInstructions: LOOP_PROTOCOL, config: await unattendedThreadConfig(started.engine) },
+      turnOpts: { sandboxPolicy: UNATTENDED_SANDBOX_POLICY, ...(started.params?.effort ? { effort: started.params.effort } : {}) },
+      accounts:
+        o.accountsFor ??
+        ((session) => createTuiAccounts({ session, store: o.store ?? createSecretStore(), clientVersion: o.clientVersion, launch: (a) => launchHarness({ cwd, account: a.id, command: o.command, clientVersion: o.clientVersion, store: o.store, err, requireSandbox: true, env: UNATTENDED_ENV, homePolicy: "grace", allowHomeFolder: o.allowHomeFolder === true }) })),
+      onEvent: (ev) => {
+        if (ev.type === "item.completed" && ev.item?.kind === "fileChange") fileChanges += ev.item.changes?.length || 1;
+        else if (ev.type === "item.completed" && ev.item?.kind === "commandExecution") commands++;
+        else if (ev.type === "thread.tokens") spent += ev.usage?.last?.total ?? 0;
+      },
+      deps: o.fallbackDeps ?? {},
+    });
+    const s = run.session;
+    if (o.resume) await s.resume(o.resume);
+    else await s.startThread();
+    const threadId = s.state.thread.id;
+    if (objective?.trim()) {
+      await started.engine
+        .setGoal(threadId, objective, limits.maxTokens ? { tokenBudget: limits.maxTokens } : {})
+        .then(() => (goalSet = true))
+        .catch((e) => err.write("[loop] could not set thread goal\n" + cliErrorLines("loop", e)));
+    }
+    // One log per loop, whatever model it moves to.
+    const logDir = path.join(cwd, ".agent-daemon", "loops");
+    mkdirSync(logDir, { recursive: true });
+    const logFile = path.join(logDir, `${threadId}.jsonl`);
+    const log = (o2) => appendFileSync(logFile, JSON.stringify({ ts: new Date().toISOString(), ...o2 }) + "\n");
+    out.write(`ad loop — thread ${threadId} (fallback on)\nlog: ${logFile}\nstop anytime: create ${stopFiles(cwd, userHome)[0]}\n`);
+    const t0 = Date.now();
+    const history = [];
+    let decision = { stop: false };
+    while (!decision.stop) {
+      const i = history.length + 1;
+      const text = nextPrompt(objective, history.at(-1));
+      const f0 = run.fallback().length;
+      const [fc0, c0, s0] = [fileChanges, commands, spent];
+      // The STOP file and the wall clock, during the turn too.
+      const poll = setInterval(() => {
+        const overTime = limits.maxMinutes && Date.now() - t0 >= limits.maxMinutes * 60_000;
+        if ((stopRequested() || overTime) && s.state.activeTurnId) s.interrupt().catch(() => {});
+      }, 2000);
+      let r;
+      try {
+        r = await run.turn(text, { via: i === 1 && objective?.trim() ? "submit" : "ad" });
+      } finally {
+        clearInterval(poll);
+      }
+      const moved = run.fallback().slice(f0);
+      for (const e of moved) log({ type: "fallback", event: e.type, text: e.text, reason: e.reason ?? null, sessionId: r.sessionId, threadId: s.state.thread?.id ?? null });
+      const switched = moved.some((e) => e.type === "switched");
+      const record = {
+        turnStatus: r.status === "completed" && switched ? "switched" : r.status,
+        status: parseLoopStatus(r.output),
+        error: r.error?.message ?? null,
+        fileChanges: fileChanges - fc0,
+        commands: commands - c0,
+        tokens: spent - s0,
+        ...(switched ? { switchedTo: r.target ? `${r.target.account}${r.target.model ? ` \u{b7} ${r.target.model}` : ""}` : null, switchReason: moved.find((e) => e.type === "switched")?.text?.split(": ").slice(1).join(": ").replace(/\. Fallback \d+ of \d+\.$/, "") ?? null } : {}),
+      };
+      history.push(record);
+      log({ iteration: i, ...record });
+      out.write(`[${i}] ${record.turnStatus}${record.status ? ` — ${record.status.progress}` : " — (no LOOP_STATUS)"}${record.fileChanges ? ` [${record.fileChanges} file change(s)]` : ""}\n`);
+      if (r.status === "paused") {
+        out.write(`ad loop stopped: paused: ${r.reason} (${history.length} iteration(s), ~${spent} tokens).\n`);
+        err.write(`${UNATTENDED_TEXTS.PAUSED(r.reason, r.sessionId)}\n`);
+        return 4;
+      }
+      // A switched turn's success is its own: done + exit_signal still ends the loop.
+      const forBrakes = record.turnStatus === "switched" && record.status?.done && record.status.exitSignal ? [...history.slice(0, -1), { ...record, turnStatus: "completed" }] : history;
+      decision = loopDecision(forBrakes, { limits, elapsedMs: Date.now() - t0, spentTokens: spent, stopRequested: stopRequested() });
+    }
+    out.write(`ad loop stopped: ${decision.reason} (${history.length} iteration(s), ~${spent} tokens). Resume: ad loop --fallback --resume ${run.session.state.thread?.id ?? threadId}\n`);
+    return decision.success ? 0 : 3;
+  } catch (e) {
+    err.write(cliErrorLines("loop", e));
+    return 1;
+  } finally {
+    // The goal lives on the thread the loop ended on (a switch moved it there, paused).
+    const tid = run?.session.state.thread?.id;
+    if (goalSet && tid) await (run.session.engine ?? started.engine).clearGoal(tid).catch(() => {});
+    await run?.close();
+    await started.release?.();
+  }
 }

@@ -59,6 +59,7 @@ let turnSeq = 0;
 // restarted engine must not reuse the crashed one's turn and item ids.
 const RUN = process.pid.toString(36);
 const loopTurns = new Map();
+let loopQuotaDone = false; // LOOPTEST-QUOTA-FIRST: only the first such turn of the process fails
 const hung = new Map(); // "hang" turns, completed as interrupted by turn/interrupt
 let tokensUsed = 0;
 const awaiting = new Map();
@@ -317,6 +318,15 @@ async function runScriptedTurn(threadId, turn, params) {
     agentMessage(threadId, turn.id, '{"answer":42}');
     return complete(threadId, turn);
   }
+  // `ad loop --fallback` scripts (P4.7): a quota error on the first turn, or a pause.
+  if (/LOOPTEST-QUOTA-FIRST/.test(text) && !loopQuotaDone) {
+    loopQuotaDone = true;
+    return complete(threadId, turn, { status: "failed", error: { message: QUOTA_MESSAGE, codexErrorInfo: "usageLimitExceeded" } });
+  }
+  if (/LOOPTEST-PAUSE/.test(text)) {
+    notify("item/started", { threadId, turnId: turn.id, item: { type: "commandExecution", id: "call_0", command: "npm run deploy", cwd: process.cwd(), source: "appServer", status: "inProgress", commandActions: [{ type: "unknown", command: "npm run deploy" }], aggregatedOutput: null, exitCode: null, durationMs: null } });
+    return complete(threadId, turn, { status: "failed", error: { message: QUOTA_MESSAGE, codexErrorInfo: "usageLimitExceeded" } });
+  }
   // `ad loop` scripts: the objective text carries the scenario name.
   if (/LOOPTEST-/.test(text)) {
     const n = (loopTurns.get(threadId) ?? 0) + 1;
@@ -327,6 +337,9 @@ async function runScriptedTurn(threadId, turn, params) {
     if (/LOOPTEST-DONE-AFTER-2/.test(text)) {
       if (n < 2) notify("item/completed", { threadId, turnId: turn.id, item: { type: "fileChange", id: `fc-${n}`, changes: [{ path: "a.js" }] } });
       status = n >= 2 ? { done: true, exit_signal: true, progress: "all done" } : { done: false, exit_signal: false, progress: `step ${n}` };
+    } else if (/LOOPTEST-QUOTA-FIRST/.test(text)) {
+      notify("item/completed", { threadId, turnId: turn.id, item: { type: "fileChange", id: `fc-q${n}`, changes: [{ path: "a.js" }] } });
+      status = { done: true, exit_signal: true, progress: "done after the switch" };
     } else if (/LOOPTEST-CLAIMS-DONE/.test(text)) {
       notify("item/completed", { threadId, turnId: turn.id, item: { type: "fileChange", id: `fc-${n}`, changes: [{ path: "a.js" }] } });
       status = { done: true, exit_signal: false, progress: `claims done ${n}` };

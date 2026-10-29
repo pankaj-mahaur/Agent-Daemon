@@ -80,6 +80,14 @@ export function engineErrorText(err, { details = "/warnings" } = {}) {
   }
 }
 
+/**
+ * A turn's error as turn() returns it (the engine's own field names) → the shape the failure
+ * classifier reads ({ message, info }), as the session's events already give it. null for none.
+ */
+export function turnErrorOf(e) {
+  return e ? { message: String(e.message ?? ""), info: e.codexErrorInfo ?? e.info ?? null } : null;
+}
+
 /** The engine's raw text for an error, or null: unmodified but for secrets (P3.3 redactor). */
 export function engineErrorDetail(err) {
   if (!isEngineError(err)) return null;

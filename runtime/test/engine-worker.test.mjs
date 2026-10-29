@@ -171,3 +171,29 @@ test("the running-agent limit counts agents across processes, dropping stale ent
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("P4.7: a paused worker reaches the team board as blocked with its reason; the team's fallback setting reaches the worker", async () => {
+  const { spawnAgent } = await import("../src/orchestration/spawn.mjs");
+  const { createTeam, setTeamFallback } = await import("../src/orchestration/team.mjs");
+  const root = mkdtempSync(join(tmpdir(), "ad-spawn-paused-"));
+  const prevHome = process.env.HOME;
+  const prevProfile = process.env.USERPROFILE;
+  process.env.HOME = process.env.USERPROFILE = root;
+  try {
+    const team = await createTeam({ description: "paused worker" });
+    await setTeamFallback(team.id, true);
+    const seen = [];
+    const r = await spawnAgent({ teamId: team.id, role: "coder", task: "x", cwd: root, worktree: false, runWorker: async (args) => (seen.push(args), { ok: false, status: "paused", reason: "no other target", error: "paused: no other target" }) });
+    assert.equal(r.ok, false);
+    assert.equal(seen[0].fallback, true, "the team's setting");
+    const { readFileSync } = await import("node:fs");
+    const agents = JSON.parse(readFileSync(join(root, ".agent-daemon", "teams", team.id, "agents.json"), "utf8"));
+    const a = agents.find((x) => x.role === "coder") ?? agents[0];
+    assert.equal(a.status, "blocked");
+    assert.equal(a.error, "paused: no other target");
+  } finally {
+    process.env.HOME = prevHome;
+    process.env.USERPROFILE = prevProfile;
+    rmSync(root, { recursive: true, force: true });
+  }
+});

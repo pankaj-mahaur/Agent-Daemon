@@ -921,6 +921,12 @@ See [harness.md](harness.md#working-in-your-home-folder).
 
 **Fix:** wait for a reset (`ad fallback` shows each target's state), add a target that isn't limited, or raise a limit (`ad fallback set max-hops 4`). `/retry` tries the current model again now.
 
+## 83. A run exited with code 4, or a scheduled job says "paused"
+
+**Cause:** the run opted in to fallback (`--fallback`, a job's or a team's setting), a limit ran out, and fallback couldn't move safely with nobody to ask: no other model in the order could take over, a command's end was unknown, a background command wasn't on the keep-running list, or a budget was used up. The reason is on stderr (`[ad] ⏸ Paused: …`), in `--json` (`"reason"`), in the job's `schedule-logs/<id>.status.json` and in `ad schedule list`.
+
+**Fix:** nothing was lost: the session (`ses_…`) keeps the work. Run it again after the reset, add a target that can take over (`ad fallback`), or allow the long-running command (`ad fallback set keep-running "…"`). Scripts that treat any non-zero exit as a failure see `4` as one; check for it to tell "paused" from "failed".
+
 ## 82. Limits are blank, or "not reported by this provider"
 
 **Cause:** ad shows only what a provider told it, and drops a number once its reset passed or it is more than 6 hours old. Many API providers report nothing until a limit is hit; OpenRouter's numbers are read after a limit and on request; a ChatGPT sign-in reports through its engine, so a sign-in no window has open keeps its last numbers.

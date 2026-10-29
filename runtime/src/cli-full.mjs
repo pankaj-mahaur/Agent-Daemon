@@ -112,9 +112,9 @@ Agent harness (ad's engine; ad about):
   tui                    The terminal UI (inline; bare "ad" opens it): see docs/tui.md
                          --cwd <dir>  --model <name>  --sandbox <mode>  --resume <thread-id>  --last
                          --preview            a minimal preview UI on the same engine instead
-  loop "<objective>"     Autonomous loop until done (dual exit, circuit breaker, budgets, STOP file)
+  loop "<objective>"     Autonomous loop until done (dual exit, circuit breaker, budgets, STOP file); --fallback: your fallback order
                          --max-iterations 20  --max-minutes 60  --max-tokens <n>  --resume <thread-id>
-  run "<prompt>"         One non-interactive agent turn (approvals are declined); --account/--model/--effort pick the target
+  run "<prompt>"         One non-interactive agent turn (approvals are declined); --account/--model/--effort pick the target; --fallback: your fallback order (exit 4: paused)
   sessions show [<id>|--last] [--json]  One session's record: bindings, targets, turns and tool calls (read-only)
                          --cwd <dir>  --model <name>  --json
                          --sandbox <mode>     read-only | workspace-write (default) | danger-full-access
@@ -132,8 +132,8 @@ Agent harness (ad's engine; ad about):
   auth repair            Fix interrupted sign-ins and keys without an account (--yes: answer yes)
   auth logout [openrouter]
   fallback [list|add|remove|order|move|set|preview|test|enable|disable]   Where a task continues when a limit runs out: ad fallback --help
-  schedule add "<cron>" run|loop "<prompt>"   Recurring job, run by "ad watch" / the service  [--cwd dir]
-  schedule list | remove|enable|disable|run <id> | tick
+  schedule add "<cron>" run|loop "<prompt>"   Recurring job, run by "ad watch" / the service  [--cwd dir] [--fallback]
+  schedule list | remove|enable|disable|run <id> | tick | edit <id> --fallback|--no-fallback
   web                    Local web UI: chat with approvals, threads, loops, schedules  [--port <n>]
   acp                    Serve Agent Client Protocol on stdio (use ad as the agent in Zed / JetBrains)
   agy "<prompt>"         Opt-in: ask your own Antigravity CLI (Gemini subscription); needs --accept-risk once
@@ -147,6 +147,7 @@ Agent harness (ad's engine; ad about):
   team create     (tc)   Create a new multi-agent team
   team status     (ts)   Show team kanban board
   team list       (tl)   List all teams
+  team set <team> fallback on|off   Let the team's workers continue on your fallback order
   team list-templates (tt)  List available team templates
   team inbox      (ti)   Read messages from an agent's inbox
   team cleanup    (tu)   Prune stale worktrees and dangling team data
@@ -2042,6 +2043,11 @@ async function cmdTeam(subcommand, opts) {
   const { readInbox } = await import("./orchestration/inbox.mjs");
 
   switch (subcommand) {
+    // ad team set <team> fallback on|off (P4.7): whether the team's workers may fall back.
+    case "set": {
+      const { cmdTeamSet } = await import("./orchestration/team-settings.mjs");
+      return cmdTeamSet(opts.args ?? [], { env: process.env });
+    }
     case "create": {
       if (!opts.task) {
         console.error("agent-daemon team create: --task is required");
@@ -2434,6 +2440,8 @@ async function main(argv) {
         digest:       { type: "boolean" },
         wide:         { type: "boolean" },
         "refresh-all": { type: "boolean" },
+        fallback:     { type: "boolean" },
+        "no-fallback": { type: "boolean" },
         "show-emails": { type: "boolean" },
         "delete-conversations": { type: "boolean" },
         help:         { type: "boolean", short: "h" },
@@ -2665,7 +2673,7 @@ async function main(argv) {
     }
     case "schedule": {
       const { cmdSchedule } = await import("./harness/schedule.mjs");
-      return cmdSchedule(parsed.positionals[0], parsed.positionals.slice(1), { cwd: parsed.values.cwd || process.cwd(), allowHomeFolder: Boolean(parsed.values["allow-home-folder"]) });
+      return cmdSchedule(parsed.positionals[0], parsed.positionals.slice(1), { cwd: parsed.values.cwd || process.cwd(), allowHomeFolder: Boolean(parsed.values["allow-home-folder"]), fallback: parsed.values.fallback ? true : parsed.values["no-fallback"] ? false : undefined });
     }
     case "tools": {
       const { cmdTools } = await import("./harness/tools.mjs");
@@ -2681,6 +2689,7 @@ async function main(argv) {
         effort: parsed.values.effort,
         resume: parsed.values.resume,
         limits: { maxIterations: num("max-iterations"), maxMinutes: num("max-minutes"), maxTokens: num("max-tokens") },
+        fallback: Boolean(parsed.values.fallback),
         allowHomeFolder: Boolean(parsed.values["allow-home-folder"]),
         clientVersion: VERSION
       });
@@ -2754,11 +2763,12 @@ async function main(argv) {
         effort: parsed.values.effort,
         sandbox: parsed.values.sandbox,
         json: parsed.values.json || false,
+        fallback: Boolean(parsed.values.fallback),
         allowHomeFolder: Boolean(parsed.values["allow-home-folder"]),
         clientVersion: VERSION
       });
     }
-    case "team":           return cmdTeam(parsed.positionals?.[0], { ...opts, template: parsed.values.template, task: parsed.values.task, team: parsed.values.team, agent: parsed.values.agent, model: parsed.values.model });
+    case "team":           return cmdTeam(parsed.positionals?.[0], { ...opts, template: parsed.values.template, task: parsed.values.task, team: parsed.values.team, agent: parsed.values.agent, model: parsed.values.model, args: parsed.positionals.slice(1) });
     case "spawn":          return cmdSpawn({ ...opts, team: parsed.values.team, role: parsed.values.role, task: parsed.values.task, model: parsed.values.model, account: parsed.values.account, engine: parsed.values.engine });
     case "hook":           return cmdHook(parsed.positionals?.[0]);
     default:

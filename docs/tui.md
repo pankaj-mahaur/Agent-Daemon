@@ -664,6 +664,7 @@ Everything else (conversations, logs, login) is the engine's own, in ad's engine
 | "⏸ Paused: … is still running in the background" | [#80](troubleshooting.md#80-fallback-paused-still-running-in-the-background) |
 | "⏸ Paused: fallback is switching too often", "the fallback budget is used up" | [#81](troubleshooting.md#81-fallback-paused-switching-too-often-or-the-fallback-budget-is-used-up) |
 | `limits` blank, "not reported by this provider" | [#82](troubleshooting.md#82-limits-are-blank-or-not-reported-by-this-provider) |
+| `ad run` / `ad loop` exit 4, a job "paused" | [#83](troubleshooting.md#83-a-run-exited-with-code-4-or-a-scheduled-job-says-paused) |
 | an engine command says "isn't in ad yet" | [commands.md](commands.md) |
 | not signed in, sandbox, hooks, your own install's home refused | [harness.md](harness.md#when-something-goes-wrong), troubleshooting #14–21 |
 

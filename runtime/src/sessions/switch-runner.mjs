@@ -164,7 +164,8 @@ export function createSwitchRunner({ session, ledger, prepare, current = () => (
     const from = eng();
     const oldId = st.thread?.id ?? null;
     const oldTerminals = [...(st.terminals?.values?.() ?? [])].map((x) => x.itemId).filter(Boolean);
-    const started = await to.startThread({ cwd: st.config.cwd, model: target.model, modelProvider: target.modelProvider, sandbox: st.config.sandbox, approvalPolicy: st.config.approvalPolicy });
+    // An unattended run's thread settings come along (P4.7: the worker sandbox, LOOP_PROTOCOL…).
+    const started = await to.startThread({ cwd: st.config.cwd, model: target.model, modelProvider: target.modelProvider, sandbox: st.config.sandbox, approvalPolicy: st.config.approvalPolicy, ...(st.config.threadExtra ?? {}) });
     let moved = false;
     try {
       assertRetargeted(started, { modelProvider: target.modelProvider, ...(target.model ? { model: target.model } : {}) });

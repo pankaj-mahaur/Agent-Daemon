@@ -110,7 +110,7 @@ ad run "…" --account openrouter/work --model qwen3-coder --effort high
 
 `--account` takes `provider/label`, a label, or an id (`ad auth list`); an unknown or ambiguous one exits 2 and says what to type. The account and model that run the turn are printed on stderr (`target: OpenRouter · work · qwen3-coder`). `ad loop` and `ad tui` take the same three flags.
 
-Nobody can answer approvals in `ad run`, so anything that needs one is declined and the agent works around it. Exit code: `0` when the turn completed, `1` otherwise.
+Nobody can answer approvals in `ad run`, so anything that needs one is declined and the agent works around it. Exit code: `0` when the turn completed, `1` otherwise, `2` for a usage error or a refusal, `4` when fallback paused (below).
 
 ### `ad loop`: work until done
 
@@ -127,7 +127,7 @@ The model doesn't decide when to stop; the daemon does. Each turn must end with 
 - a budget runs out: iterations (default 20), minutes (default 60) or tokens, or
 - a STOP file appears: `.agent-daemon/STOP` (this project) or `~/.agent-daemon/STOP` (every loop). It's checked between and during turns. An existing STOP file also refuses to start a loop.
 
-Every iteration is logged to `.agent-daemon/loops/`. Exit code: `0` when the objective is done, `3` when a brake stopped it, `1` on a setup error.
+Every iteration is logged to `.agent-daemon/loops/`. Exit code: `0` when the objective is done, `3` when a brake stopped it, `4` when fallback paused, `1` on a setup error.
 
 ### `ad schedule`: recurring jobs
 
@@ -139,7 +139,24 @@ ad schedule run <id>             # run once now
 ad schedule disable <id> | enable <id> | remove <id>
 ```
 
-Jobs use standard 5-field cron syntax. They're run by `ad watch` (or the registered service, `ad service install`), so one of those must be running. A job never overlaps itself. Output goes to `~/.agent-daemon/schedule-logs/<id>.log`.
+Jobs use standard 5-field cron syntax. They're run by `ad watch` (or the registered service, `ad service install`), so one of those must be running. A job never overlaps itself. Output goes to `~/.agent-daemon/schedule-logs/<id>.log`, and each run leaves `<id>.status.json` (`{at, exitCode, status, reason, switchedTo}`, status `completed`, `failed`, `refused`, `stopped` or `paused`); `ad schedule list` shows the last one (`paused: …`, `ok, last run switched to …`).
+
+### Fallback in unattended runs
+
+When a limit runs out with nobody watching, a run can continue on the next model in your fallback order (`ad fallback`), as `ad tui` does. It needs your yes twice: the order turned on (`ad fallback enable`), and this run's own opt-in:
+
+```bash
+ad run "…" --fallback
+ad loop "…" --fallback
+ad schedule add "0 2 * * *" loop "…" --fallback      # or: ad schedule edit <id> --fallback | --no-fallback
+ad team set <team> fallback on                        # the team's workers
+```
+
+- **Refused (exit 2)** when the order is off, when an account in it changed since you confirmed it, or from the agent's own shell: granting or changing fallback is a terminal-only decision. A scheduled job or a team worker uses the grant you made.
+- **What it does.** The same rules as in `ad tui`: only at the end of a turn, only for a used-up limit, a rate limit, a network or a provider error; never another account of a provider that just ran out; a tool that ran is never run again. The new model gets a fresh thread with this run's own settings (sandbox, approvals, the loop's instructions) and ad's request to carry on. stderr says so: `[ad] ↪ Switched to Gemini API · gemini-2.5-flash: OpenRouter's free daily limit is used up (resets 05:30). Fallback 1 of 3.`
+- **Nobody to ask: it pauses instead,** and never waits for a reset. Exit code `4`, stderr `[ad] ⏸ Paused: <why>. Work so far is saved (session ses_…).` `ad run --json` adds `"status": "paused"`, `"reason"`, `"sessionId"`; a completed run adds `"target"` (the model that finished) and `"fallback"` (each switch). A paused team worker shows as blocked on the board, with the reason.
+- **`ad loop`.** A turn fallback moved is logged `switched` (and as a `fallback` line in the same log), never counts toward the failed-turn or same-error brakes, and the next prompt says where the loop is now. The token budget counts every model.
+- **Without the opt-in nothing changes,** except one line when a run hits a limit while your order is on: `Fallback is on in your settings but not for this run: add --fallback.` (`"hint"` in `--json`; for a job, the `ad schedule edit` command; for a worker, `ad team set`). `AD_FALLBACK=0` turns fallback off even for a run that opted in.
 
 ### `ad web`: local web UI
 

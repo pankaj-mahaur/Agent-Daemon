@@ -43,6 +43,7 @@ const { enablePolicy, readPolicy, updatePolicy } = await import("../src/routing/
 const { startGateway } = await import("../src/gateway/client.mjs");
 const { TOKEN_HIDDEN_ARGS } = await import("../src/gateway/table.mjs");
 const { startFaultProvider, fault, PROBES, refusedUrl } = await import("../testkit/fault-responses.mjs");
+const { createUnattendedRun } = await import("../src/harness/unattended-run.mjs");
 
 const KEYS = { acct_a: ["sk", "test", "AAAAaaaa1111AAAAaaaa1111"].join("-"), acct_b: ["sk", "test", "BBBBbbbb2222BBBBbbbb2222"].join("-"), acct_c: ["sk", "test", "CCCCcccc3333CCCCcccc3333"].join("-") };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -207,8 +208,58 @@ async function withWorld(fn, { policyPatch = {}, accounts: accountPatch = {}, up
     return w;
   }
 
+  // P4.7: an unattended run (ad run --fallback's runner) on account A, nobody at the keyboard.
+  async function openRun(name = "u1") {
+    const cwd = path.join(root, name, "work");
+    fs.mkdirSync(cwd, { recursive: true });
+    const engineIn = async (homeKey) => {
+      const home = path.join(root, name, homeKey.replace("/", "-"));
+      writeHome(home, gw);
+      const e = await createEngine({ home, cwd, command: resolveCodexCommand({}), clientVersion: "test", experimental: true, env: { AD_GATEWAY_TOKEN: gw.token }, engineArgs: [...TOKEN_HIDDEN_ARGS] });
+      engines.push(e);
+      return e;
+    };
+    const engine = await engineIn("api");
+    let session;
+    const idNow = () => Object.keys(RUNNER).find((k) => RUNNER[k].modelProvider === session.state.config.modelProvider) ?? "acct_a";
+    const accounts = {
+      current: () => byId(idNow()),
+      currentTarget: () => ({ ...RUNNER[idNow()], ...session.state.config, passthrough: false, account: byId(idNow()), label: RUNNER[idNow()].label }),
+      targetFor: (a) => ({ ...RUNNER[a.id], account: a }),
+      prepare: async (t) => (t.homeKey === session.state.config.homeKey ? { sameEngine: true } : { engine: await engineIn(t.homeKey), sameEngine: false, release: async () => {} }),
+    };
+    const err = { text: "", write(s) { this.text += s; return true; } };
+    const run = createUnattendedRun({
+      started: { engine, params: { model: "mock-model", modelProvider: ENTRY.acct_a }, homeKey: "api", target: { account: byId("acct_a") } },
+      cwd,
+      origin: "run",
+      adRoot,
+      err,
+      env: {},
+      accounts: (s) => ((session = s), accounts),
+      deps: {
+        policy: () => readPolicy({ root: adRoot, lenient: true }),
+        routing,
+        classify: ({ error, status, threadId, startedAt, fallbackInterrupt }) => {
+          const inTurn = (o) => o && Number.isFinite(startedAt) && Date.parse(o.at) >= startedAt;
+          const t = gw.lastFailureForThread(threadId);
+          const a = gw.lastFailure(idNow());
+          const observation = inTurn(t) ? { ...t, by: "thread" } : inTurn(a) ? { ...a, by: "account" } : null;
+          return classifyTurnError({ error, status, observation, accountKind: "api", fallbackInterrupt });
+        },
+        retryObservation: (threadId, sinceMs) => {
+          const o = gw.lastFailureForThread(threadId);
+          return o && Number.isFinite(sinceMs) && Date.parse(o.at) >= sinceMs ? classifyUpstream(o) : null;
+        },
+        bench: ({ provider, accountId, until: u, reason }) => benchProvider(benchKey(provider, accountId), { until: u, reason, accountId }, { root: adRoot }),
+      },
+    });
+    windows.push({ close: () => run.close() });
+    return { run, cwd, err, marker: () => (fs.existsSync(path.join(cwd, "marker.txt")) ? fs.readFileSync(path.join(cwd, "marker.txt"), "utf8").split(/\r?\n/).filter((l) => l.trim()).length : 0) };
+  }
+
   try {
-    await fn({ P, gw, adRoot, openWindow, routing });
+    await fn({ P, gw, adRoot, openWindow, openRun, routing });
   } finally {
     for (const w of windows) await w.close().catch(() => {});
     for (const e of engines) await e.close().catch(() => {});
@@ -466,4 +517,32 @@ test("F13 connection refused with unbounded retries off: the turn fails within t
     assert.equal(w.currentId(), "acct_b");
     assert.ok(["transientNetwork", "provider5xx"].includes(routeFailures(w)[0].failure.class), JSON.stringify(routeFailures(w)[0].failure));
   }, { upstream: { acct_a: refused } });
+});
+
+// ---- P4.7: unattended runs on the real engine ----------------------------------------------------
+
+test("U1 ad run --fallback's runner, F1 on A: completes on B with nobody at the keyboard; the tool ran once", { skip, timeout: TIMEOUT }, async () => {
+  await withWorld(async ({ P, openRun }) => {
+    const u = await openRun();
+    P.acct_a.schedule("EXEC U1", [fault.quota()]);
+    const r = await u.run.turn("EXEC U1");
+    assert.equal(r.status, "completed", u.err.text);
+    assert.equal(r.target.account, "OpenAI · b");
+    assert.equal(r.fallback.filter((e) => e.type === "switched").length, 1);
+    assert.match(u.err.text, /\[ad\] \u{21aa} Switched to OpenAI · b · mock-model/u);
+    assert.equal(u.marker(), 1);
+  });
+});
+
+test("U3 every target exhausted: the run pauses within the budget (under 10 s), never waiting for a reset", { skip, timeout: TIMEOUT }, async () => {
+  await withWorld(async ({ P, openRun }) => {
+    const u = await openRun();
+    P.acct_a.schedule("PING U3", [fault.quota()]);
+    P.acct_b.schedule("automatic continuation", [fault.quota(), fault.quota()]);
+    const t0 = Date.now();
+    const r = await u.run.turn("PING U3");
+    assert.equal(r.status, "paused", u.err.text);
+    assert.ok(Date.now() - t0 < 10_000, `${Date.now() - t0} ms`);
+    assert.match(r.sessionId, /^ses_/);
+  }, { policyPatch: { maxHops: 1 } });
 });

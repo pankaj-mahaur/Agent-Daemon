@@ -276,3 +276,86 @@ test("P0.2a: a new schedule add in home without the flag is refused; with it the
     assert.equal(plain.allowHomeFolder, undefined, "a project folder needs nothing");
   });
 });
+
+// ---- P4.7: fallback in scheduled jobs ----------------------------------------------------------
+const { jobGrantsFallback, reasonFrom } = await import("../src/harness/schedule.mjs");
+const { existsSync } = await import("node:fs");
+// A child that prints ad's lines and exits with `code`, as `ad run|loop --fallback` would.
+const childSaying = (lines, code, seen = {}) => (cmd, args, o) => {
+  seen.args = args;
+  seen.env = o?.env;
+  const stdout = new EventEmitter();
+  const stderr = new EventEmitter();
+  stdout.pipe = stderr.pipe = () => {};
+  const c = Object.assign(new EventEmitter(), { pid: 0, stdout, stderr });
+  setTimeout(() => {
+    stderr.emit("data", Buffer.from(lines.join("\n") + "\n"));
+    c.emit("close", code);
+  }, 10);
+  return c;
+};
+
+test("schedule: a job with fallback passes --fallback (before --), and its child is named in AD_SCHEDULE_JOB; a paused run writes status.json and list says why", async () => {
+  const home = mkdtempSync(join(tmpdir(), "ad-sched-fb-"));
+  try {
+    const out = sink();
+    assert.equal(await cmdSchedule("add", ["@daily", "run", "ship it"], { userHome: home, cwd: home, stdout: out, stderr: sink(), fallback: true }), 0);
+    const job = loadJobs(home)[0];
+    assert.equal(job.fallback, true);
+    assert.deepEqual(jobArgs(job).slice(-3), ["--fallback", "--", "ship it"]);
+    const seen = {};
+    const code = await cmdSchedule("run", [job.id], { userHome: home, stdout: sink(), stderr: sink(), spawnFn: childSaying(["[ad] \u{23f8} Paused: OpenRouter's free limit is used up until 05:30, and no other target in your order can take over. Work so far is saved (session ses_1)."], 4, seen) });
+    assert.equal(code, 1, "ad schedule run: the job didn't complete");
+    assert.equal(seen.env.AD_SCHEDULE_JOB, job.id);
+    const st = JSON.parse(readFileSync(join(home, ".agent-daemon", "schedule-logs", `${job.id}.status.json`), "utf8"));
+    assert.deepEqual([st.exitCode, st.status], [4, "paused"]);
+    assert.match(st.reason, /^OpenRouter's free limit is used up until 05:30/);
+    const list = sink();
+    await cmdSchedule("list", [], { userHome: home, stdout: list, stderr: sink() });
+    assert.match(list.text, /run +\(fallback\).*last paused: OpenRouter's free limit is used up until 05:30/);
+    assert.equal(jobGrantsFallback({ AD_SCHEDULE_JOB: job.id }, home), true);
+    assert.equal(jobGrantsFallback({ AD_SCHEDULE_JOB: "nope" }, home), false, "only a job that granted it");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("schedule: a loop job stopped by its brakes writes status stopped (exit 3); a switched run says where it went", async () => {
+  const home = mkdtempSync(join(tmpdir(), "ad-sched-st-"));
+  try {
+    const job = addJob({ cron: "@daily", kind: "loop", prompt: "x", cwd: home, fallback: true }, home);
+    await cmdSchedule("run", [job.id], { userHome: home, stdout: sink(), stderr: sink(), spawnFn: childSaying(["ad loop stopped: no progress in 3 turns (circuit breaker) (3 iteration(s), ~0 tokens)."], 3) });
+    const st = JSON.parse(readFileSync(join(home, ".agent-daemon", "schedule-logs", `${job.id}.status.json`), "utf8"));
+    assert.deepEqual([st.exitCode, st.status, st.reason], [3, "stopped", "no progress in 3 turns (circuit breaker)"]);
+    await cmdSchedule("run", [job.id], { userHome: home, stdout: sink(), stderr: sink(), spawnFn: childSaying(["[ad] \u{21aa} Switched to Gemini API · gemini-2.5-flash: OpenRouter's free daily limit is used up. Fallback 1 of 3."], 0) });
+    assert.equal(loadJobs(home)[0].lastStatus, "ok, last run switched to Gemini API · gemini-2.5-flash");
+    assert.deepEqual(reasonFrom(["nothing of ad's"]), { reason: null, switchedTo: null });
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("AD_TOOL_SHELL=1: ad schedule add --fallback and ad schedule edit each exit 2 with the guard text; edit toggles it from a terminal", async () => {
+  const home = mkdtempSync(join(tmpdir(), "ad-sched-shell-"));
+  const guard = "Fallback settings can't be changed from the agent's own shell. Run it in your terminal.\n";
+  try {
+    const shell = { ...process.env, AD_TOOL_SHELL: "1" };
+    let err = sink();
+    assert.equal(await cmdSchedule("add", ["@daily", "run", "x"], { userHome: home, cwd: home, stdout: sink(), stderr: err, fallback: true, env: shell }), 2);
+    assert.equal(err.text, guard);
+    assert.equal(loadJobs(home).length, 0);
+    assert.equal(await cmdSchedule("add", ["@daily", "run", "x"], { userHome: home, cwd: home, stdout: sink(), stderr: sink(), env: shell }), 0, "a job without fallback is fine");
+    const id = loadJobs(home)[0].id;
+    err = sink();
+    assert.equal(await cmdSchedule("edit", [id], { userHome: home, stdout: sink(), stderr: err, fallback: true, env: shell }), 2);
+    assert.equal(err.text, guard);
+    assert.equal(loadJobs(home)[0].fallback, undefined);
+    assert.equal(await cmdSchedule("edit", [id], { userHome: home, stdout: sink(), stderr: sink(), fallback: true, env: {} }), 0);
+    assert.equal(loadJobs(home)[0].fallback, true);
+    assert.equal(await cmdSchedule("edit", [id], { userHome: home, stdout: sink(), stderr: sink(), fallback: false, env: {} }), 0);
+    assert.equal(loadJobs(home)[0].fallback, undefined);
+    assert.equal(existsSync(home), true);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});

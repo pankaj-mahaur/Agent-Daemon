@@ -21,6 +21,8 @@ import crypto from "node:crypto";
 import { sendMessage, createInbox } from "./inbox.mjs";
 import { productValue } from "../product-values.mjs";
 import { commitWorktree, runEngineWorker } from "./engine-worker.mjs";
+// The team's settings (P4.7: fallback), lazily: team.mjs is the board's, spawn only reads it.
+const loadTeamInfo = async (teamId) => (await import("./team.mjs")).loadTeam(teamId);
 import { acquireLock, liveLocks } from "../lock.mjs";
 import { engineHome } from "../engine/index.mjs";
 import { homeWorkerNote } from "../engine/attribution.mjs";
@@ -204,7 +206,11 @@ export async function spawnAgent(opts) {
     }
     try {
       await updateAgentStatus(opts.teamId, agentName, "running", null, process.pid);
+      // The team's fallback setting (P4.7), made with ad team set in a terminal.
+      const teamFallback = opts.teamId ? Boolean((await loadTeamInfo(opts.teamId).catch(() => null))?.fallback) : false;
       r = await (opts.runWorker ?? runEngineWorker)({
+        fallback: teamFallback,
+        team: opts.teamId ?? null,
         worktreePath,
         systemPrompt,
         userMessage,
@@ -228,7 +234,8 @@ export async function spawnAgent(opts) {
     } finally {
       activeAgents.delete(agentName);
     }
-    const status = r.ok ? "completed" : "error";
+    // A paused worker (P4.7) waits for a person: the board shows it blocked, with the reason.
+    const status = r.ok ? "completed" : r.status === "paused" ? "blocked" : "error";
     await updateAgentStatus(opts.teamId, agentName, status, r.ok ? null : r.error).catch((e) => process.stderr.write(`[spawn] status update failed: ${e.message}\n`));
     if (opts.leader) {
       await sendMessage({

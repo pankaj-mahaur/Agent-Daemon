@@ -135,6 +135,9 @@ export function createSession({
   // request decisions (never a question's answer), thread changes and engine exits. Called
   // synchronously; its failure is one notice, never the session's.
   observer = null,
+  // An unattended run's thread settings (P4.7): developerInstructions and config overrides that
+  // every thread this session starts or resumes gets, a switch's continuation included.
+  threadExtra = null,
 } = {}) {
   let eng = engine;
   const emitter = new EventEmitter();
@@ -151,7 +154,7 @@ export function createSession({
     // Background terminals still running in a conversation this window switched away from:
     // [{key, itemId, command, threadId…}] (they stay there; /ps lists them apart).
     priorTerminals: [],
-    config: { model: model ?? null, modelProvider: modelProvider ?? null, homeKey, provider, effort: null, sandbox, approvalPolicy, cwd },
+    config: { model: model ?? null, modelProvider: modelProvider ?? null, homeKey, provider, effort: null, sandbox, approvalPolicy, cwd, ...(threadExtra ? { threadExtra } : {}) },
     account: null,
     goal: null,
     // This conversation's subagents (the engine's /subagents rows), first seen first:
@@ -555,7 +558,7 @@ export function createSession({
         if (state.thread) {
           const id = state.thread.id;
           try {
-            await eng.resumeThread(id, { cwd: state.config.cwd, sandbox: state.config.sandbox, approvalPolicy: state.config.approvalPolicy, excludeTurns: true });
+            await eng.resumeThread(id, { cwd: state.config.cwd, sandbox: state.config.sandbox, approvalPolicy: state.config.approvalPolicy, ...(threadExtra ?? {}), excludeTurns: true });
           } catch (err) {
             if (closed) return void (await eng.close?.());
             if (eng.exitError) {
@@ -635,7 +638,7 @@ export function createSession({
     if (threadStarting) return threadStarting;
     const e = epoch;
     const p = (async () => {
-      const t = await eng.startThread({ cwd: state.config.cwd, model: state.config.model ?? undefined, modelProvider: state.config.modelProvider ?? undefined, sandbox: state.config.sandbox, approvalPolicy: state.config.approvalPolicy, ...extra });
+      const t = await eng.startThread({ cwd: state.config.cwd, model: state.config.model ?? undefined, modelProvider: state.config.modelProvider ?? undefined, sandbox: state.config.sandbox, approvalPolicy: state.config.approvalPolicy, ...(threadExtra ?? {}), ...extra });
       if (stale(e)) throw new Error("the session moved on before the thread started");
       state.config.model ??= t.model ?? null;
       attach(t.threadId, { ...(t.thread ?? {}), modelProvider: t.modelProvider ?? t.thread?.modelProvider ?? null });
@@ -1488,7 +1491,7 @@ export function createSession({
       const e = epoch;
       let t;
       try {
-        t = await eng.resumeThread(threadId, { cwd: state.config.cwd, sandbox: state.config.sandbox, approvalPolicy: state.config.approvalPolicy, excludeTurns: true });
+        t = await eng.resumeThread(threadId, { cwd: state.config.cwd, sandbox: state.config.sandbox, approvalPolicy: state.config.approvalPolicy, ...(threadExtra ?? {}), excludeTurns: true });
         if (stale(e)) throw new Error("the session moved on before the thread resumed");
       } catch (err) {
         release();

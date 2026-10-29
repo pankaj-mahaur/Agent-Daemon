@@ -54,7 +54,10 @@ export function commitWorktree(worktreePath, message, run = execFileSyncNoShell)
 // The worktree itself lives inside ad's own folder, which never binds memory.
 // account: the parent's account (P3.4): a worker runs on what its leader chose, never on
 // whatever the default home holds.
-export async function runEngineWorker({ worktreePath, systemPrompt, userMessage, model, account, timeoutMs, engineOpts = {}, onEvent, err = process.stderr, memoryProject }) {
+// fallback (P4.7): the team's own setting; the worker then runs through the headless fallback
+// runner, every thread with the worker's sandbox, approval never and the unattended config. A
+// pause comes back as { status: "paused", reason } (the team board shows the task blocked).
+export async function runEngineWorker({ worktreePath, systemPrompt, userMessage, model, account, timeoutMs, engineOpts = {}, onEvent, err = process.stderr, memoryProject, fallback = false, team = null }) {
   let engine;
   let release = null;
   try {
@@ -66,6 +69,14 @@ export async function runEngineWorker({ worktreePath, systemPrompt, userMessage,
     if (!started.engine) return { ok: false, error: started.error };
     engine = started.engine;
     release = started.release;
+    if (fallback) {
+      // The team's setting is the grant (made in a terminal): an inherited tool-shell marker
+      // doesn't block using it.
+      const { fallbackOptIn } = await import("../harness/unattended-run.mjs");
+      const ok = fallbackOptIn({ command: "ad team worker", env: engineOpts.env ?? process.env, grantedElsewhere: true });
+      if (!ok.ok) return { ok: false, error: ok.text };
+      if (ok.on) return await workerWithFallback(started, { worktreePath, systemPrompt, userMessage, memoryProject, err: prefixed, account, engineOpts, timeoutMs });
+    }
     const { threadId } = await engine.startThread({
       cwd: worktreePath,
       model: started.params.model,
@@ -77,11 +88,53 @@ export async function runEngineWorker({ worktreePath, systemPrompt, userMessage,
       memoryProject: memoryProject ?? worktreePath,
     });
     const r = await engine.turn({ threadId, text: userMessage, timeoutMs, sandboxPolicy: WORKER_SANDBOX_POLICY, onEvent });
-    return { ok: r.status === "completed", status: r.status, output: r.output, threadId, error: r.status === "completed" ? undefined : r.error?.message ?? `turn ${r.status}` };
+    const hint = r.status === "completed" ? null : await workerHint(r, { team, account: started.target?.account ?? null, threadId });
+    return { ok: r.status === "completed", status: r.status, output: r.output, threadId, error: r.status === "completed" ? undefined : `${r.error?.message ?? `turn ${r.status}`}${hint ? ` ${hint}` : ""}` };
   } catch (e) {
     return { ok: false, error: e.message };
   } finally {
     if (release) await release();
     else await engine?.close();
+  }
+}
+
+// A worker that hit a limit with fallback on in the settings but not for its team (P4.7).
+async function workerHint(r, { team, account, threadId }) {
+  try {
+    const { isLimitClass, policyOn, UNATTENDED_TEXTS } = await import("../harness/unattended-run.mjs");
+    const { classifyTurnFailure } = await import("../harness/gateway-runtime.mjs");
+    const { turnErrorOf } = await import("../engine/index.mjs");
+    const error = turnErrorOf(r.error);
+    if (!isLimitClass(classifyTurnFailure({ error, status: r.status, threadId, account }).class) || !policyOn()) return null;
+    return UNATTENDED_TEXTS.HINT(`ad team set ${team ?? "<team>"} fallback on`);
+  } catch {
+    return null;
+  }
+}
+
+async function workerWithFallback(started, { worktreePath, systemPrompt, userMessage, memoryProject, err, account, engineOpts, timeoutMs }) {
+  const { createUnattendedRun } = await import("../harness/unattended-run.mjs");
+  const { createTuiAccounts } = await import("../tui/accounts.mjs");
+  const { createSecretStore } = await import("../auth/secrets.mjs");
+  const run = createUnattendedRun({
+    started,
+    cwd: worktreePath,
+    origin: "worker",
+    err,
+    env: engineOpts.env ?? process.env,
+    threadOpts: { sandbox: "workspace-write", approvalPolicy: "never", developerInstructions: `${systemPrompt}
+
+${WORKER_COMMIT_NOTE}`, config: { ...(await unattendedThreadConfig(started.engine)), memoryProject: memoryProject ?? worktreePath } },
+    turnOpts: { sandboxPolicy: WORKER_SANDBOX_POLICY },
+    accounts: (session) => createTuiAccounts({ session, store: engineOpts.store ?? createSecretStore(), launch: (a) => launchHarness({ cwd: worktreePath, err, requireSandbox: true, account: a.id, ...engineOpts, env: { ...UNATTENDED_ENV, ...(engineOpts.env ?? {}) } }) }),
+  });
+  const timer = timeoutMs ? setTimeout(() => run.session.interrupt().catch(() => {}), timeoutMs) : null;
+  try {
+    const r = await run.turn(userMessage);
+    if (r.status === "paused") return { ok: false, status: "paused", reason: r.reason, output: r.output, threadId: r.threadId, error: `paused: ${r.reason}` };
+    return { ok: r.status === "completed", status: r.status, output: r.output, threadId: r.threadId, fallback: r.fallback, error: r.status === "completed" ? undefined : r.error?.message ?? `turn ${r.status}` };
+  } finally {
+    if (timer) clearTimeout(timer);
+    await run.close();
   }
 }
