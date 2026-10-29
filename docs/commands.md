@@ -77,7 +77,7 @@ The engine's own rules come with the commands:
 | `/subagents` | yes | yes | the engine's **Subagents** picker; ad shows the agent's transcript live in a pager instead of switching the conversation. Alt+← / Alt+→ go round them |
 | `/debug-m-drop`, `/debug-m-update` | no | no | debug commands of the engine's own UI |
 
-`ad` also has commands of its own, with names the engine doesn't use: `/help`, `/remember`, `/memory`, `/private`, `/proposals`, `/loop`, `/team`, `/schedule`, `/tools`, `/login`, `/ad`, `/image`, `/undo`, `/fallback`, `/terminal-setup`. (Typing the removed `/codex` hand-off answers what to use instead.) See [tui.md](tui.md#slash-commands).
+`ad` also has commands of its own, with names the engine doesn't use: `/help`, `/remember`, `/memory`, `/private`, `/proposals`, `/loop`, `/team`, `/schedule`, `/tools`, `/login`, `/ad`, `/image`, `/undo`, `/fallback`, `/retry`, `/terminal-setup`. (Typing the removed `/codex` hand-off answers what to use instead.) See [tui.md](tui.md#slash-commands).
 
 ## `ad fallback`
 

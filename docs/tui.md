@@ -352,6 +352,7 @@ Model, effort and permission changes apply from the next turn.
 | `/tools [list|enable|disable <tool>]` | optional agent tools (`/tools enable browser`) |
 | `/ad <command>` | run an ad command, e.g. `/ad doctor` |
 | `/fallback [on\|off]` | the fallback order: where a task may continue when a limit runs out; `on`/`off` for this window only (see [Automatic fallback](#automatic-fallback)) |
+| `/retry` | try again after automatic fallback paused (on the current model) |
 
 **Help**
 

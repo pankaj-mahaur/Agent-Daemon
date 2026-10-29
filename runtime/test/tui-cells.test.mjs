@@ -128,3 +128,13 @@ test("diffs never hide lines: a new file's content is shown whole; +++/--- conte
   assert.match(hidden, /<U\+200B>/);
   assert.match(hidden, /<U\+E0041>/);
 });
+
+test("ad's continuation renders as a Fallback: line, never as the user's message", async () => {
+  const { renderCell } = await import("../src/tui/view/cells.mjs");
+  const text = (lines) => lines.map((l) => (typeof l === "string" ? l : l.map((s) => s.text).join(""))).join("\n");
+  const out = text(renderCell({ kind: "userMessage", text: "[ad: automatic continuation] The previous attempt on A stopped (x). Continue." }, { width: 100 }));
+  assert.match(out, /Fallback: ad continued the task here/);
+  assert.doesNotMatch(out, /\u{203a}/u, "not the user's prompt marker");
+  assert.doesNotMatch(out, /automatic continuation/);
+  assert.match(text(renderCell({ kind: "userMessage", text: "fix the tests" }, { width: 100 })), /\u{203a} fix the tests/u);
+});

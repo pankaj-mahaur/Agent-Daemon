@@ -19,6 +19,7 @@ import { stringWidth } from "../terminal/width.mjs";
 import { codeLines, codeTokenLines, renderMarkdown, wrapPrefixed } from "./markdown.mjs";
 import { highlightLines, languageFor, MAX_CHARS, MAX_LINES } from "./highlight.mjs";
 import { T } from "./theme.mjs";
+import { AD_CONTINUATION_PREFIX } from "../../hooks/generated-prompts.mjs";
 
 const S = {
   bullet: T.dim,
@@ -354,6 +355,7 @@ const AD_ROWS = {
   learned: "Learned:",
   loop: "Loop:",
   team: "Team:",
+  fallback: "Fallback:",
 };
 
 /** One dim line for something ad did (recalled memory, a skill, a guard…). */
@@ -396,6 +398,8 @@ function cellLines(item, width) {
   const done = !item.streaming;
   switch (item.kind) {
     case "userMessage": {
+      // ad's own continuation after a fallback switch (P4.5): never shown as the user's words.
+      if (String(item.text ?? "").startsWith(AD_CONTINUATION_PREFIX)) return renderAdRow("fallback", "ad continued the task here", { width });
       // A /private prompt shows as typed, marked private (the model sees the wrapper).
       const priv = /^<private>([\s\S]*)<\/private>$/.exec(String(item.text ?? ""));
       const body = [{ text: clean(priv ? priv[1] : item.text) }, ...(priv ? [{ text: "  (private)", style: S.dim }] : [])];

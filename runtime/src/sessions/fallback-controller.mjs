@@ -3,8 +3,8 @@
 // to the next target in the user's order (the switch runner), or pauses with the reason. A turn
 // that keeps retrying is interrupted at the end of the budget, the goal paused first.
 //
-//   createFallbackController(deps) → { onEvent(ev), turnCompleted({ turn, status }), tick(), resume(),
-//                                      state(), settled(), dispose() }
+//   createFallbackController(deps) → { onEvent(ev), turnCompleted({ turn, status }), tick(), resume(), retry(),
+//                                      handled(turnId), state(), settled(), dispose() }
 //
 // Every exit of a triggered turn either switches or pauses; a pause keeps the session held until
 // resume() (B2 wires /retry, a manual switch and the user's own prompt to it).
@@ -49,6 +49,10 @@ export function createFallbackController({
   let goalBefore = null; // the goal objective when the root turn started, if it was active
   let chosenBy = "user";
   let paused = null; // { code, text }
+  const startedAt = new Map(); // turnId → when it started (classification's window)
+  const handled = new Set(); // turns fallback acted on: the TUI shows ad's line, not the engine's
+  let switches = 0; // automatic switches in this window (/status)
+  let lastSwitch = null; // { at, why }
   let disposed = false;
   const timers = new Set();
   let work = Promise.resolve();
@@ -139,6 +143,7 @@ export function createFallbackController({
     const id = tid();
     if (ev.type === "turn.started" && ev.threadId === id) {
       watch = watchdogStart({ turnId: ev.turnId, at: now() });
+      startedAt.set(ev.turnId, now());
       // The goal as the engine has it when the turn starts: resumed on the target after a switch.
       const turnId = ev.turnId;
       goalBefore = session.state.goal?.status === "active" ? (session.state.goal.objective ?? null) : null;
@@ -162,7 +167,7 @@ export function createFallbackController({
       watch = null;
       return;
     }
-    if (ev.type === "notice" && ev.code === "turn.retrying") return step({ type: "notice", at: now(), failure: retryObservation(ev.threadId) });
+    if (ev.type === "notice" && ev.code === "turn.retrying") return step({ type: "notice", at: now(), failure: retryObservation(ev.threadId, startedAt.get(ev.turnId) ?? null) });
     step({ type: "event", at: now() });
   }
 
@@ -178,13 +183,18 @@ export function createFallbackController({
   // The session hook: runs before the session drains its queue, so the hold below comes first.
   function turnCompleted({ turn, status }) {
     if (disposed || !turn) return;
+    // A window on an engine home ad didn't make has no account: nothing to fall back from.
+    const from = current();
+    const began = startedAt.get(turn.id) ?? null;
+    startedAt.delete(turn.id);
+    if (!from?.account) return;
     const g = gate();
     if (!g.on) {
       if (status === "completed") episode = null;
       return;
     }
     const interrupted = interrupts.get(turn.id) ?? null;
-    const failure = classify({ error: turn.error ?? null, status, threadId: tid(), turnId: turn.id, fallbackInterrupt: interrupted });
+    const failure = classify({ error: turn.error ?? null, status, threadId: tid(), turnId: turn.id, startedAt: began, fallbackInterrupt: interrupted });
     const p = policy();
     const d = detect({ turn: { id: turn.id, status }, failure, interrupted, policy: p });
     if (!d.trigger) {
@@ -195,7 +205,7 @@ export function createFallbackController({
       return;
     }
     session.hold(true);
-    const from = current();
+    handled.add(turn.id);
     if (!episode) episode = startEpisode({ id: newEpisodeId(), from: routeOf(from), at: now() });
     ledger.record?.({ type: "routeFailure", episode: { id: episode.id, startedAt: episode.startedAt, from: episode.from }, turnId: turn.id, failure });
     if (LIMITS.has(failure.class) && from.account) {
@@ -277,6 +287,8 @@ export function createFallbackController({
     if (outcome?.kind === "committed") {
       episode = afterSwitch(episode, r.target);
       chosenBy = "fallback";
+      switches += 1;
+      lastSwitch = { at: now(), why };
       return;
     }
     // The runner said why (its own notice); keep the queue held for the user.
@@ -294,7 +306,20 @@ export function createFallbackController({
       episode = null;
       session.hold(false);
     },
-    state: () => ({ episode, paused, chosenBy, watching: Boolean(watch) }),
+    /** /retry: a new episode, the current target first (ad's continuation, once). */
+    retry() {
+      if (!paused) return false;
+      const from = current();
+      paused = null;
+      episode = null;
+      ledger.markAdTurn?.();
+      session.queue(FALLBACK_RUN_TEXTS.CONTINUATION(from?.label ?? "this model", "you asked to try again"), { first: true, via: "ad" });
+      session.hold(false);
+      return true;
+    },
+    /** Whether fallback acted on this turn (the TUI then shows ad's line, not the engine's). */
+    handled: (turnId) => handled.has(turnId),
+    state: () => ({ episode, paused, chosenBy, watching: Boolean(watch), switches, lastSwitch }),
     /** Settles the work started so far (tests). */
     settled: () => work,
     dispose() {

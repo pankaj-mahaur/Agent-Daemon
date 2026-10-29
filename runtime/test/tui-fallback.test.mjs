@@ -145,7 +145,7 @@ const { fileURLToPath } = await import("node:url");
 const FAKE = fileURLToPath(new URL("../testkit/fake-codex-app-server.mjs", import.meta.url));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function withApp(fn) {
+async function withApp(fn, { fallbackRun } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ad-fb-app-"));
   const engine = await createEngine({ home: path.join(dir, "home"), command: { cmd: process.execPath, prefix: [FAKE] } });
   const session = createSession({ engine, cwd: dir, lockDir: path.join(dir, "locks") });
@@ -155,7 +155,13 @@ async function withApp(fn) {
   const decoder = createInputDecoder({ onEvent: (e) => listeners.forEach((f) => f(e)), escTimeoutMs: 5 });
   const renderer = createRenderer({ io, reflow: "none" });
   await renderer.start();
-  const app = createApp({ io, renderer, session, cwd: dir, armMs: 0, actions: { fallback: fallbackHost({ root }) } });
+  const scrollback = [];
+  const commit = renderer.commit.bind(renderer);
+  renderer.commit = (lines) => {
+    for (const l of lines) scrollback.push((typeof l === "string" ? l : l.map((s) => s.text).join("")).replace(/ +$/, ""));
+    return commit(lines);
+  };
+  const app = createApp({ io, renderer, session, cwd: dir, armMs: 0, actions: { fallback: fallbackHost({ root }), ...(fallbackRun ? { fallbackRun } : {}) } });
   const until = async (pred, what, ms = 10000) => {
     const end = Date.now() + ms;
     while (Date.now() < end) {
@@ -165,7 +171,7 @@ async function withApp(fn) {
     throw new Error(`timed out waiting for ${what}:\n${scr.lines().join("\n")}`);
   };
   try {
-    await fn({ app, type: (s) => decoder.feed(s), until, screen: () => scr.lines().join("\n") });
+    await fn({ app, session, type: (s) => decoder.feed(s), until, screen: () => scr.lines().join("\n"), committed: () => scrollback.join("\n") });
   } finally {
     app.dispose();
     renderer.dispose();
@@ -256,4 +262,73 @@ test("a draw while a key's work runs doesn't hide its result (the live test's li
   await pending;
   assert.equal(ed.mode, "message");
   assert.match(text(), /^1\. answered/);
+});
+
+// ---- Automatic fallback in the app (P4.5 B2) ------------------------------------------------
+
+const stubRun = ({ paused = false, handledAll = false, status = null } = {}) => {
+  const calls = [];
+  let p = paused;
+  return {
+    calls,
+    run: {
+      paused: () => p,
+      retry: () => (calls.push("retry"), (p = false), true),
+      resume: () => (calls.push("resume"), (p = false)),
+      handled: () => handledAll,
+      status: () => status,
+    },
+  };
+};
+
+test("/retry says there is nothing to retry when fallback isn't paused; when paused it retries", async () => {
+  const idle = stubRun();
+  await withApp(async ({ type, until, committed }) => {
+    type("/retry\r");
+    await until(() => /Nothing to retry: automatic fallback isn't paused\./.test(committed()), "the answer");
+    assert.deepEqual(idle.calls, []);
+  }, { fallbackRun: idle.run });
+  const held = stubRun({ paused: true });
+  await withApp(async ({ type, until, committed }) => {
+    type("/retry\r");
+    await until(() => /Trying again on this model\./.test(committed()), "the retry");
+    assert.deepEqual(held.calls, ["retry"]);
+  }, { fallbackRun: held.run });
+});
+
+test("a prompt typed while fallback is paused ends the pause first", async () => {
+  const held = stubRun({ paused: true });
+  await withApp(async ({ type, until, session }) => {
+    type("early-complete\r");
+    await until(() => held.calls.includes("resume"), "the pause ended");
+    await until(() => session.state.turns.length > 0, "the prompt sent");
+    assert.equal(held.calls[0], "resume");
+  }, { fallbackRun: held.run });
+});
+
+test("/status shows fallback's switches and the last reason; off in this window after /fallback off", async () => {
+  const at = Date.parse("2026-11-02T14:02:00");
+  const s = stubRun({ status: { switches: 1, lastSwitch: { at, why: "OpenRouter's daily limit is used up (resets 05:30)" }, paused: null } });
+  await withApp(async ({ type, until, committed }) => {
+    type("/status\r");
+    await until(() => /fallback\s+1 switch this session \(14:02, OpenRouter's daily limit is used up \(resets 05:30\)\)/.test(committed()), "the fallback row");
+    type("/fallback off\r");
+    await until(() => /Fallback is off for this window/.test(committed()), "off here");
+    type("/status\r");
+    await until(() => /fallback\s+off in this window \(\/fallback on\)/.test(committed()), "the off row");
+  }, { fallbackRun: s.run });
+});
+
+test("a failed turn fallback handled shows no \"The turn failed\" line", async () => {
+  const s = stubRun({ handledAll: true });
+  await withApp(async ({ type, until, session, committed }) => {
+    type("fail-turn\r");
+    await until(() => session.state.turns.some((t) => t.status === "failed"), "the failed turn");
+    await sleep(200);
+    assert.doesNotMatch(committed(), /The turn failed/);
+  }, { fallbackRun: s.run });
+  await withApp(async ({ type, until, committed }) => {
+    type("fail-turn\r");
+    await until(() => /The turn failed/.test(committed()), "the engine's words when fallback didn't act");
+  });
 });

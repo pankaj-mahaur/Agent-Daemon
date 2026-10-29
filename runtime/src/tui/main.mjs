@@ -298,6 +298,7 @@ export async function cmdTui(opts = {}) {
   let session;
   let ledger = null; // the session ledger's coordinator (P4.1)
   let switchRunnerRef = null; // its switch runner (P4.2), closed with the window
+  let fallbackRef = null; // its automatic fallback (P4.5), stopped with the window
   let app;
   let exitHint = null;
   try {
@@ -439,7 +440,7 @@ export async function cmdTui(opts = {}) {
     // The session ledger (P4.1): which account and model ran each turn, what each tool did.
     const { createCoordinator, ledgerEnabled, ledgerHome, ledgerTarget } = await import("../sessions/coordinator.mjs");
     const { fromChatgpt, recordObservations } = await import("../providers/quota.mjs");
-    const { classifyTurnFailure } = await import("../harness/gateway-runtime.mjs");
+    const { classifyTurnFailure, lastUpstreamFailureForThread } = await import("../harness/gateway-runtime.mjs");
     const isChatgpt = (a) => a?.method === "engine-login" || a?.credential?.kind === "engine-home";
     let ledgerAccount = () => launched?.target?.account ?? null;
     ledger = createCoordinator({
@@ -459,8 +460,21 @@ export async function cmdTui(opts = {}) {
     // A switch (P4.2) sees the same events first; the app shows its notices and choices.
     let switchRunner = null;
     const switchUi = { notify: () => {}, ask: () => {} };
+    // Automatic fallback (P4.5): acts at turn boundaries, after the switch runner saw the event.
+    let fallbackController = null;
+    let fallbackWindowOn = () => true; // the app's /fallback off, once the app exists
+    // The session's hooks: /undo's, plus fallback's turn-end hook, which must run before the
+    // session drains its queue (a queued prompt never starts on the target that just failed).
+    const sessionHooks = () => ({
+      ...(undoKit?.hooks ?? {}),
+      turnCompleted: (x) => {
+        undoKit?.hooks?.turnCompleted?.(x);
+        fallbackController?.turnCompleted(x);
+      },
+    });
     const observer = (ev) => {
       switchRunner?.onEvent(ev);
+      fallbackController?.onEvent(ev);
       // A ChatGPT account's limits, as the engine reports them, to the QuotaStore (P4.3).
       if (ev.type === "rateLimits" && ledger) {
         const a = ledgerAccount();
@@ -468,7 +482,7 @@ export async function cmdTui(opts = {}) {
       }
       return ledger.observer(ev);
     };
-    session = createSession({ observer, engine, cwd, model: started.params.model, modelProvider: started.params.modelProvider, homeKey: launched?.homeKey ?? null, provider: launched?.target?.account?.provider ?? null, release: launched?.release ?? null, sandbox: opts.sandbox, restart, maxRestarts: 3, hooks: undoKit?.hooks ?? {}, modes: true, planEffort: () => settings.engine.get("plan_mode_reasoning_effort") ?? null, configEffort: () => settings.engine.get("model_reasoning_effort") ?? null, ...(opts.lockDir ? { lockDir: opts.lockDir } : {}), identity: engineHome.isManaged(engine.home) ? null : await harnessIdentity(engine).catch(() => null) }); // no identity: the session starts without it
+    session = createSession({ observer, engine, cwd, model: started.params.model, modelProvider: started.params.modelProvider, homeKey: launched?.homeKey ?? null, provider: launched?.target?.account?.provider ?? null, release: launched?.release ?? null, sandbox: opts.sandbox, restart, maxRestarts: 3, hooks: sessionHooks(), modes: true, planEffort: () => settings.engine.get("plan_mode_reasoning_effort") ?? null, configEffort: () => settings.engine.get("model_reasoning_effort") ?? null, ...(opts.lockDir ? { lockDir: opts.lockDir } : {}), identity: engineHome.isManaged(engine.home) ? null : await harnessIdentity(engine).catch(() => null) }); // no identity: the session starts without it
     await session.init();
     if (launched?.params?.effort) session.setNextTurn({ effort: launched.params.effort });
     await settings.engine.load();
@@ -601,6 +615,41 @@ export async function cmdTui(opts = {}) {
         notify: (...a) => switchUi.notify(...a),
         ask: (...a) => switchUi.ask(...a),
       });
+      // Automatic fallback (P4.5): the user's order, at turn boundaries, through the switch runner.
+      const { createFallbackController } = await import("../sessions/fallback-controller.mjs");
+      const { readPolicy } = await import("../routing/store.mjs");
+      const { routingContext } = await import("../routing/context.mjs");
+      const { readLedger } = await import("../sessions/ledger.mjs");
+      const { benchProvider, benchKey } = await import("../providers/quota.mjs");
+      const { classifyUpstream } = await import("../providers/errors.mjs");
+      fallbackRef = fallbackController = createFallbackController({
+        session,
+        ledger,
+        runner: switchRunner,
+        policy: () => readPolicy({ lenient: true }),
+        routing: () => routingContext(),
+        current: () => {
+          const t = accounts.currentTarget();
+          return t?.account ? { account: t.account, model: t.model ?? null, effort: t.effort ?? null, label: t.label } : null;
+        },
+        toSwitchTarget: async (rt) => {
+          const a = routingContext().accounts.find((x) => x.id === rt.account);
+          return a ? accounts.targetFor(a, rt.model ?? null, rt.effort ?? null) : null;
+        },
+        classify: ({ error, status, threadId, startedAt, fallbackInterrupt }) => classifyTurnFailure({ error, status, threadId, startedAt, fallbackInterrupt, account: ledgerAccount(), rateLimits: session?.state.rateLimits ?? null, rateLimitsAt: session?.state.rateLimitsAt ?? null }),
+        // A retry notice's cause: the gateway's last failed answer for this conversation, if it came in this turn.
+        retryObservation: (threadId, sinceMs) => {
+          const o = lastUpstreamFailureForThread(threadId);
+          return o && Number.isFinite(sinceMs) && Date.parse(o.at) >= sinceMs ? classifyUpstream(o) : null;
+        },
+        bench: ({ provider, accountId, until, reason }) => benchProvider(benchKey(provider, accountId), { until, reason, accountId }),
+        events: () => (ledger?.sessionId?.() ? readLedger(ledger.sessionId(), opts.adRoot ? { root: opts.adRoot } : {}) : []),
+        notify: (level, text, o) => {
+          switchUi.notify(level, text, o);
+          if (o?.line) actions?.bell?.({ unfocusedOnly: true });
+        },
+        windowOn: () => fallbackWindowOn(),
+      });
     }
     const actions = {
       accounts,
@@ -627,6 +676,14 @@ export async function cmdTui(opts = {}) {
       ad,
       // /fallback (P4.4): ~/.agent-daemon/fallback.json, ad's own accounts and catalogs.
       fallback: fallbackHost(),
+      // Automatic fallback (P4.5): /retry, the pause, and whether a failed turn was ad's to explain.
+      fallbackRun: {
+        paused: () => Boolean(fallbackController?.state().paused),
+        retry: () => fallbackController?.retry() ?? false,
+        resume: () => fallbackController?.resume(),
+        handled: (turnId) => fallbackController?.handled(turnId) ?? false,
+        status: () => (fallbackController ? fallbackController.state() : null),
+      },
       ...(undoKit ? { undo: (o) => undoKit.undo(session, o), onTyping: () => undoKit.onTyping() } : {}),
       // /cd: ad's memory project and /undo's checkpoints follow the new folder.
       setCwd: async (dir) => {
@@ -634,7 +691,7 @@ export async function cmdTui(opts = {}) {
         actions.ad = ad = createAdLayer({ cwd, home: opts.adHome ?? homedir(), memory: adMemory, cli: CLI });
         cp = createCheckpoints({ cwd });
         undoKit = (await cp.repo().catch(() => null)) ? checkpointWiring(cp, { cwd }) : null;
-        session.setHooks(undoKit?.hooks ?? {});
+        session.setHooks(sessionHooks());
         if (undoKit) {
           actions.undo = (o) => undoKit.undo(session, o);
           actions.onTyping = () => undoKit.onTyping();
@@ -680,6 +737,8 @@ export async function cmdTui(opts = {}) {
     };
 
     app = createApp({ io, renderer, session, cwd, header: intro, newline, history: createHistory(opts.historyFile ? { file: opts.historyFile } : {}), actions, settings, keymap: createKeymap({ overrides: settings.engine.get("tui.keymap") }), statusInfo: { engineVersion: engineVersionText, hostname: hostname(), home: homedir() }, info: { compat: `${engineVersionText} (tested)`, terminal: term } });
+    // /fallback off is the app's: fallback asks it at every turn.
+    fallbackWindowOn = () => app.state.fallbackHere !== false;
     // `ad tui "<prompt>"`: the first prompt is sent right away.
     if (opts.prompt) app.send(opts.prompt);
     await app.done;
@@ -702,6 +761,7 @@ export async function cmdTui(opts = {}) {
     renderer?.frame({ lines: [] });
     renderer?.dispose();
     const live = session?.engine;
+    fallbackRef?.dispose();
     session?.close();
     await switchRunnerRef?.dispose().catch(() => {});
     await ledger?.close().catch(() => {});

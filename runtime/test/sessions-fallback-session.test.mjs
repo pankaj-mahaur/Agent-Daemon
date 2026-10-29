@@ -350,3 +350,63 @@ test("the user's Esc during a turn is never a fallback", async () => {
     assert.equal(session.state.held, false);
   });
 });
+
+test("handled(turnId) is true for a turn fallback acted on, false for others", async () => {
+  await withRig(async ({ session, events, controller }) => {
+    await session.submit("plan-fail").done;
+    await session.submit("quota-fail").done;
+    await until(() => events().some((e) => e.type === "switchCommitted"), "the switch");
+    const done = events().filter((e) => e.type === "turnCompleted");
+    const plan = done.find((e) => e.status === "failed");
+    const quota = events().find((e) => e.type === "routeFailure");
+    assert.equal(controller().handled(quota.turnId), true);
+    assert.equal(controller().handled(plan.turnId), false, "a plan error isn't fallback's to explain");
+  });
+});
+
+test("retry() after a pause queues ad's continuation once on the current target and releases the queue; it does nothing when not paused", async () => {
+  await withRig(async ({ session, events, controller, currentId }) => {
+    assert.equal(controller().retry(), false, "nothing to retry");
+    session.submit("quota-command-running");
+    await until(() => controller().state().paused, "the pause");
+    assert.equal(controller().retry(), true);
+    assert.equal(controller().state().paused, null);
+    await until(() => events().filter((e) => e.type === "userMessage" && e.via === "ad").length === 1, "ad's continuation");
+    const ad = events().find((e) => e.type === "userMessage" && e.via === "ad");
+    assert.equal(ad.text, TXT.CONTINUATION("OpenRouter · a · fake-model", "you asked to try again"));
+    assert.equal(currentId(), "acct_a", "the current target first");
+    assert.equal(session.state.held, false);
+  });
+});
+
+test("state() counts automatic switches and keeps the last one's reason", async () => {
+  await withRig(async ({ session, events, controller }) => {
+    assert.equal(controller().state().switches, 0);
+    session.submit("quota-fail");
+    await until(() => events().some((e) => e.type === "switchCommitted"), "the switch");
+    await until(() => controller().state().switches === 1, "the count");
+    assert.equal(controller().state().lastSwitch.why, causeText({ class: "quotaExhausted", period: null, resetsAt: null }, "openrouter"));
+  });
+});
+
+test("a window with no account (an engine home ad didn't make) never holds or falls back", () => {
+  const holds = [];
+  let policyReads = 0;
+  const c = createFallbackController({
+    session: { state: { thread: { id: "t" }, terminals: new Map(), requests: [] }, hold: (on) => holds.push(on), engine: null },
+    ledger: { record: () => assert.fail("nothing recorded") },
+    runner: {},
+    policy: () => {
+      policyReads++;
+      return { enabled: true };
+    },
+    routing: () => ({ accounts: [], catalog: () => null, now: Date.now() }),
+    current: () => ({ account: null, model: "m", label: "an engine home ad didn't make" }),
+    toSwitchTarget: async () => null,
+    classify: () => ({ class: "quotaExhausted" }),
+  });
+  c.turnCompleted({ turn: { id: "x", status: "failed", error: { message: "Quota exceeded." } }, status: "failed" });
+  assert.deepEqual(holds, []);
+  assert.equal(policyReads, 0, "it stops before even reading the order");
+  c.dispose();
+});

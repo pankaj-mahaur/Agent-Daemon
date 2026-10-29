@@ -106,7 +106,7 @@ export const lastUpstream = (accountId) => shared?.gateway.last(accountId) ?? nu
  * failed answer during the turn (this conversation's first; else the account's, marked so it
  * must agree with the engine), the account's kind, and a ChatGPT account's limits.
  */
-export function classifyTurnFailure({ error, status, threadId = null, startedAt = null, account = null, rateLimits = null, rateLimitsAt = null }) {
+export function classifyTurnFailure({ error, status, threadId = null, startedAt = null, account = null, rateLimits = null, rateLimitsAt = null, fallbackInterrupt = null }) {
   const chatgpt = account?.method === "engine-login" || account?.credential?.kind === "engine-home";
   const inTurn = (o) => o && Number.isFinite(startedAt) && Date.parse(o.at) >= startedAt;
   let observation = null;
@@ -115,7 +115,8 @@ export function classifyTurnFailure({ error, status, threadId = null, startedAt 
     const a = lastUpstreamFailure(account.id);
     observation = inTurn(t) ? { ...t, by: "thread" } : inTurn(a) ? { ...a, by: "account" } : null;
   }
-  return classifyTurnError({ error, status, observation, accountKind: account ? (chatgpt ? "chatgpt" : "api") : "unknown", rateLimits, rateLimitsAt });
+  // ad's own interrupt (P4.5's watchdog) is classified by the cause it recorded, never as cancelled.
+  return classifyTurnError({ error, status, observation, accountKind: account ? (chatgpt ? "chatgpt" : "api") : "unknown", rateLimits, rateLimitsAt, fallbackInterrupt });
 }
 
 /** The provider's last failed answer for an account, or a conversation (P4.3). */

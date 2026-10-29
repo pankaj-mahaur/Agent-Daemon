@@ -213,3 +213,10 @@ test("one classifier for every window (TUI, ad run, ad loop): the account's kind
   assert.equal(classifyTurnFailure({ error: usage, status: "failed", account: { id: "a", method: "api-key" } }).class, "quotaExhausted");
   assert.equal(classifyTurnFailure({ error: usage, status: "failed", account: { id: "c", method: "engine-login" } }).class, "unknown", "ChatGPT: unconfirmed");
 });
+
+test("an interrupted turn with ad's recorded cause classifies as that cause; without it, cancelled", async () => {
+  const { classifyTurnFailure } = await import("../src/harness/gateway-runtime.mjs");
+  const cause = { class: "rateLimit", period: "minute", retryAfterMs: 45_000, resetsAt: null, source: "gateway", reason: "429" };
+  assert.deepEqual(classifyTurnFailure({ error: null, status: "interrupted", account: { id: "a", method: "api-key" }, fallbackInterrupt: { turnId: "t1", cause } }), cause);
+  assert.equal(classifyTurnFailure({ error: null, status: "interrupted", account: { id: "a", method: "api-key" } }).class, "cancelled");
+});

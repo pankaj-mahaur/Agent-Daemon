@@ -106,6 +106,7 @@ export const SLASH_COMMANDS = [
   { name: "title", source: "upstream", desc: "choose what the terminal window's title shows" },
   { name: "image", source: "ad", desc: "attach an image file to the next prompt" },
   { name: "undo", source: "ad", desc: "put back the files the last turn changed, and rewind it (/undo force)" },
+  { name: "retry", source: "ad", desc: "try again after automatic fallback paused" },
   { name: "fallback", source: "ad", desc: "where a task continues when a limit runs out (/fallback on|off: this window)" },
   { name: "terminal-setup", source: "ad", desc: "how to make Shift+Enter add a newline here" },
   { name: "quit", source: "upstream", desc: "exit ad" },
@@ -392,7 +393,11 @@ export function createApp({
       actions.bell?.({ unfocusedOnly: true });
       notePlan(t);
       showLearned(turnStarts.get(t.id) ?? turnStartedAt);
-      if (t.status === "failed" && t.error) {
+      // A turn automatic fallback acted on (P4.5): its own line (↪ switched, ⏸ paused) says why;
+      // the engine's words for it stay in /warnings.
+      if (actions.fallbackRun?.handled?.(t.id)) {
+        // nothing here
+      } else if (t.status === "failed" && t.error) {
         // A provider ad translates for: the gateway's reason, not the engine's generic words
         // (kept as the hint, and in /warnings).
         const engineWords = errorText({ ...t.error, code: -32000 });
@@ -1686,6 +1691,10 @@ export function createApp({
           fail(err);
         });
       }
+      case "retry":
+        if (!actions.fallbackRun?.paused()) return info0("Nothing to retry: automatic fallback isn't paused.");
+        actions.fallbackRun.retry();
+        return info0("Trying again on this model.");
       case "terminal-setup":
         return commitCell(terminalSetup(info.terminal).map((l) => truncate([{ text: l }], width())));
       case "remember":
@@ -1796,6 +1805,17 @@ export function createApp({
     return `${l.sessionId} \u{b7} binding ${l.gen}${hhmm ? ` (switched ${hhmm}, ${l.switchReason === "user" ? "you asked" : l.switchReason})` : ""}`;
   }
 
+  // /status's fallback row (P4.5): this window's automatic switches, the last one's reason, a pause.
+  function fallbackRow(s) {
+    if (fallbackHere === false) return "off in this window (/fallback on)";
+    const hhmm = (ms) => {
+      const d = new Date(ms);
+      return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    };
+    const head = s.switches ? `${s.switches} switch${s.switches === 1 ? "" : "es"} this session${s.lastSwitch ? ` (${hhmm(s.lastSwitch.at)}, ${s.lastSwitch.why})` : ""}` : "no switches this session";
+    return s.paused ? `${head}; paused: ${s.paused.code}` : head;
+  }
+
   function statusReport() {
     const c = st.config;
     const acct = st.account?.type ? (st.account.type === "chatgpt" ? `ChatGPT ${st.account.planType ?? ""}`.trim() : st.account.type) : st.account?.requiresOpenaiAuth ? "not signed in" : "provider key";
@@ -1807,6 +1827,7 @@ export function createApp({
       ["directory", c.cwd ?? cwd],
       ["conversation", st.thread?.id ?? "(new)"],
       ...(actions.ledger?.() ? [["session", sessionRow(actions.ledger())]] : []),
+      ...(actions.fallbackRun?.status?.() ? [["fallback", fallbackRow(actions.fallbackRun.status())]] : []),
       ["tokens", tokens],
     ];
     const rl = st.rateLimits?.primary;
@@ -2059,6 +2080,8 @@ export function createApp({
 
   /** The switch table: a model alone any time; another account moves the conversation (P4.2), or starts a new one. */
   async function applyChoice(a, { model, effort } = {}) {
+    // A choice of model or account ends a fallback pause (P4.5); a switch then holds again.
+    if (actions.fallbackRun?.paused()) actions.fallbackRun.resume();
     const current = actions.accounts.current();
     if (current && a.id === current.id) {
       session.setNextTurn({ ...(model ? { model } : {}), ...(effort ? { effort } : {}) });
@@ -2306,6 +2329,8 @@ export function createApp({
       attachments = [];
       const raw = text;
       if (privateMode && !shown) text = `<private>${text}</private>`;
+      // The user's own prompt ends a fallback pause (P4.5): what was queued runs, then this.
+      if (actions.fallbackRun?.paused()) actions.fallbackRun.resume();
       const r = session.submit(images.length ? [{ type: "text", text }, ...images.map((p) => ({ type: "localImage", path: p }))] : text);
       if (shown) {
         echoesShown.add(r.clientUserMessageId);
