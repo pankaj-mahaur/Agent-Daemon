@@ -969,6 +969,7 @@ Copy-paste configuration templates:
 
 **Top-level:**
 - [SECURITY.md](SECURITY.md) — Threat model + responsible disclosure
+- [Privacy](docs/privacy.md) — what ad stores, where, and when it uses the network (no telemetry) · [Terms](docs/terms.md)
 - [CHANGELOG.md](CHANGELOG.md) — Release history
 - [ATTRIBUTION.md](ATTRIBUTION.md) — Upstream credits
 - [DEPENDENCIES.md](DEPENDENCIES.md) — Third-party deps and licenses

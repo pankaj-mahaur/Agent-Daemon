@@ -85,6 +85,20 @@ The vendored ECC snapshot at `vendored/everything-claude-code/` is **read-only a
 
 If upstream is compromised, re-hydration via `node vendored/fetch.mjs --force` would pull the bad commit. Mitigation: the pin is reviewed when bumped, and we keep our hand-merged content (`methodology-api-design`, `methodology-tdd`) cleanly attributed so a bad pull is visible in `git diff`.
 
+## Memory
+
+- **Scope.** Memory is kept per project: notes from one project are never served in another unless you accept them as cross-project. A collided or unattributable note stays where it was until you assign it.
+- **Data, not instructions.** Notes reach an agent as quoted data; notes that read like instructions, or hold something shaped like a key, are held back (quarantined) instead of served.
+- **Review gate.** Your own corrections apply right away. Notes an agent writes for itself, imported memory and cross-project promotions wait for `ad review`, which needs your own terminal and a typed confirmation and refuses to run from an agent's shell. The limit: an agent that gets a real terminal of its own is outside that guard; text you paste into a prompt counts as your own words.
+- **Bundles.** `ad state export` never includes keys, sign-ins or the engine's folders; `ad state import` refuses a bundle with unsafe names or database parts ad didn't make, before writing anything.
+
+## Supported versions
+
+| Version | Supported |
+|---|---|
+| 3.x (the latest release) | yes: security fixes |
+| 2.x and older | no: please update |
+
 ## Reporting a vulnerability
 
 - Email: pankajmahaur2003@gmail.com
