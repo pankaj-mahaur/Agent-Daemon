@@ -21,7 +21,7 @@ import { createHash } from "node:crypto";
 import { adRoot } from "../ad-root.mjs";
 import { acquireLockWithin } from "../lock.mjs";
 import { ulid } from "../ids.mjs";
-import { findProject, readRegistry as readProjects, normalizeRemote, episodicSlug, handoffSlug, canonicalDir } from "../memory/projects.mjs";
+import { findProject, readRegistry as readProjects, normalizeRemote, episodicSlug, handoffSlug, canonicalDir, PROJECT_ID_RE } from "../memory/projects.mjs";
 import { TABLES } from "../memory/tables.mjs";
 import { findSecrets } from "../security/secret-patterns.mjs";
 import { preflight } from "./preflight.mjs";
@@ -41,6 +41,14 @@ export const IMPORT_TEXTS = Object.freeze({
 
 const fail = (code, message, extra = {}) => Object.assign(new Error(message), { code, ...extra });
 const sha = (b) => createHash("sha256").update(b).digest("hex");
+const markerId = (b) => {
+  try {
+    const id = JSON.parse(b.toString("utf8"))?.id;
+    return PROJECT_ID_RE.test(id) ? id : null;
+  } catch {
+    return null;
+  }
+};
 const importsDir = (env) => path.join(adRoot({ env }), "imports");
 const ON_CONFLICT = new Set(["refuse", "keep-mine", "take-theirs", "keep-both"]);
 const APPEND = new Set(["pending", "skill-log", "project-journals", "tui-history"]);
@@ -274,6 +282,8 @@ export async function planImport({ file, maps = [], search = [], onConflict = "r
         mine = null;
       }
       if (mine && sha(mine) === sha(data)) continue; // the same: nothing to do
+      // The project marker: the same id is the same marker, however it is written (ad rewrites it).
+      if (mine && project?.dir && path.basename(dest) === "project.json" && path.dirname(dest) === path.join(project.dir, ".agent-daemon") && markerId(mine) && markerId(mine) === markerId(data)) continue;
       if (mine) {
         const tracked = project?.dir && trackedByGit(project.dir, dest);
         const shown = project?.dir ? path.join(path.basename(project.dir), path.relative(project.dir, dest)) : path.relative(root, dest);

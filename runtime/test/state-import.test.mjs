@@ -360,3 +360,13 @@ test("re-screen and status: an instruction-like lesson arrives quarantined, an a
   assert.equal(row("an old archived%").status, "pending", "whatever the bundle said");
   db.close();
 });
+
+test("the project marker: the same id written another way isn't a conflict; another project's id is", async () => {
+  const w = await world();
+  await runImport(await planImport({ file: w.bundle, env: w.env, maps: w.map }), { env: w.env });
+  const marker = path.join(w.appHere, ".agent-daemon", "project.json");
+  fs.writeFileSync(marker, `${JSON.stringify({ schemaVersion: 1, id: w.src.A.id }, null, 2)}\n`); // as ad's registry rewrites it
+  assert.deepEqual((await planImport({ file: w.bundle, env: w.env, maps: w.map })).conflicts, [], "a re-import of the same bundle goes through");
+  fs.writeFileSync(marker, JSON.stringify({ schemaVersion: 1, id: "prj_01J0CCCCCCCCCCCCCCCCCCCCCC" }));
+  assert.deepEqual((await planImport({ file: w.bundle, env: w.env, maps: w.map })).conflicts.map((c) => path.basename(c.path)), ["project.json"]);
+});

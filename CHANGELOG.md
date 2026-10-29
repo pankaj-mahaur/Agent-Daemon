@@ -77,6 +77,7 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 ### Fixed
 
+- Importing the same `.adstate` bundle twice stopped on a conflict over `.agent-daemon/project.json` when ad had rewritten that marker; a marker naming the same project is now the same file.
 - A switch refused because the account needs signing in again said so in JavaScript (`(label) => …`); it now names the account to sign in again.
 - One state root for everything ad keeps: MCP audit logs now go to `~/.agent-daemon/audit/` (or `AD_ROOT`) instead of following `AGENT_DAEMON_HOME`, which names the runtime folder (`ad doctor` points at old logs), and the digest's global memory, its queue and the skill manifest no longer land in a second folder when `HOME` and `USERPROFILE` differ (Git Bash on Windows).
 - macOS: memory works in a project under a temp folder (`/tmp`, `/var/folders/…`). Every folder under `/private` was taken for a system folder, so memory served and stored nothing there; plain `/etc` and `/var` are now system folders as they should be.
