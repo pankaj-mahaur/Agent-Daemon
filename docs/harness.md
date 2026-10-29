@@ -352,7 +352,8 @@ ad state imports                                # every import and its state
 - **Nothing is trusted blindly.** A bundle with names that could leave ad's folders, a database with parts ad didn't make (a trigger, a view, an extra column) or rows of a project it doesn't declare is refused before anything is written. Lessons and facts come in as *pending*: searchable in their project, marked unreviewed, never put into a session until `ad review --import` accepts them (in your own terminal, typing the import id). A memory file that reads like an instruction, or holds something shaped like a key, is held back (`--accept-held` places it).
 - **Your work wins by default.** A file that differs from yours stops the import before any write (`--on-conflict keep-mine`, `take-theirs` or `keep-both`, which writes `<name>.imported-<date>` beside yours). Accounts merge by id (yours keep their sign-in; new ones need one), schedules come in switched off, journals gain only the lines they don't have.
 - **Safe to stop.** Each step is journaled: after a crash, any `ad state` command says so, and `ad state import --resume <id>` finishes it. `ad state rollback <id>` removes exactly what the import wrote; a file you changed since, or a session your newer memory points at, is kept and listed.
-- **A dual boot.** Use one checkout per OS, and `--on-conflict keep-both` for repeated moves between the two.
+- **A dual boot.** Use one checkout per OS (a shared checkout's native SQLite module, rebuilt for one OS, breaks the other), and `--on-conflict keep-both` for repeated moves between the two.
+- **Let an agent walk you through it:** the [`ad-state-migrate`](../skills/daemon/ad-state-migrate/SKILL.md) skill runs these steps in order, stops on any failed check, and leaves the review and the sign-ins to you.
 
 ## Memory, hooks and skills inside the harness
 

@@ -144,7 +144,7 @@ Agent harness (ad's engine; ad about):
   tools enable <tool>    browser (Playwright MCP) | web-search (live); "tools disable <tool>" turns off
   sandbox setup          Windows: set up the command sandbox for ad's engine (--elevated: stronger; asks first, --yes off a terminal)
   sandbox status         Windows: show sandbox readiness
-  migrate [--undo]       Rename ad's engine folder from its older name (optional; --undo reverses it)
+  migrate [--undo]       Rename ad's engine folder from its older name (optional; --undo reverses it). To move ad to another computer: ad state export / import
 
   team create     (tc)   Create a new multi-agent team
   team status     (ts)   Show team kanban board

@@ -19,11 +19,9 @@ ad state rollback <importId>          undo an import's own writes
 ad state verify --import <importId>   counts, integrity and recall on this computer
 `;
 
-function parse(args) {
-  return parseArgs({
-    args,
-    allowPositionals: true,
-    options: {
+// The subcommands and options (exported for the ad-state-migrate skill's test).
+export const STATE_SUBCOMMANDS = Object.freeze(["inspect", "export", "verify", "import", "imports", "rollback"]);
+export const STATE_OPTIONS = Object.freeze({
       project: { type: "string", multiple: true },
       "all-projects": { type: "boolean" },
       include: { type: "string", multiple: true },
@@ -38,10 +36,12 @@ function parse(args) {
       "on-conflict": { type: "string" },
       "accept-held": { type: "boolean" },
       "force-tracked": { type: "boolean" },
-      resume: { type: "string" },
-      import: { type: "string" },
-    },
-  });
+  resume: { type: "string" },
+  import: { type: "string" },
+});
+
+function parse(args) {
+  return parseArgs({ args, allowPositionals: true, options: STATE_OPTIONS });
 }
 
 export async function cmdState(args, { out = process.stdout, err = process.stderr, env = process.env, cwd = process.cwd(), appVersion = null } = {}) {
