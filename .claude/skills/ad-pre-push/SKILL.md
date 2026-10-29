@@ -86,6 +86,7 @@ git grep -nIE "sk-[A-Za-z0-9]{20}|ghp_[A-Za-z0-9]{20}|AKIA[0-9A-Z]{16}|BEGIN [A-
 ```bash
 node runtime/scripts/check-doc-links.mjs           # every relative doc link points at a tracked file
 node --test runtime/test/launch-checks.test.mjs     # privacy/security pages, MIT everywhere, no analytics, no network in the memory package
+node --test runtime/test/claim-cross-project.test.mjs   # the approved "never served in another project" sentence still holds; if it fails, the sentence leaves the copy
 cd runtime && npm test
 AD_REAL_ENGINE=1 node --test --test-concurrency=1 --test-force-exit test/tui-live.test.mjs   # after app/session/view/engine changes
 ```

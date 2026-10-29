@@ -184,6 +184,11 @@
       "reason": "P4.3: records what the pinned binary reports for each provider failure; it starts that binary and speaks the protocol to it on purpose"
     },
     {
+      "path": "runtime/test/engine-network.test.mjs",
+      "rules": ["B"],
+      "reason": "P8.4b E1: the engine's outbound-host check; it starts the pinned binary behind a recording proxy and runs one turn through the protocol on purpose"
+    },
+    {
       "path": "runtime/test/engine-real.test.mjs",
       "rules": ["A", "B"],
       "reason": "the real-engine suite: it starts the pinned binary and speaks the protocol to it on purpose"
