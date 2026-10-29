@@ -131,6 +131,7 @@ Agent harness (ad's engine; ad about):
   auth status            Show the harness login + active provider (no secrets)
   auth repair            Fix interrupted sign-ins and keys without an account (--yes: answer yes)
   auth logout [openrouter]
+  fallback [list|add|remove|order|move|set|preview|test|enable|disable]   Where a task continues when a limit runs out: ad fallback --help
   schedule add "<cron>" run|loop "<prompt>"   Recurring job, run by "ad watch" / the service  [--cwd dir]
   schedule list | remove|enable|disable|run <id> | tick
   web                    Local web UI: chat with approvals, threads, loops, schedules  [--port <n>]
@@ -2491,7 +2492,10 @@ async function main(argv) {
         file:             { type: "string" },
         origin:           { type: "string" },
         replace:          { type: "boolean" },
-        remove:           { type: "boolean" }
+        remove:           { type: "boolean" },
+        at:               { type: "string" },
+        error:            { type: "string" },
+        live:             { type: "boolean" }
       },
       allowPositionals: true,
       strict: false
@@ -2592,6 +2596,22 @@ async function main(argv) {
       return cmdAbout();
     }
     case "viewer":         return cmdViewer({ ...opts, out: parsed.values.out, open: parsed.values.open || false });
+    case "fallback": {
+      // P4.4: the fallback order and its rules (changes refuse in the agent's shell).
+      const { cmdFallback } = await import("./routing/cli.mjs");
+      return cmdFallback(parsed.positionals[0], parsed.positionals.slice(1), {
+        model: parsed.values.model,
+        effort: parsed.values.effort,
+        at: parsed.values.at,
+        error: parsed.values.error,
+        from: parsed.values.from,
+        live: Boolean(parsed.values.live),
+        json: Boolean(parsed.values.json),
+        yes: Boolean(parsed.values.yes),
+        help: Boolean(parsed.values.help),
+        clientVersion: VERSION
+      });
+    }
     case "auth": {
       // P3.2: fix interrupted sign-ins and keys without an account.
       // `ad auth repair -h` is help, never a repair (P3.8a).

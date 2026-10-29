@@ -189,7 +189,7 @@ ad auth models openrouter/work            # its models: tools, context, price, r
 ad auth models openrouter/work --refresh  # ask the provider again (at most every 10 minutes)
 ```
 
-ad keeps what it has seen about each account, so that a later switch or fallback (M4) knows what a target can do and whether it can take work. It never polls: everything comes from what passes anyway.
+ad keeps what it has seen about each account, so that a later switch or fallback knows what a target can do and whether it can take work. It never polls: everything comes from what passes anyway.
 
 - **Models and prices** (`~/.agent-daemon/catalog/`): from the provider's own model list, on demand. A model is **free** only when every price it lists is exactly zero and that was seen under 24 hours ago, or the server is local. A `:free` name alone doesn't count, a subscription is never "free", and a price nobody reported is shown as **price unknown**, never as zero.
 - **Limits** (`~/.agent-daemon/quota/observations.json`): from the provider's rate-limit headers and errors as ad's gateway sees them, ChatGPT's own limit reports, and OpenRouter's key data, read once after a 429 (at most every 30 s). A limit past its reset time, or older than 6 hours, is **unknown** again, never "ok".
@@ -198,6 +198,31 @@ ad keeps what it has seen about each account, so that a later switch or fallback
 - **Why a turn failed** is recorded in the session record (`ad sessions show`): from the provider's real answer when ad's gateway saw it, else from the engine's own code. Only a rate limit, a used-up quota, a network failure or a provider's server error can ever move work elsewhere; anything ad can't place for sure is `unknown` and moves nothing. "Upgrade to Plus" from ChatGPT means the plan doesn't include it: no switch can wait that out.
 
 Deleting `catalog/` and `quota/` loses only these caches: every target reads "unknown" until it is seen again.
+
+### The fallback order: `ad fallback`
+
+You choose, ahead of time, where ad may continue a task when a model's limit runs out or its provider fails, and on what rules. This version stores and checks the order; moving work by itself comes in the next release. It is off until you turn it on.
+
+```bash
+ad fallback add openrouter/work:qwen/qwen3-coder:free   # account[:model]; --effort, --at <N>
+ad fallback add gemini --model gemini-2.5-flash          # a trial or free-tier endpoint asks first
+ad fallback add chatgpt --model gpt-5.5 --effort medium
+ad fallback                                              # the order, what can continue now, and why not
+ad fallback preview --error quotaExhausted               # what would happen now, step by step
+ad fallback enable                                       # shows every destination, then asks
+```
+
+- **The file** is `~/.agent-daemon/fallback.json`. Every change is checked first and refused if it adds a problem ("… bills per use. 'No extra spend' allows free models and plans you already pay for."). A problem that was already there (an account removed since) never blocks removing it or `ad fallback disable`.
+- **Cost rule.** `noExtraSpend` (the default): free models and plans you already pay for. `freeOnly`: free models and local servers only. A model is free only from a fresh price check (see above); a model whose billing ad doesn't know is never used.
+- **Trial and free-tier endpoints** (NVIDIA's trial catalog, Gemini's free tier, which may use what you send) each need your own yes when you add them. `ad fallback set trial never` refuses them; `allow` stops asking.
+- **What it switches on:** only a used-up limit, a rate limit, a network failure or a provider's server error. Never on sign-in, plan or policy problems: those need you.
+- **Limits:** `set max-hops` (targets one task may move through, 1–5), `set max-switches` (per hour, 1–20), `set give-up` (seconds of trying, 10–600).
+- **Another account of the same provider** is used only while that provider hasn't hit a limit. A provider that ran out is skipped, on every account, until it resets, also when another window saw it.
+- **Long-running commands.** `set keep-running "npm run dev"` lists commands a switch may leave running; a bare `npm`, `node`, `bash` and the like are refused (they would allow almost anything).
+- **Consent.** `ad fallback enable` lists every target and what its provider does with your data, then asks. It runs only in your own terminal: `--yes` skips the question there (the text goes to stderr), never the terminal, since an agent in another tool has no `AD_TOOL_SHELL` but no terminal either. Confirming a trial endpoint and `test --live` work the same way. What you confirmed is fingerprinted: the order, each account's identity, workspace, base URL, key revision and sign-in folder, the cost and trial rules, the keep-running list. Changing any of them, re-signing an account into another identity included, turns fallback off until you confirm again ("Fallback is off until you confirm the new order: ad fallback enable"). Lowering the limits doesn't. A ChatGPT sign-in whose account ad hasn't recorded yet is tied to its sign-in folder only; the consent says so.
+- **The agent can't change it.** In the shells ad's agent runs commands in (`AD_TOOL_SHELL=1`), `ad fallback add`, `remove`, `order`, `move`, `set`, `enable` and `test --live` refuse: "ad fallback can't be changed from the agent's own shell. Run it in your terminal." Listing, preview, the dry test and `disable` still work there.
+- **`ad fallback test`** checks each target without sending anything: account ready, model listed, limits as last seen. `--live` sends one tiny request to each API account (it asks first; it counts against free limits). A ChatGPT sign-in is never tested by starting a second engine.
+- **Undo:** `ad fallback disable`, or delete `fallback.json`.
 
 ### The session record: `ad sessions show`
 
@@ -307,6 +332,7 @@ Loop and worker prompts are marked as non-user (`AD_WORKER=1`), so they never en
 | `<project>/.agent-daemon/loops/` | `ad loop` iteration logs |
 | `<project>/.agent-daemon/STOP` | stop file for loops in this project |
 | `~/.agent-daemon/catalog/`, `~/.agent-daemon/quota/` | what ad has seen of each account's models and prices, limits, benched providers and today's spend (caches; see "Models, prices, limits and spend") |
+| `~/.agent-daemon/fallback.json` | the fallback order, its rules and what you confirmed (see "The fallback order") |
 | `~/.agent-daemon/sessions/` | the session record: `ses_<id>.jsonl` per session and `index.json` (owner-only); never reasoning, a question's or form's answer, file contents, command output, headers or keys (see "The session record") |
 | `~/.agent-daemon/tui/`, `~/.agent-daemon/locks/` | `ad tui` prompt history and per-folder state; conversation locks (see [tui.md](tui.md#files-ad-writes)) |
 

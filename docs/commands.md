@@ -77,7 +77,26 @@ The engine's own rules come with the commands:
 | `/subagents` | yes | yes | the engine's **Subagents** picker; ad shows the agent's transcript live in a pager instead of switching the conversation. Alt+← / Alt+→ go round them |
 | `/debug-m-drop`, `/debug-m-update` | no | no | debug commands of the engine's own UI |
 
-`ad` also has commands of its own, with names the engine doesn't use: `/help`, `/remember`, `/memory`, `/private`, `/proposals`, `/loop`, `/team`, `/schedule`, `/tools`, `/login`, `/ad`, `/image`, `/undo`, `/terminal-setup`. (Typing the removed `/codex` hand-off answers what to use instead.) See [tui.md](tui.md#slash-commands).
+`ad` also has commands of its own, with names the engine doesn't use: `/help`, `/remember`, `/memory`, `/private`, `/proposals`, `/loop`, `/team`, `/schedule`, `/tools`, `/login`, `/ad`, `/image`, `/undo`, `/fallback`, `/terminal-setup`. (Typing the removed `/codex` hand-off answers what to use instead.) See [tui.md](tui.md#slash-commands).
+
+## `ad fallback`
+
+The fallback order in a terminal; `/fallback` is the same in the TUI ([tui.md](tui.md#automatic-fallback)). Changes refuse in the agent's own shell. Exit codes: 0 ok, 1 refused or invalid, 2 usage.
+
+| Command | What it does |
+|---|---|
+| `ad fallback` / `ad fallback list [--json]` | the order, what can continue a task now, and why not |
+| `ad fallback add <account>[:<model>] [--model <m>] [--effort <e>] [--at <N>]` | add a target (the account's default model if none); a trial or free-tier endpoint asks first, in your own terminal only (`--yes` skips the question there) |
+| `ad fallback remove <N>` | remove row N |
+| `ad fallback order <N> <N> …` · `ad fallback move <N> <M>` | a new order (every row once) · move one row |
+| `ad fallback set cost freeOnly\|noExtraSpend` | free models only, or free models plus plans you already pay for |
+| `ad fallback set on <classes>` | which failures switch: `quotaExhausted rateLimit transientNetwork provider5xx` |
+| `ad fallback set max-hops <1-5>` · `set max-switches <1-20>` · `set give-up <seconds>` | targets per task · switches per hour · how long to keep trying |
+| `ad fallback set trial ask\|never\|allow` | trial and free-tier endpoints |
+| `ad fallback set keep-running "<command>" …` | long-running commands a switch may leave running (nothing: clear the list) |
+| `ad fallback preview [--error <class>] [--from <N>]` | what would happen now, step by step |
+| `ad fallback test [--live] [--json]` | each target checked without sending anything; `--live` sends one tiny request to each API account (your own terminal only; asks first, or `--yes`) |
+| `ad fallback enable [--yes]` · `ad fallback disable` | show every destination, then turn it on, in your own terminal only (`--yes`: no question, the text goes to stderr) · turn it off |
 
 ## Keys
 

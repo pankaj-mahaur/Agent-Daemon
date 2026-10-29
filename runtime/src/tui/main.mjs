@@ -16,6 +16,7 @@ import { cliErrorLines, openUrl } from "../harness/io.mjs";
 import { closeHarnessEngines, findThreadHome, launchHarness, newestThreadAcrossHomes, removedAccountText, resumeHint, windowTarget } from "../harness/engines.mjs";
 import { readRecord, recordSettings } from "../harness/settings-sync.mjs";
 import { createTuiAccounts } from "./accounts.mjs";
+import { fallbackHost } from "./fallback-editor.mjs";
 import { accountName } from "../auth/accounts/target.mjs";
 import { createSecretStore } from "../auth/secrets.mjs";
 import { createSession } from "../harness/session.mjs";
@@ -624,6 +625,8 @@ export async function cmdTui(opts = {}) {
         return r;
       },
       ad,
+      // /fallback (P4.4): ~/.agent-daemon/fallback.json, ad's own accounts and catalogs.
+      fallback: fallbackHost(),
       ...(undoKit ? { undo: (o) => undoKit.undo(session, o), onTyping: () => undoKit.onTyping() } : {}),
       // /cd: ad's memory project and /undo's checkpoints follow the new folder.
       setCwd: async (dir) => {

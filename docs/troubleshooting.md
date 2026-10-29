@@ -891,6 +891,18 @@ See [harness.md](harness.md#working-in-your-home-folder).
 
 **Fix:** use an account whose plan includes it (`/model` or `/account`), or an API key account. `ad auth status` shows each account's plan.
 
+## 77. Fallback never switches, or a target says "skipped now"
+
+**Cause:** fallback is off, or no target fits its rules right now. `ad fallback` lists each target with the reason it would be skipped: a price not checked in the last day under "free only", a model that bills per use under "no extra spend", a trial endpoint you haven't confirmed, an account that needs signing in, a provider that hit its limit (every account of it waits for the reset, also when another window saw it), or the per-hour switch cap. "None of these targets fits 'free only' right now" means turning it on would never move anything.
+
+**Fix:** `ad fallback preview --error quotaExhausted` shows what would happen now, step by step. `ad auth models <account> --refresh` checks prices again. Add a free model, or choose `ad fallback set cost noExtraSpend` to allow plans you already pay for. `ad fallback test` checks every target without sending anything.
+
+## 78. "Fallback is off: … changed since you confirmed the order", or it turned itself off
+
+**Cause:** what you confirmed changed: the order, a target, the cost or trial rule, the keep-running list, or the account behind a target (signed in again as someone else, a new key, another base URL). ad never sends your work to a destination you didn't confirm, so it turns fallback off until you look again. Lowering the limits doesn't do this.
+
+**Fix:** `ad fallback` to check the order, then `ad fallback enable` (or `/fallback`, then **e**) to confirm it again.
+
 ---
 
 For harness problems, the [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill walks through login → hooks → sandbox → the engine's own log. See also [harness.md](harness.md) and, for the terminal UI, [tui.md](tui.md).

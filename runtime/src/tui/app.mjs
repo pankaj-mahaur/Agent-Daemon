@@ -32,6 +32,7 @@ import path from "node:path";
 import { copyText, denialSummary, exportMarkdown, imagePath, lastAgentText, renderDebugConfig, renderHooks, renderKeyInspector, renderKeymap, renderMcp, renderSkills, renderUsage, terminalSetup, transcriptLines } from "./commands.mjs";
 
 import { T } from "./view/theme.mjs";
+import { createFallbackEditor } from "./fallback-editor.mjs";
 import { createKeymap, eventSpec, keyLabel } from "./keymap.mjs";
 import { setSyntaxTheme, SYNTAX_THEMES, syntaxTheme, withSyntaxTheme } from "./view/highlight.mjs";
 import { DEFAULT_STATUS, DEFAULT_TITLE, STATUS_IDS, TITLE_IDS, canonical, contextUsedLabel, statusSegments, titleText, unsupported } from "./status.mjs";
@@ -42,6 +43,7 @@ const LIVE_SHARE = 0.6; // at most this much of the screen for streaming cells
 
 const DIM = T.dim;
 const WARN = T.warning;
+const FB_TONE = { dim: DIM, warn: WARN, selected: T.accent };
 
 // source "upstream": the same command as the engine's own UI (its name must stay one of upstream's); "ad": ad's own (its name must never be one of upstream's). The collision test checks both against upstream-commands.json in the adapter.
 export const SLASH_COMMANDS = [
@@ -104,6 +106,7 @@ export const SLASH_COMMANDS = [
   { name: "title", source: "upstream", desc: "choose what the terminal window's title shows" },
   { name: "image", source: "ad", desc: "attach an image file to the next prompt" },
   { name: "undo", source: "ad", desc: "put back the files the last turn changed, and rewind it (/undo force)" },
+  { name: "fallback", source: "ad", desc: "where a task continues when a limit runs out (/fallback on|off: this window)" },
   { name: "terminal-setup", source: "ad", desc: "how to make Shift+Enter add a newline here" },
   { name: "quit", source: "upstream", desc: "exit ad" },
   { name: "exit", source: "upstream", desc: "exit ad" },
@@ -223,6 +226,9 @@ export function createApp({
   let confirm = null; // {view, resolve}: a question of ad's own (openConfirm, openChoice)
   let planReady = null; // {turnId, text}: a Plan-mode turn proposed a plan; "Implement this plan?" opens when nothing is in the way
   let overlay = false; // the ? shortcuts
+  let fbEditor = null; // /fallback's editor (fallback-editor.mjs), drawn below the prompt
+  let fbKeys = Promise.resolve(); // its keys, one at a time (each may save)
+  let fallbackHere = true; // /fallback off: this window only, never saved
   // Key chords and the leader (P1.2): matched before any layer; a completed one
   // is routed as {type: "chord", ctx, action}, which keymap.is() answers.
   const chordKeys = keymap.chords();
@@ -767,6 +773,7 @@ export function createApp({
       lines.push(...c.lines);
       cursor = { row: top + c.cursor.row, col: c.cursor.col };
       if (popup) lines.push(...popup.view.render({ width: w, height: Math.min(10, Math.max(3, rows - lines.length - 1)) }));
+      else if (fbEditor) lines.push(...fbEditor.render().map((l) => truncate([{ text: clean(l.text), style: FB_TONE[l.tone] }], w)));
       else if (inspector) lines.push(...renderKeyInspector(inspector.last, { width: w }));
       else if (overlay) lines.push(...renderShortcuts({ newline, keymap }, { width: w }));
       else {
@@ -1657,6 +1664,28 @@ export function createApp({
             draw();
           })
           .catch(fail);
+      case "fallback": {
+        const fb = actions.fallback;
+        if (!fb) return warn("Fallback isn't available here.");
+        if (arg === "off") {
+          fallbackHere = false;
+          return info0("Fallback is off for this window. /fallback on turns it back on.");
+        }
+        if (arg === "on")
+          return Promise.resolve(fb.load()).then(({ policy }) => {
+            if (!policy.enabled) return warn("Fallback is off in your settings. /fallback opens them.");
+            fallbackHere = true;
+            return info0("Fallback is on for this window.");
+          }, fail);
+        if (arg) return warn("/fallback opens the order; /fallback on or /fallback off sets this window.");
+        const ed = createFallbackEditor({ host: { ...fb, pickTarget: pickFallbackTarget } });
+        fbEditor = ed;
+        fbKeys = Promise.resolve(); // a key still hung in an earlier editor doesn't hold this one
+        return ed.open().then(draw, (err) => {
+          if (fbEditor === ed) fbEditor = null;
+          fail(err);
+        });
+      }
       case "terminal-setup":
         return commitCell(terminalSetup(info.terminal).map((l) => truncate([{ text: l }], width())));
       case "remember":
@@ -1898,6 +1927,37 @@ export function createApp({
   }
 
   /** Level 2: the account's models (its engine's when it is this window's own sign-in), then effort. */
+  // /fallback's "a": a target from ad's own lists (account, then model); null on esc.
+  function pickFallbackTarget() {
+    const fb = actions.fallback;
+    return new Promise((resolve) => {
+      Promise.resolve(fb.load()).then(({ ctx }) => {
+        if (!ctx.accounts.length) {
+          warn("No accounts yet: /model adds one.");
+          return resolve(null);
+        }
+        const items = ctx.accounts.map((a) => ({ label: clean(accountName(a)), hint: a.status === "ready" ? "" : a.status, value: a.id }));
+        openPicker(
+          "fallback-account",
+          items,
+          (id) => {
+            const a = ctx.accounts.find((x) => x.id === id);
+            const models = fb.models(a, { current: actions.accounts?.current?.()?.id === a.id ? (st.config.model ?? null) : null });
+            if (!models.length) {
+              warn(`No models listed for ${clean(accountName(a))}: ad auth models ${a.provider}/${a.label} --refresh`);
+              return resolve(null);
+            }
+            openPicker("fallback-model", models.map((m) => ({ label: clean(m.id), hint: clean(m.hint ?? ""), value: m.id, ...(m.noTools ? { disabled: true, reason: `${clean(m.id)} can't call tools, so it can't continue a coding task.` } : {}) })), (model) => resolve({ account: a.id, model }), { title: "Add to the fallback order: model", onCancel: () => resolve(null) });
+          },
+          { title: "Add to the fallback order: account", onCancel: () => resolve(null) },
+        );
+      }, (err) => {
+        fail(err);
+        resolve(null);
+      });
+    });
+  }
+
   async function pickModelsOf(a) {
     const isCurrent = a.id === actions.accounts.current()?.id;
     // Another account during a turn: say so now, not after a model and an effort (with
@@ -2378,6 +2438,10 @@ export function createApp({
       p?.onCancel?.(); // a checklist's live preview goes back
       return;
     }
+    if (fbEditor) {
+      fbEditor = null;
+      return;
+    }
     if (composer.text) {
       composer.clear();
       return;
@@ -2466,6 +2530,21 @@ export function createApp({
         confirm = null;
         c.resolve(r.answer);
       }
+      return draw();
+    }
+    // /fallback's editor takes the keys while it is open (a picker it opened comes first).
+    // Ctrl and Alt chords and pastes go nowhere while it is open.
+    if (fbEditor && !popup && (ev.type === "key" || ev.type === "text" || ev.type === "paste" || ev.type === "paste-empty")) {
+      // Keys typed fast arrive as one text event: each character is a key of its own.
+      const names = ev.type === "text" ? [...ev.text].map((c) => (c === " " ? "space" : c)) : ev.type !== "key" || ev.ctrl || ev.alt ? [] : [ev.name === "escape" ? "esc" : ev.name];
+      const ed = fbEditor;
+      for (const name of names)
+        fbKeys = fbKeys
+          .then(() => (fbEditor === ed ? ed.key(name) : undefined))
+          .then((r) => {
+            if (r === "close" && fbEditor === ed) fbEditor = null;
+            draw();
+          }, fail);
       return draw();
     }
     if (overlay && (ev.type === "key" || ev.type === "text")) {
@@ -2657,7 +2736,7 @@ export function createApp({
       draw();
     },
     get state() {
-      return { composer: composer.text, modal: modal?.view.kind ?? null, confirm: Boolean(confirm), pager: Boolean(pager), popup: popup?.kind ?? null, overlay, note: note?.text ?? null, committed: committed.size, chord: Boolean(chordKeys.pending()) };
+      return { composer: composer.text, modal: modal?.view.kind ?? null, confirm: Boolean(confirm), pager: Boolean(pager), popup: popup?.kind ?? null, overlay, fallback: fbEditor?.mode ?? null, fallbackHere, note: note?.text ?? null, committed: committed.size, chord: Boolean(chordKeys.pending()) };
     },
     /** Around a handoff (the editor): the title goes back to the terminal's, then ours again. */
     holdTitle(hold) {

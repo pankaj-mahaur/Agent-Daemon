@@ -12,6 +12,8 @@ If something gets in the way, `ad chat` is the plain line mode and stays availab
 - [Keys](#keys)
 - [Approvals and questions](#approvals-and-questions)
 - [Slash commands](#slash-commands)
+- [Switching model, account or provider](#switching-model-account-or-provider)
+- [Automatic fallback](#automatic-fallback)
 - [Plan mode](#plan-mode)
 - [Syntax highlighting](#syntax-highlighting)
 - [Vim mode](#vim-mode)
@@ -349,6 +351,7 @@ Model, effort and permission changes apply from the next turn.
 | `/schedule [run <id>]` | scheduled jobs |
 | `/tools [list|enable|disable <tool>]` | optional agent tools (`/tools enable browser`) |
 | `/ad <command>` | run an ad command, e.g. `/ad doctor` |
+| `/fallback [on\|off]` | the fallback order: where a task may continue when a limit runs out; `on`/`off` for this window only (see [Automatic fallback](#automatic-fallback)) |
 
 **Help**
 
@@ -375,6 +378,30 @@ Pick another account (or its model) in `/model` or `/account` while a conversati
 - **If it can't**, nothing moves: "Couldn't switch to … Still on …" says why (sign-in, model, engine, the engine kept the old provider). See [troubleshooting #74](troubleshooting.md#74-couldnt-switch-to--still-on-).
 - `/status` shows `session ses_… · binding 2 (switched 14:02, you asked)`; `ad sessions show --last` lists the bindings.
 - **Turn it off:** `"switching.crossAccount": false` in `~/.agent-daemon/tui/prefs.json` brings back P3.8b's behaviour (another provider starts a new, empty conversation; the row says "starts a new conversation").
+
+## Automatic fallback
+
+`/fallback` opens the order ad may continue a task in when a model's limit runs out, below the prompt. This version keeps and checks the order; moving work by itself comes in the next release.
+
+```text
+Fallback order        off · no extra spend
+› 1  OpenRouter · work · qwen/qwen3-coder:free    free (checked 3 min ago) · today 41/50  ✓
+  2  Gemini API · personal · gemini-2.5-flash     free (checked 3 min ago)                ✓
+  3  ChatGPT · personal · gpt-5.5 medium          your plan · weekly 64% used             ✓
+    + add a target (a)
+ Switch on: limit used up · rate limit · network error · provider error
+ Cost: no extra spend   Moves per task: 3 (6 an hour)   Give up after: 2 min   Trial endpoints: ask
+ enter rules · a add · d remove · [ ] move · t test · l live test · p preview · e turn on · esc close
+```
+
+- **↑/↓** choose a row; **[** and **]** move it; **d** removes it; **a** adds a target (an account, then one of its models; a trial or free-tier endpoint asks first).
+- **enter** on the rules line: what it switches on, the cost rule, moves per task, how long to keep trying, the trial rule.
+- **t** checks each target without sending anything. **l** sends one tiny request to each API target, after asking. **p** previews what would happen now (**tab**: another kind of error).
+- **e** shows every destination and what its provider does with your data, then **Turn on**, **Save, keep off** or **Cancel**. When on, **e** turns it off.
+- Each change is saved at once. One that would add a problem shows the reason under the rows and stays a draft until you fix it; **esc** then asks "Discard changes?".
+- Changing the order, a target, the cost or trial rule, or the account behind a target turns fallback off until you confirm again ("Changed: fallback is off until you turn it on again (e).").
+- **`/fallback off`** stops it for this window only, until you quit; **`/fallback on`** brings it back (refused while it is off in your settings: "Fallback is off in your settings. /fallback opens them.").
+- The rules, the words and the agent-shell refusal are the same as `ad fallback` in a terminal: see [harness.md](harness.md#the-fallback-order-ad-fallback).
 
 ## Plan mode
 
@@ -591,6 +618,8 @@ Everything else (conversations, logs, login) is the engine's own, in ad's engine
 | "Pick a project folder" at start, or `/cd` says a folder would load your own skills from `~/.codex/` | [#48](troubleshooting.md#48-pick-a-project-folder-or-run-this-in-a-project-folder) |
 | "This session is open in another ad window", "couldn't write this session's record" | [#73](troubleshooting.md#73-this-session-is-open-in-another-ad-window-or-ad-couldnt-write-this-sessions-record) |
 | "Couldn't switch to …", "the engine kept the old provider", "history carried over … left out" | [#74](troubleshooting.md#74-couldnt-switch-to--still-on-) |
+| `/fallback` shows "skipped" rows, or "None of these targets fits …" | [#77](troubleshooting.md#77-fallback-never-switches-or-a-target-says-skipped-now) |
+| "Fallback is off: … changed since you confirmed the order" | [#78](troubleshooting.md#78-fallback-is-off--changed-since-you-confirmed-the-order-or-it-turned-itself-off) |
 | an engine command says "isn't in ad yet" | [commands.md](commands.md) |
 | not signed in, sandbox, hooks, your own install's home refused | [harness.md](harness.md#when-something-goes-wrong), troubleshooting #14–21 |
 
