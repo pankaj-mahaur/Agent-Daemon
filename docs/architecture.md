@@ -238,6 +238,15 @@ Some providers speak only Chat Completions; the engine speaks only the Responses
     If any step fails, the goal ad paused is active again, and a fork that ignored the target is archived.
   - After the fork, the old thread is unsubscribed. If background terminals still run in it, it stays subscribed and watched until they end, because unloading would kill them. A turn the engine starts on it is stopped and reported.
 
+### Portable state (P7.1b, `runtime/src/portability/`)
+
+The format for moving ad's state to another machine (export and import come with P7.2 and P7.3):
+
+- **One file, `.adstate`:** tar (ustar, pax only for a long name or size) in gzip, written deterministically (sorted, mode 0600/0700, no times or owners). The reader accepts only files, folders and pax `path`/`size`; a link, a device, a global pax header or a name that could leave the bundle is an error, never a partial read (`archive.mjs`, `names.mjs`).
+- **`manifest.json` first:** what is inside, from which machine, what was left out and why; a bundle never carries secrets (`manifest.mjs`).
+- **Path tokens:** `{HOME}`, `{AD_ROOT}`, `{PROJECT:<id>}` replace one machine's absolute paths in structured fields (the longest root wins; case-insensitive only from Windows or macOS), so a project lands wherever it lives on the target (`paths.mjs`).
+- **The inventory:** every file under ad's state root and a project's `.agent-daemon` belongs to one class: taken by default, only on request (`--include`), left behind (machine-local), or never (secrets, engine folders, sign-ins) (`inventory.mjs`). A test fails when the code adds a folder no class names.
+
 ## Data flow — a single session, start to finish
 
 ```
