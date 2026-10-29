@@ -1480,3 +1480,15 @@ test("a continuation whose new engine can't be wired leaves the window on its co
     await until(() => session.state.queue.length === 0, "the queue runs here");
   });
 });
+
+test("a partial rateLimits update keeps the other window (P4.3)", async () => {
+  const seen = [];
+  await withSession(() => ({ observer: (ev) => void (ev.type === "rateLimits" && seen.push(ev)) }), async ({ session, engine }) => {
+    await session.init();
+    session.state.rateLimits = { limitId: "lim_main", primary: { usedPercent: 10, windowDurationMins: 300 }, secondary: { usedPercent: 20, windowDurationMins: 10080 } };
+    await engine.testRequest("test/notify", { method: "account/rateLimits/updated", params: { rateLimits: { limitId: "lim_main", primary: { usedPercent: 55, windowDurationMins: 300 } } } });
+    await until(() => session.state.rateLimits.primary.usedPercent === 55, "the update");
+    assert.equal(session.state.rateLimits.secondary.usedPercent, 20, "secondary kept");
+    assert.equal(seen.at(-1).limits.secondary.usedPercent, 20, "the observer gets the merged snapshot");
+  });
+});

@@ -879,6 +879,20 @@ See [harness.md](harness.md#working-in-your-home-folder).
 
 ---
 
+## 75. "price unknown" next to a model
+
+**Cause:** the provider's model list didn't give a price for it (most OpenAI-style lists don't), or the price ad saw is more than a day old. ad never guesses, and never counts an unknown price as free.
+
+**Fix:** `ad auth models <account> --refresh` asks the provider again. If it still says unknown, the provider doesn't publish prices in its list: check its pricing page. Automatic moves that need a price ("free only", a daily budget) skip such a model.
+
+## 76. "… with your ChatGPT plan, upgrade to Plus"
+
+**Cause:** the ChatGPT plan signed in doesn't include this use. It is not a limit that resets, so ad records it as "not eligible", not as a quota, and never waits for it or switches to wait it out.
+
+**Fix:** use an account whose plan includes it (`/model` or `/account`), or an API key account. `ad auth status` shows each account's plan.
+
+---
+
 For harness problems, the [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill walks through login → hooks → sandbox → the engine's own log. See also [harness.md](harness.md) and, for the terminal UI, [tui.md](tui.md).
 
 ## Still stuck?

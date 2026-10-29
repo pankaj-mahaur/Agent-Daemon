@@ -35,6 +35,8 @@ import { signInOpenRouter } from "../auth/accounts/openrouter-oauth.mjs";
 import { listModels } from "../providers/models.mjs";
 import { presetFor, PROVIDER_PRESETS, UNAVAILABLE, visiblePresets } from "../providers/registry.mjs";
 import { homeKeyFor } from "../harness/engines.mjs";
+import { readCatalog, refresh as refreshCatalog } from "../providers/catalog.mjs";
+import { priceText } from "../harness/auth-models.mjs";
 import { AUTH_TEXTS } from "../harness/auth-texts.mjs";
 
 const live = (doc) => doc.accounts.filter((a) => a.status !== "removing");
@@ -155,7 +157,17 @@ export function createTuiAccounts({ session, store, launch, clientVersion, fetch
     },
     async models(a) {
       if (ownsHome(a)) return null; // an engine's own account: the engine lists them
-      return listModels(a, { key: keyAccount(a) ? store.get(a.credential.ref) : null, fetch, clientVersion });
+      const key = keyAccount(a) ? store.get(a.credential.ref) : null;
+      const rows = await listModels(a, { key, fetch, clientVersion });
+      // The catalog's facts beside each row (P4.3): price and tools, as last seen. Its refresh
+      // runs at most every 10 minutes and never holds the picker.
+      void refreshCatalog(a, { key, fetch, clientVersion }).catch(() => {});
+      const cat = readCatalog(a.id);
+      return rows.map((m) => {
+        const e = cat?.entries?.find((x) => x.model === m.id);
+        if (!e) return m;
+        return { ...m, ...(m.free ? {} : { priceHint: priceText(e) }), ...(e.caps?.tools === false ? { noTools: true } : {}) };
+      });
     },
     /** Moves this window to an account: same engine → retarget (a fork when it continues); another home → useEngine. */
     async switchTo(a, { model, effort } = {}) {

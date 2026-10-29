@@ -685,3 +685,19 @@ test("glue: a switch's target is checked first: an account that needs sign-in, a
     await engine.close();
   }
 });
+
+test("model rows show the catalog's price and 'no tools' (P4.3)", async () => {
+  const accounts = stubAccounts({ models: [{ id: "m/paid", name: "m/paid", free: false, priceHint: "$1.00 in · $2.00 out per 1M tokens" }, { id: "m/plain", name: "m/plain", free: false, noTools: true }] });
+  await withApp(
+    async ({ type, text, until }) => {
+      type("/account\r");
+      await until(() => /Account and model/.test(text()), "the picker");
+      type("client");
+      type("\r");
+      await until(() => /m\/paid/.test(text()), "its models");
+      assert.match(text(), /m\/paid.*\$1\.00 in · \$2\.00 out per 1M tokens/);
+      assert.match(text(), /m\/plain.*no tools/);
+    },
+    { accounts },
+  );
+});

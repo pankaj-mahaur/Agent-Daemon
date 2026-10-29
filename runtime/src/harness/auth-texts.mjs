@@ -20,6 +20,7 @@ export const AUTH_HELP = `Usage: ad auth <command>
   remove <account>     Forget an account   [--yes] [--delete-conversations]
   status [<account>]   What ad uses now, and whether each account works   [--json]
   test <account>       Check an account   [--model <id>: also one small request]   [--json]
+  models <account>     Its models: tools, context, price (free only from a fresh zero price), route   [--refresh] [--json]
   repair               Fix interrupted sign-ins and keys without an account   [--yes]
 
 <account> is provider/label (openrouter/work), a provider with one account, a label used once, or an account id.

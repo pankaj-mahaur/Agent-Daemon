@@ -15,7 +15,7 @@ The engine's own rules come with the commands:
 
 | Command | In ad | During a task | What it does in ad |
 |---|---|---|---|
-| `/model` | yes | yes | choose the model and reasoning effort |
+| `/model` | yes | yes | choose the model and reasoning effort; each model row shows its price as last seen ("free, checked 3 min ago", "price unknown") and "no tools" when the provider says so. `ad auth models <account>` prints the same in the terminal |
 | `/ide` | no | yes | needs an editor link that `ad` doesn't have |
 | `/permissions` | yes | yes | what the engine may do without asking |
 | `/keymap` | yes | no | shows the keys in effect, yours marked; `/keymap debug` is the engine's Keypress Inspector. Keys are changed in the engine's settings file under `[tui.keymap]` (`ad about` shows where), and `ad` uses them (see [Keys](#keys)) |

@@ -466,6 +466,7 @@ ad tui ["<prompt>"] [--last | --resume <id>]   # terminal UI (docs/tui.md)
 ad about                                     # what ad runs on: versions, the engine, licenses, settings path
 ad chat | ad run "<prompt>" | ad loop "<objective>"   # --account <provider>/<label> --model <m> --effort <e> pick the target (AD_ACCOUNT: a default)
 ad sessions show [<id>|--last] [--json]      # what ran where: bindings, turns, tool calls (docs/harness.md)
+ad auth models <account> [--refresh] [--json]  # its models: tools, context, price (free only when seen free today)
 ad schedule add|list|remove|enable|disable|run|tick
 ad web | ad acp | ad tools list|enable|disable | ad sandbox setup|status | ad agy "<prompt>"
 ad spawn ... --engine ad|claude     # team workers (default: sandboxed engine thread)

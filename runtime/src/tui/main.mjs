@@ -437,6 +437,9 @@ export async function cmdTui(opts = {}) {
     // Default's mask keeps the configured effort, as the engine's own Default mode does.
     // The session ledger (P4.1): which account and model ran each turn, what each tool did.
     const { createCoordinator, ledgerEnabled, ledgerHome, ledgerTarget } = await import("../sessions/coordinator.mjs");
+    const { fromChatgpt, recordObservations } = await import("../providers/quota.mjs");
+    const { classifyTurnFailure } = await import("../harness/gateway-runtime.mjs");
+    const isChatgpt = (a) => a?.method === "engine-login" || a?.credential?.kind === "engine-home";
     let ledgerAccount = () => launched?.target?.account ?? null;
     ledger = createCoordinator({
       cwd,
@@ -448,12 +451,20 @@ export async function cmdTui(opts = {}) {
         const c = session.state.config;
         return ledgerTarget({ account: ledgerAccount(), provider: c.provider, model: c.model, effort: c.effort });
       },
+      // A failed turn's class (P4.3): the gateway's observation of this account's route during
+      // the turn wins (API accounts); a ChatGPT account's limits come from its own reads.
+      classify: ({ error, status, threadId, startedAt }) => classifyTurnFailure({ error, status, threadId, startedAt, account: ledgerAccount(), rateLimits: session?.state.rateLimits ?? null, rateLimitsAt: session?.state.rateLimitsAt ?? null }),
     });
     // A switch (P4.2) sees the same events first; the app shows its notices and choices.
     let switchRunner = null;
     const switchUi = { notify: () => {}, ask: () => {} };
     const observer = (ev) => {
       switchRunner?.onEvent(ev);
+      // A ChatGPT account's limits, as the engine reports them, to the QuotaStore (P4.3).
+      if (ev.type === "rateLimits" && ledger) {
+        const a = ledgerAccount();
+        if (isChatgpt(a)) void recordObservations(fromChatgpt(ev.limits, { accountId: a.id, source: ev.source })).catch(() => {});
+      }
       return ledger.observer(ev);
     };
     session = createSession({ observer, engine, cwd, model: started.params.model, modelProvider: started.params.modelProvider, homeKey: launched?.homeKey ?? null, provider: launched?.target?.account?.provider ?? null, release: launched?.release ?? null, sandbox: opts.sandbox, restart, maxRestarts: 3, hooks: undoKit?.hooks ?? {}, modes: true, planEffort: () => settings.engine.get("plan_mode_reasoning_effort") ?? null, configEffort: () => settings.engine.get("model_reasoning_effort") ?? null, ...(opts.lockDir ? { lockDir: opts.lockDir } : {}), identity: engineHome.isManaged(engine.home) ? null : await harnessIdentity(engine).catch(() => null) }); // no identity: the session starts without it

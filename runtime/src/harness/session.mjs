@@ -35,6 +35,7 @@ import { join } from "node:path";
 import { DEFAULT_APPROVAL_POLICY, DEFAULT_SANDBOX, engineEvents, engineHome, isAutoModel, engineErrorText, engineErrorDetail, engineNoticeText, switchThread } from "../engine/index.mjs";
 import { acquireLock, DEFAULT_LOCK_DIR, defaultLockDir } from "../lock.mjs";
 import { homeCdRefusal } from "../engine/attribution.mjs";
+import { mergeRateLimits } from "../providers/quota.mjs";
 
 export { DEFAULT_LOCK_DIR };
 const NOTICE_CAP = 50;
@@ -163,6 +164,7 @@ export function createSession({
     plan: null,
     diff: null,
     rateLimits: null,
+    rateLimitsAt: null, // when the engine last reported them (P4.3: a usage limit is confirmed only by a fresh one)
     // Background terminals (the engine's unified exec, /ps): key (the engine's processId) → {key, itemId, command, actions, lines}.
     terminals: new Map(),
     // presets: null until the engine answers, [] when it has none (plan mode unavailable).
@@ -258,7 +260,12 @@ export function createSession({
   function onGlobal(ev) {
     if (ev.type === "hook.started" || ev.type === "hook.completed") return void emitter.emit("hook", { ...ev.run, phase: ev.type.slice(5) });
     if (ev.type === "account") state.account = { ...(state.account ?? {}), ...ev.account };
-    else if (ev.type === "rateLimits") state.rateLimits = ev.limits;
+    else if (ev.type === "rateLimits") {
+      // A partial update replaces only the windows it carries (P4.3).
+      state.rateLimits = mergeRateLimits(state.rateLimits, ev.limits);
+      state.rateLimitsAt = Date.now();
+      observe({ type: "rateLimits", limits: state.rateLimits, source: "chatgpt:rateLimits/updated" });
+    }
     else if (ev.type === "mcp.status") state.mcp.set(ev.server, { status: ev.status, error: ev.error, failureReason: ev.failureReason });
     else if (ev.type === "notice") return notice(ev.level, ev.code, engineNoticeText(ev), [ev.message, ev.details && JSON.stringify(ev.details)].filter(Boolean).join("\n"));
     else return;
@@ -1193,7 +1200,11 @@ export function createSession({
       const acct = await eng.account().catch(() => null);
       if (acct) state.account = { ...(acct.account ?? {}), requiresOpenaiAuth: Boolean(acct.requiresOpenaiAuth) };
       const limits = await eng.usage.limits().catch(() => null);
-      if (limits) state.rateLimits = limits.rateLimits ?? limits;
+      if (limits) {
+        state.rateLimits = limits.rateLimits ?? limits;
+        state.rateLimitsAt = Date.now();
+        observe({ type: "rateLimits", limits: state.rateLimits, source: "chatgpt:rateLimits/read" });
+      }
       change("account");
     },
     submit,

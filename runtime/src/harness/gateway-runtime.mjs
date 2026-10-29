@@ -15,6 +15,8 @@ import { syncLegacyAccounts } from "../auth/accounts/migrate.mjs";
 import { createSecretStore } from "../auth/secrets.mjs";
 import { startGateway } from "../gateway/client.mjs";
 import { engineEnvFor, engineProviderArgs, gatewayTable, threadConfigFor, TOKEN_HIDDEN_ARGS } from "../gateway/table.mjs";
+import { createUpstreamRecorder, probeOpenRouterKey } from "../providers/upstream.mjs";
+import { classifyTurnError } from "../providers/errors.mjs";
 
 let shared = null; // { gateway, tableKey }
 // This ad session's id for providers that want one (OpenCode Go outside a conversation):
@@ -70,7 +72,14 @@ export async function gatewayState({ store, env = process.env } = {}) {
     return Object.fromEntries([...refs].map(([id, ref]) => [id, values.get(ref)]).filter(([, v]) => v));
   };
   const tableKey = JSON.stringify([...table]);
-  if (!shared) shared = { gateway: await startGateway({ table, getKeys, env, sealKey: sealKeyFrom(store), translate: translateEnabled(env), sessionId: SESSION_ID }), tableKey };
+  // Limits, benches and spend from what the gateway sees (P4.3); OpenRouter's /key after a 429.
+  const probeKey = async (accountId) => {
+    const a = readRegistry().accounts.find((x) => x.id === accountId);
+    if (a?.provider !== "openrouter" || a.endpoint || !a.credential?.ref) return null;
+    const key = store.get(a.credential.ref);
+    return key ? probeOpenRouterKey({ key }) : null;
+  };
+  if (!shared) shared = { gateway: await startGateway({ table, getKeys, env, sealKey: sealKeyFrom(store), translate: translateEnabled(env), sessionId: SESSION_ID, onUpstream: createUpstreamRecorder({ probeKey }) }), tableKey };
   else if (shared.tableKey !== tableKey) {
     await shared.gateway.setTable(table);
     shared.tableKey = tableKey;
@@ -92,6 +101,26 @@ export async function gatewayEngineOpts({ home, store, env = process.env, err = 
 
 /** The running gateway's last observation for an account (ad auth status, /status). */
 export const lastUpstream = (accountId) => shared?.gateway.last(accountId) ?? null;
+/**
+ * A failed turn's class (P4.3), for the TUI, ad run and ad loop alike: the provider's last
+ * failed answer during the turn (this conversation's first; else the account's, marked so it
+ * must agree with the engine), the account's kind, and a ChatGPT account's limits.
+ */
+export function classifyTurnFailure({ error, status, threadId = null, startedAt = null, account = null, rateLimits = null, rateLimitsAt = null }) {
+  const chatgpt = account?.method === "engine-login" || account?.credential?.kind === "engine-home";
+  const inTurn = (o) => o && Number.isFinite(startedAt) && Date.parse(o.at) >= startedAt;
+  let observation = null;
+  if (account && !chatgpt) {
+    const t = lastUpstreamFailureForThread(threadId);
+    const a = lastUpstreamFailure(account.id);
+    observation = inTurn(t) ? { ...t, by: "thread" } : inTurn(a) ? { ...a, by: "account" } : null;
+  }
+  return classifyTurnError({ error, status, observation, accountKind: account ? (chatgpt ? "chatgpt" : "api") : "unknown", rateLimits, rateLimitsAt });
+}
+
+/** The provider's last failed answer for an account, or a conversation (P4.3). */
+export const lastUpstreamFailure = (accountId) => shared?.gateway.lastFailure?.(accountId) ?? null;
+export const lastUpstreamFailureForThread = (threadId) => shared?.gateway.lastFailureForThread?.(threadId) ?? null;
 
 // What a translated turn's failure really was (P6.1 §6): the engine only knows generic
 // codes ("Quota exceeded. Check your plan…" even for a free daily limit), the gateway knows

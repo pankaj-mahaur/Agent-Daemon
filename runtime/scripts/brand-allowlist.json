@@ -174,6 +174,16 @@
       "reason": "P6.1: recorded engine requests; the model slug gpt-5.1-codex is a real model name the recording used"
     },
     {
+      "path": "runtime/test/fixtures/engine-failures-0.163.json",
+      "rules": ["A"],
+      "reason": "P4.3: the turn errors the pinned binary reported, recorded as it sends them (its own field names)"
+    },
+    {
+      "path": "runtime/test/engine-real-failures.test.mjs",
+      "rules": ["A", "B"],
+      "reason": "P4.3: records what the pinned binary reports for each provider failure; it starts that binary and speaks the protocol to it on purpose"
+    },
+    {
       "path": "runtime/test/engine-real.test.mjs",
       "rules": ["A", "B"],
       "reason": "the real-engine suite: it starts the pinned binary and speaks the protocol to it on purpose"

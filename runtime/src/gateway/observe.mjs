@@ -46,8 +46,26 @@ export function errorFromBody(status, text) {
     e = text ? { message: text } : null;
   }
   const message = redact(String(e?.message ?? "")).slice(0, 300);
-  const error = { status, type: e?.type ?? null, code: e?.code === undefined ? null : String(e.code), message };
+  const error = { status, type: e?.type ?? null, code: e?.code === undefined ? null : String(e.code), message, ...bodyFacts(e) };
   return { ...error, class: classifyProviderError(status, error) };
+}
+
+const short = (v) => (typeof v === "string" || typeof v === "number" ? redact(String(v)).slice(0, 120) : null);
+// The few facts a failure's class needs (P4.3), never more of the body: Google's status,
+// quota ids and retry delay; OpenRouter's limit source (its remaining-requests header in the
+// body is per minute as often as per day, so ad asks /key instead).
+function bodyFacts(e) {
+  if (!e || typeof e !== "object") return {};
+  const out = {};
+  if (typeof e.status === "string") out.statusText = short(e.status);
+  const details = Array.isArray(e.details) ? e.details : [];
+  const quotaIds = details.flatMap((d) => (Array.isArray(d?.violations) ? d.violations.map((v) => short(v?.quotaId)).filter(Boolean) : [])).slice(0, 8);
+  if (quotaIds.length) out.quotaIds = quotaIds;
+  const delay = details.find((d) => typeof d?.retryDelay === "string")?.retryDelay;
+  if (delay) out.retryDelay = short(delay);
+  const meta = e.metadata && typeof e.metadata === "object" ? e.metadata : null;
+  if (meta?.limit_source) out.limitSource = short(meta.limit_source);
+  return out;
 }
 
 const EVENT_CAP = 1024 * 1024;

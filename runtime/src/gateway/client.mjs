@@ -40,10 +40,22 @@ export async function startGateway({ table = new Map(), getKeys = async () => ({
   child.stderr?.resume();
   const last = new Map();
   const byThread = new Map(); // the engine's thread → its last translated request's event (≤ 256)
+  // The provider's last failed answer per account and per thread (P4.3): a later success (a
+  // subagent's, a retry's) never hides it from a failed turn's classification.
+  const failed = new Map();
+  const failedByThread = new Map();
   let closing = false;
   child.on("message", (m) => {
     if (m?.type !== "upstream") return;
     last.set(m.event.accountId, m.event);
+    if (!m.event.local && (m.event.status >= 400 || m.event.error)) {
+      failed.set(m.event.accountId, m.event);
+      if (m.event.threadId) {
+        failedByThread.delete(m.event.threadId);
+        failedByThread.set(m.event.threadId, m.event);
+        if (failedByThread.size > 256) failedByThread.delete(failedByThread.keys().next().value);
+      }
+    }
     if (m.event.threadId) {
       byThread.delete(m.event.threadId);
       byThread.set(m.event.threadId, m.event);
@@ -93,6 +105,9 @@ export async function startGateway({ table = new Map(), getKeys = async () => ({
       });
     },
     last: (accountId) => last.get(accountId) ?? null,
+    /** The provider's last failed answer for an account, or a conversation. */
+    lastFailure: (accountId) => failed.get(accountId) ?? null,
+    lastFailureForThread: (threadId) => (threadId ? (failedByThread.get(threadId) ?? null) : null),
     /** The last translated request's event for a conversation (the engine's thread id). */
     lastForThread: (threadId) => (threadId ? (byThread.get(threadId) ?? null) : null),
     async close() {

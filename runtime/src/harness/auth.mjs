@@ -26,7 +26,7 @@ import { readRegistry } from "../auth/accounts/registry.mjs";
 import { syncAccountsFromEngine } from "./accounts-sync.mjs";
 import { refuseKeyArgs } from "../auth/accounts/signin.mjs";
 
-const AUTH_COMMANDS = ["login", "list", "use", "rename", "logout", "remove", "status", "test"];
+const AUTH_COMMANDS = ["login", "list", "use", "rename", "logout", "remove", "status", "test", "models"];
 const MUTATING = new Set(["login", "use", "rename", "logout", "remove"]);
 // accountCommand's answer for "3.0's logout of the main engine folder's sign-in".
 const LEGACY_LOGOUT = Symbol("legacy-logout");
@@ -47,6 +47,11 @@ async function accountCommand(sub, args, o) {
     return cmdRemove(args[0], { out: o.out, err: o.err, yes: o.yes, store: o.store, stdin: o.stdin ?? process.stdin, ask: o.ask });
   }
   if (sub === "status" && args[0]) return cmdStatusAccount(args[0], { out: o.out, json: o.json });
+  if (sub === "models") {
+    if (!args[0]) throw Object.assign(new Error("Usage: ad auth models <account> [--refresh] [--json]"), { code: "USAGE" });
+    const { cmdModels } = await import("./auth-models.mjs");
+    return cmdModels(args[0], { out: o.out, json: o.json, refresh: o.refresh, store: o.store, fetch: o.fetch, clientVersion: o.clientVersion });
+  }
   if (sub === "logout" && args[0]) {
     const id = String(args[0]).toLowerCase();
     let a;

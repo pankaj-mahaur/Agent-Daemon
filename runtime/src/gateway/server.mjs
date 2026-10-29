@@ -135,7 +135,8 @@ export function createGatewayServer({ token, table, keys = {}, onUpstream = () =
     if (translated && !translate) return void adError(res, 502, "ad: providers that need translation are turned off (AD_TRANSLATE=0)");
 
     const at = new Date();
-    const ev = { requestId: ulid(), upstreamRequestId: null, at: at.toISOString(), accountId: route.accountId, providerEntry: t.entry, path: t.rest, status: null, headers: {}, retryAfterS: null, rateLimit: {}, usage: null, error: null, firstByteMs: null, durationMs: null, aborted: false };
+    // local: ad's own answer (its caps, a missing key, a refusal) until the request goes upstream.
+    const ev = { local: true, requestId: ulid(), upstreamRequestId: null, at: at.toISOString(), accountId: route.accountId, provider: route.provider ?? null, providerEntry: t.entry, path: t.rest, status: null, headers: {}, retryAfterS: null, rateLimit: {}, usage: null, error: null, firstByteMs: null, durationMs: null, aborted: false };
     let emitted = false;
     const emit = () => {
       if (emitted) return;
@@ -183,6 +184,9 @@ export function createGatewayServer({ token, table, keys = {}, onUpstream = () =
         return void adError(res, 413, "ad: the request is too large");
       }
       body = Buffer.concat(chunks);
+      // For spend (P4.3): the request's size and model, never its content.
+      ev.requestBytes = body.length;
+      ev.model = /"model"\s*:\s*"([^"\\]{1,200})"/.exec(body.subarray(0, 4096).toString("utf8"))?.[1] ?? null;
       if (perModel || route.sessionHeader) {
         let j = null;
         try {
@@ -299,6 +303,7 @@ export function createGatewayServer({ token, table, keys = {}, onUpstream = () =
         done();
         return void adError(res, 502, "ad: this account's key isn't available (run: ad auth status)");
       }
+      ev.local = false;
       up = await send(auth);
       // token-provider: one refresh and one retry on 401, then the 401 passes through.
       if (up.status === 401 && route.auth?.kind === "token-provider") {

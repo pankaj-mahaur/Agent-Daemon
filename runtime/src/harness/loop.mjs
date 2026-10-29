@@ -24,6 +24,7 @@ import path from "node:path";
 import { describeItem } from "./run.mjs";
 import { launchHarness } from "./engines.mjs";
 import { createCoordinator, ledgerEnabled, ledgerHome, ledgerTarget, recordEngineThread } from "../sessions/coordinator.mjs";
+import { classifyTurnFailure } from "./gateway-runtime.mjs";
 import { UNATTENDED_ENV, UNATTENDED_SANDBOX_POLICY, unattendedThreadConfig } from "./unattended.mjs";
 
 export const LOOP_DEFAULTS = {
@@ -139,7 +140,7 @@ export async function cmdLoop(objective, opts = {}) {
     const threadOpts = { cwd, model: opts.model, sandbox: "workspace-write", approvalPolicy: "never", developerInstructions: LOOP_PROTOCOL, config: await unattendedThreadConfig(engine) };
     // A resumed thread keeps its own account; a new one starts on the resolved one.
     ({ threadId } = opts.resume ? await engine.resumeThread(opts.resume, threadOpts) : await engine.startThread({ ...threadOpts, model: started.params.model, modelProvider: started.params.modelProvider }));
-    const ledger = createCoordinator({ cwd, origin: "loop", root: opts.adRoot, enabled: ledgerEnabled(opts), homeKey: () => ledgerHome(started.homeKey), targetOf: () => ledgerTarget({ account: started.target?.account, model: started.params.model ?? opts.model, effort: started.params.effort }) });
+    const ledger = createCoordinator({ cwd, origin: "loop", root: opts.adRoot, enabled: ledgerEnabled(opts), classify: ({ error, status, threadId, startedAt }) => classifyTurnFailure({ error, status, threadId, startedAt, account: started.target?.account ?? null }), homeKey: () => ledgerHome(started.homeKey), targetOf: () => ledgerTarget({ account: started.target?.account, model: started.params.model ?? opts.model, effort: started.params.effort }) });
     ledgerRec = recordEngineThread(ledger, { engine, threadId, how: opts.resume ? "resume" : "new", warn: (m) => err.write(`ad loop: ${m}\n`) });
     if (objective?.trim()) {
       await engine

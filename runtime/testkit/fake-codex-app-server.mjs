@@ -785,6 +785,10 @@ async function onRequest({ id, method, params }) {
       return send({ id, result: { ok: true } });
     case "test/silent":
       return; // never answers — exercises client timeouts
+    case "test/notify":
+      // Any notification the engine might send (rate-limit updates…), as given.
+      notify(params.method, params.params ?? {});
+      return send({ id, result: { ok: true } });
     case "test/start-turn": {
       // A turn the engine starts by itself (a goal continuation, a subagent wake-up): runs until interrupted.
       const tid = params.threadId;

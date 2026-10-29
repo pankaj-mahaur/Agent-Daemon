@@ -453,3 +453,24 @@ test("a switch a crash left open says how it ended when the session reopens (P4.
   assert.ok(ev.some((e) => e.type === "switchAborted" && e.reason === "crash"), ev.map((e) => e.type).join());
   await b.close();
 });
+
+test("a failed turn's error carries its class (P4.3): the engine's error alone by default, the window's classifier when given", async () => {
+  const c = make();
+  start(c, "cls");
+  c.observer({ type: "turn.started", threadId: "cls", turnId: "f1" });
+  c.observer({ type: "turn.completed", threadId: "cls", turnId: "f1", status: "failed", error: { message: "exceeded retry limit, last status: 429 Too Many Requests", details: null, info: { responseTooManyFailedAttempts: { httpStatusCode: 429 } } } });
+  const e = readLedger(c.sessionId()).find((x) => x.type === "turnCompleted").error;
+  assert.equal(e.class, "rateLimit");
+  assert.equal(e.httpStatus, 429);
+  await c.close();
+  const seen = [];
+  const d = createCoordinator({ cwd: path.join(TMP, "work"), homeKey: () => "engine", targetOf: () => target, classify: (x) => (seen.push(x), { class: "quotaExhausted", resetsAt: "2026-10-30T00:00:00.000Z", retryAfterMs: null }) });
+  start(d, "cls2");
+  d.observer({ type: "turn.started", threadId: "cls2", turnId: "f2" });
+  d.observer({ type: "turn.completed", threadId: "cls2", turnId: "f2", status: "failed", error: { message: "m", info: "other" } });
+  const e2 = readLedger(d.sessionId()).find((x) => x.type === "turnCompleted").error;
+  assert.equal(e2.class, "quotaExhausted");
+  assert.equal(e2.resetsAt, "2026-10-30T00:00:00.000Z");
+  assert.ok(Number.isFinite(seen[0].startedAt), "the turn's start time is the window");
+  await d.close();
+});

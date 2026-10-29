@@ -1919,7 +1919,8 @@ export function createApp({
       label: clean(m.name || m.id),
       hint: [
         !isCurrent && st.thread ? rowHint(a, m.id) : null,
-        m.free ? (m.priceObservedAt ? `free \u{b7} checked ${hours(m.priceObservedAt)}h ago` : "free") : null,
+        m.free ? (m.priceObservedAt ? `free \u{b7} checked ${hours(m.priceObservedAt)}h ago` : "free") : (m.priceHint ?? null),
+        m.noTools ? "no tools" : null,
         m.dataNote,
       ]
         .filter(Boolean)

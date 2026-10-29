@@ -19,6 +19,7 @@ import { openLedger, readLedger, SESSION_TEXTS } from "./ledger.mjs";
 import { readIndex, sessionForThread, threadKey, updateIndex } from "./index.mjs";
 import { effectOf, innerCommand, settleTurn, toolStatus } from "./effects.mjs";
 import { recoverSwitch } from "./switch.mjs";
+import { classifyTurnError, engineInfo } from "../providers/errors.mjs";
 import { adRoot } from "../ad-root.mjs";
 import { ulid } from "../ids.mjs";
 
@@ -119,7 +120,11 @@ export function recordEngineThread(coordinator, { engine, threadId, how = "new",
 // names the root too; AD_LEDGER=0 turns the record off.
 export const ledgerEnabled = ({ home, adRoot } = {}) => process.env.AD_LEDGER !== "0" && (!home || Boolean(adRoot));
 
-export function createCoordinator({ cwd, origin = "tui", root = adRoot(), homeKey = () => "engine", targetOf = () => null, enabled = process.env.AD_LEDGER !== "0" } = {}) {
+// classify({ error, status, threadId, turnId, startedAt }) → Failure (P4.3): the failed turn's
+// class; by default from the engine's error alone (a window adds the gateway's observation).
+const engineOnly = ({ error, status }) => classifyTurnError({ error, status, accountKind: "unknown" });
+
+export function createCoordinator({ cwd, origin = "tui", root = adRoot(), homeKey = () => "engine", targetOf = () => null, classify = engineOnly, enabled = process.env.AD_LEDGER !== "0" } = {}) {
   let ledger = null;
   let sessionId = null;
   let lastId = null; // the session this coordinator wrote last (tests, ad run)
@@ -138,6 +143,7 @@ export function createCoordinator({ cwd, origin = "tui", root = adRoot(), homeKe
   const turnRoot = new Map(); // turn id → root turn id
   const tools = new Map(); // key → { rootTurnId, status, background, turnId, itemId }
   let lastSwitch = null; // { at, reason } of this session's last switch (for /status)
+  const turnStarts = new Map(); // root turn id → when it started (the failure window)
 
   const target = () => targetOf() ?? null;
   const write = (ev) => ledger?.append(ev);
@@ -368,6 +374,7 @@ export function createCoordinator({ cwd, origin = "tui", root = adRoot(), homeKe
             pendingUser -= 1;
           } else trigger = goalActive ? "goal" : "engine";
           activeRoot = lastRoot = ev.turnId;
+          turnStarts.set(ev.turnId, Date.now());
         } else if (parent) childRoot.set(ev.threadId, parent);
         // A subagent's wake-up before any root turn of a reopened session is its own root.
         turnRoot.set(ev.turnId, isRoot ? ev.turnId : (parent ?? ev.turnId));
@@ -382,7 +389,17 @@ export function createCoordinator({ cwd, origin = "tui", root = adRoot(), homeKe
           if (activeRoot === ev.turnId) activeRoot = null;
         } else settleChildTurn(ev.turnId); // its root may have ended (and settled) before it
         const e = ev.error;
-        write({ type: "turnCompleted", turnId: ev.turnId, ...(isRoot ? {} : { thread: ev.threadId }), status: ev.status ?? "completed", ...(e ? { error: { info: e.info ?? null, httpStatus: e.info?.httpStatusCode ?? null, message: String(e.message ?? ""), class: null } } : {}) });
+        let failure = null;
+        if (e) {
+          try {
+            failure = classify({ error: e, status: ev.status, threadId: ev.threadId, turnId: ev.turnId, startedAt: turnStarts.get(ev.turnId) ?? null });
+          } catch {
+            failure = null; // a classifier's failure leaves the class unknown
+          }
+        }
+        turnStarts.delete(ev.turnId);
+        const { status: httpStatus } = engineInfo(e?.info);
+        write({ type: "turnCompleted", turnId: ev.turnId, ...(isRoot ? {} : { thread: ev.threadId }), status: ev.status ?? "completed", ...(e ? { error: { info: e.info ?? null, httpStatus, message: String(e.message ?? ""), class: failure?.class ?? "unknown", ...(failure?.resetsAt ? { resetsAt: failure.resetsAt } : {}), ...(failure?.retryAfterMs != null ? { retryAfterMs: failure.retryAfterMs } : {}) } } : {}) });
         return;
       }
       case "item.started":

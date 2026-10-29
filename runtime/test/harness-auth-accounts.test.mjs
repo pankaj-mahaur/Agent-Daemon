@@ -176,3 +176,23 @@ test("a failing 3.0 use leaves the default account alone", async () => {
     process.env.AD_ROOT = prev;
   }
 });
+
+test("ad auth models shows free with its age and unknown prices as unknown (P4.3)", async () => {
+  const r = await auth("models", ["openrouter/work"], { refresh: true });
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /OpenRouter · work: \d+ models?, listed 0 min ago/);
+  assert.match(r.out, /mock-model\s+\?\s+\?\s+\$1\.00 in · \$2\.00 out per 1M tokens\s+direct/);
+  const j = await auth("models", ["openrouter/work"], { json: true });
+  const doc = JSON.parse(j.out);
+  assert.ok(doc.entries.every((e) => e.accountId === doc.account));
+  // A catalog row with no price says so; one past a day is unknown, not free.
+  const { readCatalog } = await import("../src/providers/catalog.mjs");
+  const { priceText } = await import("../src/harness/auth-models.mjs");
+  const cached = readCatalog(doc.account);
+  assert.equal(priceText({ ...cached.entries[0], price: null, billing: "metered" }), "price unknown");
+  const now = Date.parse(cached.observedAt);
+  const free = { ...cached.entries[0], billing: "metered", price: { input: "0", output: "0", request: null, observedAt: cached.observedAt } };
+  assert.equal(priceText(free, now + 3 * 60_000), "free, checked 3 min ago");
+  assert.equal(priceText(free, now + 25 * 3_600_000), "price unknown (last seen 25 h ago)", "a day-old zero is unknown, not free");
+  assert.ok(!r.out.includes(K1) && !j.out.includes(K1), "never the key");
+});

@@ -11,6 +11,7 @@ import { launchHarness } from "./engines.mjs";
 import { createCoordinator, ledgerEnabled, ledgerHome, ledgerTarget, recordEngineThread } from "../sessions/coordinator.mjs";
 import { gatewayReason } from "./gateway-runtime.mjs";
 import { accountName } from "../auth/accounts/target.mjs";
+import { classifyTurnFailure } from "./gateway-runtime.mjs";
 
 export { NOT_LOGGED_IN };
 
@@ -77,7 +78,7 @@ export async function cmdRun(prompt, opts = {}) {
     engine = started.engine;
     release = started.release;
     const { threadId } = await engine.startThread({ cwd: opts.cwd, model: started.params.model, modelProvider: started.params.modelProvider, sandbox: opts.sandbox });
-    const ledger = createCoordinator({ cwd: opts.cwd ?? process.cwd(), origin: "run", root: opts.adRoot, enabled: ledgerEnabled(opts), homeKey: () => ledgerHome(started.homeKey), targetOf: () => ledgerTarget({ account: started.target?.account, model: started.params.model ?? opts.model, effort: started.params.effort }) });
+    const ledger = createCoordinator({ cwd: opts.cwd ?? process.cwd(), origin: "run", root: opts.adRoot, enabled: ledgerEnabled(opts), classify: ({ error, status, threadId, startedAt }) => classifyTurnFailure({ error, status, threadId, startedAt, account: started.target?.account ?? null }), homeKey: () => ledgerHome(started.homeKey), targetOf: () => ledgerTarget({ account: started.target?.account, model: started.params.model ?? opts.model, effort: started.params.effort }) });
     record = recordEngineThread(ledger, { engine, threadId, warn: (m) => err.write(`ad run: ${m}\n`) });
     // Which account and model run it (P4.2), on stderr: stdout stays the agent's text.
     const target = targetLine(started, opts);

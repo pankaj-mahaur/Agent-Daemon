@@ -182,6 +182,23 @@ Opt-in, and it uses *your* installed Antigravity CLI and its login. The daemon n
 
 ---
 
+### Models, prices, limits and spend
+
+```bash
+ad auth models openrouter/work            # its models: tools, context, price, route
+ad auth models openrouter/work --refresh  # ask the provider again (at most every 10 minutes)
+```
+
+ad keeps what it has seen about each account, so that a later switch or fallback (M4) knows what a target can do and whether it can take work. It never polls: everything comes from what passes anyway.
+
+- **Models and prices** (`~/.agent-daemon/catalog/`): from the provider's own model list, on demand. A model is **free** only when every price it lists is exactly zero and that was seen under 24 hours ago, or the server is local. A `:free` name alone doesn't count, a subscription is never "free", and a price nobody reported is shown as **price unknown**, never as zero.
+- **Limits** (`~/.agent-daemon/quota/observations.json`): from the provider's rate-limit headers and errors as ad's gateway sees them, ChatGPT's own limit reports, and OpenRouter's key data, read once after a 429 (at most every 30 s). A limit past its reset time, or older than 6 hours, is **unknown** again, never "ok".
+- **Benched providers**: when an account hits its quota or a rate limit, that provider (every account of it) is benched until the reset (24 hours when none is known for a quota, 10 minutes for a rate limit), across windows and restarts, so an automatic move never just rotates to another key of the same provider.
+- **Spend** (`~/.agent-daemon/quota/spend.json`, per account per day): usage × price for each answer the provider bills. An answer that doesn't report its usage is charged pessimistically (the request's size as input, the model's maximum output). Rejections (429, 5xx) cost nothing. ChatGPT accounts are subscriptions and aren't counted.
+- **Why a turn failed** is recorded in the session record (`ad sessions show`): from the provider's real answer when ad's gateway saw it, else from the engine's own code. Only a rate limit, a used-up quota, a network failure or a provider's server error can ever move work elsewhere; anything ad can't place for sure is `unknown` and moves nothing. "Upgrade to Plus" from ChatGPT means the plan doesn't include it: no switch can wait that out.
+
+Deleting `catalog/` and `quota/` loses only these caches: every target reads "unknown" until it is seen again.
+
 ### The session record: `ad sessions show`
 
 ```bash
@@ -289,6 +306,7 @@ Loop and worker prompts are marked as non-user (`AD_WORKER=1`), so they never en
 | `~/.agent-daemon/schedules.json`, `schedule-logs/` | scheduled jobs and their output |
 | `<project>/.agent-daemon/loops/` | `ad loop` iteration logs |
 | `<project>/.agent-daemon/STOP` | stop file for loops in this project |
+| `~/.agent-daemon/catalog/`, `~/.agent-daemon/quota/` | what ad has seen of each account's models and prices, limits, benched providers and today's spend (caches; see "Models, prices, limits and spend") |
 | `~/.agent-daemon/sessions/` | the session record: `ses_<id>.jsonl` per session and `index.json` (owner-only); never reasoning, a question's or form's answer, file contents, command output, headers or keys (see "The session record") |
 | `~/.agent-daemon/tui/`, `~/.agent-daemon/locks/` | `ad tui` prompt history and per-folder state; conversation locks (see [tui.md](tui.md#files-ad-writes)) |
 
