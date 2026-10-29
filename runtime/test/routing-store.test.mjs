@@ -90,6 +90,7 @@ test("re-signing an account to another identity changes the hash and disables fa
   assert.equal(s.ok, false);
   assert.equal(s.reason, "changed");
   assert.equal(s.text, "Fallback is off: ChatGPT · personal changed since you confirmed the order. /fallback to confirm again.");
+  assert.equal(s.name, "ChatGPT · personal");
   // The next saved change, whatever it is, writes it off.
   const r = await updatePolicy((p) => void (p.maxHops = 2), { ...opts, accounts: resigned });
   assert.equal(r.consentCleared, true);

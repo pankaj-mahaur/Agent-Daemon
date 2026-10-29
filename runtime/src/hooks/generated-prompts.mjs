@@ -9,8 +9,12 @@
 export const PLAN_CLEAR_CONTEXT_PREFIX =
   "A previous agent produced the plan below to accomplish the user's task. Implement the plan in a fresh context. Treat the plan as the source of user intent, re-read files as needed, and carry the work through implementation and verification.";
 
-/** Is this prompt one a client generated (the plan hand-off above)? A /private wrapper doesn't hide it. */
+/** ad's own continuation after an automatic switch (P4.5): never the user's words. */
+export const AD_CONTINUATION_PREFIX = "[ad: automatic continuation]";
+
+/** Is this prompt one a client generated (the plan hand-off above, or ad's continuation after an
+ * automatic fallback switch)? A /private wrapper doesn't hide it. */
 export function isGeneratedPrompt(prompt) {
   const text = String(prompt ?? "").replace(/^\s*<private>/, "").trimStart();
-  return text.startsWith(PLAN_CLEAR_CONTEXT_PREFIX);
+  return text.startsWith(PLAN_CLEAR_CONTEXT_PREFIX) || text.startsWith(AD_CONTINUATION_PREFIX);
 }

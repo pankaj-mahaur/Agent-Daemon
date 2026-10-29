@@ -6,7 +6,7 @@
 //   updatePolicy(mutate, { root, accounts, catalog, now, expectedRevision, enabling })
 //     → { policy, consentCleared, warnings }
 //   enablePolicy(opts)  disablePolicy(opts)
-//   consentState(policy, accounts) → { ok: true } | { ok: false, reason: "off" | "changed", text }
+//   consentState(policy, accounts) → { ok: true } | { ok: false, reason: "off" | "changed", text, name }
 
 import fs from "node:fs";
 import path from "node:path";
@@ -114,6 +114,7 @@ export function consentState(policy, accounts = []) {
   const parts = consentParts(policy, accounts);
   const changed = (policy.targets ?? []).find((t) => policy.consent.parts?.[targetKey(t)] !== parts[targetKey(t)]);
   const account = changed ? accounts.find((a) => a.id === changed.account) : null;
+  const name = account ? accountName(account) : (changed ? changed.account : null);
   const text = changed ? FALLBACK_TEXTS.CHANGED(account ? accountName(account) : changed.account) : FALLBACK_TEXTS.RULES_CHANGED;
-  return { ok: false, reason: "changed", text };
+  return { ok: false, reason: "changed", text, name };
 }

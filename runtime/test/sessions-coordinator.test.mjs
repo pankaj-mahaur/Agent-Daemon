@@ -88,6 +88,32 @@ test("a subagent's interrupted collab call: its child turn's running write becom
   await c.close();
 });
 
+test("toolsOfRoot lists a root turn's tools with their child turns', and nothing of other turns", async () => {
+  const c = make();
+  assert.equal(c.lastRootTurnId(), null, "nothing has happened yet");
+  const o = c.observer;
+  o({ type: "thread.attached", threadId: "qroot", how: "new" });
+  o({ type: "user.message", clientId: "c", input: "fix it", via: "submit" });
+  o({ type: "turn.started", threadId: "qroot", turnId: "rt" });
+  o({ type: "item.started", threadId: "qroot", turnId: "rt", item: cmd("qc", "inProgress") });
+  o({ type: "item.completed", threadId: "qroot", turnId: "rt", item: cmd("qc", "completed", { exitCode: 0 }) });
+  o({ type: "item.started", threadId: "qroot", turnId: "rt", item: { type: "collabAgentToolCall", id: "qco", tool: "spawnAgent", status: "inProgress", receiverThreadIds: ["kid"] } });
+  o({ type: "turn.started", threadId: "kid", turnId: "kt" });
+  o({ type: "item.started", threadId: "kid", turnId: "kt", item: { type: "fileChange", id: "qf", status: "inProgress", changes: [{ path: path.join(TMP, "work", "src", "b.js") }] } });
+  o({ type: "turn.completed", threadId: "qroot", turnId: "rt", status: "interrupted" }); // the unfinished ones turn unknown here
+  o({ type: "turn.started", threadId: "qroot", turnId: "rt2" });
+  o({ type: "item.started", threadId: "qroot", turnId: "rt2", item: cmd("qc2", "inProgress") });
+  assert.equal(c.lastRootTurnId(), "rt2");
+  assert.deepEqual(c.toolsOfRoot("rt"), [
+    { status: "succeeded", effect: "exec", background: false, summary: "npm test" },
+    { status: "unknown", effect: "agent", background: false, summary: "spawnAgent" },
+    { status: "unknown", effect: "write", background: false, summary: `edit ${path.join("src", "b.js")}` },
+  ], "the child turn's tools come with the root's");
+  assert.deepEqual(c.toolsOfRoot("rt2"), [{ status: "running", effect: "exec", background: false, summary: "npm test" }], "nothing of other turns");
+  assert.deepEqual(c.toolsOfRoot("nope"), [], "a turn that never ran has no tools");
+  await c.close();
+});
+
 test("a turn the engine starts by itself is logged with trigger engine; with a goal active, goal; ad's own, ad", async () => {
   const c = make();
   const o = c.observer;

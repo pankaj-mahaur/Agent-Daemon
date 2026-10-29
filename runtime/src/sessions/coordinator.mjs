@@ -455,6 +455,12 @@ export function createCoordinator({ cwd, origin = "tui", root = adRoot(), homeKe
     unknownNonRead() {
       return [...tools.values()].filter((t) => t.status === "unknown" && t.effect !== "read" && !t.background && (t.rootTurnId === lastRoot || t.rootTurnId === activeRoot)).map((t) => t.summary);
     },
+    /** The tools of a root turn (its child turns' included), for P4.5's boundary check. */
+    toolsOfRoot(rootTurnId) {
+      return [...tools.values()].filter((t) => t.rootTurnId === rootTurnId).map((t) => ({ status: t.status, effect: t.effect ?? null, background: Boolean(t.background), summary: t.summary ?? null }));
+    },
+    /** The root turn the last turn event belonged to (null before any). */
+    lastRootTurnId: () => lastRoot ?? null,
     /** The same thread on a new target (a model change on the same account): a new binding. */
     rebind(how = "nextTurn") {
       if (!ledger || !binding) return;

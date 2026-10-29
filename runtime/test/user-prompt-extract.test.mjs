@@ -162,3 +162,23 @@ test("subprocess: the engine's plan hand-off (a prompt the client wrote) is neve
   assert.equal(await run(typed, "Actually, we use pnpm here, not npm."), 0);
   assert.match(await fs.readFile(path.join(typed, ".agent-daemon", "learning-journal.jsonl"), "utf8"), /pnpm/);
 });
+
+test("an ad continuation prompt is never captured as the user's words", async () => {
+  const { AD_CONTINUATION_PREFIX, isGeneratedPrompt } = await import("../src/hooks/generated-prompts.mjs");
+  const { FALLBACK_RUN_TEXTS } = await import("../src/sessions/fallback.mjs");
+  const cont = FALLBACK_RUN_TEXTS.CONTINUATION("OpenRouter · work · q", "OpenRouter's limit is used up (reset time unknown)");
+  assert.equal(cont.startsWith(AD_CONTINUATION_PREFIX), true);
+  assert.equal(isGeneratedPrompt(cont), true);
+  assert.equal(isGeneratedPrompt(`<private>${cont}</private>`), true, "a /private wrapper doesn't hide it");
+  assert.equal(isGeneratedPrompt("Continue where you left off."), false);
+  assert.equal(isGeneratedPrompt("please [ad: automatic continuation]"), false, "the prefix only counts at the start");
+  const run = (cwd, prompt) =>
+    new Promise((resolve) => {
+      const proc = spawn(process.execPath, [CLI, "hook", "user-prompt-extract", "--host", LEGACY.productValue], { stdio: ["pipe", "ignore", "ignore"] });
+      proc.on("close", resolve);
+      proc.stdin.end(JSON.stringify({ session_id: "cont", cwd, prompt, hook_event_name: "UserPromptSubmit" }));
+    });
+  const cwd = await makeTmp();
+  assert.equal(await run(cwd, cont), 0);
+  await assert.rejects(fs.readFile(path.join(cwd, ".agent-daemon", "learning-journal.jsonl"), "utf8"), /ENOENT/);
+});
