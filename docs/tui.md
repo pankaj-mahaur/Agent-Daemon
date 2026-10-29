@@ -382,7 +382,34 @@ Pick another account (or its model) in `/model` or `/account` while a conversati
 
 ## Automatic fallback
 
-`/fallback` opens the order ad may continue a task in when a model's limit runs out, below the prompt. This version keeps and checks the order; moving work by itself comes in the next release.
+When a model's limit runs out or its provider fails, ad can continue the task on the next model in an order you chose, by itself, once the turn has ended. It is off until you turn it on in `/fallback`, which opens the order below the prompt.
+
+### What happens when a limit runs out
+
+- **Only at the end of a turn.** ad never moves a turn that is still working. A turn that keeps retrying a dead connection is stopped at the end of the order's "give up after" time (a goal is paused first), then moved.
+- **Only for a used-up limit, a rate limit, a network failure or a provider's server error.** Never for a sign-in problem, a plan that doesn't include the use, a request the model refused, or your own Esc.
+- **The line says what happened:** `↪ Switched to Gemini API · gemini-2.5-flash: OpenRouter's daily limit is used up (resets 05:30). Fallback 1 of 3.` It replaces the engine's own message, which can mislead (a free daily limit arrives as "Quota exceeded. Check your plan and billing details."); that message stays in `/warnings`. The bell rings when the terminal isn't focused.
+- **ad continues the work there:** the next model gets the conversation (tools that ran are marked done, never run again) and one line from ad asking it to carry on. That line shows as `• Fallback: ad continued the task here`, never as your words, and ad's memory never learns from it. Prompts you queued run after it, once.
+- **Another account of the provider that ran out is never next:** every account of it waits for the reset, in every window.
+- **A short wait instead of a move:** a rate limit with a known wait of 30 s or less is retried once on the same model (`↻ Rate limited by OpenRouter; retrying in 8 s (1 of 1).`).
+- **Before your prompt:** if the model you are on ran out since (or the provider of a model fallback chose was benched), ad switches first and your prompt runs there (`↪ Using … for this prompt: …`). A model you picked yourself is kept, with one notice.
+
+### When it pauses
+
+ad stops and asks you instead of moving when it can't be sure the move is safe or useful: `⏸ Paused: <why>. Your work is saved. /retry tries again · /model picks a model · /fallback shows the order.` The reasons:
+
+- a command from the failed turn may still be running (ad can't tell whether it finished);
+- a command is still running in the background and isn't one you allowed to keep running (the rules' keep-running list, for dev servers and watchers);
+- a subagent is still working;
+- no other model in your order can take over now (each one's reason is listed);
+- the order's budget is used up (moves per task, or the time to keep trying), or fallback is switching too often (moves per hour);
+- the order no longer matches what you confirmed.
+
+While paused, nothing you queued runs. **`/retry`** tries again on the current model; a prompt you type, or a model you pick in `/model`, ends the pause. `/status` shows `fallback  1 switch this session (14:02, …)`.
+
+### The order
+
+`/fallback` shows and edits it:
 
 ```text
 Fallback order        off · no extra spend
@@ -621,6 +648,9 @@ Everything else (conversations, logs, login) is the engine's own, in ad's engine
 | "Couldn't switch to …", "the engine kept the old provider", "history carried over … left out" | [#74](troubleshooting.md#74-couldnt-switch-to--still-on-) |
 | `/fallback` shows "skipped" rows, or "None of these targets fits …" | [#77](troubleshooting.md#77-fallback-never-switches-or-a-target-says-skipped-now) |
 | "Fallback is off: … changed since you confirmed the order" | [#78](troubleshooting.md#78-fallback-is-off--changed-since-you-confirmed-the-order-or-it-turned-itself-off) |
+| "⏸ Paused: … may still be running from the failed turn" | [#79](troubleshooting.md#79-fallback-paused-may-still-be-running-from-the-failed-turn) |
+| "⏸ Paused: … is still running in the background" | [#80](troubleshooting.md#80-fallback-paused-still-running-in-the-background) |
+| "⏸ Paused: fallback is switching too often", "the fallback budget is used up" | [#81](troubleshooting.md#81-fallback-paused-switching-too-often-or-the-fallback-budget-is-used-up) |
 | an engine command says "isn't in ad yet" | [commands.md](commands.md) |
 | not signed in, sandbox, hooks, your own install's home refused | [harness.md](harness.md#when-something-goes-wrong), troubleshooting #14–21 |
 

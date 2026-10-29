@@ -332,3 +332,16 @@ test("a failed turn fallback handled shows no \"The turn failed\" line", async (
     await until(() => /The turn failed/.test(committed()), "the engine's words when fallback didn't act");
   });
 });
+
+test("a prompt asks fallback first: a target that ran out switches before the prompt is sent", async () => {
+  const order = [];
+  const s = stubRun();
+  s.run.beforePrompt = () => (order.push("beforePrompt"), null);
+  await withApp(async ({ type, until, session }) => {
+    const submit = session.submit.bind(session);
+    session.submit = (x) => (order.push("submit"), submit(x));
+    type("early-complete\r");
+    await until(() => order.includes("submit"), "the prompt sent");
+    assert.deepEqual(order.slice(0, 2), ["beforePrompt", "submit"]);
+  }, { fallbackRun: s.run });
+});

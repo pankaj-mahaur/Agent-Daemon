@@ -682,6 +682,7 @@ export async function cmdTui(opts = {}) {
         retry: () => fallbackController?.retry() ?? false,
         resume: () => fallbackController?.resume(),
         handled: (turnId) => fallbackController?.handled(turnId) ?? false,
+        beforePrompt: () => fallbackController?.beforePrompt() ?? null,
         status: () => (fallbackController ? fallbackController.state() : null),
       },
       ...(undoKit ? { undo: (o) => undoKit.undo(session, o), onTyping: () => undoKit.onTyping() } : {}),

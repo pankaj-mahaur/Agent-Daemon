@@ -201,7 +201,12 @@ Deleting `catalog/` and `quota/` loses only these caches: every target reads "un
 
 ### The fallback order: `ad fallback`
 
-You choose, ahead of time, where ad may continue a task when a model's limit runs out or its provider fails, and on what rules. This version stores and checks the order; moving work by itself comes in the next release. It is off until you turn it on.
+You choose, ahead of time, where ad may continue a task when a model's limit runs out or its provider fails, and on what rules. With it on, `ad tui` moves the conversation there by itself at the end of the failed turn (see [tui.md](tui.md#automatic-fallback) for what you see, and when it pauses instead). It is off until you turn it on; `AD_FALLBACK=0` turns it off for a run whatever the file says.
+
+How the move stays safe:
+- **Turn boundaries only.** A failed turn's tools have all settled by then: the pinned engine runs a tool the model asked for once, and carries its result into its single retry, even when the stream dies right after the call. A tool whose end is unknown pauses instead.
+- **Bounded retries.** API accounts already go through ad's gateway with one retry each; while fallback is on, a ChatGPT sign-in's engine also stops reconnecting forever (`features.unbounded_connection_retries=false`, from its next start). On top of that, a turn that keeps retrying is stopped when the order's "give up after" time runs out, its goal paused first; the interrupt is recorded with its cause, so it never counts as yours.
+- **Recorded.** Each step is in the session record (`ad sessions show`): `routeFailure`, `fallbackInterrupt`, `switchCommitted` with reason `policy`, `paused` with why. A window that restarts mid-way rebuilds where it was, and the session list shows a paused session as `paused`.
 
 ```bash
 ad fallback add openrouter/work:qwen/qwen3-coder:free   # account[:model]; --effort, --at <N>
@@ -339,6 +344,7 @@ Loop and worker prompts are marked as non-user (`AD_WORKER=1`), so they never en
 | Variable | Effect |
 |---|---|
 | `AD_LEDGER` | `0`: ad keeps no session record (`~/.agent-daemon/sessions/`) |
+| `AD_FALLBACK` | `0`: automatic fallback does nothing in this run, whatever `~/.agent-daemon/fallback.json` says |
 | `AD_TUI` | `0`: bare `ad` prints the help instead of opening the terminal UI (`ad tui` still opens it). `1`: the default behaviour |
 | `AD_ALLOW_HOME_FOLDER` | `1`: work in a folder that would load your own `~/.codex` skills, like `--allow-home-folder` (see "Working in your home folder") |
 | `AD_ENGINE_DIR` (old name `AD_CODEX_HOME`, still read) | use another engine home (never your own `~/.codex` or `CODEX_HOME`: refused) |

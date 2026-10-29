@@ -410,3 +410,63 @@ test("a window with no account (an engine home ad didn't make) never holds or fa
   assert.equal(policyReads, 0, "it stops before even reading the order");
   c.dispose();
 });
+
+// ---- Before a prompt starts (P4.5 B3) ------------------------------------------------------
+
+const { benchProvider, recordObservations } = await import("../src/providers/quota.mjs");
+const { readIndex } = await import("../src/sessions/index.mjs");
+
+test("before dispatch: an exhausted current target switches first; the prompt then runs there, once, with the 'for this prompt' line", async () => {
+  await withRig(async ({ session, events, notices, controller, currentId }) => {
+    await session.submit("early-complete").done;
+    await recordObservations([{ accountId: "acct_a", provider: "openrouter", window: "day", usedPercent: 100, resetsAt: new Date(Date.now() + 3_600_000).toISOString(), state: "exhausted", source: "test", observedAt: new Date().toISOString() }]);
+    assert.deepEqual(controller().beforePrompt(), { switching: true });
+    session.submit("early-complete");
+    await until(() => events().filter((e) => e.type === "turnCompleted" && e.status === "completed").length >= 2, "the prompt on the new target");
+    assert.equal(currentId(), "acct_b");
+    const texts = userTexts(events());
+    assert.equal(texts.filter((t) => t === "queue:early-complete").length, 1, "the prompt ran once, after the switch");
+    assert.equal(texts.filter(isContinuation).length, 0, "the user's own prompt continues: no continuation of ad's");
+    assert.ok(notices.some((n) => n.line && n.text.startsWith("\u{21aa} Using OpenAI · b · fake-model for this prompt: OpenRouter's limit is used up")), JSON.stringify(notices.map((n) => n.text)));
+  });
+});
+
+test("before dispatch: a target the user picked on a benched provider is used, with one notice", async () => {
+  await withRig(async ({ controller, notices }) => {
+    const until = Date.now() + 3_600_000;
+    await benchProvider("openrouter", { until: new Date(until).toISOString(), reason: "quotaExhausted", accountId: "acct_c" });
+    assert.equal(controller().beforePrompt(), null);
+    assert.equal(controller().beforePrompt(), null);
+    const shown = notices.filter((n) => /hit a limit earlier/.test(n.text));
+    assert.equal(shown.length, 1, "once per bench");
+    assert.match(shown[0].text, /^OpenRouter hit a limit earlier \(resets \d\d:\d\d\); you picked OpenRouter · a · fake-model, so ad uses it\. Fallback won't move to another OpenRouter account by itself\.$/);
+  });
+});
+
+test("before dispatch: a target fallback chose, whose provider is benched since, switches before the prompt", async () => {
+  await withRig(async ({ session, events, controller, currentId }) => {
+    await session.submit("quota-fail").done;
+    await until(() => currentId() === "acct_b" && events().some((e) => e.type === "turnCompleted" && e.status === "completed"), "on B, chosen by fallback");
+    await benchProvider("openai", { until: new Date(Date.now() + 3_600_000).toISOString(), reason: "quotaExhausted", accountId: "acct_b" });
+    assert.deepEqual(controller().beforePrompt(), { switching: true });
+    // C and A share OpenRouter, which ran out earlier in this session: nothing is left, so it pauses, held.
+    await until(() => controller().state().paused, "the pause");
+    assert.equal(controller().state().paused.code, "noneLeft");
+    assert.equal(session.state.held, true);
+  });
+});
+
+test("the session index says paused (and why) while fallback holds the conversation; open again after resume", async () => {
+  await withRig(async ({ session, ledger, controller }) => {
+    session.submit("quota-command-running");
+    await until(() => controller().state().paused, "the pause");
+    await ledger.flush();
+    const id = ledger.sessionId();
+    assert.equal(readIndex().sessions[id].state, "paused");
+    assert.equal(readIndex().sessions[id].pausedReason, "mayBeRunning");
+    controller().resume();
+    await ledger.flush();
+    assert.equal(readIndex().sessions[id].state, "open");
+    assert.equal(readIndex().sessions[id].pausedReason, undefined);
+  });
+});

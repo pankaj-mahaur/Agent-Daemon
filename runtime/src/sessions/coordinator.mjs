@@ -455,6 +455,19 @@ export function createCoordinator({ cwd, origin = "tui", root = adRoot(), homeKe
     unknownNonRead() {
       return [...tools.values()].filter((t) => t.status === "unknown" && t.effect !== "read" && !t.background && (t.rootTurnId === lastRoot || t.rootTurnId === activeRoot)).map((t) => t.summary);
     },
+    /** The session index's state while fallback holds the conversation (P4.5): "paused" with why, or "open". */
+    setState(state, reason = null) {
+      if (!ledger || !sessionId) return;
+      const id = sessionId;
+      index((ix) => {
+        const s = ix.sessions[id];
+        if (!s) return;
+        s.state = state;
+        if (reason) s.pausedReason = reason;
+        else delete s.pausedReason;
+        s.updatedAt = new Date().toISOString();
+      });
+    },
     /** The tools of a root turn (its child turns' included), for P4.5's boundary check. */
     toolsOfRoot(rootTurnId) {
       return [...tools.values()].filter((t) => t.rootTurnId === rootTurnId).map((t) => ({ status: t.status, effect: t.effect ?? null, background: Boolean(t.background), summary: t.summary ?? null }));

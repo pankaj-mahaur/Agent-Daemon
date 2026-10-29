@@ -2331,6 +2331,9 @@ export function createApp({
       if (privateMode && !shown) text = `<private>${text}</private>`;
       // The user's own prompt ends a fallback pause (P4.5): what was queued runs, then this.
       if (actions.fallbackRun?.paused()) actions.fallbackRun.resume();
+      // A target that ran out since (its limit, or the bench of a provider fallback chose): the
+      // switch starts first and this prompt waits for it, then runs there.
+      actions.fallbackRun?.beforePrompt?.();
       const r = session.submit(images.length ? [{ type: "text", text }, ...images.map((p) => ({ type: "localImage", path: p }))] : text);
       if (shown) {
         echoesShown.add(r.clientUserMessageId);

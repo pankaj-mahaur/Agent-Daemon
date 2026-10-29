@@ -903,6 +903,24 @@ See [harness.md](harness.md#working-in-your-home-folder).
 
 **Fix:** `ad fallback` to check the order, then `ad fallback enable` (or `/fallback`, then **e**) to confirm it again.
 
+## 79. Fallback paused: "may still be running from the failed turn"
+
+**Cause:** the turn failed while a command (or an edit) it started had no known end. Moving the conversation now could let the next model run it again, or build on a half-finished change, so automatic fallback stops instead.
+
+**Fix:** check what the command did (`git status`, its output, the service it touches). Then `/retry` to go on with the same model, `/model` to pick another one yourself, or type what to do next. Nothing you queued runs until then.
+
+## 80. Fallback paused: "still running in the background"
+
+**Cause:** a background command from the conversation (a server, a watcher, a migration) is still running, and it isn't on the order's keep-running list. Another model might start it a second time.
+
+**Fix:** stop it in `/ps` and `/retry`. If it is a dev server or a watcher you always run, add it to the keep-running list (`ad fallback set keep-running "npm run dev"`, or the rules line in `/fallback`): the next model is then told it is running and not to start it again.
+
+## 81. Fallback paused: "switching too often" or "the fallback budget is used up"
+
+**Cause:** the order's limits stop endless moving: moves per task (`max-hops`), moves per hour across windows (`max-switches`), and how long ad keeps trying (`give-up`). Several providers running out at once reaches them quickly.
+
+**Fix:** wait for a reset (`ad fallback` shows each target's state), add a target that isn't limited, or raise a limit (`ad fallback set max-hops 4`). `/retry` tries the current model again now.
+
 ---
 
 For harness problems, the [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill walks through login → hooks → sandbox → the engine's own log. See also [harness.md](harness.md) and, for the terminal UI, [tui.md](tui.md).

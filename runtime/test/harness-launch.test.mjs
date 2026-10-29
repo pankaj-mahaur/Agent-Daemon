@@ -228,3 +228,15 @@ test("two callers with different start options in one process get separate engin
     await c.release();
   }
 });
+
+test("homeArgs with fallback on: a sign-in's engine stops reconnecting forever; the API engine keeps its own limits; off adds nothing", () => {
+  const gateway = { baseUrlFor: (e) => `http://127.0.0.1:1/p/${e}/v1` };
+  const a = { ...work, status: "ready", migratedFrom: "3.0-openrouter" };
+  const doc = { accounts: [a], engines: { api: { home: "api" } }, defaults: { target: { account: a.id } } };
+  const table = new Map([[a.providerEntry, { accountId: a.id, label: "OpenRouter", displayName: "OpenRouter · work" }]]);
+  const bounded = ["-c", "features.unbounded_connection_retries=false"];
+  assert.deepEqual(homeArgs("a/h1", { table, gateway, doc }, { fallbackOn: true }), bounded, "an account's own (ChatGPT) home");
+  assert.deepEqual(homeArgs("@default", { table, gateway, doc }, { fallbackOn: true }).slice(-2), bounded, "the default ChatGPT home");
+  assert.deepEqual(homeArgs("a/h1", { table, gateway, doc }), [], "fallback off: unchanged");
+  assert.deepEqual(homeArgs("api", { table, gateway, doc }, { fallbackOn: true }), homeArgs("api", { table, gateway, doc }), "the API engine already bounds its retries (its own args)");
+});

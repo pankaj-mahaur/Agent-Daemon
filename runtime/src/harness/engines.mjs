@@ -31,6 +31,11 @@ import { gatewayState } from "./gateway-runtime.mjs";
 import { adRoot } from "../ad-root.mjs";
 import { accountHomePath, apiHomePath, folderTrusted } from "./settings-sync.mjs";
 import { startHarnessEngine } from "./start.mjs";
+import { readPolicy } from "../routing/store.mjs";
+
+// Automatic fallback on (P4.5): read when an engine starts, never cached; a change applies at the
+// engine's next start (EngineManager restarts idle engines).
+const fallbackEnabled = () => readPolicy({ lenient: true }).enabled === true;
 
 const START_REFUSED = "ENGINE_START_REFUSED";
 const TARGET_CODES = new Set(["TARGET_NOT_READY", "ACCOUNT_NOT_FOUND", "ACCOUNT_AMBIGUOUS", "REGISTRY_CORRUPT", "REGISTRY_NEWER"]);
@@ -52,16 +57,19 @@ export const homePathFor = (key) => (key === "@default" ? undefined : key === "a
 const servesApi = (key, doc) => key === (doc.engines?.api?.home ?? "api");
 
 /** One home's gateway arguments (pure: the table, the gateway's addresses, the registry). */
-export function homeArgs(key, { table, gateway, doc }) {
+export function homeArgs(key, { table, gateway, doc }, { fallbackOn = false } = {}) {
   const all = engineProviderArgs(table, { gateway, doc });
   if (servesApi(key, doc)) return [...all, ...apiEngineArgs(doc, table)];
+  // P4.5: a sign-in's own engine retries a dead connection forever by default; with fallback on
+  // it gives up after its bounded retries, so the turn fails and fallback can move it.
+  const bounded = fallbackOn ? ["-c", "features.unbounded_connection_retries=false"] : [];
   if (key === "@default") {
     // A ChatGPT (or not yet known) default home: 3.0's alias only.
     const out = [];
     for (let i = 0; i < all.length; i += 2) if (all[i + 1].startsWith("model_providers.openrouter=")) out.push(all[i], all[i + 1]);
-    return out;
+    return [...out, ...bounded];
   }
-  return []; // an account's own home: no API entries
+  return bounded; // an account's own home: no API entries
 }
 
 /**
@@ -139,7 +147,7 @@ function harnessManager({ store, err, idleMs, env }) {
     homeFor: (key) => homePathFor(homeOf(key)),
     argsFor: async (key) => {
       const s = await gw();
-      return s ? homeArgs(homeOf(key), s) : [];
+      return s ? homeArgs(homeOf(key), s, { fallbackOn: fallbackEnabled() }) : [];
     },
     envFor: async () => {
       const s = await gw();

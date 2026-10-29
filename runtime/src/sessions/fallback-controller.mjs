@@ -9,11 +9,11 @@
 // Every exit of a triggered turn either switches or pauses; a pause keeps the session held until
 // resume() (B2 wires /retry, a manual switch and the user's own prompt to it).
 
-import { benchKey } from "../providers/quota.mjs";
+import { benchedUntil, benchKey, limitState } from "../providers/quota.mjs";
 import { nextTarget } from "../routing/next-target.mjs";
 import { targetInfo, targetKey } from "../routing/policy.mjs";
 import { reasonText } from "../routing/preview.mjs";
-import { afterRetry, afterSwitch, boundaryCheck, budgetLeft, causeText, detect, episodeFromEvents, episodeOver, fallbackGate, FALLBACK_RUN_TEXTS, retryDecision, runInterrupt, startEpisode, SUBAGENT_WAIT_MS, switchesLastHour, watchdogStart, watchdogStep } from "./fallback.mjs";
+import { afterRetry, afterSwitch, beforeDispatch, boundaryCheck, budgetLeft, causeText, detect, episodeFromEvents, episodeOver, fallbackGate, FALLBACK_RUN_TEXTS, retryDecision, runInterrupt, startEpisode, SUBAGENT_WAIT_MS, switchesLastHour, watchdogStart, watchdogStep } from "./fallback.mjs";
 import { providerDisplay } from "../auth/accounts/target.mjs";
 
 const LIMITS = new Set(["rateLimit", "quotaExhausted"]);
@@ -41,6 +41,8 @@ export function createFallbackController({
   setInterval: si = setInterval,
   clearInterval: ci = clearInterval,
   newEpisodeId = () => `ep_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+  limit = (accountId, ctx) => limitState(accountId, { now: ctx.now, root: ctx.root }),
+  benched = (key, ctx) => benchedUntil(key, { now: ctx.now, root: ctx.root }),
 } = {}) {
   let watch = null; // part A's watchdog over the running root turn
   let ticker = null;
@@ -53,6 +55,7 @@ export function createFallbackController({
   const handled = new Set(); // turns fallback acted on: the TUI shows ad's line, not the engine's
   let switches = 0; // automatic switches in this window (/status)
   let lastSwitch = null; // { at, why }
+  let noticeFor = null; // the bench a manual pick's notice was shown for (once per bench)
   let disposed = false;
   const timers = new Set();
   let work = Promise.resolve();
@@ -173,6 +176,7 @@ export function createFallbackController({
 
   function pause(code, text) {
     paused = { code, text };
+    ledger.setState?.("paused", code);
     if (episode) {
       episode = { ...episode, paused: code };
       ledger.record?.({ type: "paused", episodeId: episode.id, reason: code, text });
@@ -216,11 +220,13 @@ export function createFallbackController({
     work = work.then(() => proceed(failure, from, turn.id, p)).catch((err) => pause("failed", `ad couldn't continue (${err?.message ?? err})`));
   }
 
-  async function proceed(failure, from, turnId, p) {
+  // mode "turn": a failed turn (ad's continuation follows the switch); "prompt": before the
+  // user's prompt starts on a target that ran out (the prompt itself follows the switch).
+  async function proceed(failure, from, turnId, p, mode = "turn") {
     if (disposed) return;
     const why = causeText(failure, from.account?.provider);
     // 1. A short, known Retry-After on the same target.
-    const retry = retryDecision(episode, { failure, current: routeOf(from), policy: p, now: now() });
+    const retry = mode === "prompt" ? null : retryDecision(episode, { failure, current: routeOf(from), policy: p, now: now() });
     if (retry) {
       episode = afterRetry(episode, routeOf(from));
       const n = episode.retries[targetKey(routeOf(from))] ?? 1;
@@ -279,7 +285,10 @@ export function createFallbackController({
     await runner.request(target, {
       mode: "wait",
       reason: "policy",
-      fallback: { line: FALLBACK_RUN_TEXTS.SWITCHED(target.label, why, episode.hops + 1, p.maxHops), continuation: FALLBACK_RUN_TEXTS.CONTINUATION(from.label, why), resumeGoal: goalBefore },
+      fallback:
+        mode === "prompt"
+          ? { line: FALLBACK_RUN_TEXTS.USING_FOR_PROMPT(target.label, why), continuation: null, resumeGoal: null }
+          : { line: FALLBACK_RUN_TEXTS.SWITCHED(target.label, why, episode.hops + 1, p.maxHops), continuation: FALLBACK_RUN_TEXTS.CONTINUATION(from.label, why), resumeGoal: goalBefore },
     });
     // The switch ends later than the request's first effects: wait for its commit or abort.
     const outcome = await Promise.race([runner.whenOutcome(), wait(SWITCH_WAIT_MS).then(() => null)]);
@@ -296,12 +305,43 @@ export function createFallbackController({
     return pause("switchFailed", `the switch to ${target.label} didn't work (details above)`);
   }
 
+  /**
+   * A prompt is about to start (the TUI asks first). Switch before it when the current target
+   * itself ran out, or fallback chose it and its provider has been benched since; a target the
+   * user picked by hand is kept, with one notice per bench. → { switching: true } | null
+   */
+  function beforePrompt() {
+    if (disposed || paused || runner.pending?.()) return null;
+    const from = current();
+    if (!from?.account || !gate().on) return null;
+    const ctx = routing();
+    const key = benchKey(from.account.provider, from.account.id);
+    const until = benched(key, ctx);
+    const d = beforeDispatch({ current: from, chosenBy, limit: limit(from.account.id, ctx), benchedUntil: until, now: now(), noticeShown: noticeFor === key });
+    if (!d) return null;
+    if (d.notice) {
+      noticeFor = key;
+      notify("info", d.notice, { line: true });
+      return null;
+    }
+    session.hold(true);
+    const failure = { class: "quotaExhausted", period: null, retryAfterMs: null, resetsAt: Number.isFinite(until) ? new Date(until).toISOString() : null, source: "beforeDispatch", reason: d.why };
+    if (!episode) episode = startEpisode({ id: newEpisodeId(), from: routeOf(from), at: now() });
+    ledger.record?.({ type: "routeFailure", episode: { id: episode.id, startedAt: episode.startedAt, from: episode.from }, turnId: null, failure });
+    sessionLimited.set(key, Number.isFinite(until) ? until : Infinity);
+    const p = policy();
+    work = work.then(() => proceed(failure, from, null, p, "prompt")).catch((err) => pause("failed", `ad couldn't continue (${err?.message ?? err})`));
+    return { switching: true };
+  }
+
   return {
     onEvent,
     turnCompleted,
+    beforePrompt,
     tick,
     /** /retry, a manual switch or the user's own prompt: the episode ends and the queue runs. */
     resume() {
+      if (paused) ledger.setState?.("open");
       paused = null;
       episode = null;
       session.hold(false);
@@ -310,6 +350,7 @@ export function createFallbackController({
     retry() {
       if (!paused) return false;
       const from = current();
+      ledger.setState?.("open");
       paused = null;
       episode = null;
       ledger.markAdTurn?.();
