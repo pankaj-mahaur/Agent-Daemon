@@ -36,7 +36,9 @@ The harness pins `@openai/codex` exactly (`runtime/package.json`). Each upgrade 
    node scripts/codex-slash.mjs                  # Codex's slash names at the new tag (needs gh)
    node --test test/tui-resilience.test.mjs      # slash collisions, compat.json, fake-vs-protocol, future fixture
    AD_REAL_ENGINE=1 node --test --test-concurrency=1 --test-force-exit test/engine-real.test.mjs test/tui-live.test.mjs
+   AD_REAL_ENGINE=1 node --test --test-force-exit test/engine-network.test.mjs   # docs/privacy.md: no host but the provider
    ```
+   - **Privacy keys:** `ENGINE_PRIVACY` in `runtime/src/harness/setup.mjs` turns off the engine's analytics, feedback uploads, telemetry exporters and update check. If the new engine renames or rejects one, its config write fails and `engine-network.test.mjs` lists the host it now reaches. Fix the key list, then re-check the Network section of `docs/privacy.md`.
    - `--check` exits 1 if the committed snapshot doesn't match the pinned binary.
     - The last line runs the **real** new engine against a mock model (`testkit/mock-responses.mjs`; no login, throwaway homes): `engine-real` covers a streamed turn, an escalation approval, a patch and the error classes the code relies on; `tui-live` runs the real `ad tui` in a pseudo-terminal through the manual test's terminal UI script and ad's own TUI features. A behaviour change shows up here even when the schema didn't change.
     - The workflow's own run is on Linux; the PR's CI (`test.yml`, all three OSes, `engine-real` job) only runs when the `ENGINE_UPGRADE_TOKEN` secret is set (the old `CODEX_UPGRADE_TOKEN` keeps working). That job is non-blocking: read its result, not the run's colour. The bot's PR body lists real-engine failures by name (label `real-engine-failing`).
