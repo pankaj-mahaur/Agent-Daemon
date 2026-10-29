@@ -96,6 +96,8 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 ### Changed
 
+- The footer's usage limits say "used": `5h 96% used`. A bare `5h 96%` next to `ctx 94%` (context left) read as 96 % left.
+
 - Memory can run on Node's built-in SQLite (`node:sqlite`) when `better-sqlite3` isn't installed; `AD_SQLITE_DRIVER` picks one, and `ad doctor` shows which is in use ("SQLite driver"). The managed instructions now point at `ad memory install` for other agents, and `ad init` offers to add the memory server to Claude Code (in a terminal; scripts get the command as a hint).
 - One note per project: a learning that differs from one already in the project only in case, spacing or end punctuation counts as the same note (it reinforces it), and the same text in two projects is two notes (it used to be stored once, in whichever project said it first).
 - **The engine moves to 0.163.0** (from 0.160.0). The protocol only gains fields and methods. `/config` and `/daybreak` answer with a note; `/archive`, which the engine now allows during a task, still waits for the turn in `ad`; and key chords and the leader key from its keymap work in `ad tui` (see Added). Going back to an ad release on engine 0.160 after this one has run is not supported: the engine may have updated its own data in ad's engine folder.

@@ -33,14 +33,14 @@ const texts = (ids, ctx = CTX) => statusSegments(ids, ctx).map((s) => s.text);
 
 test("status line: ad's default when unset; [] is off; the engine's order and aliases", () => {
   assert.deepEqual(DEFAULT_STATUS, ["model-with-reasoning", "current-dir", "context-remaining", "five-hour-limit"]);
-  assert.deepEqual(texts(undefined), ["gpt-5.5 high", "~\\work\\app", "ctx 15%", "5h 38%"]);
+  assert.deepEqual(texts(undefined), ["gpt-5.5 high", "~\\work\\app", "ctx 15%", "5h 38% used"]);
   assert.deepEqual(texts([]), []);
   assert.deepEqual(texts(["git-branch", "model-name", "project-root", "status", "session-id"]), ["main", "gpt-5.5", "app", "ready", "t-1"]);
   assert.equal(canonical("context-usage"), "context-used");
 });
 
 test("status line: every item ad shows, warnings at 80 % used, empty values skipped", () => {
-  assert.deepEqual(texts(["reasoning", "hostname", "branch-changes", "permissions", "approval-mode", "context-used", "context-window-size", "weekly-limit", "codex-version", "used-tokens", "total-input-tokens", "total-output-tokens", "thread-name", "task-progress"]), ["high", "box", "+12 -3", "workspace-write", "on-request", "ctx 85% used", "100.0k window", "wk 91%", "engine 0.160.0", "85.0k tokens", "120.0k in", "4.2k out", "login fix", "1/3 steps"]);
+  assert.deepEqual(texts(["reasoning", "hostname", "branch-changes", "permissions", "approval-mode", "context-used", "context-window-size", "weekly-limit", "codex-version", "used-tokens", "total-input-tokens", "total-output-tokens", "thread-name", "task-progress"]), ["high", "box", "+12 -3", "workspace-write", "on-request", "ctx 85% used", "100.0k window", "wk 91% used", "engine 0.160.0", "85.0k tokens", "120.0k in", "4.2k out", "login fix", "1/3 steps"]);
   const segs = statusSegments(["context-remaining", "five-hour-limit", "weekly-limit"], CTX);
   assert.deepEqual(segs.map((s) => s.warn), [true, false, true]);
   assert.deepEqual(texts(["thread-name", "git-branch", "pull-request-number", 42], { ...CTX, threadName: null, branch: null }), [], "nothing for missing values or ids ad can't show");
@@ -81,7 +81,7 @@ const viewOf = (list, provider = "openrouter") => quotaView("acct_or", { store: 
 
 test("five-hour-limit picks the 300-minute window even when it is secondary; weekly the 10080-minute one", () => {
   const rl = { primary: { usedPercent: 22, windowDurationMins: 10080 }, secondary: { usedPercent: 64, windowDurationMins: 300 } };
-  assert.deepEqual(statusSegments(["five-hour-limit", "weekly-limit"], { rateLimits: rl }).map((s) => s.text), ["5h 64%", "wk 22%"]);
+  assert.deepEqual(statusSegments(["five-hour-limit", "weekly-limit"], { rateLimits: rl }).map((s) => s.text), ["5h 64% used", "wk 22% used"]);
   assert.deepEqual(statusSegments(["five-hour-limit"], { rateLimits: { primary: { usedPercent: 10, windowDurationMins: 10080 } } }), [], "no 5-hour window reported: nothing, not the weekly one");
   assert.deepEqual(statusSegments(["five-hour-limit"], { rateLimits: { primary: { usedPercent: 10 } } }).map((s) => s.text), ["usage 10%"], "no lengths at all: the slot, as before");
 });
@@ -96,7 +96,7 @@ test("the limits item is empty when five-hour-limit already shows that window", 
   const quota = viewOf([obs({ provider: "chatgpt", window: "5h", usedPercent: 64, used: null, limit: null })]);
   const engine = statusSegments(["five-hour-limit"], { rateLimits: { primary: { usedPercent: 64, windowDurationMins: 300 } } });
   assert.deepEqual(adSegments(["limits"], { quota }, engine), []);
-  assert.deepEqual(adSegments(["limits"], { quota }, []).map((s) => s.text), ["5h 64%"], "shown when the engine item isn't on the line");
+  assert.deepEqual(adSegments(["limits"], { quota }, []).map((s) => s.text), ["5h 64% used"], "shown when the engine item isn't on the line");
 });
 
 test("unknown shows nothing, never 0%: a window past its reset, or too old", () => {

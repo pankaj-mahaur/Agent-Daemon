@@ -46,7 +46,8 @@ export function contextUsedLabel(t) {
 function limit(w, fallback) {
   if (w?.usedPercent == null) return null;
   const label = w.windowDurationMins ? (w.windowDurationMins >= 7 * 24 * 60 ? "wk" : `${Math.round(w.windowDurationMins / 60)}h`) : fallback;
-  return { text: `${label} ${pct(w.usedPercent)}`, warn: w.usedPercent >= 80 };
+  // "used" like ctx-used: a bare "5h 96%" beside "ctx 94%" (left) read as left. "usage" says it already.
+  return { text: `${label} ${pct(w.usedPercent)}${w.windowDurationMins ? " used" : ""}`, warn: w.usedPercent >= 80 };
 }
 // A ChatGPT window by its length (300 min, 10080 min), whichever slot it came in: primary isn't
 // always the 5-hour one (P4.6). With no length reported at all, the slot as before.
@@ -113,7 +114,8 @@ const AD_ITEMS = {
   limits: (c, shown) => {
     const w = mostConstrained(c.quota);
     if (!w || shown.has(w.window)) return null;
-    return { text: w.short, warn: w.state === "exhausted" || w.state === "limited" || (usedOf(w) ?? 0) >= 80 };
+    // "5h 64%" → "5h 64% used", as the engine items say (else it reads as ctx's "left").
+    return { text: /\d%$/.test(w.short) ? `${w.short} used` : w.short, warn: w.state === "exhausted" || w.state === "limited" || (usedOf(w) ?? 0) >= 80 };
   },
   fallback: (c) => (c.fallback?.switches ? `\u{21aa} ${c.fallback.switches}` : c.fallback?.on ? "fallback on" : null),
 };

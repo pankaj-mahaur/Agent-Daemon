@@ -119,7 +119,7 @@ On exit, ad prints how to continue: `ad tui --resume <id>`, with the tokens used
   ↳ queued: also run the signup test                              tab: edit
 
 › Ask ad to do anything
-  enter steer · tab queue · ctrl+j newline                     ctx 91% · 5h 38%
+  enter steer · tab queue · ctrl+j newline                ctx 91% · 5h 38% used
 ```
 
 - **Header.** Shown once at the start, then it scrolls into history like everything else. Under 40 columns it is one line.
