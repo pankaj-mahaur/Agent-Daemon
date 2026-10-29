@@ -60,8 +60,8 @@ test("archive: a round trip gives every entry back, byte for byte, and the same 
   const b = writeArchive([...ENTRIES].reverse());
   assert.ok(a.equals(b), "deterministic, order-independent");
   const back = readArchive(a);
-  assert.deepEqual(back.map((e) => e.name), ["global/episodic.db", "global/handoffs/", "manifest.json", `projects/${PRJ}/memory/${"long-name-".repeat(12)}é.md`]);
-  assert.deepEqual(back[0].data, Buffer.from([0, 1, 2, 3]));
+  assert.deepEqual(back.map((e) => e.name), ["manifest.json", "global/episodic.db", "global/handoffs/", `projects/${PRJ}/memory/${"long-name-".repeat(12)}é.md`]);
+  assert.deepEqual(back[1].data, Buffer.from([0, 1, 2, 3]));
   assert.equal(back[3].data.toString(), "x".repeat(1000), "a long name through a pax header");
   assert.throws(() => writeArchive([{ name: "global/../x", data: "" }]), ArchiveError);
   assert.throws(() => writeArchive([{ name: "global/a", data: "" }, { name: "global/a", data: "" }]), /twice/);

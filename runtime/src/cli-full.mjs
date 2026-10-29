@@ -82,6 +82,8 @@ Commands:
   memory scan            Check older memory notes once: hold back rows with a provider key or an injection
   memory held [accept|release|drop <id>]  Notes memory keeps back (agent-written, flagged); accept/release/drop need your own terminal and the typed id
   memory consolidate     Hermes-style evolution pass: near-duplicate merges, stale archive, contradictions
+  memory redact <table>:<id>   Replace what looks like a key in one row (your own terminal, typed confirmation)
+  state inspect|export|verify  Move ad to another computer: one .adstate file (ad state --help)
                          → proposals only; --apply-merges / --apply-stale execute after review
   memory install [--host <id>] [--yes] [--dry-run]   Add ad's memory server to other agents (doctor, repair, status, uninstall)
   memory report [--days 30] [--all-projects] [--json] [--share]   Is memory working: repeated corrections, what was shown, feedback
@@ -2370,7 +2372,7 @@ async function main(argv) {
   // job's prompt that happens to be "-h").
   const flagsPart = argv.includes("--") ? argv.slice(0, argv.indexOf("--")) : argv;
   // `ad auth --help` is the auth command's own help (P3.8a).
-  if (argv.length === 0 || ((flagsPart.includes("--help") || flagsPart.includes("-h")) && flagsPart[0] !== "auth")) {
+  if (argv.length === 0 || ((flagsPart.includes("--help") || flagsPart.includes("-h")) && !["auth", "state"].includes(flagsPart[0]))) {
     console.log(HELP);
     return 0;
   }
@@ -2406,6 +2408,9 @@ async function main(argv) {
     process.stderr.write(`${tombstoneEngineUiCommand({ settingsPath: engineHome.settingsPath() ?? "(see ad doctor)" })}\n`);
     return 2;
   }
+
+  // ad state (P7.2): its own options (--project <dir> repeats, unlike the shared boolean).
+  if (command === "state") return (await import("./portability/state-cli.mjs")).cmdState(rest, { appVersion: VERSION });
 
   // Parse remaining args generically (each command interprets what it needs)
   let parsed;
@@ -2563,6 +2568,17 @@ async function main(argv) {
     case "watch":          return cmdWatch({ ...opts, logFile: parsed.values["log-file"] });
     case "query-retrieve": return cmdQueryRetrieve(opts);
     case "memory":
+      // ad memory redact <table>:<id> (P7.2): one row's key-shaped spans, confirmed by typing.
+      if (parsed.positionals?.[0] === "redact") {
+        const { cmdMemoryRedact } = await import("./portability/state-cli.mjs");
+        const { createInterface } = await import("node:readline/promises");
+        const rl = createInterface({ input: process.stdin, output: process.stdout });
+        try {
+          return await cmdMemoryRedact(parsed.positionals[1], { ask: (q) => rl.question(q) });
+        } finally {
+          rl.close();
+        }
+      }
       // The memory installer for other hosts (same code as npx agent-daemon-memory; P5.3).
       if (["install", "doctor", "repair", "status", "uninstall"].includes(parsed.positionals?.[0])) {
         const sub = parsed.positionals[0];

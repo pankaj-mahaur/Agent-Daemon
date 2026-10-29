@@ -57,7 +57,9 @@ function paxRecord(key, value) {
 }
 
 export function writeArchive(entries) {
-  const list = entries.map((e) => ({ ...e, name: String(e.name).normalize("NFC") })).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  // The manifest first, then every other entry sorted by name.
+  const rank = (n) => (n === "manifest.json" ? 0 : 1);
+  const list = entries.map((e) => ({ ...e, name: String(e.name).normalize("NFC") })).sort((a, b) => rank(a.name) - rank(b.name) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   const seen = new Set();
   const parts = [];
   for (const e of list) {

@@ -318,6 +318,25 @@ The engine process itself runs in an empty folder, `~/.agent-daemon/launch`, nev
 
 ---
 
+## Moving ad to another computer
+
+One file carries ad's memory, settings, session record and account list to another computer, or to the other OS of a dual boot:
+
+```bash
+ad state inspect                      # what an export would hold (this folder's project), and what it leaves out
+ad state export --out ~/ad.adstate    # this folder's project only
+ad state export --out ~/ad.adstate --project ~/code/app --project ~/code/api
+ad state export --out ~/ad.adstate --all-projects          # every project, and the memory that belongs to none
+ad state verify ~/ad.adstate          # reads it the way import does; changes nothing
+```
+
+- **Only what you chose.** Other projects' lessons, sessions, handoffs, schedules and session records stay behind, down to the bytes of the database file. Memory that belongs to no project (your profile, global lessons) comes with `--all-projects` or `--include global-memory`.
+- **Never a secret.** Keys, sign-ins and the engine's own folders never go in: on the new computer you sign in again (the account list comes along, each account marked "needs sign-in"). Before writing, ad looks for anything shaped like a key in what it would export. When it finds one it stops and lists where (`learnings #812 (text)`, never the value): `--redact` replaces those in the export only, and `ad memory redact learnings:812` cleans your own copy (in your terminal, typing the row to confirm).
+- **Paths that travel.** A project's folder, your home and ad's folder are written as placeholders, so a project lands wherever it lives on the new computer.
+- **Optional:** `--include tui-history`, `engine-rollouts`, `project-journals`; `--exclude <class>` leaves a class out. `ad state inspect --json` lists everything by class.
+- **Safe while ad runs.** The database is copied from a consistent snapshot; nothing of yours is changed. The command refuses to run from an agent's own shell.
+- **Not encrypted.** The file holds your memory and history as plain text: keep it on your own disk or a USB drive, not a shared or synced folder.
+
 ## Memory, hooks and skills inside the harness
 
 Every harness run gets the same daemon features as a Claude Code session:

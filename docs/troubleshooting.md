@@ -921,6 +921,12 @@ See [harness.md](harness.md#working-in-your-home-folder).
 
 **Fix:** wait for a reset (`ad fallback` shows each target's state), add a target that isn't limited, or raise a limit (`ad fallback set max-hops 4`). `/retry` tries the current model again now.
 
+## 84. "Export stopped: … look like keys", or a name can't go into a bundle
+
+**Cause:** `ad state export` found text shaped like a key (an API key, a token) in what it would export, or a file whose name another OS can't create (`aux.md`, two names that differ only by case, a name ending in a dot). It lists each one: the row (`learnings #812 (text)`) or the file, never the key itself.
+
+**Fix:** for keys, run again with `--redact` (the export gets `[redacted:…]`, your own memory is unchanged), or clean the row for good with `ad memory redact learnings:812` in your terminal. For names, rename the file it lists and export again.
+
 ## 83. A run exited with code 4, or a scheduled job says "paused"
 
 **Cause:** the run opted in to fallback (`--fallback`, a job's or a team's setting), a limit ran out, and fallback couldn't move safely with nobody to ask: no other model in the order could take over, a command's end was unknown, a background command wasn't on the keep-running list, or a budget was used up. The reason is on stderr (`[ad] ⏸ Paused: …`), in `--json` (`"reason"`), in the job's `schedule-logs/<id>.status.json` and in `ad schedule list`.

@@ -509,6 +509,7 @@ ad query-retrieve                      # Keyword extraction + learning injection
 
 # Memory
 ad memory stats                        # Row counts + retrieval telemetry (truncation rate, bytes)
+ad state export --out ~/ad.adstate     # Move ad to another computer (inspect, verify; import next)
 ad memory scan                         # Check older notes once: hold back rows holding a key or an injection
 ad memory held                         # Notes memory keeps back; accept|release|drop <id> from your own terminal
 ad memory promote fact:<id>            # Make a user fact apply in every project (your own terminal, typed)
