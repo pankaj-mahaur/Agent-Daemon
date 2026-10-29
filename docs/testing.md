@@ -99,6 +99,10 @@ Rules: fake keys only (`sk-test-…`, built by joining parts so no scanner mista
 - **Reproduce before fixing.** A failing live test or a user's transcript is first reproduced in a temp home (same shell, same PATH), then fixed, then checked with the same reproduction.
 - **Never touch real user state.** Tests use temp homes for `~/.agent-daemon`, the engine home, the clipboard and the editor. Never start the real engine outside `codexEnv()`. A test that writes memory sets a temp `HOME`/`USERPROFILE` before the first write (the episodic DB path is read from HOME when it opens). Locks are covered automatically: under `node --test`, when the home isn't faked, `defaultLockDir()` (`runtime/src/lock.mjs`) returns a per-process temp folder. New tests that create engines or locks call `assertFakeHome()` (`testkit/real-home-guard.mjs`).
 
+## The claims lint
+
+`node runtime/scripts/check-claims.mjs [files]` checks public copy (README, `docs/compare.md`, `docs/memory/`, `docs/site/`, host package descriptions) sentence by sentence: no "#1", "best" or "SOTA"; a percentage or "N×" only with a link and a named baseline ("no memory", "own memory", "rules file"); a host name only when `docs/support-matrix.md` lists it as tested live (`{{hosts}}` renders that list); no "reviewed lessons" without saying whose review; "never … another project" only as the one approved sentence. Tests: `runtime/test/check-claims.test.mjs`. It isn't in CI yet: the README and docs are rewritten to pass it first (P8.1).
+
 ## The brand lint
 
 ad runs on a pinned third-party engine; the product says "the engine", and the engine's own name appears only in its allowed zone. `node runtime/scripts/check-brand.mjs` checks four rules over every tracked text file:

@@ -67,6 +67,7 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 ### Internal
 
+- A claims lint for public copy (`runtime/scripts/check-claims.mjs`): banned superlatives, numbers without a source and a baseline, host names not tested live, and the cross-project sentence. Not in CI until the copy is rewritten to pass it.
 - The portable state format for moving ad to another machine (export and import come next): a deterministic `.adstate` bundle (tar in gzip) with a strict reader, a manifest, path tokens and an inventory that sorts every file ad keeps into taken, optional, machine-local or never (secrets and sign-ins).
 - Chat translation in the provider gateway: providers that speak only Chat Completions can be routed through ad (presets come in the next wave). Tool calls are handed to the engine only whole, quota and rate limits reach it as codes it handles without re-asking an exhausted provider, and the TUI and `ad run` show the provider's real reason. `AD_TRANSLATE=0` turns it off. Recorded engine fixtures and a contract test catch wire changes at an engine upgrade.
 - Real-engine fallback tests (F1–F13) against providers that fail at each point of a turn, through ad's gateway, with probes that would show a tool run twice.
