@@ -22,7 +22,7 @@ import { accountName, providerDisplay } from "../auth/accounts/target.mjs";
 import { PROVIDER_PRESETS } from "../providers/registry.mjs";
 import { PLAN_CLEAR_CONTEXT_PREFIX } from "../hooks/generated-prompts.mjs";
 import { sanitize } from "./terminal/sanitize.mjs";
-import { lineWidth, truncate } from "./terminal/text.mjs";
+import { lineWidth, truncate, withPrefix } from "./terminal/text.mjs";
 import { INIT_PROMPT } from "./init-prompt.mjs";
 import { setupWindowsSandbox } from "../harness/sandbox.mjs";
 import { existsSync, realpathSync, statSync, writeFileSync } from "node:fs";
@@ -369,7 +369,7 @@ export function createApp({
         const out = live ? fresh : [...fresh, ...s.md.finish()];
         if (out.length) {
           // The bullet on the message's first line only; the rest (and later batches) indent.
-          const lines = out.map((l, k) => [{ text: s.started || k > 0 ? "  " : "\u{2022} ", style: DIM }, ...l]);
+          const lines = out.map((l, k) => withPrefix([{ text: s.started || k > 0 ? "  " : "\u{2022} ", style: DIM }], l));
           // Keyed, so the fullscreen renderer can swap the streamed pieces for one re-wrappable entry.
           if (!s.started) {
             s.gap = lastWasCell;
@@ -384,7 +384,7 @@ export function createApp({
           const gap = s.gap;
           renderer.settle?.(shownKey(it), (w) => {
             const md = createMarkdownStream({ width: w - 2 });
-            const all = [...md.push(text), ...md.finish()].map((l, k) => [{ text: k > 0 ? "  " : "\u{2022} ", style: DIM }, ...l]);
+            const all = [...md.push(text), ...md.finish()].map((l, k) => withPrefix([{ text: k > 0 ? "  " : "\u{2022} ", style: DIM }], l));
             return gap ? [[], ...all] : all;
           });
         }

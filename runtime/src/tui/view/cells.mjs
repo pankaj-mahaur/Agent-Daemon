@@ -14,7 +14,7 @@
 // floods the scrollback.
 
 import { sanitize } from "../terminal/sanitize.mjs";
-import { lineWidth, normalize, truncate, wrap } from "../terminal/text.mjs";
+import { lineWidth, normalize, truncate, withPrefix, wrap } from "../terminal/text.mjs";
 import { stringWidth } from "../terminal/width.mjs";
 import { codeLines, codeTokenLines, renderMarkdown, wrapPrefixed } from "./markdown.mjs";
 import { highlightLines, languageFor, MAX_CHARS, MAX_LINES } from "./highlight.mjs";
@@ -122,7 +122,7 @@ function renderCommand(item, width) {
   if (status !== "inProgress" && item.durationMs != null) parts.push({ text: ` \u{00b7} ${seconds(item.durationMs)}`, style: S.dim });
   const out = capLines(header("\u{2022}", parts, width), COMMAND_LINES, "lines of command");
   const output = tail(item.output ?? "", shell ? SHELL_TAIL : OUTPUT_TAIL, width);
-  if (output.length) out.push(...output.map((l, i) => normalize([{ text: i === 0 ? BRANCH : INDENT, style: S.dim }, ...l])));
+  if (output.length) out.push(...output.map((l, i) => withPrefix([{ text: i === 0 ? BRANCH : INDENT, style: S.dim }], l)));
   else if (status !== "inProgress" && !failed && status !== "declined") out.push([{ text: `${BRANCH}(no output)`, style: S.dim }]);
   return out;
 }
@@ -233,7 +233,7 @@ function diffBody(change, width, maxLines, mode) {
     const gutter = `${INDENT}${String(r.n ?? "").padStart(nw)} ${r.sign} `;
     const room = Math.max(1, width - stringWidth(gutter));
     const body = hl?.[k] ? codeTokenLines(hl[k], room) : codeLines(r.text, room, style);
-    body.forEach((l, i) => out.push(normalize([{ text: i === 0 ? gutter : " ".repeat(stringWidth(gutter)), style: S.dim }, ...l])));
+    body.forEach((l, i) => out.push(withPrefix([{ text: i === 0 ? gutter : " ".repeat(stringWidth(gutter)), style: S.dim }], l)));
   });
   return capLines(out, maxLines);
 }
@@ -431,7 +431,7 @@ function cellLines(item, width) {
       const verb = item.incomplete ? "Tool stopped" : item.status === "inProgress" || !done ? "Calling" : failed ? "Tool failed" : "Called";
       const out = capLines(header("\u{2022}", [{ text: verb, style: failed ? S.bad : S.head }, { text: " " }, { text: name, style: S.cmd }, { text: `(${toolArgs(item.arguments)})`, style: S.dim }], width), COMMAND_LINES);
       const res = item.kind === "mcpToolCall" ? toolResult(item.result, item.error) : "";
-      if (res) out.push(...tail(res, OUTPUT_TAIL, width).map((l, i) => normalize([{ text: i === 0 ? BRANCH : INDENT, style: S.dim }, ...l])));
+      if (res) out.push(...tail(res, OUTPUT_TAIL, width).map((l, i) => withPrefix([{ text: i === 0 ? BRANCH : INDENT, style: S.dim }], l)));
       if (item.progress && !done) out.push([{ text: `${BRANCH}${clean(item.progress)}`, style: S.dim }]);
       return out;
     }

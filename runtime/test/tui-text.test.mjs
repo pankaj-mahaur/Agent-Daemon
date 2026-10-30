@@ -3,7 +3,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { colorDepth, sgr, to256, renderLine, normalize, lineWidth, toLines, wrap, truncate, RESET } from "../src/tui/terminal/text.mjs";
+import { colorDepth, sgr, to256, renderLine, normalize, lineWidth, toLines, wrap, withPrefix, truncate, RESET } from "../src/tui/terminal/text.mjs";
 import { graphemes, graphemeWidth, setWidthProfile } from "../src/tui/terminal/width.mjs";
 import { assertGolden } from "../testkit/golden.mjs";
 
@@ -265,3 +265,27 @@ for (const width of [20, 40, 79]) {
     assertGolden(`tui/wrap-${width}.txt`, `${body}\n--- ansi (depth 4)\n${styled}`);
   });
 }
+
+/* Soft-wrap markers (P2.3) */
+
+test("wrap marks continuation rows (join and indent), invisibly to JSON and deepEqual", () => {
+  const rows = wrap([{ text: "alpha beta gamma" }], 11);
+  assert.deepEqual(rows.map((r) => r.map((s) => s.text).join("")), ["alpha beta", "gamma"]);
+  assert.equal(rows[0].cont, undefined, "a source line's first row is not a continuation");
+  assert.deepEqual(rows[1].cont, { join: " ", indent: 0 });
+  assert.equal(JSON.stringify(rows[1]), JSON.stringify([{ text: "gamma" }]));
+  assert.deepEqual(rows[1], [{ text: "gamma" }]);
+  const hard = wrap([{ text: "abcdefghij" }], 4);
+  assert.deepEqual(hard.map((r) => r.cont?.join ?? null), [null, "", ""], "a word broken mid-way joins with nothing");
+  const two = wrap([{ text: "one\ntwo" }], 10);
+  assert.deepEqual(two.map((r) => r.cont ?? null), [null, null], "a hard newline is not a continuation");
+});
+
+test("withPrefix keeps the marker and adds the prefix width to the indent", () => {
+  const rows = wrap([{ text: "alpha beta gamma" }], 11);
+  const first = withPrefix([{ text: "• " }], rows[0]);
+  const next = withPrefix([{ text: "  " }], rows[1]);
+  assert.equal(first.cont, undefined);
+  assert.deepEqual(next.cont, { join: " ", indent: 2 });
+  assert.equal(next.map((s) => s.text).join(""), "  gamma");
+});
