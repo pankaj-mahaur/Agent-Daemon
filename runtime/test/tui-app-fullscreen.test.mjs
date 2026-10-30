@@ -32,7 +32,7 @@ function stubSession({ running = false } = {}) {
   };
 }
 
-async function withFullscreen(fn, { rows = 12, cols = 60, speed, overrides = null, running = false, history = 60, env = {}, platform = "linux", config = {}, clipboard = "from the clipboard" } = {}) {
+async function withFullscreen(fn, { rows = 12, cols = 60, speed, overrides = null, running = false, history = 60, env = {}, platform = "linux", config = {}, clipboard = "from the clipboard", extraActions = {} } = {}) {
   const scr = xtermScreen({ cols, rows });
   const listeners = new Set();
   const io = { ...scr.io, onInput: (f) => (listeners.add(f), () => listeners.delete(f)) };
@@ -43,7 +43,7 @@ async function withFullscreen(fn, { rows = 12, cols = 60, speed, overrides = nul
   const settings = { engine: { get: (k) => (k === "tui.mouse_scroll_speed" ? speed : config[k]) } };
   // A fake clipboard: what was copied, and what a right-click paste reads.
   const copies = [];
-  const actions = { copy: async (text) => (copies.push(text), { ok: true, via: "pbcopy" }), readClipboard: async () => clipboard };
+  const actions = { copy: async (text) => (copies.push(text), { ok: true, via: "pbcopy" }), readClipboard: async () => clipboard, ...extraActions };
   const app = createApp({ io, renderer, session, cwd: "/x", armMs: 0, settings, keymap: createKeymap({ overrides }), env, platform, actions });
   for (let i = 0; i < history; i++) renderer.commit([[{ text: `h${i}` }]]); // one row each
   app.draw();
@@ -401,4 +401,26 @@ test("a held Enter while reading with an empty prompt sends nothing and keeps th
     assert.deepEqual(session.calls.filter((c) => c[0] === "submit"), []);
     assert.equal(renderer.transcript.following, false, "the extra Enters don't go back to the bottom");
   });
+});
+
+/* Ctrl+Z (P2.4) */
+
+test("Ctrl+Z suspends between turns; not while a turn runs (the note says why); on Windows it does nothing", async () => {
+  let n = 0;
+  const extraActions = { suspend: () => (n++, true) };
+  await withFullscreen(async ({ type }) => {
+    type("\x1a");
+    await tick();
+    assert.equal(n, 1);
+  }, { extraActions });
+  await withFullscreen(async ({ type, scr }) => {
+    type("\x1a");
+    assert.match(await screenText(scr), /Ctrl\+Z works between turns/);
+    assert.equal(n, 1);
+  }, { extraActions, running: true, cols: 90 });
+  await withFullscreen(async ({ type }) => {
+    type("\x1a");
+    await tick();
+    assert.equal(n, 1);
+  }, { extraActions, platform: "win32" });
 });

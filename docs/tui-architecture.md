@@ -122,6 +122,8 @@ Key chords (`"ctrl-x ctrl-s"`, `"leader c"`) are matched before every layer by `
 
 The external editor (Ctrl+G) and `/login` hand the terminal to a child process: input is detached, modes restored, and everything re-entered afterwards. SIGINT/SIGBREAK during (and briefly after) a handoff belong to the child.
 
+In fullscreen (P2.4) there are two kinds. The editor is a **keep-screen** handoff: ad leaves its screen (mouse off, its keyboard push popped), io restores the main screen's modes, then the renderer `freeze()`s: back on the alternate screen with the last frame but with no keyboard push and no mouse, so a GUI editor leaves ad visible; `unfreeze()` leaves it again before io re-applies the main modes, so every screen's keyboard stack ends where it began. `/login` and `/ad <command>` are **restore** handoffs: the child runs on the main screen, so its output stays in the shell's scrollback, and "Press Enter to return to ad." waits after `/ad` and after a failed `/login`. Nothing is written while frozen (commits, frames, resizes and OSC 52 are kept for the repaint). If io was restored during a handoff (a signal), the renderer stays out. Ctrl+Z (POSIX) leaves ad's screen and stops; on SIGCONT io cycles raw mode and the renderer repaints.
+
 ## Staying working across engine releases
 
 - **Pinned engine.** `@openai/codex` is pinned exactly in `runtime/package.json`; the TUI only talks to that binary.

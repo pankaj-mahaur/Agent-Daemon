@@ -320,6 +320,8 @@ export function createIo({
     const onCont = () => {
       away = false;
       if (!entered || restored) return;
+      // The shell may have changed the terminal while ad was stopped: off, then on (as after a handoff).
+      setRaw(false);
       setRaw(true);
       writeRaw(modesOn());
       attachInput();

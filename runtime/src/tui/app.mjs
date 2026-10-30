@@ -3227,6 +3227,16 @@ export function createApp({
       }
       return draw();
     }
+    // Ctrl+Z (P2.4): stop ad and return to the shell (`fg` brings it back). POSIX only, between turns.
+    if (ev.type === "key" && ev.ctrl && ev.name === "z" && !ev.alt && !ev.shift) {
+      if (platform === "win32" || !actions.suspend) return draw();
+      if (turnActive()) {
+        note = { level: "info", text: "Ctrl+Z works between turns: this one is still running (Esc stops it)." };
+        return draw();
+      }
+      actions.suspend();
+      return;
+    }
     // Shift+Tab: the fixed key for the next collaboration mode (Plan ↔ Default), only with no task running.
     if (ev.type === "key" && ev.name === "tab" && ev.shift && !ev.ctrl && !ev.alt) {
       if (!turnActive()) {

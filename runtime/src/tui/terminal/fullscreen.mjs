@@ -63,6 +63,7 @@ export function createFullscreenRenderer({
   let suspended = false;
   let paused = false; // a resize waiting for quiet
   let disposed = false;
+  let frozen = false; // a keep-screen handoff shows the last frame (P2.4)
   let dirty = false;
   let current = { lines: [], cursor: { row: 0, col: 0 } };
   let prev = []; // the rendered rows on screen
@@ -77,7 +78,7 @@ export function createFullscreenRenderer({
   let marks = null; // (ref) → [[fromCol, toCol, style], …]: what to highlight
   const resizeListeners = new Set();
 
-  const writable = () => started && !disposed && !suspended && !paused && isActive();
+  const writable = () => started && !disposed && !suspended && !frozen && !paused && isActive();
 
   // ---- stderr while the alternate screen is up ----
   let stderrWrite = null;
@@ -283,10 +284,35 @@ export function createFullscreenRenderer({
     },
     resume() {
       if (!suspended || disposed) return;
+      if (frozen) this.unfreeze();
+      // io was restored meanwhile (a signal, close() during a handoff): the terminal is the shell's now.
+      if (io.entered === false) return;
       suspended = false;
       enter();
       draw({ full: true });
       flushBytes();
+    },
+    /**
+     * During a keep-screen handoff (P2.4, the external editor): back on the
+     * alternate screen with the last frame, but without a keyboard push or the
+     * mouse, so a GUI editor leaves ad visible. Nothing more is written until
+     * unfreeze(); the guard knows there is no push to pop.
+     */
+    freeze() {
+      if (!started || !suspended || frozen || disposed) return;
+      enterAltScreen(io.writeSync, { mouse: false, keyboard: false });
+      prev = [];
+      parked = null;
+      suspended = false;
+      draw({ full: true });
+      suspended = true;
+      frozen = true;
+    },
+    /** Leaves the frozen screen (a terminal editor may have left it already: harmless). */
+    unfreeze() {
+      if (!frozen) return;
+      frozen = false;
+      releaseAltScreen(io.writeSync);
     },
     redraw() {
       draw({ full: true });

@@ -481,3 +481,15 @@ test("size falls back to 80x24", () => {
   const { io } = make(t);
   assert.deepEqual(io.size(), { cols: 80, rows: 24 });
 });
+
+test("SIGCONT cycles raw mode off then on before the modes return", async () => {
+  const t = fakeTerminal();
+  const { io } = make(t);
+  await io.enter();
+  assert.equal(io.suspend(), true);
+  t.stdin.raw.length = 0;
+  const n = t.written.length;
+  t.proc.emit("SIGCONT");
+  assert.deepEqual(t.stdin.raw, [false, true]);
+  assert.ok(t.written.slice(n).join("").includes("\x1b[?2004h"), "modes back after the raw cycle");
+});

@@ -72,16 +72,71 @@ function pickOnce({ io, renderer, title, items, intro = [] }) {
   });
 }
 
-/** Gives the terminal to `fn` (a child program) and takes it back. */
-async function handoff(io, renderer, fn, app = null) {
+/**
+ * Gives the terminal to `fn` (a child program) and takes it back.
+ *
+ * Fullscreen (P2.4) has two kinds. "keep" (the external editor) shows ad's
+ * last frame on the alternate screen while the child runs, with no keyboard
+ * push or mouse, so a GUI editor leaves ad visible. "restore" (/login, /ad)
+ * runs the child on the main screen, so its output stays in the user's
+ * scrollback; when waitAfter(result) says so, "Press Enter to return to ad."
+ * keeps that output readable before ad repaints. Inline, both are as before.
+ */
+export async function handoff(io, renderer, fn, app = null, { kind = "restore", waitAfter = () => false, wait = waitForEnter } = {}) {
   app?.holdTitle?.(true); // the child sets its own title; ours comes back after
   renderer.suspend();
   try {
-    return await io.handoff(fn);
+    return await io.handoff(async () => {
+      const keep = kind === "keep" && typeof renderer.freeze === "function";
+      if (keep) renderer.freeze();
+      let result;
+      try {
+        result = await fn();
+      } finally {
+        // Before io's modes come back: they belong on the main screen's keyboard stack.
+        if (keep) renderer.unfreeze();
+      }
+      if (renderer.fullscreen && !keep && waitAfter(result)) await wait();
+      return result;
+    });
   } finally {
     await renderer.resume();
     app?.holdTitle?.(false);
   }
+}
+
+/**
+ * Ctrl+Z: the renderer leaves its screen, io restores the terminal and stops
+ * the process (SIGSTOP); on SIGCONT io re-enters and the renderer repaints.
+ * → false where stopping isn't possible (Windows), with nothing changed.
+ */
+export function suspendTui(io, renderer, app = null) {
+  renderer.suspend();
+  const back = () => Promise.resolve(renderer.resume()).then(() => app?.draw?.());
+  const off = io.onResume((r) => {
+    if (r.reason !== "sigcont") return;
+    off();
+    back();
+  });
+  if (io.suspend()) return true;
+  off();
+  back();
+  return false;
+}
+
+/** Waits for Enter on the main screen (cooked mode: the handoff turned raw mode off). */
+function waitForEnter({ stdin = process.stdin, stdout = process.stdout } = {}) {
+  return new Promise((resolve) => {
+    stdout.write("\r\nPress Enter to return to ad. ");
+    const onData = (d) => {
+      if (!/[\r\n]/.test(String(d))) return;
+      stdin.off("data", onData);
+      stdin.pause?.();
+      resolve();
+    };
+    stdin.on("data", onData);
+    stdin.resume?.();
+  });
 }
 
 function runChild(cmd, args, opts = {}) {
@@ -371,7 +426,8 @@ export async function cmdTui(opts = {}) {
         ],
       });
       if (!choice) break;
-      await handoff(io, renderer, () => runChild(process.execPath, [CLI, ...choice], { cwd }));
+      // A failed sign-in keeps its output on screen until Enter (fullscreen; P2.4).
+      await handoff(io, renderer, () => runChild(process.execPath, [CLI, ...choice], { cwd }), null, { waitAfter: (code) => code !== 0 });
       started = await start();
     }
     if (!started.engine) {
@@ -786,7 +842,7 @@ export async function cmdTui(opts = {}) {
         await session.engine.setSkillRoots(skillRoots({ cwd, engineHome: session.engine.home }));
       },
       login: async (arg) => {
-        const code = await handoff(io, renderer, () => runChild(process.execPath, [CLI, "auth", "login", ...splitArgs(arg || "chatgpt")], { cwd }), app);
+        const code = await handoff(io, renderer, () => runChild(process.execPath, [CLI, "auth", "login", ...splitArgs(arg || "chatgpt")], { cwd }), app, { waitAfter: (c) => c !== 0 });
         if (code !== 0) return `Sign-in didn't finish (exit ${code}). Nothing changed.`;
         // Keys reach the engine when it starts, and a new login is read at start too: restart it.
         const ok = await session.restartEngine().catch(() => false);
@@ -794,7 +850,7 @@ export async function cmdTui(opts = {}) {
       },
       runAd: async (arg) => {
         if (!arg) return "Usage: /ad <command>, e.g. /ad doctor";
-        const code = await handoff(io, renderer, () => runChild(process.execPath, [CLI, ...splitArgs(arg)], { cwd }), app);
+        const code = await handoff(io, renderer, () => runChild(process.execPath, [CLI, ...splitArgs(arg)], { cwd }), app, { waitAfter: () => true });
         return `ad ${sanitize(arg, "transcript")} exited ${code}.`;
       },
       hookRows: (run) => hookRows(run, { hooksFile }),
@@ -815,7 +871,9 @@ export async function cmdTui(opts = {}) {
       },
       // /delete: the conversation's /undo snapshots go with it.
       forgetCheckpoints: (threadId) => (undoKit ? cp.forget(threadId) : Promise.resolve(0)),
-      editText: (text) => handoff(io, renderer, () => editInEditor(text, { run: (cmd, args, verbatim) => runChild(cmd, args, { cwd, windowsVerbatimArguments: Boolean(verbatim) }) }), app),
+      editText: (text) => handoff(io, renderer, () => editInEditor(text, { run: (cmd, args, verbatim) => runChild(cmd, args, { cwd, windowsVerbatimArguments: Boolean(verbatim) }) }), app, { kind: "keep" }),
+      // Ctrl+Z (POSIX; P2.4): leave ad's screen, stop; `fg` brings it back repainted.
+      suspend: () => suspendTui(io, renderer, app),
     };
 
     // Path B (P2.1): swap renderers just before the app, so the inline "Starting the engine…"
