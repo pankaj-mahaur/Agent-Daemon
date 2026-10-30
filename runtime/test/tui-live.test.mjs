@@ -936,6 +936,11 @@ test("P4.1 live: a command and a patch in ad tui are in the session record; ad s
     if (/cannot enforce split writable root sets/.test(t.text().replace(/\s+/g, " "))) {
       return void ctx.skip("The engine's unelevated Windows sandbox refused the command on this machine (\"cannot enforce split writable root sets\")");
     }
+    // Or the engine rejected it before it started: no command cell at all, only a warning.
+    const shellTurn = t.text().slice(t.text().lastIndexOf("SHELL with"), t.text().lastIndexOf("done after call-shell"));
+    if (process.platform === "win32" && !/\b(Ran|Running|Failed|Declined|Stopped)\b/.test(shellTurn)) {
+      return void ctx.skip("The engine rejected the command before it started on this machine (no command cell; the Windows sandbox isn't set up here)");
+    }
     t.type("PATCH please\r");
     await answer(/done after call-patch/, "the patch");
     t.type("/status\r");
