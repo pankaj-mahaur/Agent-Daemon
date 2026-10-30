@@ -50,11 +50,17 @@ agent-daemon is best understood as three nested loops:
 | `digest`, `digest-latest`, `digest-sweep` | `runtime/src/digest/digest.mjs` |
 | `watch`, `service` | `runtime/src/daemon/` |
 | `hook <name>` | `runtime/src/hooks/*.mjs` |
-| `init`, `doctor`, `status`, `review`, `checkpoint` | `runtime/src/cli-full.mjs` directly |
+| `init`, `doctor`, `status`, `checkpoint` | `runtime/src/cli-full.mjs` directly |
+| `review` | `runtime/src/review.mjs` (`review --import <id>`: `runtime/src/portability/state-cli.mjs`) |
 | `memory`, `route`, `skill`, `viewer` | `runtime/src/memory/`, `route-map.mjs`, `skill-install.mjs`, `viewer.mjs` |
+| `memory install`, `doctor`, `repair`, `status`, `uninstall` | `runtime/src/memory-install/` (also the `agent-daemon-memory` package's own CLI) |
+| `skill propose`, `history`, `diff`, `undo`, `publish` | `runtime/src/skills/` (the skill library) |
+| `state` | `runtime/src/portability/` |
+| `sessions show` | `runtime/src/sessions/show.mjs` |
+| `fallback` | `runtime/src/routing/` |
 | `team *`, `spawn` | `runtime/src/orchestration/*.mjs` |
 | `evolve` | `runtime/src/digest/gepa/*.mjs` |
-| `auth`, `chat`, `run`, `loop`, `schedule`, `web`, `acp`, `tools`, `sandbox`, `agy` | `runtime/src/harness/*.mjs` (engine: `runtime/src/engine/codex/`) |
+| `auth`, `chat`, `run`, `loop`, `schedule`, `web`, `acp`, `tools`, `sandbox`, `agy`, `migrate` | `runtime/src/harness/*.mjs` (accounts: `runtime/src/auth/`; engine: `runtime/src/engine/codex/`) |
 
 ### 2. Hooks (`runtime/src/hooks/`)
 
@@ -133,6 +139,14 @@ transcript.jsonl
 - `skill_failures` — feedback signal for the GEPA evolve loop
 - `injections`, `correction_events`, `feedback` — what each session was shown, each correction and whether it repeated a lesson, and memory_feedback verdicts; read by `ad memory report` ([Memory metrics](memory/metrics.md))
 
+The database opens through `better-sqlite3`, or Node's built-in `node:sqlite` (Node 22.16 or newer) when that isn't installed (`runtime/src/memory/driver.mjs`; `AD_SQLITE_DRIVER` picks one, `ad doctor` shows which).
+
+**How memory stays safe** (details: [memory/security.md](memory/security.md)):
+- **Project ids** (`memory/projects.mjs`). Each project has an id in `~/.agent-daemon/projects.json` (and `.agent-daemon/project.json` in a project you set up), and memory rows carry it, so a moved folder keeps its memory. Two folders whose old path slugs collide are withheld until each has its own id (`memory/safety.mjs`, `ad memory assign`).
+- **One scope per reader** (`memory/scope.mjs`). The memory MCP server is bound to one project when it starts; no tool argument changes it.
+- **Held notes** (`memory/held.mjs`). A note an agent wrote about itself is stored *pending*, and one the injection screen or the secret check flags is stored *quarantined*; neither is served until you act in `ad review` or `ad memory held`, which refuse to run in an agent's tool shell (`security/agent-shell.mjs`).
+- **Secrets** (`security/secret-patterns.mjs`). Key-shaped text is replaced with `[redacted:<kind>]` at every write and masked again when older notes are shown.
+
 ### 5. Watch daemon (`runtime/src/daemon/watch.mjs`)
 
 Foreground process. Uses `chokidar` (with Windows polling fallback) to watch transcript directories. For each file:
@@ -143,7 +157,7 @@ Foreground process. Uses `chokidar` (with Windows polling fallback) to watch tra
 4. Extract cwd from the transcript itself (Claude Code embeds it)
 5. Fire `runDigest({ transcript, cwd, ... })`
 
-Watched directories: `~/.claude/projects`, `~/.cursor/sessions`, `~/.codex/sessions`, and the harness's `~/.agent-daemon/codex-home/sessions` (opt out with `"harnessSessions": false`).
+Watched directories: `~/.claude/projects`, `~/.cursor/sessions`, `~/.codex/sessions`, and the harness's `~/.agent-daemon/engine/sessions` (opt out with `"harnessSessions": false`).
 
 Also polls team inboxes every 10 sec for multi-agent orchestration, and runs scheduled harness jobs (`ad schedule`).
 
@@ -238,9 +252,16 @@ Some providers speak only Chat Completions; the engine speaks only the Responses
     If any step fails, the goal ad paused is active again, and a fork that ignored the target is archived.
   - After the fork, the old thread is unsubscribed. If background terminals still run in it, it stays subscribed and watched until they end, because unloading would kill them. A turn the engine starts on it is stopped and reported.
 
+### The session record and fallback (`runtime/src/sessions/`, `runtime/src/routing/`)
+
+- **Logical sessions.** One session follows a conversation across threads and engine homes (a switch, a fork, a fallback). `sessions/coordinator.mjs` turns the session's events into an append-only record, `~/.agent-daemon/sessions/ses_<id>.jsonl` (`ledger.mjs`): which account and model ran each turn, who started it, and what each tool call did and how it ended, never its content. `sessions/index.json` maps threads to sessions. `ad sessions show` reads it; `AD_LEDGER=0` turns it off.
+- **Switching.** `sessions/switch.mjs` decides how a conversation moves to another target at a safe point (the next turn, a fork for another key of the same provider, or a new thread seeded with a continuation capsule built from what you saw, `capsule.mjs`); `switch-runner.mjs` does it.
+- **The fallback order.** `~/.agent-daemon/fallback.json` (`routing/store.mjs`, under a lock) holds the order and its rules; `routing/policy.mjs` validates it and keeps the consent hash, which clears itself when a confirmed destination changes. `routing/next-target.mjs` picks the next target from the accounts, their model catalogs and the last limits seen.
+- **Automatic fallback.** `sessions/fallback.mjs` makes every decision as pure functions; `fallback-controller.mjs` acts at turn boundaries in `ad tui`, and in `ad run`, `ad loop`, schedules and team workers that opted in (`--fallback`, `ad team set <team> fallback on`).
+
 ### Portable state (P7.1b, `runtime/src/portability/`)
 
-The format for moving ad's state to another machine (export and import come with P7.2 and P7.3):
+`ad state` moves ad's state to another machine ([harness.md](harness.md#moving-ad-to-another-computer) has the user's side). `export.mjs` writes a bundle for the selected projects from a consistent snapshot; `import.mjs` stages an untrusted bundle under `~/.agent-daemon/imports/<id>/`, checks its database for parts ad didn't make (`inspect-db.mjs`), maps projects, and applies a journaled, resumable, reversible plan. The format:
 
 - **One file, `.adstate`:** tar (ustar, pax only for a long name or size) in gzip, written deterministically (sorted, mode 0600/0700, no times or owners). The reader accepts only files, folders and pax `path`/`size`; a link, a device, a global pax header or a name that could leave the bundle is an error, never a partial read (`archive.mjs`, `names.mjs`).
 - **`manifest.json` first:** what is inside, from which machine, what was left out and why; a bundle never carries secrets (`manifest.mjs`).
@@ -317,6 +338,12 @@ Agent-Daemon/                       # The cloned repo
 │   ├── installation-guide.md
 │   ├── customization-guide.md
 │   ├── skill-anatomy.md
+│   ├── commands.md                 # engine slash commands in ad, keys, shared settings
+│   ├── accounts.md, providers.md   # accounts and providers
+│   ├── memory/                     # ad's memory in other agents: install, hosts, tools, security, metrics, FAQ
+│   ├── support-matrix.md           # where memory is tested live
+│   ├── privacy.md, terms.md
+│   ├── upgrade-3.0.md
 │   ├── ecosystem.md
 │   └── future-harnesses.md
 ├── constitution/                   # Loaded into every session
@@ -336,7 +363,14 @@ Agent-Daemon/                       # The cloned repo
 │   │   ├── engine/                 # The engine adapter and façade
 │   │   ├── harness/                # chat/run/loop/schedule/web/acp/auth/sandbox/agy, session controller, /undo checkpoints
 │   │   ├── tui/                    # Terminal UI: terminal/ layer, view/ components, app, /undo wiring
-│   │   ├── auth/                   # Provider keys + secret store
+│   │   ├── auth/                   # Accounts, provider keys + secret store
+│   │   ├── gateway/                # The local provider gateway (keys stay here) and chat translation
+│   │   ├── providers/              # Provider presets, model catalogs, limits, spend
+│   │   ├── sessions/, routing/     # The session record, switching, fallback
+│   │   ├── portability/            # ad state export / import
+│   │   ├── memory-install/         # ad memory install (other agents)
+│   │   ├── skills/                 # The skill library: versions, history, undo, publish
+│   │   ├── security/               # The agent-shell guard, secret patterns
 │   │   ├── orchestration/
 │   │   ├── adapters/
 │   │   ├── daemon/                 # Watcher
@@ -353,8 +387,16 @@ Agent-Daemon/                       # The cloned repo
 ├── logs/                           # Digest failure reports, tui-probe logs
 ├── checkpoints/                    # Pre-compact memory markers (ad checkpoint; not /undo)
 ├── watch.json                      # Watcher config
-├── codex-home/                     # Engine home (login, config, rollouts, skills mirror)
+├── engine/                         # Engine home (login, config, rollouts, skills mirror); codex-home/ on installs from before 3.0 (ad migrate renames it)
+├── api/, a/<account id>/           # More engine homes: API-key accounts once engine/ holds a ChatGPT sign-in; an account's own home (see "Accounts, engines and switching")
+├── launch/                         # The empty folder the engine process starts in
+├── accounts/registry.json          # Accounts: id, label, owner, where the key lives (never the key)
 ├── secrets/                        # Provider keys (file backends)
+├── quota/, catalog/                # Last limits and today's spend per account; each account's model list (re-read from the providers)
+├── fallback.json                   # The fallback order and its rules (ad fallback)
+├── sessions/                       # The session record: index.json + ses_<id>.jsonl (ad sessions show)
+├── imports/<id>/                   # ad state import: staging, journal, unmapped files
+├── memory/                         # ad memory install: install-ledger.json, backups/<host>/
 ├── schedules.json, schedule-logs/  # ad schedule jobs + output
 ├── tui/                            # Terminal UI: prompt history (0600), per-folder state
 ├── locks/                          # Conversation locks (one ad per conversation); a holder is judged by its process start time, so a reused pid is free at once and a suspended session keeps its lock

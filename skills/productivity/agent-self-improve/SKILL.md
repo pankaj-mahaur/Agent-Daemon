@@ -6,7 +6,7 @@ allowed-tools: mcp__qmd__*, Bash
 metadata:
   author: agent-daemon
   spec: agentskills.io
-  version: "1.0"
+  version: "1.1"
 ---
 
 # Be a session that the next session learns from

@@ -2,7 +2,7 @@
 
 [![test](https://github.com/pankaj-mahaur/Agent-Daemon/actions/workflows/test.yml/badge.svg)](https://github.com/pankaj-mahaur/Agent-Daemon/actions/workflows/test.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![version](https://img.shields.io/badge/version-3.0.0-green.svg)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-3.1.0-green.svg)](CHANGELOG.md)
 [![harnesses](https://img.shields.io/badge/harnesses-Claude%20Code%20%7C%20Codex%20%7C%20Cursor-purple.svg)](#cross-harness-support)
 
 **Agent Daemon.** A terminal coding agent that remembers. Type `ad` in a project: it works in your repo, runs commands in a sandbox, asks before going beyond it (see [Safety model](#production-safety)), and keeps what it learns. It also gives Claude Code the same memory, guards and skills. To run the agent yourself you need an OpenAI API key, an OpenRouter key or a ChatGPT plan; the Claude Code memory and guards need none.
@@ -151,8 +151,11 @@ ad sandbox setup --elevated      # Windows: stronger command sandbox (one UAC pr
 - **Windows:** the engine's PATH leaves out every `WindowsApps` folder, because the sandbox can't start PowerShell 7 from the Microsoft Store. Commands run in an MSI-installed PowerShell 7 or Windows PowerShell 5.1 ([troubleshooting #16](docs/troubleshooting.md#16-harness-on-windows-every-agent-command-fails-access-is-denied-or-createprocessasuserw-failed)).
 
 **Keys.**
-- OpenRouter keys are stored with DPAPI on Windows, libsecret on Linux (falling back to a 0600 file), and a 0600 file on macOS. They never go into config or argv, and `OPENROUTER_API_KEY` is stripped from the agent's shell.
-- ChatGPT / OpenAI logins are kept by the engine in the harness home (`auth.json`). Your own environment variables (e.g. `GITHUB_TOKEN`) are passed through to the agent's shell unchanged.
+- API keys are stored with DPAPI on Windows, libsecret on Linux (falling back to a 0600 file), and on macOS in the keychain when the optional `@napi-rs/keyring` module is installed (else a 0600 file). They never go into config or argv.
+- Keys never reach the engine, its hooks or the commands the agent runs: ad's local gateway adds the key on the way out, and the engine holds only a per-run token that the agent's shell doesn't get.
+- ChatGPT logins are kept by the engine in the harness home (`auth.json`). Your own environment variables (e.g. `GITHUB_TOKEN`) are passed through to the agent's shell unchanged.
+
+**Accounts and fallback.** Several accounts side by side (OpenAI, OpenRouter, ChatGPT, Kimi, xAI, local models and more; [docs/accounts.md](docs/accounts.md)), picked per conversation with `--account` or `/model`. `ad fallback` sets where a task may continue when a limit runs out; it is off until you turn it on.
 
 **`ad loop` brakes:** dual exit (the agent must report `done` *and* `exit_signal`), a circuit breaker (no progress or the same error repeatedly), iteration / time / token budgets, and a STOP file (`.agent-daemon/STOP`) checked mid-turn.
 
@@ -160,7 +163,7 @@ ad sandbox setup --elevated      # Windows: stronger command sandbox (one UAC pr
 
 Full guide: [docs/harness.md](docs/harness.md).
 
-**Your own install stays yours.** The harness runs a separate pinned copy of the engine in its own home. It refuses to run in `~/.codex` (or a `CODEX_HOME` you set), and never passes your `CODEX_HOME`, `CODEX_API_KEY` and the like to its engine. The optional `ad watch` daemon reads `~/.codex/sessions` to learn from your own sessions, and writes nothing there.
+**Your own install stays yours.** The harness runs a separate pinned copy of the engine in its own home. It refuses to run in `~/.codex` (or a `CODEX_HOME` you set), and never passes your `CODEX_HOME`, `CODEX_API_KEY` and the like to its engine. The engine process starts in an empty folder, and in a folder where your own `~/.codex/` skills would load (your home folder) ad asks you to pick a project first ([docs/harness.md](docs/harness.md#working-in-your-home-folder)). ad switches off the engine's analytics, feedback uploads and telemetry exporters in its own folders. The optional `ad watch` daemon reads `~/.codex/sessions` to learn from your own sessions, and writes nothing there.
 
 **The engine's folder.** The engine lives in its own home (`~/.agent-daemon/engine`; older installs: `codex-home`, moved with `ad migrate`). `ad about` shows the engine version, the folder, and where the notices live.
 
@@ -177,7 +180,8 @@ Design and decisions: [docs/harness-design.md](docs/harness-design.md).
 Bare `ad` (or `ad tui`) opens a terminal UI on the same engine, and `ad --last` reopens the newest conversation in it. `AD_TUI=0` turns that off, so bare `ad` prints the help (`ad tui` still opens the UI); `ad chat` stays the plain line mode.
 - **Reflexes:** history in your terminal's own scrollback, approvals showing the full command or diff (keys pressed in the first 400 ms are ignored), steer (Enter) and queue (Tab) while a turn runs, Esc to interrupt, Esc Esc to rewind, Ctrl+T for the transcript, Ctrl+O to copy, `/model`, `/review`, `/resume`, `/permissions`, `/clear`, `/archive`, `/delete`, `/statusline`, `/title` and the rest of the commands, with the engine's rules (some wait for the turn to end). A command ad doesn't have yet answers why instead of going to the model; [commands.md](docs/commands.md) lists every one.
 - **Commands:** plan mode (`/plan`, Shift+Tab), background terminals (`/ps`, `/stop`), `/cd`, side conversations (`/side`, `/btw`), Vim mode (`/vim`), syntax highlighting and `/theme`, `/recap`, `/subagents` (Alt+← / Alt+→), `/approve`, `/keymap`, `/clear`, `/archive`, `/delete` and the rest: [what each does in ad](docs/commands.md).
-- **Shared with the engine's own UI:** the status line, the window title and the keys you set in `/keymap` (the engine's `tui.*` settings in ad's engine home).
+- **Shared with the engine's own UI:** the status line, the window title and the keys you set in `/keymap`, chords and the leader key included (the engine's `tui.*` settings in ad's engine home).
+- **Fullscreen (early):** `/tui` (or `tui.fullscreen_transcript = true`) gives ad the whole terminal from the next start, with scrolling, mouse selection, copy and Find (F3); `--no-alt-screen` stays inline for one run. Inline is the default.
 - **What ad adds:** "Learned:" rows after a turn and `/memory`; `/private`; `/undo`, which puts back the files the last turn's edits changed and rewinds it, and refuses when your own work is in the way (a save of yours during the turn, or after the agent's edit, is a conflict; only `/undo force` discards later changes to the agent's files); `/loop` in the background; `/team`, `/schedule`, `/tools`.
 - **Tested live:** CI's real-engine job (non-blocking) runs the manual test's terminal UI script and ad's own TUI features on the real `ad tui`, in a real pseudo-terminal with the real pinned engine, on Linux, macOS and Windows (`runtime/test/tui-live.test.mjs`).
 
@@ -435,7 +439,11 @@ agent-daemon/
 │       ├── tui/             # ad tui: terminal layer, view components, /undo wiring
 │       ├── engine/          # the engine adapter and façade
 │       ├── harness/         # ad chat/run/loop/schedule/web/acp/auth/sandbox/agy, session controller, /undo checkpoints
-│       ├── auth/            # Provider keys + OS secret store
+│       ├── auth/            # Accounts, provider keys + OS secret store
+│       ├── gateway/         # Local provider gateway: keys stay here; chat translation
+│       ├── sessions/        # Session record, switching, automatic fallback (routing/: the order)
+│       ├── portability/     # ad state export / import
+│       ├── memory-install/  # ad memory install for other agents
 │       ├── orchestration/   # Multi-agent: inbox, spawn, team, templates, engine workers
 │       ├── daemon/          # Watch daemon + OS service registration
 │       ├── digest/          # Extract → sanitize → classify → apply pipeline + GEPA
@@ -459,17 +467,26 @@ All commands work with both `ad` (short) and `agent-daemon` (full). Short aliase
 
 ```bash
 # Harness (ad's own engine) — see "Agent harness" above
-ad auth login openai|openrouter|chatgpt   # ad auth use / status / logout
-ad auth login xai|kimi-code|moonshot|fireworks|custom|ollama|lmstudio [--label <l>]   # more accounts: docs/accounts.md
-ad [--last]                                    # terminal UI (AD_TUI=0: bare ad prints the help)
+ad auth login <provider> [--label <l>] [--owner <t>]   # add an account; ad auth login --help lists providers (docs/accounts.md)
+                                       #   chatgpt [--device] | openai | openrouter [--oauth] | custom --base-url <url> [--no-key] | ollama | lmstudio | ...
+ad auth list | use | rename | logout | remove | status | test | repair   # manage accounts (ad auth --help)
+ad auth use <account> [--global|--project|--session|--digest]   # the default account, or a narrower one
+ad auth models <account> [--refresh] [--json]  # its models: tools, context, price (free only when seen free today)
+ad [--last] [--no-alt-screen]                  # terminal UI (AD_TUI=0: bare ad prints the help)
 ad tui ["<prompt>"] [--last | --resume <id>]   # terminal UI (docs/tui.md)
+                                       #   --cwd <dir> --account <ref> --model <m> --effort <e> --sandbox <mode>
+                                       #   --no-alt-screen    inline for this run (no fullscreen)
+                                       #   --preview          a minimal preview UI on the same engine
 ad about                                     # what ad runs on: versions, the engine, licenses, settings path
 ad chat | ad run "<prompt>" | ad loop "<objective>"   # --account <provider>/<label> --model <m> --effort <e> pick the target (AD_ACCOUNT: a default)
+                                       #   --fallback         (run, loop) continue on your fallback order; ad run exits 4 when it pauses
+                                       #   --allow-home-folder  (chat, run, loop, schedule add) work where your own engine skills load
 ad sessions show [<id>|--last] [--json]      # what ran where: bindings, turns, tool calls (docs/harness.md)
-ad auth models <account> [--refresh] [--json]  # its models: tools, context, price (free only when seen free today)
-ad fallback [add|remove|order|move|set|preview|test|enable|disable]   # where a task may continue when a limit runs out (docs/commands.md)
-ad schedule add|list|remove|enable|disable|run|tick
+ad fallback [list|add|remove|order|move|set|preview|test|enable|disable]   # where a task may continue when a limit runs out (docs/commands.md)
+ad schedule add "<cron>" run|loop "<prompt>" [--cwd <dir>] [--fallback]
+ad schedule list | remove|enable|disable|run <id> | edit <id> --fallback|--no-fallback | tick
 ad web | ad acp | ad tools list|enable|disable | ad sandbox setup|status | ad agy "<prompt>"
+ad migrate [--undo]                    # rename the engine's folder from its older name (optional)
 ad spawn ... --engine ad|claude     # team workers (default: sandboxed engine thread)
 ad evolve <skill> --llm claude|ad|auto
 
@@ -500,6 +517,7 @@ ad review                              # Accept/reject queued proposals (skills,
                                        #   --list, --reject <file> (both work without a terminal)
                                        #   --accept <file> | --accept-all   accept memory proposals (you type the confirmation)
                                        #   --global           older "global" notes: every project, or only their own
+                                       #   --import <id>      what an `ad state import` brought in
 ad init                                # Scaffold .agent-daemon/ + AD-INSTRUCTIONS.md in project
                                        #   --profile <name>     minimal | developer (default) | security
                                        #   --skills-mode <m>    smart (default — stack-detect) | all | minimal | manual
@@ -509,21 +527,28 @@ ad query-retrieve                      # Keyword extraction + learning injection
 
 # Memory
 ad memory stats                        # Row counts + retrieval telemetry (truncation rate, bytes)
-ad state export --out ~/ad.adstate     # Move ad to another computer (inspect, verify)
-ad state import ~/ad.adstate --dry-run # …and bring it in there (rollback, imports, verify --import)
 ad memory scan                         # Check older notes once: hold back rows holding a key or an injection
-ad memory held                         # Notes memory keeps back; accept|release|drop <id> from your own terminal
+ad memory held [--all-projects]        # Notes memory keeps back; accept|release|drop <id> from your own terminal
 ad memory promote fact:<id>            # Make a user fact apply in every project (your own terminal, typed)
-ad memory install [--host <id>]        # Add the memory server to Claude Code, Codex, Cursor, VS Code, Gemini CLI (docs/memory/install.md)
+ad memory redact <table>:<id>          # Replace what looks like a key in one row (your own terminal, typed)
+ad memory install [--host <id>] [--yes] [--dry-run]   # Add the memory server to Claude Code, Codex, Cursor, VS Code, Gemini CLI (docs/memory/install.md)
 ad memory doctor | repair | status | uninstall
-ad memory report [--days 30] [--share]  # Is memory working: repeated corrections, what was shown, feedback (docs/memory/metrics.md)
-ad memory migrate                      # Run the one-time upkeep now (note keys, journal secret scrub)
+ad memory report [--days 30] [--all-projects] [--json] [--share]   # Is memory working: repeated corrections, what was shown, feedback (docs/memory/metrics.md)
+ad memory migrate                      # Run the one-time upkeep now (note keys, journal secret scrub, project ids)
+ad memory assign --list | <table>:<id> --project <dir>   # Place a note two folders shared (typed confirmation)
 ad memory consolidate                  # Evolution pass: near-dup merges, stale archive, contradictions
                                        #   proposals only — --apply-merges / --apply-stale execute
                                        #   --all-projects     span every project (default: --cwd only)
 ad viewer                              # Render a zero-dep HTML snapshot of the episodic store
                                        #   --out <path>       output file (default ~/.agent-daemon/viewer.html)
                                        #   --open             open it in the default browser
+
+# Moving ad to another computer (docs/harness.md#moving-ad-to-another-computer; ad state --help)
+ad state inspect [--project <dir>]... [--all-projects]   # What an export would hold, and what it leaves out
+ad state export --out ~/ad.adstate     # This folder's project; --project <dir>..., --all-projects, --include/--exclude <class>, --redact
+ad state verify ~/ad.adstate           # Read a bundle the way import does; changes nothing
+ad state import ~/ad.adstate --dry-run # The plan; then import with --map <project>=<dir>, --search <dir>, --on-conflict <mode>
+ad state import --resume <id> | ad state imports | ad state rollback <id> | ad state verify --import <id>
 
 # Skills — routing + on-demand install
 ad skill install <name|path|git-url>   # Lint-gated install with provenance manifest
@@ -534,8 +559,6 @@ ad skill list [--available] [--json]   # Installed skills (both lanes) with prov
 ad skill remove <name> [--force]       # Manifest-aware removal
 ad skill search <query>                # Search the bundled catalog
 ad skill propose <name> --file <path>  # Queue a SKILL.md change for ad review (applies nothing)
-ad memory migrate                      # Give older memory rows their project id (also runs by itself once)
-ad memory assign --list | <table>:<id> --project <dir>   # Place a note two folders shared (typed confirmation)
 ad skill history <name>                # Every accepted version, with where it came from
 ad skill diff <name> [--from a --to b] [--bundled]   # Between versions, or against this release
 ad skill undo <name> [--to n]          # An older version becomes current (typed confirmation)
@@ -555,6 +578,7 @@ ad team inbox    (ti)  --team <id> [--agent <name>]
 ad team cleanup  (tu)                  # Prune stale worktrees
 ad team delete   (td)  --team <id>
 ad team retry    (tr)  --team <id> --task <task-id>   # Reset a failed task
+ad team set <team> fallback on|off     # Let the team's workers continue on your fallback order
 ad spawn         (sp)  --team <id> --role <name> --task "..."
 ```
 
@@ -961,6 +985,8 @@ Copy-paste configuration templates:
 - [Memory for every agent](docs/memory/README.md) — ad's memory in Claude Code, Codex, Cursor, VS Code and Gemini CLI: install, hosts and plugins, tools, security, FAQ; [support matrix](docs/support-matrix.md)
 - [Memory as host plugins](docs/memory/hosts.md) — The Claude Code plugin, the Cursor plugin, the Gemini extension and the Agent Plugins package, built from one source; when to use the installer instead
 - [Memory metrics](docs/memory/metrics.md) — `ad memory report`: repeated corrections, what was shown, feedback, rewording proposals
+- [Moving ad to another computer](docs/harness.md#moving-ad-to-another-computer) — `ad state export` / `import`: what travels, what never does, conflicts, rollback
+- [Upgrading to 3.0](docs/upgrade-3.0.md) — What changed from 2.x, renamed commands and folders, rolling back
 - [Correction benchmark](bench/correction-bench/README.md) — Does an agent repeat a corrected mistake, with and without ad's memory? Protocol, drivers, analysis
 - [Testing](docs/testing.md) — The test layers, the live terminal UI tests, mutation checks, CI
 - [Manual test](docs/manual-test.md) — End-to-end checklist (Claude Code mode + harness + terminal UI)

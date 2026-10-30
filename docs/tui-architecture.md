@@ -17,9 +17,14 @@ runtime/src/cli.mjs            thin launcher: routes `ad tui` / bare `ad` before
 runtime/src/tui/
   main.mjs                     cmdTui: preflight, engine start, sign-in and trust prompts, header, wiring
   app.mjs                      the app: what is committed to scrollback, what is live, keys, slash commands
-  keymap.mjs                   keys as the engine's actions (the engine's names and key spelling; tui.keymap read)
+  keymap.mjs                   keys as the engine's actions (the engine's names and key spelling; tui.keymap read), chords, the leader
   status.mjs                   the status line and the window title, by the engine's item ids
   prefs.mjs                    settings: the engine's tui.* in its config.toml, ad's in prefs.json
+  screen-mode.mjs              inline or fullscreen, and the mouse default, from the flag, settings and terminal (pure)
+  accounts.mjs                 what /model, /account, /login and /logout need over the account list and the engines
+  fallback-editor.mjs          /fallback: the order's editor (pure state and keys; the app draws it)
+  home-launcher.mjs            "Pick a project folder", before the engine starts in a home folder
+  history.mjs                  the prompt history (history.jsonl)
   upstream-commands.json       the engine's slash commands and their rules at the pin (generated, in engine/codex/)
   ad-layer.mjs                 ad's own capabilities: memory, learned rows, /loop, /team, /schedule, proposals
   undo.mjs                     checkpoint wiring for /undo (hooks on the session)
@@ -29,7 +34,9 @@ runtime/src/tui/
   view/                        pure renderers: composer, markdown, cells (items), chrome (header/footer, picker,
                                checklist), modals (the engine's requests, ad's confirm, choices), theme (every colour),
                                highlight (the syntax lexer, one table per language), vim (the engine's Vim mode)
-  terminal/                    io (raw mode, input decoding, handoff), renderer (inline frames), width, sanitize
+  terminal/                    io (raw mode, input decoding, handoff), renderer (inline frames), width, sanitize;
+                               fullscreen (the alternate-screen renderer), alt-screen (its guard), transcript (the
+                               re-wrapping buffer), selection, find, clipboard, detect (what the terminal is)
 runtime/src/harness/
   session.mjs                  the session controller: one thread, turns, queue/steer, approvals, items, restarts
   checkpoints.mjs              git-tree snapshots, plan and restore for /undo
@@ -101,7 +108,7 @@ Key chords (`"ctrl-x ctrl-s"`, `"leader c"`) are matched before every layer by `
 - Shift+Enter isn't distinguishable from Enter in some terminals; Ctrl+J always inserts a newline, and `/terminal-setup` explains the per-terminal fix.
 - Every exit path restores the terminal (modes, cursor, colours), including a crash.
 - Terminal replies (OSC, DCS, APC strings) are recognised anywhere in the input and dropped; Alt+], Alt+Shift+P and Alt+_ still type.
-- **Keys are the engine's actions** (`tui/keymap.mjs`): the engine's contexts, action names and key spelling, so `tui.keymap` (set in the engine's settings file) means the same in ad. ad reads it and never writes it; a key it can't use (a chord, a clash, one of the prompt's editing keys) is skipped with a note in `/warnings`.
+- **Keys are the engine's actions** (`tui/keymap.mjs`): the engine's contexts, action names and key spelling, so `tui.keymap` (set in the engine's settings file) means the same in ad. ad reads it and never writes it; a key it can't use (a clash, one of the prompt's editing keys, a chord the engine refuses) is skipped, summed up in one `/warnings` line and listed by `/keymap`.
 - **The topmost layer takes the key.** Tested cell by cell (`test/tui-app.test.mjs`, "key routing table"):
 
 | Layer | Esc | Ctrl+C | Tab | Shift+Tab | Enter |
@@ -180,6 +187,7 @@ Each layer is tested where it is cheapest, and the whole is tested live. Details
 - Golden screens at 40, 80 and 120 columns through `@xterm/headless`.
 - The app against a fake app-server (`runtime/testkit/fake-codex-app-server.mjs`), whose messages are checked against the protocol snapshot.
 - `/undo` against real temporary git repos, including adversarial cases (mid-turn saves, moves, binary files, CRLF, 8.3 paths).
+- Fullscreen: the guard, transcript, selection, Find, clipboard and screen-mode rules as units; the app in fullscreen on the fake app-server; and in a real pseudo-terminal (`test/tui-pty-smoke.test.mjs`), each crash path leaving the alternate screen, the editor handoff, and Ctrl+Z under bash job control (POSIX).
 - **Live:** `runtime/test/tui-live.test.mjs` runs the real `ad tui` in a real pseudo-terminal (ConPTY on Windows) on the real pinned engine with a mock model: the terminal UI script of the manual test (section 6) and ad's own TUI features, on Linux, macOS and Windows in CI's non-blocking real-engine job.
 - Guards that matter are mutation-checked: each is broken on purpose and a test must fail.
 

@@ -9,6 +9,7 @@ Everything stays in folders on your computer:
 - **ad's own folder,** `~/.agent-daemon` (or the folder `AD_ROOT` names): the memory database (`episodic.db`: lessons, corrections, session summaries and the project each belongs to), your profile notes, the project list (`projects.json`), proposals waiting for review, the session record (`sessions/`), settings, your account list (`accounts/`), keys you entered (`secrets/`, encrypted with Windows DPAPI, stored in the system keyring, or kept in a file only you can read), and the engine's own folders (sign-ins, conversations).
 - **Each project's folder:** after `ad init`, a `.agent-daemon/` folder with that project's memory notes and handoffs. A project where you never ran `ad init` keeps its capture files under `~/.agent-daemon/projects/` instead, so nothing lands in your repository.
 - Memory is kept per project. Notes from one project are never served in another unless you accept them as cross-project. Text that looks like a key is filtered before it is stored.
+- **A state export** (`ad state export`) is one file holding your memory and history for the projects you chose, as plain text, never a key or a sign-in. It is not encrypted: keep it on your own disk or a USB drive, not in a shared or synced folder.
 
 ## What the installer writes
 
@@ -17,7 +18,7 @@ Everything stays in folders on your computer:
 ## Network
 
 - **The memory server makes no network calls.** The package contains no network code; a test fails if any is added.
-- **ad's agent harness** (`ad`, `ad run`, `ad loop`) talks to the model provider you choose (for example OpenAI, OpenRouter or a local model), through a gateway that runs on your own computer. Your prompts, code context and tool results go to that provider, under its terms. ad also reads the provider's own model list and limits (for example OpenRouter's `/key`) when you ask for them.
+- **ad's agent harness** (`ad`, `ad run`, `ad loop`) talks to the model provider you choose (for example OpenAI, OpenRouter or a local model), through a gateway that runs on your own computer. Your prompts, code context and tool results go to that provider, under its terms. ad also reads the provider's own model list and limits (for example OpenRouter's `/key`) when you ask for them. With automatic fallback turned on (`ad fallback enable`, which lists every destination first), a task can continue at another provider in your order, which then receives the conversation.
 - **Signing in** opens the provider's own sign-in page (for example OpenAI or OpenRouter) in your browser.
 - **The engine** (the open-source agent engine ad runs) has settings of its own for analytics, feedback uploads, telemetry exporters and an update check. ad turns each of them off in its engine folders, unless you set one yourself. A test runs a real turn through a recording proxy and checks that, with an API key, the engine reaches no host but the model provider. With a ChatGPT sign-in, the engine also talks to OpenAI's ChatGPT services (your provider in that case); ad can't test that without a sign-in.
 - Nothing else: no update check, no analytics, no crash reports.

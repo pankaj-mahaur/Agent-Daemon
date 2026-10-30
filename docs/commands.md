@@ -77,7 +77,7 @@ The engine's own rules come with the commands:
 | `/subagents` | yes | yes | the engine's **Subagents** picker; ad shows the agent's transcript live in a pager instead of switching the conversation. Alt+← / Alt+→ go round them |
 | `/debug-m-drop`, `/debug-m-update` | no | no | debug commands of the engine's own UI |
 
-`ad` also has commands of its own, with names the engine doesn't use: `/help`, `/remember`, `/memory`, `/private`, `/proposals`, `/loop`, `/team`, `/schedule`, `/tools`, `/login`, `/ad`, `/image`, `/undo`, `/fallback`, `/retry`, `/terminal-setup`. (Typing the removed `/codex` hand-off answers what to use instead.) See [tui.md](tui.md#slash-commands).
+`ad` also has commands of its own, with names the engine doesn't use: `/help`, `/remember`, `/memory`, `/private`, `/proposals`, `/loop`, `/team`, `/schedule`, `/tools`, `/login`, `/account`, `/ad`, `/image`, `/undo`, `/fallback`, `/retry`, `/terminal-setup`. (Typing the removed `/codex` hand-off answers what to use instead.) See [tui.md](tui.md#slash-commands).
 
 ## `ad fallback`
 
@@ -116,7 +116,7 @@ The fallback order in a terminal; `/fallback` is the same in the TUI ([tui.md](t
 | the shortcuts | `?` |
 | transcript pager | ↑ ↓ (`k` `j`), PgUp / PgDn, Shift+Space / Space, Ctrl+B / Ctrl+F, Ctrl+U / Ctrl+D, Home, End, `q` |
 
-Keys you set in the engine's settings file under `[tui.keymap]` apply in `ad` for these actions. `ad` never changes them itself. A key it can't use there (a two-key chord, a key that would mean two things, or one of the prompt's editing keys) is skipped, and `/warnings` says why. Shift+Tab never queues.
+Keys you set in the engine's settings file under `[tui.keymap]` apply in `ad` for these actions. `ad` never changes them itself. Two-key chords (`"ctrl-x ctrl-s"`) and the leader key (`"leader c"`, with `global.leader`, default `ctrl-x`) work as in the engine's own UI: see [Settings in the engine's settings file](tui.md#settings-in-the-engines-settings-file). A key setting `ad` can't use (not a key, a key that would mean two things, one of the prompt's editing keys, or a leader it can't take) is skipped and its default kept: `/warnings` sums them up in one line, and `/keymap` lists each. Shift+Tab never queues.
 
 ## Settings shared with the engine's own UI
 
@@ -126,6 +126,13 @@ These live in the engine's `config.toml` in `ad`'s engine home (`~/.agent-daemon
 |---|---|---|
 | `tui.status_line` | `/statusline` | the engine's item ids; `[]` turns the status line off. An item `ad` can't show stays in the setting and `/warnings` lists it |
 | `tui.terminal_title` | `/title` | the window title's items; `[]` leaves the title alone |
-| `tui.keymap` | `[tui.keymap]` in the settings file | read by `ad`, never written |
+| `tui.keymap` | `[tui.keymap]` in the settings file | read by `ad`, never written; chords and the leader key work |
+| `tui.theme` | `/theme` | the syntax colours |
+| `tui.vim_mode_default` | the settings file | starts the prompt in Vim mode |
+| `tui.fullscreen_transcript` | `/tui` | fullscreen from the next start (early); inline is the default |
+| `tui.alternate_screen` | the settings file | `"never"` keeps `ad` inline for good; `ad tui --no-alt-screen` does it for one run |
+| `tui.mouse_scroll_speed` | the settings file | fullscreen: rows per wheel notch |
+| `tui.copy_on_select`, `tui.copy_on_select_clear_selection` | the settings file | fullscreen: copy a selection when you let go of the mouse (`"always"` / `"never"`), and clear it after |
+| `tui.right_click_paste` | the settings file | fullscreen: a right-click with no selection pastes into the prompt (never over SSH) |
 
 `ad`'s own preferences, for what the engine has no setting for, are in `~/.agent-daemon/tui/prefs.json` (for example `"clear.keepScrollback": true`).

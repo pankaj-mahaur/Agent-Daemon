@@ -4,13 +4,14 @@
 
 It runs inline: finished output goes into your terminal's normal scrollback, so scrolling, selecting and copying work as usual. Only the bottom of the screen (the running turn, the composer and the footer) is redrawn. The composer sits on the screen's last rows from the start, and the conversation fills the space above it. To have it follow the conversation instead, as in the engine's own inline mode, set `"prompt.atBottom": false` in `~/.agent-daemon/tui/prefs.json`.
 
-**Fullscreen (early).** Pick it with `/tui` (it applies from the next start), or set `fullscreen_transcript = true` under `[tui]` in `~/.agent-daemon/engine/config.toml`; `ad tui --no-alt-screen` (or `ad --no-alt-screen`) starts inline for one run, and `tui.alternate_screen = "never"` turns fullscreen off for good. `/status` shows the screen mode and why. Fullscreen also stays off in Apple Terminal over SSH, and inside tmux with its mouse off ad leaves the mouse alone (`set -g mouse on` turns it on). In fullscreen ad takes the whole terminal: the shell's earlier output is hidden while ad runs and comes back as it was when ad exits, and long output re-wraps when you resize the window. Mouse reporting is on in Windows Terminal, Zed and other modern terminals (off in the old Windows console window); `"screen.mouse": false` in `prefs.json` turns it off. Scroll with PageUp/PageDown or the wheel (`tui.mouse_scroll_speed` sets rows per notch); Ctrl+Home and Ctrl+End jump to the top and the latest. New output never moves a view you scrolled: a "↓ Back to bottom" line appears instead, and Esc, Enter on an empty prompt, a click on that line or sending a prompt takes you back. Drag to select (double click: a word, triple click: the line, Shift+click extends); Ctrl+C, Ctrl+Shift+C or Ctrl+Insert copies the selection (Ctrl+C then never quits), Enter copies and goes back to the bottom, Esc clears it, and Ctrl+Space starts a selection from the keyboard. Where your terminal doesn't already copy a selection, letting go of the mouse copies it (`tui.copy_on_select = "always"` / `"never"`; `tui.copy_on_select_clear_selection = true` clears it after). A right-click copies the selection, or pastes the clipboard into the prompt (`tui.right_click_paste`; never over SSH). F3 finds text in the whole conversation, also across wrapped lines. Ctrl+G keeps ad visible behind a windowed editor; `/login` and `/ad <command>` run on the shell's screen (their output stays in your scrollback), and `/ad` waits for Enter before ad comes back. Ctrl+Z stops ad between turns on macOS and Linux; `fg` brings it back. Inline is still the default. If a killed ad leaves the terminal in its screen: [troubleshooting #86](troubleshooting.md#86-ad-tui-the-terminal-is-stuck-in-ads-screen-after-a-crash).
+**Fullscreen (early).** ad can also take the whole terminal, with its own scrolling, selection and Find: `/tui` picks it for the next start. See [Fullscreen](#fullscreen). Inline stays the default.
 
 If something gets in the way, `ad chat` is the plain line mode and stays available. How it is built, and the safety model behind `/undo`: [tui-architecture.md](tui-architecture.md).
 
 - [Starting it](#starting-it)
 - [First run](#first-run)
 - [The screen](#the-screen)
+- [Fullscreen](#fullscreen)
 - [Keys](#keys)
 - [Approvals and questions](#approvals-and-questions)
 - [Slash commands](#slash-commands)
@@ -55,6 +56,7 @@ ad tui --cwd ../other-repo --model <name> --sandbox read-only
 | `--cwd <dir>` | works in another folder |
 | `--model <name>` | the model for new turns (`/model` changes it later) |
 | `--sandbox <mode>` | `read-only`, `workspace-write` (default) or `danger-full-access` |
+| `--no-alt-screen` | starts inline for this run, even when [fullscreen](#fullscreen) is on (`ad --no-alt-screen` too) |
 
 A conversation is open in one `ad` at a time. Resuming one that another `ad` has open says so and changes nothing.
 
@@ -89,7 +91,7 @@ On exit, ad prints how to continue: `ad tui --resume <id>`, with the tokens used
    | ChatGPT | `ad auth login chatgpt` (browser) |
 
    The terminal is handed to that command and comes back when it finishes. Esc closes the panel and exits. `/login` does the same later; `/logout` signs out.
-   2. **Trust the folder.** The first time in a folder, ad asks whether you trust it. Trusted folders can run their own hooks, skills and settings. The answer is saved once per folder in ad's engine home (`config.toml`, `projects`). Your home folder is never asked about.
+2. **Trust the folder.** The first time in a folder, ad asks whether you trust it. Trusted folders can run their own hooks, skills and settings. The answer is saved once per folder in ad's engine home (`config.toml`, `projects`). Your home folder is never asked about.
 3. **The header** appears, then the composer. Type and press Enter.
 
 ---
@@ -139,6 +141,57 @@ On exit, ad prints how to continue: `ad tui --resume <id>`, with the tokens used
 
 ---
 
+## Fullscreen
+
+Early. Inline stays the default. In fullscreen ad takes the whole terminal (its alternate screen) and keeps the conversation itself, so it scrolls, selects and searches it.
+
+**Turning it on and off.**
+- `/tui` → **Fullscreen** saves `tui.fullscreen_transcript = true` in the engine's settings file (`~/.agent-daemon/engine/config.toml`, under `[tui]`; you can also set it there by hand). It applies from the next start: "Saved: fullscreen from the next start.". `/tui` → **Inline** sets it back.
+- `ad tui --no-alt-screen` (or `ad --no-alt-screen`) starts inline for one run.
+- `tui.alternate_screen = "never"` keeps ad inline for good. Fullscreen also stays off in Apple Terminal over SSH, unless `tui.alternate_screen = "always"`.
+- `/status` has a `screen` row with the mode and why: `inline (started with --no-alt-screen)`, `inline (ad's default: /tui to change)`, `fullscreen · mouse off: tmux mouse is off (set -g mouse on)`.
+
+**What changes.**
+- The shell's earlier output is hidden while ad runs and comes back as it was when ad exits.
+- Long output re-wraps when you resize the window.
+- Text a library writes to stderr while ad runs is held and printed after ad leaves its screen.
+- Every exit leaves ad's screen first: quitting, Ctrl+C, a crash, a closed window, SIGTERM. A process killed outright (`kill -9`, End task) can't: see [troubleshooting #86](troubleshooting.md#86-ad-tui-the-terminal-is-stuck-in-ads-screen-after-a-crash).
+
+**The mouse** is on in Windows Terminal, Zed and other modern terminals, and off in the old Windows console window (a click there would select text instead of reaching ad). Inside tmux with its mouse off, ad leaves the mouse alone (`set -g mouse on` turns it on). `"screen.mouse": false` in `~/.agent-daemon/tui/prefs.json` turns it off anywhere. Without the mouse, the keys below still scroll and select.
+
+**Scrolling.** New output never moves a view you scrolled: the last row becomes "↓ Back to bottom" instead.
+
+| Key | What it does |
+|---|---|
+| PgUp / PgDn | scroll a page (the pager's page keys, so `tui.keymap.pager` changes them) |
+| Ctrl+Home / Ctrl+End | jump to the top / the latest (Alt+< / Alt+> too) |
+| the wheel | scroll `tui.mouse_scroll_speed` rows per notch (1 by default) |
+| Esc, or Enter on an empty prompt | back to the bottom when scrolled. The next Esc interrupts or rewinds as usual |
+
+A click on "↓ Back to bottom", or sending a prompt, also goes back.
+
+**Selecting and copying.**
+
+| Do | What happens |
+|---|---|
+| drag | selects (double click: a word, triple click: the line, Shift+click extends). Dragging past the edge scrolls |
+| Ctrl+Space | starts a selection from the keyboard; ← → ↑ ↓ extend it |
+| Ctrl+C, Ctrl+Shift+C or Ctrl+Insert | copies the selection. Ctrl+C then never interrupts or quits |
+| Enter | copies and goes back to the bottom |
+| Esc | clears the selection (never interrupts) |
+| letting go of the mouse | copies, where your terminal doesn't already copy a selection itself. `tui.copy_on_select = "always"` or `"never"` decides; `tui.copy_on_select_clear_selection = true` clears the selection after |
+| right-click | copies the selection; with none, pastes the clipboard into the prompt on Windows and Linux (`tui.right_click_paste = "on"` or `"off"`; never over SSH or in VS Code) |
+
+A selection holds the view while output arrives. A selection of blank cells copies nothing. The footer says "Copied." (or "Copied (through the terminal)." when it went by OSC 52 or tmux). When no clipboard worked: [troubleshooting #87](troubleshooting.md#87-ad-tui-couldnt-reach-a-clipboard-in-fullscreen). The Ctrl+T pager selects the same way in fullscreen; there Ctrl+C copies the selection instead of closing the pager.
+
+**Find (F3)** searches the whole conversation, also across wrapped lines, literal and case-insensitive. Type to search, Ctrl+P / Ctrl+N for older / newer matches, Enter keeps the match in view, Esc while typing puts the view back where it was; Esc after Enter goes back to the bottom. Inline, F3 opens the Ctrl+T pager in Find.
+
+**Handoffs.** Ctrl+G opens your editor and keeps ad visible behind a windowed one. `/login` and `/ad <command>` run on the shell's screen, so their output stays in your scrollback; "Press Enter to return to ad." waits after `/ad` and after a failed `/login`. Ctrl+Z (macOS and Linux) leaves ad's screen before it stops, and `fg` brings it back repainted.
+
+If fullscreen doesn't start, or the mouse doesn't reach ad: [troubleshooting #88](troubleshooting.md#88-ad-tui-fullscreen-doesnt-start-or-the-mouse-doesnt-reach-ad).
+
+---
+
 ## Keys
 
 `?` on an empty prompt shows the shortcuts; `/help` lists them too.
@@ -172,8 +225,9 @@ Alt+Enter is never used: it is Windows Terminal's fullscreen toggle.
 | Esc Esc | on an empty prompt, while idle: rewind to an earlier prompt (below) |
 | Ctrl+C | in this order: close a popup, clear the prompt, interrupt the turn. A second Ctrl+C within 1.5 s quits |
 | Ctrl+L | redraw the screen |
+| Ctrl+Z | macOS and Linux: stop ad and return to the shell, between turns only (during a turn it says so; Esc stops the turn). `fg` brings ad back. Nothing on Windows |
 
-With an approval open, Ctrl+C declines it. Clearing the prompt or closing a popup doesn't arm the quit; only an interrupt or a press on an idle, empty prompt does.
+With an approval open, Ctrl+C declines it. In fullscreen, Ctrl+C copies a selection first ([Fullscreen](#fullscreen)). Clearing the prompt or closing a popup doesn't arm the quit; only an interrupt or a press on an idle, empty prompt does.
 
 **Esc Esc: rewind.** A "Rewind to" picker lists your earlier prompts (latest first). Picking one rewinds the conversation to just before it and puts that prompt back in the composer to edit. **Files on disk are not changed.** To put files back too, use `/undo`. The first Esc says "Esc again to rewind".
 
@@ -202,7 +256,7 @@ Big pastes (more than 5 lines or 1000 characters) show as `[Pasted N lines]` and
 | `@` | complete a file name in this folder |
 | `/` | complete a command; Enter runs the highlighted one, Tab fills it in |
 | `!cmd` | run `cmd` in the shell, **unsandboxed** (like the engine's own UI `!`). One line only; a multi-line paste starting with `!` is a prompt |
-| Ctrl+T | page through the whole transcript: ↑ ↓ (or `k` `j`), PgUp / Shift+Space / Ctrl+B, PgDn / Space / Ctrl+F, Ctrl+U / Ctrl+D (half a page), Home, End; Esc, `q`, Ctrl+C or Ctrl+T closes |
+| Ctrl+T | page through the whole transcript: ↑ ↓ (or `k` `j`), PgUp / Shift+Space / Ctrl+B, PgDn / Space / Ctrl+F, Ctrl+U / Ctrl+D (half a page), Home, End; Esc, `q`, Ctrl+C or Ctrl+T closes. In fullscreen the wheel scrolls it and a drag selects in it |
 | Alt+, / Alt+. | lower / raise the reasoning effort for the next turn, through the current model's own levels (Shift+↓ / Shift+↑ too) |
 | Alt+← / Alt+→ | with the prompt empty: watch the previous / next [subagent](#subagents) (the engine's fixed keys) |
 | Shift+Tab | switch between Plan and Default mode ([Plan mode](#plan-mode)); not while a turn runs |
@@ -222,7 +276,7 @@ The terminal bell rings when an approval waits, and when a turn ends while the t
 open_transcript = "alt-y"
 ```
 
-ad reads them and never writes them. A key ad can't use there (a chord like `ctrl-x f`, a key that would mean two things, or one of the prompt's editing keys) is skipped, and `/warnings` says why. `/keymap` lists the keys in effect (yours marked) and `/keymap debug` shows what your terminal sends for a key and what it does in ad (Ctrl+C closes it). Shift+Tab never queues: it switches [Plan mode](#plan-mode).
+ad reads them and never writes them. A key ad can't use there (a key that would mean two things, one of the prompt's editing keys, `f13` and up, or a value that isn't a key) is skipped: `/warnings` sums them up in one line and `/keymap` lists each with the reason. `/keymap` lists the keys in effect (yours marked) and `/keymap debug` shows what your terminal sends for a key and what it does in ad (Ctrl+C closes it). Shift+Tab never queues: it switches [Plan mode](#plan-mode).
 
 ### Settings in the engine's settings file
 
@@ -298,7 +352,8 @@ Type `/` to see them with a one-line hint each. Commands marked "engine" keep th
 | `/title` | choose what the terminal window's title shows, the same way (engine) |
 | `/vim` | toggle the engine's Vim mode for the prompt (engine). See [Vim mode](#vim-mode) |
 | `/theme` | choose the syntax colours, with a live preview; Esc keeps the old one (engine). See [Syntax highlighting](#syntax-highlighting) |
-| `/keymap [debug]` | the keys in effect; `debug` shows what a key sends (engine) |
+| `/keymap [debug]` | the keys in effect, your chords and the leader key; `debug` shows what a key sends (engine) |
+| `/tui` | inline or fullscreen, from the next start (engine). See [Fullscreen](#fullscreen) |
 | `/setup-default-sandbox` | Windows: set up the engine's elevated sandbox, after asking: machine-wide, so your own install uses it too. Nothing else is sent while it runs; then the conversation gets the Auto permissions. Not in an engine home ad didn't create (`ad sandbox setup --elevated --force` there) (engine) |
 
 Model, effort and permission changes apply from the next turn.
@@ -332,7 +387,7 @@ Model, effort and permission changes apply from the next turn.
 
 | Command | What it does |
 |---|---|
-| `/status` | account, model, sandbox, tokens, limits, and the engine version line (engine) |
+| `/status` | account, model, sandbox, tokens, limits, the session, the screen mode and why, and the engine version line (engine) |
 | `/usage` | usage limits and tokens: ChatGPT's windows, or what an API account's provider last reported (OpenRouter's numbers are read again) |
 | `/mcp` | MCP servers and their status (engine): the ones in ad's engine settings; a trusted project's own start with its conversation |
 | `/hooks` | hooks and whether they are trusted; ad's own are marked (engine) |
@@ -480,7 +535,7 @@ Code in answers (a fenced block that names its language) and the unchanged lines
 
 ## Subagents
 
-When the engine spawns subagents, `/subagents` lists them as the engine's own UI does: **Subagents**, the main conversation first (`Main [default]`), then each agent in the order it appeared, by its nickname and role (`Ada [explorer]`), with its thread id and whether it is running or closed. Pick one to watch it: its own transcript, live, in a pager (↑ ↓, PgUp PgDn; at the bottom it follows what comes in). Alt+← and Alt+→ go to the previous or next agent, round to the main conversation, which closes the pager; from an empty prompt they open the pager on the last or first agent, as in the engine's own UI (⌥← ⌥→ on macOS). q or Esc closes it. With none yet: "No agents available yet."; with subagents switched off (`features.multi_agent = false`), the engine's "Enable subagents?" saves it on for new threads.
+When the engine spawns subagents, `/subagents` lists them as the engine's own UI does: **Subagents**, the main conversation first (`Main [default]`), then each agent in the order it appeared, by its nickname and role (`Ada [explorer]`), with its thread id, its model and reasoning effort when the engine reports them, and whether it is running or closed. Pick one to watch it: its own transcript, live, in a pager (↑ ↓, PgUp PgDn; at the bottom it follows what comes in). Alt+← and Alt+→ go to the previous or next agent, round to the main conversation, which closes the pager; from an empty prompt they open the pager on the last or first agent, as in the engine's own UI (⌥← ⌥→ on macOS). q or Esc closes it. With none yet: "No agents available yet."; with subagents switched off (`features.multi_agent = false`), the engine's "Enable subagents?" saves it on for new threads.
 
 The engine's own UI switches its whole view to the agent's thread; ad keeps your conversation where it is and shows the agent beside it, so watching one never changes what your prompts go to.
 
@@ -608,8 +663,8 @@ Esc Esc rewinds the conversation only; `/undo` rewinds the conversation **and** 
 | `~/.agent-daemon/tui/chat-hint-shown` | marks the one-time `ad chat` hint (that bare `ad` opens the TUI) as shown |
 | `~/.agent-daemon/locks/` | conversation locks, so two `ad`s never write one conversation |
 | `~/.agent-daemon/sessions/` | the session record: which account and model ran each turn, and what each tool call did (`/status` names the session; `ad sessions show --last` prints it). Never reasoning, a question's or form's answer, file contents, command output, headers or keys; see [harness.md](harness.md#the-session-record-ad-sessions-show) |
-| `~/.agent-daemon/tui/prefs.json` | ad's own TUI preferences (owner-only), for what the engine has no setting for: `clear.keepScrollback`, `prompt.atBottom` |
-| `~/.agent-daemon/engine/config.toml` | folder trust (`projects`), as the engine keeps it, and the engine's own TUI settings (`tui.status_line`, `tui.terminal_title`, `tui.theme`, `tui.vim_mode_default`): an item ad can't show stays there (`/warnings` lists it). `tui.keymap` is read, never written by ad |
+| `~/.agent-daemon/tui/prefs.json` | ad's own TUI preferences (owner-only), for what the engine has no setting for: `clear.keepScrollback`, `prompt.atBottom`, `screen.mouse`, `allowHomeFolder`, `switching.crossAccount`, `limits.warnAt`, ad's status-line items (`statusExtra`), and `screen.lastMode` (which screen the last run used, so a fullscreen start never touches the shell's screen) |
+| `~/.agent-daemon/engine/config.toml` | folder trust (`projects`), as the engine keeps it, and the engine's own TUI settings (`tui.status_line`, `tui.terminal_title`, `tui.theme`, `tui.vim_mode_default`, `tui.fullscreen_transcript`, `tui.alternate_screen`, `tui.mouse_scroll_speed`, `tui.copy_on_select`, `tui.right_click_paste`): an item ad can't show stays there (`/warnings` lists it). `tui.keymap` is read, never written by ad |
 | `~/.agent-daemon/engine/skills/` | the mirror of `~/.claude/skills` for the engine |
 | `<repo>/.git/ad-checkpoint-index`, `refs/ad/checkpoints/` | `/undo` snapshots |
 | `<project>/.agent-daemon/loop-tui.log`, `STOP` | `/loop` output, and its stop file |
@@ -633,7 +688,7 @@ Everything else (conversations, logs, login) is the engine's own, in ad's engine
 - **Windows needs Node 22.17+ or 24.2+.** Older versions turn a multi-line paste into one message per line. Upgrade 22.x to 22.17+ or 24.x to 24.2+ (same native-module ABI, nothing to rebuild); from 23.x, move to 24.2+ and run `npm rebuild` in `runtime/`.
 - **`/terminal-setup`** prints the exact setting for your terminal. It changes nothing itself.
 - **Resizing.** History in the scrollback is never repainted. If a terminal leaves stray copies of the bottom lines after you make the window narrower, Ctrl+L redraws (see [troubleshooting #25](troubleshooting.md#25-ghost-copies-of-the-bottom-lines-after-narrowing-the-window)).
-- **Check what your terminal sends:** `node runtime/scripts/tui-probe.mjs keys` and `screen` ([troubleshooting #22](troubleshooting.md#22-keys-or-paste-behave-oddly-in-a-terminal)).
+- **Check what your terminal sends:** `node runtime/scripts/tui-probe.mjs keys` and `screen` ([troubleshooting #22](troubleshooting.md#22-keys-or-paste-behave-oddly-in-a-terminal)); `mouse` for fullscreen clicks and the wheel.
 
 ---
 
@@ -660,6 +715,9 @@ Everything else (conversations, logs, login) is the engine's own, in ad's engine
 | "The engine reported a problem", or an upstream name in raw details or an OS prompt | [#39](troubleshooting.md#39-what-ad-cant-rename) |
 | "Pick a project folder" at start, or `/cd` says a folder would load your own skills from `~/.codex/` | [#48](troubleshooting.md#48-pick-a-project-folder-or-run-this-in-a-project-folder) |
 | "This session is open in another ad window", "couldn't write this session's record" | [#73](troubleshooting.md#73-this-session-is-open-in-another-ad-window-or-ad-couldnt-write-this-sessions-record) |
+| a provider's error ends a turn: "couldn't reach", "needs its key again", "the daily limit is used up", "OpenCode Go's usage limit" | [#58–#72](troubleshooting.md#58-ad-couldnt-reach-host) |
+| "ad can't read its account list", "Run: ad auth repair" | [#91](troubleshooting.md#91-ad-cant-read-its-account-list-or-doctor-says-account-repair--run-ad-auth-repair) |
+| "price unknown" in `/model`; "… with your ChatGPT plan, upgrade to Plus" | [#75](troubleshooting.md#75-price-unknown-next-to-a-model), [#76](troubleshooting.md#76--with-your-chatgpt-plan-upgrade-to-plus) |
 | "Couldn't switch to …", "the engine kept the old provider", "history carried over … left out" | [#74](troubleshooting.md#74-couldnt-switch-to--still-on-) |
 | `/fallback` shows "skipped" rows, or "None of these targets fits …" | [#77](troubleshooting.md#77-fallback-never-switches-or-a-target-says-skipped-now) |
 | "Fallback is off: … changed since you confirmed the order" | [#78](troubleshooting.md#78-fallback-is-off--changed-since-you-confirmed-the-order-or-it-turned-itself-off) |
@@ -669,6 +727,9 @@ Everything else (conversations, logs, login) is the engine's own, in ad's engine
 | `limits` blank, "not reported by this provider" | [#82](troubleshooting.md#82-limits-are-blank-or-not-reported-by-this-provider) |
 | `ad run` / `ad loop` exit 4, a job "paused" | [#83](troubleshooting.md#83-a-run-exited-with-code-4-or-a-scheduled-job-says-paused) |
 | after a fullscreen session was killed: the shell's output is gone, clicks print `[<0;…M` | [#86](troubleshooting.md#86-ad-tui-the-terminal-is-stuck-in-ads-screen-after-a-crash) |
+| fullscreen: "Couldn't reach a clipboard." | [#87](troubleshooting.md#87-ad-tui-couldnt-reach-a-clipboard-in-fullscreen) |
+| `/tui` picked fullscreen but ad starts inline; clicks or the wheel don't reach ad | [#88](troubleshooting.md#88-ad-tui-fullscreen-doesnt-start-or-the-mouse-doesnt-reach-ad) |
+| a key chord or the leader key does nothing | [#30](troubleshooting.md#30-ad-tui-keys-set-outside-ad-dont-work-in-ad) |
 | an engine command says "isn't in ad yet" | [commands.md](commands.md) |
 | not signed in, sandbox, hooks, your own install's home refused | [harness.md](harness.md#when-something-goes-wrong), troubleshooting #14–21 |
 

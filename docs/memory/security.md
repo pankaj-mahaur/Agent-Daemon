@@ -31,6 +31,16 @@ steering it, and where the limits are. The threat model behind it is in
 - **Instructions.** A note that reads like an instruction (to run something,
   change settings or ignore earlier instructions) is withheld everywhere memory
   is shown. Every result is headed as data, not instructions.
+- **Held notes.** A note the agent wrote about itself waits as *pending*, and a
+  note the injection screen or the secret check flags is held back as
+  *quarantined*; neither reaches a session. `ad memory held` lists them (this
+  project, or `--all-projects`); `ad memory held accept|release|drop <id>` runs
+  only in your own terminal and asks you to type the id. A note holding a secret
+  can be dropped, never released.
+- **Nothing goes global by itself.** A note that sounds global stays in its
+  project, marked for promotion, until you decide in `ad review`.
+  `ad memory promote fact:<id>` makes a user fact apply everywhere, typed, in
+  your own terminal.
 - **Feedback.** It changes how notes rank in the project that gave it, never in
   another.
 
@@ -43,7 +53,8 @@ journal, memory or memory files see them:
 - `user:pass@` URLs, Bearer and Basic headers;
 - passwords assigned to a secret-looking name.
 
-`ad memory scan` checks older notes once.
+`ad memory scan` checks older notes once. `ad memory redact <table>:<id>` replaces
+what looks like a key in one row, from your own terminal, after you type the row.
 
 ## No network, no telemetry
 

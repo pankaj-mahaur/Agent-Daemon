@@ -540,11 +540,11 @@ Other choices: `nvim`, `vim`, `nano`, or Notepad++ with `-multiInst -nosession`.
 
 ## 30. `ad tui`: keys set outside ad don't work in ad
 
-**Symptom:** you changed a key under `[tui.keymap]` in the engine's settings file, and ad still uses the old one (or the key does nothing).
+**Symptom:** you changed a key under `[tui.keymap]` in the engine's settings file, and ad still uses the old one (or the key does nothing). Or a chord (`"ctrl-x ctrl-s"`, `"leader c"`) does nothing.
 
-**Cause:** ad applies `tui.keymap` only to the actions it has (the transcript, the editor, copy, raw output, clear, interrupt, reasoning effort, queue, the shortcuts, the pager). It skips a key it can't use: a two-key chord (`ctrl-x f`), a key that would mean two things, or one of the prompt's editing keys (Enter, Ctrl+A/E/K/U/W/Y, Ctrl+R, the arrows).
+**Cause:** ad applies `tui.keymap` only to the actions it has (the transcript, the editor, copy, raw output, clear, Find, interrupt, reasoning effort, queue, the shortcuts, the pager). It skips a key it can't use: a key that would mean two things, one of the prompt's editing keys (Enter, Ctrl+A/E/K/U/W/Y, Ctrl+R, the arrows), `f13` and up, a value that isn't a key, or a chord the engine also refuses (more than two keys, plain Esc in a chord, the leader as its own second key). A `"leader …"` chord needs a leader: when you bound `ctrl-x` to something else and set no `global.leader`, there is none. Chords are off while an approval or one of ad's questions is open.
 
-**Fix:** `/warnings` (or F2) lists what was skipped and why. Pick another key in the settings file, then restart ad (it reads the keymap at start). See [commands.md](commands.md#keys).
+**Fix:** `/warnings` (or F2) says how many settings were skipped; `/keymap` lists each with the reason and names the leader. Pick another key in the settings file (or set `tui.keymap.global.leader`), then restart ad (it reads the keymap at start). See [tui.md](tui.md#keys).
 
 ## 31. `ad tui`: `/clear` wiped my scrollback
 
@@ -921,6 +921,24 @@ See [harness.md](harness.md#working-in-your-home-folder).
 
 **Fix:** wait for a reset (`ad fallback` shows each target's state), add a target that isn't limited, or raise a limit (`ad fallback set max-hops 4`). `/retry` tries the current model again now.
 
+## 82. Limits are blank, or "not reported by this provider"
+
+**Cause:** ad shows only what a provider told it, and drops a number once its reset passed or it is more than 6 hours old. Many API providers report nothing until a limit is hit; OpenRouter's numbers are read after a limit and on request; a ChatGPT sign-in reports through its engine, so a sign-in no window has open keeps its last numbers.
+
+**Fix:** `/usage` reads OpenRouter's numbers again. `ad auth list --refresh` does it for every OpenRouter key, and `--refresh=all` also starts each ChatGPT sign-in's engine that no window is using. A blank cell is "unknown", never "unlimited": nothing is wrong with the account.
+
+## 83. A run exited with code 4, or a scheduled job says "paused"
+
+**Cause:** the run opted in to fallback (`--fallback`, a job's or a team's setting), a limit ran out, and fallback couldn't move safely with nobody to ask: no other model in the order could take over, a command's end was unknown, a background command wasn't on the keep-running list, or a budget was used up. The reason is on stderr (`[ad] ⏸ Paused: …`), in `--json` (`"reason"`), in the job's `schedule-logs/<id>.status.json` and in `ad schedule list`.
+
+**Fix:** nothing was lost: the session (`ses_…`) keeps the work. Run it again after the reset, add a target that can take over (`ad fallback`), or allow the long-running command (`ad fallback set keep-running "…"`). Scripts that treat any non-zero exit as a failure see `4` as one; check for it to tell "paused" from "failed".
+
+## 84. "Export stopped: … look like keys", or a name can't go into a bundle
+
+**Cause:** `ad state export` found text shaped like a key (an API key, a token) in what it would export, or a file whose name another OS can't create (`aux.md`, two names that differ only by case, a name ending in a dot). It lists each one: the row (`learnings #812 (text)`) or the file, never the key itself.
+
+**Fix:** for keys, run again with `--redact` (the export gets `[redacted:…]`, your own memory is unchanged), or clean the row for good with `ad memory redact learnings:812` in your terminal. For names, rename the file it lists and export again.
+
 ## 85. An import was refused, interrupted, or held something back
 
 **Cause and fix, by what ad said:**
@@ -930,24 +948,6 @@ See [harness.md](harness.md#working-in-your-home-folder).
 - *"held back: …"*: a memory file read like an instruction or held something shaped like a key. It waits under `~/.agent-daemon/imports/<id>/held/`; read it, then import again with `--accept-held` if it's fine.
 - *"not mapped"*: ad couldn't tell where a project lives here. Its memory came in (searchable by its id); map it with `ad state import <file> --map <name>=<dir>`.
 - *"… is a link. ad won't write through it."*: that project's `.agent-daemon` points somewhere else. Replace the link with a real folder, then import again.
-
-## 84. "Export stopped: … look like keys", or a name can't go into a bundle
-
-**Cause:** `ad state export` found text shaped like a key (an API key, a token) in what it would export, or a file whose name another OS can't create (`aux.md`, two names that differ only by case, a name ending in a dot). It lists each one: the row (`learnings #812 (text)`) or the file, never the key itself.
-
-**Fix:** for keys, run again with `--redact` (the export gets `[redacted:…]`, your own memory is unchanged), or clean the row for good with `ad memory redact learnings:812` in your terminal. For names, rename the file it lists and export again.
-
-## 83. A run exited with code 4, or a scheduled job says "paused"
-
-**Cause:** the run opted in to fallback (`--fallback`, a job's or a team's setting), a limit ran out, and fallback couldn't move safely with nobody to ask: no other model in the order could take over, a command's end was unknown, a background command wasn't on the keep-running list, or a budget was used up. The reason is on stderr (`[ad] ⏸ Paused: …`), in `--json` (`"reason"`), in the job's `schedule-logs/<id>.status.json` and in `ad schedule list`.
-
-**Fix:** nothing was lost: the session (`ses_…`) keeps the work. Run it again after the reset, add a target that can take over (`ad fallback`), or allow the long-running command (`ad fallback set keep-running "…"`). Scripts that treat any non-zero exit as a failure see `4` as one; check for it to tell "paused" from "failed".
-
-## 82. Limits are blank, or "not reported by this provider"
-
-**Cause:** ad shows only what a provider told it, and drops a number once its reset passed or it is more than 6 hours old. Many API providers report nothing until a limit is hit; OpenRouter's numbers are read after a limit and on request; a ChatGPT sign-in reports through its engine, so a sign-in no window has open keeps its last numbers.
-
-**Fix:** `/usage` reads OpenRouter's numbers again. `ad auth list --refresh` does it for every OpenRouter key, and `--refresh=all` also starts each ChatGPT sign-in's engine that no window is using. A blank cell is "unknown", never "unlimited": nothing is wrong with the account.
 
 ## 86. ad tui: the terminal is stuck in ad's screen after a crash
 
@@ -962,6 +962,56 @@ See [harness.md](harness.md#working-in-your-home-folder).
 - Closing the tab and opening a new one always works.
 
 Stray text on top of ad's screen while it runs (a library writing straight to the terminal): Ctrl+L repaints it.
+
+## 87. ad tui: "Couldn't reach a clipboard" in fullscreen
+
+**Symptom:** in fullscreen, copying a selection says "Couldn't reach a clipboard. Your terminal may select with Shift+drag, or start ad with --no-alt-screen."
+
+**Cause:** ad copies through the system's clipboard tool first (`clip.exe` on Windows and WSL, `pbcopy` on macOS, `wl-copy`, `xclip` or `xsel` on Linux), each stopped after 2 seconds. When none worked, it falls back to OSC 52, which asks the terminal to copy, and it says this when that didn't happen either. Common on Linux without a display (no tool installed, or one waiting for a display) in a terminal that doesn't take OSC 52.
+
+**Fix:**
+- Linux: install `wl-copy` (Wayland) or `xclip` (X11).
+- Over SSH: use a terminal that accepts OSC 52 (some ask you to allow it in their settings). Inside tmux, ad also puts the text in tmux's own buffer.
+- Copy with the terminal itself instead: most terminals select with Shift+drag while a program has the mouse.
+- Or start inline (`ad tui --no-alt-screen`, or `/tui` → Inline): the terminal's own selection and copy work as usual there.
+
+## 88. ad tui: fullscreen doesn't start, or the mouse doesn't reach ad
+
+**Symptom:** you picked fullscreen in `/tui`, but ad still starts inline. Or in fullscreen, a click selects text in the terminal, or the wheel scrolls the terminal instead of ad.
+
+**Cause:** `/status` has a `screen` row that says which rule applied:
+- `inline (started with --no-alt-screen)`: this run's flag.
+- `inline (fullscreen turned off in your settings)`: `tui.alternate_screen = "never"` in the engine's settings file.
+- `inline (you picked inline with /tui)`: `tui.fullscreen_transcript = false`.
+- `inline (ad's default: /tui to change)`: no fullscreen choice in your own settings. Only a value in the engine's settings file in ad's engine folder counts; one in a project's settings doesn't.
+- `inline (Apple Terminal over SSH)`: fullscreen stays off there.
+- `mouse off: tmux mouse is off (set -g mouse on)`, `mouse off: screen.mouse is false in prefs.json`, or `mouse off: this terminal doesn't send mouse reports to ad` (the old Windows console window, where a click selects text instead).
+
+**Fix:** follow the reason: drop the flag, remove `tui.alternate_screen = "never"` (or set `"always"` for Apple Terminal over SSH), pick **Fullscreen** in `/tui` and restart, `set -g mouse on` in tmux, or remove `"screen.mouse": false` from `~/.agent-daemon/tui/prefs.json`. In the old console window, use Windows Terminal; without the mouse, PgUp/PgDn scroll and Ctrl+Space starts a selection. `node runtime/scripts/tui-probe.mjs mouse` shows whether the terminal sends mouse reports at all.
+
+## 89. Memory: "no SQLite driver" or "no such module: fts5"
+
+**Symptom:** `ad doctor` (or `npx agent-daemon-memory doctor`) shows "no SQLite driver", or memory writes failed with "no such module: fts5".
+
+**Cause:** memory runs on `better-sqlite3` when it is installed, else on Node's built-in SQLite. The built-in one has full-text search only from Node 22.16, so an older Node has no driver ad can use. Earlier memory packages accepted Node 22.13–22.15 and then failed on every write with "no such module: fts5"; now they say no driver is available, with the version they need.
+
+**Fix:** upgrade Node to 22.16 or newer, or install `better-sqlite3` (`cd runtime && npm install`). `ad doctor` names the driver in use ("SQLite driver"); `AD_SQLITE_DRIVER` picks one.
+
+## 90. Memory server: "the host didn't expand ${…}"
+
+**Symptom:** the memory MCP server stops at start with `agent-daemon-memory: the host didn't expand ${PLUGIN_ROOT}; this host needs the installer route.` (or another `${…}` name), and the host lists no memory tools.
+
+**Cause:** the host started the server with a variable in its arguments it didn't replace with a path, as Cursor does with `${PLUGIN_ROOT}`. ad stops instead of reading a wrong path. A `--project ${workspaceFolder}` left as it is (a window with no folder open) is not this error: ad skips that project with a note.
+
+**Fix:** install memory for that host with the installer, which writes absolute paths: `npx agent-daemon-memory install` (or `ad memory install`). See [docs/memory/install.md](memory/install.md).
+
+## 91. "ad can't read its account list", or doctor says "Account repair: … Run: ad auth repair"
+
+**Symptom:** an `ad auth` command or a start stops with `ad can't read its account list (…registry.json: …). Your keys are untouched. Run: ad auth repair`, or `ad doctor` shows an "Account repair" row. Related: "This account list was written by a newer ad", "Another ad is updating the account list".
+
+**Cause:** the account list (`~/.agent-daemon/accounts/registry.json`) is damaged, or a sign-in or key change was interrupted (a crash, a closed window) and left a half-made account or a key no account names. ad never resets the list by itself. A list from a newer ad is only read, never changed.
+
+**Fix:** run `ad auth repair` in your own terminal. It finishes what it safely can and asks before the rest: restoring the list from its backup (the damaged file is kept), finishing or removing a half-made account, deleting a key no account uses. It never prints a key. "Another ad is updating" passes once the other command ends; "written by a newer ad" means updating ad here.
 
 ---
 

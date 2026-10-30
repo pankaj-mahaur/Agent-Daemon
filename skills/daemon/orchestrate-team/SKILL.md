@@ -5,7 +5,7 @@ license: MIT
 metadata:
   author: agent-daemon
   spec: agentskills.io
-  version: "2.0"
+  version: "2.1"
 allowed-tools: Bash
 ---
 
@@ -61,7 +61,7 @@ Roles:
   - dev: [specific task description]
   - qa: [verification task, blocked by dev]
 
-This will spawn 1 background Claude agent in an isolated worktree.
+This will spawn 1 background worker (ad's sandboxed engine) in an isolated worktree.
 The agent's changes stay on a separate branch until you review and merge.
 
 Should I proceed?
@@ -90,6 +90,10 @@ Each spawned agent gets:
 - Automatic completion reporting to leader inbox
 
 Role and team names may use only letters, digits, `.`, `_` and `-` (max 64): they become the branch `team/<team>/<agent>`. Any text is fine in `--task`; it reaches the worker as data, never through a shell.
+
+- **Which worker.** The default is an `ad` worker: sandboxed, no network, approvals never asked (on Windows it needs `ad sandbox setup`). `--engine claude` runs Claude Code with `--dangerously-skip-permissions` (any command as the user, network included): use it only for tasks the user would run themselves, and say so in the approval request. Claude workers need `claude` on PATH (or `AD_CLAUDE_BIN`) and a Claude Code that knows `--append-system-prompt-file`.
+- **Which account.** `--account <provider>/<label>` (with `--model`) runs the worker on that account; without it, the project's or the default account.
+- **When a limit runs out.** Without fallback the worker's task ends in error (with a hint when the user has a fallback order). With the team's fallback on (`ad team set <team> fallback on`, the user's own terminal; it refuses from the agent's shell) the worker moves to the next target, or pauses when it can't move safely and the board shows the task blocked with the reason. Report either with its reason; never turn fallback on yourself.
 
 ### Step 6 — Monitor
 

@@ -76,7 +76,8 @@ A terminal UI on ad's own engine home. History goes into your terminal's scrollb
 - **First run:** a sign-in panel if ad isn't signed in (it runs `ad auth login …` for you), then a one-time trust question per folder.
 - **Keys:** Enter sends, and steers a running turn. Tab queues a prompt for after the turn. Esc interrupts. The newline key depends on the terminal (Shift+Enter in Zed, Ctrl+Enter in Windows Terminal, Ctrl+J or `\` + Enter anywhere). `?` shows every shortcut.
 - **Approvals** list what the engine offers. An answer that grants something is taken only 400 ms after the box opens, so type-ahead never approves, and hidden characters show as `<U+…>`.
-- **Commands:** the engine's (`/new`, `/clear`, `/resume`, `/archive`, `/delete`, `/model`, `/review`, `/diff`, `/compact`, `/statusline`, `/title`, …) keep the engine's meaning and rules; one ad doesn't have yet answers why instead of reaching the model ([commands.md](commands.md) lists every one). ad adds `/undo` (put back the files the last turn changed), `/memory`, `/remember`, `/private`, `/proposals`, `/loop`, `/team`, `/schedule`, `/tools`, `/image`, `/login` and `/ad <command>`.
+- **Commands:** the engine's (`/new`, `/clear`, `/resume`, `/archive`, `/delete`, `/model`, `/review`, `/diff`, `/compact`, `/statusline`, `/title`, …) keep the engine's meaning and rules; one ad doesn't have yet answers why instead of reaching the model ([commands.md](commands.md) lists every one). ad adds `/undo` (put back the files the last turn changed), `/memory`, `/remember`, `/private`, `/proposals`, `/loop`, `/team`, `/schedule`, `/tools`, `/image`, `/login`, `/account`, `/fallback`, `/retry`, `/terminal-setup` and `/ad <command>`.
+- **Inline or fullscreen.** Inline is the default. `/tui` (or `tui.fullscreen_transcript = true` in the engine's settings) makes ad take the whole terminal from the next start, an early mode with its own scrolling, selection and Find; `ad tui --no-alt-screen` (or `ad --no-alt-screen`) stays inline for one run. See [tui.md](tui.md).
 - **Bare `ad`** opens the TUI where the terminal can show it. `AD_TUI=0` turns that off: bare `ad` prints the help, and `ad --last` points you at `ad tui --last`.
 - **Requirements:** an interactive terminal, and on Windows Node 22.17+ or 24.2+. Otherwise use `ad chat` (with `/resume` to continue a conversation).
 
@@ -284,7 +285,7 @@ Unattended runs also switch off every MCP server except the daemon's memory, and
 
 **Accounts.** ad keeps a list of accounts (`~/.agent-daemon/accounts/registry.json`): each has an id, a label, an owner tag and where its credential lives, and never the credential itself (an API key shows only its last 4 characters). ad 3.0's sign-in and OpenRouter key become accounts by themselves, without moving or rewriting anything 3.0 uses, so going back to 3.0 still works. An interrupted sign-in or key change leaves something `ad auth repair` finishes (it asks before deleting a key).
 
-**Adding accounts.** `ad auth login <provider>` adds an API key (OpenAI, OpenRouter, Kimi, Moonshot, xAI, Fireworks), your own endpoint or a local server; see [accounts.md](accounts.md) for providers, free models and what ad doesn't offer.
+**Adding accounts.** `ad auth login <provider>` adds an API key (OpenAI, OpenRouter, Kimi, Moonshot, xAI, Fireworks, OpenCode Go, and the Chat Completions providers in [providers.md](providers.md)), your own endpoint or a local server; `ad auth login --help` lists them. See [accounts.md](accounts.md) for providers, free models and what ad doesn't offer.
 
 **Which account a conversation uses.** ad decides before any engine starts, and the first message already goes to that account. The first of these that names an account wins:
 1. `--account <provider>/<label>` (or `/model`, `/account` in the terminal UI);
@@ -304,11 +305,11 @@ Open ad in a project folder. If you start it in your home folder and your own `~
 
 - The same applies to any folder under a home folder that is a git repository, since the repository's root is then your home.
 - A `~/.codex/` with no skills (or no `~/.codex/` at all) is never a reason: ad opens directly. One exception: if your home folder is a git repository and `~/.codex/config.toml` has settings, ad doesn't offer to trust a folder inside it that has no git repository of its own, because trusting that folder would also apply those settings there. A folder trusted that way earlier gets the launcher.
-- `/cd` into such a folder is refused with the same reason. `ad run`, `ad chat` and `ad loop` still run there in 3.0.x and say so once per folder. From 3.1 they need `--allow-home-folder`. `ad schedule add` there needs the flag now. Scheduled jobs and team workers that already worked there keep running, with a note, and `ad doctor` lists them under "Home-folder jobs".
+- `/cd` into such a folder is refused with the same reason. `ad run`, `ad chat` and `ad loop` still run there, so scripts keep working, and say so once per folder; a later release will need `--allow-home-folder` for them. `ad schedule add` there needs the flag now. Scheduled jobs and team workers that already worked there keep running, with a note, and `ad doctor` lists them under "Home-folder jobs".
 - To work there anyway, use one of the overrides. Each makes ad print one note saying your skills load in that session:
-  - `--allow-home-folder` on `ad`, `ad tui`, `ad chat`, `ad run`, `ad loop` or `ad schedule add`;
-  - `AD_ALLOW_HOME_FOLDER=1`;
-  - the launcher's **Always open home without asking**. It saves `"allowHomeFolder": true` in `~/.agent-daemon/tui/prefs.json`; delete the key to undo.
+  - `--allow-home-folder` on `ad chat`, `ad run`, `ad loop` or `ad schedule add`;
+  - `AD_ALLOW_HOME_FOLDER=1` (this one also covers `ad` and `ad tui`, which don't take the flag);
+  - in `ad` and `ad tui`, the launcher's **Open home anyway** (this time only) or **Always open home without asking**. It saves `"allowHomeFolder": true` in `~/.agent-daemon/tui/prefs.json`; delete the key to undo.
 
 ad never uses folder trust for this. It doesn't mark your home folder `untrusted`, which would change the approvals and sandbox there. If ad's engine settings trust your home folder (from an older version or the engine's own UI), ad removes that entry when it starts and says so once. Folders you trusted yourself are unchanged.
 
@@ -350,7 +351,7 @@ ad state imports                                # every import and its state
 
 - **Where projects go.** A project lands where you map it (`--map <name>=<dir>`), where the same project already lives here, or in the one clone whose git remote matches (`--search <dir>` looks further). One not mapped keeps its memory (searchable by its id) and its files wait under `~/.agent-daemon/imports/<id>/unmapped/`.
 - **Nothing is trusted blindly.** A bundle with names that could leave ad's folders, a database with parts ad didn't make (a trigger, a view, an extra column) or rows of a project it doesn't declare is refused before anything is written. Lessons and facts come in as *pending*: searchable in their project, marked unreviewed, never put into a session until `ad review --import` accepts them (in your own terminal, typing the import id). A memory file that reads like an instruction, or holds something shaped like a key, is held back (`--accept-held` places it).
-- **Your work wins by default.** A file that differs from yours stops the import before any write (`--on-conflict keep-mine`, `take-theirs` or `keep-both`, which writes `<name>.imported-<date>` beside yours). Accounts merge by id (yours keep their sign-in; new ones need one), schedules come in switched off, journals gain only the lines they don't have.
+- **Your work wins by default.** A file that differs from yours stops the import before any write (`--on-conflict keep-mine`, `take-theirs` or `keep-both`, which writes `<name>.imported-<date>` beside yours). `take-theirs` still keeps your copy of a file git tracks in the project, unless you add `--force-tracked`. Accounts merge by id (yours keep their sign-in; new ones need one), schedules come in switched off, journals gain only the lines they don't have.
 - **Safe to stop.** Each step is journaled: after a crash, any `ad state` command says so, and `ad state import --resume <id>` finishes it. `ad state rollback <id>` removes exactly what the import wrote; a file you changed since, or a session your newer memory points at, is kept and listed.
 - **A dual boot.** Use one checkout per OS (a shared checkout's native SQLite module, rebuilt for one OS, breaks the other), and `--on-conflict keep-both` for repeated moves between the two.
 - **Let an agent walk you through it:** the [`ad-state-migrate`](../skills/daemon/ad-state-migrate/SKILL.md) skill runs these steps in order, stops on any failed check, and leaves the review and the sign-ins to you.
@@ -393,6 +394,9 @@ Loop and worker prompts are marked as non-user (`AD_WORKER=1`), so they never en
 | `~/.agent-daemon/catalog/`, `~/.agent-daemon/quota/` | what ad has seen of each account's models and prices, limits, benched providers and today's spend (caches; see "Models, prices, limits and spend") |
 | `~/.agent-daemon/fallback.json` | the fallback order, its rules and what you confirmed (see "The fallback order") |
 | `~/.agent-daemon/sessions/` | the session record: `ses_<id>.jsonl` per session and `index.json` (owner-only); never reasoning, a question's or form's answer, file contents, command output, headers or keys (see "The session record") |
+| `~/.agent-daemon/launch/` | the empty folder the engine process starts in (see "Working in your home folder") |
+| `~/.agent-daemon/projects.json`, `<project>/.agent-daemon/project.json` | project ids, so a moved folder keeps its memory (`project.json` is written only where `ad init` ran, and kept out of git through `.git/info/exclude`) |
+| `~/.agent-daemon/imports/<id>/` | `ad state import`: its staging, journal and files of projects not mapped yet (see "Moving ad to another computer") |
 | `~/.agent-daemon/tui/`, `~/.agent-daemon/locks/` | `ad tui` prompt history and per-folder state; conversation locks (see [tui.md](tui.md#files-ad-writes)) |
 
 | Variable | Effect |
@@ -412,6 +416,11 @@ Loop and worker prompts are marked as non-user (`AD_WORKER=1`), so they never en
 | `AD_ENGINE_MODEL` (old name `AD_CODEX_LLM_MODEL`, still read) | model for those calls when they run on the engine |
 | `AD_SECRETS_BACKEND=file` | store keys in plain 0600 files instead of the OS store |
 | `AD_ACCOUNT`, `AD_MODEL` | the account (`<provider>/<label>`, a label, or an id) and model for what you launch, below a window's own choice and `--account` |
+| `AD_ROOT` | an absolute path: keep ad's state there instead of `~/.agent-daemon` |
+| `AD_SHOW_CANDIDATES` | `1`: pickers and help also list providers not yet checked on a real account (see [accounts.md](accounts.md)) |
+| `AD_TRANSLATE` | `0`: turn off chat translation in the gateway (see "Chat-only providers") |
+| `AD_SQLITE_DRIVER` | `better-sqlite3` or `node:sqlite`: which SQLite driver memory uses (`ad doctor` shows which is in use) |
+| `AD_GATEWAY_TOKEN`, `AD_TOOL_SHELL` | set by ad: the engine's per-run gateway token (empty in the agent's shells), and `1` in the agent's shells so terminal-only commands refuse there; don't set them yourself |
 
 ## Chat-only providers
 

@@ -29,16 +29,26 @@ All tests should pass (`# fail 0`).
 ## Project layout (the 60-second tour)
 
 ```
-runtime/src/cli.mjs              ← Launcher: routes the terminal UI and `ad codex`, loads cli-full.mjs for the rest
+runtime/src/cli.mjs              ← Launcher: routes the terminal UI, loads cli-full.mjs for the rest
 runtime/src/cli-full.mjs         ← Help text + command dispatcher
 runtime/src/digest/digest.mjs    ← Pipeline orchestrator (read first)
 runtime/src/hooks/*.mjs          ← One file per hook handler
 runtime/src/adapters/*.mjs       ← Transcript parsers, one per agent
-runtime/src/memory/episodic.mjs  ← SQLite wrapper
+runtime/src/memory/              ← SQLite store (better-sqlite3 or node:sqlite), scope, capture safety
+runtime/src/mcp/                 ← The memory MCP server and its tools
+runtime/src/memory-install/      ← `npx agent-daemon-memory install`: per-host config edits, ledger, doctor
 runtime/src/orchestration/       ← Multi-agent team layer (engine + claude workers)
 runtime/src/engine/codex/        ← The engine adapter (the harness engine)
 runtime/src/harness/             ← ad chat / run / loop / schedule / web / acp / auth / sandbox, session controller, /undo checkpoints
-runtime/src/tui/                 ← ad tui: terminal/ layer, view/ components, app, /undo wiring
+runtime/src/auth/                ← Accounts (registry, repair), the secret store, redaction
+runtime/src/gateway/             ← The local gateway that adds keys on the way out; chat translation, native adapters
+runtime/src/providers/           ← Provider presets, models, limits, spend, failure classes
+runtime/src/routing/             ← The fallback order and its rules (`ad fallback`)
+runtime/src/sessions/            ← The session record, mid-task switching, automatic fallback
+runtime/src/portability/         ← `ad state export / import`: the .adstate format
+runtime/src/safe-spawn.mjs       ← How every child process starts: no shell, full program paths
+runtime/src/tui/                 ← ad tui: terminal/ layer (inline and fullscreen), view/ components, app, /undo wiring
+runtime/testkit/                 ← Fakes and mocks for the tests (engine, providers, editor, mouse)
 runtime/test/*.test.mjs          ← node:test suite
 
 constitution/                    ← Loaded into every session
@@ -80,6 +90,12 @@ Read [`docs/architecture.md`](./architecture.md) for the full picture.
 - **Hook handlers must fail-safe to approve** — see [`SECURITY.md`](../SECURITY.md)
 - Top-level async functions wrap in try/catch and log to stderr with `[agent-daemon]` prefix
 - Persistence (fs writes, SQLite inserts) is always best-effort — never let a write failure crash a CLI command
+
+### Child processes and secrets
+
+- **Start every child process through `runtime/src/safe-spawn.mjs`** (`resolveCommand`, `systemTool`): no shell, no `exec()`, no bare program name. A bare name lets Windows run a same-named program from the working folder; a shell lets task text run as commands. `test/no-shell-spawn.test.mjs` checks all of `runtime/src`; a real exception goes in `test/fixtures/spawn-allowlist.json` with its reason.
+- **Text that may hold a key** passes the secret filter (`runtime/src/security/secret-patterns.mjs`, `runtime/src/auth/redact.mjs`) before it reaches memory, a journal, a log or an error line. A key is never taken on the command line.
+- **Commands that change memory, accounts or the fallback order** refuse inside an agent's tool shell (`AD_TOOL_SHELL=1`, `runtime/src/security/agent-shell.mjs`); accepting notes also needs a terminal and a typed confirmation.
 
 ---
 
@@ -204,12 +220,14 @@ Harness tests come in two kinds:
 
 - **Fake engine (default).** Most harness tests drive the scripted fake app-server in [`runtime/testkit/fake-codex-app-server.mjs`](../runtime/testkit/fake-codex-app-server.mjs): fast, and good for crashes and odd traffic. A test that builds `CodexAppServer` around the fake directly marks the command `source: "test-double"`.
   - **The fake speaks the pinned protocol.** `test/tui-resilience.test.mjs` checks its messages with [`runtime/testkit/protocol-check.mjs`](../runtime/testkit/protocol-check.mjs) (required fields, enums, variants from the snapshot). A new scenario must keep passing it. The `future` scenario is the deliberate exception: a synthetic newer engine.
-- **Real engine (opt-in).** [`runtime/test/engine-real.test.mjs`](../runtime/test/engine-real.test.mjs) runs the pinned engine binary against [`runtime/testkit/mock-responses.mjs`](../runtime/testkit/mock-responses.mjs), a scripted stand-in for the Responses API. No login and no network are needed. It catches behaviour changes in an engine release that a protocol snapshot can't. [`runtime/test/tui-live.test.mjs`](../runtime/test/tui-live.test.mjs) goes one step further: the real `ad tui` in a pseudo-terminal, on the real engine and the mock model, running the manual test's terminal UI script and ad's own TUI features. CI's `engine-real` job runs both on Linux, macOS and Windows.
+- **Real engine (opt-in).** [`runtime/test/engine-real.test.mjs`](../runtime/test/engine-real.test.mjs) runs the pinned engine binary against [`runtime/testkit/mock-responses.mjs`](../runtime/testkit/mock-responses.mjs), a scripted stand-in for the Responses API. No login and no network are needed. It catches behaviour changes in an engine release that a protocol snapshot can't. [`runtime/test/tui-live.test.mjs`](../runtime/test/tui-live.test.mjs) goes one step further: the real `ad tui` in a pseudo-terminal, on the real engine and the mock model, running the manual test's terminal UI script and ad's own TUI features. CI's `engine-real` job runs both (and `engine-real-translate`) on Linux, macOS and Windows; other real-engine tests are opt-in only ([testing.md](testing.md#run-it)).
 
   ```sh
   cd runtime
   AD_REAL_ENGINE=1 node --test --test-concurrency=1 --test-force-exit test/engine-real.test.mjs test/tui-live.test.mjs
   ```
+
+**Test homes and fakes.** New tests that create engines, locks or memory run in a temp home and call `assertFakeHome()` ([`runtime/testkit/real-home-guard.mjs`](../runtime/testkit/real-home-guard.mjs)). Fake keys only (`sk-test-…`). Use the testkit's mocks for providers, the editor and mouse reports ([testing.md](testing.md#other-test-helpers)).
 
 **Golden files.** Terminal UI output is compared byte for byte with files under `runtime/test/golden/` (kept LF by `.gitattributes`) through `assertGolden()` in [`runtime/testkit/golden.mjs`](../runtime/testkit/golden.mjs). After an intended change, rewrite them and review the diff before committing:
 
@@ -263,7 +281,8 @@ Body should explain **why**, not what. The diff shows what.
 - Name your branch `feat/<thing>` or `fix/<thing>`
 - Open PRs early as drafts if you want feedback
 - Squash-merge into `main` (we prefer linear history)
-- Every PR to `main` must pass CI: `npm test` + the skill linter + the brand lint (report mode, see [testing](./testing.md#the-brand-lint)) on Ubuntu / macOS / Windows × Node 22. The `engine-real` job (real engine vs a mock model, plus the live terminal UI tests) runs alongside; it is non-blocking (`continue-on-error`) while each platform's sandbox behaviour is being recorded, so read its result.
+- Every PR to `main` must pass CI: `npm test` + the skill linter + the brand lint (`--strict`, see [testing](./testing.md#the-brand-lint)) + the doc-link check on Ubuntu / macOS / Windows × Node 22, the memory install jobs (Node 22.16 and 24, on `node:sqlite`) and the state export / import jobs (each OS imports the other two). The `engine-real` job (real engine vs a mock model, plus the live terminal UI tests) runs alongside; it is non-blocking (`continue-on-error`) while each platform's sandbox behaviour is being recorded, so read its result. The full list: [testing.md](testing.md#ci).
+- Public copy (README, `docs/compare.md`, `docs/memory/`): run the claims lint, `node runtime/scripts/check-claims.mjs` ([testing.md](testing.md#the-claims-lint)). It isn't in CI yet.
 - Before pushing, check the doc links: `node runtime/scripts/check-doc-links.mjs` (every relative link must point at a file git tracks, and no `## ` section appears twice). CI runs the same check on all three OSes.
 - Before pushing to a PR or releasing, run the CI pipeline locally too: the [`ad-ci-readiness`](../.claude/skills/ad-ci-readiness/SKILL.md) project skill mirrors it on your machine and in a Linux container, and holds the release-readiness checklist.
 

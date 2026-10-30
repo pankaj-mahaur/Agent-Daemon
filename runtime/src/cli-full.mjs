@@ -83,7 +83,7 @@ Commands:
   memory held [accept|release|drop <id>]  Notes memory keeps back (agent-written, flagged); accept/release/drop need your own terminal and the typed id
   memory consolidate     Hermes-style evolution pass: near-duplicate merges, stale archive, contradictions
   memory redact <table>:<id>   Replace what looks like a key in one row (your own terminal, typed confirmation)
-  state inspect|export|verify  Move ad to another computer: one .adstate file (ad state --help)
+  state inspect|export|import|verify  Move ad to another computer: one .adstate file (ad state --help)
                          → proposals only; --apply-merges / --apply-stale execute after review
   memory install [--host <id>] [--yes] [--dry-run]   Add ad's memory server to other agents (doctor, repair, status, uninstall)
   memory report [--days 30] [--all-projects] [--json] [--share]   Is memory working: repeated corrections, what was shown, feedback
@@ -101,6 +101,8 @@ Commands:
   skill list             List installed skills (both lanes) with provenance; --available shows the bundle
   skill remove <name>    Remove a daemon-managed skill (--force for unmanaged); --project for project lane
   skill search <query>   Search the bundled skill catalog by name/description
+  skill history|diff|undo <name>   Every version of a skill, what changed, roll back (yours alone)
+  skill propose|publish  Queue a change for ad review; write accepted skills to other agents
   doctor                 Diagnose the install — settings.json, PATH, dirs
   doctor --tokens        Show token usage + cache stats from recent sessions
   about                  What ad runs on: versions, the engine, licenses, settings path
@@ -122,7 +124,7 @@ Agent harness (ad's engine; ad about):
                          --sandbox <mode>     read-only | workspace-write (default) | danger-full-access
                          --account <provider>/<label>  (ad, tui, chat, loop, run, spawn) the account to run on
                                               (AD_ACCOUNT: a default; docs/harness.md)
-                         --allow-home-folder  (ad, tui, chat, loop, run, schedule add) work in a folder that
+                         --allow-home-folder  (chat, loop, run, schedule add; the TUI: AD_ALLOW_HOME_FOLDER=1) work in a folder that
                                               would load skills from your own engine install (docs/harness.md)
   auth login <provider>  Add an account (API key at a hidden prompt or --stdin; ChatGPT in the browser or --device; OpenRouter --oauth)
   auth list | use | status | logout | remove | rename | test | repair   Manage accounts: ad auth --help
