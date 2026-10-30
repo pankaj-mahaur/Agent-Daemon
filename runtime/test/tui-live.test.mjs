@@ -960,6 +960,8 @@ test("P4.1 live: a command and a patch in ad tui are in the session record; ad s
     for (const bad of ["encrypted_content", "summaryText", key, "sk-test-"]) assert.ok(!raw.includes(bad), `the record holds ${bad}`);
   } catch (err) {
     err.message += `\n--- model requests ---\n${mock.requests.map((r) => JSON.stringify(r.text)).join("\n")}`;
+    // What the command did on screen (the Windows runner's sandbox has refused commands in more than one way).
+    if (t) err.message += `\n--- screen (last 3000 chars) ---\n${t.text().slice(-3000)}`;
     throw err;
   } finally {
     for (const k of launched.splice(0)) k();

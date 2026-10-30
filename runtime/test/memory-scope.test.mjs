@@ -101,7 +101,7 @@ test("a git repo at the home folder doesn't make a home subfolder a project", ()
   } finally { f.cleanup(); }
 });
 
-test("home given by a link, the working folder by its real path: the walk still stops at home (macOS /var vs /private/var)", () => {
+test("home and the working folder spelled differently: the walk still stops at home (macOS /var vs /private/var, Windows 8.3 names)", () => {
   const f = fixture();
   try {
     // Home holds ad's folder (AD_ROOT under home, as by default); HOME names it through a link.
@@ -111,6 +111,13 @@ test("home given by a link, the working folder by its real path: the walk still 
     const linked = { ...f, env: { ...f.env, HOME: homeLink, USERPROFILE: homeLink }, home: homeLink };
     assert.equal(resolveMemoryScope(opts(linked, { cwd: f.plain })).kind, "unbound");
     assert.equal(resolveMemoryScope(opts(linked, { cwd: f.repoA })).kind, "project");
+    // The working folder through a third spelling, matching neither HOME nor its real path.
+    const rootLink = path.join(tmpdir(), `ad-scope-link-${process.pid}-${Date.now()}`);
+    symlinkSync(f.root, rootLink, "junction");
+    try {
+      const viaLink = path.join(rootLink, path.relative(f.root, f.plain));
+      assert.equal(resolveMemoryScope(opts(linked, { cwd: viaLink })).kind, "unbound");
+    } finally { rmSync(rootLink, { recursive: false, force: true }); }
   } finally { f.cleanup(); }
 });
 

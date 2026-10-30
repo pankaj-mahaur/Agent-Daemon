@@ -103,12 +103,13 @@ function neverValidOne(dir, { env = process.env, home = os.homedir(), platform =
 
 /** A .git (folder or file) or .agent-daemon folder at dir or above, below home and the root. */
 function looksLikeProject(dir, { home, platform }) {
-  // Every spelling of home: a working folder given as its real path (macOS's
-  // /private/var/...) would otherwise walk past home and find ad's own folder.
+  // Every spelling on both sides (macOS's /var vs /private/var, a Windows 8.3
+  // short name, a link): otherwise the walk passes home and finds ad's own folder.
   const homes = home ? spellings(home).map((h) => norm(h, platform)) : [];
+  const isHome = (d) => spellings(d).some((s) => homes.includes(norm(s, platform)));
   let d = path.resolve(dir);
   for (;;) {
-    if (isRoot(d) || homes.includes(norm(d, platform))) return false;
+    if (isRoot(d) || isHome(d)) return false;
     if (fs.existsSync(path.join(d, ".git"))) return true;
     try {
       if (fs.statSync(path.join(d, ".agent-daemon")).isDirectory()) return true;
