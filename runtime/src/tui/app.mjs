@@ -2729,6 +2729,8 @@ export function createApp({
     const tv = renderer.transcript;
     const text = selectedText(tv.entriesBetween(selection.anchor.entryId, selection.head.entryId), selection);
     if (clear) clearSelection();
+    // Only blank cells selected: nothing to copy, and no clipboard to blame.
+    if (!text.trim()) return;
     Promise.resolve((actions.copy ?? copyText)(text, { terminalWrite: (d) => renderer.terminalWrite(d) }))
       .then((r) => {
         note = r.ok

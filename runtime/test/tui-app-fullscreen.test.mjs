@@ -455,3 +455,19 @@ test("/tui picks the screen mode for the next start and saves tui.fullscreen_tra
     assert.match(await screenUntil(scr, /screen +fullscreen/), /screen +fullscreen · mouse off: tmux mouse is off/);
   }, { cols: 100, rows: 30, config: { "tui.fullscreen_transcript": true }, statusInfo: { screen: "fullscreen \u{b7} mouse off: tmux mouse is off (set -g mouse on)" } });
 });
+
+test("selecting only blank cells copies nothing and says nothing about the clipboard", async () => {
+  await withFullscreen(async ({ renderer, type, copies, scr }) => {
+    renderer.commit([[]]);
+    renderer.commit([[{ text: "after a blank row" }]]);
+    await tick();
+    await scr.settle();
+    const lines = scr.altLines();
+    const blank = lines.findIndex((l, i) => i > 0 && l === "" && lines[i + 1] === "after a blank row");
+    assert.ok(blank > 0, lines.join("\n"));
+    type(press(0, blank) + drag(10, blank) + release(10, blank));
+    await tick();
+    assert.deepEqual(copies, []);
+    assert.doesNotMatch(await screenText(scr), /Couldn't reach a clipboard/);
+  });
+});

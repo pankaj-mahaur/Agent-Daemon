@@ -161,8 +161,8 @@ async function launch(w, args = [], { cols = 100, rows = 30, fullscreen = false 
 }
 
 // Starts ad tui and answers the first-run trust question; resolves at the composer.
-async function start(w, args) {
-  const t = await launch(w, args);
+async function start(w, args, opts) {
+  const t = await launch(w, args, opts);
   await t.until(/Do you trust|>_ Agent Daemon/, "the trust question or the header");
   if (/Do you trust/.test(t.text())) t.type("\r");
   await t.until(/>_ Agent Daemon[\s\S]*\? for shortcuts/, "the header card and the composer");
@@ -972,6 +972,56 @@ test("P4.1 live: a command and a patch in ad tui are in the session record; ad s
     throw err;
   } finally {
     for (const k of launched.splice(0)) k();
+    await mock.close();
+    await removeWithRetry(w.root);
+  }
+});
+
+test("fullscreen live (P2.5): the alternate screen on the real engine; PageUp, Ctrl+End, F3 and a drag that copies; quit gives the shell its screen back", { skip, timeout: 5 * 60_000 }, async () => {
+  const mock = await startMockResponses({ script: liveScript });
+  const w = world(mock.url);
+  writeFileSync(join(w.codexHome, "config.toml"), `${readFileSync(join(w.codexHome, "config.toml"), "utf8")}\n[tui]\nfullscreen_transcript = true\n`);
+  // Over SSH a copy also goes to the terminal (OSC 52), which the raw stream shows; copy-on-select stays on.
+  w.env.SSH_CONNECTION = "10.0.0.1 1 10.0.0.2 22";
+  delete w.env.WT_SESSION;
+  delete w.env.TERM_PROGRAM;
+  let t;
+  try {
+    t = await start(w, [], { fullscreen: true });
+    assert.equal(t.term.buffer.active.type, "alternate", "fullscreen: ad's own screen");
+    for (let i = 0; i < 3; i++) {
+      t.type(`PING ${i}\r`);
+      await t.until((x) => (x.match(/pong/g) ?? []).length > i, `answer ${i}`);
+      await t.until(() => t.idle(), `idle after turn ${i}`);
+    }
+    t.type("\x1b[5~"); // PageUp
+    await t.until(/Back to bottom/, "the follow control after PageUp");
+    t.type("\x1b[1;5F"); // Ctrl+End
+    await t.until((x) => !/Back to bottom/.test(x), "back at the bottom");
+    t.type("\x1bOR"); // F3
+    t.type("pong");
+    await t.until(/Find: pong/, "Find's footer");
+    t.type("\x1b");
+    await t.until((x) => !/Find: pong/.test(x), "Find closed");
+    // Drag over the row that shows "PING 1", then let go: copy-on-select copies it.
+    const y = t.screen().split("\n").findIndex((l) => l.includes("PING 1")) + 1; // SGR rows are 1-based
+    assert.ok(y > 0, t.screen());
+    t.type(`\x1b[<0;1;${y}M\x1b[<32;20;${y}M\x1b[<0;20;${y}m`);
+    await t.until(() => t.raw().includes("\x1b]52;c;"), "the copy reaching the terminal (OSC 52 over SSH)");
+    const b64 = /\x1b\]52;c;([A-Za-z0-9+/=]+)\x07/.exec(t.raw())?.[1];
+    assert.match(Buffer.from(b64 ?? "", "base64").toString("utf8"), /PING 1/, "the copied text is the selected row");
+    t.type("\x1b"); // the selection stays after a copy; Esc clears it (else Ctrl+C would copy it again)
+    await settle(300);
+    t.type("\x03");
+    await settle(200);
+    t.type("\x03");
+    const exit = await t.exit;
+    assert.equal(exit.exitCode, 0);
+    await new Promise((r) => t.term.write("", r));
+    assert.equal(t.term.buffer.active.type, "normal", "the shell's screen back");
+    assert.equal(t.term.modes.mouseTrackingMode, "none", "mouse reporting off after quit");
+  } finally {
+    t?.kill();
     await mock.close();
     await removeWithRetry(w.root);
   }
