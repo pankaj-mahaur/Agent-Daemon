@@ -144,6 +144,7 @@ function decodeCsi(seq, outstandingCpr) {
   if (final === "I" && inner === "") return { type: "focus", focused: true };
   if (final === "O" && inner === "") return { type: "focus", focused: false };
   if (final === "Z") return key("tab", seq, { shift: true });
+  if ((final === "M" || final === "m") && (m = /^<(\d+);(\d+);(\d+)$/.exec(inner))) return mouse(Number(m[1]), Number(m[2]) - 1, Number(m[3]) - 1, final === "m", seq);
 
   if (final === "R" && (m = /^(\d+);(\d+)$/.exec(inner))) {
     if (outstandingCpr) return { type: "reply", kind: "cpr", row: Number(m[1]), col: Number(m[2]) };
@@ -169,6 +170,26 @@ function decodeCsi(seq, outstandingCpr) {
   if (LETTER_FINAL[final] && (m = /^(?:1?;(\d+)|\d*)$/.exec(inner))) return key(LETTER_FINAL[final], seq, mods(m[1]));
   return key("unknown", seq);
 }
+
+const MOUSE_BUTTONS = ["left", "middle", "right"];
+const WHEEL_DIRS = ["up", "down", "left", "right"];
+
+/**
+ * An SGR mouse report (P2.2): `CSI < Cb ; Cx ; Cy M|m`, x and y made 0-based.
+ * Buttons 8–11 (Cb & 128) are dropped: null, not a key.
+ */
+function mouse(cb, x, y, released, raw) {
+  if (cb & 128) return null;
+  const ev = { type: "mouse", action: "press", button: null, wheel: null, x, y, shift: Boolean(cb & 4), alt: Boolean(cb & 8), ctrl: Boolean(cb & 16), raw };
+  const low = cb & 3;
+  if (cb & 64) return { ...ev, action: "wheel", wheel: WHEEL_DIRS[low] };
+  if (cb & 32) return low === 3 ? { ...ev, action: "move" } : { ...ev, action: "drag", button: MOUSE_BUTTONS[low] };
+  return { ...ev, action: released ? "release" : "press", button: MOUSE_BUTTONS[low] ?? null };
+}
+
+// How many bytes a character took on the wire (stdin is decoded as UTF-8; an
+// invalid byte arrives as one U+FFFD).
+const utf8Bytes = (cp) => (cp === 0xfffd || cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4);
 
 function decodeSs3(seq) {
   const name = LETTER_FINAL[seq[2]];
@@ -311,6 +332,31 @@ export function createInputDecoder({
           return;
         }
         const next = buf[1];
+        if (next === "[" && buf.startsWith("\x1b[M")) {
+          // A legacy X10 mouse report: ESC [ M and 3 raw bytes. ad asks for SGR
+          // (?1006h), so it only comes from a terminal without it: dropped, never
+          // decoded, or its bytes would type text. Two raw bytes can arrive as one
+          // UTF-8 character, so bytes are counted, not characters.
+          let i = 3;
+          let bytes = 0;
+          while (i < buf.length && bytes < 3) {
+            const cp = buf.codePointAt(i);
+            bytes += utf8Bytes(cp);
+            i += cp > 0xffff ? 2 : 1;
+          }
+          if (bytes < 3) {
+            emitText();
+            if (timerKind !== "sequence") {
+              arm(sequenceCapMs, () => {
+                buf = "";
+              }, "sequence");
+            }
+            return;
+          }
+          disarm();
+          buf = buf.slice(i);
+          continue;
+        }
         if (next === "[") {
           const m = /^\x1b\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]/.exec(buf);
           if (!m) {
