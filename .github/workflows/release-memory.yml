@@ -3,7 +3,8 @@
 # Runs only when the owner dispatches it. `dry_run` (the default) builds, checks
 # and uploads every artifact with SHA256SUMS, and publishes nothing. A real run
 # also needs the `release-memory` environment's approval, then:
-#   - npm publish --provenance (secret NPM_TOKEN: a granular, publish-only token)
+#   - npm publish --provenance through npm's trusted publisher (OIDC: this repo,
+#     release-memory.yml, environment release-memory; no token is stored)
 #   - the Claude Code marketplace tree → vars.MEMORY_MARKETPLACE_REPO (secret MARKETPLACE_DEPLOY_KEY)
 #   - the Gemini extension tree → vars.MEMORY_GEMINI_REPO (secret GEMINI_DEPLOY_KEY)
 #   - a GitHub release memory-v<version> with the ZIPs, the npm tarball and SHA256SUMS
@@ -102,17 +103,16 @@ jobs:
           name: agent-daemon-memory-${{ needs.build.outputs.version }}
           path: out
 
-      - name: Setup Node.js 22 for npm
+      # Trusted publishing (OIDC, id-token: write above) needs npm 11.5.1 or later; Node 24 ships it.
+      - name: Setup Node.js 24 for npm
         uses: actions/setup-node@v7
         with:
-          node-version: "22"
+          node-version: "24"
           registry-url: "https://registry.npmjs.org"
 
       - name: npm publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          if [ -z "$NODE_AUTH_TOKEN" ]; then echo "::notice::NPM_TOKEN isn't set: npm publish skipped"; exit 0; fi
+          node -e 'const [a,b,c]=process.argv[1].split(".").map(Number); if (a*1e6+b*1e3+c < 11005001) { console.error(`::error::npm ${process.argv[1]} cannot use the trusted publisher (needs 11.5.1+)`); process.exit(1); }' "$(npm --version)"
           npm publish "out/dist/agent-daemon-memory-$V.tgz" --provenance --access public
 
       - name: Push the Claude Code marketplace tree
