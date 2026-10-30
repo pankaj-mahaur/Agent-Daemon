@@ -292,7 +292,7 @@ Error: write EOF
 
 **Symptom:** `ad chat`, `ad run`, `ad loop` (and the other harness commands) exit with code 2.
 
-**Fix:** log the harness in once. It keeps its own login in `~/.agent-daemon/codex-home`, separate from your own `~/.codex`.
+**Fix:** log the harness in once. It keeps its own login in `~/.agent-daemon/codex-home`, separate from your own `~/.codex`. With several accounts, `ad auth list` shows which ones need signing in again, and `ad auth login <provider> --label <label>` brings one back ([accounts.md](accounts.md)).
 
 ```sh
 ad auth login openai                           # OpenAI API key
@@ -668,7 +668,7 @@ For "The engine reported a problem", inspect those details first. `ad doctor` sh
 
 **Cause:** the memory server serves one project, chosen when it starts, and couldn't tell which: no `--project`, no project from ad or Claude Code, and its working folder isn't inside a git repo and holds no `.agent-daemon` folder. Home, a drive root, system folders and ad's own folders never count. It serves nothing rather than guess.
 
-**Fix:** open the session in the project folder (a git repo). In ad's own engine, each conversation binds to its folder, or to the project ad passes (`AD_MEMORY_PROJECT`). A desktop app whose working folder is its install folder never binds by itself: give it `--project <folder>` (`${workspaceFolder}` in hosts that expand it). For Claude Code, register the server with `--host claude-code` (see [mcp/agent-daemon-memory/README.md](../mcp/agent-daemon-memory/README.md#install-claude-code)); for another host, pass `--project <folder>` in its server config.
+**Fix:** open the session in the project folder (a git repo). In ad's own engine, each conversation binds to its folder, or to the project ad passes (`AD_MEMORY_PROJECT`). A desktop app whose working folder is its install folder never binds by itself: give it `--project <folder>` (`${workspaceFolder}` in hosts that expand it). For Claude Code, register the server with `--host claude-code` (see [mcp/agent-daemon-memory/README.md](../mcp/agent-daemon-memory/README.md#by-hand-claude-code)); for another host, pass `--project <folder>` in its server config.
 
 ## 45. A note I expected doesn't show up in memory
 
@@ -680,13 +680,13 @@ For "The engine reported a problem", inspect those details first. `ad doctor` sh
 
 **Fix:** `ad memory held` lists what is waiting or held back in this project. Run it in your own terminal: `ad memory held accept L12` serves a waiting note, `release` brings back one the injection screen held (never one holding a secret), `drop` clears it; each asks you to type the id. Or say it again in your own words, or use `/remember` in `ad tui`: what you type yourself applies at once.
 
-## 46. `ad doctor` or memory says two folders share one memory key
+## 46. `ad doctor` says older notes from folders that shared one key reach neither
 
-**Symptom:** the memory server answers "This folder shares its memory key with another folder…", and SessionStart shows no learnings there.
+**Symptom:** `ad doctor`'s "Memory keys" line names two folders and a count of rows that "can't be told apart".
 
-**Cause:** memory keys come from folder paths with `/`, `\` and `:` turned into `-`, so `/x/a/b` and `/x/a-b` get the same key. Serving it would mix two projects' notes, so ad keeps both out.
+**Cause:** memory keys used to come from folder paths with `/`, `\` and `:` turned into `-`, so `/x/a/b` and `/x/a-b` got the same key. Each project now has its own id, and older notes are given theirs by the session or folder they were recorded in (`ad memory migrate`). A note with neither can't be placed, so it reaches neither folder.
 
-**Fix:** nothing is lost; the notes stay in the database. A later release gives each project its own ID and ends this. Renaming one of the folders also separates them for new notes.
+**Fix:** nothing is lost. List them with `ad memory assign --list`, then place one with `ad memory assign learnings:<id> --project <folder>` in your own terminal (you type the id to confirm).
 
 ## 47. `This editor runs through cmd.exe, which can't take that file name safely`
 
@@ -753,6 +753,201 @@ See [harness.md](harness.md#working-in-your-home-folder).
 **Cause:** in Claude Code, ad's hooks capture what you type, and the memory server was installed with `--capture tools`, so the agent's record tools save corrections as well.
 
 **Fix:** `install --host claude-code --capture hooks` (or `repair`). With the default `auto`, the record tools stand down while the hooks are capturing.
+
+## 56. `ad skill publish` says a folder "was changed outside ad, so it wasn't overwritten"
+
+**Cause:** the skill's folder in that host (for example `~/.codex/skills/<name>`) has no `.ad-skill.json` from ad, or its SKILL.md changed since ad wrote it. ad never overwrites a folder it doesn't own.
+
+**Fix:** keep your version, or replace it with the accepted one: `ad skill publish <name> --host <id> --replace`. The old folder is backed up to `~/.agent-daemon/memory/backups/<host>/` first.
+
+## 57. `ad review` says a proposal is "in an old format ad can't apply"
+
+**Cause:** the proposal was written before skill proposals had a format ad can check (or by hand).
+
+**Fix:** apply the change to the SKILL.md yourself, then accept to file it; or reject it and run `/evolve` again, which now queues through `ad skill propose`. A file that says it is damaged (its checksum doesn't match) was changed after it was written: reject it.
+
+## 58. "ad: couldn't reach <host>"
+
+**Cause:** ad's gateway couldn't connect to the provider: no network, a proxy it doesn't know about, or a certificate your company adds that Node doesn't trust.
+
+**Fix:** check the network first. A company certificate: point `NODE_EXTRA_CA_CERTS` at it (a `CODEX_CA_CERTIFICATE` you set for the engine is used too). An HTTP proxy: ad's gateway can't go through one yet (it connects directly; support is planned), so API accounts need a direct connection to the provider for now. ad keeps `127.0.0.1` and `localhost` out of any proxy the engine uses.
+
+## 59. "ad: the provider redirected; ad doesn't send keys across redirects"
+
+**Cause:** the provider's address answered with a redirect. ad never follows one with your key, since it could send the key somewhere else.
+
+**Fix:** use the address the provider documents (for a custom endpoint, the final URL with `/v1`), then sign in again with it.
+
+## 60. "ad auth: <account> needs its key again"
+
+**Cause:** the account ad picked (from `--account`, `AD_ACCOUNT`, the project's choice or your default) has no working key or sign-in, so ad stops before starting anything.
+
+**Fix:** run the command the message names (`ad auth login <provider> --label <label>`), or pick another account with `--account`. `ad auth status` shows them all.
+
+## 61. "The engine kept this conversation on <account>" / "This conversation is still busy"
+
+**Cause:** a conversation was asked to move to another account. The engine moves a conversation only when nothing runs in it, and keeps the old account otherwise.
+
+**Fix:** wait for the turn (or a background terminal) to finish, then switch again; or start a new conversation on the other account.
+
+## 62. "This conversation used an account you removed"
+
+**Cause:** the conversation ran on an API-key account that is no longer in your account list.
+
+**Fix:** start a new conversation. Carrying it over to another account comes in a later release.
+
+## 63. "The key was refused (HTTP 401), so it wasn't saved"
+
+**Cause:** the provider said no to the key: a typo, a revoked key, or a key for another provider.
+
+**Fix:** copy the key again from the provider's site and run the command the message names (`ad auth login <provider> --label <label>`). ad never keeps a refused key.
+
+## 64. "Couldn't reach <host> (…). The key is saved; test it later"
+
+**Cause:** ad couldn't talk to the provider while adding the key (no network, a proxy, the provider down). The key is stored and the account waits.
+
+**Fix:** when the network is back, run `ad auth test <provider>/<label>`. Behind a proxy, see #58.
+
+## 65. "This endpoint speaks only Chat Completions"
+
+**Cause:** your endpoint has no Responses API, which ad's engine needs.
+
+**Fix:** let ad test the endpoint when it asks (the one-token test also tries Chat Completions; an endpoint that answers there is added and goes through ad's translation). This message means neither API answered: check the address ends in `/v1`, or use a server with the Responses API (Ollama 0.13.3+, LM Studio, vLLM).
+
+## 66. "Ollama isn't answering on localhost:11434" (or LM Studio on localhost:1234)
+
+**Cause:** the local server isn't running, or listens on another port.
+
+**Fix:** start it (`ollama serve`, `lms server start`) and run the login again. A server on another port: `ad auth login custom --base-url http://127.0.0.1:<port>/v1 --no-key`.
+
+## 67. "This provider can't take … through ad" / "ad can't pass … to this provider"
+
+**Cause:** the provider speaks only Chat Completions, and the request needs something ad can't carry across (live web search, a stored response, an image for a model without vision).
+
+**Fix:** turn that feature off for this chat (for live web search: `ad tools disable web-search`), or pick a model or provider that has it (`/model`).
+
+## 68. "<provider>: the daily limit is used up" (or "the monthly limit")
+
+**Cause:** the provider's free or paid quota for the period is spent. ad stops the turn at once instead of retrying, so it isn't asked again.
+
+**Fix:** wait for the provider's reset, switch accounts (`/model`), or add credit. A per-minute limit is different: ad waits the time the provider asks (up to 60 s) and the turn goes on.
+
+## 69. "OpenCode Go's usage limit is reached"
+
+**Cause:** your Go plan's allowance for that model is used up for its 5-hour, weekly or monthly window. ad stops the turn instead of retrying.
+
+**Fix:** wait for the reset time shown, pick another model or account with `/model`, or turn on Extra Usage on OpenCode's Go page (it then spends your OpenCode balance).
+
+## 70. "This OpenCode Go model isn't available to ad yet. Pick another with /model."
+
+**Cause:** OpenCode serves that model on an API ad can't speak yet (Anthropic's or Gemini's), or answered that the model isn't on the route ad tried (ad then tries the other route for the rest of this run).
+
+**Fix:** pick another Go model in `/model`. Models marked "coming later" arrive with ad's Anthropic and Gemini support.
+
+## 71. "DeepSeek can't read this chat's earlier reasoning any more (ad's key for it changed)"
+
+**Cause:** DeepSeek (and MiniMax) want their earlier reasoning back with every request that has tools. ad keeps it sealed with a key in your secret store; that key changed (the store was reset, or the chat came from another computer), so ad can't give it back.
+
+**Fix:** start a new chat on that model. Chats that began on another provider or model are not affected: their turns go without reasoning, as DeepSeek allows.
+
+## 72. "This chat's earlier Gemini steps can't be replayed"
+
+**Cause:** Gemini checks the thought signature on each tool call of the current turn, and this chat has a call without one (it ran on another provider or model, or before ad kept signatures). ad never makes one up.
+
+**Fix:** start a new chat on Gemini, or continue on the model you were using. If `ad doctor` says ad's secret store isn't available, ad keeps Gemini's signatures only while it runs, so a chat in the middle of a tool step can't continue after ad restarts.
+
+---
+
+## 73. "This session is open in another ad window", or "ad couldn't write this session's record"
+
+**Cause:** ad keeps a record of each session in `~/.agent-daemon/sessions/` (see [harness.md](harness.md#the-session-record-ad-sessions-show)). Only one window writes a session: a second `ad` on the same conversation (a `/resume` of it, or the same thread in two windows) gets the first message, and that window records nothing. The second message means a write failed (a full disk, a folder ad can't write); the details are in `/warnings`. "Repaired the session record after an unclean exit" means ad or the machine stopped in the middle of a write and ad dropped the half line.
+
+**Fix:** nothing is lost from the conversation itself, which goes on in both cases. Close the other window to record the session again. For a failed write, check that `~/.agent-daemon/sessions/` exists and is writable. `AD_LEDGER=0` turns the record off.
+
+---
+
+## 74. "Couldn't switch to … Still on …"
+
+**Cause:** moving a conversation to another account (P4.2) stopped before anything moved, for the reason in the message:
+- "that account needs signing in again": its key or sign-in expired; run the `ad auth login` it names;
+- "that model isn't available on that account": pick one of the account's models;
+- "the engine for that account didn't start": details in `/warnings`; `ad doctor` checks the engine;
+- "the engine kept the old provider": the engine answered the fork on the old provider, so ad dropped the copy; switch again (it then starts a new conversation with the history), and report it;
+- "the conversation kept starting turns by itself": a goal or a subagent kept starting turns; stop it (`/goal pause`, `/subagents`), then switch.
+
+**Fix:** nothing changed: the conversation, its goal and its files are as they were. Fix the reason and pick the account again. "History carried over: 14 turns, 3 left out" after a switch is not an error: the oldest turns didn't fit the new model's context; they're in the previous conversation (`/resume`).
+
+---
+
+## 75. "price unknown" next to a model
+
+**Cause:** the provider's model list didn't give a price for it (most OpenAI-style lists don't), or the price ad saw is more than a day old. ad never guesses, and never counts an unknown price as free.
+
+**Fix:** `ad auth models <account> --refresh` asks the provider again. If it still says unknown, the provider doesn't publish prices in its list: check its pricing page. Automatic moves that need a price ("free only", a daily budget) skip such a model.
+
+## 76. "… with your ChatGPT plan, upgrade to Plus"
+
+**Cause:** the ChatGPT plan signed in doesn't include this use. It is not a limit that resets, so ad records it as "not eligible", not as a quota, and never waits for it or switches to wait it out.
+
+**Fix:** use an account whose plan includes it (`/model` or `/account`), or an API key account. `ad auth status` shows each account's plan.
+
+## 77. Fallback never switches, or a target says "skipped now"
+
+**Cause:** fallback is off, or no target fits its rules right now. `ad fallback` lists each target with the reason it would be skipped: a price not checked in the last day under "free only", a model that bills per use under "no extra spend", a trial endpoint you haven't confirmed, an account that needs signing in, a provider that hit its limit (every account of it waits for the reset, also when another window saw it), or the per-hour switch cap. "None of these targets fits 'free only' right now" means turning it on would never move anything.
+
+**Fix:** `ad fallback preview --error quotaExhausted` shows what would happen now, step by step. `ad auth models <account> --refresh` checks prices again. Add a free model, or choose `ad fallback set cost noExtraSpend` to allow plans you already pay for. `ad fallback test` checks every target without sending anything.
+
+## 78. "Fallback is off: … changed since you confirmed the order", or it turned itself off
+
+**Cause:** what you confirmed changed: the order, a target, the cost or trial rule, the keep-running list, or the account behind a target (signed in again as someone else, a new key, another base URL). ad never sends your work to a destination you didn't confirm, so it turns fallback off until you look again. Lowering the limits doesn't do this.
+
+**Fix:** `ad fallback` to check the order, then `ad fallback enable` (or `/fallback`, then **e**) to confirm it again.
+
+## 79. Fallback paused: "may still be running from the failed turn"
+
+**Cause:** the turn failed while a command (or an edit) it started had no known end. Moving the conversation now could let the next model run it again, or build on a half-finished change, so automatic fallback stops instead.
+
+**Fix:** check what the command did (`git status`, its output, the service it touches). Then `/retry` to go on with the same model, `/model` to pick another one yourself, or type what to do next. Nothing you queued runs until then.
+
+## 80. Fallback paused: "still running in the background"
+
+**Cause:** a background command from the conversation (a server, a watcher, a migration) is still running, and it isn't on the order's keep-running list. Another model might start it a second time.
+
+**Fix:** stop it in `/ps` and `/retry`. If it is a dev server or a watcher you always run, add it to the keep-running list (`ad fallback set keep-running "npm run dev"`, or the rules line in `/fallback`): the next model is then told it is running and not to start it again. Write the command as you typed it (the pause names it that way): ad matches it inside the shell the engine runs it in (`powershell.exe -Command '…'` on Windows, `bash -lc '…'` elsewhere).
+
+## 81. Fallback paused: "switching too often" or "the fallback budget is used up"
+
+**Cause:** the order's limits stop endless moving: moves per task (`max-hops`), moves per hour across windows (`max-switches`), and how long ad keeps trying (`give-up`). Several providers running out at once reaches them quickly.
+
+**Fix:** wait for a reset (`ad fallback` shows each target's state), add a target that isn't limited, or raise a limit (`ad fallback set max-hops 4`). `/retry` tries the current model again now.
+
+## 85. An import was refused, interrupted, or held something back
+
+**Cause and fix, by what ad said:**
+- *"Import refused: …"*: the bundle has a name that could leave ad's folders, a file that doesn't match its manifest, a database with parts ad didn't make, or rows of a project it doesn't declare. Nothing was written. Export it again with this ad (`ad state export`), and import only bundles you made.
+- *"This bundle was made by a newer ad"*: update ad here, then import again.
+- *"An import was interrupted (imp_…)"*: finish it with `ad state import --resume imp_…`, or undo it with `ad state rollback imp_…`.
+- *"held back: …"*: a memory file read like an instruction or held something shaped like a key. It waits under `~/.agent-daemon/imports/<id>/held/`; read it, then import again with `--accept-held` if it's fine.
+- *"not mapped"*: ad couldn't tell where a project lives here. Its memory came in (searchable by its id); map it with `ad state import <file> --map <name>=<dir>`.
+- *"… is a link. ad won't write through it."*: that project's `.agent-daemon` points somewhere else. Replace the link with a real folder, then import again.
+
+## 84. "Export stopped: … look like keys", or a name can't go into a bundle
+
+**Cause:** `ad state export` found text shaped like a key (an API key, a token) in what it would export, or a file whose name another OS can't create (`aux.md`, two names that differ only by case, a name ending in a dot). It lists each one: the row (`learnings #812 (text)`) or the file, never the key itself.
+
+**Fix:** for keys, run again with `--redact` (the export gets `[redacted:…]`, your own memory is unchanged), or clean the row for good with `ad memory redact learnings:812` in your terminal. For names, rename the file it lists and export again.
+
+## 83. A run exited with code 4, or a scheduled job says "paused"
+
+**Cause:** the run opted in to fallback (`--fallback`, a job's or a team's setting), a limit ran out, and fallback couldn't move safely with nobody to ask: no other model in the order could take over, a command's end was unknown, a background command wasn't on the keep-running list, or a budget was used up. The reason is on stderr (`[ad] ⏸ Paused: …`), in `--json` (`"reason"`), in the job's `schedule-logs/<id>.status.json` and in `ad schedule list`.
+
+**Fix:** nothing was lost: the session (`ses_…`) keeps the work. Run it again after the reset, add a target that can take over (`ad fallback`), or allow the long-running command (`ad fallback set keep-running "…"`). Scripts that treat any non-zero exit as a failure see `4` as one; check for it to tell "paused" from "failed".
+
+## 82. Limits are blank, or "not reported by this provider"
+
+**Cause:** ad shows only what a provider told it, and drops a number once its reset passed or it is more than 6 hours old. Many API providers report nothing until a limit is hit; OpenRouter's numbers are read after a limit and on request; a ChatGPT sign-in reports through its engine, so a sign-in no window has open keeps its last numbers.
+
+**Fix:** `/usage` reads OpenRouter's numbers again. `ad auth list --refresh` does it for every OpenRouter key, and `--refresh=all` also starts each ChatGPT sign-in's engine that no window is using. A blank cell is "unknown", never "unlimited": nothing is wrong with the account.
 
 ---
 

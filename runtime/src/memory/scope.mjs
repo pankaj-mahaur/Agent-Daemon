@@ -21,6 +21,8 @@ import os from "node:os";
 import path from "node:path";
 import { adPackageRoot, adRoot, legacyAdRoots } from "../ad-root.mjs";
 import { projectSlug } from "./episodic.mjs";
+import { withProjectId } from "./projects.mjs";
+import { syncProjectKeys } from "./project-db.mjs";
 
 const norm = (p, platform) => {
   const r = path.resolve(p).replace(/[\\/]+$/, "") || path.resolve(p);
@@ -49,8 +51,19 @@ function systemFolders(env, platform) {
     if (local) out.push(path.join(local, "Programs"));
     return out.filter((p) => path.isAbsolute(p));
   }
-  if (platform === "darwin") return ["/System", "/Library", "/Applications", "/usr", "/bin", "/sbin", "/private", "/opt/homebrew"];
+  // macOS: /etc and /var are links into /private; /tmp too, and the per-user
+  // temp folder lives in /private/var/folders (exempt below), so not all of /private.
+  if (platform === "darwin") return ["/System", "/Library", "/Applications", "/usr", "/bin", "/sbin", "/etc", "/var", "/private/etc", "/private/var", "/opt/homebrew"];
   return ["/usr", "/bin", "/sbin", "/etc", "/opt", "/var", "/proc", "/sys", "/snap"];
+}
+
+// Temp folders inside a system folder are where people (and tests) make scratch
+// projects: the OS temp folder and macOS's per-user ones are never "system".
+function tempFolders(platform) {
+  if (platform === "win32") return [];
+  const out = [os.tmpdir(), "/var/tmp", "/private/var/tmp"];
+  if (platform === "darwin") out.push("/var/folders", "/private/var/folders");
+  return out;
 }
 
 // A path and, when it exists, its real path (a junction, a short 8.3 name or
@@ -80,7 +93,7 @@ function neverValidOne(dir, { env = process.env, home = os.homedir(), platform =
   if (isRoot(dir)) return "a filesystem root";
   if (home && spellings(home).some((h) => norm(dir, platform) === norm(h, platform))) return "the home folder";
   const inside = (ref) => spellings(ref).some((r) => within(dir, r, platform));
-  for (const sys of systemFolders(env, platform)) if (inside(sys)) return "a system folder";
+  if (!tempFolders(platform).some((t) => inside(t))) for (const sys of systemFolders(env, platform)) if (inside(sys)) return "a system folder";
   for (const r of [adRoot({ env, homedir: () => home }), ...legacyAdRoots({ env, homedir: () => home, platform })]) {
     if (inside(r)) return "ad's own folder";
   }
@@ -90,9 +103,13 @@ function neverValidOne(dir, { env = process.env, home = os.homedir(), platform =
 
 /** A .git (folder or file) or .agent-daemon folder at dir or above, below home and the root. */
 function looksLikeProject(dir, { home, platform }) {
+  // Every spelling on both sides (macOS's /var vs /private/var, a Windows 8.3
+  // short name, a link): otherwise the walk passes home and finds ad's own folder.
+  const homes = home ? spellings(home).map((h) => norm(h, platform)) : [];
+  const isHome = (d) => spellings(d).some((s) => homes.includes(norm(s, platform)));
   let d = path.resolve(dir);
   for (;;) {
-    if (isRoot(d) || (home && norm(d, platform) === norm(home, platform))) return false;
+    if (isRoot(d) || isHome(d)) return false;
     if (fs.existsSync(path.join(d, ".git"))) return true;
     try {
       if (fs.statSync(path.join(d, ".agent-daemon")).isDirectory()) return true;
@@ -114,7 +131,8 @@ const isDir = (p) => {
 /**
  * The project keys a hook (SessionStart, query-retrieve) may read for the
  * folder the host gave it: [] when that folder is never valid (home, a root,
- * a system folder, ad's own folders) or shares its key with another folder.
+ * a system folder, ad's own folders). With the project's id (P7.1a): a folder
+ * that shares its slug with another reads by id only (projects.mjs withProjectId).
  *
  * @param {string|undefined} cwd
  * @returns {Promise<string[]>}
@@ -125,7 +143,17 @@ export async function hookProjectKeys(cwd, { env = process.env } = {}) {
   const { slugCollides } = await import("./safety.mjs");
   const handle = await db().catch(() => null);
   const s = resolveMemoryScope({ project: cwd, env: { ...env, AD_MEMORY_PROJECT: undefined }, cwd, collides: handle ? (k, d) => slugCollides(handle, k, d) : undefined, note: () => {} });
-  return s.keys;
+  const bound = withProjectId(s, { env });
+  // A project the registry just learned of: the database's mirror follows, so rows
+  // written in this process get its id.
+  if (handle?.raw && bound !== s) {
+    try {
+      syncProjectKeys(handle.raw, { env });
+    } catch {
+      // a busy store: the next open mirrors it
+    }
+  }
+  return bound.keys;
 }
 
 /**
@@ -151,7 +179,9 @@ export function resolveMemoryScope({ project, env = process.env, cwd, host, home
     picked = { dir: path.resolve(value), source };
     break;
   }
-  if (!picked && cwd && path.isAbsolute(cwd) && !neverValid(cwd, o) && looksLikeProject(cwd, o)) {
+  // Agent Plugins hosts start servers in the plugin's own folder, which may sit in a
+  // git clone of a marketplace: the working folder is never the user's project there.
+  if (!picked && host !== "agent-plugins" && cwd && path.isAbsolute(cwd) && !neverValid(cwd, o) && looksLikeProject(cwd, o)) {
     picked = { dir: path.resolve(cwd), source: "cwd" };
   }
   if (!picked) return { kind: "unbound", dir: null, keys: [], source: "none" };

@@ -4,3 +4,6 @@ runtime/test/golden/** text eol=lf
 
 # Shell scripts must stay LF or bash on Linux/macOS (and Git Bash) chokes on \r.
 *.sh text eol=lf
+
+# The correction benchmark hashes its fixtures byte for byte (repos.sha256): keep them LF.
+bench/correction-bench/repos/** text eol=lf

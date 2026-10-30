@@ -1,0 +1,584 @@
+{
+  "path": "/v1/responses",
+  "headers": {
+    "accept": "text/event-stream",
+    "content-type": "application/json",
+    "originator": "agent_daemon"
+  },
+  "body": {
+    "model": "gemini-2.5-flash",
+    "stream": true,
+    "input": [
+      {
+        "type": "message",
+        "id": "msg_73c5acaa-908c-5439-92f7-4ff33b962373",
+        "role": "developer",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "{ELIDED 17174 chars sha256:f6d6b8750560}"
+          }
+        ]
+      },
+      {
+        "type": "message",
+        "id": "msg_01a17179-380d-7643-80ad-3b0957cee40a",
+        "role": "developer",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "{ELIDED 7756 chars sha256:23d0b9eadc78}"
+          },
+          {
+            "type": "input_text",
+            "text": "{ELIDED 3939 chars sha256:2493dd1ae752}"
+          }
+        ]
+      },
+      {
+        "type": "message",
+        "id": "msg_01a17179-380d-7643-80ad-3b1cb3a9534d",
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "<environment_context>\n  <cwd>{TMP}</cwd>\n  <shell>powershell</shell>\n  <current_date>{DATE}</current_date>\n  <timezone>{TZ}</timezone>\n  <filesystem><workspace_roots><root>{TMP}</root></workspace_roots><permission_profile type=\"managed\"><file_system type=\"restricted\"><entry access=\"read\"><special>:root</special></entry></file_system></permission_profile></filesystem>\n</environment_context>"
+          }
+        ]
+      },
+      {
+        "type": "message",
+        "id": "msg_01a17179-3859-7840-986b-f7e3129ae3e6",
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "PING"
+          }
+        ]
+      },
+      {
+        "type": "reasoning",
+        "summary": [
+          {
+            "type": "summary_text",
+            "text": "**Thinking** about the reply"
+          }
+        ],
+        "content": null,
+        "encrypted_content": "YmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJi"
+      },
+      {
+        "type": "message",
+        "role": "assistant",
+        "content": [
+          {
+            "type": "output_text",
+            "text": "pong"
+          }
+        ]
+      },
+      {
+        "type": "message",
+        "id": "msg_01a17179-3972-73a1-b9a2-90345a760314",
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "SHELL"
+          }
+        ]
+      },
+      {
+        "type": "function_call",
+        "id": "fc_01a17179-39a3-7640-878f-14729d73d8dd",
+        "name": "exec_command",
+        "arguments": "{\"cmd\":\"cmd.exe /d /c echo hi\"}",
+        "call_id": "call-shell"
+      },
+      {
+        "type": "function_call_output",
+        "id": "fco_01a17179-3da0-7163-9db9-f578b2af7739",
+        "call_id": "call-shell",
+        "output": "Chunk ID: 37f02b\nWall time: 0.7460 seconds\nProcess exited with code 0\nOriginal token count: 1\nOutput:\nhi\r\n"
+      },
+      {
+        "type": "message",
+        "role": "assistant",
+        "content": [
+          {
+            "type": "output_text",
+            "text": "done after call-shell"
+          }
+        ]
+      },
+      {
+        "type": "message",
+        "id": "msg_01a17179-3e89-7363-af05-22ad7cb13e60",
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "FREEFORM"
+          }
+        ]
+      },
+      {
+        "type": "custom_tool_call",
+        "id": "ctc_01a17179-3eba-7772-b949-bd32514fa00a",
+        "call_id": "call-freeform",
+        "name": "apply_patch",
+        "input": "*** Begin Patch\n*** Add File: hello.txt\n+hello from the mock\n*** End Patch\n"
+      },
+      {
+        "type": "custom_tool_call_output",
+        "id": "ctco_01a17179-3ede-75a0-955f-e5f6a2ed371d",
+        "call_id": "call-freeform",
+        "output": "unsupported custom tool call: apply_patch"
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "name": "exec_command",
+        "description": "Runs a command in a PTY, returning output or a session ID for ongoing interaction.\n\nWindows safety rules:\n- Do not compose destructive filesystem commands across shells. Do not enumerate paths in PowerShell and then pass them to `cmd /c`, batch builtins, or another shell for deletion or moving. Use one shell end-to-end, prefer native PowerShell cmdlets such as `Remove-Item` / `Move-Item` with `-LiteralPath`, and avoid string-built shell commands for file operations.\n- Before any recursive delete or move on Windows, verify the resolved absolute target paths stay within the intended workspace or explicitly named target directory. Never issue a recursive delete or move against a computed path if the final target has not been checked.\n- When using `Start-Process` to launch a background helper or service, pass `-WindowStyle Hidden` unless the user explicitly asked for a visible interactive window. Use visible windows only for interactive tools the user needs to see or control.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "cmd": {
+              "type": "string",
+              "description": "Shell command to execute."
+            },
+            "justification": {
+              "type": "string",
+              "description": "User-facing approval question for `require_escalated`; omit otherwise."
+            },
+            "login": {
+              "type": "boolean",
+              "description": "True runs the shell with -l/-i semantics; false disables them. Defaults to true."
+            },
+            "max_output_tokens": {
+              "type": "number",
+              "description": "Output token budget. Defaults to 10000 tokens; larger requests may be capped by policy."
+            },
+            "prefix_rule": {
+              "type": "array",
+              "description": "Reusable approval prefix for `cmd`, only with `sandbox_permissions: \"require_escalated\"`; for example [\"git\", \"pull\"].",
+              "items": {
+                "type": "string"
+              }
+            },
+            "sandbox_permissions": {
+              "type": "string",
+              "description": "Per-command sandbox override. Defaults to `use_default`; use `require_escalated` for unsandboxed execution.",
+              "enum": [
+                "use_default",
+                "require_escalated"
+              ]
+            },
+            "shell": {
+              "type": "string",
+              "description": "Shell binary to launch. Defaults to the user's default shell."
+            },
+            "tty": {
+              "type": "boolean",
+              "description": "True allocates a PTY for the command; false or omitted uses plain pipes."
+            },
+            "workdir": {
+              "type": "string",
+              "description": "Working directory for the command. Defaults to the turn cwd."
+            },
+            "yield_time_ms": {
+              "type": "number",
+              "description": "Maximum time to wait before returning a session ID for a still-running command. Commands that finish sooner return immediately. For ordinary commands, omit this parameter to use the 10000 ms default. Effective range on Windows is 10000-30000 ms."
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "type": "function",
+        "name": "write_stdin",
+        "description": "Writes characters to an existing unified exec session and returns recent output.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "chars": {
+              "type": "string",
+              "description": "Bytes to write to stdin. Defaults to empty, which polls without writing."
+            },
+            "max_output_tokens": {
+              "type": "number",
+              "description": "Output token budget. Defaults to 10000 tokens; larger requests may be capped by policy."
+            },
+            "session_id": {
+              "type": "number",
+              "description": "Identifier of the running unified exec session."
+            },
+            "yield_time_ms": {
+              "type": "number",
+              "description": "Wait before yielding output. Non-empty writes default to 250 ms and cap at 30000 ms; empty polls wait 5000-300000 ms by default."
+            }
+          },
+          "required": [
+            "session_id"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "type": "function",
+        "name": "request_user_input",
+        "description": "Request user input for one to three short questions and wait for the response. This tool is only available in Plan mode.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "questions": {
+              "type": "array",
+              "description": "Questions to show the user. Prefer 1 and do not exceed 3",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "header": {
+                    "type": "string",
+                    "description": "Short header label shown in the UI (12 or fewer chars)."
+                  },
+                  "id": {
+                    "type": "string",
+                    "description": "Stable identifier for mapping answers (snake_case)."
+                  },
+                  "options": {
+                    "type": "array",
+                    "description": "Provide 2-3 mutually exclusive choices. Put the recommended option first and suffix its label with \"(Recommended)\". Do not include an \"Other\" option in this list; the client will add a free-form \"Other\" option automatically.",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "description": {
+                          "type": "string",
+                          "description": "One short sentence explaining impact/tradeoff if selected."
+                        },
+                        "label": {
+                          "type": "string",
+                          "description": "User-facing label (1-5 words)."
+                        }
+                      },
+                      "required": [
+                        "label",
+                        "description"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "question": {
+                    "type": "string",
+                    "description": "Single-sentence prompt shown to the user."
+                  }
+                },
+                "required": [
+                  "id",
+                  "header",
+                  "question",
+                  "options"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "questions"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "type": "function",
+        "name": "view_image",
+        "description": "View a local image file from the filesystem when visual inspection is needed. Use this for images already available on disk.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "Local filesystem path to an image file."
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "type": "namespace",
+        "name": "multi_agent_v1",
+        "description": "Tools for spawning and managing sub-agents.",
+        "tools": [
+          {
+            "type": "function",
+            "name": "close_agent",
+            "description": "Close an agent and any open descendants when they are no longer needed, and return the target agent's previous status before shutdown was requested. Completed agents remain open and count toward the concurrency limit until closed. Don't keep agents open for too long if they are not needed anymore.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "target": {
+                  "type": "string",
+                  "description": "Agent id to close (from spawn_agent)."
+                }
+              },
+              "required": [
+                "target"
+              ],
+              "additionalProperties": false
+            }
+          },
+          {
+            "type": "function",
+            "name": "resume_agent",
+            "description": "Resume a previously closed agent by id so it can receive send_input and wait_agent calls.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Agent id to resume."
+                }
+              },
+              "required": [
+                "id"
+              ],
+              "additionalProperties": false
+            }
+          },
+          {
+            "type": "function",
+            "name": "send_input",
+            "description": "Send a message to an existing agent. Use interrupt=true to redirect work immediately. You should reuse the agent by send_input if you believe your assigned task is highly dependent on the context of a previous task.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "interrupt": {
+                  "type": "boolean",
+                  "description": "True interrupts the current task and handles this message immediately; false or omitted queues it."
+                },
+                "items": {
+                  "type": "array",
+                  "description": "Structured input items. Use this to pass explicit mentions (for example app:// connector paths).",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "audio_url": {
+                        "type": "string",
+                        "description": "Audio data URL when type is audio."
+                      },
+                      "image_url": {
+                        "type": "string",
+                        "description": "Image URL when type is image."
+                      },
+                      "name": {
+                        "type": "string",
+                        "description": "Display name when type is skill or mention."
+                      },
+                      "path": {
+                        "type": "string",
+                        "description": "Path when type is local_image/local_audio/skill, or structured mention target such as app://<connector-id> or plugin://<plugin-name>@<marketplace-name> when type is mention."
+                      },
+                      "text": {
+                        "type": "string",
+                        "description": "Text content when type is text."
+                      },
+                      "type": {
+                        "type": "string",
+                        "description": "Input item type: text, image, local_image, audio, local_audio, skill, or mention."
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "message": {
+                  "type": "string",
+                  "description": "Legacy plain-text message to send to the agent. Use either message or items."
+                },
+                "target": {
+                  "type": "string",
+                  "description": "Agent id to message (from spawn_agent)."
+                }
+              },
+              "required": [
+                "target"
+              ],
+              "additionalProperties": false
+            }
+          },
+          {
+            "type": "function",
+            "name": "spawn_agent",
+            "description": "{ELIDED 5033 chars sha256:5dfbcec2bbf5}",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "fork_context": {
+                  "type": "boolean",
+                  "description": "True forks the current thread history into the new agent; false or omitted starts with only the initial prompt."
+                },
+                "items": {
+                  "type": "array",
+                  "description": "Structured input items. Use this to pass explicit mentions (for example app:// connector paths).",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "audio_url": {
+                        "type": "string",
+                        "description": "Audio data URL when type is audio."
+                      },
+                      "image_url": {
+                        "type": "string",
+                        "description": "Image URL when type is image."
+                      },
+                      "name": {
+                        "type": "string",
+                        "description": "Display name when type is skill or mention."
+                      },
+                      "path": {
+                        "type": "string",
+                        "description": "Path when type is local_image/local_audio/skill, or structured mention target such as app://<connector-id> or plugin://<plugin-name>@<marketplace-name> when type is mention."
+                      },
+                      "text": {
+                        "type": "string",
+                        "description": "Text content when type is text."
+                      },
+                      "type": {
+                        "type": "string",
+                        "description": "Input item type: text, image, local_image, audio, local_audio, skill, or mention."
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "message": {
+                  "type": "string",
+                  "description": "Initial plain-text task for the new agent. Use either message or items."
+                },
+                "model": {
+                  "type": "string",
+                  "description": "Model override for the new agent. Omit unless an explicit override is needed."
+                },
+                "reasoning_effort": {
+                  "type": "string",
+                  "description": "Reasoning effort override for the new agent. Omit to inherit the parent effort."
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          {
+            "type": "function",
+            "name": "wait_agent",
+            "description": "Wait for agents to reach a final status. Completed statuses may include the agent's final message. Returns empty status when timed out. Once the agent reaches a final status, a notification message will be received containing the same completed status.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "targets": {
+                  "type": "array",
+                  "description": "Agent ids to wait on. Pass multiple ids to wait for whichever finishes first.",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "timeout_ms": {
+                  "type": "number",
+                  "description": "Timeout in milliseconds. Defaults to 30000, min 10000, max 3600000. Prefer longer waits (minutes) to avoid busy polling."
+                }
+              },
+              "required": [
+                "targets"
+              ],
+              "additionalProperties": false
+            }
+          }
+        ]
+      },
+      {
+        "type": "function",
+        "name": "get_goal",
+        "description": "Get the current goal for this thread, including status, budgets, token and elapsed-time usage, and remaining token budget.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      {
+        "type": "function",
+        "name": "create_goal",
+        "description": "Create a goal only when explicitly requested by the user or system/developer instructions; do not infer goals from ordinary tasks.\nSet token_budget only when an explicit token budget is requested. Fails if an unfinished goal exists; use update_goal only for status.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "objective": {
+              "type": "string",
+              "description": "Required. The concrete objective to start pursuing. This starts a new active goal when no goal exists or replaces the current goal when it is complete."
+            },
+            "token_budget": {
+              "type": "integer",
+              "description": "Positive token budget for the new goal. Omit unless explicitly requested."
+            }
+          },
+          "required": [
+            "objective"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "type": "function",
+        "name": "update_goal",
+        "description": "{ELIDED 1541 chars sha256:5d7192dc9175}",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "description": "Required. `paused` requires an explicit user request. Set to `complete` only when the objective is achieved and no required work remains. Set to `blocked` only after the same blocking condition has recurred for at least three consecutive goal turns and the agent is at an impasse. After a previously blocked goal is resumed, the resumed run starts a fresh blocked audit.",
+              "enum": [
+                "complete",
+                "blocked",
+                "paused"
+              ]
+            }
+          },
+          "required": [
+            "status"
+          ],
+          "additionalProperties": false
+        }
+      }
+    ],
+    "tool_choice": "auto",
+    "parallel_tool_calls": true,
+    "reasoning": {
+      "summary": "auto"
+    },
+    "store": false,
+    "include": [
+      "reasoning.encrypted_content"
+    ],
+    "prompt_cache_key": "{CACHE_KEY}",
+    "client_metadata": "{CLIENT_METADATA}"
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "family": "ids",
+  "phrasings": [
+    {
+      "id": "ids-a1",
+      "text": "Actually we use newId(prefix) from src/lib/ids.js for ids, not randomUUID.",
+      "writer": "author"
+    },
+    {
+      "id": "ids-a2",
+      "text": "Ids come from newId(\"cart\") etc. in lib/ids.js; they need the prefix and to sort by time.",
+      "writer": "author"
+    },
+    {
+      "id": "ids-a3",
+      "text": "Please remember: every id is made with newId from the ids helper.",
+      "writer": "author"
+    },
+    {
+      "id": "ids-a4",
+      "text": "use newId, not uuid",
+      "writer": "author"
+    },
+    {
+      "id": "ids-a5",
+      "text": "We don't generate random ids ourselves, newId in src/lib/ids.js does that.",
+      "writer": "author"
+    }
+  ]
+}

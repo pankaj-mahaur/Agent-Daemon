@@ -29,14 +29,28 @@ const SHAPES = {
     others: '{\n  "mcpServers": {\n    "github": { "command": "gh-mcp" }\n  }\n}\n',
     jsonc: '{\n  // mine\n  "mcpServers": {}\n}\n',
   },
+  vscode: {
+    missing: null,
+    empty: "{}",
+    others: '{\n  "mcpServers": {\n    "github": { "type": "stdio", "command": "gh-mcp" }\n  }\n}\n',
+    jsonc: '{\n  // personal servers\n  "mcpServers": {}\n}\n',
+  },
+  gemini: {
+    missing: null,
+    empty: "{}",
+    others: '{\n  "theme": "Dracula",\n  "mcpServers": {\n    "github": { "command": "gh-mcp" }\n  }\n}\n',
+    crlf: '{\r\n  "theme": "Dracula"\r\n}\r\n',
+  },
   "claude-code": { cli: null },
 };
+// The host's settings file in a fake home (its folder makes the host "found").
+const FILES = { codex: [".codex", "config.toml"], cursor: [".cursor", "mcp.json"], vscode: [".copilot", "mcp-config.json"], gemini: [".gemini", "settings.json"] };
 
 function world(host, text) {
   const h = fs.mkdtempSync(path.join(os.tmpdir(), "ad-matrix-"));
   const env = { HOME: h, USERPROFILE: h, CODEX_HOME: path.join(h, ".codex"), AD_ROOT: path.join(h, ".agent-daemon"), FAKE_CLAUDE_STATE: path.join(h, "claude.json"), PATH: process.env.PATH, SystemRoot: process.env.SystemRoot };
-  const file = host === "codex" ? path.join(h, ".codex", "config.toml") : host === "cursor" ? path.join(h, ".cursor", "mcp.json") : null;
-  fs.mkdirSync(path.join(h, host === "codex" ? ".codex" : host === "cursor" ? ".cursor" : ".claude"), { recursive: true });
+  const file = FILES[host] ? path.join(h, ...FILES[host]) : null;
+  fs.mkdirSync(path.join(h, FILES[host]?.[0] ?? ".claude"), { recursive: true });
   if (file && text !== null) fs.writeFileSync(file, text);
   const out = [];
   const ctx = makeContext({ env, home: h, root: env.AD_ROOT, resolve: (n) => (n === "claude" && host === "claude-code" ? { cmd: process.execPath, prefix: [SHIM], via: "env", file: SHIM } : null), out: (l) => out.push(l), ask: async () => "" });

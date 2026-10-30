@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { CodexAppServer, installedCodexVersion, pinnedCodexVersion } from "./codex/app-server.mjs";
 import { engineError } from "./codex/errors.mjs";
+import { assertRetargeted, RETARGET_BUSY_TEXT } from "./retarget.mjs";
 import { APPROVAL_METHODS, approvalResponse } from "./codex/approvals.mjs";
 import { canonicalPath, codexEnv, defaultCodexHome, ensureCodexHome, homeLayerRisk, homeOverride, isManagedHome, launchDir, prepareDefaultHome, riskUserHomes, userCodexHomes, MANAGED_MARKER } from "./codex/home.mjs";
 import { homeDoctorNote, homeFolderRefusal } from "./attribution.mjs";
@@ -28,8 +29,12 @@ import { codexCompat, engineChecks, engineLiveChecks, parseCodexVersion, probeVe
 import { MIRROR_MARKER, MIRRORED_FLAG, runStockUi, stockUiArgs, syncSkills } from "./codex/stock-ui.mjs";
 import PINNED_SNAPSHOT from "./codex/protocol-snapshot.json" with { type: "json" };
 import UPSTREAM_COMMANDS from "./codex/upstream-commands.json" with { type: "json" };
+import { redact } from "../auth/redact.mjs";
 
 export { engineError };
+export { assertRetargeted, RETARGET_BUSY_TEXT, RETARGET_IGNORED_TEXT } from "./retarget.mjs";
+export { letGo, switchThread, SWITCH_TEXTS } from "./switch.mjs";
+export { createEngineManager } from "./manager.mjs";
 
 // The engine's errors and notices in ad's words (design G2): the screen shows
 // these; the raw text goes to /warnings (terminal UI) or a "details:" line (CLI).
@@ -71,14 +76,23 @@ export function engineErrorText(err, { details = "/warnings" } = {}) {
     case "ENGINE_NOT_STARTED":
       return "The engine isn't running.";
     default:
-      return err?.message ?? String(err); // ad's own words (HOME_*, FEATURE_UNAVAILABLE, ENGINE_NOT_INSTALLED, …), or not an engine error
+      return redact(err?.message ?? String(err)); // ad's own words (HOME_*, FEATURE_UNAVAILABLE, ENGINE_NOT_INSTALLED, …), or not an engine error
   }
 }
 
-/** The engine's raw text for an error, unmodified, or null. */
+/**
+ * A turn's error as turn() returns it (the engine's own field names) → the shape the failure
+ * classifier reads ({ message, info }), as the session's events already give it. null for none.
+ */
+export function turnErrorOf(e) {
+  return e ? { message: String(e.message ?? ""), info: e.codexErrorInfo ?? e.info ?? null } : null;
+}
+
+/** The engine's raw text for an error, or null: unmodified but for secrets (P3.3 redactor). */
 export function engineErrorDetail(err) {
   if (!isEngineError(err)) return null;
-  return err.raw ?? err.stderr ?? err.message ?? null;
+  const raw = err.raw ?? err.stderr ?? err.message ?? null;
+  return raw === null ? null : redact(raw);
 }
 
 /** ad's words for a notice the engine sent (events.mjs codes: warning, deprecation, config, …). */
@@ -110,6 +124,7 @@ export const DEFAULT_APPROVAL_POLICY = "on-request";
 const FEATURE_NEEDS = {
   planMode: { methods: ["collaborationMode/list", "thread/settings/update"], fields: { "turn/start": ["collaborationMode"] } },
   stopTerminals: { methods: ["thread/backgroundTerminals/clean"], fields: {} },
+  deferGoal: { methods: [], fields: { "thread/fork": ["deferGoalContinuation"] } },
 };
 
 /** {planMode, stopTerminals}, each {available, reason}; reason says why not, in ad's words. */
@@ -214,16 +229,29 @@ export class Engine extends EventEmitter {
       resume: (threadId, o) => this.resumeThread(threadId, o),
       /** → the engine's answer ({thread, …}). */
       fork: async (threadId, { memoryProject, ...o } = {}) => {
+        if (o.deferGoalContinuation !== undefined) this.#gate("deferGoal", "Holding a goal back while forking");
         const folder = await this.#refuseHomeFolder(o.cwd, threadId);
         const config = await this.#threadConfig(await this.#withMemoryScope(memoryProject === undefined ? (o.cwd ?? folder) : memoryProject, o.config));
         const params = clean({ threadId, ...o, config });
-        return this.#request("thread/fork", params).catch((err) => this.#homeError(err, params));
+        const r = await this.#request("thread/fork", params).catch((err) => this.#homeError(err, params));
+        // A fork that names a provider or model must have taken it; the fork's id travels
+        // with the error so the caller can drop it.
+        if (o.modelProvider !== undefined || o.model !== undefined) {
+          try {
+            assertRetargeted(r, { modelProvider: o.modelProvider, model: o.model });
+          } catch (err) {
+            err.forkedThreadId = r?.thread?.id ?? null;
+            throw err;
+          }
+        }
+        return r;
       },
       inject: (threadId, items) => this.#request("thread/inject_items", { threadId, items }),
       /** → {status: "unsubscribed" | "notLoaded" | …}. */
       unsubscribe: (threadId) => this.#request("thread/unsubscribe", { threadId }),
-      /** → [thread]; o: {cwd, limit, modelProviders, sourceKinds, archived}. */
-      list: async (o = {}) => (await this.#request("thread/list", clean(o)))?.data ?? [],
+      /** → [thread]; o: {cwd, limit, modelProviders, sourceKinds, archived}. modelProviders defaults
+       *  to [] (every provider): with -c model_provider set the engine lists only that one's (N15). */
+      list: async (o = {}) => (await this.#request("thread/list", clean({ ...o, modelProviders: o.modelProviders ?? [] })))?.data ?? [],
       archive: (threadId) => this.#request("thread/archive", { threadId }),
       /** → the engine's answer ({thread}). */
       unarchive: (threadId) => this.#request("thread/unarchive", { threadId }),
@@ -233,8 +261,14 @@ export class Engine extends EventEmitter {
       /** One page of history, oldest first, full items → {data, nextCursor}. */
       turns: (threadId, { cursor, limit = 50 } = {}) => this.#request("thread/turns/list", clean({ threadId, itemsView: "full", sortDirection: "asc", limit, cursor })),
       compact: (threadId) => this.compactThread(threadId),
+      /** One thread's stored data, without turns unless asked → thread (its status says whether it runs). */
+      read: async (threadId, { includeTurns = false } = {}) => (await this.#request("thread/read", { threadId, includeTurns }))?.thread ?? null,
+      /** Thread ids loaded in this engine. */
+      loaded: () => this.#loadedIds(),
       goal: {
         set: (threadId, objective, o) => this.setGoal(threadId, objective, o),
+        /** → the thread's goal or null. */
+        get: async (threadId) => (await this.#request("thread/goal/get", { threadId }))?.goal ?? null,
         clear: (threadId) => this.clearGoal(threadId),
       },
     };
@@ -534,7 +568,9 @@ export class Engine extends EventEmitter {
       cwd: this.launch.dir,
       clientVersion: this.opts.clientVersion,
       detached: this.opts.detached,
-      codexArgs: [...this.launch.codexArgs, ...(this.opts.engineArgs ?? this.opts.codexArgs ?? [])],
+      // An unsubscribed idle thread unloads at once (P3.4, S-THREADCFG Q10): a switch never
+      // leaves the old thread loaded for the engine's default 30 minutes.
+      codexArgs: [...this.launch.codexArgs, "-c", "thread_unload_delay_secs=0", ...(this.opts.engineArgs ?? this.opts.codexArgs ?? [])],
       // Only the terminal UI opts into the experimental allowlist (codex-parity-2 P0).
       capabilities: this.opts.experimental ? experimentalCapabilities() : undefined,
       env: { ...(this.opts.env ?? {}), CODEX_HOME: this.home },
@@ -683,25 +719,85 @@ export class Engine extends EventEmitter {
   // lives inside ad's own folder; null for none).
   // rootMarkers: this thread's project root markers instead of ad's own ([] for a
   // system thread in the launch folder: its root is then the folder itself).
-  async startThread({ cwd, model, sandbox = DEFAULT_SANDBOX, approvalPolicy = DEFAULT_APPROVAL_POLICY, ephemeral, developerInstructions, config, sessionStartSource, memoryProject, rootMarkers } = {}) {
+  // modelProvider: the account's provider entry (P3.4: a target is captured when a thread
+  // starts and never changes under it).
+  async startThread({ cwd, model, modelProvider, sandbox = DEFAULT_SANDBOX, approvalPolicy = DEFAULT_APPROVAL_POLICY, ephemeral, developerInstructions, config, sessionStartSource, memoryProject, rootMarkers } = {}) {
     // The engine runs in its launch folder: a thread's folder is always sent.
     cwd ??= this.opts.cwd ?? process.cwd();
     await this.#refuseHomeFolder(cwd, null, { markers: rootMarkers });
     config = await this.#withMemoryScope(memoryProject === undefined ? cwd : memoryProject, config);
     config = rootMarkers ? { ...(config ?? {}), project_root_markers: rootMarkers } : await this.#threadConfig(config);
-    const params = clean({ cwd, model, sandbox, approvalPolicy, ephemeral, developerInstructions, config, sessionStartSource });
+    // What the thread's model needs that the engine can't know (P6.2): a provider ad
+    // translates for has no model metadata in the engine, so its context window comes
+    // from ad's provider presets, and the engine compacts before the provider's limit.
+    const forModel = this.opts.threadConfigFor?.({ model, modelProvider }) ?? null;
+    if (forModel) config = { ...forModel, ...(config ?? {}) };
+    const params = clean({ cwd, model, modelProvider, sandbox, approvalPolicy, ephemeral, developerInstructions, config, sessionStartSource });
     const r = await this.#request("thread/start", params).catch((err) => this.#homeError(err, params));
     return { threadId: r.thread.id, model: r.model, modelProvider: r.modelProvider, thread: r.thread };
   }
 
-  async resumeThread(threadId, { memoryProject, ...overrides } = {}) {
+  // A resume that changes the provider or the model (P3.4, S-THREADCFG Q5): the engine
+  // ignores such overrides on a loaded, subscribed or running thread and still answers
+  // success. So the thread is unsubscribed first and given time to unload (bounded), and
+  // the answer is compared with the request: a mismatch throws RETARGET_IGNORED. A
+  // running thread, or one with background terminals (`terminals`: their item ids, from
+  // the caller's own tracking), is refused first (RETARGET_BUSY): unsubscribing it would
+  // lose its events, and unloading it would end its terminals.
+  async resumeThread(threadId, { memoryProject, terminals = [], ...overrides } = {}) {
+    const retarget = overrides.modelProvider !== undefined || overrides.model !== undefined || overrides.config?.model_provider !== undefined || overrides.config?.model !== undefined;
+    if (retarget) {
+      // Fails closed: a thread ad can't read is never unsubscribed.
+      const t = await this.#request("thread/read", { threadId, includeTurns: false });
+      if (t?.thread?.status?.type === "active" || terminals.length) throw engineError("RETARGET_BUSY", RETARGET_BUSY_TEXT);
+      await this.#unloadForRetarget(threadId);
+    }
     // No default folder: the engine keeps the thread's stored one, and the
     // check applies to the folder the thread will actually run in.
     const folder = await this.#refuseHomeFolder(overrides.cwd, threadId);
-    const config = await this.#threadConfig(await this.#withMemoryScope(memoryProject === undefined ? (overrides.cwd ?? folder) : memoryProject, overrides.config));
+    let config = await this.#threadConfig(await this.#withMemoryScope(memoryProject === undefined ? (overrides.cwd ?? folder) : memoryProject, overrides.config));
+    // A resume onto a translated model (a retarget, a fallback, or a plain reopen after a
+    // restart) gets that model's window too: what the call doesn't name comes from the thread.
+    let forModel = null;
+    if (this.opts.threadConfigFor) {
+      let model = overrides.model ?? overrides.config?.model;
+      let modelProvider = overrides.modelProvider ?? overrides.config?.model_provider;
+      if (!model || !modelProvider) {
+        const t = await this.#request("thread/read", { threadId, includeTurns: false }).catch(() => null);
+        model ??= t?.thread?.model ?? undefined;
+        modelProvider ??= t?.thread?.modelProvider ?? undefined;
+      }
+      forModel = this.opts.threadConfigFor({ model, modelProvider }) ?? null;
+    }
+    if (forModel) config = { ...forModel, ...(config ?? {}) };
     const params = clean({ threadId, ...overrides, config });
     const r = await this.#request("thread/resume", params).catch((err) => this.#homeError(err, params));
+    if (retarget) assertRetargeted(r, { modelProvider: overrides.modelProvider ?? overrides.config?.model_provider, model: overrides.model ?? overrides.config?.model });
     return { threadId: r.thread.id, model: r.model, modelProvider: r.modelProvider, thread: r.thread, collaborationMode: collaborationMode(r.collaborationMode) };
+  }
+
+  // opts.retargetWaitMs: how long to wait for the unload (tests shorten it).
+  async #unloadForRetarget(threadId, { timeoutMs = this.opts.retargetWaitMs ?? 10_000 } = {}) {
+    await this.#request("thread/unsubscribe", { threadId }).catch(() => {});
+    const until = Date.now() + timeoutMs;
+    while (Date.now() < until) {
+      const ids = await this.#loadedIds().catch(() => null);
+      if (!ids || !ids.includes(threadId)) return;
+      await new Promise((res) => setTimeout(res, 100));
+    }
+  }
+
+  // Every page of thread/loaded/list.
+  async #loadedIds() {
+    const ids = [];
+    let cursor;
+    for (let page = 0; page < 100; page++) {
+      const r = await this.#request("thread/loaded/list", clean({ cursor }));
+      for (const x of r?.data ?? []) ids.push(typeof x === "string" ? x : x?.id);
+      cursor = r?.nextCursor;
+      if (!cursor) break;
+    }
+    return ids;
   }
 
   // The memory scope contract (plan §M): bind this thread's memory server to
@@ -919,7 +1015,7 @@ export class Engine extends EventEmitter {
   // Recent threads (newest first): [{id, preview, cwd, updatedAt, name?}]
   // sourceKinds: omitted = Codex's default (interactive sources only).
   async listThreads({ cwd, limit = 20, sourceKinds } = {}) {
-    const r = await this.#request("thread/list", clean({ cwd, limit, sourceKinds }));
+    const r = await this.#request("thread/list", clean({ cwd, limit, sourceKinds, modelProviders: [] }));
     return r.data ?? [];
   }
 
@@ -928,8 +1024,9 @@ export class Engine extends EventEmitter {
   }
 
   // Durable objective for long-running work (Codex tracks time/tokens used).
-  async setGoal(threadId, objective, { tokenBudget } = {}) {
-    return (await this.#request("thread/goal/set", clean({ threadId, objective, tokenBudget }))).goal;
+  // status: "paused" holds a goal without clearing it (P3.4's switch).
+  async setGoal(threadId, objective, { tokenBudget, status } = {}) {
+    return (await this.#request("thread/goal/set", clean({ threadId, objective, tokenBudget, status }))).goal;
   }
 
   clearGoal(threadId) {
@@ -984,6 +1081,7 @@ export class Engine extends EventEmitter {
         // In the launch folder the root is the folder itself, whatever the mode.
         rootMarkers: cwd === this.launch?.dir ? [] : undefined,
         model,
+        modelProvider: opts.modelProvider,
         ephemeral: true,
         sandbox: "read-only",
         approvalPolicy: "never",

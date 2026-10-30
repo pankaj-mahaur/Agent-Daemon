@@ -8,7 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { availableDrivers } from "../memory/driver.mjs";
-import { HOSTS, SERVER_NAME, claudeHasAdHooks, hostById } from "./hosts.mjs";
+import { HOSTS, SERVER_NAME, claudeHasAdHooks, claudePluginEnabled, hostById } from "./hosts.mjs";
 import { readLedger } from "./ledger.mjs";
 import { inspect } from "./fsx.mjs";
 import { jsonEntry } from "./edit-json.mjs";
@@ -86,7 +86,7 @@ export async function doctor(opts = {}) {
 
   add("node.version", nodeOk(process.versions.node), `Node ${process.versions.node}${nodeOk(process.versions.node) ? "" : ` (needs ${MIN_NODE.join(".")} or newer)`}`);
   const drivers = await availableDrivers();
-  add("sqlite.driver", drivers.length > 0, drivers.length ? drivers.join(", ") : "no SQLite driver: needs Node 22.13+ (node:sqlite)");
+  add("sqlite.driver", drivers.length > 0, drivers.length ? drivers.join(", ") : "no SQLite driver: needs Node 22.16+ (node:sqlite with full-text search)");
   try {
     const { open } = await import("../memory/sqlite.mjs");
     const db = await open({ dbPath: path.join(ctx.root, "episodic.db"), prefer: "node:sqlite" });
@@ -148,6 +148,9 @@ export async function doctor(opts = {}) {
     if (id === "claude-code") {
       const double = claudeHasAdHooks(ctx.home) && rec.capture === "tools";
       add("capture.double", !double, double ? "ad's hooks and the record tools both capture here: run install --capture hooks" : "one capture path", id);
+      // The installer's entry and the plugin both serve memory: tools twice, notes twice.
+      const plugin = claudePluginEnabled(ctx.home, ctx.env);
+      add("route.double", !plugin, plugin ? `the ${plugin} plugin also serves memory here: keep one (uninstall --host claude-code, or disable the plugin)` : "one route", id);
     }
     if (id === "cursor") {
       const proj = path.join(opts.cwd ?? process.cwd(), ".cursor", "mcp.json");

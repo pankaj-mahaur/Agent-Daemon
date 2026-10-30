@@ -20,6 +20,7 @@ import { resolveGit, spawnResolved } from "./safe-spawn.mjs";
 import { buildSkillIndex, resolveSkillSource } from "./skills-source.mjs";
 import { parseFrontmatter, validateSkill, unquote } from "./skill-lint.mjs";
 import { rebuildRouteMaps } from "./route-map.mjs";
+import { statePath } from "./ad-root.mjs";
 
 // file:// included for local-repo installs and tests; C:\ paths can't match
 // because the alternatives are anchored to URL schemes.
@@ -31,7 +32,7 @@ function homeDir() {
 }
 
 function manifestPath() {
-  return path.join(homeDir(), ".agent-daemon", "skill-manifest.json");
+  return statePath("skill-manifest.json");
 }
 
 /* ------------------------------------------------------------------ */
@@ -44,21 +45,39 @@ function manifestPath() {
  *   - source newer    → overwrite (1s mtime tolerance)
  *   - same/older      → skip
  *
+ * A skill the user accepted a change to (P5.7, skills/library.mjs) installs from
+ * the library instead: missing → the accepted version; an older version of ours →
+ * updated; edited by hand → left alone. When this release's bundled skill changed
+ * since, `notice` says the user's version was kept.
+ *
  * @param {string[]} skillNames
  * @param {Map<string, string>} skillIndex - name → source dir
  * @param {string} destRoot
+ * @param {{ notice?: (text: string) => void }} [opts]
  * @returns {Promise<{installed: number, updated: number, skipped: number, missing: number}>}
  */
-export async function installSkillLane(skillNames, skillIndex, destRoot) {
+export async function installSkillLane(skillNames, skillIndex, destRoot, { notice = (t) => console.log(`  ⚠ ${t}`) } = {}) {
   let installed = 0, updated = 0, skipped = 0, missing = 0;
   try {
     await fs.mkdir(destRoot, { recursive: true });
   } catch { return { installed, updated, skipped, missing }; }
+  const { laneDecision, writeSkillDir } = await import("./skills/library.mjs");
 
   for (const skill of skillNames) {
     const src = skillIndex.get(skill);
-    if (!src) { missing++; continue; }
     const dst = path.join(destRoot, skill);
+    const lib = laneDecision(skill, dst, src);
+    if (lib) {
+      if (lib.notice) notice(lib.notice);
+      if (lib.action === "keep") { skipped++; continue; }
+      try {
+        await writeSkillDir(dst, { fromDir: lib.dir });
+        if (lib.action === "install") installed++;
+        else updated++;
+      } catch { skipped++; }
+      continue;
+    }
+    if (!src) { missing++; continue; }
     let destExists = false;
     try { await fs.access(dst); destExists = true; } catch { /* not installed */ }
 

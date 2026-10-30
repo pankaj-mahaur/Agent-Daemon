@@ -31,11 +31,12 @@ export const IGNORED_NOTIFICATIONS = {
 // opts into experimentalApi for these only; every other request stays on the
 // stable surface. The fake app-server rejects anything experimental outside
 // this list (testkit/protocol-check.mjs), so a new use has to be added here on
-// purpose. Plan mode (Part 4) and /stop (Part 5) use them.
+// purpose. Plan mode (Part 4) and /stop (Part 5) use them; an account switch (P3.4)
+// forks with deferGoalContinuation so a goal never continues on its own.
 export const EXPERIMENTAL_ALLOWLIST = {
   methods: ["collaborationMode/list", "thread/settings/update", "thread/backgroundTerminals/clean"],
   // method → params fields that only exist with experimentalApi
-  fields: { "turn/start": ["collaborationMode"] },
+  fields: { "turn/start": ["collaborationMode"], "thread/fork": ["deferGoalContinuation"] },
   // experimental notifications ad handles; every other one is opted out of
   notifications: ["thread/settings/updated"],
 };

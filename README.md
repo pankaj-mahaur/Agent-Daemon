@@ -407,7 +407,7 @@ Mid-session recall is pull-based too — an **MCP memory server** (read-only exc
 - Plus `memory_stats`, `user_facts_list`, and `memory_feedback`. Index tools cap at 5 results / 4 KB; `memory_get` at 8 KB.
 - **Record (hosts without hooks):** `memory_record_correction` and `memory_record_learning` save what the user just taught the agent **for your review**: pending until you accept it in `ad review`, never reinforced by repetition, never global by itself.
 
-Add it to Claude Code, Codex and Cursor with one command (it shows the plan first, keeps a backup, and removes exactly what it added; see [docs/memory-install.md](docs/memory-install.md)):
+Add it to Claude Code, Codex, Cursor, VS Code and Gemini CLI with one command (it shows the plan first, keeps a backup, and removes exactly what it added; see [docs/memory/install.md](docs/memory/install.md)):
 
 ```bash
 npx agent-daemon-memory install    # or, with ad installed: ad memory install
@@ -460,10 +460,14 @@ All commands work with both `ad` (short) and `agent-daemon` (full). Short aliase
 ```bash
 # Harness (ad's own engine) — see "Agent harness" above
 ad auth login openai|openrouter|chatgpt   # ad auth use / status / logout
+ad auth login xai|kimi-code|moonshot|fireworks|custom|ollama|lmstudio [--label <l>]   # more accounts: docs/accounts.md
 ad [--last]                                    # terminal UI (AD_TUI=0: bare ad prints the help)
 ad tui ["<prompt>"] [--last | --resume <id>]   # terminal UI (docs/tui.md)
 ad about                                     # what ad runs on: versions, the engine, licenses, settings path
-ad chat | ad run "<prompt>" | ad loop "<objective>"
+ad chat | ad run "<prompt>" | ad loop "<objective>"   # --account <provider>/<label> --model <m> --effort <e> pick the target (AD_ACCOUNT: a default)
+ad sessions show [<id>|--last] [--json]      # what ran where: bindings, turns, tool calls (docs/harness.md)
+ad auth models <account> [--refresh] [--json]  # its models: tools, context, price (free only when seen free today)
+ad fallback [add|remove|order|move|set|preview|test|enable|disable]   # where a task may continue when a limit runs out (docs/commands.md)
 ad schedule add|list|remove|enable|disable|run|tick
 ad web | ad acp | ad tools list|enable|disable | ad sandbox setup|status | ad agy "<prompt>"
 ad spawn ... --engine ad|claude     # team workers (default: sandboxed engine thread)
@@ -492,6 +496,8 @@ ad evolve <skill>                      # GEPA self-evolution run for a skill (ne
                                        #   --list-candidates [--json]  list skills with ≥3 failures in 30d (no auth)
                                        #   --export-traces             export JSONL traces for inline GEPA (no auth)
 ad review                              # Accept/reject queued proposals (skills, and notes an agent recorded)
+                                       #   skill changes show as a diff; a typed accept applies them
+                                       #   --list, --reject <file> (both work without a terminal)
                                        #   --accept <file> | --accept-all   accept memory proposals (you type the confirmation)
                                        #   --global           older "global" notes: every project, or only their own
 ad init                                # Scaffold .agent-daemon/ + AD-INSTRUCTIONS.md in project
@@ -503,12 +509,14 @@ ad query-retrieve                      # Keyword extraction + learning injection
 
 # Memory
 ad memory stats                        # Row counts + retrieval telemetry (truncation rate, bytes)
+ad state export --out ~/ad.adstate     # Move ad to another computer (inspect, verify)
+ad state import ~/ad.adstate --dry-run # …and bring it in there (rollback, imports, verify --import)
 ad memory scan                         # Check older notes once: hold back rows holding a key or an injection
 ad memory held                         # Notes memory keeps back; accept|release|drop <id> from your own terminal
 ad memory promote fact:<id>            # Make a user fact apply in every project (your own terminal, typed)
-ad memory install [--host <id>]        # Add the memory server to Claude Code, Codex, Cursor (docs/memory-install.md)
+ad memory install [--host <id>]        # Add the memory server to Claude Code, Codex, Cursor, VS Code, Gemini CLI (docs/memory/install.md)
 ad memory doctor | repair | status | uninstall
-ad memory report [--days 30] [--share]  # Is memory working: repeated corrections, what was shown, feedback (docs/memory-metrics.md)
+ad memory report [--days 30] [--share]  # Is memory working: repeated corrections, what was shown, feedback (docs/memory/metrics.md)
 ad memory migrate                      # Run the one-time upkeep now (note keys, journal secret scrub)
 ad memory consolidate                  # Evolution pass: near-dup merges, stale archive, contradictions
                                        #   proposals only — --apply-merges / --apply-stale execute
@@ -525,6 +533,14 @@ ad skill install <name|path|git-url>   # Lint-gated install with provenance mani
 ad skill list [--available] [--json]   # Installed skills (both lanes) with provenance
 ad skill remove <name> [--force]       # Manifest-aware removal
 ad skill search <query>                # Search the bundled catalog
+ad skill propose <name> --file <path>  # Queue a SKILL.md change for ad review (applies nothing)
+ad memory migrate                      # Give older memory rows their project id (also runs by itself once)
+ad memory assign --list | <table>:<id> --project <dir>   # Place a note two folders shared (typed confirmation)
+ad skill history <name>                # Every accepted version, with where it came from
+ad skill diff <name> [--from a --to b] [--bundled]   # Between versions, or against this release
+ad skill undo <name> [--to n]          # An older version becomes current (typed confirmation)
+ad skill publish [<name>] [--host <id>] [--replace] [--dry-run]   # Write accepted skills to the hosts
+                                       #   --host agents --remove: stop the opt-in ~/.agents/skills copy
 ad route stats [--days N] [--json]     # Advice effectiveness: advised/followed/diverged/ignored
 ad route rebuild                       # Recompile route maps from installed skills
 ad route show                          # Print the merged compiled route map
@@ -929,6 +945,8 @@ Copy-paste configuration templates:
 - [Terminal UI](docs/tui.md) — Using `ad` / `ad tui`: keys, commands, `/undo`, terminals
 - [Commands in ad](docs/commands.md) — Every engine slash command: works in ad, or why not yet; keys and settings shared with the engine's own UI
 - [Agent harness guide](docs/harness.md) — `ad auth`, `ad tui`, `ad chat/run/loop/schedule/web/acp`, safety model, Windows notes
+- [Accounts and providers](docs/accounts.md) — Adding API keys, your own endpoint and local models; free models; which sign-ins ad doesn't offer
+- [Chat Completions providers](docs/providers.md) — Gemini, Groq, Cerebras, Mistral, NVIDIA, Anthropic, DeepSeek and more through ad's translation: free tiers, data notes, status
 - [Workflow](docs/workflow.md) — `ad watch` vs `ad digest-latest`, the ending protocol, decision matrix
 - [Troubleshooting](docs/troubleshooting.md) — Symptoms, causes and fixes (watch, digest, harness, Windows sandbox, terminal UI)
 - [Architecture](docs/architecture.md) — Three loops, components, data flow, file-system layout
@@ -940,7 +958,10 @@ Copy-paste configuration templates:
 - [Skill Anatomy](docs/skill-anatomy.md) — How SKILL.md works, frontmatter fields, trigger system
 - [Harness design](docs/harness-design.md) — The engine boundary, isolation from your own install, the safety model, staying current with the engine
 - [Terminal UI architecture](docs/tui-architecture.md) — How `ad tui` is built, the `/undo` safety model, decisions
-- [Memory metrics](docs/memory-metrics.md) — `ad memory report`: repeated corrections, what was shown, feedback, rewording proposals
+- [Memory for every agent](docs/memory/README.md) — ad's memory in Claude Code, Codex, Cursor, VS Code and Gemini CLI: install, hosts and plugins, tools, security, FAQ; [support matrix](docs/support-matrix.md)
+- [Memory as host plugins](docs/memory/hosts.md) — The Claude Code plugin, the Cursor plugin, the Gemini extension and the Agent Plugins package, built from one source; when to use the installer instead
+- [Memory metrics](docs/memory/metrics.md) — `ad memory report`: repeated corrections, what was shown, feedback, rewording proposals
+- [Correction benchmark](bench/correction-bench/README.md) — Does an agent repeat a corrected mistake, with and without ad's memory? Protocol, drivers, analysis
 - [Testing](docs/testing.md) — The test layers, the live terminal UI tests, mutation checks, CI
 - [Manual test](docs/manual-test.md) — End-to-end checklist (Claude Code mode + harness + terminal UI)
 - [Ecosystem](docs/ecosystem.md) — Hermes interop, cross-agent awareness
@@ -948,6 +969,7 @@ Copy-paste configuration templates:
 
 **Top-level:**
 - [SECURITY.md](SECURITY.md) — Threat model + responsible disclosure
+- [Privacy](docs/privacy.md) — what ad stores, where, and when it uses the network (no telemetry) · [Terms](docs/terms.md)
 - [CHANGELOG.md](CHANGELOG.md) — Release history
 - [ATTRIBUTION.md](ATTRIBUTION.md) — Upstream credits
 - [DEPENDENCIES.md](DEPENDENCIES.md) — Third-party deps and licenses

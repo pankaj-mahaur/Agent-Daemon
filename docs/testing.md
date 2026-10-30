@@ -24,10 +24,12 @@ Install with `npm ci` (or `npm install`) in `runtime/`, devDependencies included
 | App + session on a fake engine | `test/tui-app`, `tui-ad`, `tui-parity`, `tui-resilience`, `session`, … with `testkit/fake-codex-app-server.mjs` | keys, slash commands, approvals, steer/queue, crashes and restarts, odd traffic |
 | `/undo` on real git repos | `test/checkpoints.test.mjs` | snapshots, restores byte for byte, every conflict kind, adversarial cases |
 | Real engine, protocol level | `test/engine-real.test.mjs` + `testkit/mock-responses.mjs` | what an engine release actually sends for a turn, an approval, a patch |
+| Automatic fallback, real engine | `test/fallback-real.test.mjs` + `testkit/fault-responses.mjs` (`AD_REAL_ENGINE=1`) | F1–F13: providers failing at each point of a turn (before the first byte, mid-text, after a tool call is emitted, on a tool's result, a long Retry-After, a refused connection), through ad's gateway; switch or pause, and a tool never runs twice |
 | Real engine, real terminal | `test/tui-live.test.mjs` | the terminal UI script of the manual test (section 6) and ad's own features, on the real `ad tui` |
 | Vim, highlighting, recap | `test/tui-vim`, `tui-highlight`, `tui-recap` | the engine's Vim binding table; each language's lexer, hostile input at the caps, a style golden per theme; the recap history budget and strict parse |
 | Keys, styles, settings | `test/tui-keymap`, `tui-styles`, `tui-dialogs`, `tui-prefs`, `tui-status` | the engine's key spelling and `tui.keymap` overrides; a golden that keeps every span's style (and no colour outside `view/theme.mjs`); the confirm and checklist; settings files; status-line and title items, `titleSafe` |
 | The key routing table | `test/tui-app.test.mjs` ("key routing table") | for each layer (approval, ad's confirm, pager, shortcuts, popup, checklist, composer idle or running), what Esc, Ctrl+C, Tab, Shift+Tab, Enter and PgUp do |
+| The correction benchmark | `bench/correction-bench/test/` (run by `test/correction-bench.test.mjs`); `smoke-real.test.mjs` in the real-engine job | each dev family's oracle on its violating and compliant example; the statistics on synthetic data with known answers (a 40% → 20% effect, an effect held by one family); the episode flow; the driver smoke: the real engine with a scripted model, the correction turn, ad's hooks, capture and the lesson in session 2. See [`bench/correction-bench/PROTOCOL.md`](../bench/correction-bench/PROTOCOL.md) |
 | Engine pin bookkeeping | `test/tui-resilience.test.mjs` | ad's slash commands don't collide with the engine's (`src/engine/codex/upstream-commands.json` must match the pinned tag); `src/engine/codex/compat.json` lists the pin as tested, with a "what changed" note (`AD_COMPAT_NOTE_PENDING=1` lets the upgrade bot's run pass until a person writes it) |
 
 ### The fake engine speaks the pinned protocol
@@ -41,6 +43,28 @@ The fake answers an unknown method with -32600, like the real engine. Tests reac
 ### The mock model
 
 `testkit/mock-responses.mjs` stands in for the OpenAI Responses API. A keyword in the prompt picks the reply: `PING` (a streamed "pong"), and in `tui-live`'s own script `SPAWNONE` (the engine's `spawn_agent`; 0.160–0.163 namespace the agent tools as `multi_agent_v1`, so the call carries `namespace`) and the engine's recap prompt (an answer in its schema), `SHELL` / `ESCALATE` (a command, the second asking to leave the sandbox), `PATCH` (an `apply_patch` adding `hello.txt`), `FAIL`, `HOLD` (streams, then waits for `mock.release()`). A test can pass its own script; the live test adds `STEERED`, `QUEUED` and `EDITMATH` (an Update File patch).
+
+### Mock providers and auth
+
+For accounts and providers (M3), the testkit has:
+- `mock-providers.mjs` `startMockProvider({ personality, keys, models, script })`: an OpenAI-, OpenRouter- or generic-shaped API on the same scripted stream.
+  - It records each request's headers, model and tools, and what a tool printed (`functionOutputs`). The key itself is never recorded: the bearer becomes `{ scheme, matchesKey, sha256 }`.
+  - It answers a wrong key with that provider's 401 and serves `/models` (OpenRouter: with pricing and `GET /api/v1/key`).
+  - `setQuota` gives each provider's 429 body; `setFault` gives a 5xx with Retry-After, a stream cut after the first delta, a slow stream or a reset socket.
+- `fault-responses.mjs` `startFaultProvider({ personality, keys })` (P4.5): a provider that fails at a chosen point, per prompt marker (`schedule(marker, steps)`: `fault.quota()`, `rate(s)`, `freePerDay()`, `unauthorized()`, `afterCreated()`, `midText(n)`, `afterToolCallEmitted(probe)`, `sseFailed(code)`, `slow(ms)`, `ok()`; `onToolResult(callId, step)`; `refusedUrl()`). Its probes (`EXEC` appends to `marker.txt`, `WRITE` adds `made.txt`, `BGHOLD` starts a background command) run only when the request shows no sign they ran (their result, or ad's `[done]` / still-running line), so a lost carry-over shows as a doubled marker.
+- `mock-auth.mjs` `startMockAuth()`: ChatGPT-style token refresh with rotation; a refresh token used twice answers `refresh_token_reused`.
+- `gateway-proto.mjs`: the loopback gateway prototype (P3.1; P3.3 builds the real one). The engine holds only a gateway token; the gateway swaps it for the account key and decodes compressed upstream bodies.
+- `mock-chat.mjs` `startMockChat({ script })`: a Chat Completions provider (P6.1). A script answers with stream chunks (split every n bytes, or the socket dropped at the end), an error or redirect status, or a held stream; it counts requests per prompt word and hang-ups.
+- `probes.mjs`: an environment dump that runs as a hook or a stdio MCP server, tool-shell probe commands, and `scanForSecrets`, which reports which fake secret appeared and never prints one.
+
+Rules: fake keys only (`sk-test-…`, built by joining parts so no scanner mistakes them for real ones), a fake home for every engine run, and nothing about a request is written to disk. `test/engine-real-accounts.test.mjs` (`AD_REAL_ENGINE=1`) runs the pinned engine through the gateway:
+- two providers in one engine;
+- a resume that changes the provider;
+- the key-isolation probes, with a control that puts the key in the engine's environment to prove the hook probe can see one.
+
+### Chat translation fixtures
+
+`scripts/record-engine-requests.mjs` drives the pinned engine against the mock and writes what it sends into `test/fixtures/gateway/engine-<version>/` (instructions elided by hash; install id, cache key, timezone, date and temp paths blanked). `test/translate-contract.test.mjs` translates every recorded request and compares the shape with `test/golden/translate/`. Re-record after an engine upgrade and read the diff. `test/engine-real-translate.test.mjs` (`AD_REAL_ENGINE=1`) runs the pinned engine through the gateway to `mock-chat` and counts what ran and how many upstream calls were made: a split tool call runs once, a used-up daily quota is asked once, a cut-off is retried exactly once, and a tool printing its environment sees neither the key nor the gateway token.
 
 ## The live terminal UI tests
 
@@ -75,6 +99,10 @@ The fake answers an unknown method with -32600, like the real engine. Tests reac
 - **Reproduce before fixing.** A failing live test or a user's transcript is first reproduced in a temp home (same shell, same PATH), then fixed, then checked with the same reproduction.
 - **Never touch real user state.** Tests use temp homes for `~/.agent-daemon`, the engine home, the clipboard and the editor. Never start the real engine outside `codexEnv()`. A test that writes memory sets a temp `HOME`/`USERPROFILE` before the first write (the episodic DB path is read from HOME when it opens). Locks are covered automatically: under `node --test`, when the home isn't faked, `defaultLockDir()` (`runtime/src/lock.mjs`) returns a per-process temp folder. New tests that create engines or locks call `assertFakeHome()` (`testkit/real-home-guard.mjs`).
 
+## The claims lint
+
+`node runtime/scripts/check-claims.mjs [files]` checks public copy (README, `docs/compare.md`, `docs/memory/`, `docs/site/`, host package descriptions) sentence by sentence: no "#1", "best" or "SOTA"; a percentage or "N×" only with a link and a named baseline ("no memory", "own memory", "rules file"); a host name only when `docs/support-matrix.md` lists it as tested live (`{{hosts}}` renders that list); no "reviewed lessons" without saying whose review; "never … another project" only as the one approved sentence. Tests: `runtime/test/check-claims.test.mjs`. It isn't in CI yet: the README and docs are rewritten to pass it first. The approved sentence has its own proof, `runtime/test/claim-cross-project.test.mjs`: project A's learning, a user fact seen only in A, a 3.0 global row from A's session and an agent's request to go global reach neither project B, a folder sharing A's slug nor an unbound server (memory tools, SessionStart, prompt retrieval); after a typed accept of the fact and the global row, B sees exactly those two. If it fails, the sentence leaves the copy.
+
 ## The brand lint
 
 ad runs on a pinned third-party engine; the product says "the engine", and the engine's own name appears only in its allowed zone. `node runtime/scripts/check-brand.mjs` checks four rules over every tracked text file:
@@ -95,8 +123,9 @@ The allowed zone and the other legitimate places are `runtime/scripts/brand-allo
 | Job | Runs |
 |---|---|
 | `ubuntu / macos / windows · node 22` | `npm test`, the skill linter, the brand lint (strict), the doc-link check, and smoke runs of `ad doctor`, `ad init --plan` and the skills-diff script |
-| `real engine · ubuntu / macos / windows` | `engine-real` and `tui-live` with `AD_REAL_ENGINE=1` (on Linux after allowing unprivileged user namespaces for the engine's bubblewrap sandbox) |
-| `memory install · ubuntu / macos / windows · node 22.13 / 24` | the memory tests on `node:sqlite` (`AD_SQLITE_DRIVER=node:sqlite`); the installer's config matrix, `runtime/scripts/memory-install-matrix.mjs` (release gate a: ≥ 95% and no uninstall-integrity failure); the package build and `npm pack --dry-run`; `test/memory-host-codex.test.mjs`, the real Codex binary loading the installed entry (gate b) |
+| `real engine · ubuntu / macos / windows` | `engine-real`, `tui-live` and the correction benchmark's driver smoke with `AD_REAL_ENGINE=1` (on Linux after allowing unprivileged user namespaces for the engine's bubblewrap sandbox) |
+| `memory install · ubuntu / macos / windows · node 22.16 / 24` | the memory tests on `node:sqlite` (`AD_SQLITE_DRIVER=node:sqlite`); the installer's config matrix, `runtime/scripts/memory-install-matrix.mjs` (release gate a: ≥ 95% and no uninstall-integrity failure); the package build and `npm pack --dry-run`; `test/memory-host-codex.test.mjs`, the real Codex binary loading the installed entry (gate b) |
+| `state export / state import · ubuntu / macos / windows` | `runtime/scripts/portability-fixture.mjs`: each OS exports a throwaway project (paths with spaces and non-ASCII, a git remote, a second project that must not travel) with `ad state export`; each OS imports the other two bundles into a fresh home with the clone at another path, then checks `ad state verify --import`, `ad review --import --accept-all`, that `ad query-retrieve` brings the lesson back, that nothing of the second project arrived, and that a second import adds nothing. Run it locally with `export <file>` then `import <file>` |
 
 Installer tests run in fake homes only (HOME, USERPROFILE, APPDATA, XDG_CONFIG_HOME, CODEX_HOME, CLAUDE_CONFIG_DIR, AD_ROOT) with a fake `claude` (`testkit/fake-claude.mjs`); they never read a real host config.
 
@@ -110,6 +139,9 @@ Run the same pipeline before pushing, on this machine and in a Linux container, 
 
 | Symptom | Cause | Fix |
 |---|---|---|
+| A lock or lease test passes alone, fails in the full suite on Windows | the process-identity lookup (PowerShell, 3 s budget) times out under load, returns "unknown", and a fresh lease counts as live, which is the designed fallback | inject `identityOf` where the test is about counting or classifying; give a real-lookup test its own budget (`identityOf(pid, { timeoutMs })`) |
+| A path check passes on Windows locally, fails on macOS or the Windows runner | the same folder has two spellings: macOS's `/var` is `/private/var`, the runner's temp folder is the 8.3 short name `RUNNER~1` | compare folders by `statSync(p, { bigint: true })` `dev:ino`, or build fixtures from `realpathSync.native`; code that stops at a folder checks every spelling of it |
+| A lock test with a made-up pid fails on Linux only | pid 111 can be a real process there; its start time makes the record read as a reused pid | pass `identityOf: () => ({ unknown: "test pid" })` |
 | `ENOTEMPTY` removing a temp repo on Linux | a big commit started git's background auto-gc, still writing | `git config gc.auto 0` in test repos; retry `rmSync` |
 | A test file never exits | an open pseudo-terminal or a long timer | close ptys in `finally`; keep fake timers short |
 | Strings with `\` or `$` mangled in an edit | bash heredocs and `node -e` eat backslashes | edit with an editor tool or a script file; build escape bytes with `"\x1b"` |

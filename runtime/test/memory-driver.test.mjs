@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { availableDrivers, openDatabase, wrapNodeSqlite } from "../src/memory/driver.mjs";
+import { availableDrivers, hasFts5, openDatabase, wrapNodeSqlite } from "../src/memory/driver.mjs";
 
 const drivers = await availableDrivers();
 const tmp = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ad-driver-")), "t.db");
@@ -17,7 +17,26 @@ test("node:sqlite is available on this Node (the memory package's driver)", () =
   assert.ok(drivers.includes("node:sqlite"), `drivers: ${drivers}`);
 });
 
-for (const d of drivers) {
+test("a built-in SQLite without full-text search (Node 22.13–22.15) is no driver", () => {
+  class NoFts {
+    exec(sql) {
+      if (/fts5/.test(sql)) throw Object.assign(new Error("no such module: fts5"), { code: "ERR_SQLITE_ERROR" });
+    }
+    close() {}
+  }
+  class WithFts {
+    exec() {}
+    close() {}
+  }
+  assert.equal(hasFts5(NoFts), false);
+  assert.equal(hasFts5(WithFts), true);
+});
+
+// A run pinned to one driver (the memory-install CI job: node:sqlite) tests only that
+// one: better-sqlite3 11 aborts at process exit on Node 24 (a destructor assertion in
+// Node's environment teardown), which that job's Node 24 leg would otherwise hit.
+const pinned = process.env.AD_SQLITE_DRIVER;
+for (const d of drivers.filter((x) => !pinned || x === pinned)) {
   test(`${d}: run/get/all, plain rows, undefined binds as NULL`, async () => {
     const db = await openDatabase(":memory:", { env: env(d) });
     assert.equal(db.driver, d);

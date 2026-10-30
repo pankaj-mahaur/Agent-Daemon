@@ -1,0 +1,46 @@
+{
+  "engine": "0.163.0",
+  "platform": "win32",
+  "items": {
+    "ECHO": {
+      "type": "commandExecution",
+      "status": "completed",
+      "exitCode": 0,
+      "command": "\"C:\\\\Windows\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe\" -Command 'echo hi'",
+      "commandActions": [
+        {
+          "type": "unknown"
+        }
+      ]
+    },
+    "LIST": {
+      "type": "commandExecution",
+      "status": "completed",
+      "exitCode": 0,
+      "command": "\"C:\\\\Windows\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe\" -Command ls",
+      "commandActions": [
+        {
+          "type": "unknown"
+        }
+      ]
+    },
+    "DELETE": {
+      "type": "commandExecution",
+      "status": "completed",
+      "exitCode": 0,
+      "command": "\"C:\\\\Windows\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe\" -Command 'find . -name x -delete'",
+      "commandActions": [
+        {
+          "type": "unknown"
+        }
+      ]
+    },
+    "PATCH": {
+      "type": "fileChange",
+      "status": "completed",
+      "exitCode": null,
+      "command": null,
+      "commandActions": []
+    }
+  }
+}

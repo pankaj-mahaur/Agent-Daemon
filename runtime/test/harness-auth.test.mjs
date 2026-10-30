@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { cmdAuth, describeAccount, maskEmail } from "../src/harness/auth.mjs";
-import { providerEnv, useProviderEdits } from "../src/auth/providers.mjs";
+import { useProviderEdits } from "../src/auth/providers.mjs";
 import { createSecretStore, fileBackend } from "../src/auth/secrets.mjs";
 import { createEngine } from "../src/engine/index.mjs";
 
@@ -126,7 +126,7 @@ test("login openrouter requires --model before asking for a key", async () => {
   }
 });
 
-test("openrouter: key → store, provider active, key reaches the engine as env; logout reverts", async () => {
+test("openrouter: key → store, provider active, the key never reaches the engine's env (P3.3: the gateway adds it); logout reverts", async () => {
   const t = setup();
   try {
     const r = await t.auth("login", ["openrouter"], { model: "anthropic/some-model", readKey: async () => KEY });
@@ -134,10 +134,10 @@ test("openrouter: key → store, provider active, key reaches the engine as env;
     assert.equal(t.store.get("openrouter"), KEY);
     assert.ok(!r.out.includes(KEY));
 
-    const engine = await createEngine({ home: t.home, command, env: providerEnv(t.store) });
+    const engine = await createEngine({ home: t.home, command });
     try {
       const { env } = await engine.testRequest("debug/state");
-      assert.equal(env.hasOpenRouterKey, true);
+      assert.equal(env.hasOpenRouterKey, false, "keys stay in ad's gateway");
     } finally {
       await engine.close();
     }
@@ -206,7 +206,7 @@ test("maskEmail and describeAccount", () => {
   assert.equal(describeAccount({}, { model_provider: "openrouter", model: "m" }), "provider openrouter, model m");
 });
 
-test("a damaged stored key blocks neither status nor logout, and providerEnv only warns", async () => {
+test("a damaged stored key blocks neither status nor logout", async () => {
   const t = setup();
   try {
     const broken = createSecretStore({
@@ -220,9 +220,6 @@ test("a damaged stored key blocks neither status nor logout, and providerEnv onl
     assert.equal(status, 0);
     const logout = await cmdAuth("logout", ["openrouter"], { home: t.home, command, store: broken, stdout: sink(), stderr: sink() });
     assert.equal(logout, 0);
-    const warnings = [];
-    assert.deepEqual(providerEnv(broken, (m) => warnings.push(m)), {});
-    assert.match(warnings[0], /could not read stored openrouter key/);
   } finally {
     t.cleanup();
   }

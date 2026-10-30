@@ -12,6 +12,9 @@ If something gets in the way, `ad chat` is the plain line mode and stays availab
 - [Keys](#keys)
 - [Approvals and questions](#approvals-and-questions)
 - [Slash commands](#slash-commands)
+- [Switching model, account or provider](#switching-model-account-or-provider)
+- [Limits and usage](#limits-and-usage)
+- [Automatic fallback](#automatic-fallback)
 - [Plan mode](#plan-mode)
 - [Syntax highlighting](#syntax-highlighting)
 - [Vim mode](#vim-mode)
@@ -44,14 +47,16 @@ ad tui --cwd ../other-repo --model <name> --sandbox read-only
 |---|---|
 | `"<prompt>"` | sent as the first prompt as soon as the UI is up |
 | `--last` | resumes the newest conversation for this folder |
-| `--resume <id>` | resumes that conversation |
+| `--resume <id>` | resumes that conversation (in whichever engine folder holds it) |
+| `--account <provider>/<label>` | the account for new conversations (see [harness.md](harness.md#safety-model)) |
+| `--effort <level>` | the reasoning effort with `--model` |
 | `--cwd <dir>` | works in another folder |
 | `--model <name>` | the model for new turns (`/model` changes it later) |
 | `--sandbox <mode>` | `read-only`, `workspace-write` (default) or `danger-full-access` |
 
 A conversation is open in one `ad` at a time. Resuming one that another `ad` has open says so and changes nothing.
 
-On exit, ad prints how to continue: `ad tui --resume <id>`, with the tokens used.
+On exit, ad prints how to continue: `ad tui --resume <id>`, with the tokens used, and `--account <provider>/<label>` when the conversation isn't on your default account.
 
 **Bare `ad`** (and `ad --last`) opens the TUI whenever the terminal can show it. `ad chat` stays the plain line mode.
 - `AD_TUI=0` turns that off: bare `ad` prints the help. `ad --last` exits (code 2) saying that `ad tui --last` still reopens the last conversation in the TUI.
@@ -114,7 +119,7 @@ On exit, ad prints how to continue: `ad tui --resume <id>`, with the tokens used
   ↳ queued: also run the signup test                              tab: edit
 
 › Ask ad to do anything
-  enter steer · tab queue · ctrl+j newline                     ctx 91% · 5h 38%
+  enter steer · tab queue · ctrl+j newline                ctx 91% · 5h 38% used
 ```
 
 - **Header.** Shown once at the start, then it scrolls into history like everything else. Under 40 columns it is one line.
@@ -123,7 +128,7 @@ On exit, ad prints how to continue: `ad tui --resume <id>`, with the tokens used
 - **Cells.** Prompts (`›`), answers, commands (Explored, Ran, Failed (exit N), Declined, with the last lines of output), edits (`Edited N files (+A -R)` with a diff), the model's checklists (**Updated Plan**, each time it changes them), proposed plans ([Plan mode](#plan-mode)), tool calls and notices. A turn ends with "Worked for Ns".
 - **ad rows** are one dim line each, and only when something happens: recalled learnings, a guard that blocked a command, a hook that failed, what ad learned, loop iterations.
 - **Activity row** (while a turn runs): what the engine is doing, the time, and `esc to interrupt`. Queued prompts are listed under it; the last one says `tab: edit`.
-- **Status line** (under the prompt, from 12 rows): the engine's status line items, joined with ` · `. By default the model and its reasoning effort, the folder, `ctx N%` (the context left in this conversation) and `5h N%` (how much of the current usage window is used); a percentage turns amber at 80 % used. `/statusline` chooses the items and their order, with the engine's ids (`git-branch`, `branch-changes`, `run-state`, `weekly-limit`, `task-progress`, …); it's saved as the engine's `tui.status_line`. When it's too wide, items drop from the end. Under an approval it shows only where the approval doesn't need the room.
+- **Status line** (under the prompt, from 12 rows): the engine's status line items, joined with ` · `. By default the model and its reasoning effort, the folder, `ctx N%` (the context left in this conversation) and `5h N%` (how much of the 5-hour window is used; `wk N%` is the weekly one, each picked by its length); a percentage turns amber at 80 % used. After the engine's items come ad's own: `limits` (on by default: the current account's limit closest to running out, such as `today 41/50` for OpenRouter's free requests, when the engine's items don't already show it), `account` and `fallback` (`fallback on`, or `↪ 2` after two automatic switches). They are listed in `/statusline` as "(ad's item)" and saved in ad's own settings, not the engine's. `/statusline` chooses the items and their order, with the engine's ids (`git-branch`, `branch-changes`, `run-state`, `weekly-limit`, `task-progress`, …); it's saved as the engine's `tui.status_line`. When it's too wide, items drop from the end. Under an approval it shows only where the approval doesn't need the room.
 - **Footer.**
   - Left: key hints. Idle: `? shortcuts · @ files · <newline key> newline`. While a turn runs: `enter steer · tab queue · <newline key> newline`.
   - Right: chips: `private` while `/private` is on, `loop N` while a background loop runs.
@@ -281,10 +286,11 @@ Type `/` to see them with a one-line hint each. Commands marked "engine" keep th
 
 | Command | What it does |
 |---|---|
-| `/model` | choose the model and reasoning effort (engine) |
+| `/model` | choose the model and reasoning effort; with several accounts, the account first (grouped by provider; each row says how this conversation continues there; see [Switching model, account or provider](#switching-model-account-or-provider)). `/model default` makes this window's account and model the default for new sessions |
+| `/account` | pick this window's account (then its model) |
 | `/permissions` | what the engine may do without asking: Read only, Auto (default: edits this folder, asks for the rest), Full access (engine) |
-| `/login [chatgpt\|openai\|openrouter]` | sign in (ChatGPT, OpenAI key, OpenRouter); the engine restarts with the new login |
-| `/logout` | sign out in ad's home (engine) |
+| `/login [provider]` | add or sign in an account: pick the provider, give it a label and an owner, then paste the key into a masked field (never kept in the prompt history). ChatGPT signs in through `ad auth login chatgpt` |
+| `/logout [account]` | sign out one account; the others stay signed in. Signing out this window's account opens `/account` |
 | `/statusline` | choose the status line's items and their order: Space toggles, ← → move, Enter saves, Esc puts it back (engine) |
 | `/title` | choose what the terminal window's title shows, the same way (engine) |
 | `/vim` | toggle the engine's Vim mode for the prompt (engine). See [Vim mode](#vim-mode) |
@@ -324,7 +330,7 @@ Model, effort and permission changes apply from the next turn.
 | Command | What it does |
 |---|---|
 | `/status` | account, model, sandbox, tokens, limits, and the engine version line (engine) |
-| `/usage` | usage limits and tokens (engine) |
+| `/usage` | usage limits and tokens: ChatGPT's windows, or what an API account's provider last reported (OpenRouter's numbers are read again) |
 | `/mcp` | MCP servers and their status (engine): the ones in ad's engine settings; a trusted project's own start with its conversation |
 | `/hooks` | hooks and whether they are trusted; ad's own are marked (engine) |
 | `/skills` | skills the engine can use here (engine) |
@@ -346,6 +352,8 @@ Model, effort and permission changes apply from the next turn.
 | `/schedule [run <id>]` | scheduled jobs |
 | `/tools [list|enable|disable <tool>]` | optional agent tools (`/tools enable browser`) |
 | `/ad <command>` | run an ad command, e.g. `/ad doctor` |
+| `/fallback [on\|off]` | the fallback order: where a task may continue when a limit runs out; `on`/`off` for this window only (see [Automatic fallback](#automatic-fallback)) |
+| `/retry` | try again after automatic fallback paused (on the current model) |
 
 **Help**
 
@@ -357,6 +365,83 @@ Model, effort and permission changes apply from the next turn.
 A command ad doesn't have yet is never sent to the model as a prompt. It answers in one line why ("/import isn't planned for ad."), and what you typed stays in the prompt. Where the engine's own UI can't help either (`/ide`, `/app`, `/daemon`), the answer says so instead. Upstream commands keep upstream's rules: the ones disabled while a task runs (`/new`, `/fork`, `/compact`, `/init`, `/export`, `/review`, `/logout`, …) answer "'/new' is disabled while a task is in progress.", and the draft stays. Upstream's aliases work (`/cwd`, `/clean` for `/stop`, `/pet`), and `/quit` shows in the popup only once you type it.
 
 ---
+
+## Switching model, account or provider
+
+Pick another account (or its model) in `/model` or `/account` while a conversation is open, and it moves there, mid-task, with its history. Each row says what Enter does: "continues this conversation" or "continues in a new conversation (history carried over)".
+
+- **How it moves.** Another model on the same account takes effect from the next turn. Another key of the same provider, same model, continues in a copy of the conversation (a fork). Anything else (another provider, a ChatGPT account, ad's chat translation on either side, another model with the account) starts a new conversation on that account, seeded with the history so far as ad's note plus the messages; the old one stays in `/resume`.
+- **When.** At a safe point: idle, no open approval, no subagent still working. During a turn you choose **Switch after this turn** or **Stop the turn and switch now** (ad then tells the new model to continue). Prompts you send meanwhile wait and run once, on the new account. The footer says **switch pending**; `/model` or `/account` then offers to cancel it.
+- **What carries over.** The history (as text: tools as `[done] $ npm test → exit 1` lines, no reasoning, no internal ids), the folder, permissions, the queue and the mode. Files on disk are as they are.
+- **Goals** pause during the switch and resume after the first answer on the new account; no turn starts there by itself first.
+- **Background terminals** keep running with the old conversation. The new model is told which they are and not to restart them; `/ps` lists them under "Still running from before the switch" and `/stop` ends them too.
+- **Not carried:** "for this session" approvals, the side conversation, `/undo` of turns from before the switch ("That turn ran before the switch to …").
+- **When a tool's end is unknown** (the last turn may still have started `npm run deploy`), ad asks first: **Switch anyway** or **Cancel**.
+- **If it can't**, nothing moves: "Couldn't switch to … Still on …" says why (sign-in, model, engine, the engine kept the old provider). See [troubleshooting #74](troubleshooting.md#74-couldnt-switch-to--still-on-).
+- `/status` shows `session ses_… · binding 2 (switched 14:02, you asked)`; `ad sessions show --last` lists the bindings.
+- **Turn it off:** `"switching.crossAccount": false` in `~/.agent-daemon/tui/prefs.json` brings back P3.8b's behaviour (another provider starts a new, empty conversation; the row says "starts a new conversation").
+
+## Limits and usage
+
+ad shows the limits it hears about and never invents one. A ChatGPT sign-in reports its 5-hour and weekly windows; OpenRouter reports its free daily requests and credits (read after a limit and with `/usage`); other providers report rate limits in their answers, or nothing. A number past its reset, or too old, is dropped rather than shown as `0%`.
+
+- **The status line** shows the limit closest to running out (`limits`, see above).
+- **The footer** adds a chip only when it matters: `limit 92% · resets 14:05` at the warning level, `limit used up · resets 05:30` when it ran out.
+- **A notice before it runs out**, once per window and reset period: `ChatGPT · personal: 90% of the 5-hour limit used (resets 14:05).` With fallback on it says where the task continues if it runs out; with other accounts and fallback off it points at `/fallback`. Another notice says when it is used up. A restart doesn't repeat them.
+- **`/status`** has a `limits` row: each window with its reset (`5-hour 64% (resets 14:05, in 1h 10m) · weekly 22% (resets Tue 09:00)`), when ad last heard, and a provider benched by another window (`OpenRouter hit a limit; other OpenRouter accounts aren't used automatically until 05:30`). "not reported by this provider" means there is nothing to show.
+- **The warning level** is `limits.warnAt` in ad's `prefs.json`: a percentage (90 by default) or `"off"` for no notices and no early chip.
+
+## Automatic fallback
+
+When a model's limit runs out or its provider fails, ad can continue the task on the next model in an order you chose, by itself, once the turn has ended. It is off until you turn it on in `/fallback`, which opens the order below the prompt.
+
+### What happens when a limit runs out
+
+- **Only at the end of a turn.** ad never moves a turn that is still working. A turn that keeps retrying a dead connection is stopped at the end of the order's "give up after" time (a goal is paused first), then moved.
+- **Only for a used-up limit, a rate limit, a network failure or a provider's server error.** Never for a sign-in problem, a plan that doesn't include the use, a request the model refused, or your own Esc.
+- **The line says what happened:** `↪ Switched to Gemini API · gemini-2.5-flash: OpenRouter's daily limit is used up (resets 05:30). Fallback 1 of 3.` It replaces the engine's own message, which can mislead (a free daily limit arrives as "Quota exceeded. Check your plan and billing details."); that message stays in `/warnings`. The bell rings when the terminal isn't focused.
+- **ad continues the work there:** the next model gets the conversation (tools that ran are marked done, never run again) and one line from ad asking it to carry on. That line shows as `• Fallback: ad continued the task here`, never as your words, and ad's memory never learns from it. Prompts you queued run after it, once.
+- **Another account of the provider that ran out is never next:** every account of it waits for the reset, in every window.
+- **A ChatGPT sign-in is checked first:** ad asks its engine who is signed in before moving there. A signed-out one is skipped (`Couldn't switch to …: that account needs signing in again: ad auth login <name>`).
+- **A short wait instead of a move:** a rate limit with a known wait of 30 s or less is retried once on the same model (`↻ Rate limited by OpenRouter; retrying in 8 s (1 of 1).`).
+- **Before your prompt:** if the model you are on ran out since (or the provider of a model fallback chose was benched), ad switches first and your prompt runs there (`↪ Using … for this prompt: …`). A model you picked yourself is kept, with one notice.
+
+### When it pauses
+
+ad stops and asks you instead of moving when it can't be sure the move is safe or useful: `⏸ Paused: <why>. Your work is saved. /retry tries again · /model picks a model · /fallback shows the order.` The reasons:
+
+- a command from the failed turn may still be running (ad can't tell whether it finished);
+- a command is still running in the background and isn't one you allowed to keep running (the rules' keep-running list, for dev servers and watchers);
+- a subagent is still working;
+- no other model in your order can take over now (each one's reason is listed);
+- the order's budget is used up (moves per task, or the time to keep trying), or fallback is switching too often (moves per hour);
+- the order no longer matches what you confirmed.
+
+While paused, nothing you queued runs. **`/retry`** tries again on the current model; a prompt you type, or a model you pick in `/model`, ends the pause. `/status` shows `fallback  1 switch this session (14:02, …)`.
+
+### The order
+
+`/fallback` shows and edits it:
+
+```text
+Fallback order        off · no extra spend
+› 1  OpenRouter · work · qwen/qwen3-coder:free    free (checked 3 min ago) · today 41/50  ✓
+  2  Gemini API · personal · gemini-2.5-flash     free (checked 3 min ago)                ✓
+  3  ChatGPT · personal · gpt-5.5 medium          your plan · weekly 64% used             ✓
+    + add a target (a)
+ Switch on: limit used up · rate limit · network error · provider error
+ Cost: no extra spend   Moves per task: 3 (6 an hour)   Give up after: 2 min   Trial endpoints: ask
+ enter rules · a add · d remove · [ ] move · t test · l live test · p preview · e turn on · esc close
+```
+
+- **↑/↓** choose a row; **[** and **]** move it; **d** removes it; **a** adds a target (an account, then one of its models; a trial or free-tier endpoint asks first).
+- **enter** on the rules line: what it switches on, the cost rule, moves per task, how long to keep trying, the trial rule.
+- **t** checks each target without sending anything. **l** sends one tiny request to each API target, after asking. **p** previews what would happen now (**tab**: another kind of error).
+- **e** shows every destination and what its provider does with your data, then **Turn on**, **Save, keep off** or **Cancel**. When on, **e** turns it off.
+- Each change is saved at once. One that would add a problem shows the reason under the rows and stays a draft until you fix it; **esc** then asks "Discard changes?".
+- Changing the order, a target, the cost or trial rule, or the account behind a target turns fallback off until you confirm again ("Changed: fallback is off until you turn it on again (e).").
+- **`/fallback off`** stops it for this window only, until you quit; **`/fallback on`** brings it back (refused while it is off in your settings: "Fallback is off in your settings. /fallback opens them.").
+- The rules, the words and the agent-shell refusal are the same as `ad fallback` in a terminal: see [harness.md](harness.md#the-fallback-order-ad-fallback).
 
 ## Plan mode
 
@@ -519,6 +604,7 @@ Esc Esc rewinds the conversation only; `/undo` rewinds the conversation **and** 
 | `~/.agent-daemon/tui/state.json` | when you last used each folder, for "Since last time" |
 | `~/.agent-daemon/tui/chat-hint-shown` | marks the one-time `ad chat` hint (that bare `ad` opens the TUI) as shown |
 | `~/.agent-daemon/locks/` | conversation locks, so two `ad`s never write one conversation |
+| `~/.agent-daemon/sessions/` | the session record: which account and model ran each turn, and what each tool call did (`/status` names the session; `ad sessions show --last` prints it). Never reasoning, a question's or form's answer, file contents, command output, headers or keys; see [harness.md](harness.md#the-session-record-ad-sessions-show) |
 | `~/.agent-daemon/tui/prefs.json` | ad's own TUI preferences (owner-only), for what the engine has no setting for: `clear.keepScrollback`, `prompt.atBottom` |
 | `~/.agent-daemon/engine/config.toml` | folder trust (`projects`), as the engine keeps it, and the engine's own TUI settings (`tui.status_line`, `tui.terminal_title`, `tui.theme`, `tui.vim_mode_default`): an item ad can't show stays there (`/warnings` lists it). `tui.keymap` is read, never written by ad |
 | `~/.agent-daemon/engine/skills/` | the mirror of `~/.claude/skills` for the engine |
@@ -570,6 +656,15 @@ Everything else (conversations, logs, login) is the engine's own, in ad's engine
 | `/setup-default-sandbox` refuses or fails | [#36](troubleshooting.md#36-ad-tui-setup-default-sandbox-refuses-or-fails) |
 | "The engine reported a problem", or an upstream name in raw details or an OS prompt | [#39](troubleshooting.md#39-what-ad-cant-rename) |
 | "Pick a project folder" at start, or `/cd` says a folder would load your own skills from `~/.codex/` | [#48](troubleshooting.md#48-pick-a-project-folder-or-run-this-in-a-project-folder) |
+| "This session is open in another ad window", "couldn't write this session's record" | [#73](troubleshooting.md#73-this-session-is-open-in-another-ad-window-or-ad-couldnt-write-this-sessions-record) |
+| "Couldn't switch to …", "the engine kept the old provider", "history carried over … left out" | [#74](troubleshooting.md#74-couldnt-switch-to--still-on-) |
+| `/fallback` shows "skipped" rows, or "None of these targets fits …" | [#77](troubleshooting.md#77-fallback-never-switches-or-a-target-says-skipped-now) |
+| "Fallback is off: … changed since you confirmed the order" | [#78](troubleshooting.md#78-fallback-is-off--changed-since-you-confirmed-the-order-or-it-turned-itself-off) |
+| "⏸ Paused: … may still be running from the failed turn" | [#79](troubleshooting.md#79-fallback-paused-may-still-be-running-from-the-failed-turn) |
+| "⏸ Paused: … is still running in the background" | [#80](troubleshooting.md#80-fallback-paused-still-running-in-the-background) |
+| "⏸ Paused: fallback is switching too often", "the fallback budget is used up" | [#81](troubleshooting.md#81-fallback-paused-switching-too-often-or-the-fallback-budget-is-used-up) |
+| `limits` blank, "not reported by this provider" | [#82](troubleshooting.md#82-limits-are-blank-or-not-reported-by-this-provider) |
+| `ad run` / `ad loop` exit 4, a job "paused" | [#83](troubleshooting.md#83-a-run-exited-with-code-4-or-a-scheduled-job-says-paused) |
 | an engine command says "isn't in ad yet" | [commands.md](commands.md) |
 | not signed in, sandbox, hooks, your own install's home refused | [harness.md](harness.md#when-something-goes-wrong), troubleshooting #14–21 |
 

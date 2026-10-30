@@ -11,7 +11,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -87,6 +87,18 @@ function world(mockUrl) {
   for (const k of Object.keys(env)) if (new RegExp(`^${ENGINE.name.toUpperCase()}_`).test(k) || k === "AD_CODEX_BIN") delete env[k];
   delete env.CI; // the TUI is interactive here
   return { root, home, codexHome, cwd, env, git };
+}
+
+// Every learning journal of the world's project, as one text. Capture files sit in
+// the project's own .agent-daemon after `ad init`, else in ad's root
+// (projects/<name>, P5.2): read every journal (and draining copy) in both.
+function journalTextOf(w) {
+  const projects = join(w.home, ".agent-daemon", "projects");
+  const dirs = [join(w.cwd, ".agent-daemon"), ...(existsSync(projects) ? readdirSync(projects).map((n) => join(projects, n)) : [])];
+  return dirs
+    .filter((d) => existsSync(d))
+    .flatMap((d) => readdirSync(d).filter((n) => n.startsWith("learning-journal")).map((n) => readFileSync(join(d, n), "utf8")))
+    .join("\n");
 }
 
 // Every pty started, so a test can close them all (an open ConPTY keeps node alive).
@@ -658,8 +670,7 @@ test("Part 6 live: /cd forks the conversation into another folder, and the next 
 test("Part 7 live: a side question while the main turn runs; the side runs without ad's hooks; nothing merges back", { skip, timeout: 10 * 60_000 }, async () => {
   const mock = await startMockResponses({ script: liveScript });
   const w = world(mock.url);
-  const journal = join(w.cwd, ".agent-daemon", "learning-journal.jsonl");
-  const journalText = () => (existsSync(journal) ? readFileSync(journal, "utf8") : "");
+  const journalText = () => journalTextOf(w);
   let t;
   try {
     t = await start(w);
@@ -780,8 +791,7 @@ test("Part 9 live: /theme saves tui.theme through the real engine, and code is c
 test("Part 10 live: /recap from a temporary thread with no tools or hooks; /subagents watches a real subagent", { skip, timeout: 10 * 60_000 }, async () => {
   const mock = await startMockResponses({ script: liveScript });
   const w = world(mock.url);
-  const journal = join(w.cwd, ".agent-daemon", "learning-journal.jsonl");
-  const journalText = () => (existsSync(journal) ? readFileSync(journal, "utf8") : "");
+  const journalText = () => journalTextOf(w);
   let t;
   try {
     t = await start(w);
@@ -894,6 +904,72 @@ test("prompt at the bottom live: the composer starts on the last rows and stays 
     await t.exit;
   } finally {
     t?.kill();
+    await mock.close();
+    await removeWithRetry(w.root);
+  }
+});
+
+// P4.1 Done-when: one ad tui conversation with a command and a patch is recorded, and
+// `ad sessions show --last --json` reads it back; the record holds no reasoning or key.
+test("P4.1 live: a command and a patch in ad tui are in the session record; ad sessions show --last --json", { skip, timeout: 10 * 60_000 }, async (ctx) => {
+  const mock = await startMockResponses({ script: liveScript });
+  const w = world(mock.url);
+  const key = ["sk", "test", "LIVEKEY0123456789abcdefghij"].join("-");
+  let t;
+  try {
+    t = await start(w);
+    const answer = async (doneRe, what) => {
+      const end = Date.now() + 180_000;
+      while (!doneRe.test(t.text())) {
+        if (Date.now() > end) throw new Error(`no ${what}\n${t.text().slice(-2000)}`);
+        if (/retry without sandbox\?|Apply file changes\?|Run this command\?|Allow command\?/i.test(t.screen()) && /\(y\)|No, and stop/.test(t.screen())) {
+          await settle(600);
+          t.type("y");
+        }
+        await settle(300);
+      }
+      await t.until(() => t.idle(), `idle after ${what}`);
+    };
+    t.type(`SHELL with ${key}\r`);
+    await answer(/done after call-shell/, "the command");
+    // GitHub's Windows runner refuses the command outright (as in Part 5): no exec to record.
+    if (/cannot enforce split writable root sets/.test(t.text().replace(/\s+/g, " "))) {
+      return void ctx.skip("The engine's unelevated Windows sandbox refused the command on this machine (\"cannot enforce split writable root sets\")");
+    }
+    // Or the engine rejected it before it started: no command cell at all, only a warning.
+    const shellTurn = t.text().slice(t.text().lastIndexOf("SHELL with"), t.text().lastIndexOf("done after call-shell"));
+    if (process.platform === "win32" && !/\b(Ran|Running|Failed|Declined|Stopped)\b/.test(shellTurn)) {
+      return void ctx.skip("The engine rejected the command before it started on this machine (no command cell; the Windows sandbox isn't set up here)");
+    }
+    t.type("PATCH please\r");
+    await answer(/done after call-patch/, "the patch");
+    t.type("/status\r");
+    await t.until(/session\s+ses_\w+ \u{b7} binding 1/u, "the session row in /status");
+    t.type("\x03");
+    await settle(200);
+    t.type("\x03");
+    assert.equal((await t.exit).exitCode, 0);
+
+    const shown = execFileSync(process.execPath, [CLI, "sessions", "show", "--last", "--json"], { cwd: w.cwd, env: w.env, encoding: "utf8" });
+    const s = JSON.parse(shown);
+    assert.equal(s.origin, "tui");
+    assert.equal(s.state, "closed");
+    assert.equal(s.bindings.length, 1, JSON.stringify(s.bindings));
+    assert.ok(s.bindings[0].target?.key, "the binding's target");
+    const tools = s.turns.flatMap((x) => x.tools);
+    assert.ok(tools.some((x) => x.effect === "exec" && x.status === "succeeded"), JSON.stringify(tools));
+    assert.ok(tools.some((x) => x.effect === "write" && x.status === "succeeded"), JSON.stringify(tools));
+    assert.deepEqual([...new Set(s.turns.map((x) => x.trigger))], ["user"]);
+    const dir = join(w.home, ".agent-daemon", "sessions");
+    const raw = readdirSync(dir).filter((n) => n.endsWith(".jsonl")).map((n) => readFileSync(join(dir, n), "utf8")).join("\n");
+    for (const bad of ["encrypted_content", "summaryText", key, "sk-test-"]) assert.ok(!raw.includes(bad), `the record holds ${bad}`);
+  } catch (err) {
+    err.message += `\n--- model requests ---\n${mock.requests.map((r) => JSON.stringify(r.text)).join("\n")}`;
+    // What the command did on screen (the Windows runner's sandbox has refused commands in more than one way).
+    if (t) err.message += `\n--- screen (last 3000 chars) ---\n${t.text().slice(-3000)}`;
+    throw err;
+  } finally {
+    for (const k of launched.splice(0)) k();
     await mock.close();
     await removeWithRetry(w.root);
   }

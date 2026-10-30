@@ -12,7 +12,7 @@
 // the harness memory server apply).
 
 import { createInterface } from "node:readline";
-import { startHarnessEngine } from "./start.mjs";
+import { launchHarness } from "./engines.mjs";
 
 export const ACP_PROTOCOL_VERSION = 1;
 
@@ -93,6 +93,9 @@ export function createAcpAgent({ send, request, engineFactory, clientVersion, er
       const started = await engineFactory({ cwd, clientVersion, err });
       if (!started.engine) throw Object.assign(new Error(started.error), { code: -32000 });
       engine = started.engine;
+      // The account's provider for new threads (P3.4; a test factory may give none).
+      engine.adModelProvider = started.params?.modelProvider;
+      engine.adRelease = started.release;
       engine.on("itemStarted", ({ item, threadId }) => {
         if (item.type !== "fileChange") return;
         fileChanges.set(item.id, item);
@@ -139,7 +142,7 @@ export function createAcpAgent({ send, request, engineFactory, clientVersion, er
         return {}; // login is `ad auth` in a terminal; nothing to do over ACP
       case "session/new": {
         const e = await getEngine(params.cwd);
-        const { threadId } = await e.startThread({ cwd: params.cwd });
+        const { threadId } = await e.startThread({ cwd: params.cwd, modelProvider: e.adModelProvider });
         sessions.set(threadId, { cwd: params.cwd, turnId: null, busy: false, cancelRequested: false });
         return { sessionId: threadId };
       }
@@ -196,13 +199,14 @@ export function createAcpAgent({ send, request, engineFactory, clientVersion, er
     }
   }
 
-  return { handle, close: async () => (enginePromise ? (await enginePromise.catch(() => null))?.close() : undefined), sessions };
+  const closeEngine = (e) => (e?.adRelease ? e.adRelease() : e?.close());
+  return { handle, close: async () => (enginePromise ? closeEngine(await enginePromise.catch(() => null)) : undefined), sessions };
 }
 
 // stdio JSON-RPC 2.0 peer: requests from the client are handled by the
 // agent; our own requests to the client (session/request_permission)
 // resolve when the client answers.
-export function serveAcp({ input = process.stdin, output = process.stdout, err = process.stderr, clientVersion, engineFactory = startHarnessEngine } = {}) {
+export function serveAcp({ input = process.stdin, output = process.stdout, err = process.stderr, clientVersion, engineFactory = launchHarness } = {}) {
   let nextId = 1;
   const pending = new Map();
   const send = (msg) => output.write(JSON.stringify(msg) + "\n");

@@ -1,0 +1,30 @@
+{
+  "family": "http",
+  "phrasings": [
+    {
+      "id": "http-a1",
+      "text": "Actually we use request() from src/lib/api.js to call services, not fetch.",
+      "writer": "author"
+    },
+    {
+      "id": "http-a2",
+      "text": "Service calls go through request(\"mail\", \"/send\", ...) in lib/api.js; it handles retries and the base URL.",
+      "writer": "author"
+    },
+    {
+      "id": "http-a3",
+      "text": "Please remember: never call fetch directly, use the api helper.",
+      "writer": "author"
+    },
+    {
+      "id": "http-a4",
+      "text": "use request from lib/api.js instead of fetch",
+      "writer": "author"
+    },
+    {
+      "id": "http-a5",
+      "text": "We don't talk to services with raw fetch here. request(service, path) does it.",
+      "writer": "author"
+    }
+  ]
+}

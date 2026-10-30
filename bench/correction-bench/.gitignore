@@ -1,0 +1,4 @@
+# The test split is private until the pre-registration tag (PROTOCOL.md):
+# only its hashes (tasks/test.sha256, phrasings/test.sha256, repos.sha256) are committed.
+tasks/test/
+phrasings/test/

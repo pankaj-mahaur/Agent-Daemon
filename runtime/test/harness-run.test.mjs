@@ -138,3 +138,41 @@ test("P0.2a: a trusted folder under a git home with only home settings gets the 
     rmSync(user, { recursive: true, force: true });
   }
 });
+
+test("ad run records a session with its target (P4.1)", async () => {
+  const adRoot = mkdtempSync(join(tmpdir(), "ad-run-root-"));
+  try {
+    const r = await run("apply-edit", { adRoot, json: true });
+    assert.equal(r.code, 0, r.stderr);
+    const { lastSessionId, summarizeSession } = await import("../src/sessions/show.mjs");
+    const id = lastSessionId({ root: adRoot });
+    assert.match(id ?? "", /^ses_/);
+    const s = summarizeSession(id, { root: adRoot });
+    assert.equal(s.origin, "run");
+    assert.equal(s.state, "closed");
+    assert.equal(s.bindings.length, 1);
+    assert.equal(s.bindings[0].endReason, "close", "released after the record closed: not a lost engine");
+    assert.ok(s.bindings[0].target?.key, JSON.stringify(s.bindings[0]));
+    assert.equal(s.turns.length, 1);
+    assert.equal(s.turns[0].trigger, "user");
+    assert.ok(s.turns[0].tools.length >= 1, JSON.stringify(s.turns[0]));
+  } finally {
+    rmSync(adRoot, { recursive: true, force: true });
+  }
+});
+
+test("ad run with a home a command chose and no ad root records nothing", async () => {
+  const adRoot = mkdtempSync(join(tmpdir(), "ad-run-root-"));
+  const saved = process.env.AD_ROOT;
+  process.env.AD_ROOT = adRoot;
+  try {
+    const r = await run("do the thing");
+    assert.equal(r.code, 0);
+    const { lastSessionId } = await import("../src/sessions/show.mjs");
+    assert.equal(lastSessionId({ root: adRoot }), null);
+  } finally {
+    if (saved === undefined) delete process.env.AD_ROOT;
+    else process.env.AD_ROOT = saved;
+    rmSync(adRoot, { recursive: true, force: true });
+  }
+});

@@ -131,7 +131,7 @@ test("syncSkills mirrors ~/.claude/skills, never touches the user's own folders,
   }
 });
 
-test("runStockCodex: pinned binary, isolated CODEX_HOME, no engine environment leaks, provider keys from ad's store", async () => {
+test("runStockCodex: pinned binary, isolated CODEX_HOME, no engine environment leaks, and no provider key (P3.3: keys never enter an engine env)", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ad-stock-"));
   try {
     let seen = null;
@@ -156,7 +156,7 @@ test("runStockCodex: pinned binary, isolated CODEX_HOME, no engine environment l
     assert.equal(seen.opts.env.CODEX_SQLITE_HOME, undefined);
     assert.deepEqual(seen.args.slice(-5), ["resume", "t9", "--no-daemon", "-C", root]);
     assert.equal(seen.opts.stdio, "inherit");
-    assert.ok(Object.values(seen.opts.env).includes("sk-or-test"), "the provider key from ad's store reaches the stock UI");
+    assert.ok(!Object.values(seen.opts.env).includes("sk-or-test"), "no stored key reaches the stock UI");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

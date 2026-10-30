@@ -21,6 +21,8 @@ import crypto from "node:crypto";
 import { sendMessage, createInbox } from "./inbox.mjs";
 import { productValue } from "../product-values.mjs";
 import { commitWorktree, runEngineWorker } from "./engine-worker.mjs";
+// The team's settings (P4.7: fallback), lazily: team.mjs is the board's, spawn only reads it.
+const loadTeamInfo = async (teamId) => (await import("./team.mjs")).loadTeam(teamId);
 import { acquireLock, liveLocks } from "../lock.mjs";
 import { engineHome } from "../engine/index.mjs";
 import { homeWorkerNote } from "../engine/attribution.mjs";
@@ -57,6 +59,10 @@ const activeAgents = {
     agentLeases.delete(name);
   },
   get size() {
+    return this.count();
+  },
+  /** @param {{identityOf?: Function}} [o] identityOf: who holds each lease (lock.mjs; tests pass their own) */
+  count({ identityOf } = {}) {
     let legacy = 0;
     let files = [];
     try {
@@ -70,7 +76,7 @@ const activeAgents = {
       if (pid && pidAlive(pid)) legacy++;
       else fsSync.rmSync(p, { force: true });
     }
-    return legacy + liveLocks({ dir: runningDir() }).filter((h) => h.kind === "agent").length;
+    return legacy + liveLocks({ dir: runningDir(), ...(identityOf ? { identityOf } : {}) }).filter((h) => h.kind === "agent").length;
   },
 };
 
@@ -200,11 +206,16 @@ export async function spawnAgent(opts) {
     }
     try {
       await updateAgentStatus(opts.teamId, agentName, "running", null, process.pid);
+      // The team's fallback setting (P4.7), made with ad team set in a terminal.
+      const teamFallback = opts.teamId ? Boolean((await loadTeamInfo(opts.teamId).catch(() => null))?.fallback) : false;
       r = await (opts.runWorker ?? runEngineWorker)({
+        fallback: teamFallback,
+        team: opts.teamId ?? null,
         worktreePath,
         systemPrompt,
         userMessage,
         model: opts.model,
+        account: opts.account,
         timeoutMs,
         engineOpts,
         memoryProject: opts.cwd,
@@ -223,7 +234,8 @@ export async function spawnAgent(opts) {
     } finally {
       activeAgents.delete(agentName);
     }
-    const status = r.ok ? "completed" : "error";
+    // A paused worker (P4.7) waits for a person: the board shows it blocked, with the reason.
+    const status = r.ok ? "completed" : r.status === "paused" ? "blocked" : "error";
     await updateAgentStatus(opts.teamId, agentName, status, r.ok ? null : r.error).catch((e) => process.stderr.write(`[spawn] status update failed: ${e.message}\n`));
     if (opts.leader) {
       await sendMessage({
@@ -491,8 +503,8 @@ async function updateAgentStatus(teamId, agentName, status, error, pid) {
   await atomicWriteJson(p, agents);
 }
 
-export function getActiveAgentCount() {
-  return activeAgents.size;
+export function getActiveAgentCount(opts) {
+  return activeAgents.count(opts);
 }
 
 export async function removeWorktree(cwd, branch) {

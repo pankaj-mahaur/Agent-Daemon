@@ -82,6 +82,8 @@ Commands:
   memory scan            Check older memory notes once: hold back rows with a provider key or an injection
   memory held [accept|release|drop <id>]  Notes memory keeps back (agent-written, flagged); accept/release/drop need your own terminal and the typed id
   memory consolidate     Hermes-style evolution pass: near-duplicate merges, stale archive, contradictions
+  memory redact <table>:<id>   Replace what looks like a key in one row (your own terminal, typed confirmation)
+  state inspect|export|verify  Move ad to another computer: one .adstate file (ad state --help)
                          → proposals only; --apply-merges / --apply-stale execute after review
   memory install [--host <id>] [--yes] [--dry-run]   Add ad's memory server to other agents (doctor, repair, status, uninstall)
   memory report [--days 30] [--all-projects] [--json] [--share]   Is memory working: repeated corrections, what was shown, feedback
@@ -112,21 +114,28 @@ Agent harness (ad's engine; ad about):
   tui                    The terminal UI (inline; bare "ad" opens it): see docs/tui.md
                          --cwd <dir>  --model <name>  --sandbox <mode>  --resume <thread-id>  --last
                          --preview            a minimal preview UI on the same engine instead
-  loop "<objective>"     Autonomous loop until done (dual exit, circuit breaker, budgets, STOP file)
+  loop "<objective>"     Autonomous loop until done (dual exit, circuit breaker, budgets, STOP file); --fallback: your fallback order
                          --max-iterations 20  --max-minutes 60  --max-tokens <n>  --resume <thread-id>
-  run "<prompt>"         One non-interactive agent turn (approvals are declined)
+  run "<prompt>"         One non-interactive agent turn (approvals are declined); --account/--model/--effort pick the target; --fallback: your fallback order (exit 4: paused)
+  sessions show [<id>|--last] [--json]  One session's record: bindings, targets, turns and tool calls (read-only)
                          --cwd <dir>  --model <name>  --json
                          --sandbox <mode>     read-only | workspace-write (default) | danger-full-access
+                         --account <provider>/<label>  (ad, tui, chat, loop, run, spawn) the account to run on
+                                              (AD_ACCOUNT: a default; docs/harness.md)
                          --allow-home-folder  (ad, tui, chat, loop, run, schedule add) work in a folder that
                                               would load skills from your own engine install (docs/harness.md)
+  auth login <provider>  Add an account (API key at a hidden prompt or --stdin; ChatGPT in the browser or --device; OpenRouter --oauth)
+  auth list | use | status | logout | remove | rename | test | repair   Manage accounts: ad auth --help
   auth login chatgpt     Sign in with your ChatGPT subscription (browser; --device for a code)
   auth login openai      Use an OpenAI API key (hidden prompt, or pipe it on stdin)
   auth login openrouter  Store an OpenRouter key and make it active (needs --model <slug>)
   auth use <provider>    Switch active provider: openai | openrouter [--model <slug>]
   auth status            Show the harness login + active provider (no secrets)
+  auth repair            Fix interrupted sign-ins and keys without an account (--yes: answer yes)
   auth logout [openrouter]
-  schedule add "<cron>" run|loop "<prompt>"   Recurring job, run by "ad watch" / the service  [--cwd dir]
-  schedule list | remove|enable|disable|run <id> | tick
+  fallback [list|add|remove|order|move|set|preview|test|enable|disable]   Where a task continues when a limit runs out: ad fallback --help
+  schedule add "<cron>" run|loop "<prompt>"   Recurring job, run by "ad watch" / the service  [--cwd dir] [--fallback]
+  schedule list | remove|enable|disable|run <id> | tick | edit <id> --fallback|--no-fallback
   web                    Local web UI: chat with approvals, threads, loops, schedules  [--port <n>]
   acp                    Serve Agent Client Protocol on stdio (use ad as the agent in Zed / JetBrains)
   agy "<prompt>"         Opt-in: ask your own Antigravity CLI (Gemini subscription); needs --accept-risk once
@@ -135,11 +144,12 @@ Agent harness (ad's engine; ad about):
   tools enable <tool>    browser (Playwright MCP) | web-search (live); "tools disable <tool>" turns off
   sandbox setup          Windows: set up the command sandbox for ad's engine (--elevated: stronger; asks first, --yes off a terminal)
   sandbox status         Windows: show sandbox readiness
-  migrate [--undo]       Rename ad's engine folder from its older name (optional; --undo reverses it)
+  migrate [--undo]       Rename ad's engine folder from its older name (optional; --undo reverses it). To move ad to another computer: ad state export / import
 
   team create     (tc)   Create a new multi-agent team
   team status     (ts)   Show team kanban board
   team list       (tl)   List all teams
+  team set <team> fallback on|off   Let the team's workers continue on your fallback order
   team list-templates (tt)  List available team templates
   team inbox      (ti)   Read messages from an agent's inbox
   team cleanup    (tu)   Prune stale worktrees and dangling team data
@@ -972,31 +982,22 @@ async function countTemplates(dir) {
 }
 
 async function cmdStatus({ cwd = process.cwd() }) {
-  const { projectDataDir } = await import("./memory/project-dir.mjs");
-  const proposed = path.join(projectDataDir(cwd), "proposed");
-  try {
-    const entries = await fs.readdir(proposed);
-    const diffs = entries.filter(e => e.endsWith(".diff") || e.endsWith(".md"));
-    if (diffs.length === 0) {
-      console.log("No queued proposals.");
-      return 0;
-    }
-    console.log(`${diffs.length} queued proposal(s):`);
-    for (const d of diffs) {
-      const stat = await fs.stat(path.join(proposed, d));
-      console.log(`  ${d}  (${stat.size} bytes, ${stat.mtime.toISOString()})`);
-    }
-    console.log("\nReview with: agent-daemon review");
+  // The same queues ad review reads: this project's and ad's global folder.
+  const { listProposals } = await import("./review.mjs");
+  const entries = await listProposals(cwd);
+  if (entries.length === 0) {
+    console.log("No queued proposals.");
     await printHeldLine(cwd);
     return 0;
-  } catch (err) {
-    if (err.code === "ENOENT") {
-      console.log("No queued proposals.");
-      await printHeldLine(cwd);
-      return 0;
-    }
-    throw err;
   }
+  console.log(`${entries.length} queued proposal(s):`);
+  for (const e of entries) {
+    const stat = await fs.stat(e.file);
+    console.log(`  ${e.name}  (${stat.size} bytes, ${stat.mtime.toISOString()})`);
+  }
+  console.log("\nReview with: ad review");
+  await printHeldLine(cwd);
+  return 0;
 }
 
 // "<n> memory notes are waiting or held back. Review: ad memory held" (ad status).
@@ -1202,10 +1203,15 @@ async function cmdDoctor({ cwd = process.cwd(), tokens, limit, model } = {}) {
         const held = heldNotes(handle, [projectSlug(cwd)]).length;
         checks.push({ name: "Memory notes held", ok: true, note: held ? `${held} waiting or held back — review: ad memory held` : "none waiting or held back" });
         const collisions = findSlugCollisions(handle);
+        // P7.1a: projects have ids; only notes written before, that nothing ties to one
+        // of the folders, stay out of both.
+        const { unassignedCounts } = await import("./memory/project-db.mjs");
+        const left = collisions.length ? unassignedCounts(handle) : {};
+        const nLeft = Object.values(left).reduce((s, x) => s + x, 0);
         checks.push({
           name: "Memory keys",
-          ok: collisions.length === 0,
-          note: collisions.length ? `these folders share one memory key, so ad keeps their notes out of both until a later release gives each project its own ID: ${collisions.map((c) => c.paths.join(", ")).join("; ")}` : "every project has its own key",
+          ok: nLeft === 0,
+          note: nLeft ? `${nLeft} older row(s) from folders that shared one key (${collisions.map((c) => c.paths.join(", ")).join("; ")}) can't be told apart and reach neither: place them with ad memory assign --list` : collisions.length ? "folders that shared a key now each have their own project id" : "every project has its own key",
         });
       }
     } catch (e) {
@@ -1218,6 +1224,19 @@ async function cmdDoctor({ cwd = process.cwd(), tokens, limit, model } = {}) {
     });
   } catch {
     checks.push({ name: "Project memory bootstrap", ok: false, note: "missing .agent-daemon/memory — run ad init" });
+  }
+  // P3.2: accounts and the secret store (counts and names only, never a value).
+  try {
+    const { accountRows } = await import("./auth/accounts/reconcile.mjs");
+    const { createSecretStore } = await import("./auth/secrets.mjs");
+    checks.push(...accountRows({ store: createSecretStore() }));
+  } catch (e) {
+    checks.push({ name: "Accounts", ok: true, note: `not checked (${e.message})` });
+  }
+  // P7.1a: MCP audit logs go to ad's state root; AGENT_DAEMON_HOME is the runtime folder.
+  if (process.env.AGENT_DAEMON_HOME && (await fs.stat(path.join(process.env.AGENT_DAEMON_HOME, "audit")).catch(() => null))) {
+    const { adRoot } = await import("./ad-root.mjs");
+    checks.push({ name: "MCP audit logs", ok: true, note: `Old MCP audit logs are in ${path.join(process.env.AGENT_DAEMON_HOME, "audit")}; new ones go to ${path.join(adRoot(), "audit")}.` });
   }
 
   // A project's own .agent-daemon in a git repo needs its ignore file, or capture
@@ -1526,7 +1545,9 @@ async function cmdSkill(sub, opts) {
       return 0;
     }
     default:
-      console.error(`agent-daemon skill: unknown subcommand "${sub || ""}" (use install | list | remove | search)`);
+      // The skill library (P5.7): propose | history | diff | undo | publish.
+      if (["propose", "history", "diff", "undo", "publish"].includes(sub)) return (await import("./skills/cli.mjs")).runSkillCommand(sub, { ...opts, name: opts.spec });
+      console.error(`agent-daemon skill: unknown subcommand "${sub || ""}" (use install | list | remove | search | propose | history | diff | undo | publish)`);
       return 1;
   }
 }
@@ -1663,9 +1684,31 @@ async function cmdMemory(sub, opts) {
         console.error("agent-daemon: the memory store is unavailable (run ad doctor)");
         return 1;
       }
-      if (opts.outputJson || opts.json) console.log(JSON.stringify(r));
-      else console.log(Object.keys(r).length ? `Memory upkeep: ${Object.entries(r).map(([k, v]) => `${k} ${JSON.stringify(v)}`).join("; ")}` : "Memory upkeep: nothing left to do.");
-      return 0;
+      if (opts.outputJson || opts.json) {
+        console.log(JSON.stringify(r));
+        return 0;
+      }
+      console.log(Object.keys(r).length ? `Memory upkeep: ${Object.entries(r).map(([k, v]) => `${k} ${JSON.stringify(v)}`).join("; ")}` : "Memory upkeep: nothing left to do.");
+      // P7.1a: project ids for any row still without one, and what is left to place by hand.
+      const handle = await (await import("./memory/episodic.mjs")).db();
+      return handle ? (await import("./memory/assign.mjs")).memoryMigrate({ handle }) : 0;
+    }
+    case "assign": {
+      const ep = await import("./memory/episodic.mjs");
+      const handle = await ep.db();
+      if (!handle) {
+        console.error("agent-daemon: better-sqlite3 not installed — no episodic store");
+        return 1;
+      }
+      const readline = await import("node:readline/promises");
+      const io = {
+        ask: async (q) => {
+          const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+          try { return await rl.question(q); } finally { rl.close(); }
+        },
+      };
+      const [ref] = opts.rest ?? [];
+      return (await import("./memory/assign.mjs")).memoryAssign({ ref, project: opts.projectDir, list: opts.list || false, handle, io });
     }
     case "scan": {
       // One-time check of notes stored before the secret filter (runs once;
@@ -2002,6 +2045,11 @@ async function cmdTeam(subcommand, opts) {
   const { readInbox } = await import("./orchestration/inbox.mjs");
 
   switch (subcommand) {
+    // ad team set <team> fallback on|off (P4.7): whether the team's workers may fall back.
+    case "set": {
+      const { cmdTeamSet } = await import("./orchestration/team-settings.mjs");
+      return cmdTeamSet(opts.args ?? [], { env: process.env });
+    }
     case "create": {
       if (!opts.task) {
         console.error("agent-daemon team create: --task is required");
@@ -2293,6 +2341,7 @@ async function cmdSpawn(opts) {
     instructions: roleDef?.instructions,
     skills: roleDef?.skills,
     model: opts.model,
+    account: opts.account,
     cwd: opts.cwd,
     worktree: true,
     leader: leader?.name || null,
@@ -2322,7 +2371,8 @@ async function main(argv) {
   // Only before "--": after it everything is a positional (e.g. a scheduled
   // job's prompt that happens to be "-h").
   const flagsPart = argv.includes("--") ? argv.slice(0, argv.indexOf("--")) : argv;
-  if (argv.length === 0 || flagsPart.includes("--help") || flagsPart.includes("-h")) {
+  // `ad auth --help` is the auth command's own help (P3.8a).
+  if (argv.length === 0 || ((flagsPart.includes("--help") || flagsPart.includes("-h")) && !["auth", "state"].includes(flagsPart[0]))) {
     console.log(HELP);
     return 0;
   }
@@ -2359,11 +2409,15 @@ async function main(argv) {
     return 2;
   }
 
+  // ad state (P7.2): its own options (--project <dir> repeats, unlike the shared boolean).
+  if (command === "state") return (await import("./portability/state-cli.mjs")).cmdState(rest, { appVersion: VERSION });
+
   // Parse remaining args generically (each command interprets what it needs)
   let parsed;
   try {
     parsed = parseArgs({
-      args: rest,
+      // ad auth list --refresh=all (P4.6): its own flag, since --refresh alone takes no value.
+      args: rest.map((a) => (command === "auth" && a === "--refresh=all" ? "--refresh-all" : a)),
       options: {
         transcript:   { type: "string" },
         "session-id": { type: "string" },
@@ -2374,6 +2428,28 @@ async function main(argv) {
         tokens:       { type: "boolean" },
         limit:        { type: "string" },
         model:        { type: "string" },
+        account:      { type: "string" },
+        label:        { type: "string" },
+        owner:        { type: "string" },
+        "base-url":   { type: "string" },
+        preset:       { type: "string" },
+        oauth:        { type: "boolean" },
+        insecure:     { type: "boolean" },
+        stdin:        { type: "boolean" },
+        "no-test":    { type: "boolean" },
+        "no-key":     { type: "boolean" },
+        provider:     { type: "string" },
+        effort:       { type: "string" },
+        global:       { type: "boolean" },
+        session:      { type: "boolean" },
+        digest:       { type: "boolean" },
+        wide:         { type: "boolean" },
+        "refresh-all": { type: "boolean" },
+        fallback:     { type: "boolean" },
+        "no-fallback": { type: "boolean" },
+        "show-emails": { type: "boolean" },
+        "delete-conversations": { type: "boolean" },
+        help:         { type: "boolean", short: "h" },
         template:     { type: "string" },
         task:         { type: "string" },
         team:         { type: "string" },
@@ -2390,6 +2466,7 @@ async function main(argv) {
         "list-candidates": { type: "boolean" },
         "export-traces": { type: "boolean" },
         json:         { type: "boolean" },
+        refresh:      { type: "boolean" },
         "exclude-session": { type: "string" },
         "log-file":   { type: "string" },
         "log-dir":    { type: "string" },
@@ -2420,8 +2497,21 @@ async function main(argv) {
         "allow-home-folder": { type: "boolean" },
         accept:           { type: "string" },
         "accept-all":     { type: "boolean" },
+        import:       { type: "string" },
         global:           { type: "boolean" },
-        share:            { type: "boolean" }
+        share:            { type: "boolean" },
+        reject:           { type: "string" },
+        list:             { type: "boolean" },
+        to:               { type: "string" },
+        from:             { type: "string" },
+        bundled:          { type: "boolean" },
+        file:             { type: "string" },
+        origin:           { type: "string" },
+        replace:          { type: "boolean" },
+        remove:           { type: "boolean" },
+        at:               { type: "string" },
+        error:            { type: "string" },
+        live:             { type: "boolean" }
       },
       allowPositionals: true,
       strict: false
@@ -2475,10 +2565,23 @@ async function main(argv) {
     case "checkpoint":     return cmdCheckpoint(opts);
     case "init":           return cmdInit({ ...opts, profile: parsed.values.profile, plan: parsed.values.plan, skillsMode: parsed.values["skills-mode"] });
     case "status":         return cmdStatus(opts);
-    case "review":         return cmdReview({ ...opts, accept: parsed.values.accept, acceptAll: parsed.values["accept-all"] || false, global: parsed.values.global || false, yes: parsed.values.yes || false });
+    // ad review --import <id> (P7.3): imported lessons and facts, under the same gate.
+    case "review":         if (parsed.values.import) return (await import("./portability/state-cli.mjs")).cmdReviewImport(parsed.values.import, { acceptAll: Boolean(parsed.values["accept-all"]) });
+                           return cmdReview({ ...opts, accept: parsed.values.accept, acceptAll: parsed.values["accept-all"] || false, global: parsed.values.global || false, yes: parsed.values.yes || false, reject: parsed.values.reject, list: parsed.values.list || false });
     case "watch":          return cmdWatch({ ...opts, logFile: parsed.values["log-file"] });
     case "query-retrieve": return cmdQueryRetrieve(opts);
     case "memory":
+      // ad memory redact <table>:<id> (P7.2): one row's key-shaped spans, confirmed by typing.
+      if (parsed.positionals?.[0] === "redact") {
+        const { cmdMemoryRedact } = await import("./portability/state-cli.mjs");
+        const { createInterface } = await import("node:readline/promises");
+        const rl = createInterface({ input: process.stdin, output: process.stdout });
+        try {
+          return await cmdMemoryRedact(parsed.positionals[1], { ask: (q) => rl.question(q) });
+        } finally {
+          rl.close();
+        }
+      }
       // The memory installer for other hosts (same code as npx agent-daemon-memory; P5.3).
       if (["install", "doctor", "repair", "status", "uninstall"].includes(parsed.positionals?.[0])) {
         const sub = parsed.positionals[0];
@@ -2492,6 +2595,9 @@ async function main(argv) {
       json: parsed.values.json || false,
       days: parsed.values.days,
       share: parsed.values.share || false,
+      list: parsed.values.list || false,
+      // ad memory assign <ref> --project <folder>: --project is a flag elsewhere, so its folder is the next word.
+      projectDir: typeof parsed.values.project === "string" ? parsed.values.project : parsed.values.project ? parsed.positionals?.[2] : undefined,
       rest: parsed.positionals?.slice(1) ?? []
     });
     case "route":          return cmdRoute(parsed.positionals?.[0], { ...opts, days: parsed.values.days, json: parsed.values.json });
@@ -2501,7 +2607,17 @@ async function main(argv) {
       project: parsed.values.project || false,
       available: parsed.values.available || false,
       skill: parsed.values.skill,
-      json: parsed.values.json
+      json: parsed.values.json,
+      to: parsed.values.to,
+      from: parsed.values.from,
+      bundled: parsed.values.bundled || false,
+      file: parsed.values.file,
+      origin: parsed.values.origin,
+      yes: parsed.values.yes || false,
+      host: parsed.values.host,
+      replace: parsed.values.replace || false,
+      remove: parsed.values.remove || false,
+      dryRun: parsed.values["dry-run"] || false
     });
     case "doctor":         return cmdDoctor({ ...opts, tokens: parsed.values.tokens, limit: parsed.values.limit, model: parsed.values.model });
     case "about": {
@@ -2509,12 +2625,51 @@ async function main(argv) {
       return cmdAbout();
     }
     case "viewer":         return cmdViewer({ ...opts, out: parsed.values.out, open: parsed.values.open || false });
+    case "fallback": {
+      // P4.4: the fallback order and its rules (changes refuse in the agent's shell).
+      const { cmdFallback } = await import("./routing/cli.mjs");
+      return cmdFallback(parsed.positionals[0], parsed.positionals.slice(1), {
+        model: parsed.values.model,
+        effort: parsed.values.effort,
+        at: parsed.values.at,
+        error: parsed.values.error,
+        from: parsed.values.from,
+        live: Boolean(parsed.values.live),
+        json: Boolean(parsed.values.json),
+        yes: Boolean(parsed.values.yes),
+        help: Boolean(parsed.values.help),
+        clientVersion: VERSION
+      });
+    }
     case "auth": {
+      // P3.2: fix interrupted sign-ins and keys without an account.
+      // `ad auth repair -h` is help, never a repair (P3.8a).
+      if (parsed.positionals[0] === "repair" && !parsed.values.help) return (await import("./harness/auth-repair.mjs")).cmdAuthRepair({ yes: parsed.values.yes || false });
       const { cmdAuth } = await import("./harness/auth.mjs");
       return cmdAuth(parsed.positionals[0], parsed.positionals.slice(1), {
         model: parsed.values.model,
         device: parsed.values.device || false,
         force: parsed.values.force || false,
+        label: parsed.values.label,
+        owner: parsed.values.owner,
+        baseUrl: parsed.values["base-url"],
+        oauth: Boolean(parsed.values.oauth),
+        insecure: Boolean(parsed.values.insecure),
+        noTest: Boolean(parsed.values["no-test"]),
+        noKey: Boolean(parsed.values["no-key"]),
+        provider: parsed.values.provider,
+        effort: parsed.values.effort,
+        // use: one scope (the default is global)
+        scope: ["global", "project", "session", "digest"].filter((s) => parsed.values[s]).length > 1 ? "conflict" : parsed.values.project ? "project" : parsed.values.session ? "session" : parsed.values.digest ? "digest" : "global",
+        wide: Boolean(parsed.values.wide),
+        json: Boolean(parsed.values.json),
+        refresh: Boolean(parsed.values.refresh || parsed.values["refresh-all"]),
+        refreshAll: Boolean(parsed.values["refresh-all"]),
+        yes: Boolean(parsed.values.yes),
+        help: Boolean(parsed.values.help),
+        width: process.stdout.columns ?? 80,
+        // A key typed as a flag (--key …) is refused, never echoed (P3.5).
+        rawValues: parsed.values,
         clientVersion: VERSION
       });
     }
@@ -2537,7 +2692,7 @@ async function main(argv) {
     }
     case "schedule": {
       const { cmdSchedule } = await import("./harness/schedule.mjs");
-      return cmdSchedule(parsed.positionals[0], parsed.positionals.slice(1), { cwd: parsed.values.cwd || process.cwd(), allowHomeFolder: Boolean(parsed.values["allow-home-folder"]) });
+      return cmdSchedule(parsed.positionals[0], parsed.positionals.slice(1), { cwd: parsed.values.cwd || process.cwd(), allowHomeFolder: Boolean(parsed.values["allow-home-folder"]), fallback: parsed.values.fallback ? true : parsed.values["no-fallback"] ? false : undefined });
     }
     case "tools": {
       const { cmdTools } = await import("./harness/tools.mjs");
@@ -2549,8 +2704,11 @@ async function main(argv) {
       return cmdLoop(parsed.positionals.join(" "), {
         cwd: parsed.values.cwd || process.cwd(),
         model: parsed.values.model,
+        account: parsed.values.account,
+        effort: parsed.values.effort,
         resume: parsed.values.resume,
         limits: { maxIterations: num("max-iterations"), maxMinutes: num("max-minutes"), maxTokens: num("max-tokens") },
+        fallback: Boolean(parsed.values.fallback),
         allowHomeFolder: Boolean(parsed.values["allow-home-folder"]),
         clientVersion: VERSION
       });
@@ -2578,6 +2736,7 @@ async function main(argv) {
         return cmdTui({
           cwd: parsed.values.cwd || process.cwd(),
           model: parsed.values.model,
+          account: parsed.values.account,
           sandbox: parsed.values.sandbox,
           resume: parsed.values.resume,
           last: parsed.values.last,
@@ -2601,11 +2760,16 @@ async function main(argv) {
       return cmdChat({
         cwd: parsed.values.cwd || process.cwd(),
         model: parsed.values.model,
+        account: parsed.values.account,
         sandbox: parsed.values.sandbox,
         resume: parsed.values.resume,
         allowHomeFolder: Boolean(parsed.values["allow-home-folder"]),
         clientVersion: VERSION
       });
+    }
+    case "sessions": {
+      const { cmdSessions } = await import("./sessions/show.mjs");
+      return cmdSessions(parsed.positionals?.[0], { id: parsed.positionals?.[1], last: Boolean(parsed.values.last), json: Boolean(parsed.values.json) });
     }
     case "run": {
       const { cmdRun } = await import("./harness/run.mjs");
@@ -2614,14 +2778,17 @@ async function main(argv) {
         // workspace-write sandbox must be rooted where the user actually is.
         cwd: parsed.values.cwd || process.cwd(),
         model: parsed.values.model,
+        account: parsed.values.account,
+        effort: parsed.values.effort,
         sandbox: parsed.values.sandbox,
         json: parsed.values.json || false,
+        fallback: Boolean(parsed.values.fallback),
         allowHomeFolder: Boolean(parsed.values["allow-home-folder"]),
         clientVersion: VERSION
       });
     }
-    case "team":           return cmdTeam(parsed.positionals?.[0], { ...opts, template: parsed.values.template, task: parsed.values.task, team: parsed.values.team, agent: parsed.values.agent, model: parsed.values.model });
-    case "spawn":          return cmdSpawn({ ...opts, team: parsed.values.team, role: parsed.values.role, task: parsed.values.task, model: parsed.values.model, engine: parsed.values.engine });
+    case "team":           return cmdTeam(parsed.positionals?.[0], { ...opts, template: parsed.values.template, task: parsed.values.task, team: parsed.values.team, agent: parsed.values.agent, model: parsed.values.model, args: parsed.positionals.slice(1) });
+    case "spawn":          return cmdSpawn({ ...opts, team: parsed.values.team, role: parsed.values.role, task: parsed.values.task, model: parsed.values.model, account: parsed.values.account, engine: parsed.values.engine });
     case "hook":           return cmdHook(parsed.positionals?.[0]);
     default:
       console.error(`agent-daemon: unknown command "${command}"`);
@@ -2688,13 +2855,23 @@ async function cmdEvolve(opts) {
     console.error("  --export-traces      export skill traces for inline evolution (no auth needed)");
     return 1;
   }
+  // Evolve the copy hosts load (the project's .claude/skills, else ~/.claude/skills,
+  // else the bundled source): the proposal's checksum is that file's, so ad review
+  // applies it there (P5.7).
   const skillsSrc = path.join(opts.projectRoot, "skills");
-  const skillDir = await resolveSkillSource(skillsSrc, opts.skillName);
-  if (!skillDir) {
-    console.error(`agent-daemon evolve: no such skill "${opts.skillName}" under ${skillsSrc}`);
+  const bundledDir = await resolveSkillSource(skillsSrc, opts.skillName);
+  const { loadedCopy } = await import("./skills/library.mjs");
+  const { isSkillName } = await import("./skills/proposal.mjs");
+  if (!isSkillName(opts.skillName)) {
+    console.error(`agent-daemon evolve: "${opts.skillName}" isn't a skill name (kebab-case)`);
     return 1;
   }
-  const skillPath = path.join(skillDir, "SKILL.md");
+  const loaded = loadedCopy(opts.skillName, { cwd: opts.cwd, bundled: new Map(bundledDir ? [[opts.skillName, bundledDir]] : []) });
+  if (!loaded) {
+    console.error(`agent-daemon evolve: no such skill "${opts.skillName}" (not installed, not under ${skillsSrc})`);
+    return 1;
+  }
+  const skillPath = path.join(loaded.dir, "SKILL.md");
 
   const result = await evolveSkill({
     skillPath,

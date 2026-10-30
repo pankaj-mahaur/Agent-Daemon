@@ -8,9 +8,9 @@
 // Audit log: $AGENT_DAEMON_HOME/audit/mcp.jsonl  (or ~/.agent-daemon/audit/mcp.jsonl)
 
 import { mkdirSync, appendFileSync, statSync, renameSync, existsSync, unlinkSync } from "node:fs";
-import { homedir } from "node:os";
 import { join, dirname } from "node:path";
 import { readStdinJson, approve, warn } from "./io.mjs";
+import { adRoot } from "../ad-root.mjs";
 
 // Rotation policy: when the audit log exceeds ROTATE_BYTES, move it to
 // `<path>.1`, push older rotations down (.1 -> .2, .2 -> .3), discard .3+.
@@ -38,9 +38,10 @@ function trustedSet() {
   return set;
 }
 
+// ad's state root (ad-root.mjs). AGENT_DAEMON_HOME is the runtime folder, not state
+// (P7.1a): older logs written under it are noted by ad doctor.
 function auditPath() {
-  const root = process.env.AGENT_DAEMON_HOME || join(homedir(), ".agent-daemon");
-  return join(root, "audit", "mcp.jsonl");
+  return join(adRoot(), "audit", "mcp.jsonl");
 }
 
 // Size-based rotation. Called best-effort before each append; failures are

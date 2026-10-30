@@ -208,6 +208,8 @@ export function checkpointWiring(cp, { cwd = process.cwd(), waitMs = 10_000, typ
       await Promise.all([...recording.values()]).catch(() => {});
       const target = st.turns.filter((t) => t.status !== "inProgress").at(-1);
       if (!target) return { error: "Nothing to undo yet." };
+      // A turn from before a switch (P4.2): its checkpoints belong to the conversation it ran in.
+      if (!recorded.has(target.id) && !missing.has(target.id) && st.switched?.threadId === st.thread.id) return { error: `That turn ran before the switch to ${st.switched.to}; /undo works on turns since then.` };
       if (!recorded.has(target.id)) return { error: `The last turn has no checkpoint (${missing.get(target.id) ?? "it ran before checkpoints were on"}), so /undo can't put its files back.` };
       if (st.activeTurnId || st.starting) return { error: "A turn started meanwhile: /undo again once it finishes." };
       const { skipped: left, agentBlobs, agentChain } = recorded.get(target.id);

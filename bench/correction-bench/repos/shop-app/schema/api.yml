@@ -1,0 +1,5 @@
+# The API schema. src/generated/client.js is generated from this file.
+endpoints:
+  listOrders: { method: GET, path: /orders }
+  getOrder: { method: GET, path: /orders/:id }
+  createOrder: { method: POST, path: /orders }

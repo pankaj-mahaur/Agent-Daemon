@@ -22,8 +22,13 @@
 //   --global        3.0's automatic global notes, grouped by the project they came
 //                   from: accept → cross-project; reject → that project only
 //
-// Skill-edit and constitution-add proposals still need the file applied by
-// hand (the suggested patch is printed).
+// Skill proposals (P5.7, skills/proposal.mjs: skill-update and skill-lesson) show
+// the change as a diff against today's SKILL.md; accepting goes through the same
+// guard and typed confirmation, then applies it (skills/library.mjs: a new version,
+// published to the hosts, undo with `ad skill undo`). Rejecting files it in
+// rejected/. Constitution-add proposals still need the file applied by hand.
+//
+// Without a terminal: `ad review` (or --list) lists, and `--reject <file>` rejects.
 
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -37,6 +42,7 @@ import { readProposalMeta, appendToMemory } from "./digest/proposals.mjs";
 import { learningContentHash, scopedContentHash } from "./memory/sqlite.mjs";
 import { sameNote } from "./memory/episodic.mjs";
 import { neutralizeText } from "./digest/sanitize.mjs";
+import { parseProposal } from "./skills/proposal.mjs";
 
 const DIVIDER = "─".repeat(72);
 
@@ -60,7 +66,8 @@ export function proposalDirs(cwd) {
   return [path.join(projectDataDir(cwd), "proposed"), globalProposedDir()];
 }
 
-async function listProposals(cwd) {
+/** Every queued proposal of this project and ad's global folder: [{ name, file, dir }]. */
+export async function listProposals(cwd) {
   const out = [];
   for (const dir of proposalDirs(cwd)) {
     let names = [];
@@ -284,17 +291,22 @@ export async function runInteractiveReview(opts) {
   try {
     if (opts.global) return await reviewGlobal({ ...(await store()), question, out });
     const entries = await listProposals(opts.cwd);
+    if (opts.reject) return await rejectByFlag({ entries, name: opts.reject, out, store, env });
+    if (opts.accept) {
+      const skillEntry = await skillProposalNamed(entries, opts.accept);
+      if (skillEntry) return await acceptSkill({ entry: skillEntry, cwd: opts.cwd, question, out, env, isTTY, store, color: false });
+    }
     if (opts.accept || opts.acceptAll) return await acceptByFlag({ entries, opts, ...(await store()), question, out });
 
     if (entries.length === 0) {
       out("No queued proposals.");
       return 0;
     }
-    if (!isTTY()) {
+    if (opts.list || !isTTY()) {
       // Non-interactive caller — fall back to listing (the v0.2 behavior).
-      out(`${entries.length} queued proposal(s) — non-TTY; listing only:`);
+      out(`${entries.length} queued proposal(s)${opts.list ? "" : " — non-TTY; listing only"}:`);
       for (const e of entries) out(`  ${e.name}`);
-      out("\nRun this in an interactive terminal to accept/reject/edit.");
+      out("\nRun ad review in an interactive terminal to accept; ad review --reject <file> rejects one.");
       return 0;
     }
     return await reviewLoop({ entries, opts, store, question, out, env, isTTY });
@@ -412,11 +424,13 @@ async function reviewLoop({ entries, opts, store, question, out, env, isTTY }) {
       continue;
     }
     const meta = readProposalMeta(content);
+    const skill = !meta && isSkillProposalText(content);
 
     out(DIVIDER);
     out(`Proposal ${i + 1}/${entries.length}: ${name}`);
     out(DIVIDER);
-    out(neutralizeText(content));
+    const shownSkill = skill ? await showSkill({ entry: entries[i], content, cwd: opts.cwd, out, color: opts.color ?? (!opts.out && Boolean(output.isTTY)) }) : null;
+    if (!skill) out(neutralizeText(content));
     out(DIVIDER);
 
     let decision = null;
@@ -430,6 +444,10 @@ async function reviewLoop({ entries, opts, store, question, out, env, isTTY }) {
         case "e": case "edit":
           if (meta) {
             out("  Memory proposals can't be edited here: reject it and tell the agent the right wording.");
+            break;
+          }
+          if (skill) {
+            out("  Skill proposals can't be edited here: accept it and edit the skill afterwards (ad skill undo reverts), or reject it.");
             break;
           }
           await openInEditor(file);
@@ -477,12 +495,21 @@ async function reviewLoop({ entries, opts, store, question, out, env, isTTY }) {
           stats.accepted++;
         } else stats.skipped++;
       }
+    } else if (decision === "accept" && skill) {
+      const code = await acceptSkill({ entry: entries[i], cwd: opts.cwd, question, out, env, isTTY, store, color: opts.color ?? (!opts.out && Boolean(output.isTTY)), shown: shownSkill });
+      if (code === 2) return 2;
+      if (code === 0) stats.accepted++;
+      else stats.skipped++;
     } else if (decision === "accept") {
       const dst = await moveToApplied(entries[i]);
       out(`✓ accepted — moved to ${dst}`);
-      out("  Note: skill-edit proposals require manual SKILL.md update for now.");
-      out("        constitution-add proposals require manual constitution/core.md update.");
+      out("  Note: constitution-add proposals require manual constitution/core.md update.");
       stats.accepted++;
+    } else if (decision === "reject" && skill) {
+      const { rejectSkillProposal } = await import("./skills/library.mjs");
+      const dst = await rejectSkillProposal(file, { handle: db?.handle ?? null });
+      out(`✗ rejected — kept in ${dst}`);
+      stats.rejected++;
     } else if (decision === "reject") {
       if (meta && db?.handle) rejectMemory(db.handle, meta, { keys: db.keys });
       await fs.unlink(file);
@@ -496,6 +523,144 @@ async function reviewLoop({ entries, opts, store, question, out, env, isTTY }) {
   }
 
   summarize(out, stats, 0);
+  return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Skill proposals (P5.7)                                              */
+/* ------------------------------------------------------------------ */
+
+const isSkillProposalText = (text) => {
+  const p = parseProposal(text);
+  return p.legacy !== "unknown" || Boolean(p.error);
+};
+
+async function skillProposalNamed(entries, name) {
+  const e = entries.find((x) => x.name === path.basename(String(name)));
+  if (!e) return null;
+  try {
+    return isSkillProposalText(await fs.readFile(e.file, "utf8")) ? e : null;
+  } catch {
+    return null;
+  }
+}
+
+// The prose of a v1 proposal (what it is and why), up to its fenced payload.
+function proseOf(content) {
+  const body = content.replace(/^\u{FEFF}?---\r?\n[\s\S]*?\r?\n---[ \t]*\r?\n/u, "");
+  const cut = body.search(/^## (Proposed SKILL\.md|Lesson)[ \t]*$/m);
+  return (cut < 0 ? body : body.slice(0, cut)).trim();
+}
+
+/** What a skill proposal would change: its prose, then the diff against today's SKILL.md. */
+async function showSkill({ entry, content, cwd, out, color, lessonSkill }) {
+  const { previewSkillProposal, LIBRARY_TEXTS, visible } = await import("./skills/library.mjs");
+  const p = await previewSkillProposal(entry.file, { cwd, lessonSkill });
+  const parsed = parseProposal(content);
+  if (!p.ok && !p.needsSkill) {
+    out(visible(content));
+    out(`\n  ${p.text}`);
+    return p;
+  }
+  out(visible(proseOf(content)));
+  if (p.needsSkill) {
+    out(`\n  Lesson: ${visible(parsed.body ?? "")}`);
+    out(`  ${p.text}`);
+    return p;
+  }
+  out("");
+  if (p.legacy) out("  This proposal is in an older format: ad applies it after a second confirmation.");
+  if (p.drift) out(`  ${LIBRARY_TEXTS.drift(p.name)}`);
+  for (const w of p.warnings) out(`  ⚠ ${visible(w)}`);
+  out(p.diffFor(color));
+  return p;
+}
+
+/**
+ * Accept one skill proposal: the guard, the change shown, a typed confirmation, then
+ * apply (skills/library.mjs). → exit code: 0 applied, 1 not, 2 refused by the guard.
+ */
+async function acceptSkill({ entry, cwd, question, out, env, isTTY, store, color, shown = null }) {
+  const refused = reviewGuard({ env, isTTY });
+  if (refused) {
+    out(refused);
+    return 2;
+  }
+  const { applySkillProposal } = await import("./skills/library.mjs");
+  const content = await fs.readFile(entry.file, "utf8");
+  let lessonSkill;
+  // The review loop has shown it already (`shown`, what the user read); --accept <file> shows it here.
+  let p = shown ?? (await showSkill({ entry, content, cwd, out, color }));
+  if (p.needsSkill) {
+    const answer = String(await question("Which skill does this lesson belong to? (name, or Enter to leave it queued) ")).trim();
+    if (!answer) {
+      out("· left queued");
+      return 1;
+    }
+    lessonSkill = answer;
+    p = await showSkill({ entry, content, cwd, out, color, lessonSkill });
+  }
+  if (!p.ok) {
+    if (p.text && shown) out(`  ${p.text}`);
+    return 1;
+  }
+  if (!(await confirm(question, "accept"))) {
+    out("· not confirmed — skipped");
+    return 1;
+  }
+  let handle = null;
+  try {
+    handle = (await store()).handle;
+  } catch {
+    // no store: the proposals table isn't updated
+  }
+  const r = await applySkillProposal(entry.file, {
+    cwd,
+    handle,
+    lessonSkill,
+    // Applied only if the proposal and the skill are still what the user was shown.
+    expect: p.expect,
+    confirmDrift: async (text) => {
+      out(`  ${text.split("\n")[0]} (the diff above)`);
+      return ["a", "apply"].includes(String(await question("[a]pply anyway / [s]kip: ")).trim().toLowerCase());
+    },
+    confirmLegacy: async () => confirm(question, "apply"),
+  });
+  out(r.ok ? r.text : `  ${r.text}`);
+  return r.ok ? 0 : 1;
+}
+
+/**
+ * `ad review --reject <file>`: works without a terminal; nothing is applied. Not from
+ * an agent's own shell, though: rejecting could hide a note the user wants to see.
+ */
+async function rejectByFlag({ entries, name, out, store, env = process.env }) {
+  if (env.AD_TOOL_SHELL === "1") {
+    out("ad review: rejecting proposals can't run from the agent's own shell. Run it yourself in a terminal.");
+    return 2;
+  }
+  const e = entries.find((x) => x.name === path.basename(String(name)));
+  if (!e) {
+    out(`ad review: no queued proposal named ${path.basename(String(name))}.`);
+    return 1;
+  }
+  const content = await fs.readFile(e.file, "utf8");
+  let handle = null;
+  let keys = [];
+  try {
+    ({ handle, keys } = await store());
+  } catch {
+    // no store
+  }
+  if (isSkillProposalText(content)) {
+    const { rejectSkillProposal } = await import("./skills/library.mjs");
+    out(`✗ rejected — kept in ${await rejectSkillProposal(e.file, { handle })}`);
+    return 0;
+  }
+  const meta = readProposalMeta(content);
+  if (meta && handle) rejectMemory(handle, meta, { keys });
+  await fs.unlink(e.file);
+  out(`✗ rejected — ${e.name} deleted`);
   return 0;
 }
 

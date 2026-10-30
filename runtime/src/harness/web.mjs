@@ -18,7 +18,7 @@ import http from "node:http";
 import path from "node:path";
 import { parseApprovalAnswer } from "./chat.mjs";
 import { loadJobs } from "./schedule.mjs";
-import { startHarnessEngine } from "./start.mjs";
+import { launchHarness } from "./engines.mjs";
 
 const MAX_BODY = 64 * 1024;
 
@@ -54,10 +54,12 @@ export function recentLoops(cwd, limit = 10) {
     .slice(0, limit);
 }
 
-export async function startWebServer({ cwd = process.cwd(), port = 0, token = randomBytes(24).toString("hex"), engineFactory = startHarnessEngine, engineOpts = {}, userHome, err = process.stderr } = {}) {
+export async function startWebServer({ cwd = process.cwd(), port = 0, token = randomBytes(24).toString("hex"), engineFactory = launchHarness, engineOpts = {}, userHome, err = process.stderr } = {}) {
   const started = await engineFactory({ cwd, err, ...engineOpts });
   if (!started.engine) throw new Error(started.error);
   const engine = started.engine;
+  // The account's provider for new threads (P3.4; a test factory may give none).
+  const modelProvider = started.params?.modelProvider;
   const describeError = (e) => {
     if (!isEngineError(e)) return e?.message ?? String(e);
     err.write(cliErrorLines("web", e));
@@ -110,7 +112,7 @@ export async function startWebServer({ cwd = process.cwd(), port = 0, token = ra
     if (turn) throw Object.assign(new Error("a turn is already running"), { status: 409 });
     turn = { turnId: null }; // claimed before any await: two POSTs can't both start
     try {
-      if (!threadId) threadId = (await engine.startThread({ cwd })).threadId;
+      if (!threadId) threadId = (await engine.startThread({ cwd, modelProvider })).threadId;
     } catch (e) {
       turn = null;
       throw e;
@@ -242,7 +244,8 @@ export async function startWebServer({ cwd = process.cwd(), port = 0, token = ra
       for (const id of [...approvals.keys()]) settleApproval(id, "n");
       for (const res of clients) res.end();
       await new Promise((r) => server.close(r));
-      await engine.close();
+      if (started.release) await started.release();
+      else await engine.close();
     },
   };
 }

@@ -7,6 +7,8 @@
 //   memoryReport(handle, {keys, days, now}) → data
 //   renderReport(data, {share}) → text
 
+import { projectClause } from "./projects.mjs";
+
 const median = (xs) => {
   if (!xs.length) return 0;
   const s = [...xs].sort((a, b) => a - b);
@@ -14,10 +16,10 @@ const median = (xs) => {
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 };
 
+// A project's rows by id, or by slug where they have none yet (projects.mjs, P7.1a).
 function scope(col, keys) {
-  if (keys === null) return { sql: "1", params: [] };
-  if (!keys.length) return { sql: "0", params: [] };
-  return { sql: `${col} IN (${keys.map(() => "?").join(",")})`, params: [...keys] };
+  const alias = col.includes(".") ? col.split(".")[0] : "";
+  return projectClause(alias, keys);
 }
 
 /**

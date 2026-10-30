@@ -233,9 +233,11 @@
       "thread/delete": "ThreadDeleteParams",
       "thread/fork": "ThreadForkParams",
       "thread/goal/clear": "ThreadGoalClearParams",
+      "thread/goal/get": "ThreadGoalGetParams",
       "thread/goal/set": "ThreadGoalSetParams",
       "thread/inject_items": "ThreadInjectItemsParams",
       "thread/list": "ThreadListParams",
+      "thread/loaded/list": "ThreadLoadedListParams",
       "thread/name/set": "ThreadSetNameParams",
       "thread/read": "ThreadReadParams",
       "thread/resume": "ThreadResumeParams",
@@ -372,6 +374,9 @@
     "fields": {
       "turn/start": {
         "collaborationMode": "CollaborationMode|null"
+      },
+      "thread/fork": {
+        "deferGoalContinuation": "boolean"
       }
     }
   },
@@ -2041,6 +2046,17 @@
         "threadId": "string"
       }
     },
+    "ThreadGoalGetParams": {
+      "required": [
+        "threadId"
+      ],
+      "props": [
+        "threadId"
+      ],
+      "types": {
+        "threadId": "string"
+      }
+    },
     "ThreadGoalMutationOrigin": {
       "enum": [
         "automatic",
@@ -2115,6 +2131,17 @@
           "tag": "string"
         }
       ]
+    },
+    "ThreadLoadedListParams": {
+      "required": [],
+      "props": [
+        "cursor",
+        "limit"
+      ],
+      "types": {
+        "cursor": "null|string",
+        "limit": "integer|null"
+      }
     },
     "ThreadNameUpdatedNotification": {
       "required": [

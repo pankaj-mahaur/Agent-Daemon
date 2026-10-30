@@ -14,7 +14,7 @@ disable-model-invocation: false
 
 The normal `ad evolve <skill>` command spawns a headless `claude` CLI to do reflection + variant generation. That needs auth (`claude auth login` or `ANTHROPIC_API_KEY`). This skill is the no-auth alternative: you (the active Claude Code session) ARE the LLM. You read the traces, reflect, and write the proposal yourself.
 
-The output is the same: a markdown proposal at `.agent-daemon/proposed/<skill>-<timestamp>.md` that the user reviews via `ad review`.
+The output is the same: a proposal queued with `ad skill propose`, which the user reviews via `ad review` (a diff, then a typed accept).
 
 ## Phase 1 — Find candidates
 
@@ -105,33 +105,27 @@ Based on the reflection, draft a modified SKILL.md. **Only change what the refle
 - Broaden the `description:` line if triggers are missing the failure cases
 - Add a `## Examples` block covering the failed scenario
 
-Write the proposal to `.agent-daemon/proposed/<skill>-<ISO-timestamp>.md`:
+Write the full revised SKILL.md (frontmatter + body) to a temporary file, then queue it:
 
 ```bash
-mkdir -p .agent-daemon/proposed
-TIMESTAMP=$(date -u +%Y-%m-%dT%H-%M-%SZ)
-PROPOSAL=".agent-daemon/proposed/<skill>-${TIMESTAMP}.md"
+ad skill propose <skill> --file <path to the revised SKILL.md> --origin gepa-inline
 ```
 
-Proposal file format:
+Never write into `.agent-daemon/proposed/` by hand: ad writes the proposal (with the checksum of today's SKILL.md and of yours), and `ad review` refuses a file whose checksums don't match (a check against damage, not a signature: the user reviewing the diff is the gate).
+
+Put the reasoning in your reply instead of the file:
 
 ```markdown
 # Proposed via inline GEPA (active session)
 
 **Skill:** <skill-name>
-**Proposed at:** <ISO timestamp>
+**Queued:** <the path ad skill propose printed>
 **Mode:** inline (no headless claude spawn, no API cost)
 **Source traces:** <N>  (failures: <F>, successes: <S>)
 
 ## Reflection summary
 
 <paste the reflection from Phase 4>
-
-## Proposed SKILL.md
-
-\`\`\`markdown
-<the full revised SKILL.md content, frontmatter + body>
-\`\`\`
 
 ## Changes from baseline
 
@@ -146,7 +140,7 @@ To accept this proposal:
 ad review
 ```
 
-The diff will be displayed; accept will replace the existing SKILL.md.
+ad review shows the diff against today's SKILL.md; the user's typed accept applies it and publishes it to every host ad's memory is installed in (`ad skill undo <skill>` reverts).
 ```
 
 ## Phase 6 — Surface to user + log
@@ -154,7 +148,7 @@ The diff will be displayed; accept will replace the existing SKILL.md.
 In your final assistant response:
 
 1. **Summary** — "Reflected on N traces (F failures, S successes). Identified <root cause hypothesis>."
-2. **Path** — "Proposal written to `.agent-daemon/proposed/<file>`"
+2. **Path** — the path `ad skill propose` printed
 3. **Next step** — "Run `ad review` to accept or reject."
 
 Append a log line to `.agent-daemon/gepa-inline-log.jsonl`:
@@ -205,4 +199,4 @@ ad status                                        # surface in queued proposals
 ad review                                        # user reviews
 ```
 
-After `ad review` accepts, the change lands in `skills/<bucket>/<name>/SKILL.md` and the next session loads the improved skill.
+After `ad review` accepts, the change becomes a new version in `~/.agent-daemon/skills/<name>/`, is written to the copy hosts load (`.claude/skills/<name>`), and the next session loads it. `ad skill history <name>` lists versions; `ad skill undo <name>` reverts.

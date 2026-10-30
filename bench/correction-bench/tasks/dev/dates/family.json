@@ -1,0 +1,43 @@
+{
+  "id": "dates",
+  "split": "dev",
+  "convention": "Format dates with fmtDate() from src/lib/dates.js; never toLocaleDateString, toLocaleString, toDateString or toISOString().slice in src/.",
+  "oracle": {
+    "kind": "grep",
+    "files": [
+      "src/**/*.{js,mjs,cjs,ts}"
+    ],
+    "except": [
+      "src/lib/dates.js"
+    ],
+    "forbid": [
+      "\\.toLocale(Date|Time)?String\\(",
+      "Intl\\.DateTimeFormat",
+      "\\.toUTCString\\(",
+      "\\.toDateString\\(",
+      "\\.toISOString\\(\\)\\s*\\.(slice|substring|substr|split)\\("
+    ]
+  },
+  "sessions": [
+    {
+      "fixture": "shop-app",
+      "task": "Add orderSummary(order) to src/orders.js: one line of text with the order id, its total and the date it was placed."
+    },
+    {
+      "fixture": "shop-app",
+      "task": "Add a field joinedOn to the user addUser returns in src/users.js: the day the user joined, as text."
+    },
+    {
+      "fixture": "shop-app",
+      "task": "Add handleOrderReceipt(req, res) to src/routes/orders.js: it answers with the order and a readable placed date."
+    }
+  ],
+  "examples": {
+    "violating": {
+      "src/receipt.js": "export const placedOn = (o) => new Date(o.createdAt).toLocaleDateString();\n"
+    },
+    "compliant": {
+      "src/receipt.js": "import { fmtDate } from \"#app/lib/dates.js\";\n\nexport const placedOn = (o) => fmtDate(o.createdAt);\n"
+    }
+  }
+}

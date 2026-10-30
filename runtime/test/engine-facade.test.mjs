@@ -188,12 +188,13 @@ test("waitForCompaction resolves for the right thread and times out otherwise", 
   });
 });
 
-test("features: with the committed snapshot, plan mode and /stop exist only on an engine that opted into the experimental allowlist", async () => {
+test("features: with the committed snapshot, plan mode, /stop and a goal held back by a fork exist only on an engine that opted into the experimental allowlist", async () => {
   const stable = featureFlags(SNAPSHOT, { experimental: false });
   assert.equal(stable.planMode.available, false);
   assert.equal(stable.stopTerminals.available, false);
   const exp = featureFlags(SNAPSHOT, { experimental: true });
-  assert.deepEqual(exp, { planMode: { available: true, reason: null }, stopTerminals: { available: true, reason: null } });
+  assert.deepEqual(exp, { planMode: { available: true, reason: null }, stopTerminals: { available: true, reason: null }, deferGoal: { available: true, reason: null } });
+  assert.equal(stable.deferGoal.available, false);
   await withEngine({}, async (engine) => {
     assert.equal(engine.features.planMode.available, false);
     await assert.rejects(engine.modes.list(), { code: "FEATURE_UNAVAILABLE" });
@@ -467,4 +468,101 @@ test("memory scope: with the server configured, start/resume/fork bind it to the
     await engine.threads.start({ cwd: "/work/a", memoryProject: null });
     assert.ok(!JSON.stringify((await debug(engine)).lastParams["thread/start"].config ?? {}).includes("AD_MEMORY_PROJECT"));
   });
+});
+
+// ---- P3.4: a thread's provider, and moving it (S-THREADCFG Q5) ----
+
+test("threads.start and complete() pass modelProvider", async () => {
+  await withEngine({}, async (engine) => {
+    const r = await engine.threads.start({ cwd: "/work", modelProvider: "ad-openrouter-aaaa1111", model: "m/one" });
+    assert.equal((await debug(engine)).lastParams["thread/start"].modelProvider, "ad-openrouter-aaaa1111");
+    assert.equal(r.modelProvider, "ad-openrouter-aaaa1111");
+    await engine.complete({ user: "hi", modelProvider: "ad-openrouter-bbbb2222" });
+    assert.equal((await debug(engine)).lastParams["thread/start"].modelProvider, "ad-openrouter-bbbb2222");
+  });
+});
+
+test("resume with a new provider unsubscribes first and is applied", async () => {
+  await withEngine({}, async (engine) => {
+    const { threadId } = await engine.threads.start({ cwd: "/work", modelProvider: "ad-a" });
+    const r = await engine.threads.resume(threadId, { modelProvider: "ad-b", model: "m/b" });
+    assert.equal(r.modelProvider, "ad-b");
+    assert.equal(r.model, "m/b");
+    const { calls } = await debug(engine);
+    const at = (m) => calls.lastIndexOf(m);
+    assert.ok(at("thread/unsubscribe") !== -1 && at("thread/unsubscribe") < at("thread/resume"), "unsubscribed before the resume");
+    assert.ok(at("thread/loaded/list") > at("thread/unsubscribe") && at("thread/loaded/list") < at("thread/resume"), "waited for the unload");
+    // A plain resume sends no unsubscribe.
+    const before = (await debug(engine)).calls.filter((m) => m === "thread/unsubscribe").length;
+    await engine.threads.resume(threadId, { cwd: "/work" });
+    assert.equal((await debug(engine)).calls.filter((m) => m === "thread/unsubscribe").length, before);
+  });
+});
+
+test("resume on a running thread, or one with background terminals → RETARGET_BUSY, and it stays subscribed", async () => {
+  await withEngine({ retargetWaitMs: 200 }, async (engine) => {
+    const { threadId } = await engine.threads.start({ cwd: "/work", modelProvider: "ad-a" });
+    await engine.startTurn({ threadId, text: "hang" });
+    await assert.rejects(engine.threads.resume(threadId, { modelProvider: "ad-b" }), { code: "RETARGET_BUSY" });
+    assert.ok(!(await debug(engine)).calls.includes("thread/unsubscribe"), "never unsubscribed");
+    const other = (await engine.threads.start({ cwd: "/work" })).threadId;
+    await assert.rejects(engine.threads.resume(other, { model: "m/b", terminals: ["bg-1"] }), { code: "RETARGET_BUSY" });
+    assert.ok(!(await debug(engine)).calls.includes("thread/unsubscribe"));
+  });
+});
+
+test("a resume the engine still ignores (another client keeps the thread loaded) → RETARGET_IGNORED with the old provider named", async () => {
+  await withEngine({ retargetWaitMs: 200, env: { FAKE_OTHER_SUBSCRIBER: "1" } }, async (engine) => {
+    const { threadId } = await engine.threads.start({ cwd: "/work", modelProvider: "ad-a" });
+    await assert.rejects(engine.threads.resume(threadId, { modelProvider: "ad-b" }), (e) => e.code === "RETARGET_IGNORED" && /kept this conversation on ad-a/.test(e.message) && e.wanted.modelProvider === "ad-b");
+  });
+});
+
+test("a fork naming a provider is checked by the façade; the ignored fork's id comes with the error", async () => {
+  await withEngine({ env: { FAKE_FORK_KEEPS_PROVIDER: "1" } }, async (engine) => {
+    const { threadId } = await engine.threads.start({ cwd: "/work", modelProvider: "ad-a" });
+    await assert.rejects(engine.threads.fork(threadId, { modelProvider: "ad-b" }), (e) => e.code === "RETARGET_IGNORED" && /^thread-/.test(e.forkedThreadId));
+    // A plain fork isn't checked.
+    assert.ok((await engine.threads.fork(threadId, {})).thread.id);
+  });
+});
+
+test("goals: get, set with status paused; a fork holding the goal back needs the experimental API", async () => {
+  await withEngine({}, async (engine) => {
+    const { threadId } = await engine.threads.start({ cwd: "/work" });
+    assert.equal(await engine.threads.goal.get(threadId), null);
+    await engine.threads.goal.set(threadId, "ship it");
+    const g = await engine.threads.goal.set(threadId, "ship it", { status: "paused" });
+    assert.equal(g.status, "paused");
+    assert.equal((await engine.threads.goal.get(threadId)).status, "paused");
+    await assert.rejects(engine.threads.fork(threadId, { deferGoalContinuation: true }), { code: "FEATURE_UNAVAILABLE" });
+    assert.ok(!(await debug(engine)).calls.includes("thread/fork"), "nothing sent");
+  });
+  await withEngine({ experimental: true }, async (engine) => {
+    const { threadId } = await engine.threads.start({ cwd: "/work" });
+    const f = await engine.threads.fork(threadId, { deferGoalContinuation: true, modelProvider: "ad-b" });
+    assert.equal(f.modelProvider, "ad-b");
+    assert.equal((await debug(engine)).lastParams["thread/fork"].deferGoalContinuation, true);
+  });
+});
+
+test("every engine ad starts unloads an unsubscribed thread at once; every thread list asks for every provider", async () => {
+  await withEngine({}, async (engine) => {
+    const { argv } = await engine.testRequest("debug/processCwd", {});
+    const at = argv.indexOf("thread_unload_delay_secs=0");
+    assert.ok(at > 0 && argv[at - 1] === "-c", `argv: ${argv.join(" ")}`);
+    await engine.threads.list({ cwd: "/work" });
+    assert.deepEqual((await debug(engine)).lastParams["thread/list"].modelProviders, []);
+    await engine.listThreads({ cwd: "/work" });
+    assert.deepEqual((await debug(engine)).lastParams["thread/list"].modelProviders, []);
+    // A caller may still narrow it.
+    await engine.threads.list({ modelProviders: ["ad-a"] });
+    assert.deepEqual((await debug(engine)).lastParams["thread/list"].modelProviders, ["ad-a"]);
+  });
+});
+
+test("source scan: thread/list is sent only by the façade's two list helpers", () => {
+  const src = readFileSync(new URL("../src/engine/index.mjs", import.meta.url), "utf8");
+  assert.equal(src.split('"thread/list"').length - 1, 2);
+  for (const m of src.matchAll(/"thread\/list", clean\(([^)]*)\)/g)) assert.match(m[1], /modelProviders/);
 });

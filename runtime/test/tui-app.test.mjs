@@ -954,14 +954,14 @@ function stubSession(state) {
   };
 }
 
-async function withStub(session, fn, { cols = 70, rows = 20 } = {}) {
+async function withStub(session, fn, { cols = 70, rows = 20, actions } = {}) {
   const scr = modelScreen({ cols, rows });
   const listeners = new Set();
   const io = { ...scr.io, onInput: (f) => (listeners.add(f), () => listeners.delete(f)) };
   const decoder = createInputDecoder({ onEvent: (e) => listeners.forEach((f) => f(e)), escTimeoutMs: 5 });
   const renderer = createRenderer({ io, reflow: "none" });
   await renderer.start();
-  const app = createApp({ io, renderer, session, cwd: "/x", armMs: 0 });
+  const app = createApp({ io, renderer, session, cwd: "/x", armMs: 0, ...(actions ? { actions } : {}) });
   try {
     await fn({ app, type: (s) => decoder.feed(s), text: () => scr.lines().join("\n") });
   } finally {
@@ -1000,7 +1000,16 @@ test("/status shows the tokens used", async () => {
     type("/status\r");
     await sleep(20);
     assert.match(text(), /1,234 tokens used/);
+    assert.doesNotMatch(text(), /session /, "no session row before the ledger has one");
   });
+});
+
+test("/status names the session and its binding (P4.1)", async () => {
+  await withStub(stubSession({}), async ({ type, text }) => {
+    type("/status\r");
+    await sleep(20);
+    assert.match(text(), /session +ses_01TEST \u{b7} binding 2/u);
+  }, { actions: { ledger: () => ({ sessionId: "ses_01TEST", gen: 2 }) } });
 });
 
 test("/undo: files back and the prompt returns; typing takes the next turn's snapshot early", async () => {
@@ -1079,7 +1088,7 @@ test("status line: the engine's items under the composer; /statusline previews, 
       type(" "); // model off: the row changes at once (a preview)
       await until(() => !/fake-model ·/.test(text()), "the preview");
       type("\r");
-      await until(() => /Status line: current-dir\. Saved\./.test(text()), "saved");
+      await until(() => /Status line: current-dir, limits \(ad\)\. Saved\./.test(text()), "saved"); // ad's item, on by default (P4.6)
       assert.deepEqual(settings.store.tui.status_line, ["current-dir", "pull-request-number"], "engine's item ad can't show is kept");
       // Esc puts the row back as it was.
       type("/statusline\r");
@@ -1712,4 +1721,18 @@ test("an ordinary chord's hint goes away after a second, as the chord does", asy
     assert.equal(app.state.chord, true);
     await until(() => !/alt\+k …/.test(text()) && !app.state.chord, "the hint gone after the timeout", 3000);
   }, { keymap: km({ overrides: { global: { copy: "alt-k alt-c" } } }) });
+});
+
+test("a translated provider's failed turn shows ad's reason, the engine's words as the hint", async () => {
+  const asked = [];
+  const gatewayReason = (threadId, since) => (asked.push([threadId, since]), "Groq: the daily limit is used up.");
+  await withApp(
+    async ({ type, until, committed }) => {
+      type("fail-turn\r");
+      await until(() => /The turn failed: Groq: the daily limit is used up\./.test(committed()), "ad's reason");
+      assert.match(committed(), /The engine said:/);
+      assert.ok(asked.length === 1 && typeof asked[0][0] === "string" && typeof asked[0][1] === "number" && asked[0][1] > 0, "asked for this thread, since the turn's start");
+    },
+    { cols: 120, actions: { gatewayReason } },
+  );
 });

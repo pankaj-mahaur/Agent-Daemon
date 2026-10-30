@@ -16,7 +16,7 @@ import { cliErrorLines } from "./io.mjs";
 import { createInterface } from "node:readline";
 import { DEFAULT_APPROVAL_POLICY, DEFAULT_SANDBOX, engineEvents, engineError, isEngineError } from "../engine/index.mjs";
 import { describeItem } from "./run.mjs";
-import { startHarnessEngine } from "./start.mjs";
+import { launchHarness } from "./engines.mjs";
 
 const useColor = (stream) => Boolean(stream.isTTY) && !process.env.NO_COLOR;
 const paint = (on, code, s) => (on ? `\u001b[${code}m${s}\u001b[0m` : s);
@@ -76,7 +76,7 @@ export function serializedAsk(askOnce) {
   };
 }
 
-export function createChatSession({ engine, cwd, out, err, ask, model, sandbox }) {
+export function createChatSession({ engine, cwd, out, err, ask, model, modelProvider, sandbox }) {
   const color = { out: useColor(out), err: useColor(err) };
   const state = { threadId: null, model, defaultModel: null, turn: null, fileChanges: new Map(), lastStreamed: null };
 
@@ -87,7 +87,7 @@ export function createChatSession({ engine, cwd, out, err, ask, model, sandbox }
 
   const ensureThread = async () => {
     if (!state.threadId) {
-      const t = await engine.startThread({ cwd, model: state.model, sandbox });
+      const t = await engine.startThread({ cwd, model: state.model, modelProvider, sandbox });
       state.threadId = t.threadId;
       state.defaultModel ??= t.model;
     }
@@ -246,14 +246,17 @@ export async function cmdChat(opts = {}) {
   const cwd = opts.cwd ?? process.cwd();
   const interactive = Boolean(stdin.isTTY);
   let engine;
+  let release = null;
   let rl;
   try {
-    const started = await startHarnessEngine({ cwd, home: opts.home, command: opts.command, clientVersion: opts.clientVersion, store: opts.store, platform: opts.platform, err, interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY), allowHomeFolder: opts.allowHomeFolder === true, homePolicy: "grace" });
+    // The account first (P3.4): the engine that serves it starts.
+    const started = await launchHarness({ cwd, account: opts.account, model: opts.model, home: opts.home, command: opts.command, clientVersion: opts.clientVersion, store: opts.store, platform: opts.platform, err, interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY), allowHomeFolder: opts.allowHomeFolder === true, homePolicy: "grace" });
     if (!started.engine) {
       err.write(started.error + "\n");
       return started.code;
     }
     engine = started.engine;
+    release = started.release;
 
     rl = createInterface({ input: stdin, output: out, terminal: interactive });
     const queue = [];
@@ -283,7 +286,7 @@ export async function cmdChat(opts = {}) {
         pending = { abort: () => (ac.abort(), (pending = null), out.write("\n"), resolve("")) };
         rl.question(q, { signal: ac.signal }, (a) => ((pending = null), resolve(a)));
       });
-    const session = createChatSession({ engine, cwd, out, err, ask: serializedAsk(askOnce), model: opts.model, sandbox: opts.sandbox });
+    const session = createChatSession({ engine, cwd, out, err, ask: serializedAsk(askOnce), model: started.params.model, modelProvider: started.params.modelProvider, sandbox: opts.sandbox });
     if (opts.resume) await session.handleLine(`/resume ${opts.resume}`);
 
     out.write(`Agent Daemon chat — ${cwd}\nType a request, /help for commands, Ctrl+C to interrupt.\n`);
@@ -331,6 +334,7 @@ export async function cmdChat(opts = {}) {
     return 1;
   } finally {
     rl?.close();
-    await engine?.close();
+    if (release) await release();
+    else await engine?.close();
   }
 }

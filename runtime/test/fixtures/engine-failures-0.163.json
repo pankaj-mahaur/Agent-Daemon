@@ -1,0 +1,477 @@
+{
+  "engine": "0.163.0",
+  "recorded": "2026-10-29",
+  "scenarios": {
+    "QUOTA": {
+      "status": "failed",
+      "turnError": {
+        "message": "Quota exceeded. Check your plan and billing details.",
+        "codexErrorInfo": "usageLimitExceeded",
+        "additionalDetails": null,
+        "misalignment": null
+      },
+      "retries": [],
+      "gateway": [
+        {
+          "status": 429,
+          "retryAfterS": null,
+          "error": {
+            "status": 429,
+            "type": "insufficient_quota",
+            "code": "insufficient_quota",
+            "message": "You exceeded your current quota, please check your plan and billing details.",
+            "class": "quota"
+          },
+          "translate": null
+        }
+      ]
+    },
+    "RATE1": {
+      "status": "failed",
+      "turnError": {
+        "message": "exceeded retry limit, last status: 429 Too Many Requests",
+        "codexErrorInfo": {
+          "responseTooManyFailedAttempts": {
+            "httpStatusCode": 429
+          }
+        },
+        "additionalDetails": null,
+        "misalignment": null
+      },
+      "retries": [
+        {
+          "message": "Reconnecting... 1/1",
+          "info": {
+            "responseStreamDisconnected": {
+              "httpStatusCode": 429
+            }
+          }
+        }
+      ],
+      "gateway": [
+        {
+          "status": 429,
+          "retryAfterS": 1,
+          "error": {
+            "status": 429,
+            "type": "requests",
+            "code": "rate_limit_exceeded",
+            "message": "Rate limit reached for requests per min (RPM). Please try again in 1s.",
+            "class": "rate-limit"
+          },
+          "translate": null
+        },
+        {
+          "status": 429,
+          "retryAfterS": 1,
+          "error": {
+            "status": 429,
+            "type": "requests",
+            "code": "rate_limit_exceeded",
+            "message": "Rate limit reached for requests per min (RPM). Please try again in 1s.",
+            "class": "rate-limit"
+          },
+          "translate": null
+        }
+      ]
+    },
+    "RATE3600": {
+      "status": "failed",
+      "turnError": {
+        "message": "Quota exceeded. Check your plan and billing details.",
+        "codexErrorInfo": "usageLimitExceeded",
+        "additionalDetails": null,
+        "misalignment": null
+      },
+      "retries": [],
+      "gateway": [
+        {
+          "status": 429,
+          "retryAfterS": 3600,
+          "error": {
+            "status": 429,
+            "type": "requests",
+            "code": "rate_limit_exceeded",
+            "message": "Rate limit reached.",
+            "class": "rate-limit"
+          },
+          "translate": null
+        }
+      ]
+    },
+    "ORFREE": {
+      "status": "failed",
+      "turnError": {
+        "message": "exceeded retry limit, last status: 429 Too Many Requests",
+        "codexErrorInfo": {
+          "responseTooManyFailedAttempts": {
+            "httpStatusCode": 429
+          }
+        },
+        "additionalDetails": null,
+        "misalignment": null
+      },
+      "retries": [],
+      "gateway": [
+        {
+          "status": 429,
+          "retryAfterS": null,
+          "error": {
+            "status": 429,
+            "type": null,
+            "code": "429",
+            "message": "Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day",
+            "remaining": "0",
+            "class": "quota"
+          },
+          "translate": null
+        }
+      ]
+    },
+    "OR402": {
+      "status": "failed",
+      "turnError": {
+        "message": "unexpected status 402 Payment Required: This request requires more credits, or fewer max_tokens. You requested up to 4096 tokens, but can only afford 120., url: http://127.0.0.1:51288/p/ad-fail/v1/responses",
+        "codexErrorInfo": {
+          "httpConnectionFailed": {
+            "httpStatusCode": 402
+          }
+        },
+        "additionalDetails": null,
+        "misalignment": null
+      },
+      "retries": [
+        {
+          "message": "Reconnecting... 1/1",
+          "info": {
+            "responseStreamDisconnected": {
+              "httpStatusCode": 402
+            }
+          }
+        }
+      ],
+      "gateway": [
+        {
+          "status": 402,
+          "retryAfterS": null,
+          "error": {
+            "status": 402,
+            "type": null,
+            "code": "402",
+            "message": "This request requires more credits, or fewer max_tokens. You requested up to 4096 tokens, but can only afford 120.",
+            "class": "payment"
+          },
+          "translate": null
+        },
+        {
+          "status": 402,
+          "retryAfterS": null,
+          "error": {
+            "status": 402,
+            "type": null,
+            "code": "402",
+            "message": "This request requires more credits, or fewer max_tokens. You requested up to 4096 tokens, but can only afford 120.",
+            "class": "payment"
+          },
+          "translate": null
+        }
+      ]
+    },
+    "GEMDAY": {
+      "status": "failed",
+      "turnError": {
+        "message": "exceeded retry limit, last status: 429 Too Many Requests",
+        "codexErrorInfo": {
+          "responseTooManyFailedAttempts": {
+            "httpStatusCode": 429
+          }
+        },
+        "additionalDetails": null,
+        "misalignment": null
+      },
+      "retries": [],
+      "gateway": [
+        {
+          "status": 429,
+          "retryAfterS": null,
+          "error": {
+            "status": 429,
+            "type": null,
+            "code": "429",
+            "message": "You exceeded your current quota. Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 50",
+            "statusText": "RESOURCE_EXHAUSTED",
+            "quotaIds": [
+              "GenerateRequestsPerDayPerProjectPerModel-FreeTier"
+            ],
+            "retryDelay": "36s",
+            "class": "quota"
+          },
+          "translate": null
+        }
+      ]
+    },
+    "S503": {
+      "status": "failed",
+      "turnError": {
+        "message": "unexpected status 503 Service Unavailable: The server is overloaded., url: http://127.0.0.1:51288/p/ad-fail/v1/responses",
+        "codexErrorInfo": {
+          "httpConnectionFailed": {
+            "httpStatusCode": 503
+          }
+        },
+        "additionalDetails": null,
+        "misalignment": null
+      },
+      "retries": [
+        {
+          "message": "Reconnecting... 1/1",
+          "info": {
+            "responseStreamDisconnected": {
+              "httpStatusCode": 503
+            }
+          }
+        }
+      ],
+      "gateway": [
+        {
+          "status": 503,
+          "retryAfterS": null,
+          "error": {
+            "status": 503,
+            "type": null,
+            "code": null,
+            "message": "The server is overloaded.",
+            "class": "server"
+          },
+          "translate": null
+        },
+        {
+          "status": 503,
+          "retryAfterS": null,
+          "error": {
+            "status": 503,
+            "type": null,
+            "code": null,
+            "message": "The server is overloaded.",
+            "class": "server"
+          },
+          "translate": null
+        },
+        {
+          "status": 503,
+          "retryAfterS": null,
+          "error": {
+            "status": 503,
+            "type": null,
+            "code": null,
+            "message": "The server is overloaded.",
+            "class": "server"
+          },
+          "translate": null
+        },
+        {
+          "status": 503,
+          "retryAfterS": null,
+          "error": {
+            "status": 503,
+            "type": null,
+            "code": null,
+            "message": "The server is overloaded.",
+            "class": "server"
+          },
+          "translate": null
+        }
+      ]
+    },
+    "CTX400": {
+      "status": "failed",
+      "turnError": {
+        "message": "{\"error\":{\"type\":\"invalid_request_error\",\"code\":\"context_length_exceeded\",\"param\":\"input\",\"message\":\"This model's maximum context length is 8192 tokens. However, your messages resulted in 9001 tokens.\"}}",
+        "codexErrorInfo": "other",
+        "additionalDetails": null,
+        "misalignment": null
+      },
+      "retries": [],
+      "gateway": [
+        {
+          "status": 400,
+          "retryAfterS": null,
+          "error": {
+            "status": 400,
+            "type": "invalid_request_error",
+            "code": "context_length_exceeded",
+            "message": "This model's maximum context length is 8192 tokens. However, your messages resulted in 9001 tokens.",
+            "class": "bad-request"
+          },
+          "translate": null
+        }
+      ]
+    },
+    "CTXSSE": {
+      "status": "failed",
+      "turnError": {
+        "message": "Codex ran out of room in the model's context window. Start a new thread or clear earlier history before retrying.",
+        "codexErrorInfo": "contextWindowExceeded",
+        "additionalDetails": null,
+        "misalignment": null
+      },
+      "retries": [],
+      "gateway": [
+        {
+          "status": 200,
+          "retryAfterS": null,
+          "error": {
+            "status": 200,
+            "type": null,
+            "code": "context_length_exceeded",
+            "message": "Your input exceeds the context window of this model.",
+            "class": "unknown"
+          },
+          "translate": null
+        }
+      ]
+    },
+    "FAILUNK": {
+      "status": "failed",
+      "turnError": {
+        "message": "stream disconnected before completion: Something odd happened.",
+        "codexErrorInfo": "other",
+        "additionalDetails": null,
+        "misalignment": null
+      },
+      "retries": [
+        {
+          "message": "Reconnecting... 1/1",
+          "info": {
+            "responseStreamDisconnected": {
+              "httpStatusCode": null
+            }
+          }
+        }
+      ],
+      "gateway": [
+        {
+          "status": 200,
+          "retryAfterS": null,
+          "error": {
+            "status": 200,
+            "type": null,
+            "code": "weird_code",
+            "message": "Something odd happened.",
+            "class": "unknown"
+          },
+          "translate": null
+        },
+        {
+          "status": 200,
+          "retryAfterS": null,
+          "error": {
+            "status": 200,
+            "type": null,
+            "code": "weird_code",
+            "message": "Something odd happened.",
+            "class": "unknown"
+          },
+          "translate": null
+        }
+      ]
+    },
+    "OVERLOAD": {
+      "status": "failed",
+      "turnError": {
+        "message": "Selected model is at capacity. Please try a different model.",
+        "codexErrorInfo": "serverOverloaded",
+        "additionalDetails": null,
+        "misalignment": null
+      },
+      "retries": [],
+      "gateway": [
+        {
+          "status": 200,
+          "retryAfterS": null,
+          "error": {
+            "status": 200,
+            "type": null,
+            "code": "server_is_overloaded",
+            "message": "The server is overloaded.",
+            "class": "unknown"
+          },
+          "translate": null
+        }
+      ]
+    },
+    "RESET": {
+      "status": "failed",
+      "turnError": {
+        "message": "unexpected status 502 Bad Gateway: ad: couldn't reach 127.0.0.1:51287 (UND_ERR_SOCKET), url: http://127.0.0.1:51288/p/ad-fail/v1/responses",
+        "codexErrorInfo": {
+          "httpConnectionFailed": {
+            "httpStatusCode": 502
+          }
+        },
+        "additionalDetails": null,
+        "misalignment": null
+      },
+      "retries": [
+        {
+          "message": "Reconnecting... 1/1",
+          "info": {
+            "responseStreamDisconnected": {
+              "httpStatusCode": 502
+            }
+          }
+        }
+      ],
+      "gateway": [
+        {
+          "status": 502,
+          "retryAfterS": null,
+          "error": {
+            "status": 502,
+            "type": "server_error",
+            "code": "UND_ERR_SOCKET",
+            "message": "couldn't reach 127.0.0.1:51287",
+            "class": "server"
+          },
+          "translate": null
+        },
+        {
+          "status": 502,
+          "retryAfterS": null,
+          "error": {
+            "status": 502,
+            "type": "server_error",
+            "code": "UND_ERR_SOCKET",
+            "message": "couldn't reach 127.0.0.1:51287",
+            "class": "server"
+          },
+          "translate": null
+        },
+        {
+          "status": 502,
+          "retryAfterS": null,
+          "error": {
+            "status": 502,
+            "type": "server_error",
+            "code": "UND_ERR_SOCKET",
+            "message": "couldn't reach 127.0.0.1:51287",
+            "class": "server"
+          },
+          "translate": null
+        },
+        {
+          "status": 502,
+          "retryAfterS": null,
+          "error": {
+            "status": 502,
+            "type": "server_error",
+            "code": "UND_ERR_SOCKET",
+            "message": "couldn't reach 127.0.0.1:51287",
+            "class": "server"
+          },
+          "translate": null
+        }
+      ]
+    }
+  }
+}

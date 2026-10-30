@@ -385,3 +385,15 @@ export async function isTeamComplete(teamId) {
   if (tasks.length === 0) return false;
   return tasks.every(t => t.status === "completed");
 }
+
+/**
+ * Whether the team's workers may fall back (P4.7): only `ad team set <team> fallback on|off`
+ * changes it, and never from the agent's own shell (the caller checks).
+ */
+export async function setTeamFallback(teamId, on) {
+  const team = await loadTeam(teamId);
+  if (on) team.fallback = true;
+  else delete team.fallback;
+  await atomicWriteJson(path.join(teamDir(teamId), "team.json"), team);
+  return team;
+}

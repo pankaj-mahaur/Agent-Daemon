@@ -43,6 +43,28 @@ by hand if absent).
   CHANGELOG, docs)
 - exit checkpoint: `FLOW release-flow 3/3 reviewed: <findings>`
 
+### The memory package and host plugins (agent-daemon only)
+Released separately, by `.github/workflows/release-memory.yml`, which runs only when the owner dispatches it:
+0. Before a version bump lands, regenerate what carries the version or the tool list, and commit them with the bump:
+   - `node runtime/scripts/memory-deeplinks.mjs --write` (the pinned quick-try links);
+   - `node runtime/scripts/render-tools-doc.mjs --write` (`docs/memory/tools.md`).
+
+   `runtime/test/listings.test.mjs` fails if either is stale. Listing copy comes from `docs/support-matrix.md`: move a host to "tested live" only with an acceptance record.
+1. Dispatch it with `dry_run` on (the default). Read the job, download the artifacts (`server.json` and the rendered listing copy included) and check `SHA256SUMS`.
+2. Install from the built trees on each host and record the result (host acceptance).
+3. Only on the owner's explicit OK, dispatch again with `dry_run` off and approve the `release-memory` environment. The npm package publishes first; then the marketplace and Gemini trees are pushed and the GitHub release is made.
+4. After npm publishing, and only with the owner's OK, publish to the MCP Registry:
+   - run `mcp-publisher login github`, then `mcp-publisher publish` with the artifact's `server.json`;
+   - the Registry is in preview and may reset, so re-running is safe;
+   - only from a release whose branch is merged: `websiteUrl` points at `docs/memory/README.md` on main.
+
+   Gallery submissions (Claude Code directory, Cursor marketplace) are the owner's, after the privacy and terms pages exist.
+5. Never publish from a laptop. The package version must equal the runtime's: the build refuses otherwise.
+
+### Launch checks, every release (P8.4)
+- `node --test runtime/test/launch-checks.test.mjs runtime/test/support-matrix.test.mjs`: privacy and security pages, MIT everywhere, no analytics, no network in the memory package, and no matrix row that overstates its evidence.
+- After an engine upgrade: `AD_REAL_ENGINE=1 node --test runtime/test/engine-network.test.mjs`. A new host it reaches means a new engine setting to turn off in `ENGINE_PRIVACY` (`runtime/src/harness/setup.mjs`), or a line on `docs/privacy.md`.
+
 ## Go / No-Go
 
 End with a one-screen summary: version, changelog highlights, verification

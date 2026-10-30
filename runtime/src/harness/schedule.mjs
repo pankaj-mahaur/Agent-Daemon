@@ -2,8 +2,14 @@
 // cron schedule), executed by the existing `ad watch` daemon (which the
 // `ad service install` OS service keeps alive).
 //
-//   ad schedule add "<cron>" run|loop "<prompt>" [--cwd dir]
+//   ad schedule add "<cron>" run|loop "<prompt>" [--cwd dir] [--fallback]
 //   ad schedule list | remove <id> | enable <id> | disable <id> | run <id> | tick
+//   ad schedule edit <id> --fallback | --no-fallback
+//
+// A job with fallback (P4.7) runs `ad run|loop --fallback`: it may continue on the next model
+// in the user's order. Granting or changing that is refused from the agent's own shell; a
+// scheduled child (AD_SCHEDULE_JOB=<id>) uses its job's grant. Each run also leaves
+// schedule-logs/<id>.status.json { at, exitCode, status, reason, switchedTo }.
 //
 // Jobs live in ~/.agent-daemon/schedules.json (atomic writes). Each due job
 // runs as a child `ad run`/`ad loop` process with output appended to
@@ -136,7 +142,7 @@ export function homeFolderJobs(home) {
   return loadJobs(home).filter((j) => j.allowHomeFolder).map((j) => ({ id: j.id, cwd: j.cwd, allowHomeFolder: j.allowHomeFolder }));
 }
 
-export function addJob({ cron, kind, prompt, cwd, now = new Date(), allowHomeFolder = false }, home) {
+export function addJob({ cron, kind, prompt, cwd, now = new Date(), allowHomeFolder = false, fallback = false }, home) {
   if (!["run", "loop"].includes(kind)) throw new Error(`job kind must be run or loop, got "${kind}"`);
   if (!prompt?.trim()) throw new Error("job needs a prompt");
   const risk = engineHome.homeLayerRisk(path.resolve(cwd ?? process.cwd()));
@@ -153,6 +159,7 @@ export function addJob({ cron, kind, prompt, cwd, now = new Date(), allowHomeFol
     lastRun: null,
     lastStatus: null,
     ...(risk ? { allowHomeFolder: true } : {}),
+    ...(fallback ? { fallback: true } : {}),
   };
   saveJobs([...loadJobs(home), job], home);
   return job;
@@ -163,7 +170,42 @@ export function addJob({ cron, kind, prompt, cwd, now = new Date(), allowHomeFol
 // "--" ends option parsing: a prompt like "--sandbox=danger-full-access"
 // stays a prompt instead of becoming a flag.
 export function jobArgs(job) {
-  return [CLI, job.kind === "loop" ? "loop" : "run", "--cwd", job.cwd, ...(job.allowHomeFolder ? ["--allow-home-folder"] : []), "--", job.prompt];
+  return [CLI, job.kind === "loop" ? "loop" : "run", "--cwd", job.cwd, ...(job.allowHomeFolder ? ["--allow-home-folder"] : []), ...(job.fallback ? ["--fallback"] : []), "--", job.prompt];
+}
+
+/** Whether a scheduled child's job granted fallback (the child can't be asked; P4.7). */
+export function jobGrantsFallback(env = process.env, home) {
+  const id = env.AD_SCHEDULE_JOB;
+  return Boolean(id) && loadJobs(home).some((j) => j.id === id && j.fallback === true);
+}
+
+// What a run's exit code means for a job (P4.7, D48).
+const STATUS_OF = { 0: "completed", 1: "failed", 2: "refused", 3: "stopped", 4: "paused" };
+export const jobStatusOf = (code) => STATUS_OF[code] ?? "failed";
+
+// The reason a run gave on stderr, kept for its status file: ad's pause and switch lines, and a
+// loop's stop line.
+export function reasonFrom(lines) {
+  let reason = null;
+  let switchedTo = null;
+  for (const l of lines) {
+    const p = /^\[ad\] \u{23f8} Paused: (.*?)\. Work so far is saved/u.exec(l);
+    if (p) reason = p[1];
+    const s = /^\[ad\] \u{21aa} Switched to (.+?): /u.exec(l);
+    if (s) switchedTo = s[1];
+    const stop = /^ad loop stopped: (.*?) \(\d+ iteration/.exec(l);
+    if (stop && !reason) reason = stop[1];
+  }
+  return { reason, switchedTo };
+}
+
+export function writeJobStatus(id, { code, lines = [], now = new Date() }, home) {
+  const { reason, switchedTo } = reasonFrom(lines);
+  const file = path.join(scheduleDir(home), "schedule-logs", `${id}.status.json`);
+  mkdirSync(path.dirname(file), { recursive: true });
+  const status = { at: now.toISOString(), exitCode: code, status: jobStatusOf(code), reason, switchedTo };
+  writeFileSync(file, `${JSON.stringify(status)}\n`);
+  return status;
 }
 
 // Cross-process "running" lock: a job must not overlap itself even across
@@ -206,6 +248,13 @@ function runJob(job, { home, spawnFn = spawn, onExit } = {}) {
     running.delete(job.id);
     lease?.();
     log.end(`=== ${note}\n`);
+    if (typeof code === "number" && code >= 0) {
+      try {
+        job.status = writeJobStatus(job.id, { code, lines: job.lines?.() ?? [] }, home);
+      } catch {
+        // the status file is a convenience; the log has it all
+      }
+    }
     onExit?.(code);
   };
   const logDir = path.join(scheduleDir(home), "schedule-logs");
@@ -232,7 +281,15 @@ function runJob(job, { home, spawnFn = spawn, onExit } = {}) {
     queueMicrotask(() => { finished = true; log.end(`=== skipped: already running elsewhere (pid ${err.holder?.pid})\n`); });
     return null;
   }
-  const child = spawnFn(process.execPath, jobArgs(job), { cwd: job.cwd, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+  const child = spawnFn(process.execPath, jobArgs(job), { cwd: job.cwd, env: { ...process.env, AD_SCHEDULE_JOB: job.id }, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+  // ad's own lines (a switch, a pause, a loop's stop) for the job's status file.
+  let tail = "";
+  const keep = (c) => {
+    tail = (tail + String(c)).split(/\r?\n/).filter((l) => /^\[ad\] |^ad loop stopped: /u.test(l) || l === "").slice(-20).join("\n");
+  };
+  child.stdout?.on?.("data", keep);
+  child.stderr?.on?.("data", keep);
+  job.lines = () => tail.split("\n").filter(Boolean);
   if (child.pid) lease.updateMeta({ child: { pid: child.pid, startedAt: Date.now() } });
   child.stdout?.pipe(log, { end: false });
   child.stderr?.pipe(log, { end: false });
@@ -242,12 +299,20 @@ function runJob(job, { home, spawnFn = spawn, onExit } = {}) {
   return child;
 }
 
-function recordExit(id, code, home) {
+function recordExit(id, code, home, status = null) {
   const jobs = loadJobs(home);
   const j = jobs.find((x) => x.id === id);
   if (!j) return;
-  j.lastStatus = code === 0 ? "ok" : typeof code === "string" ? code : `exit ${code}`;
+  j.lastStatus = lastStatusText(code, status);
   saveJobs(jobs, home);
+}
+
+// "ok", "paused: OpenRouter's free limit is used up until 05:30", "ok, switched to Gemini API · …".
+export function lastStatusText(code, status = null) {
+  if (code === 4) return `paused${status?.reason ? `: ${status.reason}` : ""}`;
+  if (code === 0) return status?.switchedTo ? `ok, last run switched to ${status.switchedTo}` : "ok";
+  if (code === 3) return `stopped${status?.reason ? `: ${status.reason}` : ""}`;
+  return typeof code === "string" ? code : `exit ${code}`;
 }
 
 // Start every enabled job whose nextRun has passed. Returns started ids.
@@ -276,7 +341,7 @@ export function tick({ home, now = new Date(), spawnFn, log = () => {} } = {}) {
   const started = [];
   for (const job of due) {
     try {
-      runJob(job, { home, spawnFn, onExit: (code) => recordExit(job.id, code, home) });
+      runJob(job, { home, spawnFn, onExit: (code) => recordExit(job.id, code, home, job.status ?? null) });
       started.push(job.id);
     } catch (err) {
       log(`schedule: could not start ${job.id}: ${err.message}`);
@@ -334,7 +399,8 @@ export async function cmdSchedule(sub, args = [], opts = {}) {
     switch (sub) {
       case "add": {
         const [cron, kind, ...rest] = args;
-        const job = addJob({ cron, kind, prompt: rest.join(" "), cwd: opts.cwd, allowHomeFolder: opts.allowHomeFolder === true }, home);
+        if (opts.fallback && (opts.env ?? process.env).AD_TOOL_SHELL === "1") return refuseInToolShell(err);
+        const job = addJob({ cron, kind, prompt: rest.join(" "), cwd: opts.cwd, allowHomeFolder: opts.allowHomeFolder === true, fallback: opts.fallback === true }, home);
         out.write(`added ${job.id}: ${job.kind} "${job.prompt}" at "${job.cron}" (next ${new Date(job.nextRun).toLocaleString()})\n`);
         out.write("Jobs run while the daemon is up: ad watch  (or keep it running: ad service install)\n");
         return 0;
@@ -344,8 +410,20 @@ export async function cmdSchedule(sub, args = [], opts = {}) {
         const jobs = loadJobs(home);
         if (!jobs.length) out.write("no scheduled jobs\n");
         for (const j of jobs) {
-          out.write(`${j.id}  ${j.enabled ? "on " : "off"}  ${j.cron.padEnd(14)} ${j.kind.padEnd(4)} next ${new Date(j.nextRun).toLocaleString()}  last ${j.lastStatus ?? "-"}  ${j.prompt.slice(0, 50)}\n`);
+          out.write(`${j.id}  ${j.enabled ? "on " : "off"}  ${j.cron.padEnd(14)} ${j.kind.padEnd(4)}${j.fallback ? " (fallback)" : ""} next ${new Date(j.nextRun).toLocaleString()}  last ${j.lastStatus ?? "-"}  ${j.prompt.slice(0, 50)}\n`);
         }
+        return 0;
+      }
+      case "edit": {
+        if (opts.fallback === undefined) throw new Error("edit needs --fallback or --no-fallback");
+        if ((opts.env ?? process.env).AD_TOOL_SHELL === "1") return refuseInToolShell(err);
+        const jobs = loadJobs(home);
+        const j = jobs.find((x) => x.id === args[0]);
+        if (!j) throw new Error(`no job ${args[0] ?? "(missing id)"}`);
+        if (opts.fallback) j.fallback = true;
+        else delete j.fallback;
+        saveJobs(jobs, home);
+        out.write(`${j.id}: fallback ${opts.fallback ? "on" : "off"}\n`);
         return 0;
       }
       case "remove":
@@ -368,7 +446,7 @@ export async function cmdSchedule(sub, args = [], opts = {}) {
         if (!j) throw new Error(`no job ${args[0] ?? "(missing id)"}`);
         if (running.has(j.id) || jobLocked(j.id, home)) throw new Error(`job ${j.id} is already running`);
         const code = await new Promise((resolve) => runJob(j, { home, spawnFn: opts.spawnFn, onExit: resolve }));
-        recordExit(j.id, code, home);
+        recordExit(j.id, code, home, j.status ?? null);
         out.write(`${j.id} finished: exit ${code} (log: ${path.join(scheduleDir(home), "schedule-logs", `${j.id}.log`)})\n`);
         return code === 0 ? 0 : 1;
       }
@@ -378,11 +456,16 @@ export async function cmdSchedule(sub, args = [], opts = {}) {
         return 0;
       }
       default:
-        err.write('Usage: ad schedule add "<cron>" run|loop "<prompt>" | list | remove|enable|disable|run <id> | tick\n');
+        err.write('Usage: ad schedule add "<cron>" run|loop "<prompt>" [--fallback] | list | remove|enable|disable|run <id> | edit <id> --fallback|--no-fallback | tick\n');
         return 1;
     }
   } catch (e) {
     err.write(`ad schedule: ${e.message}\n`);
     return 1;
   }
+}
+
+function refuseInToolShell(err) {
+  err.write("Fallback settings can't be changed from the agent's own shell. Run it in your terminal.\n");
+  return 2;
 }

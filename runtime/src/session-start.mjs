@@ -32,6 +32,10 @@ const SWEEP_THROTTLE_MS = 10 * 60 * 1000;
  */
 export async function runSessionStart(opts) {
   const sections = [];
+  // memoryOnly (a host plugin, P5.4): this project's memory and nothing else of ad —
+  // no constitution, no pointers to ad's tools or commands, no other tools' rules
+  // or CLAUDE.md (the host loads those itself), no digest sweep, no init hint.
+  const full = !opts.memoryOnly;
 
   // -1. Rotate activeContext.md if it has grown too large AND is older than
   //     a week. activeContext.md gets read raw into the 9KB SessionStart
@@ -64,8 +68,8 @@ export async function runSessionStart(opts) {
         `## Carried over from prior session(s)`,
         ``,
         `${drain.drained} learning(s) captured by UserPromptSubmit hooks were applied: ${detail}.`,
-        `Run \`ad status\` to review anything queued.`
-      ].join("\n"));
+        full ? `Run \`ad status\` to review anything queued.` : a.proposalsQueued ? "Some wait for your review: npx agent-daemon-memory review." : null
+      ].filter((l) => l !== null).join("\n"));
     }
   } catch { /* fail-safe — never block session-start */ }
 
@@ -74,7 +78,7 @@ export async function runSessionStart(opts) {
   //     the installed hook has a 5s timeout, so the sweep must not be awaited,
   //     and one run per 10 minutes is plenty.
   try {
-    await spawnDigestSweep(opts);
+    if (full) await spawnDigestSweep(opts);
   } catch { /* fail-safe — never block session-start */ }
 
   // 1. Constitution — always-loaded files (~3KB total).
@@ -83,12 +87,12 @@ export async function runSessionStart(opts) {
   //    (vendored from forrestchang/andrej-karpathy-skills, MIT).
   //    safety.md, verification.md, communication.md, ending-protocol.md are
   //    on-demand: the agent loads them via skill triggers or QMD search.
-  const constitutionDir = path.join(opts.projectRoot, "constitution");
-  const coreText = await tryRead(path.join(constitutionDir, "core.md"));
+  const constitutionDir = path.join(opts.projectRoot ?? "", "constitution");
+  const coreText = full ? await tryRead(path.join(constitutionDir, "core.md")) : null;
   if (coreText) {
     sections.push(`<!-- constitution/core.md -->\n${coreText}`);
   }
-  const karpathyText = await tryRead(path.join(constitutionDir, "karpathy-guidelines.md"));
+  const karpathyText = full ? await tryRead(path.join(constitutionDir, "karpathy-guidelines.md")) : null;
   if (karpathyText) {
     sections.push(`<!-- constitution/karpathy-guidelines.md -->\n${karpathyText}`);
   }
@@ -96,7 +100,7 @@ export async function runSessionStart(opts) {
   // 2. Memory retrieval — prefer QMD pointer over bulk-loading files.
   //    If QMD (mcp__qmd__search) is available, inject a one-line pointer instead
   //    of loading all memory files. Falls back to bulk-load if QMD isn't installed.
-  const qmdAvailable = await detectQmd(opts.cwd);
+  const qmdAvailable = full && (await detectQmd(opts.cwd));
   if (qmdAvailable) {
     const activeContext = await tryRead(path.join(projectDataDir(opts.cwd), "memory", "activeContext.md"));
     if (activeContext) {
@@ -114,18 +118,19 @@ export async function runSessionStart(opts) {
     // memory goes first, so the memory group's cap never cuts activeContext.md
     // for the global user.md; user.md (pushed after this block) gets what remains.
 
-    const memoryLocations = [
+    // memoryOnly: ad's own memory for this project only (the host shows its own).
+    const memoryLocations = full ? [
       path.join(projectDataDir(opts.cwd), "memory"),
       path.join(opts.cwd, ".claude", "memory"),
       path.join(homeDir(), ".claude", "projects", encodeProjectPath(opts.cwd), "memory"),
       path.join(homeDir(), ".agent-daemon", "memory")
-    ];
+    ] : [path.join(projectDataDir(opts.cwd), "memory")];
 
     let foundProjectMemory = false;
     for (const memDir of memoryLocations) {
       const result = await readMemoryDir(memDir);
       if (result) {
-        if (result.hasPlaceholders) {
+        if (result.hasPlaceholders && full) {
           // Push warning BEFORE memory content so it survives 9KB truncation
           sections.push(`<!-- memory-bootstrap-hint -->\n**⚠ Memory not yet bootstrapped.** Memory files contain unfilled template placeholders (\`{{...}}\`). Say "bootstrap the daemon memory" to populate them with real project context.`);
         }
@@ -137,7 +142,7 @@ export async function runSessionStart(opts) {
 
   }
 
-  if (!qmdAvailable) {
+  if (!qmdAvailable && full) {
     const userMd = await tryRead(path.join(homeDir(), ".agent-daemon", "user.md"));
     if (userMd) sections.push(`<!-- ~/.agent-daemon/user.md (cross-project user profile) -->\n${neutralizeMemoryFile(userMd)}`);
   }
@@ -145,7 +150,7 @@ export async function runSessionStart(opts) {
   // 3. Graphify knowledge graph pointer — if a graphify-out/graph.json exists
   //    in the project, inject a lightweight pointer so Claude queries the graph
   //    for architecture/relationship questions instead of re-reading the codebase.
-  {
+  if (full) {
     const graphJsonPath = path.join(opts.cwd, "graphify-out", "graph.json");
     try {
       await fs.access(graphJsonPath);
@@ -162,7 +167,7 @@ export async function runSessionStart(opts) {
 
   // If .agent-daemon/ doesn't exist in this project, suggest initialization.
   // Inserted early (index 1, right after constitution) so it survives 9KB truncation.
-  {
+  if (full) {
     const projectDaemonDir = path.join(opts.cwd, ".agent-daemon");
     let projectHasDaemon = false;
     try { await fs.access(projectDaemonDir); projectHasDaemon = true; } catch {}
@@ -175,7 +180,7 @@ export async function runSessionStart(opts) {
   //    Note: AD-INSTRUCTIONS.md is NOT loaded here — it is referenced from the
   //    managed CLAUDE.md block, which Claude Code reads natively with a much
   //    larger budget. Loading it here would double-count against the 9KB cap.
-  for (const fname of ["CLAUDE.md", "CONVENTIONS.md"]) {
+  for (const fname of full ? ["CLAUDE.md", "CONVENTIONS.md"] : []) {
     const text = await tryRead(path.join(opts.cwd, fname));
     if (text) {
       sections.push(`<!-- ${fname} -->\n${text}`);
@@ -190,7 +195,7 @@ export async function runSessionStart(opts) {
     { dir: path.join(homeDir(), ".claude", "projects", encodeProjectPath(opts.cwd), "memory"), label: "Claude Code auto-memory", ext: ".md" },
     { dir: path.join(homeDir(), ".cursor", "rules"), label: "Global Cursor rules", ext: ".mdc" }
   ];
-  for (const source of crossAgentSources) {
+  for (const source of full ? crossAgentSources : []) {
     // Skip the readdir/file open work entirely when the directory does not
     // exist. Most projects only set up one or two of these locations.
     try { await fs.access(source.dir); } catch { continue; }
@@ -203,7 +208,7 @@ export async function runSessionStart(opts) {
   // 4c. Active team context — if this session is part of a multi-agent team,
   //      inject team info, task assignments, and inbox messages.
   try {
-    const teamContext = await loadActiveTeamContext();
+    const teamContext = full ? await loadActiveTeamContext() : null;
     if (teamContext) {
       sections.push(`<!-- active team context -->\n${teamContext}`);
     }
@@ -227,7 +232,7 @@ export async function runSessionStart(opts) {
     const { db } = await import("./memory/episodic.mjs");
     const { safetyScanDone } = await import("./memory/safety.mjs");
     const handle = await db();
-    if (handle && !safetyScanDone(handle) && handle.get("SELECT 1 AS x FROM learnings LIMIT 1")) sections.push("<!-- memory-scan-hint -->\nad hasn't checked older memory notes for secrets yet. Run: ad memory scan");
+    if (full && handle && !safetyScanDone(handle) && handle.get("SELECT 1 AS x FROM learnings LIMIT 1")) sections.push("<!-- memory-scan-hint -->\nad hasn't checked older memory notes for secrets yet. Run: ad memory scan");
   } catch { /* no store: nothing to check */ }
   try {
     const files = memKeys.length ? await recentlyChangedFiles(opts.cwd) : [];
@@ -298,7 +303,7 @@ export async function runSessionStart(opts) {
       // The memory file is shown too: its lessons count as shown (matched to their rows).
       const fileText = await tryRead(path.join(projectDataDir(opts.cwd), "memory", "activeContext.md"));
       const ids = [...shownIds, ...lessonIdsInFile(handle, memKeys, fileText)];
-      recordInjections(handle, { captureRef: opts.sessionId || null, projectKey: memKeys[0], ids, surface: "session-start", host: hostId(hookHost()) });
+      recordInjections(handle, { captureRef: opts.sessionId || null, keys: memKeys, ids, surface: "session-start", host: hostId(hookHost()) });
     } catch {
       // telemetry only
     }

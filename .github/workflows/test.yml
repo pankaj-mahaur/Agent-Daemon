@@ -89,7 +89,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        node: ["22.13", "24"]
+        node: ["22.16", "24"]
 
     steps:
       - name: Checkout
@@ -162,9 +162,90 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
-      # engine-real: the protocol; tui-live: the FC3 script, the real ad tui in a pty.
+      # engine-real: the protocol; engine-real-translate: a Chat provider through the gateway's
+      # translation (P6.1); tui-live: the FC3 script, the real ad tui in a pty;
+      # smoke-real: the correction benchmark's driver (hooks, capture, the lesson in session 2).
       - name: Real engine vs mock model
         working-directory: runtime
         env:
           AD_REAL_ENGINE: "1"
-        run: node --test --test-concurrency=1 --test-force-exit test/engine-real.test.mjs test/tui-live.test.mjs
+        run: node --test --test-concurrency=1 --test-force-exit test/engine-real.test.mjs test/engine-real-translate.test.mjs test/tui-live.test.mjs ../bench/correction-bench/test/smoke-real.test.mjs
+
+  portability-export:
+    # P7.3 OS pairs: each OS exports a fixture project (runtime/scripts/portability-fixture.mjs);
+    # portability-import brings every other OS's bundle in. No secrets: throwaway homes only.
+    name: state export / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: runtime/package-lock.json
+
+      - name: Install runtime deps
+        working-directory: runtime
+        run: npm ci
+
+      - name: Export the fixture project
+        shell: bash
+        run: |
+          mkdir -p bundles
+          node runtime/scripts/portability-fixture.mjs export "bundles/${{ runner.os }}.adstate"
+
+      - name: Upload the bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: adstate-${{ runner.os }}
+          path: bundles/
+          retention-days: 3
+
+  portability-import:
+    name: state import / ${{ matrix.os }}
+    needs: portability-export
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: runtime/package-lock.json
+
+      - name: Install runtime deps
+        working-directory: runtime
+        run: npm ci
+
+      - name: Download every bundle
+        uses: actions/download-artifact@v4
+        with:
+          pattern: adstate-*
+          path: bundles
+          merge-multiple: true
+
+      # The other two OSes' bundles: all six directed pairs across the matrix.
+      - name: Import the other OSes' bundles
+        shell: bash
+        run: |
+          others=$(ls bundles/*.adstate | grep -v "/${{ runner.os }}.adstate$")
+          test -n "$others"
+          node runtime/scripts/portability-fixture.mjs import $others

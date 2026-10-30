@@ -1,0 +1,30 @@
+{
+  "family": "changelog",
+  "phrasings": [
+    {
+      "id": "changelog-a1",
+      "text": "Actually we add a line to CHANGES.md under Unreleased for every change.",
+      "writer": "author"
+    },
+    {
+      "id": "changelog-a2",
+      "text": "Each code change needs an entry in CHANGES.md, in the \"## Unreleased\" section.",
+      "writer": "author"
+    },
+    {
+      "id": "changelog-a3",
+      "text": "Please remember: update CHANGES.md (Unreleased) whenever src changes.",
+      "writer": "author"
+    },
+    {
+      "id": "changelog-a4",
+      "text": "you forgot CHANGES.md",
+      "writer": "author"
+    },
+    {
+      "id": "changelog-a5",
+      "text": "Every change gets a line under ## Unreleased in CHANGES.md, the release notes are built from it.",
+      "writer": "author"
+    }
+  ]
+}

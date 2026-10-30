@@ -21,6 +21,8 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { adRoot, legacyAdRoots } from "../ad-root.mjs";
 import { availableDrivers, openDatabase } from "./driver.mjs";
+import { migrateProjectIds, syncProjectKeys } from "./project-db.mjs";
+
 
 /**
  * Full schema (idempotent — uses IF NOT EXISTS everywhere).
@@ -379,6 +381,9 @@ export async function open(opts = {}) {
       migrateMemoryContract(raw);
       migrateLearningsCapture(raw);
       migrateLearningValue(raw);
+      // P7.1a: project ids (additive), and the registry's slugs mirrored for the triggers.
+      migrateProjectIds(raw);
+      syncProjectKeys(raw);
       break;
     } catch (e) {
       try {
@@ -768,7 +773,7 @@ function migrateSkillRouteEvents(raw) {
 export async function checkDriver() {
   try {
     const drivers = await availableDrivers();
-    if (!drivers.length) return { installed: false, drivers, error: "no SQLite driver: better-sqlite3 not installed (run: cd runtime && npm install) and node:sqlite needs Node 22.13+" };
+    if (!drivers.length) return { installed: false, drivers, error: "no SQLite driver: better-sqlite3 not installed (run: cd runtime && npm install) and node:sqlite needs Node 22.16+ (full-text search)" };
     // Probe the one open() will use.
     const db = await openDatabase(":memory:");
     const driver = db.driver;

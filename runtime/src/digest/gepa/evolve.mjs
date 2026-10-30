@@ -22,6 +22,7 @@ import { reflectOnTraces } from "./reflect.mjs";
 import { generateVariants } from "./generate.mjs";
 import { evaluateVariants } from "./evaluate.mjs";
 import { paretoSelect } from "./select.mjs";
+import { renderSkillProposal, skillSha, withFrontmatterOf } from "../../skills/proposal.mjs";
 
 /**
  * @typedef {Object} EvolveOptions
@@ -158,7 +159,6 @@ export async function evolveSkill(opts) {
   const proposalContent = renderProposal({
     runId,
     skillName: opts.skillName,
-    skillPath: opts.skillPath,
     parentBody,
     winner: best,
     allWinners: winners,
@@ -181,11 +181,12 @@ export async function evolveSkill(opts) {
   };
 }
 
-function renderProposal({ runId, skillName, skillPath, parentBody, winner, allWinners, reflections, totalCostUsd }) {
-  const lines = [
-    `# Proposed skill update — ${skillName}`,
-    "",
-    `_Run id: ${runId}_  ·  _Generated: ${new Date().toISOString()}_  ·  _Cost: $${(totalCostUsd || 0).toFixed(4)}_`,
+// The v1 skill proposal (skills/proposal.mjs): the full proposed SKILL.md (the
+// parent's frontmatter on the winner body, since variants don't carry it), with the
+// parent's checksum, so ad review can show the diff and apply it.
+export function renderProposal({ runId, skillName, parentBody, winner, allWinners, reflections, totalCostUsd }) {
+  const why = [
+    `_Run id: ${runId}_  ·  _Cost: $${(totalCostUsd || 0).toFixed(4)}_`,
     "",
     "## Why this change",
     "",
@@ -215,32 +216,24 @@ function renderProposal({ runId, skillName, skillPath, parentBody, winner, allWi
     "",
     "## To accept",
     "",
-    "Run `agent-daemon review` and choose **(a)ccept** when prompted. Or apply manually:",
-    "",
-    "```bash",
-    `# Replace the body of ${displayPath(skillPath)} with the winner body below`,
-    `# (preserve the YAML frontmatter at the top — variants do NOT include it)`,
-    "```",
-    "",
-    "## Winner body",
-    "",
-    "```markdown",
-    winner.body,
-    "```",
-    ""
+    "Run `ad review`: it shows the change as a diff, and accepting applies it (undo: `ad skill undo ${skillName}`).",
+  ].join("\n");
+  const lines = [
+    renderSkillProposal({ skill: skillName, base: skillSha(parentBody), body: withFrontmatterOf(parentBody, winner.body.endsWith("\n") ? winner.body : `${winner.body}\n`), origin: "gepa", run: runId, why }),
   ];
 
   if (allWinners.length > 1) {
-    lines.push("## Other Pareto winners (alternatives)");
+    lines.push("## Other Pareto winners (alternatives, not applied)");
     lines.push("");
     for (const [i, w] of allWinners.slice(1, 4).entries()) {
+      const fence = "`".repeat(Math.max(3, ...[...String(w.body).matchAll(/`+/g)].map((m) => m[0].length + 1)));
       lines.push(`### Alternative ${i + 1} — quality=${w.scores.quality.toFixed(2)}, size=${w.scores.size}`);
       lines.push("");
       lines.push("<details><summary>Show body</summary>");
       lines.push("");
-      lines.push("```markdown");
+      lines.push(`${fence}text`);
       lines.push(w.body);
-      lines.push("```");
+      lines.push(fence);
       lines.push("");
       lines.push("</details>");
       lines.push("");
@@ -250,6 +243,3 @@ function renderProposal({ runId, skillName, skillPath, parentBody, winner, allWi
   return lines.join("\n");
 }
 
-function displayPath(absPath) {
-  return absPath.replace(/.*[\\/]skills[\\/]/, "skills/");
-}

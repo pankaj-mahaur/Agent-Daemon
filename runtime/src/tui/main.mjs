@@ -12,8 +12,13 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { cliErrorLines } from "../harness/io.mjs";
-import { startHarnessEngine } from "../harness/start.mjs";
+import { cliErrorLines, openUrl } from "../harness/io.mjs";
+import { closeHarnessEngines, findThreadHome, launchHarness, newestThreadAcrossHomes, removedAccountText, resumeHint, windowTarget } from "../harness/engines.mjs";
+import { readRecord, recordSettings } from "../harness/settings-sync.mjs";
+import { createTuiAccounts } from "./accounts.mjs";
+import { fallbackHost } from "./fallback-editor.mjs";
+import { accountName } from "../auth/accounts/target.mjs";
+import { createSecretStore } from "../auth/secrets.mjs";
 import { createSession } from "../harness/session.mjs";
 import { engineHome, engineVersion, engineErrorText, engineErrorDetail } from "../engine/index.mjs";
 import { createIo } from "./terminal/io.mjs";
@@ -42,6 +47,7 @@ import { homeFolderAllowed, recentProjects } from "../harness/home-folder.mjs";
 import { launcherItems, LAUNCHER_TITLE } from "./home-launcher.mjs";
 import { projectDataDir } from "../memory/project-dir.mjs";
 import { homeFolderRefusal, homeLauncherWhy, homeTrustSkippedNote } from "../engine/attribution.mjs";
+import { gatewayReason } from "../harness/gateway-runtime.mjs";
 
 /* ------------------------------------------------------------------ */
 /* Small terminal helpers                                              */
@@ -288,7 +294,11 @@ export async function cmdTui(opts = {}) {
   let renderer;
   let adPrefs;
   let engine;
+  let launched = null; // launchHarness's answer for this window's engine
   let session;
+  let ledger = null; // the session ledger's coordinator (P4.1)
+  let switchRunnerRef = null; // its switch runner (P4.2), closed with the window
+  let fallbackRef = null; // its automatic fallback (P4.5), stopped with the window
   let app;
   let exitHint = null;
   try {
@@ -323,7 +333,12 @@ export async function cmdTui(opts = {}) {
     // Before the engine starts: skills (and settings with no trust) need no engine.
     const homeRisk = engineHome.homeLayerRisk(cwd);
     if (homeRisk && !allowHomeFolder && !(await pickHomeFolder(homeRisk))) return 2;
-    const start = () => startHarnessEngine({ cwd, home: opts.home, command: opts.command, clientVersion: opts.clientVersion, store: opts.store, err: sink, detached: true, experimental: true, interactive: true, allowHomeFolder });
+    // The account first (P3.4): the engine that serves it starts; this window holds it.
+    const start = async () => {
+      const r = await launchHarness({ cwd, account: opts.account, model: opts.model, effort: opts.effort, home: opts.home, command: opts.command, clientVersion: opts.clientVersion, store: opts.store, err: sink, detached: true, experimental: true, interactive: true, allowHomeFolder, idleMs: 5 * 60_000 });
+      if (r.engine) launched = r;
+      return r;
+    };
     let started = await start();
     while (!started.engine && started.code === 2 && /Not logged in/.test(started.error ?? "")) {
       const choice = await pickOnce({
@@ -360,8 +375,11 @@ export async function cmdTui(opts = {}) {
         break;
       }
       if (cwd === before) continue;
-      await engine.close();
+      // Another folder: its engine starts there (the old one is stopped, not kept).
+      if (launched?.lease) await closeHarnessEngines();
+      else await engine.close();
       engine = null;
+      launched = null;
       started = await start();
       if (!started.engine) {
         renderer.frame({ lines: [] });
@@ -389,31 +407,92 @@ export async function cmdTui(opts = {}) {
           { label: "No", hint: "ignore its hooks and settings", value: "untrusted" },
         ],
       });
-      if (trust) await engine.writeConfig([["projects", { [cwd]: { trust_level: trust } }, "upsert"]]).catch((e) => setupNotes.push(`trust not saved: ${keepStartupError(e)}`));
+      if (trust) {
+        await engine
+          .writeConfig([["projects", { [cwd]: { trust_level: trust } }, "upsert"]])
+          // The settings record learns it too: every home gets the answer (P3.4).
+          // Not for a home a command chose: its answers stay in it.
+          .then(() => (opts.home ? null : recordSettings([[`projects.${JSON.stringify(cwd)}.trust_level`, trust]], { engine, written: true })))
+          .catch((e) => setupNotes.push(`trust not saved: ${keepStartupError(e)}`));
+      }
     }
 
-    const restart = async () => {
-      const again = await start();
-      if (!again.engine) throw new Error(again.error);
-      return again.engine;
-    };
+    // The same home's engine again (the manager's restart; a chosen home starts anew).
+    const restart = () => launched.restart();
     // Checkpoints for /undo, in a git repo only (plan Part 10).
     const { createCheckpoints } = await import("../harness/checkpoints.mjs");
     const { checkpointWiring } = await import("./undo.mjs");
     let cp = createCheckpoints({ cwd });
     let undoKit = (await cp.repo().catch(() => null)) ? checkpointWiring(cp, { cwd }) : null;
     // Settings: the engine's own (its config.toml in ad's home) and ad's (prefs.json).
-    const settings = { engine: createEngineSettings({ engine: () => session.engine }), ad: adPrefs };
+    // [tui] comes from the settings record when this window runs on another home (P3.4).
+    const onDefaultHome = () => engineHome.canonical(session.engine.home) === engineHome.canonical(engineHome.defaultPath());
+    const settings = {
+      engine: createEngineSettings({
+        engine: () => session.engine,
+        record: () => (opts.home || onDefaultHome() ? null : readRecord().tui),
+        write: opts.home ? null : (edits) => recordSettings(edits, { engine: session.engine }),
+      }),
+      ad: adPrefs,
+    };
     // modes: the plan mode, on the experimental allowlist this engine opted into (parity P0).
     // Default's mask keeps the configured effort, as the engine's own Default mode does.
-    session = createSession({ engine, cwd, model: opts.model, sandbox: opts.sandbox, restart, maxRestarts: 3, hooks: undoKit?.hooks ?? {}, modes: true, planEffort: () => settings.engine.get("plan_mode_reasoning_effort") ?? null, configEffort: () => settings.engine.get("model_reasoning_effort") ?? null, ...(opts.lockDir ? { lockDir: opts.lockDir } : {}), identity: engineHome.isManaged(engine.home) ? null : await harnessIdentity(engine).catch(() => null) }); // no identity: the session starts without it
+    // The session ledger (P4.1): which account and model ran each turn, what each tool did.
+    const { createCoordinator, ledgerEnabled, ledgerHome, ledgerTarget } = await import("../sessions/coordinator.mjs");
+    const { fromChatgpt, recordObservations } = await import("../providers/quota.mjs");
+    const { classifyTurnFailure, lastUpstreamFailureForThread } = await import("../harness/gateway-runtime.mjs");
+    const isChatgpt = (a) => a?.method === "engine-login" || a?.credential?.kind === "engine-home";
+    let ledgerAccount = () => launched?.target?.account ?? null;
+    ledger = createCoordinator({
+      cwd,
+      origin: "tui",
+      root: opts.adRoot,
+      enabled: ledgerEnabled(opts),
+      homeKey: () => ledgerHome(session?.state.config.homeKey),
+      targetOf: () => {
+        const c = session.state.config;
+        return ledgerTarget({ account: ledgerAccount(), provider: c.provider, model: c.model, effort: c.effort });
+      },
+      // A failed turn's class (P4.3): the gateway's observation of this account's route during
+      // the turn wins (API accounts); a ChatGPT account's limits come from its own reads.
+      classify: ({ error, status, threadId, startedAt }) => classifyTurnFailure({ error, status, threadId, startedAt, account: ledgerAccount(), rateLimits: session?.state.rateLimits ?? null, rateLimitsAt: session?.state.rateLimitsAt ?? null }),
+    });
+    // A switch (P4.2) sees the same events first; the app shows its notices and choices.
+    let switchRunner = null;
+    const switchUi = { notify: () => {}, ask: () => {} };
+    // Automatic fallback (P4.5): acts at turn boundaries, after the switch runner saw the event.
+    let fallbackController = null;
+    let fallbackWindowOn = () => true; // the app's /fallback off, once the app exists
+    // The session's hooks: /undo's, plus fallback's turn-end hook, which must run before the
+    // session drains its queue (a queued prompt never starts on the target that just failed).
+    const sessionHooks = () => ({
+      ...(undoKit?.hooks ?? {}),
+      turnCompleted: (x) => {
+        undoKit?.hooks?.turnCompleted?.(x);
+        fallbackController?.turnCompleted(x);
+      },
+    });
+    const observer = (ev) => {
+      switchRunner?.onEvent(ev);
+      fallbackController?.onEvent(ev);
+      // A ChatGPT account's limits, as the engine reports them, to the QuotaStore (P4.3).
+      if (ev.type === "rateLimits" && ledger) {
+        const a = ledgerAccount();
+        if (isChatgpt(a)) void recordObservations(fromChatgpt(ev.limits, { accountId: a.id, source: ev.source })).catch(() => {});
+      }
+      return ledger.observer(ev);
+    };
+    session = createSession({ observer, engine, cwd, model: started.params.model, modelProvider: started.params.modelProvider, homeKey: launched?.homeKey ?? null, provider: launched?.target?.account?.provider ?? null, release: launched?.release ?? null, sandbox: opts.sandbox, restart, maxRestarts: 3, hooks: sessionHooks(), modes: true, planEffort: () => settings.engine.get("plan_mode_reasoning_effort") ?? null, configEffort: () => settings.engine.get("model_reasoning_effort") ?? null, ...(opts.lockDir ? { lockDir: opts.lockDir } : {}), identity: engineHome.isManaged(engine.home) ? null : await harnessIdentity(engine).catch(() => null) }); // no identity: the session starts without it
     await session.init();
+    if (launched?.params?.effort) session.setNextTurn({ effort: launched.params.effort });
     await settings.engine.load();
 
     const term = terminalName();
     const newline = newlineHint({ terminal: term, csiU: Boolean(caps.kitty) });
     const st = session.state;
-    const acct = st.account?.type === "chatgpt" ? `ChatGPT ${st.account.planType ?? ""}`.trim() : st.account?.type ?? "provider key";
+    // The account by its name, with where the choice came from when it isn't the user's own (P3.8b).
+    const source = { project: " (project)", env: " (from AD_ACCOUNT)" }[launched?.target?.source] ?? "";
+    const acct = launched?.target?.account ? `${accountName(launched.target.account)}${source}` : st.account?.type === "chatgpt" ? `ChatGPT ${st.account.planType ?? ""}`.trim() : st.account?.type ?? "provider key";
     const branch = (await git(cwd, ["rev-parse", "--abbrev-ref", "HEAD"])).stdout.trim();
     let memoryLine = "not set up";
     try {
@@ -426,7 +505,7 @@ export async function cmdTui(opts = {}) {
     }
     const engineVersionText = engineVersion.pinned() ?? "?";
     // No model configured: name the one the engine will use (its default), not "default".
-    let modelName = config.model ?? opts.model ?? null;
+    let modelName = launched?.params?.model ?? config.model ?? opts.model ?? null;
     if (!modelName) {
       const listed = await Promise.race([engine.models.list().catch(() => null), new Promise((r) => setTimeout(() => r(null), 2000).unref?.())]);
       const def = listed?.find((m) => m.isDefault);
@@ -454,12 +533,37 @@ export async function cmdTui(opts = {}) {
     for (const n of setupNotes.filter(Boolean)) intro.push([{ text: `  ${sanitize(n, "transcript")}`, style: T.warning }]);
 
     if (opts.resume || opts.last) {
+      const couldNot = (text) => intro.push([{ text: `  Could not resume: ${sanitize(text, "transcript")}`, style: T.warning }]);
       let id = opts.resume;
-      if (!id) {
-        const listed = await engine.threads.list({ cwd, limit: 1, modelProviders: [], sourceKinds: ["cli", "vscode", "exec", "appServer"] }).catch(() => null);
-        id = listed?.[0]?.id ?? null;
+      let home = launched?.homeKey ?? null;
+      // --last: the newest conversation for this folder in any home (P3.4).
+      if (!id) ({ threadId: id = null, homeKey: home = home } = (await newestThreadAcrossHomes({ currentKey: launched?.homeKey ?? null, engine, cwd, profile: launched?.profile }).catch(() => null)) ?? {});
+      // In another home: this window moves to that home's engine, then continues there.
+      const moveTo = async (found) => {
+        const removedThere = removedAccountText(found.thread?.modelProvider);
+        if (removedThere) {
+          await found.release();
+          return couldNot(removedThere);
+        }
+        return session.useEngine({ engine: found.engine, release: found.release, restart: found.restart }, { homeKey: found.homeKey, ...windowTarget(found.thread?.modelProvider) }, { threadId: id });
+      };
+      if (id) {
+        const here = await session.engine.threads.read(id).catch(() => null);
+        const removed = removedAccountText(here?.modelProvider);
+        if (removed) couldNot(removed);
+        else if (home !== (launched?.homeKey ?? null)) {
+          const found = await findThreadHome(id, { currentKey: launched?.homeKey ?? null, cwd, profile: launched?.profile }).catch(() => null);
+          if (found) await moveTo(found).catch((e) => couldNot(keepStartupError(e)));
+          else couldNot("that conversation wasn't found");
+        } else {
+          await session.resume(id).catch(async (e) => {
+            // Not in this home: look in the others (--resume <tid> without --account).
+            const found = launched?.lease ? await findThreadHome(id, { currentKey: launched.homeKey, cwd, profile: launched.profile }).catch(() => null) : null;
+            if (found) await moveTo(found).catch((e2) => couldNot(keepStartupError(e2)));
+            else couldNot(keepStartupError(e));
+          });
+        }
       }
-      if (id) await session.resume(id).catch((e) => intro.push([{ text: `  Could not resume: ${sanitize(keepStartupError(e), "transcript")}`, style: T.warning }]));
     }
 
     for (const detail of setupDetails.slice(-50)) session.state.notices.push({ level: "info", code: "startup.details", message: "Engine startup details. Details: /warnings", detail, at: Date.now() });
@@ -474,7 +578,112 @@ export async function cmdTui(opts = {}) {
       if (ev.type === "focus") focused = ev.focused;
     });
     const hooksFile = path.join(engine.home, "hooks.json");
+    // Accounts in the UI (P3.8b): only for ad's own homes (a home a command chose has none).
+    const accounts = launched?.lease
+      ? createTuiAccounts({
+          session,
+          store: opts.store ?? createSecretStore(),
+          clientVersion: opts.clientVersion,
+          openBrowser: openUrl,
+          // Another account's engine, started the same way as this window's.
+          launch: (a) => launchHarness({ cwd, account: a.id, command: opts.command, clientVersion: opts.clientVersion, store: opts.store, err: sink, detached: true, experimental: true, interactive: true, allowHomeFolder, idleMs: 5 * 60_000 }),
+        })
+      : null;
+    if (accounts) ledgerAccount = () => accounts.current() ?? launched?.target?.account ?? null;
+    // Switching a conversation to another account or provider (P4.2): only with ad's accounts.
+    if (accounts) {
+      const { createSwitchRunner } = await import("../sessions/switch-runner.mjs");
+      const shortstat = async () => (await git(cwd, ["diff", "--shortstat", "HEAD"]).catch(() => ({ stdout: "" }))).stdout.trim();
+      const num = (s, re) => Number(re.exec(s)?.[1] ?? 0);
+      switchRunner = createSwitchRunner({
+        session,
+        ledger,
+        current: () => accounts.currentTarget(),
+        prepare: (t) => accounts.prepare(t),
+        git: async () => {
+          const branch = (await git(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]).catch(() => ({ stdout: "" }))).stdout.trim();
+          if (!branch) return null;
+          const s = await shortstat();
+          return { branch, files: num(s, /(\d+) files? changed/), added: num(s, /(\d+) insertion/), deleted: num(s, /(\d+) deletion/) };
+        },
+        // /undo's snapshot (uncommitted edits included) when the folder has checkpoints, else HEAD.
+        checkpoint: async () => {
+          const snap = undoKit ? await cp.snapshot().catch(() => null) : null;
+          const ref = snap?.tree ?? (await git(cwd, ["rev-parse", "--short", "HEAD"]).catch(() => ({ stdout: "" }))).stdout.trim();
+          return ref ? { ref, diffStat: (await shortstat()) || null } : null;
+        },
+        notify: (...a) => switchUi.notify(...a),
+        ask: (...a) => switchUi.ask(...a),
+      });
+      // Automatic fallback (P4.5): the user's order, at turn boundaries, through the switch runner.
+      const { createFallbackController } = await import("../sessions/fallback-controller.mjs");
+      const { readPolicy } = await import("../routing/store.mjs");
+      const { routingContext } = await import("../routing/context.mjs");
+      const { readLedger } = await import("../sessions/ledger.mjs");
+      const { benchProvider, benchKey } = await import("../providers/quota.mjs");
+      const { classifyUpstream } = await import("../providers/errors.mjs");
+      fallbackRef = fallbackController = createFallbackController({
+        session,
+        ledger,
+        runner: switchRunner,
+        policy: () => readPolicy({ lenient: true }),
+        routing: () => routingContext(),
+        current: () => {
+          const t = accounts.currentTarget();
+          return t?.account ? { account: t.account, model: t.model ?? null, effort: t.effort ?? null, label: t.label } : null;
+        },
+        toSwitchTarget: async (rt) => {
+          const a = routingContext().accounts.find((x) => x.id === rt.account);
+          return a ? accounts.targetFor(a, rt.model ?? null, rt.effort ?? null) : null;
+        },
+        classify: ({ error, status, threadId, startedAt, fallbackInterrupt }) => classifyTurnFailure({ error, status, threadId, startedAt, fallbackInterrupt, account: ledgerAccount(), rateLimits: session?.state.rateLimits ?? null, rateLimitsAt: session?.state.rateLimitsAt ?? null }),
+        // A retry notice's cause: the gateway's last failed answer for this conversation, if it came in this turn.
+        retryObservation: (threadId, sinceMs) => {
+          const o = lastUpstreamFailureForThread(threadId);
+          return o && Number.isFinite(sinceMs) && Date.parse(o.at) >= sinceMs ? classifyUpstream(o) : null;
+        },
+        bench: ({ provider, accountId, until, reason }) => benchProvider(benchKey(provider, accountId), { until, reason, accountId }),
+        events: () => (ledger?.sessionId?.() ? readLedger(ledger.sessionId(), opts.adRoot ? { root: opts.adRoot } : {}) : []),
+        notify: (level, text, o) => {
+          switchUi.notify(level, text, o);
+          if (o?.line) actions?.bell?.({ unfocusedOnly: true });
+        },
+        windowOn: () => fallbackWindowOn(),
+      });
+    }
+    const { quotaView } = await import("../providers/quota-view.mjs");
+    const { markNoticed, noticesShown, readStore } = await import("../providers/quota.mjs");
+    const { refreshOpenRouterKey } = await import("../providers/upstream.mjs");
+    let quotaAt = -Infinity;
+    let quotaDoc = null;
+    let keyReadAt = -Infinity;
+    const quotaStore = () => {
+      if (Date.now() - quotaAt > 2000) {
+        quotaAt = Date.now();
+        quotaDoc = readStore();
+      }
+      return quotaDoc;
+    };
+    let factsAt = -Infinity;
+    let facts = { on: false, next: null };
+    const fallbackFacts = () => {
+      if (fallbackController && Date.now() - factsAt > 5000) {
+        factsAt = Date.now();
+        try {
+          facts = { on: fallbackController.gateOn(), next: fallbackController.nextLabel() };
+        } catch {
+          facts = { on: false, next: null };
+        }
+      }
+      return facts;
+    };
     const actions = {
+      accounts,
+      ledger: () => ledger?.status() ?? null,
+      // Another model on the same account: the same thread on a new binding (P4.2 nextTurn).
+      onModelChange: () => ledger?.rebind("nextTurn"),
+      switching: (switchRunnerRef = switchRunner) ? { runner: switchRunner, ui: switchUi } : null,
+      gatewayReason: (threadId, sinceMs) => gatewayReason({ threadId, sinceMs }),
       bell: (o = {}) => {
         if (!o.unfocusedOnly || !focused) io.write("\x07");
       },
@@ -491,6 +700,44 @@ export async function cmdTui(opts = {}) {
         return r;
       },
       ad,
+      // /fallback (P4.4): ~/.agent-daemon/fallback.json, ad's own accounts and catalogs.
+      fallback: fallbackHost(),
+      // Automatic fallback (P4.5): /retry, the pause, and whether a failed turn was ad's to explain.
+      fallbackRun: {
+        paused: () => Boolean(fallbackController?.state().paused),
+        retry: () => fallbackController?.retry() ?? false,
+        resume: () => fallbackController?.resume(),
+        handled: (turnId) => fallbackController?.handled(turnId) ?? false,
+        beforePrompt: () => fallbackController?.beforePrompt() ?? null,
+        status: () => (fallbackController ? fallbackController.state() : null),
+        // For the status line and the limit notices (P4.6): read the policy at most every 5 s.
+        on: () => fallbackFacts().on,
+        nextLabel: () => fallbackFacts().next,
+      },
+      // Limits as last seen (P4.6): the current account's view over the QuotaStore (re-read at
+      // most every 2 s), the notices already shown, and OpenRouter's /key read for /usage.
+      quota: accounts
+        ? {
+            view: () => {
+              const a = accounts.current();
+              return a ? quotaView(a.id, { store: quotaStore(), provider: a.provider }) : null;
+            },
+            name: () => {
+              const a = accounts.current();
+              return a ? accountName(a) : null;
+            },
+            seen: () => noticesShown(),
+            mark: (keys) => markNoticed(keys).catch(() => {}),
+            refresh: async () => {
+              const a = accounts.current();
+              if (!a || Date.now() - keyReadAt < 30_000) return false;
+              keyReadAt = Date.now();
+              const done = await refreshOpenRouterKey(a, { store: opts.store ?? createSecretStore(), clientVersion: opts.clientVersion }).catch(() => false);
+              if (done) quotaAt = -Infinity;
+              return done;
+            },
+          }
+        : null,
       ...(undoKit ? { undo: (o) => undoKit.undo(session, o), onTyping: () => undoKit.onTyping() } : {}),
       // /cd: ad's memory project and /undo's checkpoints follow the new folder.
       setCwd: async (dir) => {
@@ -498,7 +745,7 @@ export async function cmdTui(opts = {}) {
         actions.ad = ad = createAdLayer({ cwd, home: opts.adHome ?? homedir(), memory: adMemory, cli: CLI });
         cp = createCheckpoints({ cwd });
         undoKit = (await cp.repo().catch(() => null)) ? checkpointWiring(cp, { cwd }) : null;
-        session.setHooks(undoKit?.hooks ?? {});
+        session.setHooks(sessionHooks());
         if (undoKit) {
           actions.undo = (o) => undoKit.undo(session, o);
           actions.onTyping = () => undoKit.onTyping();
@@ -544,6 +791,8 @@ export async function cmdTui(opts = {}) {
     };
 
     app = createApp({ io, renderer, session, cwd, header: intro, newline, history: createHistory(opts.historyFile ? { file: opts.historyFile } : {}), actions, settings, keymap: createKeymap({ overrides: settings.engine.get("tui.keymap") }), statusInfo: { engineVersion: engineVersionText, hostname: hostname(), home: homedir() }, info: { compat: `${engineVersionText} (tested)`, terminal: term } });
+    // /fallback off is the app's: fallback asks it at every turn.
+    fallbackWindowOn = () => app.state.fallbackHere !== false;
     // `ad tui "<prompt>"`: the first prompt is sent right away.
     if (opts.prompt) app.send(opts.prompt);
     await app.done;
@@ -551,7 +800,7 @@ export async function cmdTui(opts = {}) {
     await writeState(stateFile, state);
     const tid = session.state.thread?.id;
     const total = session.state.tokens?.total?.total;
-    exitHint = tid ? `To continue: ad tui --resume ${tid}${total ? `   (${total.toLocaleString("en-US")} tokens)` : ""}` : null;
+    exitHint = tid ? `To continue: ${resumeHint(tid, session.state.thread?.modelProvider ?? session.state.config.modelProvider)}${total ? `   (${total.toLocaleString("en-US")} tokens)` : ""}` : null;
     if (ad.loop.state.running) {
       const loopNote = "A loop is still working in the background (log: .agent-daemon/loop-tui.log). To stop it, create .agent-daemon/STOP.";
       exitHint = exitHint ? `${exitHint}\n${loopNote}` : loopNote;
@@ -566,10 +815,16 @@ export async function cmdTui(opts = {}) {
     renderer?.frame({ lines: [] });
     renderer?.dispose();
     const live = session?.engine;
+    fallbackRef?.dispose();
     session?.close();
+    await switchRunnerRef?.dispose().catch(() => {});
+    await ledger?.close().catch(() => {});
     await io?.close();
-    if (live && live !== engine) await live.close().catch(() => {});
-    await engine?.close();
+    if (launched?.lease) await closeHarnessEngines().catch(() => {});
+    else {
+      if (live && live !== engine) await live.close().catch(() => {});
+      await engine?.close();
+    }
     if (exitHint) out.write(`${exitHint}\n`);
   }
 }

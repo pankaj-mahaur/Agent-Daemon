@@ -365,8 +365,14 @@ test("P0.3b: the running-agents count ignores a lease whose pid was reused", asy
       const { getActiveAgentCount } = await import("../src/orchestration/spawn.mjs");
       const dir = path.join(r.home, ".agent-daemon", "running-agents");
       mkdirSync(dir, { recursive: true });
-      writeFileSync(path.join(dir, "agent-old.lock"), JSON.stringify({ pid: other.pid, startedAt: Date.now() - 3_600_000, threadId: "agent-old", token: "t", kind: "agent" }));
-      assert.equal(getActiveAgentCount(), 0, "a live but unrelated process doesn't count");
+      const recorded = Date.now() - 3_600_000;
+      writeFileSync(path.join(dir, "agent-old.lock"), JSON.stringify({ pid: other.pid, startedAt: recorded, threadId: "agent-old", token: "t", kind: "agent" }));
+      // The pid is really alive; who owns it now is answered here, not by a
+      // PowerShell lookup that a loaded machine can time out (process-identity.test
+      // covers the real lookup).
+      const owner = (startedAt) => (pid) => (pid === other.pid ? { startedAt } : { unknown: "not this test's pid" });
+      assert.equal(getActiveAgentCount({ identityOf: owner(Date.now()) }), 0, "a live but unrelated process doesn't count");
+      assert.equal(getActiveAgentCount({ identityOf: owner(recorded) }), 1, "the agent's own process still does");
     });
   } finally {
     other.kill();

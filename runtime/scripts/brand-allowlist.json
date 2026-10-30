@@ -154,6 +154,41 @@
       "reason": "tests of the adapter: they assert what the adapter sends to and reads from the engine"
     },
     {
+      "path": "runtime/test/engine-real-accounts.test.mjs",
+      "rules": ["A", "B"],
+      "reason": "P3.1: real-engine account cases; like engine-real, it starts the pinned binary and speaks the protocol to it on purpose"
+    },
+    {
+      "path": "runtime/test/engine-real-translate.test.mjs",
+      "rules": ["A", "B"],
+      "reason": "P6.1: real-engine translation cases; like engine-real, it starts the pinned binary and speaks the protocol to it on purpose"
+    },
+    {
+      "path": "runtime/scripts/record-engine-requests.mjs",
+      "rules": ["A", "B"],
+      "reason": "P6.1: records what the pinned binary sends on the wire; it starts that binary (from its npm package) and speaks the protocol to it on purpose"
+    },
+    {
+      "path": "runtime/test/fixtures/gateway/",
+      "rules": ["A"],
+      "reason": "P6.1: recorded engine requests; the model slug gpt-5.1-codex is a real model name the recording used"
+    },
+    {
+      "path": "runtime/test/fixtures/engine-failures-0.163.json",
+      "rules": ["A"],
+      "reason": "P4.3: the turn errors the pinned binary reported, recorded as it sends them (its own field names)"
+    },
+    {
+      "path": "runtime/test/engine-real-failures.test.mjs",
+      "rules": ["A", "B"],
+      "reason": "P4.3: records what the pinned binary reports for each provider failure; it starts that binary and speaks the protocol to it on purpose"
+    },
+    {
+      "path": "runtime/test/engine-network.test.mjs",
+      "rules": ["B"],
+      "reason": "P8.4b E1: the engine's outbound-host check; it starts the pinned binary behind a recording proxy and runs one turn through the protocol on purpose"
+    },
+    {
       "path": "runtime/test/engine-real.test.mjs",
       "rules": ["A", "B"],
       "reason": "the real-engine suite: it starts the pinned binary and speaks the protocol to it on purpose"
@@ -342,6 +377,12 @@
       "reason": "tests may name the engine's API tokens and files they exercise"
     },
     {
+      "path": "bench/correction-bench/**",
+      "rules": ["A"],
+      "match": "[a-z][A-Za-z0-9]*Codex[A-Za-z0-9]*|CODEX_[A-Z_]+|AD_CODEX_[A-Z_]+",
+      "reason": "the benchmark's runner and tests isolate an episode from the user's engine folder (its environment variables) and use the mock model's engine-home writer from runtime/testkit"
+    },
+    {
       "path": "mcp/agent-daemon-memory/README.md",
       "rules": ["A"],
       "match": "CODEX_MCP_PROTOCOL_VERSION",
@@ -402,7 +443,7 @@
       "reason": "the CI step for the memory package's Codex host acceptance (gate b)"
     },
     {
-      "path": "docs/memory-install.md",
+      "path": "docs/memory/install.md",
       "rules": ["A"],
       "reason": "the memory installer's guide: Codex is one of the three hosts it installs into (the user's own Codex CLI, not ad's engine)"
     },
@@ -439,8 +480,69 @@
     {
       "path": "mcp/agent-daemon-memory/README.md",
       "rules": ["A"],
-      "match": "Install \\(Claude Code, Codex, Cursor\\)",
+      "match": "Install \\(Claude Code, Codex, Cursor(, VS Code, Gemini CLI)?\\)",
       "reason": "the heading naming the hosts the installer covers"
+    },
+    {
+      "path": "docs/memory/hosts.md",
+      "rules": ["A"],
+      "match": "\\| Codex \\| not yet: its public directory",
+      "reason": "the plugin guide's table row for the Codex host, whose plugin comes later (the user's own Codex CLI, not ad's engine)"
+    },
+    {
+      "path": "docs/memory/faq.md",
+      "rules": ["A"],
+      "match": "Claude Code, Codex, Cursor, VS Code and Gemini CLI",
+      "reason": "the hosts the memory installer supports (the user's own Codex CLI, not ad's engine)"
+    },
+    {
+      "path": "docs/support-matrix.md",
+      "rules": ["A"],
+      "match": "\\| Codex \\| installer \\| tested live|the real Codex binary|memory-host-codex\\.test\\.mjs",
+      "reason": "the support matrix's evidence row for the Codex host (the user's own Codex CLI, whose real binary CI starts)"
+    },
+    {
+      "path": "runtime/scripts/render-copy.mjs",
+      "rules": ["A"],
+      "match": "\"Codex\"",
+      "reason": "the claims rule's list of host names that listing templates may not name by hand"
+    },
+    {
+      "path": "runtime/src/hosts/skill-formats.mjs",
+      "rules": ["A"],
+      "reason": "P5.7: the table of each host's user skill folder names each host and its folder (CODEX_HOME, ~/.codex/skills) by design, like memory-install/hosts.mjs"
+    },
+    {
+      "path": "runtime/src/skills/publish.mjs",
+      "rules": ["A", "C"],
+      "reason": "P5.7: the messages that tell the user which hosts got an accepted skill name those hosts"
+    },
+    {
+      "path": "runtime/test/skill-publish.test.mjs",
+      "rules": ["A"],
+      "reason": "P5.7: tests that a skill reaches each host's own folder in a temp home"
+    },
+    {
+      "path": "runtime/test/skills-cross-host.test.mjs",
+      "rules": ["A"],
+      "reason": "P5.7: the cross-host test checks each host's folder in a temp home"
+    },
+    {
+      "path": "docs/memory/hosts.md",
+      "rules": ["A"],
+      "match": "\\| Codex \\| `\\$CODEX_HOME/skills/<name>` \\(default `~/\\.codex/skills`\\) \\|",
+      "reason": "P5.7: the row saying where an accepted skill goes in the user's own Codex CLI (its folder and CODEX_HOME)"
+    },
+    {
+      "path": "runtime/test/skill-library.test.mjs",
+      "rules": ["A"],
+      "reason": "P5.7: a test that a failed write to a host's skill folder (Codex's, in a temp home) still files the proposal"
+    },
+    {
+      "path": "runtime/src/gateway/client.mjs",
+      "rules": ["A"],
+      "match": "env.CODEX_CA_CERTIFICATE",
+      "reason": "P3.3: the engine's own CA variable, which users already set; the gateway honours it so provider calls work behind the same company certificate"
     }
   ]
 }

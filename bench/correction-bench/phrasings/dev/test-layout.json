@@ -1,0 +1,30 @@
+{
+  "family": "test-layout",
+  "phrasings": [
+    {
+      "id": "test-layout-a1",
+      "text": "Actually we keep tests in spec/ as name.spec.js, not in a test folder.",
+      "writer": "author"
+    },
+    {
+      "id": "test-layout-a2",
+      "text": "Tests go in spec/ and end in .spec.js. No test/ directory, no .test.js.",
+      "writer": "author"
+    },
+    {
+      "id": "test-layout-a3",
+      "text": "Please remember: every test file is spec/<name>.spec.js.",
+      "writer": "author"
+    },
+    {
+      "id": "test-layout-a4",
+      "text": "wrong folder, tests live in spec/",
+      "writer": "author"
+    },
+    {
+      "id": "test-layout-a5",
+      "text": "We name tests *.spec.js under spec/, move it there.",
+      "writer": "author"
+    }
+  ]
+}

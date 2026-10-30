@@ -6,7 +6,7 @@
 // layer.
 
 import { createChatSession, serializedAsk } from "../harness/chat.mjs";
-import { startHarnessEngine } from "../harness/start.mjs";
+import { launchHarness } from "../harness/engines.mjs";
 import { createIo } from "./terminal/io.mjs";
 import { createRenderer } from "./terminal/renderer.mjs";
 import { isNewline } from "./terminal/input.mjs";
@@ -320,16 +320,19 @@ export async function cmdTuiPreview(opts = {}) {
     return 2;
   }
   let engine;
+  let release = null;
   let io;
   let renderer;
   let app;
   try {
-    const started = await startHarnessEngine({ cwd, home: opts.home, command: opts.command, clientVersion: opts.clientVersion, store: opts.store, err, detached: true });
+    // The account first (P3.4).
+    const started = await launchHarness({ cwd, account: opts.account, model: opts.model, home: opts.home, command: opts.command, clientVersion: opts.clientVersion, store: opts.store, err, detached: true });
     if (!started.engine) {
       err.write(started.error + "\n");
       return started.code;
     }
     engine = started.engine;
+    release = started.release;
     const acct = await engine.account().catch(() => ({}));
     const config = await engine.readConfig().catch(() => ({}));
     io = createIo();
@@ -355,7 +358,7 @@ export async function cmdTuiPreview(opts = {}) {
       renderer,
       header,
       hints: { newline },
-      makeSession: ({ out, err: errSink, ask }) => createChatSession({ engine, cwd, out, err: errSink, ask, model: opts.model, sandbox: opts.sandbox }),
+      makeSession: ({ out, err: errSink, ask }) => createChatSession({ engine, cwd, out, err: errSink, ask, model: started.params.model, modelProvider: started.params.modelProvider, sandbox: opts.sandbox }),
     });
     engine.on("exit", (info) => app.engineStopped(info?.code));
     await app.done;
@@ -369,6 +372,7 @@ export async function cmdTuiPreview(opts = {}) {
     renderer?.frame({ lines: [] });
     renderer?.dispose();
     await io?.close();
-    await engine?.close();
+    if (release) await release();
+    else await engine?.close();
   }
 }

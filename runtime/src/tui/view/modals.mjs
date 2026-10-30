@@ -499,3 +499,44 @@ export function createRequestModal(request, { now = () => Date.now(), armMs = AR
   if (request?.kind === "elicitation") return createElicitationModal(request, { now, armMs });
   return null;
 }
+
+/**
+ * A short text answer to a question of ad's own (P3.8b: an account's label, an API key).
+ * The field has no history, so nothing typed here is ever recalled or saved; with `mask`
+ * it renders as dots and the field is dropped as soon as it is answered.
+ *   createTextPrompt({title, body, mask, initial, placeholder})
+ *     .handle(ev) → {answer: text | null (Esc)} | {changed} | null
+ *     .render({width, height}) → lines
+ */
+export function createTextPrompt({ title, body = "", mask = false, initial = "", placeholder = "" } = {}) {
+  let field = createComposer({ mask, history: null, pasteLines: Infinity, pasteChars: Infinity });
+  if (initial) field.handle({ type: "text", text: String(initial) });
+  return {
+    kind: "text-prompt",
+    handle(ev) {
+      if (!field) return null;
+      if (ev.type === "key" && (ev.name === "escape" || (ev.ctrl && ev.name === "c"))) {
+        field = null;
+        return { answer: null };
+      }
+      // An empty Enter answers "" (an optional question skipped); the composer itself ignores it.
+      if (ev.type === "key" && ev.name === "enter" && !ev.shift && !ev.ctrl && !ev.meta && !field.text) {
+        field = null;
+        return { answer: "" };
+      }
+      const r = field.handle(ev);
+      if (r && "submit" in r) {
+        const value = r.submit;
+        field = null;
+        return { answer: value };
+      }
+      return r ?? { changed: true };
+    },
+    render({ width = 80, height = 8 } = {}) {
+      const head = [truncate([{ text: oneRow(shown(title)), style: S.title }], width), ...(body ? block(shown(body), width, S.dim) : []), []];
+      const input = field ? field.render({ width, prompt: mask ? "\u{1f512} " : "\u{203a} ", placeholder }).lines : [];
+      const hint = truncate([{ text: "  enter: ok \u{b7} esc: cancel", style: S.dim }], width);
+      return [...head, ...input, hint].slice(0, Math.max(3, height));
+    },
+  };
+}

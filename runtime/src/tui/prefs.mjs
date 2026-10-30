@@ -30,7 +30,10 @@ function at(obj, keyPath) {
  * The engine's settings as ad reads them. `engine` is a getter: the
  * engine is replaced when it restarts.
  */
-export function createEngineSettings({ engine }) {
+// record (P3.4): () → the settings record's [tui], read first (the default home is the
+// home of record; an account home's copy may be stale). write: (edits) → ad's own [tui]
+// writes through the record (settings-sync recordSettings), so every home gets them.
+export function createEngineSettings({ engine, record = null, write = null }) {
   let config = {};
   return {
     /** Re-reads them; a failure keeps the last known values. */
@@ -40,6 +43,8 @@ export function createEngineSettings({ engine }) {
       } catch {
         // Keep what we had: settings are never a reason to stop.
       }
+      const tui = record?.();
+      if (tui && Object.keys(tui).length) config = { ...config, tui: { ...(config.tui ?? {}), ...tui } };
       return config;
     },
     /** A setting by the engine's key path, e.g. "tui.status_line"; undefined when unset. */
@@ -49,7 +54,8 @@ export function createEngineSettings({ engine }) {
     /** Writes one of the engine's settings (null removes it, back to the default). */
     async set(keyPath, value) {
       if (keyPath === "tui.keymap" || keyPath.startsWith("tui.keymap.")) throw new Error("ad doesn't write tui.keymap: change keys in the engine's settings file (ad reads them from there)");
-      await engine().writeConfig([[keyPath, value]]);
+      if (write && keyPath.startsWith("tui.")) await write([[keyPath, value]]);
+      else await engine().writeConfig([[keyPath, value]]);
       // What the engine now has; ours is a copy until the next load().
       const keys = keyPath.split(".");
       let o = config;

@@ -4,6 +4,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { redact } from "../auth/redact.mjs";
 
 export const DEFAULT_NOTES_FILE = join(homedir(), ".agent-daemon", "notes.json");
 
@@ -16,7 +17,7 @@ export function noteOnce(key, text, { err = process.stderr, file = DEFAULT_NOTES
     seen = {}; // unreadable: show the note again rather than never
   }
   if (seen[key]) return false;
-  err.write(`[agent-daemon] ${text}\n`);
+  err.write(`[agent-daemon] ${redact(text)}\n`);
   try {
     mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, JSON.stringify({ ...seen, [key]: now().toISOString() }, null, 2) + "\n");

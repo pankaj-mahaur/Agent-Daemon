@@ -109,8 +109,8 @@ What a bound server serves:
 Notes an agent wrote about itself wait as **pending** (only this project's
 `memory_search` and `memory_get` show them, marked unreviewed), and notes the
 injection screen or the secret check flagged are **held back** and never served. Two
-folders whose paths map to the same memory key (`/x/a/b` and `/x/a-b`) are both
-withheld until each project gets its own ID.
+folders whose paths map to the same memory key (`/x/a/b` and `/x/a-b`) are told apart
+by their project ids; older notes nothing ties to either reach neither (`ad memory assign`).
 
 ## Security blast radius
 
@@ -138,15 +138,16 @@ keep this one. Each conversation's server is bound to that conversation's folder
 (`AD_MEMORY_PROJECT`); a team worker's to the repo it was spawned from, not its
 worktree.
 
-## Install (Claude Code, Codex, Cursor)
+## Install (Claude Code, Codex, Cursor, VS Code, Gemini CLI)
 
 ```sh
 npx agent-daemon-memory install     # or, with ad installed: ad memory install
 ```
 
 It adds the server to each host it finds, after showing the plan; see
-[docs/memory-install.md](../../docs/memory-install.md) (doctor, repair,
-uninstall, and what it never changes).
+[docs/memory/install.md](../../docs/memory/install.md) (doctor, repair,
+uninstall, and what it never changes). As a host plugin (Claude Code's
+marketplace, Agent Plugins): [docs/memory/hosts.md](../../docs/memory/hosts.md).
 
 ### By hand (Claude Code)
 

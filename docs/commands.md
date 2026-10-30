@@ -15,7 +15,7 @@ The engine's own rules come with the commands:
 
 | Command | In ad | During a task | What it does in ad |
 |---|---|---|---|
-| `/model` | yes | yes | choose the model and reasoning effort |
+| `/model` | yes | yes | choose the model and reasoning effort; each model row shows its price as last seen ("free, checked 3 min ago", "price unknown") and "no tools" when the provider says so. `ad auth models <account>` prints the same in the terminal |
 | `/ide` | no | yes | needs an editor link that `ad` doesn't have |
 | `/permissions` | yes | yes | what the engine may do without asking |
 | `/keymap` | yes | no | shows the keys in effect, yours marked; `/keymap debug` is the engine's Keypress Inspector. Keys are changed in the engine's settings file under `[tui.keymap]` (`ad about` shows where), and `ad` uses them (see [Keys](#keys)) |
@@ -52,7 +52,7 @@ The engine's own rules come with the commands:
 | `/tui` | no | no | chooses the engine's own UI mode; `ad` has only its inline mode so far |
 | `/diff` | yes | yes | show git changes, untracked files included |
 | `/mention` | yes | yes | an `@` in the prompt, and the file picker |
-| `/status` | yes | yes | account, model, sandbox, tokens, limits |
+| `/status` | yes | yes | account, model, sandbox, tokens, limits, and the session ad records (`ses_… · binding 2 (switched 14:02, you asked)`) |
 | `/daemon` | no | yes | manages the engine's background server; `ad` runs its own engine and never uses it |
 | `/warnings` | yes | yes | notices kept from this session, unknown events, settings `ad` couldn't use |
 | `/cd` | yes | no | continue the conversation in another folder (the engine forks it there); asks first if the folder isn't trusted yet. Refused for a folder that would load your own `~/.codex` skills (see [harness.md](harness.md#working-in-your-home-folder)) |
@@ -77,7 +77,26 @@ The engine's own rules come with the commands:
 | `/subagents` | yes | yes | the engine's **Subagents** picker; ad shows the agent's transcript live in a pager instead of switching the conversation. Alt+← / Alt+→ go round them |
 | `/debug-m-drop`, `/debug-m-update` | no | no | debug commands of the engine's own UI |
 
-`ad` also has commands of its own, with names the engine doesn't use: `/help`, `/remember`, `/memory`, `/private`, `/proposals`, `/loop`, `/team`, `/schedule`, `/tools`, `/login`, `/ad`, `/image`, `/undo`, `/terminal-setup`. (Typing the removed `/codex` hand-off answers what to use instead.) See [tui.md](tui.md#slash-commands).
+`ad` also has commands of its own, with names the engine doesn't use: `/help`, `/remember`, `/memory`, `/private`, `/proposals`, `/loop`, `/team`, `/schedule`, `/tools`, `/login`, `/ad`, `/image`, `/undo`, `/fallback`, `/retry`, `/terminal-setup`. (Typing the removed `/codex` hand-off answers what to use instead.) See [tui.md](tui.md#slash-commands).
+
+## `ad fallback`
+
+The fallback order in a terminal; `/fallback` is the same in the TUI ([tui.md](tui.md#automatic-fallback)). Changes refuse in the agent's own shell. Exit codes: 0 ok, 1 refused or invalid, 2 usage.
+
+| Command | What it does |
+|---|---|
+| `ad fallback` / `ad fallback list [--json]` | the order, what can continue a task now, and why not |
+| `ad fallback add <account>[:<model>] [--model <m>] [--effort <e>] [--at <N>]` | add a target (the account's default model if none); a trial or free-tier endpoint asks first, in your own terminal only (`--yes` skips the question there) |
+| `ad fallback remove <N>` | remove row N |
+| `ad fallback order <N> <N> …` · `ad fallback move <N> <M>` | a new order (every row once) · move one row |
+| `ad fallback set cost freeOnly\|noExtraSpend` | free models only, or free models plus plans you already pay for |
+| `ad fallback set on <classes>` | which failures switch: `quotaExhausted rateLimit transientNetwork provider5xx` |
+| `ad fallback set max-hops <1-5>` · `set max-switches <1-20>` · `set give-up <seconds>` | targets per task · switches per hour · how long to keep trying |
+| `ad fallback set trial ask\|never\|allow` | trial and free-tier endpoints |
+| `ad fallback set keep-running "<command>" …` | long-running commands a switch may leave running (nothing: clear the list) |
+| `ad fallback preview [--error <class>] [--from <N>]` | what would happen now, step by step |
+| `ad fallback test [--live] [--json]` | each target checked without sending anything; `--live` sends one tiny request to each API account (your own terminal only; asks first, or `--yes`) |
+| `ad fallback enable [--yes]` · `ad fallback disable` | show every destination, then turn it on, in your own terminal only (`--yes`: no question, the text goes to stderr) · turn it off |
 
 ## Keys
 

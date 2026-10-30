@@ -169,7 +169,8 @@ test("mcp-audit rotates the log when it exceeds ROTATE_BYTES", async () => {
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
 
-  // Point the hook at a scratch AGENT_DAEMON_HOME and pre-fill the log past
+  // Point the hook at a scratch state root (AD_ROOT; P7.1a: not AGENT_DAEMON_HOME,
+  // which is the runtime folder) and pre-fill the log past
   // the rotation threshold (10 MB).
   const home = mkdtempSync(join(tmpdir(), "ad-mcp-rotate-"));
   const auditDir = join(home, "audit");
@@ -181,11 +182,11 @@ test("mcp-audit rotates the log when it exceeds ROTATE_BYTES", async () => {
   assert.equal(statSync(log).size >= 10 * 1024 * 1024, true);
 
   try {
-    // Spawn the handler with AGENT_DAEMON_HOME pointing at our scratch.
+    // Spawn the handler with ad's state root at our scratch.
     await new Promise((res) => {
       const child = spawn(process.execPath, [CLI, "hook", "mcp-pre"], {
         stdio: ["pipe", "pipe", "pipe"],
-        env: { ...process.env, AGENT_DAEMON_HOME: home },
+        env: { ...process.env, AD_ROOT: home },
       });
       child.on("close", () => res());
       child.stdin.end(JSON.stringify({ tool_name: "mcp__qmd__search" }));

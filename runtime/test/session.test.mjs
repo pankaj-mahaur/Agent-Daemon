@@ -123,8 +123,11 @@ test("subagent requests carry the agent's label; the agent is listed", async () 
 test("a thread held by a live process can't be opened; a stale lock is taken over", async () => {
   const dir = mkdtempSync(join(tmpdir(), "ad-lock-"));
   try {
-    const release = lockThread("t1", { dir, pid: 111, isAlive: () => true });
-    assert.throws(() => lockThread("t1", { dir, pid: 222, isAlive: () => true }), SessionLockedError);
+    // The OS isn't asked who pid 111 is: on Linux it can be a real process whose start
+    // time reads as a reused pid (the record carries this process's identity).
+    const noLookup = () => ({ unknown: "test pid" });
+    const release = lockThread("t1", { dir, pid: 111, isAlive: () => true, identityOf: noLookup });
+    assert.throws(() => lockThread("t1", { dir, pid: 222, isAlive: () => true, identityOf: noLookup }), SessionLockedError);
     const takeover = lockThread("t1", { dir, pid: 222, isAlive: () => false });
     release(); // the old holder's release doesn't remove the new holder's lock
     assert.equal(readdirSync(dir).length, 1);
@@ -134,10 +137,13 @@ test("a thread held by a live process can't be opened; a stale lock is taken ove
     writeFileSync(join(dir, "t2.lock"), "not json");
     assert.throws(() => lockThread("t2", { dir, pid: 333, isAlive: () => true }), SessionLockedError);
     lockThread("t2", { dir, pid: 333, isAlive: () => true, now: () => Date.now() + 200_000 })();
-    // A live pid whose heartbeat stopped (a reused pid) doesn't keep the lock.
-    lockThread("t3", { dir, pid: 444, isAlive: () => true });
-    assert.throws(() => lockThread("t3", { dir, pid: 555, isAlive: () => true }), SessionLockedError);
-    lockThread("t3", { dir, pid: 555, isAlive: () => true, now: () => Date.now() + 200_000 })();
+    // A live pid whose heartbeat stopped (a reused pid) doesn't keep the lock. The OS
+    // can't say who pid 444 is here (on a Mac it is a real boot-time daemon, whose
+    // start a real lookup would read as "older than the lock, so the same process").
+    const unknownOs = () => ({ unknown: "test pid" });
+    lockThread("t3", { dir, pid: 444, isAlive: () => true, identityOf: unknownOs });
+    assert.throws(() => lockThread("t3", { dir, pid: 555, isAlive: () => true, identityOf: unknownOs }), SessionLockedError);
+    lockThread("t3", { dir, pid: 555, isAlive: () => true, identityOf: unknownOs, now: () => Date.now() + 200_000 })();
     // The same process can't hold one thread twice.
     const mine = lockThread("t4", { dir });
     assert.throws(() => lockThread("t4", { dir }), SessionLockedError);
@@ -240,6 +246,27 @@ test("queue and editQueued: visible, editable, drained in order", async () => {
     // Queued while idle: runs at once.
     session.queue("fail-turn");
     await until(() => session.state.turns.length === 4, "an idle queue to run");
+  });
+});
+
+test('a queued entry can go first and carries who wrote it: an ad entry is observed with via "ad"', async () => {
+  const seen = [];
+  await withSession(() => ({ observer: (ev) => seen.push(ev) }), async ({ session }) => {
+    // Held: nothing may drain until the release (a switch or fallback holds the queue).
+    session.hold(true);
+    session.queue("second");
+    assert.equal(session.queue("first", { first: true, via: "ad" }), 0, "an entry queued first returns index 0");
+    assert.deepEqual(session.state.queue.map((q) => q.text), ["first", "second"], "the first entry goes in front");
+    session.hold(false);
+    // The fake's plain prompts ask for approval before completing.
+    for (let i = 0; i < 2; i++) {
+      await until(() => session.state.requests.length === 1, `the approval of prompt ${i + 1}`);
+      session.resolve(session.state.requests[0].request.id, "accept");
+    }
+    await until(() => session.state.queue.length === 0 && session.state.turns.length === 2, "the queue to drain in order");
+    const users = seen.filter((e) => e.type === "user.message");
+    assert.deepEqual(users.map((u) => u.input), ["first", "second"], "observed in the run order");
+    assert.deepEqual(users.map((u) => u.via), ["ad", "queue"]);
   });
 });
 
@@ -1159,4 +1186,333 @@ test("changeDir into a folder that would load the user's own ~/.codex is refused
     }
     rmSync(userHome, { recursive: true, force: true });
   }
+});
+
+// ---- P3.4: accounts in a window ----
+
+test("retarget to another account of the same provider forks the conversation onto it; to another provider the next prompt starts anew", async () => {
+  await withSession(
+    () => ({ modelProvider: "ad-openrouter-a", homeKey: "api", provider: "openrouter" }),
+    async ({ session, engine }) => {
+      await session.submit("early-complete").done;
+      const first = session.state.thread.id;
+      assert.equal((await debugState(engine)).lastParams["thread/start"].modelProvider, "ad-openrouter-a");
+      const b = { modelProvider: "ad-openrouter-b", homeKey: "api", provider: "openrouter", passthrough: true };
+      assert.equal(session.retarget.plan(b), "continues");
+      const r = await session.retarget(b);
+      assert.equal(r.kind, "continues");
+      assert.notEqual(session.state.thread.id, first);
+      assert.equal((await debugState(engine)).lastParams["thread/fork"].modelProvider, "ad-openrouter-b");
+      assert.equal(session.state.config.modelProvider, "ad-openrouter-b");
+      // Another provider: no fork, a new thread at the next prompt.
+      const k = { modelProvider: "ad-kimi-c", homeKey: "api", provider: "kimi", passthrough: true };
+      assert.equal(session.retarget.plan(k), "new");
+      assert.equal((await session.retarget(k)).kind, "new");
+      assert.equal(session.state.thread, null);
+      await session.submit("early-complete").done;
+      assert.equal((await debugState(engine)).lastParams["thread/start"].modelProvider, "ad-kimi-c");
+      // Another model id is a new conversation too (M3's "same model family").
+      assert.equal(session.retarget.plan({ modelProvider: "ad-kimi-d", homeKey: "api", provider: "kimi", model: "other/model" }), "new");
+    },
+  );
+});
+
+test("retarget refuses while a turn runs", async () => {
+  await withSession(
+    () => ({ modelProvider: "ad-a", homeKey: "api", provider: "openrouter" }),
+    async ({ session }) => {
+      session.submit("hang");
+      await until(() => session.state.activeTurnId, "the turn to start");
+      await assert.rejects(session.retarget({ modelProvider: "ad-b", homeKey: "api", provider: "openrouter" }), { code: "RETARGET_RUNNING" });
+      await session.interrupt();
+    },
+  );
+});
+
+test("useEngine with a threadId attaches that thread in the new engine with its lock and no provider override; without one the next prompt starts there", async () => {
+  let released = 0;
+  await withSession(() => ({ release: async () => void released++ }), async ({ session, engine, make, lockDir }) => {
+    await session.submit("early-complete").done;
+    const tid = session.state.thread.id;
+    const other = await make();
+    await session.useEngine({ engine: other }, { modelProvider: "ad-openrouter-a", homeKey: "api", provider: "openrouter" }, { threadId: tid });
+    assert.equal(released, 1, "the old lease is released");
+    assert.equal(session.engine, other);
+    assert.equal(session.state.thread.id, tid);
+    const resumed = (await debugState(other)).lastParams["thread/resume"];
+    assert.equal(resumed.threadId, tid);
+    assert.equal(resumed.modelProvider, undefined, "a plain resume");
+    assert.throws(() => lockThread(tid, { dir: lockDir }), SessionLockedError);
+    // Without a thread: the next prompt starts on the new engine with its provider.
+    const third = await make();
+    await session.useEngine({ engine: third }, { modelProvider: "ad-openrouter-b" });
+    assert.equal(session.state.thread, null);
+    await session.submit("early-complete").done;
+    assert.equal((await debugState(third)).lastParams["thread/start"].modelProvider, "ad-openrouter-b");
+    assert.equal((await debugState(engine)).calls.filter((m) => m === "thread/start").length, 1);
+  });
+});
+
+test("a resumed thread keeps its own account, and the next new conversation is on the window's (D15)", async () => {
+  await withSession(
+    () => ({ modelProvider: "ad-openrouter-a", homeKey: "api", provider: "openrouter" }),
+    async ({ session, engine }) => {
+      await session.submit("early-complete").done;
+      const mine = session.state.thread.id;
+      // Another account's thread, started elsewhere in this engine.
+      const other = (await engine.threads.start({ cwd: "/w", modelProvider: "ad-openrouter-b" })).threadId;
+      await engine.threads.unsubscribe(other);
+      await session.resume(other);
+      assert.equal(session.state.thread.modelProvider, "ad-openrouter-b");
+      assert.equal(session.state.config.modelProvider, "ad-openrouter-a");
+      session.newThread();
+      await session.submit("early-complete").done;
+      assert.equal((await debugState(engine)).lastParams["thread/start"].modelProvider, "ad-openrouter-a");
+      assert.notEqual(session.state.thread.id, mine);
+    },
+  );
+});
+
+test("a prompt sent while a switch runs waits and then runs on the fork", async () => {
+  await withSession(
+    () => ({ modelProvider: "ad-openrouter-a", homeKey: "api", provider: "openrouter" }),
+    async ({ session, engine }) => {
+      await session.submit("early-complete").done;
+      const old = session.state.thread.id;
+      const switching = session.retarget({ modelProvider: "ad-openrouter-b", homeKey: "api", provider: "openrouter", passthrough: true });
+      const sent = session.submit("early-complete");
+      assert.equal((await sent.accepted).queued, true);
+      await assert.rejects(session.retarget({ modelProvider: "ad-openrouter-c", homeKey: "api", provider: "openrouter" }), { code: "RETARGET_RUNNING" });
+      const r = await switching;
+      await until(() => session.state.turns.length > 0 && session.state.turns.every((x) => x.status !== "inProgress"), "the queued prompt to run");
+      const starts = (await debugState(engine)).notifications ?? [];
+      assert.notEqual(r.threadId, old);
+      assert.equal((await debugState(engine)).lastParams["turn/start"].threadId, r.threadId, "it ran on the fork");
+      void starts;
+    },
+  );
+});
+
+test("switching a resumed thread compares with the thread's own account, not the window's", async () => {
+  await withSession(
+    () => ({ modelProvider: "ad-openrouter-a", homeKey: "api", provider: "openrouter" }),
+    async ({ session, engine }) => {
+      const other = (await engine.threads.start({ cwd: "/w", modelProvider: "ad-openrouter-b" })).threadId;
+      await engine.threads.unsubscribe(other);
+      await session.resume(other);
+      // The window's account isn't the thread's: moving the thread to it is a fork.
+      const r = await session.retarget({ modelProvider: "ad-openrouter-a", homeKey: "api", provider: "openrouter", passthrough: true });
+      assert.equal(r.kind, "continues");
+      assert.notEqual(r.threadId, other);
+      assert.equal((await debugState(engine)).lastParams["thread/fork"].modelProvider, "ad-openrouter-a");
+    },
+  );
+});
+
+/* ------------------------------------------------------------------ */
+/* The ledger's observer (P4.1)                                        */
+/* ------------------------------------------------------------------ */
+
+test("observer receives user messages once each", async () => {
+  const seen = [];
+  await withSession(() => ({ observer: (ev) => seen.push(ev) }), async ({ session }) => {
+    await session.submit("early-complete").done;
+    const running = session.submit("hang");
+    await running.accepted;
+    session.queue("fail-turn");
+    await session.interrupt();
+    await until(() => session.state.queue.length === 0 && session.state.turns.length === 3 && session.state.turns.every((t) => t.status !== "inProgress"), "the queue to drain");
+    const users = seen.filter((e) => e.type === "user.message");
+    assert.deepEqual(users.map((e) => `${e.via}:${e.input}`), ["submit:early-complete", "submit:hang", "queue:fail-turn"]);
+    assert.equal(new Set(users.map((e) => e.clientId)).size, 3);
+    assert.ok(seen.some((e) => e.type === "thread.attached" && e.how === "new"));
+    assert.ok(seen.some((e) => e.type === "turn.completed"), "thread events reach it too");
+  });
+});
+
+test("observer sees request answers but never question answers' text", async () => {
+  const seen = [];
+  await withSession(() => ({ observer: (ev) => seen.push(ev) }), async ({ session }) => {
+    session.on("change", () => {
+      for (const r of [...session.state.requests]) session.resolve(r.request.id, r.request.kind === "user-input" ? { q: ["my secret answer"] } : "accept");
+    });
+    await session.submit("edit-file").done;
+    await session.submit("user-input").done;
+    const answers = seen.filter((e) => e.type === "request.answered");
+    assert.deepEqual(answers.map((e) => e.decision), ["accept", "answered"]);
+    assert.ok(!JSON.stringify(answers).includes("my secret answer"));
+    assert.ok(!JSON.stringify(answers).includes("Which one?"), "nor the question");
+  });
+});
+
+test("an observer that throws gives one notice and the turn completes", async () => {
+  await withSession(() => ({ observer: () => { throw new Error("disk full"); } }), async ({ session }) => {
+    await session.submit("early-complete").done;
+    await session.submit("fail-turn").done;
+    assert.equal(session.state.turns.length, 2);
+    assert.ok(session.state.turns.every((t) => t.status !== "inProgress"), "both turns ended");
+    const n = session.state.notices.filter((x) => x.code === "session.record");
+    assert.equal(n.length, 1);
+    assert.match(n[0].message, /couldn't write this session's record/);
+  });
+});
+
+let session_ = null; // the observer below reads the session it is passed to
+test("observer: a restart attaches the same thread again", async () => {
+  const seen = [];
+  await withSession((make) => ({ restart: make, maxRestarts: 2, modelProvider: "ad-openrouter-a", homeKey: "api", provider: "openrouter", observer: (ev) => seen.push({ ...ev, provider: ev.type === "thread.attached" ? session_.state.config.modelProvider : undefined }) }), async ({ session, engines }) => {
+    session_ = session;
+    const s = session.submit("hang");
+    await s.accepted;
+    const threadId = session.state.thread.id;
+    engines[0].testRequest("test/crash", {}).catch(() => {});
+    await s.done;
+    await until(() => session.state.engine.state === "ready" && session.state.engine.restarts === 1, "the restart");
+    const back = seen.filter((e) => e.type === "thread.attached" && e.how === "continuation");
+    assert.deepEqual(back.map((e) => e.threadId), [threadId], "the restart re-attaches the thread");
+    assert.ok(seen.findIndex((e) => e.type === "engine.exited") < seen.indexOf(back[0]));
+  });
+});
+
+test("observer: a switch is seen after the new target is taken, as a switch", async () => {
+  const seen = [];
+  await withSession(() => ({ modelProvider: "ad-openrouter-a", homeKey: "api", provider: "openrouter", observer: (ev) => seen.push({ ...ev, provider: ev.type === "thread.attached" ? session_.state.config.modelProvider : undefined }) }), async ({ session }) => {
+    session_ = session;
+    await session.submit("early-complete").done;
+    const r = await session.retarget({ modelProvider: "ad-openrouter-b", homeKey: "api", provider: "openrouter", passthrough: true });
+    assert.equal(r.kind, "continues");
+    const fork = seen.filter((e) => e.type === "thread.attached" && e.how === "fork").at(-1);
+    assert.equal(fork.provider, "ad-openrouter-b", "observed after takeTarget");
+    assert.equal(seen.filter((e) => e.type === "thread.detached").at(-1).reason, "switched");
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* P4.2: a switch moves this window to another thread                  */
+/* ------------------------------------------------------------------ */
+
+test("while held, Enter queues (also over a running turn) and nothing starts; let go, the queue runs once", async () => {
+  await withSession(none, async ({ session, engine }) => {
+    await session.submit("early-complete").done;
+    session.hold(true);
+    const r = session.submit("early-complete");
+    assert.deepEqual(await r.accepted, { queued: true, index: 0 });
+    await sleep(80);
+    assert.equal(session.state.queue.length, 1, "nothing ran");
+    assert.equal(session.state.turns.length, 1);
+    session.hold(false);
+    await until(() => session.state.queue.length === 0 && session.state.turns.length === 2 && session.state.turns.every((t) => t.status !== "inProgress"), "the queued prompt");
+    assert.equal((await debugState(engine)).calls.filter((c) => c === "turn/start").length, 2, "once");
+  });
+});
+
+test("useEngine with a thread keeps the queue and runs it once on the new engine; the lock moves; the old engine's late events change nothing", async () => {
+  await withSession(none, async ({ session, engine, make, lockDir }) => {
+    await session.submit("early-complete").done;
+    const oldId = session.state.thread.id;
+    session.hold(true);
+    session.submit("early-complete");
+    const other = await make();
+    await other.startThread({ cwd: session.state.config.cwd }); // the fake numbers threads per engine: not the old one's id
+    const started = await other.startThread({ cwd: session.state.config.cwd });
+    assert.notEqual(started.threadId, oldId);
+    await other.threads.inject(started.threadId, [{ type: "message", role: "developer", content: [{ type: "input_text", text: "note" }] }]);
+    const before = (await debugState(engine)).calls.filter((c) => c === "turn/start").length;
+    const r = await session.useEngine({ engine: other }, { modelProvider: "ad-b", homeKey: "a/b" }, { threadId: started.threadId, thread: started.thread });
+    assert.equal(r.threadId, started.threadId);
+    assert.equal(session.state.thread.id, started.threadId);
+    assert.equal(session.state.queue.length, 1, "still held: the queue waits");
+    session.hold(false);
+    await until(() => session.state.queue.length === 0 && session.state.turns.some((t) => t.status === "completed"), "the queued prompt on the new engine");
+    assert.equal((await debugState(other)).calls.filter((c) => c === "turn/start").length, 1, "once, on the new engine");
+    assert.equal((await debugState(engine)).calls.filter((c) => c === "turn/start").length, before, "none on the old one");
+    // The lock moved with the conversation.
+    assert.throws(() => lockThread(started.threadId, { dir: lockDir }), SessionLockedError);
+    lockThread(oldId, { dir: lockDir })();
+    // A late event from the old engine's thread: nothing in this window changes.
+    const turns = session.state.turns.length;
+    await engine.testRequest("test/error-notification", { threadId: oldId }).catch(() => {});
+    await sleep(80);
+    assert.equal(session.state.turns.length, turns);
+    assert.ok(!session.state.notices.some((n) => /error-notification|test error/i.test(n.message)), JSON.stringify(session.state.notices));
+  });
+});
+
+test("adoptThread: a continuation on the same engine; the queue and mode carry over; the old live terminals are listed apart", async () => {
+  await withSession(none, async ({ session, engine }) => {
+    await session.submit("early-complete").done;
+    session.state.terminals.set("bg@t", { key: "bg@t", itemId: "bg", command: "npm run dev", lines: [] });
+    session.hold(true);
+    session.submit("early-complete");
+    const started = await engine.startThread({ cwd: session.state.config.cwd });
+    session.adoptThread(started.threadId, started.thread, { modelProvider: "ad-c", model: "m-c" });
+    assert.equal(session.state.thread.id, started.threadId);
+    assert.equal(session.state.config.model, "m-c");
+    assert.deepEqual(session.state.priorTerminals.map((t) => t.command), ["npm run dev"]);
+    assert.equal(session.state.terminals.size, 0);
+    session.hold(false);
+    await until(() => session.state.queue.length === 0 && session.state.turns.some((t) => t.status === "completed"), "the queued prompt");
+  });
+});
+
+test("Plan mask uses the target's model after a provider switch", async () => {
+  await withModes(none, async ({ session, engine }) => {
+    await session.modesReady;
+    await session.submit("fail-turn").done;
+    assert.equal((await turnMask(engine)).settings.model, "engine-default-model", "the preset's model on the default provider");
+    const started = await engine.startThread({ cwd: session.state.config.cwd });
+    session.adoptThread(started.threadId, started.thread, { modelProvider: "ad-or-b", model: "qwen3-coder" });
+    session.setMode("plan");
+    await session.submit("fail-turn").done;
+    assert.equal((await turnMask(engine)).settings.model, "qwen3-coder");
+  }, { env: { FAKE_MODES_MODEL: "engine-default-model" } });
+});
+
+test("a switch's target replaces a /model choice made for the old provider: its model and effort reach the next turn", async () => {
+  await withSession(none, async ({ session, engine }) => {
+    await session.submit("early-complete").done;
+    session.setNextTurn({ model: "gpt-5", effort: "xhigh" });
+    const a = await engine.startThread({ cwd: session.state.config.cwd });
+    session.adoptThread(a.threadId, a.thread, { modelProvider: "ad-or-b", model: "qwen3-coder", effort: "low" });
+    await session.submit("fail-turn").done;
+    let p = (await debugState(engine)).lastParams["turn/start"];
+    assert.equal(p.model, "qwen3-coder");
+    assert.equal(p.effort, "low");
+    // Another provider with no model named: no model or effort from the old one is sent.
+    const b = await engine.startThread({ cwd: session.state.config.cwd });
+    session.adoptThread(b.threadId, b.thread, { modelProvider: "ad-oa-c" });
+    await session.submit("fail-turn").done;
+    p = (await debugState(engine)).lastParams["turn/start"];
+    assert.equal(p.model, undefined);
+    assert.equal(p.effort, undefined);
+    assert.equal(session.state.config.effort, null);
+  });
+});
+
+test("a continuation whose new engine can't be wired leaves the window on its conversation, history and queue included", async () => {
+  await withSession(none, async ({ session }) => {
+    await session.submit("early-complete").done;
+    const old = session.state.thread.id;
+    session.hold(true);
+    session.submit("early-complete");
+    const busy = { onRequest: () => {} }; // an engine another session already wired
+    await assert.rejects(session.useEngine({ engine: busy }, { modelProvider: "x", homeKey: "a/x" }, { threadId: "t-new", thread: { id: "t-new" } }), /already has a session/);
+    assert.equal(session.state.thread.id, old);
+    assert.equal(session.state.queue.length, 1);
+    await until(() => session.state.turns.length >= 1, "the history back");
+    session.hold(false);
+    await until(() => session.state.queue.length === 0, "the queue runs here");
+  });
+});
+
+test("a partial rateLimits update keeps the other window (P4.3)", async () => {
+  const seen = [];
+  await withSession(() => ({ observer: (ev) => void (ev.type === "rateLimits" && seen.push(ev)) }), async ({ session, engine }) => {
+    await session.init();
+    session.state.rateLimits = { limitId: "lim_main", primary: { usedPercent: 10, windowDurationMins: 300 }, secondary: { usedPercent: 20, windowDurationMins: 10080 } };
+    await engine.testRequest("test/notify", { method: "account/rateLimits/updated", params: { rateLimits: { limitId: "lim_main", primary: { usedPercent: 55, windowDurationMins: 300 } } } });
+    await until(() => session.state.rateLimits.primary.usedPercent === 55, "the update");
+    assert.equal(session.state.rateLimits.secondary.usedPercent, 20, "secondary kept");
+    assert.equal(seen.at(-1).limits.secondary.usedPercent, 20, "the observer gets the merged snapshot");
+  });
 });

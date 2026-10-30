@@ -25,7 +25,7 @@ The `agent-daemon-memory` package (and `ad memory install`) depends on two parse
 | `jsonc-parser` | 3.3.1 | edits Cursor's `mcp.json` in place, keeping comments and formatting |
 | `smol-toml` | 1.9.0 | parses Codex's `config.toml` to refuse an existing entry in any shape and to check every edit |
 
-Memory itself runs on Node's built-in `node:sqlite` (Node 22.13+) in the package, and on `better-sqlite3` in the full runtime; `AD_SQLITE_DRIVER=node:sqlite|better-sqlite3` picks one.
+Memory itself runs on Node's built-in `node:sqlite` (Node 22.16+, the first with full-text search in it) in the package, and on `better-sqlite3` in the full runtime; `AD_SQLITE_DRIVER=node:sqlite|better-sqlite3` picks one.
 
 ## Notes
 

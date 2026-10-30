@@ -48,10 +48,12 @@ export function parseLstart(text) {
 }
 
 /**
- * When the process now owning `pid` started.
+ * When the process now owning `pid` started. A lookup slower than `timeoutMs`
+ * (PowerShell on a busy Windows machine) is "unknown", and the caller falls back
+ * to the lock's heartbeat.
  * @returns {{startedAt?: number, startId?: string} | {unknown: string}}
  */
-export function identityOf(pid, { platform = process.platform, run = execFileSync, readFile = readFileSync, env = process.env } = {}) {
+export function identityOf(pid, { platform = process.platform, run = execFileSync, readFile = readFileSync, env = process.env, timeoutMs } = {}) {
   if (!validPid(pid)) return { unknown: "not a pid" };
   try {
     if (platform === "linux") {
@@ -67,13 +69,13 @@ export function identityOf(pid, { platform = process.platform, run = execFileSyn
       return out;
     }
     if (platform === "darwin") {
-      const t = parseLstart(run("/bin/ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8", timeout: 2000, env: { ...env, LC_ALL: "C", TZ: "UTC" } }));
+      const t = parseLstart(run("/bin/ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8", timeout: timeoutMs ?? 2000, env: { ...env, LC_ALL: "C", TZ: "UTC" } }));
       return t === null ? { unknown: "unreadable ps lstart" } : { startedAt: t };
     }
     if (platform === "win32") {
       const ps = systemTool("powershell.exe", { env, platform });
       if (!ps) return { unknown: "Windows PowerShell not found" };
-      const out = String(run(ps, ["-NoProfile", "-NonInteractive", "-Command", `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToUniversalTime().ToString('o')`], { encoding: "utf8", timeout: 3000, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] })).trim();
+      const out = String(run(ps, ["-NoProfile", "-NonInteractive", "-Command", `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToUniversalTime().ToString('o')`], { encoding: "utf8", timeout: timeoutMs ?? 3000, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] })).trim();
       const t = Date.parse(out);
       return Number.isFinite(t) ? { startedAt: t } : { unknown: "unreadable StartTime" };
     }

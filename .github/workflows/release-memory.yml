@@ -1,0 +1,158 @@
+# Release agent-daemon-memory (P5.4): the npm package and the host packages.
+#
+# Runs only when the owner dispatches it. `dry_run` (the default) builds, checks
+# and uploads every artifact with SHA256SUMS, and publishes nothing. A real run
+# also needs the `release-memory` environment's approval, then:
+#   - npm publish --provenance (secret NPM_TOKEN: a granular, publish-only token)
+#   - the Claude Code marketplace tree → vars.MEMORY_MARKETPLACE_REPO (secret MARKETPLACE_DEPLOY_KEY)
+#   - the Gemini extension tree → vars.MEMORY_GEMINI_REPO (secret GEMINI_DEPLOY_KEY)
+#   - a GitHub release memory-v<version> with the ZIPs, the npm tarball and SHA256SUMS
+# A target whose secret or repository isn't set is skipped, with a notice.
+# Nothing here runs on push or tag.
+
+name: release memory
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build and check only; publish nothing"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build and check
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.build.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: runtime/package-lock.json
+
+      - name: Install runtime deps
+        working-directory: runtime
+        run: npm ci
+
+      - name: Registry signatures of the installed dependencies
+        working-directory: runtime
+        run: npm audit signatures
+
+      - name: Package and host-package tests
+        working-directory: runtime
+        env:
+          AD_SQLITE_DRIVER: node:sqlite
+        run: node --test --test-force-exit test/host-packages.test.mjs test/memory-package.test.mjs test/listings.test.mjs
+
+      - name: Build every artifact
+        id: build
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/out"
+          V=$(node -p "require('./packages/agent-daemon-memory/package.json').version")
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          mkdir -p "$OUT/dist"
+          node runtime/scripts/build-memory-package.mjs --out "$OUT/npm"
+          (cd "$OUT/npm" && npm pack --pack-destination "$OUT/dist")
+          node runtime/scripts/build-host-packages.mjs --out "$OUT/hosts"
+          (cd "$OUT/hosts/agent-plugin" && zip -qrX "$OUT/dist/agent-daemon-memory-agent-plugin-$V.zip" agent-daemon-memory)
+          (cd "$OUT/hosts/cursor" && zip -qrX "$OUT/dist/agent-daemon-memory-cursor-$V.zip" agent-daemon-memory)
+          (cd "$OUT/hosts" && zip -qrX "$OUT/dist/agent-daemon-memory-claude-code-marketplace-$V.zip" claude-code)
+          (cd "$OUT/hosts" && zip -qrX "$OUT/dist/agent-daemon-memory-gemini-extension-$V.zip" gemini)
+          cp "$OUT/hosts/registry/server.json" "$OUT/dist/server.json"
+          node runtime/scripts/render-copy.mjs --out "$OUT/listing"
+          (cd "$OUT/dist" && sha256sum -- * > SHA256SUMS)
+          cat "$OUT/dist/SHA256SUMS"
+
+      - name: Upload the artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-daemon-memory-${{ steps.build.outputs.version }}
+          path: |
+            ${{ runner.temp }}/out/dist
+            ${{ runner.temp }}/out/hosts
+            ${{ runner.temp }}/out/listing
+          if-no-files-found: error
+
+  publish:
+    name: publish (owner-approved)
+    needs: build
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    environment: release-memory
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      V: ${{ needs.build.outputs.version }}
+    steps:
+      - name: Download the artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: agent-daemon-memory-${{ needs.build.outputs.version }}
+          path: out
+
+      - name: Setup Node.js 22 for npm
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then echo "::notice::NPM_TOKEN isn't set: npm publish skipped"; exit 0; fi
+          npm publish "out/dist/agent-daemon-memory-$V.tgz" --provenance --access public
+
+      - name: Push the Claude Code marketplace tree
+        env:
+          KEY: ${{ secrets.MARKETPLACE_DEPLOY_KEY }}
+          REPO: ${{ vars.MEMORY_MARKETPLACE_REPO }}
+        run: bash -c "$PUSH_TREE" -- out/hosts/claude-code
+        shell: bash
+
+      - name: Push the Gemini extension tree
+        env:
+          KEY: ${{ secrets.GEMINI_DEPLOY_KEY }}
+          REPO: ${{ vars.MEMORY_GEMINI_REPO }}
+        run: bash -c "$PUSH_TREE" -- out/hosts/gemini
+        shell: bash
+
+      - name: GitHub release with the ZIPs and SHA256SUMS
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "memory-v$V" out/dist/* --repo "$GITHUB_REPOSITORY" --title "agent-daemon-memory $V" \
+            --notes "agent-daemon-memory $V: the npm package and the host packages. Check downloads against SHA256SUMS."
+
+# One script for both generated trees: it replaces the target repository's content
+# on its default branch as one commit, and is skipped when not configured.
+env:
+  PUSH_TREE: |
+    set -euo pipefail
+    TREE="$1"
+    if [ -z "${KEY:-}" ] || [ -z "${REPO:-}" ]; then echo "::notice::deploy key or repository not set: $TREE not pushed"; exit 0; fi
+    install -m 700 -d ~/.ssh
+    printf '%s\n' "$KEY" > ~/.ssh/deploy_key && chmod 600 ~/.ssh/deploy_key
+    export GIT_SSH_COMMAND="ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+    WORK="$(mktemp -d)"
+    git clone --depth 1 "git@github.com:${REPO}.git" "$WORK"
+    find "$WORK" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+    cp -R "$TREE"/. "$WORK"/
+    cd "$WORK"
+    git add -A
+    if git diff --cached --quiet; then echo "no change in $REPO"; exit 0; fi
+    git -c user.name="agent-daemon release" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -q -m "agent-daemon-memory ${V}"
+    git push origin HEAD
+    rm -f ~/.ssh/deploy_key

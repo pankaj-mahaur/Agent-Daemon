@@ -1,7 +1,7 @@
 // Proposals and memory-file appends, shared by the digest (apply.mjs), the
 // memory server's record tools (memory/capture.mjs) and ad review (P5.2).
 //
-//   writeProposal(...)          a skill-edit, constitution-add or quarantined-learning proposal
+//   writeProposal(...)          a skill-lesson (v1, skills/proposal.mjs), constitution-add or quarantined-learning proposal
 //   writeMemoryProposal(...)    a memory-add or memory-promote proposal for one learning
 //   readProposalMeta(content)   the machine line of a memory proposal, or null
 //   appendToMemory(...)         append learnings to a memory markdown file, deduplicated
@@ -9,6 +9,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { neutralizeText } from "./sanitize.mjs";
+import { isSkillName, renderSkillProposal } from "../skills/proposal.mjs";
 
 // The first line of a memory proposal: what ad review acts on. Only the first
 // line counts, so text quoted further down can't pose as one.
@@ -66,12 +67,14 @@ export async function writeMemoryProposal({ kind, learningId, text, evidence, or
 
 export async function writeProposal({ item, proposedDir, sessionId, stamp, dryRun, kindOverride, quarantineReasons }) {
   const safeStamp = stamp.replace(/[:.]/g, "-");
-  const kind = kindOverride || (item.targets.includes("skill-edit") ? "skill-edit" : "constitution-add");
+  // A lesson for a skill (the classifier's skill-edit route) is a skill-lesson in the
+  // v1 format (skills/proposal.mjs), which ad review applies after showing the diff.
+  const kind = kindOverride || (item.targets.includes("skill-edit") ? "skill-lesson" : "constitution-add");
   const slug = (item.learning.tags?.[0] || item.learning.type).replace(/[^a-z0-9-]/gi, "-").slice(0, 32);
   const filename = `${kind}-${slug}-${safeStamp}.md`;
   const filePath = path.join(proposedDir, filename);
 
-  const content = renderProposalMd(item, sessionId, kind, quarantineReasons);
+  const content = kind === "skill-lesson" ? renderSkillLesson(item, sessionId, stamp) : renderProposalMd(item, sessionId, kind, quarantineReasons);
 
   if (!dryRun) {
     await fs.mkdir(proposedDir, { recursive: true });
@@ -79,6 +82,18 @@ export async function writeProposal({ item, proposedDir, sessionId, stamp, dryRu
   }
 
   return filePath;
+}
+
+function renderSkillLesson(item, sessionId, stamp) {
+  const l = item.learning;
+  // The skill the classifier matched (classify.mjs); else review asks which one.
+  const skill = isSkillName(item.skill) ? item.skill : undefined;
+  const why = [
+    `Evidence: > ${neutralizeText(l.evidence_quote || "").replace(/\s+/g, " ").trim()}`,
+    "",
+    `_(${l.evidence_speaker}, confidence ${l.confidence.toFixed(2)}; ${item.routeReason})_`,
+  ].join("\n");
+  return renderSkillProposal({ kind: "skill-lesson", skill, body: neutralizeText(l.text).replace(/\s+/g, " ").trim(), origin: "digest", run: sessionId || undefined, created: stamp, why });
 }
 
 function renderProposalMd(item, sessionId, kind, quarantineReasons) {

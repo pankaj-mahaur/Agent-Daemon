@@ -168,7 +168,7 @@ This protects against rapid double-trigger.
 Just close out. Don't be ceremonial. After completing phases 2–7, your assistant response should:
 
 1. Confirm in 1-2 short sentences what was done ("Session-log updated, handoff written, digest emitted")
-2. Mention any GEPA candidates ("3 skills queued for evolution — run `ad review` or say 'evolve skill X' next session")
+2. Mention any GEPA candidates ("3 skills queued for evolution — run `ad review` or say 'evolve skill X' next session"). `ad review` shows each skill change as a diff and applies it only on the user's typed accept (`ad skill undo <name>` reverts).
 3. End with the digest block
 
 Don't ask the user "is there anything else?" — they said bye. Honor it.

@@ -7,10 +7,13 @@ import { createEngine, engineVersion, engineErrorText, engineErrorDetail } from 
 import { envRenameNote, homeCliGraceNote, homeOverrideNote, homeTrustRemovedNote, LEGACY, migrateMessages } from "../engine/attribution.mjs";
 import { engineHome } from "../engine/index.mjs";
 import { homeFolderAllowed } from "./home-folder.mjs";
-import { providerEnv } from "../auth/providers.mjs";
+import { gatewayEngineOpts } from "./gateway-runtime.mjs";
+import { TOKEN_HIDDEN_ARGS } from "../gateway/table.mjs";
 import { noteOnce } from "./notes.mjs";
 import { ensureHarnessSetup } from "./setup.mjs";
 import { needsWindowsSandbox, sandboxReadiness } from "./sandbox.mjs";
+import { syncAccountsFromEngine } from "./accounts-sync.mjs";
+import { syncSettings } from "./settings-sync.mjs";
 
 export const NOT_LOGGED_IN = "Not logged in. Run: ad auth login openai | ad auth login openrouter --model <slug> | ad auth login chatgpt";
 
@@ -20,8 +23,11 @@ export const NOT_LOGGED_IN = "Not logged in. Run: ad auth login openai | ad auth
 // homePolicy (P0.2a), for a cwd that would load the user's own engine home:
 //   "refuse" (default): threads there are refused (HOME_FOLDER_REFUSED);
 //   "grace": non-interactive ad run/chat/loop in 3.0.x run anyway, with a one-time note per folder.
+// gateway: the EngineManager's precomputed {env, args} for this home (P3.4); omitted, the
+//   default home gets the gateway as in P3.3.
+// loginGate: false for ad's api home, which needs no engine sign-in (its accounts are ad's).
 // → {engine, homeRisk} | {engine: null, error, code}.
-export async function startHarnessEngine({ cwd, home, command, clientVersion, store, onApproval, err = process.stderr, setup = true, platform, env, requireSandbox = false, detached = false, engineArgs, experimental = false, interactive = false, notesFile, allowHomeFolder = false, homePolicy = "refuse" } = {}) {
+export async function startHarnessEngine({ cwd, home, command, clientVersion, store, onApproval, err = process.stderr, setup = true, platform, env, requireSandbox = false, detached = false, engineArgs, experimental = false, interactive = false, notesFile, allowHomeFolder = false, homePolicy = "refuse", gateway, loginGate = true } = {}) {
   const e = { ...process.env, ...(env ?? {}) };
   const notesFileFinal = notesFile ?? (process.env.NODE_TEST_CONTEXT ? null : undefined);
   if (notesFileFinal !== null) {
@@ -33,7 +39,11 @@ export async function startHarnessEngine({ cwd, home, command, clientVersion, st
   const v = engineVersion.check({ installed: engineVersion.installed().version });
   if (v.code === "untested") err.write(`[agent-daemon] the engine is version ${v.installed}; ad was tested with ${v.tested.join(", ")}. Run: cd runtime && npm install\n`);
   let allowed = homeFolderAllowed({ flag: allowHomeFolder, env: e }).allowed;
-  const engineOpts = { cwd, home, command, clientVersion, detached, engineArgs, experimental, interactive, env: { ...providerEnv(store), ...(env ?? {}) }, onApproval, allowHomeFolder: allowed };
+  // API keys stay in ad's gateway (P3.3): the engine gets a token and provider entries.
+  const gw = gateway ?? (await gatewayEngineOpts({ home, store, env: e, err }));
+  // The engine needs the gateway token; the commands it runs never see its value.
+  const hideToken = gw.env?.AD_GATEWAY_TOKEN && !gw.args?.includes(TOKEN_HIDDEN_ARGS[1]) ? TOKEN_HIDDEN_ARGS : [];
+  const engineOpts = { cwd, home, command, clientVersion, detached, engineArgs: [...(engineArgs ?? []), ...gw.args, ...hideToken], experimental, interactive, env: { ...gw.env, ...(env ?? {}) }, onApproval, allowHomeFolder: allowed, ...(gw.threadConfigFor ? { threadConfigFor: gw.threadConfigFor } : {}) };
   let engine = await createEngine(engineOpts);
   let homeRisk = null;
   try {
@@ -51,7 +61,9 @@ export async function startHarnessEngine({ cwd, home, command, clientVersion, st
       err.write(`[agent-daemon] ${homeOverrideNote(homeRisk)}\n`);
     }
     const acct = await engine.account();
-    if (acct.requiresOpenaiAuth && !acct.account) {
+    // ad 3.0's sign-ins as accounts (P3.2): the default home only; never fails a start.
+    await syncAccountsFromEngine(engine, { store, acct, err });
+    if (loginGate && acct.requiresOpenaiAuth && !acct.account) {
       await engine.close();
       return { engine: null, error: NOT_LOGGED_IN, code: 2 };
     }
@@ -62,6 +74,9 @@ export async function startHarnessEngine({ cwd, home, command, clientVersion, st
         engine = await createEngine(engineOpts);
         report = await safeSetup(engine, { cwd, platform }, err);
       }
+      // [tui] and folder trust: the default home is the record, other homes mirror it.
+      const settingsWarning = await syncSettings(engine);
+      if (settingsWarning) err.write(`[agent-daemon] ${settingsWarning}\n`);
     }
     // Unattended runs (loops, workers) rely on the sandbox instead of a
     // human; on Windows, refuse to start them without a ready one.

@@ -50,6 +50,10 @@ test("order: --project, then AD_MEMORY_PROJECT, then CLAUDE_PROJECT_DIR (Claude 
     s = resolveMemoryScope(opts(f, { env: f.env, cwd: f.wt }));
     assert.deepEqual([s.kind, s.source, s.dir], ["project", "cwd", f.wt]);
     assert.deepEqual(s.keys, [projectSlug(f.wt)]);
+    // An Agent Plugins host starts the server in the plugin's folder (maybe inside a
+    // git clone): the working folder never binds there; an explicit project still does.
+    assert.equal(resolveMemoryScope(opts(f, { env: f.env, cwd: f.sub, host: "agent-plugins" })).kind, "unbound");
+    assert.equal(resolveMemoryScope(opts(f, { env: f.env, project: f.repoA, cwd: f.sub, host: "agent-plugins" })).kind, "project");
   } finally { f.cleanup(); }
 });
 
@@ -97,6 +101,26 @@ test("a git repo at the home folder doesn't make a home subfolder a project", ()
   } finally { f.cleanup(); }
 });
 
+test("home and the working folder spelled differently: the walk still stops at home (macOS /var vs /private/var, Windows 8.3 names)", () => {
+  const f = fixture();
+  try {
+    // Home holds ad's folder (AD_ROOT under home, as by default); HOME names it through a link.
+    mkdirSync(path.join(f.home, ".agent-daemon"));
+    const homeLink = path.join(f.root, "home-link");
+    symlinkSync(f.home, homeLink, "junction");
+    const linked = { ...f, env: { ...f.env, HOME: homeLink, USERPROFILE: homeLink }, home: homeLink };
+    assert.equal(resolveMemoryScope(opts(linked, { cwd: f.plain })).kind, "unbound");
+    assert.equal(resolveMemoryScope(opts(linked, { cwd: f.repoA })).kind, "project");
+    // The working folder through a third spelling, matching neither HOME nor its real path.
+    const rootLink = path.join(tmpdir(), `ad-scope-link-${process.pid}-${Date.now()}`);
+    symlinkSync(f.root, rootLink, "junction");
+    try {
+      const viaLink = path.join(rootLink, path.relative(f.root, f.plain));
+      assert.equal(resolveMemoryScope(opts(linked, { cwd: viaLink })).kind, "unbound");
+    } finally { rmSync(rootLink, { recursive: false, force: true }); }
+  } finally { f.cleanup(); }
+});
+
 test("never valid: home, a root, a folder inside ad's root, the package folder, system folders", () => {
   const f = fixture();
   try {
@@ -130,6 +154,13 @@ test("system folders never bind, with or without .git inside", { skip: false }, 
     for (const d of ["/usr/lib", "/usr", "/etc/x", "/opt/homebrew/y", "/bin"]) assert.ok(neverValid(d, o), d);
     assert.equal(neverValid("/home/u/work/app", o), null);
   }
+});
+
+test("macOS: system folders refuse, but its temp folders (inside /private) are ordinary folders", () => {
+  // Paths that don't exist on this machine: only their own spelling is judged, on every OS.
+  const o = { env: { HOME: "/Users/u" }, home: "/Users/u", platform: "darwin" };
+  for (const d of ["/etc/x", "/private/etc/hosts.d", "/var/db/x", "/private/var/root", "/usr/local/x", "/System/Library", "/Library/Caches", "/opt/homebrew/y"]) assert.ok(neverValid(d, o), d);
+  for (const d of ["/var/folders/n6/abc/T/ad-x/repo", "/private/var/folders/n6/abc/T/ad-x/repo", "/private/var/tmp/scratch", "/tmp/scratch", "/private/tmp/scratch", "/Users/u/work/app"]) assert.equal(neverValid(d, o), null, d);
 });
 
 test("a link (junction) into ad's own folder or home never binds", () => {

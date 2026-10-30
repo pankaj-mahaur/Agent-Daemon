@@ -131,7 +131,7 @@ transcript.jsonl
 - `sessions` — one row per digested session
 - `learnings` — one row per extracted learning, queryable by tag / scope / confidence
 - `skill_failures` — feedback signal for the GEPA evolve loop
-- `injections`, `correction_events`, `feedback` — what each session was shown, each correction and whether it repeated a lesson, and memory_feedback verdicts; read by `ad memory report` ([Memory metrics](memory-metrics.md))
+- `injections`, `correction_events`, `feedback` — what each session was shown, each correction and whether it repeated a lesson, and memory_feedback verdicts; read by `ad memory report` ([Memory metrics](memory/metrics.md))
 
 ### 5. Watch daemon (`runtime/src/daemon/watch.mjs`)
 
@@ -180,6 +180,72 @@ ad's own agent runs on a pinned app-server, driven over JSON-RPC on stdio in ad'
 Bare `ad` / `ad tui`: an inline terminal UI on the session controller. `terminal/` is the terminal layer (input decoding, sanitizing, widths, the inline renderer), `view/` the components (composer, markdown, cells, chrome, approval prompts), `app.mjs` the slash commands and keys, `main.mjs` the startup (sign-in, folder trust, header), `ad-layer.mjs` ad's own features (memory, loops, schedules, teams) and `undo.mjs` the `/undo` wiring. See [tui-architecture.md](tui-architecture.md) and [tui.md](tui.md).
 
 ---
+
+### The provider gateway (P3.3)
+
+API keys live in the secret store and in one place at run time: ad's gateway, a child process (`runtime/src/gateway/`) listening on `127.0.0.1`. The engine gets a per-run token and, per ready API account, a `-c model_providers.<entry>={ base_url = "http://127.0.0.1:<port>/p/<entry>/v1", env_key = "AD_GATEWAY_TOKEN" }`; the gateway swaps the token for the account's key, forwards `POST responses` and `GET models`, decodes a body the provider compressed anyway, and emits one observation per request (status, limits, usage, the error's class) for ad's own use. ad 3.0's provider name `openrouter` is pointed at the same route, so 3.0 conversations resume. Nothing about it is written to `config.toml`.
+
+### Chat translation in the gateway (P6.1)
+
+Some providers speak only Chat Completions; the engine speaks only the Responses API. A route whose preset says `mode: "chat"` is translated inside the gateway (`runtime/src/gateway/translate/`), so keys, the token check, the address allowlist and the redirect refusal stay the gateway's:
+
+- **Request.** The engine's Responses request becomes a Chat body (`responses-in.mjs`). Namespaced and custom tools get flat names that map back exactly (`tools.mjs`). Anything with content ad can't carry is refused with HTTP 400 naming the field, never dropped. The engine's default cached web search is left out: it only works on OpenAI's own servers.
+- **Answer.** The Chat stream becomes the engine's Responses events in its exact item shapes (`responses-out.mjs`). A tool call is handed over only whole, with its arguments parsed and its namespace or custom shape restored. A stream cut off mid-call, a length stop or an unmappable call runs nothing.
+- **Failures.** Only codes the engine knows reach it (`errors.mjs`): a used-up daily or monthly limit is `insufficient_quota` (asked once, never retried), a per-minute limit `rate_limit_exceeded` with its wait, a too-long context the stream form of `context_length_exceeded`, a cut-off an unknown code (exactly one retry). The provider's real reason goes to the gateway's observation, and the TUI's failed-turn line and `ad run` show it instead of the engine's generic words.
+- **Native modes** (P6.4): routes with `mode: "anthropic"` or `"gemini"` build the vendor's own request from the same translated turn (`upstream/anthropic.mjs`, `upstream/gemini.mjs`) and parse its own stream; everything engine-facing is the shared writer's. Claude's thinking blocks travel in a sealed envelope under their own scope, Gemini's signatures as per-call extras. The gateway refuses any upstream address carrying a key-like query parameter.
+- **Hidden reasoning** a provider wants back (DeepSeek's) travels in the engine's `encrypted_content` as an AES-256-GCM envelope bound to provider and model, under a per-install key in the secret store (`gateway-seal`).
+- **Contract.** `scripts/record-engine-requests.mjs` records what the pinned engine sends into `test/fixtures/gateway/engine-<version>/`; `translate-contract.test.mjs` translates every recorded request. An engine upgrade that changes the wire fails there first.
+- `AD_TRANSLATE=0` turns translated routes off (they answer 502 with the reason).
+
+### Accounts, engines and switching (P3.4)
+
+- **Target** (`runtime/src/auth/accounts/target.mjs`). Which account and model a conversation starts on is resolved before any engine starts, in this order:
+  1. a flag or command;
+  2. this window's choice;
+  3. `AD_ACCOUNT`/`AD_MODEL`;
+  4. the project's `.agent-daemon/config.json` `target`, read only in a trusted folder;
+  5. the registry's default;
+  6. 3.0's settings.
+
+  The level that names the account also bounds the model. A target is fixed when its thread starts.
+- **Engines** (`runtime/src/engine/manager.mjs`).
+
+  | Engine id | Home | Serves |
+  |---|---|---|
+  | `api` | `@default` (no ChatGPT sign-in there) or `api/` | every API-key account, through the gateway |
+  | an account id | that account's own home | a ChatGPT account (or an OpenAI key the engine keeps) |
+
+  The EngineManager runs one process per engine id per ad process:
+  - Leases are in-process. An unleased engine stops after an idle period unless it was pinned.
+  - An acquire during that stop waits for it, so there are never two processes on one id.
+  - When the gateway entries change, `restartIfStale` restarts the engine, and only when no turn runs.
+- **Launch** (`runtime/src/harness/engines.mjs`). Every entry point (the terminal UI, `ad run`/`chat`/`loop`, `ad web`, `ad acp`, workers) calls `launchHarness`:
+  1. adopt 3.0's key as an account;
+  2. resolve the target;
+  3. acquire the engine of the home that serves it (`@default`, `api`, `a/<id>`) from the process's EngineManager;
+  4. start threads with that account's provider entry.
+
+  A home a command or test chose (`--home`-style options) runs as before, with no accounts. `--resume`/`--last` look in the other homes too.
+- **Settings record** (`runtime/src/harness/settings-sync.mjs`). The default home is the record for `[tui]` and folder trust. It is read through the engine's `config/read` (no TOML parser) into `accounts/settings-record.json`, mirrored into `api/` and `a/<id>` at each engine start, and edits made elsewhere wait as `pending` for the default home's next start.
+- **Switching** (`runtime/src/engine/switch.mjs`). A loaded, subscribed or running thread keeps its provider on `thread/resume` even though the answer says success. So:
+  - `resumeThread` with a provider or model first refuses a running thread, or one whose background terminals the caller names (`RETARGET_BUSY`). Otherwise it unsubscribes, waits for the unload, and checks the answer (`RETARGET_IGNORED`). A fork that names a provider or model is checked the same way.
+  - Switching to another account of the same provider forks:
+    1. pause the goal;
+    2. confirm the thread is idle;
+    3. fork with `deferGoalContinuation` and check the fork took the target;
+    4. move the goal to the fork: an active goal is paused there, any other status is kept.
+
+    If any step fails, the goal ad paused is active again, and a fork that ignored the target is archived.
+  - After the fork, the old thread is unsubscribed. If background terminals still run in it, it stays subscribed and watched until they end, because unloading would kill them. A turn the engine starts on it is stopped and reported.
+
+### Portable state (P7.1b, `runtime/src/portability/`)
+
+The format for moving ad's state to another machine (export and import come with P7.2 and P7.3):
+
+- **One file, `.adstate`:** tar (ustar, pax only for a long name or size) in gzip, written deterministically (sorted, mode 0600/0700, no times or owners). The reader accepts only files, folders and pax `path`/`size`; a link, a device, a global pax header or a name that could leave the bundle is an error, never a partial read (`archive.mjs`, `names.mjs`).
+- **`manifest.json` first:** what is inside, from which machine, what was left out and why; a bundle never carries secrets (`manifest.mjs`).
+- **Path tokens:** `{HOME}`, `{AD_ROOT}`, `{PROJECT:<id>}` replace one machine's absolute paths in structured fields (the longest root wins; case-insensitive only from Windows or macOS), so a project lands wherever it lives on the target (`paths.mjs`).
+- **The inventory:** every file under ad's state root and a project's `.agent-daemon` belongs to one class: taken by default, only on request (`--include`), left behind (machine-local), or never (secrets, engine folders, sign-ins) (`inventory.mjs`). A test fails when the code adds a folder no class names.
 
 ## Data flow — a single session, start to finish
 
@@ -293,12 +359,16 @@ Agent-Daemon/                       # The cloned repo
 ├── tui/                            # Terminal UI: prompt history (0600), per-folder state
 ├── locks/                          # Conversation locks (one ad per conversation); a holder is judged by its process start time, so a reused pid is free at once and a suspended session keeps its lock
 ├── skill-manifest.json             # Provenance of skills installed with ad skill install
+├── skills/<name>/                  # Accepted skill versions: current/, versions/<n>/, meta.json (ad review, ad skill undo)
+├── projects.json                   # Project ids: paths, slugs, git remote (memory/projects.mjs); memory rows carry project_id
+├── projects/<project id>/          # Capture files of a project without ad init (journals, proposals, memory)
 ├── teams/                          # Team state + inboxes
 └── worktrees/                      # Worker git worktrees
 
 <project>/.agent-daemon/            # Per-project state (per-codebase)
 ├── memory/                         # Project memory markdown files
-├── proposed/                       # Queued diffs for review (ad status / ad review)
+├── proposed/                       # Queued proposals for review (ad status / ad review)
+├── applied/, rejected/             # Proposals after review, kept as a record
 ├── sessions.jsonl                  # Per-session audit ledger
 ├── loops/                          # ad loop iteration logs
 ├── loop-tui.log                    # Output of a /loop started from ad tui

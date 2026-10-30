@@ -16,7 +16,10 @@ import { isExploring, renderAdRow, renderBackgroundTerminals, renderCell, render
 import { parseRecap, RECAP_PROMPT_PREFIX, RECAP_SCHEMA, recapHistory, TEMPORARY_THREAD_CONFIG } from "./recap.mjs";
 import { createChecklist, createPicker, renderFooter, renderShortcuts, renderStatus } from "./view/chrome.mjs";
 import { formAutoCancel, homeCdRefusal, homeTrustSkippedNote, LEGACY, ownEngineHomeRefusal, projectConfigFolder, sandboxConsentBody, tombstoneEngineUiSlash } from "../engine/attribution.mjs";
-import { ARM_MS, createChoice, createConfirm, createRequestModal } from "./view/modals.mjs";
+import { ARM_MS, createChoice, createConfirm, createRequestModal, createTextPrompt } from "./view/modals.mjs";
+import { whoOf } from "../harness/auth-list-view.mjs";
+import { accountName, providerDisplay } from "../auth/accounts/target.mjs";
+import { PROVIDER_PRESETS } from "../providers/registry.mjs";
 import { PLAN_CLEAR_CONTEXT_PREFIX } from "../hooks/generated-prompts.mjs";
 import { sanitize } from "./terminal/sanitize.mjs";
 import { lineWidth, truncate } from "./terminal/text.mjs";
@@ -29,9 +32,11 @@ import path from "node:path";
 import { copyText, denialSummary, exportMarkdown, imagePath, lastAgentText, renderDebugConfig, renderHooks, renderKeyInspector, renderKeymap, renderMcp, renderSkills, renderUsage, terminalSetup, transcriptLines } from "./commands.mjs";
 
 import { T } from "./view/theme.mjs";
+import { createFallbackEditor } from "./fallback-editor.mjs";
 import { createKeymap, eventSpec, keyLabel } from "./keymap.mjs";
 import { setSyntaxTheme, SYNTAX_THEMES, syntaxTheme, withSyntaxTheme } from "./view/highlight.mjs";
-import { DEFAULT_STATUS, DEFAULT_TITLE, STATUS_IDS, TITLE_IDS, canonical, contextUsedLabel, statusSegments, titleText, unsupported } from "./status.mjs";
+import { AD_STATUS_IDS, DEFAULT_AD_STATUS, DEFAULT_STATUS, DEFAULT_TITLE, STATUS_IDS, TITLE_IDS, adSegments, canonical, contextUsedLabel, statusSegments, titleText, unsupported } from "./status.mjs";
+import { agoText, limitNotices, mostConstrained, resetText, windowLong } from "../providers/quota-view.mjs";
 
 export const FORCE_QUIT_MS = 1500;
 const FRAME_MS = 33;
@@ -39,6 +44,7 @@ const LIVE_SHARE = 0.6; // at most this much of the screen for streaming cells
 
 const DIM = T.dim;
 const WARN = T.warning;
+const FB_TONE = { dim: DIM, warn: WARN, selected: T.accent };
 
 // source "upstream": the same command as the engine's own UI (its name must stay one of upstream's); "ad": ad's own (its name must never be one of upstream's). The collision test checks both against upstream-commands.json in the adapter.
 export const SLASH_COMMANDS = [
@@ -75,8 +81,10 @@ export const SLASH_COMMANDS = [
   { name: "team", source: "ad", desc: "the team board" },
   { name: "schedule", source: "ad", desc: "scheduled jobs (/schedule run <id>)" },
   { name: "tools", source: "ad", desc: "optional agent tools (/tools enable browser)" },
-  { name: "login", source: "ad", desc: "sign in (ChatGPT, OpenAI key, OpenRouter)" },
-  { name: "logout", source: "upstream", desc: "sign out" },
+  { name: "login", source: "ad", desc: "add or sign in an account" },
+  // The engine's own command, run by ad per account (P3.8b).
+  { name: "logout", source: "upstream", desc: "sign out one account" },
+  { name: "account", source: "ad", desc: "pick this window's account" },
   { name: "ad", source: "ad", desc: "run an ad command, e.g. /ad doctor" },
   { name: "fork", source: "upstream", desc: "continue in a copy of this conversation" },
   { name: "rename", source: "upstream", desc: "name this conversation" },
@@ -99,6 +107,8 @@ export const SLASH_COMMANDS = [
   { name: "title", source: "upstream", desc: "choose what the terminal window's title shows" },
   { name: "image", source: "ad", desc: "attach an image file to the next prompt" },
   { name: "undo", source: "ad", desc: "put back the files the last turn changed, and rewind it (/undo force)" },
+  { name: "retry", source: "ad", desc: "try again after automatic fallback paused" },
+  { name: "fallback", source: "ad", desc: "where a task continues when a limit runs out (/fallback on|off: this window)" },
   { name: "terminal-setup", source: "ad", desc: "how to make Shift+Enter add a newline here" },
   { name: "quit", source: "upstream", desc: "exit ad" },
   { name: "exit", source: "upstream", desc: "exit ad" },
@@ -218,6 +228,9 @@ export function createApp({
   let confirm = null; // {view, resolve}: a question of ad's own (openConfirm, openChoice)
   let planReady = null; // {turnId, text}: a Plan-mode turn proposed a plan; "Implement this plan?" opens when nothing is in the way
   let overlay = false; // the ? shortcuts
+  let fbEditor = null; // /fallback's editor (fallback-editor.mjs), drawn below the prompt
+  let fbKeys = Promise.resolve(); // its keys, one at a time (each may save)
+  let fallbackHere = true; // /fallback off: this window only, never saved
   // Key chords and the leader (P1.2): matched before any layer; a completed one
   // is routed as {type: "chord", ctx, action}, which keymap.is() answers.
   const chordKeys = keymap.chords();
@@ -381,8 +394,17 @@ export function createApp({
       actions.bell?.({ unfocusedOnly: true });
       notePlan(t);
       showLearned(turnStarts.get(t.id) ?? turnStartedAt);
-      if (t.status === "failed" && t.error) commitCell(renderNotice({ level: "error", message: `The turn failed: ${errorText({ ...t.error, code: -32000 })}` }, { width: width() }));
-      else if (t.status === "interrupted") commitCell(renderNotice({ level: "warn", message: "Interrupted. Say what to do differently." }, { width: width() }));
+      // A turn automatic fallback acted on (P4.5): its own line (↪ switched, ⏸ paused) says why;
+      // the engine's words for it stay in /warnings.
+      if (actions.fallbackRun?.handled?.(t.id)) {
+        // nothing here
+      } else if (t.status === "failed" && t.error) {
+        // A provider ad translates for: the gateway's reason, not the engine's generic words
+        // (kept as the hint, and in /warnings).
+        const engineWords = errorText({ ...t.error, code: -32000 });
+        const why = actions.gatewayReason?.(st.thread?.id ?? null, turnStarts.get(t.id) ?? turnStartedAt ?? null);
+        commitCell(renderNotice({ level: "error", message: `The turn failed: ${why ? clean(why) : engineWords}`, ...(why ? { hint: `The engine said: ${engineWords}` } : {}) }, { width: width() }));
+      } else if (t.status === "interrupted") commitCell(renderNotice({ level: "warn", message: "Interrupted. Say what to do differently." }, { width: width() }));
       const started = turnStarts.get(t.id) ?? turnStartedAt;
       turnStarts.delete(t.id);
       if (started != null) {
@@ -440,6 +462,33 @@ export function createApp({
       noticesSeen.add(n);
       commitCell(renderNotice(n, { width: width() }));
     }
+  }
+
+  // Before a limit runs out (P4.6): one notice per account, window and reset period when a
+  // reported window crosses limits.warnAt, one when it is used up. Checked at most every 3 s;
+  // the marks live in the QuotaStore, so a restart doesn't repeat them.
+  let limitsCheckedAt = -Infinity;
+  const limitsShown = new Set();
+  function reportLimits() {
+    if (!actions.quota || now() - limitsCheckedAt < 3000) return;
+    limitsCheckedAt = now();
+    const name = actions.quota.name?.();
+    const v = actions.quota.view?.();
+    if (!name || !v) return;
+    const seen = { ...(actions.quota.seen?.() ?? {}), ...Object.fromEntries([...limitsShown].map((k) => [k, true])) };
+    const due = limitNotices(v, { name, warnAt: warnAt(), seen, now: now() });
+    if (!due.length) return;
+    for (const n of due) {
+      limitsShown.add(n.key);
+      if (n.threshold === 100) {
+        commitCell(renderNotice({ level: "warn", message: n.text }, { width: width() }));
+        continue;
+      }
+      const next = actions.fallbackRun?.on?.() ? actions.fallbackRun.nextLabel?.() : null;
+      const suffix = next ? ` If it runs out, ad continues on ${next} after that turn.` : actions.accounts?.label?.() ? " /fallback can continue on another account when it runs out." : "";
+      commitCell(renderNotice({ level: "info", message: `${n.text}${suffix}` }, { width: width() }));
+    }
+    actions.quota.mark?.(due.map((n) => n.key));
   }
 
   /* -------------------------------------------------------------- */
@@ -546,8 +595,11 @@ export function createApp({
     const n = st.terminals?.size ?? 0;
     if (n) own.unshift({ full: `${n} background terminal${n === 1 ? "" : "s"} running \u{b7} /ps to view \u{b7} /stop to close`, short: `${n} background terminal${n === 1 ? "" : "s"}` });
     if (privateMode) own.push({ full: "private", short: "P" });
+    if (st.held) own.push({ full: "switch pending", short: "switching" });
     const loop = actions.ad?.loop?.state;
     if (loop?.running) own.push({ full: `loop ${loop.iterations}`, short: `L${loop.iterations}` });
+    const limit = limitChip();
+    if (limit) own.push(limit);
     return renderFooter({ hints, chips: [...mode, ...chips(), ...own] }, { width: width() });
   }
 
@@ -571,6 +623,8 @@ export function createApp({
       app: "ad",
       model: c.model,
       effort: c.effort,
+      // Only when more than one account is ready (P3.8b).
+      account: actions.accounts?.label?.() ?? null,
       cwd,
       home: statusInfo.home,
       project: path.basename(git.root ?? cwd),
@@ -589,10 +643,18 @@ export function createApp({
       threadName: privateMode ? null : st.thread?.name || st.thread?.preview,
       plan: st.plan,
       frame: titleFrame,
+      // ad's own items (P4.6).
+      quota: actions.quota?.view?.() ?? null,
+      accountName: actions.quota?.name?.() ?? null,
+      fallback: actions.fallbackRun?.status ? { on: Boolean(actions.fallbackRun.on?.()), switches: actions.fallbackRun.status()?.switches ?? 0 } : null,
     };
   }
+  // ad's items on the status line (P4.6): ad's prefs, or a /statusline preview's "ad:" values.
+  const adStatusIds = () => (preview.status ? preview.status.filter((v) => String(v).startsWith("ad:")).map((v) => v.slice(3)) : (settings?.ad?.get?.("statusExtra", DEFAULT_AD_STATUS) ?? DEFAULT_AD_STATUS));
   function statusRow(w) {
-    const segs = statusSegments(statusIds(), statusCtx());
+    const ctx = statusCtx();
+    const engineSegs = statusSegments(statusIds(), ctx);
+    const segs = [...engineSegs, ...adSegments(adStatusIds(), ctx, engineSegs)];
     if (!segs.length) return null;
     // Items drop from the end until the row fits; the last one left is cut.
     const sep = " \u{b7} ";
@@ -665,14 +727,20 @@ export function createApp({
     const ctx = statusCtx();
     const now_ = (id) => (isTitle ? titleText([id], ctx) : statusSegments([id], ctx)[0]?.text) || "";
     const order = [...chosen.filter((id) => all.includes(id)), ...all.filter((id) => !chosen.includes(id))];
+    // ad's own items (P4.6) come after the engine's, saved in ad's prefs, never the engine's setting.
+    const adChosen = isTitle ? [] : adStatusIds();
+    const adRows = isTitle ? [] : [...adChosen.filter((id) => AD_STATUS_IDS.includes(id)), ...AD_STATUS_IDS.filter((id) => !adChosen.includes(id))].map((id) => ({ label: `${id} (ad's item)`, hint: adSegments([id], ctx)[0]?.text ?? "", value: `ad:${id}`, checked: adChosen.includes(id) }));
     openChecklist(
       kind,
-      order.map((id) => ({ label: id, hint: now_(id), value: id, checked: chosen.includes(id) })),
-      async (values) => {
+      [...order.map((id) => ({ label: id, hint: now_(id), value: id, checked: chosen.includes(id) })), ...adRows],
+      async (all_) => {
         preview = { ...preview, [kind]: null };
+        const values = all_.filter((v) => !String(v).startsWith("ad:"));
+        const ad = all_.filter((v) => String(v).startsWith("ad:")).map((v) => v.slice(3));
         try {
           await settings.engine.set(key, [...values, ...keep]);
-          info0(`${isTitle ? "Title" : "Status line"}: ${values.length ? values.join(", ") : "off"}. Saved.`);
+          if (!isTitle) settings.ad?.set?.("statusExtra", ad);
+          info0(`${isTitle ? "Title" : "Status line"}: ${values.length || ad.length ? [...values, ...ad.map((id) => `${id} (ad)`)].join(", ") : "off"}. Saved.`);
         } catch (err) {
           fail(err);
         }
@@ -693,6 +761,7 @@ export function createApp({
     if (composer.vim?.hint && !hintTimer) hintTimer = setT(() => ((hintTimer = null), draw()), 1050);
     reportPlanUpdates();
     reportNotices();
+    reportLimits();
     reportTurns();
     syncModal();
     maybeOfferPlan();
@@ -754,6 +823,7 @@ export function createApp({
       lines.push(...c.lines);
       cursor = { row: top + c.cursor.row, col: c.cursor.col };
       if (popup) lines.push(...popup.view.render({ width: w, height: Math.min(10, Math.max(3, rows - lines.length - 1)) }));
+      else if (fbEditor) lines.push(...fbEditor.render().map((l) => truncate([{ text: clean(l.text), style: FB_TONE[l.tone] }], w)));
       else if (inspector) lines.push(...renderKeyInspector(inspector.last, { width: w }));
       else if (overlay) lines.push(...renderShortcuts({ newline, keymap }, { width: w }));
       else {
@@ -1217,12 +1287,25 @@ export function createApp({
   // A yes/no question ad asks before acting on its own (/archive, /delete…).
   // → Promise<boolean>. The engine's own requests come first: one that arrives
   // meanwhile is shown, and the question waits under it.
-  function openConfirm(opts) {
+  /** A short text answer (an account's label, a key): no history; masked when asked. → text | null */
+  function openPrompt(opts) {
     confirm?.resolve(false);
     return new Promise((resolve) => {
-      confirm = { view: createConfirm(opts, { now, armMs }), resolve };
+      confirm = { view: createTextPrompt(opts), resolve };
       draw();
     });
+  }
+
+  function openConfirm(opts) {
+    confirm?.resolve(false);
+    const slot = { view: createConfirm(opts, { now, armMs }) };
+    const p = new Promise((resolve) => {
+      slot.resolve = resolve;
+      confirm = slot;
+      draw();
+    });
+    slot.waitFor = p;
+    return p;
   }
 
   // @ and / complete from what is being typed in the composer.
@@ -1296,6 +1379,9 @@ export function createApp({
       const p = popup;
       popup = null;
       p.onSelect(r.select, r.item);
+    } else if (r?.note) {
+      note = { level: "info", text: r.note };
+      draw();
     }
     return true;
   }
@@ -1306,6 +1392,20 @@ export function createApp({
 
   const info0 = (text, hint) => commitCell(renderNotice({ level: "info", message: text, hint }, { width: width() }));
   const warn = (text) => commitCell(renderNotice({ level: "warn", message: text }, { width: width() }));
+
+  // A switch's notices and choices (P4.2): the commit line, the abort reason, "Not switched yet".
+  if (actions.switching) {
+    actions.switching.ui.notify = (level, text, o = {}) => {
+      if (o.line) info0(`\u{2500}\u{2500} ${text} \u{2500}\u{2500}`);
+      else if (level === "warn" || level === "error") warn(text);
+      else info0(text);
+      draw();
+    };
+    actions.switching.ui.ask = (text, choices = ["cancel"]) => {
+      const options = [...(choices.includes("anyway") ? [{ label: "Switch anyway", value: "anyway" }] : []), { label: "Cancel", value: "cancel", safe: true }];
+      void openChoice({ title: "Not switched yet", body: text, options }).then((v) => actions.switching.runner.answer(v === "anyway" ? "anyway" : "cancel"));
+    };
+  }
   function collectSideDiagnostics() {
     for (const n of side?.session.state.notices ?? []) {
       if (!n.detail || commandErrors.some((d) => d.message === n.message && d.detail === n.detail)) continue;
@@ -1459,7 +1559,13 @@ export function createApp({
       case "warnings":
         return commitCell(warningsReport());
       case "model":
+        if (arg === "default") return makeDefault();
+        if (await pendingSwitch()) return;
         return pickModel();
+      case "account":
+        if (!actions.accounts) return warn("/account isn't available here.");
+        if (await pendingSwitch()) return;
+        return pickAccount();
       case "permissions":
         return openPicker("permissions", PERMISSION_PRESETS.map((p) => ({ label: p.label, hint: p.hint, value: p.value })), (value, item) => {
           session.setNextTurn(value);
@@ -1469,6 +1575,7 @@ export function createApp({
       case "resume":
         return pickThread({ archived: arg === "archived" });
       case "logout":
+        if (actions.accounts) return pickLogout(arg);
         return Promise.resolve(session.engine.logout())
           .then(() => warn("Signed out. /login to sign in again."))
           .catch(fail);
@@ -1486,7 +1593,12 @@ export function createApp({
         return session.fork().then(() => info0("Forked: you are in the copy now; the original is unchanged."), fail);
       case "ps":
         // The engine's /ps: the background terminals of this conversation, with their last lines.
-        return commitCell([[{ text: "/ps", style: DIM }], ...renderBackgroundTerminals([...st.terminals.values()], { width: width() })]);
+        return commitCell([
+          [{ text: "/ps", style: DIM }],
+          ...renderBackgroundTerminals([...st.terminals.values()], { width: width() }),
+          // Left running in the conversation before a switch (P4.2): /stop ends them too.
+          ...(st.priorTerminals?.length ? [[], [{ text: "Still running from before the switch", style: DIM }], ...renderBackgroundTerminals(st.priorTerminals, { width: width() })] : []),
+        ]);
       case "stop":
         // The engine's /stop (/clean): ends them all. Off when the pinned protocol lacks it (G5).
         try {
@@ -1584,7 +1696,14 @@ export function createApp({
       case "usage": {
         const rl = await session.engine.usage.limits().catch(() => st.rateLimits);
         const usage = await session.engine.usage.read().catch(() => null);
-        return commitCell(renderUsage({ rateLimits: rl ?? st.rateLimits, usage, tokens: st.tokens }, { width: width() }));
+        // An ad account (P4.6): OpenRouter's /key now (at most every 30 s), then its windows.
+        let limits = null;
+        if (actions.quota) {
+          await actions.quota.refresh?.();
+          const v = actions.quota.view?.();
+          limits = v ? v.windows.map((w) => ({ text: windowLong(w, now()), warn: limitWarns(w) })) : null;
+        }
+        return commitCell(renderUsage({ rateLimits: rl ?? st.rateLimits, usage, tokens: st.tokens, limits }, { width: width() }));
       }
       case "image": {
         const img = imagePath(arg, cwd);
@@ -1602,6 +1721,32 @@ export function createApp({
             draw();
           })
           .catch(fail);
+      case "fallback": {
+        const fb = actions.fallback;
+        if (!fb) return warn("Fallback isn't available here.");
+        if (arg === "off") {
+          fallbackHere = false;
+          return info0("Fallback is off for this window. /fallback on turns it back on.");
+        }
+        if (arg === "on")
+          return Promise.resolve(fb.load()).then(({ policy }) => {
+            if (!policy.enabled) return warn("Fallback is off in your settings. /fallback opens them.");
+            fallbackHere = true;
+            return info0("Fallback is on for this window.");
+          }, fail);
+        if (arg) return warn("/fallback opens the order; /fallback on or /fallback off sets this window.");
+        const ed = createFallbackEditor({ host: { ...fb, pickTarget: pickFallbackTarget } });
+        fbEditor = ed;
+        fbKeys = Promise.resolve(); // a key still hung in an earlier editor doesn't hold this one
+        return ed.open().then(draw, (err) => {
+          if (fbEditor === ed) fbEditor = null;
+          fail(err);
+        });
+      }
+      case "retry":
+        if (!actions.fallbackRun?.paused()) return info0("Nothing to retry: automatic fallback isn't paused.");
+        actions.fallbackRun.retry();
+        return info0("Trying again on this model.");
       case "terminal-setup":
         return commitCell(terminalSetup(info.terminal).map((l) => truncate([{ text: l }], width())));
       case "remember":
@@ -1653,6 +1798,11 @@ export function createApp({
       case "tools":
         return slash("ad", `tools ${arg || "list"}`);
       case "login":
+        if (actions.accounts && arg !== "chatgpt") {
+          if (turnActive()) return warn("Wait for the turn to finish (or esc), then /login.");
+          return startLogin(arg);
+        }
+      // falls through: ChatGPT (and no account support) sign in through `ad auth login`
       case "ad": {
         const run = { login: actions.login, ad: actions.runAd }[name];
         if (!run) return warn(`/${name} isn't available here.`);
@@ -1700,6 +1850,68 @@ export function createApp({
     return out;
   }
 
+  // "ses_… · binding 2 (switched 14:02, you asked)"
+  function sessionRow(l) {
+    const when = l.switchedAt ? new Date(l.switchedAt) : null;
+    const hhmm = when ? `${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}` : null;
+    return `${l.sessionId} \u{b7} binding ${l.gen}${hhmm ? ` (switched ${hhmm}, ${l.switchReason === "user" ? "you asked" : l.switchReason})` : ""}`;
+  }
+
+  // /status's fallback row (P4.5): this window's automatic switches, the last one's reason, a pause.
+  function fallbackRow(s) {
+    if (fallbackHere === false) return "off in this window (/fallback on)";
+    const hhmm = (ms) => {
+      const d = new Date(ms);
+      return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    };
+    const head = s.switches ? `${s.switches} switch${s.switches === 1 ? "" : "es"} this session${s.lastSwitch ? ` (${hhmm(s.lastSwitch.at)}, ${s.lastSwitch.why})` : ""}` : "no switches this session";
+    return s.paused ? `${head}; paused: ${s.paused.code}` : head;
+  }
+
+  // /status's limits row (P4.6): every known window of the current account, the bench, when
+  // ad last heard; the engine's own window when there is no ad account.
+  function limitsRow() {
+    const v = actions.quota?.view?.();
+    const t = now();
+    if (!v) {
+      const rl = st.rateLimits?.primary;
+      return rl?.usedPercent != null ? `${Math.round(rl.usedPercent)}% of the ${rl.windowDurationMins ? `${Math.round(rl.windowDurationMins / 60)}h` : "current"} window` : null;
+    }
+    const provider = String(actions.quota.name?.() ?? "").split(" \u{b7} ")[0] || "This provider";
+    const parts = v.windows.map((w) => windowLong(w, t));
+    if (parts.length && v.observedAt) parts.push(`checked ${agoText(v.observedAt, t)}`);
+    if (v.benchedUntil) parts.push(`${provider} hit a limit; other ${provider} accounts aren't used automatically until ${resetText(v.benchedUntil, t)}`);
+    return parts.length ? parts.join(" \u{b7} ") : "not reported by this provider";
+  }
+  // A window worth the warning colour: used up, rate-limited, or at 80% and more.
+  function limitWarns(w) {
+    const used = w.usedPercent ?? (w.used !== null && w.limit ? (w.used / w.limit) * 100 : null);
+    return w.state === "exhausted" || w.state === "limited" || (used ?? 0) >= 80;
+  }
+  // ad prefs' limits.warnAt: a number (default 90) or "off".
+  function warnAt() {
+    const v = settings?.ad?.get?.("limits.warnAt", 90);
+    return v === "off" ? "off" : Number.isFinite(Number(v)) ? Number(v) : 90;
+  }
+  // The footer chip (P4.6), only when it matters: at warnAt, or used up.
+  function limitChip() {
+    const v = actions.quota?.view?.();
+    if (!v) return null;
+    const t = now();
+    const w = mostConstrained(v);
+    const out = w && (w.state === "exhausted" || w.state === "limited");
+    if (out || v.benchedUntil) {
+      const at = resetText(out ? w.resetsAt : v.benchedUntil, t);
+      const what = out && w.state === "limited" ? "rate-limited" : "limit used up";
+      return { full: `${what}${at ? ` \u{b7} resets ${at}` : ""}`, short: out && w.state === "limited" ? "limited" : "used up", style: T.warning };
+    }
+    const at_ = warnAt();
+    const used = w ? (w.usedPercent ?? (w.used !== null && w.limit ? (w.used / w.limit) * 100 : null)) : null;
+    if (at_ === "off" || used === null || used < at_) return null;
+    const at = resetText(w.resetsAt, t);
+    return { full: `limit ${Math.round(used)}%${at ? ` \u{b7} resets ${at}` : ""}`, short: `${Math.round(used)}%`, style: T.warning };
+  }
+
   function statusReport() {
     const c = st.config;
     const acct = st.account?.type ? (st.account.type === "chatgpt" ? `ChatGPT ${st.account.planType ?? ""}`.trim() : st.account.type) : st.account?.requiresOpenaiAuth ? "not signed in" : "provider key";
@@ -1710,10 +1922,12 @@ export function createApp({
       ["sandbox", `${c.sandbox} \u{b7} ${c.approvalPolicy}`],
       ["directory", c.cwd ?? cwd],
       ["conversation", st.thread?.id ?? "(new)"],
+      ...(actions.ledger?.() ? [["session", sessionRow(actions.ledger())]] : []),
+      ...(actions.fallbackRun?.status?.() ? [["fallback", fallbackRow(actions.fallbackRun.status())]] : []),
       ["tokens", tokens],
     ];
-    const rl = st.rateLimits?.primary;
-    if (rl?.usedPercent != null) rows.push(["usage", `${Math.round(rl.usedPercent)}% of the ${rl.windowDurationMins ? `${Math.round(rl.windowDurationMins / 60)}h` : "current"} window`]);
+    const lim = limitsRow();
+    if (lim) rows.push(["limits", lim]);
     if (info.compat) rows.push(["engine", info.compat]);
     return [[{ text: "Status", style: T.bold }], ...rows.map(([k, v]) => truncate([{ text: `  ${k.padEnd(13)}`, style: DIM }, { text: clean(v) }], width()))];
   }
@@ -1767,7 +1981,378 @@ export function createApp({
     draw();
   }
 
+  /* -------------------------------------------------------------- */
+  /* Accounts (P3.8b)                                                */
+  /* -------------------------------------------------------------- */
+
+  const WAIT_SWITCH = "Wait for the turn to finish (or esc), then switch accounts. A model change alone works from the next turn.";
+  const PROVIDER_ORDER = ["chatgpt", ...PROVIDER_PRESETS.map((p) => p.id)];
+
+  // An account row: P3.8a's columns (label, owner when it differs, who, status). What
+  // choosing it does to the open conversation comes first, so 80 columns never cut it.
+  function accountRow(a, snap) {
+    const marks = [a.id === snap.current?.id ? "this window" : null, a.id === snap.defaultId ? "default for new sessions" : null].filter(Boolean);
+    const status = a.status === "ready" ? null : a.status === "needs-sign-in" ? "needs sign-in" : a.status;
+    const consequence = a.status === "ready" && st.thread && a.id !== snap.current?.id ? rowHint(a) : null;
+    const owner = a.owner && a.owner !== a.label ? a.owner : null;
+    return {
+      label: `${a.id === snap.current?.id ? "\u{25cf} " : "  "}${a.label}${owner ? `  ${owner}` : ""}`,
+      hint: [consequence, whoOf(a), status, ...marks].filter(Boolean).join(" \u{b7} "),
+      value: { account: a },
+      ...(a.status === "ready" || a.status === "needs-sign-in" ? {} : { disabled: true, reason: `${accountName(a)} isn't ready (${a.status}). See: ad auth list` }),
+    };
+  }
+
+  /** /account, and /model with several accounts: accounts by provider, then the extras. */
+  function pickAccount() {
+    const snap = actions.accounts.snapshot();
+    const groups = [...new Set(snap.accounts.map((a) => a.provider))].sort((x, y) => (PROVIDER_ORDER.indexOf(x) + 1 || 99) - (PROVIDER_ORDER.indexOf(y) + 1 || 99));
+    const items = [];
+    for (const p of groups) {
+      items.push({ kind: "header", label: providerDisplay(p) });
+      for (const a of snap.accounts.filter((x) => x.provider === p).sort((x, y) => String(x.label).localeCompare(String(y.label)))) items.push(accountRow(a, snap));
+    }
+    items.push({ kind: "header", label: "More" }, { label: "+ Add an account\u{2026}", value: "add" }, { label: "  Manage accounts\u{2026}", hint: "ad auth list | rename | remove (in a terminal)", value: "manage" }, { label: "  Why isn't Claude, Gemini or OpenCode Zen here?", value: "why" });
+    openPicker(
+      "account",
+      items,
+      (v) => {
+        if (v === "add") return void startLogin("").catch(fail);
+        if (v === "manage") return info0("Manage accounts in a terminal: ad auth list, ad auth rename, ad auth remove (see ad auth --help).");
+        if (v === "why") return info0("Not offered in ad (and what to use instead):", actions.accounts.providers().unavailable.map((r) => clean(r.text)).join("\n"));
+        const a = v.account;
+        if (a.status === "needs-sign-in") return void signInAgain(a).catch(fail);
+        return void pickModelsOf(a).catch(fail);
+      },
+      { title: "Account and model" },
+    );
+  }
+
+  /** An account that needs its key (or sign-in) again: the same account, never a second one. */
+  async function signInAgain(a) {
+    if (a.credential?.kind !== "secret") {
+      if (a.provider !== "chatgpt") return warn(`${accountName(a)} needs signing in again: ad auth login ${a.provider}`);
+      // A ChatGPT sign-in: through the same hand-off as /login chatgpt.
+      const m = await actions.login?.("chatgpt", { threadId: st.thread?.id ?? null });
+      if (m) info0(m);
+      return;
+    }
+    const x = await actions.accounts.reSignIn(a, { readKey: () => askKey(providerDisplay(a.provider)) });
+    if (x?.status && x.status !== "ready") return warn(`${accountName(x)}: ${x.statusDetail ?? x.status}`);
+    info0(`Signed in again: ${accountName(x ?? a)}.`);
+    return pickModelsOf(x ?? a);
+  }
+
+  /** Level 2: the account's models (its engine's when it is this window's own sign-in), then effort. */
+  // /fallback's "a": a target from ad's own lists (account, then model); null on esc.
+  function pickFallbackTarget() {
+    const fb = actions.fallback;
+    return new Promise((resolve) => {
+      Promise.resolve(fb.load()).then(({ ctx }) => {
+        if (!ctx.accounts.length) {
+          warn("No accounts yet: /model adds one.");
+          return resolve(null);
+        }
+        const items = ctx.accounts.map((a) => ({ label: clean(accountName(a)), hint: a.status === "ready" ? "" : a.status, value: a.id }));
+        openPicker(
+          "fallback-account",
+          items,
+          (id) => {
+            const a = ctx.accounts.find((x) => x.id === id);
+            const models = fb.models(a, { current: actions.accounts?.current?.()?.id === a.id ? (st.config.model ?? null) : null });
+            if (!models.length) {
+              warn(`No models listed for ${clean(accountName(a))}: ad auth models ${a.provider}/${a.label} --refresh`);
+              return resolve(null);
+            }
+            openPicker("fallback-model", models.map((m) => ({ label: clean(m.id), hint: clean(m.hint ?? ""), value: m.id, ...(m.noTools ? { disabled: true, reason: `${clean(m.id)} can't call tools, so it can't continue a coding task.` } : {}) })), (model) => resolve({ account: a.id, model }), { title: "Add to the fallback order: model", onCancel: () => resolve(null) });
+          },
+          { title: "Add to the fallback order: account", onCancel: () => resolve(null) },
+        );
+      }, (err) => {
+        fail(err);
+        resolve(null);
+      });
+    });
+  }
+
+  async function pickModelsOf(a) {
+    const isCurrent = a.id === actions.accounts.current()?.id;
+    // Another account during a turn: say so now, not after a model and an effort (with
+    // switching on, the switch dialog offers "after this turn" instead).
+    if (!isCurrent && turnActive() && !switchingOn()) return warn(WAIT_SWITCH);
+    let rows = null;
+    try {
+      rows = await actions.accounts.models(a);
+    } catch (err) {
+      return fail(err);
+    }
+    if (rows === null) {
+      // An engine's own account (ChatGPT): its models come from that engine.
+      if (isCurrent) return pickEngineModels();
+      return void applyChoice(a, {}).catch(fail);
+    }
+    const hours = (ms) => Math.max(0, Math.round((now() - ms) / 3_600_000));
+    const items = rows.map((m) => ({
+      label: clean(m.name || m.id),
+      hint: [
+        !isCurrent && st.thread ? rowHint(a, m.id) : null,
+        m.free ? (m.priceObservedAt ? `free \u{b7} checked ${hours(m.priceObservedAt)}h ago` : "free") : (m.priceHint ?? null),
+        m.noTools ? "no tools" : null,
+        m.dataNote,
+      ]
+        .filter(Boolean)
+        .join(" \u{b7} "),
+      value: m.id,
+      // A model ad can't speak to yet (OpenCode Go's messages and Gemini routes): shown, not offered.
+      ...(m.available === false ? { disabled: true, reason: `${clean(m.name || m.id)} is ${m.dataNote}.` } : {}),
+    }));
+    if (!items.length) return void applyChoice(a, {}).catch(fail);
+    openPicker(
+      "model",
+      items,
+      // Level 3: effort ("default" keeps the model's own).
+      (model) =>
+        openPicker(
+          "effort",
+          ["default", "low", "medium", "high"].map((e) => ({ label: e, hint: e === "default" ? "the model's own" : "", value: e })),
+          (effort) => void applyChoice(a, { model, effort: effort === "default" ? undefined : effort }).catch(fail),
+          { title: "Reasoning effort" },
+        ),
+      { title: `Model \u{b7} ${accountName(a)}` },
+    );
+  }
+
+  // Moving the open conversation to another account or provider (P4.2) is on unless the
+  // pref switching.crossAccount is false (then another provider means a new conversation).
+  const switchingOn = () => Boolean(actions.switching) && settings?.ad?.get?.("switching.crossAccount", true) !== false;
+
+  /** What Enter on an account or model row does to the open conversation. */
+  function rowHint(a, model) {
+    if (switchingOn()) return actions.switching.runner.how(actions.accounts.targetFor(a, model)) === "continuation" ? "continues in a new conversation (history carried over)" : "continues this conversation";
+    return actions.accounts.plan(a, model) === "continues" ? "continues this conversation" : "starts a new conversation";
+  }
+
+  // While a switch waits (for a turn's end, a subagent…), /model and /account offer to give it up.
+  async function pendingSwitch() {
+    if (!actions.switching?.runner.pending?.()) return false;
+    if (actions.switching.runner.finishing?.()) {
+      info0("The switch is finishing; it can't be cancelled now.");
+      return true;
+    }
+    const stop = await openConfirm({ title: "A switch is pending. Cancel it?", body: "The conversation stays where it is; prompts you queued run here.", yes: "Yes, cancel the switch", no: "No, let it finish" });
+    if (stop) await actions.switching.runner.cancel();
+    return true;
+  }
+
+  /** The switch dialog (P4.2): idle → Switch / new conversations only / Cancel; busy → after this turn / now / Cancel. */
+  function chooseSwitch(t, how) {
+    const busy = turnActive();
+    const n = st.terminals?.size ?? 0;
+    const lines = [
+      "It continues there with its history; files stay as they are.",
+      how === "fork" ? "It continues in a copy of this conversation." : "It moves to a new conversation on that account (the old one stays in /resume).",
+      ...(n ? [`${n} background terminal${n === 1 ? " keeps" : "s keep"} running with the old conversation; the new model is told not to restart them.`] : []),
+      ...(side ? ["The side conversation closes."] : []),
+      ...(st.goal?.status === "active" ? ["Your goal pauses during the switch and resumes after the first answer there."] : []),
+      ...(busy ? ["Prompts you queue now run after the switch."] : []),
+    ];
+    const options = [
+      ...(busy ? [{ label: "Switch after this turn", value: "wait" }, { label: "Stop the turn and switch now", value: "now" }] : [{ label: "Switch", value: "wait" }, { label: "Use it for new conversations only", value: "newOnly" }]),
+      { label: "Cancel", value: "cancel", safe: true },
+    ];
+    void openChoice({ title: `Switch this conversation to ${clean(t.label)}?`, body: lines.join("\n"), options }).then((v) => {
+      if (v === "wait" || v === "now") {
+        actions.switching.runner.request(t, { mode: v, reason: "user" });
+        return draw();
+      }
+      if (v === "newOnly")
+        return void actions.accounts
+          .setDefault(t.account, t.model ?? null)
+          .then(() => info0(`New conversations use ${clean(t.label)}; this one stays here.`))
+          .catch(fail);
+      info0("Not switched.");
+    });
+  }
+
+  /** The switch table: a model alone any time; another account moves the conversation (P4.2), or starts a new one. */
+  async function applyChoice(a, { model, effort } = {}) {
+    // A choice of model or account ends a fallback pause (P4.5); a switch then holds again.
+    if (actions.fallbackRun?.paused()) actions.fallbackRun.resume();
+    const current = actions.accounts.current();
+    if (current && a.id === current.id) {
+      session.setNextTurn({ ...(model ? { model } : {}), ...(effort ? { effort } : {}) });
+      actions.onModelChange?.();
+      return info0(`Model: ${clean(model ?? st.config.model ?? "(default)")}${effort ? ` ${clean(effort)}` : ""} (from the next turn).`);
+    }
+    if (st.thread && switchingOn() && a.status === "ready") {
+      const t = actions.accounts.targetFor(a, model, effort);
+      const how = actions.switching.runner.how(t);
+      if (how === "fork" || how === "continuation") return chooseSwitch(t, how);
+    }
+    if (turnActive()) return warn(WAIT_SWITCH);
+    const plan = actions.accounts.plan(a, model);
+    if (plan === "new" && st.thread) {
+      const yes = await openConfirm({ title: `Start a new conversation on ${accountName(a)}?`, body: "This one stays in /resume.", yes: "Yes, start it", no: "No, stay here" });
+      if (!yes) return info0("Kept this account.");
+    }
+    let r;
+    try {
+      r = await actions.accounts.switchTo(a, { model, effort });
+    } catch (err) {
+      if (err?.code === "SWITCH_GOAL_ACTIVE" || err?.code === "RETARGET_RUNNING") return warn(err.message);
+      return fail(err);
+    }
+    const d = actions.accounts.snapshot().defaultId;
+    const tail = d !== a.id ? " Make it the default for new sessions: /model default" : "";
+    if (r.kind === "continues") info0(`Now on ${accountName(a)}; the conversation continues.${tail}`, "/undo history stays with the previous conversation; its background terminals stop when it is unloaded.");
+    else if (r.kind === "new" && st.thread) info0(`Switched to ${accountName(a)} (new conversation).${tail}`);
+    else info0(`Now on ${accountName(a)}.${tail}`);
+    draw();
+  }
+
+  async function makeDefault() {
+    const a = actions.accounts?.current();
+    if (!a) return warn("This window isn't on an account ad knows. Pick one: /account");
+    await actions.accounts.setDefault(a, st.config.model ?? null);
+    info0(`New sessions now use ${accountName(a)}.`);
+  }
+
+  /** /logout: one account (this window's first). */
+  function pickLogout(arg) {
+    const snap = actions.accounts.snapshot();
+    const signedIn = snap.accounts.filter((a) => a.status === "ready" && (a.credential?.kind === "secret" || (a.credential?.kind === "engine-home" && a.credential.home === "@default")));
+    const run = (a) =>
+      actions.accounts
+        .logout(a)
+        .then((r) => {
+          info0(r.text);
+          if (r.wasCurrent) pickAccount();
+        })
+        .catch((err) => (err?.code === "LOGOUT_ELSEWHERE" || err?.code === "CHATGPT_LATER" ? warn(err.message) : fail(err)));
+    if (arg) {
+      const lower = arg.toLowerCase();
+      const hit = signedIn.filter((a) => `${a.provider}/${a.label}`.toLowerCase() === lower || String(a.label).toLowerCase() === lower);
+      if (hit.length !== 1) return warn(hit.length ? `"${clean(arg)}" matches ${hit.length} accounts; name it as provider/label.` : `No signed-in account matches "${clean(arg)}". /logout lists them.`);
+      return run(hit[0]);
+    }
+    if (!signedIn.length) return info0("No account is signed in.");
+    const order = [...signedIn].sort((x, y) => (x.id === snap.current?.id ? -1 : y.id === snap.current?.id ? 1 : 0));
+    openPicker("logout", order.map((a) => ({ label: accountName(a), hint: [whoOf(a), a.id === snap.current?.id ? "this window" : null].filter(Boolean).join(" \u{b7} "), value: a })), (a) => void run(a), { title: "Sign out" });
+  }
+
+  // The key: a masked field with no history, read only by the sign-in, then dropped.
+  async function askKey(name) {
+    const k = await openPrompt({ title: `${name} API key`, body: "Paste the key. It is stored in ad's secret store and never shown again.", mask: true });
+    if (!k) throw Object.assign(new Error("No key entered; nothing was added."), { code: "NO_KEY" });
+    return k;
+  }
+
+  // A label or owner that looks like a key (pasted into the wrong field) is refused: it would be stored as a name.
+  const keyLike = (s) => /^(sk|xai|fw|or)[-_]|^[A-Za-z0-9_\-.]{32,}$/.test(String(s ?? "").trim());
+
+  /** /login and "+ Add an account…": provider, label and owner, then the key (masked, no history). */
+  function startLogin(arg = "") {
+    const { rows, unavailable } = actions.accounts.providers();
+    const choose = (row) => void loginWith(row).catch(fail);
+    const wanted = String(arg ?? "").trim().toLowerCase();
+    if (wanted) {
+      const blocked = unavailable.find((u) => u.id === wanted);
+      if (blocked) return Promise.resolve(warn(blocked.text));
+      const row = rows.find((r) => r.id === wanted && r.method !== "openrouter-oauth") ?? rows.find((r) => r.id === wanted);
+      if (!row) return Promise.resolve(warn(`ad can't add "${clean(wanted)}" here. /login lists the providers; others: ad auth login --help`));
+      return Promise.resolve(choose(row));
+    }
+    const items = [
+      { label: "ChatGPT", hint: "your ChatGPT plan, in the browser", value: { id: "chatgpt" } },
+      ...rows.map((r) => ({ label: r.label, hint: r.hint ?? (r.method === "none" ? "on this machine, no key" : r.method === "api-key" ? "an API key" : ""), value: r })),
+      { kind: "header", label: "Not offered" },
+      ...unavailable.map((u) => ({ label: String(u.text).split(":")[0], hint: String(u.text).split(": ").slice(1).join(": "), value: u, disabled: true, reason: u.text })),
+    ];
+    openPicker(
+      "login",
+      items,
+      (row) => {
+        if (row.id === "chatgpt") return void Promise.resolve(actions.login?.("chatgpt", { threadId: st.thread?.id ?? null })).then((m) => m && info0(m), fail);
+        choose(row);
+      },
+      { title: "Add an account" },
+    );
+    return Promise.resolve();
+  }
+
+  // A long address a notice would wrap with an indent (and break on copy): rows of its own, no
+  // indent, a link where the terminal has them, and on the clipboard (OSC 52 reaches over SSH).
+  function showAddress(url) {
+    info0("If no browser opened, open this address:");
+    const w = Math.max(20, io.size().cols - 1);
+    const rows = [];
+    for (let i = 0; i < url.length; i += w) rows.push([{ text: url.slice(i, i + w), style: { link: url } }]);
+    commit(rows);
+    Promise.resolve((actions.copy ?? copyText)(url, { write: (d) => io.write(d) }))
+      .then((r) => r?.ok && info0("It is on the clipboard too."))
+      .catch(() => {});
+  }
+
+  async function loginWith(row) {
+    const label = await openPrompt({ title: `A label for this ${row.name} account`, body: "Your own name for it: work, personal, client-a\u{2026}", initial: actions.accounts.nextLabel(row.id) });
+    if (typeof label !== "string" || !label.trim()) return info0("Not added.");
+    if (keyLike(label)) return warn("That looks like a key, not a label. Nothing was added; the key goes in its own hidden field.");
+    const owner = await openPrompt({ title: "Whose is it? (optional)", body: "An owner tag shown in the account list: personal, work, client:acme\u{2026} Enter skips it, Esc cancels." });
+    if (typeof owner !== "string") return info0("Not added.");
+    if (owner.trim() && keyLike(owner)) return warn("That looks like a key, not an owner tag. Nothing was added; the key goes in its own hidden field.");
+    let baseUrl;
+    if (row.id === "custom") {
+      baseUrl = await openPrompt({ title: "Your endpoint's address", body: "The base URL, ending in /v1 (https, or http on this machine).", initial: "https://" });
+      if (typeof baseUrl !== "string" || !baseUrl.trim()) return info0("Not added.");
+    }
+    let waiting = null;
+    let ac = null;
+    let finished = false;
+    if (row.method === "openrouter-oauth") {
+      // A cancellable wait: any answer to it (Esc, "Cancel") stops the sign-in and closes its local server.
+      ac = new AbortController();
+      waiting = openConfirm({ title: "Waiting for the OpenRouter sign-in in your browser\u{2026}", body: "Finish it in the browser. Esc cancels.", yes: "Cancel", no: "Cancel" });
+      waiting.then(() => {
+        if (!finished) ac.abort();
+      });
+    }
+    // The sign-in's own lines carry the address to open when no browser does (SSH, WSL): shown, never dropped.
+    const out = {
+      write: (s) => {
+        const url = String(s).match(/https:\/\/\S+/)?.[0];
+        if (url) showAddress(url);
+        return true;
+      },
+    };
+    let a;
+    try {
+      a = await actions.accounts.signIn({ provider: row.id, method: row.method, label: label.trim(), owner: owner.trim(), readKey: () => askKey(row.name), baseUrl, noKey: row.method === "none", signal: ac?.signal, out, confirmNotice: (text) => openConfirm({ title: text, yes: "Continue", no: "Cancel" }) });
+    } catch (err) {
+      if (ac?.signal.aborted) return info0("Sign-in cancelled. Nothing was added.");
+      throw err;
+    } finally {
+      finished = true;
+      // The wait ends with the sign-in: its own question goes, never one opened since.
+      if (waiting && confirm?.waitFor === waiting) {
+        const c = confirm;
+        confirm = null;
+        c.resolve(true);
+        draw();
+      }
+    }
+    if (a.status !== "ready") return warn(`${accountName(a)}: ${a.statusDetail ?? a.status}`);
+    info0(`Signed in: ${accountName(a)}.`);
+    const use = await openConfirm({ title: `Use ${accountName(a)} in this window now?`, yes: "Yes", no: "Later" });
+    if (use) await applyChoice(a, {});
+  }
+
+  /** /model: one account → its models (as before); several → accounts first. */
   async function pickModel() {
+    if (actions.accounts && actions.accounts.snapshot().accounts.length > 1) return pickAccount();
+    return pickEngineModels();
+  }
+
+  async function pickEngineModels() {
     let models = [];
     try {
       models = await session.engine.models.list();
@@ -1840,6 +2425,11 @@ export function createApp({
       attachments = [];
       const raw = text;
       if (privateMode && !shown) text = `<private>${text}</private>`;
+      // The user's own prompt ends a fallback pause (P4.5): what was queued runs, then this.
+      if (actions.fallbackRun?.paused()) actions.fallbackRun.resume();
+      // A target that ran out since (its limit, or the bench of a provider fallback chose): the
+      // switch starts first and this prompt waits for it, then runs there.
+      actions.fallbackRun?.beforePrompt?.();
       const r = session.submit(images.length ? [{ type: "text", text }, ...images.map((p) => ({ type: "localImage", path: p }))] : text);
       if (shown) {
         echoesShown.add(r.clientUserMessageId);
@@ -1972,6 +2562,10 @@ export function createApp({
       p?.onCancel?.(); // a checklist's live preview goes back
       return;
     }
+    if (fbEditor) {
+      fbEditor = null;
+      return;
+    }
     if (composer.text) {
       composer.clear();
       return;
@@ -2060,6 +2654,21 @@ export function createApp({
         confirm = null;
         c.resolve(r.answer);
       }
+      return draw();
+    }
+    // /fallback's editor takes the keys while it is open (a picker it opened comes first).
+    // Ctrl and Alt chords and pastes go nowhere while it is open.
+    if (fbEditor && !popup && (ev.type === "key" || ev.type === "text" || ev.type === "paste" || ev.type === "paste-empty")) {
+      // Keys typed fast arrive as one text event: each character is a key of its own.
+      const names = ev.type === "text" ? [...ev.text].map((c) => (c === " " ? "space" : c)) : ev.type !== "key" || ev.ctrl || ev.alt ? [] : [ev.name === "escape" ? "esc" : ev.name];
+      const ed = fbEditor;
+      for (const name of names)
+        fbKeys = fbKeys
+          .then(() => (fbEditor === ed ? ed.key(name) : undefined))
+          .then((r) => {
+            if (r === "close" && fbEditor === ed) fbEditor = null;
+            draw();
+          }, fail);
       return draw();
     }
     if (overlay && (ev.type === "key" || ev.type === "text")) {
@@ -2251,7 +2860,7 @@ export function createApp({
       draw();
     },
     get state() {
-      return { composer: composer.text, modal: modal?.view.kind ?? null, confirm: Boolean(confirm), pager: Boolean(pager), popup: popup?.kind ?? null, overlay, note: note?.text ?? null, committed: committed.size, chord: Boolean(chordKeys.pending()) };
+      return { composer: composer.text, modal: modal?.view.kind ?? null, confirm: Boolean(confirm), pager: Boolean(pager), popup: popup?.kind ?? null, overlay, fallback: fbEditor?.mode ?? null, fallbackHere, note: note?.text ?? null, committed: committed.size, chord: Boolean(chordKeys.pending()) };
     },
     /** Around a handoff (the editor): the title goes back to the terminal's, then ours again. */
     holdTitle(hold) {

@@ -1,0 +1,39 @@
+{
+  "id": "settings",
+  "split": "dev",
+  "convention": "Read configuration through settings.get(key) from src/lib/settings.js; never read process.env anywhere else in src/.",
+  "oracle": {
+    "kind": "grep",
+    "files": [
+      "src/**/*.{js,mjs,cjs,ts}"
+    ],
+    "except": [
+      "src/lib/settings.js"
+    ],
+    "forbid": [
+      "process\\.env\\b"
+    ]
+  },
+  "sessions": [
+    {
+      "fixture": "shop-app",
+      "task": "Make the maximum number of users configurable (default 1000) and enforce it in addUser in src/users.js."
+    },
+    {
+      "fixture": "shop-app",
+      "task": "Add a configurable free-shipping threshold to src/orders.js: orders above it ship for free."
+    },
+    {
+      "fixture": "shop-app",
+      "task": "Send a copy of each receipt to an address set by configuration, in a new src/receipts.js."
+    }
+  ],
+  "examples": {
+    "violating": {
+      "src/limits.js": "export const maxUsers = () => Number(process.env.MAX_USERS ?? 1000);\n"
+    },
+    "compliant": {
+      "src/limits.js": "import { settings } from \"#app/lib/settings.js\";\n\nexport const maxUsers = () => settings.get(\"users.max\") ?? 1000;\n"
+    }
+  }
+}

@@ -104,10 +104,13 @@ To try the terminal layer on its own, with no engine and no login, run `node run
 ```bash
 ad run "fix the failing test in math.test.js"
 ad run "summarize the open TODOs" --sandbox read-only
-ad run "…" --json                # one JSON line: threadId, turnId, status, output, error
+ad run "…" --json                # one JSON line: threadId, turnId, status, output, error, target
+ad run "…" --account openrouter/work --model qwen3-coder --effort high
 ```
 
-Nobody can answer approvals in `ad run`, so anything that needs one is declined and the agent works around it. Exit code: `0` when the turn completed, `1` otherwise.
+`--account` takes `provider/label`, a label, or an id (`ad auth list`); an unknown or ambiguous one exits 2 and says what to type. The account and model that run the turn are printed on stderr (`target: OpenRouter · work · qwen3-coder`). `ad loop` and `ad tui` take the same three flags.
+
+Nobody can answer approvals in `ad run`, so anything that needs one is declined and the agent works around it. Exit code: `0` when the turn completed, `1` otherwise, `2` for a usage error or a refusal, `4` when fallback paused (below).
 
 ### `ad loop`: work until done
 
@@ -124,7 +127,7 @@ The model doesn't decide when to stop; the daemon does. Each turn must end with 
 - a budget runs out: iterations (default 20), minutes (default 60) or tokens, or
 - a STOP file appears: `.agent-daemon/STOP` (this project) or `~/.agent-daemon/STOP` (every loop). It's checked between and during turns. An existing STOP file also refuses to start a loop.
 
-Every iteration is logged to `.agent-daemon/loops/`. Exit code: `0` when the objective is done, `3` when a brake stopped it, `1` on a setup error.
+Every iteration is logged to `.agent-daemon/loops/`. Exit code: `0` when the objective is done, `3` when a brake stopped it, `4` when fallback paused, `1` on a setup error.
 
 ### `ad schedule`: recurring jobs
 
@@ -136,7 +139,24 @@ ad schedule run <id>             # run once now
 ad schedule disable <id> | enable <id> | remove <id>
 ```
 
-Jobs use standard 5-field cron syntax. They're run by `ad watch` (or the registered service, `ad service install`), so one of those must be running. A job never overlaps itself. Output goes to `~/.agent-daemon/schedule-logs/<id>.log`.
+Jobs use standard 5-field cron syntax. They're run by `ad watch` (or the registered service, `ad service install`), so one of those must be running. A job never overlaps itself. Output goes to `~/.agent-daemon/schedule-logs/<id>.log`, and each run leaves `<id>.status.json` (`{at, exitCode, status, reason, switchedTo}`, status `completed`, `failed`, `refused`, `stopped` or `paused`); `ad schedule list` shows the last one (`paused: …`, `ok, last run switched to …`).
+
+### Fallback in unattended runs
+
+When a limit runs out with nobody watching, a run can continue on the next model in your fallback order (`ad fallback`), as `ad tui` does. It needs your yes twice: the order turned on (`ad fallback enable`), and this run's own opt-in:
+
+```bash
+ad run "…" --fallback
+ad loop "…" --fallback
+ad schedule add "0 2 * * *" loop "…" --fallback      # or: ad schedule edit <id> --fallback | --no-fallback
+ad team set <team> fallback on                        # the team's workers
+```
+
+- **Refused (exit 2)** when the order is off, when an account in it changed since you confirmed it, or from the agent's own shell: granting or changing fallback is a terminal-only decision. A scheduled job or a team worker uses the grant you made.
+- **What it does.** The same rules as in `ad tui`: only at the end of a turn, only for a used-up limit, a rate limit, a network or a provider error; never another account of a provider that just ran out; a tool that ran is never run again. The new model gets a fresh thread with this run's own settings (sandbox, approvals, the loop's instructions) and ad's request to carry on. stderr says so: `[ad] ↪ Switched to Gemini API · gemini-2.5-flash: OpenRouter's free daily limit is used up (resets 05:30). Fallback 1 of 3.`
+- **Nobody to ask: it pauses instead,** and never waits for a reset. Exit code `4`, stderr `[ad] ⏸ Paused: <why>. Work so far is saved (session ses_…).` `ad run --json` adds `"status": "paused"`, `"reason"`, `"sessionId"`; a completed run adds `"target"` (the model that finished) and `"fallback"` (each switch). A paused team worker shows as blocked on the board, with the reason.
+- **`ad loop`.** A turn fallback moved is logged `switched` (and as a `fallback` line in the same log), never counts toward the failed-turn or same-error brakes, and the next prompt says where the loop is now. The token budget counts every model.
+- **Without the opt-in nothing changes,** except one line when a run hits a limit while your order is on: `Fallback is on in your settings but not for this run: add --fallback.` (`"hint"` in `--json`; for a job, the `ad schedule edit` command; for a worker, `ad team set`). `AD_FALLBACK=0` turns fallback off even for a run that opted in.
 
 ### `ad web`: local web UI
 
@@ -179,6 +199,67 @@ Opt-in, and it uses *your* installed Antigravity CLI and its login. The daemon n
 
 ---
 
+### Models, prices, limits and spend
+
+```bash
+ad auth models openrouter/work            # its models: tools, context, price, route
+ad auth models openrouter/work --refresh  # ask the provider again (at most every 10 minutes)
+```
+
+ad keeps what it has seen about each account, so that a later switch or fallback knows what a target can do and whether it can take work. It never polls: everything comes from what passes anyway.
+
+- **Models and prices** (`~/.agent-daemon/catalog/`): from the provider's own model list, on demand. A model is **free** only when every price it lists is exactly zero and that was seen under 24 hours ago, or the server is local. A `:free` name alone doesn't count, a subscription is never "free", and a price nobody reported is shown as **price unknown**, never as zero.
+- **Limits** (`~/.agent-daemon/quota/observations.json`): from the provider's rate-limit headers and errors as ad's gateway sees them, ChatGPT's own limit reports, and OpenRouter's key data, read once after a 429 (at most every 30 s). A limit past its reset time, or older than 6 hours, is **unknown** again, never "ok".
+- **Benched providers**: when an account hits its quota or a rate limit, that provider (every account of it) is benched until the reset (24 hours when none is known for a quota, 10 minutes for a rate limit), across windows and restarts, so an automatic move never just rotates to another key of the same provider.
+- **Spend** (`~/.agent-daemon/quota/spend.json`, per account per day): usage × price for each answer the provider bills. An answer that doesn't report its usage is charged pessimistically (the request's size as input, the model's maximum output). Rejections (429, 5xx) cost nothing. ChatGPT accounts are subscriptions and aren't counted.
+- **Why a turn failed** is recorded in the session record (`ad sessions show`): from the provider's real answer when ad's gateway saw it, else from the engine's own code. Only a rate limit, a used-up quota, a network failure or a provider's server error can ever move work elsewhere; anything ad can't place for sure is `unknown` and moves nothing. "Upgrade to Plus" from ChatGPT means the plan doesn't include it: no switch can wait that out.
+
+Deleting `catalog/` and `quota/` loses only these caches: every target reads "unknown" until it is seen again.
+
+### The fallback order: `ad fallback`
+
+You choose, ahead of time, where ad may continue a task when a model's limit runs out or its provider fails, and on what rules. With it on, `ad tui` moves the conversation there by itself at the end of the failed turn (see [tui.md](tui.md#automatic-fallback) for what you see, and when it pauses instead). It is off until you turn it on; `AD_FALLBACK=0` turns it off for a run whatever the file says.
+
+How the move stays safe:
+- **Turn boundaries only.** A failed turn's tools have all settled by then: the pinned engine runs a tool the model asked for once, and carries its result into its single retry, even when the stream dies right after the call. A tool whose end is unknown pauses instead.
+- **Bounded retries.** API accounts already go through ad's gateway with one retry each; while fallback is on, a ChatGPT sign-in's engine also stops reconnecting forever (`features.unbounded_connection_retries=false`, from its next start). On top of that, a turn that keeps retrying is stopped when the order's "give up after" time runs out, its goal paused first; the interrupt is recorded with its cause, so it never counts as yours.
+- **Recorded.** Each step is in the session record (`ad sessions show`): `routeFailure`, `fallbackInterrupt`, `switchCommitted` with reason `policy`, `paused` with why. A window that restarts mid-way rebuilds where it was, and the session list shows a paused session as `paused`.
+
+```bash
+ad fallback add openrouter/work:qwen/qwen3-coder:free   # account[:model]; --effort, --at <N>
+ad fallback add gemini --model gemini-2.5-flash          # a trial or free-tier endpoint asks first
+ad fallback add chatgpt --model gpt-5.5 --effort medium
+ad fallback                                              # the order, what can continue now, and why not
+ad fallback preview --error quotaExhausted               # what would happen now, step by step
+ad fallback enable                                       # shows every destination, then asks
+```
+
+- **The file** is `~/.agent-daemon/fallback.json`. Every change is checked first and refused if it adds a problem ("… bills per use. 'No extra spend' allows free models and plans you already pay for."). A problem that was already there (an account removed since) never blocks removing it or `ad fallback disable`.
+- **Cost rule.** `noExtraSpend` (the default): free models and plans you already pay for. `freeOnly`: free models and local servers only. A model is free only from a fresh price check (see above); a model whose billing ad doesn't know is never used.
+- **Trial and free-tier endpoints** (NVIDIA's trial catalog, Gemini's free tier, which may use what you send) each need your own yes when you add them. `ad fallback set trial never` refuses them; `allow` stops asking.
+- **What it switches on:** only a used-up limit, a rate limit, a network failure or a provider's server error. Never on sign-in, plan or policy problems: those need you.
+- **Limits:** `set max-hops` (targets one task may move through, 1–5), `set max-switches` (per hour, 1–20), `set give-up` (seconds of trying, 10–600).
+- **Another account of the same provider** is used only while that provider hasn't hit a limit. A provider that ran out is skipped, on every account, until it resets, also when another window saw it.
+- **Long-running commands.** `set keep-running "npm run dev"` lists commands a switch may leave running; a bare `npm`, `node`, `bash` and the like are refused (they would allow almost anything).
+- **Consent.** `ad fallback enable` lists every target and what its provider does with your data, then asks. It runs only in your own terminal: `--yes` skips the question there (the text goes to stderr), never the terminal, since an agent in another tool has no `AD_TOOL_SHELL` but no terminal either. Confirming a trial endpoint and `test --live` work the same way. What you confirmed is fingerprinted: the order, each account's identity, workspace, base URL, key revision and sign-in folder, the cost and trial rules, the keep-running list. Changing any of them, re-signing an account into another identity included, turns fallback off until you confirm again ("Fallback is off until you confirm the new order: ad fallback enable"). Lowering the limits doesn't. A ChatGPT sign-in whose account ad hasn't recorded yet is tied to its sign-in folder only; the consent says so.
+- **The agent can't change it.** In the shells ad's agent runs commands in (`AD_TOOL_SHELL=1`), `ad fallback add`, `remove`, `order`, `move`, `set`, `enable` and `test --live` refuse: "ad fallback can't be changed from the agent's own shell. Run it in your terminal." Listing, preview, the dry test and `disable` still work there.
+- **`ad fallback test`** checks each target without sending anything: account ready, model listed, limits as last seen. `--live` sends one tiny request to each API account (it asks first; it counts against free limits). A ChatGPT sign-in is never tested by starting a second engine.
+- **Undo:** `ad fallback disable`, or delete `fallback.json`.
+
+### The session record: `ad sessions show`
+
+```bash
+ad sessions show --last          # the newest session: bindings, turns, tool calls
+ad sessions show ses_01J… --json # one session as JSON
+```
+
+ad keeps its own record of each conversation you start in `ad tui`, `ad run` or `ad loop`, from the first prompt on. It says which engine home, conversation and target (account, provider, model, effort) ran each turn, who started the turn (`user`, `ad`, `goal`, `subagent` or `engine`), and what each tool call did: its effect (`read`, `exec`, `write`, `external`, `agent`) and how it ended (`succeeded`, `failed`, `declined`, or `unknown` when the turn or the engine ended first). Switching accounts later (M4) builds on it.
+
+- **What it never holds:** never reasoning, a question's or form's answer, file contents, command output, headers or keys. Prompts, summaries and error messages are cut to size and have keys redacted; a `/private` prompt is stored without its text. Paths in the project are relative; others under your home folder start with `~`.
+- **A command is a read only when ad can prove it.** ad checks the command line itself (no redirect, no `tee`, no `find -delete`, only known read commands); the engine's own summary of a command never makes it a read.
+- **One window per session.** A second window on the same conversation says "This session is open in another ad window" and records nothing.
+- **Off switch:** `AD_LEDGER=0`. Deleting `~/.agent-daemon/sessions/` loses only this record; conversations stay in the engine's folder.
+
 ## Safety model
 
 | Mode | Used by | Sandbox | Approvals |
@@ -191,7 +272,31 @@ Unattended runs also switch off every MCP server except the daemon's memory, and
 
 `--sandbox danger-full-access` turns the sandbox off for `ad run` / `ad chat`. Use it only in a throwaway environment.
 
-**Keys.** OpenRouter keys are stored with DPAPI on Windows, libsecret on Linux (falling back to a 0600 file) and a 0600 file on macOS. They never go into config or argv, and `OPENROUTER_API_KEY` is removed from the agent's shell. ChatGPT / OpenAI logins are kept by the engine in the harness home (`auth.json`).
+**Keys.** OpenRouter keys are stored with DPAPI on Windows, libsecret on Linux (falling back to a 0600 file), and on macOS in the keychain when the optional `@napi-rs/keyring` module is installed (else a 0600 file; `ad doctor` says which). They never go into config or argv, and `OPENROUTER_API_KEY` is removed from the agent's shell. ChatGPT / OpenAI logins are kept by the engine in the harness home (`auth.json`).
+
+**The gateway.** API keys never reach the engine, its hooks or the tools it runs:
+- **How it works.** ad starts a small local gateway (a child process on `127.0.0.1`) and gives the engine only a per-run token (`AD_GATEWAY_TOKEN`) and an address per account. The gateway checks the token, adds the account's key on the way out, and streams the answer back unchanged.
+- **What it watches.** Each answer's status, rate limits and usage; that is how ad can later say "OpenRouter's free limit resets at 05:30".
+- **What the token can do.** Spend through the gateway while this ad runs. It can never reveal a key, and tool shells don't get it.
+- **What can see the token.** Hook processes inherit it with the engine's environment, and an MCP server sees it only if a config names it in `env_vars`.
+- **Its limits.** It never follows a redirect with a key, and sends keys over https only (a local endpoint may use http).
+- **Long waits.** A provider asking to wait longer than a minute ends the turn at once with the provider's own message, instead of sleeping for an hour.
+
+**Accounts.** ad keeps a list of accounts (`~/.agent-daemon/accounts/registry.json`): each has an id, a label, an owner tag and where its credential lives, and never the credential itself (an API key shows only its last 4 characters). ad 3.0's sign-in and OpenRouter key become accounts by themselves, without moving or rewriting anything 3.0 uses, so going back to 3.0 still works. An interrupted sign-in or key change leaves something `ad auth repair` finishes (it asks before deleting a key).
+
+**Adding accounts.** `ad auth login <provider>` adds an API key (OpenAI, OpenRouter, Kimi, Moonshot, xAI, Fireworks), your own endpoint or a local server; see [accounts.md](accounts.md) for providers, free models and what ad doesn't offer.
+
+**Which account a conversation uses.** ad decides before any engine starts, and the first message already goes to that account. The first of these that names an account wins:
+1. `--account <provider>/<label>` (or `/model`, `/account` in the terminal UI);
+2. what this window picked;
+3. `AD_ACCOUNT` (with `AD_MODEL`), a default for whatever you launch;
+4. the project's `.agent-daemon/config.json` `"target": {"provider", "label", "model", "effort"}`, read only in a folder you trusted, and shown as "This project picks …";
+5. the default account;
+6. what ad 3.0 used.
+
+An account that needs its key or sign-in again stops the start with the command that fixes it. A conversation keeps the account it started on. Switching to another account of the same provider (same model) continues it as a copy on the new account; anything else starts a new conversation. Background terminals keep running in the old one, and `/undo` checkpoints stay with it.
+
+**What a tool can still reach.** The file backend's keys and the `.dpapi` files can be read (and DPAPI files decrypted) by programs the agent runs as you, until ad can deny those reads to its tools (planned with the gateway). `ad doctor` notes this on the Secret store line.
 
 ### Working in your home folder
 
@@ -212,6 +317,43 @@ ad never uses folder trust for this. It doesn't mark your home folder `untrusted
 The engine process itself runs in an empty folder, `~/.agent-daemon/launch`, never in your project. So `/mcp` lists the MCP servers from ad's own settings. Servers from a project's `.codex/config.toml` start with that project's conversations, once the project is trusted. To add a server for every project, add it to ad's engine settings (`ad about` shows the path).
 
 ---
+
+## Moving ad to another computer
+
+One file carries ad's memory, settings, session record and account list to another computer, or to the other OS of a dual boot:
+
+```bash
+ad state inspect                      # what an export would hold (this folder's project), and what it leaves out
+ad state export --out ~/ad.adstate    # this folder's project only
+ad state export --out ~/ad.adstate --project ~/code/app --project ~/code/api
+ad state export --out ~/ad.adstate --all-projects          # every project, and the memory that belongs to none
+ad state verify ~/ad.adstate          # reads it the way import does; changes nothing
+```
+
+- **Only what you chose.** Other projects' lessons, sessions, handoffs, schedules and session records stay behind, down to the bytes of the database file. Memory that belongs to no project (your profile, global lessons) comes with `--all-projects` or `--include global-memory`.
+- **Never a secret.** Keys, sign-ins and the engine's own folders never go in: on the new computer you sign in again (the account list comes along, each account marked "needs sign-in"). Before writing, ad looks for anything shaped like a key in what it would export. When it finds one it stops and lists where (`learnings #812 (text)`, never the value): `--redact` replaces those in the export only, and `ad memory redact learnings:812` cleans your own copy (in your terminal, typing the row to confirm).
+- **Paths that travel.** A project's folder, your home and ad's folder are written as placeholders, so a project lands wherever it lives on the new computer.
+- **Optional:** `--include tui-history`, `engine-rollouts`, `project-journals`; `--exclude <class>` leaves a class out. `ad state inspect --json` lists everything by class.
+- **Safe while ad runs.** The database is copied from a consistent snapshot; nothing of yours is changed. The command refuses to run from an agent's own shell.
+- **Not encrypted.** The file holds your memory and history as plain text: keep it on your own disk or a USB drive, not a shared or synced folder.
+
+On the new computer:
+
+```bash
+ad state import ~/ad.adstate --dry-run          # the plan: where each project goes, what conflicts, nothing written
+ad state import ~/ad.adstate --map app=~/code/app
+ad review --import <importId>                   # accept or reject what came in (--accept-all: everything not held back)
+ad state verify --import <importId>             # counts, the database's integrity, and recall of known lessons
+ad state rollback <importId>                    # undo that import's own writes
+ad state imports                                # every import and its state
+```
+
+- **Where projects go.** A project lands where you map it (`--map <name>=<dir>`), where the same project already lives here, or in the one clone whose git remote matches (`--search <dir>` looks further). One not mapped keeps its memory (searchable by its id) and its files wait under `~/.agent-daemon/imports/<id>/unmapped/`.
+- **Nothing is trusted blindly.** A bundle with names that could leave ad's folders, a database with parts ad didn't make (a trigger, a view, an extra column) or rows of a project it doesn't declare is refused before anything is written. Lessons and facts come in as *pending*: searchable in their project, marked unreviewed, never put into a session until `ad review --import` accepts them (in your own terminal, typing the import id). A memory file that reads like an instruction, or holds something shaped like a key, is held back (`--accept-held` places it).
+- **Your work wins by default.** A file that differs from yours stops the import before any write (`--on-conflict keep-mine`, `take-theirs` or `keep-both`, which writes `<name>.imported-<date>` beside yours). Accounts merge by id (yours keep their sign-in; new ones need one), schedules come in switched off, journals gain only the lines they don't have.
+- **Safe to stop.** Each step is journaled: after a crash, any `ad state` command says so, and `ad state import --resume <id>` finishes it. `ad state rollback <id>` removes exactly what the import wrote; a file you changed since, or a session your newer memory points at, is kept and listed.
+- **A dual boot.** Use one checkout per OS (a shared checkout's native SQLite module, rebuilt for one OS, breaks the other), and `--on-conflict keep-both` for repeated moves between the two.
+- **Let an agent walk you through it:** the [`ad-state-migrate`](../skills/daemon/ad-state-migrate/SKILL.md) skill runs these steps in order, stops on any failed check, and leaves the review and the sign-ins to you.
 
 ## Memory, hooks and skills inside the harness
 
@@ -242,13 +384,21 @@ Loop and worker prompts are marked as non-user (`AD_WORKER=1`), so they never en
 |---|---|
 | `~/.agent-daemon/engine/` (new installs; older installs: `codex-home/`) | engine home: `config.toml`, `hooks.json`, `AGENTS.md`, login `auth.json`, `sessions/` rollouts, `logs_2.sqlite` (see "The engine's folder" below) |
 | `~/.agent-daemon/secrets/` | provider keys (file backends) |
+| `~/.agent-daemon/accounts/` | the account list (`registry.json`, its `.bak`) and `settings-record.json` (your `[tui]` settings and folder trust, copied from the engine's folder); never a key |
+| `~/.agent-daemon/api/` | the engine folder for API-key accounts once the main one holds a ChatGPT sign-in (see "The engine's folder") |
+| `<project>/.agent-daemon/config.json` | `target`: the account this project picks (trusted folders only) |
 | `~/.agent-daemon/schedules.json`, `schedule-logs/` | scheduled jobs and their output |
 | `<project>/.agent-daemon/loops/` | `ad loop` iteration logs |
 | `<project>/.agent-daemon/STOP` | stop file for loops in this project |
+| `~/.agent-daemon/catalog/`, `~/.agent-daemon/quota/` | what ad has seen of each account's models and prices, limits, benched providers and today's spend (caches; see "Models, prices, limits and spend") |
+| `~/.agent-daemon/fallback.json` | the fallback order, its rules and what you confirmed (see "The fallback order") |
+| `~/.agent-daemon/sessions/` | the session record: `ses_<id>.jsonl` per session and `index.json` (owner-only); never reasoning, a question's or form's answer, file contents, command output, headers or keys (see "The session record") |
 | `~/.agent-daemon/tui/`, `~/.agent-daemon/locks/` | `ad tui` prompt history and per-folder state; conversation locks (see [tui.md](tui.md#files-ad-writes)) |
 
 | Variable | Effect |
 |---|---|
+| `AD_LEDGER` | `0`: ad keeps no session record (`~/.agent-daemon/sessions/`) |
+| `AD_FALLBACK` | `0`: automatic fallback does nothing in this run, whatever `~/.agent-daemon/fallback.json` says |
 | `AD_TUI` | `0`: bare `ad` prints the help instead of opening the terminal UI (`ad tui` still opens it). `1`: the default behaviour |
 | `AD_ALLOW_HOME_FOLDER` | `1`: work in a folder that would load your own `~/.codex` skills, like `--allow-home-folder` (see "Working in your home folder") |
 | `AD_ENGINE_DIR` (old name `AD_CODEX_HOME`, still read) | use another engine home (never your own `~/.codex` or `CODEX_HOME`: refused) |
@@ -261,12 +411,28 @@ Loop and worker prompts are marked as non-user (`AD_WORKER=1`), so they never en
 | `AD_HOOK_HOST` | `ad` for hook input/output adaptation |
 | `AD_ENGINE_MODEL` (old name `AD_CODEX_LLM_MODEL`, still read) | model for those calls when they run on the engine |
 | `AD_SECRETS_BACKEND=file` | store keys in plain 0600 files instead of the OS store |
+| `AD_ACCOUNT`, `AD_MODEL` | the account (`<provider>/<label>`, a label, or an id) and model for what you launch, below a window's own choice and `--account` |
+
+## Chat-only providers
+
+Providers that speak only Chat Completions go through a translation in ad's gateway: the engine still sees the Responses API, the provider sees Chat Completions. What a provider can't do is refused before anything is sent, with ad's reason (for example live web search). When such a provider's daily limit is used up, the turn stops at once and ad says so; it isn't retried. `AD_TRANSLATE=0` turns these providers off. Details: [architecture.md](architecture.md#chat-translation-in-the-gateway-p61).
+
+The gateway's token is the engine's only: commands the agent runs see `AD_GATEWAY_TOKEN` empty. This keeps it out of their environment, not out of reach: a process running as you could still read the engine's own environment. The token opens only ad's loopback gateway, for this run.
 
 ## The engine's folder
 
 New installs keep the engine's folder at `~/.agent-daemon/engine/`, plus a link named `codex-home` pointing at it (a rolled-back ad 2.x finds the same folder). Installs from before 3.0 keep their `codex-home/` folder untouched; `ad doctor` calls it the older folder name and says `ad migrate` is optional.
 
 `ad migrate` (interactive terminal only) renames `codex-home/` to `engine/` and leaves the link; `ad migrate --undo` reverses it. Nothing is ever moved without you running it: no other command renames the folder, and a folder you chose with `AD_ENGINE_DIR` is never touched. In Git Bash run `winpty ad migrate` (or use PowerShell or Windows Terminal). Both refuse while an ad session is running; close it first.
+
+Which folder runs what:
+
+| Engine folder | Runs |
+|---|---|
+| `engine/` (the main one) | ad 3.0's sign-in; a ChatGPT sign-in made there; every API-key account while it holds no ChatGPT sign-in |
+| `api/` | every API-key account once the main folder holds a ChatGPT sign-in. New API conversations never start next to a ChatGPT sign-in. API conversations 3.0 already wrote there still continue there |
+
+Your `[tui]` settings and folder trust live in the main folder's settings file. Other folders get a copy each time their engine starts, so a hand edit there is overwritten. Edit the main folder's settings: other folders pick your edit up the next time ad starts an engine on the main folder.
 
 What a start does with these names:
 

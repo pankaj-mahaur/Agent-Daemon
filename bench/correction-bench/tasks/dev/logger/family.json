@@ -1,0 +1,39 @@
+{
+  "id": "logger",
+  "split": "dev",
+  "convention": "Log through logInfo/logWarn/logError from src/lib/log.js; never console.log or any other console method in src/.",
+  "oracle": {
+    "kind": "grep",
+    "files": [
+      "src/**/*.{js,mjs,cjs,ts}"
+    ],
+    "except": [
+      "src/lib/log.js"
+    ],
+    "forbid": [
+      "\\bconsole\\.(log|info|warn|error|debug)\\s*\\("
+    ]
+  },
+  "sessions": [
+    {
+      "fixture": "shop-app",
+      "task": "In src/orders.js, log a message with the order id and total whenever an order is placed."
+    },
+    {
+      "fixture": "shop-app",
+      "task": "In src/users.js, log a warning when addUser gets an email without an @ sign, and still add the user."
+    },
+    {
+      "fixture": "shop-app",
+      "task": "Add cancelOrder(id) to src/orders.js: it marks the order cancelled and logs the cancellation."
+    }
+  ],
+  "examples": {
+    "violating": {
+      "src/notify.js": "export function notify(order) {\n  console.log(\"order placed\", order.id);\n}\n"
+    },
+    "compliant": {
+      "src/notify.js": "import { logInfo } from \"#app/lib/log.js\";\n\nexport function notify(order) {\n  logInfo(\"order placed\", { id: order.id });\n}\n"
+    }
+  }
+}

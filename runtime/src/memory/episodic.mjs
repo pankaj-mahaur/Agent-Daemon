@@ -12,6 +12,7 @@
 import path from "node:path";
 import { open, learningContentHash, normKey, scopedContentHash } from "./sqlite.mjs";
 import { redactSecrets } from "../security/secret-patterns.mjs";
+import { idOfKeys, isProjectId, projectClause, projectIdOf, slugOfKeys } from "./projects.mjs";
 
 /* ------------------------------------------------------------------ */
 /* Lifecycle                                                           */
@@ -77,6 +78,8 @@ export async function upsertSession(row) {
   const handle = await db();
   if (!handle) return;
   const slug = projectSlug(row.projectPath);
+  // The folder's project id when the registry knows it (P7.1a); the backfill fills the rest.
+  const projectId = row.projectPath ? projectIdOf(row.projectPath) : null;
   const durationMs = (row.startedAt && row.endedAt)
     ? Math.max(0, new Date(row.endedAt) - new Date(row.startedAt))
     : null;
@@ -84,9 +87,10 @@ export async function upsertSession(row) {
   handle.run(
     `INSERT INTO sessions
        (id, project_path, project_slug, agent_type, started_at, ended_at, duration_ms,
-        user_turns, assistant_turns, tool_calls, edits, transcript_path, digest_status, digest_reason, digested_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        user_turns, assistant_turns, tool_calls, edits, transcript_path, digest_status, digest_reason, digested_at, project_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
+       project_id      = COALESCE(sessions.project_id, excluded.project_id),
        ended_at        = COALESCE(excluded.ended_at, sessions.ended_at),
        duration_ms     = COALESCE(excluded.duration_ms, sessions.duration_ms),
        user_turns      = excluded.user_turns,
@@ -103,7 +107,8 @@ export async function upsertSession(row) {
       row.transcriptPath || null,
       row.digestStatus || "digested",
       row.digestReason || null,
-      new Date().toISOString()
+      new Date().toISOString(),
+      projectId
     ]
   );
 }
@@ -210,15 +215,19 @@ export async function insertLearning(learning) {
  */
 function writeLearning(handle, raw) {
   const l = redactLearning(raw);
+  // A note that records its folder takes that folder's project id (not the slug's).
+  if (!l.projectId && l.projectSlug && l.projectPath) l.projectId = projectIdOf(l.projectPath);
   const nk = normKey(l.text);
-  const same = sameNote(handle, l.projectSlug, l.text, nk);
+  const same = sameNote(handle, l.projectSlug, l.text, nk, l.projectId);
   if (same) {
     if (l.origin === "user" && same.status === "pending") acceptPendingById(handle, same.id);
     // An agent saying something again is no confirmation: only other origins reinforce.
     if (l.origin !== "agent") reinforceById(handle, same.id);
     return null;
   }
-  const contentHash = scopedContentHash(l.projectSlug, l.text);
+  // Scoped by the project id when the writer knows it (P7.1a), so two folders that
+  // share a slug never share a note; else by the slug, as before.
+  const contentHash = scopedContentHash(l.projectId || l.projectSlug, l.text);
   // INSERT OR IGNORE: a 3.0 row holding this text under the plain hash
   // collides on the partial unique index `idx_learnings_content_hash` (OR
   // IGNORE because SQLite's UPSERT can't target a partial index).
@@ -231,9 +240,19 @@ function writeLearning(handle, raw) {
   return result.lastInsertRowid;
 }
 
-/** The row holding this note in `projectKey` (null = global), or null. */
-export function sameNote(handle, projectKey, text, nk = normKey(text)) {
+/**
+ * The row holding this note in `projectKey` (null = global), or null. With a project
+ * id: that project's rows, and rows of the slug that have no id yet.
+ */
+export function sameNote(handle, projectKey, text, nk = normKey(text), projectId = null) {
   try {
+    if (projectId) {
+      return handle.get(
+        `SELECT id, status, origin, capture_ref FROM learnings
+          WHERE (project_id = ? OR (project_id IS NULL AND project_slug IS ?)) AND (norm_key = ? OR content_hash IN (?, ?, ?)) ORDER BY id LIMIT 1`,
+        [projectId, projectKey || null, nk, learningContentHash(text), scopedContentHash(projectKey, text), scopedContentHash(projectId, text)]
+      ) ?? null;
+    }
     return handle.get(
       `SELECT id, status, origin, capture_ref FROM learnings
         WHERE project_slug IS ? AND (norm_key = ? OR content_hash IN (?, ?)) ORDER BY id LIMIT 1`,
@@ -248,8 +267,8 @@ export function sameNote(handle, projectKey, text, nk = normKey(text)) {
 // status: 'active' (accepted), 'pending' (waits for the user: agent-written
 // notes) or 'quarantined' (held back: injection screen, secrets).
 const INSERT_LEARNING_SQL = `INSERT OR IGNORE INTO learnings
-  (session_id, project_slug, category, text, evidence, confidence, tags, applied_to, content_hash, derivation, status, origin, quarantine_reason, promote_request, norm_key, capture_ref, project_path)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+  (session_id, project_slug, category, text, evidence, confidence, tags, applied_to, content_hash, derivation, status, origin, quarantine_reason, promote_request, norm_key, capture_ref, project_path, project_id)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
 const LEARNING_STATUSES = new Set(["active", "pending", "quarantined"]);
 
@@ -277,6 +296,8 @@ function learningRow(l, contentHash, nk) {
     nk,
     typeof l.captureRef === "string" && l.captureRef ? redactSecrets(l.captureRef.slice(0, 160)).text : null,
     l.projectPath || null,
+    // A project row whose writer knows the id; else the insert trigger fills it from the slug.
+    l.projectSlug && typeof l.projectId === "string" && l.projectId.startsWith("prj_") ? l.projectId : null,
   ];
 }
 
@@ -372,13 +393,15 @@ export function learningVisibility(alias, keys, scope = "any") {
   const notQ = NOT_QUARANTINED(a);
   if (keys === null) return { sql: notQ, params: [] };
   if (keys.length === 0) return { sql: "0", params: [] };
-  const ph = keys.map(() => "?").join(",");
-  const project = `${a}project_slug IN (${ph})`;
+  // By project id, or by slug for rows without one (projects.mjs projectClause, P7.1a).
+  const project = projectClause(alias || "learnings", keys);
+  const inSession = projectClause("s", keys);
+  const own = `(${a}project_slug IS NOT NULL AND ${project.sql})`;
   const accepted = `(${a}project_slug IS NULL AND ${a}global_accepted_at IS NOT NULL)`;
-  const pendingHere = `(${a}project_slug IS NULL AND ${a}global_accepted_at IS NULL AND EXISTS (SELECT 1 FROM sessions s WHERE s.id = ${a}session_id AND s.project_slug IN (${ph})))`;
-  if (scope === "project") return { sql: `${notQ} AND ${project}`, params: [...keys] };
+  const pendingHere = `(${a}project_slug IS NULL AND ${a}global_accepted_at IS NULL AND EXISTS (SELECT 1 FROM sessions s WHERE s.id = ${a}session_id AND ${inSession.sql}))`;
+  if (scope === "project") return { sql: `${notQ} AND ${own}`, params: [...project.params] };
   if (scope === "global") return { sql: `${notQ} AND ${accepted}`, params: [] };
-  return { sql: `${notQ} AND (${project} OR ${accepted} OR ${pendingHere})`, params: [...keys, ...keys] };
+  return { sql: `${notQ} AND (${own} OR ${accepted} OR ${pendingHere})`, params: [...project.params, ...inSession.params] };
 }
 
 /**
@@ -390,7 +413,8 @@ export function learningVisibility(alias, keys, scope = "any") {
 export function servedStatus(alias, keys, includePending = false) {
   const a = `${alias || "learnings"}.`;
   if (!includePending || !keys?.length) return { sql: `${a}status = 'active'`, params: [] };
-  return { sql: `(${a}status = 'active' OR (${a}status = 'pending' AND ${a}project_slug IN (${keys.map(() => "?").join(",")})))`, params: [...keys] };
+  const own = projectClause(alias || "learnings", keys);
+  return { sql: `(${a}status = 'active' OR (${a}status = 'pending' AND ${a}project_slug IS NOT NULL AND ${own.sql}))`, params: [...own.params] };
 }
 
 /** SQL for "this user fact may be served to a reader bound to `keys`". */
@@ -398,11 +422,14 @@ export function factVisibility(alias, keys) {
   const a = `${alias || "user_facts"}.`;
   if (keys === null) return { sql: "1", params: [] };
   if (keys.length === 0) return { sql: "0", params: [] };
-  const ph = keys.map(() => "?").join(",");
-  return {
-    sql: `(${a}global_accepted_at IS NOT NULL OR EXISTS (SELECT 1 FROM json_each(COALESCE(${a}projects, '[]')) WHERE value IN (${ph})))`,
-    params: [...keys],
-  };
+  // A fact names its projects by slug (projects) and, from P7.1a, by id (project_ids);
+  // write-only (~) slugs, a project's collided ones, never match.
+  const ids = keys.filter(isProjectId);
+  const slugs = keys.filter((k) => !isProjectId(k) && !k.startsWith("~"));
+  const parts = [`${a}global_accepted_at IS NOT NULL`];
+  if (ids.length) parts.push(`EXISTS (SELECT 1 FROM json_each(COALESCE(${a}project_ids, '[]')) WHERE value IN (${ids.map(() => "?").join(",")}))`);
+  if (slugs.length) parts.push(`EXISTS (SELECT 1 FROM json_each(COALESCE(${a}projects, '[]')) WHERE value IN (${slugs.map(() => "?").join(",")}))`);
+  return { sql: `(${parts.join(" OR ")})`, params: [...ids, ...slugs] };
 }
 
 /**
@@ -889,7 +916,7 @@ export async function recordFeedback({ id, verdict, projectKeys }) {
   // Every verdict is kept per calling project (P5.5); a project lesson's own value
   // moves too: the first verdict sets it, later ones average in.
   try {
-    handle.run("INSERT INTO feedback (project_slug, learning_id, verdict) VALUES (?, ?, ?)", [keys[0] ?? null, lid, verdict]);
+    handle.run("INSERT INTO feedback (project_slug, project_id, learning_id, verdict) VALUES (?, ?, ?, ?)", [slugOfKeys(keys), idOfKeys(keys), lid, verdict]);
   } catch {
     // a store without the table (older schema): the row's value still moves below
   }
@@ -911,9 +938,8 @@ export const VERDICT_VALUE = Object.freeze({ useful: 1, stale: -0.5, wrong: -1 }
 export function usefulnessFactor(alias, keys) {
   const a = `${alias}.`;
   const verdicts = `CASE f.verdict WHEN 'useful' THEN 1.0 WHEN 'stale' THEN -0.5 WHEN 'wrong' THEN -1.0 END`;
-  const globalU = keys?.length
-    ? { sql: `(SELECT AVG(${verdicts}) FROM feedback f WHERE f.learning_id = ${a}id AND f.project_slug IN (${keys.map(() => "?").join(",")}))`, params: [...keys] }
-    : { sql: "NULL", params: [] };
+  const here = keys?.length ? projectClause("f", keys) : null;
+  const globalU = here ? { sql: `(SELECT AVG(${verdicts}) FROM feedback f WHERE f.learning_id = ${a}id AND ${here.sql})`, params: [...here.params] } : { sql: "NULL", params: [] };
   return {
     sql: `(1 + 0.3 * MAX(-1.0, MIN(1.0, COALESCE(CASE WHEN ${a}project_slug IS NULL THEN ${globalU.sql} ELSE ${a}usefulness END, 0))))`,
     params: globalU.params,

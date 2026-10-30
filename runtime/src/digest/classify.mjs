@@ -60,6 +60,7 @@ export function classify(learnings, opts = {}) {
 function classifyOne(input, skills) {
   const targets = ["episodic-only"];  // always
   const reasons = [];
+  let skill;  // the skill a skill-edit lesson belongs to
   // Automatic global is off (plan §M): nothing goes to user.md or a global
   // row by itself. A global-sounding item is routed as a project item and
   // carries promote_request "global" until the user promotes it.
@@ -75,6 +76,7 @@ function classifyOne(input, skills) {
     const matchingSkill = learning.tags.find(t => skills.has(t.replace(/^skill:/, "")));
     if (matchingSkill) {
       targets.push("skill-edit");
+      skill = matchingSkill.replace(/^skill:/, "");
       reasons.push(`pattern tagged with skill "${matchingSkill}" → propose SKILL.md edit`);
     }
   }
@@ -123,7 +125,7 @@ function classifyOne(input, skills) {
     reasons.push(`${learning.type} (user-profile shaped) → user_facts observation`);
   }
 
-  return { learning, targets, routeReason: reasons.join("; ") };
+  return { learning, targets, routeReason: reasons.join("; "), ...(skill ? { skill } : {}) };
 }
 
 /**

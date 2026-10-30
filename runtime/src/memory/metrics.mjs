@@ -23,6 +23,7 @@
 
 import { normKey } from "./sqlite.mjs";
 import { learningVisibility } from "./episodic.mjs";
+import { idOfKeys, slugOfKeys } from "./projects.mjs";
 
 const EARLIER_MS = 10 * 60 * 1000;
 const SIMILAR = 0.6;
@@ -48,11 +49,14 @@ export function jaccard(a, b) {
 }
 
 /** Record that `ids` were shown to a session. Never throws. */
-export function recordInjections(handle, { captureRef, projectKey, ids, surface, host = null }) {
+export function recordInjections(handle, { captureRef, keys, projectKey, ids, surface, host = null }) {
   if (!handle || !ids?.length) return;
+  // keys (a reader's project keys) give the slug and the project id (P7.1a).
+  const slug = keys ? slugOfKeys(keys) : projectKey || null;
+  const projectId = keys ? idOfKeys(keys) : null;
   try {
     handle.transaction(() => {
-      for (const id of new Set(ids)) handle.run("INSERT INTO injections (capture_ref, project_slug, learning_id, surface, host) VALUES (?, ?, ?, ?, ?)", [captureRef || null, projectKey || null, id, surface, host]);
+      for (const id of new Set(ids)) handle.run("INSERT INTO injections (capture_ref, project_slug, project_id, learning_id, surface, host) VALUES (?, ?, ?, ?, ?, ?)", [captureRef || null, slug, projectId, id, surface, host]);
     });
   } catch {
     // telemetry: a missing table (older store) or a busy one never fails a read
@@ -158,8 +162,8 @@ export function classifyCorrection(handle, { keys, text, captureRef = null, sour
       wasInjected = shown ? "yes" : isSessionRef(captureRef) ? "no" : "unknown";
     }
     handle.run(
-      "INSERT INTO correction_events (ts, capture_ref, project_slug, norm_key, source, matched_learning_id, match_kind, was_injected, host) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      [new Date(now).toISOString(), captureRef, keys[0], normKey(text), source ?? null, found?.row.id ?? null, found?.kind ?? null, wasInjected, host]
+      "INSERT INTO correction_events (ts, capture_ref, project_slug, project_id, norm_key, source, matched_learning_id, match_kind, was_injected, host) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [new Date(now).toISOString(), captureRef, slugOfKeys(keys), idOfKeys(keys), normKey(text), source ?? null, found?.row.id ?? null, found?.kind ?? null, wasInjected, host]
     );
     if (!found) return { repeat: false };
     let reword = false;

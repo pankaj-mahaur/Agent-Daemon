@@ -22,6 +22,7 @@ import { screenLearning, neutralizeText } from "./sanitize.mjs";
 import { redactSecrets } from "../security/secret-patterns.mjs";
 import { appendToMemory, writeMemoryProposal, writeProposal } from "./proposals.mjs";
 import { ensureProjectDataDir, projectDataDir } from "../memory/project-dir.mjs";
+import { adRoot, statePath } from "../ad-root.mjs";
 
 /**
  * @typedef {import("./classify.mjs").ClassifiedLearning} ClassifiedLearning
@@ -62,7 +63,6 @@ export async function applyLearnings(opts) {
     memoryFilesTouched: []
   };
 
-  const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
   const stamp = new Date().toISOString();
   const dateOnly = stamp.slice(0, 10);
   const slug = projectSlug(opts.cwd);
@@ -73,7 +73,7 @@ export async function applyLearnings(opts) {
 
   // Resolve memory locations
   const projectMemoryPath = await resolveProjectMemoryPath(opts.cwd);
-  const globalMemoryPath  = path.join(home, ".agent-daemon", "user.md");
+  const globalMemoryPath  = statePath("user.md");
   const proposedDir       = path.join(projectDataDir(opts.cwd), "proposed");
 
   if (!opts.dryRun && opts.classified.length) ensureProjectDataDir(opts.cwd);
@@ -315,8 +315,7 @@ export function originOf(l) {
 }
 
 async function loadConfig() {
-  const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
-  const configPath = path.join(home, ".agent-daemon", "config.json");
+  const configPath = statePath("config.json");
   try {
     return JSON.parse(await fs.readFile(configPath, "utf8"));
   } catch {
@@ -384,8 +383,7 @@ const MAX_PENDING_ENTRIES = 100;
 const MAX_PENDING_AGE_DAYS = 14;
 
 function pendingArchivePath() {
-  const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
-  return path.join(home, ".agent-daemon", "pending_messages.archive.jsonl");
+  return statePath("pending_messages.archive.jsonl");
 }
 
 async function archivePendingEntries(entries, reason) {
@@ -397,8 +395,7 @@ async function archivePendingEntries(entries, reason) {
 }
 
 async function queuePendingMessages(rows, sessionId, errorMsg) {
-  const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
-  const queueDir = path.join(home, ".agent-daemon");
+  const queueDir = adRoot();
   const queueFile = path.join(queueDir, "pending_messages.json");
   await fs.mkdir(queueDir, { recursive: true });
 
@@ -424,8 +421,7 @@ async function queuePendingMessages(rows, sessionId, errorMsg) {
 }
 
 async function drainPendingMessages(verbose) {
-  const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
-  const queueFile = path.join(home, ".agent-daemon", "pending_messages.json");
+  const queueFile = statePath("pending_messages.json");
 
   let pending;
   try {

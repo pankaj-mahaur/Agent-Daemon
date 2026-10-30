@@ -11,6 +11,14 @@ These files contain text copied verbatim from openai/codex at tag `rust-v0.163.0
 - `runtime/src/tui/init-prompt.mjs` — the `/init` prompt (`codex-rs/tui/assets/prompt_for_init_command.md`)
 - `runtime/src/tui/recap.mjs` — the `/recap` prompt and schema (`codex-rs/context-fragments/src/recap_prompt.rs`, `tui/src/app/recap.rs`, `tui/src/app/recap_history.rs`)
 
+## Agent Plugins 1.0.0 schemas
+
+`runtime/test/fixtures/schemas/agent-plugins-1.0.0/plugin.schema.json` and `mcp.schema.json` are unchanged copies from https://github.com/agentplugins/agent-plugins-spec (`schemas/1.0.0`, commit d92e6f4), whose schemas are licensed under the Apache License 2.0 (text below). The project ships no NOTICE file. The tests use them to validate ad's Agent Plugins package.
+
+## MCP Registry server.json schema
+
+`runtime/test/fixtures/schemas/mcp-registry-2025-12-11/server.schema.json` is an unchanged copy of https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json, from the Model Context Protocol registry project (https://github.com/modelcontextprotocol/registry), licensed under the MIT License and, for new contributions, the Apache License 2.0. The tests use it to validate ad's MCP Registry entry.
+
 ## NOTICE (openai/codex, verbatim)
 
 ```

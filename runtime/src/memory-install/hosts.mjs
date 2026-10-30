@@ -39,6 +39,21 @@ export function claudeHasAdHooks(home) {
   }
 }
 
+/**
+ * The agent-daemon-memory plugin is enabled in Claude Code's user settings
+ * (`enabledPlugins["agent-daemon-memory@<marketplace>"]: true`) → that key, else null.
+ * One route per host: with the plugin, the installer leaves Claude Code alone.
+ */
+export function claudePluginEnabled(home, env = {}) {
+  const dir = env.CLAUDE_CONFIG_DIR && path.isAbsolute(env.CLAUDE_CONFIG_DIR) ? env.CLAUDE_CONFIG_DIR : path.join(home, ".claude");
+  try {
+    const j = JSON.parse(fs.readFileSync(path.join(dir, "settings.json"), "utf8"));
+    return Object.entries(j?.enabledPlugins ?? {}).find(([k, v]) => v === true && k.startsWith(`${SERVER_NAME}@`))?.[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function args(ctx, host, capture, extra = []) {
   return ["--disable-warning=ExperimentalWarning", ctx.target, ...(ctx.viaLauncher ? ["serve"] : []), "--host", host, "--capture", capture, ...extra];
 }
@@ -84,6 +99,46 @@ export const HOSTS = Object.freeze([
     defaultCapture: () => "tools",
     entry: (ctx, capture) => ({ type: "stdio", command: ctx.node, args: args(ctx, "cursor", capture, ["--project", "${workspaceFolder}"]) }),
     where: (ctx) => ctx.display(HOSTS[2].file(ctx)),
+  },
+  {
+    // VS Code with Copilot: the user's portable MCP file, the docs' preferred
+    // personal location (the profile mcp.json is the deprecated route). The
+    // server starts in the open workspace folder, so it binds to that project.
+    id: "vscode",
+    name: "VS Code",
+    driver: "json",
+    file: (ctx) => path.join(ctx.env.COPILOT_HOME && path.isAbsolute(ctx.env.COPILOT_HOME) ? ctx.env.COPILOT_HOME : path.join(ctx.home, ".copilot"), "mcp-config.json"),
+    detect(ctx) {
+      const appData = ctx.env.APPDATA && path.isAbsolute(ctx.env.APPDATA) ? ctx.env.APPDATA : null;
+      const config = ctx.env.XDG_CONFIG_HOME && path.isAbsolute(ctx.env.XDG_CONFIG_HOME) ? ctx.env.XDG_CONFIG_HOME : path.join(ctx.home, ".config");
+      const userDirs = ["Code", "Code - Insiders"].flatMap((n) => [appData && path.join(appData, n, "User"), path.join(ctx.home, "Library", "Application Support", n, "User"), path.join(config, n, "User")]).filter(Boolean);
+      return { found: Boolean(ctx.resolve("code")) || exists(path.dirname(this.file(ctx))) || userDirs.some(exists) };
+    },
+    defaultCapture: () => "tools",
+    entry: (ctx, capture) => ({ type: "stdio", command: ctx.node, args: args(ctx, "vscode", capture) }),
+    where: (ctx) => ctx.display(HOSTS[3].file(ctx)),
+  },
+  {
+    // Gemini CLI: ~/.gemini/settings.json (GEMINI_CLI_HOME moves the .gemini
+    // folder). `gemini mcp add` defaults to the project scope and overwrites an
+    // existing name, so ad edits the user file itself, its own entry only. The
+    // server starts in the CLI's folder and binds to that project. Gemini passes MCP
+    // servers only safe variables (HOME, PATH, TMPDIR…), so an AD_ROOT you set goes
+    // into the entry's env, as for Codex.
+    id: "gemini",
+    name: "Gemini CLI",
+    driver: "json",
+    file: (ctx) => path.join(ctx.env.GEMINI_CLI_HOME && path.isAbsolute(ctx.env.GEMINI_CLI_HOME) ? ctx.env.GEMINI_CLI_HOME : ctx.home, ".gemini", "settings.json"),
+    detect(ctx) {
+      return { found: Boolean(ctx.resolve("gemini")) || exists(path.dirname(this.file(ctx))) };
+    },
+    defaultCapture: () => "tools",
+    entry(ctx, capture) {
+      const e = { command: ctx.node, args: args(ctx, "gemini", capture) };
+      if (ctx.env.AD_ROOT && path.isAbsolute(ctx.env.AD_ROOT)) e.env = { AD_ROOT: ctx.env.AD_ROOT };
+      return e;
+    },
+    where: (ctx) => ctx.display(HOSTS[4].file(ctx)),
   },
 ]);
 

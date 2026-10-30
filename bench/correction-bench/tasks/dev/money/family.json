@@ -1,0 +1,43 @@
+{
+  "id": "money",
+  "split": "dev",
+  "convention": "Money is integer cents through Money.cents()/Money.format() from src/lib/money.js; never parseFloat, toFixed or Number() on prices.",
+  "oracle": {
+    "kind": "grep",
+    "files": [
+      "src/**/*.{js,mjs,cjs,ts}"
+    ],
+    "except": [
+      "src/lib/money.js"
+    ],
+    "forbid": [
+      "parseFloat\\(",
+      "\\.toFixed\\(",
+      "Number\\(\\s*[\\w.]*(price|amount)",
+      "(^|[=(,:?]\\s*)\\+\\s*[\\w.]*(price|amount)",
+      "\\*\\s*100\\b"
+    ]
+  },
+  "sessions": [
+    {
+      "fixture": "shop-app",
+      "task": "Add applyDiscount(order, percent) to src/orders.js: it returns the discounted total."
+    },
+    {
+      "fixture": "shop-app",
+      "task": "Add refund(orderId, amountText) in a new src/refunds.js; amountText looks like \"4.99\"."
+    },
+    {
+      "fixture": "shop-app",
+      "task": "Add totalText(order) to src/orders.js: the order total as text like \"12.50\"."
+    }
+  ],
+  "examples": {
+    "violating": {
+      "src/refunds.js": "export const refundAmount = (amountText) => parseFloat(amountText);\n"
+    },
+    "compliant": {
+      "src/refunds.js": "import { Money } from \"#app/lib/money.js\";\n\nexport const refundAmount = (amountText) => Money.cents(amountText);\n"
+    }
+  }
+}

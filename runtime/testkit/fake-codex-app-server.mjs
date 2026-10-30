@@ -22,6 +22,16 @@
 //                        both with the item id "call_0" (providers that reuse ids)
 //   "resolved-elsewhere" / "revert-pending" → an approval that serverRequest/resolved
 //                        or thread/reverted ends while it is open
+//   "quota-fail" / "plan-fail" → the turn fails with the engine's quota error or its
+//                        plan-limit error (P4.5 B1: fallback classifies both)
+//   "server-fail"         → the turn fails with the engine's internal-server error (a provider 5xx)
+//   "quota-after-command" → a command completes, then the quota failure (the tool ran)
+//   "quota-command-running" → a foreground command with no end yet, then the quota failure
+//   "quota-background-running" → a background terminal still running, then the quota failure
+//   "[ad: automatic continuation] …" → answers "continued" (ad's continuation after a switch)
+//   "endless-reconnect"   → a retry notice every 100 ms until the turn is interrupted
+//                        (it then completes "interrupted", as a turn that keeps retrying)
+//   "one-retry-notice"    → one retry notice, then silence until the turn is interrupted
 //   (outputSchema)    → final agent message is JSON `{"answer":42}`
 //   anything else     → "po"+"ng", an `error` notification, a command
 //                        approval, then "[<decision>]"
@@ -37,6 +47,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { checkRequest } from "./protocol-check.mjs";
+import { ENGINE } from "../src/engine/attribution.mjs";
 
 const notifications = [];
 const lastParams = {};
@@ -48,6 +59,7 @@ let turnSeq = 0;
 // restarted engine must not reuse the crashed one's turn and item ids.
 const RUN = process.pid.toString(36);
 const loopTurns = new Map();
+let loopQuotaDone = false; // LOOPTEST-QUOTA-FIRST: only the first such turn of the process fails
 const hung = new Map(); // "hang" turns, completed as interrupted by turn/interrupt
 let tokensUsed = 0;
 const awaiting = new Map();
@@ -110,6 +122,14 @@ const notify = (method, params) => send({ method, params });
 // Collaboration modes per thread, as Codex keeps them (developer instructions filled in).
 const threadModes = new Map(); // threadId → CollaborationMode
 const threadCwds = new Map(); // threadId → the folder it was started in (thread/read)
+// As 0.163 (P3.4, S-THREADCFG Q5): a thread's provider and model, and whether it is
+// loaded and subscribed. thread/resume applies modelProvider/model only to a thread
+// that is not loaded, or loaded with no subscriber and not running; otherwise it keeps
+// the old ones and still answers success.
+const threadTargets = new Map(); // threadId → { modelProvider, model }
+const loaded = new Set();
+const subscribed = new Set();
+const goals = new Map(); // threadId → { objective, status }
 let optedOut = new Set();
 const withInstructions = (cm) => ({ mode: cm.mode, settings: { ...cm.settings, developer_instructions: cm.settings?.developer_instructions ?? (cm.mode === "plan" ? "# Plan Mode (fake)" : "") } });
 function setThreadMode(threadId, cm) {
@@ -136,6 +156,7 @@ function setThreadMode(threadId, cm) {
 // past the turn, ended by thread/backgroundTerminals/clean (item/completed, failed, exit -1).
 const terminals = new Map(); // threadId → [{item, turnId, timer}]
 let terminalSeq = 0;
+const killedTerminals = []; // {threadId, id}: ended because their thread unloaded (0.163 terminate_all_processes)
 function startTerminal(threadId, turnId, n, id = null) {
   const item = { type: "commandExecution", id: id ?? `bg-${turnId}-${n}`, command: `/bin/bash -lc 'npm run dev:${n}'`, cwd: process.cwd(), processId: String(4242 + (id ? 100 + terminalSeq++ : n)), source: "unifiedExecStartup", status: "inProgress", commandActions: [{ type: "unknown", command: `npm run dev:${n}` }], aggregatedOutput: null, exitCode: null, durationMs: null };
   notify("item/started", { threadId, turnId, item });
@@ -165,6 +186,10 @@ const agentMessage = (threadId, turnId, text) => {
   recordItem(threadId, turnId, item);
   notify("item/completed", { threadId, turnId, item });
 };
+// The real engine's texts for the P4.5 fallback scenarios, built from attribution like tests do
+// (this file is brand-linted; the emitted bytes stay what the engine sends).
+const QUOTA_MESSAGE = "Quota exceeded. Check your plan and billing details.";
+const PLAN_MESSAGE = `To use ${ENGINE.name} with your ChatGPT plan, upgrade to Plus: https://chatgpt.com/explore/plus.`;
 const complete = (threadId, turn, extra = {}) => {
   const done = { ...turn, status: "completed", ...extra };
   const t = turnsOf(threadId).find((x) => x.id === turn.id);
@@ -242,6 +267,47 @@ async function runScriptedTurn(threadId, turn, params) {
     return complete(threadId, turn);
   }
   if (text === "fail-turn") return complete(threadId, turn, { status: "failed", error: { message: process.env.FAKE_TURN_ERROR ?? "model refused" } });
+  // P4.5 fallback scenarios: the same shapes the real engine sends, quoted as it sends them.
+  // ad's own continuation after a fallback switch: the model just answers.
+  if (text.startsWith("[ad: automatic continuation]")) {
+    // FAKE_CONTINUATION_FAIL=1: the target runs out too (one fallback episode, several hops).
+    if (process.env.FAKE_CONTINUATION_FAIL === "1") return complete(threadId, turn, { status: "failed", error: { message: QUOTA_MESSAGE, codexErrorInfo: "usageLimitExceeded" } });
+    agentMessage(threadId, turn.id, "continued");
+    return complete(threadId, turn);
+  }
+  if (text === "quota-fail") return complete(threadId, turn, { status: "failed", error: { message: QUOTA_MESSAGE, codexErrorInfo: "usageLimitExceeded" } });
+  if (text === "plan-fail") return complete(threadId, turn, { status: "failed", error: { message: PLAN_MESSAGE, codexErrorInfo: "usageLimitExceeded" } });
+  if (text === "server-fail") return complete(threadId, turn, { status: "failed", error: { message: "Internal server error", codexErrorInfo: "internalServerError" } });
+  if (text === "quota-after-command") {
+    const item = { type: "commandExecution", id: "call_0", command: "echo done", cwd: process.cwd(), processId: "9002", source: "unifiedExecStartup", status: "inProgress", commandActions: [{ type: "unknown", command: "echo done" }], aggregatedOutput: null, exitCode: null, durationMs: null };
+    notify("item/started", { threadId, turnId: turn.id, item });
+    notify("item/completed", { threadId, turnId: turn.id, item: { ...item, status: "completed", exitCode: 0, aggregatedOutput: "done\n", durationMs: 10 } });
+    return complete(threadId, turn, { status: "failed", error: { message: QUOTA_MESSAGE, codexErrorInfo: "usageLimitExceeded" } });
+  }
+  if (text === "quota-command-running") {
+    // A foreground command whose end never comes: its state is uncertain at the boundary.
+    notify("item/started", { threadId, turnId: turn.id, item: { type: "commandExecution", id: "call_0", command: "npm run deploy", cwd: process.cwd(), source: "appServer", status: "inProgress", commandActions: [{ type: "unknown", command: "npm run deploy" }], aggregatedOutput: null, exitCode: null, durationMs: null } });
+    return complete(threadId, turn, { status: "failed", error: { message: QUOTA_MESSAGE, codexErrorInfo: "usageLimitExceeded" } });
+  }
+  if (text === "quota-background-running") {
+    // A background terminal (unified exec) still running when the turn fails.
+    notify("item/started", { threadId, turnId: turn.id, item: { type: "commandExecution", id: "call_1", command: "./migrate.sh", cwd: process.cwd(), processId: "9004", source: "unifiedExecStartup", status: "inProgress", commandActions: [{ type: "unknown", command: "./migrate.sh" }], aggregatedOutput: null, exitCode: null, durationMs: null } });
+    return complete(threadId, turn, { status: "failed", error: { message: QUOTA_MESSAGE, codexErrorInfo: "usageLimitExceeded" } });
+  }
+  if (text === "one-retry-notice") {
+    // The engine's single retry notice (a long Retry-After), then silence until interrupted.
+    notify("error", { threadId, turnId: turn.id, error: { message: "Rate limited. Retrying in 3600s" }, willRetry: true });
+    return hung.set(turn.id, { threadId, turn });
+  }
+  if (text === "endless-reconnect") {
+    // A provider that never answers: a retry notice every 100 ms until the turn is interrupted.
+    const t = setInterval(() => {
+      if (!hung.has(turn.id)) return clearInterval(t); // interrupted: stop the noise
+      notify("error", { threadId, turnId: turn.id, error: { message: "Reconnecting... 1/5" }, willRetry: true });
+    }, 100);
+    t.unref?.();
+    return hung.set(turn.id, { threadId, turn });
+  }
   if (params.outputSchema?.properties?.summary) {
     // Codex's /recap schema: FAKE_RECAP sets the answer ("slow:" first waits a while).
     const env = process.env.FAKE_RECAP ?? "";
@@ -251,6 +317,15 @@ async function runScriptedTurn(threadId, turn, params) {
   if (params.outputSchema) {
     agentMessage(threadId, turn.id, '{"answer":42}');
     return complete(threadId, turn);
+  }
+  // `ad loop --fallback` scripts (P4.7): a quota error on the first turn, or a pause.
+  if (/LOOPTEST-QUOTA-FIRST/.test(text) && !loopQuotaDone) {
+    loopQuotaDone = true;
+    return complete(threadId, turn, { status: "failed", error: { message: QUOTA_MESSAGE, codexErrorInfo: "usageLimitExceeded" } });
+  }
+  if (/LOOPTEST-PAUSE/.test(text)) {
+    notify("item/started", { threadId, turnId: turn.id, item: { type: "commandExecution", id: "call_0", command: "npm run deploy", cwd: process.cwd(), source: "appServer", status: "inProgress", commandActions: [{ type: "unknown", command: "npm run deploy" }], aggregatedOutput: null, exitCode: null, durationMs: null } });
+    return complete(threadId, turn, { status: "failed", error: { message: QUOTA_MESSAGE, codexErrorInfo: "usageLimitExceeded" } });
   }
   // `ad loop` scripts: the objective text carries the scenario name.
   if (/LOOPTEST-/.test(text)) {
@@ -262,6 +337,9 @@ async function runScriptedTurn(threadId, turn, params) {
     if (/LOOPTEST-DONE-AFTER-2/.test(text)) {
       if (n < 2) notify("item/completed", { threadId, turnId: turn.id, item: { type: "fileChange", id: `fc-${n}`, changes: [{ path: "a.js" }] } });
       status = n >= 2 ? { done: true, exit_signal: true, progress: "all done" } : { done: false, exit_signal: false, progress: `step ${n}` };
+    } else if (/LOOPTEST-QUOTA-FIRST/.test(text)) {
+      notify("item/completed", { threadId, turnId: turn.id, item: { type: "fileChange", id: `fc-q${n}`, changes: [{ path: "a.js" }] } });
+      status = { done: true, exit_signal: true, progress: "done after the switch" };
     } else if (/LOOPTEST-CLAIMS-DONE/.test(text)) {
       notify("item/completed", { threadId, turnId: turn.id, item: { type: "fileChange", id: `fc-${n}`, changes: [{ path: "a.js" }] } });
       status = { done: true, exit_signal: false, progress: `claims done ${n}` };
@@ -294,7 +372,10 @@ async function runScriptedTurn(threadId, turn, params) {
     const item = { type: "fileChange", id: "fc-1", status: "inProgress", changes: [{ path: "src/app.js", kind: { type: "update" }, diff: "-a\n+b" }] };
     notify("item/started", { threadId, turnId: turn.id, item });
     const reply = await askClient("item/fileChange/requestApproval", { threadId, turnId: turn.id, itemId: "fc-1", reason: "apply fix" });
-    agentMessage(threadId, turn.id, `edit[${reply.result.decision}]`);
+    // As the engine: the item ends with the answer (declined unless accepted).
+    const ok = /^accept/.test(reply.result?.decision ?? "");
+    notify("item/completed", { threadId, turnId: turn.id, item: { ...item, status: ok ? "completed" : "declined" } });
+    agentMessage(threadId, turn.id, `edit[${reply.result?.decision}]`);
     return complete(threadId, turn);
   }
   if (text === "ask-permission" || text === "legacy-approval") {
@@ -419,13 +500,27 @@ async function onRequest({ id, method, params }) {
     case "collaborationMode/list":
       if (process.env.FAKE_NO_MODES === "1") return send({ id, error: { code: -32603, message: "no modes here" } });
       if (process.env.FAKE_MODES_SLOW === "1") return;
-      return send({ id, result: { data: [{ name: "Plan", mode: "plan", model: null, reasoning_effort: "medium" }, { name: "Default", mode: "default", model: null, reasoning_effort: null }] } });
+      // FAKE_MODES_MODEL: presets that name a model (the engine default provider's).
+      return send({ id, result: { data: [{ name: "Plan", mode: "plan", model: process.env.FAKE_MODES_MODEL ?? null, reasoning_effort: "medium" }, { name: "Default", mode: "default", model: process.env.FAKE_MODES_MODEL ?? null, reasoning_effort: null }] } });
     case "thread/settings/update":
       send({ id, result: {} });
       if (params.collaborationMode) setThreadMode(params.threadId, params.collaborationMode);
       return;
     case "debug/state":
       return send({ id, result: { notifications, lastParams, calls, env: { CODEX_HOME: process.env.CODEX_HOME, hasOpenRouterKey: Boolean(process.env.OPENROUTER_API_KEY) } } });
+    // A thread's background terminals: running ids, and ids killed by an unload.
+    case "debug/terminals":
+      return send({ id, result: { running: (terminals.get(params.threadId) ?? []).map((x) => x.item.id), killed: killedTerminals.filter((k) => k.threadId === params.threadId).map((k) => k.id) } });
+    // A background terminal's command ends on its own (exit 0).
+    case "debug/terminal/exit": {
+      send({ id, result: {} });
+      for (const x of terminals.get(params.threadId) ?? []) {
+        clearInterval(x.timer);
+        notify("item/completed", { threadId: params.threadId, turnId: x.turnId, item: { ...x.item, status: "completed", exitCode: 0 } });
+      }
+      terminals.delete(params.threadId);
+      return;
+    }
     case "debug/processCwd":
       return send({ id, result: { cwd: process.cwd(), argv: process.argv.slice(2) } });
     case "account/read":
@@ -507,17 +602,45 @@ async function onRequest({ id, method, params }) {
       const sandbox = { "read-only": { type: "readOnly" }, "danger-full-access": { type: "dangerFullAccess" } }[params?.sandbox] ?? { type: "workspaceWrite" };
       const thread = { id: tid, ephemeral: Boolean(params?.ephemeral), path: params?.ephemeral ? null : `/fake/sessions/rollout-${tid}.jsonl`, cwd: params?.cwd ?? process.cwd() };
       threadCwds.set(tid, thread.cwd);
-      return send({ id, result: { thread, model: params?.model ?? "fake-model", modelProvider: "fake", sandbox } });
+      threadTargets.set(tid, { modelProvider: params?.modelProvider ?? "fake", model: params?.model ?? "fake-model" });
+      loaded.add(tid);
+      subscribed.add(tid);
+      return send({ id, result: { thread, model: threadTargets.get(tid).model, modelProvider: threadTargets.get(tid).modelProvider, sandbox } });
     }
     case "thread/read":
       // FAKE_THREAD_CWD: a stored folder for threads this fake didn't start (a resume after restart).
-      return send({ id, result: { thread: fullThread({ id: params.threadId, cwd: threadCwds.get(params.threadId) ?? process.env.FAKE_THREAD_CWD ?? process.cwd() }) } });
-    case "thread/resume":
-      return send({ id, result: { thread: { id: params.threadId }, model: "fake-model", modelProvider: "fake", ...(threadModes.has(params.threadId) ? { collaborationMode: threadModes.get(params.threadId) } : {}) } });
+      return send({
+        id,
+        result: {
+          thread: fullThread({
+            id: params.threadId,
+            cwd: threadCwds.get(params.threadId) ?? process.env.FAKE_THREAD_CWD ?? process.cwd(),
+            ...(threadTargets.has(params.threadId) ? { modelProvider: threadTargets.get(params.threadId).modelProvider, model: threadTargets.get(params.threadId).model } : {}),
+            status: !loaded.has(params.threadId) && threadTargets.has(params.threadId) ? { type: "notLoaded" } : turnsOf(params.threadId).some((x) => x.status === "inProgress") ? { type: "active", activeFlags: [] } : { type: "idle" },
+            ...(params.includeTurns ? { turns: turnsOf(params.threadId).map((x) => ({ ...x, items: [] })) } : {}),
+          }),
+        },
+      });
+    case "thread/resume": {
+      const tid = params.threadId;
+      const cur = threadTargets.get(tid) ?? { modelProvider: "fake", model: "fake-model" };
+      const running = turnsOf(tid).some((x) => x.status === "inProgress");
+      // Overrides apply only when the thread isn't loaded, or is loaded with no subscriber and idle.
+      const applies = !loaded.has(tid) || (!subscribed.has(tid) && !running);
+      const next = applies ? { modelProvider: params.modelProvider ?? cur.modelProvider, model: params.model ?? cur.model } : cur;
+      threadTargets.set(tid, next);
+      loaded.add(tid);
+      subscribed.add(tid);
+      return send({ id, result: { thread: { id: tid }, model: next.model, modelProvider: next.modelProvider, ...(threadModes.has(tid) ? { collaborationMode: threadModes.get(tid) } : {}) } });
+    }
+    case "thread/loaded/list":
+      return send({ id, result: { data: [...loaded] } });
     case "turn/start": {
       const threadId = params.threadId;
       // A turn/start Codex rejects (as for a bad input or a thread it lost).
       if ((params.input?.[0]?.text ?? "") === "reject-start") return send({ id, error: { code: -32600, message: "turn/start rejected" } });
+      // The same, refused only after a while (a client waits on a start that never becomes a turn).
+      if ((params.input?.[0]?.text ?? "") === "reject-slow") return setTimeout(() => send({ id, error: { code: -32600, message: "turn/start rejected" } }), 400);
       const turn = { id: `turn-${RUN}-${++turnSeq}`, status: "inProgress", items: [] };
       const text = params.input?.[0]?.text ?? "";
       // A mask that differs from the thread's mode changes it, as in Codex.
@@ -627,14 +750,35 @@ async function onRequest({ id, method, params }) {
       return notify("thread/reverted", { threadId: params.threadId });
     }
     case "thread/goal/clear":
+      goals.delete(params.threadId);
       return send({ id, result: {} });
-    case "thread/goal/set":
-      return send({ id, result: { goal: { threadId: params.threadId, objective: params.objective, status: "active", tokensUsed: 0, timeUsedSeconds: 0, createdAt: 0, updatedAt: 0 } } });
+    case "thread/goal/set": {
+      const prev = goals.get(params.threadId);
+      const g = { objective: params.objective ?? prev?.objective ?? "", status: params.status ?? "active" };
+      goals.set(params.threadId, g);
+      return send({ id, result: { goal: { threadId: params.threadId, objective: g.objective, status: g.status, tokensUsed: 0, timeUsedSeconds: 0, createdAt: 0, updatedAt: 0 } } });
+    }
+    case "thread/goal/get":
+      return send({ id, result: { goal: goals.has(params.threadId) ? { threadId: params.threadId, ...goals.get(params.threadId) } : null } });
     case "thread/unsubscribe": {
       // Codex unloads an idle thread with no subscribers (ad runs with
       // thread_unload_delay_secs=0) and tells every connection.
       const known = /^thread-/.test(params.threadId);
-      if (known) setTimeout(() => notify("thread/closed", { threadId: params.threadId }), 10);
+      // FAKE_OTHER_SUBSCRIBER: another connection still watches every thread, so none unloads.
+      if (process.env.FAKE_OTHER_SUBSCRIBER) return send({ id, result: { status: known ? "unsubscribed" : "notLoaded" } });
+      subscribed.delete(params.threadId);
+      // Unloaded at once when idle (ad runs with thread_unload_delay_secs=0).
+      if (known && !turnsOf(params.threadId).some((x) => x.status === "inProgress")) {
+        setTimeout(() => {
+          loaded.delete(params.threadId);
+          for (const x of terminals.get(params.threadId) ?? []) {
+            clearInterval(x.timer);
+            killedTerminals.push({ threadId: params.threadId, id: x.item.id });
+          }
+          terminals.delete(params.threadId);
+          notify("thread/closed", { threadId: params.threadId });
+        }, 10);
+      }
       return send({ id, result: { status: known ? "unsubscribed" : "notLoaded" } });
     }
     case "thread/name/set":
@@ -646,7 +790,28 @@ async function onRequest({ id, method, params }) {
       const cut = params.lastTurnId ? src.findIndex((t) => t.id === params.lastTurnId) + 1 : src.length;
       history.set(forkId, src.slice(0, cut > 0 ? cut : src.length).map((t) => ({ ...t, items: [...t.items] })));
       threadCwds.set(forkId, params.cwd ?? threadCwds.get(params.threadId) ?? process.cwd());
-      return send({ id, result: { thread: { id: forkId, forkedFromId: params.threadId }, model: "fake-model", modelProvider: "fake" } });
+      const from = threadTargets.get(params.threadId) ?? { modelProvider: "fake", model: "fake-model" };
+      // FAKE_FORK_KEEPS_PROVIDER: an engine that ignores the requested provider (RETARGET_IGNORED tests).
+      const forkTarget = process.env.FAKE_FORK_KEEPS_PROVIDER ? from : { modelProvider: params.modelProvider ?? from.modelProvider, model: params.model ?? from.model };
+      threadTargets.set(forkId, forkTarget);
+      loaded.add(forkId);
+      subscribed.add(forkId);
+      // A goal is copied to the fork. An idle thread whose goal is still active continues
+      // it on its own (a turn the user didn't start): the source at once, and the fork
+      // too unless deferGoalContinuation. Such turns run until interrupted.
+      const g = goals.get(params.threadId);
+      if (g) goals.set(forkId, { ...g });
+      const continueGoal = (tid) => {
+        const cont = { id: `turn-cont-${tid}`, status: "inProgress", items: [] };
+        turnsOf(tid).push(cont);
+        hung.set(cont.id, { threadId: tid, turn: cont });
+        setTimeout(() => notify("turn/started", { threadId: tid, turn: cont }), 5);
+      };
+      if (g?.status === "active") {
+        continueGoal(params.threadId);
+        if (!params.deferGoalContinuation) continueGoal(forkId);
+      }
+      return send({ id, result: { thread: { id: forkId, forkedFromId: params.threadId }, model: forkTarget.model, modelProvider: forkTarget.modelProvider } });
     }
     case "mcpServerStatus/list":
       return send({ id, result: { data: [{ name: "memory", runtimeStatus: "ready", pluginId: null, httpOrigin: null, serverInfo: null }, { name: "broken", runtimeStatus: "failed", pluginId: null, httpOrigin: null, serverInfo: null }], nextCursor: null } });
@@ -689,6 +854,19 @@ async function onRequest({ id, method, params }) {
       return send({ id, result: { ok: true } });
     case "test/silent":
       return; // never answers — exercises client timeouts
+    case "test/notify":
+      // Any notification the engine might send (rate-limit updates…), as given.
+      notify(params.method, params.params ?? {});
+      return send({ id, result: { ok: true } });
+    case "test/start-turn": {
+      // A turn the engine starts by itself (a goal continuation, a subagent wake-up): runs until interrupted.
+      const tid = params.threadId;
+      const cont = { id: `turn-self-${++turnSeq}`, status: "inProgress", items: [] };
+      turnsOf(tid).push(cont);
+      hung.set(cont.id, { threadId: tid, turn: cont });
+      notify("turn/started", { threadId: tid, turn: cont });
+      return send({ id, result: { turnId: cont.id } });
+    }
     default:
       // As the real engine (0.160.0, spike S6): an unknown method is an invalid request.
       return send({ id, error: { code: -32600, message: `Invalid request: unknown variant \`${method}\`` } });

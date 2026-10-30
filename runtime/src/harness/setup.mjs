@@ -15,7 +15,6 @@ import { existsSync, readFileSync, realpathSync, renameSync, writeFileSync } fro
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { PROVIDER_ENV_KEYS } from "../auth/providers.mjs";
 import { identityBlock } from "../engine/attribution.mjs";
 import { engineDebugUi, engineHome, engineHooks, engineVersion, engineErrorText, engineErrorDetail } from "../engine/index.mjs";
 import { needsWindowsSandbox, setupWindowsSandbox } from "./sandbox.mjs";
@@ -23,6 +22,14 @@ import { needsWindowsSandbox, setupWindowsSandbox } from "./sandbox.mjs";
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 export const MEMORY_SERVER = path.join(REPO_ROOT, "runtime", "src", "mcp", "memory-server.mjs");
 export const MEMORY_SERVER_ID = "agent-daemon-memory";
+// The engine's own calls home (verified on the pinned engine: each value is accepted), with what
+// the config says now: [key, the off value, the current value].
+export const ENGINE_PRIVACY = (config) => [
+  ["analytics.enabled", false, config.analytics?.enabled],
+  ["feedback.enabled", false, config.feedback?.enabled],
+  ["otel.exporter", "none", config.otel?.exporter],
+  ["otel.metrics_exporter", "none", config.otel?.metrics_exporter],
+];
 
 const START = "<!-- agent-daemon:start -->";
 const END = "<!-- agent-daemon:end -->";
@@ -67,7 +74,8 @@ export function mergeManagedBlock(existing, block) {
  */
 export async function harnessIdentity(engine) {
   const [acct, cfg] = [await engine.account(), await engine.readConfig()];
-  const signIn = cfg.model_provider === "openrouter" ? "openrouter" : acct.account?.type === "chatgpt" ? "chatgpt" : "openai-key";
+  // An ad account entry ("ad-<provider>-<id>", P3.3) means the api home: any account the user picked.
+  const signIn = /^ad-/.test(cfg.model_provider ?? "") ? "account" : cfg.model_provider === "openrouter" ? "openrouter" : acct.account?.type === "chatgpt" ? "chatgpt" : "openai-key";
   return identityBlock({ adVersion: engine.opts?.clientVersion || "unknown", engineVersion: engineVersion.installed().version ?? engineVersion.pinned() ?? "unknown", signIn });
 }
 
@@ -183,13 +191,19 @@ export async function ensureHarnessSetup(engine, { cwd = process.cwd(), profile 
     if (current.default_tools_approval_mode == null || current.default_tools_approval_mode === "auto") {
       edits.push([`mcp_servers.${MEMORY_SERVER_ID}.default_tools_approval_mode`, "approve"]);
     }
-    for (const key of PROVIDER_ENV_KEYS) {
+    // Defence in depth (D05): the gateway token, and 3.0's key variable, never reach a tool shell.
+    for (const key of ["AD_GATEWAY_TOKEN", "OPENROUTER_API_KEY"]) {
       if (config.shell_environment_policy?.filters?.[key] !== "exclude") edits.push([`shell_environment_policy.filters.${key}`, "exclude"]);
     }
     // The agent-shell marker (security/agent-shell.mjs): every tool shell of
     // ad's engine carries AD_TOOL_SHELL=1, so memory accept/promote commands
     // refuse to run from it. Field-level: the user's own `set` entries stay.
     if (config.shell_environment_policy?.set?.AD_TOOL_SHELL !== "1") edits.push(["shell_environment_policy.set.AD_TOOL_SHELL", "1"]);
+    // Privacy (P8.4b E1, docs/privacy.md): the engine's own analytics, feedback uploads and
+    // telemetry exporters are off unless you set them yourself; ad pins the engine's version,
+    // so its update check is always off.
+    for (const [key, value, now] of ENGINE_PRIVACY(config)) if (now == null) edits.push([key, value]);
+    if (config.check_for_update_on_startup !== false) edits.push(["check_for_update_on_startup", false]);
     if (edits.length) {
       await engine.writeConfig(edits);
       await engine.reloadMcpServers();

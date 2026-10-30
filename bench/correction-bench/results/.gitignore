@@ -1,0 +1,4 @@
+# Run output stays local by default. Commit a sanitised dev-pilot folder on purpose
+# (git add -f results/dev-<date>/run.json results/dev-<date>/episodes.jsonl report.md).
+*
+!.gitignore

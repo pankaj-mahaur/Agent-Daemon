@@ -68,20 +68,13 @@ Select the variant(s) on the Pareto frontier — best across the three dimension
 
 ### Step 8: Write the proposal
 
-Write the winning variant to the proposals directory:
+Write the full SKILL.md of the winning variant (frontmatter included) to a temporary file, then queue it with ad. Never write into `.agent-daemon/proposed/` yourself: ad writes the proposal with the checksums `ad review` needs.
 
 ```bash
-mkdir -p .agent-daemon/proposed
+ad skill propose $ARGUMENTS --file <path to the winning SKILL.md> --origin gepa-inline
 ```
 
-Write it as `.agent-daemon/proposed/skill-$ARGUMENTS-<timestamp>.md` with:
-- The full SKILL.md content of the winning variant
-- A `<!-- evolve-metadata -->` comment block at the end containing:
-  - Reflection summary
-  - Variant scores
-  - Why this variant won
-
-Report the proposal path and instruct the user to review with `agent-daemon review`.
+Report the reflection summary, the variant scores and why this variant won in your reply, then tell the user to run `ad review`: it shows the change as a diff, and only their typed accept applies it (`ad skill undo $ARGUMENTS` reverts).
 
 ## Important notes
 

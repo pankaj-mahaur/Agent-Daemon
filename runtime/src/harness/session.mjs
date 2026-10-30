@@ -32,9 +32,10 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_APPROVAL_POLICY, DEFAULT_SANDBOX, engineEvents, engineHome, isAutoModel, engineErrorText, engineErrorDetail, engineNoticeText } from "../engine/index.mjs";
+import { DEFAULT_APPROVAL_POLICY, DEFAULT_SANDBOX, engineEvents, engineHome, isAutoModel, engineErrorText, engineErrorDetail, engineNoticeText, switchThread } from "../engine/index.mjs";
 import { acquireLock, DEFAULT_LOCK_DIR, defaultLockDir } from "../lock.mjs";
 import { homeCdRefusal } from "../engine/attribution.mjs";
+import { mergeRateLimits } from "../providers/quota.mjs";
 
 export { DEFAULT_LOCK_DIR };
 const NOTICE_CAP = 50;
@@ -94,10 +95,21 @@ You may perform non-mutating inspection, including reading or searching files an
 
 Do not modify files, source, git state, permissions, configuration, or any other workspace state unless the user explicitly requests that mutation in this side conversation. Do not request escalated permissions or broader sandbox access unless the user explicitly requests a mutation that requires it. If the user explicitly requests a mutation, keep it minimal, local to the request, and avoid disrupting the main thread.`;
 
+export const RETARGET_RUNNING_TEXT = "Wait for the turn to finish (or Esc) before switching accounts.";
+
 export function createSession({
   engine,
   cwd,
   model,
+  // The account's provider entry (P3.4): every new thread starts on it (a target is
+  // captured when a thread starts and never changes under it).
+  modelProvider,
+  // Where this window runs (P3.4): the engine's home key and the account's provider id,
+  // so retarget can tell a fork switch (same provider, same engine) from a new thread.
+  homeKey = null,
+  provider = null,
+  // The first engine's lease (the EngineManager's release): let go when useEngine moves on.
+  release: initialRelease = null,
   sandbox = DEFAULT_SANDBOX,
   approvalPolicy = DEFAULT_APPROVAL_POLICY,
   hooks: initialHooks = {},
@@ -119,6 +131,13 @@ export function createSession({
   // Who the agent is (attribution.mjs identityBlock), for a home ad didn't
   // create: injected into each new thread, since there's no managed file.
   identity = null,
+  // The session ledger's observer (P4.1): sees every thread event, each user message once,
+  // request decisions (never a question's answer), thread changes and engine exits. Called
+  // synchronously; its failure is one notice, never the session's.
+  observer = null,
+  // An unattended run's thread settings (P4.7): developerInstructions and config overrides that
+  // every thread this session starts or resumes gets, a switch's continuation included.
+  threadExtra = null,
 } = {}) {
   let eng = engine;
   const emitter = new EventEmitter();
@@ -131,7 +150,11 @@ export function createSession({
     starting: false, // a turn/start is on its way
     requests: [], // [{request, resolve}] in arrival order
     queue: [], // [{id, input, text}]
-    config: { model: model ?? null, effort: null, sandbox, approvalPolicy, cwd },
+    held: false, // a switch is under way (P4.2): prompts wait, nothing starts
+    // Background terminals still running in a conversation this window switched away from:
+    // [{key, itemId, command, threadId…}] (they stay there; /ps lists them apart).
+    priorTerminals: [],
+    config: { model: model ?? null, modelProvider: modelProvider ?? null, homeKey, provider, effort: null, sandbox, approvalPolicy, cwd, ...(threadExtra ? { threadExtra } : {}) },
     account: null,
     goal: null,
     // This conversation's subagents (the engine's /subagents rows), first seen first:
@@ -144,6 +167,7 @@ export function createSession({
     plan: null,
     diff: null,
     rateLimits: null,
+    rateLimitsAt: null, // when the engine last reported them (P4.3: a usage limit is confirmed only by a fresh one)
     // Background terminals (the engine's unified exec, /ps): key (the engine's processId) → {key, itemId, command, actions, lines}.
     terminals: new Map(),
     // presets: null until the engine answers, [] when it has none (plan mode unavailable).
@@ -171,6 +195,19 @@ export function createSession({
   const doneWaiters = new Map(); // turnId → [resolve]
 
   const change = (what) => emitter.emit("change", { what, state });
+  let observerFailed = false;
+  const observe = (ev) => {
+    if (!observer || secondary) return;
+    try {
+      // It may hand back one notice of its own ({ notice: { level, code, message } }).
+      const n = observer(ev)?.notice;
+      if (n) notice(n.level ?? "info", n.code ?? "session.record", n.message);
+    } catch (err) {
+      if (observerFailed) return;
+      observerFailed = true;
+      notice("warn", "session.record", typeof err?.notice === "string" ? err.notice : "ad couldn't write this session's record (details: /warnings); the conversation goes on.", String(err?.stack ?? err));
+    }
+  };
   const notice = (level, code, message, detail = null) => {
     // The engine repeats some notices (a config warning per thread, a shell
     // deprecation per turn): the same one again only counts up.
@@ -226,7 +263,12 @@ export function createSession({
   function onGlobal(ev) {
     if (ev.type === "hook.started" || ev.type === "hook.completed") return void emitter.emit("hook", { ...ev.run, phase: ev.type.slice(5) });
     if (ev.type === "account") state.account = { ...(state.account ?? {}), ...ev.account };
-    else if (ev.type === "rateLimits") state.rateLimits = ev.limits;
+    else if (ev.type === "rateLimits") {
+      // A partial update replaces only the windows it carries (P4.3).
+      state.rateLimits = mergeRateLimits(state.rateLimits, ev.limits);
+      state.rateLimitsAt = Date.now();
+      observe({ type: "rateLimits", limits: state.rateLimits, source: "chatgpt:rateLimits/updated" });
+    }
     else if (ev.type === "mcp.status") state.mcp.set(ev.server, { status: ev.status, error: ev.error, failureReason: ev.failureReason });
     else if (ev.type === "notice") return notice(ev.level, ev.code, engineNoticeText(ev), [ev.message, ev.details && JSON.stringify(ev.details)].filter(Boolean).join("\n"));
     else return;
@@ -355,6 +397,7 @@ export function createSession({
   }
 
   function onThreadEvent(ev) {
+    observe(ev);
     const root = ev.threadId === state.thread?.id;
     if (root && trackTerminal(ev)) change("terminals");
     trackAgents(ev, root);
@@ -461,6 +504,7 @@ export function createSession({
   // engine can't resume is dropped: the next prompt starts a new one.
   async function onExit(info, from) {
     if (closed || from !== eng || restarting) return;
+    observe({ type: "engine.exited", code: info?.code ?? null });
     state.engine = { ...state.engine, state: "crashed", exitCode: info?.code ?? null };
     if (eng.exitError) notice("error", "engine.exited", engineErrorText(eng.exitError), engineErrorDetail(eng.exitError));
     // The running turn won't complete: end it as failed for whoever waits.
@@ -514,7 +558,7 @@ export function createSession({
         if (state.thread) {
           const id = state.thread.id;
           try {
-            await eng.resumeThread(id, { cwd: state.config.cwd, sandbox: state.config.sandbox, approvalPolicy: state.config.approvalPolicy, excludeTurns: true });
+            await eng.resumeThread(id, { cwd: state.config.cwd, sandbox: state.config.sandbox, approvalPolicy: state.config.approvalPolicy, ...(threadExtra ?? {}), excludeTurns: true });
           } catch (err) {
             if (closed) return void (await eng.close?.());
             if (eng.exitError) {
@@ -523,13 +567,16 @@ export function createSession({
             }
             notice("warn", "thread.notResumed", `The conversation could not be resumed (${engineErrorText(err, { details: null })}); the next prompt starts a new one.`, engineErrorDetail(err));
             const queued = state.queue;
-            detach();
+            detach("abandoned", "notResumed");
             resetThreadState();
             state.queue = queued;
             change("thread");
           }
           if (closed) return void (await eng.close?.());
-          if (state.thread?.id === id) unsubThread = eng.subscribe(id, onThreadEvent);
+          if (state.thread?.id === id) {
+            unsubThread = eng.subscribe(id, onThreadEvent);
+            observe({ type: "thread.attached", threadId: id, thread: state.thread, how: "continuation" });
+          }
         }
         // Overrides go again on the next turn, in case the engine lost them.
         nextTurn = { ...sticky, ...nextTurn };
@@ -558,15 +605,19 @@ export function createSession({
   /* Threads                                                        */
   /* -------------------------------------------------------------- */
 
-  function attach(threadId, thread) {
+  function attach(threadId, thread, how = "new") {
     if (!secondary) releaseLock = lockThread(threadId, { dir: lockDir });
     state.thread = { ...(thread ?? {}), id: threadId };
     unsubThread = eng.subscribe(threadId, onThreadEvent);
+    observe({ type: "thread.attached", threadId, thread: state.thread, how });
   }
 
   // Leaves the current thread: a running turn is interrupted (it would go on
   // writing files unobserved) and its waiters settle as "abandoned".
-  function detach(status = "abandoned") {
+  // why (for the ledger): "abandoned" (a new conversation comes next), "switched" (the work
+  // moves to another thread), "notResumed", "closed".
+  function detach(status = "abandoned", why = status) {
+    if (state.thread) observe({ type: "thread.detached", threadId: state.thread.id, reason: why });
     epoch++;
     threadStarting = null;
     pendingInterrupt = false;
@@ -587,10 +638,10 @@ export function createSession({
     if (threadStarting) return threadStarting;
     const e = epoch;
     const p = (async () => {
-      const t = await eng.startThread({ cwd: state.config.cwd, model: state.config.model ?? undefined, sandbox: state.config.sandbox, approvalPolicy: state.config.approvalPolicy, ...extra });
+      const t = await eng.startThread({ cwd: state.config.cwd, model: state.config.model ?? undefined, modelProvider: state.config.modelProvider ?? undefined, sandbox: state.config.sandbox, approvalPolicy: state.config.approvalPolicy, ...(threadExtra ?? {}), ...extra });
       if (stale(e)) throw new Error("the session moved on before the thread started");
       state.config.model ??= t.model ?? null;
-      attach(t.threadId, t.thread);
+      attach(t.threadId, { ...(t.thread ?? {}), modelProvider: t.modelProvider ?? t.thread?.modelProvider ?? null });
       change("thread");
       if (identity && !engineHome.isManaged(eng.home)) {
         // A home ad didn't create gets no managed instructions file, so the agent learns who it is here (design D5).
@@ -684,6 +735,7 @@ export function createSession({
       } catch (err) {
         if (!stale(e)) state.echoes.delete(cid);
         hooks.turnStartFailed?.({ error: err, session: api });
+        observe({ type: "turn.startFailed", clientId: cid });
         throw err;
       } finally {
         if (!stale(e)) {
@@ -711,15 +763,18 @@ export function createSession({
    */
   function submit(input) {
     if (closed) throw new Error("session closed");
+    // A switch is under way (P4.2): the prompt waits and runs once on the new binding.
+    if (state.held) return { clientUserMessageId: null, accepted: Promise.resolve({ queued: true, index: queue(input) }), done: Promise.resolve({ queued: true }) };
     if (state.activeTurnId) return steer(input);
     const cid = randomUUID();
     // While a turn is starting or the engine is restarting, the prompt waits in the queue.
-    if (state.starting || state.engine.state !== "ready") {
+    if (state.starting || switching || state.engine.state !== "ready") {
       const accepted = Promise.resolve({ queued: true, index: queue(input) });
       return { clientUserMessageId: cid, accepted, done: accepted };
     }
     state.echoes.set(cid, inputText(input));
     change("echoes");
+    observe({ type: "user.message", clientId: cid, input: inputText(input), via: "submit" });
     return { clientUserMessageId: cid, ...startTurn(input, cid) };
   }
 
@@ -732,7 +787,10 @@ export function createSession({
     const accepted = eng.turns
       .steer(state.thread.id, turnId, toInput(input), { clientUserMessageId: cid })
       .then(
-        (r) => ({ steered: true, turnId: r?.turnId ?? turnId }),
+        (r) => {
+          observe({ type: "user.message", clientId: cid, input: inputText(input), via: "steer", turnId: r?.turnId ?? turnId });
+          return { steered: true, turnId: r?.turnId ?? turnId };
+        },
         () => {
           // Not steerable (review, compact) or the turn just ended: keep it as
           // a queued prompt, which runs as soon as the thread is idle.
@@ -748,12 +806,15 @@ export function createSession({
   }
 
   // Queued prompts run in order whenever the thread is idle (edits made in
-  // the same tick still apply).
-  function queue(input) {
-    state.queue.push({ id: randomUUID(), input: toInput(input), text: inputText(input) });
+  // the same tick still apply). An entry can go first (fallback's continuation
+  // must run before prompts already queued) and carries who wrote it (via).
+  function queue(input, { first = false, via = "queue" } = {}) {
+    const entry = { id: randomUUID(), input: toInput(input), text: inputText(input), via };
+    if (first) state.queue.unshift(entry);
+    else state.queue.push(entry);
     change("queue");
     queueMicrotask(drainQueue);
-    return state.queue.length - 1;
+    return first ? 0 : state.queue.length - 1;
   }
 
   function editQueued(index, text) {
@@ -765,11 +826,12 @@ export function createSession({
   }
 
   function drainQueue() {
-    if (closed || state.engine.state !== "ready" || state.activeTurnId || state.starting || !state.queue.length) return;
+    if (closed || switching || state.held || state.engine.state !== "ready" || state.activeTurnId || state.starting || !state.queue.length) return;
     const next = state.queue.shift();
     change("queue");
     const cid = randomUUID();
     state.echoes.set(cid, next.text);
+    observe({ type: "user.message", clientId: cid, input: next.text, via: next.via ?? "queue" });
     startTurn(next.input, cid).accepted.catch((err) => notice("error", "turn.start", engineErrorText(err), engineErrorDetail(err)));
   }
 
@@ -789,6 +851,8 @@ export function createSession({
     const i = state.requests.findIndex((r) => r.request.id === requestId);
     if (i < 0) return false;
     const [r] = state.requests.splice(i, 1);
+    // The decision only: a question's or a form's answer is the user's, never recorded.
+    observe({ type: "request.answered", request: { kind: r.request.kind, itemId: r.request.itemId ?? null, turnId: r.request.turnId ?? null, threadId: r.request.threadId ?? null }, decision: typeof answer === "string" ? answer : answer == null ? "withdrawn" : typeof answer?.decision === "string" ? answer.decision : typeof answer?.action === "string" ? answer.action : "answered" });
     r.resolve(answer);
     change("requests");
     return true;
@@ -826,7 +890,9 @@ export function createSession({
   // developer instructions, so the engine uses its built-in ones.
   function modeMask(kind = state.mode.kind) {
     const preset = state.mode.presets?.find((p) => p.mode === kind);
-    const model = preset?.model ?? state.config.model;
+    // A binding on a provider of its own (a switch, P4.2): the presets name the engine's
+    // default provider's model, which that provider may not have.
+    const model = (state.config.modelProvider ? state.config.model : null) ?? preset?.model ?? state.config.model;
     if (!preset || !model) return null;
     const own = state.config.effort ?? configEffort() ?? null;
     const effort = kind === "plan" ? (planEffort() ?? preset.effort ?? own) : own;
@@ -865,6 +931,223 @@ export function createSession({
     if (o.approvalPolicy !== undefined) state.config.approvalPolicy = o.approvalPolicy;
     if (o.sandboxPolicy !== undefined) state.config.sandbox = SANDBOX_MODE[o.sandboxPolicy?.type] ?? state.config.sandbox;
     change("config");
+  }
+
+  /* -------------------------------------------------------------- */
+  /* Accounts (P3.4)                                                */
+  /* -------------------------------------------------------------- */
+
+  // A target: { modelProvider, model, effort, homeKey, provider, passthrough }.
+  // "continues": the same account (only the model changes), or another account of the
+  // same provider in the same engine on a passthrough route with the same model id
+  // (M3's "same model family"): the conversation is forked onto it. Anything else
+  // starts a new conversation.
+  // The account the open conversation is on (its own), else the window's.
+  const currentProvider = () => state.thread?.modelProvider ?? state.config.modelProvider ?? null;
+
+  function retargetPlan(t = {}) {
+    const c = state.config;
+    if ((t.modelProvider ?? null) === currentProvider()) return "continues";
+    const sameEngine = (t.homeKey ?? null) === (c.homeKey ?? null);
+    const sameProvider = Boolean(t.provider) && t.provider === c.provider;
+    const sameModel = (t.model ?? c.model ?? null) === (c.model ?? null);
+    return sameEngine && sameProvider && t.passthrough !== false && sameModel ? "continues" : "new";
+  }
+
+  let switching = false;
+  // Switches' watches on old threads whose background terminals still run (one per old thread:
+  // stopping one unloads that thread, which would end its terminals). Stopped at close.
+  const oldWatches = [];
+  function busyGuard() {
+    if (state.activeTurnId || state.starting || switching) throw Object.assign(new Error(RETARGET_RUNNING_TEXT), { code: "RETARGET_RUNNING" });
+  }
+
+  // A target's model and effort replace any /model choice made for the old one: on another
+  // provider, gpt-5 or "xhigh" may not exist (P4.2 review).
+  function takeTarget(t) {
+    const providerChanged = t.modelProvider !== undefined && (t.modelProvider ?? null) !== (state.config.modelProvider ?? null);
+    for (const k of ["modelProvider", "homeKey", "provider"]) if (t[k] !== undefined) state.config[k] = t[k] ?? null;
+    for (const k of ["model", "effort"]) {
+      if (t[k] !== undefined) {
+        state.config[k] = t[k] ?? null;
+        if (t[k]) sticky[k] = nextTurn[k] = t[k];
+        else delete sticky[k], delete nextTurn[k];
+      } else if (providerChanged) {
+        delete sticky[k];
+        delete nextTurn[k];
+        if (k === "effort") state.config.effort = null;
+      }
+    }
+    change("config");
+  }
+
+  // A terminal left in a thread this window switched away from ended (or died with it).
+  function priorTerminalDone(itemId) {
+    const before = state.priorTerminals?.length ?? 0;
+    state.priorTerminals = (state.priorTerminals ?? []).filter((p) => p.itemId !== itemId);
+    if (state.priorTerminals.length !== before) change("terminals");
+  }
+
+  // Moves this window to a target in the same engine, at idle only. A thread already
+  // started keeps its account (D08): a switch forks it, or the next prompt starts anew.
+  async function retarget(t = {}) {
+    if (closed) throw new Error("session closed");
+    busyGuard();
+    const same = (t.modelProvider ?? null) === currentProvider();
+    if (same) {
+      setNextTurn({ ...(t.model !== undefined ? { model: t.model } : {}), ...(t.effort !== undefined ? { effort: t.effort } : {}) });
+      return { kind: "same", threadId: state.thread?.id ?? null };
+    }
+    if (retargetPlan(t) === "new" || !state.thread) {
+      if (state.thread) {
+        detach();
+        resetThreadState();
+        change("thread");
+      }
+      takeTarget(t);
+      return { kind: state.thread ? "continues" : "new", threadId: null };
+    }
+    const old = state.thread.id;
+    // Until the move is done, a prompt waits in the queue (it would run on the old thread).
+    switching = true;
+    try {
+      const r = await switchThread({
+        engine: eng,
+        threadId: old,
+        target: { modelProvider: t.modelProvider, model: t.model },
+        terminals: () => [...state.terminals.values()].map((x) => x.itemId),
+        onViolation: (v) => notice("warn", "switch.violation", v.text),
+        onItemDone: (id) => priorTerminalDone(id),
+      });
+      // The fork is locked before the old thread is let go; if it can't be, it is dropped.
+      let release;
+      try {
+        release = lockThread(r.threadId, { dir: lockDir });
+      } catch (err) {
+        await r.stop?.();
+        await eng.threads.archive(r.threadId).catch(() => {});
+        throw err;
+      }
+      // The queue, the mode and the old thread's live terminals come along (P4.2).
+      const carry = carryOf();
+      detach("abandoned", "switched");
+      resetThreadState();
+      putBack(carry);
+      releaseLock = release;
+      state.thread = { id: r.threadId, modelProvider: t.modelProvider ?? null };
+      unsubThread = eng.subscribe(r.threadId, onThreadEvent);
+      if (r.watching) oldWatches.push(r.stop);
+      takeTarget(t);
+      // After the target is taken: the new binding records the new model and account.
+      observe({ type: "thread.attached", threadId: r.threadId, thread: state.thread, how: "fork" });
+      await loadTurns(r.threadId, epoch);
+      change("thread");
+      return { kind: "continues", threadId: r.threadId, previous: old, goalMoved: r.goalMoved, watching: r.watching };
+    } finally {
+      switching = false;
+      queueMicrotask(drainQueue);
+    }
+  }
+  retarget.plan = retargetPlan;
+
+  let engineRelease = initialRelease;
+  // Another engine for this window (another home): the thread is let go (its lock too),
+  // the old engine's lease released. With threadId the new engine then continues that
+  // thread (lock first, a plain resume: never a provider override); without, the next
+  // prompt starts a new one there.
+  // With thread (a switch's continuation, P4.2): that thread, already started on the new
+  // engine, becomes this window's; the queue, the mode and the old live terminals carry
+  // over, and with keepOld the old engine's lease is handed back instead of released (its
+  // background terminals still run there).
+  async function useEngine({ engine: next, release: nextRelease = null, restart: nextRestart = null } = {}, t = {}, { threadId, thread = null, how = "continuation", keepOld = false } = {}) {
+    if (closed) throw new Error("session closed");
+    busyGuard();
+    const carry = thread ? carryOf() : null;
+    const before = state.thread; // put back if the new engine can't be wired
+    detach("abandoned", carry ? "switched" : "abandoned");
+    resetThreadState();
+    unwire();
+    const prev = { eng, engineRelease, restart };
+    try {
+      eng = next;
+      engineRelease = nextRelease;
+      if (nextRestart) restart = nextRestart;
+      wire();
+    } catch (err) {
+      // Back on the old engine; the new one's lease is let go.
+      eng = prev.eng;
+      engineRelease = prev.engineRelease;
+      restart = prev.restart;
+      wire();
+      await nextRelease?.();
+      // A switch's continuation: the conversation stays where it was, queue included.
+      if (carry && before) {
+        putBack(carry);
+        // Its own terminals are its own again, not "from before a switch".
+        state.terminals = new Map(carry.prior.filter((p) => p.threadId === before.id).map((p) => [p.key, p]));
+        state.priorTerminals = carry.prior.filter((p) => p.threadId !== before.id);
+        try {
+          attach(before.id, before, "continuation");
+          await loadTurns(before.id, epoch).catch(() => {});
+        } catch {
+          // its lock went elsewhere meanwhile: the next prompt starts anew
+        }
+        change("thread");
+      }
+      throw err;
+    }
+    const oldRelease = prev.engineRelease;
+    takeTarget(t);
+    const acct = await eng.account().catch(() => null);
+    state.account = acct ? { ...(acct.account ?? {}), requiresOpenaiAuth: Boolean(acct.requiresOpenaiAuth) } : null;
+    if (carry) {
+      state.rateLimits = null;
+      putBack(carry);
+      attach(threadId, thread, how);
+      loadModes();
+    }
+    change("engine");
+    change("thread");
+    if (!(carry && keepOld)) await oldRelease?.();
+    if (threadId && !carry) await api.resume(threadId);
+    if (carry) queueMicrotask(drainQueue);
+    return { threadId: state.thread?.id ?? null, ...(carry && keepOld ? { releaseOld: oldRelease ?? (async () => {}) } : {}) };
+  }
+
+  // What a switch carries to the new thread: the queue, the mode, the terminals still
+  // running in the old one (listed apart; they stay with the old conversation).
+  function carryOf() {
+    const live = [...(state.terminals?.values?.() ?? [])].filter((x) => x?.running !== false);
+    return { queue: state.queue, kind: state.mode.kind, prior: [...(state.priorTerminals ?? []), ...live.map((x) => ({ ...x, threadId: state.thread?.id ?? null, engine: eng }))] };
+  }
+  function putBack(c) {
+    state.queue = c.queue;
+    state.mode = { ...state.mode, kind: c.kind };
+    state.priorTerminals = c.prior;
+    change("queue");
+  }
+
+  // A switch's continuation on the same engine (P4.2): the new thread, already started
+  // and seeded, becomes this window's.
+  function adoptThread(threadId, thread, t = {}, how = "continuation") {
+    if (closed) throw new Error("session closed");
+    busyGuard();
+    const carry = carryOf();
+    detach("abandoned", "switched");
+    resetThreadState();
+    takeTarget(t);
+    putBack(carry);
+    attach(threadId, thread, how);
+    change("thread");
+    queueMicrotask(drainQueue);
+    return { threadId };
+  }
+
+  // While a switch runs (P4.2): nothing new starts here; prompts wait in the queue.
+  function hold(on) {
+    state.held = Boolean(on);
+    change("held");
+    if (!state.held) queueMicrotask(drainQueue);
   }
 
   async function loadTurns(threadId, e) {
@@ -923,7 +1206,11 @@ export function createSession({
       const acct = await eng.account().catch(() => null);
       if (acct) state.account = { ...(acct.account ?? {}), requiresOpenaiAuth: Boolean(acct.requiresOpenaiAuth) };
       const limits = await eng.usage.limits().catch(() => null);
-      if (limits) state.rateLimits = limits.rateLimits ?? limits;
+      if (limits) {
+        state.rateLimits = limits.rateLimits ?? limits;
+        state.rateLimitsAt = Date.now();
+        observe({ type: "rateLimits", limits: state.rateLimits, source: "chatgpt:rateLimits/read" });
+      }
       change("account");
     },
     submit,
@@ -933,6 +1220,15 @@ export function createSession({
     interrupt,
     resolve,
     setNextTurn,
+    retarget,
+    useEngine,
+    adoptThread,
+    hold,
+    priorTerminalDone,
+    /** A switch committed (P4.2): earlier turns ran on `to`'s predecessor; /undo says so. */
+    markSwitched(to) {
+      state.switched = { to, at: Date.now(), threadId: state.thread?.id ?? null };
+    },
     /** Switches the collaboration mode ("plan" | "default") → {ok, message?}. Callers check busy rules. */
     setMode,
     /** The next preset in the engine's order (Shift+Tab) → {ok, message?}. */
@@ -970,6 +1266,15 @@ export function createSession({
      */
     async stopTerminals() {
       const threadId = state.thread?.id;
+      // Also those still running in a conversation this window switched away from (P4.2).
+      const prior = state.priorTerminals ?? [];
+      state.priorTerminals = [];
+      const seen = new Set();
+      for (const p of prior) {
+        if (!p.threadId || seen.has(p.threadId)) continue;
+        seen.add(p.threadId);
+        await (p.engine ?? eng).terminals.clean(p.threadId).catch(() => {});
+      }
       try {
         if (threadId) await eng.terminals.clean(threadId);
       } finally {
@@ -1072,11 +1377,11 @@ export function createSession({
       if (state.activeTurnId || state.starting || state.queue.length) drop("Changing directories requires an idle primary session without queued input.");
       if (r.cwd && engineHome.canonical(r.cwd) !== engineHome.canonical(dir)) drop("Requested directory or permissions not applied.");
       const kind = state.mode.kind; // the fork keeps the thread's mode
-      detach();
+      detach("abandoned", "switched");
       resetThreadState();
       state.mode = { ...state.mode, kind };
       state.config.cwd = dir;
-      attach(id, r.thread);
+      attach(id, r.thread, "fork");
       change("thread");
       return id;
     },
@@ -1186,7 +1491,7 @@ export function createSession({
       const e = epoch;
       let t;
       try {
-        t = await eng.resumeThread(threadId, { cwd: state.config.cwd, sandbox: state.config.sandbox, approvalPolicy: state.config.approvalPolicy, excludeTurns: true });
+        t = await eng.resumeThread(threadId, { cwd: state.config.cwd, sandbox: state.config.sandbox, approvalPolicy: state.config.approvalPolicy, ...(threadExtra ?? {}), excludeTurns: true });
         if (stale(e)) throw new Error("the session moved on before the thread resumed");
       } catch (err) {
         release();
@@ -1196,8 +1501,11 @@ export function createSession({
       // The mode the thread is in (a plan stays a plan).
       state.mode = { ...state.mode, kind: t.collaborationMode?.mode ?? "default" };
       releaseLock = release;
-      state.thread = { ...(t.thread ?? {}), id: t.threadId };
+      // A resumed thread keeps its own account; the window's choice (config) is untouched,
+      // so the next new conversation still starts on it.
+      state.thread = { ...(t.thread ?? {}), id: t.threadId, modelProvider: t.modelProvider ?? t.thread?.modelProvider ?? null };
       unsubThread = eng.subscribe(t.threadId, onThreadEvent);
+      observe({ type: "thread.attached", threadId: t.threadId, thread: state.thread, how: "resume" });
       await loadTurns(t.threadId, e);
       change("thread");
       return t.threadId;
@@ -1207,6 +1515,7 @@ export function createSession({
       closed = true;
       // A side conversation's thread is let go: ephemeral, it ends with it.
       const sideThread = secondary ? state.thread?.id : null;
+      for (const stop of oldWatches.splice(0)) stop?.();
       detach("closed");
       if (sideThread) eng.threads.unsubscribe(sideThread).catch(() => {});
       state.queue = [];

@@ -1,0 +1,39 @@
+{
+  "id": "error-envelope",
+  "split": "dev",
+  "convention": "HTTP handlers answer errors with fail(res, status, code, message) from src/lib/envelope.js; never res.status(...).json(...) or a bare { error } body.",
+  "oracle": {
+    "kind": "grep",
+    "files": [
+      "src/routes/**/*.{js,mjs,cjs,ts}"
+    ],
+    "forbid": [
+      "res\\.status\\(\\s*[45]\\d\\d",
+      "res\\.statusCode\\s*=\\s*[45]\\d\\d",
+      "\\.json\\(\\s*\\{\\s*error",
+      "res\\.send\\(\\s*[45]\\d\\d\\s*,\\s*\\{\\s*error"
+    ]
+  },
+  "sessions": [
+    {
+      "fixture": "shop-app",
+      "task": "Add handleCancelOrder(req, res) to src/routes/orders.js: answer 409 when the order is already shipped."
+    },
+    {
+      "fixture": "shop-app",
+      "task": "Add src/routes/users.js with handleGetUser(req, res): answer 404 when the user doesn't exist."
+    },
+    {
+      "fixture": "shop-app",
+      "task": "In src/routes/orders.js, make handleListOrders answer 401 when req.user is missing."
+    }
+  ],
+  "examples": {
+    "violating": {
+      "src/routes/users.js": "import { getUser } from \"#app/users.js\";\n\nexport function handleGetUser(req, res) {\n  const user = getUser(req.params.id);\n  if (!user) return res.status(404).json({ error: \"not found\" });\n  return res.send(200, { ok: true, data: user });\n}\n"
+    },
+    "compliant": {
+      "src/routes/users.js": "import { ok, fail } from \"#app/lib/envelope.js\";\nimport { getUser } from \"#app/users.js\";\n\nexport function handleGetUser(req, res) {\n  const user = getUser(req.params.id);\n  if (!user) return fail(res, 404, \"not_found\", \"No such user\");\n  return ok(res, user);\n}\n"
+    }
+  }
+}

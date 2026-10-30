@@ -1,0 +1,371 @@
+{
+  "engine": "0.163.0",
+  "recordedAt": "2026-10-25",
+  "slugs": {
+    "gemini-2.5-flash": {
+      "requests": 6,
+      "accepted": {
+        "turn PING": "completed",
+        "turn SHELL": "completed",
+        "customToolCallApplyPatch": false,
+        "turn FREEFORM": "completed",
+        "turn PING again": "completed"
+      },
+      "tools": [
+        {
+          "type": "function",
+          "name": "exec_command"
+        },
+        {
+          "type": "function",
+          "name": "write_stdin"
+        },
+        {
+          "type": "function",
+          "name": "request_user_input"
+        },
+        {
+          "type": "function",
+          "name": "view_image"
+        },
+        {
+          "type": "namespace",
+          "name": "multi_agent_v1",
+          "children": [
+            "close_agent",
+            "resume_agent",
+            "send_input",
+            "spawn_agent",
+            "wait_agent"
+          ]
+        },
+        {
+          "type": "function",
+          "name": "get_goal"
+        },
+        {
+          "type": "function",
+          "name": "create_goal"
+        },
+        {
+          "type": "function",
+          "name": "update_goal"
+        }
+      ],
+      "inputItemTypes": [
+        "message",
+        "reasoning",
+        "function_call",
+        "function_call_output",
+        "custom_tool_call",
+        "custom_tool_call_output"
+      ],
+      "topLevelKeys": [
+        "client_metadata",
+        "include",
+        "input",
+        "model",
+        "parallel_tool_calls",
+        "prompt_cache_key",
+        "reasoning",
+        "store",
+        "stream",
+        "tool_choice",
+        "tools"
+      ],
+      "lite": false
+    },
+    "deepseek-chat": {
+      "requests": 6,
+      "accepted": {
+        "turn PING": "completed",
+        "turn SHELL": "completed",
+        "customToolCallApplyPatch": false,
+        "turn FREEFORM": "completed",
+        "turn PING again": "completed"
+      },
+      "tools": [
+        {
+          "type": "function",
+          "name": "exec_command"
+        },
+        {
+          "type": "function",
+          "name": "write_stdin"
+        },
+        {
+          "type": "function",
+          "name": "request_user_input"
+        },
+        {
+          "type": "function",
+          "name": "view_image"
+        },
+        {
+          "type": "namespace",
+          "name": "multi_agent_v1",
+          "children": [
+            "close_agent",
+            "resume_agent",
+            "send_input",
+            "spawn_agent",
+            "wait_agent"
+          ]
+        },
+        {
+          "type": "function",
+          "name": "get_goal"
+        },
+        {
+          "type": "function",
+          "name": "create_goal"
+        },
+        {
+          "type": "function",
+          "name": "update_goal"
+        }
+      ],
+      "inputItemTypes": [
+        "message",
+        "reasoning",
+        "function_call",
+        "function_call_output",
+        "custom_tool_call",
+        "custom_tool_call_output"
+      ],
+      "topLevelKeys": [
+        "client_metadata",
+        "include",
+        "input",
+        "model",
+        "parallel_tool_calls",
+        "prompt_cache_key",
+        "reasoning",
+        "store",
+        "stream",
+        "tool_choice",
+        "tools"
+      ],
+      "lite": false
+    },
+    "mistral-large-latest": {
+      "requests": 6,
+      "accepted": {
+        "turn PING": "completed",
+        "turn SHELL": "completed",
+        "customToolCallApplyPatch": false,
+        "turn FREEFORM": "completed",
+        "turn PING again": "completed"
+      },
+      "tools": [
+        {
+          "type": "function",
+          "name": "exec_command"
+        },
+        {
+          "type": "function",
+          "name": "write_stdin"
+        },
+        {
+          "type": "function",
+          "name": "request_user_input"
+        },
+        {
+          "type": "function",
+          "name": "view_image"
+        },
+        {
+          "type": "namespace",
+          "name": "multi_agent_v1",
+          "children": [
+            "close_agent",
+            "resume_agent",
+            "send_input",
+            "spawn_agent",
+            "wait_agent"
+          ]
+        },
+        {
+          "type": "function",
+          "name": "get_goal"
+        },
+        {
+          "type": "function",
+          "name": "create_goal"
+        },
+        {
+          "type": "function",
+          "name": "update_goal"
+        }
+      ],
+      "inputItemTypes": [
+        "message",
+        "reasoning",
+        "function_call",
+        "function_call_output",
+        "custom_tool_call",
+        "custom_tool_call_output"
+      ],
+      "topLevelKeys": [
+        "client_metadata",
+        "include",
+        "input",
+        "model",
+        "parallel_tool_calls",
+        "prompt_cache_key",
+        "reasoning",
+        "store",
+        "stream",
+        "tool_choice",
+        "tools"
+      ],
+      "lite": false
+    },
+    "mock-model": {
+      "requests": 6,
+      "accepted": {
+        "turn PING": "completed",
+        "turn SHELL": "completed",
+        "customToolCallApplyPatch": false,
+        "turn FREEFORM": "completed",
+        "turn PING again": "completed"
+      },
+      "tools": [
+        {
+          "type": "function",
+          "name": "exec_command"
+        },
+        {
+          "type": "function",
+          "name": "write_stdin"
+        },
+        {
+          "type": "function",
+          "name": "request_user_input"
+        },
+        {
+          "type": "function",
+          "name": "view_image"
+        },
+        {
+          "type": "namespace",
+          "name": "multi_agent_v1",
+          "children": [
+            "close_agent",
+            "resume_agent",
+            "send_input",
+            "spawn_agent",
+            "wait_agent"
+          ]
+        },
+        {
+          "type": "function",
+          "name": "get_goal"
+        },
+        {
+          "type": "function",
+          "name": "create_goal"
+        },
+        {
+          "type": "function",
+          "name": "update_goal"
+        }
+      ],
+      "inputItemTypes": [
+        "message",
+        "reasoning",
+        "function_call",
+        "function_call_output",
+        "custom_tool_call",
+        "custom_tool_call_output"
+      ],
+      "topLevelKeys": [
+        "client_metadata",
+        "include",
+        "input",
+        "model",
+        "parallel_tool_calls",
+        "prompt_cache_key",
+        "reasoning",
+        "store",
+        "stream",
+        "tool_choice",
+        "tools"
+      ],
+      "lite": false
+    },
+    "gpt-5.1-codex": {
+      "requests": 6,
+      "accepted": {
+        "turn PING": "completed",
+        "turn SHELL": "completed",
+        "customToolCallApplyPatch": false,
+        "turn FREEFORM": "completed",
+        "turn PING again": "completed"
+      },
+      "tools": [
+        {
+          "type": "function",
+          "name": "exec_command"
+        },
+        {
+          "type": "function",
+          "name": "write_stdin"
+        },
+        {
+          "type": "function",
+          "name": "request_user_input"
+        },
+        {
+          "type": "function",
+          "name": "view_image"
+        },
+        {
+          "type": "namespace",
+          "name": "multi_agent_v1",
+          "children": [
+            "close_agent",
+            "resume_agent",
+            "send_input",
+            "spawn_agent",
+            "wait_agent"
+          ]
+        },
+        {
+          "type": "function",
+          "name": "get_goal"
+        },
+        {
+          "type": "function",
+          "name": "create_goal"
+        },
+        {
+          "type": "function",
+          "name": "update_goal"
+        }
+      ],
+      "inputItemTypes": [
+        "message",
+        "reasoning",
+        "function_call",
+        "function_call_output",
+        "custom_tool_call",
+        "custom_tool_call_output"
+      ],
+      "topLevelKeys": [
+        "client_metadata",
+        "include",
+        "input",
+        "model",
+        "parallel_tool_calls",
+        "prompt_cache_key",
+        "reasoning",
+        "store",
+        "stream",
+        "tool_choice",
+        "tools"
+      ],
+      "lite": false
+    }
+  }
+}

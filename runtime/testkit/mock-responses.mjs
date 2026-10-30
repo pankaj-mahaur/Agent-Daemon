@@ -91,11 +91,71 @@ export function collaborationModeSeen(body) {
   return last == null ? null : /Plan Mode/.test(last) ? "plan" : "default";
 }
 
+/**
+ * The scripted Responses stream, shared by startMockResponses and the provider kit
+ * (mock-providers.mjs): answers a request body with its script's events, holds a
+ * HOLD response until release(), and counts hang-ups.
+ *   respond(res, body, { delayMs })  write the answer (delayMs: space events out)
+ */
+export function createResponsesHandler({ script = defaultScript } = {}) {
+  let current = script;
+  const holds = [];
+  const holdWaiters = [];
+  let hangups = 0;
+  const writeSlow = async (res, events, delayMs) => {
+    for (const e of events) {
+      if (res.destroyed) return;
+      res.write(sse([e]));
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+  };
+  return {
+    setScript: (fn) => {
+      current = fn;
+    },
+    async respond(res, body, { delayMs = 0 } = {}) {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      const out = current(body);
+      if (Array.isArray(out)) {
+        if (delayMs) await writeSlow(res, out, delayMs);
+        else res.write(sse(out));
+        return void res.end();
+      }
+      // {hold, after}: send `hold` now, `after` when the test releases it.
+      res.write(sse(out.hold));
+      const held = { res, after: out.after, closed: false };
+      res.on("close", () => {
+        held.closed = true;
+        if (!held.done) hangups++;
+      });
+      holds.push(held);
+      for (const fn of holdWaiters.splice(0)) fn();
+    },
+    /** Resolves once a HOLD response is open. */
+    held: () => (holds.some((h) => !h.closed && !h.done) ? Promise.resolve() : new Promise((r) => holdWaiters.push(r))),
+    /** Finishes the oldest open HOLD response; false if none is open. */
+    release() {
+      const h = holds.find((x) => !x.closed && !x.done);
+      if (!h) return false;
+      h.done = true;
+      h.res.end(sse(h.after));
+      return true;
+    },
+    get hangups() {
+      return hangups;
+    },
+    destroyAll() {
+      for (const h of holds) if (!h.closed) h.res.destroy();
+    },
+  };
+}
+
 // Start the mock on a random loopback port. `requests` records every call
 // (path, model, tool names, last user text) for assertions.
-export async function startMockResponses({ script = defaultScript } = {}) {
+// recordBodies: also keep each full request body (the P6.1 recorder's fixtures).
+export async function startMockResponses({ script = defaultScript, recordBodies = false } = {}) {
   const requests = [];
-  let current = script;
+  const handler = createResponsesHandler({ script });
   const server = createServer((req, res) => {
     let raw = "";
     req.on("data", (chunk) => (raw += chunk));
@@ -109,51 +169,28 @@ export async function startMockResponses({ script = defaultScript } = {}) {
         res.writeHead(400, { "content-type": "application/json" }).end(JSON.stringify({ error: { message: "mock: request body is not JSON" } }));
         return;
       }
-      requests.push({ path: req.url, model: body.model, tools: (body.tools ?? []).map((t) => t.name ?? t.type), text: lastUserText(body), mode: collaborationModeSeen(body), userTexts: roleTexts(body, "user"), developerTexts: roleTexts(body, "developer") });
+      requests.push({ path: req.url, model: body.model, tools: (body.tools ?? []).map((t) => t.name ?? t.type), text: lastUserText(body), mode: collaborationModeSeen(body), userTexts: roleTexts(body, "user"), developerTexts: roleTexts(body, "developer"), ...(recordBodies ? { body, headers: req.headers } : {}) });
       if (!/\/responses$/.test(req.url ?? "")) {
         res.writeHead(404).end();
         return;
       }
-      res.writeHead(200, { "content-type": "text/event-stream" });
-      const out = current(body);
-      if (Array.isArray(out)) return void res.end(sse(out));
-      // {hold, after}: send `hold` now, `after` when the test releases it.
-      res.write(sse(out.hold));
-      const held = { res, after: out.after, closed: false };
-      res.on("close", () => {
-        held.closed = true;
-        hangups++;
-      });
-      holds.push(held);
-      for (const fn of holdWaiters.splice(0)) fn();
+      handler.respond(res, body);
     });
   });
-  // Control API (no sleeps in tests): wait for a held response, release it.
-  const holds = [];
-  const holdWaiters = [];
-  let hangups = 0;
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address();
   return {
     url: `http://127.0.0.1:${port}/v1`,
     requests,
-    setScript: (fn) => { current = fn; },
-    /** Resolves once a HOLD response is open. */
-    held: () => (holds.some((h) => !h.closed && !h.done) ? Promise.resolve() : new Promise((r) => holdWaiters.push(r))),
-    /** Finishes the oldest open HOLD response; false if none is open. */
-    release() {
-      const h = holds.find((x) => !x.closed && !x.done);
-      if (!h) return false;
-      h.done = true;
-      h.res.end(sse(h.after));
-      return true;
-    },
+    setScript: handler.setScript,
+    held: handler.held,
+    release: () => handler.release(),
     /** How many held responses the client hung up on (an interrupt does). */
     get hangups() {
-      return hangups;
+      return handler.hangups;
     },
     close: () => {
-      for (const h of holds) if (!h.closed) h.res.destroy();
+      handler.destroyAll();
       return new Promise((resolve) => server.close(() => resolve()));
     },
   };
