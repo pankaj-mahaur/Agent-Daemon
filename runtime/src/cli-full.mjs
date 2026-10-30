@@ -1051,7 +1051,7 @@ async function cmdDoctor({ cwd = process.cwd(), tokens, limit, model } = {}) {
     const folders = homeGraceFolders();
     if (jobs.length || folders.length) {
       const parts = [...jobs.map((j) => `job ${j.id} (${j.cwd}${j.allowHomeFolder === "grandfathered" ? ", kept from 3.0" : ""})`), ...folders.map((f) => `ad run/chat/loop in ${f}`)];
-      checks.push({ name: "Home-folder jobs", ok: true, note: `${parts.join("; ")}. Move them to a project folder (ad schedule add --cwd <project>); from 3.1 ad run/chat/loop there need --allow-home-folder` });
+      checks.push({ name: "Home-folder jobs", ok: true, note: `${parts.join("; ")}. Move them to a project folder (ad schedule add --cwd <project>); a later release will need --allow-home-folder for ad run/chat/loop there` });
     }
   } catch (e) {
     checks.push({ name: "Home-folder jobs", ok: true, note: `could not read the schedule: ${e.message}` });

@@ -82,7 +82,7 @@ export async function cmdRun(prompt, opts = {}) {
       store: opts.store,
       platform: opts.platform,
       err,
-      // 3.0.x: a script in the home folder still runs, with a one-time note (strict from 3.1).
+      // For now a script in the home folder still runs, with a one-time note (strict in a later release).
       allowHomeFolder: opts.allowHomeFolder === true,
       homePolicy: "grace",
       onApproval: (req) => {

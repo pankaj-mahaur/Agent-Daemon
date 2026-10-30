@@ -128,7 +128,7 @@ export function ownEngineHomeStartRefusal(dir) {
 
 const homeLoads = (loads = ["skills"]) => `your own ${ENGINE.name} ${loads.includes("skills") && loads.includes("settings") ? "skills and settings" : loads.includes("settings") ? "settings" : "skills"}`;
 
-/** ad run/chat/loop (strict, from 3.1), acp and web: the folder is refused. */
+/** ad run/chat/loop (strict in a later release), acp and web: the folder is refused. */
 export function homeFolderRefusal({ loads } = {}) {
   return `Run this in a project folder: ~/${projectConfigFolder} in your home folder has ${homeLoads(loads)}, which ad would load here. Use --cwd <project>, or add --allow-home-folder.`;
 }
@@ -176,8 +176,8 @@ export function homeDoctorNote({ trusted, loadable, settingsPath }) {
   return "nothing from your own engine install would load there";
 }
 
-/** Non-interactive ad run/chat/loop in a refused folder during 3.0.x (one note per folder). */
-export const homeCliGraceNote = `ad ran in your home folder, where your own ${ENGINE.name} skills load. From 3.1 this needs --allow-home-folder.`;
+/** Non-interactive ad run/chat/loop in a refused folder, until a later release makes it strict (one note per folder). */
+export const homeCliGraceNote = `ad ran in your home folder, where your own ${ENGINE.name} skills load. A later release will need --allow-home-folder here.`;
 
 /** `ad watch` reads the user's own engine conversations, like Claude Code's and Cursor's. */
 export const ownEngineSessionsNote = `ad watch also reads your own ${ENGINE.name} conversations in ~/${projectConfigFolder}/sessions, if you have ${ENGINE.name} installed; ad never writes there.`;

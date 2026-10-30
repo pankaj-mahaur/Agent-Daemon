@@ -96,7 +96,7 @@ test("P0.2a: a non-interactive run in a refused folder prints the 3.0.x note and
   await inFakeHome(async (home) => {
     const r = await run("do the thing", { cwd: home });
     assert.equal(r.code, 0, r.stderr);
-    assert.match(r.stderr, /From 3\.1 this needs --allow-home-folder/);
+    assert.match(r.stderr, /A later release will need --allow-home-folder here/);
     assert.equal(r.stdout, "pong[decline]\n");
   });
 });
@@ -106,7 +106,7 @@ test("P0.2a: --allow-home-folder runs there with the note that says what loads",
     const r = await run("do the thing", { cwd: home, allowHomeFolder: true });
     assert.equal(r.code, 0, r.stderr);
     assert.match(r.stderr, /Working in your home folder: your own \S+ skills from ~\/\.\w+ load in this session/);
-    assert.doesNotMatch(r.stderr, /From 3\.1/);
+    assert.doesNotMatch(r.stderr, /A later release will need/);
   });
 });
 
@@ -129,7 +129,7 @@ test("P0.2a: a trusted folder under a git home with only home settings gets the 
   try {
     const r = await run("do the thing", { cwd: work, home: engineHome });
     assert.equal(r.code, 0, r.stderr);
-    assert.match(r.stderr, /From 3\.1 this needs --allow-home-folder/);
+    assert.match(r.stderr, /A later release will need --allow-home-folder here/);
   } finally {
     for (const [k, v] of Object.entries(saved)) {
       if (v === undefined) delete process.env[k];
