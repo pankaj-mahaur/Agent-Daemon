@@ -5,7 +5,7 @@ license: MIT
 metadata:
   author: agent-daemon
   spec: agentskills.io
-  version: "1.1"
+  version: "1.2"
   kind: flow
 ---
 
@@ -52,7 +52,10 @@ Released separately, by `.github/workflows/release-memory.yml`, which runs only 
    `runtime/test/listings.test.mjs` fails if either is stale. Listing copy comes from `docs/support-matrix.md`: move a host to "tested live" only with an acceptance record.
 1. Dispatch it with `dry_run` on (the default). Read the job, download the artifacts (`server.json` and the rendered listing copy included) and check `SHA256SUMS`.
 2. Install from the built trees on each host and record the result (host acceptance).
-3. Only on the owner's explicit OK, dispatch again with `dry_run` off and approve the `release-memory` environment. The npm package publishes first; then the marketplace and Gemini trees are pushed and the GitHub release is made.
+3. Only on the owner's explicit OK, dispatch again with `dry_run` off and approve the `release-memory` environment. The npm package publishes first; then the marketplace and Gemini trees are pushed and the GitHub release is made (`memory-vX.Y.Z`, never marked Latest, so ad's own `vX.Y.Z` keeps the badge).
+   - The `dry_run` box in the web form starts checked and is easy to miss: a publish job that took 0 s was skipped. `gh workflow run release-memory.yml -f dry_run=false` leaves no doubt. Start one run only; a second fails on npm with E409.
+   - Without an `NPM_TOKEN` secret the publish step only prints a notice and the run still succeeds: check that the version is on npm afterwards.
+   - npm may stage the upload: the registry then shows a `0.0.0-stage` placeholder until the owner approves the version on npmjs.com. It is live once `latest` points at it.
 4. After npm publishing, and only with the owner's OK, publish to the MCP Registry:
    - run `mcp-publisher login github`, then `mcp-publisher publish` with the artifact's `server.json`;
    - the Registry is in preview and may reset, so re-running is safe;

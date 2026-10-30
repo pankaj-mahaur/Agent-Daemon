@@ -31,6 +31,7 @@ test("the publish job needs a real run and the owner's environment; the build jo
   assert.match(publish, /if: \$\{\{ !inputs\.dry_run \}\}/);
   assert.match(publish, /environment: release-memory/);
   assert.match(publish, /npm publish .* --provenance --access public/);
+  assert.match(publish, /gh release create "memory-v\$V" .*--latest=false/, "the Latest badge stays on ad's own release");
   const build = block("build");
   assert.doesNotMatch(build, /npm publish|gh release|git push|contents: write/);
   assert.match(build, /SHA256SUMS/);
