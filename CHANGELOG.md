@@ -100,6 +100,7 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 ### Changed
 
+- `/copy` no longer also sends the text to the terminal (OSC 52) when your clipboard tool took it. It still does over SSH, inside tmux (through tmux's own buffer when it can), and when no clipboard tool worked. A clipboard tool that hangs is stopped after 2 seconds.
 - The footer's usage limits say "used": `5h 96% used`. A bare `5h 96%` next to `ctx 94%` (context left) read as 96 % left.
 
 - Memory can run on Node's built-in SQLite (`node:sqlite`) when `better-sqlite3` isn't installed; `AD_SQLITE_DRIVER` picks one, and `ad doctor` shows which is in use ("SQLite driver"). The managed instructions now point at `ad memory install` for other agents, and `ad init` offers to add the memory server to Claude Code (in a terminal; scripts get the command as a hint).

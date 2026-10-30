@@ -98,7 +98,7 @@ test("export: markdown of the conversation, sanitized; the last answer for /copy
   assert.ok(!text(transcriptLines(ST, { width: 60 })).includes("child"), "the pager shows this thread only");
 });
 
-test("copyText: OSC 52 to the terminal, then the platform's tool (clip.exe gets UTF-16 with a BOM)", async () => {
+test("copyText: the platform's tool (clip.exe gets UTF-16 with a BOM); OSC 52 only when no tool worked", async () => {
   const writes = [];
   const fed = [];
   const spawnFn = (cmd) => {
@@ -106,9 +106,9 @@ test("copyText: OSC 52 to the terminal, then the platform's tool (clip.exe gets 
     child.stdin = { end: (b) => (fed.push([cmd, b]), setImmediate(() => child.emit("exit", 0))) };
     return child;
   };
-  const r = await copyText("héllo", { write: (d) => writes.push(d), platform: "win32", spawnFn });
+  const r = await copyText("héllo", { write: (d) => writes.push(d), platform: "win32", spawnFn, env: {} });
   assert.deepEqual(r, { ok: true, via: "clip.exe" });
-  assert.equal(writes[0], `\x1b]52;c;${Buffer.from("héllo").toString("base64")}\x07`);
+  assert.deepEqual(writes, [], "the native tool worked outside tmux and SSH: no OSC 52 (P2.3)");
   assert.deepEqual([...fed[0][1].subarray(0, 2)], [0xff, 0xfe]);
   assert.equal(fed[0][1].subarray(2).toString("utf16le"), "héllo");
   const failing = () => {
@@ -116,8 +116,8 @@ test("copyText: OSC 52 to the terminal, then the platform's tool (clip.exe gets 
     child.stdin = { end: () => setImmediate(() => child.emit("error", new Error("ENOENT"))) };
     return child;
   };
-  assert.deepEqual(await copyText("x", { write: () => {}, platform: "linux", spawnFn: failing }), { ok: true, via: "terminal" });
-  assert.deepEqual(await copyText("x", { platform: "linux", spawnFn: failing, osc52: false }), { ok: false, via: null });
+  assert.deepEqual(await copyText("x", { write: () => {}, platform: "linux", spawnFn: failing, env: {}, readFile: () => "" }), { ok: true, via: "terminal" });
+  assert.deepEqual(await copyText("x", { platform: "linux", spawnFn: failing, osc52: false, env: {}, readFile: () => "" }), { ok: false, via: null });
 });
 
 test("imagePath: an existing image file, quotes and file:// removed; anything else is not an image", () => {
