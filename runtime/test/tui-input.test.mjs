@@ -592,3 +592,9 @@ test("buttons 8-11 are dropped, not reported as keys", () => {
   h.d.feed("\x1b[<128;2;2M\x1b[<129;2;2M");
   assert.deepEqual(h.events, []);
 });
+
+test("a DA2 reply is a reply, never a key", () => {
+  const h = harness();
+  h.d.feed("\x1b[>1;95;0c");
+  assert.deepEqual(h.events, [{ type: "reply", kind: "da2", params: [1, 95, 0] }]);
+});

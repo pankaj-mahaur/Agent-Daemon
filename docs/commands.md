@@ -49,7 +49,7 @@ The engine's own rules come with the commands:
 | `/copy` | yes | yes | copy the last answer to the clipboard |
 | `/export` | yes | no | save the conversation as markdown in this folder |
 | `/raw` | yes | yes | print the last answer as plain text (for selecting) |
-| `/tui` | no | no | chooses the engine's own UI mode; `ad` has only its inline mode so far |
+| `/tui` | yes | no | choose inline or fullscreen for the next start; saved as `tui.fullscreen_transcript` (`ad tui --no-alt-screen` and `tui.alternate_screen` still win) |
 | `/diff` | yes | yes | show git changes, untracked files included |
 | `/mention` | yes | yes | an `@` in the prompt, and the file picker |
 | `/status` | yes | yes | account, model, sandbox, tokens, limits, and the session ad records (`ses_… · binding 2 (switched 14:02, you asked)`) |

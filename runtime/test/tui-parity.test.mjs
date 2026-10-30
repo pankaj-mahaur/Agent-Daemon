@@ -106,7 +106,7 @@ test("copyText: the platform's tool (clip.exe gets UTF-16 with a BOM); OSC 52 on
     child.stdin = { end: (b) => (fed.push([cmd, b]), setImmediate(() => child.emit("exit", 0))) };
     return child;
   };
-  const r = await copyText("héllo", { write: (d) => writes.push(d), platform: "win32", spawnFn, env: {} });
+  const r = await copyText("héllo", { write: (d) => writes.push(d), platform: "win32", spawnFn, env: {}, resolve: (n) => ({ cmd: n, prefix: [] }) });
   assert.deepEqual(r, { ok: true, via: "clip.exe" });
   assert.deepEqual(writes, [], "the native tool worked outside tmux and SSH: no OSC 52 (P2.3)");
   assert.deepEqual([...fed[0][1].subarray(0, 2)], [0xff, 0xfe]);
@@ -116,8 +116,8 @@ test("copyText: the platform's tool (clip.exe gets UTF-16 with a BOM); OSC 52 on
     child.stdin = { end: () => setImmediate(() => child.emit("error", new Error("ENOENT"))) };
     return child;
   };
-  assert.deepEqual(await copyText("x", { write: () => {}, platform: "linux", spawnFn: failing, env: {}, readFile: () => "" }), { ok: true, via: "terminal" });
-  assert.deepEqual(await copyText("x", { platform: "linux", spawnFn: failing, osc52: false, env: {}, readFile: () => "" }), { ok: false, via: null });
+  assert.deepEqual(await copyText("x", { write: () => {}, platform: "linux", spawnFn: failing, env: {}, readFile: () => "", resolve: (n) => ({ cmd: n, prefix: [] }) }), { ok: true, via: "terminal" });
+  assert.deepEqual(await copyText("x", { platform: "linux", spawnFn: failing, osc52: false, env: {}, readFile: () => "", resolve: (n) => ({ cmd: n, prefix: [] }) }), { ok: false, via: null });
 });
 
 test("imagePath: an existing image file, quotes and file:// removed; anything else is not an image", () => {

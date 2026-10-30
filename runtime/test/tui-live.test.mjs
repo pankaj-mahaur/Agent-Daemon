@@ -105,7 +105,9 @@ function journalTextOf(w) {
 const launched = [];
 
 // `ad tui` in a pseudo-terminal, shown on xterm.js.
-async function launch(w, args = [], { cols = 100, rows = 30 } = {}) {
+// Inline unless a case asks for fullscreen (P2.5): these cases read the terminal's scrollback.
+async function launch(w, args = [], { cols = 100, rows = 30, fullscreen = false } = {}) {
+  if (!fullscreen && !args.includes("--no-alt-screen")) args = ["--no-alt-screen", ...args];
   const pty = (await import("@lydell/node-pty")).default ?? (await import("@lydell/node-pty"));
   const term = new Terminal({ cols, rows, scrollback: 5000, allowProposedApi: true });
   term.loadAddon(new Unicode11Addon());

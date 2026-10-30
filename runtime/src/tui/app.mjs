@@ -61,6 +61,7 @@ export const SLASH_COMMANDS = [
   { name: "keymap", source: "upstream", desc: "the keys in effect (/keymap debug shows what a key sends)" },
   { name: "vim", source: "upstream", desc: "toggle Vim mode for the composer" },
   { name: "theme", source: "upstream", desc: "choose a syntax highlighting theme" },
+  { name: "tui", source: "upstream", desc: "choose inline or fullscreen for the next start" },
   { name: "cd", source: "upstream", desc: "change the working directory (the conversation continues there)" },
   { name: "model", source: "upstream", desc: "choose the model and reasoning effort" },
   { name: "permissions", source: "upstream", desc: "what the agent may do without asking" },
@@ -139,7 +140,6 @@ export const NOT_IN_AD = {
   worktree: "/worktree isn't in ad. For parallel work in worktrees, use /team or ad sp.",
   app: "/app isn't in ad: the desktop app keeps its own folder, not ad's, so it can't continue this conversation.",
   voice: "/voice isn't planned for ad.",
-  tui: "/tui isn't in ad: ad has only its inline mode.",
   daemon: "/daemon manages a background server ad never uses; ad runs its own engine.",
   pets: "ad doesn't draw terminal pets (they need Kitty or Sixel images).",
   apps: "/apps isn't planned for ad.",
@@ -1120,6 +1120,34 @@ export function createApp({
     );
   }
 
+  // /tui (P2.5): the engine's tui.fullscreen_transcript, for the next start (a value the user set counts as explicit).
+  function pickScreenMode() {
+    if (!settings?.engine) return warn("Settings aren't available here.");
+    const now = settings.engine.get("tui.fullscreen_transcript") === true ? "fullscreen" : "inline";
+    const current = (mode) => (mode === now ? " \u{b7} current" : "");
+    const items = [
+      { label: "Inline", hint: `the terminal's own scrollback, selection and search${current("inline")}`, value: "inline" },
+      { label: "Fullscreen", hint: `ad's own scrolling, selection and Find${current("fullscreen")}`, value: "fullscreen" },
+      { kind: "header", label: "Restart to apply. --no-alt-screen and tui.alternate_screen still win." },
+    ];
+    openPicker(
+      "tui",
+      items,
+      async (mode) => {
+        try {
+          await settings.engine.set("tui.fullscreen_transcript", mode === "fullscreen");
+          const id = st.thread?.id;
+          const how = id ? `It applies the next time ad starts: quit (Ctrl+C twice), then ad tui --resume ${id}` : "It applies the next time ad starts.";
+          info0(`Saved: ${mode} from the next start.`, how);
+        } catch (err) {
+          fail(err);
+        }
+        drawSoon();
+      },
+      { title: "Screen mode for the next start", showQuery: false, initial: now },
+    );
+  }
+
   // Options to switch on and reorder: onSave(values) on Enter, onCancel() on Esc
   // (undo a live preview there), onChange(values) on every change.
   function openChecklist(kind, items, onSave, { onCancel, onChange, ...opts } = {}) {
@@ -1520,6 +1548,8 @@ export function createApp({
         return changeDir(arg);
       case "theme":
         return pickTheme();
+      case "tui":
+        return pickScreenMode();
       case "vim": {
         // The engine's /vim: a toggle for this session; turned on, it starts in Normal.
         const on = !composer.vim;
@@ -1975,6 +2005,7 @@ export function createApp({
     const lim = limitsRow();
     if (lim) rows.push(["limits", lim]);
     if (info.compat) rows.push(["engine", info.compat]);
+    if (statusInfo.screen) rows.push(["screen", statusInfo.screen]); // P2.5: fullscreen · inline, and why
     return [[{ text: "Status", style: T.bold }], ...rows.map(([k, v]) => truncate([{ text: `  ${k.padEnd(13)}`, style: DIM }, { text: clean(v) }], width()))];
   }
 

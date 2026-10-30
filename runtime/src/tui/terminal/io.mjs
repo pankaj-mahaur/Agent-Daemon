@@ -22,6 +22,7 @@ const KITTY_POP = `${CSI}<u`;
 const KITTY_QUERY = `${CSI}?u`;
 const SYNC_QUERY = `${CSI}?2026$p`;
 const DA1_QUERY = `${CSI}c`;
+const DA2_QUERY = `${CSI}>c`;
 const MOK_ON = `${CSI}>4;2m`; // xterm modifyOtherKeys level 2
 const MOK_OFF = `${CSI}>4;0m`;
 const FOCUS_ON = `${CSI}?1004h`;
@@ -68,6 +69,7 @@ export function createIo({
     sync: false,
     focus: platform !== "win32", // as in the engine's own UI: no focus reporting on Windows
     da1: null,
+    da2: null, // asked only over SSH outside a multiplexer (Apple Terminal detection, P2.5)
   };
   const inputListeners = new Set();
   const resumeListeners = new Set();
@@ -102,6 +104,7 @@ export function createIo({
         }
         caps.kitty = true;
       } else if (ev.kind === "decrqm" && ev.mode === 2026) caps.sync = ev.value === 1 || ev.value === 2;
+      else if (ev.kind === "da2") caps.da2 = ev.params;
       else if (ev.kind === "da1") {
         caps.da1 = ev.params;
         da1Waiter?.();
@@ -214,7 +217,9 @@ export function createIo({
     const gotDa1 = new Promise((resolve) => {
       da1Waiter = resolve;
     });
-    writeRaw(BRACKETED_PASTE_ON + KITTY_PUSH + KITTY_QUERY + SYNC_QUERY + (caps.focus ? FOCUS_ON : "") + DA1_QUERY);
+    // DA2 before DA1 (DA1 marks the end of the replies), as the engine asks it: only over SSH outside tmux, zellij or screen.
+    const askDa2 = Boolean(env.SSH_TTY || env.SSH_CONNECTION) && !env.TMUX && !env.ZELLIJ && !env.STY;
+    writeRaw(BRACKETED_PASTE_ON + KITTY_PUSH + KITTY_QUERY + SYNC_QUERY + (caps.focus ? FOCUS_ON : "") + (askDa2 ? DA2_QUERY : "") + DA1_QUERY);
     let timer;
     await Promise.race([gotDa1, new Promise((resolve) => (timer = setTimeout(resolve, queryTimeoutMs)))]);
     clearTimeout(timer);

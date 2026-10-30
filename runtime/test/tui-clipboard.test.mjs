@@ -34,7 +34,7 @@ const TMUX_OSC = (t) => `\x1bPtmux;${OSC(t).replace(/\x1b/g, "\x1b\x1b")}\x1b\\`
 async function copy(text, { native = "ok", env = {}, platform = "darwin", tmux = "fail", timeoutMs = 2000, readFile = () => "" } = {}) {
   const { spawnFn, ran } = fakeSpawn({ pbcopy: native, "clip.exe": native, "wl-copy": native, tmux });
   const written = [];
-  const r = await copy0(text, { terminalWrite: (s) => written.push(s), env, platform, spawnFn, timeoutMs, readFile });
+  const r = await copy0(text, { terminalWrite: (s) => written.push(s), env, platform, spawnFn, timeoutMs, readFile, resolve: (n) => ({ cmd: n, prefix: [] }) });
   return { r, ran, written };
 }
 const copy0 = copyText;
@@ -98,8 +98,8 @@ test("a native tool that never exits is killed after the timeout, and OSC 52 is 
 
 test("readClipboard: the platform's tool, CRLF to LF; null when none works", async () => {
   const { spawnFn } = fakeSpawn({ "powershell.exe": { out: "a\r\nb" } });
-  assert.equal(await readClipboard({ platform: "win32", spawnFn, env: {} }), "a\nb");
-  assert.equal(await readClipboard({ platform: "darwin", spawnFn: fakeSpawn().spawnFn, env: {} }), null);
+  assert.equal(await readClipboard({ platform: "win32", spawnFn, env: {}, resolve: (n) => ({ cmd: n, prefix: [] }) }), "a\nb");
+  assert.equal(await readClipboard({ platform: "darwin", spawnFn: fakeSpawn().spawnFn, env: {}, resolve: (n) => ({ cmd: n, prefix: [] }) }), null);
 });
 
 test("copy-on-select defaults per terminal", () => {
@@ -127,4 +127,12 @@ test("right-click paste: auto on Windows, WSL and Linux; never over SSH or in VS
   assert.equal(p({}, "win32", "off"), false);
   assert.equal(p({ SSH_TTY: "x" }, "linux", "on"), false);
   assert.equal(p({ TERM_PROGRAM: "vscode" }, "win32", "on"), false);
+});
+
+test("a tool that isn't on PATH counts as failed and is never run (no working-folder lookup)", async () => {
+  const { spawnFn, ran } = fakeSpawn({ pbcopy: "ok" });
+  const written = [];
+  const r = await copyText("hi", { terminalWrite: (s) => written.push(s), env: {}, platform: "darwin", spawnFn, resolve: () => ({ cmd: null, via: "missing" }) });
+  assert.deepEqual(ran, []);
+  assert.deepEqual(r, { ok: true, via: "terminal" });
 });

@@ -493,3 +493,15 @@ test("SIGCONT cycles raw mode off then on before the modes return", async () => 
   assert.deepEqual(t.stdin.raw, [false, true]);
   assert.ok(t.written.slice(n).join("").includes("\x1b[?2004h"), "modes back after the raw cycle");
 });
+
+test("over SSH outside a multiplexer, enter() asks DA2 before DA1; in tmux or locally it doesn't ask", async () => {
+  const ask = async (env) => {
+    const t = fakeTerminal();
+    const { io } = make(t, { env });
+    await io.enter();
+    return t.written[0];
+  };
+  assert.ok((await ask({ SSH_CONNECTION: "1 2 3 4" })).endsWith("\x1b[>c\x1b[c"));
+  assert.ok(!(await ask({ SSH_CONNECTION: "1 2 3 4", TMUX: "/tmp/t" })).includes("\x1b[>c"));
+  assert.ok(!(await ask({})).includes("\x1b[>c"));
+});

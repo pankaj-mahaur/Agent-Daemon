@@ -14,6 +14,7 @@
 
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import { resolveCommand } from "../../safe-spawn.mjs";
 
 export const TERMINAL_MAX = 100_000;
 
@@ -52,7 +53,10 @@ const overSsh = (env) => Boolean(env.SSH_TTY || env.SSH_CONNECTION);
 
 // Runs a tool with `input` on stdin; true when it exits 0 in time. A tool that
 // hangs (a clipboard manager waiting for a display) is killed and counts as failed.
-function run(cmd, args, { input = null, spawnFn, timeoutMs, capture = false }) {
+function run(cmd, args, { input = null, spawnFn, timeoutMs, capture = false, resolve: resolveProgram }) {
+  // From PATH only, never the working folder (runtime/src/safe-spawn.mjs).
+  const program = resolveProgram(cmd);
+  if (!program?.cmd) return Promise.resolve(capture ? null : false);
   return new Promise((resolve) => {
     let child;
     let out = "";
@@ -64,7 +68,7 @@ function run(cmd, args, { input = null, spawnFn, timeoutMs, capture = false }) {
       resolve(v);
     };
     try {
-      child = spawnFn(cmd, args, { stdio: ["pipe", capture ? "pipe" : "ignore", "ignore"], windowsHide: true });
+      child = spawnFn(program.cmd, [...program.prefix, ...args], { stdio: ["pipe", capture ? "pipe" : "ignore", "ignore"], windowsHide: true });
     } catch {
       return resolve(capture ? null : false);
     }
@@ -88,7 +92,7 @@ function run(cmd, args, { input = null, spawnFn, timeoutMs, capture = false }) {
 const osc52 = (text) => `\x1b]52;c;${Buffer.from(text, "utf8").toString("base64")}\x07`;
 const forTmux = (seq) => `\x1bPtmux;${seq.replace(/\x1b/g, "\x1b\x1b")}\x1b\\`;
 
-export async function copyText(text, { terminalWrite, write, env = process.env, platform = process.platform, spawnFn = spawn, timeoutMs = 2000, readFile = readProcVersion, osc52: allowTerminal = true } = {}) {
+export async function copyText(text, { terminalWrite, write, env = process.env, platform = process.platform, spawnFn = spawn, timeoutMs = 2000, readFile = readProcVersion, osc52: allowTerminal = true, resolve = (n) => resolveCommand(n, { env, platform }) } = {}) {
   const value = String(text ?? "");
   if (!value) return { ok: false, via: null, error: "nothing to copy" };
   const toTerminal = terminalWrite ?? write;
@@ -98,7 +102,7 @@ export async function copyText(text, { terminalWrite, write, env = process.env, 
   for (const [cmd, args] of tools) {
     // clip.exe reads the console code page; UTF-16LE with a BOM is what it takes for Unicode.
     const input = cmd === "clip.exe" ? Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(value, "utf16le")]) : value;
-    if (await run(cmd, args, { input, spawnFn, timeoutMs })) {
+    if (await run(cmd, args, { input, spawnFn, timeoutMs, resolve })) {
       native = cmd;
       break;
     }
@@ -118,7 +122,7 @@ export async function copyText(text, { terminalWrite, write, env = process.env, 
     return true;
   };
   if (env.TMUX) {
-    if (await run("tmux", ["load-buffer", "-w", "-"], { input: value, spawnFn, timeoutMs })) {
+    if (await run("tmux", ["load-buffer", "-w", "-"], { input: value, spawnFn, timeoutMs, resolve })) {
       forwarded = true;
       via ??= "tmux";
     } else forwarded = terminal(forTmux(osc52(value))) || forwarded;
@@ -129,10 +133,10 @@ export async function copyText(text, { terminalWrite, write, env = process.env, 
   return ok ? { ok, via } : { ok: false, via: null, ...(error ? { error } : {}) };
 }
 
-export async function readClipboard({ env = process.env, platform = process.platform, spawnFn = spawn, timeoutMs = 2000, readFile = readProcVersion } = {}) {
+export async function readClipboard({ env = process.env, platform = process.platform, spawnFn = spawn, timeoutMs = 2000, readFile = readProcVersion, resolve = (n) => resolveCommand(n, { env, platform }) } = {}) {
   const tools = isWsl({ env, platform, readFile }) ? READ.win32 : READ[platform] ?? READ.linux;
   for (const [cmd, args] of tools) {
-    const text = await run(cmd, args, { spawnFn, timeoutMs, capture: true });
+    const text = await run(cmd, args, { spawnFn, timeoutMs, capture: true, resolve });
     if (typeof text === "string") return text.replace(/\r\n?/g, "\n");
   }
   return null;

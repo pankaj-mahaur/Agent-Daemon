@@ -25,6 +25,7 @@ const TUI_USAGE = `Usage: ad tui ["<first prompt>"] [options]
   --sandbox <mode>     read-only | workspace-write (default) | danger-full-access
   --resume <thread-id> continue a conversation;  --last  the newest one here
   --preview            a minimal preview UI on the same engine instead
+  --no-alt-screen      inline mode for this run (no fullscreen)
 Guide: docs/tui.md`;
 const SANDBOX_MODES = ["read-only", "workspace-write", "danger-full-access"];
 
@@ -51,6 +52,7 @@ async function tui(args) {
         resume: { type: "string" },
         last: { type: "boolean" },
         preview: { type: "boolean" },
+        "no-alt-screen": { type: "boolean" },
       },
       allowPositionals: true,
       strict: true,
@@ -69,7 +71,7 @@ async function tui(args) {
     return cmdTuiPreview({ cwd: values.cwd || process.cwd(), model: values.model, sandbox: values.sandbox, clientVersion: version() });
   }
   const { cmdTui } = await import("./tui/main.mjs");
-  return cmdTui({ cwd: values.cwd || process.cwd(), model: values.model, account: values.account, effort: values.effort, sandbox: values.sandbox, resume: values.resume, last: values.last, prompt: positionals.join(" ").trim() || null, clientVersion: version() });
+  return cmdTui({ cwd: values.cwd || process.cwd(), model: values.model, account: values.account, effort: values.effort, sandbox: values.sandbox, resume: values.resume, last: values.last, noAltScreen: values["no-alt-screen"] === true, prompt: positionals.join(" ").trim() || null, clientVersion: version() });
 }
 
 async function launch() {
@@ -94,18 +96,24 @@ async function launch() {
   }
   // Bare `ad` (and `ad --last`) open the TUI unless AD_TUI=0; otherwise the
   // help, with the reason when the TUI was wanted but can't run here.
-  const bare = argv.length === 0 || (argv.length === 1 && argv[0] === "--last");
+  // `--no-alt-screen` (P2.5) may come along: `ad --no-alt-screen`, `ad --last --no-alt-screen`.
+  const bare = argv.length <= 2 && argv.every((a) => a === "--last" || a === "--no-alt-screen") && new Set(argv).size === argv.length;
   if (bare) {
     const choice = bareAdChoice({ env: process.env, isDefault: TUI_IS_DEFAULT });
     if (choice.tui) return tui(argv);
     // `ad --last` means "reopen the last conversation in the terminal UI": say
     // what to do instead of falling through to "unknown command".
-    if (argv[0] === "--last") {
+    if (argv.includes("--last")) {
       process.stderr.write(
         choice.reason
           ? `${choice.reason}\n\`ad --last\` reopens the last conversation in the terminal UI; here, use \`ad chat\` and /resume.\n`
           : "The terminal UI is turned off (AD_TUI=0). `ad tui --last` reopens the last conversation in it anyway.\n",
       );
+      return 2;
+    }
+    // `ad --no-alt-screen` asks for the terminal UI (inline): say why it can't open, never "unknown command".
+    if (argv.includes("--no-alt-screen")) {
+      process.stderr.write(choice.reason ? `${choice.reason}\n` : "The terminal UI is turned off (AD_TUI=0). `ad tui --no-alt-screen` opens it inline anyway.\n");
       return 2;
     }
     if (choice.reason) process.stderr.write(`${choice.reason}\n\n`);

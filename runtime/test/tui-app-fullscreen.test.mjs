@@ -32,7 +32,7 @@ function stubSession({ running = false } = {}) {
   };
 }
 
-async function withFullscreen(fn, { rows = 12, cols = 60, speed, overrides = null, running = false, history = 60, env = {}, platform = "linux", config = {}, clipboard = "from the clipboard", extraActions = {} } = {}) {
+async function withFullscreen(fn, { rows = 12, cols = 60, speed, overrides = null, running = false, history = 60, env = {}, platform = "linux", config = {}, clipboard = "from the clipboard", extraActions = {}, statusInfo = {} } = {}) {
   const scr = xtermScreen({ cols, rows });
   const listeners = new Set();
   const io = { ...scr.io, onInput: (f) => (listeners.add(f), () => listeners.delete(f)) };
@@ -40,11 +40,12 @@ async function withFullscreen(fn, { rows = 12, cols = 60, speed, overrides = nul
   const renderer = createFullscreenRenderer({ io, resizeSource: scr.resizeSource, stderr: { write: () => true } });
   renderer.start();
   const session = stubSession({ running });
-  const settings = { engine: { get: (k) => (k === "tui.mouse_scroll_speed" ? speed : config[k]) } };
+  const sets = [];
+  const settings = { engine: { get: (k) => (k === "tui.mouse_scroll_speed" ? speed : config[k]), set: async (k, v) => (sets.push([k, v]), (config[k] = v)) } };
   // A fake clipboard: what was copied, and what a right-click paste reads.
   const copies = [];
   const actions = { copy: async (text) => (copies.push(text), { ok: true, via: "pbcopy" }), readClipboard: async () => clipboard, ...extraActions };
-  const app = createApp({ io, renderer, session, cwd: "/x", armMs: 0, settings, keymap: createKeymap({ overrides }), env, platform, actions });
+  const app = createApp({ io, renderer, session, cwd: "/x", armMs: 0, settings, keymap: createKeymap({ overrides }), env, platform, actions, statusInfo });
   for (let i = 0; i < history; i++) renderer.commit([[{ text: `h${i}` }]]); // one row each
   app.draw();
   await sleep(40);
@@ -54,7 +55,7 @@ async function withFullscreen(fn, { rows = 12, cols = 60, speed, overrides = nul
     return scr.altLines()[0];
   };
   try {
-    await fn({ app, renderer, session, scr, type: (s) => decoder.feed(s), top, copies });
+    await fn({ app, renderer, session, scr, type: (s) => decoder.feed(s), top, copies, sets });
   } finally {
     app.dispose();
     renderer.dispose();
@@ -423,4 +424,34 @@ test("Ctrl+Z suspends between turns; not while a turn runs (the note says why); 
     await tick();
     assert.equal(n, 1);
   }, { extraActions, platform: "win32" });
+});
+
+/* /tui and the /status screen line (P2.5) */
+
+// Polls the screen until it matches (a picker or a note can take a few ticks under load).
+async function screenUntil(scr, re, ms = 3000) {
+  const end = Date.now() + ms;
+  let t = "";
+  while (Date.now() < end) {
+    t = await screenText(scr);
+    if (re.test(t)) return t;
+  }
+  return t;
+}
+
+test("/tui picks the screen mode for the next start and saves tui.fullscreen_transcript; /status shows the screen line", async () => {
+  await withFullscreen(async ({ type, scr, sets }) => {
+    type("/tui\r");
+    let t = await screenUntil(scr, /Fullscreen +ad's own scrolling/);
+    assert.match(t, /Inline +the terminal's own scrollback, selection and search/);
+    assert.match(t, /Fullscreen +ad's own scrolling, selection and Find · current/);
+    type("\x1b[A"); // up to Inline
+    type("\r");
+    await tick();
+    assert.deepEqual(sets, [["tui.fullscreen_transcript", false]]);
+    t = await screenUntil(scr, /Saved: inline from the next start/);
+    assert.match(t, /Saved: inline from the next start/);
+    type("/status\r");
+    assert.match(await screenUntil(scr, /screen +fullscreen/), /screen +fullscreen · mouse off: tmux mouse is off/);
+  }, { cols: 100, rows: 30, config: { "tui.fullscreen_transcript": true }, statusInfo: { screen: "fullscreen \u{b7} mouse off: tmux mouse is off (set -g mouse on)" } });
 });

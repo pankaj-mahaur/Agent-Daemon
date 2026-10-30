@@ -150,6 +150,9 @@ function decodeCsi(seq, outstandingCpr) {
     if (outstandingCpr) return { type: "reply", kind: "cpr", row: Number(m[1]), col: Number(m[2]) };
     if (m[1] === "1") return key("f3", seq, mods(m[2]));
   }
+  if (final === "c" && inner.startsWith(">")) {
+    return { type: "reply", kind: "da2", params: inner.slice(1).split(";").filter(Boolean).map(Number) };
+  }
   if (final === "c" && inner.startsWith("?")) {
     return { type: "reply", kind: "da1", params: inner.slice(1).split(";").filter(Boolean).map(Number) };
   }

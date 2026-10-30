@@ -24,7 +24,7 @@ import { engineHome, engineVersion, engineErrorText, engineErrorDetail } from ".
 import { createIo } from "./terminal/io.mjs";
 import { createRenderer } from "./terminal/renderer.mjs";
 import { createFullscreenRenderer } from "./terminal/fullscreen.mjs";
-import { explicitIn, mouseDefault, resolveScreenMode } from "./screen-mode.mjs";
+import { appleTerminalOverSsh, explicitIn, mouseDefault, probeTmuxMouse, resolveScreenMode, screenStatus } from "./screen-mode.mjs";
 import { colorDepth } from "./terminal/text.mjs";
 import { setWidthProfile } from "./terminal/width.mjs";
 import { probeWidthProfile, reflowModel, terminalName } from "./terminal/detect.mjs";
@@ -375,7 +375,9 @@ export async function cmdTui(opts = {}) {
       } });
     const mousePref = adPrefs.get("screen.mouse", null);
     // Path A (P2.1): last time was fullscreen, so start there; nothing touches the shell's screen.
-    if (adPrefs.get("screen.lastMode", null) === "fullscreen") {
+    // Inside tmux, whether its mouse is on (P2.5): asked now, read when the mode is resolved.
+    const tmuxMouse = probeTmuxMouse({ execFile });
+    if (adPrefs.get("screen.lastMode", null) === "fullscreen" && !opts.noAltScreen) {
       renderer = fullscreenRenderer(typeof mousePref === "boolean" ? mousePref : mouseDefault());
       renderer.start();
     } else {
@@ -563,6 +565,9 @@ export async function cmdTui(opts = {}) {
     // The screen mode follows the engine's settings; only a value the user set counts (explicitIn).
     const layers = await engine.config.read({ includeLayers: true }).then((r) => r?.layers ?? null, () => null);
     const screen = resolveScreenMode({
+      noAltScreen: opts.noAltScreen === true,
+      appleTerminalOverSsh: appleTerminalOverSsh(caps),
+      tmuxMouse: await tmuxMouse,
       altScreen: settings.engine.get("tui.alternate_screen") ?? "auto",
       fullscreenTranscript: settings.engine.get("tui.fullscreen_transcript"),
       fullscreenExplicit: explicitIn(layers, "tui.fullscreen_transcript"),
@@ -889,7 +894,7 @@ export async function cmdTui(opts = {}) {
       renderer = inlineRenderer();
       await renderer.start();
     }
-    app = createApp({ io, renderer, session, cwd, header: intro, newline, history: createHistory(opts.historyFile ? { file: opts.historyFile } : {}), actions, settings, keymap: createKeymap({ overrides: settings.engine.get("tui.keymap") }), statusInfo: { engineVersion: engineVersionText, hostname: hostname(), home: homedir() }, info: { compat: `${engineVersionText} (tested)`, terminal: term } });
+    app = createApp({ io, renderer, session, cwd, header: intro, newline, history: createHistory(opts.historyFile ? { file: opts.historyFile } : {}), actions, settings, keymap: createKeymap({ overrides: settings.engine.get("tui.keymap") }), statusInfo: { engineVersion: engineVersionText, hostname: hostname(), home: homedir(), screen: screenStatus(screen) }, info: { compat: `${engineVersionText} (tested)`, terminal: term } });
     // /fallback off is the app's: fallback asks it at every turn.
     fallbackWindowOn = () => app.state.fallbackHere !== false;
     // `ad tui "<prompt>"`: the first prompt is sent right away.
