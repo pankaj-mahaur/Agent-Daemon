@@ -126,3 +126,85 @@ test("append needs lines or a render function; render output is copied, not kept
   out.push(line("added later"));
   assert.deepEqual(text(t.window({ width: 30, height: 5 }).rows), ["kept"]);
 });
+
+/* Scrolling (P2.2) */
+
+const rowsOfN = (n, prefix = "r") => Array.from({ length: n }, (_, i) => line(`${prefix}${i}`));
+const fill = (t, n) => { for (let i = 0; i < n; i++) t.append({ lines: [line(`e${i}`)] }); };
+const view = (t, height = 5, width = 40) => text(t.window({ width, height }).rows);
+
+test("scroll up stops at the top; scrolling down to the bottom resumes following", () => {
+  const t = createTranscript();
+  fill(t, 20);
+  assert.deepEqual(view(t), ["e15", "e16", "e17", "e18", "e19"]);
+  t.scroll(-3, { width: 40, height: 5 });
+  assert.equal(t.following, false);
+  assert.deepEqual(view(t), ["e12", "e13", "e14", "e15", "e16"]);
+  t.scroll(-100, { width: 40, height: 5 });
+  assert.deepEqual(view(t), ["e0", "e1", "e2", "e3", "e4"]);
+  assert.equal(t.window({ width: 40, height: 5 }).top, true);
+  t.scroll(-1, { width: 40, height: 5 });
+  assert.deepEqual(view(t), ["e0", "e1", "e2", "e3", "e4"], "never past the top");
+  t.scroll(100, { width: 40, height: 5 });
+  assert.equal(t.following, true);
+  assert.deepEqual(view(t), ["e15", "e16", "e17", "e18", "e19"]);
+});
+
+test("scrolling crosses entries of several rows, row by row", () => {
+  const t = createTranscript();
+  t.append({ lines: rowsOfN(4, "a") });
+  t.append({ lines: rowsOfN(4, "b") });
+  t.append({ lines: rowsOfN(4, "c") });
+  t.scroll(-2, { width: 40, height: 3 });
+  assert.deepEqual(view(t, 3), ["b3", "c0", "c1"]);
+  t.scroll(-4, { width: 40, height: 3 });
+  assert.deepEqual(view(t, 3), ["a3", "b0", "b1"]);
+});
+
+test("commits while scrolled keep the anchor and set newActivity; jumpLatest clears it", () => {
+  const t = createTranscript();
+  fill(t, 20);
+  t.scroll(-5, { width: 40, height: 5 });
+  const before = view(t);
+  t.append({ lines: [line("new")] });
+  assert.deepEqual(view(t), before);
+  assert.equal(t.newActivity, true);
+  t.jumpLatest();
+  assert.equal(t.following, true);
+  assert.equal(t.newActivity, false);
+  assert.deepEqual(view(t).at(-1), "new");
+});
+
+test("jumpTop shows the first rows; with everything on one screen it stays following", () => {
+  const t = createTranscript();
+  fill(t, 20);
+  t.jumpTop();
+  assert.deepEqual(view(t), ["e0", "e1", "e2", "e3", "e4"]);
+  const s = createTranscript();
+  fill(s, 2);
+  s.jumpTop();
+  view(s);
+  assert.equal(s.following, true);
+});
+
+test("resize while scrolled keeps the anchor entry and moves its row in proportion", () => {
+  const t = createTranscript();
+  // 2 rows per entry when wide, 4 when narrow: half way into an entry stays half way.
+  const part = (i, n) => Array.from({ length: n }, (_, k) => line(`entry ${i} part ${k} of ${n}`));
+  for (let i = 0; i < 10; i++) t.append({ render: (w) => (w >= 30 ? part(i, 2) : part(i, 4)) });
+  t.scroll(-8, { width: 40, height: 3 });
+  assert.equal(view(t, 3, 40)[0], "entry 4 part 1 of 2");
+  t.layout(20);
+  assert.equal(view(t, 3, 20)[0], "entry 4 part 2 of 4");
+  assert.equal(t.following, false);
+});
+
+test("a retention trim that drops the anchor entry moves the view to the first entry", () => {
+  const t = createTranscript({ maxEntries: 20 });
+  fill(t, 20);
+  t.jumpTop();
+  view(t);
+  for (let i = 20; i < 30; i++) t.append({ lines: [line(`e${i}`)] });
+  assert.equal(view(t, 5, 120)[0], TRIMMED_TEXT);
+  assert.equal(t.following, false);
+});

@@ -37,11 +37,18 @@ export function createTranscript({ maxEntries = 5000, entryMaxRows = 2000 } = {}
 
   const hasMarker = () => entries[0]?.marker === true;
 
+  // The view (P2.2): null follows the bottom; else the top visible row, as an
+  // entry and a row inside it, so new entries and re-wraps don't move it.
+  let anchor = null;
+  let newActivity = false;
+  const indexOf = (id) => entries.findIndex((e) => e.id === id);
+
   function trim() {
     const first = hasMarker() ? 1 : 0;
     if (entries.length - first <= maxEntries) return;
     const drop = Math.max(1, Math.ceil(maxEntries / 10));
     const marker = hasMarker() ? entries[0] : { id: nextId++, marker: true, fixed: [[{ text: TRIMMED_TEXT, style: DIM }]] };
+    // A view whose entry was dropped shows the first entry (topPos falls back to it).
     entries = [marker, ...entries.slice(first + drop)];
   }
 
@@ -49,6 +56,7 @@ export function createTranscript({ maxEntries = 5000, entryMaxRows = 2000 } = {}
     if (typeof render !== "function" && !Array.isArray(lines)) throw new TypeError("transcript.append needs lines or a render function");
     const entry = { id: nextId++, key, render: typeof render === "function" ? render : undefined, fixed: render ? undefined : lines.map((l) => [...l]), cache: null };
     entries.push(entry);
+    if (anchor) newActivity = true;
     trim();
     return entry.id;
   }
@@ -57,17 +65,89 @@ export function createTranscript({ maxEntries = 5000, entryMaxRows = 2000 } = {}
     const at = entries.findIndex((e) => e.key === key);
     if (at < 0) return append({ render });
     const entry = { id: nextId++, render, cache: null };
+    if (anchor && entries[indexOf(anchor.entryId)]?.key === key) anchor = { entryId: entry.id, row: 0 };
     entries = entries.flatMap((e, i) => (i === at ? [entry] : e.key === key ? [] : [e]));
     return entry.id;
   }
 
-  // Caches carry their width, so a stale one is simply not used.
+  // Caches carry their width, so a stale one is simply not used. A scrolled
+  // view keeps its entry and moves its row in proportion.
   function layout(w) {
+    if (anchor && width != null && w !== width) {
+      const e = entries[indexOf(anchor.entryId)];
+      if (e) {
+        const before = rowsOf(e, width).length;
+        const after = rowsOf(e, w).length;
+        anchor = { entryId: e.id, row: before ? Math.max(0, Math.min(after - 1, Math.round((anchor.row * after) / before))) : 0 };
+      }
+    }
     width = w;
+  }
+
+  const len = (i, w) => rowsOf(entries[i], w).length;
+
+  /** The top visible row as {i, row}, for the anchor or for the bottom view. */
+  function topPos(w, height) {
+    if (anchor) {
+      const i = indexOf(anchor.entryId);
+      if (i >= 0) return { i, row: Math.max(0, Math.min(anchor.row, len(i, w) - 1)) };
+      return { i: 0, row: 0 };
+    }
+    let need = height;
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const n = len(i, w);
+      if (n >= need) return { i, row: n - need };
+      need -= n;
+    }
+    return { i: 0, row: 0 };
+  }
+
+  // Rows from pos to the end, counting at most `limit`.
+  function rowsFrom({ i, row }, w, limit) {
+    let n = entries.length ? len(i, w) - row : 0;
+    for (let j = i + 1; j < entries.length && n < limit; j++) n += len(j, w);
+    return n;
+  }
+
+  function scroll(delta, { width: w = width, height }) {
+    if (!entries.length || !delta) return;
+    if (w !== width) layout(w);
+    let { i, row } = topPos(w, height);
+    const up = () => {
+      if (row > 0) return (row--, true);
+      for (let j = i - 1; j >= 0; j--) if (len(j, w) > 0) return ((i = j), (row = len(j, w) - 1), true);
+      return false;
+    };
+    const down = () => {
+      if (row < len(i, w) - 1) return (row++, true);
+      for (let j = i + 1; j < entries.length; j++) if (len(j, w) > 0) return ((i = j), (row = 0), true);
+      return false;
+    };
+    for (let k = 0; k < Math.abs(delta); k++) if (!(delta < 0 ? up() : down())) break;
+    if (rowsFrom({ i, row }, w, height + 1) <= height) jumpLatest();
+    else anchor = { entryId: entries[i].id, row };
+  }
+
+  function jumpLatest() {
+    anchor = null;
+    newActivity = false;
+  }
+
+  function jumpTop() {
+    if (entries.length) anchor = { entryId: entries[0].id, row: 0 };
   }
 
   function window({ width: w = width, height }) {
     if (w !== width) layout(w);
+    if (anchor) {
+      const pos = topPos(w, height);
+      if (rowsFrom(pos, w, height + 1) <= height) jumpLatest(); // the end came into view
+      else {
+        const rows = rowsOf(entries[pos.i], w).slice(pos.row);
+        for (let j = pos.i + 1; j < entries.length && rows.length < height; j++) rows.push(...rowsOf(entries[j], w));
+        return { rows: rows.slice(0, height), top: pos.i === 0 && pos.row === 0 };
+      }
+    }
     const want = height * 2;
     const collected = [];
     let i = entries.length - 1;
@@ -84,6 +164,7 @@ export function createTranscript({ maxEntries = 5000, entryMaxRows = 2000 } = {}
 
   function clear() {
     entries = [];
+    jumpLatest();
   }
 
   return {
@@ -92,10 +173,16 @@ export function createTranscript({ maxEntries = 5000, entryMaxRows = 2000 } = {}
     layout,
     window,
     clear,
+    scroll,
+    jumpTop,
+    jumpLatest,
     size: () => entries.length,
-    // P2.2 adds scrolling; until then the window always shows the newest rows.
     get following() {
-      return true;
+      return anchor === null;
     },
+    get newActivity() {
+      return newActivity;
+    },
+    canReturn: () => anchor !== null,
   };
 }
