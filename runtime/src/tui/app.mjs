@@ -260,16 +260,41 @@ export function createApp({
   /* Scrollback                                                      */
   /* -------------------------------------------------------------- */
 
-  function commit(lines) {
-    if (lines.length) renderer.commit(lines);
+  // `content` is lines, or a render function over the width. A function lets the
+  // fullscreen renderer re-wrap the entry on resize; it must close over a
+  // commit-time snapshot (snap()), never a live item, or a resize would rewrite
+  // history. The inline renderer gets the lines at today's width either way.
+  function commit(content, { key } = {}) {
+    const render = typeof content === "function" ? content : null;
+    const lines = render ? render(width()) : content;
+    if (!lines.length) return;
+    renderer.commit(lines, render ? { render, key } : key ? { key } : undefined);
   }
 
   // A cell gets a blank line before it, as in the engine's own UI.
-  function commitCell(lines) {
+  function commitCell(content, opts) {
+    const render = typeof content === "function" ? content : null;
+    const lines = render ? render(width()) : content;
     if (!lines.length) return;
-    commit(lastWasCell ? [[], ...lines] : lines);
+    const gap = lastWasCell;
+    if (render) commit((w) => (gap ? [[], ...render(w)] : render(w)), opts);
+    else commit(gap ? [[], ...lines] : lines, opts);
     lastWasCell = true;
   }
+
+  // A deep copy of what a committed cell shows, taken when it is committed.
+  const snap = (v) => {
+    try {
+      return structuredClone(v);
+    } catch {
+      return JSON.parse(JSON.stringify(v));
+    }
+  };
+  /** Commits a cell that re-renders from a snapshot: render(snapshot, width). */
+  const commitView = (value, render, opts) => {
+    const view = snap(value);
+    commitCell((w) => render(view, w), opts);
+  };
 
   function resetThreadView() {
     recapping = null; // a recap of the conversation left behind is dropped
@@ -321,13 +346,13 @@ export function createApp({
         const running = [...(st.terminals?.values() ?? [])].some((t) => t.itemId === it.id && t.turnId === it.turnId);
         committed.add(shownKey(it));
         if (running) runningShown.add(shownKey(it));
-        commitCell(renderCell(running ? { ...it, streaming: false } : settledView(it), { width: width() }));
+        commitView(running ? { ...it, streaming: false } : settledView(it), (v, w) => renderCell(v, { width: w }));
         continue;
       }
       if (it.kind === "userMessage") {
         committed.add(shownKey(it));
         if (it.clientId && echoesShown.has(it.clientId)) continue;
-        commitCell(renderCell(it, { width: width() }));
+        commitView(it, (v, w) => renderCell(v, { width: w }));
         continue;
       }
       if (it.kind === "agentMessage") {
@@ -344,13 +369,24 @@ export function createApp({
         if (out.length) {
           // The bullet on the message's first line only; the rest (and later batches) indent.
           const lines = out.map((l, k) => [{ text: s.started || k > 0 ? "  " : "\u{2022} ", style: DIM }, ...l]);
-          if (!s.started) commitCell(lines);
-          else commit(lines);
+          // Keyed, so the fullscreen renderer can swap the streamed pieces for one re-wrappable entry.
+          if (!s.started) {
+            s.gap = lastWasCell;
+            commitCell(lines, { key: shownKey(it) });
+          } else commit(lines, { key: shownKey(it) });
           s.started = true;
         }
         if (live) return items.slice(i);
         committed.add(shownKey(it));
         streams.delete(shownKey(it));
+        if (s.started) {
+          const gap = s.gap;
+          renderer.settle?.(shownKey(it), (w) => {
+            const md = createMarkdownStream({ width: w - 2 });
+            const all = [...md.push(text), ...md.finish()].map((l, k) => [{ text: k > 0 ? "  " : "\u{2022} ", style: DIM }, ...l]);
+            return gap ? [[], ...all] : all;
+          });
+        }
         continue;
       }
       if (isExploring(it)) {
@@ -360,14 +396,14 @@ export function createApp({
         const settled = group.every((g) => !open(g));
         // A run of exploring commands is one cell: it ends at the next other item or the turn's end.
         if (!settled || (j === items.length && turnActive())) return items.slice(i);
-        commitCell(renderExploring(group.map(settledView), { width: width() }));
+        commitView(group.map(settledView), (v, w) => renderExploring(v, { width: w }));
         for (const g of group) committed.add(shownKey(g));
         i = j - 1;
         continue;
       }
       if (open(it)) return items.slice(i);
       committed.add(shownKey(it));
-      commitCell(renderCell(settledView(it), { width: width() }));
+      commitView(settledView(it), (v, w) => renderCell(v, { width: w }));
     }
     return [];
   }
@@ -379,7 +415,7 @@ export function createApp({
       const it = rootItems().find((x) => shownKey(x) === key);
       if (!it || it.status === "inProgress") continue;
       runningShown.delete(key);
-      if (turnActive()) commitCell(renderCell(it, { width: width() }));
+      if (turnActive()) commitView(it, (v, w) => renderCell(v, { width: w }));
     }
   }
 
@@ -403,8 +439,9 @@ export function createApp({
         // (kept as the hint, and in /warnings).
         const engineWords = errorText({ ...t.error, code: -32000 });
         const why = actions.gatewayReason?.(st.thread?.id ?? null, turnStarts.get(t.id) ?? turnStartedAt ?? null);
-        commitCell(renderNotice({ level: "error", message: `The turn failed: ${why ? clean(why) : engineWords}`, ...(why ? { hint: `The engine said: ${engineWords}` } : {}) }, { width: width() }));
-      } else if (t.status === "interrupted") commitCell(renderNotice({ level: "warn", message: "Interrupted. Say what to do differently." }, { width: width() }));
+        const n = { level: "error", message: `The turn failed: ${why ? clean(why) : engineWords}`, ...(why ? { hint: `The engine said: ${engineWords}` } : {}) };
+        commitCell((w) => renderNotice(n, { width: w }));
+      } else if (t.status === "interrupted") commitCell((w) => renderNotice({ level: "warn", message: "Interrupted. Say what to do differently." }, { width: w }));
       const started = turnStarts.get(t.id) ?? turnStartedAt;
       turnStarts.delete(t.id);
       if (started != null) {
@@ -424,7 +461,7 @@ export function createApp({
   function reportPlanUpdates() {
     if (!st.plan || st.plan === planShown) return;
     planShown = st.plan;
-    commitCell(renderPlan(st.plan.steps, { width: width(), explanation: st.plan.explanation }));
+    commitView(st.plan, (p, w) => renderPlan(p.steps, { width: w, explanation: p.explanation }));
   }
 
   // "Learned:" rows for what ad's hooks recorded during the turn (keyed by thread id).
@@ -2433,7 +2470,7 @@ export function createApp({
       const r = session.submit(images.length ? [{ type: "text", text }, ...images.map((p) => ({ type: "localImage", path: p }))] : text);
       if (shown) {
         echoesShown.add(r.clientUserMessageId);
-        commitCell(renderCell({ kind: "userMessage", text: shown }, { width: width() }));
+        commitView({ kind: "userMessage", text: shown }, (v, w) => renderCell(v, { width: w }));
       }
       r.accepted.then(
         (a) => {

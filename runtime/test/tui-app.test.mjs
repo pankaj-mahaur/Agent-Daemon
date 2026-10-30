@@ -1736,3 +1736,31 @@ test("a translated provider's failed turn shows ad's reason, the engine's words 
     { cols: 120, actions: { gatewayReason } },
   );
 });
+
+test("a committed cell re-renders from its commit-time snapshot (a later change to the item doesn't rewrite history)", async () => {
+  const s = stubSession({ turns: [{ id: "u", status: "completed", itemIds: [] }] });
+  s.state.items.set("c1", { id: "c1", kind: "commandExecution", command: "npm test", status: "completed", exitCode: 0, actions: [], turnId: "u", threadId: "t" });
+  const scr = modelScreen({ cols: 70, rows: 20 });
+  const io = { ...scr.io, onInput: () => () => {} };
+  const renderer = createRenderer({ io, reflow: "none" });
+  await renderer.start();
+  const renders = [];
+  const commit = renderer.commit.bind(renderer);
+  renderer.commit = (lines, opts) => {
+    if (opts?.render) renders.push(opts.render);
+    return commit(lines);
+  };
+  const app = createApp({ io, renderer, session: s, cwd: "/x", armMs: 0 });
+  try {
+    app.draw();
+    const flat = (lines) => lines.map((l) => l.map((x) => x.text).join("")).join("\n");
+    const cell = renders.find((r) => /npm test/.test(flat(r(60))));
+    assert.ok(cell, "the command cell was committed as a render function");
+    s.state.items.get("c1").command = "rm -rf build";
+    assert.match(flat(cell(60)), /npm test/);
+    assert.doesNotMatch(flat(cell(30)), /rm -rf/);
+  } finally {
+    app.dispose();
+    renderer.dispose();
+  }
+});
