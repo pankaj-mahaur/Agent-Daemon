@@ -26,11 +26,24 @@ import { enterAltScreen, isActive, onRelease, releaseAltScreen } from "./alt-scr
 import { COMMIT_BATCH_MS, RESIZE_QUIET_MS } from "./renderer.mjs";
 import { renderLine, truncate } from "./text.mjs";
 import { createTranscript } from "./transcript.mjs";
+import { stringWidth } from "./width.mjs";
 
 const CSI = "\x1b[";
 const SYNC_BATCH_MS = 16;
 const STDERR_HOLD_MAX = 64 * 1024;
 const asLine = (line) => (typeof line === "string" ? [{ text: line }] : line);
+
+// The engine's follow control texts (0.163 follow_control.rs), widest first.
+const FOLLOW_TEXTS = {
+  true: [" New activity \u{b7} \u{2193} Back to bottom \u{b7} esc ", " New activity \u{b7} \u{2193} Bottom ", " New \u{b7} \u{2193} Bottom ", " \u{2193} Bottom ", " \u{2193} "],
+  false: [" \u{2193} Back to bottom \u{b7} esc ", " \u{2193} Back to bottom ", " \u{2193} Bottom \u{b7} esc ", " \u{2193} Bottom ", " \u{2193} "],
+};
+
+/** The widest follow-control text that fits in `cols − 1` cells. */
+export function followText(cols, newActivity) {
+  const list = FOLLOW_TEXTS[Boolean(newActivity)];
+  return list.find((t) => stringWidth(t) <= cols - 1) ?? list.at(-1);
+}
 
 export function createFullscreenRenderer({
   io,
@@ -58,6 +71,8 @@ export function createFullscreenRenderer({
   let resizeTimer = null;
   let pendingBytes = [];
   let offRelease = null;
+  let areaHeight = null; // the transcript's rows at the last draw
+  let controlRow = -1; // the follow control's screen row, or -1
   const resizeListeners = new Set();
 
   const writable = () => started && !disposed && !suspended && !paused && isActive();
@@ -113,9 +128,16 @@ export function createFullscreenRenderer({
     const live = lines.length > rows - 1 ? lines.slice(lines.length - (rows - 1)) : lines;
     const cut = lines.length - live.length;
     const top = rows - live.length;
-    const hist = transcript.window({ width: contentWidth(cols), height: top }).rows;
+    areaHeight = top;
+    // Scrolled up: the last transcript row is the follow control (window() may
+    // find the end in view and follow again, so ask it first).
+    let hist = transcript.following ? null : transcript.window({ width: contentWidth(cols), height: Math.max(0, top - 1) }).rows;
+    const control = !transcript.following && top > 0;
+    if (!control) hist = transcript.window({ width: contentWidth(cols), height: top }).rows;
     const next = [];
-    for (let r = 0; r < top; r++) next.push(hist[r] ?? []);
+    for (let r = 0; r < (control ? top - 1 : top); r++) next.push(hist[r] ?? []);
+    if (control) next.push([{ text: followText(cols, transcript.newActivity), style: { dim: true } }]);
+    controlRow = control ? top - 1 : -1;
     next.push(...live);
     const strings = next.map((l) => renderLine(truncate(l, cols - 1), depth, { hyperlinks }));
     let out = "";
@@ -177,8 +199,33 @@ export function createFullscreenRenderer({
     parked = null;
   }
 
+  // The transcript area's height: rows above the live region (the app keeps it ≤ rows − 1).
+  const height = () => areaHeight ?? Math.max(1, io.size().rows - Math.min(current.lines.length, io.size().rows - 1));
+  const view = (fn) => {
+    if (disposed) return;
+    fn();
+    draw();
+  };
+  const transcriptHandle = {
+    scroll: (rows) => view(() => transcript.scroll(rows, { width: contentWidth(io.size().cols), height: height() })),
+    jumpTop: () => view(() => transcript.jumpTop()),
+    jumpLatest: () => view(() => transcript.jumpLatest()),
+    get following() {
+      return transcript.following;
+    },
+    get newActivity() {
+      return transcript.newActivity;
+    },
+    get height() {
+      return height();
+    },
+    /** What screen row y shows: "control" (the follow control) or null (P2.3 maps entries). */
+    rowAt: (y) => (y === controlRow ? "control" : null),
+  };
+
   return {
     fullscreen: true,
+    transcript: transcriptHandle,
     start() {
       if (started || disposed) return;
       if (!io.entered) throw new Error("the fullscreen renderer needs io entered first (its exit hooks must be live before ?1049h)");

@@ -4,7 +4,7 @@
 
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { createFullscreenRenderer } from "../src/tui/terminal/fullscreen.mjs";
+import { createFullscreenRenderer, followText } from "../src/tui/terminal/fullscreen.mjs";
 import { enterBytes, isActive, releaseAltScreen } from "../src/tui/terminal/alt-screen.mjs";
 import { xtermScreen } from "../testkit/screen.mjs";
 
@@ -197,4 +197,56 @@ test("after the guard is released elsewhere (io.restore on a crash), frame and d
   assert.equal(a.scr.writes.length, n);
   a.err.stream.write("x\n");
   assert.deepEqual(a.err.real, ["x\n"], "stderr given back on release");
+});
+
+/* The follow control (P2.2) */
+
+
+test("the follow control shows the widest engine text that fits, with and without new activity", () => {
+  assert.equal(followText(80, true), " New activity \u{b7} \u{2193} Back to bottom \u{b7} esc ");
+  assert.equal(followText(30, true), " New activity \u{b7} \u{2193} Bottom ");
+  assert.equal(followText(12, true), " \u{2193} Bottom ");
+  assert.equal(followText(4, true), " \u{2193} ");
+  assert.equal(followText(80, false), " \u{2193} Back to bottom \u{b7} esc ");
+  assert.equal(followText(30, false), " \u{2193} Back to bottom \u{b7} esc ");
+  assert.equal(followText(12, false), " \u{2193} Bottom ");
+  assert.equal(followText(4, false), " \u{2193} ");
+});
+
+test("scrolled: the last transcript row is the follow control; new output leaves every other row unchanged", async () => {
+  const a = setup({ cols: 40, rows: 8 });
+  a.r.start();
+  for (let i = 0; i < 30; i++) a.r.commit([line(`h${i}`)]);
+  a.clock.flush();
+  a.r.frame({ lines: [line("live")] });
+  a.r.transcript.scroll(-5);
+  await a.scr.settle();
+  const before = a.scr.altLines();
+  assert.equal(before[6].trim(), followText(40, false).trim());
+  assert.equal(a.r.transcript.following, false);
+  a.r.commit([line("fresh output")]);
+  a.clock.flush();
+  await a.scr.settle();
+  const after = a.scr.altLines();
+  assert.deepEqual(after.slice(0, 6), before.slice(0, 6));
+  assert.equal(after[6].trim(), followText(40, true).trim());
+  assert.equal(after[7], "live");
+  assert.equal(a.r.transcript.rowAt(6), "control");
+  a.r.transcript.jumpLatest();
+  await a.scr.settle();
+  assert.equal(a.scr.altLines()[6], "fresh output");
+  a.r.dispose();
+});
+
+test("transcript.height is the rows above the live region; page() scrolls by it", async () => {
+  const a = setup({ cols: 40, rows: 10 });
+  a.r.start();
+  for (let i = 0; i < 40; i++) a.r.commit([line(`h${i}`)]);
+  a.clock.flush();
+  a.r.frame({ lines: [line("live 1"), line("live 2")] });
+  assert.equal(a.r.transcript.height, 8);
+  a.r.transcript.scroll(-(a.r.transcript.height - 1));
+  await a.scr.settle();
+  assert.equal(a.scr.altLines()[0], "h25");
+  a.r.dispose();
 });
