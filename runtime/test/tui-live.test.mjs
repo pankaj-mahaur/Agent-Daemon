@@ -936,6 +936,11 @@ test("P4.1 live: a command and a patch in ad tui are in the session record; ad s
     if (/cannot enforce split writable root sets/.test(t.text().replace(/\s+/g, " "))) {
       return void ctx.skip("The engine's unelevated Windows sandbox refused the command on this machine (\"cannot enforce split writable root sets\")");
     }
+    // Or the engine rejected it before it started: no command cell at all, only a warning.
+    const shellTurn = t.text().slice(t.text().lastIndexOf("SHELL with"), t.text().lastIndexOf("done after call-shell"));
+    if (process.platform === "win32" && !/\b(Ran|Running|Failed|Declined|Stopped)\b/.test(shellTurn)) {
+      return void ctx.skip("The engine rejected the command before it started on this machine (no command cell; the Windows sandbox isn't set up here)");
+    }
     t.type("PATCH please\r");
     await answer(/done after call-patch/, "the patch");
     t.type("/status\r");
@@ -960,6 +965,8 @@ test("P4.1 live: a command and a patch in ad tui are in the session record; ad s
     for (const bad of ["encrypted_content", "summaryText", key, "sk-test-"]) assert.ok(!raw.includes(bad), `the record holds ${bad}`);
   } catch (err) {
     err.message += `\n--- model requests ---\n${mock.requests.map((r) => JSON.stringify(r.text)).join("\n")}`;
+    // What the command did on screen (the Windows runner's sandbox has refused commands in more than one way).
+    if (t) err.message += `\n--- screen (last 3000 chars) ---\n${t.text().slice(-3000)}`;
     throw err;
   } finally {
     for (const k of launched.splice(0)) k();

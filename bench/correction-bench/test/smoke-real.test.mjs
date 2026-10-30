@@ -16,7 +16,7 @@ const skip = process.env.AD_REAL_ENGINE === "1" ? false : "set AD_REAL_ENGINE=1 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "bench-smoke-"));
 after(() => fs.rmSync(TMP, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }));
 
-test("one family through the real engine: off repeats the mistake, on-hooks captures the correction and doesn't", { skip, timeout: 900_000 }, () => {
+test("one family through the real engine: off repeats the mistake, on-hooks captures the correction and doesn't", { skip, timeout: 900_000 }, (ctx) => {
   const phr = path.join(TMP, "phrasings");
   fs.mkdirSync(phr);
   // A phrasing the hook's rules capture whole (PROTOCOL.md: capture is measured, not assumed).
@@ -28,6 +28,11 @@ test("one family through the real engine: off repeats the mistake, on-hooks capt
   const at = (c, s) => rs.find((x) => x.condition === c && x.session === s);
   const show = JSON.stringify(rs, null, 1);
   for (const x of rs) assert.equal(x.status, "ok", show);
+  // The mock model edits through exec_command; GitHub's Windows runner rejects every
+  // command before it starts (no sandbox set up there), so no episode reaches the task.
+  if (process.platform === "win32" && process.env.CI && rs.every((x) => !x.opportunity)) {
+    return void ctx.skip("The engine rejected every command on this Windows runner: no episode had an opportunity");
+  }
   // off: corrected in session 1, repeated in session 2.
   assert.deepEqual([at("off", 1).violated, at("off", 1).corrected, at("off", 2).violated], [true, true, true], show);
   // on-hooks: the follow-up turn ran, the prompt hook and SessionEnd fired, the correction was stored…

@@ -58,9 +58,9 @@ const refused = { code: "HOME_FOLDER_REFUSED" };
 test("the engine is launched in the neutral folder, not the work folder", async () => {
   await withHome({}, async ({ engine, project, home }) => {
     const { cwd } = await engine.testRequest("debug/processCwd", {});
-    assert.equal(cwd, engine.launch.dir);
     // The same folder, however it is spelled (macOS's /private, a Windows 8.3 short name).
     const id = (p) => { const s = statSync(p, { bigint: true }); return `${s.dev}:${s.ino}`; };
+    assert.equal(id(cwd), id(engine.launch.dir));
     assert.equal(id(engine.launch.dir), id(join(home, ".agent-daemon", "launch")));
     assert.notEqual(cwd, project);
     assert.equal(engine.launch.mode, "root");
