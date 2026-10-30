@@ -239,6 +239,7 @@ export function createApp({
   let note = null; // one transient line above the composer
   let lastCtrlC = -Infinity;
   let lastEsc = -Infinity;
+  let wheelCarry = 0; // fractional wheel rows (tui.mouse_scroll_speed), reset on a direction change
   let attachments = []; // image paths for the next prompt
   let pager = null; // {lines, top} while Ctrl+T shows the transcript; {agent, lines, top} watching a subagent
   let privateMode = false; // prompts wrapped in <private>…</private>
@@ -862,7 +863,7 @@ export function createApp({
       if (popup) lines.push(...popup.view.render({ width: w, height: Math.min(10, Math.max(3, rows - lines.length - 1)) }));
       else if (fbEditor) lines.push(...fbEditor.render().map((l) => truncate([{ text: clean(l.text), style: FB_TONE[l.tone] }], w)));
       else if (inspector) lines.push(...renderKeyInspector(inspector.last, { width: w }));
-      else if (overlay) lines.push(...renderShortcuts({ newline, keymap }, { width: w }));
+      else if (overlay) lines.push(...renderShortcuts({ newline, keymap, fullscreen: Boolean(renderer.transcript) }, { width: w }));
       else {
         if (status) lines.push(status);
         if (rows >= 10) lines.push(footer());
@@ -1469,7 +1470,7 @@ export function createApp({
           [{ text: "Commands", style: T.bold }],
           ...SLASH_COMMANDS.filter((c) => c.name !== "exit" && !popupHidden(c)).map((c) => truncate([{ text: `  /${c.name.padEnd(12)}`, style: T.code }, { text: c.desc, style: DIM }], width())),
           [],
-          ...renderShortcuts({ newline, keymap }, { width: width() }),
+          ...renderShortcuts({ newline, keymap, fullscreen: Boolean(renderer.transcript) }, { width: width() }),
         ]);
       case "new":
         session.newThread();
@@ -2456,6 +2457,7 @@ export function createApp({
       return warn("Changing directories: send it once that's done.");
     }
     recapping = null; // as the engine does, a prompt drops a recap on its way
+    renderer.transcript?.jumpLatest(); // the user's own prompt must be in view
     turnStartedAt ??= now();
     try {
       const images = attachments;
@@ -2616,8 +2618,63 @@ export function createApp({
     note = { level: "info", text: "Ctrl+C again quits." };
   }
 
+  /* Fullscreen scrolling (P2.2): only when the renderer keeps its own transcript. */
+
+  // Exact modifiers, matched before the chat keys: plain Alt+, and Alt+. stay the effort keys.
+  const jumpTarget = (ev) => {
+    if (ev.type !== "key") return null;
+    const { name, ctrl, alt, shift } = ev;
+    if ((name === "home" || name === "end") && ctrl && !alt && !shift) return name === "home" ? "top" : "latest";
+    if ((name === "<" || name === ">") && alt && !ctrl) return name === "<" ? "top" : "latest"; // the ESC-prefix form
+    if ((name === "," || name === ".") && alt && shift && !ctrl) return name === "," ? "top" : "latest"; // the CSI-u form
+    return null;
+  };
+
+  // PageUp/PageDown scroll by whichever pager binding the key has (as the engine does).
+  const PAGE_STEPS = [["scroll_up", () => -1], ["scroll_down", () => 1], ["page_up", (h) => -(h - 1)], ["page_down", (h) => h - 1], ["half_page_up", (h) => -Math.ceil(h / 2)], ["half_page_down", (h) => Math.ceil(h / 2)]];
+  const pageDelta = (ev, h) => {
+    const hit = PAGE_STEPS.find(([action]) => keymap.is("pager", action, ev));
+    return hit ? hit[1](h) : null;
+  };
+
+  function wheelRows(dir) {
+    const s = Number(settings?.engine?.get?.("tui.mouse_scroll_speed"));
+    const speed = Number.isFinite(s) && s > 0 ? s : 1;
+    if (Math.sign(wheelCarry) && Math.sign(wheelCarry) !== dir) wheelCarry = 0;
+    wheelCarry += dir * speed;
+    if (Math.abs(wheelCarry - Math.round(wheelCarry)) < 1e-9) wheelCarry = Math.round(wheelCarry);
+    const rows = Math.trunc(wheelCarry);
+    wheelCarry -= rows;
+    return rows;
+  }
+
+  // Mouse events: the wheel scrolls the Ctrl+T pager when it is open, else the
+  // transcript (also under a modal: reading while approving); a click on the
+  // follow control returns to the bottom. Anything else changes nothing and
+  // draws nothing.
+  function onMouse(ev) {
+    const tv = renderer.transcript;
+    if (!tv) return;
+    if (ev.action === "wheel" && (ev.wheel === "up" || ev.wheel === "down")) {
+      const rows = wheelRows(ev.wheel === "up" ? -1 : 1);
+      if (!rows) return;
+      if (pager && !modal) {
+        const view = Math.max(1, height() - 2);
+        pager.top = Math.max(0, Math.min(pager.top + rows, pager.lines.length - view));
+        return draw();
+      }
+      tv.scroll(rows);
+      return draw();
+    }
+    if (ev.action === "press" && ev.button === "left" && tv.rowAt(ev.y) === "control") {
+      tv.jumpLatest();
+      return draw();
+    }
+  }
+
   function onInput(ev) {
     if (quitting) return;
+    if (ev.type === "mouse") return onMouse(ev);
     if (ev.type === "key" || ev.type === "text") {
       // No chords under a modal, ad's confirm or the key inspector (their keys are theirs).
       const contexts = modal || confirm || inspector ? [] : pager ? ["global", "pager"] : ["global", "chat", "composer"];
@@ -2761,6 +2818,33 @@ export function createApp({
         })
         .catch(fail);
       return;
+    }
+    // Fullscreen scrolling. Modals, popups, overlays, Vim's Esc and a focused side
+    // conversation had their turn above; the jump keys come before the effort keys.
+    const tv = renderer.transcript;
+    if (tv && ev.type === "key") {
+      const jump = jumpTarget(ev);
+      if (jump) {
+        if (jump === "top") tv.jumpTop();
+        else tv.jumpLatest();
+        return draw();
+      }
+      if ((ev.name === "pageup" || ev.name === "pagedown") && !ev.ctrl && !ev.alt && !ev.shift) {
+        const d = pageDelta(ev, tv.height);
+        if (d != null) {
+          tv.scroll(d);
+          return draw();
+        }
+      }
+      // Back to the bottom first; the next Esc interrupts or rewinds as usual.
+      if (ev.name === "escape" && !ev.ctrl && !ev.alt && !ev.shift && !tv.following) {
+        tv.jumpLatest();
+        return draw();
+      }
+      if (ev.name === "enter" && !ev.ctrl && !ev.alt && !ev.shift && !tv.following && !composer.text) {
+        tv.jumpLatest();
+        return draw();
+      }
     }
     const up = keymap.is("chat", "increase_reasoning_effort", ev);
     if (up || keymap.is("chat", "decrease_reasoning_effort", ev)) {

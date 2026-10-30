@@ -149,7 +149,7 @@ export function renderFooter({ hints = [], chips = [], meters = [] } = {}, { wid
 /* ------------------------------------------------------------------ */
 
 /** The `?` overlay. */
-export function renderShortcuts({ newline = "ctrl+j", keymap = null } = {}, { width = 80 } = {}) {
+export function renderShortcuts({ newline = "ctrl+j", keymap = null, fullscreen = false } = {}, { width = 80 } = {}) {
   // Keys that can be remapped (tui.keymap) come from the keymap; the rest are fixed.
   const k = (ctx, action, fallback) => (keymap ? keymap.label(ctx, action) : fallback);
   const keys = [
@@ -171,6 +171,8 @@ export function renderShortcuts({ newline = "ctrl+j", keymap = null } = {}, { wi
     [k("global", "toggle_raw_output", "alt+r"), "the last answer as plain text"],
     ["f2", "warnings"],
     [k("global", "clear_terminal", "ctrl+l"), "redraw the screen"],
+    // Fullscreen: ad scrolls its own transcript (P2.2).
+    ...(fullscreen ? [["pgup / pgdn", "scroll"], ["ctrl+home / ctrl+end", "top / latest"], ["esc", "back to bottom (when scrolled)"]] : []),
   ].filter(([key]) => key.trim()); // an unbound action isn't listed
   const kw = Math.max(...keys.map(([key]) => stringWidth(key))) + 2;
   return [

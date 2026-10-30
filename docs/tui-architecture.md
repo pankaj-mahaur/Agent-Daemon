@@ -87,6 +87,7 @@ Two renderers share one interface (`start`, `frame`, `commit`, `suspend`, `resum
 - **Drawing.** History fills from the top, the live region sits on the bottom rows. Only changed rows are rewritten, one write per frame inside `?2026`, autowrap off; an idle frame writes nothing. `clear()` uses `2J` (the alternate screen only) and **never `3J`**, which would wipe the shell's scrollback.
 - **stderr** written while fullscreen would land on the frame: it is held, noted once in the window, and printed when ad leaves the alternate screen.
 - **Start-up.** `prefs.json` caches `screen.lastMode`. When the last run was fullscreen, ad starts on the alternate screen at once (nothing touches the shell's screen); otherwise it boots inline and swaps just before the app appears, after draining the inline erase.
+- **Scrolling** (P2.2). The transcript keeps a view anchor (an entry and a row in it), so new output never moves a scrolled view; while scrolled, its last row is the follow control (the engine's texts). PageUp/PageDown use the pager bindings' steps, Ctrl+Home/Ctrl+End (also Alt+< / Alt+>, and Alt+Shift+, / Alt+Shift+. under CSI-u) jump, matched with exact modifiers before the effort keys. The wheel moves `tui.mouse_scroll_speed` rows per notch with a fractional carry reset on a direction change. Mouse events are decoded from SGR reports only; a legacy X10 report is dropped by byte count, never typed.
 - **The mouse** is captured (`?1000h ?1002h ?1006h`, no any-motion) where reports reach ad: Windows Terminal and Zed were probed; the legacy console host is off (QuickEdit can't be turned off); `"screen.mouse": false` in `prefs.json` turns it off anywhere.
 
 ### Keys and terminals
@@ -109,6 +110,7 @@ Key chords (`"ctrl-x ctrl-s"`, `"leader c"`) are matched before every layer by `
 | `?` shortcuts | closes | closes | closes, then acts | closes, then acts | closes, then acts |
 | command or file popup | closes | closes | fills in | — | runs or inserts |
 | checklist | cancels (undoes the preview) | cancels | — | — | saves |
+| transcript scrolled up (fullscreen) | back to the bottom (the next Esc goes on down) | as below | as below | as below | back to the bottom, on an empty prompt |
 | composer, turn running | interrupts | clears the draft, then interrupts | queues | — (never queues) | steers |
 | composer, idle | rewind (twice, on an empty prompt) | clears the draft, then arms quit | pulls back a queued prompt | — | sends |
 
