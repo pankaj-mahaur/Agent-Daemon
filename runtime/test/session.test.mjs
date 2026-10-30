@@ -123,8 +123,11 @@ test("subagent requests carry the agent's label; the agent is listed", async () 
 test("a thread held by a live process can't be opened; a stale lock is taken over", async () => {
   const dir = mkdtempSync(join(tmpdir(), "ad-lock-"));
   try {
-    const release = lockThread("t1", { dir, pid: 111, isAlive: () => true });
-    assert.throws(() => lockThread("t1", { dir, pid: 222, isAlive: () => true }), SessionLockedError);
+    // The OS isn't asked who pid 111 is: on Linux it can be a real process whose start
+    // time reads as a reused pid (the record carries this process's identity).
+    const noLookup = () => ({ unknown: "test pid" });
+    const release = lockThread("t1", { dir, pid: 111, isAlive: () => true, identityOf: noLookup });
+    assert.throws(() => lockThread("t1", { dir, pid: 222, isAlive: () => true, identityOf: noLookup }), SessionLockedError);
     const takeover = lockThread("t1", { dir, pid: 222, isAlive: () => false });
     release(); // the old holder's release doesn't remove the new holder's lock
     assert.equal(readdirSync(dir).length, 1);

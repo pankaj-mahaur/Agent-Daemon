@@ -101,6 +101,19 @@ test("a git repo at the home folder doesn't make a home subfolder a project", ()
   } finally { f.cleanup(); }
 });
 
+test("home given by a link, the working folder by its real path: the walk still stops at home (macOS /var vs /private/var)", () => {
+  const f = fixture();
+  try {
+    // Home holds ad's folder (AD_ROOT under home, as by default); HOME names it through a link.
+    mkdirSync(path.join(f.home, ".agent-daemon"));
+    const homeLink = path.join(f.root, "home-link");
+    symlinkSync(f.home, homeLink, "junction");
+    const linked = { ...f, env: { ...f.env, HOME: homeLink, USERPROFILE: homeLink }, home: homeLink };
+    assert.equal(resolveMemoryScope(opts(linked, { cwd: f.plain })).kind, "unbound");
+    assert.equal(resolveMemoryScope(opts(linked, { cwd: f.repoA })).kind, "project");
+  } finally { f.cleanup(); }
+});
+
 test("never valid: home, a root, a folder inside ad's root, the package folder, system folders", () => {
   const f = fixture();
   try {

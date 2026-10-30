@@ -669,7 +669,9 @@ const memCall = (body) => {
 };
 
 async function memoryWorld() {
-  const fakeHome = mkdtempSync(join(tmpdir(), "ad-real-memsrv-"));
+  // The real path: the engine starts the server in the resolved folder (macOS's
+  // /private/var), and these rows carry a slug only, no project id to match by.
+  const fakeHome = realpathSync.native(mkdtempSync(join(tmpdir(), "ad-real-memsrv-")));
   const A = join(fakeHome, "work", "alpha");
   const B = join(fakeHome, "work", "beta");
   for (const d of [A, B]) mkdirSync(join(d, ".git"), { recursive: true });

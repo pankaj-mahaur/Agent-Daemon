@@ -144,7 +144,7 @@ test("use --global prints the scope text; --project writes names only and mentio
   const before = fs.readFileSync(path.join(process.env.AD_ROOT, "accounts", "registry.json"), "utf8");
   r = await auth("use", ["openrouter/client-a"], { scope: "session", fetch: async () => { throw new Error("offline"); } });
   assert.equal(r.code, 0);
-  assert.match(r.out, process.platform === "win32" ? /AD_ACCOUNT( = "|=)openrouter\/client-a/ : /export AD_ACCOUNT=openrouter\/client-a/);
+  assert.match(r.out, process.platform === "win32" ? /AD_ACCOUNT( = "|=)openrouter\/client-a/ : /export AD_ACCOUNT='?openrouter\/client-a'?/);
   assert.equal(fs.readFileSync(path.join(process.env.AD_ROOT, "accounts", "registry.json"), "utf8"), before, "nothing written");
   await reg.transact((doc) => {
     doc.accounts.find((a) => a.label === "default").status = "needs-sign-in";

@@ -911,7 +911,7 @@ test("prompt at the bottom live: the composer starts on the last rows and stays 
 
 // P4.1 Done-when: one ad tui conversation with a command and a patch is recorded, and
 // `ad sessions show --last --json` reads it back; the record holds no reasoning or key.
-test("P4.1 live: a command and a patch in ad tui are in the session record; ad sessions show --last --json", { skip, timeout: 10 * 60_000 }, async () => {
+test("P4.1 live: a command and a patch in ad tui are in the session record; ad sessions show --last --json", { skip, timeout: 10 * 60_000 }, async (ctx) => {
   const mock = await startMockResponses({ script: liveScript });
   const w = world(mock.url);
   const key = ["sk", "test", "LIVEKEY0123456789abcdefghij"].join("-");
@@ -932,6 +932,10 @@ test("P4.1 live: a command and a patch in ad tui are in the session record; ad s
     };
     t.type(`SHELL with ${key}\r`);
     await answer(/done after call-shell/, "the command");
+    // GitHub's Windows runner refuses the command outright (as in Part 5): no exec to record.
+    if (/cannot enforce split writable root sets/.test(t.text().replace(/\s+/g, " "))) {
+      return void ctx.skip("The engine's unelevated Windows sandbox refused the command on this machine (\"cannot enforce split writable root sets\")");
+    }
     t.type("PATCH please\r");
     await answer(/done after call-patch/, "the patch");
     t.type("/status\r");
