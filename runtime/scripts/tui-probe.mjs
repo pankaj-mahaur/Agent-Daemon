@@ -6,6 +6,8 @@
 //   node runtime/scripts/tui-probe.mjs screen --bottom
 //                                               the same with the live region flush with the
 //                                               bottom of the window (narrowing ghosts, plan Part 7)
+//   node runtime/scripts/tui-probe.mjs mouse    mouse reports (SGR) as bytes + the decoded event
+//                                               (fullscreen bug reports, plan P2.5)
 //
 // Quit: type qqq, or press Ctrl+C three times in a row (single Ctrl+C presses
 // are shown, since they are part of what is being probed).
@@ -19,8 +21,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 const mode = process.argv[2];
-if (mode !== "keys" && mode !== "screen") {
-  console.error("usage: node tui-probe.mjs keys|screen");
+if (mode !== "keys" && mode !== "screen" && mode !== "mouse") {
+  console.error("usage: node tui-probe.mjs keys|screen|mouse");
   process.exit(2);
 }
 if (!process.stdin.isTTY || !process.stdout.isTTY) {
@@ -52,6 +54,13 @@ const SINGLE = { "\r": "Enter", "\n": "Ctrl+J / Ctrl+Enter", "\t": "Tab", "\x7f"
 function name(seq) {
   if (SINGLE[seq]) return SINGLE[seq];
   let m;
+  // An SGR mouse report (`tui-probe mouse`).
+  if ((m = /^\x1b\[<(\d+);(\d+);(\d+)([Mm])$/.exec(seq))) {
+    const b = Number(m[1]);
+    const mods = [b & 4 && "Shift", b & 8 && "Alt", b & 16 && "Ctrl"].filter(Boolean).join("+");
+    const what = b & 64 ? `wheel ${["up", "down", "left", "right"][b & 3]}` : b & 32 ? ((b & 3) === 3 ? "move" : `drag ${["left", "middle", "right"][b & 3]}`) : `${m[4] === "m" ? "release" : "press"} ${["left", "middle", "right", "(none)"][b & 3]}`;
+    return `mouse: ${[mods, what].filter(Boolean).join("+")} at column ${m[2]}, row ${m[3]}`;
+  }
   // `CSI row;col R` is also what Shift/Ctrl+F3 send on some terminals.
   if ((m = /^\x1b\[(\d+);(\d+)R$/.exec(seq))) return `cursor report row ${m[1]} col ${m[2]} (or modified F3)`;
   if ((m = /^\x1b\[\?([\d;]*)c$/.exec(seq))) return `reply: DA1 (${m[1]})`;
@@ -90,8 +99,9 @@ function split(chunk) {
 
 // Only what we set: kitty flags (pushed), bracketed paste, autowrap (toggled),
 // cursor visibility, a synchronized update left open by a kill.
-const SETUP = "\x1b[?2004h\x1b[>1u";
-const RESTORE = "\x1b[?2026l\x1b[<u\x1b[?2004l\x1b[?7h\x1b[?25h";
+// mouse: button-event tracking in SGR form, as ad's fullscreen asks (no any-motion).
+const SETUP = "\x1b[?2004h\x1b[>1u" + (mode === "mouse" ? "\x1b[?1000h\x1b[?1002h\x1b[?1006h" : "");
+const RESTORE = "\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?1000l\x1b[?2026l\x1b[<u\x1b[?2004l\x1b[?7h\x1b[?25h";
 let restored = false;
 function restore() {
   if (restored) return;
@@ -175,10 +185,13 @@ for (const p of split(capabilities)) out(`  ${name(p) ?? "reply"}  [${show(p)}]`
 if (!/\x1b\[\?\d+u/.test(capabilities)) out("  (no kitty keyboard reply: Shift+Enter will look like Enter here)");
 if (!/\x1b\[\?2026;\d\$y/.test(capabilities)) out("  (no reply about synchronized output ?2026)");
 
-if (mode === "keys") {
+if (mode === "keys" || mode === "mouse") {
   out("");
-  out("Press keys: Enter, Shift+Enter, Ctrl+Enter, Alt+Enter, Ctrl+J, Esc, Tab, Shift+Tab, arrows with Shift/Ctrl/Alt,");
-  out("Backspace, Ctrl+Backspace, Ctrl+C, Ctrl+Z, Ctrl+V (text, then an image), and paste a few lines.");
+  if (mode === "mouse") out("Click, drag, scroll the wheel and Shift+click inside this window. A report that shows as text means the terminal doesn't send SGR mouse reports.");
+  else {
+    out("Press keys: Enter, Shift+Enter, Ctrl+Enter, Alt+Enter, Ctrl+J, Esc, Tab, Shift+Tab, arrows with Shift/Ctrl/Alt,");
+    out("Backspace, Ctrl+Backspace, Ctrl+C, Ctrl+Z, Ctrl+V (text, then an image), and paste a few lines.");
+  }
   out("Quit: qqq, or Ctrl+C three times.");
   let t0 = Date.now();
   handler = (chunk) => {

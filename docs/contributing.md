@@ -310,6 +310,7 @@ Edit `~/.agent-daemon/watch.json` to point at a sandbox directory.
 ```sh
 node runtime/scripts/tui-probe.mjs keys     # keys and pastes as raw bytes
 node runtime/scripts/tui-probe.mjs screen   # wrapping, autowrap-off, sync output, resize reflow
+node runtime/scripts/tui-probe.mjs mouse    # mouse reports (fullscreen) as raw bytes and the decoded event
 ```
 
 Logs land in `~/.agent-daemon/logs/tui-probe-*.log`. How the terminal UI is built, and why: [tui-architecture.md](tui-architecture.md). How it is tested: [testing.md](testing.md).

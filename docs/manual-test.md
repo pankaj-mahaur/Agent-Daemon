@@ -114,6 +114,7 @@ Run this in each terminal you use: Windows Terminal, Zed and the VS Code termina
 | Run | Expect | If not |
 |---|---|---|
 | `node runtime/scripts/tui-probe.mjs keys`, press a few keys and paste two lines, then `qqq` | each key named. On Windows with Node 22.17+ or 24.2+ the paste shows as one `PASTE (… line breaks)` row | [troubleshooting #22](troubleshooting.md#22-keys-or-paste-behave-oddly-in-a-terminal) |
+| `node runtime/scripts/tui-probe.mjs mouse`, click, drag, scroll the wheel, Shift+click, then `qqq` | one `mouse: …` line per report (press, drag, release, wheel), never text | attach `~/.agent-daemon/logs/tui-probe-mouse-*.log` to an issue about fullscreen clicks or scrolling |
 | `node runtime/scripts/tui-probe.mjs screen --bottom`, make the window narrower then wider, then `qqq` | wrap and autowrap verdicts, plus one line per resize | attach `~/.agent-daemon/logs/tui-probe-screen-*.log` and a screenshot to an issue |
 
 ## 7. Clean up
