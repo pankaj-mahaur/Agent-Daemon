@@ -237,6 +237,10 @@ export function createFullscreenRenderer({
     entriesBetween: (a, b) => transcript.entriesBetween(a, b, contentWidth(io.size().cols)),
     /** Sets what to highlight: (ref) → [[fromCol, toCol, style], …], or null. */
     setMarks: (fn) => view(() => (marks = fn)),
+    allEntries: () => transcript.allEntries(contentWidth(io.size().cols)),
+    reveal: (ref) => view(() => transcript.reveal(ref, { width: contentWidth(io.size().cols), height: height() })),
+    getView: () => transcript.getView(),
+    setView: (v) => view(() => transcript.setView(v)),
   };
 
   return {

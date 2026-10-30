@@ -330,3 +330,75 @@ test("a selection keeps its rows while output arrives; a resize clears it", asyn
     assert.equal(renderer.transcript.following, true, "the selection ended and following resumed");
   }, { env: { WT_SESSION: "1" }, platform: "win32" });
 });
+
+/* Find (P2.3b) */
+
+const F3 = "\x1bOR";
+const screenText = async (scr) => (await tick(), await scr.settle(), scr.altLines().join("\n"));
+
+test("F3 opens Find; typing scrolls to the newest match; Enter keeps the view; Esc while reading returns to latest", async () => {
+  await withFullscreen(async ({ renderer, type, scr }) => {
+    type(F3);
+    assert.match(await screenText(scr), /Find: +Type to find/);
+    type("h12");
+    const shown = await screenText(scr);
+    assert.match(shown, /^h12$/m);
+    assert.equal(renderer.transcript.following, false);
+    assert.match(shown, /enter accept/);
+    type("\r");
+    assert.match(await screenText(scr), /esc back to bottom/);
+    assert.equal(renderer.transcript.following, false, "Enter keeps the match in view");
+    type("\x1b");
+    await tick();
+    assert.equal(renderer.transcript.following, true);
+    assert.doesNotMatch(await screenText(scr), /Find:/);
+  }, { cols: 90 });
+});
+
+test("Esc while editing puts the view back where it was", async () => {
+  await withFullscreen(async ({ renderer, type }) => {
+    type(F3);
+    type("h3");
+    await tick();
+    assert.equal(renderer.transcript.following, false);
+    type("\x1b");
+    await tick();
+    assert.equal(renderer.transcript.following, true);
+  });
+});
+
+test("Find owns typing: q edits the query, not the prompt; no matches says so", async () => {
+  await withFullscreen(async ({ type, scr }) => {
+    type(F3);
+    type("qzx");
+    const t = await screenText(scr);
+    assert.match(t, /Find: qzx +No matches/);
+    assert.doesNotMatch(t, /› qzx/);
+  });
+});
+
+test("Ctrl+N at the newest match reports no more; Ctrl+P steps older", async () => {
+  await withFullscreen(async ({ type, scr }) => {
+    type(F3);
+    type("h1");
+    await tick();
+    type("\x0e"); // Ctrl+N
+    assert.match(await screenText(scr), /No more matches/);
+    type("\x10"); // Ctrl+P
+    assert.doesNotMatch(await screenText(scr), /No more matches/);
+  });
+});
+
+test("a held Enter while reading with an empty prompt sends nothing and keeps the match in view", async () => {
+  await withFullscreen(async ({ renderer, session, type }) => {
+    type(F3);
+    type("h12"); // one match, far from the bottom
+    await tick();
+    type("\r");
+    type("\r");
+    type("\r");
+    await tick();
+    assert.deepEqual(session.calls.filter((c) => c[0] === "submit"), []);
+    assert.equal(renderer.transcript.following, false, "the extra Enters don't go back to the bottom");
+  });
+});

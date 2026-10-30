@@ -22,7 +22,7 @@ import { accountName, providerDisplay } from "../auth/accounts/target.mjs";
 import { PROVIDER_PRESETS } from "../providers/registry.mjs";
 import { PLAN_CLEAR_CONTEXT_PREFIX } from "../hooks/generated-prompts.mjs";
 import { sanitize } from "./terminal/sanitize.mjs";
-import { lineWidth, truncate, withPrefix } from "./terminal/text.mjs";
+import { lineWidth, restyle, truncate, withPrefix } from "./terminal/text.mjs";
 import { INIT_PROMPT } from "./init-prompt.mjs";
 import { setupWindowsSandbox } from "../harness/sandbox.mjs";
 import { existsSync, realpathSync, statSync, writeFileSync } from "node:fs";
@@ -33,6 +33,7 @@ import { copyText, denialSummary, exportMarkdown, imagePath, lastAgentText, rend
 
 import { T } from "./view/theme.mjs";
 import { clickCount, rowRanges, selectedText } from "./terminal/selection.mjs";
+import { clampQuery, findMatches } from "./terminal/find.mjs";
 import { copyOnSelectDefault, readClipboard, rightClickPaste } from "./terminal/clipboard.mjs";
 import { createFallbackEditor } from "./fallback-editor.mjs";
 import { createKeymap, eventSpec, keyLabel } from "./keymap.mjs";
@@ -620,6 +621,7 @@ export function createApp({
   }
 
   function footer() {
+    if (find) return findFooter(); // Find replaces the footer while it is open
     const running = turnActive();
     const vim = composer.vim;
     // The engine's gg chord hint replaces the hints while the second g is awaited.
@@ -824,11 +826,14 @@ export function createApp({
         const a = st.agents.get(pager.agent);
         const state = a?.closed ? "closed" : a?.running ? "running" : "idle";
         lines.push(truncate([{ text: `${clean(agentName(a))}${agentModel(a) ? ` \u{b7} ${clean(agentModel(a))}` : ""} \u{b7} ${state} \u{b7} ${ids.indexOf(pager.agent) + 1} of ${ids.length}  `, style: T.bold }, { text: `${AGENT_KEYS} other agents \u{b7} \u{2191}\u{2193} pgup pgdn \u{b7} q or esc closes`, style: DIM }], w));
+      } else if (pager.find) {
+        lines.push(pagerFindLine(w));
       } else {
         const where = pager.lines.length ? `Transcript ${pager.top + 1}\u{2013}${Math.min(pager.lines.length, pager.top + view)} of ${pager.lines.length}  ` : "The transcript is empty  ";
         lines.push(truncate([{ text: where, style: T.bold }, { text: "\u{2191}\u{2193} pgup pgdn home end \u{b7} q or esc closes", style: DIM }], w));
       }
-      lines.push(...pager.lines.slice(pager.top, pager.top + view));
+      const hit = pager.find?.hits[pager.find.index];
+      lines.push(...pager.lines.slice(pager.top, pager.top + view).map((l, i) => (pager.top + i === hit ? restyle(typeof l === "string" ? [{ text: l }] : l, 0, Infinity, T.findCurrent) : l)));
       renderer.frame({ lines, cursor: { row: 0, col: 0 } });
       return;
     }
@@ -2809,12 +2814,182 @@ export function createApp({
     return false;
   }
 
+  /* Find in the Ctrl+T pager (P2.3b; inline F3 opens it) */
+
+  const lineText = (l) => (typeof l === "string" ? l : l.map((s) => s.text).join(""));
+
+  function pagerFindRun(view) {
+    const f = pager.find;
+    const q = clampQuery(f.query).query.toLowerCase();
+    f.hits = [];
+    if (q) for (let i = pager.lines.length - 1; i >= 0; i--) if (lineText(pager.lines[i]).toLowerCase().includes(q)) f.hits.push(i);
+    f.index = f.hits.length ? 0 : -1;
+    f.exhausted = false;
+    if (f.index >= 0) pager.top = Math.max(0, f.hits[0] - Math.floor(view / 3));
+  }
+
+  function pagerFindStep(dir, view) {
+    const f = pager.find;
+    const next = f.index + dir;
+    if (next < 0 || next >= f.hits.length) f.exhausted = true;
+    else {
+      f.index = next;
+      f.exhausted = false;
+      pager.top = Math.max(0, f.hits[next] - Math.floor(view / 3));
+    }
+  }
+
+  function pagerFindKey(ev, view) {
+    const f = pager.find;
+    const k = ev.type === "key" ? ev : null;
+    if (k?.ctrl && !k.alt && (k.name === "p" || k.name === "n")) return pagerFindStep(k.name === "p" ? 1 : -1, view);
+    if (k?.name === "enter" && !k.ctrl && !k.alt && !k.shift) return void (f.mode = "reading");
+    if (k && (k.name === "escape" || (k.ctrl && k.name === "c"))) return void (pager.find = null);
+    if (k?.name === "backspace") f.query = [...f.query].slice(0, -1).join("");
+    else if (ev.type === "text" || ev.type === "paste") f.query += ev.text.replace(/[\r\n]+/g, " ");
+    else return;
+    pagerFindRun(view);
+  }
+
+  function pagerFindLine(w) {
+    const f = pager.find;
+    const status = f.mode === "reading" ? "ctrl+p older \u{b7} ctrl+n newer \u{b7} esc ends Find" : !f.query ? "Type to find \u{b7} esc cancel" : !f.hits.length ? "No matches \u{b7} esc cancel" : `${f.exhausted ? "No more matches \u{b7} " : ""}${f.index + 1} of ${f.hits.length} \u{b7} enter accept \u{b7} ctrl+p older \u{b7} ctrl+n newer \u{b7} esc cancel`;
+    return truncate([{ text: `Find: ${clean(f.query)}  `, style: T.bold }, { text: status, style: DIM }], w);
+  }
+
+  /* Find in fullscreen (P2.3b) */
+
+  // {query, matches, index, mode: "editing" | "reading", searching, exhausted, limited, view, gen}
+  let find = null;
+
+  function showFind() {
+    const tv = renderer.transcript;
+    if (!find) return tv.setMarks(null);
+    const byRow = new Map();
+    find.matches.forEach((m, i) => {
+      for (const s of m.segments) {
+        const key = `${m.entryId}:${s.row}`;
+        if (!byRow.has(key)) byRow.set(key, []);
+        byRow.get(key).push([s.c0, s.c1, i === find.index ? T.findCurrent : T.findMatch]);
+      }
+    });
+    tv.setMarks((ref) => byRow.get(`${ref.entryId}:${ref.row}`) ?? null);
+  }
+
+  function openFind() {
+    clearSelection();
+    find = { query: "", matches: [], index: -1, mode: "editing", searching: false, exhausted: false, limited: false, view: renderer.transcript.getView(), gen: 0 };
+    showFind();
+  }
+
+  function closeFind({ restore = false, latest = false } = {}) {
+    const tv = renderer.transcript;
+    const f = find;
+    find = null;
+    tv.setMarks(null);
+    if (restore) tv.setView(f.view);
+    if (latest) tv.jumpLatest();
+  }
+
+  const revealMatch = () => {
+    const m = find?.matches[find.index];
+    if (m) renderer.transcript.reveal({ entryId: m.entryId, row: m.segments[0]?.row ?? 0 });
+  };
+
+  function runFind() {
+    const f = find;
+    const gen = ++f.gen;
+    const { query, limited } = clampQuery(f.query);
+    f.limited = limited;
+    f.exhausted = false;
+    if (!query) {
+      Object.assign(f, { matches: [], index: -1, searching: false });
+      showFind();
+      return draw();
+    }
+    f.searching = true;
+    draw();
+    findMatches(renderer.transcript.allEntries(), query)
+      .then((matches) => {
+        if (find !== f || f.gen !== gen) return; // a newer query or a closed Find
+        Object.assign(f, { matches, index: matches.length ? 0 : -1, searching: false });
+        revealMatch();
+        showFind();
+        draw();
+      })
+      .catch(fail);
+  }
+
+  // Ctrl+P older, Ctrl+N newer (matches are newest first).
+  function stepFind(dir) {
+    const next = find.index + dir;
+    if (next < 0 || next >= find.matches.length) find.exhausted = true;
+    else {
+      find.index = next;
+      find.exhausted = false;
+      revealMatch();
+    }
+    showFind();
+  }
+
+  function findFooter() {
+    const f = find;
+    let status;
+    if (f.mode === "reading") status = "ctrl+p older \u{b7} ctrl+n newer";
+    else if (!f.query) status = "Type to find";
+    else if (f.searching) status = "Searching\u{2026}";
+    else if (!f.matches.length) status = "No matches";
+    else status = `${f.exhausted ? "No more matches \u{b7} " : ""}enter accept \u{b7} ctrl+p older \u{b7} ctrl+n newer`;
+    const tail = f.mode === "editing" ? " \u{b7} esc cancel" : " \u{b7} esc back to bottom";
+    return truncate([{ text: `Find: ${clean(f.query)}` }, { text: `  ${status}${f.limited ? " \u{b7} query limited to 4 KiB" : ""}${tail}`, style: DIM }], width());
+  }
+
+  // → true when Find took the key. Find owns every key while editing.
+  function findKey(ev) {
+    if (!find) {
+      if (ev.type === "key" && keymap.is("global", "find_transcript", ev)) return openFind(), true;
+      return false;
+    }
+    const k = ev.type === "key" ? ev : null;
+    const step = k && k.ctrl && !k.alt && (k.name === "p" || k.name === "n") ? (k.name === "p" ? 1 : -1) : 0;
+    if (find.mode === "editing") {
+      if (step) return stepFind(step), true;
+      if (k?.name === "enter" && !k.ctrl && !k.alt && !k.shift) {
+        find.mode = "reading";
+        return true;
+      }
+      if (k && (k.name === "escape" || (k.ctrl && k.name === "c"))) return closeFind({ restore: true }), true;
+      if (k?.name === "backspace") {
+        find.query = [...find.query].slice(0, -1).join("");
+        runFind();
+        return true;
+      }
+      if (ev.type === "text" || ev.type === "paste") {
+        find.query += ev.text.replace(/[\r\n]+/g, " ");
+        runFind();
+        return true;
+      }
+      return true;
+    }
+    // Reading: the match stays highlighted and in view.
+    if (step) return stepFind(step), true;
+    if (k?.name === "escape" && !k.ctrl && !k.alt) return closeFind({ latest: true }), true;
+    if (k && keymap.is("global", "find_transcript", k)) {
+      find.mode = "editing";
+      return true;
+    }
+    // A held Enter can't send anything while the result is read.
+    if (k?.name === "enter" && !k.ctrl && !k.alt && !k.shift && !composer.text) return true;
+    if (ev.type === "text" || ev.type === "paste") closeFind(); // the view stays; the key types
+    return false;
+  }
+
   function onInput(ev) {
     if (quitting) return;
     if (ev.type === "mouse") return onMouse(ev);
     if (ev.type === "key" || ev.type === "text") {
       // No chords under a modal, ad's confirm or the key inspector (their keys are theirs).
-      const contexts = modal || confirm || inspector ? [] : pager ? ["global", "pager"] : ["global", "chat", "composer"];
+      const contexts = modal || confirm || inspector || find?.mode === "editing" ? [] : pager ? ["global", "pager"] : ["global", "chat", "composer"];
       const r = chordKeys.feed(ev, contexts, Date.now());
       const was = chordHint;
       chordHint = r.kind === "pending" ? r.hint : null;
@@ -2841,6 +3016,8 @@ export function createApp({
       return draw();
     }
     // A fullscreen selection takes its keys first: Ctrl+C copies it instead of arming quit.
+    // Find (fullscreen) comes before the selection and the composer; an approval still comes first.
+    if (renderer.transcript && !modal && !confirm && !pager && findKey(ev)) return draw();
     if (renderer.transcript && !modal && !confirm && selectionKey(ev)) return draw();
     if (ev.type === "key" && ev.ctrl && ev.name === "c") {
       onCtrlC();
@@ -2854,6 +3031,23 @@ export function createApp({
     if (pager && !modal) {
       const view = Math.max(1, height() - 2);
       const k = (action) => keymap.is("pager", action, ev);
+      // Find in the pager (P2.3b): it owns every key while its query is edited.
+      if (pager.find?.mode === "editing") {
+        pagerFindKey(ev, view);
+        return draw();
+      }
+      if (k("find")) {
+        pager.find = { query: "", hits: [], index: -1, mode: "editing" };
+        return draw();
+      }
+      if (pager.find && ev.type === "key" && ev.ctrl && !ev.alt && (ev.name === "p" || ev.name === "n")) {
+        pagerFindStep(ev.name === "p" ? 1 : -1, view);
+        return draw();
+      }
+      if (pager.find && ev.type === "key" && ev.name === "escape") {
+        pager.find = null; // the first Esc ends Find; the next closes the pager
+        return draw();
+      }
       if ((ev.type === "key" && ev.name === "escape") || k("close") || k("close_transcript")) pager = null;
       else if (k("scroll_up")) pager.top--;
       else if (k("scroll_down")) pager.top++;
@@ -2873,6 +3067,11 @@ export function createApp({
     }
     if (keymap.is("global", "open_transcript", ev) && !modal) {
       pager = { lines: transcriptLines(st, { width: width() }), top: Infinity };
+      return draw();
+    }
+    // Inline, F3 opens the pager in Find (fullscreen Find took it above).
+    if (!renderer.transcript && keymap.is("global", "find_transcript", ev) && !modal) {
+      pager = { lines: transcriptLines(st, { width: width() }), top: Infinity, find: { query: "", hits: [], index: -1, mode: "editing" } };
       return draw();
     }
     if (modal) {

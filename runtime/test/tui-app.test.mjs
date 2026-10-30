@@ -1764,3 +1764,24 @@ test("a committed cell re-renders from its commit-time snapshot (a later change 
     renderer.dispose();
   }
 });
+
+test("inline: F3 opens the Ctrl+T pager in Find; / in the pager starts Find; Esc ends Find first", async () => {
+  const s = stubSession({});
+  s.state.items.set("m1", { id: "m1", kind: "agentMessage", text: "the needle is here", turnId: "u", threadId: "t" });
+  s.state.turns = [{ id: "u", status: "completed", itemIds: ["m1"] }];
+  await withStub(s, async ({ app, type, text }) => {
+    app.draw();
+    type("\x1bOR");
+    await sleep(20);
+    assert.match(text(), /Find: +Type to find/);
+    type("needle");
+    await sleep(20);
+    assert.match(text(), /Find: needle +1 of 1/);
+    type("\x1b");
+    await sleep(20);
+    assert.match(text(), /Transcript \d/, "Find ended, the pager stays");
+    type("/");
+    await sleep(20);
+    assert.match(text(), /Find: +Type to find/);
+  });
+});

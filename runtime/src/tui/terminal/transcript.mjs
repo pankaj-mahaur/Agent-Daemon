@@ -183,6 +183,23 @@ export function createTranscript({ maxEntries = 5000, entryMaxRows = 2000 } = {}
     return entries.slice(i, j + 1).map((e) => ({ id: e.id, rows: rowsOf(e, w) }));
   }
 
+  /** Every entry with its rows at the width (Find's source; renders lazily-held entries). */
+  const allEntries = (w = width) => entries.map((e) => ({ id: e.id, rows: rowsOf(e, w) }));
+
+  /** Brings an entry's row into view, a third of the way down (Find). */
+  function reveal({ entryId, row }, { width: w = width, height }) {
+    if (indexOf(entryId) < 0) return;
+    anchor = { entryId, row };
+    scroll(-Math.floor(height / 3), { width: w, height });
+  }
+
+  // The view as a value, to put back later (Find's cancel).
+  const getView = () => (anchor ? { ...anchor } : null);
+  function setView(v) {
+    if (v && indexOf(v.entryId) >= 0) anchor = { ...v };
+    else jumpLatest();
+  }
+
   function clear() {
     entries = [];
     jumpLatest();
@@ -199,6 +216,10 @@ export function createTranscript({ maxEntries = 5000, entryMaxRows = 2000 } = {}
     jumpLatest,
     hold,
     entriesBetween,
+    allEntries,
+    reveal,
+    getView,
+    setView,
     size: () => entries.length,
     get following() {
       return anchor === null;
