@@ -300,3 +300,49 @@ for (const mode of ["throw", "reject", "exit", "sigterm", "catch-finally"]) {
     }
   });
 }
+
+test("fullscreen editor handoff in a real pty: ad's screen during and after, the edited text in the prompt (P2.4)", { skip: !pty && "node-pty unavailable", timeout: 90000 }, async () => {
+  const { mkdtempSync, rmSync, mkdirSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const root = mkdtempSync(path.join(tmpdir(), "ad-tui-editor-pty-"));
+  const cwd = path.join(root, "project");
+  mkdirSync(cwd);
+  mkdirSync(path.join(root, "home"), { recursive: true });
+  writeFileSync(path.join(root, "home", "fake-config.json"), JSON.stringify({ tui: { fullscreen_transcript: true } }));
+  const term = new xtermHeadless.Terminal({ cols: 90, rows: 28, scrollback: 1000, allowProposedApi: true });
+  const env = { ...process.env, TERM: "xterm-256color", EDITOR: `"${process.execPath}" "${path.join(here, "..", "testkit", "fake-editor.mjs")}"` };
+  delete env.VISUAL;
+  delete env.WT_SESSION;
+  delete env.TERM_PROGRAM;
+  delete env.CODEX_HOME;
+  const child = pty.spawn(process.execPath, [path.join(here, "..", "testkit", "tui-fake.mjs"), root, cwd], { cols: 90, rows: 28, cwd, env, name: "xterm-256color" });
+  let exit = null;
+  child.onData((d) => term.write(d));
+  child.onExit((e) => (exit = e));
+  term.onData((d) => child.write(d));
+  try {
+    await waitFor(() => screenText(term).includes("Do you trust"), "the trust prompt");
+    child.write("\r");
+    await waitFor(() => screenText(term).includes("Ask ad to do anything"), "the composer");
+    assert.equal(term.buffer.active.type, "alternate");
+    child.write("draft");
+    await waitFor(() => screenText(term).includes("draft"), "the typed draft");
+    child.write("\x07"); // Ctrl+G
+    await waitFor(() => screenText(term).includes("draft EDITED-BY-FAKE"), "the edited text back in the prompt");
+    assert.equal(term.buffer.active.type, "alternate", "back on ad's screen after the editor");
+    child.write("\x03");
+    child.write("\x03");
+    child.write("\x03");
+    await waitFor(() => exit !== null, "ad tui to exit");
+    await new Promise((r) => term.write("", r));
+    assert.equal(term.buffer.active.type, "normal");
+  } finally {
+    try {
+      child.kill();
+    } catch {
+      // Already gone.
+    }
+    term.dispose();
+    rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  }
+});
