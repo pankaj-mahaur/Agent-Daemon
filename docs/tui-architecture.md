@@ -17,9 +17,14 @@ runtime/src/cli.mjs            thin launcher: routes `ad tui` / bare `ad` before
 runtime/src/tui/
   main.mjs                     cmdTui: preflight, engine start, sign-in and trust prompts, header, wiring
   app.mjs                      the app: what is committed to scrollback, what is live, keys, slash commands
-  keymap.mjs                   keys as the engine's actions (the engine's names and key spelling; tui.keymap read)
+  keymap.mjs                   keys as the engine's actions (the engine's names and key spelling; tui.keymap read), chords, the leader
   status.mjs                   the status line and the window title, by the engine's item ids
   prefs.mjs                    settings: the engine's tui.* in its config.toml, ad's in prefs.json
+  screen-mode.mjs              inline or fullscreen, and the mouse default, from the flag, settings and terminal (pure)
+  accounts.mjs                 what /model, /account, /login and /logout need over the account list and the engines
+  fallback-editor.mjs          /fallback: the order's editor (pure state and keys; the app draws it)
+  home-launcher.mjs            "Pick a project folder", before the engine starts in a home folder
+  history.mjs                  the prompt history (history.jsonl)
   upstream-commands.json       the engine's slash commands and their rules at the pin (generated, in engine/codex/)
   ad-layer.mjs                 ad's own capabilities: memory, learned rows, /loop, /team, /schedule, proposals
   undo.mjs                     checkpoint wiring for /undo (hooks on the session)
@@ -29,7 +34,9 @@ runtime/src/tui/
   view/                        pure renderers: composer, markdown, cells (items), chrome (header/footer, picker,
                                checklist), modals (the engine's requests, ad's confirm, choices), theme (every colour),
                                highlight (the syntax lexer, one table per language), vim (the engine's Vim mode)
-  terminal/                    io (raw mode, input decoding, handoff), renderer (inline frames), width, sanitize
+  terminal/                    io (raw mode, input decoding, handoff), renderer (inline frames), width, sanitize;
+                               fullscreen (the alternate-screen renderer), alt-screen (its guard), transcript (the
+                               re-wrapping buffer), selection, find, clipboard, detect (what the terminal is)
 runtime/src/harness/
   session.mjs                  the session controller: one thread, turns, queue/steer, approvals, items, restarts
   checkpoints.mjs              git-tree snapshots, plan and restore for /undo
@@ -64,9 +71,11 @@ The rule between layers: **only `engine/codex/` knows the engine's protocol.** E
 - **Subagents and denials.** `state.agents` (first seen, running, closed) for `/subagents`; `state.denials` (the engine's auto-review denials, the last 10) for `/approve`, sent back as the engine's core event.
 - **Identity.** The agent learns who it is from the identity block: on a managed engine home it is the first line of the managed instructions block in `<home>/AGENTS.md`; on a home ad didn't create, the TUI injects it as a developer message into each new thread.
 
-### The renderer: inline, not fullscreen
+### The renderer: inline or fullscreen
 
-The UI draws **inline**, like the engine's default mode: finished output is written into the terminal's own scrollback (so it scrolls, searches and copies like any terminal output), and only a small live region at the bottom is redrawn.
+Two renderers share one interface (`start`, `frame`, `commit`, `suspend`, `resume`, `redraw`, `clear`, `onResize`, `dispose`); the app doesn't know which one it has. Inline is the default. Fullscreen runs when the engine's settings say `[tui] fullscreen_transcript = true` in a layer the user set (`screen-mode.mjs`; the engine's packaged default doesn't count).
+
+**Inline.** The UI draws like the engine's default mode: finished output is written into the terminal's own scrollback (so it scrolls, searches and copies like any terminal output), and only a small live region at the bottom is redrawn.
 
 - **The prompt at the bottom.** The live region ends on the screen's last row from the start (ad's choice; the engine's inline mode lets it follow the transcript, which `"prompt.atBottom": false` brings back). Committed lines fill the blank rows above it from the top, then scroll as usual. The renderer counts those blank rows as a lower bound: after a width change, which may reflow history into them, it counts none, so it never writes over history.
 - **Committed vs live.** An item is committed once it can no longer change (a finished command, a closed message). A streaming answer commits line by line as newlines arrive; only the unfinished tail stays live. Committed lines are never repainted.
@@ -77,7 +86,18 @@ The UI draws **inline**, like the engine's default mode: finished output is writ
 - **The status line and the window title** are computed from the engine's item ids (`status.mjs`), from 12 rows. The title is written with OSC 0, at most 4 times a second, only when it changes; the terminal's own title is saved (XTWINOPS 22) and put back (23) on exit and around handoffs, and nothing is written while another program has the terminal. Every value passes `titleSafe` (no escapes, line breaks or invisible format characters).
 - **Untrusted text is sanitized.** Model output and command output can carry escape sequences; they are shown as visible `<U+…>` forms, never sent to the terminal.
 
-Why not a fullscreen (alternate-screen) UI: it hides the terminal's own scrollback, search and copy, and it is what users of the engine's inline mode moved away from. A fullscreen mode is a possible later addition, only on demand.
+**Fullscreen** (`terminal/fullscreen.mjs`). ad takes the alternate screen, as the engine's fullscreen mode and Claude Code do: the shell's earlier output is hidden while ad runs and comes back exactly as it was on exit.
+
+- **The guard** (`terminal/alt-screen.mjs`) is one state per process, marked active *before* `?1049h` is written, so a signal that lands mid-write still finds something to undo. `io.restore()` (every exit path: exit, signals, an uncaught error or rejection), `handoff()` and `suspend()` release it first: `?2026l`, mouse off, the alternate screen's keyboard pop, then `?1049l`. Release is synchronous, idempotent and never throws.
+- **The write gate.** Every write goes through `io.writeSync` (synchronous, so a frame can never land after the leave bytes) and through `writable()`: nothing is written while suspended, while a resize settles, after dispose, or once the guard was released by a crash path. A blocked draw marks the screen dirty and the next one repaints it whole.
+- **The transcript buffer** (`terminal/transcript.mjs`) keeps committed entries as render functions over the width (or fixed lines, re-wrapped), so a resize re-wraps history. Layout is lazy from the bottom (a resize renders about two screens, not the whole history); past 5,000 entries the oldest tenth goes behind a "trimmed" line. The app commits cells as functions over a **commit-time snapshot** (`commitView`), never a live item, so a resize can't rewrite history; a streamed answer's pieces are swapped for one entry when it completes (`settle`).
+- **Drawing.** History fills from the top, the live region sits on the bottom rows. Only changed rows are rewritten, one write per frame inside `?2026`, autowrap off; an idle frame writes nothing. `clear()` uses `2J` (the alternate screen only) and **never `3J`**, which would wipe the shell's scrollback.
+- **stderr** written while fullscreen would land on the frame: it is held, noted once in the window, and printed when ad leaves the alternate screen.
+- **Start-up.** `prefs.json` caches `screen.lastMode`. When the last run was fullscreen, ad starts on the alternate screen at once (nothing touches the shell's screen); otherwise it boots inline and swaps just before the app appears, after draining the inline erase.
+- **Scrolling** (P2.2). The transcript keeps a view anchor (an entry and a row in it), so new output never moves a scrolled view; while scrolled, its last row is the follow control (the engine's texts). PageUp/PageDown use the pager bindings' steps, Ctrl+Home/Ctrl+End (also Alt+< / Alt+>, and Alt+Shift+, / Alt+Shift+. under CSI-u) jump, matched with exact modifiers before the effort keys. The wheel moves `tui.mouse_scroll_speed` rows per notch with a fractional carry reset on a direction change. Mouse events are decoded from SGR reports only; a legacy X10 report is dropped by byte count, never typed.
+- **Selecting, copying, Find** (P2.3). `wrap()` marks soft-wrapped rows with how they join the row before (a non-enumerable `cont`; `withPrefix` keeps it), so a copy or a Find sees the wrapped text as the line it was. `selection.mjs` holds the model (click count, word and line units, the copied text); a selection holds the view while output arrives. `clipboard.mjs` copies through the native tool first (killed after 2 s), adds tmux's buffer or OSC 52 inside tmux and over SSH, and writes OSC 52 only as a fallback. `find.mjs` searches each entry's copy text, literal and case-insensitive, newest first, 200 entries per tick. Highlights reach the renderer as `setMarks(ref → ranges)` and are drawn with `restyle()` and the theme's `selection`, `findMatch` and `findCurrent` tokens.
+- **Which mode** (P2.5): `resolveScreenMode` in `screen-mode.mjs`, fed by `--no-alt-screen`, the engine's `tui.alternate_screen` and `tui.fullscreen_transcript` (only a value the user set), Apple Terminal over SSH (DA1 `1;2` and DA2 `1;95;0`, DA2 asked only over SSH outside a multiplexer) and tmux's `#{mouse}` (one probe, 1 s). Its reason ids become the `/status` screen line. `/tui` writes `tui.fullscreen_transcript`.
+- **The mouse** is captured (`?1000h ?1002h ?1006h`, no any-motion) where reports reach ad: Windows Terminal and Zed were probed; the legacy console host is off (QuickEdit can't be turned off); `"screen.mouse": false` in `prefs.json` turns it off anywhere.
 
 ### Keys and terminals
 
@@ -88,7 +108,7 @@ Key chords (`"ctrl-x ctrl-s"`, `"leader c"`) are matched before every layer by `
 - Shift+Enter isn't distinguishable from Enter in some terminals; Ctrl+J always inserts a newline, and `/terminal-setup` explains the per-terminal fix.
 - Every exit path restores the terminal (modes, cursor, colours), including a crash.
 - Terminal replies (OSC, DCS, APC strings) are recognised anywhere in the input and dropped; Alt+], Alt+Shift+P and Alt+_ still type.
-- **Keys are the engine's actions** (`tui/keymap.mjs`): the engine's contexts, action names and key spelling, so `tui.keymap` (set in the engine's settings file) means the same in ad. ad reads it and never writes it; a key it can't use (a chord, a clash, one of the prompt's editing keys) is skipped with a note in `/warnings`.
+- **Keys are the engine's actions** (`tui/keymap.mjs`): the engine's contexts, action names and key spelling, so `tui.keymap` (set in the engine's settings file) means the same in ad. ad reads it and never writes it; a key it can't use (a clash, one of the prompt's editing keys, a chord the engine refuses) is skipped, summed up in one `/warnings` line and listed by `/keymap`.
 - **The topmost layer takes the key.** Tested cell by cell (`test/tui-app.test.mjs`, "key routing table"):
 
 | Layer | Esc | Ctrl+C | Tab | Shift+Tab | Enter |
@@ -99,12 +119,18 @@ Key chords (`"ctrl-x ctrl-s"`, `"leader c"`) are matched before every layer by `
 | `?` shortcuts | closes | closes | closes, then acts | closes, then acts | closes, then acts |
 | command or file popup | closes | closes | fills in | — | runs or inserts |
 | checklist | cancels (undoes the preview) | cancels | — | — | saves |
+| Find editing (fullscreen) | cancels: the view goes back | cancels | — | — | keeps the match in view |
+| Find reading (fullscreen) | back to the bottom | as below | as below | as below | nothing, on an empty prompt |
+| selection (fullscreen) | clears (never interrupts) | copies (never arms quit) | clears, then acts | clears, then acts | copies, back to the bottom |
+| transcript scrolled up (fullscreen) | back to the bottom (the next Esc goes on down) | as below | as below | as below | back to the bottom, on an empty prompt |
 | composer, turn running | interrupts | clears the draft, then interrupts | queues | — (never queues) | steers |
 | composer, idle | rewind (twice, on an empty prompt) | clears the draft, then arms quit | pulls back a queued prompt | — | sends |
 
 ### Handoffs
 
 The external editor (Ctrl+G) and `/login` hand the terminal to a child process: input is detached, modes restored, and everything re-entered afterwards. SIGINT/SIGBREAK during (and briefly after) a handoff belong to the child.
+
+In fullscreen (P2.4) there are two kinds. The editor is a **keep-screen** handoff: ad leaves its screen (mouse off, its keyboard push popped), io restores the main screen's modes, then the renderer `freeze()`s: back on the alternate screen with the last frame but with no keyboard push and no mouse, so a GUI editor leaves ad visible; `unfreeze()` leaves it again before io re-applies the main modes, so every screen's keyboard stack ends where it began. `/login` and `/ad <command>` are **restore** handoffs: the child runs on the main screen, so its output stays in the shell's scrollback, and "Press Enter to return to ad." waits after `/ad` and after a failed `/login`. Nothing is written while frozen (commits, frames, resizes and OSC 52 are kept for the repaint). If io was restored during a handoff (a signal), the renderer stays out. Ctrl+Z (POSIX) leaves ad's screen and stops; on SIGCONT io cycles raw mode and the renderer repaints.
 
 ## Staying working across engine releases
 
@@ -161,6 +187,7 @@ Each layer is tested where it is cheapest, and the whole is tested live. Details
 - Golden screens at 40, 80 and 120 columns through `@xterm/headless`.
 - The app against a fake app-server (`runtime/testkit/fake-codex-app-server.mjs`), whose messages are checked against the protocol snapshot.
 - `/undo` against real temporary git repos, including adversarial cases (mid-turn saves, moves, binary files, CRLF, 8.3 paths).
+- Fullscreen: the guard, transcript, selection, Find, clipboard and screen-mode rules as units; the app in fullscreen on the fake app-server; and in a real pseudo-terminal (`test/tui-pty-smoke.test.mjs`), each crash path leaving the alternate screen, the editor handoff, and Ctrl+Z under bash job control (POSIX).
 - **Live:** `runtime/test/tui-live.test.mjs` runs the real `ad tui` in a real pseudo-terminal (ConPTY on Windows) on the real pinned engine with a mock model: the terminal UI script of the manual test (section 6) and ad's own TUI features, on Linux, macOS and Windows in CI's non-blocking real-engine job.
 - Guards that matter are mutation-checked: each is broken on purpose and a test must fail.
 

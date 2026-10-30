@@ -5,7 +5,7 @@ license: MIT
 metadata:
   author: agent-daemon
   spec: agentskills.io
-  version: "1.0"
+  version: "1.1"
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep
 disable-model-invocation: false
 ---

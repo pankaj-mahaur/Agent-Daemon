@@ -14,6 +14,18 @@ node scripts/check-doc-links.mjs                    # every relative link in the
 
 Install with `npm ci` (or `npm install`) in `runtime/`, devDependencies included: the screen and live tests use `@xterm/headless` and `@lydell/node-pty`, which the one-liner's `--omit=dev` install leaves out. The real-engine tests need nothing else: no login, no network.
 
+**Opt-in tests CI doesn't run.** Run them by hand when you touch what they cover:
+
+| Run with | File | Covers |
+|---|---|---|
+| `AD_REAL_ENGINE=1` | `test/engine-real-accounts.test.mjs` | two providers in one engine, a resume that changes provider, no key in any tool shell, hook or MCP server |
+| `AD_REAL_ENGINE=1` | `test/fallback-real.test.mjs` | automatic fallback F1–F13 (below) |
+| `AD_REAL_ENGINE=1` | `test/engine-real-failures.test.mjs` | each provider failure as the engine reports it; `AD_WRITE_FIXTURE=1` rewrites `test/fixtures/engine-failures-0.163.json`, which the pure tests read |
+| `AD_REAL_ENGINE=1` | `test/engine-network.test.mjs` | with ad's privacy settings, a turn reaches no host but the model provider (a recording proxy) |
+| `AD_ROLLBACK_30=1` | `test/rollback-30.test.mjs` | ad 3.0 still starts and finds its sign-ins after this branch wrote its account files; needs the `v3.0.0` tag and the network |
+
+`AD_WRITE_FIXTURE=1` on `test/engine-real.test.mjs` also refreshes `test/fixtures/engine-items-0.163.json` (what the session record maps).
+
 ## The layers
 
 | Layer | Where | What it proves |
@@ -26,9 +38,12 @@ Install with `npm ci` (or `npm install`) in `runtime/`, devDependencies included
 | Real engine, protocol level | `test/engine-real.test.mjs` + `testkit/mock-responses.mjs` | what an engine release actually sends for a turn, an approval, a patch |
 | Automatic fallback, real engine | `test/fallback-real.test.mjs` + `testkit/fault-responses.mjs` (`AD_REAL_ENGINE=1`) | F1–F13: providers failing at each point of a turn (before the first byte, mid-text, after a tool call is emitted, on a tool's result, a long Retry-After, a refused connection), through ad's gateway; switch or pause, and a tool never runs twice |
 | Real engine, real terminal | `test/tui-live.test.mjs` | the terminal UI script of the manual test (section 6) and ad's own features, on the real `ad tui` |
+| Real terminal, fake engine | `test/tui-pty-smoke.test.mjs` (in `npm test`; skipped where `@lydell/node-pty` can't load) | `ad tui` and `--preview` in a pseudo-terminal; fullscreen: the shell's screen back after quit, each crash path (`testkit/fullscreen-crash.mjs`: throw, rejection, exit, SIGTERM) leaving the alternate screen with the mouse off, the editor handoff (`testkit/fake-editor.mjs`), Ctrl+Z and `fg` under bash job control (POSIX only) |
+| Fullscreen | `test/tui-fullscreen`, `tui-fullscreen-restore`, `tui-alt-screen`, `tui-transcript`, `tui-selection`, `tui-find`, `tui-clipboard`, `tui-screen-mode`, `tui-handoff`, `tui-app-fullscreen` | the renderer and its write gate, the guard's leave bytes on every exit path, re-wrapping history, selection and copy text across wrapped rows, Find, the clipboard order and timeouts, which screen mode and mouse default, handoffs; the app's scrolling, selection and Find keys with SGR mouse reports from `testkit/mouse.mjs` |
+| Accounts, limits, fallback in the UI | `test/tui-accounts`, `tui-limits`, `tui-fallback`, `tui-home-launcher`, `tui-picker` | `/model`, `/account`, `/login`, `/logout`; the limits chip, notices and `/status` row; automatic fallback and `/fallback`; "Pick a project folder"; the picker |
 | Vim, highlighting, recap | `test/tui-vim`, `tui-highlight`, `tui-recap` | the engine's Vim binding table; each language's lexer, hostile input at the caps, a style golden per theme; the recap history budget and strict parse |
-| Keys, styles, settings | `test/tui-keymap`, `tui-styles`, `tui-dialogs`, `tui-prefs`, `tui-status` | the engine's key spelling and `tui.keymap` overrides; a golden that keeps every span's style (and no colour outside `view/theme.mjs`); the confirm and checklist; settings files; status-line and title items, `titleSafe` |
-| The key routing table | `test/tui-app.test.mjs` ("key routing table") | for each layer (approval, ad's confirm, pager, shortcuts, popup, checklist, composer idle or running), what Esc, Ctrl+C, Tab, Shift+Tab, Enter and PgUp do |
+| Keys, styles, settings | `test/tui-keymap`, `tui-keymap-chords`, `tui-styles`, `tui-dialogs`, `tui-prefs`, `tui-status` | the engine's key spelling and `tui.keymap` overrides; chords and the leader key under the engine's rules (that `docs/tui.md` names every default key is a test too); a golden that keeps every span's style (and no colour outside `view/theme.mjs`); the confirm and checklist; settings files; status-line and title items, `titleSafe` |
+| The key routing table | `test/tui-app.test.mjs` ("key routing table") | for each layer (approval, ad's confirm, pager, shortcuts, popup, checklist, composer idle or running), what Esc, Ctrl+C, Tab, Shift+Tab, Enter and PgUp do; the fullscreen layers (Find, a selection, a scrolled view) in `tui-app-fullscreen` |
 | The correction benchmark | `bench/correction-bench/test/` (run by `test/correction-bench.test.mjs`); `smoke-real.test.mjs` in the real-engine job | each dev family's oracle on its violating and compliant example; the statistics on synthetic data with known answers (a 40% → 20% effect, an effect held by one family); the episode flow; the driver smoke: the real engine with a scripted model, the correction turn, ad's hooks, capture and the lesson in session 2. See [`bench/correction-bench/PROTOCOL.md`](../bench/correction-bench/PROTOCOL.md) |
 | Engine pin bookkeeping | `test/tui-resilience.test.mjs` | ad's slash commands don't collide with the engine's (`src/engine/codex/upstream-commands.json` must match the pinned tag); `src/engine/codex/compat.json` lists the pin as tested, with a "what changed" note (`AD_COMPAT_NOTE_PENDING=1` lets the upgrade bot's run pass until a person writes it) |
 
@@ -55,12 +70,27 @@ For accounts and providers (M3), the testkit has:
 - `mock-auth.mjs` `startMockAuth()`: ChatGPT-style token refresh with rotation; a refresh token used twice answers `refresh_token_reused`.
 - `gateway-proto.mjs`: the loopback gateway prototype (P3.1; P3.3 builds the real one). The engine holds only a gateway token; the gateway swaps it for the account key and decodes compressed upstream bodies.
 - `mock-chat.mjs` `startMockChat({ script })`: a Chat Completions provider (P6.1). A script answers with stream chunks (split every n bytes, or the socket dropped at the end), an error or redirect status, or a held stream; it counts requests per prompt word and hang-ups.
+- `mock-native.mjs` `startMockNative({ script })`: Anthropic's Messages stream and Gemini's `streamGenerateContent`, for the native adapters. It records the full request line and headers, so a test can check that a key never travels in an address.
+- `mock-opencode.mjs`: OpenCode Go as its docs and a live check show it: the public model list, a wire per model, the session header it requires, its 401 and its usage-limit 429.
 - `probes.mjs`: an environment dump that runs as a hook or a stdio MCP server, tool-shell probe commands, and `scanForSecrets`, which reports which fake secret appeared and never prints one.
 
 Rules: fake keys only (`sk-test-…`, built by joining parts so no scanner mistakes them for real ones), a fake home for every engine run, and nothing about a request is written to disk. `test/engine-real-accounts.test.mjs` (`AD_REAL_ENGINE=1`) runs the pinned engine through the gateway:
 - two providers in one engine;
 - a resume that changes the provider;
 - the key-isolation probes, with a control that puts the key in the engine's environment to prove the hook probe can see one.
+
+### Other test helpers
+
+| Helper | What it is for |
+|---|---|
+| `testkit/mouse.mjs` | mouse report bytes: `sgr({action, button, wheel, x, y, …})` and a legacy `x10()` report (which ad must drop, never type) |
+| `testkit/fake-editor.mjs` | a stand-in `$EDITOR`: appends `EDITED-BY-FAKE`; `--fail` exits 3, `--leave-alt` switches screens like a terminal editor |
+| `testkit/fullscreen-crash.mjs` | enters fullscreen for real, draws, then fails one way (`throw`, `reject`, `exit`, `sigterm`, `catch-finally`), for the pty test |
+| `testkit/state-fixture.mjs` | `makeStateFixture({ root })`: a throwaway ad home with two projects, each with its own sentinel, so a state test can prove the other project never reaches a bundle |
+| `testkit/mcp-client.mjs` | a minimal MCP client that starts ad's memory server and collects answers by id |
+| `testkit/json-schema-lite.mjs` | a small JSON Schema 2020-12 validator for the vendored host-package schemas; an unknown keyword throws, so a schema update is noticed |
+| `testkit/fake-claude.mjs` | a fake `claude` CLI (`claude mcp add`, `get` and `remove` against `FAKE_CLAUDE_STATE`, every call logged to `FAKE_CLAUDE_LOG`) for the installer and spawn tests |
+| `testkit/real-home-guard.mjs` | `assertFakeHome()`: fails a test that would create engines, locks or memory in your real home |
 
 ### Chat translation fixtures
 
@@ -76,6 +106,7 @@ Rules: fake keys only (`sk-test-…`, built by joining parts so no scanner mista
 - FC3: header, a streamed answer, exec approval (the 400 ms guard, Esc = "No, and stop", approval), a patch in Auto and `/undo`, an Update File patch and `/undo`, the permissions picker and a read-only patch approval, steer, queue, interrupt, Esc Esc, `/undo` refusing a user's edit and `/undo force`, Ctrl+T, a narrowing resize, quit, `ad tui --last`.
 - FC4: `/memory`, `/private` (the model receives the wrapper; the transcript shows the prompt as typed), a correction becoming a "Learned:" row, `/schedule`, `/team`, `/proposals`, `/loop` start and stop.
 - Engine parity: plan mode end to end, a background terminal with `/ps` and `/stop`, `/cd` then an edit, `/side` during a turn, `/vim`, `/theme`, `/recap`, and a real subagent (spawned through the engine) in `/subagents`.
+- The prompt at the bottom (`prompt.atBottom`), the session record of a command and a patch (`ad sessions show --last --json`), and fullscreen on the real engine: PageUp, Ctrl+End, F3, a drag that copies, and the shell's screen back after quit.
 - G2: the live brand test — nothing on ad's screen names the engine; signed-out startup and a rejected model request are covered too. The latter verifies that `/warnings` retains the original error. `test/engine-text.test.mjs` and the TUI app tests also cover crash stderr, engine notices, RPC failures and raw diagnostic retention.
 
 **Writing steps that don't flake.**
@@ -123,7 +154,7 @@ The allowed zone and the other legitimate places are `runtime/scripts/brand-allo
 | Job | Runs |
 |---|---|
 | `ubuntu / macos / windows · node 22` | `npm test`, the skill linter, the brand lint (strict), the doc-link check, and smoke runs of `ad doctor`, `ad init --plan` and the skills-diff script |
-| `real engine · ubuntu / macos / windows` | `engine-real`, `tui-live` and the correction benchmark's driver smoke with `AD_REAL_ENGINE=1` (on Linux after allowing unprivileged user namespaces for the engine's bubblewrap sandbox) |
+| `real engine · ubuntu / macos / windows` | `engine-real`, `engine-real-translate`, `tui-live` and the correction benchmark's driver smoke with `AD_REAL_ENGINE=1` (on Linux after allowing unprivileged user namespaces for the engine's bubblewrap sandbox) |
 | `memory install · ubuntu / macos / windows · node 22.16 / 24` | the memory tests on `node:sqlite` (`AD_SQLITE_DRIVER=node:sqlite`); the installer's config matrix, `runtime/scripts/memory-install-matrix.mjs` (release gate a: ≥ 95% and no uninstall-integrity failure); the package build and `npm pack --dry-run`; `test/memory-host-codex.test.mjs`, the real Codex binary loading the installed entry (gate b) |
 | `state export / state import · ubuntu / macos / windows` | `runtime/scripts/portability-fixture.mjs`: each OS exports a throwaway project (paths with spaces and non-ASCII, a git remote, a second project that must not travel) with `ad state export`; each OS imports the other two bundles into a fresh home with the clone at another path, then checks `ad state verify --import`, `ad review --import --accept-all`, that `ad query-retrieve` brings the lesson back, that nothing of the second project arrived, and that a second import adds nothing. Run it locally with `export <file>` then `import <file>` |
 
@@ -132,6 +163,8 @@ Installer tests run in fake homes only (HOME, USERPROFILE, APPDATA, XDG_CONFIG_H
 The real-engine job is non-blocking (`continue-on-error`): **read its result**, don't rely on the run's overall status.
 
 Run the same pipeline before pushing, on this machine and in a Linux container, with the project skill [`ad-ci-readiness`](../.claude/skills/ad-ci-readiness/SKILL.md): it also reads a PR's CI test by test and holds the release-readiness checklist.
+
+Two more workflows: `skills-lint.yml` lints the skills and smoke-runs the skills diff; `release-memory.yml` builds the memory package and host plugins. It is started by hand by the owner, is a dry run by default (every artifact and `SHA256SUMS`, nothing published), and publishes only behind an approved environment; `test/release-memory-workflow.test.mjs` checks those guards.
 
 `.github/workflows/engine-upgrade.yml` runs `npm test` and the same real-engine tests in its own Linux job before it opens the PR that bumps the engine pin, and puts the results in the PR body. The PR's own `test.yml` run (all three OSes) happens only when the repo has an `ENGINE_UPGRADE_TOKEN` secret (the old `CODEX_UPGRADE_TOKEN` also works): PRs opened with the default token don't trigger other workflows.
 

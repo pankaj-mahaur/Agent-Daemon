@@ -32,6 +32,9 @@ node --test            # expect: 1 failing test (the bug the agent will fix in s
 | Open `claude` here and say: *"actually we use tabs, not spaces"* | a new line in `.agent-daemon/learning-journal.jsonl` | `ad doctor`; check the UserPromptSubmit hook is registered |
 | End the session, then `ad digest-latest --verbose` | extract → classify → apply steps, or "already digested" | [troubleshooting #4](troubleshooting.md#4-agent-daemon-no-agent-daemon-digest-block-found-in-transcript), [#12](troubleshooting.md#12-ad-digest-latest-says-no-transcripts-found-for-a-project-with-active-chats) |
 | `ad memory stats` | non-zero learnings | — |
+| `ad memory held` | the notes waiting for you (written by the agent) or held back (flagged), or none | [troubleshooting #51](troubleshooting.md#51-my-note-isnt-used-yet) |
+| `ad review` | pending notes and proposals; accepting asks you to type `accept`. From inside an agent's shell it refuses | [troubleshooting #52](troubleshooting.md#52-ad-review-accepting-notes-cant-run-from-the-agents-own-shell-or--needs-an-interactive-terminal) |
+| `ad memory report` | corrections captured, repeats, what memory showed, what waits for review | — |
 | `ad viewer` | path to an HTML snapshot of the memory store | — |
 
 ## 3. Harness: login and setup
@@ -39,7 +42,7 @@ node --test            # expect: 1 failing test (the bug the agent will fix in s
 | Run | Expect | If not |
 |---|---|---|
 | `ad auth login openai` (or `openrouter --model <slug>` / `chatgpt`) | API-key prompt or browser sign-in, then `logged in: …` | `--device` for a code instead of the browser |
-| `ad auth status` | harness home `~/.agent-daemon/engine`, the active login, no secrets printed | — |
+| `ad auth status` | every account and which one is the default, no secrets printed | — |
 | Windows: `ad sandbox status` | `ready` (it's set up on first use) | `ad sandbox setup` |
 | `ad doctor` | engine login OK, harness hooks `N/N trusted`, Windows sandbox ready | the next `ad run` re-trusts hooks |
 
@@ -108,25 +111,76 @@ Run this in each terminal you use: Windows Terminal, Zed and the VS Code termina
 | `/archive` (wait a moment, then `y`), then `/resume archived` and Enter | "Archived. /resume archived brings it back.", then "Unarchived and resumed." | — |
 | Ctrl+O, Alt+R, F2 | the last answer copied; printed as plain text; the warnings | — |
 | `/private`, send *"What does math.js export?"*, then `/private` again | "Private: your prompts are wrapped in <private> …"; the prompt shows as typed, marked "(private)"; then "Private is off." | — |
+| In the engine's settings file (`ad about` shows where) add `[tui.keymap.global]` `open_transcript = "leader t"`, restart, press Ctrl+X | the footer lists what can follow (`… t …` and `esc cancel`); `t` opens the Ctrl+T pager; Ctrl+X then Esc cancels and types nothing. `/keymap` names the leader. Remove the line afterwards | [troubleshooting #30](troubleshooting.md#30-ad-tui-keys-set-outside-ad-dont-work-in-ad) |
+| `/subagents` after the model used subagents | each row shows the agent's model and effort when the engine reports them | — |
+
+**Fullscreen** (early; same scratch project). Do it in Windows Terminal and Zed at least, and in tmux or over SSH if you use them.
+
+| Do | Expect | If not |
+|---|---|---|
+| `/tui` → **Fullscreen**, quit (Ctrl+C twice), then `ad tui --last` | "Saved: fullscreen from the next start."; ad now fills the window and the shell's earlier output is hidden. `/status` shows `screen  fullscreen` | [troubleshooting #88](troubleshooting.md#88-ad-tui-fullscreen-doesnt-start-or-the-mouse-doesnt-reach-ad) |
+| Ask for a long answer (*"Explain node:test in 60 lines."*); while it streams, PgUp, then the wheel | the view stays where you scrolled while output arrives; the last row says "↓ Back to bottom". Ctrl+End, Esc or a click on that row goes back | — |
+| Drag over a few lines, then Ctrl+C | the lines are highlighted; "Copied." (or "Copied (through the terminal).") and ad doesn't quit. Paste somewhere to check the text, wrapped lines joined as one | [troubleshooting #87](troubleshooting.md#87-ad-tui-couldnt-reach-a-clipboard-in-fullscreen) |
+| Double click a word, triple click a line, Shift+click; Esc | word, line, extended selection; Esc clears it without interrupting | — |
+| F3, type `test`, Ctrl+P / Ctrl+N, Enter, Esc | matches highlighted, the current one in view; Enter keeps it; Esc goes back to the bottom | — |
+| Ctrl+T, drag in the pager, Ctrl+C; then Esc | the pager's lines selected and copied, the pager still open; Esc closes it | — |
+| Ctrl+G with a terminal editor (`EDITOR=vi`), edit, save and quit | the editor gets the whole window; back in ad, the edited prompt is in the composer and the screen is repainted | [troubleshooting #28](troubleshooting.md#28-ad-tui-the-editor-ctrlg-returned-at-once) |
+| `/ad doctor` | the doctor's output on the shell's screen, then "Press Enter to return to ad."; Enter brings ad back; after quitting, that output is still in your scrollback | — |
+| macOS and Linux: Ctrl+Z between turns, then `fg` | the shell's screen comes back with a stopped job; `fg` brings ad back repainted. During a turn Ctrl+Z only says it works between turns | — |
+| Resize the window narrower, then wider | history re-wraps to the new width; nothing is duplicated | — |
+| Quit | the shell's earlier output is back as it was, with the `ad tui --resume` hint under it; clicks don't print `[<0;…M` | [troubleshooting #86](troubleshooting.md#86-ad-tui-the-terminal-is-stuck-in-ads-screen-after-a-crash) |
+| `ad tui --no-alt-screen`, then `/status` | inline; `screen  inline (started with --no-alt-screen)` | — |
+| `/tui` → **Inline**, quit, `ad tui --last` | back to inline (the default) | — |
 
 **Terminal probes** (from the repo). They change nothing but the terminal's modes, which they restore on exit.
 
 | Run | Expect | If not |
 |---|---|---|
 | `node runtime/scripts/tui-probe.mjs keys`, press a few keys and paste two lines, then `qqq` | each key named. On Windows with Node 22.17+ or 24.2+ the paste shows as one `PASTE (… line breaks)` row | [troubleshooting #22](troubleshooting.md#22-keys-or-paste-behave-oddly-in-a-terminal) |
+| `node runtime/scripts/tui-probe.mjs mouse`, click, drag, scroll the wheel, Shift+click, then `qqq` | one `mouse: …` line per report (press, drag, release, wheel), never text | attach `~/.agent-daemon/logs/tui-probe-mouse-*.log` to an issue about fullscreen clicks or scrolling |
 | `node runtime/scripts/tui-probe.mjs screen --bottom`, make the window narrower then wider, then `qqq` | wrap and autowrap verdicts, plus one line per resize | attach `~/.agent-daemon/logs/tui-probe-screen-*.log` and a screenshot to an issue |
 
-## 7. Clean up
+## 7. Accounts, limits and fallback
+
+Needs at least one real sign-in or key; skip the rows for providers you don't have. Stay in the scratch project.
+
+| Run | Expect | If not |
+|---|---|---|
+| `ad auth list` | each account with its label, owner and a limits column (blank when unknown, never `0%`); no key printed, only its last 4 characters | [troubleshooting #91](troubleshooting.md#91-ad-cant-read-its-account-list-or-doctor-says-account-repair--run-ad-auth-repair) |
+| `ad auth login <provider>` for a provider you have a key for | the key is asked at a hidden prompt, never on the command line; a refused key isn't saved | [troubleshooting #63](troubleshooting.md#63-the-key-was-refused-http-401-so-it-wasnt-saved) |
+| `ad tui`, `/login` | the provider list, a label and owner, then a masked key field; the key never appears in the prompt history | — |
+| `/account`, pick another account | its models, then "continues this conversation" or "continues in a new conversation (history carried over)"; the footer names the account | [troubleshooting #74](troubleshooting.md#74-couldnt-switch-to--still-on-) |
+| `/status`, `/usage` | a `limits` row with reset times, or "not reported by this provider"; a `session ses_…` line | [troubleshooting #82](troubleshooting.md#82-limits-are-blank-or-not-reported-by-this-provider) |
+| `/fallback` | the order editor below the prompt, off by default. `p` previews what would happen now; `e` lists every destination before turning it on | [troubleshooting #77](troubleshooting.md#77-fallback-never-switches-or-a-target-says-skipped-now) |
+| `ad fallback preview`, `ad fallback test` | what fallback would do now, step by step; each target checked without sending anything | — |
+| Quit, then `ad sessions show --last` | the session's account and model per turn and its tool calls; no answers, command output or keys | [troubleshooting #73](troubleshooting.md#73-this-session-is-open-in-another-ad-window-or-ad-couldnt-write-this-sessions-record) |
+| Only if your own `~/.codex` has skills: `cd ~ && ad` | **Pick a project folder**, your last project first; Esc exits | [troubleshooting #48](troubleshooting.md#48-pick-a-project-folder-or-run-this-in-a-project-folder) |
+
+## 8. Moving ad: state export and import
+
+Use a throwaway home for the import side (a second OS user, or `HOME=$(mktemp -d)` on Linux and macOS), so your own ad state is never changed.
+
+| Run | Expect | If not |
+|---|---|---|
+| In the scratch project: `ad state inspect` | what an export would hold for this project only; no secret opened | — |
+| `ad state export --out ../scratch.adstate` | one bundle; a row shaped like a key stops it and names the row | [troubleshooting #84](troubleshooting.md#84-export-stopped--look-like-keys-or-a-name-cant-go-into-a-bundle) |
+| `ad state verify ../scratch.adstate` | no problems; nothing changed | — |
+| In the throwaway home: `ad state import ../scratch.adstate --dry-run` | where the project would go and any conflict; nothing written | [troubleshooting #85](troubleshooting.md#85-an-import-was-refused-interrupted-or-held-something-back) |
+| `ad state import ../scratch.adstate` | "Imported (imp_…). Next: ad review --import imp_… …"; schedules come in switched off, accounts need a sign-in | [troubleshooting #85](troubleshooting.md#85-an-import-was-refused-interrupted-or-held-something-back) |
+| `ad review --import <id>`, then `ad state verify --import <id>` | the imported notes wait for your typed accept; verify reports counts, integrity and recall | — |
+| `ad state rollback <id>` | the import's own writes undone | — |
+
+## 9. Clean up
 
 ```bash
-cd .. && rm -rf ad-manual-test
+cd .. && rm -rf ad-manual-test scratch.adstate
 ```
 
-The harness login stays in `~/.agent-daemon/engine`. Use `ad auth logout` to remove it.
+Your accounts stay. `ad auth logout <account>` signs one out and keeps it; `ad auth remove <account>` forgets it.
 
 ---
 
-## 8. Stranger's walk (G8)
+## 10. Stranger's walk (G8)
 
 A first-time user with a fresh machine state walks the whole path and captures everything, then searches the capture for the engine's name. Do this once per release, by hand (it needs a real sign-in).
 

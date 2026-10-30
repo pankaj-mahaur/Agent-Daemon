@@ -9,6 +9,10 @@
 //
 // Both: {io, resizeSource, resize(cols, rows), settle(), lines(), visible(), cursor()};
 // cprDelayMs delays CPR answers, to expose races with the renderer's awaits.
+// xtermScreen also has, for the fullscreen renderer (P2.1): io.writeSync (the
+// same ordered chain as write), io.entered, bufferType(), normalLines(),
+// altLines(), modes(), and `prefill`: lines written to the main screen first,
+// with `promptLast` leaving the cursor on the last row as a shell prompt does.
 
 import { EventEmitter } from "node:events";
 import xtermHeadless from "@xterm/headless";
@@ -31,6 +35,8 @@ function makeIo({ write, size, caps }) {
     io: {
       caps,
       write,
+      writeSync: write,
+      entered: true,
       size,
       cpr() {
         return new Promise((resolve) => {
@@ -42,7 +48,7 @@ function makeIo({ write, size, caps }) {
   };
 }
 
-export function xtermScreen({ cols = 40, rows = 10, sync = true, scrollback = 1000, cprDelayMs = 0 } = {}) {
+export function xtermScreen({ cols = 40, rows = 10, sync = true, scrollback = 1000, cprDelayMs = 0, prefill = null, promptLast = false } = {}) {
   const term = new Terminal({ cols, rows, scrollback, allowProposedApi: true });
   term.loadAddon(new Unicode11Addon());
   term.unicode.activeVersion = "11";
@@ -65,11 +71,25 @@ export function xtermScreen({ cols = 40, rows = 10, sync = true, scrollback = 10
     if (cprDelayMs) setTimeout(() => resolve?.(answer), cprDelayMs);
     else resolve?.(answer);
   });
+  if (prefill) {
+    const nl = "\r\n";
+    const text = prefill.join(nl) + (promptLast ? nl.repeat(Math.max(1, rows - prefill.length)) + "$ " : "");
+    chain = chain.then(() => new Promise((r) => term.write(text, r)));
+  }
+  const bufferLines = (b) => {
+    const out = [];
+    for (let i = 0; i < b.length; i++) out.push(b.getLine(i).translateToString(true));
+    return trimBlank(out);
+  };
   return {
     kind: "xterm",
     term,
     io,
     writes,
+    bufferType: () => term.buffer.active.type,
+    normalLines: () => bufferLines(term.buffer.normal),
+    altLines: () => bufferLines(term.buffer.alternate),
+    modes: () => ({ ...term.modes }),
     resizeSource,
     resize(c, r) {
       term.resize(c, r);

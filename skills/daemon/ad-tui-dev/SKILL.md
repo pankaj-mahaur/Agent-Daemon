@@ -1,11 +1,11 @@
 ---
 name: ad-tui-dev
-description: "Use when working on agent-daemon's own terminal UI (maintainers, this repo): \"continue the TUI\", \"TUI ka kaam\", \"ad tui\", \"next TUI part\", \"renderer\", \"composer\", \"input parser\", \"tui-probe\", \"terminal UI bug\", \"/undo\", \"ad codex\", \"the fake app-server\". Loads the plan's state, the module map, tests and goldens, and the rules the TUI must keep: isolation from the user's own install, inline-renderer terminal rules, Windows input facts, and the per-part loop."
+description: "Use when working on agent-daemon's own terminal UI (maintainers, this repo): \"continue the TUI\", \"TUI ka kaam\", \"ad tui\", \"renderer\", \"fullscreen\", \"mouse\", \"select and copy\", \"keymap\", \"chords\", \"account picker\", \"tui-probe\", \"terminal UI bug\", \"/undo\", \"the fake app-server\". Loads the module map, tests and goldens, and the rules the TUI must keep: isolation from the user's own install, inline and fullscreen renderer rules, Windows input facts, the per-part loop."
 license: MIT
 metadata:
   author: agent-daemon
   spec: agentskills.io
-  version: "1.2"
+  version: "1.3"
 allowed-tools: Bash, Read, Edit, Write, Grep, Glob, Agent
 ---
 
@@ -32,10 +32,16 @@ All paths under `runtime/`.
 | `src/tui/ad-layer.mjs` | Part 9: `/memory`, learned rows, `/proposals`, `/loop`, `/team`, `/schedule`, scheduler warning |
 | `src/tui/undo.mjs` | Part 10 wiring: "before" started at Enter and awaited (10 s cap) so no agent action can be in it, "after" after the turn, applied edits only (hashed + line-counted per file), edit paths resolved to real paths, `/undo` |
 | `src/tui/history.mjs` | prompt history JSONL (`~/.agent-daemon/tui/history.jsonl`) |
+| `src/tui/keymap.mjs` | every key ad handles as an action (the engine's contexts and defaults), `tui.keymap` overrides, chords and the leader key |
+| `src/tui/status.mjs` | status-line and title items (the engine's ids, plus ad's own `statusExtra` items) |
+| `src/tui/screen-mode.mjs` | inline or fullscreen at start (`--no-alt-screen`, `tui.alternate_screen`, `tui.fullscreen_transcript`, Apple Terminal over SSH, tmux mouse), the mouse default per terminal, the `/status` screen line |
+| `src/tui/home-launcher.mjs` | "Pick a project folder" before the engine starts, when the folder would load the user's own engine home |
+| `src/tui/fallback-editor.mjs` | `/fallback`: the fallback order editor over `~/.agent-daemon/fallback.json` |
+| `src/sessions/` | the session record (`ledger`, `coordinator`, `effects`), switching (`switch`, `switch-runner`, `capsule`) and automatic fallback (`fallback`, `fallback-controller`) |
 | `src/tui/init-prompt.mjs` | the engine's `/init` prompt, vendored (re-copy on engine upgrades) |
 | `src/tui/preview.mjs` | `ad tui --preview`, a minimal preview UI on the same engine (the first walking skeleton) |
 | `src/engine/codex/upstream-commands.json` | the engine's slash commands at the pinned tag with their rules: aliases, inline args, allowed during a task, side-conversation allowlist, visibility, popup (`scripts/codex-slash.mjs --file slash_command.rs --popup command_popup.rs`), reached through the façade as `engineCommands` |
-| `src/tui/terminal/` | `io` (raw mode, caps, handoff, restore), `input` (bytes → key/text/paste events), `renderer` (inline), `sanitize`, `text` (spans, SGR, wrap), `width` + `width-table` (generated), `detect` (terminal name, reflow model, width profile) |
+| `src/tui/terminal/` | `io` (raw mode, caps, handoff, restore), `input` (bytes → key/text/paste/mouse events), `renderer` (inline), `fullscreen` (the alternate-screen renderer), `alt-screen` (the guard every exit path releases), `transcript` (the fullscreen buffer: lazy layout, re-wrap, scroll anchor), `selection`, `find`, `clipboard` (native tools, tmux, OSC 52), `sanitize`, `text` (spans, SGR, wrap with soft-wrap markers), `width` + `width-table` (generated), `detect` (terminal name, reflow model, width profile) |
 | `src/tui/accounts.mjs` | the window's accounts (P3.8b): snapshot, plan, switchTo (retarget in the same home, useEngine for another), logout, signIn; app.mjs only calls it, so tests stub it |
 | `src/tui/view/` | pure views: `composer`, `markdown` (streaming), `cells` (items, diffs, ad rows), `chrome` (header, status, footer, shortcuts, picker), `modals` (approvals with arming, questions, forms) |
 | `src/harness/session.mjs` | UI-agnostic session controller: submit / steer / queue, requests, restarts, thread locks (`~/.agent-daemon/locks`) |
@@ -52,6 +58,8 @@ All paths under `runtime/`.
 - An API key is typed only into `createTextPrompt({mask: true})`, a composer with **no history**, and is dropped on answer. It must never reach the main composer, history.jsonl, the transcript, notices or the title (test: tui-accounts "masked field").
 - Switching accounts goes through `session.retarget` (fork, same provider/engine/model) or `session.useEngine` (a new conversation on another home), never `thread/resume` with a new provider.
 - Picker rows may be `{kind: "header"}` (skipped by the cursor, kept only while a row in their group matches the filter) or `{disabled: true, reason}`, where Enter shows the reason in the note line.
+- Two ChatGPT homes share the `openai` provider entry, so `session.retarget.plan` alone would say "continues": the accounts layer compares homes first.
+- A long URL (a browser sign-in) is committed as its own unindented rows and copied, never put in a notice: the renderer cuts every committed line to `cols − 1`. Tests that copy must stub `actions.copy`, or the real clipboard tool runs.
 
 ## The session ledger's observer (P4.1)
 
@@ -71,14 +79,26 @@ All paths under `runtime/`.
 - The capsule drops reasoning itself: the engine accepts and forwards a foreign `reasoning` item in `thread/inject_items` (S-RESUME).
 - Fake engine: `early-complete` never sends `turn/started` (use `fail-turn` when the ledger must see the turn); `test/start-turn` starts a turn by itself; fakes number threads from 1 per engine, so start a throwaway thread on a second fake before comparing ids or taking locks.
 
+## Fallback and limits in the TUI (P4.4–P4.6)
+
+- `main.mjs` builds the fallback controller (`sessions/fallback-controller.mjs`) and composes it into the session's hooks and observer; it acts only at a turn's end, through the same switch runner as `/model`. A turn it handles shows ad's ↪ line instead of the engine's error text (that stays in `/warnings`); `/retry`, a new prompt or a model pick ends a pause.
+- Keys typed fast arrive as one multi-character text event: an editor or picker that acts per key must split it per character, queue async key handlers, and clear any render memo after the handler finishes, not when it starts (the `/fallback` editor lost keys otherwise).
+- ad's own status items (limits, account, fallback) never go into the engine's `tui.status_line` (the engine's UI would meet unknown ids): they live in ad's prefs (`statusExtra`) and `/statusline` carries them as `ad:` values, split again on save.
+- The TUI draws every frame, so anything it reads from disk (the quota store, `fallback.json`) sits behind a short cache. A notice marked in a store asynchronously also needs an in-memory "shown" set, or the next check before the write lands repeats it (test with a mark that never resolves).
+- Usage limits are shown only as reported: a number past its reset or 6 hours old is unknown, never 0 %.
+
 ## Tests and goldens
 
-- **TUI tests** (`runtime/test/`): `tui-input`, `tui-io`, `tui-detect`, `tui-width`, `tui-text`, `tui-sanitize`, `tui-renderer` (terminal layer); `tui-composer`, `tui-markdown`, `tui-cells`, `tui-chrome`, `tui-modals` (views); `tui-app`, `tui-main`, `tui-parity`, `tui-ad`, `tui-hardening`, `tui-resilience`, `tui-preview`, `tui-pty-smoke`. Also `session`, `checkpoints`, `codex-events.test.mjs`, `codex-protocol-snapshot.test.mjs`, `engine-real` and `tui-live` (both `AD_REAL_ENGINE=1`; `tui-live` is the FC3/FC4 script on the real `ad tui` in a pty: run it after any app, session or view change).
-- **Goldens:** `test/golden/tui/` holds `wrap-{20,40,79}`, `{cells,chrome,markdown,modals,parity}-{40,80,120}` and `modals-small`. They are LF on every platform. After an intended change, run with `AD_UPDATE_GOLDEN=1`, then read the golden diff line by line before committing.
+- **TUI tests** (`runtime/test/`): `tui-input`, `tui-io`, `tui-detect`, `tui-width`, `tui-text`, `tui-sanitize`, `tui-renderer` (terminal layer); `tui-alt-screen`, `tui-fullscreen`, `tui-fullscreen-restore`, `tui-transcript`, `tui-selection`, `tui-find`, `tui-clipboard`, `tui-handoff`, `tui-screen-mode`, `tui-app-fullscreen` (fullscreen); `tui-composer`, `tui-markdown`, `tui-cells`, `tui-chrome`, `tui-modals`, `tui-picker` (views); `tui-keymap-chords`, `tui-accounts`, `tui-fallback`, `tui-limits`, `tui-home-launcher`; `tui-app`, `tui-main`, `tui-parity`, `tui-ad`, `tui-hardening`, `tui-resilience`, `tui-preview`, `tui-pty-smoke`. Also `session`, `checkpoints`, `codex-events.test.mjs`, `codex-protocol-snapshot.test.mjs`, `engine-real` and `tui-live` (both `AD_REAL_ENGINE=1`; `tui-live` is the FC3/FC4 script on the real `ad tui` in a pty: run it after any app, session or view change).
+- **Goldens:** `test/golden/tui/` holds the wrap, cells, chrome, dialogs, markdown, modals, parity, styles and syntax goldens, most at 40, 80 and 120 columns. They are LF on every platform. After an intended change, run with `AD_UPDATE_GOLDEN=1`, then read the golden diff line by line before committing.
 - **Fixtures:** `test/fixtures/tui/s1-keys.json` (real key bytes from Windows Terminal and Zed).
 - **The fake must stay honest:** every message `fake-codex-app-server.mjs` sends in the main scenarios must pass `protocol-check` (`tui-resilience` enforces it). When you add a fake message, give it the real shape (full `Thread` objects, `startedAtMs`, the approval's `itemId`, …), not just the fields ad reads.
 - **Mutation-check every guard.** For each fix or safety check, break it on purpose (delete the line, flip the condition), run the tests, and confirm a named test fails; then restore it. A guard no test catches isn't done. Record the count in the plan ("N guards mutation-checked").
 - **Slash names:** a new command needs `source: "upstream"` (mirroring the engine's own UI) or `"ad"`, a check against `engine/codex/upstream-commands.json` (`slashCollisions`), a row in `docs/tui.md`, and `/help` coverage. Never point users to the engine's own UI. Every upstream command is either a `source: "upstream"` row in `SLASH_COMMANDS` or an entry in `NOT_IN_AD` (what ad says instead; never sent to the model): implementing one means removing it from `NOT_IN_AD`. Upstream's "during a task" rule and popup hiding come from the generated metadata, not by hand.
+- **Fullscreen renderer rules (P2.1):** every write goes through `io.writeSync` and the renderer's `writable()` gate (never `stdout.write`: on Windows it is asynchronous and could land after the leave bytes); the alt-screen guard is marked before `?1049h` and released first by every exit path; never send `CSI 3J` in fullscreen (it wipes the shell's scrollback); commit cells as `commitView(snapshot, render)` or a function over constants, never a closure over a live item. Each guard has a mutation test (`tui-alt-screen`, `tui-fullscreen-restore`, `tui-fullscreen`, the pty crash paths). The pty main-screen comparison only means something on POSIX: ConPTY repaints the main screen when a child starts.
+- **Mouse (P2.2):** SGR reports reach Node in Windows Terminal and Zed (P0.1's probe, research S-FULLSCREEN); decode SGR only and drop X10 by UTF-8 byte count (two raw bytes can arrive as one character). A mouse event that changes nothing must draw nothing. Scrolling keys sit after modals, popups, overlays, Vim's Esc and the side panel, and before the effort keys (`matchKey` ignores Shift on symbols, so Alt+Shift+, would otherwise step the effort). Seed fullscreen app tests with `renderer.commit` (one row per line); `app.commit` adds a blank line between cells.
+- **Select, copy, Find (P2.3):** layer order is modal → confirm → Find (editing) → selection → pager → scroll keys; Ctrl+C copies a selection before `onCtrlC`. Never rebuild a row with `normalize([...prefix, ...l])` (it drops the soft-wrap marker): use `withPrefix`. `footer()` returns one line, not a list. A mutation that survives because "the other path also does nothing" usually means the test sits where both paths agree (a match at the bottom follows anyway): move the case. A pager selection's keys must also sit before `onCtrlC`, or Ctrl+Shift+C closes the pager. An empty (blank-cells) selection copies nothing and says nothing.
+- **Handoffs and modes (P2.4, P2.5):** the editor is a keep-screen handoff (`freeze()`/`unfreeze()` inside io's handoff, before its modes come back); `/login` and `/ad` are restore handoffs with the Enter wait. Check keyboard-stack balance with a per-screen push/pop model over the written bytes: it found a resume re-entering after io was restored. Programs (tmux, clipboard tools) go through `resolveCommand`, never a literal name (the no-shell lint). `tui-live` passes `--no-alt-screen` unless a case asks for fullscreen; a selection survives a copy, so clear it (Esc) before testing Ctrl+C quit.
 - **Status line and title:** items are the engine's ids in `tui/status.mjs`; every value through `titleSafe`; the title is never written while `holdTitle(true)` (a handoff). A new item needs the engine's id (or it stays "unsupported"). A bare percentage means "left" (`ctx 94%`); anything counting up says "used" (`ctx 6% used`, `5h 96% used`): the owner read a bare `5h 96%` as 96 % left.
 - **Test pitfalls met:** match long paths and hints with `\s+` (they wrap); give "too soon" assertions a long arm delay (500 ms) and waits that end early on success a generous cap (a 50 ms query timeout flaked under load); `until()` must await async predicates; if a mutation isn't caught, change the setup until the old and new behaviour differ on screen. In Git Bash, `--test-name-pattern="/cd"` matches nothing (the slash is turned into a path): prefix that one command with `MSYS_NO_PATHCONV=1`, never export it for the shell (git honours it and `skill-install.test.mjs`'s local-repo test fails). Capture a live run to a file before filtering it: a grep that keeps only `ok`/`not ok` lines eats the error block.
 - **Subagent run state** lives in `session.state.agents` (`noteAgent`/`trackAgents` in `harness/session.mjs`): `running` from `turn.started`/`turn.completed` and `subAgentActivity` hints, `stopped` so a late "started" hint for a finished agent is ignored (the engine's `stopped_threads` guard), `closed` from `thread.closed`. An engine restart clears every `running` (the engine that ran them is gone), as it clears `terminals`. `/cd` refuses while any agent is `running && !closed`, as the engine's `app/working_directory.rs` does; the fake's `subagents-2` prompt leaves one running and sends a late hint, so it is the fixture for both guards.
@@ -92,7 +112,7 @@ Engine-originated failures must retain their classification through wrappers: us
 1. **Load the state.**
    - Read `docs/tui-architecture.md` (layers, invariants, decisions); when present locally, the status block of `docs/plans/ad-tui.md`.
    - Read `.agent-daemon/memory/activeContext.md`.
-   - Check `git status -sb`: work happens on `feat/tui`, never on main.
+   - Check `git status -sb`: work happens on a feature branch in its own git worktree, never on main and never in a checkout a global `ad` is npm-linked to (the user's own hooks would run your branch against their real home).
 2. **Follow the plan's loop** for the (sub-)part, and finish its Done-when. Interfaces are fixed; changing one needs a revision-log entry. If the plan and the code disagree, verify against the code and fix whichever is wrong.
 3. **Never touch the user's own install.**
     - Every real engine process starts through `codexEnv()` (`runtime/src/engine/codex/home.mjs`).
@@ -156,15 +176,15 @@ Engine-originated failures must retain their classification through wrappers: us
    - Only the "changed since…" conflicts are forceable; a file moved in from outside the repo is "not in the checkpoint", never deleted.
    - Prove each case on a real temp repo in `test/checkpoints.test.mjs`, and mutation-check it.
 6a2. **Start-up isolation** (P0.2a): the launcher runs before the engine starts (`tui/home-launcher.mjs`, `engineHome.homeLayerRisk`); `/cd` asks `engine.homeFolderRisk` before forking; the façade refuses any thread whose folder loads the user's `~/.codex` unless `allowHomeFolder`. Tests that fake a home set HOME and USERPROFILE (under node --test the real account's `~/.codex` is never read: `riskUserHomes`). In a pty test on Windows always `child.kill()` after the child exited, or ConPTY handles keep the test file from exiting; the full TUI quits with Ctrl+C twice and its composer reads "? for shortcuts".
-6a4. **Keys and chords**: every key goes through `keymap.chords().feed` first, then `keymap.is(ctx, action, ev)`. Never add a second matcher: a chord completes as a synthetic `chord` event that `is()` answers. The rules follow the engine's `keymap/chords.rs` and `leader.rs` (0.163): an unmatched second key is passed through, Esc or the leader again cancels, a leader chord never times out.
 6a3. **Commit batching** (no `?2026`): commits within 150 ms of the last wait in `queued`; `frame()` flushes them in its own write, because the app removes a finished cell from the live region in the same tick it commits it. Without that, the screen briefly lacks the cell (pinBottom shows blank rows where it was).
+6a4. **Keys and chords**: every key goes through `keymap.chords().feed` first, then `keymap.is(ctx, action, ev)`. Never add a second matcher: a chord completes as a synthetic `chord` event that `is()` answers. The rules follow the engine's `keymap/chords.rs` and `leader.rs` (0.163): an unmatched second key is passed through, Esc or the leader again cancels, an ordinary chord expires after 1 s (its hint cleared), a leader chord never times out. Chord matching is off while a modal, confirm or inspector owns the keys.
 6b. **Live tests** (`test/tui-live.test.mjs`, practices in `docs/testing.md`): wait for state not time, count occurrences instead of matching once (the scrollback keeps old text), wait for the idle footer before the next prompt, close every pty in `finally`, approve "retry without sandbox?" on runners that can't sandbox. Reproduce a user's live transcript in a temp home (same shell, same PATH) before fixing it.
 7. **Before every commit:** run the project's `ad-pre-push` skill (docs, CHANGELOG, skills, learnings, hygiene, link check). In particular:
    - `cd runtime && node --test`;
    - the goldens (UI changes) and a mutation check of each new guard;
    - the real-engine suite when engine code changed;
    - `npm run lint:skills` when skills changed;
-   - `docs/tui.md` (and `docs/troubleshooting.md` #22–30) when keys, commands, messages or files changed: the docs must match the code;
+   - `docs/tui.md` (and the TUI entries of `docs/troubleshooting.md`) when keys, commands, messages or files changed: the docs must match the code;
    - read the `git diff` (scripted edits have corrupted files before).
    - Commit by file name. Push only with the user's OK.
 
@@ -172,7 +192,7 @@ Engine-originated failures must retain their classification through wrappers: us
 
 ### Example 1: continuing after a break
 
-The status says Parts 0–11 are built, FC2–FC4 run automated in `test/tui-live.test.mjs`, and bare `ad` opens the TUI. Read the plan's status block for what still waits for the user, pick up what is open without them (a backlog item, a review finding), and run `AD_REAL_ENGINE=1 node --test test/tui-live.test.mjs` after any change to the app, session or views.
+The plan's progress file says which parts are done and which wait on the owner (a live check in Windows Terminal and Zed, a default to pick). Pick up what is open without them (a backlog item, a review finding), and run `AD_REAL_ENGINE=1 node --test test/tui-live.test.mjs` after any change to the app, session or views.
 
 ### Example 2: a renderer bug report
 

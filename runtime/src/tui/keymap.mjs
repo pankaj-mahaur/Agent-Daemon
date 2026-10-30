@@ -22,6 +22,7 @@ export const DEFAULT_KEYMAP = Object.freeze({
     clear_terminal: ["ctrl-l"], // ad redraws (the engine clears)
     toggle_raw_output: ["alt-r"], // /raw
     toggle_side_conversation: ["ctrl-/"], // focus between a /side panel and the main prompt
+    find_transcript: ["f3"], // Find in the fullscreen transcript (inline: the pager in Find)
   },
   chat: {
     interrupt_turn: ["esc"],
@@ -43,6 +44,7 @@ export const DEFAULT_KEYMAP = Object.freeze({
     jump_bottom: ["end"],
     close: ["q", "ctrl-c"],
     close_transcript: ["ctrl-t"],
+    find: ["f3", "/"], // Find in the pager
   },
 });
 

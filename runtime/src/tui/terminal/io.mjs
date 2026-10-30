@@ -12,6 +12,7 @@
 
 import fs from "node:fs";
 import { createInputDecoder } from "./input.mjs";
+import { releaseAltScreen } from "./alt-screen.mjs";
 
 const CSI = "\x1b[";
 const BRACKETED_PASTE_ON = `${CSI}?2004h`;
@@ -21,6 +22,7 @@ const KITTY_POP = `${CSI}<u`;
 const KITTY_QUERY = `${CSI}?u`;
 const SYNC_QUERY = `${CSI}?2026$p`;
 const DA1_QUERY = `${CSI}c`;
+const DA2_QUERY = `${CSI}>c`;
 const MOK_ON = `${CSI}>4;2m`; // xterm modifyOtherKeys level 2
 const MOK_OFF = `${CSI}>4;0m`;
 const FOCUS_ON = `${CSI}?1004h`;
@@ -38,6 +40,10 @@ export const RESTORE_SEQUENCE = [
   `${CSI}?25h`,
   `${CSI}0 q`,
 ].join("");
+// While away (a handoff or a suspend already restored), the kitty pop and the
+// modifyOtherKeys reset would undo one step past what ad set. The rest still
+// undoes whatever a crashed child left on.
+const RESTORE_AWAY = RESTORE_SEQUENCE.replace(KITTY_POP, "").replace(MOK_OFF, "");
 
 const SIGNALS = ["SIGTERM", "SIGHUP", "SIGBREAK", "SIGINT"];
 
@@ -63,6 +69,7 @@ export function createIo({
     sync: false,
     focus: platform !== "win32", // as in the engine's own UI: no focus reporting on Windows
     da1: null,
+    da2: null, // asked only over SSH outside a multiplexer (Apple Terminal detection, P2.5)
   };
   const inputListeners = new Set();
   const resumeListeners = new Set();
@@ -97,6 +104,7 @@ export function createIo({
         }
         caps.kitty = true;
       } else if (ev.kind === "decrqm" && ev.mode === 2026) caps.sync = ev.value === 1 || ev.value === 2;
+      else if (ev.kind === "da2") caps.da2 = ev.params;
       else if (ev.kind === "da1") {
         caps.da1 = ev.params;
         da1Waiter?.();
@@ -209,7 +217,9 @@ export function createIo({
     const gotDa1 = new Promise((resolve) => {
       da1Waiter = resolve;
     });
-    writeRaw(BRACKETED_PASTE_ON + KITTY_PUSH + KITTY_QUERY + SYNC_QUERY + (caps.focus ? FOCUS_ON : "") + DA1_QUERY);
+    // DA2 before DA1 (DA1 marks the end of the replies), as the engine asks it: only over SSH outside tmux, zellij or screen.
+    const askDa2 = Boolean(env.SSH_TTY || env.SSH_CONNECTION) && !env.TMUX && !env.ZELLIJ && !env.STY;
+    writeRaw(BRACKETED_PASTE_ON + KITTY_PUSH + KITTY_QUERY + SYNC_QUERY + (caps.focus ? FOCUS_ON : "") + (askDa2 ? DA2_QUERY : "") + DA1_QUERY);
     let timer;
     await Promise.race([gotDa1, new Promise((resolve) => (timer = setTimeout(resolve, queryTimeoutMs)))]);
     clearTimeout(timer);
@@ -227,8 +237,10 @@ export function createIo({
     if (restored) return;
     restored = true;
     entered = false;
+    const wasAway = away;
     away = false;
-    writeRaw(RESTORE_SEQUENCE);
+    releaseAltScreen(writeRaw);
+    writeRaw(wasAway ? RESTORE_AWAY : RESTORE_SEQUENCE);
     setRaw(false);
     detachInput();
     decoder.reset(); // a half paste must not swallow the next session's input
@@ -281,6 +293,7 @@ export function createIo({
     if (!entered || away) return fn();
     decoder.flush();
     detachInput();
+    releaseAltScreen(writeRaw);
     writeRaw(RESTORE_SEQUENCE);
     setRaw(false);
     away = true;
@@ -305,12 +318,15 @@ export function createIo({
   function suspend() {
     if (platform === "win32" || !entered || away) return false;
     detachInput();
+    releaseAltScreen(writeRaw);
     writeRaw(RESTORE_SEQUENCE);
     setRaw(false);
     away = true;
     const onCont = () => {
       away = false;
       if (!entered || restored) return;
+      // The shell may have changed the terminal while ad was stopped: off, then on (as after a handoff).
+      setRaw(false);
       setRaw(true);
       writeRaw(modesOn());
       attachInput();
@@ -335,6 +351,8 @@ export function createIo({
   return {
     caps,
     write: (s) => stdout.write(s),
+    // Synchronous, in order with restore's bytes: the fullscreen renderer writes only through this.
+    writeSync: writeRaw,
     enter,
     restore,
     close,

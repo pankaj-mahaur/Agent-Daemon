@@ -5,7 +5,7 @@ license: MIT
 metadata:
   author: agent-daemon
   spec: agentskills.io
-  version: "1.0"
+  version: "1.1"
   kind: flow
 ---
 
@@ -61,9 +61,12 @@ Released separately, by `.github/workflows/release-memory.yml`, which runs only 
    Gallery submissions (Claude Code directory, Cursor marketplace) are the owner's, after the privacy and terms pages exist.
 5. Never publish from a laptop. The package version must equal the runtime's: the build refuses otherwise.
 
-### Launch checks, every release (P8.4)
+### Release checks, every release (agent-daemon only)
 - `node --test runtime/test/launch-checks.test.mjs runtime/test/support-matrix.test.mjs`: privacy and security pages, MIT everywhere, no analytics, no network in the memory package, and no matrix row that overstates its evidence.
+- `node runtime/scripts/check-claims.mjs <files>` on public copy the release changed (README, listings): it flags superlatives, numbers without a linked baseline, and hosts not tested live in `docs/support-matrix.md`.
 - After an engine upgrade: `AD_REAL_ENGINE=1 node --test runtime/test/engine-network.test.mjs`. A new host it reaches means a new engine setting to turn off in `ENGINE_PRIVACY` (`runtime/src/harness/setup.mjs`), or a line on `docs/privacy.md`.
+- When the release changes what ad stores (accounts, memory schema, engine folders): `AD_ROLLBACK_30=1 node --test runtime/test/rollback-30.test.mjs` proves ad 3.0 still starts, shows its sign-in and finds its key on the new state (needs the `v3.0.0` tag and network); users must be able to go back.
+- **Read CI per job, not the run's colour.** The real-engine job can't fail the run, and the state export/import job pairs every OS with every other. Stacked branches have been merged with red POSIX jobs: read each job of each PR before calling it green.
 
 ## Go / No-Go
 

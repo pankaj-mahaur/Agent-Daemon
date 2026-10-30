@@ -18,8 +18,11 @@ irm https://raw.githubusercontent.com/pankaj-mahaur/Agent-Daemon/main/install.ps
 
 - **Pin a release:** set `AD_VERSION` (e.g. `AD_VERSION=v1.0.0` for the Claude Code–only v1). Re-run without it to move back to `main`.
 - **From a clone instead:** `cd runtime && npm install --omit=dev && npm link --omit=dev` (contributors drop `--omit=dev` to get the test tools).
-- **Then, per project:** `ad init`.
-- **To let ad run the agent:** type `ad` in the project. The terminal UI opens and asks you to sign in on the first run. For `ad chat`, `ad run`, `ad loop` and the other harness commands, sign in first with `ad auth login openai` (or `openrouter --model <slug>` / `chatgpt`). The ChatGPT sign-in opens the vendor's page, which may name the engine: that is what ad runs on. See [harness.md](harness.md) and [tui.md](tui.md).
+- **Then, per project:** `ad init`. Where Claude Code is installed, it offers (in a terminal) to add ad's memory server to it; in a script it prints the command instead.
+- **To let ad run the agent:** type `ad` in a project folder (in your home folder ad asks you to pick a project first). The terminal UI opens and asks you to sign in on the first run (`/login` adds more accounts later). For `ad chat`, `ad run`, `ad loop` and the other harness commands, sign in first with `ad auth login <provider>`: `ad auth login --help` lists the providers, and [accounts.md](accounts.md) has the details. The ChatGPT sign-in opens the vendor's page, which may name the engine: that is what ad runs on. See [harness.md](harness.md) and [tui.md](tui.md).
+- **Memory needs SQLite.** The runtime installs `better-sqlite3`. Where that can't load, memory runs on Node's built-in SQLite, which needs Node 22.16 or newer; `ad doctor` shows the driver in use.
+- **Memory in other agents** (the hosts are listed in [memory/install.md](memory/install.md)): `ad memory install`, or `npx agent-daemon-memory install` without the `ad` command.
+- **Moving to another computer:** install there, then bring your state with `ad state import` ([harness.md](harness.md#moving-ad-to-another-computer)).
 
 ## Skills only (no `ad` command)
 

@@ -1,6 +1,6 @@
 {
   "name": "agent-daemon",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "A terminal coding agent that remembers, plus memory, guards and skills for Claude Code.",
   "type": "module",
   "bin": {

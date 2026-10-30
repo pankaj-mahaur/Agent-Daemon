@@ -36,6 +36,10 @@ export const T = deepFreeze({
   diffAdd: { fg: "green" },
   diffDel: { fg: "red" },
   diffHunk: { fg: "cyan", dim: true },
+  // Fullscreen (P2.3): selected cells, Find's matches and its current match.
+  selection: { inverse: true },
+  findMatch: { underline: true, bold: true },
+  findCurrent: { inverse: true, bold: true },
 });
 
 // Syntax highlighting (parity Part 9): token class → style, per theme

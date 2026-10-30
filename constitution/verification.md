@@ -73,7 +73,7 @@ In these cases, write the verification steps explicitly so the user can run them
 > I couldn't open the dashboard in a browser from here. To verify:
 > 1. `npm run dev`
 > 2. Sign in as a manager
-> 3. Open `/admin/timesheets`
+> 3. Open `/admin/orders`
 > 4. Filter by "this month" — confirm the row count matches what you'd expect
 
 This is *not* failure. It's the difference between an agent that's honest about its tools and one that bluffs.

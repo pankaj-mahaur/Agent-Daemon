@@ -22,7 +22,7 @@ import { accountName, providerDisplay } from "../auth/accounts/target.mjs";
 import { PROVIDER_PRESETS } from "../providers/registry.mjs";
 import { PLAN_CLEAR_CONTEXT_PREFIX } from "../hooks/generated-prompts.mjs";
 import { sanitize } from "./terminal/sanitize.mjs";
-import { lineWidth, truncate } from "./terminal/text.mjs";
+import { lineWidth, restyle, truncate, withPrefix } from "./terminal/text.mjs";
 import { INIT_PROMPT } from "./init-prompt.mjs";
 import { setupWindowsSandbox } from "../harness/sandbox.mjs";
 import { existsSync, realpathSync, statSync, writeFileSync } from "node:fs";
@@ -32,6 +32,9 @@ import path from "node:path";
 import { copyText, denialSummary, exportMarkdown, imagePath, lastAgentText, renderDebugConfig, renderHooks, renderKeyInspector, renderKeymap, renderMcp, renderSkills, renderUsage, terminalSetup, transcriptLines } from "./commands.mjs";
 
 import { T } from "./view/theme.mjs";
+import { clickCount, rowRanges, selectedText } from "./terminal/selection.mjs";
+import { clampQuery, findMatches } from "./terminal/find.mjs";
+import { copyOnSelectDefault, readClipboard, rightClickPaste } from "./terminal/clipboard.mjs";
 import { createFallbackEditor } from "./fallback-editor.mjs";
 import { createKeymap, eventSpec, keyLabel } from "./keymap.mjs";
 import { setSyntaxTheme, SYNTAX_THEMES, syntaxTheme, withSyntaxTheme } from "./view/highlight.mjs";
@@ -58,6 +61,7 @@ export const SLASH_COMMANDS = [
   { name: "keymap", source: "upstream", desc: "the keys in effect (/keymap debug shows what a key sends)" },
   { name: "vim", source: "upstream", desc: "toggle Vim mode for the composer" },
   { name: "theme", source: "upstream", desc: "choose a syntax highlighting theme" },
+  { name: "tui", source: "upstream", desc: "choose inline or fullscreen for the next start" },
   { name: "cd", source: "upstream", desc: "change the working directory (the conversation continues there)" },
   { name: "model", source: "upstream", desc: "choose the model and reasoning effort" },
   { name: "permissions", source: "upstream", desc: "what the agent may do without asking" },
@@ -136,7 +140,6 @@ export const NOT_IN_AD = {
   worktree: "/worktree isn't in ad. For parallel work in worktrees, use /team or ad sp.",
   app: "/app isn't in ad: the desktop app keeps its own folder, not ad's, so it can't continue this conversation.",
   voice: "/voice isn't planned for ad.",
-  tui: "/tui isn't in ad: ad has only its inline mode.",
   daemon: "/daemon manages a background server ad never uses; ad runs its own engine.",
   pets: "ad doesn't draw terminal pets (they need Kitty or Sixel images).",
   apps: "/apps isn't planned for ad.",
@@ -202,6 +205,7 @@ export function createApp({
   clearInterval: clearI = clearInterval,
   armMs = ARM_MS,
   platform = process.platform,
+  env = process.env, // the terminal's variables: clipboard paths and copy-on-select defaults (P2.3)
 }) {
   const st = session.state;
   const composer = createComposer({ history, now });
@@ -239,6 +243,7 @@ export function createApp({
   let note = null; // one transient line above the composer
   let lastCtrlC = -Infinity;
   let lastEsc = -Infinity;
+  let wheelCarry = 0; // fractional wheel rows (tui.mouse_scroll_speed), reset on a direction change
   let attachments = []; // image paths for the next prompt
   let pager = null; // {lines, top} while Ctrl+T shows the transcript; {agent, lines, top} watching a subagent
   let privateMode = false; // prompts wrapped in <private>…</private>
@@ -260,16 +265,41 @@ export function createApp({
   /* Scrollback                                                      */
   /* -------------------------------------------------------------- */
 
-  function commit(lines) {
-    if (lines.length) renderer.commit(lines);
+  // `content` is lines, or a render function over the width. A function lets the
+  // fullscreen renderer re-wrap the entry on resize; it must close over a
+  // commit-time snapshot (snap()), never a live item, or a resize would rewrite
+  // history. The inline renderer gets the lines at today's width either way.
+  function commit(content, { key } = {}) {
+    const render = typeof content === "function" ? content : null;
+    const lines = render ? render(width()) : content;
+    if (!lines.length) return;
+    renderer.commit(lines, render ? { render, key } : key ? { key } : undefined);
   }
 
   // A cell gets a blank line before it, as in the engine's own UI.
-  function commitCell(lines) {
+  function commitCell(content, opts) {
+    const render = typeof content === "function" ? content : null;
+    const lines = render ? render(width()) : content;
     if (!lines.length) return;
-    commit(lastWasCell ? [[], ...lines] : lines);
+    const gap = lastWasCell;
+    if (render) commit((w) => (gap ? [[], ...render(w)] : render(w)), opts);
+    else commit(gap ? [[], ...lines] : lines, opts);
     lastWasCell = true;
   }
+
+  // A deep copy of what a committed cell shows, taken when it is committed.
+  const snap = (v) => {
+    try {
+      return structuredClone(v);
+    } catch {
+      return JSON.parse(JSON.stringify(v));
+    }
+  };
+  /** Commits a cell that re-renders from a snapshot: render(snapshot, width). */
+  const commitView = (value, render, opts) => {
+    const view = snap(value);
+    commitCell((w) => render(view, w), opts);
+  };
 
   function resetThreadView() {
     recapping = null; // a recap of the conversation left behind is dropped
@@ -321,13 +351,13 @@ export function createApp({
         const running = [...(st.terminals?.values() ?? [])].some((t) => t.itemId === it.id && t.turnId === it.turnId);
         committed.add(shownKey(it));
         if (running) runningShown.add(shownKey(it));
-        commitCell(renderCell(running ? { ...it, streaming: false } : settledView(it), { width: width() }));
+        commitView(running ? { ...it, streaming: false } : settledView(it), (v, w) => renderCell(v, { width: w }));
         continue;
       }
       if (it.kind === "userMessage") {
         committed.add(shownKey(it));
         if (it.clientId && echoesShown.has(it.clientId)) continue;
-        commitCell(renderCell(it, { width: width() }));
+        commitView(it, (v, w) => renderCell(v, { width: w }));
         continue;
       }
       if (it.kind === "agentMessage") {
@@ -343,14 +373,25 @@ export function createApp({
         const out = live ? fresh : [...fresh, ...s.md.finish()];
         if (out.length) {
           // The bullet on the message's first line only; the rest (and later batches) indent.
-          const lines = out.map((l, k) => [{ text: s.started || k > 0 ? "  " : "\u{2022} ", style: DIM }, ...l]);
-          if (!s.started) commitCell(lines);
-          else commit(lines);
+          const lines = out.map((l, k) => withPrefix([{ text: s.started || k > 0 ? "  " : "\u{2022} ", style: DIM }], l));
+          // Keyed, so the fullscreen renderer can swap the streamed pieces for one re-wrappable entry.
+          if (!s.started) {
+            s.gap = lastWasCell;
+            commitCell(lines, { key: shownKey(it) });
+          } else commit(lines, { key: shownKey(it) });
           s.started = true;
         }
         if (live) return items.slice(i);
         committed.add(shownKey(it));
         streams.delete(shownKey(it));
+        if (s.started) {
+          const gap = s.gap;
+          renderer.settle?.(shownKey(it), (w) => {
+            const md = createMarkdownStream({ width: w - 2 });
+            const all = [...md.push(text), ...md.finish()].map((l, k) => withPrefix([{ text: k > 0 ? "  " : "\u{2022} ", style: DIM }], l));
+            return gap ? [[], ...all] : all;
+          });
+        }
         continue;
       }
       if (isExploring(it)) {
@@ -360,14 +401,14 @@ export function createApp({
         const settled = group.every((g) => !open(g));
         // A run of exploring commands is one cell: it ends at the next other item or the turn's end.
         if (!settled || (j === items.length && turnActive())) return items.slice(i);
-        commitCell(renderExploring(group.map(settledView), { width: width() }));
+        commitView(group.map(settledView), (v, w) => renderExploring(v, { width: w }));
         for (const g of group) committed.add(shownKey(g));
         i = j - 1;
         continue;
       }
       if (open(it)) return items.slice(i);
       committed.add(shownKey(it));
-      commitCell(renderCell(settledView(it), { width: width() }));
+      commitView(settledView(it), (v, w) => renderCell(v, { width: w }));
     }
     return [];
   }
@@ -379,7 +420,7 @@ export function createApp({
       const it = rootItems().find((x) => shownKey(x) === key);
       if (!it || it.status === "inProgress") continue;
       runningShown.delete(key);
-      if (turnActive()) commitCell(renderCell(it, { width: width() }));
+      if (turnActive()) commitView(it, (v, w) => renderCell(v, { width: w }));
     }
   }
 
@@ -403,8 +444,9 @@ export function createApp({
         // (kept as the hint, and in /warnings).
         const engineWords = errorText({ ...t.error, code: -32000 });
         const why = actions.gatewayReason?.(st.thread?.id ?? null, turnStarts.get(t.id) ?? turnStartedAt ?? null);
-        commitCell(renderNotice({ level: "error", message: `The turn failed: ${why ? clean(why) : engineWords}`, ...(why ? { hint: `The engine said: ${engineWords}` } : {}) }, { width: width() }));
-      } else if (t.status === "interrupted") commitCell(renderNotice({ level: "warn", message: "Interrupted. Say what to do differently." }, { width: width() }));
+        const n = { level: "error", message: `The turn failed: ${why ? clean(why) : engineWords}`, ...(why ? { hint: `The engine said: ${engineWords}` } : {}) };
+        commitCell((w) => renderNotice(n, { width: w }));
+      } else if (t.status === "interrupted") commitCell((w) => renderNotice({ level: "warn", message: "Interrupted. Say what to do differently." }, { width: w }));
       const started = turnStarts.get(t.id) ?? turnStartedAt;
       turnStarts.delete(t.id);
       if (started != null) {
@@ -424,7 +466,7 @@ export function createApp({
   function reportPlanUpdates() {
     if (!st.plan || st.plan === planShown) return;
     planShown = st.plan;
-    commitCell(renderPlan(st.plan.steps, { width: width(), explanation: st.plan.explanation }));
+    commitView(st.plan, (p, w) => renderPlan(p.steps, { width: w, explanation: p.explanation }));
   }
 
   // "Learned:" rows for what ad's hooks recorded during the turn (keyed by thread id).
@@ -579,6 +621,7 @@ export function createApp({
   }
 
   function footer() {
+    if (find) return findFooter(); // Find replaces the footer while it is open
     const running = turnActive();
     const vim = composer.vim;
     // The engine's gg chord hint replaces the hints while the second g is awaited.
@@ -768,6 +811,7 @@ export function createApp({
     const w = width();
     const rows = height();
     const lines = [];
+    if (!pager) pagerSel = null; // a closed pager takes its selection with it
     if (pager && !modal) {
       // Ctrl+T: the whole transcript, paged inside the live region.
       const view = Math.max(1, rows - 2);
@@ -783,11 +827,26 @@ export function createApp({
         const a = st.agents.get(pager.agent);
         const state = a?.closed ? "closed" : a?.running ? "running" : "idle";
         lines.push(truncate([{ text: `${clean(agentName(a))}${agentModel(a) ? ` \u{b7} ${clean(agentModel(a))}` : ""} \u{b7} ${state} \u{b7} ${ids.indexOf(pager.agent) + 1} of ${ids.length}  `, style: T.bold }, { text: `${AGENT_KEYS} other agents \u{b7} \u{2191}\u{2193} pgup pgdn \u{b7} q or esc closes`, style: DIM }], w));
+      } else if (pager.find) {
+        lines.push(pagerFindLine(w));
       } else {
         const where = pager.lines.length ? `Transcript ${pager.top + 1}\u{2013}${Math.min(pager.lines.length, pager.top + view)} of ${pager.lines.length}  ` : "The transcript is empty  ";
         lines.push(truncate([{ text: where, style: T.bold }, { text: "\u{2191}\u{2193} pgup pgdn home end \u{b7} q or esc closes", style: DIM }], w));
       }
-      lines.push(...pager.lines.slice(pager.top, pager.top + view));
+      const hit = pager.find?.hits[pager.find.index];
+      const before = lines.length;
+      // A selection in the pager (P2.3, fullscreen): its rows, highlighted.
+      const sel = pagerSel ? rowRanges([{ id: "pager", rows: pager.lines }], pagerSel) : null;
+      lines.push(
+        ...pager.lines.slice(pager.top, pager.top + view).map((l, i) => {
+          let line = typeof l === "string" ? [{ text: l }] : l;
+          if (pager.top + i === hit) line = restyle(line, 0, Infinity, T.findCurrent);
+          const r = sel?.get(`pager:${pager.top + i}`);
+          return r ? restyle(line, r[0], r[1], T.selection) : line;
+        }),
+      );
+      // The live region ends on the last row: where the pager's first line lands.
+      pagerFirstY = Math.max(0, rows - lines.length) + before;
       renderer.frame({ lines, cursor: { row: 0, col: 0 } });
       return;
     }
@@ -825,7 +884,7 @@ export function createApp({
       if (popup) lines.push(...popup.view.render({ width: w, height: Math.min(10, Math.max(3, rows - lines.length - 1)) }));
       else if (fbEditor) lines.push(...fbEditor.render().map((l) => truncate([{ text: clean(l.text), style: FB_TONE[l.tone] }], w)));
       else if (inspector) lines.push(...renderKeyInspector(inspector.last, { width: w }));
-      else if (overlay) lines.push(...renderShortcuts({ newline, keymap }, { width: w }));
+      else if (overlay) lines.push(...renderShortcuts({ newline, keymap, fullscreen: Boolean(renderer.transcript) }, { width: w }));
       else {
         if (status) lines.push(status);
         if (rows >= 10) lines.push(footer());
@@ -1071,6 +1130,34 @@ export function createApp({
         onChange: (name) => ((previewTheme = name), drawSoon()),
         onCancel: () => ((previewTheme = null), drawSoon()),
       },
+    );
+  }
+
+  // /tui (P2.5): the engine's tui.fullscreen_transcript, for the next start (a value the user set counts as explicit).
+  function pickScreenMode() {
+    if (!settings?.engine) return warn("Settings aren't available here.");
+    const now = settings.engine.get("tui.fullscreen_transcript") === true ? "fullscreen" : "inline";
+    const current = (mode) => (mode === now ? " \u{b7} current" : "");
+    const items = [
+      { label: "Inline", hint: `the terminal's own scrollback, selection and search${current("inline")}`, value: "inline" },
+      { label: "Fullscreen", hint: `ad's own scrolling, selection and Find${current("fullscreen")}`, value: "fullscreen" },
+      { kind: "header", label: "Restart to apply. --no-alt-screen and tui.alternate_screen still win." },
+    ];
+    openPicker(
+      "tui",
+      items,
+      async (mode) => {
+        try {
+          await settings.engine.set("tui.fullscreen_transcript", mode === "fullscreen");
+          const id = st.thread?.id;
+          const how = id ? `It applies the next time ad starts: quit (Ctrl+C twice), then ad tui --resume ${id}` : "It applies the next time ad starts.";
+          info0(`Saved: ${mode} from the next start.`, how);
+        } catch (err) {
+          fail(err);
+        }
+        drawSoon();
+      },
+      { title: "Screen mode for the next start", showQuery: false, initial: now },
     );
   }
 
@@ -1432,7 +1519,7 @@ export function createApp({
           [{ text: "Commands", style: T.bold }],
           ...SLASH_COMMANDS.filter((c) => c.name !== "exit" && !popupHidden(c)).map((c) => truncate([{ text: `  /${c.name.padEnd(12)}`, style: T.code }, { text: c.desc, style: DIM }], width())),
           [],
-          ...renderShortcuts({ newline, keymap }, { width: width() }),
+          ...renderShortcuts({ newline, keymap, fullscreen: Boolean(renderer.transcript) }, { width: width() }),
         ]);
       case "new":
         session.newThread();
@@ -1474,6 +1561,8 @@ export function createApp({
         return changeDir(arg);
       case "theme":
         return pickTheme();
+      case "tui":
+        return pickScreenMode();
       case "vim": {
         // The engine's /vim: a toggle for this session; turned on, it starts in Normal.
         const on = !composer.vim;
@@ -1929,6 +2018,7 @@ export function createApp({
     const lim = limitsRow();
     if (lim) rows.push(["limits", lim]);
     if (info.compat) rows.push(["engine", info.compat]);
+    if (statusInfo.screen) rows.push(["screen", statusInfo.screen]); // P2.5: fullscreen · inline, and why
     return [[{ text: "Status", style: T.bold }], ...rows.map(([k, v]) => truncate([{ text: `  ${k.padEnd(13)}`, style: DIM }, { text: clean(v) }], width()))];
   }
 
@@ -2419,6 +2509,7 @@ export function createApp({
       return warn("Changing directories: send it once that's done.");
     }
     recapping = null; // as the engine does, a prompt drops a recap on its way
+    renderer.transcript?.jumpLatest(); // the user's own prompt must be in view
     turnStartedAt ??= now();
     try {
       const images = attachments;
@@ -2433,7 +2524,7 @@ export function createApp({
       const r = session.submit(images.length ? [{ type: "text", text }, ...images.map((p) => ({ type: "localImage", path: p }))] : text);
       if (shown) {
         echoesShown.add(r.clientUserMessageId);
-        commitCell(renderCell({ kind: "userMessage", text: shown }, { width: width() }));
+        commitView({ kind: "userMessage", text: shown }, (v, w) => renderCell(v, { width: w }));
       }
       r.accepted.then(
         (a) => {
@@ -2579,11 +2670,424 @@ export function createApp({
     note = { level: "info", text: "Ctrl+C again quits." };
   }
 
+  /* Fullscreen scrolling (P2.2): only when the renderer keeps its own transcript. */
+
+  // Exact modifiers, matched before the chat keys: plain Alt+, and Alt+. stay the effort keys.
+  const jumpTarget = (ev) => {
+    if (ev.type !== "key") return null;
+    const { name, ctrl, alt, shift } = ev;
+    if ((name === "home" || name === "end") && ctrl && !alt && !shift) return name === "home" ? "top" : "latest";
+    if ((name === "<" || name === ">") && alt && !ctrl) return name === "<" ? "top" : "latest"; // the ESC-prefix form
+    if ((name === "," || name === ".") && alt && shift && !ctrl) return name === "," ? "top" : "latest"; // the CSI-u form
+    return null;
+  };
+
+  // PageUp/PageDown scroll by whichever pager binding the key has (as the engine does).
+  const PAGE_STEPS = [["scroll_up", () => -1], ["scroll_down", () => 1], ["page_up", (h) => -(h - 1)], ["page_down", (h) => h - 1], ["half_page_up", (h) => -Math.ceil(h / 2)], ["half_page_down", (h) => Math.ceil(h / 2)]];
+  const pageDelta = (ev, h) => {
+    const hit = PAGE_STEPS.find(([action]) => keymap.is("pager", action, ev));
+    return hit ? hit[1](h) : null;
+  };
+
+  function wheelRows(dir) {
+    const s = Number(settings?.engine?.get?.("tui.mouse_scroll_speed"));
+    const speed = Number.isFinite(s) && s > 0 ? s : 1;
+    if (Math.sign(wheelCarry) && Math.sign(wheelCarry) !== dir) wheelCarry = 0;
+    wheelCarry += dir * speed;
+    if (Math.abs(wheelCarry - Math.round(wheelCarry)) < 1e-9) wheelCarry = Math.round(wheelCarry);
+    const rows = Math.trunc(wheelCarry);
+    wheelCarry -= rows;
+    return rows;
+  }
+
+  // Mouse events: the wheel scrolls the Ctrl+T pager when it is open, else the
+  // transcript (also under a modal: reading while approving); a click on the
+  // follow control returns to the bottom. Anything else changes nothing and
+  // draws nothing.
+  /* Selecting and copying in fullscreen (P2.3) */
+
+  let selection = null; // {anchor, head, unit, dragging, resume}: points are {entryId, row, col}
+  let lastClick = null;
+  // A selection in the Ctrl+T pager: its lines are one entry, "pager" (T2-L1).
+  let pagerSel = null;
+  let pagerFirstY = 0; // the screen row of the pager's first shown line, at the last draw
+
+  const pagerPoint = (ev) => {
+    const line = pager.top + (ev.y - pagerFirstY);
+    return ev.y >= pagerFirstY && line >= 0 && line < pager.lines.length ? { entryId: "pager", row: line, col: Math.max(0, ev.x) } : null;
+  };
+
+  function copyPagerSelection() {
+    const text = selectedText([{ id: "pager", rows: pager.lines.map((l) => (typeof l === "string" ? [{ text: l }] : l)) }], pagerSel);
+    pagerSel = null;
+    copyOut(text);
+  }
+
+  // The selection is in the pager while it is open (fullscreen): drag, release, Shift+click.
+  function pagerMouse(ev) {
+    if (ev.action === "press" && ev.button === "left" && !ev.ctrl && !ev.alt) {
+      const p = pagerPoint(ev);
+      if (!p) return;
+      if (ev.shift && pagerSel) pagerSel.head = p;
+      else {
+        lastClick = clickCount(lastClick, { x: ev.x, y: ev.y, at: now() });
+        pagerSel = { anchor: p, head: p, unit: ["char", "word", "line"][lastClick.count - 1], dragging: true };
+      }
+      return draw();
+    }
+    if (ev.action === "drag" && ev.button === "left" && pagerSel?.dragging) {
+      const p = pagerPoint(ev);
+      if (p) pagerSel.head = p;
+      return draw();
+    }
+    if (ev.action === "release" && ev.button === "left" && pagerSel?.dragging) {
+      pagerSel.dragging = false;
+      if (isEmptySelection(pagerSel)) pagerSel = null;
+      else if (copyOnSelect()) {
+        const keep = { ...pagerSel };
+        copyPagerSelection();
+        if (settings?.engine?.get?.("tui.copy_on_select_clear_selection") !== true) pagerSel = keep;
+      }
+      return draw();
+    }
+    if (ev.action === "press" && ev.button === "right" && pagerSel) {
+      copyPagerSelection();
+      return draw();
+    }
+  }
+  const copyOnSelect = () => copyOnSelectDefault({ env, platform, setting: settings?.engine?.get?.("tui.copy_on_select") ?? null });
+
+  function showSelection() {
+    const tv = renderer.transcript;
+    if (!selection) return tv.setMarks(null);
+    const ranges = rowRanges(tv.entriesBetween(selection.anchor.entryId, selection.head.entryId), selection);
+    tv.setMarks((ref) => {
+      const r = ranges.get(`${ref.entryId}:${ref.row}`);
+      return r ? [[r[0], r[1], T.selection]] : null;
+    });
+  }
+
+  function select(anchor, head, unit) {
+    // The selected rows stay put while output arrives; following resumes when it ends.
+    const resume = selection ? selection.resume : renderer.transcript.hold();
+    selection = { anchor, head, unit, dragging: false, resume };
+    showSelection();
+  }
+
+  function clearSelection() {
+    if (!selection) return;
+    const { resume } = selection;
+    selection = null;
+    renderer.transcript.setMarks(null);
+    if (resume) renderer.transcript.jumpLatest();
+  }
+
+  const isEmptySelection = (s) => s.unit === "char" && s.anchor.entryId === s.head.entryId && s.anchor.row === s.head.row && s.anchor.col === s.head.col;
+
+  function copySelection({ clear = true } = {}) {
+    if (!selection) return;
+    const tv = renderer.transcript;
+    const text = selectedText(tv.entriesBetween(selection.anchor.entryId, selection.head.entryId), selection);
+    if (clear) clearSelection();
+    copyOut(text);
+  }
+
+  // Copies selected text and says how it went. Only blank cells: nothing to copy, and no clipboard to blame.
+  function copyOut(text) {
+    if (!text.trim()) return;
+    Promise.resolve((actions.copy ?? copyText)(text, { terminalWrite: (d) => renderer.terminalWrite(d) }))
+      .then((r) => {
+        note = r.ok
+          ? { level: "info", text: r.via === "terminal" || r.via === "tmux" ? "Copied (through the terminal)." : "Copied." }
+          : { level: "warn", text: "Couldn't reach a clipboard. Your terminal may select with Shift+drag, or start ad with --no-alt-screen." };
+        draw();
+      })
+      .catch(fail);
+  }
+
+  const pointAt = (ev) => {
+    const ref = renderer.transcript.rowAt(ev.y);
+    return ref && typeof ref === "object" ? { ...ref, col: Math.max(0, ev.x) } : null;
+  };
+
+  function onMouse(ev) {
+    const tv = renderer.transcript;
+    if (!tv) return;
+    if (pager && !modal && ev.action !== "wheel") return pagerMouse(ev);
+    if (ev.action === "press" && ev.button === "left" && !ev.ctrl && !ev.alt) {
+      const p = pointAt(ev);
+      if (!p) return tv.rowAt(ev.y) === "control" ? (clearSelection(), tv.jumpLatest(), draw()) : undefined;
+      if (ev.shift && selection) {
+        selection.head = p;
+        showSelection();
+        return draw();
+      }
+      lastClick = clickCount(lastClick, { x: ev.x, y: ev.y, at: now() });
+      select(p, p, ["char", "word", "line"][lastClick.count - 1]);
+      selection.dragging = true;
+      return draw();
+    }
+    if (ev.action === "drag" && ev.button === "left" && selection?.dragging) {
+      let p = pointAt(ev);
+      // Past the last transcript row: scroll a row that way and extend to the new edge.
+      if (!p && ev.y >= tv.height - 1) {
+        tv.scroll(1);
+        const last = tv.rowAt(tv.height - 1);
+        p = last && typeof last === "object" ? { ...last, col: Math.max(0, ev.x) } : null;
+      } else if (p && ev.y === 0) tv.scroll(-1);
+      if (p) {
+        selection.head = p;
+        showSelection();
+      }
+      return draw();
+    }
+    if (ev.action === "release" && ev.button === "left" && selection?.dragging) {
+      selection.dragging = false;
+      if (isEmptySelection(selection)) clearSelection();
+      else if (copyOnSelect()) copySelection({ clear: settings?.engine?.get?.("tui.copy_on_select_clear_selection") === true });
+      return draw();
+    }
+    if (ev.action === "press" && ev.button === "right") {
+      if (selection) {
+        copySelection();
+        return draw();
+      }
+      if (rightClickPaste({ env, platform, setting: settings?.engine?.get?.("tui.right_click_paste") ?? "auto" })) {
+        Promise.resolve((actions.readClipboard ?? readClipboard)())
+          .then((text) => {
+            if (text) onInput({ type: "paste", text });
+          })
+          .catch(fail);
+      }
+      return;
+    }
+    if (ev.action === "wheel" && (ev.wheel === "up" || ev.wheel === "down")) {
+      const rows = wheelRows(ev.wheel === "up" ? -1 : 1);
+      if (!rows) return;
+      if (pager && !modal) {
+        const view = Math.max(1, height() - 2);
+        pager.top = Math.max(0, Math.min(pager.top + rows, pager.lines.length - view));
+        return draw();
+      }
+      tv.scroll(rows);
+      return draw();
+    }
+  }
+
+  // Keys while a selection exists (before Ctrl+C's own meaning). → true when consumed.
+  function selectionKey(ev) {
+    const tv = renderer.transcript;
+    if (ev.type === "key" && ev.ctrl && ev.name === "space" && !ev.alt && !ev.shift) {
+      const ref = tv.rowAt(0);
+      if (ref && typeof ref === "object") select({ ...ref, col: 0 }, { ...ref, col: 0 }, "char");
+      return true;
+    }
+    if (!selection) return false;
+    if (ev.type !== "key") {
+      if (ev.type === "text" || ev.type === "paste") clearSelection();
+      return false;
+    }
+    const { name, ctrl, alt, shift } = ev;
+    const copyKey = (name === "c" && ((ctrl && !alt) || ev.super)) || (name === "insert" && ctrl);
+    if (copyKey) return copySelection(), true;
+    if (name === "enter" && !ctrl && !alt && !shift) {
+      copySelection();
+      tv.jumpLatest();
+      return true;
+    }
+    if (name === "escape" && !ctrl && !alt) return clearSelection(), true;
+    if (["left", "right", "up", "down"].includes(name) && !ctrl && !alt) {
+      const h = selection.head;
+      if (name === "left" || name === "right") selection.head = { ...h, col: Math.max(0, h.col + (name === "left" ? -1 : 1)) };
+      else {
+        const y = tv.yOf(h) + (name === "up" ? -1 : 1);
+        const ref = y >= 0 ? tv.rowAt(y) : null;
+        if (ref && typeof ref === "object") selection.head = { ...ref, col: h.col };
+      }
+      showSelection();
+      return true;
+    }
+    if (name === "pageup" || name === "pagedown") return false; // scrolls (P2.2), the selection stays
+    clearSelection();
+    return false;
+  }
+
+  /* Find in the Ctrl+T pager (P2.3b; inline F3 opens it) */
+
+  const lineText = (l) => (typeof l === "string" ? l : l.map((s) => s.text).join(""));
+
+  function pagerFindRun(view) {
+    const f = pager.find;
+    const q = clampQuery(f.query).query.toLowerCase();
+    f.hits = [];
+    if (q) for (let i = pager.lines.length - 1; i >= 0; i--) if (lineText(pager.lines[i]).toLowerCase().includes(q)) f.hits.push(i);
+    f.index = f.hits.length ? 0 : -1;
+    f.exhausted = false;
+    if (f.index >= 0) pager.top = Math.max(0, f.hits[0] - Math.floor(view / 3));
+  }
+
+  function pagerFindStep(dir, view) {
+    const f = pager.find;
+    const next = f.index + dir;
+    if (next < 0 || next >= f.hits.length) f.exhausted = true;
+    else {
+      f.index = next;
+      f.exhausted = false;
+      pager.top = Math.max(0, f.hits[next] - Math.floor(view / 3));
+    }
+  }
+
+  function pagerFindKey(ev, view) {
+    const f = pager.find;
+    const k = ev.type === "key" ? ev : null;
+    if (k?.ctrl && !k.alt && (k.name === "p" || k.name === "n")) return pagerFindStep(k.name === "p" ? 1 : -1, view);
+    if (k?.name === "enter" && !k.ctrl && !k.alt && !k.shift) return void (f.mode = "reading");
+    if (k && (k.name === "escape" || (k.ctrl && k.name === "c"))) return void (pager.find = null);
+    if (k?.name === "backspace") f.query = [...f.query].slice(0, -1).join("");
+    else if (ev.type === "text" || ev.type === "paste") f.query += ev.text.replace(/[\r\n]+/g, " ");
+    else return;
+    pagerFindRun(view);
+  }
+
+  function pagerFindLine(w) {
+    const f = pager.find;
+    const status = f.mode === "reading" ? "ctrl+p older \u{b7} ctrl+n newer \u{b7} esc ends Find" : !f.query ? "Type to find \u{b7} esc cancel" : !f.hits.length ? "No matches \u{b7} esc cancel" : `${f.exhausted ? "No more matches \u{b7} " : ""}${f.index + 1} of ${f.hits.length} \u{b7} enter accept \u{b7} ctrl+p older \u{b7} ctrl+n newer \u{b7} esc cancel`;
+    return truncate([{ text: `Find: ${clean(f.query)}  `, style: T.bold }, { text: status, style: DIM }], w);
+  }
+
+  /* Find in fullscreen (P2.3b) */
+
+  // {query, matches, index, mode: "editing" | "reading", searching, exhausted, limited, view, gen}
+  let find = null;
+
+  function showFind() {
+    const tv = renderer.transcript;
+    if (!find) return tv.setMarks(null);
+    const byRow = new Map();
+    find.matches.forEach((m, i) => {
+      for (const s of m.segments) {
+        const key = `${m.entryId}:${s.row}`;
+        if (!byRow.has(key)) byRow.set(key, []);
+        byRow.get(key).push([s.c0, s.c1, i === find.index ? T.findCurrent : T.findMatch]);
+      }
+    });
+    tv.setMarks((ref) => byRow.get(`${ref.entryId}:${ref.row}`) ?? null);
+  }
+
+  function openFind() {
+    clearSelection();
+    find = { query: "", matches: [], index: -1, mode: "editing", searching: false, exhausted: false, limited: false, view: renderer.transcript.getView(), gen: 0 };
+    showFind();
+  }
+
+  function closeFind({ restore = false, latest = false } = {}) {
+    const tv = renderer.transcript;
+    const f = find;
+    find = null;
+    tv.setMarks(null);
+    if (restore) tv.setView(f.view);
+    if (latest) tv.jumpLatest();
+  }
+
+  const revealMatch = () => {
+    const m = find?.matches[find.index];
+    if (m) renderer.transcript.reveal({ entryId: m.entryId, row: m.segments[0]?.row ?? 0 });
+  };
+
+  function runFind() {
+    const f = find;
+    const gen = ++f.gen;
+    const { query, limited } = clampQuery(f.query);
+    f.limited = limited;
+    f.exhausted = false;
+    if (!query) {
+      Object.assign(f, { matches: [], index: -1, searching: false });
+      showFind();
+      return draw();
+    }
+    f.searching = true;
+    draw();
+    findMatches(renderer.transcript.allEntries(), query)
+      .then((matches) => {
+        if (find !== f || f.gen !== gen) return; // a newer query or a closed Find
+        Object.assign(f, { matches, index: matches.length ? 0 : -1, searching: false });
+        revealMatch();
+        showFind();
+        draw();
+      })
+      .catch(fail);
+  }
+
+  // Ctrl+P older, Ctrl+N newer (matches are newest first).
+  function stepFind(dir) {
+    const next = find.index + dir;
+    if (next < 0 || next >= find.matches.length) find.exhausted = true;
+    else {
+      find.index = next;
+      find.exhausted = false;
+      revealMatch();
+    }
+    showFind();
+  }
+
+  function findFooter() {
+    const f = find;
+    let status;
+    if (f.mode === "reading") status = "ctrl+p older \u{b7} ctrl+n newer";
+    else if (!f.query) status = "Type to find";
+    else if (f.searching) status = "Searching\u{2026}";
+    else if (!f.matches.length) status = "No matches";
+    else status = `${f.exhausted ? "No more matches \u{b7} " : ""}enter accept \u{b7} ctrl+p older \u{b7} ctrl+n newer`;
+    const tail = f.mode === "editing" ? " \u{b7} esc cancel" : " \u{b7} esc back to bottom";
+    return truncate([{ text: `Find: ${clean(f.query)}` }, { text: `  ${status}${f.limited ? " \u{b7} query limited to 4 KiB" : ""}${tail}`, style: DIM }], width());
+  }
+
+  // → true when Find took the key. Find owns every key while editing.
+  function findKey(ev) {
+    if (!find) {
+      if (ev.type === "key" && keymap.is("global", "find_transcript", ev)) return openFind(), true;
+      return false;
+    }
+    const k = ev.type === "key" ? ev : null;
+    const step = k && k.ctrl && !k.alt && (k.name === "p" || k.name === "n") ? (k.name === "p" ? 1 : -1) : 0;
+    if (find.mode === "editing") {
+      if (step) return stepFind(step), true;
+      if (k?.name === "enter" && !k.ctrl && !k.alt && !k.shift) {
+        find.mode = "reading";
+        return true;
+      }
+      if (k && (k.name === "escape" || (k.ctrl && k.name === "c"))) return closeFind({ restore: true }), true;
+      if (k?.name === "backspace") {
+        find.query = [...find.query].slice(0, -1).join("");
+        runFind();
+        return true;
+      }
+      if (ev.type === "text" || ev.type === "paste") {
+        find.query += ev.text.replace(/[\r\n]+/g, " ");
+        runFind();
+        return true;
+      }
+      return true;
+    }
+    // Reading: the match stays highlighted and in view.
+    if (step) return stepFind(step), true;
+    if (k?.name === "escape" && !k.ctrl && !k.alt) return closeFind({ latest: true }), true;
+    if (k && keymap.is("global", "find_transcript", k)) {
+      find.mode = "editing";
+      return true;
+    }
+    // A held Enter can't send anything while the result is read.
+    if (k?.name === "enter" && !k.ctrl && !k.alt && !k.shift && !composer.text) return true;
+    if (ev.type === "text" || ev.type === "paste") closeFind(); // the view stays; the key types
+    return false;
+  }
+
   function onInput(ev) {
     if (quitting) return;
+    if (ev.type === "mouse") return onMouse(ev);
     if (ev.type === "key" || ev.type === "text") {
       // No chords under a modal, ad's confirm or the key inspector (their keys are theirs).
-      const contexts = modal || confirm || inspector ? [] : pager ? ["global", "pager"] : ["global", "chat", "composer"];
+      const contexts = modal || confirm || inspector || find?.mode === "editing" ? [] : pager ? ["global", "pager"] : ["global", "chat", "composer"];
       const r = chordKeys.feed(ev, contexts, Date.now());
       const was = chordHint;
       chordHint = r.kind === "pending" ? r.hint : null;
@@ -2609,6 +3113,16 @@ export function createApp({
       else if (ev.type === "key" || ev.type === "text") inspector.last = inspectKey(ev);
       return draw();
     }
+    // A fullscreen selection takes its keys first: Ctrl+C copies it instead of arming quit.
+    // Find (fullscreen) comes before the selection and the composer; an approval still comes first.
+    if (renderer.transcript && !modal && !confirm && !pager && findKey(ev)) return draw();
+    // A pager selection's keys, before Ctrl+C would close the pager: copy keys copy it, Esc clears it.
+    if (pager && pagerSel && !modal && ev.type === "key") {
+      const copyKey = (ev.name === "c" && ((ev.ctrl && !ev.alt) || ev.super)) || (ev.name === "insert" && ev.ctrl);
+      if (copyKey) return copyPagerSelection(), draw();
+      if (ev.name === "escape") return (pagerSel = null), draw();
+    }
+    if (renderer.transcript && !modal && !confirm && selectionKey(ev)) return draw();
     if (ev.type === "key" && ev.ctrl && ev.name === "c") {
       onCtrlC();
       return draw();
@@ -2621,6 +3135,23 @@ export function createApp({
     if (pager && !modal) {
       const view = Math.max(1, height() - 2);
       const k = (action) => keymap.is("pager", action, ev);
+      // Find in the pager (P2.3b): it owns every key while its query is edited.
+      if (pager.find?.mode === "editing") {
+        pagerFindKey(ev, view);
+        return draw();
+      }
+      if (k("find")) {
+        pager.find = { query: "", hits: [], index: -1, mode: "editing" };
+        return draw();
+      }
+      if (pager.find && ev.type === "key" && ev.ctrl && !ev.alt && (ev.name === "p" || ev.name === "n")) {
+        pagerFindStep(ev.name === "p" ? 1 : -1, view);
+        return draw();
+      }
+      if (pager.find && ev.type === "key" && ev.name === "escape") {
+        pager.find = null; // the first Esc ends Find; the next closes the pager
+        return draw();
+      }
       if ((ev.type === "key" && ev.name === "escape") || k("close") || k("close_transcript")) pager = null;
       else if (k("scroll_up")) pager.top--;
       else if (k("scroll_down")) pager.top++;
@@ -2640,6 +3171,11 @@ export function createApp({
     }
     if (keymap.is("global", "open_transcript", ev) && !modal) {
       pager = { lines: transcriptLines(st, { width: width() }), top: Infinity };
+      return draw();
+    }
+    // Inline, F3 opens the pager in Find (fullscreen Find took it above).
+    if (!renderer.transcript && keymap.is("global", "find_transcript", ev) && !modal) {
+      pager = { lines: transcriptLines(st, { width: width() }), top: Infinity, find: { query: "", hits: [], index: -1, mode: "editing" } };
       return draw();
     }
     if (modal) {
@@ -2725,6 +3261,33 @@ export function createApp({
         .catch(fail);
       return;
     }
+    // Fullscreen scrolling. Modals, popups, overlays, Vim's Esc and a focused side
+    // conversation had their turn above; the jump keys come before the effort keys.
+    const tv = renderer.transcript;
+    if (tv && ev.type === "key") {
+      const jump = jumpTarget(ev);
+      if (jump) {
+        if (jump === "top") tv.jumpTop();
+        else tv.jumpLatest();
+        return draw();
+      }
+      if ((ev.name === "pageup" || ev.name === "pagedown") && !ev.ctrl && !ev.alt && !ev.shift) {
+        const d = pageDelta(ev, tv.height);
+        if (d != null) {
+          tv.scroll(d);
+          return draw();
+        }
+      }
+      // Back to the bottom first; the next Esc interrupts or rewinds as usual.
+      if (ev.name === "escape" && !ev.ctrl && !ev.alt && !ev.shift && !tv.following) {
+        tv.jumpLatest();
+        return draw();
+      }
+      if (ev.name === "enter" && !ev.ctrl && !ev.alt && !ev.shift && !tv.following && !composer.text) {
+        tv.jumpLatest();
+        return draw();
+      }
+    }
     const up = keymap.is("chat", "increase_reasoning_effort", ev);
     if (up || keymap.is("chat", "decrease_reasoning_effort", ev)) {
       stepEffort(up ? 1 : -1).catch(fail);
@@ -2767,6 +3330,16 @@ export function createApp({
         note = st.thread ? { level: "info", text: "Esc again to rewind to an earlier prompt." } : null;
       }
       return draw();
+    }
+    // Ctrl+Z (P2.4): stop ad and return to the shell (`fg` brings it back). POSIX only, between turns.
+    if (ev.type === "key" && ev.ctrl && ev.name === "z" && !ev.alt && !ev.shift) {
+      if (platform === "win32" || !actions.suspend) return draw();
+      if (turnActive()) {
+        note = { level: "info", text: "Ctrl+Z works between turns: this one is still running (Esc stops it)." };
+        return draw();
+      }
+      actions.suspend();
+      return;
     }
     // Shift+Tab: the fixed key for the next collaboration mode (Plan ↔ Default), only with no task running.
     if (ev.type === "key" && ev.name === "tab" && ev.shift && !ev.ctrl && !ev.alt) {
@@ -2829,7 +3402,8 @@ export function createApp({
     drawSoon();
   });
   const offInput = io.onInput(onInput);
-  const offResize = renderer.onResize?.(() => draw()) ?? (() => {});
+  // A resize re-wraps the rows a selection points at: it ends (P2.3).
+  const offResize = renderer.onResize?.(() => (renderer.transcript && clearSelection(), draw())) ?? (() => {});
   ticker = setI(() => {
     pollLoop();
     if (turnActive()) titleFrame++;

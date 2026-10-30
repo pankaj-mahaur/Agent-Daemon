@@ -23,6 +23,8 @@ import { createSession } from "../harness/session.mjs";
 import { engineHome, engineVersion, engineErrorText, engineErrorDetail } from "../engine/index.mjs";
 import { createIo } from "./terminal/io.mjs";
 import { createRenderer } from "./terminal/renderer.mjs";
+import { createFullscreenRenderer } from "./terminal/fullscreen.mjs";
+import { appleTerminalOverSsh, explicitIn, mouseDefault, probeTmuxMouse, resolveScreenMode, screenStatus } from "./screen-mode.mjs";
 import { colorDepth } from "./terminal/text.mjs";
 import { setWidthProfile } from "./terminal/width.mjs";
 import { probeWidthProfile, reflowModel, terminalName } from "./terminal/detect.mjs";
@@ -70,16 +72,71 @@ function pickOnce({ io, renderer, title, items, intro = [] }) {
   });
 }
 
-/** Gives the terminal to `fn` (a child program) and takes it back. */
-async function handoff(io, renderer, fn, app = null) {
+/**
+ * Gives the terminal to `fn` (a child program) and takes it back.
+ *
+ * Fullscreen (P2.4) has two kinds. "keep" (the external editor) shows ad's
+ * last frame on the alternate screen while the child runs, with no keyboard
+ * push or mouse, so a GUI editor leaves ad visible. "restore" (/login, /ad)
+ * runs the child on the main screen, so its output stays in the user's
+ * scrollback; when waitAfter(result) says so, "Press Enter to return to ad."
+ * keeps that output readable before ad repaints. Inline, both are as before.
+ */
+export async function handoff(io, renderer, fn, app = null, { kind = "restore", waitAfter = () => false, wait = waitForEnter } = {}) {
   app?.holdTitle?.(true); // the child sets its own title; ours comes back after
   renderer.suspend();
   try {
-    return await io.handoff(fn);
+    return await io.handoff(async () => {
+      const keep = kind === "keep" && typeof renderer.freeze === "function";
+      if (keep) renderer.freeze();
+      let result;
+      try {
+        result = await fn();
+      } finally {
+        // Before io's modes come back: they belong on the main screen's keyboard stack.
+        if (keep) renderer.unfreeze();
+      }
+      if (renderer.fullscreen && !keep && waitAfter(result)) await wait();
+      return result;
+    });
   } finally {
     await renderer.resume();
     app?.holdTitle?.(false);
   }
+}
+
+/**
+ * Ctrl+Z: the renderer leaves its screen, io restores the terminal and stops
+ * the process (SIGSTOP); on SIGCONT io re-enters and the renderer repaints.
+ * → false where stopping isn't possible (Windows), with nothing changed.
+ */
+export function suspendTui(io, renderer, app = null) {
+  renderer.suspend();
+  const back = () => Promise.resolve(renderer.resume()).then(() => app?.draw?.());
+  const off = io.onResume((r) => {
+    if (r.reason !== "sigcont") return;
+    off();
+    back();
+  });
+  if (io.suspend()) return true;
+  off();
+  back();
+  return false;
+}
+
+/** Waits for Enter on the main screen (cooked mode: the handoff turned raw mode off). */
+function waitForEnter({ stdin = process.stdin, stdout = process.stdout } = {}) {
+  return new Promise((resolve) => {
+    stdout.write("\r\nPress Enter to return to ad. ");
+    const onData = (d) => {
+      if (!/[\r\n]/.test(String(d))) return;
+      stdin.off("data", onData);
+      stdin.pause?.();
+      resolve();
+    };
+    stdin.on("data", onData);
+    stdin.resume?.();
+  });
 }
 
 function runChild(cmd, args, opts = {}) {
@@ -307,8 +364,26 @@ export async function cmdTui(opts = {}) {
     setWidthProfile(await probeWidthProfile({ io }));
     // The prompt sits on the screen's last rows unless prefs.json says "prompt.atBottom": false.
     adPrefs = createPrefs({ file: opts.prefsFile ?? DEFAULT_PREFS_FILE });
-    renderer = createRenderer({ io, caps, depth: colorDepth({ isTTY: true }), reflow: reflowModel(), pinBottom: adPrefs.get("prompt.atBottom", true) !== false, resizeSource: process.stdout, hyperlinks: terminalName() !== "unknown" });
-    await renderer.start();
+    const inlineRenderer = () => createRenderer({ io, caps, depth: colorDepth({ isTTY: true }), reflow: reflowModel(), pinBottom: adPrefs.get("prompt.atBottom", true) !== false, resizeSource: process.stdout, hyperlinks: terminalName() !== "unknown" });
+    // stderr while fullscreen (it would land on the frame): held, written out on exit, and said once here.
+    let stderrSaid = false;
+    const fullscreenRenderer = (mouse) =>
+      createFullscreenRenderer({ io, caps, depth: colorDepth({ isTTY: true }), resizeSource: process.stdout, hyperlinks: terminalName() !== "unknown", mouse, stderrSink: () => {
+        if (stderrSaid || !app) return;
+        stderrSaid = true;
+        app.notice("warn", "ad wrote an error message; it is printed when ad exits.");
+      } });
+    const mousePref = adPrefs.get("screen.mouse", null);
+    // Path A (P2.1): last time was fullscreen, so start there; nothing touches the shell's screen.
+    // Inside tmux, whether its mouse is on (P2.5): asked now, read when the mode is resolved.
+    const tmuxMouse = probeTmuxMouse({ execFile });
+    if (adPrefs.get("screen.lastMode", null) === "fullscreen" && !opts.noAltScreen) {
+      renderer = fullscreenRenderer(typeof mousePref === "boolean" ? mousePref : mouseDefault());
+      renderer.start();
+    } else {
+      renderer = inlineRenderer();
+      await renderer.start();
+    }
     renderer.frame({ lines: [[{ text: "Starting the engine\u{2026}", style: T.dim }]] });
 
     // A folder that would load the user's own engine home (P0.2a): pick a project
@@ -353,7 +428,8 @@ export async function cmdTui(opts = {}) {
         ],
       });
       if (!choice) break;
-      await handoff(io, renderer, () => runChild(process.execPath, [CLI, ...choice], { cwd }));
+      // A failed sign-in keeps its output on screen until Enter (fullscreen; P2.4).
+      await handoff(io, renderer, () => runChild(process.execPath, [CLI, ...choice], { cwd }), null, { waitAfter: (code) => code !== 0 });
       started = await start();
     }
     if (!started.engine) {
@@ -486,6 +562,19 @@ export async function cmdTui(opts = {}) {
     await session.init();
     if (launched?.params?.effort) session.setNextTurn({ effort: launched.params.effort });
     await settings.engine.load();
+    // The screen mode follows the engine's settings; only a value the user set counts (explicitIn).
+    const layers = await engine.config.read({ includeLayers: true }).then((r) => r?.layers ?? null, () => null);
+    const screen = resolveScreenMode({
+      noAltScreen: opts.noAltScreen === true,
+      appleTerminalOverSsh: appleTerminalOverSsh(caps),
+      tmuxMouse: await tmuxMouse,
+      altScreen: settings.engine.get("tui.alternate_screen") ?? "auto",
+      fullscreenTranscript: settings.engine.get("tui.fullscreen_transcript"),
+      fullscreenExplicit: explicitIn(layers, "tui.fullscreen_transcript"),
+      mousePref: typeof mousePref === "boolean" ? mousePref : null,
+      mouseDefault: mouseDefault(),
+    });
+    adPrefs.set("screen.lastMode", screen.mode);
 
     const term = terminalName();
     const newline = newlineHint({ terminal: term, csiU: Boolean(caps.kitty) });
@@ -758,7 +847,7 @@ export async function cmdTui(opts = {}) {
         await session.engine.setSkillRoots(skillRoots({ cwd, engineHome: session.engine.home }));
       },
       login: async (arg) => {
-        const code = await handoff(io, renderer, () => runChild(process.execPath, [CLI, "auth", "login", ...splitArgs(arg || "chatgpt")], { cwd }), app);
+        const code = await handoff(io, renderer, () => runChild(process.execPath, [CLI, "auth", "login", ...splitArgs(arg || "chatgpt")], { cwd }), app, { waitAfter: (c) => c !== 0 });
         if (code !== 0) return `Sign-in didn't finish (exit ${code}). Nothing changed.`;
         // Keys reach the engine when it starts, and a new login is read at start too: restart it.
         const ok = await session.restartEngine().catch(() => false);
@@ -766,7 +855,7 @@ export async function cmdTui(opts = {}) {
       },
       runAd: async (arg) => {
         if (!arg) return "Usage: /ad <command>, e.g. /ad doctor";
-        const code = await handoff(io, renderer, () => runChild(process.execPath, [CLI, ...splitArgs(arg)], { cwd }), app);
+        const code = await handoff(io, renderer, () => runChild(process.execPath, [CLI, ...splitArgs(arg)], { cwd }), app, { waitAfter: () => true });
         return `ad ${sanitize(arg, "transcript")} exited ${code}.`;
       },
       hookRows: (run) => hookRows(run, { hooksFile }),
@@ -787,10 +876,25 @@ export async function cmdTui(opts = {}) {
       },
       // /delete: the conversation's /undo snapshots go with it.
       forgetCheckpoints: (threadId) => (undoKit ? cp.forget(threadId) : Promise.resolve(0)),
-      editText: (text) => handoff(io, renderer, () => editInEditor(text, { run: (cmd, args, verbatim) => runChild(cmd, args, { cwd, windowsVerbatimArguments: Boolean(verbatim) }) }), app),
+      editText: (text) => handoff(io, renderer, () => editInEditor(text, { run: (cmd, args, verbatim) => runChild(cmd, args, { cwd, windowsVerbatimArguments: Boolean(verbatim) }) }), app, { kind: "keep" }),
+      // Ctrl+Z (POSIX; P2.4): leave ad's screen, stop; `fg` brings it back repainted.
+      suspend: () => suspendTui(io, renderer, app),
     };
 
-    app = createApp({ io, renderer, session, cwd, header: intro, newline, history: createHistory(opts.historyFile ? { file: opts.historyFile } : {}), actions, settings, keymap: createKeymap({ overrides: settings.engine.get("tui.keymap") }), statusInfo: { engineVersion: engineVersionText, hostname: hostname(), home: homedir() }, info: { compat: `${engineVersionText} (tested)`, terminal: term } });
+    // Path B (P2.1): swap renderers just before the app, so the inline "Starting the engine…"
+    // frame covered the slow part. The inline erase must reach the terminal before ?1049h.
+    if (screen.mode === "fullscreen" && !renderer.fullscreen) {
+      renderer.frame({ lines: [] });
+      renderer.dispose();
+      await new Promise((r) => process.stdout.write("", r));
+      renderer = fullscreenRenderer(screen.mouse);
+      renderer.start();
+    } else if (screen.mode === "inline" && renderer.fullscreen) {
+      renderer.dispose(); // ?1049l puts the cursor back where the shell left it
+      renderer = inlineRenderer();
+      await renderer.start();
+    }
+    app = createApp({ io, renderer, session, cwd, header: intro, newline, history: createHistory(opts.historyFile ? { file: opts.historyFile } : {}), actions, settings, keymap: createKeymap({ overrides: settings.engine.get("tui.keymap") }), statusInfo: { engineVersion: engineVersionText, hostname: hostname(), home: homedir(), screen: screenStatus(screen) }, info: { compat: `${engineVersionText} (tested)`, terminal: term } });
     // /fallback off is the app's: fallback asks it at every turn.
     fallbackWindowOn = () => app.state.fallbackHere !== false;
     // `ad tui "<prompt>"`: the first prompt is sent right away.
@@ -812,7 +916,8 @@ export async function cmdTui(opts = {}) {
     return 1;
   } finally {
     app?.dispose();
-    renderer?.frame({ lines: [] });
+    // Fullscreen: leaving the alternate screen is the erase (and after a crash-path release the renderer is inert).
+    if (!renderer?.fullscreen) renderer?.frame({ lines: [] });
     renderer?.dispose();
     const live = session?.engine;
     fallbackRef?.dispose();

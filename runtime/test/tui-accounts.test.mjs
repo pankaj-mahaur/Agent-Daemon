@@ -40,7 +40,7 @@ const acct = (o) => ({ id: `acct_${o.provider}_${o.label}`, owner: "", status: "
 const A = {
   personal: acct({ provider: "chatgpt", label: "personal", method: "engine-login", keyHint: null, credential: { kind: "engine-home", home: "@default" }, identity: { email: "sam@example.com", plan: "plus" } }),
   def: acct({ provider: "openrouter", label: "default", keyHint: "9f3c" }),
-  client: acct({ provider: "openrouter", label: "client-a", owner: "Rahul's key", keyHint: "a1b2" }),
+  client: acct({ provider: "openrouter", label: "client-a", owner: "Sam's key", keyHint: "a1b2" }),
   work: acct({ provider: "chatgpt", label: "work", method: "engine-login", status: "needs-sign-in", keyHint: null, credential: { kind: "engine-home", home: "a/h1" } }),
 };
 
@@ -140,7 +140,7 @@ test("/model with several accounts groups them by provider and marks this window
       assert.match(s, /^ ChatGPT$/m);
       assert.match(s, /^ OpenRouter$/m);
       assert.match(s, /● default.*key …9f3c.*this window.*default for new sessions/);
-      assert.match(s, /client-a {2}Rahul's key.*key …a1b2/);
+      assert.match(s, /client-a {2}Sam's key.*key …a1b2/);
       assert.match(s, /work.*needs sign-in/);
       assert.match(s, /\+ Add an account…/);
       assert.ok(!/Anthropic doesn't allow/.test(s), "no unavailable rows in the daily switcher");

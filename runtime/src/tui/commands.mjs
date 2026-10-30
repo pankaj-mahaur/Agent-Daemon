@@ -3,7 +3,6 @@
 // /export, /raw and the Ctrl+T pager, the clipboard for /copy, and image
 // paths for /image and pasted file paths.
 
-import { spawn } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import path from "node:path";
 import { sanitize } from "./terminal/sanitize.mjs";
@@ -343,50 +342,8 @@ export function transcriptLines(st, { width = 80 } = {}) {
 /* Clipboard                                                           */
 /* ------------------------------------------------------------------ */
 
-const CLIPBOARD_TOOLS = {
-  win32: [["clip.exe", []]],
-  darwin: [["pbcopy", []]],
-  linux: [
-    ["wl-copy", []],
-    ["xclip", ["-selection", "clipboard"]],
-    ["xsel", ["--clipboard", "--input"]],
-  ],
-};
-
-function runWithInput(cmd, args, input, spawnFn) {
-  return new Promise((resolve) => {
-    let child;
-    try {
-      child = spawnFn(cmd, args, { stdio: ["pipe", "ignore", "ignore"], windowsHide: true });
-    } catch {
-      return resolve(false);
-    }
-    child.on("error", () => resolve(false));
-    child.on("exit", (code) => resolve(code === 0));
-    // A tool that exits without reading (xclip with no display) makes the write fail: that's a "no".
-    child.stdin.on?.("error", () => resolve(false));
-    child.stdin.end(input);
-  });
-}
-
-/**
- * Copies text: OSC 52 to the terminal (works over SSH, when the terminal
- * allows it) and the platform's clipboard tool. Resolves with how it went.
- */
-export async function copyText(text, { write, platform = process.platform, spawnFn = spawn, osc52 = true } = {}) {
-  const value = String(text ?? "");
-  let viaTerminal = false;
-  if (osc52 && write && Buffer.byteLength(value) <= 100_000) {
-    write(`\x1b]52;c;${Buffer.from(value, "utf8").toString("base64")}\x07`);
-    viaTerminal = true;
-  }
-  for (const [cmd, args] of CLIPBOARD_TOOLS[platform] ?? CLIPBOARD_TOOLS.linux) {
-    // clip.exe reads the console code page; UTF-16LE with a BOM is what it takes for Unicode.
-    const input = cmd === "clip.exe" ? Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(value, "utf16le")]) : value;
-    if (await runWithInput(cmd, args, input, spawnFn)) return { ok: true, via: cmd };
-  }
-  return { ok: viaTerminal, via: viaTerminal ? "terminal" : null };
-}
+// Moved to terminal/clipboard.mjs (P2.3); kept here for its callers.
+export { copyText } from "./terminal/clipboard.mjs";
 
 /* ------------------------------------------------------------------ */
 /* Images                                                              */

@@ -243,6 +243,15 @@ export function wrap(spans, width) {
       out.push([]);
       continue;
     }
+    // Rows after the first of a source line are soft continuations (P2.3):
+    // marked with how they join the row before, for selecting and copying.
+    let join = null;
+    const emit = (cellsOfRow, next) => {
+      const row = cellsToLine(cellsOfRow);
+      if (join !== null) markContinuation(row, { join, indent: 0 });
+      out.push(row);
+      join = next;
+    };
     let line = [];
     let col = 0;
     let i = 0;
@@ -260,7 +269,7 @@ export function wrap(spans, width) {
           col += Math.min(runW, room);
         } else if (j < cells.length) {
           // The spaces reach the edge: wrap here and drop them.
-          out.push(cellsToLine(line));
+          emit(line, " ");
           line = [];
           col = 0;
         }
@@ -283,14 +292,16 @@ export function wrap(spans, width) {
         const onlyIndent = line.every((c) => isSpace(c.g));
         if (wordW <= width && col > 0 && !onlyIndent) {
           trimTrailingSpaces(line);
-          out.push(cellsToLine(line));
+          emit(line, " ");
           line = [];
           col = 0;
         }
         for (const cell of word) {
           if (col + cell.w > width && col > 0) {
+            // A space before the word's first piece, nothing inside the word.
+            const before = cell === word[0] ? " " : "";
             trimTrailingSpaces(line);
-            if (line.length) out.push(cellsToLine(line));
+            if (line.length) emit(line, before);
             line = [];
             col = 0;
           }
@@ -301,8 +312,38 @@ export function wrap(spans, width) {
       i = j;
     }
     trimTrailingSpaces(line);
-    out.push(cellsToLine(line));
+    emit(line, null);
   }
+  return out;
+}
+
+// Non-enumerable, so goldens, JSON and deepEqual never see it.
+function markContinuation(row, cont) {
+  Object.defineProperty(row, "cont", { value: cont, enumerable: false, configurable: true, writable: true });
+  return row;
+}
+
+/**
+ * Adds `style` to the cells of `line` between columns c0 and c1 (inclusive): a
+ * selection or a Find match. A wide grapheme takes it when either of its cells
+ * is in range.
+ */
+export function restyle(line, c0, c1, style) {
+  const out = [];
+  let col = 0;
+  for (const cell of cellsOf(line)) {
+    const w = Math.max(1, cell.w);
+    const hit = col + w - 1 >= c0 && col <= c1;
+    out.push({ text: cell.g, ...(hit || cell.style ? { style: hit ? { ...(cell.style ?? {}), ...style } : cell.style } : {}) });
+    col += w;
+  }
+  return normalize(out);
+}
+
+/** Prefixes a row (a bullet, an indent) and keeps its soft-wrap marker, widening its indent. */
+export function withPrefix(prefix, line) {
+  const out = normalize([...prefix, ...line]);
+  if (line.cont) markContinuation(out, { join: line.cont.join, indent: line.cont.indent + lineWidth(prefix) });
   return out;
 }
 

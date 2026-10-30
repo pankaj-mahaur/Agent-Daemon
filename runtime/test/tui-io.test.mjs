@@ -348,7 +348,8 @@ test("Ctrl+C / Ctrl+Break during a handoff belong to the child; SIGTERM still re
   await io2.enter();
   await io2.handoff(async () => t2.proc.emit("SIGTERM", "SIGTERM"));
   assert.deepEqual(t2.proc.exits, [143]);
-  assert.equal(t2.written.at(-1), RESTORE_SEQUENCE, "not re-entered after the restore");
+  // Not re-entered; the handoff already popped the keyboard stack, so this restore doesn't pop again (T2-M7).
+  assert.ok(t2.written.at(-1).includes("\x1b[?25h") && !t2.written.at(-1).includes("\x1b[<u"), JSON.stringify(t2.written.at(-1)));
 });
 
 test("restore + enter inside a handoff: still one input listener, keys arrive once", async () => {
@@ -405,7 +406,7 @@ test("close() during a handoff stays closed", async () => {
   await io.enter();
   await io.handoff(() => io.close());
   assert.equal(t.stdin.raw.at(-1), false);
-  assert.equal(t.written.at(-1), RESTORE_SEQUENCE);
+  assert.ok(t.written.at(-1).includes("\x1b[?25h") && !t.written.at(-1).includes("\x1b[<u"), "no second pop after the handoff's");
   assert.equal(t.stdin.listenerCount("data"), 0);
   assert.equal(t.proc.listenerCount("exit"), 0);
 });
@@ -479,4 +480,28 @@ test("size falls back to 80x24", () => {
   t.stdout.rows = undefined;
   const { io } = make(t);
   assert.deepEqual(io.size(), { cols: 80, rows: 24 });
+});
+
+test("SIGCONT cycles raw mode off then on before the modes return", async () => {
+  const t = fakeTerminal();
+  const { io } = make(t);
+  await io.enter();
+  assert.equal(io.suspend(), true);
+  t.stdin.raw.length = 0;
+  const n = t.written.length;
+  t.proc.emit("SIGCONT");
+  assert.deepEqual(t.stdin.raw, [false, true]);
+  assert.ok(t.written.slice(n).join("").includes("\x1b[?2004h"), "modes back after the raw cycle");
+});
+
+test("over SSH outside a multiplexer, enter() asks DA2 before DA1; in tmux or locally it doesn't ask", async () => {
+  const ask = async (env) => {
+    const t = fakeTerminal();
+    const { io } = make(t, { env });
+    await io.enter();
+    return t.written[0];
+  };
+  assert.ok((await ask({ SSH_CONNECTION: "1 2 3 4" })).endsWith("\x1b[>c\x1b[c"));
+  assert.ok(!(await ask({ SSH_CONNECTION: "1 2 3 4", TMUX: "/tmp/t" })).includes("\x1b[>c"));
+  assert.ok(!(await ask({})).includes("\x1b[>c"));
 });

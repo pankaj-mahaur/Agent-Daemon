@@ -23,7 +23,7 @@
 
 import { sanitize } from "../terminal/sanitize.mjs";
 import { graphemeSegments, graphemeWidth, stringWidth } from "../terminal/width.mjs";
-import { lineWidth, normalize, truncate, wrap } from "../terminal/text.mjs";
+import { lineWidth, normalize, truncate, withPrefix, wrap } from "../terminal/text.mjs";
 import { T } from "./theme.mjs";
 import { highlightLines, languageFor, styleFor } from "./highlight.mjs";
 
@@ -535,7 +535,7 @@ function parseEmphasisRun(ctx, i, len) {
 export function wrapPrefixed(spans, width, first, rest = first) {
   const pw = Math.max(lineWidth(first), lineWidth(rest));
   const lines = wrap(spans, Math.max(1, width - pw));
-  return lines.map((l, i) => normalize([...(i === 0 ? first : rest), ...l]));
+  return lines.map((l, i) => withPrefix(i === 0 ? first : rest, l));
 }
 
 // Code: hard-wrapped by grapheme (spaces are content), tabs as 4 spaces.
@@ -617,7 +617,7 @@ function renderList(block, width, depth) {
     const rest = [{ text: " ".repeat(stringWidth(marker) + 1) }];
     const inner = renderBlocks(item.blocks, Math.max(1, width - lineWidth(rest)), depth + 1);
     if (!inner.length) inner.push([]);
-    inner.forEach((l, i) => out.push(normalize([...(i === 0 ? first : rest), ...l])));
+    inner.forEach((l, i) => out.push(withPrefix(i === 0 ? first : rest, l)));
   });
   return out;
 }

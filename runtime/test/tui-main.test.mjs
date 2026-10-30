@@ -257,3 +257,20 @@ test("the launcher routes tui before the full CLI and passes everything else thr
   assert.equal(bad.status, 2);
   assert.match(bad.stderr, /--sandbox must be one of read-only/);
 });
+
+test("--no-alt-screen: ad tui accepts it, a typo is refused with the usage, bare `ad --no-alt-screen` takes the TUI path (P2.5)", async () => {
+  const { spawnSync } = await import("node:child_process");
+  const cli = fileURLToPath(new URL("../src/cli.mjs", import.meta.url));
+  const run = (args, env = {}) => spawnSync(process.execPath, [cli, ...args], { encoding: "utf8", env: { ...process.env, ...env }, input: "" });
+  const ok = run(["tui", "--no-alt-screen"]);
+  assert.doesNotMatch(ok.stderr, /Unknown option/);
+  assert.match(ok.stderr, /interactive terminal/, "accepted: preflight's reason here (no TTY)");
+  const typo = run(["tui", "--no-alt-scren"]);
+  assert.equal(typo.status, 2);
+  assert.match(typo.stderr, /Unknown option '--no-alt-scren'[\s\S]*--no-alt-screen +inline mode for this run/);
+  const bare = run(["--no-alt-screen"]);
+  assert.match(bare.stderr, /interactive terminal/);
+  assert.doesNotMatch(bare.stderr + bare.stdout, /unknown command/);
+  const both = run(["--last", "--no-alt-screen"]);
+  assert.match(both.stderr, /use `ad chat` and \/resume/);
+});

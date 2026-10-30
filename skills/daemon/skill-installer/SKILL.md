@@ -5,7 +5,7 @@ license: MIT
 metadata:
   author: agent-daemon
   spec: agentskills.io
-  version: "1.0"
+  version: "1.1"
 ---
 
 # Skill Installer
@@ -62,6 +62,22 @@ ad skill remove <name> [--project] [--force]
 Never `rm -rf` skill directories by hand — the manifest and route maps must
 stay in sync. Unmanaged (hand-authored) skills need `--force` and a heads-up
 to the user.
+
+## 6. Other hosts and versions
+
+Skills ad improves (accepted in `ad review`) are versioned in
+`~/.agent-daemon/skills/<name>/` and written to the hosts that read skills:
+
+```sh
+ad skill history <name>                # every version and where it came from
+ad skill publish [<name>] [--host <id>] [--dry-run]   # write accepted skills to the hosts' skills folders
+ad skill undo <name>                   # an older version becomes current (asks the user to type it)
+```
+
+- ad overwrites only a folder it wrote itself and that nobody changed since;
+  otherwise it says so and keeps the folder (`--replace` backs it up first).
+  Ask the user before `--replace`.
+- `undo` refuses from the agent's own shell: hand the user the command.
 
 ## Anti-patterns
 

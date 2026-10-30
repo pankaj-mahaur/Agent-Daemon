@@ -5,6 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { createInputDecoder, isNewline } from "../src/tui/terminal/input.mjs";
+import { sgr, x10 } from "../testkit/mouse.mjs";
 
 const FIXTURE = JSON.parse(fs.readFileSync(new URL("./fixtures/tui/s1-keys.json", import.meta.url), "utf8"));
 const fromHex = (hex) => Buffer.from(hex, "hex").toString("latin1");
@@ -531,4 +532,69 @@ test("a malformed string ends at the next escape sequence, which still decodes; 
   const h = harness();
   h.d.feed("\x1b]11;rgb\x1b[A\x07");
   assert.deepEqual(h.events.map(rep), ["unknown", "up", "C-g"]);
+});
+
+/* ------------------------------------------------------------------ */
+/* Mouse (P2.2)                                                        */
+/* ------------------------------------------------------------------ */
+
+test("SGR mouse: press, drag, release, wheel in four directions, modifiers; cells become 0-based", () => {
+  const h = harness();
+  h.d.feed(sgr({ action: "press", button: "left", x: 4, y: 2 }));
+  h.d.feed(sgr({ action: "drag", button: "left", x: 6, y: 2 }));
+  h.d.feed(sgr({ action: "release", button: "left", x: 6, y: 2 }));
+  for (const wheel of ["up", "down", "left", "right"]) h.d.feed(sgr({ action: "wheel", wheel, x: 1, y: 1 }));
+  h.d.feed(sgr({ action: "press", button: "right", x: 0, y: 0, shift: true, alt: true, ctrl: true }));
+  h.d.feed(sgr({ action: "move", x: 3, y: 3 }));
+  const m = h.events;
+  assert.ok(m.every((e) => e.type === "mouse"), JSON.stringify(m.map((e) => e.type)));
+  assert.deepEqual(m.slice(0, 3).map((e) => [e.action, e.button, e.x, e.y]), [["press", "left", 4, 2], ["drag", "left", 6, 2], ["release", "left", 6, 2]]);
+  assert.deepEqual(m.slice(3, 7).map((e) => [e.action, e.wheel, e.button]), [["wheel", "up", null], ["wheel", "down", null], ["wheel", "left", null], ["wheel", "right", null]]);
+  assert.deepEqual([m[7].button, m[7].shift, m[7].alt, m[7].ctrl], ["right", true, true, true]);
+  assert.deepEqual([m[8].action, m[8].button], ["move", null]);
+  assert.equal(m[0].raw, "\x1b[<0;5;3M");
+});
+
+test("an SGR report split across chunks decodes once", () => {
+  const h = harness();
+  const bytes = sgr({ action: "wheel", wheel: "down", x: 10, y: 20 });
+  for (const ch of bytes) h.d.feed(ch);
+  assert.deepEqual(h.events.map((e) => [e.type, e.wheel]), [["mouse", "down"]]);
+});
+
+test("X10 mouse bytes never become text, also when two coordinate bytes merge into one UTF-8 character or arrive split", () => {
+  const h = harness();
+  h.d.feed(x10({ x: 5, y: 3 }) + "a");
+  assert.deepEqual(h.events.map(summary), ["text:a"]);
+  const merged = harness();
+  // ESC [ M, 0x20, then 0xC3 0xA9 decoded as "é" (one character, two bytes).
+  merged.d.feed("\x1b[M\x20éb");
+  assert.deepEqual(merged.events.map(summary), ["text:b"]);
+  const split = harness();
+  split.d.feed("\x1b[M");
+  split.d.feed("\x20");
+  split.d.feed("\x25\x26c");
+  assert.deepEqual(split.events.map(summary), ["text:c"]);
+  const invalid = harness();
+  invalid.d.feed("\x1b[M���d");
+  assert.deepEqual(invalid.events.map(summary), ["text:d"], "an invalid byte (U+FFFD) counts as one");
+});
+
+test("a mouse report inside a bracketed paste stays paste text", () => {
+  const h = harness();
+  h.d.feed(`\x1b[200~x${sgr({ x: 1, y: 1 })}y\x1b[201~`);
+  assert.deepEqual(h.events.map((e) => e.type), ["paste"]);
+  assert.ok(h.events[0].text.startsWith("x") && h.events[0].text.endsWith("y") && h.events[0].text.includes("[<0;2;2M"), JSON.stringify(h.events[0].text));
+});
+
+test("buttons 8-11 are dropped, not reported as keys", () => {
+  const h = harness();
+  h.d.feed("\x1b[<128;2;2M\x1b[<129;2;2M");
+  assert.deepEqual(h.events, []);
+});
+
+test("a DA2 reply is a reply, never a key", () => {
+  const h = harness();
+  h.d.feed("\x1b[>1;95;0c");
+  assert.deepEqual(h.events, [{ type: "reply", kind: "da2", params: [1, 95, 0] }]);
 });
