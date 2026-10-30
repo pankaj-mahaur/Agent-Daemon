@@ -31,6 +31,9 @@ test("the publish job needs a real run and the owner's environment; the build jo
   assert.match(publish, /if: \$\{\{ !inputs\.dry_run \}\}/);
   assert.match(publish, /environment: release-memory/);
   assert.match(publish, /npm publish .* --provenance --access public/);
+  assert.match(publish, /^ {6}id-token: write$/m, "npm's trusted publisher signs in with the run's OIDC token");
+  assert.doesNotMatch(text, /NPM_TOKEN|NODE_AUTH_TOKEN/, "no stored npm token: publishing goes through the trusted publisher");
+  assert.match(publish, /node-version: "24"/, "npm 11.5.1+ for trusted publishing");
   assert.match(publish, /gh release create "memory-v\$V" .*--latest=false/, "the Latest badge stays on ad's own release");
   const build = block("build");
   assert.doesNotMatch(build, /npm publish|gh release|git push|contents: write/);

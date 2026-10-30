@@ -93,7 +93,7 @@ node runtime/scripts/build-host-packages.mjs --out <dir> --target claude-code
 
 - **A dry run** (the default) builds and checks everything and uploads the artifacts with `SHA256SUMS`: the npm tarball and the ZIPs for Agent Plugins, Cursor, the Claude Code marketplace and the Gemini extension. It publishes nothing.
 - **A real run** also needs the `release-memory` environment's approval. Then it:
-  - runs `npm publish --provenance` (secret `NPM_TOKEN`: a granular, publish-only token);
+  - runs `npm publish --provenance` through npm's trusted publisher (this repository, `release-memory.yml`, environment `release-memory`; set on the package's npm settings page), so no npm token is stored;
   - pushes the Claude Code marketplace tree and the Gemini extension tree to their own repositories (variables `MEMORY_MARKETPLACE_REPO`, `MEMORY_GEMINI_REPO`; deploy keys `MARKETPLACE_DEPLOY_KEY`, `GEMINI_DEPLOY_KEY`);
   - creates the GitHub release `memory-v<version>`, not marked Latest (that badge stays on ad's own release).
 
