@@ -64,9 +64,11 @@ The rule between layers: **only `engine/codex/` knows the engine's protocol.** E
 - **Subagents and denials.** `state.agents` (first seen, running, closed) for `/subagents`; `state.denials` (the engine's auto-review denials, the last 10) for `/approve`, sent back as the engine's core event.
 - **Identity.** The agent learns who it is from the identity block: on a managed engine home it is the first line of the managed instructions block in `<home>/AGENTS.md`; on a home ad didn't create, the TUI injects it as a developer message into each new thread.
 
-### The renderer: inline, not fullscreen
+### The renderer: inline or fullscreen
 
-The UI draws **inline**, like the engine's default mode: finished output is written into the terminal's own scrollback (so it scrolls, searches and copies like any terminal output), and only a small live region at the bottom is redrawn.
+Two renderers share one interface (`start`, `frame`, `commit`, `suspend`, `resume`, `redraw`, `clear`, `onResize`, `dispose`); the app doesn't know which one it has. Inline is the default. Fullscreen runs when the engine's settings say `[tui] fullscreen_transcript = true` in a layer the user set (`screen-mode.mjs`; the engine's packaged default doesn't count).
+
+**Inline.** The UI draws like the engine's default mode: finished output is written into the terminal's own scrollback (so it scrolls, searches and copies like any terminal output), and only a small live region at the bottom is redrawn.
 
 - **The prompt at the bottom.** The live region ends on the screen's last row from the start (ad's choice; the engine's inline mode lets it follow the transcript, which `"prompt.atBottom": false` brings back). Committed lines fill the blank rows above it from the top, then scroll as usual. The renderer counts those blank rows as a lower bound: after a width change, which may reflow history into them, it counts none, so it never writes over history.
 - **Committed vs live.** An item is committed once it can no longer change (a finished command, a closed message). A streaming answer commits line by line as newlines arrive; only the unfinished tail stays live. Committed lines are never repainted.
@@ -77,7 +79,15 @@ The UI draws **inline**, like the engine's default mode: finished output is writ
 - **The status line and the window title** are computed from the engine's item ids (`status.mjs`), from 12 rows. The title is written with OSC 0, at most 4 times a second, only when it changes; the terminal's own title is saved (XTWINOPS 22) and put back (23) on exit and around handoffs, and nothing is written while another program has the terminal. Every value passes `titleSafe` (no escapes, line breaks or invisible format characters).
 - **Untrusted text is sanitized.** Model output and command output can carry escape sequences; they are shown as visible `<U+…>` forms, never sent to the terminal.
 
-Why not a fullscreen (alternate-screen) UI: it hides the terminal's own scrollback, search and copy, and it is what users of the engine's inline mode moved away from. A fullscreen mode is a possible later addition, only on demand.
+**Fullscreen** (`terminal/fullscreen.mjs`). ad takes the alternate screen, as the engine's fullscreen mode and Claude Code do: the shell's earlier output is hidden while ad runs and comes back exactly as it was on exit.
+
+- **The guard** (`terminal/alt-screen.mjs`) is one state per process, marked active *before* `?1049h` is written, so a signal that lands mid-write still finds something to undo. `io.restore()` (every exit path: exit, signals, an uncaught error or rejection), `handoff()` and `suspend()` release it first: `?2026l`, mouse off, the alternate screen's keyboard pop, then `?1049l`. Release is synchronous, idempotent and never throws.
+- **The write gate.** Every write goes through `io.writeSync` (synchronous, so a frame can never land after the leave bytes) and through `writable()`: nothing is written while suspended, while a resize settles, after dispose, or once the guard was released by a crash path. A blocked draw marks the screen dirty and the next one repaints it whole.
+- **The transcript buffer** (`terminal/transcript.mjs`) keeps committed entries as render functions over the width (or fixed lines, re-wrapped), so a resize re-wraps history. Layout is lazy from the bottom (a resize renders about two screens, not the whole history); past 5,000 entries the oldest tenth goes behind a "trimmed" line. The app commits cells as functions over a **commit-time snapshot** (`commitView`), never a live item, so a resize can't rewrite history; a streamed answer's pieces are swapped for one entry when it completes (`settle`).
+- **Drawing.** History fills from the top, the live region sits on the bottom rows. Only changed rows are rewritten, one write per frame inside `?2026`, autowrap off; an idle frame writes nothing. `clear()` uses `2J` (the alternate screen only) and **never `3J`**, which would wipe the shell's scrollback.
+- **stderr** written while fullscreen would land on the frame: it is held, noted once in the window, and printed when ad leaves the alternate screen.
+- **Start-up.** `prefs.json` caches `screen.lastMode`. When the last run was fullscreen, ad starts on the alternate screen at once (nothing touches the shell's screen); otherwise it boots inline and swaps just before the app appears, after draining the inline erase.
+- **The mouse** is captured (`?1000h ?1002h ?1006h`, no any-motion) where reports reach ad: Windows Terminal and Zed were probed; the legacy console host is off (QuickEdit can't be turned off); `"screen.mouse": false` in `prefs.json` turns it off anywhere.
 
 ### Keys and terminals
 

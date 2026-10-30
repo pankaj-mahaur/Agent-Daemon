@@ -4,6 +4,8 @@
 
 It runs inline: finished output goes into your terminal's normal scrollback, so scrolling, selecting and copying work as usual. Only the bottom of the screen (the running turn, the composer and the footer) is redrawn. The composer sits on the screen's last rows from the start, and the conversation fills the space above it. To have it follow the conversation instead, as in the engine's own inline mode, set `"prompt.atBottom": false` in `~/.agent-daemon/tui/prefs.json`.
 
+**Fullscreen (early).** With `fullscreen_transcript = true` under `[tui]` in `~/.agent-daemon/engine/config.toml`, ad takes the whole terminal instead: the shell's earlier output is hidden while ad runs and comes back as it was when ad exits, and long output re-wraps when you resize the window. Mouse reporting is on in Windows Terminal, Zed and other modern terminals (off in the old Windows console window); `"screen.mouse": false` in `prefs.json` turns it off. Scrolling, selecting and Find inside ad's screen come next; until then inline is the default. If a killed ad leaves the terminal in its screen: [troubleshooting #86](troubleshooting.md#86-ad-tui-the-terminal-is-stuck-in-ads-screen-after-a-crash).
+
 If something gets in the way, `ad chat` is the plain line mode and stays available. How it is built, and the safety model behind `/undo`: [tui-architecture.md](tui-architecture.md).
 
 - [Starting it](#starting-it)
@@ -665,6 +667,7 @@ Everything else (conversations, logs, login) is the engine's own, in ad's engine
 | "⏸ Paused: fallback is switching too often", "the fallback budget is used up" | [#81](troubleshooting.md#81-fallback-paused-switching-too-often-or-the-fallback-budget-is-used-up) |
 | `limits` blank, "not reported by this provider" | [#82](troubleshooting.md#82-limits-are-blank-or-not-reported-by-this-provider) |
 | `ad run` / `ad loop` exit 4, a job "paused" | [#83](troubleshooting.md#83-a-run-exited-with-code-4-or-a-scheduled-job-says-paused) |
+| after a fullscreen session was killed: the shell's output is gone, clicks print `[<0;…M` | [#86](troubleshooting.md#86-ad-tui-the-terminal-is-stuck-in-ads-screen-after-a-crash) |
 | an engine command says "isn't in ad yet" | [commands.md](commands.md) |
 | not signed in, sandbox, hooks, your own install's home refused | [harness.md](harness.md#when-something-goes-wrong), troubleshooting #14–21 |
 

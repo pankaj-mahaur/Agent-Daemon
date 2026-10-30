@@ -949,6 +949,20 @@ See [harness.md](harness.md#working-in-your-home-folder).
 
 **Fix:** `/usage` reads OpenRouter's numbers again. `ad auth list --refresh` does it for every OpenRouter key, and `--refresh=all` also starts each ChatGPT sign-in's engine that no window is using. A blank cell is "unknown", never "unlimited": nothing is wrong with the account.
 
+## 86. ad tui: the terminal is stuck in ad's screen after a crash
+
+**Symptom:** after `ad tui` ran fullscreen (`[tui] fullscreen_transcript = true`), the shell's earlier output is gone, clicks print odd characters such as `[<0;12;5M`, or the cursor is hidden.
+
+**Cause:** ad leaves its screen on every exit it can see: quitting, Ctrl+C, a crash, a closed window, SIGTERM. A process killed outright (`kill -9`, Task Manager's End task, a power loss) can't, so the terminal stays in ad's screen with mouse reporting on.
+
+**Fix:** put the terminal back by hand:
+- macOS and Linux: `reset`.
+- PowerShell 7: ``Write-Host -NoNewline "`e[?1049l`e[?1006l`e[?1002l`e[?1000l`e[<u`e[?25h"``
+- Windows PowerShell 5.1 (no `` `e ``): `$e = [char]27`, then the same string with `$e` in place of each `` `e ``.
+- Closing the tab and opening a new one always works.
+
+Stray text on top of ad's screen while it runs (a library writing straight to the terminal): Ctrl+L repaints it.
+
 ---
 
 For harness problems, the [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill walks through login → hooks → sandbox → the engine's own log. See also [harness.md](harness.md) and, for the terminal UI, [tui.md](tui.md).
