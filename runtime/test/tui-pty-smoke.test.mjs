@@ -346,3 +346,42 @@ test("fullscreen editor handoff in a real pty: ad's screen during and after, the
     rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   }
 });
+
+test("Ctrl+Z under bash job control: ad stops, the shell has its screen, fg brings back a repainted fullscreen (P2.4)", { skip: !pty ? "node-pty unavailable" : process.platform === "win32" ? "POSIX job control" : false, timeout: 90000 }, async () => {
+  const { mkdtempSync, rmSync, mkdirSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const root = mkdtempSync(path.join(tmpdir(), "ad-tui-jobs-pty-"));
+  const cwd = path.join(root, "project");
+  mkdirSync(cwd);
+  mkdirSync(path.join(root, "home"), { recursive: true });
+  writeFileSync(path.join(root, "home", "fake-config.json"), JSON.stringify({ tui: { fullscreen_transcript: true } }));
+  const term = new xtermHeadless.Terminal({ cols: 90, rows: 28, scrollback: 1000, allowProposedApi: true });
+  const env = { ...process.env, TERM: "xterm-256color", PS1: "JOBS$ " };
+  delete env.CODEX_HOME;
+  const child = pty.spawn("bash", ["--norc", "--noprofile", "-i"], { cols: 90, rows: 28, cwd, env, name: "xterm-256color" });
+  child.onData((d) => term.write(d));
+  term.onData((d) => child.write(d));
+  try {
+    await waitFor(() => screenText(term).includes("JOBS$"), "the shell prompt");
+    child.write(`'${process.execPath}' '${path.join(here, "..", "testkit", "tui-fake.mjs")}' '${root}' '${cwd}'\r`);
+    await waitFor(() => screenText(term).includes("Do you trust"), "the trust prompt");
+    child.write("\r");
+    await waitFor(() => screenText(term).includes("Ask ad to do anything"), "the composer");
+    assert.equal(term.buffer.active.type, "alternate");
+    child.write("\x1a"); // Ctrl+Z
+    await waitFor(() => term.buffer.active.type === "normal" && /Stopped/.test(screenText(term)), "bash reporting the stopped job");
+    child.write("fg\r");
+    await waitFor(() => term.buffer.active.type === "alternate" && screenText(term).includes("Ask ad to do anything"), "fullscreen back and repainted");
+    child.write("\x03");
+    child.write("\x03");
+    await waitFor(() => term.buffer.active.type === "normal", "ad quit");
+  } finally {
+    try {
+      child.kill();
+    } catch {
+      // Already gone.
+    }
+    term.dispose();
+    rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  }
+});
