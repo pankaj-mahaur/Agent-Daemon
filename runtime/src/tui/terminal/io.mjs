@@ -12,6 +12,7 @@
 
 import fs from "node:fs";
 import { createInputDecoder } from "./input.mjs";
+import { releaseAltScreen } from "./alt-screen.mjs";
 
 const CSI = "\x1b[";
 const BRACKETED_PASTE_ON = `${CSI}?2004h`;
@@ -38,6 +39,10 @@ export const RESTORE_SEQUENCE = [
   `${CSI}?25h`,
   `${CSI}0 q`,
 ].join("");
+// While away (a handoff or a suspend already restored), the kitty pop and the
+// modifyOtherKeys reset would undo one step past what ad set. The rest still
+// undoes whatever a crashed child left on.
+const RESTORE_AWAY = RESTORE_SEQUENCE.replace(KITTY_POP, "").replace(MOK_OFF, "");
 
 const SIGNALS = ["SIGTERM", "SIGHUP", "SIGBREAK", "SIGINT"];
 
@@ -227,8 +232,10 @@ export function createIo({
     if (restored) return;
     restored = true;
     entered = false;
+    const wasAway = away;
     away = false;
-    writeRaw(RESTORE_SEQUENCE);
+    releaseAltScreen(writeRaw);
+    writeRaw(wasAway ? RESTORE_AWAY : RESTORE_SEQUENCE);
     setRaw(false);
     detachInput();
     decoder.reset(); // a half paste must not swallow the next session's input
@@ -281,6 +288,7 @@ export function createIo({
     if (!entered || away) return fn();
     decoder.flush();
     detachInput();
+    releaseAltScreen(writeRaw);
     writeRaw(RESTORE_SEQUENCE);
     setRaw(false);
     away = true;
@@ -305,6 +313,7 @@ export function createIo({
   function suspend() {
     if (platform === "win32" || !entered || away) return false;
     detachInput();
+    releaseAltScreen(writeRaw);
     writeRaw(RESTORE_SEQUENCE);
     setRaw(false);
     away = true;
@@ -335,6 +344,8 @@ export function createIo({
   return {
     caps,
     write: (s) => stdout.write(s),
+    // Synchronous, in order with restore's bytes: the fullscreen renderer writes only through this.
+    writeSync: writeRaw,
     enter,
     restore,
     close,

@@ -348,7 +348,8 @@ test("Ctrl+C / Ctrl+Break during a handoff belong to the child; SIGTERM still re
   await io2.enter();
   await io2.handoff(async () => t2.proc.emit("SIGTERM", "SIGTERM"));
   assert.deepEqual(t2.proc.exits, [143]);
-  assert.equal(t2.written.at(-1), RESTORE_SEQUENCE, "not re-entered after the restore");
+  // Not re-entered; the handoff already popped the keyboard stack, so this restore doesn't pop again (T2-M7).
+  assert.ok(t2.written.at(-1).includes("\x1b[?25h") && !t2.written.at(-1).includes("\x1b[<u"), JSON.stringify(t2.written.at(-1)));
 });
 
 test("restore + enter inside a handoff: still one input listener, keys arrive once", async () => {
@@ -405,7 +406,7 @@ test("close() during a handoff stays closed", async () => {
   await io.enter();
   await io.handoff(() => io.close());
   assert.equal(t.stdin.raw.at(-1), false);
-  assert.equal(t.written.at(-1), RESTORE_SEQUENCE);
+  assert.ok(t.written.at(-1).includes("\x1b[?25h") && !t.written.at(-1).includes("\x1b[<u"), "no second pop after the handoff's");
   assert.equal(t.stdin.listenerCount("data"), 0);
   assert.equal(t.proc.listenerCount("exit"), 0);
 });
