@@ -23,6 +23,8 @@ import { createSession } from "../harness/session.mjs";
 import { engineHome, engineVersion, engineErrorText, engineErrorDetail } from "../engine/index.mjs";
 import { createIo } from "./terminal/io.mjs";
 import { createRenderer } from "./terminal/renderer.mjs";
+import { createFullscreenRenderer } from "./terminal/fullscreen.mjs";
+import { explicitIn, mouseDefault, resolveScreenMode } from "./screen-mode.mjs";
 import { colorDepth } from "./terminal/text.mjs";
 import { setWidthProfile } from "./terminal/width.mjs";
 import { probeWidthProfile, reflowModel, terminalName } from "./terminal/detect.mjs";
@@ -307,8 +309,24 @@ export async function cmdTui(opts = {}) {
     setWidthProfile(await probeWidthProfile({ io }));
     // The prompt sits on the screen's last rows unless prefs.json says "prompt.atBottom": false.
     adPrefs = createPrefs({ file: opts.prefsFile ?? DEFAULT_PREFS_FILE });
-    renderer = createRenderer({ io, caps, depth: colorDepth({ isTTY: true }), reflow: reflowModel(), pinBottom: adPrefs.get("prompt.atBottom", true) !== false, resizeSource: process.stdout, hyperlinks: terminalName() !== "unknown" });
-    await renderer.start();
+    const inlineRenderer = () => createRenderer({ io, caps, depth: colorDepth({ isTTY: true }), reflow: reflowModel(), pinBottom: adPrefs.get("prompt.atBottom", true) !== false, resizeSource: process.stdout, hyperlinks: terminalName() !== "unknown" });
+    // stderr while fullscreen (it would land on the frame): held, written out on exit, and said once here.
+    let stderrSaid = false;
+    const fullscreenRenderer = (mouse) =>
+      createFullscreenRenderer({ io, caps, depth: colorDepth({ isTTY: true }), resizeSource: process.stdout, hyperlinks: terminalName() !== "unknown", mouse, stderrSink: () => {
+        if (stderrSaid || !app) return;
+        stderrSaid = true;
+        app.notice("warn", "ad wrote an error message; it is printed when ad exits.");
+      } });
+    const mousePref = adPrefs.get("screen.mouse", null);
+    // Path A (P2.1): last time was fullscreen, so start there; nothing touches the shell's screen.
+    if (adPrefs.get("screen.lastMode", null) === "fullscreen") {
+      renderer = fullscreenRenderer(typeof mousePref === "boolean" ? mousePref : mouseDefault());
+      renderer.start();
+    } else {
+      renderer = inlineRenderer();
+      await renderer.start();
+    }
     renderer.frame({ lines: [[{ text: "Starting the engine\u{2026}", style: T.dim }]] });
 
     // A folder that would load the user's own engine home (P0.2a): pick a project
@@ -486,6 +504,16 @@ export async function cmdTui(opts = {}) {
     await session.init();
     if (launched?.params?.effort) session.setNextTurn({ effort: launched.params.effort });
     await settings.engine.load();
+    // The screen mode follows the engine's settings; only a value the user set counts (explicitIn).
+    const layers = await engine.config.read({ includeLayers: true }).then((r) => r?.layers ?? null, () => null);
+    const screen = resolveScreenMode({
+      altScreen: settings.engine.get("tui.alternate_screen") ?? "auto",
+      fullscreenTranscript: settings.engine.get("tui.fullscreen_transcript"),
+      fullscreenExplicit: explicitIn(layers, "tui.fullscreen_transcript"),
+      mousePref: typeof mousePref === "boolean" ? mousePref : null,
+      mouseDefault: mouseDefault(),
+    });
+    adPrefs.set("screen.lastMode", screen.mode);
 
     const term = terminalName();
     const newline = newlineHint({ terminal: term, csiU: Boolean(caps.kitty) });
@@ -790,6 +818,19 @@ export async function cmdTui(opts = {}) {
       editText: (text) => handoff(io, renderer, () => editInEditor(text, { run: (cmd, args, verbatim) => runChild(cmd, args, { cwd, windowsVerbatimArguments: Boolean(verbatim) }) }), app),
     };
 
+    // Path B (P2.1): swap renderers just before the app, so the inline "Starting the engine…"
+    // frame covered the slow part. The inline erase must reach the terminal before ?1049h.
+    if (screen.mode === "fullscreen" && !renderer.fullscreen) {
+      renderer.frame({ lines: [] });
+      renderer.dispose();
+      await new Promise((r) => process.stdout.write("", r));
+      renderer = fullscreenRenderer(screen.mouse);
+      renderer.start();
+    } else if (screen.mode === "inline" && renderer.fullscreen) {
+      renderer.dispose(); // ?1049l puts the cursor back where the shell left it
+      renderer = inlineRenderer();
+      await renderer.start();
+    }
     app = createApp({ io, renderer, session, cwd, header: intro, newline, history: createHistory(opts.historyFile ? { file: opts.historyFile } : {}), actions, settings, keymap: createKeymap({ overrides: settings.engine.get("tui.keymap") }), statusInfo: { engineVersion: engineVersionText, hostname: hostname(), home: homedir() }, info: { compat: `${engineVersionText} (tested)`, terminal: term } });
     // /fallback off is the app's: fallback asks it at every turn.
     fallbackWindowOn = () => app.state.fallbackHere !== false;
@@ -812,7 +853,8 @@ export async function cmdTui(opts = {}) {
     return 1;
   } finally {
     app?.dispose();
-    renderer?.frame({ lines: [] });
+    // Fullscreen: leaving the alternate screen is the erase (and after a crash-path release the renderer is inert).
+    if (!renderer?.fullscreen) renderer?.frame({ lines: [] });
     renderer?.dispose();
     const live = session?.engine;
     fallbackRef?.dispose();
