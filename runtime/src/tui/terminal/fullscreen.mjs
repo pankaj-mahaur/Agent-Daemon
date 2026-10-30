@@ -24,7 +24,7 @@
 
 import { enterAltScreen, isActive, onRelease, releaseAltScreen } from "./alt-screen.mjs";
 import { COMMIT_BATCH_MS, RESIZE_QUIET_MS } from "./renderer.mjs";
-import { renderLine, truncate } from "./text.mjs";
+import { renderLine, restyle, truncate } from "./text.mjs";
 import { createTranscript } from "./transcript.mjs";
 import { stringWidth } from "./width.mjs";
 
@@ -73,6 +73,8 @@ export function createFullscreenRenderer({
   let offRelease = null;
   let areaHeight = null; // the transcript's rows at the last draw
   let controlRow = -1; // the follow control's screen row, or -1
+  let shownRefs = []; // {entryId, row} per transcript screen row at the last draw
+  let marks = null; // (ref) → [[fromCol, toCol, style], …]: what to highlight
   const resizeListeners = new Set();
 
   const writable = () => started && !disposed && !suspended && !paused && isActive();
@@ -131,11 +133,19 @@ export function createFullscreenRenderer({
     areaHeight = top;
     // Scrolled up: the last transcript row is the follow control (window() may
     // find the end in view and follow again, so ask it first).
-    let hist = transcript.following ? null : transcript.window({ width: contentWidth(cols), height: Math.max(0, top - 1) }).rows;
+    let win = transcript.following ? null : transcript.window({ width: contentWidth(cols), height: Math.max(0, top - 1) });
     const control = !transcript.following && top > 0;
-    if (!control) hist = transcript.window({ width: contentWidth(cols), height: top }).rows;
+    if (!control) win = transcript.window({ width: contentWidth(cols), height: top });
     const next = [];
-    for (let r = 0; r < (control ? top - 1 : top); r++) next.push(hist[r] ?? []);
+    shownRefs = [];
+    for (let r = 0; r < (control ? top - 1 : top); r++) {
+      const ref = win.refs?.[r] ?? null;
+      let row = win.rows[r] ?? [];
+      // Highlights (a selection, Find's matches) as [fromCol, toCol, style] per row.
+      for (const [c0, c1, style] of (ref && marks?.(ref)) || []) row = restyle(row, c0, c1, style);
+      next.push(row);
+      shownRefs.push(ref);
+    }
     if (control) next.push([{ text: followText(cols, transcript.newActivity), style: { dim: true } }]);
     controlRow = control ? top - 1 : -1;
     next.push(...live);
@@ -219,8 +229,14 @@ export function createFullscreenRenderer({
     get height() {
       return height();
     },
-    /** What screen row y shows: "control" (the follow control) or null (P2.3 maps entries). */
-    rowAt: (y) => (y === controlRow ? "control" : null),
+    /** What screen row y shows: "control", {entryId, row} of the transcript, or null (the live region). */
+    rowAt: (y) => (y === controlRow ? "control" : shownRefs[y] ?? null),
+    /** The transcript screen row that shows `ref`, or -1. */
+    yOf: (ref) => shownRefs.findIndex((r) => r && r.entryId === ref.entryId && r.row === ref.row),
+    hold: () => transcript.hold({ width: contentWidth(io.size().cols), height: height() }),
+    entriesBetween: (a, b) => transcript.entriesBetween(a, b, contentWidth(io.size().cols)),
+    /** Sets what to highlight: (ref) → [[fromCol, toCol, style], …], or null. */
+    setMarks: (fn) => view(() => (marks = fn)),
   };
 
   return {

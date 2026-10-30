@@ -323,6 +323,23 @@ function markContinuation(row, cont) {
   return row;
 }
 
+/**
+ * Adds `style` to the cells of `line` between columns c0 and c1 (inclusive): a
+ * selection or a Find match. A wide grapheme takes it when either of its cells
+ * is in range.
+ */
+export function restyle(line, c0, c1, style) {
+  const out = [];
+  let col = 0;
+  for (const cell of cellsOf(line)) {
+    const w = Math.max(1, cell.w);
+    const hit = col + w - 1 >= c0 && col <= c1;
+    out.push({ text: cell.g, ...(hit || cell.style ? { style: hit ? { ...(cell.style ?? {}), ...style } : cell.style } : {}) });
+    col += w;
+  }
+  return normalize(out);
+}
+
 /** Prefixes a row (a bullet, an indent) and keeps its soft-wrap marker, widening its indent. */
 export function withPrefix(prefix, line) {
   const out = normalize([...prefix, ...line]);

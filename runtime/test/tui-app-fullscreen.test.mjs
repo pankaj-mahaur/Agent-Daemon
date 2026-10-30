@@ -32,7 +32,7 @@ function stubSession({ running = false } = {}) {
   };
 }
 
-async function withFullscreen(fn, { rows = 12, cols = 60, speed, overrides = null, running = false, history = 60 } = {}) {
+async function withFullscreen(fn, { rows = 12, cols = 60, speed, overrides = null, running = false, history = 60, env = {}, platform = "linux", config = {}, clipboard = "from the clipboard" } = {}) {
   const scr = xtermScreen({ cols, rows });
   const listeners = new Set();
   const io = { ...scr.io, onInput: (f) => (listeners.add(f), () => listeners.delete(f)) };
@@ -40,8 +40,11 @@ async function withFullscreen(fn, { rows = 12, cols = 60, speed, overrides = nul
   const renderer = createFullscreenRenderer({ io, resizeSource: scr.resizeSource, stderr: { write: () => true } });
   renderer.start();
   const session = stubSession({ running });
-  const settings = { engine: { get: (k) => (k === "tui.mouse_scroll_speed" ? speed : undefined) } };
-  const app = createApp({ io, renderer, session, cwd: "/x", armMs: 0, settings, keymap: createKeymap({ overrides }) });
+  const settings = { engine: { get: (k) => (k === "tui.mouse_scroll_speed" ? speed : config[k]) } };
+  // A fake clipboard: what was copied, and what a right-click paste reads.
+  const copies = [];
+  const actions = { copy: async (text) => (copies.push(text), { ok: true, via: "pbcopy" }), readClipboard: async () => clipboard };
+  const app = createApp({ io, renderer, session, cwd: "/x", armMs: 0, settings, keymap: createKeymap({ overrides }), env, platform, actions });
   for (let i = 0; i < history; i++) renderer.commit([[{ text: `h${i}` }]]); // one row each
   app.draw();
   await sleep(40);
@@ -51,7 +54,7 @@ async function withFullscreen(fn, { rows = 12, cols = 60, speed, overrides = nul
     return scr.altLines()[0];
   };
   try {
-    await fn({ app, renderer, session, scr, type: (s) => decoder.feed(s), top });
+    await fn({ app, renderer, session, scr, type: (s) => decoder.feed(s), top, copies });
   } finally {
     app.dispose();
     renderer.dispose();
@@ -197,4 +200,133 @@ test("1,000 mouse moves cause no frame write", async () => {
     await sleep(30);
     assert.equal(scr.writes.length, n);
   });
+});
+
+/* Selecting and copying (P2.3) */
+
+const press = (x, y, o = {}) => sgr({ action: "press", button: "left", x, y, ...o });
+const drag = (x, y) => sgr({ action: "drag", button: "left", x, y });
+const release = (x, y) => sgr({ action: "release", button: "left", x, y });
+const tick = () => sleep(30);
+
+test("drag selects; release copies (copy-on-select) and keeps the selection; Esc clears it", async () => {
+  await withFullscreen(async ({ type, copies, scr }) => {
+    const first = (await (async () => (await tick(), await scr.settle(), scr.altLines()[1]))());
+    type(press(0, 1) + drag(1, 2) + release(1, 2));
+    await tick();
+    assert.equal(copies.length, 1);
+    assert.equal(copies[0], `${first}\nh${Number(first.slice(1)) + 1}`.slice(0, first.length + 3));
+    type("\x1b");
+    await tick();
+    assert.equal(copies.length, 1, "Esc clears, copies nothing");
+  });
+});
+
+test("copy_on_select_clear_selection = true clears after the copy; under Windows Terminal release copies nothing and Ctrl+Shift+C copies", async () => {
+  await withFullscreen(async ({ type, copies }) => {
+    type(press(0, 1) + drag(1, 1) + release(1, 1));
+    await tick();
+    assert.equal(copies.length, 1);
+    type("\x1b[99;6u"); // Ctrl+Shift+C: the selection is gone, nothing to copy
+    await tick();
+    assert.equal(copies.length, 1);
+  }, { config: { "tui.copy_on_select_clear_selection": true } });
+  await withFullscreen(async ({ type, copies }) => {
+    type(press(0, 1) + drag(1, 1) + release(1, 1));
+    await tick();
+    assert.deepEqual(copies, [], "Windows Terminal copies its own selection: ad doesn't on release");
+    type("\x1b[99;6u");
+    await tick();
+    assert.equal(copies.length, 1);
+  }, { env: { WT_SESSION: "1" }, platform: "win32" });
+});
+
+test("Ctrl+C with a selection copies it and doesn't arm quit; Ctrl+Insert copies too", async () => {
+  await withFullscreen(async ({ app, type, copies }) => {
+    type(press(0, 1) + drag(1, 1) + release(1, 1));
+    await tick();
+    type("\x03");
+    await tick();
+    assert.equal(copies.length, 1);
+    let quit = false;
+    app.done.then(() => (quit = true));
+    await tick();
+    assert.equal(quit, false);
+    type(press(0, 2) + drag(1, 2) + release(1, 2));
+    await tick();
+    type("\x1b[2;5~"); // Ctrl+Insert
+    await tick();
+    assert.equal(copies.length, 2);
+  }, { env: { WT_SESSION: "1" }, platform: "win32" });
+});
+
+test("Enter copies and returns to latest; Esc clears without interrupting the running turn", async () => {
+  await withFullscreen(async ({ renderer, session, type, copies }) => {
+    type(PGUP);
+    type(press(0, 1) + drag(2, 1) + release(2, 1));
+    await tick();
+    type("\r");
+    await tick();
+    assert.equal(copies.length, 1);
+    assert.equal(renderer.transcript.following, true);
+    type(press(0, 1) + drag(2, 1) + release(2, 1));
+    await tick();
+    type("\x1b");
+    await tick();
+    assert.deepEqual(session.calls.filter((c) => c[0] === "interrupt"), []);
+  }, { env: { WT_SESSION: "1" }, platform: "win32", running: true });
+});
+
+test("double click selects a word, triple click the line; Shift+click extends", async () => {
+  await withFullscreen(async ({ type, copies, scr }) => {
+    await tick();
+    await scr.settle();
+    const row1 = scr.altLines()[1];
+    type(press(1, 1) + release(1, 1) + press(1, 1) + release(1, 1));
+    await tick();
+    assert.equal(copies.at(-1), row1, "the word under the double click");
+    type(press(0, 1) + release(0, 1));
+    await tick();
+    type(press(0, 1) + press(2, 3, { shift: true }));
+    type("\x1b[99;6u");
+    await tick();
+    assert.match(copies.at(-1), /\n/, "Shift+click extended over three rows");
+  });
+});
+
+test("right-click copies a selection; without one it pastes the clipboard into the prompt, never over SSH", async () => {
+  const right = (x, y) => sgr({ action: "press", button: "right", x, y });
+  await withFullscreen(async ({ type, copies, scr }) => {
+    type(press(0, 1) + drag(1, 1) + release(1, 1));
+    await tick();
+    type(right(0, 1));
+    await tick();
+    assert.equal(copies.length, 1);
+    type(right(0, 1));
+    await tick();
+    await scr.settle();
+    assert.ok(scr.altLines().some((l) => l.includes("from the clipboard")), scr.altLines().join("\n"));
+  }, { env: { WT_SESSION: "1" }, platform: "win32" });
+  await withFullscreen(async ({ type, scr }) => {
+    type(sgr({ action: "press", button: "right", x: 0, y: 1 }));
+    await tick();
+    await scr.settle();
+    assert.ok(!scr.altLines().some((l) => l.includes("from the clipboard")));
+  }, { env: { WT_SESSION: "1", SSH_CONNECTION: "1 2 3 4" }, platform: "win32" });
+});
+
+test("a selection keeps its rows while output arrives; a resize clears it", async () => {
+  await withFullscreen(async ({ renderer, type, scr }) => {
+    type(press(0, 1) + drag(1, 1) + release(1, 1));
+    await tick();
+    await scr.settle();
+    const before = scr.altLines().slice(0, 4);
+    for (let i = 0; i < 5; i++) renderer.commit([[{ text: `new${i}` }]]);
+    await tick();
+    await scr.settle();
+    assert.deepEqual(scr.altLines().slice(0, 4), before);
+    scr.resize(50, 12);
+    await sleep(150);
+    assert.equal(renderer.transcript.following, true, "the selection ended and following resumed");
+  }, { env: { WT_SESSION: "1" }, platform: "win32" });
 });

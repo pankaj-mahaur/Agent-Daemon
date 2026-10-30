@@ -137,15 +137,18 @@ export function createTranscript({ maxEntries = 5000, entryMaxRows = 2000 } = {}
     if (entries.length) anchor = { entryId: entries[0].id, row: 0 };
   }
 
+  // `refs[k]` is {entryId, row} for `rows[k]`: what a click or a selection points at.
   function window({ width: w = width, height }) {
     if (w !== width) layout(w);
+    const withRefs = (i, from) => rowsOf(entries[i], w).slice(from).map((line, k) => ({ line, ref: { entryId: entries[i].id, row: from + k } }));
     if (anchor) {
       const pos = topPos(w, height);
       if (rowsFrom(pos, w, height + 1) <= height) jumpLatest(); // the end came into view
       else {
-        const rows = rowsOf(entries[pos.i], w).slice(pos.row);
-        for (let j = pos.i + 1; j < entries.length && rows.length < height; j++) rows.push(...rowsOf(entries[j], w));
-        return { rows: rows.slice(0, height), top: pos.i === 0 && pos.row === 0 };
+        const out = withRefs(pos.i, pos.row);
+        for (let j = pos.i + 1; j < entries.length && out.length < height; j++) out.push(...withRefs(j, 0));
+        const shown = out.slice(0, height);
+        return { rows: shown.map((x) => x.line), refs: shown.map((x) => x.ref), top: pos.i === 0 && pos.row === 0 };
       }
     }
     const want = height * 2;
@@ -153,13 +156,31 @@ export function createTranscript({ maxEntries = 5000, entryMaxRows = 2000 } = {}
     let i = entries.length - 1;
     let known = 0;
     for (; i >= 0 && known < want; i--) {
-      const rows = rowsOf(entries[i], w);
+      const rows = withRefs(i, 0);
       collected.push(rows);
       known += rows.length;
     }
     const all = collected.reverse().flat();
     const top = i < 0 && all.length <= height;
-    return { rows: all.slice(Math.max(0, all.length - height)), top };
+    const shown = all.slice(Math.max(0, all.length - height));
+    return { rows: shown.map((x) => x.line), refs: shown.map((x) => x.ref), top };
+  }
+
+  /** Stops following without moving the view (a selection keeps its rows put). → whether it was following. */
+  function hold({ width: w = width, height }) {
+    if (anchor || !entries.length) return false;
+    const { i, row } = topPos(w, height);
+    anchor = { entryId: entries[i].id, row };
+    return true;
+  }
+
+  /** The entries from id `a` to id `b` (either order), with their rows at the width: a selection's source. */
+  function entriesBetween(a, b, w = width) {
+    let i = indexOf(a);
+    let j = indexOf(b);
+    if (i < 0 || j < 0) return [];
+    if (i > j) [i, j] = [j, i];
+    return entries.slice(i, j + 1).map((e) => ({ id: e.id, rows: rowsOf(e, w) }));
   }
 
   function clear() {
@@ -176,6 +197,8 @@ export function createTranscript({ maxEntries = 5000, entryMaxRows = 2000 } = {}
     scroll,
     jumpTop,
     jumpLatest,
+    hold,
+    entriesBetween,
     size: () => entries.length,
     get following() {
       return anchor === null;

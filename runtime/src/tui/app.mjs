@@ -32,6 +32,8 @@ import path from "node:path";
 import { copyText, denialSummary, exportMarkdown, imagePath, lastAgentText, renderDebugConfig, renderHooks, renderKeyInspector, renderKeymap, renderMcp, renderSkills, renderUsage, terminalSetup, transcriptLines } from "./commands.mjs";
 
 import { T } from "./view/theme.mjs";
+import { clickCount, rowRanges, selectedText } from "./terminal/selection.mjs";
+import { copyOnSelectDefault, readClipboard, rightClickPaste } from "./terminal/clipboard.mjs";
 import { createFallbackEditor } from "./fallback-editor.mjs";
 import { createKeymap, eventSpec, keyLabel } from "./keymap.mjs";
 import { setSyntaxTheme, SYNTAX_THEMES, syntaxTheme, withSyntaxTheme } from "./view/highlight.mjs";
@@ -202,6 +204,7 @@ export function createApp({
   clearInterval: clearI = clearInterval,
   armMs = ARM_MS,
   platform = process.platform,
+  env = process.env, // the terminal's variables: clipboard paths and copy-on-select defaults (P2.3)
 }) {
   const st = session.state;
   const composer = createComposer({ history, now });
@@ -2652,9 +2655,109 @@ export function createApp({
   // transcript (also under a modal: reading while approving); a click on the
   // follow control returns to the bottom. Anything else changes nothing and
   // draws nothing.
+  /* Selecting and copying in fullscreen (P2.3) */
+
+  let selection = null; // {anchor, head, unit, dragging, resume}: points are {entryId, row, col}
+  let lastClick = null;
+  const copyOnSelect = () => copyOnSelectDefault({ env, platform, setting: settings?.engine?.get?.("tui.copy_on_select") ?? null });
+
+  function showSelection() {
+    const tv = renderer.transcript;
+    if (!selection) return tv.setMarks(null);
+    const ranges = rowRanges(tv.entriesBetween(selection.anchor.entryId, selection.head.entryId), selection);
+    tv.setMarks((ref) => {
+      const r = ranges.get(`${ref.entryId}:${ref.row}`);
+      return r ? [[r[0], r[1], T.selection]] : null;
+    });
+  }
+
+  function select(anchor, head, unit) {
+    // The selected rows stay put while output arrives; following resumes when it ends.
+    const resume = selection ? selection.resume : renderer.transcript.hold();
+    selection = { anchor, head, unit, dragging: false, resume };
+    showSelection();
+  }
+
+  function clearSelection() {
+    if (!selection) return;
+    const { resume } = selection;
+    selection = null;
+    renderer.transcript.setMarks(null);
+    if (resume) renderer.transcript.jumpLatest();
+  }
+
+  const isEmptySelection = (s) => s.unit === "char" && s.anchor.entryId === s.head.entryId && s.anchor.row === s.head.row && s.anchor.col === s.head.col;
+
+  function copySelection({ clear = true } = {}) {
+    if (!selection) return;
+    const tv = renderer.transcript;
+    const text = selectedText(tv.entriesBetween(selection.anchor.entryId, selection.head.entryId), selection);
+    if (clear) clearSelection();
+    Promise.resolve((actions.copy ?? copyText)(text, { terminalWrite: (d) => renderer.terminalWrite(d) }))
+      .then((r) => {
+        note = r.ok
+          ? { level: "info", text: r.via === "terminal" || r.via === "tmux" ? "Copied (through the terminal)." : "Copied." }
+          : { level: "warn", text: "Couldn't reach a clipboard. Your terminal may select with Shift+drag, or start ad with --no-alt-screen." };
+        draw();
+      })
+      .catch(fail);
+  }
+
+  const pointAt = (ev) => {
+    const ref = renderer.transcript.rowAt(ev.y);
+    return ref && typeof ref === "object" ? { ...ref, col: Math.max(0, ev.x) } : null;
+  };
+
   function onMouse(ev) {
     const tv = renderer.transcript;
     if (!tv) return;
+    if (ev.action === "press" && ev.button === "left" && !ev.ctrl && !ev.alt) {
+      const p = pointAt(ev);
+      if (!p) return tv.rowAt(ev.y) === "control" ? (clearSelection(), tv.jumpLatest(), draw()) : undefined;
+      if (ev.shift && selection) {
+        selection.head = p;
+        showSelection();
+        return draw();
+      }
+      lastClick = clickCount(lastClick, { x: ev.x, y: ev.y, at: now() });
+      select(p, p, ["char", "word", "line"][lastClick.count - 1]);
+      selection.dragging = true;
+      return draw();
+    }
+    if (ev.action === "drag" && ev.button === "left" && selection?.dragging) {
+      let p = pointAt(ev);
+      // Past the last transcript row: scroll a row that way and extend to the new edge.
+      if (!p && ev.y >= tv.height - 1) {
+        tv.scroll(1);
+        const last = tv.rowAt(tv.height - 1);
+        p = last && typeof last === "object" ? { ...last, col: Math.max(0, ev.x) } : null;
+      } else if (p && ev.y === 0) tv.scroll(-1);
+      if (p) {
+        selection.head = p;
+        showSelection();
+      }
+      return draw();
+    }
+    if (ev.action === "release" && ev.button === "left" && selection?.dragging) {
+      selection.dragging = false;
+      if (isEmptySelection(selection)) clearSelection();
+      else if (copyOnSelect()) copySelection({ clear: settings?.engine?.get?.("tui.copy_on_select_clear_selection") === true });
+      return draw();
+    }
+    if (ev.action === "press" && ev.button === "right") {
+      if (selection) {
+        copySelection();
+        return draw();
+      }
+      if (rightClickPaste({ env, platform, setting: settings?.engine?.get?.("tui.right_click_paste") ?? "auto" })) {
+        Promise.resolve((actions.readClipboard ?? readClipboard)())
+          .then((text) => {
+            if (text) onInput({ type: "paste", text });
+          })
+          .catch(fail);
+      }
+      return;
+    }
     if (ev.action === "wheel" && (ev.wheel === "up" || ev.wheel === "down")) {
       const rows = wheelRows(ev.wheel === "up" ? -1 : 1);
       if (!rows) return;
@@ -2666,10 +2769,44 @@ export function createApp({
       tv.scroll(rows);
       return draw();
     }
-    if (ev.action === "press" && ev.button === "left" && tv.rowAt(ev.y) === "control") {
-      tv.jumpLatest();
-      return draw();
+  }
+
+  // Keys while a selection exists (before Ctrl+C's own meaning). → true when consumed.
+  function selectionKey(ev) {
+    const tv = renderer.transcript;
+    if (ev.type === "key" && ev.ctrl && ev.name === "space" && !ev.alt && !ev.shift) {
+      const ref = tv.rowAt(0);
+      if (ref && typeof ref === "object") select({ ...ref, col: 0 }, { ...ref, col: 0 }, "char");
+      return true;
     }
+    if (!selection) return false;
+    if (ev.type !== "key") {
+      if (ev.type === "text" || ev.type === "paste") clearSelection();
+      return false;
+    }
+    const { name, ctrl, alt, shift } = ev;
+    const copyKey = (name === "c" && ((ctrl && !alt) || ev.super)) || (name === "insert" && ctrl);
+    if (copyKey) return copySelection(), true;
+    if (name === "enter" && !ctrl && !alt && !shift) {
+      copySelection();
+      tv.jumpLatest();
+      return true;
+    }
+    if (name === "escape" && !ctrl && !alt) return clearSelection(), true;
+    if (["left", "right", "up", "down"].includes(name) && !ctrl && !alt) {
+      const h = selection.head;
+      if (name === "left" || name === "right") selection.head = { ...h, col: Math.max(0, h.col + (name === "left" ? -1 : 1)) };
+      else {
+        const y = tv.yOf(h) + (name === "up" ? -1 : 1);
+        const ref = y >= 0 ? tv.rowAt(y) : null;
+        if (ref && typeof ref === "object") selection.head = { ...ref, col: h.col };
+      }
+      showSelection();
+      return true;
+    }
+    if (name === "pageup" || name === "pagedown") return false; // scrolls (P2.2), the selection stays
+    clearSelection();
+    return false;
   }
 
   function onInput(ev) {
@@ -2703,6 +2840,8 @@ export function createApp({
       else if (ev.type === "key" || ev.type === "text") inspector.last = inspectKey(ev);
       return draw();
     }
+    // A fullscreen selection takes its keys first: Ctrl+C copies it instead of arming quit.
+    if (renderer.transcript && !modal && !confirm && selectionKey(ev)) return draw();
     if (ev.type === "key" && ev.ctrl && ev.name === "c") {
       onCtrlC();
       return draw();
@@ -2950,7 +3089,8 @@ export function createApp({
     drawSoon();
   });
   const offInput = io.onInput(onInput);
-  const offResize = renderer.onResize?.(() => draw()) ?? (() => {});
+  // A resize re-wraps the rows a selection points at: it ends (P2.3).
+  const offResize = renderer.onResize?.(() => (renderer.transcript && clearSelection(), draw())) ?? (() => {});
   ticker = setI(() => {
     pollLoop();
     if (turnActive()) titleFrame++;
