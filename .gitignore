@@ -21,6 +21,27 @@ graphify-out/
 *.swp
 .env
 .env.local
+# Any other env file (keep a shared example), editor/OS junk, merge leftovers
+.env.*
+!.env.example
+*.orig
+*.rej
+desktop.ini
+# Personal agent overrides and per-user engine dirs at the repo root
+CLAUDE.local.md
+/.gemini/
+/.cursor/
+# Build/test/pack outputs and local databases
+coverage/
+.nyc_output/
+*.tgz
+*.sqlite
+*.sqlite3
+*.db
+# Keys and certificates
+*.pem
+*.key
+*.p12
 
 # Vendored upstream repos: keep MANIFEST + fetch script, ignore the clone itself
 vendored/*

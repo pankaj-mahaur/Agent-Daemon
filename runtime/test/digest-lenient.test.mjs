@@ -51,14 +51,14 @@ learnings:
     evidence_speaker: agent
     scope: project
     confidence: 0.6
-session_summary: "redseer chat work"
+session_summary: "shop-app chat work"
 </agent-daemon-digest>`;
   const res = extractFromAgentBlock(makeSummary(text));
   assert.equal(res.found, true);
   assert.equal(res.learnings.length, 2);
   assert.equal(res.learnings[0].type, "pattern");
   assert.equal(res.learnings[1].type, "gotcha");
-  assert.equal(res.sessionSummary, "redseer chat work");
+  assert.equal(res.sessionSummary, "shop-app chat work");
 });
 
 test("parses YAML inside colon-form tag (most-broken real-world combo)", () => {
@@ -366,15 +366,15 @@ test("schema drift: too-short `lesson` still rejected (min 5 chars)", () => {
 /* Bug B2 regression: category-keyed YAML salvage. Some agents emit a   */
 /* schema organized by memory-file category (techContext, systemPatterns, */
 /* etc.) with `additions[]` / `patterns[]` (and friends) sub-arrays      */
-/* instead of a flat learnings[] list. Real-world: redseer-frontend     */
+/* instead of a flat learnings[] list. Real-world: shop-app     */
 /* sessions May 19-20 emitted ~6 blocks in this shape; canonical path   */
 /* extracted 0 from each. Salvage path flattens them into learnings.   */
 /* ------------------------------------------------------------------ */
 
 test("parseCategoryKeyedYaml: extracts additions + patterns from techContext + systemPatterns", () => {
-  // Verbatim shape from D:/.../redseer-frontend transcript 4d9fea74 (May 20)
+  // Shape seen in a real digest (anonymised)
   const yaml = `session_date: "2026-05-20"
-session_id: "redseer-frontend/2026-05-20-session-01"
+session_id: "shop-app/2026-05-20-session-01"
 branch: "feat/chat-page-v2"
 
 projectbrief: {}
@@ -507,10 +507,10 @@ test("parseCategoryKeyedYaml: unknown subkey under known category doesn't crash 
 });
 
 test("parseCategoryKeyedYaml: direct list items under category (no `additions:`/`patterns:` subkey) default to type=fact", () => {
-  // Variant seen in older redseer sessions: items listed directly under the
+  // Variant seen in older sessions: items listed directly under the
   // category at indent 2, no intermediate subkey.
   const yaml = `projectbrief:
-  - "Redseer is a strategy consulting firm (not market research). Multi-geography."
+  - "Shop-app is a storefront for independent sellers. Multi-region."
   - "Standalone /chat/ ChatGPT-style page on feat/chat-page branch."
 
 techContext:
@@ -544,7 +544,7 @@ test("parseCategoryKeyedYaml: strips both double and single quotes from list-ite
 test("salvage path: extractFromAgentBlock falls through to category-keyed YAML when learnings[] is empty", () => {
   const text = `<agent-daemon:digest>
 \`\`\`yaml
-session_id: "redseer-frontend/2026-05-20"
+session_id: "shop-app/2026-05-20"
 branch: "feat/chat-page-v2"
 
 techContext:

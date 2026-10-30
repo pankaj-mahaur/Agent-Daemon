@@ -9,7 +9,7 @@ const accounts = [
   acct({ provider: "chatgpt", label: "personal", method: "engine-login", identity: { email: "sam@example.com", plan: "plus" } }),
   acct({ provider: "chatgpt", label: "work", method: "engine-login", status: "needs-sign-in", identity: { email: "alex@example.com", plan: "team" } }),
   acct({ provider: "openrouter", label: "default", keyHint: "9f3c" }),
-  acct({ provider: "openrouter", label: "client-a", owner: "Rahul's key", keyHint: "a1b2" }),
+  acct({ provider: "openrouter", label: "client-a", owner: "Sam's key", keyHint: "a1b2" }),
   acct({ provider: "openrouter", label: "a-very-long-label-that-goes-on", owner: "an owner tag that is also far too long", keyHint: "0000" }),
   acct({ provider: "ollama", label: "local", method: "none" }),
 ];
@@ -48,7 +48,7 @@ test("--wide and 120+ columns add method and last use; under 60 the owner become
   }
   const narrow = view({ width: 50 });
   for (const l of narrow) assert.ok(width(l) <= 50, l);
-  assert.ok(narrow.some((l) => /client-a.*owner: Rahul/.test(l) || /owner: Rah/.test(l)));
+  assert.ok(narrow.some((l) => /client-a.*owner: Sam/.test(l) || /owner: Sa/.test(l)));
 });
 
 test("a limit observation shows in the limits column", () => {
@@ -60,10 +60,10 @@ test("a limit observation shows in the limits column", () => {
 });
 
 test("review: neighbouring columns never run together; the header fits every width", () => {
-  const exact = [acct({ provider: "openrouter", label: "abcdefghijklm", owner: "Rahul key", keyHint: "1111" })];
+  const exact = [acct({ provider: "openrouter", label: "abcdefghijklm", owner: "Sam key", keyHint: "1111" })];
   const row = listLines(exact, { width: 80 })[2];
-  assert.ok(!row.includes("abcdefghijklmRahul"), row);
-  assert.match(row, /abcdefghijk… Rahul key/);
+  assert.ok(!row.includes("abcdefghijklmSam"), row);
+  assert.match(row, /abcdefghijk… Sam key/);
   for (const w of [50, 60, 68, 69, 74, 80, 100, 120, 140]) {
     for (const wide of [false, true]) {
       const lines = view({ width: w, wide });

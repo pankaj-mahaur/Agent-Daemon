@@ -114,7 +114,7 @@ test("labels: unique per provider ignoring case; provider names and @tokens are 
 });
 
 test("owner accepts free text, refuses control characters and long values", () => {
-  assert.equal(reg.checkOwner("Rahul's key"), null);
+  assert.equal(reg.checkOwner("Sam's key"), null);
   assert.equal(reg.checkOwner(""), null);
   assert.equal(reg.checkOwner("client:acme"), null);
   assert.equal(reg.checkOwner("bad\u{1B}[2Jowner"), "OWNER_INVALID");

@@ -24,7 +24,7 @@ workspace/
 
 - **Stack:** [e.g., Django 6 + DRF + PostgreSQL + Redis + Celery]
 - **Entry:** `backend/manage.py`, startup script
-- **Apps:** [e.g., accounts, projects, timesheets]
+- **Apps:** [e.g., accounts, projects, orders]
 - **Settings:** `backend/settings/` (base, development, production)
 - **Key Docs:** `backend/CLAUDE.md`, `backend/README.md`
 

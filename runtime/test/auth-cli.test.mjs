@@ -58,7 +58,7 @@ async function seed() {
   const personal = { ...mk({ provider: "chatgpt", label: "personal", method: "engine-login", credential: { kind: "engine-home", home: "@default" }, migratedFrom: "3.0-default-home" }), identity: { email: "sam@example.com", plan: "plus" } };
   const work = { ...mk({ provider: "chatgpt", label: "work", method: "engine-login", credential: { kind: "engine-home", home: "a/h1" } }), identity: { email: "alex@example.com", plan: "team", key: "secret-identity-hash" } };
   const def = mk({ provider: "openrouter", label: "default", method: "api-key" }, ["sk", "or", "v1", "dddd0000dddd0000d9f3"].join("-"));
-  const client = { ...mk({ provider: "openrouter", label: "client-a", owner: "Rahul's key", method: "api-key" }, ["sk", "or", "v1", "cccc0000cccc0000a1b2"].join("-")), attempt: null };
+  const client = { ...mk({ provider: "openrouter", label: "client-a", owner: "Sam's key", method: "api-key" }, ["sk", "or", "v1", "cccc0000cccc0000a1b2"].join("-")), attempt: null };
   const lab = mk({ provider: "custom", label: "lab", method: "none", endpoint: "http://127.0.0.1:9/v1" });
   await reg.transact((doc) => {
     doc.accounts.push(personal, work, def, client, lab);
@@ -83,7 +83,7 @@ test("list groups by provider, marks the default, fits 80 columns; no key, ref, 
   for (const l of r.out.split("\n")) assert.ok([...l].length <= 80, l);
   assert.match(r.out, /^ChatGPT$/m);
   assert.match(r.out, /^● personal/m);
-  assert.match(r.out, /client-a {5}Rahul's key/);
+  assert.match(r.out, /client-a {5}Sam's key/);
   assert.match(r.out, /key …a1b2/);
   for (const bad of [...Object.values(keys), "secret-identity-hash", "sam@example.com", "a/h1", acct("client-a").credential.ref]) assert.ok(!r.out.includes(bad), bad);
 });

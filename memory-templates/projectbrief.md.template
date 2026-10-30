@@ -6,7 +6,7 @@
 
 <!-- One paragraph. What does this codebase do, in one sentence the user would say to a stranger? -->
 
-E.g. *"A Next.js + Django timesheet app for a 50-person consultancy — employees log hours, managers review, leadership pulls reports."*
+E.g. *"A Next.js + Django booking app for a small chain of clinics — patients book visits, staff manage the calendar, owners pull reports."*
 
 ## Who uses it
 
