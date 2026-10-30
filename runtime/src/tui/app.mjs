@@ -811,6 +811,7 @@ export function createApp({
     const w = width();
     const rows = height();
     const lines = [];
+    if (!pager) pagerSel = null; // a closed pager takes its selection with it
     if (pager && !modal) {
       // Ctrl+T: the whole transcript, paged inside the live region.
       const view = Math.max(1, rows - 2);
@@ -833,7 +834,19 @@ export function createApp({
         lines.push(truncate([{ text: where, style: T.bold }, { text: "\u{2191}\u{2193} pgup pgdn home end \u{b7} q or esc closes", style: DIM }], w));
       }
       const hit = pager.find?.hits[pager.find.index];
-      lines.push(...pager.lines.slice(pager.top, pager.top + view).map((l, i) => (pager.top + i === hit ? restyle(typeof l === "string" ? [{ text: l }] : l, 0, Infinity, T.findCurrent) : l)));
+      const before = lines.length;
+      // A selection in the pager (P2.3, fullscreen): its rows, highlighted.
+      const sel = pagerSel ? rowRanges([{ id: "pager", rows: pager.lines }], pagerSel) : null;
+      lines.push(
+        ...pager.lines.slice(pager.top, pager.top + view).map((l, i) => {
+          let line = typeof l === "string" ? [{ text: l }] : l;
+          if (pager.top + i === hit) line = restyle(line, 0, Infinity, T.findCurrent);
+          const r = sel?.get(`pager:${pager.top + i}`);
+          return r ? restyle(line, r[0], r[1], T.selection) : line;
+        }),
+      );
+      // The live region ends on the last row: where the pager's first line lands.
+      pagerFirstY = Math.max(0, rows - lines.length) + before;
       renderer.frame({ lines, cursor: { row: 0, col: 0 } });
       return;
     }
@@ -2695,6 +2708,53 @@ export function createApp({
 
   let selection = null; // {anchor, head, unit, dragging, resume}: points are {entryId, row, col}
   let lastClick = null;
+  // A selection in the Ctrl+T pager: its lines are one entry, "pager" (T2-L1).
+  let pagerSel = null;
+  let pagerFirstY = 0; // the screen row of the pager's first shown line, at the last draw
+
+  const pagerPoint = (ev) => {
+    const line = pager.top + (ev.y - pagerFirstY);
+    return ev.y >= pagerFirstY && line >= 0 && line < pager.lines.length ? { entryId: "pager", row: line, col: Math.max(0, ev.x) } : null;
+  };
+
+  function copyPagerSelection() {
+    const text = selectedText([{ id: "pager", rows: pager.lines.map((l) => (typeof l === "string" ? [{ text: l }] : l)) }], pagerSel);
+    pagerSel = null;
+    copyOut(text);
+  }
+
+  // The selection is in the pager while it is open (fullscreen): drag, release, Shift+click.
+  function pagerMouse(ev) {
+    if (ev.action === "press" && ev.button === "left" && !ev.ctrl && !ev.alt) {
+      const p = pagerPoint(ev);
+      if (!p) return;
+      if (ev.shift && pagerSel) pagerSel.head = p;
+      else {
+        lastClick = clickCount(lastClick, { x: ev.x, y: ev.y, at: now() });
+        pagerSel = { anchor: p, head: p, unit: ["char", "word", "line"][lastClick.count - 1], dragging: true };
+      }
+      return draw();
+    }
+    if (ev.action === "drag" && ev.button === "left" && pagerSel?.dragging) {
+      const p = pagerPoint(ev);
+      if (p) pagerSel.head = p;
+      return draw();
+    }
+    if (ev.action === "release" && ev.button === "left" && pagerSel?.dragging) {
+      pagerSel.dragging = false;
+      if (isEmptySelection(pagerSel)) pagerSel = null;
+      else if (copyOnSelect()) {
+        const keep = { ...pagerSel };
+        copyPagerSelection();
+        if (settings?.engine?.get?.("tui.copy_on_select_clear_selection") !== true) pagerSel = keep;
+      }
+      return draw();
+    }
+    if (ev.action === "press" && ev.button === "right" && pagerSel) {
+      copyPagerSelection();
+      return draw();
+    }
+  }
   const copyOnSelect = () => copyOnSelectDefault({ env, platform, setting: settings?.engine?.get?.("tui.copy_on_select") ?? null });
 
   function showSelection() {
@@ -2729,7 +2789,11 @@ export function createApp({
     const tv = renderer.transcript;
     const text = selectedText(tv.entriesBetween(selection.anchor.entryId, selection.head.entryId), selection);
     if (clear) clearSelection();
-    // Only blank cells selected: nothing to copy, and no clipboard to blame.
+    copyOut(text);
+  }
+
+  // Copies selected text and says how it went. Only blank cells: nothing to copy, and no clipboard to blame.
+  function copyOut(text) {
     if (!text.trim()) return;
     Promise.resolve((actions.copy ?? copyText)(text, { terminalWrite: (d) => renderer.terminalWrite(d) }))
       .then((r) => {
@@ -2749,6 +2813,7 @@ export function createApp({
   function onMouse(ev) {
     const tv = renderer.transcript;
     if (!tv) return;
+    if (pager && !modal && ev.action !== "wheel") return pagerMouse(ev);
     if (ev.action === "press" && ev.button === "left" && !ev.ctrl && !ev.alt) {
       const p = pointAt(ev);
       if (!p) return tv.rowAt(ev.y) === "control" ? (clearSelection(), tv.jumpLatest(), draw()) : undefined;
@@ -3051,6 +3116,12 @@ export function createApp({
     // A fullscreen selection takes its keys first: Ctrl+C copies it instead of arming quit.
     // Find (fullscreen) comes before the selection and the composer; an approval still comes first.
     if (renderer.transcript && !modal && !confirm && !pager && findKey(ev)) return draw();
+    // A pager selection's keys, before Ctrl+C would close the pager: copy keys copy it, Esc clears it.
+    if (pager && pagerSel && !modal && ev.type === "key") {
+      const copyKey = (ev.name === "c" && ((ev.ctrl && !ev.alt) || ev.super)) || (ev.name === "insert" && ev.ctrl);
+      if (copyKey) return copyPagerSelection(), draw();
+      if (ev.name === "escape") return (pagerSel = null), draw();
+    }
     if (renderer.transcript && !modal && !confirm && selectionKey(ev)) return draw();
     if (ev.type === "key" && ev.ctrl && ev.name === "c") {
       onCtrlC();

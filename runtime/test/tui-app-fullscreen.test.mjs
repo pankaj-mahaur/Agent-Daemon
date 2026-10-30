@@ -471,3 +471,25 @@ test("selecting only blank cells copies nothing and says nothing about the clipb
     assert.doesNotMatch(await screenText(scr), /Couldn't reach a clipboard/);
   });
 });
+
+test("with the Ctrl+T pager open, a drag selects pager lines and Ctrl+Shift+C copies them (T2-L1)", async () => {
+  await withFullscreen(async ({ session, type, scr, copies }) => {
+    // The pager shows the conversation's items: give it some.
+    for (let i = 0; i < 3; i++) session.state.items.set(`m${i}`, { id: `m${i}`, kind: "agentMessage", text: `pager line ${i}`, turnId: "u", threadId: "t" });
+    session.state.turns.push({ id: "u", status: "completed", itemIds: ["m0", "m1", "m2"] });
+    type("\x14"); // Ctrl+T
+    await tick();
+    await scr.settle();
+    const lines = scr.altLines();
+    const header = lines.findIndex((l) => /^Transcript \d|The transcript is empty/.test(l));
+    assert.ok(header >= 0, lines.join("\n"));
+    const y = header + 1;
+    type(press(0, y) + drag(30, y + 1) + release(30, y + 1));
+    await tick();
+    type("\x1b[99;6u"); // Ctrl+Shift+C
+    await tick();
+    assert.ok(copies.length >= 1, "copied");
+    const shown = lines.slice(y, y + 2).map((l) => l.trim()).filter(Boolean).join("\n");
+    assert.equal(copies.at(-1).trim(), shown.trim(), `copied ${JSON.stringify(copies.at(-1))}`);
+  }, { env: { WT_SESSION: "1" }, platform: "win32" });
+});
