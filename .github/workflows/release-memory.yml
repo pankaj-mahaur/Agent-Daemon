@@ -129,11 +129,12 @@ jobs:
         run: bash -c "$PUSH_TREE" -- out/hosts/gemini
         shell: bash
 
+      # --latest=false: the "Latest" badge stays on ad's own vX.Y.Z release.
       - name: GitHub release with the ZIPs and SHA256SUMS
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "memory-v$V" out/dist/* --repo "$GITHUB_REPOSITORY" --title "agent-daemon-memory $V" \
+          gh release create "memory-v$V" out/dist/* --repo "$GITHUB_REPOSITORY" --title "agent-daemon-memory $V" --latest=false \
             --notes "agent-daemon-memory $V: the npm package and the host packages. Check downloads against SHA256SUMS."
 
 # One script for both generated trees: it replaces the target repository's content

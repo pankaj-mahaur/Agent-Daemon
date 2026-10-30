@@ -95,7 +95,7 @@ node runtime/scripts/build-host-packages.mjs --out <dir> --target claude-code
 - **A real run** also needs the `release-memory` environment's approval. Then it:
   - runs `npm publish --provenance` (secret `NPM_TOKEN`: a granular, publish-only token);
   - pushes the Claude Code marketplace tree and the Gemini extension tree to their own repositories (variables `MEMORY_MARKETPLACE_REPO`, `MEMORY_GEMINI_REPO`; deploy keys `MARKETPLACE_DEPLOY_KEY`, `GEMINI_DEPLOY_KEY`);
-  - creates the GitHub release `memory-v<version>`.
+  - creates the GitHub release `memory-v<version>`, not marked Latest (that badge stays on ad's own release).
 
   A target that isn't configured is skipped with a notice.
 - `runtime/test/release-memory-workflow.test.mjs` keeps it that way: dispatch only, a dry run by default, publishing only behind the environment.
