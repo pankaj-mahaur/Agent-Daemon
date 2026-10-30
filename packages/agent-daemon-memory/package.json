@@ -1,7 +1,7 @@
 {
   "name": "agent-daemon-memory",
   "mcpName": "io.github.pankaj-mahaur/agent-daemon-memory",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "Local memory for coding agents: lessons and corrections from past sessions, one MCP server, one install command.",
   "type": "module",
   "bin": {
