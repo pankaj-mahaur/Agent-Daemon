@@ -1,0 +1,65 @@
+{
+  "host": "claude-code",
+  "version": "2.1.314",
+  "scenario": "detach-control",
+  "captured": "2026-10-31",
+  "os": "win32",
+  "outcome": {
+    "name": "detach-control",
+    "code": 0,
+    "hooks": "SessionStart,SessionEnd",
+    "permission_mode": "",
+    "toolRan": false,
+    "toolResult": "",
+    "sysmsgInStdout": false,
+    "reasonInStdout": false,
+    "denials": "\"permission_denials\":[]",
+    "extra": {
+      "detached": true,
+      "child": true,
+      "hook-finished": true
+    }
+  },
+  "hooks": [
+    {
+      "label": "SessionStart",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CONFIG_DIR": "<TMP>\\home\\.claude",
+        "CLAUDE_ENV_FILE": "<TMP>\\home\\.claude\\session-env\\1cc03c54-441f-418f-a1b7-b2da0e948472\\sessionstart-hook-0.sh",
+        "CLAUDE_PROJECT_DIR": "<TMP>/project"
+      },
+      "payload": {
+        "session_id": "1cc03c54-441f-418f-a1b7-b2da0e948472",
+        "transcript_path": "<TMP>\\home\\.claude\\projects\\-TMP--proje-igdcyx\\1cc03c54-441f-418f-a1b7-b2da0e948472.jsonl",
+        "cwd": "<TMP>\\project",
+        "hook_event_name": "SessionStart",
+        "source": "startup"
+      }
+    },
+    {
+      "label": "SessionEnd",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CONFIG_DIR": "<TMP>\\home\\.claude",
+        "CLAUDE_PROJECT_DIR": "<TMP>/project"
+      },
+      "payload": {
+        "session_id": "1cc03c54-441f-418f-a1b7-b2da0e948472",
+        "transcript_path": "<TMP>\\home\\.claude\\projects\\-TMP--proje-igdcyx\\1cc03c54-441f-418f-a1b7-b2da0e948472.jsonl",
+        "cwd": "<TMP>\\project",
+        "prompt_id": "8b41aff4-e565-42ab-b69e-b6d030e79d12",
+        "hook_event_name": "SessionEnd",
+        "reason": "other"
+      }
+    }
+  ]
+}

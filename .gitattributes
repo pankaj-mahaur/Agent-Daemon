@@ -7,3 +7,7 @@ runtime/test/golden/** text eol=lf
 
 # The correction benchmark hashes its fixtures byte for byte (repos.sha256): keep them LF.
 bench/correction-bench/repos/** text eol=lf
+
+# The frozen L0 corpora (MANIFEST.json hashes) and the captured host payloads: keep them LF.
+runtime/test/corpora/** text eol=lf
+runtime/test/fixtures/hosts/** text eol=lf

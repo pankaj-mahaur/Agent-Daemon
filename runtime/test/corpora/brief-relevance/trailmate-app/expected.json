@@ -1,0 +1,29 @@
+{
+  "relevant": ["trailmate-app-01", "trailmate-app-02", "trailmate-app-03", "trailmate-app-04", "trailmate-app-05", "trailmate-app-06", "trailmate-app-07", "trailmate-app-08"],
+  "irrelevant": ["trailmate-app-10", "trailmate-app-11", "trailmate-app-12", "trailmate-app-13", "trailmate-app-15", "trailmate-app-19", "trailmate-app-20", "trailmate-app-22"],
+  "neutral": ["trailmate-app-09", "trailmate-app-14", "trailmate-app-16", "trailmate-app-17", "trailmate-app-18", "trailmate-app-21"],
+  "reasons": {
+    "trailmate-app-01": "Test command for tileStore.test.ts and how its native modules are mocked.",
+    "trailmate-app-02": "maestro/offline-download.yaml is a recent path.",
+    "trailmate-app-03": "Running the map feature needs the dev client; Expo Go won't work.",
+    "trailmate-app-04": "Eviction rules tested in the latest commits (tileStore.ts).",
+    "trailmate-app-05": "The branch adds src/db/migrations/0007_offline_regions.sql.",
+    "trailmate-app-06": "src/lib/network.ts is a recent path; offline detection depends on it.",
+    "trailmate-app-07": "Matches downloadRegion.ts and the resume-after-restart fix.",
+    "trailmate-app-08": "Where offline tiles may be downloaded from; app.config.ts is a recent path.",
+    "trailmate-app-09": "Build profiles; the dev-client point is already covered by -03.",
+    "trailmate-app-10": "Stale: offline mode is what this branch builds.",
+    "trailmate-app-11": "Stale: maps moved to MapLibre (see -03).",
+    "trailmate-app-12": "Push notifications are an unrelated area.",
+    "trailmate-app-13": "In-app purchases are an unrelated area.",
+    "trailmate-app-14": "Project-wide i18n; new download UI strings may touch it.",
+    "trailmate-app-15": "Step counting is an unrelated area.",
+    "trailmate-app-16": "Project-wide style; harmless but generic.",
+    "trailmate-app-17": "Project-wide branching rule; harmless but generic.",
+    "trailmate-app-18": "Release steps; app.config.ts overlap is incidental, but OTA limits are loosely related to native changes.",
+    "trailmate-app-19": "GPS sampling for recording is unrelated to offline maps.",
+    "trailmate-app-20": "Social sharing is an unrelated area.",
+    "trailmate-app-21": "Project-wide CI checks; harmless but generic.",
+    "trailmate-app-22": "Stale: region metadata moved to SQLite in this branch (migration 0007)."
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "relevant": ["meterly-api-01", "meterly-api-02", "meterly-api-03", "meterly-api-04", "meterly-api-05", "meterly-api-06", "meterly-api-07", "meterly-api-17", "meterly-api-24"],
+  "irrelevant": ["meterly-api-08", "meterly-api-09", "meterly-api-11", "meterly-api-12", "meterly-api-13", "meterly-api-18", "meterly-api-19", "meterly-api-21", "meterly-api-23"],
+  "neutral": ["meterly-api-10", "meterly-api-14", "meterly-api-15", "meterly-api-16", "meterly-api-20", "meterly-api-22"],
+  "reasons": {
+    "meterly-api-01": "Test commands for the unit and integration tests the branch is changing.",
+    "meterly-api-02": "Matches the commit returning invoice amounts as strings; core money rule.",
+    "meterly-api-03": "The exact rounding rule this fix implements.",
+    "meterly-api-04": "rounding.py is a recent path and holds the Decimal context.",
+    "meterly-api-05": "The branch adds Hypothesis property tests for invoice totals.",
+    "meterly-api-06": "Line-item rounding depends on currency decimals; currency.py is a recent path.",
+    "meterly-api-07": "Constrains how a rounding fix may change existing (finalized) invoices.",
+    "meterly-api-08": "Stale: floats and round-the-total were replaced by Decimal per-line rounding (see -02, -03).",
+    "meterly-api-09": "Stale: pip-tools was replaced by uv (see -10).",
+    "meterly-api-10": "Project-wide tooling; true but not needed for this fix.",
+    "meterly-api-11": "Kafka ingest is an unrelated area.",
+    "meterly-api-12": "Usage backfill is an unrelated area.",
+    "meterly-api-13": "API key hashing is an unrelated area.",
+    "meterly-api-14": "Project-wide lint and format; harmless but generic.",
+    "meterly-api-15": "Project-wide branch and PR convention; harmless but generic.",
+    "meterly-api-16": "Running the server locally; mildly useful for checking the API change.",
+    "meterly-api-17": "api/types.py is a recent path; MoneyStr serializes the string amounts.",
+    "meterly-api-18": "Rate limiting is an unrelated area.",
+    "meterly-api-19": "Grafana dashboards are an unrelated area.",
+    "meterly-api-20": "Migrations are project-wide; this branch has no migration in its paths.",
+    "meterly-api-21": "Stale: the cron script was deleted (see -22).",
+    "meterly-api-22": "Invoice generation scheduling; same domain but not touched by this fix.",
+    "meterly-api-23": "GDPR exports are an unrelated area despite mentioning invoices.",
+    "meterly-api-24": "test_invoice.py builds invoices with make_invoice."
+  }
+}

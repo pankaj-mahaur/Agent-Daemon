@@ -1,0 +1,26 @@
+{
+  "name": "parcelroute",
+  "stack": ["Go 1.23", "chi", "pgx", "Kafka (franz-go)", "PostgreSQL", "testcontainers-go", "golangci-lint", "Helm"],
+  "branch": "feat/kafka-consumer-retries",
+  "recent_paths": [
+    "internal/events/consumer.go",
+    "internal/events/consumer_test.go",
+    "internal/events/retry.go",
+    "internal/events/retry_test.go",
+    "internal/events/dlq.go",
+    "internal/events/handler_shipment_created.go",
+    "internal/config/config.go",
+    "internal/metrics/events.go",
+    "deploy/helm/values.yaml",
+    "docs/runbooks/dlq-replay.md",
+    "cmd/parcelroute/main.go"
+  ],
+  "recent_commits": [
+    "feat(events): retry handler errors with exponential backoff",
+    "feat(events): publish poison messages to shipments.dlq",
+    "feat(metrics): add events_retries_total and events_dlq_total",
+    "test(events): table tests for retry classification",
+    "chore(helm): add KAFKA_MAX_RETRIES to values"
+  ],
+  "session_cwd": "/work/parcelroute"
+}

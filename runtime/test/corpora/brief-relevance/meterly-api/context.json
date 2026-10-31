@@ -1,0 +1,26 @@
+{
+  "name": "meterly-api",
+  "stack": ["Python 3.12", "FastAPI", "SQLAlchemy 2.0", "Alembic", "PostgreSQL", "pytest", "Hypothesis", "uv", "ruff"],
+  "branch": "fix/invoice-rounding",
+  "recent_paths": [
+    "src/meterly/billing/invoice.py",
+    "src/meterly/billing/rounding.py",
+    "src/meterly/billing/line_items.py",
+    "src/meterly/billing/currency.py",
+    "src/meterly/models/invoice.py",
+    "src/meterly/api/routes/invoices.py",
+    "src/meterly/api/types.py",
+    "tests/unit/billing/test_rounding.py",
+    "tests/unit/billing/test_invoice.py",
+    "tests/integration/test_invoice_api.py",
+    "pyproject.toml"
+  ],
+  "recent_commits": [
+    "fix(billing): round each line item with ROUND_HALF_EVEN before summing",
+    "test(billing): add Hypothesis property tests for invoice totals",
+    "refactor(billing): move the Decimal context into rounding.py",
+    "fix(api): return invoice amounts as strings",
+    "chore: bump hypothesis to 6.112"
+  ],
+  "session_cwd": "/work/meterly-api"
+}

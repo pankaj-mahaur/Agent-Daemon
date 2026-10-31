@@ -1,0 +1,25 @@
+{
+  "name": "trailmate-app",
+  "stack": ["TypeScript", "React Native 0.76", "Expo SDK 52", "expo-router", "MapLibre", "expo-sqlite", "expo-file-system", "Jest (jest-expo)", "Maestro", "EAS Build"],
+  "branch": "feat/offline-maps",
+  "recent_paths": [
+    "app/(tabs)/map.tsx",
+    "src/features/offline/downloadRegion.ts",
+    "src/features/offline/tileStore.ts",
+    "src/features/offline/useOfflineRegions.ts",
+    "src/features/offline/__tests__/tileStore.test.ts",
+    "src/db/migrations/0007_offline_regions.sql",
+    "src/components/map/TrailMap.tsx",
+    "src/lib/network.ts",
+    "app.config.ts",
+    "maestro/offline-download.yaml"
+  ],
+  "recent_commits": [
+    "feat(offline): download map tiles for a bounding box",
+    "feat(offline): store region metadata in SQLite",
+    "feat(map): show downloaded regions on TrailMap",
+    "test(offline): tileStore eviction tests",
+    "fix(offline): resume interrupted downloads after app restart"
+  ],
+  "session_cwd": "/work/trailmate-app"
+}

@@ -1,0 +1,72 @@
+{
+  "host": "codex",
+  "version": "0.164.0",
+  "scenario": "untrusted",
+  "captured": "2026-10-31",
+  "os": "win32",
+  "outcome": {
+    "name": "untrusted",
+    "code": 0,
+    "ms": 5448,
+    "trust": "preToolUse:untrusted,postToolUse:untrusted,preCompact:untrusted,postCompact:untrusted,sessionStart:untrusted,sessionEnd:untrusted,userPromptSubmit:untrusted,stop:untrusted",
+    "hooks": "",
+    "toolRan": true,
+    "commandStatus": "in_progress|completed",
+    "sysmsgInStdout": false,
+    "reasonSeenByModel": false,
+    "stderrTail": "WARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir \"<HOME>\\\\AppData\\\\Local\\\\Temp\\\\\" (codex_home: AbsolutePathBuf(\"C:\\\\U"
+  },
+  "trust": {
+    "hooks": [
+      {
+        "key": "<HOME>\\AppData\\Local\\Temp\\claude\\-REPO-\\79250214-f20e-4d40-a2c1-a5a98eecf8ac\\scratchpad\\spikes\\cx-untrusted-JyPLNi\\home\\.codex\\hooks.json:pre_tool_use:0:0",
+        "eventName": "preToolUse",
+        "trustStatus": "untrusted",
+        "hash": "present"
+      },
+      {
+        "key": "<HOME>\\AppData\\Local\\Temp\\claude\\-REPO-\\79250214-f20e-4d40-a2c1-a5a98eecf8ac\\scratchpad\\spikes\\cx-untrusted-JyPLNi\\home\\.codex\\hooks.json:post_tool_use:0:0",
+        "eventName": "postToolUse",
+        "trustStatus": "untrusted",
+        "hash": "present"
+      },
+      {
+        "key": "<HOME>\\AppData\\Local\\Temp\\claude\\-REPO-\\79250214-f20e-4d40-a2c1-a5a98eecf8ac\\scratchpad\\spikes\\cx-untrusted-JyPLNi\\home\\.codex\\hooks.json:pre_compact:0:0",
+        "eventName": "preCompact",
+        "trustStatus": "untrusted",
+        "hash": "present"
+      },
+      {
+        "key": "<HOME>\\AppData\\Local\\Temp\\claude\\-REPO-\\79250214-f20e-4d40-a2c1-a5a98eecf8ac\\scratchpad\\spikes\\cx-untrusted-JyPLNi\\home\\.codex\\hooks.json:post_compact:0:0",
+        "eventName": "postCompact",
+        "trustStatus": "untrusted",
+        "hash": "present"
+      },
+      {
+        "key": "<HOME>\\AppData\\Local\\Temp\\claude\\-REPO-\\79250214-f20e-4d40-a2c1-a5a98eecf8ac\\scratchpad\\spikes\\cx-untrusted-JyPLNi\\home\\.codex\\hooks.json:session_start:0:0",
+        "eventName": "sessionStart",
+        "trustStatus": "untrusted",
+        "hash": "present"
+      },
+      {
+        "key": "<HOME>\\AppData\\Local\\Temp\\claude\\-REPO-\\79250214-f20e-4d40-a2c1-a5a98eecf8ac\\scratchpad\\spikes\\cx-untrusted-JyPLNi\\home\\.codex\\hooks.json:session_end:0:0",
+        "eventName": "sessionEnd",
+        "trustStatus": "untrusted",
+        "hash": "present"
+      },
+      {
+        "key": "<HOME>\\AppData\\Local\\Temp\\claude\\-REPO-\\79250214-f20e-4d40-a2c1-a5a98eecf8ac\\scratchpad\\spikes\\cx-untrusted-JyPLNi\\home\\.codex\\hooks.json:user_prompt_submit:0:0",
+        "eventName": "userPromptSubmit",
+        "trustStatus": "untrusted",
+        "hash": "present"
+      },
+      {
+        "key": "<HOME>\\AppData\\Local\\Temp\\claude\\-REPO-\\79250214-f20e-4d40-a2c1-a5a98eecf8ac\\scratchpad\\spikes\\cx-untrusted-JyPLNi\\home\\.codex\\hooks.json:stop:0:0",
+        "eventName": "stop",
+        "trustStatus": "untrusted",
+        "hash": "present"
+      }
+    ]
+  },
+  "hooks": []
+}

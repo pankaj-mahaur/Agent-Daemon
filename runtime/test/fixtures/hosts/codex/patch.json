@@ -1,0 +1,142 @@
+{
+  "host": "codex",
+  "version": "0.164.0",
+  "scenario": "patch",
+  "captured": "2026-10-31",
+  "os": "win32",
+  "outcome": {
+    "name": "patch",
+    "code": 0,
+    "ms": 10292,
+    "trust": "preToolUse:untrusted,postToolUse:untrusted,preCompact:untrusted,postCompact:untrusted,sessionStart:untrusted,sessionEnd:untrusted,userPromptSubmit:untrusted,stop:untrusted",
+    "hooks": "SessionStart,UserPromptSubmit,Stop,SessionEnd",
+    "toolRan": false,
+    "commandStatus": "",
+    "sysmsgInStdout": false,
+    "reasonSeenByModel": false,
+    "stderrTail": "Reading additional input from stdin... | 2026-10-31T20:02:19.300064Z ERROR codex_core::tools::router: error=unsupported call: apply_patch"
+  },
+  "trust": {
+    "hooks": [
+      {
+        "key": "<HOME>\\AppData\\Local\\Temp\\claude\\-REPO-\\79250214-f20e-4d40-a2c1-a5a98eecf8ac\\scratchpad\\spikes\\cx-patch-faCTng\\home\\.codex\\hooks.json:pre_tool_use:0:0",
+        "eventName": "preToolUse",
+        "trustStatus": "untrusted",
+        "hash": "present"
+      },
+      {
+        "key": "<HOME>\\AppData\\Local\\Temp\\claude\\-REPO-\\79250214-f20e-4d40-a2c1-a5a98eecf8ac\\scratchpad\\spikes\\cx-patch-faCTng\\home\\.codex\\hooks.json:post_tool_use:0:0",
+        "eventName": "postToolUse",
+        "trustStatus": "untrusted",
+        "hash": "present"
+      },
+      {
+        "key": "<HOME>\\AppData\\Local\\Temp\\claude\\-REPO-\\79250214-f20e-4d40-a2c1-a5a98eecf8ac\\scratchpad\\spikes\\cx-patch-faCTng\\home\\.codex\\hooks.json:pre_compact:0:0",
+        "eventName": "preCompact",
+        "trustStatus": "untrusted",
+        "hash": "present"
+      },
+      {
+        "key": "<HOME>\\AppData\\Local\\Temp\\claude\\-REPO-\\79250214-f20e-4d40-a2c1-a5a98eecf8ac\\scratchpad\\spikes\\cx-patch-faCTng\\home\\.codex\\hooks.json:post_compact:0:0",
+        "eventName": "postCompact",
+        "trustStatus": "untrusted",
+        "hash": "present"
+      },
+      {
+        "key": "<HOME>\\AppData\\Local\\Temp\\claude\\-REPO-\\79250214-f20e-4d40-a2c1-a5a98eecf8ac\\scratchpad\\spikes\\cx-patch-faCTng\\home\\.codex\\hooks.json:session_start:0:0",
+        "eventName": "sessionStart",
+        "trustStatus": "untrusted",
+        "hash": "present"
+      },
+      {
+        "key": "<HOME>\\AppData\\Local\\Temp\\claude\\-REPO-\\79250214-f20e-4d40-a2c1-a5a98eecf8ac\\scratchpad\\spikes\\cx-patch-faCTng\\home\\.codex\\hooks.json:session_end:0:0",
+        "eventName": "sessionEnd",
+        "trustStatus": "untrusted",
+        "hash": "present"
+      },
+      {
+        "key": "<HOME>\\AppData\\Local\\Temp\\claude\\-REPO-\\79250214-f20e-4d40-a2c1-a5a98eecf8ac\\scratchpad\\spikes\\cx-patch-faCTng\\home\\.codex\\hooks.json:user_prompt_submit:0:0",
+        "eventName": "userPromptSubmit",
+        "trustStatus": "untrusted",
+        "hash": "present"
+      },
+      {
+        "key": "<HOME>\\AppData\\Local\\Temp\\claude\\-REPO-\\79250214-f20e-4d40-a2c1-a5a98eecf8ac\\scratchpad\\spikes\\cx-patch-faCTng\\home\\.codex\\hooks.json:stop:0:0",
+        "eventName": "stop",
+        "trustStatus": "untrusted",
+        "hash": "present"
+      }
+    ]
+  },
+  "hooks": [
+    {
+      "label": "SessionStart",
+      "env": {
+        "CODEX_HOME": "<TMP>\\home\\.codex",
+        "CODEX_MANAGED_BY_NPM": "1",
+        "CODEX_MANAGED_PACKAGE_ROOT": "<HOME>\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex"
+      },
+      "payload": {
+        "session_id": "01a1938e-3bb1-7af0-a0d4-5dfbc9bfd175",
+        "transcript_path": "<TMP>\\home\\.codex\\sessions\\2026\\11\\01\\rollout-2026-11-01T01-32-14-01a1938e-3bb1-7af0-a0d4-5dfbc9bfd175.jsonl",
+        "cwd": "<TMP>\\project",
+        "hook_event_name": "SessionStart",
+        "model": "mock-model",
+        "permission_mode": "bypassPermissions",
+        "source": "startup"
+      }
+    },
+    {
+      "label": "UserPromptSubmit",
+      "env": {
+        "CODEX_HOME": "<TMP>\\home\\.codex",
+        "CODEX_MANAGED_BY_NPM": "1",
+        "CODEX_MANAGED_PACKAGE_ROOT": "<HOME>\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex"
+      },
+      "payload": {
+        "session_id": "01a1938e-3bb1-7af0-a0d4-5dfbc9bfd175",
+        "turn_id": "01a1938e-3c55-7331-8c61-a71f178f5cf7",
+        "transcript_path": "<TMP>\\home\\.codex\\sessions\\2026\\11\\01\\rollout-2026-11-01T01-32-14-01a1938e-3bb1-7af0-a0d4-5dfbc9bfd175.jsonl",
+        "cwd": "<TMP>\\project",
+        "hook_event_name": "UserPromptSubmit",
+        "model": "mock-model",
+        "permission_mode": "bypassPermissions",
+        "prompt": "SPIKE_PATCH add a file"
+      }
+    },
+    {
+      "label": "Stop",
+      "env": {
+        "CODEX_HOME": "<TMP>\\home\\.codex",
+        "CODEX_MANAGED_BY_NPM": "1",
+        "CODEX_MANAGED_PACKAGE_ROOT": "<HOME>\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex"
+      },
+      "payload": {
+        "session_id": "01a1938e-3bb1-7af0-a0d4-5dfbc9bfd175",
+        "turn_id": "01a1938e-3c55-7331-8c61-a71f178f5cf7",
+        "transcript_path": "<TMP>\\home\\.codex\\sessions\\2026\\11\\01\\rollout-2026-11-01T01-32-14-01a1938e-3bb1-7af0-a0d4-5dfbc9bfd175.jsonl",
+        "cwd": "<TMP>\\project",
+        "hook_event_name": "Stop",
+        "model": "mock-model",
+        "permission_mode": "bypassPermissions",
+        "stop_hook_active": false,
+        "last_assistant_message": "done"
+      }
+    },
+    {
+      "label": "SessionEnd",
+      "env": {
+        "CODEX_HOME": "<TMP>\\home\\.codex",
+        "CODEX_MANAGED_BY_NPM": "1",
+        "CODEX_MANAGED_PACKAGE_ROOT": "<HOME>\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex"
+      },
+      "payload": {
+        "session_id": "01a1938e-3bb1-7af0-a0d4-5dfbc9bfd175",
+        "transcript_path": "<TMP>\\home\\.codex\\sessions\\2026\\11\\01\\rollout-2026-11-01T01-32-14-01a1938e-3bb1-7af0-a0d4-5dfbc9bfd175.jsonl",
+        "cwd": "<TMP>\\project",
+        "hook_event_name": "SessionEnd",
+        "reason": "other"
+      }
+    }
+  ]
+}

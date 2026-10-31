@@ -543,6 +543,21 @@
       "rules": ["A"],
       "match": "env.CODEX_CA_CERTIFICATE",
       "reason": "P3.3: the engine's own CA variable, which users already set; the gateway honours it so provider calls work behind the same company certificate"
+    },
+    {
+      "path": "runtime/test/corpora/",
+      "rules": ["A"],
+      "reason": "MCP platform L0: held-out corpora model prompts and tool calls in the two tier-1 hosts (Claude Code and Codex) and name them as hosts; written clean-room and frozen (MANIFEST.json), so they can't be reworded"
+    },
+    {
+      "path": "runtime/test/fixtures/hosts/",
+      "rules": ["A"],
+      "reason": "MCP platform L0: hook payloads, transcripts and rollouts captured from the real host binaries, in their own field names"
+    },
+    {
+      "path": "tools/spikes/",
+      "rules": ["A"],
+      "reason": "MCP platform L0 spikes: scripts that drive the real host binaries (claude, codex) and their homes by name in throwaway folders"
     }
   ]
 }

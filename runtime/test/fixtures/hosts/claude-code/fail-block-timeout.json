@@ -1,0 +1,51 @@
+{
+  "host": "claude-code",
+  "version": "2.1.314",
+  "scenario": "fail-block-timeout",
+  "captured": "2026-10-31",
+  "os": "win32",
+  "outcome": {
+    "name": "fail-block-timeout",
+    "code": 0,
+    "hooks": "PreToolUse",
+    "permission_mode": "default",
+    "toolRan": false,
+    "toolResult": "\"PreToolUse:Bash hook error: [node \\\"<REPO>/tools/spikes/s-hooks/log-hook.mjs\\\" PreToolUse]: ",
+    "sysmsgInStdout": false,
+    "reasonInStdout": false,
+    "denials": "\"permission_denials\":[{\"tool_name\":\"Bash\",\"tool_use_id\":\"toolu_mock_1793475708696\",\"tool_input\":{\"command\":\"echo hello-from-bash\",\"description\":\"echo\"}}]",
+    "extra": {
+      "detached": false,
+      "child": false,
+      "hook-finished": false
+    }
+  },
+  "hooks": [
+    {
+      "label": "PreToolUse",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CONFIG_DIR": "<TMP>\\home\\.claude",
+        "CLAUDE_PROJECT_DIR": "<TMP>/project"
+      },
+      "payload": {
+        "session_id": "aec48704-c5df-4a73-8e67-0fceb2efbeed",
+        "transcript_path": "<TMP>\\home\\.claude\\projects\\-TMP--p-3wc8k9\\aec48704-c5df-4a73-8e67-0fceb2efbeed.jsonl",
+        "cwd": "<TMP>\\project",
+        "prompt_id": "a52f7ffb-2ca1-4990-b9cb-813237e47777",
+        "permission_mode": "default",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "echo hello-from-bash",
+          "description": "echo"
+        },
+        "tool_use_id": "toolu_mock_1793475708696"
+      }
+    }
+  ]
+}

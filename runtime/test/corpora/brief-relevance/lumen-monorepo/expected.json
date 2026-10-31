@@ -1,0 +1,31 @@
+{
+  "relevant": ["lumen-monorepo-01", "lumen-monorepo-02", "lumen-monorepo-03", "lumen-monorepo-04", "lumen-monorepo-05", "lumen-monorepo-06", "lumen-monorepo-07", "lumen-monorepo-08", "lumen-monorepo-09", "lumen-monorepo-21", "lumen-monorepo-24"],
+  "irrelevant": ["lumen-monorepo-10", "lumen-monorepo-12", "lumen-monorepo-13", "lumen-monorepo-14", "lumen-monorepo-17", "lumen-monorepo-18", "lumen-monorepo-20", "lumen-monorepo-23"],
+  "neutral": ["lumen-monorepo-11", "lumen-monorepo-15", "lumen-monorepo-16", "lumen-monorepo-19", "lumen-monorepo-22"],
+  "reasons": {
+    "lumen-monorepo-01": "How to run the ui package tests and the web app that depends on it.",
+    "lumen-monorepo-02": "The branch changes packages/ui and adds .changeset/quiet-owls-dance.md.",
+    "lumen-monorepo-03": "The branch exports DatePicker from packages/ui/src/index.ts and adds stories.",
+    "lumen-monorepo-04": "Matches DatePicker.test.tsx and the a11y test commit.",
+    "lumen-monorepo-05": "packages/ui/src/tokens/spacing.ts is a recent path.",
+    "lumen-monorepo-06": "The date-handling rule for a date picker component.",
+    "lumen-monorepo-07": "The branch adds DatePicker stories.",
+    "lumen-monorepo-08": "apps/web/src/app/bookings/new/page.tsx consumes the new export.",
+    "lumen-monorepo-09": "The DatePicker is built on Radix Popover.",
+    "lumen-monorepo-10": "Stale: the ui build moved to tsup (see -11).",
+    "lumen-monorepo-11": "Build command for the ui package; not needed during development.",
+    "lumen-monorepo-12": "Stale: dates moved to date-fns (see -06).",
+    "lumen-monorepo-13": "apps/api routes are an unrelated area.",
+    "lumen-monorepo-14": "apps/api database is an unrelated area.",
+    "lumen-monorepo-15": "Release flow; the changeset rule (-02) is what this branch needs.",
+    "lumen-monorepo-16": "Project-wide setup; harmless but generic.",
+    "lumen-monorepo-17": "Web auth is an unrelated area.",
+    "lumen-monorepo-18": "Email templates are an unrelated area.",
+    "lumen-monorepo-19": "Project-wide commit convention; harmless but generic.",
+    "lumen-monorepo-20": "Stale: styled-components was removed (see -21).",
+    "lumen-monorepo-21": "Styling approach for the new DatePicker.module.css.",
+    "lumen-monorepo-22": "Optional local cache; harmless but generic.",
+    "lumen-monorepo-23": "Feature flags are an unrelated area.",
+    "lumen-monorepo-24": "The booking page now uses DatePicker; dates must be converted to the venue timezone."
+  }
+}
