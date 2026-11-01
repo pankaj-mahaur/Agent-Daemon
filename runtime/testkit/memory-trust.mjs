@@ -3,12 +3,15 @@
 // Every writer stores a new note as pending (MCP launch plan D3), so a seed is
 // unaccepted until a test accepts it here.
 
-import { acceptFact, acceptLearning, reviewToken } from "../src/memory/review-service.mjs";
+import { acceptFact, acceptLearning, checkReviewToken } from "../src/memory/review-service.mjs";
 import { pendingSql } from "../src/memory/trust.mjs";
+
+/** The ancestry probe's answer in the user's own terminal, for tests that stand in for one. */
+export const TERMINAL = () => ({ verdict: "terminal", root: "test" });
 
 /** A review token as the user's own terminal gets one. */
 export function testReviewToken() {
-  const { token } = reviewToken({ env: {}, isTTY: () => true, ancestry: () => ({ agent: null }) });
+  const { token } = checkReviewToken({ env: {}, isTTY: () => true, ancestry: TERMINAL });
   return token;
 }
 

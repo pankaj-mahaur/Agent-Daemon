@@ -60,7 +60,7 @@ export const heldLine = (n) => `${n} memory notes are waiting or held back. Revi
  *           out?: (line:string)=>void }} deps
  * @returns {Promise<number>} exit code
  */
-export async function memoryHeld(sub, { ref, keys, handle, json = false, env = process.env, isTTY, io, out = (l) => console.log(l) }) {
+export async function memoryHeld(sub, { ref, keys, handle, json = false, env = process.env, isTTY, io, out = (l) => console.log(l), ancestry, dialog }) {
   if (!sub || sub === "list") {
     const rows = heldNotes(handle, keys);
     if (json) {
@@ -85,7 +85,7 @@ export async function memoryHeld(sub, { ref, keys, handle, json = false, env = p
     out(refused);
     return 2;
   }
-  const gate = reviewToken({ env, ...(isTTY ? { isTTY } : {}) });
+  const gate = await reviewToken({ env, ...(isTTY ? { isTTY } : {}), ...(ancestry ? { ancestry } : {}), ...(dialog ? { dialog } : {}), ask: io?.ask, out });
   if (gate.refused) {
     out(gate.refused);
     return 2;

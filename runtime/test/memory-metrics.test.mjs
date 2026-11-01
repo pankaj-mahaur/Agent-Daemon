@@ -19,7 +19,7 @@ const ep = await import("../src/memory/episodic.mjs");
 const { classifyCorrection, recordInjections, findRepeat, jaccard, mcpCaptureRef } = await import("../src/memory/metrics.mjs");
 const { applyLearnings } = await import("../src/digest/apply.mjs");
 const { runInteractiveReview } = await import("../src/review.mjs");
-const { acceptLearnings } = await import("../testkit/memory-trust.mjs");
+const { acceptLearnings, TERMINAL } = await import("../testkit/memory-trust.mjs");
 
 let handle;
 before(async () => {
@@ -171,7 +171,7 @@ test("two ineffective repeats queue one memory-reword proposal; accepting it rew
   assert.equal(rewords().length, 1);
   const file = rewords()[0];
   const out = [];
-  const base = { cwd: p.dir, handle, keys: [p.key], isTTY: () => true, out: (l) => out.push(String(l)), io: { ask: async () => "accept" }, editText: async () => "Apply database migrations only with the db tool; never edit the schema by hand." };
+  const base = { cwd: p.dir, handle, keys: [p.key], isTTY: () => true, ancestry: TERMINAL, out: (l) => out.push(String(l)), io: { ask: async () => "accept" }, editText: async () => "Apply database migrations only with the db tool; never edit the schema by hand." };
   // The guard: in an agent's shell nothing changes.
   assert.equal(await runInteractiveReview({ ...base, env: { AD_TOOL_SHELL: "1" }, accept: file }), 2);
   assert.equal(handle.get("SELECT status FROM learnings WHERE id = ?", [id]).status, "active");

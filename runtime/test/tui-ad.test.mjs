@@ -15,6 +15,7 @@ import { createApp } from "../src/tui/app.mjs";
 import { createRenderer } from "../src/tui/terminal/renderer.mjs";
 import { createInputDecoder } from "../src/tui/terminal/input.mjs";
 import { modelScreen } from "../testkit/screen.mjs";
+import { TERMINAL } from "../testkit/memory-trust.mjs";
 
 const FAKE = fileURLToPath(new URL("../testkit/fake-codex-app-server.mjs", import.meta.url));
 const command = { cmd: process.execPath, prefix: [FAKE] };
@@ -43,7 +44,7 @@ test("memory: search, recent, forget (archived, not deleted), profile, summary; 
   try {
     const memory = fakeMemory();
     // You type /memory forget in your own terminal: the review service's token (stood in for here).
-    const ad = createAdLayer({ cwd, memory, review: { env: {}, isTTY: () => true, ancestry: () => ({ agent: null }) } });
+    const ad = createAdLayer({ cwd, memory, review: { env: {}, isTTY: () => true, ancestry: TERMINAL } });
     const found = await ad.memory("search", "timers");
     assert.match(found[1], /^#7 \[gotcha\] fake timers break refresh$/);
     assert.deepEqual(memory.sql[0], ["search", "timers", { limit: 10, projectSlug: `slug:${cwd}` }]);

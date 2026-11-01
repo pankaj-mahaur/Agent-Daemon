@@ -24,6 +24,8 @@ const short = (t, n = 140) => {
 };
 
 // review: what the review service's token checks ({ env, isTTY, ancestry }); tests stand in for the terminal.
+const TUI_NO_CODE = "in an editor's terminal, forgetting needs ad review's dialog code, which ad tui can't ask for yet. Run ad tui in a terminal outside your editor.";
+
 export function createAdLayer({ cwd, home = homedir(), memory = null, cli = null, spawnFn = spawn, now = () => Date.now(), review = {} } = {}) {
   const slug = memory?.projectSlug ? memory.projectSlug(cwd) : null;
   const adDir = path.join(cwd, ".agent-daemon");
@@ -82,7 +84,8 @@ export function createAdLayer({ cwd, home = homedir(), memory = null, cli = null
       // Only this project's (or global) learnings: an id from another project is left alone. You
       // typed it here, in your own terminal: the review service's token (memory/review-service.mjs).
       const { archiveLearning, reviewToken } = await import("../memory/review-service.mjs");
-      const gate = reviewToken(review);
+      // ad tui can't ask for the dialog code yet (an editor's terminal, a broken chain): say where it works.
+      const gate = await reviewToken({ dialog: async () => ({ ok: false, text: TUI_NO_CODE }), ...review });
       if (gate.refused) return [`/memory forget: ${gate.refused}`];
       const changed = archiveLearning(handle, gate.token, id, slug);
       return [changed ? `Forgot #${id}: it won't be recalled again.` : `No active learning #${id}.`];

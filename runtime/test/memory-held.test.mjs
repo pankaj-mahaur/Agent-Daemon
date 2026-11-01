@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { TERMINAL } from "../testkit/memory-trust.mjs";
 
 const ROOT = mkdtempSync(path.join(tmpdir(), "ad-held-"));
 process.env.HOME = ROOT;
@@ -55,7 +56,7 @@ test("accept, release and drop refuse in an agent's shell and without a TTY; not
   const { h, pending } = await seed();
   for (const sub of ["accept", "release", "drop"]) {
     const c = capture();
-    assert.equal(await memoryHeld(sub, { ref: `L${pending}`, keys: [KEY], handle: h, env: { AD_TOOL_SHELL: "1" }, isTTY: tty, io: answer(`L${pending}`), out: c.out }), 2);
+    assert.equal(await memoryHeld(sub, { ref: `L${pending}`, keys: [KEY], handle: h, env: { AD_TOOL_SHELL: "1" }, isTTY: tty, ancestry: TERMINAL, io: answer(`L${pending}`), out: c.out }), 2);
     assert.match(c.lines.join("\n"), new RegExp(`ad memory held ${sub} only runs in your own terminal, not from an agent's shell\\.`));
     const c2 = capture();
     assert.equal(await memoryHeld(sub, { ref: `L${pending}`, keys: [KEY], handle: h, env: {}, isTTY: () => false, io: answer(`L${pending}`), out: c2.out }), 2);
@@ -65,27 +66,27 @@ test("accept, release and drop refuse in an agent's shell and without a TTY; not
 
 test("accept needs the typed id, then the note is active", async () => {
   const { h, pending } = await seed();
-  assert.equal(await memoryHeld("accept", { ref: `L${pending}`, keys: [KEY], handle: h, env: {}, isTTY: tty, io: answer("yes"), out: () => {} }), 1);
+  assert.equal(await memoryHeld("accept", { ref: `L${pending}`, keys: [KEY], handle: h, env: {}, isTTY: tty, ancestry: TERMINAL, io: answer("yes"), out: () => {} }), 1);
   assert.equal(statusOf(h, pending).status, "pending", "a wrong answer changes nothing");
-  assert.equal(await memoryHeld("accept", { ref: `L${pending}`, keys: [KEY], handle: h, env: {}, isTTY: tty, io: answer(`L${pending}`), out: () => {} }), 0);
+  assert.equal(await memoryHeld("accept", { ref: `L${pending}`, keys: [KEY], handle: h, env: {}, isTTY: tty, ancestry: TERMINAL, io: answer(`L${pending}`), out: () => {} }), 0);
   assert.equal(statusOf(h, pending).status, "active");
 });
 
 test("release brings back an injection-held note but never one holding a secret; drop clears the text", async () => {
   const { h, injected, secret } = await seed();
   const c = capture();
-  assert.equal(await memoryHeld("release", { ref: `L${secret}`, keys: [KEY], handle: h, env: {}, isTTY: tty, io: answer(`L${secret}`), out: c.out }), 1);
+  assert.equal(await memoryHeld("release", { ref: `L${secret}`, keys: [KEY], handle: h, env: {}, isTTY: tty, ancestry: TERMINAL, io: answer(`L${secret}`), out: c.out }), 1);
   assert.match(c.lines.join("\n"), new RegExp(`Note L${secret} holds a secret, so it can't go back into memory\\. Drop it: ad memory held drop L${secret}`));
   assert.equal(statusOf(h, secret).status, "quarantined");
-  assert.equal(await memoryHeld("release", { ref: `L${injected}`, keys: [KEY], handle: h, env: {}, isTTY: tty, io: answer(`L${injected}`), out: () => {} }), 0);
+  assert.equal(await memoryHeld("release", { ref: `L${injected}`, keys: [KEY], handle: h, env: {}, isTTY: tty, ancestry: TERMINAL, io: answer(`L${injected}`), out: () => {} }), 0);
   assert.equal(statusOf(h, injected).status, "active");
-  assert.equal(await memoryHeld("drop", { ref: `L${secret}`, keys: [KEY], handle: h, env: {}, isTTY: tty, io: answer(`L${secret}`), out: () => {} }), 0);
+  assert.equal(await memoryHeld("drop", { ref: `L${secret}`, keys: [KEY], handle: h, env: {}, isTTY: tty, ancestry: TERMINAL, io: answer(`L${secret}`), out: () => {} }), 0);
   assert.deepEqual({ ...statusOf(h, secret) }, { status: "rejected", text: "[dropped]" });
 });
 
 test("an id from another project can't be accepted from here", async () => {
   const { h, other } = await seed();
   const c = capture();
-  assert.equal(await memoryHeld("accept", { ref: `L${other}`, keys: [KEY], handle: h, env: {}, isTTY: tty, io: answer(`L${other}`), out: c.out }), 1);
+  assert.equal(await memoryHeld("accept", { ref: `L${other}`, keys: [KEY], handle: h, env: {}, isTTY: tty, ancestry: TERMINAL, io: answer(`L${other}`), out: c.out }), 1);
   assert.equal(statusOf(h, other).status, "pending");
 });

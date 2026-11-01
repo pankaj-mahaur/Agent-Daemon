@@ -16,8 +16,7 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 ### Security
 
-- Only the review service accepts a memory note, and only with a token from your own terminal: a TTY, not the agent's shell. No environment variable stands in for the terminal: the internal `AD_INTERNAL_TEST_CONFIRM` that `ad review --import` used to take is gone.
-
+- Only the review service accepts a memory note, and only with a token from your own terminal: a TTY, not the agent's shell, and no agent process (Claude Code, Codex, Gemini, Copilot, Cursor's agent, OpenCode) above it. In an editor's terminal, where an editor's agent can run commands too, ad shows a one-time code in a dialog for you to type back. No environment variable stands in for the terminal: the internal `AD_INTERNAL_TEST_CONFIRM` that `ad review --import` used to take is gone. It is a gate against accidents and prompt injection, not a sandbox: an agent that can drive a terminal or read your screen can still get past it.
 ## [3.1.0] — 2026-10-30
 
 Agent Daemon 3.1: several accounts and providers, with switching and fallback when a limit runs out; a fullscreen terminal UI (early, off by default); ad's memory in other agents; moving ad to another computer; and a round of security and isolation hardening.

@@ -61,6 +61,7 @@ function rebundle(file, change) {
   return writeArchive([{ name: "manifest.json", data: JSON.stringify(m) }, ...files]);
 }
 import { createHash } from "node:crypto";
+import { TERMINAL } from "../testkit/memory-trust.mjs";
 const require_sha = (b) => createHash("sha256").update(b).digest("hex");
 
 // A hand-built tar.gz with any names, for names the writer would never produce.
@@ -292,12 +293,12 @@ test("ad review --import: refused in an agent's shell and without a terminal; a 
   await runImport(plan, { env: w.env });
   const id = plan.importId;
   const out = { write: () => true };
-  await assert.rejects(reviewImport(id, { acceptAll: true, env: { ...w.env, AD_TOOL_SHELL: "1" }, isTTY: true, ask: async () => id, out }), (e) => e.exitCode === 2);
+  await assert.rejects(reviewImport(id, { acceptAll: true, env: { ...w.env, AD_TOOL_SHELL: "1" }, isTTY: true, ancestry: TERMINAL, ask: async () => id, out }), (e) => e.exitCode === 2);
   await assert.rejects(reviewImport(id, { acceptAll: true, env: w.env, isTTY: false, ask: async () => id, out }), (e) => e.message === IMPORT_TEXTS.REVIEW_TTY);
   // The old test override no longer stands in for a terminal (MCP launch plan D3).
   await assert.rejects(reviewImport(id, { acceptAll: true, env: { ...w.env, AD_INTERNAL_TEST_CONFIRM: id }, isTTY: false, ask: async () => id, out }), (e) => e.message === IMPORT_TEXTS.REVIEW_TTY);
-  assert.equal((await reviewImport(id, { acceptAll: true, env: w.env, isTTY: true, ask: async () => "nope", out })).changed, false);
-  const r = await reviewImport(id, { acceptAll: true, env: w.env, isTTY: true, ask: async () => id, out });
+  assert.equal((await reviewImport(id, { acceptAll: true, env: w.env, isTTY: true, ancestry: TERMINAL, ask: async () => "nope", out })).changed, false);
+  const r = await reviewImport(id, { acceptAll: true, env: w.env, isTTY: true, ancestry: TERMINAL, ask: async () => id, out });
   assert.equal(r.left, 0);
   const db = await dbOf(w);
   assert.deepEqual([...new Set(db.prepare("SELECT status FROM learnings").all().map((x) => x.status))], ["active"]);

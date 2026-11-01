@@ -26,7 +26,7 @@ const ep = await import("../src/memory/episodic.mjs");
 const { captureExplicit, createLimiter } = await import("../src/memory/capture.mjs");
 const { runInteractiveReview, promoteFact } = await import("../src/review.mjs");
 const { driveServer, text } = await import("../testkit/mcp-client.mjs");
-const { acceptFacts, acceptLearnings } = await import("../testkit/memory-trust.mjs");
+const { acceptFacts, acceptLearnings, TERMINAL } = await import("../testkit/memory-trust.mjs");
 
 // One word per row of A, found nowhere else.
 const W = { learning: "zephyrquill", fact: "obsidianmarrow", global: "cobaltlantern", agent: "vermilionsextant" };
@@ -113,11 +113,11 @@ test("before any accept: B, the folder sharing A's slug and an unbound server ge
 test("after a guarded accept of the fact and the global row, B sees exactly those two", async () => {
   const lines = [];
   const typed = (...answers) => ({ ask: () => Promise.resolve(answers.shift() ?? "") });
-  assert.equal(await promoteFact({ ref: `fact:${factId}`, handle, env: {}, isTTY: () => true, io: typed("accept"), out: (l) => lines.push(l) }), 0, lines.join("\n"));
+  assert.equal(await promoteFact({ ref: `fact:${factId}`, handle, env: {}, isTTY: () => true, ancestry: TERMINAL, io: typed("accept"), out: (l) => lines.push(l) }), 0, lines.join("\n"));
   // --global lists 3.0's automatic globals: accept the one from A; the agent's request is a
   // separate proposal and stays pending.
   const keys = [ep.projectSlug(B)];
-  const code = await runInteractiveReview({ cwd: B, handle, keys, isTTY: () => true, env: {}, out: (l) => lines.push(String(l)), global: true, io: typed("a", "accept") });
+  const code = await runInteractiveReview({ cwd: B, handle, keys, isTTY: () => true, ancestry: TERMINAL, env: {}, out: (l) => lines.push(String(l)), global: true, io: typed("a", "accept") });
   assert.equal(code, 0, lines.join("\n"));
   assert.ok(handle.get("SELECT global_accepted_at FROM learnings WHERE content_hash = 'claim-g1'").global_accepted_at, lines.join("\n"));
 

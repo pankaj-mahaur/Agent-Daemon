@@ -11,6 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { TERMINAL } from "../testkit/memory-trust.mjs";
 
 const HOME = await fs.mkdtemp(path.join(os.tmpdir(), "ad-review-home-"));
 const WORK = await fs.mkdtemp(path.join(os.tmpdir(), "ad-review-work-"));
@@ -58,7 +59,7 @@ const lines = () => {
 };
 const review = (p, extra) => {
   const o = lines();
-  return runInteractiveReview({ cwd: p.dir, handle, keys: p.keys, isTTY: () => true, env: {}, out: o.push, ...extra }).then((code) => ({ code, out: o.out.join("\n") }));
+  return runInteractiveReview({ cwd: p.dir, handle, keys: p.keys, isTTY: () => true, ancestry: TERMINAL, env: {}, out: o.push, ...extra }).then((code) => ({ code, out: o.out.join("\n") }));
 };
 const cli = (args, { env = {}, cwd } = {}) =>
   new Promise((resolve) => {
@@ -90,7 +91,7 @@ test("in an agent's tool shell every accept path refuses and nothing changes", a
   handle.run("INSERT INTO user_facts (category, text, projects) VALUES ('tool', 'prefers pnpm everywhere', ?)", [JSON.stringify(p.keys)]);
   const fact = handle.get("SELECT id FROM user_facts WHERE text = 'prefers pnpm everywhere'").id;
   const o = lines();
-  assert.equal(await promoteFact({ ref: `fact:${fact}`, handle, env: { AD_TOOL_SHELL: "1" }, isTTY: () => true, io: io("accept"), out: o.push }), 2);
+  assert.equal(await promoteFact({ ref: `fact:${fact}`, handle, env: { AD_TOOL_SHELL: "1" }, isTTY: () => true, ancestry: TERMINAL, io: io("accept"), out: o.push }), 2);
   assert.equal(handle.get("SELECT global_accepted_at FROM user_facts WHERE id = ?", [fact]).global_accepted_at, null);
 });
 
@@ -211,13 +212,13 @@ test("ad memory promote fact:<id> from a terminal, typed", async () => {
   const fact = handle.get("SELECT id FROM user_facts WHERE text = 'uses zed as the editor'").id;
   const unreviewed = handle.get("SELECT id FROM user_facts WHERE text = 'an unreviewed fact'").id;
   const o = lines();
-  assert.equal(await promoteFact({ ref: `fact:${unreviewed}`, handle, env: {}, isTTY: () => true, io: io("accept"), out: o.push }), 1);
+  assert.equal(await promoteFact({ ref: `fact:${unreviewed}`, handle, env: {}, isTTY: () => true, ancestry: TERMINAL, io: io("accept"), out: o.push }), 1);
   assert.equal(handle.get("SELECT global_accepted_at FROM user_facts WHERE id = ?", [unreviewed]).global_accepted_at, null);
-  assert.equal(await promoteFact({ ref: `fact:${fact}`, handle, env: {}, isTTY: () => true, io: io("no"), out: o.push }), 1);
+  assert.equal(await promoteFact({ ref: `fact:${fact}`, handle, env: {}, isTTY: () => true, ancestry: TERMINAL, io: io("no"), out: o.push }), 1);
   assert.equal(handle.get("SELECT global_accepted_at FROM user_facts WHERE id = ?", [fact]).global_accepted_at, null);
-  assert.equal(await promoteFact({ ref: `fact:${fact}`, handle, env: {}, isTTY: () => true, io: io("accept"), out: o.push }), 0);
+  assert.equal(await promoteFact({ ref: `fact:${fact}`, handle, env: {}, isTTY: () => true, ancestry: TERMINAL, io: io("accept"), out: o.push }), 0);
   assert.ok(handle.get("SELECT global_accepted_at FROM user_facts WHERE id = ?", [fact]).global_accepted_at);
-  assert.equal(await promoteFact({ ref: "nope", handle, env: {}, isTTY: () => true, io: io(), out: o.push }), 1);
+  assert.equal(await promoteFact({ ref: "nope", handle, env: {}, isTTY: () => true, ancestry: TERMINAL, io: io(), out: o.push }), 1);
 });
 
 test("a proposal for another project's note is refused; a forged second meta line doesn't count", async () => {

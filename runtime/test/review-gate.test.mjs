@@ -25,7 +25,7 @@ after(() => {
 });
 
 const PROJECT = "-work-shop-app";
-const terminal = { env: {}, isTTY: () => true, ancestry: () => ({ agent: null }) };
+const terminal = { env: {}, isTTY: () => true, ancestry: () => ({ verdict: "terminal", root: "windowsterminal" }) };
 
 function sources(dir = SRC, out = []) {
   for (const name of readdirSync(dir)) {
@@ -37,16 +37,28 @@ function sources(dir = SRC, out = []) {
 }
 const rel = (p) => path.relative(SRC, p).split(path.sep).join("/");
 
-test("the token: refused in the agent's shell, without a terminal, and under an agent", () => {
-  assert.ok(svc.reviewToken({ ...terminal, env: { AD_TOOL_SHELL: "1" } }).refused);
-  assert.ok(svc.reviewToken({ ...terminal, isTTY: () => false }).refused);
-  assert.match(svc.reviewToken({ ...terminal, ancestry: () => ({ agent: "claude" }) }).refused, /under an agent \(claude\)/);
-  assert.ok(svc.reviewToken(terminal).token);
+test("the token: refused in the agent's shell, without a terminal, and under an agent", async () => {
+  const never = async () => assert.fail("no dialog for a refused terminal");
+  assert.ok((await svc.reviewToken({ ...terminal, env: { AD_TOOL_SHELL: "1" }, dialog: never })).refused);
+  assert.ok((await svc.reviewToken({ ...terminal, isTTY: () => false, dialog: never })).refused);
+  assert.match((await svc.reviewToken({ ...terminal, ancestry: () => ({ verdict: "agent", agent: "claude" }), dialog: never })).refused, /under an agent \(claude\)/);
+  assert.ok((await svc.reviewToken({ ...terminal, dialog: never })).token, "a real terminal needs no code");
 });
 
-test("no environment variable stands in for the terminal", () => {
+test("an editor's terminal or a broken chain: a token only with the dialog code typed back", async () => {
+  for (const found of [{ verdict: "editor", editor: "zed" }, { verdict: "unknown", why: "no-root" }]) {
+    const at = { ...terminal, ancestry: () => found };
+    assert.deepEqual(svc.checkReviewToken(at), { needsCode: found }, "the sync check never issues one");
+    const asked = [];
+    assert.ok((await svc.reviewToken({ ...at, dialog: async (o) => (asked.push(o.found), { ok: true }) })).token);
+    assert.deepEqual(asked, [found]);
+    assert.equal((await svc.reviewToken({ ...at, dialog: async () => ({ ok: false, text: "the code didn't match" }) })).refused, "the code didn't match");
+  }
+});
+
+test("no environment variable stands in for the terminal", async () => {
   for (const env of [{ AD_INTERNAL_TEST_CONFIRM: "x" }, { CI: "1" }, { AD_REVIEW_YES: "1" }, { FORCE_TTY: "1" }]) {
-    assert.ok(svc.reviewToken({ ...terminal, env, isTTY: () => false }).refused, JSON.stringify(env));
+    assert.ok((await svc.reviewToken({ ...terminal, env, isTTY: () => false })).refused, JSON.stringify(env));
   }
 });
 
@@ -57,7 +69,7 @@ test("an accept without a token, or with a forged one, throws and changes nothin
     assert.throws(() => svc.acceptLearning(h, forged, id), /review token/);
   }
   assert.equal(h.get(`SELECT COUNT(*) AS n FROM learnings WHERE id = ? AND ${acceptedSql()}`, [id]).n, 0);
-  svc.acceptLearning(h, svc.reviewToken(terminal).token, id);
+  svc.acceptLearning(h, (await svc.reviewToken(terminal)).token, id);
   assert.equal(h.get(`SELECT COUNT(*) AS n FROM learnings WHERE id = ? AND ${acceptedSql()}`, [id]).n, 1);
 });
 

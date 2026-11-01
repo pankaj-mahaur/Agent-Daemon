@@ -4,15 +4,17 @@
 // Each write needs a token from reviewToken(), issued only in the user's own terminal:
 //   - a real TTY on stdin and stdout;
 //   - not the agent's tool shell (AD_TOOL_SHELL=1);
-//   - no agent process among the ancestors (the ancestry probe; L1.6 brings the real
-//     process-tree check, until then the probe passes).
-// No environment variable stands in for a check. Tests inject isTTY and the probe as
-// functions; review-gate.test.mjs holds the in-process callers to the CLI review verbs.
-// It is a gate against accidents and prompt injection, not a sandbox.
+//   - no agent process above it (memory/ancestry.mjs), and in an editor's terminal or a
+//     broken process chain, the code from a native dialog typed back (dialog-code.mjs).
+// No environment variable stands in for a check. Tests inject isTTY, the probe and the
+// dialog as functions; review-gate.test.mjs holds the in-process callers to the CLI
+// review verbs. It is a gate against accidents and prompt injection, not a sandbox.
 
 import { stdin as input, stdout as output } from "node:process";
 import { learningContentHash, scopedContentHash } from "./sqlite.mjs";
 import { purgeLearnings } from "./purge.mjs";
+import { probeAncestry } from "./ancestry.mjs";
+import { confirmByDialog } from "./dialog-code.mjs";
 
 const issued = new WeakSet();
 
@@ -23,17 +25,33 @@ export const REVIEW_TEXTS = Object.freeze({
 });
 
 const realTTY = () => Boolean(input.isTTY && output.isTTY);
-const noProbe = () => ({ agent: null });
 
-/** → { token } in the user's own terminal, else { refused: text }. */
-export function reviewToken({ env = process.env, isTTY = realTTY, ancestry = noProbe } = {}) {
-  if (env.AD_TOOL_SHELL === "1") return { refused: REVIEW_TEXTS.toolShell };
-  if (!isTTY()) return { refused: REVIEW_TEXTS.noTty };
-  const found = ancestry();
-  if (found?.agent) return { refused: REVIEW_TEXTS.agent(found.agent) };
+function mint() {
   const token = Object.freeze({ issuedAt: Date.now() });
   issued.add(token);
-  return { token };
+  return token;
+}
+
+/**
+ * The checks that need no answer from the user. → { token }, { refused: text }, or
+ * { needsCode: found } when the terminal must prove itself with the dialog code (no
+ * token is issued then; reviewToken asks for the code).
+ */
+export function checkReviewToken({ env = process.env, isTTY = realTTY, ancestry = probeAncestry } = {}) {
+  if (env.AD_TOOL_SHELL === "1") return { refused: REVIEW_TEXTS.toolShell };
+  if (!isTTY()) return { refused: REVIEW_TEXTS.noTty };
+  const found = ancestry() ?? { verdict: "unknown" };
+  if (found.verdict === "agent") return { refused: REVIEW_TEXTS.agent(found.agent) };
+  if (found.verdict !== "terminal") return { needsCode: found };
+  return { token: mint() };
+}
+
+/** → { token } in the user's own terminal (asking for the dialog code when needed), else { refused: text }. */
+export async function reviewToken({ ask, out, dialog = confirmByDialog, ...checks } = {}) {
+  const first = checkReviewToken(checks);
+  if (!first.needsCode) return first;
+  const proved = await dialog({ ask, out, found: first.needsCode });
+  return proved?.ok ? { token: mint() } : { refused: proved?.text ?? "accepting notes needs the dialog code." };
 }
 
 function must(token) {

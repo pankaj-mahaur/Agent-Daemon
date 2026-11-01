@@ -804,12 +804,12 @@ export async function verifyImport(importId, { env = process.env } = {}) {
  * review service) or rejected, in your own terminal with a typed confirmation; never from an
  * agent's shell. No environment variable stands in for the terminal: tests pass isTTY.
  */
-export async function reviewImport(importId, { acceptAll = false, env = process.env, isTTY = Boolean(process.stdin.isTTY && process.stdout.isTTY), ask, out = process.stdout } = {}) {
+export async function reviewImport(importId, { acceptAll = false, env = process.env, isTTY = Boolean(process.stdin.isTTY && process.stdout.isTTY), ask, out = process.stdout, ancestry, dialog } = {}) {
   if (env.AD_TOOL_SHELL === "1") throw fail("IMPORT_REFUSED", IMPORT_TEXTS.REVIEW_SHELL, { exitCode: 2 });
   if (!isTTY) throw fail("IMPORT_REFUSED", IMPORT_TEXTS.REVIEW_TTY, { exitCode: 2 });
   const { reviewToken, acceptLearning, acceptFact } = await import("../memory/review-service.mjs");
-  const gate = reviewToken({ env, isTTY: () => isTTY });
-  if (gate.refused) throw fail("IMPORT_REFUSED", IMPORT_TEXTS.REVIEW_SHELL, { exitCode: 2 });
+  const gate = await reviewToken({ env, isTTY: () => isTTY, ...(ancestry ? { ancestry } : {}), ...(dialog ? { dialog } : {}), ask, out: (l) => out.write(`${l}\n`) });
+  if (gate.refused) throw fail("IMPORT_REFUSED", gate.refused, { exitCode: 2 });
   const { open } = await import("../memory/sqlite.mjs");
   const saved = process.env.AD_ROOT;
   if (env.AD_ROOT) process.env.AD_ROOT = env.AD_ROOT;

@@ -58,14 +58,20 @@ const realTTY = () => Boolean(input.isTTY && output.isTTY);
 
 /** The D49 guard for accept paths: the refusal text, or null. */
 export function reviewGuard({ env = process.env, isTTY = realTTY } = {}) {
-  return gate({ env, isTTY }).refused ?? null;
+  if (env.AD_TOOL_SHELL === "1") return GUARD_TEXTS.toolShell;
+  if (!isTTY()) return GUARD_TEXTS.noTty;
+  return null;
 }
 
-// The review service's token (memory/review-service.mjs) with ad review's own wording.
-function gate({ env, isTTY }) {
-  if (env.AD_TOOL_SHELL === "1") return { refused: GUARD_TEXTS.toolShell };
-  if (!isTTY()) return { refused: GUARD_TEXTS.noTty };
-  return reviewToken({ env, isTTY });
+// What a test stands in for: the ancestry probe and the dialog (memory/review-service.mjs).
+const standIns = (o) => ({ ...(o.ancestry ? { ancestry: o.ancestry } : {}), ...(o.dialog ? { dialog: o.dialog } : {}) });
+
+// The review service's token with ad review's own wording; asks for the dialog code when the
+// terminal must prove itself (an editor's terminal, a broken process chain).
+async function gate({ env, isTTY, ask, out, ...o }) {
+  const refused = reviewGuard({ env, isTTY });
+  if (refused) return { refused };
+  return reviewToken({ env, isTTY, ask, out, ...standIns(o) });
 }
 
 /** Where this project's proposals are, in review order. */
@@ -253,16 +259,6 @@ export async function runInteractiveReview(opts) {
     out(GUARD_TEXTS.yes);
     return 2;
   }
-  let token = null;
-  if (accepting) {
-    const g = gate({ env, isTTY });
-    if (g.refused) {
-      out(g.refused);
-      return 2;
-    }
-    token = g.token;
-  }
-
   const store = async () => {
     const handle = opts.handle ?? (await (await import("./memory/episodic.mjs")).db());
     const keys = opts.keys ?? (await (await import("./memory/scope.mjs")).hookProjectKeys(opts.cwd));
@@ -271,6 +267,15 @@ export async function runInteractiveReview(opts) {
   const rl = opts.io ? null : readline.createInterface({ input, output });
   const question = opts.io ? opts.io.ask : ask(rl);
   try {
+    let token = null;
+    if (accepting) {
+      const g = await gate({ env, isTTY, ask: question, out, ...standIns(opts) });
+      if (g.refused) {
+        out(g.refused);
+        return 2;
+      }
+      token = g.token;
+    }
     if (opts.global) return await reviewGlobal({ ...(await store()), question, out, token });
     const entries = await listProposals(opts.cwd);
     if (opts.reject) return await rejectByFlag({ entries, name: opts.reject, out, store, env });
@@ -454,7 +459,7 @@ async function reviewLoop({ entries, opts, store, question, out, env, isTTY }) {
 
     if (decision === "accept" && meta) {
       // A memory note: the D49 guard, then the user types the confirmation.
-      const g = gate({ env, isTTY });
+      const g = await gate({ env, isTTY, ask: question, out, ...standIns(opts) });
       if (g.refused) {
         out(g.refused);
         return 2;
@@ -655,13 +660,13 @@ function summarize(out, stats, remaining) {
  * `ad memory promote fact:<id>`: make a user fact apply in every project.
  * Guarded like the review accepts; the user types "accept".
  */
-export async function promoteFact({ ref, handle, env = process.env, isTTY = realTTY, io, out = (l) => console.log(l) }) {
+export async function promoteFact({ ref, handle, env = process.env, isTTY = realTTY, io, out = (l) => console.log(l), ancestry, dialog }) {
   const m = /^fact:(\d+)$/.exec(String(ref ?? ""));
   if (!m) {
     out("Usage: ad memory promote fact:<id>");
     return 1;
   }
-  const g = gate({ env, isTTY });
+  const g = await gate({ env, isTTY, ask: io?.ask, out, ...standIns({ ancestry, dialog }) });
   if (g.refused) {
     out(g.refused.replace(/^ad review/, "ad memory promote"));
     return 2;

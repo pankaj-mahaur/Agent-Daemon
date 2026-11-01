@@ -128,6 +128,18 @@
       "reason": "the memory schema's comment lists the session adapter ids; `codex` is the adapter for the user's own Codex"
     },
     {
+      "path": "runtime/src/memory/ancestry.mjs",
+      "rules": ["A"],
+      "match": "\"codex\"|\\]codex",
+      "reason": "the review gate refuses under an agent process; the user's own Codex CLI is one of them, matched by its executable and npm package name"
+    },
+    {
+      "path": "runtime/test/memory-ancestry.test.mjs",
+      "rules": ["A"],
+      "match": "codex",
+      "reason": "agent-detection fixtures: the process chain of the user's own Codex CLI (its executable and npm package), as S-REVIEW-TTY captured it"
+    },
+    {
       "path": "runtime/test/fixtures/db/v3.1.0-memory.sql",
       "rules": ["A"],
       "match": "-- 'claude-code' \\| 'cline' \\| 'cursor' \\| 'codex' \\| 'aider'",
@@ -480,8 +492,8 @@
     {
       "path": "docs/troubleshooting.md",
       "rules": ["A"],
-      "match": "✗ Codex: …|Codex's `mcp_servers`|Codex: start a new session",
-      "reason": "the memory installer's messages and the Codex host's restart step"
+      "match": "✗ Codex: …|Codex's `mcp_servers`|Codex: start a new session|\\(Claude Code, Codex, Gemini",
+      "reason": "the memory installer's messages, the Codex host's restart step, and the agents the review gate refuses under (the user's own Codex CLI is one)"
     },
     {
       "path": "mcp/agent-daemon-memory/README.md",

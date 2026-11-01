@@ -673,12 +673,12 @@ For "The engine reported a problem", inspect those details first. `ad doctor` sh
 ## 45. A note I expected doesn't show up in memory
 
 **Cause:** one of these, by design:
-- it was written by the agent about itself (from its own turn), so it waits as **pending** for your review;
+- it waits as **pending** for your review: every note does, including what ad's hooks captured from your prompts (a hook can't tell a typed prompt from a scheduled one or another agent's text);
 - the injection screen flagged it, or it held a provider key, so it is **held back** (`ad memory scan` holds back older notes like this once);
 - it belongs to another project, or it was a "global" note from ad 3.0 written in another project (those stay in their project);
 - it is a user fact observed in another project.
 
-**Fix:** `ad memory held` lists what is waiting or held back in this project. Run it in your own terminal: `ad memory held accept L12` serves a waiting note, `release` brings back one the injection screen held (never one holding a secret), `drop` clears it; each asks you to type the id. Or say it again in your own words, or use `/remember` in `ad tui`: what you type yourself applies at once.
+**Fix:** `ad memory held` lists what is waiting or held back in this project. Run it in your own terminal: `ad memory held accept L12` serves a waiting note, `release` brings back one the injection screen held (never one holding a secret), `drop` clears it; each asks you to type the id. Saying the note again doesn't accept it: only you do, in review.
 
 ## 46. `ad doctor` says older notes from folders that shared one key reach neither
 
@@ -726,13 +726,17 @@ See [harness.md](harness.md#working-in-your-home-folder).
 
 **Cause:** a note the agent recorded is **pending** until you accept it: only this project's `memory_search` and `memory_get` show it, marked `(unreviewed)`. A note it asked to make cross-project also waits for a second OK.
 
-**Fix:** run `ad review` in your own terminal and accept it (type `accept`), or `ad review --accept <file>` / `--accept-all`. Saying the same note yourself also accepts it.
+**Fix:** run `ad review` in your own terminal and accept it (type `accept`), or `ad review --accept <file>` / `--accept-all`, or `ad memory held accept <id>`. Saying the same note again doesn't accept it.
 
-## 52. `ad review: accepting notes can't run from the agent's own shell` or `… needs an interactive terminal`
+## 52. `ad review: accepting notes can't run from the agent's own shell`, `… needs an interactive terminal`, `… under an agent (claude)`, or it asks for a code from a dialog
 
-**Cause:** accepting a memory note changes what reaches your sessions, so only you can do it. `ad review` (and `ad memory promote`, `ad memory held accept`) refuse inside ad's engine tool shells and when stdin or stdout isn't a terminal; there is no `--yes` and no environment variable that skips it.
+**Cause:** accepting a memory note changes what reaches your sessions, so only you can do it. `ad review` (and `ad memory promote`, `ad memory held accept`, `ad review --import`) refuse:
+- inside ad's engine tool shells, and when stdin or stdout isn't a terminal;
+- when an agent process (Claude Code, Codex, Gemini, Copilot, Cursor's agent, OpenCode) started the terminal, directly or further up.
 
-**Fix:** run it yourself in a terminal window (not through the agent, not piped). Listing works anywhere: plain `ad review` without a terminal lists what is queued.
+In an editor's terminal (VS Code, Cursor, Zed, JetBrains), where an editor's agent can run commands too, or when ad can't tell which terminal started it (a closed parent, tmux, `setsid`), ad shows a code in a dialog that you type back. There is no `--yes` and no environment variable that skips any of this.
+
+**Fix:** run it yourself in a terminal window (not through the agent, not piped), and type the dialog's code when asked. `… none can be shown` means no dialog could open (no desktop session, or Linux without `zenity`): run it in a terminal outside your editor. `/memory forget` in `ad tui` can't ask for the code yet: in an editor's terminal, run `ad tui` in a terminal outside the editor to forget a note. Listing works anywhere: plain `ad review` without a terminal lists what is queued.
 
 ## 53. The memory installer refused my config
 
