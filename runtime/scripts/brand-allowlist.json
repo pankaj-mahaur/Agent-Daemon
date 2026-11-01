@@ -307,8 +307,8 @@
     {
       "path": "SECURITY.md",
       "rules": ["A"],
-      "match": "Claude Code, Cursor, Codex|Claude Code / Cursor / Codex",
-      "reason": "the agents ad's hooks may run inside: descriptive statements about tools a user may run"
+      "match": "Claude Code, Cursor, Codex|Claude Code / Cursor / Codex|\\(Claude Code, Codex, Gemini",
+      "reason": "the agents ad's hooks may run inside, and the agents the memory review gate refuses under: descriptive statements about tools a user may run"
     },
     {
       "path": "SECURITY.md",

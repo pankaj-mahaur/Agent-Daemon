@@ -7,7 +7,7 @@
 // then on are zeroed; the index has FTS5 secure-delete, so a deleted row's terms leave its
 // segments. Pages freed before that, by an older ad or an index merge, still hold old
 // bytes: after erasing, compactStore() rewrites the file (VACUUM) and truncates the WAL.
-// When another process holds the store, that waits, and the maintenance pass retries.
+// When another process holds the store, that waits, and `ad memory migrate` retries it.
 // Rows that only point at the note (injections, feedback) go with it; correction events
 // keep their counts but lose its text.
 
@@ -51,8 +51,12 @@ export function compactionPending(handle) {
   }
 }
 
-/** Delete learnings for good. → rows deleted. */
-export function purgeLearnings(handle, ids) {
+/**
+ * Delete learnings for good. → rows deleted. compact: rewrite the store afterwards (a
+ * user's forget, who waits for it); retention skips it, since secure_delete zeroed what
+ * this delete freed, and a VACUUM would stall the memory server.
+ */
+export function purgeLearnings(handle, ids, { compact = true } = {}) {
   const list = [...new Set(ids.map(Number).filter(Number.isInteger))];
   if (!list.length) return 0;
   const marks = list.map(() => "?").join(",");
@@ -82,7 +86,7 @@ export function purgeLearnings(handle, ids) {
     return handle.run(`DELETE FROM learnings WHERE id IN (${marks})`, list).changes;
   });
   if (rebuild) handle.run("INSERT INTO learnings_fts(learnings_fts) VALUES('rebuild')");
-  if (deleted) compactStore(handle);
+  if (deleted && compact) compactStore(handle);
   return deleted;
 }
 
@@ -98,7 +102,7 @@ export function retainNotes(handle, { now = Date.now() } = {}) {
     "SELECT id FROM learnings WHERE status = 'hidden' AND accepted_by IS NULL AND status_at IS NOT NULL AND status_at < ?",
     [before(HIDDEN_DAYS)]
   ).map((r) => r.id);
-  const purged = stale.length ? purgeLearnings(handle, stale) : 0;
+  const purged = stale.length ? purgeLearnings(handle, stale, { compact: false }) : 0;
   const expired = handle.run(
     "UPDATE learnings SET status = 'pending', status_at = ? WHERE status = 'provisional' AND accepted_by IS NULL AND status_at IS NOT NULL AND status_at < ?",
     [new Date(now).toISOString(), before(PROVISIONAL_DAYS)]

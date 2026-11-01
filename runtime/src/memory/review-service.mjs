@@ -14,7 +14,7 @@ import { stdin as input, stdout as output } from "node:process";
 import { learningContentHash, scopedContentHash } from "./sqlite.mjs";
 import { readFileSync, writeFileSync } from "node:fs";
 import { purgeLearnings } from "./purge.mjs";
-import { projectClause } from "./projects.mjs";
+import { isProjectId, projectClause } from "./projects.mjs";
 import { dropFromFile } from "./metrics.mjs";
 import { probeAncestry } from "./ancestry.mjs";
 import { confirmByDialog } from "./dialog-code.mjs";
@@ -73,10 +73,23 @@ export function acceptLearning(handle, token, id, { appliedTo = "memory:project"
   ).changes;
 }
 
-/** Accept one user fact. → rows changed. */
-export function acceptFact(handle, token, id, { now } = {}) {
+/**
+ * Accept one user fact. keys: the project it is reviewed in; the fact is accepted there
+ * only, so sightings recorded elsewhere (a journal line can claim any) don't widen it.
+ */
+export function acceptFact(handle, token, id, { now, keys } = {}) {
   must(token);
   const t = iso(now);
+  if (Array.isArray(keys) && keys.length) {
+    const ids = keys.filter(isProjectId);
+    const slugs = keys.filter((k) => !isProjectId(k) && !k.startsWith("~"));
+    handle.run("UPDATE user_facts SET projects = ? WHERE id = ?", [JSON.stringify(slugs), id]);
+    try {
+      handle.run("UPDATE user_facts SET project_ids = ? WHERE id = ?", [JSON.stringify(ids), id]);
+    } catch {
+      // an older store without project ids
+    }
+  }
   return handle.run("UPDATE user_facts SET status = 'active', accepted_by = 'review', accepted_at = ?, status_at = ?, quarantine_reason = NULL WHERE id = ?", [t, t, id]).changes;
 }
 
@@ -197,17 +210,22 @@ export function forgetNote(handle, id, opts) {
   return { result: "none" };
 }
 
-// The note's line in the project's memory file goes too: session start injects that file.
-function dropFromMemoryFile(file, text) {
-  if (!file || !text) return false;
-  try {
-    const next = dropFromFile(readFileSync(file, "utf8"), text);
-    if (next === null) return false;
-    writeFileSync(file, next);
-    return true;
-  } catch {
-    return false; // no memory file
+// The note's lines in the memory files go too (the project's activeContext.md, and the
+// global user.md where older ad wrote cross-project notes): session start injects both.
+function dropFromMemoryFile(files, text) {
+  if (!text) return false;
+  let dropped = false;
+  for (const file of [files].flat().filter(Boolean)) {
+    try {
+      const next = dropFromFile(readFileSync(file, "utf8"), text);
+      if (next === null) continue;
+      writeFileSync(file, next);
+      dropped = true;
+    } catch {
+      // no such memory file
+    }
   }
+  return dropped;
 }
 
 /** The user keeps a note the agent asked to forget. */

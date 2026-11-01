@@ -1681,7 +1681,7 @@ async function cmdMemory(sub, opts) {
       // The one-time upkeep after an upgrade (note keys, the journal secret scrub),
       // all of it now. ad also runs it from long-lived commands; hooks never do.
       const { runMemoryMaintenance } = await import("./memory/maintenance.mjs");
-      const r = await runMemoryMaintenance({ budgetMs: 10 * 60 * 1000 });
+      const r = await runMemoryMaintenance({ budgetMs: 10 * 60 * 1000, compact: true });
       if (!r) {
         console.error("agent-daemon: the memory store is unavailable (run ad doctor)");
         return 1;

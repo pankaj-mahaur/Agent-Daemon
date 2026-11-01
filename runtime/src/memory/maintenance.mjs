@@ -159,7 +159,9 @@ export function scrubJournals(handle) {
  * Run whatever upkeep is still due. Never throws; a busy store means "next time".
  * @returns {Promise<object|null>} what ran, or null when the store is missing
  */
-export async function runMemoryMaintenance({ handle, budgetMs = 5000 } = {}) {
+// compact: also finish a purge's compaction another process blocked (a VACUUM: only
+// `ad memory migrate`, never the memory server or a start-up pass).
+export async function runMemoryMaintenance({ handle, budgetMs = 5000, compact = false } = {}) {
   try {
     if (!handle) handle = await (await import("./episodic.mjs")).db();
     if (!handle) return null;
@@ -191,7 +193,7 @@ export async function runMemoryMaintenance({ handle, budgetMs = 5000 } = {}) {
       const kept = retainNotes(handle);
       if (kept.purged || kept.expired) ran.retention = kept;
       // A purge whose compaction another process blocked: try again now.
-      if (compactionPending(handle)) ran.compacted = compactStore(handle);
+      if (compact && compactionPending(handle)) ran.compacted = compactStore(handle);
     } catch {
       // older store without the trust columns
     }

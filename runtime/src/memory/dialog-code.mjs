@@ -14,6 +14,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { spawn as nodeSpawn } from "node:child_process";
 import { randomInt } from "node:crypto";
 import { loaderWindowsDir, systemTool } from "../safe-spawn.mjs";
+import { cleanWindowsEnv } from "./ancestry.mjs";
 
 export const DIALOG_TEXTS = Object.freeze({
   why: (found) => (found?.verdict === "editor"
@@ -25,8 +26,9 @@ export const DIALOG_TEXTS = Object.freeze({
 });
 
 const PROMPT = "Type this code in the terminal where ad asks for it:";
-// Windows: the script is on the command line (encoded), the code arrives on stdin.
-const WIN_SCRIPT = `$c = [Console]::In.ReadLine(); Add-Type -AssemblyName System.Windows.Forms; [void][System.Windows.Forms.MessageBox]::Show("${PROMPT}" + [Environment]::NewLine + [Environment]::NewLine + $c, 'ad review')`;
+// Windows: the script is on the command line (encoded), the code arrives on stdin. No
+// cmdlet (Add-Type would autoload a module, which a caller's PSModulePath could replace).
+const WIN_SCRIPT = `$c = [Console]::In.ReadLine(); [void][Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms'); [void][System.Windows.Forms.MessageBox]::Show("${PROMPT}" + [Environment]::NewLine + [Environment]::NewLine + $c, 'ad review')`;
 const DISPLAY_KEYS = ["DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "XAUTHORITY", "DBUS_SESSION_BUS_ADDRESS"];
 
 /** Linux: the display of the editor that hosts this terminal, from its own /proc environ; else null. */
@@ -46,10 +48,11 @@ export function trustedDisplayEnv(found, { read = (f) => readFileSync(f, "utf8")
  * powershell: Windows PowerShell by absolute path under the loader's Windows folder;
  * displayEnv: Linux only, the trusted display (trustedDisplayEnv).
  */
-export function dialogCommand(platform = process.platform, { powershell = platform === "win32" ? systemTool("powershell.exe", { platform, env: { SystemRoot: loaderWindowsDir() } }) : null, displayEnv = null, exists = existsSync } = {}) {
+export function dialogCommand(platform = process.platform, { windowsDir = platform === "win32" ? loaderWindowsDir() : null, powershell = platform === "win32" ? systemTool("powershell.exe", { platform, env: { SystemRoot: windowsDir } }) : null, displayEnv = null, exists = existsSync } = {}) {
   if (platform === "win32") {
-    if (!powershell) return null;
-    return { cmd: powershell, args: ["-NoProfile", "-NonInteractive", "-STA", "-EncodedCommand", Buffer.from(WIN_SCRIPT, "utf16le").toString("base64")], input: (code) => `${code}\n` };
+    if (!powershell || !windowsDir) return null;
+    // A clean environment: nothing of the caller's (PSModulePath, COR_PROFILER) reaches it.
+    return { cmd: powershell, args: ["-NoProfile", "-NonInteractive", "-STA", "-EncodedCommand", Buffer.from(WIN_SCRIPT, "utf16le").toString("base64")], input: (code) => `${code}\n`, env: cleanWindowsEnv(windowsDir) };
   }
   if (platform === "darwin") {
     // The whole AppleScript, code included, goes through stdin.

@@ -107,14 +107,19 @@ export function rewordInFile(content, oldText, newText) {
   return hit ? out.join("") : null;
 }
 
-/** Drop a lesson's lines (and their line breaks) from a memory file; → the new content, or null when it isn't there. */
+/** Drop a lesson's lines from a memory file, with the `  > evidence` lines under them; → the new content, or null when it isn't there. */
 export function dropFromFile(content, text) {
   const nk = normKey(text);
   const lines = String(content ?? "").split(/(?<=\n)/);
-  const kept = lines.filter((line) => {
-    const m = FILE_LINE.exec(line.replace(/\r?\n$/, ""));
-    return !(m && normKey(m[1]) === nk);
-  });
+  const kept = [];
+  let dropping = false;
+  for (const line of lines) {
+    const bare = line.replace(/\r?\n$/, "");
+    const m = FILE_LINE.exec(bare);
+    if (m) dropping = normKey(m[1]) === nk;
+    else if (!/^ {2}> /.test(bare)) dropping = false;
+    if (!dropping) kept.push(line);
+  }
   return kept.length === lines.length ? null : kept.join("");
 }
 

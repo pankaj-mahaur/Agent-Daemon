@@ -153,3 +153,32 @@ test("a forged SystemRoot picks neither the walk's PowerShell nor the dialog's (
     process.env.SystemRoot = saved;
   }
 });
+
+test("a module on the caller's PSModulePath can't answer for the Windows process walk (L1 re-check)", { skip: process.platform !== "win32" && "Windows only" }, async () => {
+  const { probeAncestry } = await import("../src/memory/ancestry.mjs");
+  const { mkdirSync: mk, writeFileSync: wr } = await import("node:fs");
+  const mods = path.join(ROOT, "psmods");
+  for (const name of ["CimCmdlets", "Microsoft.PowerShell.Utility"]) {
+    mk(path.join(mods, name), { recursive: true });
+    // Every lookup answers "a Windows Terminal from Program Files started me".
+    wr(path.join(mods, name, `${name}.psm1`), "function Get-CimInstance { [pscustomobject]@{ ProcessId = 1; ParentProcessId = 0; Name = 'WindowsTerminal.exe'; ExecutablePath = 'C:\Program Files\WindowsApps\WT\WindowsTerminal.exe'; CreationDate = (Get-Date).AddDays(-1) } }\nfunction ConvertTo-Json { '[{\"pid\":1,\"ppid\":0,\"name\":\"WindowsTerminal.exe\",\"path\":\"C:\\Program Files\\WindowsApps\\WT\\WindowsTerminal.exe\"}]' }\nExport-ModuleMember -Function *\n");
+  }
+  const honest = probeAncestry();
+  const saved = process.env.PSModulePath;
+  process.env.PSModulePath = `${mods};${saved ?? ""}`;
+  try {
+    assert.deepEqual(probeAncestry(), honest, "the same verdict with the fake modules first on PSModulePath");
+  } finally {
+    process.env.PSModulePath = saved;
+  }
+});
+
+test("accepting a user fact accepts it in the project it is reviewed in, not where forged sightings put it", async () => {
+  const h = await ep.db();
+  const fact = await ep.observeUserFact({ category: "tool", text: "uses biome, not eslint", projectSlug: PROJECT, origin: "user" });
+  await ep.observeUserFact({ category: "tool", text: "uses biome, not eslint", projectSlug: "-work-forged", origin: "user" });
+  assert.deepEqual(JSON.parse(h.get("SELECT projects FROM user_facts WHERE id = ?", [fact.id]).projects), [PROJECT, "-work-forged"], "pending: sightings recorded");
+  svc.acceptFact(h, (await svc.reviewToken(terminal)).token, fact.id, { keys: [PROJECT] });
+  assert.deepEqual(JSON.parse(h.get("SELECT projects FROM user_facts WHERE id = ?", [fact.id]).projects), [PROJECT]);
+  assert.ok(!(await ep.listUserFacts({ projectKeys: ["-work-forged"] })).some((f) => f.text === "uses biome, not eslint"));
+});

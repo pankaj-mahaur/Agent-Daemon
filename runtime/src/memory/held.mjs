@@ -116,7 +116,7 @@ export async function memoryHeld(sub, { ref, keys, handle, json = false, env = p
     handle.run(`UPDATE ${table} SET status = 'rejected', text = '[dropped]' WHERE id = ?`, [row.id]);
     out(`Dropped ${row.ref}.`);
   } else {
-    if (row.kind === "fact") acceptFact(handle, gate.token, row.id);
+    if (row.kind === "fact") acceptFact(handle, gate.token, row.id, { keys });
     else acceptLearning(handle, gate.token, row.id, { appliedTo: null });
     out(`${sub === "accept" ? "Accepted" : "Released"} ${row.ref}: it is served in this project from the next session.`);
   }

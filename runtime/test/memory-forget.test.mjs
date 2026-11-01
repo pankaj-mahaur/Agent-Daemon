@@ -186,7 +186,7 @@ for (const driver of await availableDrivers()) {
   });
 }
 
-test("a compaction another process blocks is owed, and the maintenance pass does it", async () => {
+test("a compaction another process blocks is owed, and ad memory migrate's maintenance pass does it", async () => {
   const h = await store();
   const other = await open({ dbPath: h.path });
   try {
@@ -198,7 +198,10 @@ test("a compaction another process blocks is owed, and the maintenance pass does
     assert.equal(compactionPending(h), true, "owed while the other reader holds the store");
     other.raw.exec("COMMIT");
     const { runMemoryMaintenance } = await import("../src/memory/maintenance.mjs");
-    const ran = await runMemoryMaintenance({ handle: h });
+    // The memory server's and start-up passes never VACUUM (it would stall them); ad memory migrate does.
+    assert.equal((await runMemoryMaintenance({ handle: h })).compacted, undefined);
+    assert.equal(compactionPending(h), true);
+    const ran = await runMemoryMaintenance({ handle: h, compact: true });
     assert.deepEqual(ran.compacted, { vacuumed: true, walCleared: true });
     assert.equal(compactionPending(h), false);
   } finally {
@@ -238,6 +241,41 @@ test("without the index's secure-delete (SQLite before 3.44), a purge rebuilds t
     assert.ok(scan(file), "the sentinel is on disk before the purge (the scan works)");
     svc.forgetAccepted(h, testReviewToken(), id);
     for (const f of [file, `${file}-wal`]) assert.equal(scan(f), false, `${path.basename(f)} holds the purged note`);
+  } finally {
+    h.close();
+  }
+});
+
+test("forgetting drops the note's evidence lines too, and its line in the global user.md", async () => {
+  const { writeFileSync: write, readFileSync: read } = await import("node:fs");
+  const h = await store();
+  try {
+    const dir = path.dirname(h.path);
+    const project = path.join(dir, "activeContext.md");
+    const global = path.join(dir, "user.md");
+    const id = note(h, "never commit the .env file", { accepted: true });
+    write(project, "# Active\n\n- **correction** (conf 0.80): never commit the .env file  _tags: git_\n  > the user said: don't commit .env\n- **gotcha** (conf 0.70): keep this one\n  > its own evidence\n");
+    write(global, "# You\n\n- **correction** (conf 0.80): never commit the .env file\n");
+    assert.equal(svc.forgetAccepted(h, testReviewToken(), id, { memoryFile: [project, global] }), 1);
+    assert.equal(read(project, "utf8"), "# Active\n\n- **gotcha** (conf 0.70): keep this one\n  > its own evidence\n");
+    assert.equal(read(global, "utf8"), "# You\n\n");
+  } finally {
+    h.close();
+  }
+});
+
+test("a retention purge never compacts the store (secure_delete zeroed what it freed)", async () => {
+  const h = await store();
+  try {
+    const old = note(h, "hidden long ago by the agent", { status: "hidden" });
+    h.run("UPDATE learnings SET status_at = '2026-01-01T00:00:00.000Z' WHERE id = ?", [old]);
+    const { compactionPending } = await import("../src/memory/purge.mjs");
+    let vacuums = 0;
+    const exec = h.raw.exec.bind(h.raw);
+    h.raw.exec = (sql) => (/VACUUM/i.test(sql) && vacuums++, exec(sql));
+    assert.deepEqual(retainNotes(h, { now: Date.parse("2026-02-01T00:00:00Z") }), { purged: 1, expired: 0 });
+    assert.equal(vacuums, 0);
+    assert.equal(compactionPending(h), false);
   } finally {
     h.close();
   }

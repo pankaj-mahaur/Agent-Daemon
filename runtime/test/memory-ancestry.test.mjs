@@ -6,7 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { classifyChain, etimeSeconds, linuxNode, parseWindowsWalk, processChain, trustedPath } from "../src/memory/ancestry.mjs";
+import { classifyChain, cleanWindowsEnv, etimeSeconds, linuxNode, parseWindowsWalk, processChain, trustedPath } from "../src/memory/ancestry.mjs";
 import { confirmByDialog, dialogCommand, DIALOG_TEXTS, trustedDisplayEnv } from "../src/memory/dialog-code.mjs";
 import { loaderWindowsDir } from "../src/safe-spawn.mjs";
 
@@ -62,46 +62,68 @@ test("the host decides: a trusted terminal passes; an editor needs the code; any
   assert.deepEqual(classifyChain([SELF, p("bash", { reused: true }), p("gnome-terminal-server")]), { verdict: "unknown", why: "reused-pid" });
 });
 
-test("trusted install folders: never from the environment, never the user's own folders", () => {
+// A stand-in for fs.statSync: root-owned 0755 for the folders and files listed, else the user's.
+const fakeStat = (rootOwned, { writable = [] } = {}) => (p) => {
+  if (writable.includes(p)) return { uid: 0, mode: 0o40777 };
+  if (rootOwned.some((r) => p === r || r.startsWith(`${p === "/" ? "" : p}/`) || p === "/")) return { uid: 0, mode: 0o40755 };
+  return { uid: 501, mode: 0o40755 };
+};
+
+test("trusted install folders: never from the environment, never a folder the user can write", () => {
   const win = { platform: "win32", windowsDir: "C:\\Windows" };
   assert.equal(trustedPath("C:\\Program Files\\WindowsApps\\Microsoft.WindowsTerminal_1.21\\WindowsTerminal.exe", win), true);
   assert.equal(trustedPath("C:\\Windows\\explorer.exe", win), true);
+  // L1 re-check: the Windows folder has corners any user can write.
+  for (const f of ["C:\\Windows\\Tasks\\WindowsTerminal.exe", "C:\\Windows\\Temp\\WindowsTerminal.exe", "C:\\Windows\\System32\\spool\\drivers\\color\\WindowsTerminal.exe", "C:\\Windows\\System32\\cmd.exe"]) assert.equal(trustedPath(f, win), false, f);
   assert.equal(trustedPath("C:\\Users\\sam\\AppData\\Local\\Temp\\WindowsTerminal.exe", win), false);
   assert.equal(trustedPath("D:\\Program Files\\x.exe", win), false, "another drive's Program Files");
   assert.equal(trustedPath("C:\\Windows\\explorer.exe", { platform: "win32", windowsDir: null }), false, "no loader folder: nothing is trusted");
-  assert.equal(trustedPath("/usr/bin/xterm", { platform: "linux" }), true);
-  assert.equal(trustedPath("/usr/local/bin/xterm", { platform: "linux" }), false);
-  assert.equal(trustedPath("/home/sam/bin/xterm", { platform: "linux" }), false);
-  assert.equal(trustedPath("/tmp/xterm", { platform: "linux" }), false);
-  assert.equal(trustedPath("/Applications/iTerm.app/Contents/MacOS/iTerm2", { platform: "darwin" }), true);
+  // POSIX: root owns the file and every folder above it, none group- or world-writable.
+  const stat = fakeStat(["/usr/bin/xterm", "/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal", "/opt/homebrew"]);
+  assert.equal(trustedPath("/usr/bin/xterm", { platform: "linux", stat }), true);
+  assert.equal(trustedPath("/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal", { platform: "darwin", stat }), true);
+  assert.equal(trustedPath("/opt/homebrew/bin/kitty", { platform: "darwin", stat }), false, "a user-owned Homebrew folder");
+  assert.equal(trustedPath("/home/sam/.local/kitty.app/bin/kitty", { platform: "linux", stat }), false);
+  assert.equal(trustedPath("/usr/bin/xterm", { platform: "linux", stat: fakeStat(["/usr/bin/xterm"], { writable: ["/usr/bin"] }) }), false, "a world-writable folder above it");
+  assert.equal(trustedPath("relative/xterm", { platform: "linux", stat }), false);
   // The loader's folder: found from ntdll.dll's path, whatever SystemRoot says.
   assert.equal(loaderWindowsDir({ report: () => ({ sharedObjects: ["C:\\Program Files\\nodejs\\node.exe", "C:\\WINDOWS\\SYSTEM32\\ntdll.dll"] }) }), "C:\\WINDOWS");
   assert.equal(loaderWindowsDir({ report: () => ({ sharedObjects: ["/usr/lib/libc.so.6"] }) }), null);
 });
 
-test("Windows: one PowerShell walk naming only the pid; paths decide trust", () => {
+const b64 = (s) => Buffer.from(String(s ?? ""), "utf8").toString("base64");
+const winRow = (pid, ppid, name, cmd, file, created) => [pid, ppid, b64(name), b64(cmd), b64(file), created].join("\t");
+
+test("Windows: one PowerShell walk naming only the pid, no cmdlet, a clean environment; paths decide trust", () => {
   const calls = [];
-  const spawn = (cmd, args) => {
-    calls.push([cmd, args]);
-    return { status: 0, stdout: JSON.stringify([
-      { pid: 50, ppid: 40, name: "node.exe", cmd: "node ad review", path: "C:\\Program Files\\nodejs\\node.exe", created: "2026-11-01T10:00:02Z" },
-      { pid: 40, ppid: 30, name: "pwsh.exe", cmd: "pwsh", path: "C:\\Program Files\\PowerShell\\7\\pwsh.exe", created: "2026-11-01T10:00:01Z" },
-      { pid: 30, ppid: 1, name: "WindowsTerminal.exe", cmd: "wt", path: "C:\\Program Files\\WindowsApps\\Microsoft.WindowsTerminal_1.21\\WindowsTerminal.exe", created: "2026-11-01T09:00:00Z" },
-    ]) };
+  const spawn = (cmd, args, opts) => {
+    calls.push([cmd, args, opts]);
+    return { status: 0, stdout: [
+      winRow(50, 40, "node.exe", "node ad review", "C:\\Program Files\\nodejs\\node.exe", "2026-11-01T10:00:02Z"),
+      winRow(40, 30, "pwsh.exe", "pwsh", "C:\\Program Files\\PowerShell\\7\\pwsh.exe", "2026-11-01T10:00:01Z"),
+      winRow(30, 1, "WindowsTerminal.exe", "wt", "C:\\Program Files\\WindowsApps\\Microsoft.WindowsTerminal_1.21\\WindowsTerminal.exe", "2026-11-01T09:00:00Z"),
+    ].join("\r\n") };
   };
   const chain = processChain({ pid: 50, platform: "win32", spawn, windowsDir: "C:\\Windows", powershell: () => PS });
   assert.equal(calls.length, 1);
   assert.equal(calls[0][0], PS, "PowerShell by absolute path");
   const script = Buffer.from(calls[0][1].at(-1), "base64").toString("utf16le");
-  assert.match(script, /\$p = 50;/);
+  assert.match(script, /\$p = 50\b/);
+  assert.match(script, /\[wmisearcher\]/);
+  assert.doesNotMatch(script, /Get-CimInstance|ConvertTo-Json|Add-Type|Import-Module|New-Object/, "no cmdlet a module could stand in for");
+  assert.deepEqual(calls[0][2].env, cleanWindowsEnv("C:\\Windows"), "nothing of the caller's environment");
+  assert.ok(!("PSModulePath" in calls[0][2].env) || !/Documents|AppData/i.test(calls[0][2].env.PSModulePath), "only the system module folder");
   assert.deepEqual(classifyChain(chain), { verdict: "terminal", root: "windowsterminal" });
-  // The same chain with Windows Terminal copied into the user's temp folder: not trusted.
-  const fake = parseWindowsWalk(JSON.stringify([{ pid: 2, name: "node.exe" }, { pid: 1, name: "WindowsTerminal.exe", path: "C:\\Users\\sam\\AppData\\Local\\Temp\\WindowsTerminal.exe" }]), { windowsDir: "C:\\Windows" });
+  // A name or command line with tabs, quotes or non-ASCII text survives the trip.
+  const odd = parseWindowsWalk(winRow(7, 1, "x.exe", "node \"a\tb\" ü", "C:\\Program Files\\x.exe", "2026-11-01T09:00:00Z"), { windowsDir: "C:\\Windows" });
+  assert.equal(odd[0].cmd, "node \"a\tb\" ü");
+  // Windows Terminal copied into a user-writable corner of the Windows folder: not trusted.
+  const fake = parseWindowsWalk([winRow(2, 1, "node.exe", "", "", ""), winRow(1, 0, "WindowsTerminal.exe", "", "C:\\Windows\\Tasks\\WindowsTerminal.exe", "")].join("\n"), { windowsDir: "C:\\Windows" });
   assert.equal(classifyChain(fake).verdict, "unknown");
   assert.throws(() => processChain({ pid: 50, platform: "win32", spawn, windowsDir: null, powershell: () => null }), /PowerShell/);
 });
 
-test("Linux: the full executable name from /proc/<pid>/exe; a parent that started later is a reused pid", () => {
+test("Linux: the full executable name from /proc/<pid>/exe; trust from ownership; a parent that started later is a reused pid", () => {
   const files = {
     "/proc/9/stat": "9 (node) S 8 9 9 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 5000 0 0",
     "/proc/9/cmdline": "node\0ad\0review\0",
@@ -111,17 +133,24 @@ test("Linux: the full executable name from /proc/<pid>/exe; a parent that starte
     "/proc/7/cmdline": "/usr/libexec/gnome-terminal-server\0",
   };
   const links = { "/proc/9/exe": "/usr/bin/node", "/proc/8/exe": "/usr/bin/bash", "/proc/7/exe": "/usr/libexec/gnome-terminal-server" };
-  const io = { read: (f) => { if (!(f in files)) throw new Error("gone"); return files[f]; }, link: (f) => { if (!(f in links)) throw new Error("EACCES"); return links[f]; } };
+  const stat = fakeStat(["/usr/bin/node", "/usr/bin/bash", "/usr/libexec/gnome-terminal-server"]);
+  const io = { stat, read: (f) => { if (!(f in files)) throw new Error("gone"); return files[f]; }, link: (f) => { if (!(f in links)) throw new Error("EACCES"); return links[f]; } };
   const node7 = linuxNode(7, io);
   assert.equal(node7.name, "gnome-terminal-server", "not the 15-character comm");
   assert.equal(node7.trusted, true);
-  const chain = processChain({ pid: 9, platform: "linux", linux: (pid) => linuxNode(pid, io) });
-  assert.deepEqual(classifyChain(chain), { verdict: "terminal", root: "gnome-terminal-server" });
+  const walk = () => classifyChain(processChain({ pid: 9, platform: "linux", linux: (pid) => linuxNode(pid, io) }));
+  assert.deepEqual(walk(), { verdict: "terminal", root: "gnome-terminal-server" });
   files["/proc/8/stat"] = files["/proc/8/stat"].replace(" 4000 ", " 6000 ");
-  assert.deepEqual(classifyChain(processChain({ pid: 9, platform: "linux", linux: (pid) => linuxNode(pid, io) })), { verdict: "unknown", why: "reused-pid" });
+  assert.deepEqual(walk(), { verdict: "unknown", why: "reused-pid" });
+  files["/proc/8/stat"] = files["/proc/8/stat"].replace(" 6000 ", " 4000 ");
+  // The same terminal from the user's own folder: not trusted.
+  links["/proc/7/exe"] = "/home/sam/.local/bin/gnome-terminal-server";
+  assert.deepEqual(walk(), { verdict: "unknown", why: "gnome-terminal-server outside an install folder" });
   // Another user's process (exe unreadable): its comm name, never trusted.
   delete links["/proc/7/exe"];
   assert.deepEqual({ name: linuxNode(7, io).name, trusted: linuxNode(7, io).trusted }, { name: "gnome-terminal-", trusted: false });
+  // Ptyxis (Fedora's terminal) hosts its shells in ptyxis-agent; GNOME Console is kgx.
+  for (const host of ["ptyxis-agent", "kgx"]) assert.equal(classifyChain([SELF, p("bash"), p(host)]).verdict, "terminal", host);
 });
 
 test("ps elapsed times parse in every form", () => {
@@ -131,28 +160,35 @@ test("ps elapsed times parse in every form", () => {
   assert.equal(etimeSeconds("garbage"), 0);
 });
 
-test("macOS: /bin/ps per ancestor; trust from the executable's path; a younger parent is a reused pid", () => {
+test("macOS: /bin/ps for the chain, lsof for each executable (never argv[0]); a younger parent is a reused pid", () => {
+  const TERM = "/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal";
   const table = {
-    20: { head: "10 00:05 /usr/local/bin/node", args: "node ad review" },
-    10: { head: "5 00:02 -zsh", args: "-zsh" },
-    5: { head: "2 1-00:00:00 /usr/bin/login", args: "login -pfl sam" },
-    2: { head: "1 2-00:00:00 /System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal", args: "Terminal" },
+    20: { head: "10 00:05 /usr/local/bin/node", args: "node ad review", exe: "/usr/local/bin/node" },
+    10: { head: "5 00:02 -zsh", args: "-zsh", exe: "/bin/zsh" },
+    5: { head: "2 1-00:00:00 /usr/bin/login", args: "login -pfl sam", exe: "/usr/bin/login" },
+    2: { head: `1 2-00:00:00 ${TERM}`, args: "Terminal", exe: TERM },
   };
   const calls = [];
   const spawn = (cmd, args) => {
     calls.push(cmd);
-    const row = table[Number(args.at(-1))];
+    const row = table[Number(cmd === "/usr/sbin/lsof" ? args[2] : args.at(-1))];
     if (!row) return { status: 1, stdout: "" };
+    if (cmd === "/usr/sbin/lsof") return { status: 0, stdout: `p${args[2]}\nftxt\nn${row.exe}\nftxt\nn/usr/lib/dyld\n` };
     return { status: 0, stdout: args.includes("args=") ? `${row.args}\n` : `${row.head}\n` };
   };
-  assert.deepEqual(classifyChain(processChain({ pid: 20, platform: "darwin", spawn })), { verdict: "unknown", why: "reused-pid" }, "zsh (2 s) is younger than node (5 s)");
-  assert.ok(calls.every((c) => c === "/bin/ps"), "ps by absolute path, never PATH");
+  const stat = fakeStat([TERM, "/usr/bin/login", "/bin/zsh"]);
+  const walk = () => classifyChain(processChain({ pid: 20, platform: "darwin", spawn, stat }));
+  assert.deepEqual(walk(), { verdict: "unknown", why: "reused-pid" }, "zsh (2 s) is younger than node (5 s)");
+  assert.ok(calls.every((c) => c === "/bin/ps" || c === "/usr/sbin/lsof"), "tools by absolute path, never PATH");
   table[10].head = "5 00:09 -zsh";
-  assert.deepEqual(classifyChain(processChain({ pid: 20, platform: "darwin", spawn })), { verdict: "terminal", root: "terminal" });
+  assert.deepEqual(walk(), { verdict: "terminal", root: "terminal" });
+  // argv[0] says Terminal, lsof says script in Homebrew: the executable decides.
+  table[2] = { head: `1 2-00:00:00 ${TERM}`, args: TERM, exe: "/opt/homebrew/bin/script" };
+  assert.equal(walk().verdict, "unknown");
 });
 
 test("the dialog: never on a command line, never chosen by the environment", () => {
-  for (const [platform, tools] of [["win32", { powershell: PS }], ["darwin", {}], ["linux", { displayEnv: { DISPLAY: ":0" }, exists: () => true }]]) {
+  for (const [platform, tools] of [["win32", { powershell: PS, windowsDir: "C:\\Windows" }], ["darwin", {}], ["linux", { displayEnv: { DISPLAY: ":0" }, exists: () => true }]]) {
     const how = dialogCommand(platform, tools);
     assert.ok(how, platform);
     assert.ok(how.cmd.startsWith("/") || how.cmd === PS, `${platform}: ${how.cmd} by absolute path`);
@@ -161,8 +197,12 @@ test("the dialog: never on a command line, never chosen by the environment", () 
   }
   assert.deepEqual(dialogCommand("linux", { displayEnv: { DISPLAY: ":0" }, exists: () => true }).env, { DISPLAY: ":0" }, "zenity gets the trusted display only");
   assert.equal(dialogCommand("linux", { exists: () => true }), null, "no trusted display: no dialog");
+  // Windows: a clean environment and no cmdlet (a module on the caller's PSModulePath could stand in and read the code).
+  const winHow = dialogCommand("win32", { powershell: PS, windowsDir: "C:\\Windows" });
+  assert.deepEqual(winHow.env, cleanWindowsEnv("C:\\Windows"));
+  assert.doesNotMatch(Buffer.from(winHow.args.at(-1), "base64").toString("utf16le"), /Add-Type|New-Object|Import-Module|Get-[A-Z]|ConvertTo-/);
   assert.equal(dialogCommand("linux", { displayEnv: { DISPLAY: ":0" }, exists: () => false }), null, "no /usr/bin/zenity: no dialog");
-  assert.equal(dialogCommand("win32", { powershell: null }), null, "no PowerShell in the Windows folder: no dialog, never a bare name");
+  assert.equal(dialogCommand("win32", { powershell: null, windowsDir: "C:\\Windows" }), null, "no PowerShell in the Windows folder: no dialog, never a bare name");
   // Linux: the display comes from the editor's own process, and only a trusted one.
   const environ = { "/proc/77/environ": "DISPLAY=:1\0HOME=/home/sam\0XAUTHORITY=/home/sam/.Xauthority\0" };
   const read = (f) => environ[f];
@@ -186,7 +226,7 @@ test("confirmByDialog: the code typed back passes; a wrong one or no dialog refu
   const spawned = [];
   const spawn = (cmd, args) => (spawned.push([cmd, ...args].join(" ")), (child = fakeChild()));
   const lines = [];
-  const win = { platform: "win32", tools: { powershell: PS } };
+  const win = { platform: "win32", tools: { powershell: PS, windowsDir: "C:\\Windows" } };
   const ok = await confirmByDialog({ ask: async () => "123456", found, out: (l) => lines.push(l), ...win, spawn, code: "123456" });
   assert.deepEqual(ok, { ok: true });
   assert.equal(child.stdin.written, "123456\n");
