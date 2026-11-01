@@ -23,6 +23,7 @@
 
 import { normKey } from "./sqlite.mjs";
 import { learningVisibility } from "./episodic.mjs";
+import { acceptedSql } from "./trust.mjs";
 import { idOfKeys, slugOfKeys } from "./projects.mjs";
 
 const EARLIER_MS = 10 * 60 * 1000;
@@ -83,7 +84,7 @@ export function lessonIdsInFile(handle, keys, content) {
   if (!handle || !keys?.length || !nks.length) return [];
   try {
     return handle.all(
-      `SELECT id FROM learnings WHERE status = 'active' AND project_slug IN (${keys.map(() => "?").join(",")}) AND norm_key IN (${nks.map(() => "?").join(",")})`,
+      `SELECT id FROM learnings WHERE ${acceptedSql()} AND project_slug IN (${keys.map(() => "?").join(",")}) AND norm_key IN (${nks.map(() => "?").join(",")})`,
       [...keys, ...nks]
     ).map((r) => r.id);
   } catch {
@@ -109,7 +110,7 @@ export function rewordInFile(content, oldText, newText) {
 // Accepted lessons this project may use, as candidates for a repeat.
 function candidates(handle, keys) {
   const vis = learningVisibility("l", keys, "any");
-  return { sql: `l.status = 'active' AND (l.project_slug IS NOT NULL OR l.global_accepted_at IS NOT NULL) AND ${vis.sql}`, params: vis.params };
+  return { sql: `${acceptedSql("l")} AND (l.project_slug IS NOT NULL OR l.global_accepted_at IS NOT NULL) AND ${vis.sql}`, params: vis.params };
 }
 
 function earlier(row, captureRef, now) {

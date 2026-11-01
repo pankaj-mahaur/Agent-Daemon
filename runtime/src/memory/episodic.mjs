@@ -13,6 +13,7 @@ import path from "node:path";
 import { open, learningContentHash, normKey, scopedContentHash } from "./sqlite.mjs";
 import { redactSecrets } from "../security/secret-patterns.mjs";
 import { idOfKeys, isProjectId, projectClause, projectIdOf, slugOfKeys } from "./projects.mjs";
+import { acceptedSql, pendingSql, statusSql } from "./trust.mjs";
 
 /* ------------------------------------------------------------------ */
 /* Lifecycle                                                           */
@@ -220,7 +221,7 @@ function writeLearning(handle, raw) {
   const nk = normKey(l.text);
   const same = sameNote(handle, l.projectSlug, l.text, nk, l.projectId);
   if (same) {
-    if (l.origin === "user" && same.status === "pending") acceptPendingById(handle, same.id);
+    // Seeing a note again never accepts it: only the review service does (trust.mjs).
     // An agent saying something again is no confirmation: only other origins reinforce.
     if (l.origin !== "agent") reinforceById(handle, same.id);
     return null;
@@ -233,7 +234,6 @@ function writeLearning(handle, raw) {
   // IGNORE because SQLite's UPSERT can't target a partial index).
   const result = handle.run(INSERT_LEARNING_SQL, learningRow(l, contentHash, nk));
   if (!result.changes) {
-    if (l.origin === "user") acceptPendingByUser(handle, contentHash, l.projectSlug);
     if (l.origin !== "agent") reinforceLearning(handle, contentHash);
     return null;
   }
@@ -264,13 +264,15 @@ export function sameNote(handle, projectKey, text, nk = normKey(text), projectId
 }
 
 // Every learning write redacts secrets in text, evidence and tags first.
-// status: 'active' (accepted), 'pending' (waits for the user: agent-written
-// notes) or 'quarantined' (held back: injection screen, secrets).
+// status: 'pending' (waits for the user in review; the default) or 'quarantined'
+// (held back: injection screen, secrets). Only the review service accepts a note
+// (memory/review-service.mjs), so no writer here stores 'active': older ad, which
+// reads status = 'active', would serve it unreviewed.
 const INSERT_LEARNING_SQL = `INSERT OR IGNORE INTO learnings
   (session_id, project_slug, category, text, evidence, confidence, tags, applied_to, content_hash, derivation, status, origin, quarantine_reason, promote_request, norm_key, capture_ref, project_path, project_id)
   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
-const LEARNING_STATUSES = new Set(["active", "pending", "quarantined"]);
+const LEARNING_STATUSES = new Set(["pending", "quarantined"]);
 
 function redactLearning(l) {
   const r = (s) => (typeof s === "string" ? redactSecrets(s).text : s);
@@ -289,7 +291,7 @@ function learningRow(l, contentHash, nk) {
     l.appliedTo || null,
     contentHash,
     deriveTier(l.category),
-    LEARNING_STATUSES.has(l.status) ? l.status : "active",
+    LEARNING_STATUSES.has(l.status) ? l.status : "pending",
     ["user", "agent", "unknown"].includes(l.origin) ? l.origin : null,
     l.quarantineReason || null,
     l.promoteRequest || null,
@@ -301,28 +303,12 @@ function learningRow(l, contentHash, nk) {
   ];
 }
 
-// The user typed what an agent noted (same text, same project): that is the
-// user's acceptance, so the pending row becomes theirs and active.
-function acceptPendingById(handle, id) {
-  handle.run("UPDATE learnings SET status = 'active', origin = 'user', applied_to = NULL WHERE id = ? AND status = 'pending'", [id]);
-}
-
 function reinforceById(handle, id) {
   handle.run(
     `UPDATE learnings SET confidence = MIN(0.95, confidence + 0.1), observed_count = observed_count + 1, last_verified_at = ?
-      WHERE id = ? AND status = 'active'`,
+      WHERE id = ? AND status IN ('active', 'pending')`,
     [new Date().toISOString(), id]
   );
-}
-
-function acceptPendingByUser(handle, contentHash, projectSlug) {
-  try {
-    handle.run(
-      `UPDATE learnings SET status = 'active', origin = 'user', applied_to = NULL
-        WHERE content_hash = ? AND status = 'pending' AND project_slug IS ?`,
-      [contentHash, projectSlug || null]
-    );
-  } catch { /* pre-migration DB: no pending rows to accept */ }
 }
 
 /**
@@ -340,7 +326,7 @@ function reinforceLearning(handle, contentHash) {
           SET confidence = MIN(0.95, confidence + 0.1),
               observed_count = observed_count + 1,
               last_verified_at = ?
-        WHERE content_hash = ? AND status = 'active'`,
+        WHERE content_hash = ? AND status IN ('active', 'pending')`,
       [new Date().toISOString(), contentHash]
     );
   } catch { /* evolution columns missing on a pre-migration DB — best-effort */ }
@@ -412,9 +398,9 @@ export function learningVisibility(alias, keys, scope = "any") {
  */
 export function servedStatus(alias, keys, includePending = false) {
   const a = `${alias || "learnings"}.`;
-  if (!includePending || !keys?.length) return { sql: `${a}status = 'active'`, params: [] };
+  if (!includePending || !keys?.length) return { sql: acceptedSql(alias || "learnings"), params: [] };
   const own = projectClause(alias || "learnings", keys);
-  return { sql: `(${a}status = 'active' OR (${a}status = 'pending' AND ${a}project_slug IS NOT NULL AND ${own.sql}))`, params: [...own.params] };
+  return { sql: `(${acceptedSql(alias || "learnings")} OR (${pendingSql(alias || "learnings")} AND ${a}project_slug IS NOT NULL AND ${own.sql}))`, params: [...own.params] };
 }
 
 /** SQL for "this user fact may be served to a reader bound to `keys`". */
@@ -451,7 +437,7 @@ export async function searchLearnings(query, opts = {}) {
   if (!safeQuery) return [];
 
   // A bound reader sees accepted rows (and, from the pull tools, this project's pending ones).
-  const st = keys ? servedStatus("l", keys, opts.includePending) : { sql: "l.status = ?", params: [opts.status ?? "active"] };
+  const st = keys ? servedStatus("l", keys, opts.includePending) : opts.status && opts.status !== "active" ? { sql: "l.status = ?", params: [opts.status] } : { sql: acceptedSql("l"), params: [] };
   const vis = learningVisibility("l", keys, opts.scope ?? "any");
   const where = `learnings_fts MATCH ? AND ${st.sql} AND ${vis.sql}`;
   const params = [safeQuery, ...st.params, ...vis.params];
@@ -468,7 +454,7 @@ export async function searchLearnings(query, opts = {}) {
   // project's verdicts, so one project can't sink a lesson for every project.
   const fb = usefulnessFactor("l", keys);
   const rows = handle.all(
-    `SELECT l.id, l.text, l.evidence, l.category, l.confidence, l.project_slug, l.created_at, l.derivation, l.status,
+    `SELECT l.id, l.text, l.evidence, l.category, l.confidence, l.project_slug, l.created_at, l.derivation, ${statusSql("l")} AS status,
             -bm25(learnings_fts) *
               pow(0.5, (julianday('now') - julianday(
                 MAX(COALESCE(l.last_verified_at, l.created_at), COALESCE(l.last_retrieved_at, l.created_at))
@@ -496,7 +482,7 @@ export async function listRecentLearnings(opts = {}) {
   if (!handle) return [];
   const limit = opts.limit ?? 10;
   const vis = learningVisibility("", keysOf(opts), opts.scope ?? "any");
-  let where = `status = 'active' AND ${vis.sql}`;
+  let where = `${acceptedSql()} AND ${vis.sql}`;
   const params = [...vis.params];
   if (opts.category) {
     where += " AND category = ?";
@@ -538,7 +524,7 @@ export async function getLearningsByIds(ids, opts = {}) {
   const st = keys ? servedStatus("", keys, opts.includePending) : { sql: "1", params: [] };
   return handle.all(
     `SELECT id, session_id, project_slug, category, text, evidence, confidence,
-            observed_count, retrieval_count, usefulness, tags, applied_to, status,
+            observed_count, retrieval_count, usefulness, tags, applied_to, ${statusSql()} AS status,
             created_at, last_verified_at, derivation
        FROM learnings
       WHERE id IN (${placeholders})${keys ? ` AND ${st.sql} AND ${vis.sql}` : ""}
@@ -570,7 +556,7 @@ export async function learningTimeline(id, opts = {}) {
 
   const learning = handle.get(
     `SELECT id, session_id, project_slug, category, text, confidence, created_at
-       FROM learnings WHERE id = ?${keys ? ` AND status = 'active' AND ${vis.sql}` : ""} LIMIT 1`,
+       FROM learnings WHERE id = ?${keys ? ` AND ${acceptedSql()} AND ${vis.sql}` : ""} LIMIT 1`,
     [lid, ...vis.params]
   );
   if (!learning) return null;
@@ -586,7 +572,7 @@ export async function learningTimeline(id, opts = {}) {
     neighbors = handle.all(
       `SELECT id, category, text, confidence, created_at
          FROM learnings
-        WHERE session_id = ? AND id != ? AND status = 'active' AND ${nvis.sql}
+        WHERE session_id = ? AND id != ? AND ${acceptedSql()} AND ${nvis.sql}
         ORDER BY created_at ASC, id ASC
         LIMIT ?`,
       [learning.session_id, lid, ...nvis.params, limit]
@@ -619,8 +605,9 @@ export async function searchLearningsByFile(file, opts = {}) {
   const vis = learningVisibility("", keys, opts.scope ?? "any");
   // LIKE wildcards in the path are literal ("%" must not match every tagged row).
   const lit = (v) => v.replace(/[\\%_]/g, (c) => "\\" + c);
-  const where = `tags IS NOT NULL AND (tags LIKE ? ESCAPE '\\' OR tags LIKE ? ESCAPE '\\') AND status = ? AND ${vis.sql}`;
-  const params = [`%${lit(norm)}%`, `%"${lit(base)}"%`, keys ? "active" : status, ...vis.params];
+  const byStatus = keys || status === "active" ? acceptedSql() : "status = ?";
+  const where = `tags IS NOT NULL AND (tags LIKE ? ESCAPE '\\' OR tags LIKE ? ESCAPE '\\') AND ${byStatus} AND ${vis.sql}`;
+  const params = [`%${lit(norm)}%`, `%"${lit(base)}"%`, ...(keys || status === "active" ? [] : [status]), ...vis.params];
 
   return handle.all(
     `SELECT id, category, text, evidence, confidence, project_slug, created_at, tags
@@ -807,7 +794,7 @@ export async function observeUserFact(input) {
 
   const existing = handle.get(
     `SELECT id, observed_count, projects, confidence FROM user_facts
-      WHERE content_hash = ? AND status = 'active' LIMIT 1`,
+      WHERE content_hash = ? AND status IN ('active', 'pending') LIMIT 1`,
     [contentHash]
   );
 
@@ -829,8 +816,8 @@ export async function observeUserFact(input) {
 
   const projects = fact.projectSlug ? [fact.projectSlug] : [];
   const r = handle.run(
-    `INSERT INTO user_facts (category, text, evidence, confidence, source_session, observed_count, last_observed_at, projects, content_hash, origin)
-     VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
+    `INSERT INTO user_facts (category, text, evidence, confidence, source_session, observed_count, last_observed_at, projects, content_hash, origin, status)
+     VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, 'pending')`,
     [
       fact.category,
       fact.text,
@@ -857,7 +844,7 @@ export async function topUserFacts({ limit = 5, projectKeys, projectSlug } = {})
   const vis = factVisibility("", keysOf({ projectKeys, projectSlug }));
   return handle.all(
     `SELECT id, category, text, confidence, observed_count
-       FROM user_facts WHERE status = 'active' AND ${vis.sql}
+       FROM user_facts WHERE ${acceptedSql()} AND ${vis.sql}
       ORDER BY confidence DESC, observed_count DESC
       LIMIT ?`,
     [...vis.params, limit]
@@ -872,8 +859,8 @@ export async function projectStats({ projectKeys }) {
   const lv = learningVisibility("", keys);
   const fv = factVisibility("", keys);
   return {
-    learnings: handle.get(`SELECT COUNT(*) AS n FROM learnings WHERE status = 'active' AND ${lv.sql}`, lv.params).n,
-    facts: handle.get(`SELECT COUNT(*) AS n FROM user_facts WHERE status = 'active' AND ${fv.sql}`, fv.params).n,
+    learnings: handle.get(`SELECT COUNT(*) AS n FROM learnings WHERE ${acceptedSql()} AND ${lv.sql}`, lv.params).n,
+    facts: handle.get(`SELECT COUNT(*) AS n FROM user_facts WHERE ${acceptedSql()} AND ${fv.sql}`, fv.params).n,
   };
 }
 
@@ -888,7 +875,7 @@ export async function listUserFacts({ projectKeys, limit = 20 } = {}) {
   const vis = factVisibility("", keysOf({ projectKeys }) ?? []);
   return handle.all(
     `SELECT id, category, text, confidence, observed_count, last_observed_at
-       FROM user_facts WHERE status = 'active' AND ${vis.sql}
+       FROM user_facts WHERE ${acceptedSql()} AND ${vis.sql}
       ORDER BY confidence DESC, observed_count DESC LIMIT ?`,
     [...vis.params, limit]
   );
@@ -911,7 +898,7 @@ export async function recordFeedback({ id, verdict, projectKeys }) {
   if (!delta) return { changed: false };
   const keys = keysOf({ projectKeys }) ?? [];
   const vis = learningVisibility("", keys);
-  const row = handle.get(`SELECT id, project_slug FROM learnings WHERE id = ? AND status = 'active' AND ${vis.sql}`, [lid, ...vis.params]);
+  const row = handle.get(`SELECT id, project_slug FROM learnings WHERE id = ? AND ${acceptedSql()} AND ${vis.sql}`, [lid, ...vis.params]);
   if (!row) return { changed: false };
   // Every verdict is kept per calling project (P5.5); a project lesson's own value
   // moves too: the first verdict sets it, later ones average in.
@@ -963,13 +950,13 @@ export async function buildUserRepresentation({ projectSlug, projectKeys, factLi
 
   const fvis = factVisibility("", keys);
   const facts = handle.all(
-    `SELECT category, text FROM user_facts WHERE status = 'active' AND ${fvis.sql}
+    `SELECT category, text FROM user_facts WHERE ${acceptedSql()} AND ${fvis.sql}
       ORDER BY confidence DESC, observed_count DESC LIMIT ?`,
     [...fvis.params, factLimit]
   );
 
   const vis = learningVisibility("", keys);
-  const where = `status = 'active' AND confidence >= 0.6 AND ${vis.sql}`;
+  const where = `${acceptedSql()} AND confidence >= 0.6 AND ${vis.sql}`;
   const params = [...vis.params];
   // Explicit (stated) facts first, then by confidence + reinforcement.
   const learnings = handle.all(

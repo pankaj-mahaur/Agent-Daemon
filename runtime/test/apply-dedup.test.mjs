@@ -1,5 +1,7 @@
-// Tests for runtime/src/digest/apply.mjs — cross-session dedup when appending
-// learnings to activeContext.md.
+// Tests for the memory file's cross-session dedup (digest/proposals.mjs appendToMemory).
+// Since the trust core (MCP launch plan L1), a note reaches activeContext.md only when
+// the user accepts it in review (review.mjs acceptMemory appends it); the digest itself
+// stores pending rows and writes no memory file (last test).
 //
 // Real-world dogfood data showed entries like
 //   - **decision** (conf 0.65): it "knew" enough from training...
@@ -13,7 +15,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { applyLearnings } from "../src/digest/apply.mjs";
+import { applyLearnings as applyToStore } from "../src/digest/apply.mjs";
+import { appendToMemory } from "../src/digest/proposals.mjs";
 
 // Isolation: the drain and apply write the episodic DB (and user.md) under
 // HOME; point it at a temp folder so the real ~/.agent-daemon is never touched.
@@ -27,6 +30,15 @@ async function makeTmp() {
   await fs.mkdir(path.join(dir, ".agent-daemon", "memory"), { recursive: true });
   await fs.writeFile(path.join(dir, ".agent-daemon", "memory", "activeContext.md"), "# Active context\n\n", "utf8");
   return dir;
+}
+
+// Each "apply" here accepts every item, the way review appends it to the memory file.
+const entries = async (memPath) => (await fs.readFile(memPath, "utf8")).split(/\r?\n/).filter((l) => l.startsWith("- ")).length;
+async function applyLearnings({ classified, sessionId, cwd }) {
+  const memPath = path.join(cwd, ".agent-daemon", "memory", "activeContext.md");
+  const before = await entries(memPath);
+  await appendToMemory(memPath, classified, sessionId, new Date().toISOString());
+  return { memoryProjectAppended: (await entries(memPath)) - before };
 }
 
 function makeClassified(type, text, opts = {}) {
@@ -166,4 +178,16 @@ test("partial overlap: only the new entries get appended", async () => {
   const yHits = (content.match(/Y is the new finding/g) || []).length;
   assert.equal(xHits, 1);
   assert.equal(yHits, 1);
+});
+
+test("the digest itself writes no memory file: its notes wait in the store as pending", async () => {
+  const cwd = await makeTmp();
+  const memPath = path.join(cwd, ".agent-daemon", "memory", "activeContext.md");
+  const r = await applyToStore({ classified: [makeClassified("pattern", "always run the linter first")], sessionId: null, sessionSummary: "s", cwd });
+  assert.equal(r.memoryProjectAppended, 0);
+  assert.equal(r.sqliteInserted, 1);
+  assert.equal(await fs.readFile(memPath, "utf8"), "# Active context\n\n");
+  const { db } = await import("../src/memory/episodic.mjs");
+  const row = (await db()).get("SELECT status, accepted_by FROM learnings WHERE text = ?", ["always run the linter first"]);
+  assert.deepEqual({ ...row }, { status: "pending", accepted_by: null });
 });

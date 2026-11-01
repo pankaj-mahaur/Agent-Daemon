@@ -13,6 +13,7 @@
 import { db } from "./memory/episodic.mjs";
 import { routeAdviceStats, stats } from "./memory/episodic.mjs";
 import { neutralizeText } from "./digest/sanitize.mjs";
+import { acceptedSql } from "./memory/trust.mjs";
 
 /**
  * Escape the five HTML-significant characters. Applied to EVERY value rendered
@@ -74,7 +75,7 @@ export async function gatherViewerData() {
   const learnings = safeAll(
     `SELECT id, category, text, confidence, project_slug, tags, derivation,
             observed_count, retrieval_count, created_at
-       FROM learnings WHERE status = 'active' AND COALESCE(applied_to, '') NOT LIKE 'quarantined%'
+       FROM learnings WHERE ${acceptedSql()} AND COALESCE(applied_to, '') NOT LIKE 'quarantined%'
       ORDER BY created_at DESC LIMIT 200`
   );
   const proposals = safeAll(

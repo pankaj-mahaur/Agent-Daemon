@@ -19,6 +19,7 @@ const ep = await import("../src/memory/episodic.mjs");
 const { classifyCorrection, recordInjections, findRepeat, jaccard, mcpCaptureRef } = await import("../src/memory/metrics.mjs");
 const { applyLearnings } = await import("../src/digest/apply.mjs");
 const { runInteractiveReview } = await import("../src/review.mjs");
+const { acceptLearnings } = await import("../testkit/memory-trust.mjs");
 
 let handle;
 before(async () => {
@@ -41,6 +42,7 @@ const NOW = Date.parse("2026-10-10T00:00:00Z");
 async function lesson(p, text, { ref = "S1", status = "active", project = p.key } = {}) {
   const id = await ep.insertLearning({ projectSlug: project, category: "correction", text, origin: status === "pending" ? "agent" : "user", status, captureRef: ref, confidence: 0.5 });
   handle.run("UPDATE learnings SET created_at = ? WHERE id = ?", ["2026-10-01 00:00:00", id]);
+  if (status === "active") acceptLearnings(handle, id); // a lesson in use was accepted in review
   return id;
 }
 const conf = (id) => handle.get("SELECT confidence FROM learnings WHERE id = ?", [id]).confidence;
@@ -119,6 +121,7 @@ test("review H1: the hook path and the digest of one session count one correctio
 test("review M3: a cross-project lesson is never bumped or reworded from one project", async () => {
   const p = await project();
   const g = await ep.insertLearning({ category: "correction", text: "always run the linter in strict mode everywhere", origin: "user", captureRef: "G0" });
+  acceptLearnings(handle, g);
   handle.run("UPDATE learnings SET global_accepted_at = '2026-10-01', created_at = '2026-10-01 00:00:00' WHERE id = ?", [g]);
   const r = classifyCorrection(handle, { keys: [p.key], text: "in strict mode, always run the linter everywhere", captureRef: "S7", source: "hooks", now: NOW });
   assert.equal(r.repeat, true, "it still counts as a repeat");
@@ -200,6 +203,7 @@ test("feedback ranks within its project; a global lesson ranks by the reading pr
   // A cross-project lesson: project P's 'wrong' sinks it in P only.
   const g1 = await ep.insertLearning({ category: "tool", text: "global zeta lesson about linters", origin: "user", status: "active" });
   const g2 = await ep.insertLearning({ category: "tool", text: "global omega lesson about linters", origin: "user", status: "active" });
+  acceptLearnings(handle, [g1, g2]);
   handle.run("UPDATE learnings SET global_accepted_at = '2026-10-01', created_at = '2026-10-01 00:00:00' WHERE id IN (?, ?)", [g1, g2]);
   const firstIn = async (keys) => (await ep.searchLearnings("global lesson linters", { projectKeys: keys, limit: 5 })).map((r) => r.id);
   const before = await firstIn([q.key]);
@@ -212,6 +216,7 @@ test("feedback ranks within its project; a global lesson ranks by the reading pr
 test("findRepeat honours the 10-minute rule when sessions can't be told apart", async () => {
   const p = await project();
   const id = await ep.insertLearning({ projectSlug: p.key, category: "correction", text: "always pin node to 22 in ci", origin: "user" });
+  acceptLearnings(handle, id);
   handle.run("UPDATE learnings SET capture_ref = NULL, session_id = NULL, created_at = ? WHERE id = ?", ["2026-10-09 23:55:00", id]);
   assert.equal(findRepeat(handle, { keys: [p.key], text: "always pin node to 22 in ci", captureRef: null, now: NOW }), null, "5 minutes old: the same session, probably");
   handle.run("UPDATE learnings SET created_at = ? WHERE id = ?", ["2026-10-09 23:40:00", id]);

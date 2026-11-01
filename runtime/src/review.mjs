@@ -39,8 +39,10 @@ import { editorCommand, editorInvocation } from "./safe-spawn.mjs";
 import { stdin as input, stdout as output } from "node:process";
 import { globalProposedDir, projectDataDir } from "./memory/project-dir.mjs";
 import { readProposalMeta, appendToMemory } from "./digest/proposals.mjs";
-import { learningContentHash, scopedContentHash } from "./memory/sqlite.mjs";
+import { scopedContentHash } from "./memory/sqlite.mjs";
 import { sameNote } from "./memory/episodic.mjs";
+import { acceptFactGlobal, acceptGlobal, acceptLearning, promoteLearning, reviewToken } from "./memory/review-service.mjs";
+import { acceptedSql } from "./memory/trust.mjs";
 import { neutralizeText } from "./digest/sanitize.mjs";
 import { parseProposal } from "./skills/proposal.mjs";
 
@@ -56,9 +58,14 @@ const realTTY = () => Boolean(input.isTTY && output.isTTY);
 
 /** The D49 guard for accept paths: the refusal text, or null. */
 export function reviewGuard({ env = process.env, isTTY = realTTY } = {}) {
-  if (env.AD_TOOL_SHELL === "1") return GUARD_TEXTS.toolShell;
-  if (!isTTY()) return GUARD_TEXTS.noTty;
-  return null;
+  return gate({ env, isTTY }).refused ?? null;
+}
+
+// The review service's token (memory/review-service.mjs) with ad review's own wording.
+function gate({ env, isTTY }) {
+  if (env.AD_TOOL_SHELL === "1") return { refused: GUARD_TEXTS.toolShell };
+  if (!isTTY()) return { refused: GUARD_TEXTS.noTty };
+  return reviewToken({ env, isTTY });
 }
 
 /** Where this project's proposals are, in review order. */
@@ -81,7 +88,7 @@ export async function listProposals(cwd) {
   return out;
 }
 
-const learningRow = (handle, id) => handle.get("SELECT id, project_slug, category, text, evidence, confidence, tags, status, observed_count, retrieval_count, promote_request FROM learnings WHERE id = ?", [id]);
+const learningRow = (handle, id) => handle.get("SELECT id, project_slug, category, text, evidence, confidence, tags, status, accepted_by, observed_count, retrieval_count, promote_request FROM learnings WHERE id = ?", [id]);
 // What the user reads before confirming: control characters stripped (an escape code could hide or redraw it).
 const preview = (t) => neutralizeText(String(t ?? "")).replace(/\s+/g, " ").trim().slice(0, 200);
 
@@ -99,7 +106,7 @@ export function describeMemory(handle, meta, keys) {
   if (!row || !keys.includes(row.project_slug)) return { ok: false, text: `Learning #${meta.learning} isn't a note of this project.` };
   if (meta.kind === "memory-add" && row.status !== "pending") return { ok: false, text: `Learning #${row.id} isn't waiting for review (${row.status}): nothing to accept.` };
   if (meta.kind === "memory-promote" && (row.promote_request !== "global" || !["pending", "active"].includes(row.status))) return { ok: false, text: `Learning #${row.id} didn't ask to become a cross-project note: nothing to accept.` };
-  if (meta.kind === "memory-reword" && row.status !== "active") return { ok: false, text: `Learning #${row.id} isn't in use (${row.status}): nothing to reword.` };
+  if (meta.kind === "memory-reword" && !(row.status === "active" && row.accepted_by)) return { ok: false, text: `Learning #${row.id} isn't in use (${row.status}): nothing to reword.` };
   let action = { "memory-add": "use in this project", "memory-promote": "use in every project", "memory-reword": "rewrite in your words" }[meta.kind];
   if (meta.kind === "memory-reword") {
     // What the reword rests on: shown, and the same correction came back anyway.
@@ -118,13 +125,13 @@ export function describeMemory(handle, meta, keys) {
  * Apply an accepted memory proposal to the store. → {ok, text} (text says what happened).
  * keys: the project keys this review is bound to; a proposal for another project's note is refused.
  */
-export async function acceptMemory(handle, meta, { cwd, keys, now = new Date(), editText = editInEditor }) {
+export async function acceptMemory(handle, meta, { token, cwd, keys, now = new Date(), editText = editInEditor }) {
   const d = describeMemory(handle, meta, keys);
   if (!d.ok) return d;
   const row = d.row;
-  if (meta.kind === "memory-reword") return rewordLearning(handle, row, { editText, cwd });
+  if (meta.kind === "memory-reword") return rewordLearning(handle, row, { token, editText, cwd });
   if (meta.kind === "memory-add") {
-    handle.run("UPDATE learnings SET status = 'active', applied_to = 'memory:project' WHERE id = ?", [row.id]);
+    acceptLearning(handle, token, row.id, { appliedTo: "memory:project", now });
     const { resolveProjectMemoryPath } = await import("./digest/apply.mjs");
     const tags = (() => {
       try {
@@ -136,35 +143,7 @@ export async function acceptMemory(handle, meta, { cwd, keys, now = new Date(), 
     await appendToMemory(await resolveProjectMemoryPath(cwd), [{ learning: { type: row.category, text: row.text, evidence_quote: row.evidence, confidence: row.confidence, tags } }], null, now.toISOString());
     return { ok: true, text: `Accepted #${row.id}: it reaches your sessions in this project.` };
   }
-  return promoteLearning(handle, row, now);
-}
-
-/**
- * memory-promote: the note becomes cross-project with the plain content hash.
- * A cross-project note with that text already there stays, and this one is
- * superseded by it (counts merged). A 3.0 project note in another project that
- * still holds the plain hash moves to its own project-scoped hash first.
- */
-export function promoteLearning(handle, row, now = new Date()) {
-  const plain = learningContentHash(row.text);
-  return handle.transaction(() => {
-    let holder = handle.get("SELECT id, project_slug, status, applied_to FROM learnings WHERE content_hash = ? AND id != ?", [plain, row.id]);
-    // A holder that is never served (rejected, held back, superseded) gives up the
-    // hash instead of swallowing the note the user just accepted.
-    const served = holder && ["active", "pending"].includes(holder.status) && !String(holder.applied_to ?? "").startsWith("quarantined");
-    if (holder && holder.project_slug === null && !served) {
-      handle.run("UPDATE learnings SET content_hash = ?, norm_key = NULL WHERE id = ?", [`retired-${holder.id}`, holder.id]);
-      holder = null;
-    }
-    if (holder && holder.project_slug === null) {
-      handle.run("UPDATE learnings SET observed_count = observed_count + ?, retrieval_count = retrieval_count + ?, global_accepted_at = COALESCE(global_accepted_at, ?), status = CASE WHEN status = 'pending' THEN 'active' ELSE status END WHERE id = ?", [row.observed_count ?? 1, row.retrieval_count ?? 0, now.toISOString(), holder.id]);
-      handle.run("UPDATE learnings SET status = 'superseded', superseded_by = ?, promote_request = NULL WHERE id = ?", [holder.id, row.id]);
-      return { ok: true, text: `Accepted: #${row.id} is now the cross-project note #${holder.id}.` };
-    }
-    if (holder) handle.run("UPDATE learnings SET content_hash = ? WHERE id = ?", [scopedContentHash(holder.project_slug, row.text), holder.id]);
-    handle.run("UPDATE learnings SET project_slug = NULL, content_hash = ?, global_accepted_at = ?, promote_request = NULL, status = 'active', applied_to = 'memory:global' WHERE id = ?", [plain, now.toISOString(), row.id]);
-    return { ok: true, text: `Accepted: #${row.id} now applies in every project.` };
-  });
+  return promoteLearning(handle, token, row, now);
 }
 
 /** A rejected memory proposal: memory-add drops the note; memory-promote keeps it in its project. */
@@ -181,7 +160,7 @@ export function rejectMemory(handle, meta, { keys }) {
  * The new text is screened like any capture; it becomes a new accepted lesson and
  * the old one is superseded by it.
  */
-async function rewordLearning(handle, row, { editText, cwd }) {
+async function rewordLearning(handle, row, { token, editText, cwd }) {
   const oneLine = (t) => String(t ?? "").split(/\s+/).filter(Boolean).join(" ");
   const edited = oneLine(await editText(row.text));
   const { normKey } = await import("./memory/sqlite.mjs");
@@ -194,6 +173,7 @@ async function rewordLearning(handle, row, { editText, cwd }) {
   const { insertLearning } = await import("./memory/episodic.mjs");
   const id = await insertLearning({ projectSlug: row.project_slug, category: row.category, text: edited, evidence: `reworded in ad review (was #${row.id})`, confidence: row.confidence, origin: "user" });
   if (!id) return { ok: false, text: `Learning #${row.id}: that wording is already a lesson in this project.` };
+  acceptLearning(handle, token, Number(id), { appliedTo: "memory:project" });
   handle.run("UPDATE learnings SET status = 'superseded', superseded_by = ? WHERE id = ?", [Number(id), row.id]);
   // The memory file shows lessons too: its line gets the new words.
   try {
@@ -236,8 +216,8 @@ export function globalPending(handle) {
  * accept → cross-project; reject → its origin project only (no origin: rejected).
  * When the origin project already holds the same note, this row is superseded by it.
  */
-export function decideGlobal(handle, row, accept, now = new Date()) {
-  if (accept) return handle.run("UPDATE learnings SET global_accepted_at = ? WHERE id = ?", [now.toISOString(), row.id]);
+export function decideGlobal(handle, row, accept, now = new Date(), token = null) {
+  if (accept) return acceptGlobal(handle, token, row.id, { now });
   if (!row.origin) return handle.run("UPDATE learnings SET status = 'rejected' WHERE id = ?", [row.id]);
   return handle.transaction(() => {
     const same = sameNote(handle, row.origin, row.text);
@@ -273,12 +253,14 @@ export async function runInteractiveReview(opts) {
     out(GUARD_TEXTS.yes);
     return 2;
   }
+  let token = null;
   if (accepting) {
-    const refused = reviewGuard({ env, isTTY });
-    if (refused) {
-      out(refused);
+    const g = gate({ env, isTTY });
+    if (g.refused) {
+      out(g.refused);
       return 2;
     }
+    token = g.token;
   }
 
   const store = async () => {
@@ -289,14 +271,14 @@ export async function runInteractiveReview(opts) {
   const rl = opts.io ? null : readline.createInterface({ input, output });
   const question = opts.io ? opts.io.ask : ask(rl);
   try {
-    if (opts.global) return await reviewGlobal({ ...(await store()), question, out });
+    if (opts.global) return await reviewGlobal({ ...(await store()), question, out, token });
     const entries = await listProposals(opts.cwd);
     if (opts.reject) return await rejectByFlag({ entries, name: opts.reject, out, store, env });
     if (opts.accept) {
       const skillEntry = await skillProposalNamed(entries, opts.accept);
       if (skillEntry) return await acceptSkill({ entry: skillEntry, cwd: opts.cwd, question, out, env, isTTY, store, color: false });
     }
-    if (opts.accept || opts.acceptAll) return await acceptByFlag({ entries, opts, ...(await store()), question, out });
+    if (opts.accept || opts.acceptAll) return await acceptByFlag({ entries, opts, ...(await store()), question, out, token });
 
     if (entries.length === 0) {
       out("No queued proposals.");
@@ -320,7 +302,7 @@ async function confirm(question, expected) {
   return String(answer ?? "").trim() === String(expected);
 }
 
-async function acceptByFlag({ entries, opts, handle, keys, question, out }) {
+async function acceptByFlag({ entries, opts, handle, keys, question, out, token }) {
   if (!handle) {
     out("ad review: the memory store is unavailable (run ad doctor).");
     return 1;
@@ -350,7 +332,7 @@ async function acceptByFlag({ entries, opts, handle, keys, question, out }) {
   }
   let failed = refused;
   for (const { e, meta } of memory) {
-    const r = await acceptMemory(handle, meta, { cwd: opts.cwd, keys, ...(opts.editText ? { editText: opts.editText } : {}) });
+    const r = await acceptMemory(handle, meta, { token, cwd: opts.cwd, keys, ...(opts.editText ? { editText: opts.editText } : {}) });
     out(r.text);
     if (r.ok) await moveToApplied(e);
     else failed++;
@@ -358,7 +340,7 @@ async function acceptByFlag({ entries, opts, handle, keys, question, out }) {
   return failed ? 1 : 0;
 }
 
-async function reviewGlobal({ handle, question, out }) {
+async function reviewGlobal({ handle, question, out, token }) {
   if (!handle) {
     out("ad review: the memory store is unavailable (run ad doctor).");
     return 1;
@@ -387,7 +369,7 @@ async function reviewGlobal({ handle, question, out }) {
       }
       if (a === "a" || a === "accept") {
         if (await confirm(question, "accept")) {
-          decideGlobal(handle, r, true);
+          decideGlobal(handle, r, true, new Date(), token);
           out("  ✓ applies in every project");
         } else out("  · not confirmed");
         break;
@@ -404,7 +386,7 @@ async function reviewLoop({ entries, opts, store, question, out, env, isTTY }) {
   try {
     const { handle, keys } = await store();
     // A suggestion only: being seen in 2+ projects never promotes a fact by itself.
-    const shared = handle ? handle.all("SELECT id, text FROM user_facts WHERE status = 'active' AND global_accepted_at IS NULL AND json_array_length(COALESCE(projects, '[]')) >= 2 ORDER BY observed_count DESC LIMIT 5") : [];
+    const shared = handle ? handle.all(`SELECT id, text FROM user_facts WHERE ${acceptedSql()} AND global_accepted_at IS NULL AND json_array_length(COALESCE(projects, '[]')) >= 2 ORDER BY observed_count DESC LIMIT 5`) : [];
     if (shared.length) {
       out("User facts seen in 2+ projects. To make one apply everywhere: ad memory promote fact:<id>");
       for (const f of shared) out(`  fact:${f.id}  ${preview(f.text).slice(0, 100)}`);
@@ -472,9 +454,9 @@ async function reviewLoop({ entries, opts, store, question, out, env, isTTY }) {
 
     if (decision === "accept" && meta) {
       // A memory note: the D49 guard, then the user types the confirmation.
-      const refused = reviewGuard({ env, isTTY });
-      if (refused) {
-        out(refused);
+      const g = gate({ env, isTTY });
+      if (g.refused) {
+        out(g.refused);
         return 2;
       }
       const d = db?.handle ? describeMemory(db.handle, meta, db.keys) : null;
@@ -488,7 +470,7 @@ async function reviewLoop({ entries, opts, store, question, out, env, isTTY }) {
         out("· not confirmed — skipped");
         stats.skipped++;
       } else {
-        const r = await acceptMemory(db.handle, meta, { cwd: opts.cwd, keys: db.keys, ...(opts.editText ? { editText: opts.editText } : {}) });
+        const r = await acceptMemory(db.handle, meta, { token: g.token, cwd: opts.cwd, keys: db.keys, ...(opts.editText ? { editText: opts.editText } : {}) });
         out(r.ok ? `✓ ${r.text}` : `  ${r.text}`);
         if (r.ok) {
           await moveToApplied(entries[i]);
@@ -679,13 +661,13 @@ export async function promoteFact({ ref, handle, env = process.env, isTTY = real
     out("Usage: ad memory promote fact:<id>");
     return 1;
   }
-  const refused = reviewGuard({ env, isTTY });
-  if (refused) {
-    out(refused.replace(/^ad review/, "ad memory promote"));
+  const g = gate({ env, isTTY });
+  if (g.refused) {
+    out(g.refused.replace(/^ad review/, "ad memory promote"));
     return 2;
   }
-  const row = handle.get("SELECT id, text, status, global_accepted_at FROM user_facts WHERE id = ?", [Number(m[1])]);
-  if (!row || row.status !== "active") {
+  const row = handle.get("SELECT id, text, status, accepted_by, global_accepted_at FROM user_facts WHERE id = ?", [Number(m[1])]);
+  if (!row || row.status !== "active" || !row.accepted_by) {
     out(`No user fact ${ref}.`);
     return 1;
   }
@@ -698,7 +680,7 @@ export async function promoteFact({ ref, handle, env = process.env, isTTY = real
     out("Not confirmed: nothing changed.");
     return 1;
   }
-  handle.run("UPDATE user_facts SET global_accepted_at = ? WHERE id = ?", [new Date().toISOString(), row.id]);
+  acceptFactGlobal(handle, g.token, row.id);
   out(`${ref} now applies in every project.`);
   return 0;
 }

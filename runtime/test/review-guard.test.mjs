@@ -205,9 +205,14 @@ test("--global: 3.0's automatic globals grouped by origin; accept → every proj
 });
 
 test("ad memory promote fact:<id> from a terminal, typed", async () => {
-  handle.run("INSERT INTO user_facts (category, text, projects) VALUES ('tool', 'uses zed as the editor', '[\"a\",\"b\"]')");
+  // An accepted fact in use in two projects; a pending one can't be promoted (L1).
+  handle.run("INSERT INTO user_facts (category, text, projects, status, accepted_by) VALUES ('tool', 'uses zed as the editor', '[\"a\",\"b\"]', 'active', 'review')");
+  handle.run("INSERT INTO user_facts (category, text, projects, status) VALUES ('tool', 'an unreviewed fact', '[\"a\",\"b\"]', 'pending')");
   const fact = handle.get("SELECT id FROM user_facts WHERE text = 'uses zed as the editor'").id;
+  const unreviewed = handle.get("SELECT id FROM user_facts WHERE text = 'an unreviewed fact'").id;
   const o = lines();
+  assert.equal(await promoteFact({ ref: `fact:${unreviewed}`, handle, env: {}, isTTY: () => true, io: io("accept"), out: o.push }), 1);
+  assert.equal(handle.get("SELECT global_accepted_at FROM user_facts WHERE id = ?", [unreviewed]).global_accepted_at, null);
   assert.equal(await promoteFact({ ref: `fact:${fact}`, handle, env: {}, isTTY: () => true, io: io("no"), out: o.push }), 1);
   assert.equal(handle.get("SELECT global_accepted_at FROM user_facts WHERE id = ?", [fact]).global_accepted_at, null);
   assert.equal(await promoteFact({ ref: `fact:${fact}`, handle, env: {}, isTTY: () => true, io: io("accept"), out: o.push }), 0);

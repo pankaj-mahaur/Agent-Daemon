@@ -20,12 +20,15 @@ afterwards. Details and every option: [install](install.md).
    ad's hooks where the host has them, or recorded by the agent through the
    memory tools where it doesn't.
 2. **Review.**
-   - Corrections ad's hooks capture from your own words apply right away.
-   - Everything an agent records through the memory tools waits for your
-     review (`ad review`, or `npx agent-daemon-memory review`): its own notes,
-     and your corrections on hosts without ad's hooks. Until then the agent sees
-     them only when it searches, marked unreviewed, and they are never shown at
-     session start.
+   - Every note waits for your review before it is used: what ad's hooks
+     capture from your prompts, what a session-close digest finds, and what an
+     agent records through the memory tools. A hook can't prove that you typed
+     a prompt (scheduled prompts, background reports and other agents arrive
+     the same way), so nothing is accepted on its word.
+   - You accept in your own terminal: `ad memory held` (or `ad review`, or
+     `npx agent-daemon-memory review`). It refuses inside an agent's shell and
+     without a terminal. Until then the agent sees a note only when it
+     searches, marked unreviewed, and it is never shown at session start.
    - Notes from one project are never served in another unless you accept
      them as cross-project.
 3. **Recall.** At session start, with each prompt, or when the agent searches,

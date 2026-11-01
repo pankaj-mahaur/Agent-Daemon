@@ -800,14 +800,16 @@ export async function verifyImport(importId, { env = process.env } = {}) {
 }
 
 /**
- * ad review --import <id> [--accept-all]: imported lessons and facts, accepted (active) or
- * rejected, in your own terminal with a typed confirmation; never from an agent's shell. The
- * internal AD_INTERNAL_TEST_CONFIRM=<id> stands in for the terminal (CI), never under a shell marker.
+ * ad review --import <id> [--accept-all]: imported lessons and facts, accepted (through the
+ * review service) or rejected, in your own terminal with a typed confirmation; never from an
+ * agent's shell. No environment variable stands in for the terminal: tests pass isTTY.
  */
 export async function reviewImport(importId, { acceptAll = false, env = process.env, isTTY = Boolean(process.stdin.isTTY && process.stdout.isTTY), ask, out = process.stdout } = {}) {
   if (env.AD_TOOL_SHELL === "1") throw fail("IMPORT_REFUSED", IMPORT_TEXTS.REVIEW_SHELL, { exitCode: 2 });
-  const override = env.AD_INTERNAL_TEST_CONFIRM === importId;
-  if (!isTTY && !override) throw fail("IMPORT_REFUSED", IMPORT_TEXTS.REVIEW_TTY, { exitCode: 2 });
+  if (!isTTY) throw fail("IMPORT_REFUSED", IMPORT_TEXTS.REVIEW_TTY, { exitCode: 2 });
+  const { reviewToken, acceptLearning, acceptFact } = await import("../memory/review-service.mjs");
+  const gate = reviewToken({ env, isTTY: () => isTTY });
+  if (gate.refused) throw fail("IMPORT_REFUSED", IMPORT_TEXTS.REVIEW_SHELL, { exitCode: 2 });
   const { open } = await import("../memory/sqlite.mjs");
   const saved = process.env.AD_ROOT;
   if (env.AD_ROOT) process.env.AD_ROOT = env.AD_ROOT;
@@ -818,11 +820,11 @@ export async function reviewImport(importId, { acceptAll = false, env = process.
   try {
     const rowsOf = (table) => db.prepare(`SELECT x.id, x.text, x.status FROM "${table}" x JOIN import_rows r ON r.row_id = x.id AND r.table_name = ? AND r.import_id = ? WHERE x.status = 'pending'`).all(table, importId);
     const items = [...rowsOf("learnings").map((r) => ({ ...r, table: "learnings" })), ...rowsOf("user_facts").map((r) => ({ ...r, table: "user_facts" }))];
-    const accept = (it) => db.prepare(`UPDATE "${it.table}" SET status = 'active'${it.table === "learnings" ? ", applied_to = 'import:accepted'" : ""} WHERE id = ?`).run(it.id);
+    const accept = (it) => (it.table === "learnings" ? acceptLearning(t, gate.token, it.id, { appliedTo: "import:accepted" }) : acceptFact(t, gate.token, it.id));
     const reject = (it) => db.prepare(`UPDATE "${it.table}" SET status = 'rejected' WHERE id = ?`).run(it.id);
     let decided = 0;
     if (acceptAll) {
-      const typed = override ? importId : await ask(`Accept all ${items.length} imported item(s)? Type ${importId} to confirm: `);
+      const typed = await ask(`Accept all ${items.length} imported item(s)? Type ${importId} to confirm: `);
       if (String(typed ?? "").trim() !== importId) return { accepted: 0, rejected: 0, left: items.length, changed: false };
       for (const it of items) accept(it);
       decided = items.length;

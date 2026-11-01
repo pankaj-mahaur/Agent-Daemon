@@ -18,6 +18,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { db } from "./episodic.mjs";
+import { acceptedSql } from "./trust.mjs";
 
 const JACCARD_THRESHOLD = 0.8;
 const STALE_DAYS = 90;
@@ -58,7 +59,7 @@ export async function analyzeConsolidation(opts = {}) {
   const handle = await db();
   if (!handle) return { driver: false, scanned: 0, mergeClusters: [], staleCandidates: [], contradictions: [] };
 
-  let where = "status = 'active' AND COALESCE(applied_to, '') NOT LIKE 'quarantined%'";
+  let where = `${acceptedSql()} AND COALESCE(applied_to, '') NOT LIKE 'quarantined%'`;
   const params = [];
   if (opts.projectSlug) {
     where += " AND project_slug = ?";

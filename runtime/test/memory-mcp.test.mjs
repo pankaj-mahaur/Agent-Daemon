@@ -81,7 +81,11 @@ test("memory MCP: tools/list advertises the progressive-disclosure tools, and ge
     // A project row, and a 3.0-style NULL-project row from this project's session.
     id1 = await mod.insertLearning({ sessionId: "sess-X", projectSlug: slug, category: "gotcha", text: "mcp detail learning", evidence: "the evidence", tags: ["src/mcp/thing.ts"], confidence: 0.7 });
     id2 = await mod.insertLearning({ sessionId: "sess-X", category: "pattern", text: "mcp sibling learning", confidence: 0.6 });
-    await mod.observeUserFact({ category: "tool", text: "prefers pnpm", confidence: 0.8, projectSlug: slug, origin: "user" });
+    const fact = await mod.observeUserFact({ category: "tool", text: "prefers pnpm", confidence: 0.8, projectSlug: slug, origin: "user" });
+    // Accepted in review, as the served surfaces require (MCP launch plan L1).
+    const { acceptFacts, acceptLearnings } = await import("../testkit/memory-trust.mjs");
+    acceptLearnings(await mod.db(), [id1, id2]);
+    acceptFacts(await mod.db(), fact.id);
     mod.closeDb();
 
     const env = { ...process.env, HOME: dir, USERPROFILE: dir, AD_ROOT: undefined, CLAUDE_PROJECT_DIR: undefined, AD_MEMORY_PROJECT: undefined };

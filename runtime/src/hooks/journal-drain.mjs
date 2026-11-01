@@ -191,7 +191,9 @@ export function toLearning(e) {
     type: e.type || "pattern",
     text: String(e.text || "").trim(),
     evidence_quote: String(e.evidence_quote || "").slice(0, 400),
-    evidence_speaker: e.evidence_speaker === "agent" ? "agent" : "user",
+    // A journal line names its speaker or counts as unknown: anyone can append to
+    // the journal, so a missing speaker is never the user (MCP launch plan D3).
+    evidence_speaker: e.evidence_speaker === "agent" || e.evidence_speaker === "user" ? e.evidence_speaker : "unknown",
     // Who wrote the words (user-prompt-extract stamps it): an assistant-turn
     // note is the agent's, and waits for review (apply.mjs originOf).
     ...(e.source_speaker === "user" || e.source_speaker === "agent" ? { source_speaker: e.source_speaker } : {}),

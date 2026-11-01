@@ -384,6 +384,7 @@ export async function open(opts = {}) {
       // P7.1a: project ids (additive), and the registry's slugs mirrored for the triggers.
       migrateProjectIds(raw);
       syncProjectKeys(raw);
+      migrateTrustCore(raw);
       break;
     } catch (e) {
       try {
@@ -693,6 +694,45 @@ export function migrateLearningValue(raw) {
     CREATE INDEX IF NOT EXISTS idx_feedback_learning ON feedback(learning_id, project_slug);
     INSERT OR IGNORE INTO schema_version (version) VALUES (3);
   `);
+}
+
+/**
+ * Schema v5 (MCP launch plan L1, 02 §6): who accepted a note (memory/trust.mjs).
+ *   provenance   where the note came from: legacy | user-prompt | user-cli | agent |
+ *                tool | digest | buffered | import
+ *   accepted_by  'review' (the review service) or 'legacy' (accepted before v5);
+ *                NULL = not accepted
+ *   accepted_at  when it was accepted
+ *   status_at    when the status last changed (provisional expiry, hidden purge)
+ * Only rows present at the upgrade are backfilled: older ad names its columns on
+ * insert, so a row it adds later keeps accepted_by NULL and reads as pending. The
+ * check and the backfill share one IMMEDIATE transaction, so two processes upgrading
+ * at once backfill once. Additive only: 3.1.0 ignores the columns.
+ *
+ * @param {any} raw
+ */
+export function migrateTrustCore(raw) {
+  const done = () => raw.prepare("SELECT 1 FROM schema_version WHERE version = 5").get();
+  if (done()) return;
+  raw.transaction(() => {
+    if (done()) return;
+    for (const table of ["learnings", "user_facts"]) {
+      const cols = new Set(raw.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name));
+      for (const col of ["provenance", "accepted_by", "accepted_at", "status_at"]) {
+        if (!cols.has(col)) raw.exec(`ALTER TABLE ${table} ADD COLUMN ${col} TEXT`);
+      }
+    }
+    raw.exec(`
+      UPDATE learnings SET provenance = 'legacy',
+        accepted_by = CASE WHEN status = 'active' AND COALESCE(applied_to, '') NOT LIKE 'quarantined%' THEN 'legacy' END,
+        accepted_at = CASE WHEN status = 'active' AND COALESCE(applied_to, '') NOT LIKE 'quarantined%' THEN created_at END
+        WHERE provenance IS NULL;
+      UPDATE user_facts SET provenance = 'legacy',
+        accepted_by = CASE WHEN status = 'active' THEN 'legacy' END,
+        accepted_at = CASE WHEN status = 'active' THEN created_at END
+        WHERE provenance IS NULL;
+      INSERT OR IGNORE INTO schema_version (version) VALUES (5);`);
+  }).immediate();
 }
 
 /**

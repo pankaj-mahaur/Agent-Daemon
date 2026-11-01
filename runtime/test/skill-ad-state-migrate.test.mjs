@@ -89,8 +89,8 @@ test("the skill's own sequence: a first move and a repeat move back with keep-bo
   const id = /Imported \((imp_[0-9A-Z]+)\)/.exec(imp.out)[1];
   const v = await run(["verify", "--import", id], envB);
   assert.match(v.out, /Recall: 3\/3 lessons found in app-a/);
-  // 10: the user's review (here through the internal override: the walk has no terminal).
-  await reviewImport(id, { acceptAll: true, env: { ...envB, AD_INTERNAL_TEST_CONFIRM: id }, isTTY: false, out: sink() });
+  // 10: the user's review, typed in a terminal (stood in for here: the walk has none).
+  await reviewImport(id, { acceptAll: true, env: envB, isTTY: true, ask: async () => id, out: sink() });
   // The repeat move: new work on the new side, then back to the old one with keep-both.
   fs.appendFileSync(path.join(cloneB, ".agent-daemon", "memory", "notes.md"), "added on the new side\n");
   const back = path.join(TMP, "back.adstate");

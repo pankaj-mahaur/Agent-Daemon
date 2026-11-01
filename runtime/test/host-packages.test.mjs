@@ -18,6 +18,8 @@ const RUNTIME = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const SCHEMAS = path.join(RUNTIME, "test", "fixtures", "schemas", "agent-plugins-1.0.0");
 const { build, checkOut, packageVersion, BUILD_MARK, NAME } = await import("../scripts/build-host-packages.mjs");
 const { adHookInClaudeSettings } = await import("../src/memory/plugin-hook.mjs");
+const { open: openStore } = await import("../src/memory/sqlite.mjs");
+const { acceptAllPending } = await import("../testkit/memory-trust.mjs");
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "ad-hostpkg-"));
 after(() => fs.rmSync(TMP, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
@@ -204,7 +206,7 @@ const journals = (h) => {
   return fs.existsSync(root) ? walk(root).filter((f) => /learning-journal/.test(path.basename(f))) : [];
 };
 
-test("the plugin's hooks: capture into ad's folder (never the repo), then drain and show it in the next session, memory only", () => {
+test("the plugin's hooks: capture into ad's folder (never the repo), then drain; accepted in review, it shows in the next session, memory only", async () => {
   const { h, env } = tempHome();
   const repo = path.join(h, "work", "shop-app");
   fs.mkdirSync(path.join(repo, ".git"), { recursive: true });
@@ -219,8 +221,14 @@ test("the plugin's hooks: capture into ad's folder (never the repo), then drain 
   fs.writeFileSync(path.join(repo, ".cursor", "rules", "x.mdc"), "CURSOR-RULES-MARKER\n");
   const s = runHook("session-start", env, { session_id: "s2", cwd: repo }, repo);
   assert.equal(s.status, 0, s.stderr);
-  const shown = JSON.parse(s.stdout).hookSpecificOutput?.additionalContext ?? "";
-  assert.match(shown, /pnpm/, "the captured lesson comes back in the next session");
+  assert.doesNotMatch(JSON.parse(s.stdout).hookSpecificOutput?.additionalContext ?? "", /pnpm/, "a captured lesson waits for review (MCP launch plan L1)");
+  const store = await openStore({ dbPath: path.join(h, ".agent-daemon", "episodic.db") });
+  acceptAllPending(store); // the user accepts it in review
+  store.close();
+  const s3 = runHook("session-start", env, { session_id: "s3", cwd: repo }, repo);
+  assert.equal(s3.status, 0, s3.stderr);
+  const shown = JSON.parse(s3.stdout).hookSpecificOutput?.additionalContext ?? "";
+  assert.match(shown, /pnpm/, "the accepted lesson comes back in the next session");
   for (const absent of [/constitution\/core\.md/, /agent-daemon-init-hint|initialize the daemon/, /PROJECT-RULES-MARKER/, /CURSOR-RULES-MARKER/, /\bad (status|memory scan)\b/, /graphify|mcp__qmd/]) assert.doesNotMatch(shown, absent);
   assert.ok(!fs.existsSync(path.join(repo, ".agent-daemon")));
 });

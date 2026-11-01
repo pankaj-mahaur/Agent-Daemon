@@ -4,6 +4,20 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Changed
+
+- **Every memory note waits for your review before it is used.** What ad's hooks capture from your prompts and what a session-close digest finds are now stored pending, like the notes an agent records. A hook can't tell your typed prompt from a scheduled prompt, a background report or another agent's text, so nothing is accepted on its word. Accept in your own terminal with `ad memory held` or `ad review`; until then an agent sees a note only when it searches, marked unreviewed. Notes you accepted before this version stay accepted. Seeing the same note again counts the repeat but never accepts it.
+- The digest no longer writes notes into `.agent-daemon/memory/activeContext.md` itself: accepting a note in `ad review` adds it there.
+- The memory store moves to schema 5: each note records who accepted it (`accepted_by`). An older ad on the same store keeps serving the notes you accepted and never serves a pending one.
+
+### Removed
+
+- The undocumented `mirror_to_claude_md` setting, which copied captured notes into your project's `CLAUDE.md` before you reviewed them.
+
+### Security
+
+- Only the review service accepts a memory note, and only with a token from your own terminal: a TTY, not the agent's shell. No environment variable stands in for the terminal: the internal `AD_INTERNAL_TEST_CONFIRM` that `ad review --import` used to take is gone.
+
 ## [3.1.0] — 2026-10-30
 
 Agent Daemon 3.1: several accounts and providers, with switching and fallback when a limit runs out; a fullscreen terminal UI (early, off by default); ad's memory in other agents; moving ad to another computer; and a round of security and isolation hardening.

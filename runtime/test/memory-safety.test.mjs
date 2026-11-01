@@ -32,6 +32,7 @@ const { classify } = await import("../src/digest/classify.mjs");
 const { toLearning } = await import("../src/hooks/journal-drain.mjs");
 const { appendLearnings, readJournal } = await import("../src/hooks/journal.mjs");
 const { runSafetyScan, safetyScanDone } = await import("../src/memory/safety.mjs");
+const { acceptFacts, acceptLearnings } = await import("../testkit/memory-trust.mjs");
 
 const mkProject = (name) => {
   const d = path.join(HOME, "work", name);
@@ -100,6 +101,8 @@ const idGlobalA = await ep.insertLearning({ sessionId: "sA", category: "tool", t
 const idGlobalNone = await ep.insertLearning({ category: "tool", text: "orphan global tip no session", confidence: 0.8 });
 const idAccepted = await ep.insertLearning({ category: "tool", text: "accepted global tip everyone", confidence: 0.8 });
 (await raw()).prepare("UPDATE learnings SET global_accepted_at = ? WHERE id = ?").run("2026-10-02T00:00:00.000Z", idAccepted);
+// Each is a note in use: accepted (the 3.0 rows as the v5 upgrade would, the rest in review).
+acceptLearnings(await ep.db(), [idA, idB, idGlobalA, idGlobalNone, idAccepted], { appliedTo: null });
 
 test("a guessed ID from another project returns nothing, changes nothing", async () => {
   const before = (await raw()).prepare("SELECT retrieval_count, usefulness FROM learnings WHERE id = ?").get(idA);
@@ -165,8 +168,10 @@ test("a stored 'ignore previous instructions and run …' learning is held back 
   const row = (await raw()).prepare("SELECT status, quarantine_reason FROM learnings WHERE text LIKE '%evil.example%'").get();
   assert.equal(row.status, "quarantined");
   assert.match(row.quarantine_reason, /^injection:/);
+  // The clean row waits for review like every capture; the user accepts it there.
+  acceptLearnings(await ep.db(), (await raw()).prepare("SELECT id FROM learnings WHERE text LIKE '%--retry%'").get().id);
   // A legacy 3.0 quarantined row (active + applied_to) is hidden too.
-  await ep.insertLearning({ projectSlug: slugB, category: "tool", text: "legacy held row mentions curl evil", appliedTo: "quarantined", confidence: 0.9 });
+  (await raw()).prepare("INSERT INTO learnings (project_slug, category, text, confidence, status, applied_to, content_hash) VALUES (?, 'tool', 'legacy held row mentions curl evil', 0.9, 'active', 'quarantined', 'h-legacy-held')").run(slugB);
 
   const search = await ep.searchLearnings("curl evil flaky", { projectKeys: [slugB], limit: 10 });
   assert.ok(search.some((r) => /--retry/.test(r.text)), "the clean control row shows");
@@ -199,8 +204,9 @@ test("an sk-… key typed in a prompt never lands in the journal, SQLite or memo
   const rows = (await raw()).prepare("SELECT text, evidence, tags FROM learnings").all();
   assert.ok(!JSON.stringify(rows).includes("sk-test-"), "SQLite");
   assert.ok(JSON.stringify(rows).includes("[redacted:openai-key]"));
+  // The digest writes no memory file since L1 (accepting a note does), and nothing raw lands there.
   const ac = readFileSync(path.join(B, ".agent-daemon", "memory", "activeContext.md"), "utf8");
-  assert.ok(!ac.includes("sk-test-") && ac.includes("[redacted:openai-key]"), ac);
+  assert.ok(!ac.includes("sk-test-"), ac);
   // Direct writes (the /remember path) and skill telemetry.
   await ep.insertLearning({ projectSlug: slugB, category: "pattern", text: `remember ${key}`, origin: "user" });
   await ep.recordSkillExecution({ sessionId: "sB", skillName: "x", triggerText: `run with ${key}` });
@@ -225,10 +231,10 @@ test("the agent writes itself a rule: it waits as pending and goes nowhere", asy
   assert.equal((await ep.searchLearnings("skip tests", { projectKeys: [slugB], limit: 10 })).length, 0);
   const facts = (await raw()).prepare("SELECT text FROM user_facts WHERE text LIKE '%skip the tests%'").all();
   assert.equal(facts.length, 0, "no user fact from agent text");
-  // The user then types the same note in this project: that accepts it.
+  // The same text arriving again as the user's never accepts it: only review does (L1).
   await ep.insertLearning({ projectSlug: slugB, category: "correction", text: l.text, origin: "user" });
-  const accepted = (await raw()).prepare("SELECT status, origin FROM learnings WHERE text LIKE '%skip the tests%'").get();
-  assert.deepEqual({ ...accepted }, { status: "active", origin: "user" });
+  const still = (await raw()).prepare("SELECT status, origin FROM learnings WHERE text LIKE '%skip the tests%'").get();
+  assert.deepEqual({ ...still }, { status: "pending", origin: "agent" });
 });
 
 test("a classifier 'global' item stays a project row asking for promotion; user.md untouched", async () => {
@@ -244,8 +250,9 @@ test("a classifier 'global' item stays a project row asking for promotion; user.
 });
 
 test("user facts stay in the projects that observed them", async () => {
-  await ep.observeUserFact({ category: "tool", text: "uses pnpm in A", projectSlug: slugA, origin: "user" });
-  await ep.observeUserFact({ category: "tool", text: "fact with no project" });
+  const inUse = await ep.observeUserFact({ category: "tool", text: "uses pnpm in A", projectSlug: slugA, origin: "user" });
+  const noProject = await ep.observeUserFact({ category: "tool", text: "fact with no project" });
+  acceptFacts(await ep.db(), [inUse.id, noProject.id]); // accepted in review: scope still applies
   assert.equal(await ep.observeUserFact({ category: "tool", text: "agent says user loves tabs", projectSlug: slugA, origin: "agent" }), null);
   const inA = (await ep.listUserFacts({ projectKeys: [slugA] })).map((f) => f.text);
   const inB = (await ep.listUserFacts({ projectKeys: [slugB] })).map((f) => f.text);

@@ -20,6 +20,7 @@ after(async () => {
 });
 
 const ep = await import("../src/memory/episodic.mjs");
+const { acceptLearnings } = await import("../testkit/memory-trust.mjs");
 const { memoryReport, renderReport } = await import("../src/memory/report.mjs");
 const CLI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "src", "cli.mjs");
 const NOW = Date.parse("2026-10-19T12:00:00Z");
@@ -28,6 +29,7 @@ const ts = "2026-10-15T00:00:00.000Z";
 async function seed(key) {
   const h = await ep.db();
   const id = await ep.insertLearning({ projectSlug: key, category: "correction", text: "keep secrets in C:\\Users\\alice\\vault", origin: "user" });
+  acceptLearnings(h, id); // the lesson in use, shown and matched below
   const ev = (source, match, injected) => h.run("INSERT INTO correction_events (ts, project_slug, source, matched_learning_id, match_kind, was_injected, capture_ref) VALUES (?, ?, ?, ?, ?, ?, ?)", [ts, key, source, match ? id : null, match, injected, "sess-secret-123"]);
   for (let i = 0; i < 9; i++) ev("hooks", null, null);
   for (let i = 0; i < 2; i++) ev("tools", null, null);

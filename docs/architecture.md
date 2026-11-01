@@ -109,10 +109,11 @@ transcript.jsonl
     │
     ▼
 ┌─────────────────────────────────────────────┐
-│ 5. applyLearnings(classified)                │  Write to memory or queue:
-│    → { memoryProjectAppended, ... }          │  - Auto-append low-risk to .md
-│                                              │  - Insert into SQLite
-│                                              │  - Queue high-risk to .agent-daemon/proposed/
+│ 5. applyLearnings(classified)                │  Store for review:
+│    → { sqliteInserted, quarantined, ... }    │  - Insert into SQLite as pending
+│                                              │  - Queue skill/constitution edits and
+│                                              │    held-back notes to .agent-daemon/proposed/
+│                                              │  (accepting in review appends to .md)
 └─────────────────────────────────────────────┘
     │
     ▼
@@ -144,7 +145,7 @@ The database opens through `better-sqlite3`, or Node's built-in `node:sqlite` (N
 **How memory stays safe** (details: [memory/security.md](memory/security.md)):
 - **Project ids** (`memory/projects.mjs`). Each project has an id in `~/.agent-daemon/projects.json` (and `.agent-daemon/project.json` in a project you set up), and memory rows carry it, so a moved folder keeps its memory. Two folders whose old path slugs collide are withheld until each has its own id (`memory/safety.mjs`, `ad memory assign`).
 - **One scope per reader** (`memory/scope.mjs`). The memory MCP server is bound to one project when it starts; no tool argument changes it.
-- **Held notes** (`memory/held.mjs`). A note an agent wrote about itself is stored *pending*, and one the injection screen or the secret check flags is stored *quarantined*; neither is served until you act in `ad review` or `ad memory held`, which refuse to run in an agent's tool shell (`security/agent-shell.mjs`).
+- **The review service** (`memory/review-service.mjs`, `memory/trust.mjs`). Every writer stores a new note *pending*, and one the injection screen or the secret check flags *quarantined*. Only the review service accepts a note, and only with a token issued in your own terminal: a TTY and not the agent's tool shell (`AD_TOOL_SHELL`); no environment variable stands in. An accepted note carries `accepted_by` (`review`, or `legacy` for notes accepted before schema v5), and readers serve accepted notes only (`acceptedSql`). Older ad, which reads `status = 'active'`, never sees a pending note as accepted. `ad review` and `ad memory held` (`memory/held.mjs`) are the ways in; `review-gate.test.mjs` holds the rest of the code to it. A gate against accidents and injection, not a sandbox.
 - **Secrets** (`security/secret-patterns.mjs`). Key-shaped text is replaced with `[redacted:<kind>]` at every write and masked again when older notes are shown.
 
 ### 5. Watch daemon (`runtime/src/daemon/watch.mjs`)

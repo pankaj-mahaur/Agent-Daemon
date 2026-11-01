@@ -101,7 +101,7 @@ export function createAdLayer({ cwd, home = homedir(), memory = null, cli = null
     const handle = memory ? await memory.db() : null;
     if (handle) {
       try {
-        rows = handle.all("SELECT id, text FROM learnings WHERE session_id = ? AND created_at > ? AND status = 'active' AND COALESCE(applied_to, '') NOT LIKE 'quarantined%' ORDER BY id", [threadId, sinceIso]);
+        rows = handle.all("SELECT id, text FROM learnings WHERE session_id = ? AND created_at > ? AND status IN ('active', 'pending') AND COALESCE(applied_to, '') NOT LIKE 'quarantined%' ORDER BY id", [threadId, sinceIso]);
       } catch {
         rows = [];
       }
