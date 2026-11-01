@@ -42,7 +42,7 @@ import { readProposalMeta, appendToMemory } from "./digest/proposals.mjs";
 import { scopedContentHash } from "./memory/sqlite.mjs";
 import { sameNote } from "./memory/episodic.mjs";
 import { acceptFactGlobal, acceptGlobal, acceptLearning, promoteLearning, reviewToken } from "./memory/review-service.mjs";
-import { acceptedSql } from "./memory/trust.mjs";
+import { acceptedSql, statusSql } from "./memory/trust.mjs";
 import { neutralizeText } from "./digest/sanitize.mjs";
 import { parseProposal } from "./skills/proposal.mjs";
 
@@ -94,7 +94,8 @@ export async function listProposals(cwd) {
   return out;
 }
 
-const learningRow = (handle, id) => handle.get("SELECT id, project_slug, category, text, evidence, confidence, tags, status, accepted_by, observed_count, retrieval_count, promote_request FROM learnings WHERE id = ?", [id]);
+// status as readers report it: a row an older ad wrote 'active' without an accept reads 'pending' (trust.mjs).
+const learningRow = (handle, id) => handle.get(`SELECT id, project_slug, category, text, evidence, confidence, tags, ${statusSql()} AS status, accepted_by, observed_count, retrieval_count, promote_request FROM learnings WHERE id = ?`, [id]);
 // What the user reads before confirming: control characters stripped (an escape code could hide or redraw it).
 const preview = (t) => neutralizeText(String(t ?? "")).replace(/\s+/g, " ").trim().slice(0, 200);
 

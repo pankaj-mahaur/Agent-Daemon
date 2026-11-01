@@ -107,6 +107,17 @@ export function rewordInFile(content, oldText, newText) {
   return hit ? out.join("") : null;
 }
 
+/** Drop a lesson's lines (and their line breaks) from a memory file; → the new content, or null when it isn't there. */
+export function dropFromFile(content, text) {
+  const nk = normKey(text);
+  const lines = String(content ?? "").split(/(?<=\n)/);
+  const kept = lines.filter((line) => {
+    const m = FILE_LINE.exec(line.replace(/\r?\n$/, ""));
+    return !(m && normKey(m[1]) === nk);
+  });
+  return kept.length === lines.length ? null : kept.join("");
+}
+
 // Accepted lessons this project may use, as candidates for a repeat.
 function candidates(handle, keys) {
   const vis = learningVisibility("l", keys, "any");

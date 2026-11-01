@@ -558,7 +558,7 @@ async function mergeDb(dir, status, { env }) {
         const secret = findSecrets(`${text}\n${r.evidence ?? ""}`).length > 0;
         const kept = r.status === "quarantined" || r.status === "rejected" ? r.status : screen.verdict !== "clean" || secret ? "quarantined" : "pending";
         const row = {
-          ...pick(r, "learnings", ["id", "project_id", "project_slug", "project_path", "content_hash", "norm_key", "status", "origin", "applied_to", "quarantine_reason", "supersedes", "superseded_by", "session_id", "promote_request", "global_accepted_at", "retrieval_count"]),
+          ...pick(r, "learnings", ["id", "project_id", "project_slug", "project_path", "content_hash", "norm_key", "status", "origin", "applied_to", "quarantine_reason", "supersedes", "superseded_by", "session_id", "promote_request", "global_accepted_at", "retrieval_count", "accepted_by", "accepted_at", "provenance", "status_at"]),
           project_id: p.id,
           project_slug: p.slug,
           content_hash: scopedContentHash(p.slug, text),
@@ -568,6 +568,8 @@ async function mergeDb(dir, status, { env }) {
         if (lc.has("norm_key")) row.norm_key = nk;
         if (lc.has("project_path")) row.project_path = p.path ?? null;
         if (lc.has("origin")) row.origin = origin;
+        // Who accepted it is never imported: the user accepts in ad review --import.
+        if (lc.has("provenance")) row.provenance = "import";
         if (lc.has("applied_to")) row.applied_to = kept === "quarantined" ? "quarantined:import" : "proposed:import";
         if (lc.has("quarantine_reason") && kept === "quarantined") row.quarantine_reason = secret ? "secret-shaped text" : screen.reasons.join(", ") || "imported as quarantined";
         const nid = insert("learnings", row);
@@ -590,7 +592,8 @@ async function mergeDb(dir, status, { env }) {
           continue;
         }
         const flaggedFact = screenLearning({ text, evidence: r.evidence ?? "" }).verdict !== "clean" || findSecrets(text).length > 0;
-        const row = { ...pick(r, "user_facts", ["id", "projects", "project_ids", "promoted_at", "export_project", "content_hash", "status", "origin", "source_session", "supersedes"]), status: flaggedFact ? "quarantined" : "pending" };
+        const row = { ...pick(r, "user_facts", ["id", "projects", "project_ids", "promoted_at", "export_project", "content_hash", "status", "origin", "source_session", "supersedes", "global_accepted_at", "accepted_by", "accepted_at", "provenance", "status_at"]), status: flaggedFact ? "quarantined" : "pending" };
+        if (fc.has("provenance")) row.provenance = "import";
         if (fc.has("project_ids")) row.project_ids = JSON.stringify(p ? [p.id] : []);
         if (fc.has("projects")) row.projects = JSON.stringify(p ? [p.slug] : []);
         if (fc.has("content_hash")) row.content_hash = hash;

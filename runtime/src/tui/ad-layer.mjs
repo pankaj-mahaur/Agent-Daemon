@@ -87,7 +87,9 @@ export function createAdLayer({ cwd, home = homedir(), memory = null, cli = null
       // ad tui can't ask for the dialog code yet (an editor's terminal, a broken chain): say where it works.
       const gate = await reviewToken({ dialog: async () => ({ ok: false, text: TUI_NO_CODE }), ...review });
       if (gate.refused) return [`/memory forget: ${gate.refused}`];
-      const changed = archiveLearning(handle, gate.token, id, slug);
+      // Its line in the project's memory file goes too: session start injects that file.
+      const memoryFile = await (await import("../digest/apply.mjs")).resolveProjectMemoryPath(cwd).catch(() => null);
+      const changed = archiveLearning(handle, gate.token, id, slug, { memoryFile });
       return [changed ? `Forgot #${id}: it won't be recalled again.` : `No active learning #${id}.`];
     }
     if (s === "profile") {

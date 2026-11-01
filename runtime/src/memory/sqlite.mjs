@@ -370,6 +370,9 @@ export async function open(opts = {}) {
     raw = await openDatabase(dbPath, { prefer: opts.prefer });
     if (!raw) return null;
     try {
+      // Freed pages are zeroed, so a forgotten note's text doesn't linger in them
+      // (memory/purge.mjs). A per-connection setting: every opener sets it.
+      raw.exec("PRAGMA secure_delete = ON");
       raw.exec(SCHEMA);
       // Run migrations AFTER SCHEMA exec. Each migration is idempotent + safe to
       // re-run on already-migrated DBs.
@@ -707,7 +710,8 @@ export function migrateLearningValue(raw) {
  * Only rows present at the upgrade are backfilled: older ad names its columns on
  * insert, so a row it adds later keeps accepted_by NULL and reads as pending. The
  * check and the backfill share one IMMEDIATE transaction, so two processes upgrading
- * at once backfill once. Additive only: 3.1.0 ignores the columns.
+ * at once backfill once. Additive only: 3.1.0 ignores the columns. The search index gets
+ * FTS5's secure-delete (stored with the index): a deleted row's terms leave its segments.
  *
  * @param {any} raw
  */
@@ -732,6 +736,11 @@ export function migrateTrustCore(raw) {
         accepted_at = CASE WHEN status = 'active' THEN created_at END
         WHERE provenance IS NULL;
       INSERT OR IGNORE INTO schema_version (version) VALUES (5);`);
+    try {
+      raw.exec("INSERT INTO learnings_fts(learnings_fts, rank) VALUES('secure-delete', 1)");
+    } catch {
+      // SQLite before 3.44: purges rebuild the index instead (memory/purge.mjs)
+    }
   }).immediate();
 }
 

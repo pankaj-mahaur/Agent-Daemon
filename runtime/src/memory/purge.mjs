@@ -1,28 +1,69 @@
-// Hard deletes of notes (MCP launch plan 02 §6): the bytes go, not just the row.
+// Erasing notes (MCP launch plan 02 §6): the bytes go, not just the row.
 //
-// purgeLearnings is called by the review service (a forget the user confirmed) and by
-// retainNotes (hidden notes nobody accepted, after 7 days); nothing else deletes a note.
-// A purge turns on FTS5 secure-delete, so the search index drops the note's terms
-// instead of marking them deleted, and PRAGMA secure_delete, so freed pages are
-// zeroed; then it truncates the WAL. Rows that only point at the note (injections,
-// feedback) go with it, and correction events keep their counts but lose its text.
+// purgeLearnings erases accepted notes for the review service (a forget the user
+// confirmed) and hidden unaccepted notes for retainNotes (after 7 days). Other deletes are
+// rollbacks of a row just written (capture.mjs) or old migrations (sqlite.mjs).
+// Every connection runs with PRAGMA secure_delete (sqlite.mjs open), so pages freed from
+// then on are zeroed; the index has FTS5 secure-delete, so a deleted row's terms leave its
+// segments. Pages freed before that, by an older ad or an index merge, still hold old
+// bytes: after erasing, compactStore() rewrites the file (VACUUM) and truncates the WAL.
+// When another process holds the store, that waits, and the maintenance pass retries.
+// Rows that only point at the note (injections, feedback) go with it; correction events
+// keep their counts but lose its text.
 
 const DAY = 86_400_000;
 export const HIDDEN_DAYS = 7;
 export const PROVISIONAL_DAYS = 30;
+const COMPACT_STEP = "compact-after-purge";
+
+/** Rewrite the store and truncate its WAL. → { vacuumed, walCleared } (false: another process held it; retried by maintenance). */
+export function compactStore(handle) {
+  let vacuumed = false;
+  try {
+    handle.raw.exec("VACUUM");
+    vacuumed = true;
+  } catch {
+    // busy: another process has the store open in a transaction
+  }
+  let walCleared = false;
+  try {
+    const r = handle.get("PRAGMA wal_checkpoint(TRUNCATE)");
+    walCleared = Number(r?.busy ?? Object.values(r ?? {})[0] ?? 1) === 0;
+  } catch {
+    // not in WAL mode, or busy
+  }
+  const pending = !(vacuumed && walCleared);
+  try {
+    if (pending) handle.run("INSERT OR REPLACE INTO memory_maintenance (name, done_at, result) VALUES (?, ?, 'pending')", [COMPACT_STEP, new Date().toISOString()]);
+    else handle.run("DELETE FROM memory_maintenance WHERE name = ?", [COMPACT_STEP]);
+  } catch {
+    // older store without the table
+  }
+  return { vacuumed, walCleared };
+}
+
+/** Whether an earlier purge's compaction is still owed (memory maintenance retries it). */
+export function compactionPending(handle) {
+  try {
+    return Boolean(handle.get("SELECT 1 AS owed FROM memory_maintenance WHERE name = ?", [COMPACT_STEP]));
+  } catch {
+    return false;
+  }
+}
 
 /** Delete learnings for good. → rows deleted. */
 export function purgeLearnings(handle, ids) {
   const list = [...new Set(ids.map(Number).filter(Number.isInteger))];
   if (!list.length) return 0;
   const marks = list.map(() => "?").join(",");
-  let rebuild = false;
+  // The index's secure-delete is set once, by the schema v5 migration. SQLite before 3.44
+  // has none: rebuild the index after the delete instead.
+  let rebuild = true;
   try {
-    handle.run("INSERT INTO learnings_fts(learnings_fts, rank) VALUES('secure-delete', 1)");
+    rebuild = Number(handle.get("SELECT v FROM learnings_fts_config WHERE k = 'secure-delete'")?.v) !== 1;
   } catch {
-    rebuild = true; // SQLite before 3.44: rebuild the index after the delete instead
+    // no config table: rebuild
   }
-  handle.raw.exec("PRAGMA secure_delete = ON");
   const deleted = handle.transaction(() => {
     for (const [table, col] of [["injections", "learning_id"], ["feedback", "learning_id"]]) {
       try {
@@ -41,11 +82,7 @@ export function purgeLearnings(handle, ids) {
     return handle.run(`DELETE FROM learnings WHERE id IN (${marks})`, list).changes;
   });
   if (rebuild) handle.run("INSERT INTO learnings_fts(learnings_fts) VALUES('rebuild')");
-  try {
-    handle.raw.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-  } catch {
-    // another reader holds the WAL: the next checkpoint truncates it
-  }
+  if (deleted) compactStore(handle);
   return deleted;
 }
 

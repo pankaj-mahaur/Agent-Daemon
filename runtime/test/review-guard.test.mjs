@@ -240,7 +240,8 @@ test("a proposal for another project's note is refused; a forged second meta lin
 
 test("a forged proposal can't accept an active note, promote a note that never asked, or hide what a batch accepts", async () => {
   const p = await project();
-  handle.run("INSERT INTO learnings (category, text, content_hash, project_slug, status) VALUES ('fact', 'client name is a private detail of this project', 'forge-1', ?, 'active')", [p.keys[0]]);
+  // An accepted note, already served.
+  handle.run("INSERT INTO learnings (category, text, content_hash, project_slug, status, accepted_by) VALUES ('fact', 'client name is a private detail of this project', 'forge-1', ?, 'active', 'review')", [p.keys[0]]);
   const active = handle.get("SELECT id FROM learnings WHERE content_hash = 'forge-1'").id;
   const dir = path.join(p.dir, ".agent-daemon", "proposed");
   await fs.mkdir(dir, { recursive: true });

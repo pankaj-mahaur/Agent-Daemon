@@ -12,7 +12,10 @@
 
 import { stdin as input, stdout as output } from "node:process";
 import { learningContentHash, scopedContentHash } from "./sqlite.mjs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { purgeLearnings } from "./purge.mjs";
+import { projectClause } from "./projects.mjs";
+import { dropFromFile } from "./metrics.mjs";
 import { probeAncestry } from "./ancestry.mjs";
 import { confirmByDialog } from "./dialog-code.mjs";
 
@@ -129,29 +132,82 @@ export function promoteLearning(handle, token, row, now = new Date()) {
   });
 }
 
-// ── Forgetting ──────────────────────────────────────────────────────────────
-// Without a token: these only hide what nobody accepted, or flag an accepted note.
-// A model-called path never pauses a rule, stops recall of an accepted note or
-// purges it (02 §2, D40).
+// ── Consolidation ───────────────────────────────────────────────────────────
+// `ad memory consolidate --apply-merges / --apply-stale` retire accepted notes: an edit of
+// accepted memory, so it needs the token like an accept.
 
-/** Hide a pending or provisional note (purged after 7 days). → rows changed. */
-export function hideNote(handle, id, { now } = {}) {
+/** Duplicates superseded by their survivor, whose count absorbs theirs. → rows superseded. */
+export function supersedeLearnings(handle, token, clusters) {
+  must(token);
+  let superseded = 0;
+  handle.transaction(() => {
+    for (const c of clusters) {
+      const extraObserved = c.duplicates.reduce((a, d) => a + (d.observed_count || 1), 0);
+      handle.run("UPDATE learnings SET observed_count = observed_count + ? WHERE id = ?", [extraObserved, c.survivor.id]);
+      for (const d of c.duplicates) {
+        superseded += handle.run("UPDATE learnings SET status = 'superseded', superseded_by = ?, status_at = ? WHERE id = ? AND status = 'active'", [c.survivor.id, iso(), d.id]).changes;
+      }
+    }
+  });
+  return superseded;
+}
+
+/** Stale notes archived (not served, still listed). → rows archived. */
+export function archiveStale(handle, token, ids) {
+  must(token);
+  let archived = 0;
+  handle.transaction(() => {
+    for (const id of ids) archived += handle.run("UPDATE learnings SET status = 'archived', status_at = ? WHERE id = ? AND status = 'active'", [iso(), id]).changes;
+  });
+  return archived;
+}
+
+// ── Forgetting ──────────────────────────────────────────────────────────────
+// Without a token, the agent's forget, bound to its project (keys): it hides a pending or
+// provisional note the agent wrote (purged after 7 days), and flags an accepted note
+// forget-requested (still recalled and enforced until the user decides). It never touches
+// a note captured from the user's own words: that waits for the user in review. A
+// model-called path never pauses a rule, stops recall of an accepted note or purges it
+// (02 §2, D40).
+
+const inProject = (keys) => (Array.isArray(keys) && keys.length ? projectClause("", keys) : { sql: "0", params: [] });
+
+/** Hide a pending or provisional note the agent wrote, in these projects. → rows changed. */
+export function hideNote(handle, id, { keys, now } = {}) {
+  const scope = inProject(keys);
   return handle.run(
-    "UPDATE learnings SET status = 'hidden', status_at = ? WHERE id = ? AND status IN ('pending', 'provisional') AND accepted_by IS NULL",
-    [iso(now), id]
+    `UPDATE learnings SET status = 'hidden', status_at = ? WHERE id = ? AND status IN ('pending', 'provisional') AND accepted_by IS NULL AND COALESCE(origin, '') <> 'user' AND ${scope.sql}`,
+    [iso(now), id, ...scope.params]
   ).changes;
 }
 
-/** An accepted note the agent asked to forget: still recalled and enforced until the user decides. */
-export function requestForget(handle, id, { now } = {}) {
-  return handle.run("UPDATE learnings SET status = 'forget-requested', status_at = ? WHERE id = ? AND status = 'active' AND accepted_by IS NOT NULL", [iso(now), id]).changes;
+/** An accepted note of these projects the agent asked to forget: still recalled and enforced until the user decides. */
+export function requestForget(handle, id, { keys, now } = {}) {
+  const scope = inProject(keys);
+  return handle.run(
+    `UPDATE learnings SET status = 'forget-requested', status_at = ? WHERE id = ? AND status = 'active' AND accepted_by IS NOT NULL AND ${scope.sql}`,
+    [iso(now), id, ...scope.params]
+  ).changes;
 }
 
-/** A forget from any caller: hides an unaccepted note, flags an accepted one. → { result } */
+/** The agent's forget: hides its own unaccepted note, flags an accepted one. → { result } */
 export function forgetNote(handle, id, opts) {
   if (hideNote(handle, id, opts)) return { result: "hidden" };
   if (requestForget(handle, id, opts)) return { result: "forget-requested" };
   return { result: "none" };
+}
+
+// The note's line in the project's memory file goes too: session start injects that file.
+function dropFromMemoryFile(file, text) {
+  if (!file || !text) return false;
+  try {
+    const next = dropFromFile(readFileSync(file, "utf8"), text);
+    if (next === null) return false;
+    writeFileSync(file, next);
+    return true;
+  } catch {
+    return false; // no memory file
+  }
 }
 
 /** The user keeps a note the agent asked to forget. */
@@ -160,17 +216,24 @@ export function keepNote(handle, token, id, { now } = {}) {
   return handle.run("UPDATE learnings SET status = 'active', status_at = ? WHERE id = ? AND status = 'forget-requested'", [iso(now), id]).changes;
 }
 
-/** The user forgets an accepted note for good: purged, bytes and index entries included. */
-export function forgetAccepted(handle, token, id) {
+/** The user forgets an accepted note for good: purged, bytes and index entries included, and its memory-file line. */
+export function forgetAccepted(handle, token, id, { memoryFile } = {}) {
   must(token);
-  return purgeLearnings(handle, [id]);
+  const row = handle.get("SELECT text FROM learnings WHERE id = ? AND status IN ('active', 'forget-requested') AND accepted_by IS NOT NULL", [id]);
+  if (!row) return 0;
+  const purged = purgeLearnings(handle, [id]);
+  dropFromMemoryFile(memoryFile, row.text);
+  return purged;
 }
 
-/** `/memory forget` in ad's terminal UI: archived (not served, still listed), this project's or a global note. */
-export function archiveLearning(handle, token, id, projectSlug) {
+/** `/memory forget` in ad's terminal UI: archived (not served, still listed), this project's or a global note, and its memory-file line dropped. */
+export function archiveLearning(handle, token, id, projectSlug, { memoryFile } = {}) {
   must(token);
-  return handle.run(
+  const row = handle.get("SELECT text FROM learnings WHERE id = ?", [id]);
+  const changed = handle.run(
     "UPDATE learnings SET status = 'archived', status_at = ? WHERE id = ? AND status IN ('active', 'forget-requested') AND (project_slug = ? OR project_slug IS NULL)",
     [iso(), id, projectSlug]
   ).changes;
+  if (changed) dropFromMemoryFile(memoryFile, row?.text);
+  return changed;
 }

@@ -47,14 +47,24 @@ test("the agent's forget: hides a pending note, only flags an accepted one", asy
   try {
     const pending = note(h, "a pending note the agent can hide");
     const accepted = note(h, "an accepted note the agent cannot remove", { accepted: true });
-    assert.deepEqual(svc.forgetNote(h, pending), { result: "hidden" });
+    const keys = { keys: [PROJECT] };
+    assert.deepEqual(svc.forgetNote(h, pending, keys), { result: "hidden" });
     assert.equal(statusOf(h, pending), "hidden");
-    assert.deepEqual(svc.forgetNote(h, accepted), { result: "forget-requested" });
+    assert.deepEqual(svc.forgetNote(h, accepted, keys), { result: "forget-requested" });
     assert.equal(statusOf(h, accepted), "forget-requested");
     assert.ok(served(h, accepted), "still recalled until the user decides");
-    assert.deepEqual(svc.forgetNote(h, 999999), { result: "none" });
+    assert.deepEqual(svc.forgetNote(h, 999999, keys), { result: "none" });
     // Hiding never reaches an accepted note, whatever the caller asks.
-    assert.equal(svc.hideNote(h, accepted), 0);
+    assert.equal(svc.hideNote(h, accepted, keys), 0);
+    // Never the user's own capture, never another project's note, never without a project.
+    const users = note(h, "the user's own words, waiting for review");
+    h.run("UPDATE learnings SET origin = 'user' WHERE id = ?", [users]);
+    assert.deepEqual(svc.forgetNote(h, users, keys), { result: "none" });
+    assert.equal(statusOf(h, users), "pending");
+    const elsewhere = note(h, "an agent note in this project");
+    assert.deepEqual(svc.forgetNote(h, elsewhere, { keys: ["-work-other"] }), { result: "none" });
+    assert.deepEqual(svc.forgetNote(h, elsewhere, {}), { result: "none" });
+    assert.equal(statusOf(h, elsewhere), "pending");
     assert.ok(served(h, accepted));
   } finally {
     h.close();
@@ -66,8 +76,8 @@ test("the user decides a forget request in review: keep, or forget for good", as
   try {
     const keep = note(h, "keep this lesson", { accepted: true });
     const drop = note(h, "drop this lesson", { accepted: true });
-    svc.forgetNote(h, keep);
-    svc.forgetNote(h, drop);
+    svc.forgetNote(h, keep, { keys: [PROJECT] });
+    svc.forgetNote(h, drop, { keys: [PROJECT] });
     assert.throws(() => svc.keepNote(h, null, keep), /review token/);
     assert.throws(() => svc.forgetAccepted(h, {}, drop), /review token/);
     svc.keepNote(h, testReviewToken(), keep);
@@ -88,7 +98,7 @@ test("retention: hidden unaccepted notes go after 7 days, provisional ones retur
     const newHidden = note(h, "hidden two days ago", { status: "hidden" });
     const oldProvisional = note(h, "provisional for 31 days", { status: "provisional" });
     const requested = note(h, "accepted, the agent asked to forget it", { accepted: true });
-    svc.forgetNote(h, requested);
+    svc.forgetNote(h, requested, { keys: [PROJECT] });
     // A hidden row that was accepted (no path makes one today): retention never purges it.
     const hiddenAccepted = note(h, "a hidden row that was once accepted", { accepted: true });
     h.run("UPDATE learnings SET status = 'hidden' WHERE id = ?", [hiddenAccepted]);
@@ -143,6 +153,91 @@ test("/memory forget in ad's terminal UI: archived through the review service, t
     assert.equal(svc.archiveLearning(h, testReviewToken(), mine, PROJECT), 1);
     assert.equal(statusOf(h, mine), "archived");
     assert.equal(served(h, mine), false);
+  } finally {
+    h.close();
+  }
+});
+
+// Review finding M1: pages freed before the purge (an index merge, a rewritten row, or an
+// older ad without secure_delete) held the note's bytes; the purge compacts the store.
+for (const driver of await availableDrivers()) {
+  test(`a purge after an index merge and a rewritten row still leaves no bytes (${driver})`, async () => {
+    const h = await store(driver);
+    const file = h.path;
+    try {
+      h.raw.exec("PRAGMA secure_delete = OFF"); // as an older ad wrote this store
+      for (let i = 0; i < 40; i++) note(h, `filler lesson ${i} about builds`, { accepted: true });
+      const id = note(h, `always warm the ${SENTINEL} cache`, { accepted: true });
+      h.run("UPDATE learnings SET evidence = ? WHERE id = ?", [`the user said ${SENTINEL} ${"y".repeat(3000)}`, id]);
+      h.run("UPDATE learnings SET evidence = ? WHERE id = ?", [`rewritten once more ${SENTINEL}`, id]);
+      for (let i = 0; i < 300; i++) note(h, `more filler ${i} about caching widgets w${i}`, { accepted: true });
+      h.run("INSERT INTO learnings_fts(learnings_fts) VALUES('optimize')");
+      h.raw.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+      assert.ok(scan(file), "the sentinel is on disk before the purge (the scan works)");
+      h.raw.exec("PRAGMA secure_delete = ON");
+      svc.forgetAccepted(h, testReviewToken(), id);
+      for (const f of [file, `${file}-wal`]) assert.equal(scan(f), false, `${path.basename(f)} holds the purged note while open`);
+      const { compactionPending } = await import("../src/memory/purge.mjs");
+      assert.equal(compactionPending(h), false, "nothing owed: the store was compacted");
+    } finally {
+      h.close();
+    }
+    for (const f of [file, `${file}-wal`]) assert.equal(scan(f), false, `${path.basename(f)} holds the purged note after close`);
+  });
+}
+
+test("a compaction another process blocks is owed, and the maintenance pass does it", async () => {
+  const h = await store();
+  const other = await open({ dbPath: h.path });
+  try {
+    const id = note(h, "a note to forget while another reader holds the store", { accepted: true });
+    other.raw.exec("BEGIN");
+    other.get("SELECT COUNT(*) AS n FROM learnings"); // a read transaction: VACUUM and the truncate wait
+    const { compactionPending } = await import("../src/memory/purge.mjs");
+    svc.forgetAccepted(h, testReviewToken(), id);
+    assert.equal(compactionPending(h), true, "owed while the other reader holds the store");
+    other.raw.exec("COMMIT");
+    const { runMemoryMaintenance } = await import("../src/memory/maintenance.mjs");
+    const ran = await runMemoryMaintenance({ handle: h });
+    assert.deepEqual(ran.compacted, { vacuumed: true, walCleared: true });
+    assert.equal(compactionPending(h), false);
+  } finally {
+    other.close();
+    h.close();
+  }
+});
+
+test("forgetting erases only accepted notes, and drops the note's line from the memory file", async () => {
+  const { writeFileSync: write, readFileSync: read } = await import("node:fs");
+  const h = await store();
+  try {
+    const pending = note(h, "a pending note nobody accepted");
+    assert.equal(svc.forgetAccepted(h, testReviewToken(), pending), 0, "not accepted: not this path");
+    assert.equal(statusOf(h, pending), "pending");
+    const file = path.join(path.dirname(h.path), "activeContext.md");
+    const id = note(h, "always pin node to 22 in ci", { accepted: true });
+    const kept = note(h, "the release script runs from the repo root", { accepted: true });
+    write(file, "# Active context\n\n- **correction** (conf 0.80): always pin node to 22 in ci\n- **gotcha** (conf 0.70): the release script runs from the repo root\n");
+    assert.equal(svc.forgetAccepted(h, testReviewToken(), id, { memoryFile: file }), 1);
+    assert.equal(read(file, "utf8"), "# Active context\n\n- **gotcha** (conf 0.70): the release script runs from the repo root\n");
+    assert.equal(svc.archiveLearning(h, testReviewToken(), kept, PROJECT, { memoryFile: file }), 1);
+    assert.equal(read(file, "utf8"), "# Active context\n\n");
+  } finally {
+    h.close();
+  }
+});
+
+test("without the index's secure-delete (SQLite before 3.44), a purge rebuilds the index and still leaves no bytes", async () => {
+  const h = await store();
+  const file = h.path;
+  try {
+    h.run("INSERT INTO learnings_fts(learnings_fts, rank) VALUES('secure-delete', 0)");
+    for (let i = 0; i < 40; i++) note(h, `filler lesson ${i} about builds`, { accepted: true });
+    const id = note(h, `always warm the ${SENTINEL} cache`, { accepted: true });
+    h.raw.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    assert.ok(scan(file), "the sentinel is on disk before the purge (the scan works)");
+    svc.forgetAccepted(h, testReviewToken(), id);
+    for (const f of [file, `${file}-wal`]) assert.equal(scan(f), false, `${path.basename(f)} holds the purged note`);
   } finally {
     h.close();
   }

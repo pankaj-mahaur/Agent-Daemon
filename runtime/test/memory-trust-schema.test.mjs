@@ -130,3 +130,16 @@ test("copying a v5 DB keeps it at v5 (the upgrade is keyed on the version row)",
   assert.equal(h.get("SELECT COUNT(*) AS n FROM schema_version WHERE version = 5").n, 1);
   h.close();
 });
+
+test("every connection zeroes the pages it frees, and the index drops deleted terms", async () => {
+  const file = path.join(ROOT, "pragma", "episodic.db");
+  mkdirSync(path.dirname(file), { recursive: true });
+  const h = await open({ dbPath: file });
+  try {
+    assert.equal(Object.values(h.get("PRAGMA secure_delete"))[0], 1);
+    const cfg = h.get("SELECT v FROM learnings_fts_config WHERE k = 'secure-delete'");
+    assert.equal(Number(cfg?.v), 1, "FTS5 secure-delete is stored with the index");
+  } finally {
+    h.close();
+  }
+});

@@ -520,14 +520,16 @@ export async function getLearningsByIds(ids, opts = {}) {
   if (clean.length === 0) return [];
   const placeholders = clean.map(() => "?").join(",");
   const keys = keysOf(opts);
-  const vis = keys ? learningVisibility("", keys) : { sql: "1", params: [] };
-  const st = keys ? servedStatus("", keys, opts.includePending) : { sql: "1", params: [] };
+  // Without keys (--allow-cross-project): every project's accepted notes, and with
+  // includePending the waiting ones (labelled); never held-back, hidden or rejected ones.
+  const vis = learningVisibility("", keys);
+  const st = keys ? servedStatus("", keys, opts.includePending) : { sql: opts.includePending ? `(${acceptedSql()} OR ${pendingSql()})` : acceptedSql(), params: [] };
   return handle.all(
     `SELECT id, session_id, project_slug, category, text, evidence, confidence,
             observed_count, retrieval_count, usefulness, tags, applied_to, ${statusSql()} AS status,
             created_at, last_verified_at, derivation
        FROM learnings
-      WHERE id IN (${placeholders})${keys ? ` AND ${st.sql} AND ${vis.sql}` : ""}
+      WHERE id IN (${placeholders}) AND ${st.sql} AND ${vis.sql}
       ORDER BY id ASC`,
     [...clean, ...st.params, ...vis.params]
   );
@@ -551,12 +553,13 @@ export async function learningTimeline(id, opts = {}) {
   if (!Number.isInteger(lid)) return null;
   const limit = Math.min(50, Math.max(1, opts.limit ?? 10));
   const keys = keysOf(opts);
-  const vis = keys ? learningVisibility("", keys) : { sql: "1", params: [] };
-  const nvis = learningVisibility("", keys);
+  // Without keys (--allow-cross-project): accepted notes of every project, nothing held back.
+  const vis = learningVisibility("", keys);
+  const nvis = vis;
 
   const learning = handle.get(
     `SELECT id, session_id, project_slug, category, text, confidence, created_at
-       FROM learnings WHERE id = ?${keys ? ` AND ${acceptedSql()} AND ${vis.sql}` : ""} LIMIT 1`,
+       FROM learnings WHERE id = ? AND ${acceptedSql()} AND ${vis.sql} LIMIT 1`,
     [lid, ...vis.params]
   );
   if (!learning) return null;
@@ -793,7 +796,7 @@ export async function observeUserFact(input) {
   const now = new Date().toISOString();
 
   const existing = handle.get(
-    `SELECT id, observed_count, projects, confidence FROM user_facts
+    `SELECT id, observed_count, projects, confidence, status, accepted_by FROM user_facts
       WHERE content_hash = ? AND status IN ('active', 'pending') LIMIT 1`,
     [contentHash]
   );
@@ -801,7 +804,11 @@ export async function observeUserFact(input) {
   if (existing) {
     let projects = [];
     try { projects = JSON.parse(existing.projects || "[]"); } catch { /* reset */ }
-    if (fact.projectSlug && !projects.includes(fact.projectSlug)) projects.push(fact.projectSlug);
+    // A fact's projects are where it is served. An accepted fact stays where the user
+    // accepted it: seeing it in another project counts, but only review widens it
+    // (ad memory promote). A pending fact isn't served anywhere yet.
+    const accepted = existing.status === "active" && existing.accepted_by;
+    if (fact.projectSlug && !projects.includes(fact.projectSlug) && !accepted) projects.push(fact.projectSlug);
     handle.run(
       `UPDATE user_facts
           SET observed_count = observed_count + 1,

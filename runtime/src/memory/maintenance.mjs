@@ -187,9 +187,11 @@ export async function runMemoryMaintenance({ handle, budgetMs = 5000 } = {}) {
     }
     // Every run: hidden notes nobody accepted go after 7 days, provisional ones expire (L1).
     try {
-      const { retainNotes } = await import("./purge.mjs");
+      const { retainNotes, compactionPending, compactStore } = await import("./purge.mjs");
       const kept = retainNotes(handle);
       if (kept.purged || kept.expired) ran.retention = kept;
+      // A purge whose compaction another process blocked: try again now.
+      if (compactionPending(handle)) ran.compacted = compactStore(handle);
     } catch {
       // older store without the trust columns
     }

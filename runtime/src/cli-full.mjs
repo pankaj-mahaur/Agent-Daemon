@@ -1787,13 +1787,23 @@ async function cmdMemory(sub, opts) {
       console.log(`  contradictions:   ${analysis.contradictions.length}`);
 
       if (opts.applyMerges || opts.applyStale) {
-        // Explicit apply — the user reviewed the prior proposal.
+        // Explicit apply — the user reviewed the prior proposal. Retiring accepted notes needs
+        // the review token, in the user's own terminal (memory/review-service.mjs).
+        const { reviewToken } = await import("./memory/review-service.mjs");
+        const { createInterface } = await import("node:readline/promises");
+        const rl = process.stdin.isTTY ? createInterface({ input: process.stdin, output: process.stdout }) : null;
+        const gate = await reviewToken({ ask: rl ? (q) => rl.question(q) : undefined }).finally(() => rl?.close());
+        if (gate.refused) {
+          console.error(`ad memory consolidate: ${gate.refused}`);
+          return 2;
+        }
+        const token = gate.token;
         if (opts.applyMerges) {
-          const n = await con.applyMerges(analysis);
+          const n = await con.applyMerges(analysis, token);
           console.log(`  ✓ superseded ${n} duplicate(s)`);
         }
         if (opts.applyStale) {
-          const n = await con.applyStaleArchive(analysis);
+          const n = await con.applyStaleArchive(analysis, token);
           console.log(`  ✓ archived ${n} stale learning(s)`);
         }
         return 0;

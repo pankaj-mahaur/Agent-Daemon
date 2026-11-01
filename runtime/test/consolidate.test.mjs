@@ -9,7 +9,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import * as ep from "../src/memory/episodic.mjs";
-import { acceptAllPending } from "../testkit/memory-trust.mjs";
+import { acceptAllPending, testReviewToken } from "../testkit/memory-trust.mjs";
 
 // One shared episodic module — closeDb() between tests resets the singleton
 // so the next db() call re-opens under the new tmp HOME (consolidate.mjs uses
@@ -83,7 +83,8 @@ test("applyMerges supersedes duplicates and sums observed_count onto the survivo
     acceptAllPending(await ep.db());
     const analysis = await con.analyzeConsolidation({ projectSlug: "proj-y" });
     assert.equal(analysis.mergeClusters.length, 1);
-    const superseded = await con.applyMerges(analysis);
+    await assert.rejects(con.applyMerges(analysis, null), /review token/, "retiring accepted notes needs the review token");
+    const superseded = await con.applyMerges(analysis, testReviewToken());
     assert.equal(superseded, 1);
 
     const handle = await ep.db();

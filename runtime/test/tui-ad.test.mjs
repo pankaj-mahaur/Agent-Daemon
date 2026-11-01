@@ -26,6 +26,7 @@ function fakeMemory() {
   const handle = {
     run: (q, p) => (sql.push([q, p]), { changes: p?.includes(7) ? 1 : 0 }),
     all: (q, p) => (sql.push([q, p]), [{ id: 41, text: "login.spec uses fake timers" }]),
+    get: (q, p) => (sql.push([q, p]), { text: "fake timers break refresh" }),
   };
   return {
     sql,

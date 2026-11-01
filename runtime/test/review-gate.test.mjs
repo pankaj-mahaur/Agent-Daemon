@@ -107,6 +107,49 @@ test("only the review service writes accepted_by or stores 'active' on a note", 
 
 test("review tokens are requested only by the CLI review verbs and ad's own terminal UI", () => {
   const callers = sources().filter((f) => /\breviewToken\(/.test(readFileSync(f, "utf8"))).map(rel).sort();
-  assert.deepEqual(callers, ["memory/held.mjs", "memory/review-service.mjs", "portability/import.mjs", "review.mjs", "tui/ad-layer.mjs"]);
+  assert.deepEqual(callers, ["cli-full.mjs", "memory/held.mjs", "memory/review-service.mjs", "portability/import.mjs", "review.mjs", "tui/ad-layer.mjs"]);
+  // The sync check mints a token from injected probes: only the service itself (and the testkit) may call it.
+  const syncCallers = sources().filter((f) => /\bcheckReviewToken\(/.test(readFileSync(f, "utf8"))).map(rel);
+  assert.deepEqual(syncCallers, ["memory/review-service.mjs"]);
   for (const c of callers) assert.ok(!/^(mcp|hooks|memory-install)\//.test(c), c);
+});
+
+test("--allow-cross-project (no keys): accepted and labelled waiting notes only, never held-back, hidden or rejected ones", async () => {
+  const h = await ep.db();
+  const ins = (text, status) => Number(h.run("INSERT INTO learnings (project_slug, category, text, confidence, status, content_hash) VALUES (?, 'gotcha', ?, 0.8, ?, ?)", ["-work-other", text, status, `h-x-${text}`]).lastInsertRowid);
+  const accepted = ins("an accepted note of another project", "pending");
+  svc.acceptLearning(h, (await svc.reviewToken(terminal)).token, accepted);
+  const others = ["quarantined", "hidden", "rejected", "archived", "superseded"].map((s) => ins(`a ${s} note of another project`, s));
+  const waiting = ins("a waiting note of another project", "pending");
+  const all = [accepted, waiting, ...others];
+  const served = (await ep.getLearningsByIds(all)).map((r) => r.id);
+  assert.deepEqual(served, [accepted]);
+  const withPending = await ep.getLearningsByIds(all, { includePending: true });
+  assert.deepEqual(withPending.map((r) => [r.id, r.status]), [[accepted, "active"], [waiting, "pending"]]);
+  for (const id of others) assert.equal(await ep.learningTimeline(id), null, `timeline of ${id}`);
+  assert.ok(await ep.learningTimeline(accepted));
+});
+
+test("seeing an accepted user fact in another project never serves it there", async () => {
+  const h = await ep.db();
+  const first = await ep.observeUserFact({ category: "tool", text: "prefers zed as the editor", projectSlug: PROJECT, origin: "user" });
+  svc.acceptFact(h, (await svc.reviewToken(terminal)).token, first.id);
+  const again = await ep.observeUserFact({ category: "tool", text: "prefers zed as the editor", projectSlug: "-work-other", origin: "user" });
+  assert.deepEqual(again.projects, [PROJECT], "the fact stays where the user accepted it");
+  assert.equal(again.observed, 2, "the sighting counts");
+  assert.ok(!(await ep.listUserFacts({ projectKeys: ["-work-other"] })).some((f) => f.text === "prefers zed as the editor"));
+});
+
+test("a forged SystemRoot picks neither the walk's PowerShell nor the dialog's (Windows)", { skip: process.platform !== "win32" && "Windows only" }, async () => {
+  const { dialogCommand } = await import("../src/memory/dialog-code.mjs");
+  const { loaderWindowsDir } = await import("../src/safe-spawn.mjs");
+  const real = loaderWindowsDir();
+  const saved = process.env.SystemRoot;
+  process.env.SystemRoot = ROOT; // an agent's shell could set this before running ad review
+  try {
+    const how = dialogCommand("win32");
+    assert.ok(how && how.cmd.toLowerCase().startsWith(real.toLowerCase()), `${how?.cmd} comes from ${real}`);
+  } finally {
+    process.env.SystemRoot = saved;
+  }
 });

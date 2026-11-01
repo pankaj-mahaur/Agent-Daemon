@@ -730,13 +730,13 @@ See [harness.md](harness.md#working-in-your-home-folder).
 
 ## 52. `ad review: accepting notes can't run from the agent's own shell`, `… needs an interactive terminal`, `… under an agent (claude)`, or it asks for a code from a dialog
 
-**Cause:** accepting a memory note changes what reaches your sessions, so only you can do it. `ad review` (and `ad memory promote`, `ad memory held accept`, `ad review --import`) refuse:
+**Cause:** accepting a memory note changes what reaches your sessions, so only you can do it. `ad review` (and `ad memory promote`, `ad memory held accept`, `ad review --import`, `ad memory consolidate --apply-merges/--apply-stale`) refuse:
 - inside ad's engine tool shells, and when stdin or stdout isn't a terminal;
-- when an agent process (Claude Code, Codex, Gemini, Copilot, Cursor's agent, OpenCode) started the terminal, directly or further up.
+- when an agent process (Claude Code, Codex, Gemini, Copilot, Cursor's agent, OpenCode) is anywhere above the terminal.
 
-In an editor's terminal (VS Code, Cursor, Zed, JetBrains), where an editor's agent can run commands too, or when ad can't tell which terminal started it (a closed parent, tmux, `setsid`), ad shows a code in a dialog that you type back. There is no `--yes` and no environment variable that skips any of this.
+A terminal window passes as it is when ad recognises the program that started it and that program runs from an install folder (Program Files, the Windows folder, `/Applications`, `/usr`, `/opt`). Otherwise ad shows a code in a dialog that you type back: in an editor's terminal (VS Code, Cursor, Zed, JetBrains), where an editor's agent can run commands too, and inside tmux, screen, `script`, ssh, an app ad doesn't know, or a terminal installed in your own folders. There is no `--yes` and no environment variable that skips any of this.
 
-**Fix:** run it yourself in a terminal window (not through the agent, not piped), and type the dialog's code when asked. `… none can be shown` means no dialog could open (no desktop session, or Linux without `zenity`): run it in a terminal outside your editor. `/memory forget` in `ad tui` can't ask for the code yet: in an editor's terminal, run `ad tui` in a terminal outside the editor to forget a note. Listing works anywhere: plain `ad review` without a terminal lists what is queued.
+**Fix:** run it yourself in a terminal window (not through the agent, not piped), and type the dialog's code when asked. `… none can be shown` means no dialog could open: no desktop session, Linux without `/usr/bin/zenity`, or on Linux a host other than an editor installed in a system folder (ad takes the display only from that editor, never from its own environment). Run it in a terminal window of its own, outside the editor, tmux and ssh. `/memory forget` in `ad tui` can't ask for the code yet: in an editor's terminal, run `ad tui` in a terminal outside the editor to forget a note. Listing works anywhere: plain `ad review` without a terminal lists what is queued.
 
 ## 53. The memory installer refused my config
 
