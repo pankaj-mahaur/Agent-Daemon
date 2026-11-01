@@ -23,7 +23,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function fakeMemory() {
   const sql = [];
   const handle = {
-    run: (q, p) => (sql.push([q, p]), { changes: p?.[0] === 7 ? 1 : 0 }),
+    run: (q, p) => (sql.push([q, p]), { changes: p?.includes(7) ? 1 : 0 }),
     all: (q, p) => (sql.push([q, p]), [{ id: 41, text: "login.spec uses fake timers" }]),
   };
   return {
@@ -42,14 +42,18 @@ test("memory: search, recent, forget (archived, not deleted), profile, summary; 
   const cwd = mkdtempSync(join(tmpdir(), "ad-mem-"));
   try {
     const memory = fakeMemory();
-    const ad = createAdLayer({ cwd, memory });
+    // You type /memory forget in your own terminal: the review service's token (stood in for here).
+    const ad = createAdLayer({ cwd, memory, review: { env: {}, isTTY: () => true, ancestry: () => ({ agent: null }) } });
     const found = await ad.memory("search", "timers");
     assert.match(found[1], /^#7 \[gotcha\] fake timers break refresh$/);
     assert.deepEqual(memory.sql[0], ["search", "timers", { limit: 10, projectSlug: `slug:${cwd}` }]);
     assert.match((await ad.memory("recent"))[1], /#9 \[pattern\] run tests first/);
     assert.deepEqual(await ad.memory("forget", "#7"), ["Forgot #7: it won't be recalled again."]);
-    assert.match(memory.sql.at(-1)[0], /UPDATE learnings SET status = 'archived' WHERE id = \? AND status = 'active' AND \(project_slug = \? OR project_slug IS NULL\)/);
-    assert.deepEqual(memory.sql.at(-1)[1], [7, `slug:${cwd}`], "only this project's (or global) learnings");
+    assert.match(memory.sql.at(-1)[0], /UPDATE learnings SET status = 'archived', status_at = \? WHERE id = \? AND status IN \('active', 'forget-requested'\) AND \(project_slug = \? OR project_slug IS NULL\)/);
+    assert.deepEqual(memory.sql.at(-1)[1].slice(1), [7, `slug:${cwd}`], "only this project's (or global) learnings");
+    // From an agent's shell, nothing is archived.
+    const fromAgent = createAdLayer({ cwd, memory, review: { env: { AD_TOOL_SHELL: "1" }, isTTY: () => true } });
+    assert.match((await fromAgent.memory("forget", "#7"))[0], /agent's own shell/);
     assert.deepEqual(await ad.memory("forget", "8"), ["No active learning #8."]);
     assert.match((await ad.memory("forget", "x; DROP"))[0], /forget <id>/);
     assert.deepEqual(await ad.memory("profile"), ["## You", "- prefer short replies"]);

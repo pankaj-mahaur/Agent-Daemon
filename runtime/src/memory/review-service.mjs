@@ -12,6 +12,7 @@
 
 import { stdin as input, stdout as output } from "node:process";
 import { learningContentHash, scopedContentHash } from "./sqlite.mjs";
+import { purgeLearnings } from "./purge.mjs";
 
 const issued = new WeakSet();
 
@@ -108,4 +109,50 @@ export function promoteLearning(handle, token, row, now = new Date()) {
     );
     return { ok: true, text: `Accepted: #${row.id} now applies in every project.` };
   });
+}
+
+// ── Forgetting ──────────────────────────────────────────────────────────────
+// Without a token: these only hide what nobody accepted, or flag an accepted note.
+// A model-called path never pauses a rule, stops recall of an accepted note or
+// purges it (02 §2, D40).
+
+/** Hide a pending or provisional note (purged after 7 days). → rows changed. */
+export function hideNote(handle, id, { now } = {}) {
+  return handle.run(
+    "UPDATE learnings SET status = 'hidden', status_at = ? WHERE id = ? AND status IN ('pending', 'provisional') AND accepted_by IS NULL",
+    [iso(now), id]
+  ).changes;
+}
+
+/** An accepted note the agent asked to forget: still recalled and enforced until the user decides. */
+export function requestForget(handle, id, { now } = {}) {
+  return handle.run("UPDATE learnings SET status = 'forget-requested', status_at = ? WHERE id = ? AND status = 'active' AND accepted_by IS NOT NULL", [iso(now), id]).changes;
+}
+
+/** A forget from any caller: hides an unaccepted note, flags an accepted one. → { result } */
+export function forgetNote(handle, id, opts) {
+  if (hideNote(handle, id, opts)) return { result: "hidden" };
+  if (requestForget(handle, id, opts)) return { result: "forget-requested" };
+  return { result: "none" };
+}
+
+/** The user keeps a note the agent asked to forget. */
+export function keepNote(handle, token, id, { now } = {}) {
+  must(token);
+  return handle.run("UPDATE learnings SET status = 'active', status_at = ? WHERE id = ? AND status = 'forget-requested'", [iso(now), id]).changes;
+}
+
+/** The user forgets an accepted note for good: purged, bytes and index entries included. */
+export function forgetAccepted(handle, token, id) {
+  must(token);
+  return purgeLearnings(handle, [id]);
+}
+
+/** `/memory forget` in ad's terminal UI: archived (not served, still listed), this project's or a global note. */
+export function archiveLearning(handle, token, id, projectSlug) {
+  must(token);
+  return handle.run(
+    "UPDATE learnings SET status = 'archived', status_at = ? WHERE id = ? AND status IN ('active', 'forget-requested') AND (project_slug = ? OR project_slug IS NULL)",
+    [iso(), id, projectSlug]
+  ).changes;
 }

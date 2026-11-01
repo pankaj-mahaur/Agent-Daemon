@@ -185,6 +185,14 @@ export async function runMemoryMaintenance({ handle, budgetMs = 5000 } = {}) {
     } catch {
       // older store without the table
     }
+    // Every run: hidden notes nobody accepted go after 7 days, provisional ones expire (L1).
+    try {
+      const { retainNotes } = await import("./purge.mjs");
+      const kept = retainNotes(handle);
+      if (kept.purged || kept.expired) ran.retention = kept;
+    } catch {
+      // older store without the trust columns
+    }
     return ran;
   } catch {
     return null;

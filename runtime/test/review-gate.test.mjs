@@ -93,8 +93,8 @@ test("only the review service writes accepted_by or stores 'active' on a note", 
   assert.deepEqual(offenders, []);
 });
 
-test("review tokens are requested only by the CLI review verbs", () => {
+test("review tokens are requested only by the CLI review verbs and ad's own terminal UI", () => {
   const callers = sources().filter((f) => /\breviewToken\(/.test(readFileSync(f, "utf8"))).map(rel).sort();
-  assert.deepEqual(callers, ["memory/held.mjs", "memory/review-service.mjs", "portability/import.mjs", "review.mjs"]);
+  assert.deepEqual(callers, ["memory/held.mjs", "memory/review-service.mjs", "portability/import.mjs", "review.mjs", "tui/ad-layer.mjs"]);
   for (const c of callers) assert.ok(!/^(mcp|hooks|memory-install)\//.test(c), c);
 });

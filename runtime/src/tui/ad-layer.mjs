@@ -23,7 +23,8 @@ const short = (t, n = 140) => {
   return s.length > n ? `${s.slice(0, n - 1)}\u{2026}` : s;
 };
 
-export function createAdLayer({ cwd, home = homedir(), memory = null, cli = null, spawnFn = spawn, now = () => Date.now() } = {}) {
+// review: what the review service's token checks ({ env, isTTY, ancestry }); tests stand in for the terminal.
+export function createAdLayer({ cwd, home = homedir(), memory = null, cli = null, spawnFn = spawn, now = () => Date.now(), review = {} } = {}) {
   const slug = memory?.projectSlug ? memory.projectSlug(cwd) : null;
   const adDir = path.join(cwd, ".agent-daemon");
 
@@ -78,9 +79,13 @@ export function createAdLayer({ cwd, home = homedir(), memory = null, cli = null
       const handle = await memory.db();
       if (!handle) return ["ad memory isn't set up (ad doctor)."];
       // Archived, not deleted: `ad memory` can still show it, and nothing else depends on the row going away.
-      // Only this project's (or global) learnings: an id from another project is left alone.
-      const r = handle.run("UPDATE learnings SET status = 'archived' WHERE id = ? AND status = 'active' AND (project_slug = ? OR project_slug IS NULL)", [id, slug]);
-      return [r.changes ? `Forgot #${id}: it won't be recalled again.` : `No active learning #${id}.`];
+      // Only this project's (or global) learnings: an id from another project is left alone. You
+      // typed it here, in your own terminal: the review service's token (memory/review-service.mjs).
+      const { archiveLearning, reviewToken } = await import("../memory/review-service.mjs");
+      const gate = reviewToken(review);
+      if (gate.refused) return [`/memory forget: ${gate.refused}`];
+      const changed = archiveLearning(handle, gate.token, id, slug);
+      return [changed ? `Forgot #${id}: it won't be recalled again.` : `No active learning #${id}.`];
     }
     if (s === "profile") {
       const profile = await memory.buildUserRepresentation({ projectSlug: slug });
