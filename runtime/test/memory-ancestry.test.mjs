@@ -6,7 +6,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { classifyChain, cleanWindowsEnv, etimeSeconds, linuxNode, parseWindowsWalk, processChain, trustedPath } from "../src/memory/ancestry.mjs";
+import { classifyChain, cleanWindowsEnv, etimeSeconds, linuxNode, parseWindowsWalk, processChain, trustedPath, WIN_LOCKED, windowsFilesLocked } from "../src/memory/ancestry.mjs";
+import { copyFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { confirmByDialog, dialogCommand, DIALOG_TEXTS, trustedDisplayEnv } from "../src/memory/dialog-code.mjs";
 import { loaderWindowsDir } from "../src/safe-spawn.mjs";
 
@@ -92,7 +96,8 @@ test("trusted install folders: never from the environment, never a folder the us
 });
 
 const b64 = (s) => Buffer.from(String(s ?? ""), "utf8").toString("base64");
-const winRow = (pid, ppid, name, cmd, file, created) => [pid, ppid, b64(name), b64(cmd), b64(file), created].join("\t");
+// The last field: the file passed the owner and write-right check ("1") or not.
+const winRow = (pid, ppid, name, cmd, file, created, locked = "1") => [pid, ppid, b64(name), b64(cmd), b64(file), created, locked].join("\t");
 
 test("Windows: one PowerShell walk naming only the pid, no cmdlet, a clean environment; paths decide trust", () => {
   const calls = [];
@@ -120,6 +125,11 @@ test("Windows: one PowerShell walk naming only the pid, no cmdlet, a clean envir
   // Windows Terminal copied into a user-writable corner of the Windows folder: not trusted.
   const fake = parseWindowsWalk([winRow(2, 1, "node.exe", "", "", ""), winRow(1, 0, "WindowsTerminal.exe", "", "C:\\Windows\\Tasks\\WindowsTerminal.exe", "")].join("\n"), { windowsDir: "C:\\Windows" });
   assert.equal(classifyChain(fake).verdict, "unknown");
+  // L1 final re-check: a user-writable install folder under Program Files (a game launcher's,
+  // an emulator's). The copy placed there is the user's own file: the ACL check says no.
+  const planted = parseWindowsWalk([winRow(2, 1, "node.exe", "", "", ""), winRow(1, 0, "WindowsTerminal.exe", "", "C:\\Program Files (x86)\\Steam\\WindowsTerminal.exe", "", "0")].join("\n"), { windowsDir: "C:\\Windows" });
+  assert.deepEqual(classifyChain(planted), { verdict: "unknown", why: "windowsterminal outside an install folder" });
+  assert.match(script, /GetAccessControl/, "the walk checks each executable's owner and rights");
   assert.throws(() => processChain({ pid: 50, platform: "win32", spawn, windowsDir: null, powershell: () => null }), /PowerShell/);
 });
 
@@ -146,6 +156,12 @@ test("Linux: the full executable name from /proc/<pid>/exe; trust from ownership
   // The same terminal from the user's own folder: not trusted.
   links["/proc/7/exe"] = "/home/sam/.local/bin/gnome-terminal-server";
   assert.deepEqual(walk(), { verdict: "unknown", why: "gnome-terminal-server outside an install folder" });
+  // A terminal still running after a package upgrade replaced its file: the path is root-owned now.
+  links["/proc/7/exe"] = "/usr/libexec/gnome-terminal-server (deleted)";
+  assert.deepEqual(walk(), { verdict: "terminal", root: "gnome-terminal-server" });
+  // A deleted copy from the user's own folder stays untrusted.
+  links["/proc/7/exe"] = "/tmp/gnome-terminal-server (deleted)";
+  assert.equal(walk().verdict, "unknown");
   // Another user's process (exe unreadable): its comm name, never trusted.
   delete links["/proc/7/exe"];
   assert.deepEqual({ name: linuxNode(7, io).name, trusted: linuxNode(7, io).trusted }, { name: "gnome-terminal-", trusted: false });
@@ -237,4 +253,41 @@ test("confirmByDialog: the code typed back passes; a wrong one or no dialog refu
   assert.deepEqual(await confirmByDialog({ ask: async () => "123456", found, out: () => {}, platform: "linux", tools: { displayEnv: { DISPLAY: ":0" }, exists: () => true }, spawn: () => fakeChild({ fail: true }), code: "123456" }), { ok: false, text: DIALOG_TEXTS.noDialog });
   assert.deepEqual(await confirmByDialog({ ask: async () => "123456", found: { verdict: "unknown", why: "tmux" }, platform: "linux", spawn, code: "123456" }), { ok: false, text: DIALOG_TEXTS.noDialog }, "Linux with nothing to vouch for the display");
   assert.deepEqual(await confirmByDialog({ found, ...win, spawn, code: "123456" }), { ok: false, text: DIALOG_TEXTS.noDialog }, "no way to ask: refused");
+});
+
+test("Windows, on a real machine: system files pass the owner and write-right check; the user's own copies don't", { skip: process.platform !== "win32" && "Windows only" }, () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "ad-acl-"));
+  try {
+    const windowsDir = loaderWindowsDir();
+    const explorer = path.join(windowsDir, "explorer.exe");
+    const copy = path.join(dir, "WindowsTerminal.exe");
+    const plain = path.join(dir, "plain.txt");
+    copyFileSync(explorer, copy);
+    writeFileSync(plain, "x");
+    // Only SYSTEM and Administrators in its rules, but the user still owns it (and an owner can
+    // rewrite the rules): the owner check alone refuses it.
+    const ownedOnly = path.join(dir, "owned.exe");
+    copyFileSync(explorer, ownedOnly);
+    const icacls = spawnSync(path.join(windowsDir, "System32", "icacls.exe"), [ownedOnly, "/inheritance:r", "/grant:r", "*S-1-5-18:(F)", "*S-1-5-32-544:(F)"], { encoding: "utf8" });
+    assert.equal(icacls.status, 0, icacls.stderr);
+    assert.deepEqual(windowsFilesLocked([explorer, copy, plain, ownedOnly, path.join(dir, "missing.exe")]), [true, false, false, false, false]);
+    // The rules alone, on ACLs built in memory (no file needs another owner): a system-owned file
+    // that Users may write fails; one they may only read passes.
+    const cases = String.raw`
+$sys = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18')
+$users = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-545')
+foreach ($rights in @('Write', 'Modify', 'Delete', 'ChangePermissions', 'ReadAndExecute')) {
+  $acl = New-Object System.Security.AccessControl.FileSecurity
+  $acl.SetOwner($sys)
+  $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($users, $rights, 'Allow')))
+  [Console]::Out.WriteLine($rights + '=' + (& $aclOk $acl))
+}`;
+    const ps = path.join(windowsDir, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+    const r = spawnSync(ps, ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(`${WIN_LOCKED}\n${cases}`, "utf16le").toString("base64")], { encoding: "utf8" });
+    assert.deepEqual(r.stdout.trim().split(/\r?\n/), ["Write=0", "Modify=0", "Delete=0", "ChangePermissions=0", "ReadAndExecute=1"], r.stderr);
+  } finally {
+    // The owner may still rewrite the rules: put the inherited ones back so the folder can go.
+    spawnSync(path.join(loaderWindowsDir(), "System32", "icacls.exe"), [path.join(dir, "owned.exe"), "/reset"], { encoding: "utf8" });
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

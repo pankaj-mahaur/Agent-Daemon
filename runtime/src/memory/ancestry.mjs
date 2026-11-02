@@ -128,7 +128,32 @@ export function trustedPath(file, { platform = process.platform, windowsDir = nu
 // Windows: one PowerShell, one WMI query per ancestor, no cmdlet anywhere (a module on the
 // caller's PSModulePath could stand in for one). Each row: pid, ppid, then name, command
 // line and path base64-encoded, then the start time, tab-separated. The script names only a pid.
-const WIN_WALK = (pid) => `
+// Windows trust also needs the executable's own security: an install folder under Program
+// Files can be user-writable (game launchers, emulators), and a program copied there is the
+// user's. So the file must be owned by SYSTEM, Administrators or TrustedInstaller, and no one
+// else may hold a write-type right on it (WriteData, AppendData, WriteExtendedAttributes,
+// DeleteSubdirectoriesAndFiles, WriteAttributes, Delete, ChangePermissions, TakeOwnership).
+const WIN_TRUSTED_SIDS = ["S-1-5-18", "S-1-5-32-544", "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"];
+const WIN_WRITE_RIGHTS = 0x2 | 0x4 | 0x10 | 0x40 | 0x100 | 0x10000 | 0x40000 | 0x80000;
+export const WIN_LOCKED = `
+$okSids = @(${WIN_TRUSTED_SIDS.map((s) => `'${s}'`).join(", ")})
+$aclOk = { param($acl)
+  if ($okSids -notcontains $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value) { return '0' }
+  foreach ($r in $acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
+    if ($r.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) { continue }
+    if ($okSids -contains $r.IdentityReference.Value) { continue }
+    if (([int]$r.FileSystemRights -band ${WIN_WRITE_RIGHTS}) -ne 0) { return '0' }
+  }
+  return '1'
+}
+$locked = { param($file)
+  try {
+    if ([string]::IsNullOrEmpty($file)) { return '0' }
+    return (& $aclOk ([System.IO.File]::GetAccessControl($file)))
+  } catch { return '0' }
+}`;
+
+const WIN_WALK = (pid) => `${WIN_LOCKED}
 $b64 = { param($s) if ($null -eq $s) { '' } else { [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$s)) } }
 $p = ${Number(pid)}
 for ($i = 0; $i -lt ${MAX_DEPTH}; $i++) {
@@ -136,7 +161,7 @@ for ($i = 0; $i -lt ${MAX_DEPTH}; $i++) {
   foreach ($o in ([wmisearcher]"SELECT ProcessId,ParentProcessId,Name,CommandLine,ExecutablePath,CreationDate FROM Win32_Process WHERE ProcessId=$p").Get()) { $q = $o }
   if ($null -eq $q) { break }
   $created = [Management.ManagementDateTimeConverter]::ToDateTime($q.CreationDate).ToUniversalTime().ToString('o')
-  [Console]::Out.WriteLine([string]$q.ProcessId + "\`t" + [string]$q.ParentProcessId + "\`t" + (& $b64 $q.Name) + "\`t" + (& $b64 $q.CommandLine) + "\`t" + (& $b64 $q.ExecutablePath) + "\`t" + $created)
+  [Console]::Out.WriteLine([string]$q.ProcessId + "\`t" + [string]$q.ParentProcessId + "\`t" + (& $b64 $q.Name) + "\`t" + (& $b64 $q.CommandLine) + "\`t" + (& $b64 $q.ExecutablePath) + "\`t" + $created + "\`t" + (& $locked $q.ExecutablePath))
   if ($q.ParentProcessId -eq 0) { break }
   $p = $q.ParentProcessId
 }`;
@@ -151,10 +176,20 @@ export function cleanWindowsEnv(windowsDir) {
 export function parseWindowsWalk(stdout, { windowsDir = null } = {}) {
   const text = (s) => (s ? Buffer.from(s, "base64").toString("utf8") : "");
   return String(stdout).split(/\r?\n/).filter((l) => l.includes("\t")).map((line) => {
-    const [pid, ppid, name, cmd, file, created] = line.split("\t");
+    const [pid, ppid, name, cmd, file, created, locked] = line.split("\t");
     const p = text(file);
-    return { pid: Number(pid), ppid: Number(ppid), name: text(name), cmd: text(cmd), path: p, created: created || null, trusted: trustedWindowsPath(p, windowsDir) };
+    return { pid: Number(pid), ppid: Number(ppid), name: text(name), cmd: text(cmd), path: p, created: created || null, trusted: trustedWindowsPath(p, windowsDir) && locked === "1" };
   });
+}
+
+/** Windows: whether each file passes the ownership and write-right check (for tests on a real machine). */
+export function windowsFilesLocked(files, { windowsDir = loaderWindowsDir(), powershell = () => systemTool("powershell.exe", { platform: "win32", env: { SystemRoot: windowsDir } }), spawn = spawnSync } = {}) {
+  const exe = powershell();
+  if (!exe || !windowsDir) throw new Error("Windows PowerShell isn't in the Windows folder");
+  const script = `${WIN_LOCKED}
+while ($null -ne ($line = [Console]::In.ReadLine())) { [Console]::Out.WriteLine((& $locked ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($line))))) }`;
+  const r = spawn(exe, ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], { encoding: "utf8", input: files.map((f) => Buffer.from(f, "utf8").toString("base64")).join("\n") + "\n", env: cleanWindowsEnv(windowsDir), windowsHide: true });
+  return String(r.stdout ?? "").split(/\r?\n/).filter(Boolean).map((l) => l.trim() === "1");
 }
 
 /** Linux: the executable from /proc/<pid>/exe (full name, never the 15-character comm); parent and start from stat. */
@@ -175,9 +210,11 @@ export function linuxNode(pid, { read = (f) => readFileSync(f, "utf8"), link = r
   } catch {
     // a process can end between the reads
   }
+  // A terminal still running after a package upgrade replaced its file reads "… (deleted)":
+  // trusted when that path is root-owned now (only root could have put a file there).
   const real = file.replace(/ \(deleted\)$/, "");
   // fields[1] is the parent; fields[19] the start time in clock ticks since boot.
-  return { pid, ppid: Number(fields[1]), name: real ? path.posix.basename(real) : comm, cmd, path: real, started: Number(fields[19]), trusted: Boolean(real) && real === file && rootOwnedPath(real, stat ? { stat } : {}) };
+  return { pid, ppid: Number(fields[1]), name: real ? path.posix.basename(real) : comm, cmd, path: real, started: Number(fields[19]), trusted: Boolean(real) && rootOwnedPath(real, stat ? { stat } : {}) };
 }
 
 /** `ps` elapsed time ([[dd-]hh:]mm:ss) in seconds. */
