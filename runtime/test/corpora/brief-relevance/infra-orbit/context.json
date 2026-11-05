@@ -1,0 +1,25 @@
+{
+  "name": "infra-orbit",
+  "stack": ["Terraform 1.9", "AWS provider 5.x", "Amazon RDS for PostgreSQL", "tflint", "checkov", "terraform-docs", "GitHub Actions"],
+  "branch": "chore/rds-postgres-16-upgrade",
+  "recent_paths": [
+    "modules/rds-postgres/main.tf",
+    "modules/rds-postgres/variables.tf",
+    "modules/rds-postgres/parameter_group.tf",
+    "modules/rds-postgres/versions.tf",
+    "modules/rds-postgres/README.md",
+    "envs/staging/rds.tf",
+    "envs/staging/terraform.tfvars",
+    "envs/prod/rds.tf",
+    "docs/runbooks/rds-major-upgrade.md",
+    ".github/workflows/plan.yml"
+  ],
+  "recent_commits": [
+    "chore(rds): add postgres16 parameter group family",
+    "chore(rds): put allow_major_version_upgrade behind a variable",
+    "chore(staging): upgrade orders-db to engine 16.4",
+    "docs: runbook for an RDS major upgrade with blue/green",
+    "ci: post the plan output as a PR comment"
+  ],
+  "session_cwd": "/work/infra-orbit"
+}

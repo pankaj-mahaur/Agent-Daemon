@@ -1,0 +1,164 @@
+{
+  "host": "codex",
+  "version": "0.164.0",
+  "scenario": "deny-never",
+  "captured": "2026-10-31",
+  "os": "win32",
+  "outcome": {
+    "name": "deny-never",
+    "code": 0,
+    "ms": 12067,
+    "trust": "preToolUse:untrusted,postToolUse:untrusted,preCompact:untrusted,postCompact:untrusted,sessionStart:untrusted,sessionEnd:untrusted,userPromptSubmit:untrusted,stop:untrusted",
+    "hooks": "SessionStart,UserPromptSubmit,PreToolUse,Stop,SessionEnd",
+    "toolRan": false,
+    "commandStatus": "",
+    "sysmsgInStdout": false,
+    "reasonSeenByModel": false,
+    "stderrTail": "Reading additional input from stdin... | 2026-10-31T20:02:32.930950Z ERROR codex_core::tools::router: error=Command blocked by PreToolUse hook: SPIKE_REASON. Command: cmd.exe /d /c echo hello-from-cod"
+  },
+  "trust": {
+    "hooks": [
+      {
+        "key": "<HOME>\\AppData\\Local\\Temp\\claude\\-REPO-\\79250214-f20e-4d40-a2c1-a5a98eecf8ac\\scratchpad\\spikes\\cx-deny-never-lONkwV\\home\\.codex\\hooks.json:pre_tool_use:0:0",
+        "eventName": "preToolUse",
+        "trustStatus": "untrusted",
+        "hash": "present"
+      },
+      {
+        "key": "<HOME>\\AppData\\Local\\Temp\\claude\\-REPO-\\79250214-f20e-4d40-a2c1-a5a98eecf8ac\\scratchpad\\spikes\\cx-deny-never-lONkwV\\home\\.codex\\hooks.json:post_tool_use:0:0",
+        "eventName": "postToolUse",
+        "trustStatus": "untrusted",
+        "hash": "present"
+      },
+      {
+        "key": "<HOME>\\AppData\\Local\\Temp\\claude\\-REPO-\\79250214-f20e-4d40-a2c1-a5a98eecf8ac\\scratchpad\\spikes\\cx-deny-never-lONkwV\\home\\.codex\\hooks.json:pre_compact:0:0",
+        "eventName": "preCompact",
+        "trustStatus": "untrusted",
+        "hash": "present"
+      },
+      {
+        "key": "<HOME>\\AppData\\Local\\Temp\\claude\\-REPO-\\79250214-f20e-4d40-a2c1-a5a98eecf8ac\\scratchpad\\spikes\\cx-deny-never-lONkwV\\home\\.codex\\hooks.json:post_compact:0:0",
+        "eventName": "postCompact",
+        "trustStatus": "untrusted",
+        "hash": "present"
+      },
+      {
+        "key": "<HOME>\\AppData\\Local\\Temp\\claude\\-REPO-\\79250214-f20e-4d40-a2c1-a5a98eecf8ac\\scratchpad\\spikes\\cx-deny-never-lONkwV\\home\\.codex\\hooks.json:session_start:0:0",
+        "eventName": "sessionStart",
+        "trustStatus": "untrusted",
+        "hash": "present"
+      },
+      {
+        "key": "<HOME>\\AppData\\Local\\Temp\\claude\\-REPO-\\79250214-f20e-4d40-a2c1-a5a98eecf8ac\\scratchpad\\spikes\\cx-deny-never-lONkwV\\home\\.codex\\hooks.json:session_end:0:0",
+        "eventName": "sessionEnd",
+        "trustStatus": "untrusted",
+        "hash": "present"
+      },
+      {
+        "key": "<HOME>\\AppData\\Local\\Temp\\claude\\-REPO-\\79250214-f20e-4d40-a2c1-a5a98eecf8ac\\scratchpad\\spikes\\cx-deny-never-lONkwV\\home\\.codex\\hooks.json:user_prompt_submit:0:0",
+        "eventName": "userPromptSubmit",
+        "trustStatus": "untrusted",
+        "hash": "present"
+      },
+      {
+        "key": "<HOME>\\AppData\\Local\\Temp\\claude\\-REPO-\\79250214-f20e-4d40-a2c1-a5a98eecf8ac\\scratchpad\\spikes\\cx-deny-never-lONkwV\\home\\.codex\\hooks.json:stop:0:0",
+        "eventName": "stop",
+        "trustStatus": "untrusted",
+        "hash": "present"
+      }
+    ]
+  },
+  "hooks": [
+    {
+      "label": "SessionStart",
+      "env": {
+        "CODEX_HOME": "<TMP>\\home\\.codex",
+        "CODEX_MANAGED_BY_NPM": "1",
+        "CODEX_MANAGED_PACKAGE_ROOT": "<HOME>\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex"
+      },
+      "payload": {
+        "session_id": "01a1938e-68a6-79a0-bd3a-f25e0a568438",
+        "transcript_path": "<TMP>\\home\\.codex\\sessions\\2026\\11\\01\\rollout-2026-11-01T01-32-26-01a1938e-68a6-79a0-bd3a-f25e0a568438.jsonl",
+        "cwd": "<TMP>\\project",
+        "hook_event_name": "SessionStart",
+        "model": "mock-model",
+        "permission_mode": "bypassPermissions",
+        "source": "startup"
+      }
+    },
+    {
+      "label": "UserPromptSubmit",
+      "env": {
+        "CODEX_HOME": "<TMP>\\home\\.codex",
+        "CODEX_MANAGED_BY_NPM": "1",
+        "CODEX_MANAGED_PACKAGE_ROOT": "<HOME>\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex"
+      },
+      "payload": {
+        "session_id": "01a1938e-68a6-79a0-bd3a-f25e0a568438",
+        "turn_id": "01a1938e-6943-7493-9618-0003ce54e37d",
+        "transcript_path": "<TMP>\\home\\.codex\\sessions\\2026\\11\\01\\rollout-2026-11-01T01-32-26-01a1938e-68a6-79a0-bd3a-f25e0a568438.jsonl",
+        "cwd": "<TMP>\\project",
+        "hook_event_name": "UserPromptSubmit",
+        "model": "mock-model",
+        "permission_mode": "bypassPermissions",
+        "prompt": "SPIKE_SHELL run it"
+      }
+    },
+    {
+      "label": "PreToolUse",
+      "env": {
+        "CODEX_HOME": "<TMP>\\home\\.codex",
+        "CODEX_MANAGED_BY_NPM": "1",
+        "CODEX_MANAGED_PACKAGE_ROOT": "<HOME>\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex"
+      },
+      "payload": {
+        "session_id": "01a1938e-68a6-79a0-bd3a-f25e0a568438",
+        "turn_id": "01a1938e-6943-7493-9618-0003ce54e37d",
+        "transcript_path": "<TMP>\\home\\.codex\\sessions\\2026\\11\\01\\rollout-2026-11-01T01-32-26-01a1938e-68a6-79a0-bd3a-f25e0a568438.jsonl",
+        "cwd": "<TMP>\\project",
+        "hook_event_name": "PreToolUse",
+        "model": "mock-model",
+        "permission_mode": "bypassPermissions",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "cmd.exe /d /c echo hello-from-codex"
+        },
+        "tool_use_id": "call-1793476951106"
+      }
+    },
+    {
+      "label": "Stop",
+      "env": {
+        "CODEX_HOME": "<TMP>\\home\\.codex",
+        "CODEX_MANAGED_BY_NPM": "1",
+        "CODEX_MANAGED_PACKAGE_ROOT": "<HOME>\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex"
+      },
+      "payload": {
+        "session_id": "01a1938e-68a6-79a0-bd3a-f25e0a568438",
+        "turn_id": "01a1938e-6943-7493-9618-0003ce54e37d",
+        "transcript_path": "<TMP>\\home\\.codex\\sessions\\2026\\11\\01\\rollout-2026-11-01T01-32-26-01a1938e-68a6-79a0-bd3a-f25e0a568438.jsonl",
+        "cwd": "<TMP>\\project",
+        "hook_event_name": "Stop",
+        "model": "mock-model",
+        "permission_mode": "bypassPermissions",
+        "stop_hook_active": false,
+        "last_assistant_message": "done"
+      }
+    },
+    {
+      "label": "SessionEnd",
+      "env": {
+        "CODEX_HOME": "<TMP>\\home\\.codex",
+        "CODEX_MANAGED_BY_NPM": "1",
+        "CODEX_MANAGED_PACKAGE_ROOT": "<HOME>\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex"
+      },
+      "payload": {
+        "session_id": "01a1938e-68a6-79a0-bd3a-f25e0a568438",
+        "transcript_path": "<TMP>\\home\\.codex\\sessions\\2026\\11\\01\\rollout-2026-11-01T01-32-26-01a1938e-68a6-79a0-bd3a-f25e0a568438.jsonl",
+        "cwd": "<TMP>\\project",
+        "hook_event_name": "SessionEnd",
+        "reason": "other"
+      }
+    }
+  ]
+}

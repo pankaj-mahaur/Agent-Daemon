@@ -1,0 +1,30 @@
+{
+  "relevant": ["parcelroute-01", "parcelroute-02", "parcelroute-03", "parcelroute-04", "parcelroute-05", "parcelroute-06", "parcelroute-07", "parcelroute-09", "parcelroute-18", "parcelroute-22"],
+  "irrelevant": ["parcelroute-08", "parcelroute-10", "parcelroute-11", "parcelroute-12", "parcelroute-15", "parcelroute-16", "parcelroute-20", "parcelroute-21", "parcelroute-23"],
+  "neutral": ["parcelroute-13", "parcelroute-14", "parcelroute-17", "parcelroute-19"],
+  "reasons": {
+    "parcelroute-01": "Test commands; consumer tests against Kafka need the integration target.",
+    "parcelroute-02": "Offset-commit rule for the consumer the branch is changing (consumer.go).",
+    "parcelroute-03": "Retries mean redelivery; handlers like handler_shipment_created.go must stay idempotent.",
+    "parcelroute-04": "Exactly the retry classification this branch adds (retry.go, dlq.go).",
+    "parcelroute-05": "The branch publishes to shipments.dlq; the runbook is a recent path.",
+    "parcelroute-06": "The branch adds KAFKA_MAX_RETRIES in config.go and values.yaml.",
+    "parcelroute-07": "The branch adds retry and DLQ counters in internal/metrics/events.go.",
+    "parcelroute-08": "Stale: sarama was removed (see -09).",
+    "parcelroute-09": "The current Kafka client the consumer code uses.",
+    "parcelroute-10": "Carrier adapters are an unrelated area.",
+    "parcelroute-11": "Label storage is an unrelated area.",
+    "parcelroute-12": "HTTP API generation is an unrelated area.",
+    "parcelroute-13": "Project-wide error style; harmless but generic.",
+    "parcelroute-14": "Project-wide lint command; harmless but generic.",
+    "parcelroute-15": "Stale: the consumer now retries with backoff (see -04).",
+    "parcelroute-16": "Address validation is an unrelated area.",
+    "parcelroute-17": "Project-wide PR convention; harmless but generic.",
+    "parcelroute-18": "Local Kafka (Redpanda) is needed to try retries and the DLQ by hand.",
+    "parcelroute-19": "Migrations are project-wide; the branch touches no migrations.",
+    "parcelroute-20": "Carrier label tests are an unrelated area.",
+    "parcelroute-21": "Quote amounts are an unrelated area.",
+    "parcelroute-22": "Partition and replica layout shapes how blocking retries behave.",
+    "parcelroute-23": "Stale: the DLQ is what this branch adds (see -05)."
+  }
+}

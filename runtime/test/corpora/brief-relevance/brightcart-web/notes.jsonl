@@ -1,0 +1,25 @@
+{"id":"brightcart-web-01","text":"Stripe webhooks locally: run `pnpm stripe:listen` (forwards to /api/webhooks/stripe). Without it, payment and refund status never update in dev.","created":"2026-08-02","kind":"workflow"}
+{"id":"brightcart-web-02","text":"All Stripe calls go through src/payments/stripe-client.ts, which pins the API version and sets idempotency keys. Don't import the stripe SDK anywhere else.","created":"2026-07-15","kind":"architecture"}
+{"id":"brightcart-web-03","text":"Money is integer minor units (amountMinor) plus a currency code. Round with the helpers in src/lib/money.ts; never use floats or toFixed().","created":"2026-06-20","kind":"fact"}
+{"id":"brightcart-web-04","text":"Stripe fires charge.refunded on every partial refund. The webhook must sum the refunds on the charge, not assume one full refund.","created":"2026-10-25","kind":"fact"}
+{"id":"brightcart-web-05","text":"Unit tests: `pnpm test:unit` (Vitest). Payments tests use the Stripe fake in test/fakes/stripe.ts; never call Stripe's test API from unit tests.","created":"2026-07-15","kind":"testing"}
+{"id":"brightcart-web-06","text":"E2E: `pnpm e2e` (Playwright) after `pnpm db:reset && pnpm db:seed`. The seeded user buyer@example.test has a delivered order you can refund.","created":"2026-09-30","kind":"testing"}
+{"id":"brightcart-web-07","text":"Prisma: change prisma/schema.prisma, then `pnpm prisma migrate dev --name <x>`. Never edit a migration folder that is already merged.","created":"2026-05-11","kind":"workflow"}
+{"id":"brightcart-web-08","text":"Server actions in app/**/actions.ts must call requireOrderOwner() before any mutation; the middleware only checks that the user is logged in.","created":"2026-08-19","kind":"architecture"}
+{"id":"brightcart-web-09","text":"Transactional emails are React Email components in src/emails/. Preview them with `pnpm email:dev` on port 3001.","created":"2026-04-03","kind":"workflow"}
+{"id":"brightcart-web-10","text":"Refunds are done manually by support in the Stripe dashboard; there is no refund code in the app.","created":"2025-11-12","kind":"fact"}
+{"id":"brightcart-web-11","text":"Unit tests run with Jest: `npm test`.","created":"2025-06-01","kind":"testing"}
+{"id":"brightcart-web-12","text":"Use pnpm. The packageManager field is set and npm installs fail in CI.","created":"2026-03-09","kind":"tooling"}
+{"id":"brightcart-web-13","text":"Product search runs on the Meilisearch index; reindex with `pnpm search:reindex` after changing src/search/mapping.ts.","created":"2026-07-01","kind":"workflow"}
+{"id":"brightcart-web-14","text":"Marketing pages under src/app/(marketing)/ are statically generated. Don't call cookies() or headers() there or the whole route turns dynamic.","created":"2026-05-22","kind":"architecture"}
+{"id":"brightcart-web-15","text":"The recommendations carousel reads /api/recs, owned by the data team. Change only the UI; never change the payload shape.","created":"2026-09-03","kind":"fact"}
+{"id":"brightcart-web-16","text":"PR titles follow Conventional Commits with a scope, e.g. feat(payments): …; PRs are squash-merged.","created":"2026-02-14","kind":"git"}
+{"id":"brightcart-web-17","text":"Prefer server components. Add 'use client' only to leaf components that need state or effects.","created":"2026-04-18","kind":"style"}
+{"id":"brightcart-web-18","text":"Admin product image uploads go to the S3 bucket through presigned URLs from src/app/api/uploads/route.ts.","created":"2026-06-07","kind":"paths"}
+{"id":"brightcart-web-19","text":"`pnpm check` runs typecheck, lint and unit tests. Run it before pushing; CI runs the same script.","created":"2026-03-09","kind":"workflow"}
+{"id":"brightcart-web-20","text":"Order emails are sent by the legacy Mailer service (src/mailer.ts) using SendGrid templates.","created":"2025-09-20","kind":"architecture"}
+{"id":"brightcart-web-21","text":"Gift cards are off for the de locale for regulatory reasons; the giftCards flag is false there.","created":"2026-08-28","kind":"fact"}
+{"id":"brightcart-web-22","text":"Supported store currencies are EUR, GBP and USD; a store's currency is fixed when the store is created.","created":"2026-01-10","kind":"fact"}
+{"id":"brightcart-web-23","text":"Storybook: `pnpm storybook` on port 6006. Stories live next to components as *.stories.tsx.","created":"2026-02-02","kind":"tooling"}
+{"id":"brightcart-web-24","text":"Refunds are allowed only within 30 days of delivery and never for digital items. The rule lives in canRefund() in src/payments/refund-policy.ts.","created":"2026-10-20","kind":"fact"}
+{"id":"brightcart-web-25","text":"After a theme change, purge the CDN cache with the 'purge-cdn' GitHub Action; don't purge from the provider console.","created":"2026-07-30","kind":"workflow"}

@@ -1,0 +1,27 @@
+{
+  "name": "brightcart-web",
+  "stack": ["TypeScript", "Next.js 15 (App Router)", "React 19", "Prisma", "PostgreSQL", "Stripe", "Vitest", "Playwright", "pnpm"],
+  "branch": "feat/checkout-refunds",
+  "recent_paths": [
+    "src/payments/refund.ts",
+    "src/payments/refund.test.ts",
+    "src/payments/refund-policy.ts",
+    "src/payments/stripe-client.ts",
+    "src/app/(account)/orders/[orderId]/refund/page.tsx",
+    "src/app/(account)/orders/[orderId]/refund/actions.ts",
+    "src/app/api/webhooks/stripe/route.ts",
+    "prisma/schema.prisma",
+    "prisma/migrations/20261028_add_refunds/migration.sql",
+    "src/emails/refund-confirmation.tsx",
+    "e2e/refund.spec.ts",
+    "src/lib/money.ts"
+  ],
+  "recent_commits": [
+    "feat(payments): add Refund model and migration",
+    "feat(payments): createRefund calls Stripe with an idempotency key",
+    "feat(account): refund request page for delivered orders",
+    "test(payments): cover partial refunds and currency rounding",
+    "fix(webhooks): handle charge.refunded for partial refunds"
+  ],
+  "session_cwd": "/work/brightcart-web"
+}

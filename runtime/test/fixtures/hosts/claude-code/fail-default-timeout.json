@@ -1,0 +1,85 @@
+{
+  "host": "claude-code",
+  "version": "2.1.314",
+  "scenario": "fail-default-timeout",
+  "captured": "2026-10-31",
+  "os": "win32",
+  "outcome": {
+    "name": "fail-default-timeout",
+    "code": 0,
+    "hooks": "PreToolUse,PostToolUse",
+    "permission_mode": "default",
+    "toolRan": true,
+    "toolResult": "\"hello-from-bash Shell cwd was reset to <HOME>\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\-REPO-",
+    "sysmsgInStdout": false,
+    "reasonInStdout": false,
+    "denials": "\"permission_denials\":[]",
+    "extra": {
+      "detached": false,
+      "child": false,
+      "hook-finished": false
+    }
+  },
+  "hooks": [
+    {
+      "label": "PreToolUse",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CONFIG_DIR": "<TMP>\\home\\.claude",
+        "CLAUDE_PROJECT_DIR": "<TMP>/project"
+      },
+      "payload": {
+        "session_id": "ba05e8c7-6938-4be6-b3f8-0540092da83d",
+        "transcript_path": "<TMP>\\home\\.claude\\projects\\-TMP--ith7sg\\ba05e8c7-6938-4be6-b3f8-0540092da83d.jsonl",
+        "cwd": "<TMP>\\project",
+        "prompt_id": "8189ccc0-8c0e-4f2e-9b97-1af301c29a64",
+        "permission_mode": "default",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "echo hello-from-bash",
+          "description": "echo"
+        },
+        "tool_use_id": "toolu_mock_1793476906478"
+      }
+    },
+    {
+      "label": "PostToolUse",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CONFIG_DIR": "<TMP>\\home\\.claude",
+        "CLAUDE_PROJECT_DIR": "<TMP>/project"
+      },
+      "payload": {
+        "session_id": "ba05e8c7-6938-4be6-b3f8-0540092da83d",
+        "transcript_path": "<TMP>\\home\\.claude\\projects\\-TMP--ith7sg\\ba05e8c7-6938-4be6-b3f8-0540092da83d.jsonl",
+        "cwd": "<TMP>\\project",
+        "prompt_id": "8189ccc0-8c0e-4f2e-9b97-1af301c29a64",
+        "permission_mode": "default",
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "echo hello-from-bash",
+          "description": "echo"
+        },
+        "tool_response": {
+          "stdout": "hello-from-bash",
+          "stderr": "\nShell cwd was reset to <TMP>\\project",
+          "interrupted": false,
+          "isImage": false,
+          "noOutputExpected": false
+        },
+        "tool_use_id": "toolu_mock_1793476906478",
+        "duration_ms": 4327
+      }
+    }
+  ]
+}

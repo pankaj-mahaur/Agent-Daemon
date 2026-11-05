@@ -1,0 +1,29 @@
+{
+  "relevant": ["infra-orbit-01", "infra-orbit-02", "infra-orbit-03", "infra-orbit-04", "infra-orbit-05", "infra-orbit-06", "infra-orbit-07", "infra-orbit-08", "infra-orbit-15", "infra-orbit-21"],
+  "irrelevant": ["infra-orbit-09", "infra-orbit-10", "infra-orbit-12", "infra-orbit-13", "infra-orbit-14", "infra-orbit-16", "infra-orbit-19", "infra-orbit-20", "infra-orbit-22"],
+  "neutral": ["infra-orbit-11", "infra-orbit-17", "infra-orbit-18"],
+  "reasons": {
+    "infra-orbit-01": "The branch changes envs/prod/rds.tf; prod applies must go through CI.",
+    "infra-orbit-02": "How to plan the staging and prod roots the branch edits.",
+    "infra-orbit-03": "Matches the commit adding the postgres16 parameter group (parameter_group.tf).",
+    "infra-orbit-04": "Matches the commit putting allow_major_version_upgrade behind a variable.",
+    "infra-orbit-05": "Prerequisites for the prod database change this branch leads to.",
+    "infra-orbit-06": "Matches the blue/green runbook commit and the prod upgrade plan.",
+    "infra-orbit-07": "The checks this PR must pass.",
+    "infra-orbit-08": "The branch edits variables.tf and the module README.",
+    "infra-orbit-09": "Stale: prod is being upgraded past 13 on this branch.",
+    "infra-orbit-10": "Stale: state moved to S3 (see -11).",
+    "infra-orbit-11": "Project-wide state setup; useful if a plan hits a lock, otherwise generic.",
+    "infra-orbit-12": "EKS add-ons are an unrelated area.",
+    "infra-orbit-13": "CloudFront for marketing is an unrelated area.",
+    "infra-orbit-14": "OIDC trust is unrelated; this is not a new deploy branch.",
+    "infra-orbit-15": "The branch touches staging and prod; they should ship as separate PRs.",
+    "infra-orbit-16": "S3 bucket policy is an unrelated area.",
+    "infra-orbit-17": "Version pinning; versions.tf is a recent path but nothing upgrade-specific.",
+    "infra-orbit-18": "Project-wide tagging; harmless but generic.",
+    "infra-orbit-19": "ElastiCache is an unrelated area.",
+    "infra-orbit-20": "Stale and contradicted by -03: a custom postgres16 group is required.",
+    "infra-orbit-21": "Post-upgrade step for the Postgres 16 upgrade.",
+    "infra-orbit-22": "Route53 customer domains are an unrelated area."
+  }
+}

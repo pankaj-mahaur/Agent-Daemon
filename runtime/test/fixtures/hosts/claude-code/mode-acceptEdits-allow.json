@@ -1,0 +1,101 @@
+{
+  "host": "claude-code",
+  "version": "2.1.314",
+  "scenario": "mode-acceptEdits-allow",
+  "captured": "2026-10-31",
+  "os": "win32",
+  "outcome": {
+    "name": "mode-acceptEdits-allow",
+    "code": 0,
+    "hooks": "UserPromptSubmit,PreToolUse,PostToolUse",
+    "permission_mode": "acceptEdits",
+    "toolRan": true,
+    "toolResult": "\"hello-from-bash Shell cwd was reset to <HOME>\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\-REPO-",
+    "sysmsgInStdout": true,
+    "reasonInStdout": false,
+    "denials": "\"permission_denials\":[]"
+  },
+  "hooks": [
+    {
+      "label": "UserPromptSubmit",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CONFIG_DIR": "<TMP>\\home\\.claude",
+        "CLAUDE_PROJECT_DIR": "<TMP>/project"
+      },
+      "payload": {
+        "session_id": "ea18d73c-f490-4560-bcdc-adde6bc275ce",
+        "transcript_path": "<TMP>\\home\\.claude\\projects\\C--Users-<user>-AppData-Local-Temp-claude--REPO--79250214-f20e-4d40-a2c1-a5a98eecf8ac-scratchpad-spikes-cc-mode-acceptEdits-allow-dYqD-wlbl44\\ea18d73c-f490-4560-bcdc-adde6bc275ce.jsonl",
+        "cwd": "<TMP>\\project",
+        "prompt_id": "1b7e1899-03aa-401b-9184-b25d1da18a90",
+        "permission_mode": "acceptEdits",
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "SPIKE_BASH run it"
+      }
+    },
+    {
+      "label": "PreToolUse",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CONFIG_DIR": "<TMP>\\home\\.claude",
+        "CLAUDE_PROJECT_DIR": "<TMP>/project"
+      },
+      "payload": {
+        "session_id": "ea18d73c-f490-4560-bcdc-adde6bc275ce",
+        "transcript_path": "<TMP>\\home\\.claude\\projects\\C--Users-<user>-AppData-Local-Temp-claude--REPO--79250214-f20e-4d40-a2c1-a5a98eecf8ac-scratchpad-spikes-cc-mode-acceptEdits-allow-dYqD-wlbl44\\ea18d73c-f490-4560-bcdc-adde6bc275ce.jsonl",
+        "cwd": "<TMP>\\project",
+        "prompt_id": "1b7e1899-03aa-401b-9184-b25d1da18a90",
+        "permission_mode": "acceptEdits",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "echo hello-from-bash",
+          "description": "echo"
+        },
+        "tool_use_id": "toolu_mock_1793478605669"
+      }
+    },
+    {
+      "label": "PostToolUse",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CONFIG_DIR": "<TMP>\\home\\.claude",
+        "CLAUDE_PROJECT_DIR": "<TMP>/project"
+      },
+      "payload": {
+        "session_id": "ea18d73c-f490-4560-bcdc-adde6bc275ce",
+        "transcript_path": "<TMP>\\home\\.claude\\projects\\C--Users-<user>-AppData-Local-Temp-claude--REPO--79250214-f20e-4d40-a2c1-a5a98eecf8ac-scratchpad-spikes-cc-mode-acceptEdits-allow-dYqD-wlbl44\\ea18d73c-f490-4560-bcdc-adde6bc275ce.jsonl",
+        "cwd": "<TMP>\\project",
+        "prompt_id": "1b7e1899-03aa-401b-9184-b25d1da18a90",
+        "permission_mode": "acceptEdits",
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "echo hello-from-bash",
+          "description": "echo"
+        },
+        "tool_response": {
+          "stdout": "hello-from-bash",
+          "stderr": "\nShell cwd was reset to <TMP>\\project",
+          "interrupted": false,
+          "isImage": false,
+          "noOutputExpected": false
+        },
+        "tool_use_id": "toolu_mock_1793478605669",
+        "duration_ms": 6692
+      }
+    }
+  ]
+}

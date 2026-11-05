@@ -1,0 +1,26 @@
+{
+  "name": "lumen-monorepo",
+  "stack": ["pnpm workspaces", "Turborepo", "TypeScript", "React 19", "Radix UI", "CSS Modules", "Storybook 8", "Vitest", "Changesets", "Next.js (apps/web)", "Hono (apps/api)"],
+  "branch": "feat/ui-date-picker",
+  "recent_paths": [
+    "packages/ui/src/date-picker/DatePicker.tsx",
+    "packages/ui/src/date-picker/Calendar.tsx",
+    "packages/ui/src/date-picker/DatePicker.module.css",
+    "packages/ui/src/date-picker/DatePicker.stories.tsx",
+    "packages/ui/src/date-picker/DatePicker.test.tsx",
+    "packages/ui/src/date-picker/index.ts",
+    "packages/ui/src/index.ts",
+    "packages/ui/src/tokens/spacing.ts",
+    "packages/ui/package.json",
+    ".changeset/quiet-owls-dance.md",
+    "apps/web/src/app/bookings/new/page.tsx"
+  ],
+  "recent_commits": [
+    "feat(ui): DatePicker built on Radix Popover",
+    "feat(ui): keyboard navigation in the Calendar grid",
+    "test(ui): DatePicker a11y and keyboard tests",
+    "docs(ui): DatePicker stories for ranges and disabled dates",
+    "feat(web): use DatePicker on the new booking page"
+  ],
+  "session_cwd": "/work/lumen-monorepo"
+}

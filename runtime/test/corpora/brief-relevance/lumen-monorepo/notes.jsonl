@@ -1,0 +1,24 @@
+{"id":"lumen-monorepo-01","text":"Run tasks per package with filters: `pnpm --filter @lumen/ui test`, or `pnpm turbo run test --filter=@lumen/ui...` to include its dependents.","created":"2026-05-06","kind":"tooling"}
+{"id":"lumen-monorepo-02","text":"Any change to a published package under packages/ needs a changeset (`pnpm changeset`); CI fails the PR without one.","created":"2026-04-14","kind":"workflow"}
+{"id":"lumen-monorepo-03","text":"New ui components must be exported from packages/ui/src/index.ts and have a story; the component docs are built from Storybook.","created":"2026-06-09","kind":"architecture"}
+{"id":"lumen-monorepo-04","text":"UI tests use Vitest and Testing Library on jsdom. Every interactive component gets an a11y check with vitest-axe's toHaveNoViolations.","created":"2026-08-18","kind":"testing"}
+{"id":"lumen-monorepo-05","text":"Use the design tokens in packages/ui/src/tokens (spacing, color). Hard-coded px values fail the token lint rule.","created":"2026-07-01","kind":"style"}
+{"id":"lumen-monorepo-06","text":"The ui package handles dates with date-fns v4 and takes Date objects. Don't call toLocaleDateString inside components; accept a locale prop.","created":"2026-09-22","kind":"fact"}
+{"id":"lumen-monorepo-07","text":"Storybook: `pnpm --filter @lumen/ui storybook` (port 6006). Interaction tests run with `pnpm --filter @lumen/ui test-storybook`.","created":"2026-06-09","kind":"tooling"}
+{"id":"lumen-monorepo-08","text":"apps/web uses @lumen/ui through workspace:*. After changing ui exports, restart the web dev server; Next caches the transpiled package.","created":"2026-08-04","kind":"architecture"}
+{"id":"lumen-monorepo-09","text":"Overlays (Popover, Dialog) are built on Radix primitives. Don't add a second headless library such as Headless UI.","created":"2026-05-20","kind":"architecture"}
+{"id":"lumen-monorepo-10","text":"The ui package is built with Rollup: run `npm run build` inside packages/ui.","created":"2025-07-15","kind":"tooling"}
+{"id":"lumen-monorepo-11","text":"packages/ui builds with tsup (`pnpm --filter @lumen/ui build`); the Rollup config was removed.","created":"2026-02-10","kind":"tooling"}
+{"id":"lumen-monorepo-12","text":"Dates are handled with moment.js across the repo.","created":"2025-03-03","kind":"fact"}
+{"id":"lumen-monorepo-13","text":"apps/api is a Hono server on port 8787. Route handlers live in apps/api/src/routes and are validated with zod-openapi.","created":"2026-03-25","kind":"paths"}
+{"id":"lumen-monorepo-14","text":"apps/api stores data in SQLite through drizzle; run migrations with `pnpm --filter @lumen/api db:migrate`.","created":"2026-04-11","kind":"workflow"}
+{"id":"lumen-monorepo-15","text":"Packages are released from main through the Changesets 'Version Packages' PR; never run `changeset publish` locally.","created":"2026-04-14","kind":"workflow"}
+{"id":"lumen-monorepo-16","text":"Node 22 and pnpm 9 are pinned through packageManager and .nvmrc; run `corepack enable` once per machine.","created":"2026-01-09","kind":"tooling"}
+{"id":"lumen-monorepo-17","text":"apps/web auth uses Auth.js with the GitHub provider in dev; production uses SSO only.","created":"2026-06-27","kind":"fact"}
+{"id":"lumen-monorepo-18","text":"Email templates in packages/emails render with react-email; preview them with `pnpm --filter @lumen/emails dev`.","created":"2026-07-10","kind":"workflow"}
+{"id":"lumen-monorepo-19","text":"Commit scopes match package names: feat(ui), fix(api), chore(web).","created":"2026-02-02","kind":"git"}
+{"id":"lumen-monorepo-20","text":"packages/ui is styled with styled-components.","created":"2025-05-19","kind":"style"}
+{"id":"lumen-monorepo-21","text":"packages/ui styles are CSS Modules plus tokens; styled-components was removed in ui v2.","created":"2026-03-08","kind":"style"}
+{"id":"lumen-monorepo-22","text":"The Turbo remote cache is on in CI only; locally it's optional (set TURBO_TEAM and TURBO_TOKEN if you want it).","created":"2026-03-30","kind":"tooling"}
+{"id":"lumen-monorepo-23","text":"apps/web feature flags come from the flags service at /api/flags and default to off in preview deployments.","created":"2026-08-12","kind":"fact"}
+{"id":"lumen-monorepo-24","text":"Bookings are in the venue's timezone: convert with venue.tz before sending dates from apps/web to the API.","created":"2026-09-29","kind":"fact"}

@@ -1,0 +1,23 @@
+{"id":"gitsweep-01","text":"Run tests with `cargo nextest run`. Doctests don't run under nextest; run them with `cargo test --doc`.","created":"2026-04-10","kind":"testing"}
+{"id":"gitsweep-02","text":"Snapshot tests use insta. Review changes with `cargo insta review`; never hand-edit .snap files.","created":"2026-06-02","kind":"testing"}
+{"id":"gitsweep-03","text":"All user-facing output goes through the Renderer trait in src/output/. Commands return data structs and never println! directly.","created":"2026-09-18","kind":"architecture"}
+{"id":"gitsweep-04","text":"JSON output is a public contract: add fields only, never rename or remove them, and bump schema_version in src/output/json.rs on any change.","created":"2026-10-26","kind":"fact"}
+{"id":"gitsweep-05","text":"stdout is for data, stderr for progress and warnings. In JSON mode nothing else may reach stdout, so the output can be piped to jq.","created":"2026-10-26","kind":"fact"}
+{"id":"gitsweep-06","text":"CLI integration tests use assert_cmd against a temp repo built by tests/common/fixture_repo.rs; never depend on the developer's real git config.","created":"2026-07-14","kind":"testing"}
+{"id":"gitsweep-07","text":"Flags use clap derive only. Every new flag needs a doc comment (it becomes the --help text) and a row in the README's flag table.","created":"2026-05-19","kind":"style"}
+{"id":"gitsweep-08","text":"User-visible changes need a line under 'Unreleased' in CHANGELOG.md; the release script fails if that section is empty.","created":"2026-03-30","kind":"workflow"}
+{"id":"gitsweep-09","text":"MSRV is 1.75 (rust-version in Cargo.toml) and CI checks it; avoid language features stabilized after 1.75.","created":"2026-02-11","kind":"tooling"}
+{"id":"gitsweep-10","text":"`cargo clippy --all-targets -- -D warnings` must pass. Fix lints instead of adding allow attributes.","created":"2026-02-11","kind":"style"}
+{"id":"gitsweep-11","text":"Each command prints its own output with println!; there is no output abstraction yet.","created":"2025-05-07","kind":"architecture"}
+{"id":"gitsweep-12","text":"Tests run with plain `cargo test`; nextest isn't set up.","created":"2025-03-22","kind":"testing"}
+{"id":"gitsweep-13","text":"The gc command shells out to `git gc --auto` because git2 has no gc API; on Windows git must be on PATH.","created":"2026-08-01","kind":"fact"}
+{"id":"gitsweep-14","text":"The Homebrew formula lives in a separate tap repo and is bumped by the release workflow; don't edit it by hand.","created":"2026-04-22","kind":"workflow"}
+{"id":"gitsweep-15","text":"Deleting remote branches (`prune --remote`) needs an SSH agent; the HTTPS credential-helper path is untested on Windows.","created":"2026-07-27","kind":"fact"}
+{"id":"gitsweep-16","text":"Commits follow Conventional Commits; release-please derives the version bump from them.","created":"2026-01-15","kind":"git"}
+{"id":"gitsweep-17","text":"The interactive picker (`gitsweep pick`) uses ratatui and sits behind the `tui` cargo feature, off by default.","created":"2026-08-15","kind":"architecture"}
+{"id":"gitsweep-18","text":"The current branch and the default branch (from origin/HEAD) are always protected and must never appear as prune candidates.","created":"2026-10-29","kind":"fact"}
+{"id":"gitsweep-19","text":"JSON output isn't planned; users who need machine-readable output should parse the table with awk.","created":"2025-09-09","kind":"fact"}
+{"id":"gitsweep-20","text":"Release with `cargo release minor` from main after the release PR merges; the crates.io publish runs in CI.","created":"2026-03-30","kind":"workflow"}
+{"id":"gitsweep-21","text":"User config is ~/.config/gitsweep/config.toml; protected_patterns takes globs like release/*.","created":"2026-05-02","kind":"paths"}
+{"id":"gitsweep-22","text":"Criterion benchmarks live in benches/; run `cargo bench --bench scan` before and after touching the ref scanner.","created":"2026-06-20","kind":"testing"}
+{"id":"gitsweep-23","text":"Errors: anyhow in main and commands, thiserror enums in library modules. Exit code 2 for usage errors, 1 for runtime errors.","created":"2026-02-26","kind":"style"}

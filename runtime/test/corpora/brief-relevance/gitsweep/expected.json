@@ -1,0 +1,30 @@
+{
+  "relevant": ["gitsweep-01", "gitsweep-02", "gitsweep-03", "gitsweep-04", "gitsweep-05", "gitsweep-06", "gitsweep-07", "gitsweep-08", "gitsweep-18"],
+  "irrelevant": ["gitsweep-11", "gitsweep-12", "gitsweep-13", "gitsweep-14", "gitsweep-15", "gitsweep-17", "gitsweep-19", "gitsweep-22"],
+  "neutral": ["gitsweep-09", "gitsweep-10", "gitsweep-16", "gitsweep-20", "gitsweep-21", "gitsweep-23"],
+  "reasons": {
+    "gitsweep-01": "Test command for the new CLI tests.",
+    "gitsweep-02": "The branch adds an insta snapshot (cli_dry_run__json_output.snap).",
+    "gitsweep-03": "The branch splits renderers in src/output/; this is the output architecture.",
+    "gitsweep-04": "src/output/json.rs is a recent path; the JSON contract and schema_version apply.",
+    "gitsweep-05": "JSON mode must keep stdout clean; core to --format json.",
+    "gitsweep-06": "tests/cli_dry_run.rs is an assert_cmd CLI test against the fixture repo.",
+    "gitsweep-07": "The branch adds a --format flag in src/cli.rs and documents it in the README.",
+    "gitsweep-08": "A new user-visible flag needs a CHANGELOG entry; CHANGELOG.md is a recent path.",
+    "gitsweep-09": "Project-wide MSRV; harmless but generic.",
+    "gitsweep-10": "Project-wide clippy rule; harmless but generic.",
+    "gitsweep-11": "Stale: replaced by the Renderer trait (see -03).",
+    "gitsweep-12": "Stale: tests now run with nextest (see -01).",
+    "gitsweep-13": "The gc command is an unrelated area.",
+    "gitsweep-14": "Homebrew packaging is an unrelated area.",
+    "gitsweep-15": "Remote deletion is unrelated: a dry run deletes nothing, even though prune.rs is a recent path.",
+    "gitsweep-16": "Project-wide commit convention; harmless but generic.",
+    "gitsweep-17": "The TUI picker is an unrelated area.",
+    "gitsweep-18": "Matches the commit that stops listing the current branch as a candidate.",
+    "gitsweep-19": "Stale: JSON output is exactly what this branch adds.",
+    "gitsweep-20": "Release steps; not needed for feature work.",
+    "gitsweep-21": "Config file background; loosely related to which branches are protected.",
+    "gitsweep-22": "Benchmarks for the ref scanner are an unrelated area.",
+    "gitsweep-23": "Project-wide error-handling convention; harmless but generic."
+  }
+}
