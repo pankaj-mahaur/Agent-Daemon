@@ -539,6 +539,7 @@ ad memory redact <table>:<id>          # Replace what looks like a key in one ro
 ad memory install [--host <id>] [--yes] [--dry-run]   # Add the memory server to Claude Code, Codex, Cursor, VS Code, Gemini CLI (docs/memory/install.md)
 ad memory doctor | repair | status | uninstall
 ad memory report [--days 30] [--all-projects] [--json] [--share]   # Is memory working: repeated corrections, what was shown, feedback (docs/memory/metrics.md)
+ad mistakes [--all-projects] [--share | --json] [--yes]            # Read-only: the corrections you keep typing to your coding agents, offline (docs/mistakes.md)
 ad memory migrate                      # Run the one-time upkeep now (note keys, journal secret scrub, project ids)
 ad memory assign --list | <table>:<id> --project <dir>   # Place a note two folders shared (typed confirmation)
 ad memory consolidate                  # Evolution pass: near-dup merges, stale archive, contradictions

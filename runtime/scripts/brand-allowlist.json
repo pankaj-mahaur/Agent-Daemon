@@ -429,6 +429,61 @@
       "reason": "the memory package's npm page names the hosts it installs into, Codex among them"
     },
     {
+      "path": "runtime/src/mistakes/**",
+      "rules": ["A", "C"],
+      "reason": "the mistakes report (L4a) reads the user's own Codex history (CODEX_HOME, rollouts) as one of two hosts and names that host in the report; this is the user's separate install, not ad's engine"
+    },
+    {
+      "path": "docs/mistakes.md",
+      "rules": ["A"],
+      "reason": "the guide to `ad mistakes`, which reads the user's own Codex history (CODEX_HOME, sessions, `codex exec`) as one of two hosts; not ad's engine"
+    },
+    {
+      "path": "docs/troubleshooting.md",
+      "rules": ["A"],
+      "match": "Claude Code or Codex history found|`CODEX_HOME` move it|`codex exec`\\)|`CODEX_HOME` your agents use|compressed Codex sessions|Codex compresses older session files",
+      "reason": "the `ad mistakes` entries (#93, #94): the user's own Codex history, its home variable and its compressed sessions"
+    },
+    {
+      "path": "skills/daemon/harness-troubleshoot/SKILL.md",
+      "rules": ["A"],
+      "match": "Claude Code or Codex history found|`CODEX_HOME` move the history|`codex exec`\\)|compressed Codex sessions|Codex's older `\\.jsonl\\.zst`",
+      "reason": "the `ad mistakes` rows (#93, #94): the user's own Codex history"
+    },
+    {
+      "path": "SECURITY.md",
+      "rules": ["A"],
+      "match": "reads Claude Code and Codex transcripts",
+      "reason": "what `ad mistakes` reads: the user's own Codex history"
+    },
+    {
+      "path": "docs/architecture.md",
+      "rules": ["A"],
+      "match": "lists Claude Code transcripts and Codex rollouts|`CLAUDE\\.md` rules Codex doesn't read",
+      "reason": "the mistakes report's reader and coverage line: the user's own Codex history"
+    },
+    {
+      "path": "docs/testing.md",
+      "rules": ["A"],
+      "match": "2,000 Claude Code and 2,000 Codex sessions",
+      "reason": "the `ad mistakes` perf gate generates synthetic sessions of the user's hosts"
+    },
+    {
+      "path": "runtime/test/mistakes-*.test.mjs",
+      "rules": ["A"],
+      "reason": "mistakes-report tests build a fake Codex home and read the L0 Codex rollout fixtures"
+    },
+    {
+      "path": "runtime/testkit/agent-history.mjs",
+      "rules": ["A"],
+      "reason": "writes fake Codex rollouts (the user's host) into a temp home for the mistakes-report tests"
+    },
+    {
+      "path": "runtime/scripts/mistakes-perf.mjs",
+      "rules": ["A"],
+      "reason": "generates synthetic Codex rollouts (the user's host) for the mistakes-report perf gate"
+    },
+    {
       "path": "runtime/scripts/memory-install-matrix.mjs",
       "rules": ["A"],
       "reason": "the installer's config matrix sets up a fake Codex home per case"

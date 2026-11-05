@@ -4,6 +4,10 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Added
+
+- **`ad mistakes`: the corrections you keep typing to your coding agents.** A read-only report from your Claude Code and Codex history: how often you corrected your agents, which corrections came back (the same rule in other words counts as one), in which agent, week by week, and how many of your `CLAUDE.md` rules Codex never sees (and the other way round). It asks before reading anything, and shows which folders, how many sessions and which dates. It works offline: no model call, no network, nothing stored or changed. This project by default, `--all-projects` for every one; `--share` prints a redacted Markdown summary, `--json` the numbers. See [docs/mistakes.md](docs/mistakes.md).
+
 ### Changed
 
 - **Every memory note waits for your review before it is used.** What ad's hooks capture from your prompts and what a session-close digest finds are now stored pending, like the notes an agent records. A hook can't tell your typed prompt from a scheduled prompt, a background report or another agent's text, so nothing is accepted on its word. Accept in your own terminal with `ad memory held` or `ad review`; until then an agent sees a note only when it searches, marked unreviewed. Notes you accepted before this version stay accepted. Seeing the same note again counts the repeat but never accepts it.
@@ -20,6 +24,7 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 - `ad memory consolidate --apply-merges` and `--apply-stale`, which retire accepted notes, need the same terminal.
 - An import never carries who accepted a note, or a user fact's every-project flag: imported notes wait for `ad review --import`.
 - Every connection to the memory store zeroes the pages it frees, and its search index drops a deleted note's terms.
+- Secret redaction also catches names with the secret word run together, such as `PGPASSWORD=…` or `GHTOKEN=…`.
 
 ### Fixed
 

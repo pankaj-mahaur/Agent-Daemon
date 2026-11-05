@@ -1017,6 +1017,34 @@ Stray text on top of ad's screen while it runs (a library writing straight to th
 
 **Fix:** run `ad auth repair` in your own terminal. It finishes what it safely can and asks before the rest: restoring the list from its backup (the damaged file is kept), finishing or removing a half-made account, deleting a key no account uses. It never prints a key. "Another ad is updating" passes once the other command ends; "written by a newer ad" means updating ad here.
 
+## 92. ad mistakes: "Run it again with --yes to read them"
+
+**Symptom:** `ad mistakes` prints what it would read, then `Run it again with --yes to read them.` and exits with code 2 without a report.
+
+**Cause:** ad reads your agent history only after you say yes, and there was no terminal to ask in: the command ran from a script, CI, an editor task or with its input piped.
+
+**Fix:** run it in a terminal and answer `y`, or pass `--yes` (`ad mistakes --yes --share > summary.md`). Nothing was read in the run that stopped. See [mistakes.md](mistakes.md).
+
+## 93. ad mistakes: "No Claude Code or Codex history found for this project"
+
+**Symptom:** `ad mistakes` says it found no history and names the folders it looked in.
+
+**Cause:** one of these:
+- "This project" is the git repository you're in. Sessions started in another checkout or worktree of the same repository, or in a folder above it, belong to other projects. Outside a git repository only sessions started in exactly that folder count.
+- Claude Code deletes transcripts after `cleanupPeriodDays` (30 days by default).
+- Your agents keep their history somewhere else: `CLAUDE_CONFIG_DIR` and `CODEX_HOME` move it, and ad reads them from the environment it runs in.
+- The only sessions were headless (`claude -p`, `codex exec`): those are left out of the counts.
+
+**Fix:** run `ad mistakes --all-projects` to see every project. Run it from the folder you work in, with the same `CLAUDE_CONFIG_DIR` or `CODEX_HOME` your agents use. To keep more Claude Code history, raise `cleanupPeriodDays` in `~/.claude/settings.json`.
+
+## 94. ad mistakes: "Skipped N compressed Codex sessions"
+
+**Symptom:** the report ends with `Skipped N compressed Codex sessions (this Node can't read .zst; Node 22.15+ can).`
+
+**Cause:** Codex compresses older session files (`.jsonl.zst`), and the Node running ad is older than 22.15, which added zstd.
+
+**Fix:** update Node to 22.15 or later (`node --version` shows yours) and run `ad mistakes` again. The other sessions were counted.
+
 ---
 
 For harness problems, the [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill walks through login → hooks → sandbox → the engine's own log. See also [harness.md](harness.md) and, for the terminal UI, [tui.md](tui.md).

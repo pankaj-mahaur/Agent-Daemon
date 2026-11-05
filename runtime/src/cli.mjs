@@ -77,6 +77,12 @@ async function tui(args) {
 async function launch() {
   const [command, ...rest] = argv;
   if (command === "tui") return tui(rest);
+  // Read-only and offline (L4a): routed before the full command module, which
+  // may set up ad's own folders.
+  if (command === "mistakes") {
+    const { runMistakes } = await import("./mistakes/cli.mjs");
+    return runMistakes(rest);
+  }
   // The hand-off to the engine's own UI left the product in 3.0 (design C4): a tombstone says what replaced it.
   if (command === LEGACY.command) {
     const { tombstoneEngineUiCommand } = await import("./engine/attribution.mjs");

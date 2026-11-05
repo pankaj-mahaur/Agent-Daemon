@@ -91,6 +91,7 @@ If upstream is compromised, re-hydration via `node vendored/fetch.mjs --force` w
 - **Data, not instructions.** Notes reach an agent as quoted data; notes that read like instructions, or hold something shaped like a key, are held back (quarantined) instead of served.
 - **Review gate.** Every note waits for `ad review` or `ad memory held`: your captured corrections, notes an agent writes, imported memory and cross-project promotions. Review needs your own terminal (no agent process above it; a dialog code in an editor's terminal, tmux or ssh) and a typed confirmation. The limit: an agent that drives a real terminal's input, or reads your screen, is outside that guard.
 - **Bundles.** `ad state export` never includes keys, sign-ins or the engine's folders; `ad state import` refuses a bundle with unsafe names or database parts ad didn't make, before writing anything.
+- **Your agents' history.** `ad mistakes` reads Claude Code and Codex transcripts only after you confirm (without a terminal, only with `--yes`). It writes nothing, makes no network call and starts no process. The sentences it shows are redacted (secrets, paths, e-mail addresses, IP addresses, your account name); names of other people in your prompts are not detected, so read a `--share` summary before you post it.
 
 ## Supported versions
 
