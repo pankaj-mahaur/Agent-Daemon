@@ -24,7 +24,7 @@ The shell-guard, shell-log, edit-lint, and mcp-audit hooks were ported from [`ev
 
 If you write a new hook handler under [`runtime/src/hooks/`](../runtime/src/hooks/):
 
-- **Fail-safe to approve** on any non-critical error. Hooks must never block tool execution because of their own bugs — use `approve()` / `passthrough()` from [`io.mjs`](../runtime/src/hooks/io.mjs), not a non-zero exit, on parse failures / missing files / unexpected throws. See [SECURITY.md](../SECURITY.md#the-fail-safe-to-approve-decision) for the threat-model reasoning.
+- **Fail safe, never allow.** Hooks must never block tool execution because of their own bugs: use `passthrough()` from [`io.mjs`](../runtime/src/hooks/io.mjs), not a non-zero exit, on parse failures / missing files / unexpected throws. A hook with no objection passes through too. Never print `{"decision":"approve"}`: Claude Code reads it on PreToolUse as allow and skips the user's own permission prompt. See [SECURITY.md](../SECURITY.md#the-fail-safe-decision) for the threat-model reasoning.
 - **PreToolUse and Stop handlers must finish in under 200ms** — no network calls, no slow filesystem walks, no synchronous shell-outs.
 - **Stderr-only for warnings.** Log to stderr with the `[agent-daemon]` prefix (use `warn()` from `io.mjs`). Never write to stdout outside the JSON decision — Claude Code parses stdout strictly.
 - **Persistence is best-effort.** Audit logging, episodic-db writes, etc. should be wrapped in `try {} catch {}` so a disk-full or permission error never blocks a tool call.

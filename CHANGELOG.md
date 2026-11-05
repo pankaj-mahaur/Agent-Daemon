@@ -4,6 +4,11 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Security
+
+- The security profile's Bash guard and MCP audit answered "approve" when they had no objection, which Claude Code takes as allow: every Bash and MCP call skipped your own permission prompt. They now stay silent unless they block, so Claude Code asks again where your permission settings say it should. Updating ad is enough: the hooks run ad's own code. To keep a command or MCP tool running without a prompt, allow it in Claude Code's permission settings.
+- The copy-paste hook `hooks/pre-tool-use-qmd-redirect.json` did the same for every Read and Grep outside the memory folders. If you pasted it into your settings, paste it again.
+
 ## [3.1.0] — 2026-10-30
 
 Agent Daemon 3.1: several accounts and providers, with switching and fallback when a limit runs out; a fullscreen terminal UI (early, off by default); ad's memory in other agents; moving ad to another computer; and a round of security and isolation hardening.
