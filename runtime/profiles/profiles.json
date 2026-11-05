@@ -1,6 +1,6 @@
 {
   "$schema": "./profiles.schema.json",
-  "$comment": "Install profiles for `ad init --profile <name>`. Shape adapted from everything-claude-code/.manifests/install-profiles.json (MIT). Each profile composes: hooks injected into ~/.claude/settings.json, skills copied to ~/.claude/skills/, optional features.",
+  "$comment": "Install profiles for `ad init --profile <name>`. Shape adapted from everything-claude-code/.manifests/install-profiles.json (MIT). Each profile composes: hooks injected into ~/.claude/settings.json, skills copied to ~/.claude/skills/, optional features. A hook id is a step: ad init installs it as a route of the hook dispatcher (runtime/src/hooks/routes.mjs, `node runtime/bin/hook.mjs <event>`); `command` is the same step run by hand through the CLI.",
 
   "default": "developer",
 

@@ -126,108 +126,109 @@ function classifyPrompt(prompt, curatedMap, compiledEntries = []) {
 
 export async function capabilityRouteAdvice() {
   try {
-    const input = await readStdinJson();
-    const prompt = String(input.prompt || "");
-    const cwd = String(input.cwd || process.env.CLAUDE_PROJECT_DIR || process.cwd());
-    const sessionId = String(input.session_id || "");
-
-    if (!prompt) { passthrough(); return 0; }
-    // A prompt the client wrote (the engine's plan hand-off): no advice, nothing recorded.
-    if (isGeneratedPrompt(prompt)) { passthrough(); return 0; }
-
-    // Respect explicit capability constraints.
-    if (CAPABILITY_CONSTRAINT_RE.test(prompt)) {
-      await tryRecordRoute({ sessionId, cwd, prompt, taskSize: "override", recommendedCapability: null, explicit_constraint: true });
-      passthrough();
-      return 0;
-    }
-
-    // Don't suppress native agents for explicit delegation requests.
-    const explicitAgent = EXPLICIT_AGENT_RE.test(prompt);
-
-    // Curated map (user override → repo default → hardcoded fallback) plus
-    // compiled per-install maps (project shadows global). Failure anywhere →
-    // builtin-only routing; the fail-safe contract holds.
-    let curatedMap = BUILTIN_ROUTING_MAP;
-    try {
-      curatedMap = await loadCuratedMap();
-    } catch { /* hardcoded fallback */ }
-    let compiledEntries = [];
-    try {
-      compiledEntries = await loadRouteMaps({ cwd, home: os.homedir() });
-    } catch { /* curated only */ }
-
-    const taskSize = classifyPrompt(prompt, curatedMap, compiledEntries);
-
-    if (taskSize === "simple" && !explicitAgent) {
-      passthrough();
-      return 0;
-    }
-
-    // Find the first matching route: curated map first, then compiled.
-    let match = null;
-    let promptIntent = null;
-    let recommendationSource = null;
-    for (const route of curatedMap) {
-      if (route.re.test(prompt)) {
-        match = route;
-        promptIntent = `builtin:${route.skill}`;
-        recommendationSource = "builtin-map";
-        break;
-      }
-    }
-    if (!match) {
-      const curatedSkills = new Set(curatedMap.map(r => r.skill));
-      for (const entry of compiledEntries) {
-        if (curatedSkills.has(entry.skill)) continue;  // curated already vetted it
-        const m = prompt.match(compileEntryRegex(entry));
-        if (m) {
-          match = { skill: entry.skill, tier: entry.tier || "substantial", note: entry.note || `${entry.skill} matches this request` };
-          promptIntent = m[0].toLowerCase();
-          recommendationSource = "compiled-map";
-          break;
-        }
-      }
-    }
-
-    if (!match) {
-      // Substantial but no specific route match — no skill advice, still passes.
-      passthrough();
-      return 0;
-    }
-
-    // If explicit sub-agent request, mention the skill as optional context but
-    // don't instruct Claude to invoke it first.
-    const skillName = match.skill;
-    let context;
-    if (explicitAgent) {
-      context = `[agent-daemon] Native agent execution detected. Note: the installed \`${skillName}\` skill may provide useful supporting context if the task applies.`;
-    } else {
-      const fallbackNote = match.fallback
-        ? ` (use \`${match.fallback}\` if \`${skillName}\` is not installed)`
-        : "";
-      context = `[agent-daemon] This is a ${match.tier} request. Relevant installed skill: \`${skillName}\`${fallbackNote}. Invoke it before starting work. Reason: ${match.note}.`;
-    }
-
-    await tryRecordRoute({
-      sessionId, cwd, prompt, taskSize: match.tier,
-      recommendedCapability: skillName,
-      promptIntent,
-      recommendationSource,
-      explicit_agent: explicitAgent,
-      explicit_constraint: false,
-    });
-
-    advise(context);
-    return 0;
+    const context = await routeAdviceContext(await readStdinJson());
+    if (context) advise(context);
+    else passthrough();
   } catch (err) {
     // Fail-safe: never crash the session.
     if (process.env.AGENT_DAEMON_DEBUG === "1") {
       process.stderr.write(`capability-route-advice error: ${err.stack || err.message}\n`);
     }
     passthrough();
-    return 0;
   }
+  return 0;
+}
+
+/**
+ * The routing advice for one UserPromptSubmit payload, or null (the hook
+ * dispatcher merges it with the other prompt-time context). Records the route.
+ */
+export async function routeAdviceContext(input) {
+  const prompt = String(input?.prompt || "");
+  const cwd = String(input?.cwd || process.env.CLAUDE_PROJECT_DIR || process.cwd());
+  const sessionId = String(input?.session_id || "");
+
+  if (!prompt) return null;
+  // A prompt the client wrote (the engine's plan hand-off): no advice, nothing recorded.
+  if (isGeneratedPrompt(prompt)) return null;
+
+  // Respect explicit capability constraints.
+  if (CAPABILITY_CONSTRAINT_RE.test(prompt)) {
+    await tryRecordRoute({ sessionId, cwd, prompt, taskSize: "override", recommendedCapability: null, explicit_constraint: true });
+    return null;
+  }
+
+  // Don't suppress native agents for explicit delegation requests.
+  const explicitAgent = EXPLICIT_AGENT_RE.test(prompt);
+
+  // Curated map (user override → repo default → hardcoded fallback) plus
+  // compiled per-install maps (project shadows global). Failure anywhere →
+  // builtin-only routing; the fail-safe contract holds.
+  let curatedMap = BUILTIN_ROUTING_MAP;
+  try {
+    curatedMap = await loadCuratedMap();
+  } catch { /* hardcoded fallback */ }
+  let compiledEntries = [];
+  try {
+    compiledEntries = await loadRouteMaps({ cwd, home: os.homedir() });
+  } catch { /* curated only */ }
+
+  const taskSize = classifyPrompt(prompt, curatedMap, compiledEntries);
+
+  if (taskSize === "simple" && !explicitAgent) return null;
+
+  // Find the first matching route: curated map first, then compiled.
+  let match = null;
+  let promptIntent = null;
+  let recommendationSource = null;
+  for (const route of curatedMap) {
+    if (route.re.test(prompt)) {
+      match = route;
+      promptIntent = `builtin:${route.skill}`;
+      recommendationSource = "builtin-map";
+      break;
+    }
+  }
+  if (!match) {
+    const curatedSkills = new Set(curatedMap.map(r => r.skill));
+    for (const entry of compiledEntries) {
+      if (curatedSkills.has(entry.skill)) continue;  // curated already vetted it
+      const m = prompt.match(compileEntryRegex(entry));
+      if (m) {
+        match = { skill: entry.skill, tier: entry.tier || "substantial", note: entry.note || `${entry.skill} matches this request` };
+        promptIntent = m[0].toLowerCase();
+        recommendationSource = "compiled-map";
+        break;
+      }
+    }
+  }
+
+  // Substantial but no specific route match — no skill advice, still passes.
+  if (!match) return null;
+
+  // If explicit sub-agent request, mention the skill as optional context but
+  // don't instruct Claude to invoke it first.
+  const skillName = match.skill;
+  let context;
+  if (explicitAgent) {
+    context = `[agent-daemon] Native agent execution detected. Note: the installed \`${skillName}\` skill may provide useful supporting context if the task applies.`;
+  } else {
+    const fallbackNote = match.fallback
+      ? ` (use \`${match.fallback}\` if \`${skillName}\` is not installed)`
+      : "";
+    context = `[agent-daemon] This is a ${match.tier} request. Relevant installed skill: \`${skillName}\`${fallbackNote}. Invoke it before starting work. Reason: ${match.note}.`;
+  }
+
+  await tryRecordRoute({
+    sessionId, cwd, prompt, taskSize: match.tier,
+    recommendedCapability: skillName,
+    promptIntent,
+    recommendationSource,
+    explicit_agent: explicitAgent,
+    explicit_constraint: false,
+  });
+
+  return context;
 }
 
 async function tryRecordRoute(event) {

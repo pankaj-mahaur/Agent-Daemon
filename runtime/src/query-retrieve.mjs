@@ -21,19 +21,30 @@ const MAX_OUTPUT_BYTES = 2000;
  * @param {{ cwd?: string, outputJson?: boolean, verbose?: boolean }} opts
  */
 export async function runQueryRetrieve(opts = {}) {
-  const input = await readStdinJson();
-  const prompt = String(input.prompt || process.env.CLAUDE_USER_PROMPT || "");
-  const cwd = opts.cwd || input.cwd || process.env.CLAUDE_PROJECT_DIR;
-  if (!prompt || prompt.length < 10) {
+  const context = await queryRetrieveContext(await readStdinJson(), opts);
+  if (!context) {
     if (opts.outputJson) process.stdout.write("{}");
-    return 0;
+  } else if (opts.outputJson) {
+    process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: context } }));
+  } else {
+    process.stdout.write(context + "\n");
   }
+  return 0;
+}
+
+/**
+ * The notes relevant to one UserPromptSubmit payload, as markdown, or null
+ * (the hook dispatcher merges it with the other prompt-time context).
+ * @param {object} input  the hook payload
+ * @param {{ cwd?: string, verbose?: boolean }} [opts]
+ */
+export async function queryRetrieveContext(input, opts = {}) {
+  const prompt = String(input?.prompt || process.env.CLAUDE_USER_PROMPT || "");
+  const cwd = opts.cwd || input?.cwd || process.env.CLAUDE_PROJECT_DIR;
+  if (!prompt || prompt.length < 10) return null;
 
   const keywords = extractKeywords(prompt);
-  if (keywords.length === 0) {
-    if (opts.outputJson) process.stdout.write("{}");
-    return 0;
-  }
+  if (keywords.length === 0) return null;
 
   const query = keywords.join(" ");
   // No folder, home, a system folder, or a shared key: no keys, nothing served.
@@ -47,14 +58,10 @@ export async function runQueryRetrieve(opts = {}) {
       limit: MAX_RESULTS
     });
   } catch {
-    if (opts.outputJson) process.stdout.write("{}");
-    return 0;
+    return null;
   }
 
-  if (!results || results.length === 0) {
-    if (opts.outputJson) process.stdout.write("{}");
-    return 0;
-  }
+  if (!results || results.length === 0) return null;
 
   const lines = results.map(r =>
     `- **${r.category}** (conf ${r.confidence.toFixed(2)}): ${safeNoteText(r.text, { evidence: r.evidence })}`
@@ -70,7 +77,7 @@ export async function runQueryRetrieve(opts = {}) {
   // Retrieval telemetry + write-back (retrieval_count feeds freshness ranking).
   // Fire-and-forget — the hook must stay fast and fail-safe.
   try {
-    const sessionId = input.session_id || process.env.CLAUDE_SESSION_ID || null;
+    const sessionId = input?.session_id || process.env.CLAUDE_SESSION_ID || null;
     await recordRetrievalEvent({
       sessionId,
       cwd,
@@ -88,22 +95,11 @@ export async function runQueryRetrieve(opts = {}) {
     recordInjections(await db(), { captureRef: sessionId, keys: projectKeys, ids: results.map((r) => r.id).filter(Boolean), surface: "query-retrieve", host: hostId(hookHost()) });
   } catch { /* best-effort */ }
 
-  if (opts.outputJson) {
-    process.stdout.write(JSON.stringify({
-      hookSpecificOutput: {
-        hookEventName: "UserPromptSubmit",
-        additionalContext: context
-      }
-    }));
-  } else {
-    process.stdout.write(context + "\n");
-  }
-
   if (opts.verbose) {
     process.stderr.write(`agent-daemon: query-retrieve found ${results.length} relevant learning(s) for keywords: ${keywords.join(", ")}\n`);
   }
 
-  return 0;
+  return context;
 }
 
 function extractKeywords(text) {

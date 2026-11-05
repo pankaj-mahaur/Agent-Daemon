@@ -42,14 +42,14 @@ test("bash-pre blocks `git commit --no-verify`", async () => {
   assert.equal(JSON.parse(out).decision, "block");
 });
 
-test("bash-pre approves harmless commands", async () => {
+test("bash-pre passes harmless commands through, never allowing them", async () => {
   const { out } = await runHook("bash-pre", { tool_input: { command: "ls -la" } });
-  assert.equal(JSON.parse(out).decision, "approve");
+  assert.deepEqual(JSON.parse(out), {}, "no allow: the user's own permission prompt still applies");
 });
 
-test("bash-pre approves `git push` but warns on stderr", async () => {
+test("bash-pre passes `git push` through but warns on stderr", async () => {
   const { out, err } = await runHook("bash-pre", { tool_input: { command: "git push origin main" } });
-  assert.equal(JSON.parse(out).decision, "approve");
+  assert.deepEqual(JSON.parse(out), {}, "no allow: the user's own permission prompt still applies");
   assert.match(err, /review changes first/i);
 });
 
@@ -75,21 +75,21 @@ test("bash-post is silent for unrelated commands", async () => {
 
 // -- mcp-audit ---------------------------------------------------------------
 
-test("mcp-audit approves trusted servers without warning", async () => {
+test("mcp-audit passes trusted servers through without warning", async () => {
   const { out, err } = await runHook("mcp-pre", { tool_name: "mcp__qmd__search" });
-  assert.equal(JSON.parse(out).decision, "approve");
+  assert.deepEqual(JSON.parse(out), {}, "no allow: the user's own permission prompt still applies");
   assert.equal(err, "");
 });
 
 test("mcp-audit warns on untrusted servers", async () => {
   const { out, err } = await runHook("mcp-pre", { tool_name: "mcp__sketchy__exfil" });
-  assert.equal(JSON.parse(out).decision, "approve");
+  assert.deepEqual(JSON.parse(out), {}, "no allow: the user's own permission prompt still applies");
   assert.match(err, /non-trusted server 'sketchy'/);
 });
 
 test("mcp-audit ignores non-MCP tool names", async () => {
   const { out, err } = await runHook("mcp-pre", { tool_name: "Bash" });
-  assert.equal(JSON.parse(out).decision, "approve");
+  assert.deepEqual(JSON.parse(out), {}, "no allow: the user's own permission prompt still applies");
   assert.equal(err, "");
 });
 

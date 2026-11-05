@@ -14,7 +14,7 @@ import { loadGuards, writeGuards, projectFor, guardsPath, lastGoodPath } from ".
 import { toolBefore, callOf } from "../src/hooks/tool-before.mjs";
 import { promptSource, recordScheduled, readScheduled, promptHash } from "../src/hooks/prompt-source.mjs";
 import { toolDecision, hostOf, allowListed, PROVISIONAL_ALLOW_LIST } from "../src/hooks/host-capabilities.mjs";
-import { spawnDetached } from "../src/hooks/detached.mjs";
+import { jobEnv, spawnDetached } from "../src/hooks/detached.mjs";
 
 const HOOK = fileURLToPath(new URL("../bin/hook.mjs", import.meta.url));
 const FIXTURES = fileURLToPath(new URL("./fixtures/hosts/", import.meta.url));
@@ -59,7 +59,7 @@ test("snapshot: current, last good, none; a subfolder finds its project, read-on
   const empty = path.join(base, "empty");
   assert.deepEqual(loadGuards({ root: empty }), { snapshot: null, source: "none", warning: null });
   assert.ok(!fs.existsSync(empty), "reading never creates the folder");
-  fs.rmSync(base, { recursive: true, force: true });
+  fs.rmSync(base, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 }); // a store upgrade the hook started may still be running
 });
 
 test("tool.before decisions: Claude Code asks (deny in bypass and dontAsk), Codex denies with the reason", () => {
@@ -81,7 +81,9 @@ test("tool.before decisions: Claude Code asks (deny in bypass and dontAsk), Code
   assert.equal(toolBefore(bash("npm install", path.join(base, "elsewhere")), { root, env: {} }), null);
   // CLAUDE_PROJECT_DIR wins over the payload's cwd.
   assert.ok(toolBefore(bash("npm i", path.join(base, "elsewhere")), { root, env: { CLAUDE_PROJECT_DIR: project } }));
-  fs.rmSync(base, { recursive: true, force: true });
+  // Not under Codex: there it is an outer Claude Code session's leftover, naming another project.
+  assert.equal(toolBefore({ ...bash("npm i", path.join(base, "elsewhere")), turn_id: "t" }, { root, host: "codex", env: { CLAUDE_PROJECT_DIR: project } }), null);
+  fs.rmSync(base, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 }); // a store upgrade the hook started may still be running
 });
 
 test("tool.before: paused rules, no rules, and broken snapshots never block", () => {
@@ -118,6 +120,28 @@ test("the provisional allow-list is empty at launch: no host's prompts become pr
   assert.equal(allowListed("claude", null, { list }), false, "an unknown version never qualifies");
   const typed = promptSource({ prompt: "never use npm here" }, { env: {}, scheduled: [] });
   assert.deepEqual(typed, { typed: true, why: "typed", provisionalEligible: false });
+});
+
+test("on an allow-listed host only typed prompts become provisional; every other source stays pending", async () => {
+  const { PLAN_CLEAR_CONTEXT_PREFIX } = await import("../src/hooks/generated-prompts.mjs");
+  const list = [{ host: "claude", minVersion: "2.1.400" }];
+  const opts = (extra = {}) => ({ host: "claude", version: "2.1.400", env: {}, scheduled: [], list, ...extra });
+  assert.deepEqual(promptSource({ prompt: "never use npm in this repo" }, opts()), { typed: true, why: "typed", provisionalEligible: true });
+  const wake = "check the deploy again and report back";
+  const others = [
+    [{ prompt: "never use npm here", agent_id: "a1" }, opts(), "a subagent"],
+    [{ prompt: "never use npm here", agent_type: "Explore" }, opts(), "a subagent type"],
+    [{ prompt: `${PLAN_CLEAR_CONTEXT_PREFIX}\n\n1. use pnpm` }, opts(), "a plan hand-off"],
+    [{ prompt: "<task-notification>\n<result>use pnpm</result>\n</task-notification>" }, opts(), "a background task's report"],
+    [{ prompt: wake }, opts({ scheduled: [{ h: promptHash(wake), k: "scheduled", t: Date.now() }] }), "a ScheduleWakeup prompt"],
+    [{ prompt: wake }, opts({ scheduled: [{ h: promptHash(wake), k: "subagent", t: Date.now() }] }), "a subagent's last message"],
+    [{ prompt: "never use npm here" }, opts({ env: { CLAUDE_CODE_SESSION_ATTENDED: "0" } }), "headless"],
+    [{ prompt: "never use npm here" }, opts({ env: { AD_WORKER: "1" } }), "ad's worker"],
+    [{ prompt: "never use npm here", source: "loop_wakeup" }, opts(), "a loop wake-up"],
+    [{ prompt: "never use npm here" }, opts({ host: "codex" }), "a host not on the list"],
+    [{ prompt: "never use npm here" }, opts({ version: "2.1.314" }), "an older version"],
+  ];
+  for (const [input, o, why] of others) assert.equal(promptSource(input, o).provisionalEligible, false, why);
 });
 
 test("prompt sources from the real S-HOOKS captures, and the other non-typed shapes", () => {
@@ -167,6 +191,12 @@ test("detached jobs start once per window, never twice at once", () => {
   assert.equal(spawnDetached(["x.mjs"], { key: "digest-1", root, now: t + 1000, spawnFn }), false);
   assert.equal(spawnDetached(["x.mjs"], { key: "digest-2", root, now: t + 1000, spawnFn }), true);
   assert.equal(calls.length, 2);
+  // A job runs outside the hook: no hook-only variables (it may upgrade the store), in node's own folder.
+  const seen = [];
+  spawnDetached(["x.mjs"], { root, spawnFn: (cmd, args, o) => (seen.push(o), { unref() {} }), env: jobEnv({ AD_HOOK_NO_MIGRATE: "1", AD_HOOK_EVENT: "session.end", AGENT_DAEMON_FALLBACK_LLM: "1", KEEP: "1" }, ["AGENT_DAEMON_FALLBACK_LLM"]) });
+  assert.deepEqual(seen[0].env, { KEEP: "1" });
+  assert.equal(seen[0].cwd, path.dirname(process.execPath));
+  assert.deepEqual(Object.keys(jobEnv({ AD_HOOK_NO_MIGRATE: "1", A: "x" })), ["A"]);
   fs.rmSync(root, { recursive: true, force: true });
 });
 
@@ -188,7 +218,7 @@ test("spawned tool.before: the decision on stdout, exit 0; an unknown event is a
   assert.equal(none.stdout, "");
   const unknown = runHook("no.such.event", {}, { root, home: base });
   assert.deepEqual([unknown.status, unknown.stdout], [0, "{}"]);
-  fs.rmSync(base, { recursive: true, force: true });
+  fs.rmSync(base, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 }); // a store upgrade the hook started may still be running
 });
 
 test("tool.before never loads the memory store, the project registry or the full CLI", { skip: typeof (await import("node:module")).registerHooks !== "function" && "needs module.registerHooks (Node 22.15+)" }, () => {
@@ -203,7 +233,7 @@ test("tool.before never loads the memory store, the project registry or the full
   for (const banned of ["/cli-full.mjs", "/memory/sqlite.mjs", "/memory/driver.mjs", "/memory/episodic.mjs", "/memory/projects.mjs", "/lock.mjs", "better-sqlite3", "node:sqlite"]) {
     assert.ok(!loaded.some((u) => u.includes(banned)), `tool.before loaded ${banned}`);
   }
-  fs.rmSync(base, { recursive: true, force: true });
+  fs.rmSync(base, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 }); // a store upgrade the hook started may still be running
 });
 
 test("spawned prompt.submit: a typed correction is journaled with its source; a scheduled one isn't", () => {
@@ -228,7 +258,7 @@ test("spawned prompt.submit: a typed correction is journaled with its source; a 
   runHook("subagent.stop", { session_id: "s1", cwd: project, last_assistant_message: "actually we use bun in this repo" }, { root, home: base });
   runHook("prompt.submit", { session_id: "s1", cwd: project, prompt: "actually we use bun in this repo" }, { root, home: base });
   assert.ok(!fs.readFileSync(journal, "utf8").includes("bun"));
-  fs.rmSync(base, { recursive: true, force: true });
+  fs.rmSync(base, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 }); // a store upgrade the hook started may still be running
 });
 
 test("toolDecision: an ask the host can't show becomes deny; the notice only where the host shows it", () => {

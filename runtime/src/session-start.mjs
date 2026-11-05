@@ -8,6 +8,7 @@
 // Total length is capped at 9KB to stay under Claude Code's 10K hook output cap.
 
 import fs from "node:fs/promises";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { spawn, execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -36,6 +37,9 @@ export async function runSessionStart(opts) {
   // no constitution, no pointers to ad's tools or commands, no other tools' rules
   // or CLAUDE.md (the host loads those itself), no digest sweep, no init hint.
   const full = !opts.memoryOnly;
+  // The working set (4c) asks git, a separate process: started now, it runs while
+  // the journal drains and the store is read, instead of after (hook budget, plan L2).
+  const changedFiles = recentlyChangedFiles(opts.cwd).catch(() => []);
 
   // -1. Rotate activeContext.md if it has grown too large AND is older than
   //     a week. activeContext.md gets read raw into the 9KB SessionStart
@@ -235,7 +239,7 @@ export async function runSessionStart(opts) {
     if (full && handle && !safetyScanDone(handle) && handle.get("SELECT 1 AS x FROM learnings LIMIT 1")) sections.push("<!-- memory-scan-hint -->\nad hasn't checked older memory notes for secrets yet. Run: ad memory scan");
   } catch { /* no store: nothing to check */ }
   try {
-    const files = memKeys.length ? await recentlyChangedFiles(opts.cwd) : [];
+    const files = memKeys.length ? await changedFiles : [];
     if (files.length > 0) {
       const hits = [];
       for (const f of files.slice(0, 8)) {
@@ -378,6 +382,17 @@ async function tryRead(p) {
   }
 }
 
+// A .git (folder, or a worktree's file) here or above: no git process for a folder outside any repo.
+function inGitWorkTree(cwd) {
+  let dir = path.resolve(cwd);
+  for (;;) {
+    if (existsSync(path.join(dir, ".git"))) return true;
+    const up = path.dirname(dir);
+    if (up === dir) return false;
+    dir = up;
+  }
+}
+
 /**
  * Files the user is currently changing, for the working-set boost. Combines
  * `git diff --name-only HEAD` (tracked changes) with `git status --porcelain`
@@ -389,7 +404,7 @@ async function tryRead(p) {
  * @returns {Promise<string[]>}
  */
 export async function recentlyChangedFiles(cwd) {
-  if (!cwd) return [];
+  if (!cwd || !inGitWorkTree(cwd)) return [];
   const run = (args) => new Promise((resolve) => {
     try {
       let argv;
@@ -453,7 +468,11 @@ export async function spawnDigestSweep(opts) {
   const cliPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "cli.mjs");
   const args = [cliPath, "digest-sweep", "--cwd", opts.cwd];
   if (opts.sessionId) args.push("--exclude-session", opts.sessionId);
-  const child = spawn(process.execPath, args, { detached: true, stdio: "ignore" });
+  // Without the hook-only variables: the sweep runs outside the hook and may open (and upgrade) the store.
+  const env = { ...process.env };
+  delete env.AD_HOOK_NO_MIGRATE;
+  delete env.AD_HOOK_EVENT;
+  const child = spawn(process.execPath, args, { detached: true, stdio: "ignore", env });
   child.unref();
   if (opts.verbose) {
     process.stderr.write(`agent-daemon: spawned detached digest-sweep for ${opts.cwd}\n`);

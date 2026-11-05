@@ -36,7 +36,8 @@ export const HOSTS = Object.freeze({
  */
 export const PROVISIONAL_ALLOW_LIST = Object.freeze([]);
 
-const cmpVersion = (a, b) => {
+/** Compare dotted versions ("2.1.314" vs "2.1.295"): negative, zero or positive. */
+export const cmpVersion = (a, b) => {
   const pa = String(a).split(/[.-]/).map((x) => Number.parseInt(x, 10) || 0);
   const pb = String(b).split(/[.-]/).map((x) => Number.parseInt(x, 10) || 0);
   for (let i = 0; i < Math.max(pa.length, pb.length); i++) if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) - (pb[i] ?? 0);
@@ -52,6 +53,7 @@ export function allowListed(host, version, { list = PROVISIONAL_ALLOW_LIST } = {
 export function hostOf(input, { flag = null, env = process.env } = {}) {
   const h = flag ?? env.AD_HOOK_HOST ?? null;
   if (h === "codex" || h === "claude") return h;
+  if (h === "claude-code") return "claude"; // the plugin's spelling
   if (h === "ad") return "codex"; // ad's engine speaks Codex's hook protocol
   return input && typeof input === "object" && "turn_id" in input ? "codex" : "claude";
 }

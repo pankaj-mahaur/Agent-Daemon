@@ -40,6 +40,14 @@ jobs:
         working-directory: runtime
         run: npm test
 
+      - name: Hook budgets (serial)
+        # The hook dispatcher's latency budgets (plan L2, 02 §3), measured alone so the suite's
+        # parallel load doesn't skew them, and what each event loads at start-up.
+        working-directory: runtime
+        env:
+          AD_HOOK_LATENCY: strict
+        run: node --test --test-concurrency=1 test/hook-latency.test.mjs test/startup.test.mjs
+
       - name: Lint skills
         run: node runtime/scripts/lint-skills.mjs
 

@@ -74,6 +74,20 @@ export async function drainJournal(opts) {
   const cwd = opts.cwd;
   if (!cwd) return { ok: false, drained: 0, applied: null, error: "cwd required" };
 
+  // A hook never migrates the store (plan L2): while it isn't at this ad's
+  // version the journal stays whole for a later drain, instead of being
+  // consumed into a store that can't take it. (No SQLite driver at all: drain
+  // as before, into the markdown memory.)
+  if (process.env.AD_HOOK_NO_MIGRATE === "1" && !opts.dryRun) {
+    const { schemaState } = await import("../memory/sqlite.mjs");
+    const s = await schemaState();
+    if (s.state !== "current" && !(s.state === "unreadable" && s.error === "no SQLite driver")) {
+      const { db } = await import("../memory/episodic.mjs");
+      await db().catch(() => null); // starts the detached upgrade (memory/no-migrate.mjs)
+      return { ok: true, drained: 0, applied: null, deferred: s.state };
+    }
+  }
+
   // Dry-run reads in place (must not consume the journal). Real runs claim
   // the file first so concurrent drains can't double-apply.
   let claimedFile = null;

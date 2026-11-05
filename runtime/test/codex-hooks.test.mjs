@@ -11,7 +11,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { codexHooksForProfile, psQuote, shQuote, SESSION_END_SCRIPT } from "../src/engine/codex/hooks-config.mjs";
+import { codexHooksForProfile, psQuote, shQuote } from "../src/engine/codex/hooks-config.mjs";
+import { HOOK_PATH } from "../src/hooks/routes.mjs";
 import { normalizeEngineInput, patchPaths, renderDecision } from "../src/hooks/io.mjs";
 import { ensureHarnessSetup, installedProfile, MEMORY_SERVER_ID, mergeManagedBlock, renderHarnessBlock } from "../src/harness/setup.mjs";
 import { detachedDigestArgs, spawnDetachedDigest } from "../src/hooks/session-end-digest.mjs";
@@ -19,6 +20,7 @@ import { digestArgs } from "../src/hooks/engine-session-end.mjs";
 import { createEngine } from "../src/engine/index.mjs";
 
 const CLI = fileURLToPath(new URL("../src/cli.mjs", import.meta.url));
+const SESSION_END_SCRIPT = fileURLToPath(new URL("../src/hooks/engine-session-end.mjs", import.meta.url));
 const FAKE = fileURLToPath(new URL("../testkit/fake-codex-app-server.mjs", import.meta.url));
 
 function runNode(args, stdinObj) {
@@ -31,32 +33,34 @@ function runNode(args, stdinObj) {
   });
 }
 
-test("hooks.json: engine events only, Edit|Write matcher, ≥10 s timeouts, --host ad", async () => {
-  const { hooks } = await codexHooksForProfile("developer", { node: "C:\\Program Files\\nodejs\\node.exe", cli: "D:\\Program Files\\ad\\cli.mjs" });
-  assert.deepEqual(Object.keys(hooks).sort(), ["PostToolUse", "SessionEnd", "SessionStart", "UserPromptSubmit"]);
+test("hooks.json: engine events only, every hook through the dispatcher, Edit|Write matcher, ≥10 s timeouts, --host ad", async () => {
+  const { hooks } = await codexHooksForProfile("developer", { node: "C:\\Program Files\\nodejs\\node.exe", hook: "D:\\Program Files\\ad\\runtime\\bin\\hook.mjs" });
+  assert.deepEqual(Object.keys(hooks).sort(), ["PostToolUse", "PreToolUse", "SessionEnd", "SessionStart", "UserPromptSubmit"]);
+  const all = Object.values(hooks).flat().flatMap((g) => g.hooks);
+  assert.ok(all.every((h) => h.command.includes("--host ad") && h.commandWindows.includes("--host ad")));
+  assert.ok(all.every((h) => h.commandWindows.startsWith("& 'C:\\Program Files\\nodejs\\node.exe' 'D:\\Program Files\\ad\\runtime\\bin\\hook.mjs' ")));
+  assert.ok(!JSON.stringify(hooks).includes("cli.mjs"), "no hook loads the full CLI");
   const nonEnd = Object.entries(hooks).filter(([e]) => e !== "SessionEnd").flatMap(([, g]) => g).flatMap((g) => g.hooks);
-  assert.ok(nonEnd.every((h) => h.command.includes("--host ad") && h.commandWindows.includes("--host ad")));
-  assert.ok(nonEnd.every((h) => h.commandWindows.startsWith("& 'C:\\Program Files\\nodejs\\node.exe' 'D:\\Program Files\\ad\\cli.mjs' ")));
   assert.ok(nonEnd.every((h) => h.timeout >= 10), "node + PowerShell cold start needs headroom");
-  assert.ok(!JSON.stringify(hooks).includes("skill-use"), "Claude-only hooks are skipped");
-  assert.deepEqual(hooks.PostToolUse.map((g) => g.matcher).sort(), ["Bash", "Edit|Write"]);
+  assert.ok(!JSON.stringify(hooks).includes("skill.use"), "Claude-only routes are skipped");
+  assert.deepEqual(hooks.PostToolUse.map((g) => g.matcher), ["Bash|Edit|Write"], "one route: the post-tool steps together");
+  assert.deepEqual(hooks.PreToolUse.map((g) => [g.matcher, g.hooks[0].command.split(" ").at(-3)]), [["Bash|Write|Edit", "tool.before"]], "the rules check, on every install");
   assert.equal(hooks.SessionStart[0].hooks[0].additionalContextLimit, 3000);
 });
 
-test("SessionEnd uses the dependency-free launcher within Codex's 3 s cap", async () => {
+test("SessionEnd: session.end within Codex's 3 s cap (it only spawns the digest)", async () => {
   const { hooks } = await codexHooksForProfile("developer");
   const h = hooks.SessionEnd[0].hooks[0];
   assert.equal(h.timeout, 3);
-  assert.ok(h.command.includes(SESSION_END_SCRIPT.replace(/'/g, "'\\''")));
-  assert.ok(!h.command.includes("cli.mjs"), "must not load the full CLI");
+  assert.ok(h.command.includes(`${shQuote(HOOK_PATH)} session.end --host ad`));
   const src = readFileSync(SESSION_END_SCRIPT, "utf8");
   const imports = [...src.matchAll(/^import .* from "([^"]+)"/gm)].map((m) => m[1]);
-  assert.ok(imports.every((i) => i.startsWith("node:")), `only node builtins, got ${imports}`);
+  assert.ok(imports.every((i) => i.startsWith("node:")), `the digest launcher: only node builtins, got ${imports}`);
 });
 
-test("security profile adds the Bash guard and MCP audit as PreToolUse hooks", async () => {
+test("security profile adds the Bash guard and MCP audit as PreToolUse routes", async () => {
   const { hooks } = await codexHooksForProfile("security");
-  assert.deepEqual(hooks.PreToolUse.map((g) => g.matcher).sort(), ["Bash", "mcp__.*"]);
+  assert.deepEqual(hooks.PreToolUse.map((g) => g.matcher).sort(), ["Bash", "Bash|Write|Edit", "mcp__.*"]);
 });
 
 test("shell quoting survives ASCII and typographic quotes in paths", () => {
@@ -170,6 +174,11 @@ test("installedProfile follows the Claude Code install and AD_PROFILE", () => {
     assert.equal(installedProfile({ env: {}, home }), "developer");
     mkdirSync(join(home, ".claude"));
     writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify({ hooks: { PreToolUse: [{ hooks: [{ command: "ad hook bash-pre" }] }] } }));
+    assert.equal(installedProfile({ env: {}, home }), "security");
+    // ad init's dispatcher routes: the Bash guard route means the security profile.
+    writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify({ hooks: { PreToolUse: [{ matcher: "Bash|PowerShell|Write|Edit", hooks: [{ command: "node", args: [HOOK_PATH, "tool.before"] }] }] } }));
+    assert.equal(installedProfile({ env: {}, home }), "developer");
+    writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify({ hooks: { PreToolUse: [{ matcher: "Bash", hooks: [{ command: "node", args: [HOOK_PATH, "bash.guard"] }] }] } }));
     assert.equal(installedProfile({ env: {}, home }), "security");
     assert.equal(installedProfile({ env: { AD_PROFILE: "minimal" }, home }), "minimal");
   } finally {

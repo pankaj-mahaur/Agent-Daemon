@@ -459,6 +459,36 @@
       "reason": "the hook dispatcher's header names the hosts it serves"
     },
     {
+      "path": "runtime/src/hooks/routes.mjs",
+      "rules": ["A"],
+      "reason": "the hook routes table: which host events each host has, Codex (the user's own CLI and ad's engine speak its hook protocol) among them"
+    },
+    {
+      "path": "runtime/src/hooks/hook-doctor.mjs",
+      "rules": ["A", "C"],
+      "reason": "doctor's hook rows name the host whose behaviour they report: Codex's fail-open hooks and its hook trust"
+    },
+    {
+      "path": "runtime/test/hook-routes.test.mjs",
+      "rules": ["A"],
+      "reason": "route tests check the entries written for the Codex host and its payload shapes"
+    },
+    {
+      "path": "runtime/test/hook-doctor.test.mjs",
+      "rules": ["A"],
+      "reason": "doctor tests replay the S-HOOKS capture of untrusted Codex hooks"
+    },
+    {
+      "path": "runtime/test/hook-latency.test.mjs",
+      "rules": ["A"],
+      "reason": "the latency budget for the Codex host, which runs hooks through PowerShell on Windows"
+    },
+    {
+      "path": "runtime/test/startup.test.mjs",
+      "rules": ["A"],
+      "reason": "the import-graph test sends a payload in the Codex host's shape"
+    },
+    {
       "path": "runtime/test/hook-dispatch.test.mjs",
       "rules": ["A"],
       "reason": "dispatcher tests send payloads in the shapes the user's Codex host sends"

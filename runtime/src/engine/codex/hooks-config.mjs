@@ -1,63 +1,48 @@
 // Agent Daemon's hooks, rendered as a Codex hooks.json for the harness
 // CODEX_HOME.
 //
-// Same handlers as the Claude Code install (runtime/profiles/profiles.json,
-// resolved by profiles.mjs), with Codex differences applied (verified live
-// against 0.163.0: tui-live FC4 shows the learned row a hook wrote):
-//   - commands run through PowerShell on Windows → `commandWindows` with `&`
-//     and single-quoted paths; POSIX gets a sh-quoted `command`
-//   - apply_patch edits match `Edit|Write` (no MultiEdit tool)
-//   - no Skill tool / UserPromptExpansion event → those hooks are skipped
-//   - SessionEnd is capped at 3 s → a dependency-free launcher that only
-//     spawns a detached digest (hooks/engine-session-end.mjs)
+// The same routes as the Claude Code install (hooks/routes.mjs, from the
+// profile in runtime/profiles/profiles.json), all through the hook dispatcher
+// (runtime/bin/hook.mjs), with Codex differences applied (verified live
+// against 0.163.0 and 0.164.0):
+//   - commands run through a shell (PowerShell on Windows) → `commandWindows`
+//     with `&` and single-quoted paths; POSIX gets a sh-quoted `command`
+//   - apply_patch edits match `Edit|Write` (no MultiEdit tool); no Skill tool,
+//     UserPromptExpansion, CronCreate or SubagentStop work → those routes are skipped
+//   - SessionEnd is capped at 3 s → session.end only spawns a detached digest
 //   - other handlers get ≥ 10 s: node + PowerShell cold start alone can
-//     take ~2 s on Windows, and Claude-tuned 3 s limits would time out
-//   - handlers get `--host ad` so hooks/io.mjs adapts input and output (2.x homes wrote `--host codex`, still read)
+//     take ~2 s on Windows, and Claude-tuned limits would time out
+//   - handlers get `--host ad` so the dispatcher adapts input and output (2.x homes wrote `--host codex`, still read)
 //
-// Every hook invokes our CLI by absolute path with the current node binary,
-// so it works whether or not `ad` is on PATH.
+// Every hook runs the dispatcher by absolute path with the current node binary,
+// so it works whether or not `ad` is on PATH; the file is rewritten on every
+// ad run/chat, so a moved node heals itself.
 
-import { fileURLToPath } from "node:url";
 import { resolveProfile } from "../../profiles.mjs";
+import { HOOK_PATH, routesFor } from "../../hooks/routes.mjs";
 
-export const CLI_PATH = fileURLToPath(new URL("../../cli.mjs", import.meta.url));
-export const SESSION_END_SCRIPT = fileURLToPath(new URL("../../hooks/engine-session-end.mjs", import.meta.url));
-
-const SKIP = new Set(["skill-use", "slash-command-use"]);
 const CODEX_EVENTS = new Set(["SessionStart", "SessionEnd", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PreCompact", "PostCompact", "Stop"]);
-const MATCHER_MAP = { "Edit|Write|MultiEdit": "Edit|Write" };
-const MIN_TIMEOUT_S = 10;
 
 export const shQuote = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
 // PowerShell also treats the typographic quotes U+2018–U+201B as single
 // quotes; each must be doubled inside a single-quoted string.
 export const psQuote = (s) => `'${String(s).replace(/['‘-‛]/g, "$&$&")}'`;
 
-// "ad hook bash-post" → ["hook", "bash-post", "--host", "ad"]
-function argsFor(def) {
-  const parts = def.command.trim().split(/\s+/);
-  if (parts[0] !== "ad") throw new Error(`hook command must start with "ad": ${def.command}`);
-  return [...parts.slice(1), "--host", "ad"];
-}
-
-// hooks: resolved hook definitions [{id, event, matcher, command, timeout}]
-export function buildCodexHooksJson({ hooks: defs, node = process.execPath, cli = CLI_PATH, sessionEndScript = SESSION_END_SCRIPT }) {
+// hooks: resolved hook definitions [{id, event, matcher, command, timeout}]: only the ids (steps) matter
+export function buildCodexHooksJson({ hooks: defs, node = process.execPath, hook = HOOK_PATH }) {
   const hooks = {};
-  for (const def of defs) {
-    if (SKIP.has(def.id) || !CODEX_EVENTS.has(def.event)) continue;
-    const sessionEnd = def.event === "SessionEnd";
-    const target = sessionEnd ? [sessionEndScript] : [cli];
-    const args = sessionEnd ? [] : argsFor(def);
+  for (const route of routesFor(defs.map((d) => d.id), "codex")) {
+    if (!CODEX_EVENTS.has(route.hostEvent)) continue;
+    const args = [route.event, "--host", "ad"];
     const handler = {
       type: "command",
-      command: [shQuote(node), ...target.map(shQuote), ...args].join(" "),
-      commandWindows: ["&", psQuote(node), ...target.map(psQuote), ...args].join(" "),
-      timeout: sessionEnd ? 3 : Math.max(def.timeout ?? MIN_TIMEOUT_S, MIN_TIMEOUT_S),
-      statusMessage: `agent-daemon: ${def.id}`,
+      command: [shQuote(node), shQuote(hook), ...args].join(" "),
+      commandWindows: ["&", psQuote(node), psQuote(hook), ...args].join(" "),
+      timeout: route.timeout,
+      statusMessage: `agent-daemon: ${route.event}`,
     };
-    if (def.event === "SessionStart") handler.additionalContextLimit = 3000;
-    const matcher = MATCHER_MAP[def.matcher] ?? def.matcher;
-    (hooks[def.event] ??= []).push(matcher ? { matcher, hooks: [handler] } : { hooks: [handler] });
+    if (route.hostEvent === "SessionStart") handler.additionalContextLimit = 3000;
+    (hooks[route.hostEvent] ??= []).push(route.matcher ? { matcher: route.matcher, hooks: [handler] } : { hooks: [handler] });
   }
   return { description: "Managed by agent-daemon (ad). Regenerated on every ad run/chat; edits are overwritten.", hooks };
 }

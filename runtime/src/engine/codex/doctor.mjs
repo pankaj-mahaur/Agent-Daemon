@@ -119,10 +119,10 @@ export async function engineLiveChecks({ env = process.env, engineFactory, platf
     checks.push({ code: "engine.login", ok: loggedIn, data: { loggedIn, label } });
     const hooksFile = join(home, "hooks.json");
     if (existsSync(hooksFile)) {
-      const norm = (p) => (process.platform === "win32" ? String(p).toLowerCase() : String(p));
-      const ours = (await engine.listHooks([process.cwd()])).filter((h) => norm(h.sourcePath) === norm(hooksFile));
-      const trusted = ours.filter((h) => h.trustStatus === "trusted").length;
-      checks.push({ code: "engine.hooks", ok: trusted === ours.length, data: { trusted, total: ours.length } });
+      // Codex skips an untrusted or modified hook silently (S-HOOKS): name them.
+      const { codexTrust } = await import("../../hooks/hook-doctor.mjs");
+      const t = codexTrust(await engine.listHooks([process.cwd()]), hooksFile);
+      checks.push({ code: "engine.hooks", ok: t.trusted === t.total, data: t });
     }
     // Start-up isolation (P0.2a): would the user's own ~/.codex load anywhere, and is the home folder trusted?
     const homes = riskUserHomes(env).filter((h) => basename(h) === ".codex");

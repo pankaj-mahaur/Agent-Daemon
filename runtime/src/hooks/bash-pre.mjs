@@ -9,7 +9,7 @@
 // Warns to stderr (still allows):
 //   - `git push` without prior diff review
 
-import { readStdinJson, approve, block, warn } from "./io.mjs";
+import { readStdinJson, passthrough, block, warn } from "./io.mjs";
 
 function getCommand(input) {
   return String(input?.tool_input?.command || input?.command || "");
@@ -20,8 +20,9 @@ const DEV_SERVER_RE = /\b(npm\s+run\s+dev|pnpm(?:\s+run)?\s+dev|yarn\s+dev|bun\s
 const TMUX_LAUNCH_RE = /^\s*tmux\s+(new|new-session|new-window|split-window)\b/;
 const GIT_PUSH_RE = /\bgit\s+push\b/;
 
-export async function bashPre() {
-  const input = await readStdinJson();
+/** @param {object} [given]  the payload, when the hook dispatcher already read stdin */
+export async function bashPre(given) {
+  const input = given ?? (await readStdinJson());
   const cmd = getCommand(input);
 
   if (NO_VERIFY_RE.test(cmd)) {
@@ -42,5 +43,7 @@ export async function bashPre() {
     warn("git push detected — review changes first with: git diff origin/main...HEAD");
   }
 
-  approve();
+  // No objection: pass through. Claude Code reads `decision: "approve"` on
+  // PreToolUse as allow, which would skip the user's own permission prompt.
+  passthrough();
 }

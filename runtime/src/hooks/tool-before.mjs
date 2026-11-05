@@ -35,9 +35,11 @@ export function callOf(input, { host, platform = process.platform, root = null }
  * Decide one PreToolUse call.
  * @returns {object|null} the JSON to print, or null for no output (the tool runs)
  */
-export function toolBefore(input, { host = "claude", env = process.env, root, platform = process.platform } = {}) {
-  const dir = env.CLAUDE_PROJECT_DIR || input?.cwd || null;
+export function toolBefore(input, { host = "claude", env = process.env, root, platform = process.platform, onWarning = null } = {}) {
+  // CLAUDE_PROJECT_DIR is Claude Code's; under another host it is an outer session's leftover.
+  const dir = (host === "claude" ? env.CLAUDE_PROJECT_DIR : null) || input?.cwd || null;
   const { snapshot, warning } = loadGuards(root ? { root } : undefined);
+  if (warning) onWarning?.(warning);
   const found = projectFor(snapshot, dir, { platform });
   if (!found) return warning ? noticeOnly(host, warning) : null;
   const { id: projectId, project } = found;

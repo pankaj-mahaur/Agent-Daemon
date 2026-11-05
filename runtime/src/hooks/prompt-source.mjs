@@ -70,9 +70,11 @@ export function readScheduled({ root = adRoot(), now = Date.now() } = {}) {
 /**
  * Classify a prompt.
  * @param {object} input  the UserPromptSubmit payload
+ * @param {{host?:string, version?:string|null, env?:object, scheduled?:object[]|null, root?:string, list?:object[]}} [opts]
+ *   list: the provisional allow-list (default host-capabilities' PROVISIONAL_ALLOW_LIST)
  * @returns {{typed:boolean, why:string, provisionalEligible:boolean}}
  */
-export function promptSource(input, { host = "claude", version = null, env = process.env, scheduled = null, root } = {}) {
+export function promptSource(input, { host = "claude", version = null, env = process.env, scheduled = null, root, list } = {}) {
   const prompt = String(input?.prompt ?? "");
   const not = (why) => ({ typed: false, why, provisionalEligible: false });
   if (input?.agent_id || input?.agent_type) return not("subagent");
@@ -84,5 +86,5 @@ export function promptSource(input, { host = "claude", version = null, env = pro
   const h = promptHash(prompt);
   const hit = recorded.find((e) => e.h === h);
   if (hit) return not(hit.k === "subagent" ? "a subagent's message" : "a scheduled prompt");
-  return { typed: true, why: "typed", provisionalEligible: allowListed(host, version) };
+  return { typed: true, why: "typed", provisionalEligible: allowListed(host, version, list ? { list } : undefined) };
 }

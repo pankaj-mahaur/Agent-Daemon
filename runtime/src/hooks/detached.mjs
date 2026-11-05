@@ -13,10 +13,21 @@ import { spawn } from "node:child_process";
 import { adRoot } from "../ad-root.mjs";
 
 /**
+ * The environment for a job a hook starts: without the hook-only variables
+ * (a job runs outside the hook's time limit, so it may open and upgrade the
+ * memory store) and any others named in `drop`.
+ */
+export function jobEnv(env = process.env, drop = []) {
+  const out = { ...env };
+  for (const k of ["AD_HOOK_NO_MIGRATE", "AD_HOOK_EVENT", ...drop]) delete out[k];
+  return out;
+}
+
+/**
  * Start `node <args…>` detached unless the same key started within windowMs.
  * @returns {boolean} whether it started
  */
-export function spawnDetached(args, { key, windowMs = 60_000, root = adRoot(), now = Date.now(), spawnFn = spawn, env = process.env } = {}) {
+export function spawnDetached(args, { key, windowMs = 60_000, root = adRoot(), now = Date.now(), spawnFn = spawn, env = jobEnv() } = {}) {
   if (key) {
     const dir = path.join(root, "hooks", "jobs");
     const file = path.join(dir, `${String(key).replace(/[^A-Za-z0-9_.-]/g, "_")}.started`);
@@ -30,7 +41,10 @@ export function spawnDetached(args, { key, windowMs = 60_000, root = adRoot(), n
       return false;
     }
   }
-  const child = spawnFn(process.execPath, args, { detached: true, stdio: "ignore", windowsHide: true, env });
+  // Started in node's own folder, not the hook's: on Windows a running process pins
+  // its working folder (the user's project could not be moved or deleted meanwhile).
+  // Jobs take every path they need as an argument.
+  const child = spawnFn(process.execPath, args, { detached: true, stdio: "ignore", windowsHide: true, env, cwd: path.dirname(process.execPath) });
   child.unref?.();
   return true;
 }

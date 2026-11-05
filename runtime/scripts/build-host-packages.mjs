@@ -7,8 +7,9 @@
 //                   .claude-plugin/marketplace.json
 //                   plugins/agent-daemon-memory/{.claude-plugin/plugin.json, .mcp.json,
 //                     hooks/hooks.json, skills/agent-daemon-memory/SKILL.md, server/}
-//                 hooks: UserPromptSubmit (capture, recall) and SessionStart; capture
-//                 files go to projectDataDir (P5.2), so no repo gets a folder.
+//                 hooks: ad's hook dispatcher with --plugin (UserPromptSubmit: capture,
+//                 recall; SessionStart; the scheduled-prompt and subagent records);
+//                 capture files go to projectDataDir (P5.2), so no repo gets a folder.
 //   agent-plugin  <out>/agent-plugin/agent-daemon-memory: Agent Plugins 1.0.0
 //                 (VS Code, Copilot, Kiro, OpenHands…): plugin.json, mcp.json, skills/,
 //                 server/; record tools only. These hosts start servers in the plugin
@@ -38,7 +39,8 @@ const RUNTIME = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const REPO = path.resolve(RUNTIME, "..");
 export const NAME = "agent-daemon-memory";
 export const TARGETS = ["claude-code", "agent-plugin", "cursor", "gemini", "registry"];
-const SERVER_ENTRIES = ["src/mcp/memory-server.mjs", "src/memory/plugin-hook.mjs"];
+// migrate-job.mjs is started by path (memory/no-migrate.mjs), not imported: an entry of its own.
+const SERVER_ENTRIES = ["src/mcp/memory-server.mjs", "bin/hook.mjs", "src/memory/migrate-job.mjs"];
 const SKILL = path.join(REPO, "skills", "daemon", "agent-daemon-memory", "SKILL.md");
 const DESCRIPTION = "Local memory for coding agents: lessons and corrections from past sessions in this project, recalled when they matter. Nothing leaves your computer.";
 const AUTHOR = { name: "Agent Daemon", url: "https://github.com/pankaj-mahaur/Agent-Daemon" };
@@ -50,9 +52,10 @@ const NODE_ARGS = ["--disable-warning=ExperimentalWarning"];
 const SERVER_MAIN = `// agent-daemon-memory's MCP server (built by runtime/scripts/build-host-packages.mjs).
 import "./src/mcp/memory-server.mjs";
 `;
+// The plugin's hooks run ad's hook dispatcher with --plugin (memory only; a step
+// passes through when ad init's own entry runs it).
 const HOOK_MAIN = `// agent-daemon-memory's hook runner for host plugins (built by runtime/scripts/build-host-packages.mjs).
-import { runPluginHook } from "./src/memory/plugin-hook.mjs";
-process.exitCode = await runPluginHook(process.argv.slice(2));
+import "./bin/hook.mjs";
 `;
 
 export const packageVersion = () => JSON.parse(fs.readFileSync(path.join(REPO, "packages", NAME, "package.json"), "utf8")).version;
@@ -95,8 +98,10 @@ function writeCommon(pluginDir, version) {
   fs.copyFileSync(path.join(REPO, "LICENSE"), path.join(pluginDir, "LICENSE"));
 }
 
-// One hook command: node and the runner by the plugin's own path, quoted (a path may have spaces).
-const claudeHook = (name) => ({ type: "command", command: `node "\${CLAUDE_PLUGIN_ROOT}/server/hook.mjs" ${name} --host claude-code`, timeout: 10 });
+// One hook command: node and the dispatcher by the plugin's own path, quoted (a
+// path may have spaces). Shell form: whether Claude Code expands
+// ${CLAUDE_PLUGIN_ROOT} inside an exec-form `args` isn't verified yet.
+const claudeHook = (event, timeout = 10) => ({ type: "command", command: `node "\${CLAUDE_PLUGIN_ROOT}/server/hook.mjs" ${event} --host claude-code --plugin`, timeout });
 
 function buildClaudeCode(out, version) {
   const root = path.join(out, "claude-code");
@@ -124,11 +129,16 @@ function buildClaudeCode(out, version) {
     // then falls back to CLAUDE_PROJECT_DIR in its environment, then the working folder.
     mcpServers: { [NAME]: { command: "node", args: [...NODE_ARGS, "${CLAUDE_PLUGIN_ROOT}/server/server.mjs", "serve", "--host", "claude-code", "--capture", "hooks", "--project", "${CLAUDE_PROJECT_DIR:-}"] } },
   });
+  // The same routes as ad init's (hooks/routes.mjs), memory steps only: tool.after and
+  // subagent.stop record the prompts the model scheduled and the subagents' reports, so
+  // they aren't captured as the user's words when they come back.
   writeJson(path.join(plugin, "hooks", "hooks.json"), {
     description: "agent-daemon-memory: capture the user's corrections, recall notes for the prompt, show this project's notes at session start.",
     hooks: {
-      UserPromptSubmit: [{ hooks: [claudeHook("user-prompt-extract"), claudeHook("query-retrieve")] }],
-      SessionStart: [{ hooks: [claudeHook("session-start")] }],
+      UserPromptSubmit: [{ hooks: [claudeHook("prompt.submit")] }],
+      SessionStart: [{ hooks: [claudeHook("session.start")] }],
+      PostToolUse: [{ matcher: "CronCreate|ScheduleWakeup", hooks: [claudeHook("tool.after", 5)] }],
+      SubagentStop: [{ hooks: [claudeHook("subagent.stop", 5)] }],
     },
   });
   writeCommon(plugin, version);
