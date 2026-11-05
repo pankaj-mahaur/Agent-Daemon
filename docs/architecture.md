@@ -49,7 +49,7 @@ agent-daemon is best understood as three nested loops:
 | `session-start` | `runtime/src/session-start.mjs` |
 | `digest`, `digest-latest`, `digest-sweep` | `runtime/src/digest/digest.mjs` |
 | `watch`, `service` | `runtime/src/daemon/` |
-| `hook <name>` | `runtime/src/hooks/*.mjs` |
+| `hook <name>` | `runtime/src/hooks/*.mjs` (installed hooks run `runtime/bin/hook.mjs <event>` instead: the dispatcher, below) |
 | `init`, `doctor`, `status`, `checkpoint` | `runtime/src/cli-full.mjs` directly |
 | `review` | `runtime/src/review.mjs` (`review --import <id>`: `runtime/src/portability/state-cli.mjs`) |
 | `memory`, `route`, `skill`, `viewer` | `runtime/src/memory/`, `route-map.mjs`, `skill-install.mjs`, `viewer.mjs` |
@@ -64,10 +64,10 @@ agent-daemon is best understood as three nested loops:
 
 ### 2. Hooks (`runtime/src/hooks/`)
 
-Each hook is a small handler that reads JSON from stdin (the harness sends tool-call details) and writes a decision to stdout. Hooks must:
+Each hook is a small handler that reads JSON from stdin (the harness sends tool-call details) and writes a decision to stdout; the dispatcher (`runtime/bin/hook.mjs`, below) runs them by event. Hooks must:
 
-- **Finish in < 200 ms** for `PreToolUse` and `Stop`
-- **Fail-safe to approve** — any thrown error → `{"decision":"approve"}`
+- **Stay within the budgets** (spawned): `tool.before` 150/200/400 ms and `session.start`/`prompt.submit` 250/350/900 ms on Linux/macOS/Windows. `hook-latency.test.mjs` checks each hook's work over `node -e 0` (or, for a host that runs hooks through `pwsh`, over `pwsh` running it) against the budget minus node's reference start-up, scaled up on a slower runner
+- **Fail safe** — any thrown error → `{}` and exit 0, never an allow (`{"decision":"approve"}` on PreToolUse would skip the user's own permission prompt); `tool.before` answers ask when it can't check a call a rule may cover
 - **Log warnings to stderr only**, prefixed with `[agent-daemon]`
 - **Wrap persistence in try/catch** — disk-full / permission errors must not block
 
@@ -150,7 +150,7 @@ The database opens through `better-sqlite3`, or Node's built-in `node:sqlite` (N
 
 **The mistakes report** (`runtime/src/mistakes/`, [mistakes.md](mistakes.md)) reads the agents' own history and touches none of the above: no store, no file write, no network, no process (`mistakes-cli.test.mjs` runs it under a preload that trips on each). `cli.mjs` routes `ad mistakes` before loading the full command module. `history.mjs` lists Claude Code transcripts and Codex rollouts for the consent screen, then keeps only typed prompts (the S-HISTORY filters: meta, sidechain, compact summaries, wrappers, tool results, non-typed origins, injected context, subagent and headless runs; mid-turn prompts from `queued_command` attachments) and drops resumed and forked copies by uuid or item id. `classify.mjs` decides, with fixed rules, whether a prompt is a durable correction (gate: the held-out extractor corpus); `cluster.mjs` groups corrections by content words that carry a direction (`+pnpm -npm`), so opposite rules never merge; `redact.mjs` shortens each shown sentence; `coverage.mjs` counts `CLAUDE.md` rules Codex doesn't read and the other way round.
 
-**The hook dispatcher** (`runtime/bin/hook.mjs <event> [--host claude|codex]`, being built in plan part L2; not installed by `ad init` yet). One exec-form entry for every host and event, loading only what the event needs. `tool.before` reads the rules snapshot `adRoot()/guards.json` (`hooks/guards.mjs`: the review service writes it with a generation number and keeps a last-good copy; a corrupt file falls back to that copy, a missing one means no rules) and runs the rules matcher, and nothing else: no memory store, no project registry, no full CLI (`hook-dispatch.test.mjs` traces the import graph). The project is the snapshot root that contains the session's folder, found read-only. Decisions follow `hooks/host-capabilities.mjs`: Claude Code asks (denies in `bypassPermissions` and `dontAsk`, where an ask may be skipped), Codex denies with the reason (it fails open on ask); a matcher error or an unreadable command a rule may cover is an ask. `prompt.submit` classifies the prompt first (`hooks/prompt-source.mjs`: subagent markers, headless runs, ad's workers, wrappers, generated prompts, and hashes of recorded `CronCreate`/`ScheduleWakeup` inputs and subagent messages); prompts no one typed aren't captured, and the provisional allow-list is empty, so every capture waits for review. Session-end work runs detached and single-flight (`hooks/detached.mjs`).
+**The hook dispatcher** (`runtime/bin/hook.mjs <event> [--host claude|codex|ad] [--plugin]`). Every hook ad installs runs it: `ad init` writes Claude Code's entries in exec form (`{command: "node", args: [<abs>/runtime/bin/hook.mjs, <event>]}`, no shell in front; a command string for a Claude Code older than 2.1.314), ad's engine writes its `hooks.json` with it (`--host ad`), and the memory plugin's `server/hook.mjs` is the same dispatcher with `--plugin` (memory only; a step passes through when ad init's entry runs it). Each event loads only what it needs. **Routes** (`hooks/routes.mjs`): one row per host event and dispatcher event, each serving "steps" (the hook ids of `profiles.json`, plus `rules-check`, `scheduled-hashes` and `subagent-hashes`, which every install has). `ad init` replaces ad's older `ad hook …` entries and routes at another path, keeps every step they ran (a guard from an earlier profile stays) and the user's settings on them (`if`, a longer timeout, `onFailure`), and leaves other tools' hooks alone; no step runs from two entries. Events: `session.start`, `prompt.submit` (capture, recall and routing advice in one process, one `additionalContext`), `tool.before`, `tool.after` (scheduled-prompt hashes; build and edit notes), `subagent.stop`, `session.end` (spawns the digest), `skill.use`, `bash.guard`, `mcp.audit`. The dispatcher always exits 0 with JSON. **It never migrates the memory store**: it sets `AD_HOOK_NO_MIGRATE=1`, and `memory/sqlite.mjs open()` then reads the schema version read-only and opens only a store at this ad's `SCHEMA_VERSION`; otherwise the hook goes on without it (captures stay in the journal, the drain waits; telemetry, injection records and heartbeats of that moment are dropped, and recall shows nothing) and `memory/no-migrate.mjs` starts `memory/migrate-job.mjs` detached for an older or missing store (once per 5 minutes) and only logs for a newer one. At this ad's version, `open()` still runs its idempotent schema and migration statements: they set per-connection pragmas and mirror project keys, and change nothing else. While a memory plugin from before the dispatcher is on, `ad init` writes the prompt and session-start routes as command strings ending in a shell comment that carries the words that plugin's duplicate guard looks for (`OLD_PLUGIN_TAGS`). What a hook couldn't do goes to `adRoot()/hooks/hook.log`; `ad doctor` (`hooks/hook-doctor.mjs`) shows its tail, steps run twice, dead or temporary hook scripts, the rules file, an outdated memory plugin, the rules check's mode per host and the Claude Code version fail-closed needs, and which of the engine's hooks wait to be trusted. `tool.before` reads the rules snapshot `adRoot()/guards.json` (`hooks/guards.mjs`: the review service writes it with a generation number and keeps a last-good copy; a corrupt file falls back to that copy, a missing one means no rules) and runs the rules matcher, and nothing else: no memory store, no project registry, no full CLI (`startup.test.mjs` traces the import graph per event; `hook-latency.test.mjs` holds each event's work over `node -e 0` to its budget). The project is the snapshot root that contains the session's folder, found read-only. Decisions follow `hooks/host-capabilities.mjs`: Claude Code asks (denies in `bypassPermissions` and `dontAsk`, where an ask may be skipped), Codex denies with the reason (it fails open on ask); a matcher error or an unreadable command a rule may cover is an ask. `prompt.submit` classifies the prompt first (`hooks/prompt-source.mjs`: subagent markers, headless runs, ad's workers, wrappers, generated prompts, and hashes of recorded `CronCreate`/`ScheduleWakeup` inputs and subagent messages); prompts no one typed aren't captured, and the provisional allow-list is empty, so every capture waits for review. Session-end work runs detached and single-flight (`hooks/detached.mjs`).
 
 **Rules** (`runtime/src/rules/`, the coming rule hook's matcher, used by the report's rule split today). Rules use one neutral schema: `{type:"command", program, subcommands, flags}` (the program after its path and `.exe`/`.cmd`/`.bat`/`.ps1`; the first non-option argument among `subcommands`; at least one of `flags`) or `{type:"write", globs}` (project-relative). `shell.mjs` turns a command line into every simple command it runs, in bash, PowerShell or cmd syntax: chains and control flow, nested shells (including a decoded `-EncodedCommand`), substitutions, here-documents fed to a shell, wrappers and package runners, quoting, Windows case and PowerShell's built-in aliases; text that is only data never becomes a command. `paths.mjs` resolves a target against cwd and the project root with the call's own OS rules and matches globs (a slash-free glob matches at any depth). `match.mjs` decides one call; a command rule never reads file content and a write rule never reads a shell command. `derive.mjs` turns a correction into a rule or a reminder, clause by clause (a negation forbids what its own clause names; "use pnpm" forbids npm installs; obligations and content are reminders). `replay.mjs` counts what a rule would have asked before over the history's tool calls (`history.mjs` `claudeToolCalls`, `codexToolCalls`). Pure: no fs, no spawn, bounded input.
 
@@ -282,7 +282,7 @@ Some providers speak only Chat Completions; the engine speaks only the Responses
         │
         ▼
 SessionStart hook fires
-   → ad session-start
+   → node runtime/bin/hook.mjs session.start
    → reads constitution/*.md + memory/*.md + queries SQLite for relevant past learnings
    → emits JSON {"hookSpecificOutput": {"additionalContext": "..."}}
    → Claude Code injects as a system-prompt addendum
@@ -292,15 +292,16 @@ SessionStart hook fires
         │
         ▼
 PreToolUse hooks fire on each tool call
-   → ad hook bash-pre  (e.g. block `--no-verify`)
+   → hook.mjs tool.before (your rules; Bash, PowerShell, Write, Edit)
+   → hook.mjs bash.guard  (security profile: e.g. block `--no-verify`)
         │
         ▼
 [ Tool runs, e.g. Edit creates file.ts ]
         │
         ▼
 PostToolUse hooks fire
-   → ad hook edit-post (warn on console.log)
-   → ad hook bash-post (tag PR URLs)
+   → hook.mjs tool.after (warn on console.log, tag PR URLs,
+     remember prompts the model scheduled)
         │
         ▼
 [ ... many turns ... ]

@@ -16,8 +16,8 @@ Common failure modes and how to diagnose them. Each entry: **symptom → root ca
 
 **Fix (v0.3+):**
 1. Upgrade: `git pull && npm install && npm link` in the agent-daemon repo.
-2. Re-run `ad init` in each project. This wires the new `UserPromptSubmit` hook (`ad hook user-prompt-extract`) — fires before every user turn, extracts learnings from corrections / decisions / gotchas / explicit `"remember: X"` notes via regex. **Works in VS Code extension.**
-3. Verify: `cat ~/.claude/settings.json | grep user-prompt-extract` → should match. Then talk to Claude normally and check `.agent-daemon/learning-journal.jsonl` grows.
+2. Re-run `ad init` in each project. This wires the `UserPromptSubmit` hook (the dispatcher's `prompt.submit`) — fires before every user turn, extracts learnings from corrections / decisions / gotchas / explicit `"remember: X"` notes via regex. **Works in VS Code extension.**
+3. Verify: `cat ~/.claude/settings.json | grep prompt.submit` → should match. Then talk to Claude normally and check `.agent-daemon/learning-journal.jsonl` grows.
 4. The v0.3 parser also accepts both tag forms + JSON or YAML if Claude does emit a block.
 
 The historical sessions before this upgrade can't be retroactively recovered without a working LLM fallback (see entry #6) — the digest blocks weren't there to parse.
@@ -178,17 +178,12 @@ git diff -- .agent-daemon/memory/
 ✗  SessionEnd hook → agent-daemon    missing
 ```
 
-**Root cause:** Sometimes `ad init` skips hook injection if it detects existing entries it doesn't recognize (conservative — never overwrites user's hooks).
+**Root cause:** `ad init` didn't write `~/.claude/settings.json`: it refuses a file it can't parse (so a hand edit isn't lost), and says so. Or `ad doctor` read a different home than `ad init` wrote (`HOME`/`USERPROFILE`, `CLAUDE_CONFIG_DIR`).
 
 **Fix:**
 
-- Inspect `~/.claude/settings.json` and confirm the existing hooks
-- If you want the daemon hooks added on top, edit the file manually:
-  - Copy entries from `hooks/session-start-load.json`
-  - Copy entries from `hooks/session-end-digest.json`
-  - Merge into the `hooks` object
-
-Or remove conflicting entries first, then re-run `ad init`.
+- Run `ad init` again and read its output: a settings file it can't parse is named, unchanged.
+- Fix the file (or close Claude Code, which may be mid-write) and re-run `ad init`. It replaces only ad's own entries (dispatcher routes and older `ad …` entries) and never touches other hooks.
 
 ---
 
@@ -1044,6 +1039,61 @@ Stray text on top of ad's screen while it runs (a library writing straight to th
 **Cause:** Codex compresses older session files (`.jsonl.zst`), and the Node running ad is older than 22.15, which added zstd.
 
 **Fix:** update Node to 22.15 or later (`node --version` shows yours) and run `ad mistakes` again. The other sessions were counted.
+
+---
+
+## 95. The rules file is unreadable
+
+**Symptom:** Claude Code shows `ad: the rules file was unreadable; using the last good copy.` or `ad: the rules file is unreadable, so no rules apply right now.` `ad doctor` shows a `Rules file` row marked ✗.
+
+**Cause:** the rules check reads only `~/.agent-daemon/guards.json` (never the memory store), so it stays fast. ad writes that file whole and keeps the previous good one as `guards.last-good.json`. A hand edit, a full disk or a copy from another machine can leave it unreadable. With the last good copy, the rules from before your latest change apply. With neither, no rule applies: a broken rules file never blocks your tools.
+
+**Fix:**
+1. Look at the file: `node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" ~/.agent-daemon/guards.json` prints where it breaks. (On Windows the folder is `%USERPROFILE%\.agent-daemon`, or your `AD_ROOT`.)
+2. If you edited it, undo the edit. Otherwise move it aside (`guards.json.broken`): with no rules file, ad uses the last good copy without a warning. If that copy is unreadable too, move it aside as well (then no rule applies until ad writes the file again).
+3. Run `ad doctor` again: `Rules file` should be ✓ (it says when it is using the last good copy).
+
+The hook log (`~/.agent-daemon/hooks/hook.log`, shown by `ad doctor`) records each time a hook found the file unreadable.
+
+---
+
+## 96. `ad doctor`: `Hook routes … run twice`
+
+**Symptom:** `✗ Hook routes  run twice: user-prompt-extract (.claude/settings.json: prompt.submit, .claude/settings.json: an older ad hook entry)`.
+
+**Cause:** two of ad's hook entries run the same step: an entry from before the hook dispatcher (`ad hook …`) next to a dispatcher route, the same route twice, or ad's hooks in a project's `.claude/settings.json` as well as your own settings. Each prompt is then captured, and its notes shown, twice.
+
+**Fix:** run `ad init`. It keeps one route per step in your settings (and keeps any guard you had, such as `bash.guard`). Entries in a project's settings files are that project's: remove ad's entries there by hand.
+
+---
+
+## 97. `ad doctor`: `Hook script … is gone`
+
+**Symptom:** `✗ Hook script  <path>/runtime/bin/hook.mjs is gone`, and every Claude Code hook fails.
+
+**Cause:** the hooks point at the copy of ad that ran `ad init`. That copy was moved or deleted (an `npx` cache, a temporary folder, a git worktree). `ad init` warns when it runs from such a copy.
+
+**Fix:** run `ad init` again from the ad you use: it points the routes at that copy. Until then the memory plugin, if you have it, does the memory steps itself.
+
+---
+
+## 98. `ad doctor`: `Memory plugin hooks … predates ad's hook dispatcher`
+
+**Symptom:** with the `agent-daemon-memory` plugin on in Claude Code, notes show twice at session start and with prompts.
+
+**Cause:** plugin versions from before the hook dispatcher only recognise ad's older `ad hook …` entries. `ad init` knows this: while such a plugin is on, it writes its prompt and session-start hooks as command strings ending in the words that plugin looks for (`node '<ad>/runtime/bin/hook.mjs' prompt.submit # ad hook user-prompt-extract ad query-retrieve`), and the plugin stands aside. The row is ✗ when the hooks were written before the plugin was turned on, or by hand.
+
+**Fix:** run `ad init` again. Better, update the plugin from Claude Code's `/plugin` menu and then run `ad init` (the hooks go back to the faster exec form). Captures aren't stored twice either way (the journal drops duplicates).
+
+---
+
+## 99. Captures wait in the journal: "the memory store is schema vN"
+
+**Symptom:** the hook log (`ad doctor`, `Hook log`) shows `the memory store is schema v4, older than this ad's v5: upgrading it in the background`, or `… newer than this ad's …`.
+
+**Cause:** hooks never upgrade the memory store: a host stops a hook that runs past its time limit, and an upgrade cut off half-way is worse than one that waits. An older store is upgraded by a background job (one at a time); until it finishes, captures wait in the project's journal. A newer store means an older ad is running the hooks, for example a second install: captures wait until that ad is updated.
+
+**Fix:** usually none: the next session finds the store upgraded and drains the journal. If the message keeps coming, run any `ad` command that opens memory (`ad doctor`, `ad memory held`): it upgrades the store in the foreground and shows an error if it can't. For "newer", update the ad your hooks run (`ad doctor` shows its path under `Hook script`), or the memory plugin if it is the one logging.
 
 ---
 

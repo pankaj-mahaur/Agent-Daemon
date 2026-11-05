@@ -21,15 +21,17 @@ ad's memory reaches other agents two ways:
 ```
 
 - **The MCP server:** `node ${CLAUDE_PLUGIN_ROOT}/server/server.mjs serve --host claude-code --capture hooks --project ${CLAUDE_PROJECT_DIR}`.
-- **The hooks:**
-  - on each prompt, the user's corrections go to the capture journal, and notes relevant to the prompt are added;
-  - at session start, the journal is drained and this project's notes are shown.
+- **The hooks** run ad's hook dispatcher in plugin mode (`node ${CLAUDE_PLUGIN_ROOT}/server/hook.mjs <event> --host claude-code --plugin`):
+  - on each prompt (`prompt.submit`), the corrections the user typed go to the capture journal, and notes relevant to the prompt are added;
+  - at session start (`session.start`), the journal is drained and this project's notes are shown;
+  - prompts the model schedules (CronCreate, ScheduleWakeup) and subagents' reports are remembered (`tool.after`, `subagent.stop`), so when they come back as prompts they aren't taken as the user's words.
 
-  There is no end-of-session digest: that needs ad itself.
+  There is no end-of-session digest, routing advice or rules check: those need ad itself.
 - **Where capture files go:** ad's own folder (`~/.agent-daemon/projects/<project>/`), so a repository without `ad init` gets no folder.
 - **No double capture.** If `ad init` already put ad's own hook for a step in Claude Code's settings (`~/.claude/settings.json`, or the project's `.claude/settings.json` or `settings.local.json`), the plugin's hook for that step does nothing.
-  - Only ad's own commands count (`ad …`, `agent-daemon …`, or node with ad's `cli.mjs`), never another tool's `session-start.sh`.
-  - A hook with an `if` condition doesn't count either, since it may not run.
+  - Only ad's own entries count: its dispatcher (`runtime/bin/hook.mjs <event>`) or its older commands (`ad …`, `agent-daemon …`, or node with ad's `runtime/src/cli.mjs`), never another tool's `session-start.sh` or `hook.mjs`.
+  - A hook with an `if` condition doesn't count, since it may not run; nor does one whose script is gone (an `ad init` from a copy of ad that was removed).
+  - Plugin versions from before the dispatcher only know ad's older commands. While one is on, `ad init` writes its prompt and session-start hooks with those words after a shell comment, so the plugin still stands aside; `ad doctor` says when it doesn't. Update the plugin, then run `ad init` again.
 - **Session start shows memory only:** what came in since last time, this project's memory file, notes about the files you're changing, recent lessons and how you work. It adds no CLAUDE.md, no other tools' rules and no ad setup hints; the host loads its own.
 - **One route per host.** Use the plugin or the installer for Claude Code, not both, or the memory tools appear twice.
   - With the plugin enabled (`enabledPlugins` in `~/.claude/settings.json`), `npx agent-daemon-memory install` leaves Claude Code alone.

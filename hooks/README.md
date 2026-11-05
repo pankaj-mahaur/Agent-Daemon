@@ -1,6 +1,6 @@
 # hooks/
 
-Pre-baked Claude Code hook configurations that wire `agent-daemon` into the session lifecycle. Copy-paste into your `~/.claude/settings.json`.
+Pre-baked Claude Code hook configurations that wire `agent-daemon` into the session lifecycle, for a hand-made setup. `ad init` doesn't use them: it installs every hook as one entry of the hook dispatcher, `node <ad>/runtime/bin/hook.mjs <event>` (see the README's "How the hooks run"), and replaces entries copied from here. If you copy these, don't also keep `ad init`'s hooks for the same events (`ad doctor` flags a step that runs twice).
 
 ## Files
 

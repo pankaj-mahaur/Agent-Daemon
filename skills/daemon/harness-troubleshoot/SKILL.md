@@ -28,7 +28,8 @@ Any harness command errors out, hangs, or finishes without doing the work ("my s
 1. **Login.** `ad auth status` (what ad uses now, and whether each account works). `Not logged in` → `ad auth login <provider>` (`openai`, `openrouter`, `chatgpt`, …; `ad auth login --help` lists them). An account that "needs its key again" → the command it prints. The harness login is separate from your own install's login.
 2. **Engine + hooks.** `ad doctor`. Look at the engine lines:
    - the engine version should equal the pin in `runtime/package.json`; if it doesn't, `cd runtime && npm install`.
-   - `Engine hooks: k/N trusted` with k < N → the next `ad run` re-trusts them; if it stays low, the hook commands changed (re-run `ad run` once, then check again). After an upgrade the hooks file is regenerated at the next start; hooks written for older ad keep working.
+   - `Engine hooks: k/N trusted` with k < N → the next `ad run` re-trusts them; if it stays low, the hook commands changed (re-run `ad run` once, then check again). The row names the hooks the engine skips until trusted. After an upgrade the hooks file is regenerated at the next start; hooks written for older ad keep working.
+   - The hook rows (every hook runs the dispatcher, `runtime/bin/hook.mjs <event>`): `Hook routes` (a step run twice), `Hook script` (gone, or in a temporary copy), `Rules file`, `Memory plugin hooks`, the rules check's mode, and `Hook log` (the last lines of `~/.agent-daemon/hooks/hook.log`: what a hook couldn't do, which no host shows).
 3. **Sandbox (Windows).** `ad sandbox status`. Not ready → `ad sandbox setup`. Unattended runs (`ad loop`, workers, schedules) refuse to start without it.
 4. **Reproduce small**, in a scratch dir and never the user's repo, so test prompts don't land in its memory:
    ```bash
@@ -59,6 +60,10 @@ Any harness command errors out, hangs, or finishes without doing the work ("my s
 | `Windows sandbox is …; unattended runs need it` (#15) | sandbox not set up | `ad sandbox setup` |
 | `the engine is version X; ad was tested with Y` | the installed engine isn't the pinned one | `cd runtime && npm install` |
 | hooks never fire / no memory injected | hooks untrusted, or `features.hooks` off for that thread | `ad doctor`; unattended threads only switch off non-memory MCP servers, not hooks |
+| every Claude Code hook fails; doctor `Hook script … is gone` (#97) | `ad init` ran from a copy of ad that was removed (an npx cache, a temp folder, a worktree) | `ad init` from the ad the user keeps |
+| notes shown twice; doctor `Hook routes … run twice` (#96) or `Memory plugin hooks … predates` (#98) | an older `ad hook …` entry next to a dispatcher route, ad's hooks in a project's settings too, or a pre-dispatcher memory plugin next to exec-form routes | `ad init` (one route per step; writes the older plugin's form while it is on); remove ad's entries from project settings by hand |
+| `ad: the rules file is unreadable…` (#95) | `~/.agent-daemon/guards.json` damaged; the check falls back to `guards.last-good.json`, else no rules | move the broken file aside; never edit it to "unblock" a tool |
+| hook log: `the memory store is schema vN, older/newer than this ad's` (#99) | hooks never upgrade the store: older → a background upgrade, captures wait in the journal; newer → an older ad runs the hooks | older: wait for the next session, or run any `ad` memory command; newer: update the ad that `Hook script` names |
 | `ad digest-latest` finds no harness session | it only searches `~/.claude/projects` | `ad digest --transcript ~/.agent-daemon/engine/sessions/<…>/rollout-*.jsonl --cwd <project>` |
 | `ad loop` stops right away (#18) | a STOP file exists, or a budget is too small | remove `.agent-daemon/STOP`; raise `--max-*` |
 | ad won't run the engine in your own install's home (or `trailing dot or space`, `network (UNC) paths`) (#19) | `AD_ENGINE_DIR` (or `CODEX_HOME`) points at the user's own `~/.codex`, or a path leading there | unset it or point it at a new folder; never "fix" the guard |

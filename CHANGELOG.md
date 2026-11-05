@@ -14,6 +14,13 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 - **Every memory note waits for your review before it is used.** What ad's hooks capture from your prompts and what a session-close digest finds are now stored pending, like the notes an agent records. A hook can't tell your typed prompt from a scheduled prompt, a background report or another agent's text, so nothing is accepted on its word. Accept in your own terminal with `ad memory held` or `ad review`; until then an agent sees a note only when it searches, marked unreviewed. Notes you accepted before this version stay accepted. Seeing the same note again counts the repeat but never accepts it.
 - The digest no longer writes notes into `.agent-daemon/memory/activeContext.md` itself: accepting a note in `ad review` adds it there.
 - The memory store moves to schema 5: each note records who accepted it (`accepted_by`). An older ad on the same store keeps serving the notes you accepted and never serves a pending one.
+- **Every hook goes through one dispatcher, and loads only what it needs.** `ad init` now writes each hook as `node <ad>/runtime/bin/hook.mjs <event>` in Claude Code's exec form (no shell in front), instead of `ad hook …` commands that each loaded the whole CLI (2–3 times node's own start-up). The rules check before each tool call adds well under 100 ms to node's start; the prompt hook does capture, recall and skill advice in one process. Run `ad init` once to switch: it replaces ad's older entries, keeps every hook you had (a security guard from another profile stays) along with your settings on them (`if`, a longer timeout), and leaves other tools' hooks alone. On a Claude Code older than 2.1.314 it writes command strings instead. ad's own engine and the memory plugin use the same dispatcher.
+- **A rules check runs before every Bash, PowerShell, Write and Edit call.** With no rules (rules arrive in a later version) it prints nothing. It reads only `~/.agent-daemon/guards.json`, never the memory store.
+- **Prompts the model scheduled for itself are recognised.** The hooks remember what `CronCreate` and `ScheduleWakeup` scheduled and what a subagent reported, so when that text comes back as a prompt it isn't captured as your words. The memory plugin does the same.
+- **Hooks never upgrade the memory store.** A hook that finds the store older than this ad leaves your captures in the journal and upgrades it in the background; one that finds it newer (an older ad running the hooks) only keeps the captures. The session-start drain waits for a store it can write.
+- **`ad doctor` checks the hooks:** a step that runs from two entries, a hook script that is gone or lives in a temporary copy, the rules file, a memory plugin too old for the dispatcher, the rules check's mode on each host and the Claude Code version it needs, which of ad's engine hooks Codex won't run until trusted, and the last lines of the new hook log (`~/.agent-daemon/hooks/hook.log`).
+- **Memory plugin: release it together with this version.** A plugin from before the dispatcher only recognises ad's older entries. While one is on, `ad init` writes its prompt and session-start hooks as command strings carrying the words that plugin looks for, so it still stands aside; after the plugin is updated, `ad init` writes them in exec form again. `ad init` and `ad doctor` say which applies.
+- Session start asks git for your working set while it reads memory, and not at all outside a git repository.
 
 ### Removed
 
@@ -30,6 +37,9 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 ### Fixed
 
 - `/memory forget` in `ad tui` also removes the note from the project's `activeContext.md`, which session start reads.
+- The security profile's Bash guard and MCP audit answered "approve" when they had no objection, which Claude Code takes as allow: every Bash and MCP call skipped your own permission prompt. They now stay silent unless they block.
+- A hook no longer registers a project id (a write under a lock) on every call just to look for an old capture folder.
+- Under ad's engine, the rules check and session start ignore a `CLAUDE_PROJECT_DIR` left over from an outer Claude Code session.
 - `--allow-cross-project` served held-back, hidden and rejected notes to `memory_get` and the timeline.
 - Seeing an accepted user fact in another project no longer serves it there.
 
