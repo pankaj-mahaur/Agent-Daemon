@@ -144,6 +144,8 @@ test("--yes: the report, with zero writes, no network and no child process", () 
   assert.ok(!fs.existsSync(path.join(ctx.s.project, ".git", "info", "exclude")));
 
   assert.ok(runs.text.out.includes("Mistakes report: this project (app)."));
+  assert.ok(runs.text.out.includes("1 of your top 2 repeats could become a rule; replayed on your history, it would have asked before 3 commands."));
+  assert.deepEqual(JSON.parse(runs.json.out).split, ctx.s.expected.split);
   assert.ok(runs.text.out.includes("You corrected your agents 8 times in 10 typed prompts"));
   assert.equal(JSON.parse(runs.json.out).corrections, 8);
   assert.ok(runs.share.out.startsWith("## My coding agents' repeated mistakes"));

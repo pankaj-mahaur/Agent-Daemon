@@ -81,12 +81,18 @@ for (let i = 0; i < SESSIONS; i++) {
 const generateMs = Date.now() - t0;
 
 const t1 = Date.now();
+const cpu0 = process.cpuUsage();
 const sources = listSources({ env: {}, home, cwd });
-const { prompts, stats } = readPrompts(sources);
+const withCalls = !process.argv.includes("--no-calls");
+const { prompts, stats, calls = [] } = readPrompts(sources, { calls: withCalls });
 const readMs = Date.now() - t1;
-const report = buildReport({ prompts, sources, stats, now: Date.parse("2026-11-01T00:00:00Z"), redact: { home, names: [] } });
+// The rule split replays each top repeat's rule over every call, as `ad mistakes` does.
+const report = buildReport({ prompts, calls: withCalls ? calls : null, sources, stats, now: Date.parse("2026-11-01T00:00:00Z"), redact: { home, names: [] } });
 renderText(report);
 const totalMs = Date.now() - t1;
+// CPU time holds up on a busy machine, where wall-clock time doesn't.
+const cpu = process.cpuUsage(cpu0);
+const cpuMs = Math.round((cpu.user + cpu.system) / 1000);
 
 const result = {
   os: `${os.platform()} ${os.release()}`,
@@ -97,8 +103,11 @@ const result = {
   generateMs,
   readMs,
   totalMs,
+  cpuMs,
   prompts: report.prompts,
   corrections: report.corrections,
+  calls: calls.length,
+  split: report.split,
   pass: totalMs <= LIMIT_MS,
 };
 console.log(JSON.stringify(result, null, 1));

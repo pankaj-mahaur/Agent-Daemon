@@ -434,6 +434,21 @@
       "reason": "the mistakes report (L4a) reads the user's own Codex history (CODEX_HOME, rollouts) as one of two hosts and names that host in the report; this is the user's separate install, not ad's engine"
     },
     {
+      "path": "runtime/src/rules/**",
+      "rules": ["A", "C"],
+      "reason": "the rule matcher (L4c) reads calls from the user's own hosts, Codex among them: its shell tool runs through PowerShell on Windows and sends argv arrays; the names describe that host, not ad's engine"
+    },
+    {
+      "path": "runtime/test/rules-*.test.mjs",
+      "rules": ["A"],
+      "reason": "matcher tests build calls in the shapes the user's Codex host sends"
+    },
+    {
+      "path": "runtime/test/fixtures/rules/**",
+      "rules": ["A"],
+      "reason": "the L4c development sets label each call with its host (claude-code or codex), as the held-out corpora do"
+    },
+    {
       "path": "docs/mistakes.md",
       "rules": ["A"],
       "reason": "the guide to `ad mistakes`, which reads the user's own Codex history (CODEX_HOME, sessions, `codex exec`) as one of two hosts; not ad's engine"

@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import zlib from "node:zlib";
 import { fileURLToPath } from "node:url";
-import { claudePrompts, codexPrompts, listSources, readPrompts, typedText, claudeProjectSlug, inProject, claudeRetentionDays } from "../src/mistakes/history.mjs";
+import { claudePrompts, codexPrompts, codexToolCalls, osOfPath, listSources, readPrompts, typedText, claudeProjectSlug, inProject, claudeRetentionDays } from "../src/mistakes/history.mjs";
 import { buildScenario } from "../testkit/agent-history.mjs";
 
 const hosts = fileURLToPath(new URL("./fixtures/hosts/", import.meta.url));
@@ -41,6 +41,48 @@ test("real Codex 0.164 rollout: the typed prompt, not the injected environment c
   const got = codexPrompts(read("codex/rollouts/exec-basic.jsonl"));
   assert.deepEqual(got.map((p) => p.text), ["SPIKE_SHELL no, use pnpm here"]);
   assert.equal(got[0].automated, true, "codex exec is a scripted run");
+});
+
+test("tool calls for replay: the agent's own, once each, this project's, no scripted runs", () => {
+  const base = tmp();
+  const s = buildScenario(base);
+  const { calls } = readPrompts(listSources({ env: {}, home: s.home, cwd: s.project }), { calls: true });
+  // Claude Code: 4 in s1 (the sidechain's left out), 1 new in s2 (its copy of t-npm-1 dropped).
+  // Codex: npm ci in c1 (c3 repeats it), npm test in c3; c2 is a subagent's.
+  assert.deepEqual(calls.map((c) => c.id).sort(), ["cc:t-npm-1", "cc:t-npm-2", "cc:t-pnpm", "cc:t-run", "cc:t-write", "cx:call_npm_ci", "cx:call_test"]);
+  const ci = calls.find((c) => c.id === "cx:call_npm_ci");
+  assert.deepEqual(ci.input.command, ["bash", "-lc", "npm ci"]);
+  assert.equal(ci.tool, "shell");
+  assert.equal(calls.find((c) => c.id === "cx:call_test").input.command, "npm test");
+  assert.equal(calls.find((c) => c.id === "cc:t-write").tool, "Write");
+  fs.rmSync(base, { recursive: true, force: true });
+});
+
+test("the OS of a call comes from its folder's spelling", () => {
+  assert.equal(osOfPath("C:\\work\\app"), "windows");
+  assert.equal(osOfPath("\\\\server\\share\\app"), "windows");
+  assert.equal(osOfPath("/Users/sam/app"), "macos");
+  assert.equal(osOfPath("/home/sam/app"), "linux");
+  assert.equal(osOfPath(null), "linux");
+});
+
+test("Codex patch and exec calls in their different shapes", () => {
+  const ts = "2026-11-03T08:00:00.000Z";
+  const meta = JSON.stringify({ timestamp: ts, type: "session_meta", payload: { id: "x", cwd: "/w/app", originator: "codex_cli_rs" } });
+  const line = (payload) => JSON.stringify({ timestamp: ts, type: "response_item", payload });
+  const raw = [
+    meta,
+    line({ type: "custom_tool_call", name: "apply_patch", call_id: "p1", input: "*** Begin Patch\n*** Add File: a.ts\n+x\n*** End Patch" }),
+    line({ type: "function_call", name: "apply_patch", call_id: "p2", arguments: JSON.stringify({ input: "*** Begin Patch\n*** Delete File: b.ts\n*** End Patch" }) }),
+    line({ type: "local_shell_call", call_id: "l1", action: { command: ["npm", "i"], working_directory: "/w/app/web" } }),
+    line({ type: "function_call", name: "shell_command", call_id: "s1", arguments: JSON.stringify({ command: "npm ci", workdir: "/w/app" }) }),
+    line({ type: "function_call", name: "web_search", call_id: "w1", arguments: "{}" }),
+  ].join("\n");
+  const calls = codexToolCalls(raw);
+  assert.deepEqual(calls.map((c) => [c.id, c.tool]), [["cx:p1", "apply_patch"], ["cx:p2", "apply_patch"], ["cx:l1", "shell"], ["cx:s1", "shell"]]);
+  assert.equal(calls[2].cwd, "/w/app/web");
+  // Another project's rollout gives nothing in project scope.
+  assert.deepEqual(codexToolCalls(raw, { root: "/w/other" }), []);
 });
 
 test("a prompt typed mid-turn counts once, whether queued or also logged as a user entry", () => {

@@ -7,7 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { listSources, readPrompts } from "../src/mistakes/history.mjs";
-import { buildReport, renderText, renderShare, renderJson, weekStart, coverageLine, BETA_SIGNUP_URL } from "../src/mistakes/report.mjs";
+import { buildReport, renderText, renderShare, renderJson, weekStart, coverageLine, splitLine, BETA_SIGNUP_URL } from "../src/mistakes/report.mjs";
 import { clusterCorrections, clusterLabel, tokens } from "../src/mistakes/cluster.mjs";
 import { redactSentence, MAX_SENTENCE } from "../src/mistakes/redact.mjs";
 import { ruleCoverage, ruleLines } from "../src/mistakes/coverage.mjs";
@@ -20,10 +20,42 @@ function scenarioReport({ allProjects = false } = {}) {
   const base = tmp();
   const s = buildScenario(base);
   const sources = listSources({ env: {}, home: s.home, cwd: s.project, allProjects });
-  const { prompts, stats } = readPrompts(sources);
-  const report = buildReport({ prompts, sources, stats, coverage: ruleCoverage({ root: sources.root, env: {}, home: s.home }), now: s.now, redact: { home: s.home, names: [] } });
+  const { prompts, stats, calls } = readPrompts(sources, { calls: true });
+  const report = buildReport({ prompts, calls, sources, stats, coverage: ruleCoverage({ root: sources.root, env: {}, home: s.home }), now: s.now, redact: { home: s.home, names: [] } });
   return { base, s, report };
 }
+
+test("the rule split: replayed on the fixture history, exact numbers", () => {
+  const { base, s, report } = scenarioReport();
+  assert.deepEqual(report.split, s.expected.split);
+  assert.deepEqual(report.top.map((t) => t.rule), [{ kind: "command", asked: 3 }, null]);
+  assert.equal(splitLine(report), "1 of your top 2 repeats could become a rule; replayed on your history, it would have asked before 3 commands. The other one is a reminder, recalled and counted.");
+  const text = renderText(report, { projectName: "app" });
+  assert.ok(text.split("\n")[2].startsWith("1 of your top 2 repeats could become a rule"), "the split leads the report");
+  assert.ok(text.includes("×3 use pnpm, not npm  (Claude Code 2 · Codex 1)  → rule: would have asked before 3 commands"));
+  assert.ok(renderShare(report).includes("| 3 | stop adding comments to every function | Claude Code 2 · Codex 1 | reminder |"));
+  // Without calls (an older caller), no split at all.
+  assert.equal(buildReport({ prompts: [], sources: { root: null, codex: {} } }).split, null);
+  fs.rmSync(base, { recursive: true, force: true });
+});
+
+test("two repeats with the same rule count each call once in the totals", () => {
+  const ts = Date.parse("2026-11-03T00:00:00Z");
+  const prompts = ["use pnpm, not npm", "use pnpm, not npm", "stop running npm install", "stop running npm install"].map((text, i) => ({ host: "claude", id: `p${i}`, ts: ts + i, text, session: "s" }));
+  const calls = ["npm install a", "npm i b", "npm ci"].map((command, i) => ({ id: `c${i}`, tool: "Bash", input: { command }, os: "linux", cwd: "/w/app" }));
+  const report = buildReport({ prompts, calls, sources: { root: "/w/app", codex: {} }, now: ts + 86_400_000 });
+  assert.equal(report.top.length, 2);
+  assert.deepEqual(report.top.map((t) => t.rule?.asked), [3, 3]);
+  assert.equal(report.split.commands, 3, "not 6");
+});
+
+test("the split line's wording", () => {
+  const r = (split, n) => splitLine({ split, top: Array.from({ length: n }) });
+  assert.equal(r({ rules: 4, reminders: 6, commands: 37, writes: 0 }, 10), "4 of your top 10 repeats could become rules; replayed on your history, they would have asked before 37 commands. The other 6 are reminders, recalled and counted.");
+  assert.equal(r({ rules: 2, reminders: 0, commands: 5, writes: 2 }, 2), "2 of your top 2 repeats could become rules; replayed on your history, they would have asked before 5 commands and 2 file writes.");
+  assert.equal(r({ rules: 1, reminders: 0, commands: 0, writes: 3 }, 1), "1 of your top 1 repeat could become a rule; replayed on your history, it would have asked before 3 file writes.");
+  assert.equal(r({ rules: 0, reminders: 3, commands: 0, writes: 0 }, 3), "None of your top 3 repeats are command or file rules: they are reminders, recalled and counted.");
+});
 
 test("fixture history: exact counts, clusters and weekly trend", () => {
   const { base, s, report } = scenarioReport();

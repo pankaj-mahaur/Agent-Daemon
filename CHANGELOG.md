@@ -7,6 +7,7 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 ### Added
 
 - **`ad mistakes`: the corrections you keep typing to your coding agents.** A read-only report from your Claude Code and Codex history: how often you corrected your agents, which corrections came back (the same rule in other words counts as one), in which agent, week by week, and how many of your `CLAUDE.md` rules Codex never sees (and the other way round). It asks before reading anything, and shows which folders, how many sessions and which dates. It works offline: no model call, no network, nothing stored or changed. This project by default, `--all-projects` for every one; `--share` prints a redacted Markdown summary, `--json` the numbers. See [docs/mistakes.md](docs/mistakes.md).
+- **Which repeats could become rules.** `ad mistakes` now leads with the split: "4 of your top 10 repeats could become rules; replayed on your history, they would have asked before 37 commands. The other 6 are reminders." A correction becomes a command rule (`use pnpm, not npm` asks before `npm install`, not `npx`), a file rule (`don't touch src/gen/`) or a reminder, and each rule is replayed over the shell commands and file writes your agents ran. The matcher sees through chains, nested shells, wrappers, quoting and Windows spellings, and ignores text that only mentions a command.
 
 ### Changed
 

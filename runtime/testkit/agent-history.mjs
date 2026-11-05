@@ -16,6 +16,11 @@ export function claudeEntry({ cwd, session, ts, text, uuid = nextUuid(), type = 
   return { parentUuid: null, isSidechain: false, userType: "external", cwd, sessionId: session, version: "2.1.314", gitBranch: "main", promptSource: type === "user" ? "user" : undefined, type, message, uuid, timestamp: ts, ...rest };
 }
 
+/** An assistant entry calling one tool. */
+export function toolUse({ cwd, session, ts, id, name, input, ...rest }) {
+  return claudeEntry({ cwd, session, ts, type: "assistant", content: [{ type: "tool_use", id, name, input }], ...rest });
+}
+
 /** Write a Claude Code session file under <config>/projects/<slug of cwd>/. */
 export function writeClaudeSession(configDir, { cwd, session, entries, slugOf = cwd, file = `${session}.jsonl` }) {
   const dir = path.join(configDir, "projects", claudeProjectSlug(slugOf));
@@ -83,6 +88,12 @@ export function buildScenario(base) {
     claudeEntry({ cwd: project, session: "s1", ts: lastWeek(9), text: "sidechain: never use npm", isSidechain: true }),
     typed10,
     claudeEntry({ cwd: project, session: "s1", ts: lastWeek(11), content: [{ type: "text", text: "we use tabs, not spaces" }, { type: "text", text: "<system-reminder>never use npm</system-reminder>" }] }),
+    // Tool calls for replay: npm install counts, pnpm and npm run don't, a sidechain's never does.
+    toolUse({ cwd: project, session: "s1", ts: lastWeek(12), id: "t-npm-1", name: "Bash", input: { command: "npm install lodash" } }),
+    toolUse({ cwd: project, session: "s1", ts: lastWeek(12), id: "t-pnpm", name: "Bash", input: { command: "pnpm install" } }),
+    toolUse({ cwd: project, session: "s1", ts: lastWeek(12), id: "t-run", name: "Bash", input: { command: "npm run build" } }),
+    toolUse({ cwd: project, session: "s1", ts: lastWeek(12), id: "t-write", name: "Write", input: { file_path: path.join(project, "src", "app.ts"), content: "npm install" } }),
+    toolUse({ cwd: project, session: "s1", ts: lastWeek(12), id: "t-side", name: "Bash", input: { command: "npm install left-pad" }, isSidechain: true }),
   ];
   writeClaudeSession(claudeDir, { cwd: project, session: "s1", entries: s1 });
   // A subagent transcript and an old-style sidechain file: never read.
@@ -90,7 +101,18 @@ export function buildScenario(base) {
   fs.writeFileSync(path.join(claudeDir, "projects", claudeProjectSlug(project), "s1", "subagents", "agent-a1.jsonl"), JSON.stringify(claudeEntry({ cwd: project, session: "s1", ts: lastWeek(9), text: "use pnpm, not npm" })) + "\n");
   writeClaudeSession(claudeDir, { cwd: project, session: "s1", file: "agent-b2.jsonl", entries: [claudeEntry({ cwd: project, session: "s1", ts: lastWeek(9), text: "use pnpm, not npm" })] });
   // Session s2 resumes s1: its first entries are copies (same uuids).
-  writeClaudeSession(claudeDir, { cwd: project, session: "s2", entries: [typed1, typed10, claudeEntry({ cwd: project, session: "s2", ts: thisWeek(9), text: "use pnpm, not npm. how many times" })] });
+  writeClaudeSession(claudeDir, {
+    cwd: project,
+    session: "s2",
+    entries: [
+      typed1,
+      typed10,
+      claudeEntry({ cwd: project, session: "s2", ts: thisWeek(9), text: "use pnpm, not npm. how many times" }),
+      // The resumed copy repeats a call (same id), then a new one.
+      toolUse({ cwd: project, session: "s2", ts: lastWeek(12), id: "t-npm-1", name: "Bash", input: { command: "npm install lodash" } }),
+      toolUse({ cwd: project, session: "s2", ts: thisWeek(9), id: "t-npm-2", name: "Bash", input: { command: "cd web && npm i" } }),
+    ],
+  });
   // A session started in a subfolder of the project.
   const web = path.join(project, "packages", "web");
   writeClaudeSession(claudeDir, { cwd: web, session: "s3", entries: [claudeEntry({ cwd: web, session: "s3", ts: thisWeek(10), text: "stop adding comments to every function!" })] });
@@ -104,12 +126,13 @@ export function buildScenario(base) {
     codexTyped(lastWeek(12), "stop using npm, we use pnpm", "msg_r1a"),
     codexLine(lastWeek(12), "event_msg", { type: "user_message", message: "stop using npm, we use pnpm" }),
     codexTyped(lastWeek(13), "fix the failing test", "msg_r1b"),
+    codexLine(lastWeek(13), "response_item", { type: "function_call", name: "shell", call_id: "call_npm_ci", arguments: JSON.stringify({ command: ["bash", "-lc", "npm ci"] }) }),
   ];
   writeCodexRollout(codexHome, { cwd: project, id: "c1", ts: lastWeek(12), lines: r1 });
-  writeCodexRollout(codexHome, { cwd: project, id: "c2", ts: thisWeek(12), source: { subagent: { other: "review" } }, lines: [codexTyped(thisWeek(12), "use pnpm, not npm", "msg_c2")] });
+  writeCodexRollout(codexHome, { cwd: project, id: "c2", ts: thisWeek(12), source: { subagent: { other: "review" } }, lines: [codexTyped(thisWeek(12), "use pnpm, not npm", "msg_c2"), codexLine(thisWeek(12), "response_item", { type: "function_call", name: "shell", call_id: "call_sub", arguments: JSON.stringify({ command: "npm install" }) })] });
   writeCodexRollout(codexHome, { cwd: project, id: "c2b", ts: thisWeek(12), threadSource: "subagent", lines: [codexTyped(thisWeek(12), "use pnpm, not npm", "msg_c2b")] });
   // A fork of c1: copies its items (same ids), then one new prompt.
-  writeCodexRollout(codexHome, { cwd: project, id: "c3", ts: thisWeek(13), lines: [...r1, codexTyped(thisWeek(13), "don't add comments to every function", "msg_c3")] });
+  writeCodexRollout(codexHome, { cwd: project, id: "c3", ts: thisWeek(13), lines: [...r1, codexTyped(thisWeek(13), "don't add comments to every function", "msg_c3"), codexLine(thisWeek(13), "response_item", { type: "function_call", name: "exec_command", call_id: "call_test", arguments: JSON.stringify({ cmd: "npm test" }) })] });
   writeCodexRollout(codexHome, { cwd: other, id: "c4", ts: thisWeek(14), lines: [codexTyped(thisWeek(14), "never push to main", "msg_c4")] });
   // Legacy history mode: the prompt is only an event_msg.
   writeCodexRollout(codexHome, { cwd: project, id: "c5", ts: thisWeek(15), archived: true, lines: [codexLine(thisWeek(15), "event_msg", { type: "user_message", message: "always run lint before committing" })] });
@@ -132,6 +155,10 @@ export function buildScenario(base) {
       ],
       singles: 2,
       weekly: { "2026-10-26": 4, "2026-11-02": 4 },
+      // "use pnpm, not npm" → npm's install verbs: npm install lodash (once,
+      // though the resumed session repeats it), cd web && npm i, Codex's npm ci.
+      // Not: pnpm install, npm run build, npm test, the Write, the sidechain, the subagent.
+      split: { rules: 1, reminders: 1, commands: 3, writes: 0, calls: 7 },
       allProjects: { prompts: 12, corrections: 10, repeats: 3 },
     },
   };

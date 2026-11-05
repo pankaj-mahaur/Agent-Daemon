@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import readline from "node:readline/promises";
 import { parseArgs } from "node:util";
-import { listSources, readPrompts, claudeRetentionDays, claudeConfigDir } from "./history.mjs";
+import { listSources, readPrompts, claudeRetentionDays, claudeConfigDir, findProject } from "./history.mjs";
 import { ruleCoverage } from "./coverage.mjs";
 import { buildReport, renderText, renderShare, renderJson, projectLabel } from "./report.mjs";
 import { accountNames } from "./redact.mjs";
@@ -121,10 +121,20 @@ export async function runMistakes(argv, { env = process.env, home = os.homedir()
   }
   ui.write("\n");
 
-  const { prompts, stats } = readPrompts(sources);
+  const { prompts, stats, calls } = readPrompts(sources, { calls: true });
   const coverage = ruleCoverage({ root: sources.root, env, home });
+  // Write rules are project-relative: each call's project, found once per folder.
+  const roots = new Map();
+  const rootOf = (dir) => {
+    if (sources.root) return sources.root;
+    if (!dir) return null;
+    if (!roots.has(dir)) roots.set(dir, findProject(dir).root);
+    return roots.get(dir);
+  };
   const report = buildReport({
     prompts,
+    calls,
+    rootOf,
     sources,
     stats,
     retentionDays: claudeRetentionDays({ env, home }),

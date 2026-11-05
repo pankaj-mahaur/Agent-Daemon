@@ -170,6 +170,9 @@ function claudeText(content) {
   return parts.length ? parts.join("\n") : null;
 }
 
+// The readers take a file's text or its lines (readPrompts splits once for both readers).
+const linesOf = (raw) => (Array.isArray(raw) ? raw : String(raw ?? "").split("\n"));
+
 const toMs = (ts) => {
   const n = Date.parse(ts);
   return Number.isFinite(n) ? n : null;
@@ -188,7 +191,7 @@ const CLAUDE_AUTOMATED_ENTRYPOINT = /^sdk-cli$/;
  */
 export function claudePrompts(raw, { root = null, exactFolder = false, exact = true, file = "" } = {}) {
   const out = [];
-  for (const line of raw.split("\n")) {
+  for (const line of linesOf(raw)) {
     // Prefilter (S-HISTORY): only user entries, and prompts typed while the
     // agent was working (queued_command attachments), can hold a typed prompt.
     const queued = line.includes('"queued_command"');
@@ -251,7 +254,7 @@ export function codexPrompts(raw, { root = null, exactFolder = false, file = "" 
   let session = file;
   let automated = false;
   const outside = () => root && cwd && !inProject(cwd, root, { exact: exactFolder });
-  for (const line of raw.split("\n")) {
+  for (const line of linesOf(raw)) {
     const meta = line.includes('"session_meta"') || (cwd === null && line.includes('"turn_context"'));
     if (!meta && !line.includes('"role":"user"') && !line.includes('"user_message"')) continue;
     let o;
@@ -304,6 +307,104 @@ function hashOf(s) {
   return createHash("sha256").update(s).digest("hex").slice(0, 32);
 }
 
+// ---- tool calls (for replaying a rule over history, plan L4c) ---------------------
+
+/** The OS a session ran on, from its folder's spelling. */
+export function osOfPath(p) {
+  const s = String(p ?? "");
+  if (/^[A-Za-z]:[\\/]|^\\\\/.test(s)) return "windows";
+  if (/^\/Users\//.test(s) || /^\/Volumes\//.test(s)) return "macos";
+  return "linux";
+}
+
+const CLAUDE_CALL_TOOLS = new Set(["Bash", "PowerShell", "Write", "Edit", "MultiEdit", "NotebookEdit"]);
+
+/**
+ * The shell and file-write calls the agent made in one Claude Code transcript.
+ * @returns {{host:string, id:string, tool:string, input:object, cwd:string|null, os:string, ts:number|null, automated:boolean}[]}
+ */
+export function claudeToolCalls(raw, { root = null, exactFolder = false, exact = true } = {}) {
+  const out = [];
+  for (const line of linesOf(raw)) {
+    if (!line.includes('"tool_use"')) continue;
+    let e;
+    try {
+      e = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (e?.type !== "assistant" || e.isSidechain || !Array.isArray(e.message?.content)) continue;
+    if (root && (e.cwd ? !inProject(e.cwd, root, { exact: exactFolder }) : !exact)) continue;
+    for (const b of e.message.content) {
+      if (b?.type !== "tool_use" || !CLAUDE_CALL_TOOLS.has(b.name) || !b.input || typeof b.input !== "object") continue;
+      out.push({ host: "claude", id: `cc:${b.id ?? hashOf(line)}`, tool: b.name, input: b.input, cwd: e.cwd ?? null, os: osOfPath(e.cwd), ts: toMs(e.timestamp), automated: CLAUDE_AUTOMATED_ENTRYPOINT.test(String(e.entrypoint ?? "")) });
+    }
+  }
+  return out;
+}
+
+const CODEX_SHELL = new Set(["shell", "shell_command", "exec_command", "container.exec", "local_shell", "exec"]);
+
+/** The shell and patch calls in one Codex rollout (subagent rollouts skipped). */
+export function codexToolCalls(raw, { root = null, exactFolder = false } = {}) {
+  const out = [];
+  let cwd = null;
+  let automated = false;
+  for (const line of linesOf(raw)) {
+    const meta = line.includes('"session_meta"') || line.includes('"turn_context"');
+    if (!meta && !line.includes('"function_call"') && !line.includes('"custom_tool_call"') && !line.includes('"local_shell_call"')) continue;
+    let o;
+    try {
+      o = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const p = o?.payload;
+    if (!p || typeof p !== "object") continue;
+    if (o.type === "session_meta") {
+      if (p.source && typeof p.source === "object" && p.source.subagent) return [];
+      if (typeof p.thread_source === "string" && /subagent|review|agent/i.test(p.thread_source)) return [];
+      cwd ??= p.cwd ?? null;
+      automated = p.originator === "codex_exec" || p.source === "exec";
+      continue;
+    }
+    if (o.type === "turn_context") {
+      cwd = p.cwd ?? cwd;
+      continue;
+    }
+    if (o.type !== "response_item") continue;
+    let call = null;
+    if (p.type === "function_call" && CODEX_SHELL.has(p.name)) {
+      let args = {};
+      try {
+        args = typeof p.arguments === "string" ? JSON.parse(p.arguments) : p.arguments ?? {};
+      } catch {
+        args = { command: String(p.arguments ?? "") };
+      }
+      const command = args.command ?? args.cmd;
+      if (command == null) continue;
+      call = { tool: "shell", input: { command }, cwd: args.workdir ?? args.cwd ?? cwd };
+    } else if (p.type === "local_shell_call" && p.action?.command) {
+      call = { tool: "shell", input: { command: p.action.command }, cwd: p.action.working_directory ?? cwd };
+    } else if ((p.type === "custom_tool_call" || p.type === "function_call") && p.name === "apply_patch") {
+      let patch = p.input;
+      if (patch == null) {
+        try {
+          patch = JSON.parse(p.arguments ?? "{}").input;
+        } catch {
+          patch = null;
+        }
+      }
+      if (typeof patch !== "string") continue;
+      call = { tool: "apply_patch", input: { patch }, cwd };
+    }
+    if (!call) continue;
+    if (root && !(call.cwd && inProject(call.cwd, root, { exact: exactFolder }))) continue;
+    out.push({ host: "codex", id: `cx:${p.call_id ?? p.id ?? hashOf(line)}`, ...call, os: osOfPath(call.cwd), ts: toMs(o.timestamp), automated });
+  }
+  return out;
+}
+
 // The first line of a file, read in chunks (a session_meta line carries the
 // base instructions, so it can be tens of KB); null past `max` bytes.
 function firstLine(file, max = 4 << 20) {
@@ -354,12 +455,23 @@ function readText(file) {
 /**
  * Read every listed file and return the typed prompts, deduplicated and in
  * time order. Prompts from headless runs (`claude -p`, `codex exec`) are
- * counted in stats.automated and left out unless `automated` is set.
+ * counted in stats.automated and left out unless `automated` is set. With
+ * `calls`, the agents' shell and file-write calls come back too (the same
+ * read; scripted runs left out the same way).
  * @param {ReturnType<typeof listSources>} sources
  */
-export function readPrompts(sources, { automated = false } = {}) {
+export function readPrompts(sources, { automated = false, calls: withCalls = false } = {}) {
   const seen = new Set();
   const prompts = [];
+  const calls = [];
+  const seenCalls = new Set();
+  const takeCalls = (list) => {
+    for (const c of list) {
+      if (seenCalls.has(c.id) || (c.automated && !automated)) continue;
+      seenCalls.add(c.id);
+      calls.push(c);
+    }
+  };
   const stats = { claude: { files: 0, unreadable: 0 }, codex: { files: 0, unreadable: 0 }, duplicates: 0, automated: 0 };
   const scope = { root: sources.root, exactFolder: Boolean(sources.exactFolder) };
   const take = (list) => {
@@ -385,7 +497,9 @@ export function readPrompts(sources, { automated = false } = {}) {
       continue;
     }
     stats.claude.files++;
-    take(claudePrompts(raw, { ...scope, exact: f.exact, file: path.basename(f.path, ".jsonl") }));
+    const lines = raw.split("\n");
+    take(claudePrompts(lines, { ...scope, exact: f.exact, file: path.basename(f.path, ".jsonl") }));
+    if (withCalls) takeCalls(claudeToolCalls(lines, { ...scope, exact: f.exact }));
   }
   for (const f of sources.codex.files) {
     // This project only: a rollout whose first line names another folder isn't read further.
@@ -398,10 +512,13 @@ export function readPrompts(sources, { automated = false } = {}) {
       continue;
     }
     stats.codex.files++;
-    take(codexPrompts(raw, { ...scope, file: path.basename(f.path) }));
+    const lines = raw.split("\n");
+    take(codexPrompts(lines, { ...scope, file: path.basename(f.path) }));
+    if (withCalls) takeCalls(codexToolCalls(lines, scope));
   }
   prompts.sort((a, b) => (a.ts ?? 0) - (b.ts ?? 0));
-  return { prompts, stats };
+  calls.sort((a, b) => (a.ts ?? 0) - (b.ts ?? 0));
+  return withCalls ? { prompts, stats, calls } : { prompts, stats };
 }
 
 /** Claude Code's transcript retention: settings.json cleanupPeriodDays, 30 by default. */
