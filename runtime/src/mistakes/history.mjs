@@ -23,8 +23,7 @@ import os from "node:os";
 import path from "node:path";
 import zlib from "node:zlib";
 import { createHash } from "node:crypto";
-import { isGeneratedPrompt } from "../hooks/generated-prompts.mjs";
-import { isInjectedContext } from "../adapters/codex.mjs";
+import { typedText } from "../hooks/typed-text.mjs";
 
 export const HOSTS = Object.freeze({ claude: "Claude Code", codex: "Codex" });
 
@@ -143,20 +142,8 @@ export function listSources({ env = process.env, home = os.homedir(), cwd = proc
 }
 
 // Text that is a wrapper around something the user didn't type, or a prompt
-// a client generated.
-const WRAPPER_START = /^\s*(?:<(?:command-name|command-message|command-args|local-command-stdout|local-command-stderr|local-command-caveat|task-notification|bash-input|bash-stdout|bash-stderr|user-prompt-submit-hook|system-reminder)\b|Caveat: The messages below were generated|\[Request interrupted by user|This session is being continued from a previous conversation)/;
-const WHOLE_TAG = /^\s*<([a-z][a-z0-9_-]*)(?:\s[^>]*)?>[\s\S]*<\/\1>\s*$/;
-const REMINDER = /<system-reminder>[\s\S]*?<\/system-reminder>/g;
-
-/** The user's own words in a prompt, or null when it isn't something they typed. */
-export function typedText(raw) {
-  if (typeof raw !== "string") return null;
-  const text = raw.replace(REMINDER, "").trim();
-  if (!text) return null;
-  if (WRAPPER_START.test(text) || WHOLE_TAG.test(text)) return null;
-  if (isGeneratedPrompt(text) || isInjectedContext(text)) return null;
-  return text;
-}
+// a client generated: one definition, shared with the prompt hook.
+export { typedText };
 
 // Origins of prompts no one typed (S-HOOKS: task notifications carry
 // promptSource "system" and origin.kind "task-notification").

@@ -434,6 +434,36 @@
       "reason": "the mistakes report (L4a) reads the user's own Codex history (CODEX_HOME, rollouts) as one of two hosts and names that host in the report; this is the user's separate install, not ad's engine"
     },
     {
+      "path": "runtime/src/hooks/host-capabilities.mjs",
+      "rules": ["A", "C"],
+      "reason": "the hook dispatcher's table of what each host does with a hook's answer; Codex is one of the two hosts (the user's own CLI, not ad's engine)"
+    },
+    {
+      "path": "runtime/src/hooks/tool-before.mjs",
+      "rules": ["A", "C"],
+      "reason": "the dispatcher's tool check describes the payloads the user's Codex host sends (its shell tool, its patches)"
+    },
+    {
+      "path": "runtime/src/hooks/prompt-source.mjs",
+      "rules": ["A", "C"],
+      "reason": "the prompt-source check names the hosts whose prompts it classifies, the user's Codex among them"
+    },
+    {
+      "path": "runtime/src/hooks/typed-text.mjs",
+      "rules": ["A", "C"],
+      "reason": "names the context the user's Codex host injects as a user message"
+    },
+    {
+      "path": "runtime/bin/hook.mjs",
+      "rules": ["A"],
+      "reason": "the hook dispatcher's header names the hosts it serves"
+    },
+    {
+      "path": "runtime/test/hook-dispatch.test.mjs",
+      "rules": ["A"],
+      "reason": "dispatcher tests send payloads in the shapes the user's Codex host sends"
+    },
+    {
       "path": "runtime/src/rules/**",
       "rules": ["A", "C"],
       "reason": "the rule matcher (L4c) reads calls from the user's own hosts, Codex among them: its shell tool runs through PowerShell on Windows and sends argv arrays; the names describe that host, not ad's engine"
@@ -474,8 +504,8 @@
     {
       "path": "docs/architecture.md",
       "rules": ["A"],
-      "match": "lists Claude Code transcripts and Codex rollouts|`CLAUDE\\.md` rules Codex doesn't read",
-      "reason": "the mistakes report's reader and coverage line: the user's own Codex history"
+      "match": "lists Claude Code transcripts and Codex rollouts|`CLAUDE\\.md` rules Codex doesn't read|--host claude\\|codex|Codex denies with the reason",
+      "reason": "the mistakes report's reader and coverage line, and the hook dispatcher's hosts: the user's own Codex, not ad's engine"
     },
     {
       "path": "docs/testing.md",
