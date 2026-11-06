@@ -358,6 +358,7 @@ export async function runSessionStart(opts) {
 
   if (opts.outputJson) {
     process.stdout.write(JSON.stringify({
+      ...(opts.systemMessage ? { systemMessage: opts.systemMessage } : {}),
       hookSpecificOutput: {
         hookEventName: "SessionStart",
         additionalContext: combined

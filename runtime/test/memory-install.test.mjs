@@ -53,6 +53,8 @@ function home({ claude = true, claudeDir = true, codex = true, cursor = true, fi
     ask: async () => answers.shift() ?? "",
     // No terminal, whatever runs the tests: setup's own step is then skipped (L3).
     isTTY: () => false,
+    // These tests are about the MCP entries: install --no-setup (setup has its own tests).
+    noSetup: true,
   });
   return { h, env, ctx, lines, answers, text: () => lines.join("\n"), claudeLog: () => (fs.existsSync(env.FAKE_CLAUDE_LOG) ? fs.readFileSync(env.FAKE_CLAUDE_LOG, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : []) };
 }
@@ -123,6 +125,7 @@ test("P5.4: VS Code (the portable Copilot file) and Gemini CLI (user settings): 
 
 test("P5.4: one route per host — with the Claude Code plugin enabled, the installer leaves Claude Code alone and doctor flags both", async () => {
   const t = home({ codex: false, cursor: false });
+  t.ctx.noSetup = false;
   fs.writeFileSync(path.join(t.h, ".claude", "settings.json"), JSON.stringify({ enabledPlugins: { "agent-daemon-memory@agent-daemon": true, "other@x": true } }));
   // The MCP part leaves Claude Code alone; setup's hooks need a terminal (L3), so: finish there.
   assert.equal(await install({ ctx: t.ctx, yes: true }), 2, t.text());

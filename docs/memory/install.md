@@ -79,11 +79,12 @@ Gemini CLI disconnects local servers in folders you haven't trusted: trust the p
 
 With ad's memory plugin enabled in Claude Code, install leaves Claude Code alone (one route per host). Plugins (Claude Code's marketplace, Agent Plugins for VS Code and others) are the other way in: [Memory as host plugins](hosts.md).
 
-## Setup: the hooks (Claude Code)
+## Setup: the hooks (Claude Code, Codex)
 
 ```sh
-npx agent-daemon-memory setup               # in your own terminal
+npx agent-daemon-memory setup               # in your own terminal: every host found
 npx agent-daemon-memory setup --no-plugin   # Claude Code without the plugin
+npx agent-daemon-memory setup --host codex  # one host
 ```
 
 `setup` adds what a plugin can't add to Claude Code's user `settings.json`
@@ -112,12 +113,32 @@ if Claude Code writes the file meanwhile, setup plans again once, then stops and
 asks you to re-run it. Before its first change it keeps a copy of the file under
 `~/.agent-daemon/memory/backups/claude-code/`, and it asks before writing
 through a linked settings file. Running it again changes nothing; an uninstall
-right after gives the file back byte for byte.
+right after gives the file back byte for byte (and removes a settings file setup
+created).
+
+**Codex.** Setup adds the memory hooks (session start, prompt capture, and the
+check before Bash, Write and Edit calls) to `~/.codex/hooks.json` (or
+`$CODEX_HOME`), or to `config.toml` when that file already holds hook lists, and
+`AD_TOOL_SHELL = "1"` under `[shell_environment_policy.set]` in `config.toml`.
+Each hook is the same single line, `node "<~/.agent-daemon>/memory/launch/run.mjs"
+hook <event> --host codex`, so updates never change it. Codex runs a new hook
+only after you trust it: open Codex and run `/hooks`. Setup adds its hooks after
+yours, so the hooks you already trusted stay trusted. On Windows the check before
+tool calls waits for your first rule (Codex starts a shell for every hook, which
+costs a second or more per tool call). An ad folder whose path holds `$`, a
+backtick, `%` or `"` gets no Codex hooks (Codex's shell would read them); set
+`AD_ROOT` to a plain path. If `include_only` in your `shell_environment_policy`
+would drop `AD_TOOL_SHELL`, setup says so. When the marker later disappears from
+`config.toml`, the next Codex session says how to put it back. Uninstall removes
+Codex's entries only as setup wrote them and never edits one you changed (Codex
+would stop trusting it); it says when hooks you added after ad's need trusting
+again in `/hooks`.
 
 `install` runs setup at the end when it has something to do. Setup needs a
 terminal: run without one (a script, an agent's tool), `install` adds the MCP
 entries, then prints `Finish in a terminal: npx -y agent-daemon-memory@<version>
-setup` and exits 2. In Git Bash (mintty) node sees no terminal: use `winpty`,
+setup` and exits 2. `install --no-setup` adds only the MCP entries, with their
+own exit code (for scripts and CI). In Git Bash (mintty) node sees no terminal: use `winpty`,
 PowerShell or Windows Terminal. `install`, `setup`, `repair` and `uninstall` all
 refuse to run from the agent's own shell.
 

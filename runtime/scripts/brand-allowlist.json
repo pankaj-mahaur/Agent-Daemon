@@ -683,6 +683,16 @@
       "reason": "L3 part 3a: the launcher's per-host behaviour (--host codex, a disabled host), by the host id, in temp roots"
     },
     {
+      "path": "runtime/test/memory-setup-codex.test.mjs",
+      "rules": ["A"],
+      "reason": "L3 part 3c: setup's items in the user's own Codex install (a fake CODEX_HOME: its config.toml, hooks.json and trust keys), not ad's engine"
+    },
+    {
+      "path": "runtime/src/memory/codex-marker.mjs",
+      "rules": ["A"],
+      "reason": "L3 part 3c (D22): session.start for the user's own Codex host checks the marker setup wrote into that host's config.toml; it names the host it checks"
+    },
+    {
       "path": "runtime/test/skills-cross-host.test.mjs",
       "rules": ["A"],
       "reason": "P5.7: the cross-host test checks each host's folder in a temp home"

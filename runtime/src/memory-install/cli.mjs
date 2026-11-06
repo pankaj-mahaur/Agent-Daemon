@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // agent-daemon-memory — ad's memory for other agents (P5.3).
-//   install [--host <id> …] [--yes] [--dry-run] [--capture auto|hooks|tools] [--adopt] [--no-plugin]
-//   setup [--host claude-code] [--no-plugin] [--dry-run]   the hooks and the agent-shell marker
+//   install [--host <id> …] [--yes] [--dry-run] [--capture auto|hooks|tools] [--adopt] [--no-plugin] [--no-setup]
+//   setup [--host claude-code|codex] [--no-plugin] [--dry-run]   the hooks and the agent-shell marker
 //   doctor [--json]   repair [--host <id>] [--adopt]   status [--json]
 //   uninstall [--host <id> …] [--purge-data [--force]]
 //   serve [--project <dir>] [--host <id>] [--capture …]   (what hosts start)
@@ -13,8 +13,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { PRODUCT } from "../product.mjs";
 
 const USAGE = `${PRODUCT.package}: ad's memory server for Claude Code, Codex, Cursor, VS Code and Gemini CLI.
-  install [--host <id> …] [--yes] [--dry-run] [--capture auto|hooks|tools] [--no-plugin]
-  setup [--host claude-code] [--no-plugin] [--dry-run]   the hooks (in your own terminal)
+  install [--host <id> …] [--yes] [--dry-run] [--capture auto|hooks|tools] [--no-plugin] [--no-setup]
+  setup [--host claude-code|codex] [--no-plugin] [--dry-run]   the hooks (in your own terminal)
   doctor [--json]  ·  repair [--host <id>]  ·  status [--json]
   uninstall [--host <id> …] [--purge-data [--force]]
   review [--accept <file>] [--accept-all] [--global]   (in your own terminal)
@@ -36,6 +36,7 @@ export function parseFlags(argv) {
     else if (a === "--purge-data") flags.purgeData = true;
     else if (a === "--force") flags.force = true;
     else if (a === "--no-plugin") flags.noPlugin = true;
+    else if (a === "--no-setup") flags.noSetup = true;
     else return { error: `unknown option ${a}` };
   }
   return flags;

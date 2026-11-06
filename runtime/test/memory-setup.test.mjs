@@ -273,8 +273,7 @@ test("while rules exist, tool.before and the marker go only with the review toke
   assert.deepEqual(readLedger2(t.env.AD_ROOT).items.map((i) => i.kind).sort(), ["env", "hook"], "held items stay ad's");
   t.ctx.confirmReview = async () => true;
   assert.equal(await uninstall({ ctx: t.ctx }), 0, t.text());
-  assert.equal(t.settings().hooks, undefined);
-  assert.equal(t.settings().env, undefined);
+  assert.ok(!fs.existsSync(t.file), "the settings file setup created goes once ad's items are out");
 });
 
 test("ad init adopts the launcher's entries; memory uninstall then leaves ad's routes", async () => {

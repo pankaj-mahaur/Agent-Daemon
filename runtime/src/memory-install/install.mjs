@@ -26,7 +26,8 @@ import { backup, inspect, sha256, writeChecked } from "./fsx.mjs";
 import { readLedger, writeLedger } from "./ledger.mjs";
 import { dropItem, mergeV1, openLedger2ForWrite, readLedger2, uninstallReport, writeLedger2 } from "./ledger2.mjs";
 import { cmpVersion, distsFile, launchDir, launcherFile, registerDist, setHostDisabled, unregisterDist } from "../memory/launch/dists.mjs";
-import { SETUP_HOSTS, claudeSettingsFile, launcherReferences, parseSettings, planClaudeSetup, removeSettingsItems, setup, setupWork, withLedgerLock } from "./setup.mjs";
+import { SETUP_HOSTS, claudeSettingsFile, launcherReferences, parseSettings, removeSettingsItems, removeTomlItems, setup, setupPending, setupWork, withLedgerLock } from "./setup.mjs";
+import { codexConfigFile, codexHooksFile, safeToml } from "./setup-codex.mjs";
 import { ourHandlers } from "../hooks/routes.mjs";
 import { createRequire } from "node:module";
 import { jsonEntry, planJsonAdd, planJsonRemove } from "./edit-json.mjs";
@@ -90,7 +91,9 @@ export function makeContext(o = {}) {
     /** What the user types for a verb: the pinned npx command, or ad's own from a clone. */
     command: (verb) => (viaLauncher ? pinnedCommand(verb, pkg.version) : `ad memory ${verb}`),
     lockWaitMs: o.lockWaitMs,
+    platform: o.platform ?? process.platform,
     beforeWrite: o.beforeWrite,
+    noSetup: o.noSetup,
   };
 }
 
@@ -376,7 +379,8 @@ export async function install(opts = {}) {
     ctx.out(`✗ ${e.message}`);
     return 1;
   }
-  if (mcp.stop) return mcp.code;
+  // --no-setup (scripts, CI): the MCP entries only, with their own exit code.
+  if (mcp.stop || opts.noSetup || ctx.noSetup) return mcp.code;
   for (const s of mcp.setupPlans.filter((x) => x.w.none)) for (const n of s.w.notes) ctx.out(n);
   const todo = mcp.setupPlans.filter((s) => s.writes.length);
   if (!todo.length) return mcp.code;
@@ -391,22 +395,10 @@ export async function install(opts = {}) {
 // What setup would write for each host found here (nothing is written).
 async function pendingSetup(ctx, ids, opts) {
   const out = [];
-  const owned = readLedger2(ctx.root).items;
   for (const id of ids) {
     const w = await setupWork(ctx, id, { noPlugin: opts.noPlugin });
     if (!w) continue;
-    if (w.none) {
-      out.push({ id, w, writes: [] });
-      continue;
-    }
-    const file = claudeSettingsFile(ctx);
-    let plan;
-    try {
-      plan = planClaudeSetup(inspect(file).text, { launcher: launcherFile(ctx.root), routes: w.routes, marker: w.marker, owned: owned.filter((i) => i.host === id && !i.source), file });
-    } catch (e) {
-      plan = { ok: false, error: e.message };
-    }
-    out.push({ id, w, file, writes: plan.ok ? plan.results.filter((r) => r.action === "add" || r.action === "update") : [{ error: plan.error }] });
+    out.push({ id, w, writes: await setupPending(ctx, id, w) });
   }
   return out;
 }
@@ -436,9 +428,10 @@ async function installMcp(ctx, opts) {
   const plans = [];
   for (const h of found) plans.push(await planHost(ctx, h, { capture: opts.capture, adopt: opts.adopt, ledger }));
   for (const p of plans) out(planLine(ctx, p));
-  const setupPlans = await pendingSetup(ctx, found.map((h) => h.id).filter((id) => SETUP_HOSTS.includes(id)), opts);
+  // --no-setup: no preview, no question on setup's behalf.
+  const setupPlans = opts.noSetup || ctx.noSetup ? [] : await pendingSetup(ctx, found.map((h) => h.id).filter((id) => SETUP_HOSTS.includes(id)), opts);
   for (const s of setupPlans) {
-    for (const r of s.writes) out(`  ${hostById(s.id).name.padEnd(12)} setup: ${r.error ? `won't change ${ctx.display(s.file)}: ${r.error}` : `${r.action} ${r.kind === "env" ? "the agent-shell marker" : `the ${r.event} hook`} in ${ctx.display(s.file)}`}`);
+    for (const r of s.writes) out(`  ${hostById(s.id).name.padEnd(12)} setup: ${r.error ? `won't change ${ctx.display(r.file ?? "its config")}: ${r.error}` : `${r.action} ${r.kind === "env" ? "the agent-shell marker" : `the ${r.event} hook`} in ${ctx.display(r.file)}`}`);
   }
   out(`Memory stays on this computer: ${ctx.display(path.join(ctx.root, "episodic.db"))}. No account.`);
   const todo = plans.filter((p) => p.action === "add" || p.action === "update");
@@ -665,7 +658,10 @@ async function uninstallLocked(ctx, opts) {
   for (const i of direct) byFile.set(i.file, [...(byFile.get(i.file) ?? []), i]);
   for (const [file, items] of byFile) {
     try {
-      directResults.push(...(await removeSettingsItems(ctx, file, items, gate)));
+      // config.toml (Codex's inline hooks, its marker) as text; JSON settings and hooks.json by structure.
+      const res = /\.toml$/i.test(String(file)) ? await removeTomlItems(ctx, file, items, gate) : await removeSettingsItems(ctx, file, items, gate);
+      directResults.push(...res);
+      for (const n of res.notes ?? []) out(`· ${n}`);
     } catch (e) {
       for (const item of items) directResults.push({ item, action: "kept", why: `${ctx.display(file)}: ${e.message}; run uninstall again`, retry: true });
     }
@@ -696,9 +692,10 @@ async function uninstallLocked(ctx, opts) {
   // Also any launcher tool.before still in the settings that the ledger doesn't know of
   // (a ledger moved aside, a copy the user made).
   if (rulesExist) {
-    for (const file of new Set([claudeSettingsFile(ctx), ...direct.map((i) => i.file).filter(Boolean)])) {
+    for (const file of new Set([claudeSettingsFile(ctx), codexHooksFile(ctx), codexConfigFile(ctx), ...direct.map((i) => i.file).filter(Boolean)])) {
       try {
-        const root = parseSettings(fs.readFileSync(file, "utf8")).root;
+        const text = fs.readFileSync(file, "utf8");
+        const root = /\.toml$/i.test(file) ? safeToml(text).doc : parseSettings(text).root;
         for (const o of ourHandlers(root?.hooks)) if (o.info.launcher && o.info.event === "tool.before") checkStays.add(o.info.host);
       } catch {
         // not there or unreadable: nothing found in it

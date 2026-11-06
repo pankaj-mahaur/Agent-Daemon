@@ -121,7 +121,7 @@ const validDate = (d) => (d instanceof Date && !Number.isNaN(d.getTime()) ? d : 
  * restores); updatedAt moves on every write. A write without a source is a direct
  * v2 write and clears "v1".
  */
-export function upsertItem(ledger, { host, kind, file, locator, value, preExisted = false, version, source, created, now = new Date() }) {
+export function upsertItem(ledger, { host, kind, file, locator, value, preExisted = false, version, source, created, fileCreated, appended, now = new Date() }) {
   const at = validDate(now).toISOString();
   const id = itemId({ host, kind, file, locator });
   const prev = ledger.items.find((i) => i.id === id);
@@ -139,6 +139,10 @@ export function upsertItem(ledger, { host, kind, file, locator, value, preExiste
     version: version ?? prev?.version ?? null,
     // The containers ad's write created (uninstall removes those, emptied, and no others).
     ...((created ?? prev?.created)?.length ? { created: created ?? prev.created } : {}),
+    // The file didn't exist before ad's write: uninstall removes it once ad's items leave it empty.
+    ...((fileCreated ?? prev?.fileCreated) ? { fileCreated: true } : {}),
+    // Text ad appended (TOML): what it put before its lines and the line ending, to take back exactly.
+    ...((appended ?? prev?.appended) ? { appended: appended ?? prev.appended } : {}),
     ...(source ? { source } : {}),
   };
   ledger.items = [...ledger.items.filter((i) => i.id !== id), item];

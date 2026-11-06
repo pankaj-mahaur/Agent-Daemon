@@ -139,7 +139,19 @@ async function main() {
       const cwd = String(input?.cwd || projectDir(input, host) || process.cwd());
       // The plugin has no repo root (ad's skills and constitution aren't in it).
       const projectRoot = memoryOnly ? undefined : process.env.AGENT_DAEMON_HOME ? path.resolve(process.env.AGENT_DAEMON_HOME) : path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
-      await runSessionStart({ cwd, outputJson: true, projectRoot, sessionId: input?.session_id, transcript: input?.transcript_path, memoryOnly });
+      // Codex (L3, D22): the marker setup put in config.toml is gone → say how to put it back.
+      let systemMessage;
+      if (hostFlag === "codex") {
+        systemMessage = await quietly(async () => {
+          const { adRoot } = await import("../src/ad-root.mjs");
+          const gone = (await import("../src/memory/codex-marker.mjs")).codexMarkerMissing(adRoot());
+          if (!gone) return undefined;
+          const { PRODUCT, pinnedCommand } = await import("../src/product.mjs");
+          const cmd = gone.version ? pinnedCommand("setup --host codex", gone.version) : `npx -y ${PRODUCT.package} setup --host codex`;
+          return `${PRODUCT.displayName}: AD_TOOL_SHELL is gone from ${gone.file}, so Codex's agent shell isn't marked any more. Run ${cmd} in your own terminal.`;
+        });
+      }
+      await runSessionStart({ cwd, outputJson: true, projectRoot, sessionId: input?.session_id, transcript: input?.transcript_path, memoryOnly, systemMessage: systemMessage ?? undefined });
       return 0;
     }
     case "session.end":
