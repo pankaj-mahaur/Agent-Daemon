@@ -182,6 +182,32 @@ test("uninstall restores untouched configs byte for byte, and keeps hand edits",
   assert.ok(!fs.existsSync(codexFile(c.h)) && !fs.existsSync(cursorFile(c.h)));
 });
 
+test("ledger v2 mirrors every install; uninstall empties it and prints Removed, Kept and Left on disk", async () => {
+  const { readItems } = await import("../src/memory/ledger-read.mjs");
+  const a = home();
+  assert.equal(await install({ ctx: a.ctx, yes: true }), 0, a.text());
+  const items = readItems(a.env.AD_ROOT);
+  assert.deepEqual(items.map((i) => `${i.host}:${i.kind}`).sort(), ["claude-code:mcp", "codex:mcp", "cursor:mcp"]);
+  assert.ok(items.every((i) => i.preExisted === false && i.locator.key === "agent-daemon-memory" && i.canonicalSha256));
+  // The user edits ad's own entry in one host: that host keeps it, with the reason.
+  const cj = parseJsonc(fs.readFileSync(cursorFile(a.h), "utf8"));
+  cj.mcpServers["agent-daemon-memory"].env = { MINE: "1" };
+  fs.writeFileSync(cursorFile(a.h), JSON.stringify(cj, null, 2));
+  fs.mkdirSync(path.join(a.env.AD_ROOT), { recursive: true });
+  fs.writeFileSync(path.join(a.env.AD_ROOT, "episodic.db"), "x".repeat(2048));
+  a.lines.length = 0;
+  await uninstall({ ctx: a.ctx });
+  const out = a.text();
+  const removed = out.slice(out.indexOf("Removed:"), out.indexOf("Kept:"));
+  assert.match(removed, /config\.toml · agent-daemon-memory/);
+  assert.match(removed, /claude-code · agent-daemon-memory/);
+  assert.doesNotMatch(removed, /mcp\.json/);
+  assert.match(out, /Kept:\n {2}- .*mcp\.json · agent-daemon-memory: .+/);
+  assert.match(out, /Left on disk:\n {2}- .*episodic\.db \(2 KB\): your memory notes/);
+  // v2 keeps exactly what is still there: Cursor's entry.
+  assert.deepEqual(readItems(a.env.AD_ROOT).map((i) => i.host), ["cursor"]);
+});
+
 test("refusals leave the file untouched and print the snippet: malformed JSON, read-only, a hidden TOML entry", async () => {
   const bad = '{ "mcpServers": { ';
   const dotted = 'mcp_servers.agent-daemon-memory.command = "node"\n';

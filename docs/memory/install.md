@@ -114,6 +114,14 @@ you added in another scope is never touched. Removing the last host also
 removes the launcher, so an entry you copied by hand into another program stops
 working.
 
+It ends with a summary in three lists: **Removed** (each entry ad took out),
+**Kept** (each entry left in place, and why: you edited it, or you had it
+before) and **Left on disk** (your memory notes, the backups of your config
+files, the hook log), so nothing stays behind without your knowing.
+`~/.agent-daemon/memory/ledger.json` records one line per item ad wrote into a
+host's settings; the older `install-ledger.json` stays as it is, for earlier
+versions of the package.
+
 An `npx agent-daemon-memory install` of a newer version updates the copy the
 launcher starts, even when every host is already set up. `--purge-data` also deletes the memory database after you
 type `delete my memory`; it refuses while ad itself uses the same memory,

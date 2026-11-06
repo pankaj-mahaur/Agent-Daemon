@@ -24,6 +24,7 @@ import { resolveCommand } from "../safe-spawn.mjs";
 import { HOSTS, SERVER_NAME, claudePluginEnabled, hostById } from "./hosts.mjs";
 import { backup, inspect, sha256, writeChecked } from "./fsx.mjs";
 import { readLedger, writeLedger } from "./ledger.mjs";
+import { mergeV1, readLedger2, uninstallReport } from "./ledger2.mjs";
 import { jsonEntry, planJsonAdd, planJsonRemove } from "./edit-json.mjs";
 import { isDeepStrictEqual } from "node:util";
 import { planTomlAdd, planTomlRemove, tomlBlock } from "./edit-toml.mjs";
@@ -405,13 +406,34 @@ export async function uninstall(opts = {}) {
     return 0;
   }
   let fails = 0;
+  // What each host had in ledger v2 before this run (with v1 merged in: a 3.1.0
+  // install may have written it since), for the summary at the end.
+  // Items written to v2 directly (hooks, the marker: L3 part 3) aren't v1's to remove.
+  const before = mergeV1(readLedger2(ctx.root), ledger).items.filter((i) => i.source === "v1");
+  // Per item, what really happened: removed, kept (and why), or already gone.
+  const outcome = new Map();
+  const mcpOf = (id) => before.find((i) => i.host === id && i.kind === "mcp");
+  const skillOf = (id, name) => before.find((i) => i.host === id && i.kind === "skill-dir" && i.locator?.name === name);
   for (const id of ids) {
     const host = hostById(id);
     const rec = ledger.hosts[id];
+    let msg;
     try {
-      const msg = rec.driver === "cli" ? await removeCli(ctx, rec) : await removeFile(ctx, host, rec);
+      msg = rec.driver === "cli" ? await removeCli(ctx, rec) : await removeFile(ctx, host, rec);
+    } catch (e) {
+      out(`✗ ${host.name}: ${e.message}`);
+      if (mcpOf(id)) outcome.set(mcpOf(id).id, { action: "kept", why: e.message });
+      fails++;
+      continue;
+    }
+    if (mcpOf(id)) outcome.set(mcpOf(id).id, { action: /gone already/.test(msg) ? "gone" : "removed" });
+    try {
       // Skill folders ad published there (P5.7), when nobody changed them.
-      for (const line of (await import("../skills/publish.mjs")).removePublishedSkills(rec)) out(`· ${host.name}: ${line}`);
+      for (const r of (await import("../skills/publish.mjs")).removePublishedSkills(rec)) {
+        if (r.line) out(`· ${host.name}: ${r.line}`);
+        const item = skillOf(id, r.name);
+        if (item) outcome.set(item.id, { action: r.action, why: r.why });
+      }
       delete ledger.hosts[id];
       await writeLedger(ctx.root, ledger);
       out(`✓ ${host.name}: ${msg}`);
@@ -428,8 +450,33 @@ export async function uninstall(opts = {}) {
   const removed = ids.length - fails;
   let purgeFailed = false;
   if (opts.purgeData) purgeFailed = Boolean(await purgeData(ctx, adOwned, opts));
+  // The summary (L3, Decision 10): what went, what stayed and why, what is still on disk.
+  const removedItems = before.filter((i) => outcome.get(i.id)?.action === "removed");
+  const kept = before.filter((i) => outcome.get(i.id)?.action === "kept").map((item) => ({ item, why: outcome.get(item.id).why }));
+  for (const line of uninstallReport({ removed: removedItems, kept, left: leftOnDisk(ctx.root) }, { display: ctx.display })) out(line);
   if (!fails && !purgeFailed) return 0;
   return removed > 0 ? 2 : 1;
+}
+
+// What uninstall leaves on disk on purpose (your notes stay unless --purge-data).
+const LEFT = [
+  ["episodic.db", "your memory notes (remove with uninstall --purge-data)"],
+  [path.join("memory", "backups"), "copies of config files from before ad changed them"],
+  [path.join("hooks", "hook.log"), "the hook log"],
+];
+
+function leftOnDisk(root) {
+  const out = [];
+  for (const [rel, what] of LEFT) {
+    const p = path.join(root, rel);
+    try {
+      const st = fs.statSync(p);
+      out.push({ path: p, bytes: st.isFile() ? st.size : 0, what });
+    } catch {
+      // not there
+    }
+  }
+  return out;
 }
 
 async function removeFile(ctx, host, rec) {

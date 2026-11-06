@@ -10,6 +10,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { writeFileAtomic } from "../atomic-write.mjs";
+import { syncFromV1 } from "./ledger2.mjs";
 
 export const ledgerPath = (root) => path.join(root, "memory", "install-ledger.json");
 
@@ -26,4 +27,13 @@ export function readLedger(root) {
 export async function writeLedger(root, ledger) {
   fs.mkdirSync(path.dirname(ledgerPath(root)), { recursive: true });
   await writeFileAtomic(ledgerPath(root), JSON.stringify(ledger, null, 2) + "\n");
+  // Every v1 write is mirrored into ledger v2 (MCP launch plan L3, Decision 8). v1
+  // was written and can rebuild the mirror, so a failure here warns and goes on.
+  try {
+    const note = await syncFromV1(root, ledger);
+    if (note) process.stderr.write(`agent-daemon: ${note}\n`);
+  } catch (e) {
+    // The error's code only: the atomic writer's own message gives advice for another command.
+    process.stderr.write(`agent-daemon: ledger.json not updated (${e.code ?? e.name}); the next install or uninstall writes it again\n`);
+  }
 }
