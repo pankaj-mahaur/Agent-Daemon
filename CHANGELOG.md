@@ -43,6 +43,7 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 - Under ad's engine, the rules check and session start ignore a `CLAUDE_PROJECT_DIR` left over from an outer Claude Code session.
 - `--allow-cross-project` served held-back, hidden and rejected notes to `memory_get` and the timeline.
 - Seeing an accepted user fact in another project no longer serves it there.
+- On Windows, two `ad` processes using the same store at once (spend and quota tracking, accounts, the fallback order, the session index, state import) could fail with "EPERM: operation not permitted, open '…\.locks\….lock'" and lose that write. A lock file its last holder was still deleting is now treated as busy and waited for, and a lock's release retries a delete another process briefly blocks.
 
 ## [3.1.0] — 2026-10-30
 

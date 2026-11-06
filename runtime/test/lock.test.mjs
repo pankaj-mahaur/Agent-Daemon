@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { acquireLock, acquireLockWithin, liveLocks, LockBusyError } from "../src/lock.mjs";
+import { acquireLock, acquireLockWithin, createExclusive, liveLocks, LockBusyError, removeFile } from "../src/lock.mjs";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -128,6 +128,95 @@ test("takeover: a holder that released meanwhile is taken with O_EXCL; one that 
     assert.throws(() => acquireLock("t6", { dir, now: raced, isAlive: () => true }), (err) => err.code === "LOCK_BUSY");
     assert.equal(readFileSync(file, "utf8"), won, "the winner's file is untouched");
     holder();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// -- Windows: a name its last holder is deleting ---------------------------------
+// CI (windows-latest) lost a spend charge: two processes taking turns on one lock,
+// and the exclusive create of a lock file being deleted failed with EPERM, which
+// acquireLockWithin doesn't retry. The fakes below give that exact failure shape.
+
+const eperm = (f) => Object.assign(new Error(`EPERM: operation not permitted, open '${f}'`), { code: "EPERM" });
+
+test("createExclusive on Windows: EPERM while the name is being deleted is retried, then the create succeeds", () => {
+  const sleeps = [];
+  let calls = 0;
+  const write = (f) => {
+    if (++calls <= 2) throw eperm(f);
+  };
+  createExclusive("x.lock", "{}", { platform: "win32", write, sleep: (ms) => sleeps.push(ms), listed: () => true });
+  assert.equal(calls, 3);
+  assert.deepEqual(sleeps, [10, 20]);
+});
+
+test("createExclusive on Windows: a name still listed after the retries is EEXIST (busy); one that isn't there keeps its own error", () => {
+  const always = (f) => {
+    throw eperm(f);
+  };
+  const deps = { platform: "win32", write: always, sleep: () => {} };
+  assert.throws(() => createExclusive("x.lock", "{}", { ...deps, listed: () => true }), (err) => err.code === "EEXIST" && err.cause?.code === "EPERM");
+  assert.throws(() => createExclusive("x.lock", "{}", { ...deps, listed: () => false }), (err) => err.code === "EPERM", "an unwritable folder is not a busy lock");
+  assert.throws(() => createExclusive("x.lock", "{}", { ...deps, listed: () => { throw eperm("dir"); } }), (err) => err.code === "EPERM");
+});
+
+test("createExclusive elsewhere: EPERM is a real error at once, no retry", () => {
+  let calls = 0;
+  const write = (f) => {
+    calls++;
+    throw eperm(f);
+  };
+  assert.throws(() => createExclusive("x.lock", "{}", { platform: "linux", write, sleep: () => assert.fail("no sleep"), listed: () => true }), (err) => err.code === "EPERM");
+  assert.equal(calls, 1);
+});
+
+test("acquireLockWithin on Windows: a lock file stuck mid-delete is a busy lock the waiter waits out, not a crash", async () => {
+  const dir = tempDir();
+  try {
+    let lockCreates = 0;
+    // The lock file can't be created for the first 12 tries, longer than one acquireLock's two
+    // creates (the first one, then the "released meanwhile" one) of 5 tries each; then it can.
+    const write = (f, data, o) => {
+      if (f.endsWith(".lock") && ++lockCreates <= 12) throw eperm(f);
+      return writeFileSync(f, data, o);
+    };
+    const fs = { platform: "win32", write, sleep: () => {}, listed: () => true };
+    assert.throws(() => acquireLock("t7", { dir, fs }), (err) => err.code === "LOCK_BUSY", "one attempt: busy, not EPERM");
+    const release = await acquireLockWithin("t7", { dir, fs, waitMs: 5000, stepMs: 5 });
+    assert.equal(typeof release, "function");
+    assert.equal(existsSync(join(dir, "t7.lock")), true);
+    release();
+    assert.equal(existsSync(join(dir, "t7.lock")), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("removeFile on Windows retries a delete another process briefly blocks; elsewhere it throws at once", () => {
+  let calls = 0;
+  const remove = () => {
+    if (++calls <= 2) throw Object.assign(new Error("EBUSY"), { code: "EBUSY" });
+  };
+  removeFile("x.lock", { platform: "win32", remove, sleep: () => {} });
+  assert.equal(calls, 3);
+  calls = 0;
+  assert.throws(() => removeFile("x.lock", { platform: "linux", remove, sleep: () => {} }), (err) => err.code === "EBUSY");
+  assert.equal(calls, 1);
+});
+
+test("release on Windows: a delete blocked for a moment is retried, so no lock file is left with a live holder's token", () => {
+  const dir = tempDir();
+  try {
+    let removes = 0;
+    const remove = (f) => {
+      if (++removes <= 2) throw Object.assign(new Error("EBUSY"), { code: "EBUSY" });
+      rmSync(f, { force: true });
+    };
+    const release = acquireLock("t8", { dir, fs: { platform: "win32", remove, sleep: () => {} } });
+    release();
+    assert.equal(removes, 3, "release goes through the retrying delete");
+    assert.equal(existsSync(join(dir, "t8.lock")), false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
