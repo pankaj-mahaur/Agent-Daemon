@@ -671,6 +671,12 @@
       "reason": "P5.7: tests that a skill reaches each host's own folder in a temp home"
     },
     {
+      "path": "runtime/test/ledger2.test.mjs",
+      "rules": ["A"],
+      "match": "\"codex(:[a-z-]+)?\"|\\bcodex: \\{|hosts\\.codex\\b",
+      "reason": "L3 part 2: ledger items and v1 records for the other host the installer sets up, by its host id (--host codex), in temp roots"
+    },
+    {
       "path": "runtime/test/skills-cross-host.test.mjs",
       "rules": ["A"],
       "reason": "P5.7: the cross-host test checks each host's folder in a temp home"

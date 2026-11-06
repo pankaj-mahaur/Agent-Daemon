@@ -179,6 +179,7 @@ Two more workflows: `skills-lint.yml` lints the skills and smoke-runs the skills
 
 | Symptom | Cause | Fix |
 |---|---|---|
+| The brand lint passes locally, then fails in CI on a new file | `--tracked` reads only files git knows; a new file is untracked until it is staged | run the lint after `git add <new files>` (or `git add -N`), before the commit |
 | A lock or lease test passes alone, fails in the full suite on Windows | the process-identity lookup (PowerShell, 3 s budget) times out under load, returns "unknown", and a fresh lease counts as live, which is the designed fallback | inject `identityOf` where the test is about counting or classifying; give a real-lookup test its own budget (`identityOf(pid, { timeoutMs })`) |
 | A path check passes on Windows locally, fails on macOS or the Windows runner | the same folder has two spellings: macOS's `/var` is `/private/var`, the runner's temp folder is the 8.3 short name `RUNNER~1` | compare folders by `statSync(p, { bigint: true })` `dev:ino`, or build fixtures from `realpathSync.native`; code that stops at a folder checks every spelling of it |
 | A lock test with a made-up pid fails on Linux only | pid 111 can be a real process there; its start time makes the record read as a reused pid | pass `identityOf: () => ({ unknown: "test pid" })` |

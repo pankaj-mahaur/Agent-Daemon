@@ -1,5 +1,5 @@
 // The install ledger v2, read-only and dependency-free (MCP launch plan L3, Decision 8):
-// hooks read it (the Codex marker check, the plugin's setup nudge), so it may import
+// hooks read it (the agent-shell marker check, the plugin's setup nudge), so it may import
 // nothing but node:*. Hashing and editing live in memory-install/ledger2.mjs.
 //   adRoot()/memory/ledger.json = { schemaVersion: 2, items: [ … ] }
 
