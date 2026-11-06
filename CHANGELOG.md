@@ -33,11 +33,12 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 - An import never carries who accepted a note, or a user fact's every-project flag: imported notes wait for `ad review --import`.
 - Every connection to the memory store zeroes the pages it frees, and its search index drops a deleted note's terms.
 - Secret redaction also catches names with the secret word run together, such as `PGPASSWORD=…` or `GHTOKEN=…`.
+- The security profile's Bash guard and MCP audit answered "approve" when they had no objection, which Claude Code takes as allow: every Bash and MCP call skipped your own permission prompt. They now stay silent unless they block, so Claude Code asks again where your permission settings say it should. Updating ad is enough: the hooks run ad's own code. To keep a command or MCP tool running without a prompt, allow it in Claude Code's permission settings.
+- The copy-paste hook `hooks/pre-tool-use-qmd-redirect.json` did the same for every Read and Grep outside the memory folders. If you pasted it into your settings, paste it again.
 
 ### Fixed
 
 - `/memory forget` in `ad tui` also removes the note from the project's `activeContext.md`, which session start reads.
-- The security profile's Bash guard and MCP audit answered "approve" when they had no objection, which Claude Code takes as allow: every Bash and MCP call skipped your own permission prompt. They now stay silent unless they block.
 - A hook no longer registers a project id (a write under a lock) on every call just to look for an old capture folder.
 - Under ad's engine, the rules check and session start ignore a `CLAUDE_PROJECT_DIR` left over from an outer Claude Code session.
 - `--allow-cross-project` served held-back, hidden and rejected notes to `memory_get` and the timeline.

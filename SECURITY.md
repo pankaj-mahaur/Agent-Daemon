@@ -11,7 +11,7 @@ This document explains the threat model, the design choices behind it, and how t
 
 | Asset | Threats considered | Treatment |
 |---|---|---|
-| The agent's tool execution flow | Hook crashes blocking the user's work | **Fail-safe to approve** — see below |
+| The agent's tool execution flow | Hook crashes blocking the user's work; a hook allowing a call the user's own permission rules would ask about | **Fail safe, never allow**: see below |
 | `~/.claude/settings.json`, `~/.claude.json` | Concurrent writes corrupting JSON; a file ad can't parse being replaced | `ad init` reads → mutates in memory → writes a temp file in the same folder, flushes it, renames it over (retrying while Claude Code holds the file on Windows); a file it can't parse is left unchanged |
 | `~/.agent-daemon/audit/mcp.jsonl` | Unbounded growth, log injection | Size-based rotation (10 MB × 3 generations); fields are JSON-escaped |
 | `~/.agent-daemon/episodic.db` (SQLite) | Rows hold captured prompt and transcript text. One project's notes reaching another project's agent; an agent (or injected text) planting instructions in memory; secrets typed into a prompt being stored | Local-only, not network-exposed. Secrets (provider keys, tokens, passwords, `user:pass@` URLs) are redacted before any write and masked again when shown. Each memory reader is bound to one project (the MCP server at start, hooks to their folder); ids from another project return nothing; home, system folders and ad's own folders never count as a project. Every note is stored **pending** and never served until you accept it in your own terminal: what ad's hooks capture from your prompts (a hook can't tell a typed prompt from a scheduled one, a background report or another agent's text), digest items, and notes the agent records. Seeing a note again never accepts it. Notes the injection screen flags are **quarantined** (hidden from older ad versions too). Nothing becomes global by itself. `ad memory scan` checks notes stored before these rules |
@@ -39,9 +39,11 @@ What's **not** in scope:
 - Protecting against a compromised `node`/`git`/`gh` binary on PATH.
 - Multi-tenant isolation — agent-daemon is a single-user tool.
 
-## The fail-safe-to-approve decision
+## The fail-safe decision
 
-Every hook handler under [runtime/src/hooks/](runtime/src/hooks/) **never blocks the agent's tool call because of its own bug**. When stdin is malformed, the file doesn't exist, or the handler throws unexpectedly, the result is `{"decision":"approve"}` (PreToolUse) or `{}` passthrough (PostToolUse). The agent's tool runs as normal.
+Every hook handler under [runtime/src/hooks/](runtime/src/hooks/) **never blocks the agent's tool call because of its own bug**. When stdin is malformed, the file doesn't exist, or the handler throws unexpectedly, the result is `{}` (pass through). The call then goes through the host's own permission check exactly as if the hook weren't there.
+
+**A hook never answers allow.** No objection is `{}` too. Claude Code reads `{"decision":"approve"}` on PreToolUse (and `permissionDecision: "allow"`) as allow, and skips the user's own permission prompt. In ad 3.1.0 and earlier, the security profile's Bash guard and MCP audit answered that for every call they didn't block. `hooks.test.mjs`, `codex-hooks.test.mjs` and `hook-configs.test.mjs` hold the handlers and the shipped hook configurations to this.
 
 **Why:** a daemon bug that blocked legitimate tool calls would be a worse failure mode than the bug it was trying to catch. Users would disable the hook entirely on the first false positive, losing the real protection it provides on well-formed input.
 
@@ -58,7 +60,7 @@ Every hook handler under [runtime/src/hooks/](runtime/src/hooks/) **never blocks
 
 The harness drives a pinned app-server. The engine owns the agent loop, the model calls and the sandbox; ad decides the sandbox mode and approval policy for each kind of run, and wires in its memory, hooks and skills. The table above lists the main assets. In more detail:
 
-- **Hooks inside the harness** are the same handlers as in Claude Code, with the same fail-safe-to-approve rule. Only hooks from ad's own `hooks.json` are trusted automatically; a repo's or plugin's hooks are not.
+- **Hooks inside the harness** are the same handlers as in Claude Code, with the same fail-safe rule: pass through on their own error, never allow. Only hooks from ad's own `hooks.json` are trusted automatically; a repo's or plugin's hooks are not.
 - **Folder trust.** The first time `ad tui` runs in a folder it asks whether you trust it; only a trusted folder may run its own hooks, skills and settings.
 - **ad's memory MCP server** (`agent-daemon-memory`) is registered in the harness home and its tools run without an approval prompt, unless you set an approval mode for that server yourself. Its blast radius: it reads the local memory store and can write only retrieval counters and a usefulness score; it can't insert, delete or change memory text ([details](mcp/agent-daemon-memory/README.md#security-blast-radius)).
 - **Local files the TUI writes.** The prompt history (`~/.agent-daemon/tui/history.jsonl`) is owner-only (0600) and never stores masked answers. `/export` writes a new file inside the current folder only (no overwrite, no device names, no path through a link that leads out). Prompts typed under `/private` are wrapped in `<private>`, which ad's extractors drop, so they never become learnings.

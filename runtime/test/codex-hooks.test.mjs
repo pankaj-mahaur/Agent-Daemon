@@ -80,7 +80,8 @@ test("renderDecision adapts output per host", () => {
   assert.deepEqual(engine("advise", "ctx", "UserPromptSubmit"), { hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: "ctx" } });
   assert.deepEqual(renderDecision("approve", null, { host: "codex" }), {}, "the old value still gives the engine's shape");
   const claude = (kind, v) => renderDecision(kind, v, { host: "claude" });
-  assert.deepEqual(claude("approve"), { decision: "approve" });
+  assert.deepEqual(claude("approve"), {}, "never an allow: Claude Code reads decision:approve on PreToolUse as allow and skips the user's permission prompt");
+  assert.deepEqual(claude("block", "no"), { decision: "block", reason: "no" });
   assert.deepEqual(claude("advise", "ctx"), { additionalContext: "ctx" });
 });
 

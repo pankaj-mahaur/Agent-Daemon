@@ -461,8 +461,8 @@ The terminal UI (`ad tui`, bare `ad`) builds on the same engine: [tui-architectu
 
 A few load-bearing decisions:
 
-### Fail-safe to approve
-A daemon bug must never block the user's tool execution. Trade-off: an adversary who controls the hook's stdin could bypass it. But the stdin comes from the Claude Code host, which is the user's own machine — out of scope.
+### Fail safe, never allow
+A daemon bug must never block the user's tool execution, and a hook never decides for the user either: no objection and its own errors are both `{}`, so the host's permission prompt still applies. Trade-off: an adversary who controls the hook's stdin could bypass it. But the stdin comes from the Claude Code host, which is the user's own machine — out of scope.
 
 ### Zero-LLM digest (with optional fallback)
 Default extraction is parse-only — the agent emits a structured block during the session. Cheap, deterministic, no API key needed. LLM fallback exists for sessions where the agent didn't follow protocol; it runs on `claude` or ad's engine (`--llm claude|ad|auto`).
