@@ -121,7 +121,7 @@ const validDate = (d) => (d instanceof Date && !Number.isNaN(d.getTime()) ? d : 
  * restores); updatedAt moves on every write. A write without a source is a direct
  * v2 write and clears "v1".
  */
-export function upsertItem(ledger, { host, kind, file, locator, value, preExisted = false, version, source, now = new Date() }) {
+export function upsertItem(ledger, { host, kind, file, locator, value, preExisted = false, version, source, created, now = new Date() }) {
   const at = validDate(now).toISOString();
   const id = itemId({ host, kind, file, locator });
   const prev = ledger.items.find((i) => i.id === id);
@@ -137,6 +137,8 @@ export function upsertItem(ledger, { host, kind, file, locator, value, preExiste
     installedAt: prev?.installedAt ?? at,
     updatedAt: at,
     version: version ?? prev?.version ?? null,
+    // The containers ad's write created (uninstall removes those, emptied, and no others).
+    ...((created ?? prev?.created)?.length ? { created: created ?? prev.created } : {}),
     ...(source ? { source } : {}),
   };
   ledger.items = [...ledger.items.filter((i) => i.id !== id), item];
@@ -156,6 +158,23 @@ export function updateItem(ledger, id, value, { now = new Date() } = {}) {
 
 export function dropItem(ledger, id) {
   ledger.items = ledger.items.filter((i) => i.id !== id);
+}
+
+/**
+ * `ad init` replaced the launcher's Claude Code entries in `file` with its own
+ * dispatcher routes: those items are ad init's now, so memory uninstall leaves
+ * them (D8). handlers: [{hostEvent, event, script}]. → how many items were dropped
+ */
+export async function adoptLauncherHooks(root, { file, handlers }) {
+  const opened = openLedger2ForWrite(root);
+  if (opened.refuse) return 0;
+  const n = opened.ledger.items.length;
+  const replaced = (i) =>
+    i.host === "claude-code" && i.kind === "hook" && !i.source && i.file && idPath(i.file) === idPath(file) &&
+    handlers.some((h) => h.hostEvent === i.locator?.hostEvent && h.event === i.locator?.event && h.script && i.locator?.script && idPath(h.script) === idPath(i.locator.script));
+  opened.ledger.items = opened.ledger.items.filter((i) => !replaced(i));
+  if (opened.ledger.items.length !== n) await writeLedger2(root, opened.ledger);
+  return n - opened.ledger.items.length;
 }
 
 /**

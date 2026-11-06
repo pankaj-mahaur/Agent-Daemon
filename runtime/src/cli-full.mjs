@@ -85,7 +85,7 @@ Commands:
   memory redact <table>:<id>   Replace what looks like a key in one row (your own terminal, typed confirmation)
   state inspect|export|import|verify  Move ad to another computer: one .adstate file (ad state --help)
                          → proposals only; --apply-merges / --apply-stale execute after review
-  memory install [--host <id>] [--yes] [--dry-run]   Add ad's memory server to other agents (doctor, repair, status, uninstall)
+  memory install [--host <id>] [--yes] [--dry-run]   Add ad's memory server to other agents (setup, doctor, repair, status, uninstall)
   memory report [--days 30] [--all-projects] [--json] [--share]   Is memory working: repeated corrections, what was shown, feedback
                          --all-projects       span every project (default: current --cwd only)
   mistakes [--all-projects] [--share | --json] [--yes]   Read-only report of the corrections you typed to your coding agents (offline, stores nothing)
@@ -603,6 +603,20 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
       const replaced = hookPlan.removed.filter((o) => o.info.kind === "legacy").length;
       console.log(`  ✓ ${hookPlan.routes.length} hook route(s) in ~/.claude/settings.json go through the dispatcher${replaced ? ` (${replaced} older ad hook entr${replaced === 1 ? "y" : "ies"} replaced)` : ""}`);
       for (const r of hookPlan.routes) console.log(`      ${r.hostEvent}${r.matcher ? ` [${r.matcher}]` : ""} ← ${r.event}`);
+      // Entries the memory product's setup wrote (its launcher) are ad's routes now:
+      // they leave its ledger, so its uninstall doesn't touch them (L3, D8).
+      const adopted = hookPlan.removed.filter((o) => o.info.launcher);
+      if (adopted.length) {
+        try {
+          const { adoptLauncherHooks } = await import("./memory-install/ledger2.mjs");
+          const { withLedgerLock } = await import("./memory-install/setup.mjs");
+          const { adRoot } = await import("./ad-root.mjs");
+          const root = adRoot();
+          await withLedgerLock({ root }, () => adoptLauncherHooks(root, { file: globalSettingsPath, handlers: adopted.map((o) => ({ hostEvent: o.hostEvent, event: o.info.event, script: o.info.script })) }));
+        } catch (err) {
+          console.log(`  ⚠ The memory ledger still lists the hooks ad just replaced (${err.message}); its uninstall finds them gone.`);
+        }
+      }
     } catch (err) {
       console.error(`  ⚠ Could not install hooks: ${err.message}`);
     }
@@ -2592,7 +2606,7 @@ async function main(argv) {
         }
       }
       // The memory installer for other hosts (same code as npx agent-daemon-memory; P5.3).
-      if (["install", "doctor", "repair", "status", "uninstall"].includes(parsed.positionals?.[0])) {
+      if (["install", "setup", "doctor", "repair", "status", "uninstall"].includes(parsed.positionals?.[0])) {
         const sub = parsed.positionals[0];
         return (await import("./memory-install/cli.mjs")).main([sub, ...rest.slice(rest.indexOf(sub) + 1)]);
       }

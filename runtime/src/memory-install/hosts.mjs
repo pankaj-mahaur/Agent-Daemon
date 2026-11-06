@@ -17,6 +17,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { parse as parseJsonc } from "jsonc-parser";
 import { installedSteps } from "../hooks/routes.mjs";
 import { PRODUCT } from "../product.mjs";
 
@@ -31,10 +32,18 @@ const exists = (p) => {
   }
 };
 
+// A settings file read the way setup reads it (comments and trailing commas allowed).
+function settingsJson(file) {
+  const errors = [];
+  const j = parseJsonc(fs.readFileSync(file, "utf8").replace(/^\u{FEFF}/u, ""), errors, { allowTrailingComma: true });
+  if (errors.length) throw new Error("not JSON");
+  return j;
+}
+
 /** ad init's hooks are in Claude Code's settings (the prompt hook captures there): a dispatcher route or an older entry. */
 export function claudeHasAdHooks(home) {
   try {
-    const j = JSON.parse(fs.readFileSync(path.join(home, ".claude", "settings.json"), "utf8"));
+    const j = settingsJson(path.join(home, ".claude", "settings.json"));
     return installedSteps(j?.hooks, { live: true }).has("user-prompt-extract");
   } catch {
     return false;
@@ -49,7 +58,7 @@ export function claudeHasAdHooks(home) {
 export function claudePluginEnabled(home, env = {}) {
   const dir = env.CLAUDE_CONFIG_DIR && path.isAbsolute(env.CLAUDE_CONFIG_DIR) ? env.CLAUDE_CONFIG_DIR : path.join(home, ".claude");
   try {
-    const j = JSON.parse(fs.readFileSync(path.join(dir, "settings.json"), "utf8"));
+    const j = settingsJson(path.join(dir, "settings.json"));
     return Object.entries(j?.enabledPlugins ?? {}).find(([k, v]) => v === true && k.startsWith(`${PRODUCT.plugin}@`))?.[0] ?? null;
   } catch {
     return null;

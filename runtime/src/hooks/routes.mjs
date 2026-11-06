@@ -135,6 +135,12 @@ const LEGACY_STEPS = {
 // Another tool's hook.mjs is never ad's.
 const DISPATCH_ARG_RE = /(?:^|[\\/])runtime[\\/]bin[\\/]hook\.mjs$/i;
 const PLUGIN_ARG_RE = /(?:^|[\\/])server[\\/]hook\.mjs$/i;
+// The memory product's stable launcher (L3, D23): `<root>/memory/launch/run.mjs hook <event> --host <id>`.
+const LAUNCHER_ARG_RE = /(?:^|[\\/])memory[\\/]launch[\\/]run\.mjs$/i;
+const hostArg = (words) => {
+  const i = words.indexOf("--host");
+  return i >= 0 && words[i + 1] ? words[i + 1] : "claude-code";
+};
 
 // A shell command's words: '…' (with sh's '\'' escape), "…", or bare.
 const shellWords = (command) => [...String(command).matchAll(/'((?:[^']|'\\'')*)'|"((?:[^"\\]|\\.)*)"|(\S+)/g)].map((m) => (m[1] !== undefined ? m[1].replace(/'\\''/g, "'") : m[2] ?? m[3]));
@@ -163,6 +169,13 @@ export function classifyHandler(handler, { hostEvent = null, matcher = null } = 
   const plugin = Boolean(args?.includes("--plugin")) || /\s--plugin(?=\s|$|["'])/.test(command);
   let event = null;
   let script = null;
+  // The launcher: memory steps only, run through whichever copy is installed.
+  const words = args ?? shellWords(command);
+  const li = words.findIndex((w, k) => LAUNCHER_ARG_RE.test(w) && words[k + 1] === "hook" && EVENTS.includes(words[k + 2]));
+  if (li >= 0 && (!args || li === 0)) {
+    const ev = words[li + 2];
+    return { kind: "dispatcher", event: ev, steps: stepsOfRoute(ev, hostEvent, matcher), plugin: false, script: words[li], launcher: true, host: hostArg(words.slice(li + 3)) };
+  }
   const isScript = (s) => DISPATCH_ARG_RE.test(s) || (plugin && PLUGIN_ARG_RE.test(s));
   if (args && args.length >= 2 && EVENTS.includes(args[1]) && isScript(args[0])) [script, event] = args;
   else if (!args) {
@@ -185,7 +198,17 @@ export function classifyHandler(handler, { hostEvent = null, matcher = null } = 
  */
 export function entryAlive(info, { exists = fs.existsSync } = {}) {
   if (info?.kind !== "dispatcher" || info.plugin || !info.script || !path.isAbsolute(info.script)) return true;
-  return exists(info.script);
+  if (!exists(info.script)) return false;
+  // A launcher entry of a host uninstall turned off captures nothing (dists.json next to it).
+  if (info.launcher) {
+    try {
+      const d = JSON.parse(fs.readFileSync(path.join(path.dirname(info.script), "dists.json"), "utf8"));
+      if (Array.isArray(d?.disabledHosts) && d.disabledHosts.includes(info.host)) return false;
+    } catch {
+      // no list (or unreadable now): the entry runs
+    }
+  }
+  return true;
 }
 
 /** Every ad handler in a hooks map ({<HostEvent>: [{matcher, hooks: [...]}]}). */

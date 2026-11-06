@@ -38,7 +38,8 @@ export function memoryPluginState({ env = process.env, home = os.homedir(), cwd 
   const rec = Array.isArray(entry) ? entry.find((x) => x?.scope === "user") ?? entry[0] : entry;
   let outdated = null;
   try {
-    if (rec?.installPath) outdated = !/\s--plugin\b/.test(fs.readFileSync(path.join(rec.installPath, "hooks", "hooks.json"), "utf8"));
+    // A plugin from the dispatcher on passes --plugin (a command word, or an exec-form argument: D23).
+    if (rec?.installPath) outdated = !ourHandlers(JSON.parse(fs.readFileSync(path.join(rec.installPath, "hooks", "hooks.json"), "utf8"))?.hooks).some((o) => o.info.plugin);
   } catch {
     // not readable: unknown
   }
@@ -98,12 +99,16 @@ export function transientInstall(hookPath, { tmp = os.tmpdir() } = {}) {
 export function scriptRow(sources, hookPath, { transient = transientInstall } = {}) {
   const routes = sources.flatMap((s) => ourHandlers(s.hooks)).filter((o) => o.info.kind === "dispatcher" && !o.info.plugin && o.info.script);
   const scripts = [...new Set(routes.map((o) => o.info.script))];
-  const dead = [...new Set(routes.filter((o) => !entryAlive(o.info)).map((o) => o.info.script))];
+  // A memory launcher entry of a host its uninstall turned off is there and does nothing: not gone.
+  const off = (o) => o.info.launcher && fs.existsSync(o.info.script) && !entryAlive(o.info);
+  const dead = [...new Set(routes.filter((o) => !entryAlive(o.info) && !off(o)).map((o) => o.info.script))];
   if (dead.length) return { name: "Hook script", ok: false, note: `${dead.join(", ")} ${dead.length === 1 ? "is" : "are"} gone, so those hooks fail: run ad init from the ad you use` };
   const list = scripts.length ? scripts : [hookPath];
   const shaky = list.map((p) => [p, transient(p)]).filter(([, why]) => why);
   if (shaky.length) return { name: "Hook script", ok: false, note: `${shaky.map(([p, why]) => `${p} is in ${why}`).join("; ")}: hooks stop working when it goes. Run ad init from your installed ad` };
-  return { name: "Hook script", ok: true, note: list.join(", ") };
+  const quiet = routes.filter(off).length;
+  const offNote = quiet ? `; ${quiet} memory hook entr${quiet === 1 ? "y" : "ies"} turned off by its uninstall (doing nothing): remove ${quiet === 1 ? "it" : "them"}, or run its setup again` : "";
+  return { name: "Hook script", ok: true, note: list.join(", ") + offNote };
 }
 
 /** Exec-form routes on a Claude Code older than the version the form was verified on. */

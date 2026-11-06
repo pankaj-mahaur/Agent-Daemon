@@ -58,7 +58,8 @@ For daily use, run the installer instead: it starts the server directly, with no
 
 `--host <id>` (`claude-code`, `codex`, `cursor`, `vscode`, `gemini`) picks hosts; `--capture
 auto|hooks|tools` overrides the capture mode; `--dry-run` shows the plan and the
-snippets and writes nothing; `--yes` skips the question.
+snippets and writes nothing; `--yes` skips the question; `--no-plugin` sets up
+Claude Code's memory hooks without the plugin (see Setup below).
 
 Hosts start the server with the absolute path of the Node that ran the
 installer (GUI apps often don't have your shell's PATH). The npx install copies
@@ -77,6 +78,48 @@ once per session to run `npx -y agent-daemon-memory@<version> uninstall`.
 Gemini CLI disconnects local servers in folders you haven't trusted: trust the project folder in Gemini if the memory tools are missing.
 
 With ad's memory plugin enabled in Claude Code, install leaves Claude Code alone (one route per host). Plugins (Claude Code's marketplace, Agent Plugins for VS Code and others) are the other way in: [Memory as host plugins](hosts.md).
+
+## Setup: the hooks (Claude Code)
+
+```sh
+npx agent-daemon-memory setup               # in your own terminal
+npx agent-daemon-memory setup --no-plugin   # Claude Code without the plugin
+```
+
+`setup` adds what a plugin can't add to Claude Code's user `settings.json`
+(`$CLAUDE_CONFIG_DIR/settings.json` when that is set), each through the stable
+launcher:
+
+- **With the plugin on:** the `PreToolUse` entry that checks tool calls before
+  they run (`tool.before`; with no rules yet it does nothing), written so it can
+  never block a tool call if it fails (`onFailure: "continue"`), and
+  `env.AD_TOOL_SHELL = "1"`, which marks the agent's own shell so it can't accept
+  notes or change ad's settings for you.
+- **With `--no-plugin`:** every memory hook the plugin would bring (session
+  start, prompt capture, the scheduled-prompt and subagent records) plus the two
+  above.
+- **Neither:** nothing is written; setup prints the two `/plugin` lines.
+
+From a clone of ad, the same command is `ad memory setup`. With `ad init`'s
+own hooks in place and no plugin, setup writes only the marker.
+
+A hook that `ad init`'s own hooks already run is skipped, so nothing runs twice.
+Claude Code older than 2.1.314 gets no hooks (it may ignore the form ad writes);
+update it and run setup again. An `AD_TOOL_SHELL` you set to something else is
+left as it is. Setup only adds lines (it never re-lays out yours), checks the
+result parses to exactly what it meant, and writes only over the bytes it read:
+if Claude Code writes the file meanwhile, setup plans again once, then stops and
+asks you to re-run it. Before its first change it keeps a copy of the file under
+`~/.agent-daemon/memory/backups/claude-code/`, and it asks before writing
+through a linked settings file. Running it again changes nothing; an uninstall
+right after gives the file back byte for byte.
+
+`install` runs setup at the end when it has something to do. Setup needs a
+terminal: run without one (a script, an agent's tool), `install` adds the MCP
+entries, then prints `Finish in a terminal: npx -y agent-daemon-memory@<version>
+setup` and exits 2. In Git Bash (mintty) node sees no terminal: use `winpty`,
+PowerShell or Windows Terminal. `install`, `setup`, `repair` and `uninstall` all
+refuse to run from the agent's own shell.
 
 ## What it never does
 
@@ -121,10 +164,25 @@ you added in another scope is never touched. Removing the last host also
 removes the launcher, so an entry you copied by hand into another program stops
 working.
 
+Setup's hooks and marker go one by one, found by what they are rather than
+where they sit: only an entry that still starts ad's launcher and that you
+haven't changed is removed, and `env.AD_TOOL_SHELL` stays if you had it before
+setup. A hook entry you changed stays, with `onFailure: "continue"` so it can't
+block a tool call, and the host is marked uninstalled, so the entry does
+nothing; if you later delete `~/.agent-daemon`, Claude Code shows node's
+missing-file error for it and carries on. The launcher
+(`~/.agent-daemon/memory/launch/`) and its copies go only when no config still
+starts it. Once you have rules (a later release), removing the `tool.before`
+entry or the marker needs your review in your own terminal; without it,
+uninstall removes everything else and prints the exact manual step for each of
+those two.
+
 It ends with a summary in three lists: **Removed** (each entry ad took out),
 **Kept** (each entry left in place, and why: you edited it, or you had it
-before) and **Left on disk** (your memory notes, the backups of your config
-files, the hook log), so nothing stays behind without your knowing.
+before, with how to remove it) and **Left on disk** (your memory notes, the
+per-project journals, the backups of your config files, the hook log, and the
+launcher while something still starts it), so nothing stays behind without your
+knowing.
 `~/.agent-daemon/memory/ledger.json` records one line per item ad wrote into a
 host's settings; the older `install-ledger.json` stays as it is, for earlier
 versions of the package.

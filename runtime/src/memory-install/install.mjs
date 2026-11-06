@@ -19,13 +19,15 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { adRoot } from "../ad-root.mjs";
-import { PRODUCT } from "../product.mjs";
+import { PRODUCT, pinnedCommand } from "../product.mjs";
 import { resolveCommand } from "../safe-spawn.mjs";
 import { HOSTS, SERVER_NAME, claudePluginEnabled, hostById } from "./hosts.mjs";
 import { backup, inspect, sha256, writeChecked } from "./fsx.mjs";
 import { readLedger, writeLedger } from "./ledger.mjs";
-import { mergeV1, readLedger2, uninstallReport } from "./ledger2.mjs";
-import { cmpVersion, distsFile, launchDir, registerDist, unregisterDist } from "../memory/launch/dists.mjs";
+import { dropItem, mergeV1, openLedger2ForWrite, readLedger2, uninstallReport, writeLedger2 } from "./ledger2.mjs";
+import { cmpVersion, distsFile, launchDir, launcherFile, registerDist, setHostDisabled, unregisterDist } from "../memory/launch/dists.mjs";
+import { SETUP_HOSTS, claudeSettingsFile, launcherReferences, parseSettings, planClaudeSetup, removeSettingsItems, setup, setupWork, withLedgerLock } from "./setup.mjs";
+import { ourHandlers } from "../hooks/routes.mjs";
 import { createRequire } from "node:module";
 import { jsonEntry, planJsonAdd, planJsonRemove } from "./edit-json.mjs";
 import { isDeepStrictEqual } from "node:util";
@@ -73,6 +75,22 @@ export function makeContext(o = {}) {
     ask: o.ask ?? (async () => ""),
     display: (p) => (p.startsWith(home + path.sep) ? `~${p.slice(home.length).replace(/\\/g, "/")}` : p),
     claudeOpts: { env },
+    /** A real terminal on stdin and stdout (setup's own step needs one). */
+    isTTY: o.isTTY ?? (() => Boolean(process.stdin.isTTY && process.stdout.isTTY)),
+    /** Rules exist (L7 wires this): removing tool.before or the marker then needs the review token. None at L3. */
+    rulesExist: o.rulesExist ?? (() => false),
+    /** → true once the review gate (review.mjs, the review service's token) passed in the user's own terminal. */
+    confirmReview:
+      o.confirmReview ??
+      (async () => {
+        const { confirmInOwnTerminal } = await import("../review.mjs");
+        return (await confirmInOwnTerminal({ ask: o.ask ?? (async () => ""), out: o.out ?? ((l) => console.log(l)), env, isTTY: o.isTTY ?? (() => Boolean(process.stdin.isTTY && process.stdout.isTTY)) })).ok;
+      }),
+    claudeVersion: o.claudeVersion ?? (async () => (await import("../hooks/hook-doctor.mjs")).claudeCodeVersion()),
+    /** What the user types for a verb: the pinned npx command, or ad's own from a clone. */
+    command: (verb) => (viaLauncher ? pinnedCommand(verb, pkg.version) : `ad memory ${verb}`),
+    lockWaitMs: o.lockWaitMs,
+    beforeWrite: o.beforeWrite,
   };
 }
 
@@ -344,19 +362,67 @@ function planLine(ctx, p) {
 /* install                                                             */
 /* ------------------------------------------------------------------ */
 
+/**
+ * install: the MCP entries (under the ledger lock), then setup's hook and marker
+ * items (Decision 12) — in a terminal; without one, "finish in a terminal" and exit 2
+ * when setup has work for a host found here.
+ */
 export async function install(opts = {}) {
   const ctx = opts.ctx ?? makeContext(opts);
+  let mcp;
+  try {
+    mcp = await withLedgerLock(ctx, () => installMcp(ctx, opts));
+  } catch (e) {
+    ctx.out(`✗ ${e.message}`);
+    return 1;
+  }
+  if (mcp.stop) return mcp.code;
+  for (const s of mcp.setupPlans.filter((x) => x.w.none)) for (const n of s.w.notes) ctx.out(n);
+  const todo = mcp.setupPlans.filter((s) => s.writes.length);
+  if (!todo.length) return mcp.code;
+  if (!ctx.isTTY()) {
+    ctx.out(`Finish in a terminal (the hooks need one): ${ctx.command(opts.noPlugin ? "setup --no-plugin" : "setup")}`);
+    return mcp.code === 1 ? 1 : 2;
+  }
+  const code = await setup({ ctx, hosts: todo.map((s) => s.id), noPlugin: opts.noPlugin });
+  return code === mcp.code ? code : 2;
+}
+
+// What setup would write for each host found here (nothing is written).
+async function pendingSetup(ctx, ids, opts) {
+  const out = [];
+  const owned = readLedger2(ctx.root).items;
+  for (const id of ids) {
+    const w = await setupWork(ctx, id, { noPlugin: opts.noPlugin });
+    if (!w) continue;
+    if (w.none) {
+      out.push({ id, w, writes: [] });
+      continue;
+    }
+    const file = claudeSettingsFile(ctx);
+    let plan;
+    try {
+      plan = planClaudeSetup(inspect(file).text, { launcher: launcherFile(ctx.root), routes: w.routes, marker: w.marker, owned: owned.filter((i) => i.host === id && !i.source), file });
+    } catch (e) {
+      plan = { ok: false, error: e.message };
+    }
+    out.push({ id, w, file, writes: plan.ok ? plan.results.filter((r) => r.action === "add" || r.action === "update") : [{ error: plan.error }] });
+  }
+  return out;
+}
+
+async function installMcp(ctx, opts) {
   const { out } = ctx;
   if (opts.capture && !CAPTURES.includes(opts.capture)) {
     out(`--capture must be one of ${CAPTURES.join(", ")}`);
-    return 1;
+    return { stop: true, code: 1 };
   }
   let hosts;
   try {
     hosts = selected(ctx, opts.hosts);
   } catch (e) {
     out(e.message);
-    return 1;
+    return { stop: true, code: 1 };
   }
   const found = hosts.filter((h) => h.detect(ctx).found);
   const missing = hosts.filter((h) => !found.includes(h));
@@ -364,27 +430,32 @@ export async function install(opts = {}) {
   out(`Found: ${found.map((h) => h.name).join(", ") || "none"}.${missing.length ? ` Not found: ${missing.map((h) => h.name).join(", ")}.` : ""}`);
   if (!found.length) {
     out("Nothing to set up. Install one of the hosts, or pass --host for one ad didn't find.");
-    return 1;
+    return { stop: true, code: 1 };
   }
   const ledger = readLedger(ctx.root);
   const plans = [];
   for (const h of found) plans.push(await planHost(ctx, h, { capture: opts.capture, adopt: opts.adopt, ledger }));
   for (const p of plans) out(planLine(ctx, p));
+  const setupPlans = await pendingSetup(ctx, found.map((h) => h.id).filter((id) => SETUP_HOSTS.includes(id)), opts);
+  for (const s of setupPlans) {
+    for (const r of s.writes) out(`  ${hostById(s.id).name.padEnd(12)} setup: ${r.error ? `won't change ${ctx.display(s.file)}: ${r.error}` : `${r.action} ${r.kind === "env" ? "the agent-shell marker" : `the ${r.event} hook`} in ${ctx.display(s.file)}`}`);
+  }
   out(`Memory stays on this computer: ${ctx.display(path.join(ctx.root, "episodic.db"))}. No account.`);
   const todo = plans.filter((p) => p.action === "add" || p.action === "update");
   if (opts.dryRun) {
     out("Dry run: nothing written.");
     for (const p of plans.filter((x) => x.snippet)) out(`\n${p.host.name}:\n${p.snippet}`);
-    return 0;
+    return { stop: true, code: 0 };
   }
-  if (todo.length) {
+  const setupAsks = ctx.isTTY() && setupPlans.some((s) => s.writes.length);
+  if (todo.length || setupAsks) {
     const symlinked = todo.some((p) => p.target?.symlink);
     if (!opts.yes || symlinked) {
       const answer = String(await ctx.ask(symlinked && opts.yes ? "A config is a link (shown above). Write through it? [y/N] " : "Continue? [Y/n] ")).trim().toLowerCase();
       const ok = symlinked ? answer === "y" || answer === "yes" : answer === "" || answer === "y" || answer === "yes";
       if (!ok) {
         out("Nothing changed.");
-        return 1;
+        return { stop: true, code: 1 };
       }
     }
   }
@@ -395,7 +466,7 @@ export async function install(opts = {}) {
       out(`· the launcher now starts ${PRODUCT.package} ${ctx.version}`);
     } catch (e) {
       out(`✗ couldn't copy the package to ${ctx.display(path.join(ctx.root, "memory", "pkg"))}: ${e.message}`);
-      return 1;
+      return { stop: true, code: 1 };
     }
   }
   // The stable launcher (L3) and this copy registered as a dist it can run. Entries
@@ -446,7 +517,17 @@ export async function install(opts = {}) {
     }
   }
   for (const name of restart) out(`Restart ${name} to load it.`);
-  return failCount === 0 ? 0 : okCount ? 2 : 1;
+  // Installed again: a host uninstall turned off captures again (Decision 5).
+  if (fs.existsSync(distsFile(ctx.root))) {
+    for (const p of plans.filter((x) => ["add", "update", "same", "plugin"].includes(x.action))) {
+      try {
+        setHostDisabled(distsFile(ctx.root), p.host.id, false);
+      } catch (e) {
+        out(`· couldn't turn ${p.host.name} back on in ${ctx.display(distsFile(ctx.root))}: ${e.message}`);
+      }
+    }
+  }
+  return { code: failCount === 0 ? 0 : okCount ? 2 : 1, setupPlans };
 }
 
 function fileRecord(ctx, p, postBytesSha256) {
@@ -510,26 +591,37 @@ async function applyCli(ctx, p) {
 
 export async function uninstall(opts = {}) {
   const ctx = opts.ctx ?? makeContext(opts);
+  try {
+    return await withLedgerLock(ctx, () => uninstallLocked(ctx, opts));
+  } catch (e) {
+    ctx.out(`✗ ${e.message}`);
+    return 1;
+  }
+}
+
+async function uninstallLocked(ctx, opts) {
   const { out } = ctx;
   const ledger = readLedger(ctx.root);
   // Who set up what, before this run removes it: ad's own entries mean ad shares the memory.
   const adOwned = Object.values(ledger.hosts).some((h) => h.installedBy === "ad");
-  let ids = opts.hosts?.length ? opts.hosts : Object.keys(ledger.hosts);
-  const unknown = ids.filter((id) => !hostById(id));
+  const wanted = opts.hosts?.length ? opts.hosts : null;
+  const unknown = (wanted ?? []).filter((id) => !hostById(id));
   if (unknown.length) {
     out(`unknown host: ${unknown.join(", ")}`);
     return 1;
   }
-  ids = ids.filter((id) => ledger.hosts[id]);
-  if (!ids.length && !opts.purgeData) {
+  const ids = (wanted ?? Object.keys(ledger.hosts)).filter((id) => ledger.hosts[id]);
+  // What ledger v2 holds before this run (with v1 merged in: a 3.1.0 install may have
+  // written it since), for the summary at the end.
+  const all = mergeV1(readLedger2(ctx.root), ledger).items;
+  const before = all.filter((i) => i.source === "v1");
+  // Items setup wrote (hooks, the marker): removed per item, by content.
+  const direct = all.filter((i) => !i.source && (i.kind === "hook" || i.kind === "env") && (!wanted || wanted.includes(i.host)));
+  if (!ids.length && !direct.length && !opts.purgeData) {
     out("Nothing to remove: ad's installer didn't set up any host here.");
     return 0;
   }
   let fails = 0;
-  // What each host had in ledger v2 before this run (with v1 merged in: a 3.1.0
-  // install may have written it since), for the summary at the end.
-  // Items written to v2 directly (hooks, the marker: L3 part 3) aren't v1's to remove.
-  const before = mergeV1(readLedger2(ctx.root), ledger).items.filter((i) => i.source === "v1");
   // Per item, what really happened: removed, kept (and why), or already gone.
   const outcome = new Map();
   const mcpOf = (id) => before.find((i) => i.host === id && i.kind === "mcp");
@@ -562,39 +654,145 @@ export async function uninstall(opts = {}) {
       fails++;
     }
   }
-  // No host uses the copied package any more: the launcher and its copies go too.
+
+  // setup's items, one write per settings file. While rules exist, removing tool.before
+  // or the marker needs the review token (asked once); the rest goes either way.
+  const rulesExist = Boolean(await ctx.rulesExist());
+  let tokenAnswer;
+  const gate = { rulesExist, token: async () => (tokenAnswer ??= Boolean(await ctx.confirmReview())) };
+  const directResults = [];
+  const byFile = new Map();
+  for (const i of direct) byFile.set(i.file, [...(byFile.get(i.file) ?? []), i]);
+  for (const [file, items] of byFile) {
+    try {
+      directResults.push(...(await removeSettingsItems(ctx, file, items, gate)));
+    } catch (e) {
+      for (const item of items) directResults.push({ item, action: "kept", why: `${ctx.display(file)}: ${e.message}; run uninstall again`, retry: true });
+    }
+  }
+  for (const r of directResults) outcome.set(r.item.id, { action: r.action, why: r.why, how: r.how });
+  const held = directResults.filter((r) => r.held);
+  // The file was the problem (unreadable, busy, not written): those items stay ad's, to try again.
+  const retries = directResults.filter((r) => r.retry);
+  if (directResults.length) {
+    const opened = openLedger2ForWrite(ctx.root);
+    if (opened.refuse) out(`· ${opened.refuse}`);
+    else {
+      // Items kept for what they hold (you had it, you changed it) are the user's now;
+      // ones the review gate held, or whose file couldn't be changed, stay ad's.
+      for (const r of directResults) {
+        if (!r.held && !r.retry) dropItem(opened.ledger, r.item.id);
+        const li = r.held && r.created?.length ? opened.ledger.items.find((x) => x.id === r.item.id) : null;
+        if (li) li.created = r.created;
+      }
+      await writeLedger2(ctx.root, opened.ledger);
+    }
+  }
+  // Every host uninstalled here is off: a kept entry that still starts the launcher captures
+  // nothing. While rules exist, turning off a host whose tool.before stays lowers that check,
+  // so it needs the review token too.
+  const off = [...new Set([...ids, ...direct.map((i) => i.host)])];
+  const checkStays = new Set(directResults.filter((r) => r.action === "kept" && r.item.kind === "hook" && r.item.locator?.event === "tool.before").map((r) => r.item.host));
+  // Also any launcher tool.before still in the settings that the ledger doesn't know of
+  // (a ledger moved aside, a copy the user made).
+  if (rulesExist) {
+    for (const file of new Set([claudeSettingsFile(ctx), ...direct.map((i) => i.file).filter(Boolean)])) {
+      try {
+        const root = parseSettings(fs.readFileSync(file, "utf8")).root;
+        for (const o of ourHandlers(root?.hooks)) if (o.info.launcher && o.info.event === "tool.before") checkStays.add(o.info.host);
+      } catch {
+        // not there or unreadable: nothing found in it
+      }
+    }
+  }
+  if (fs.existsSync(distsFile(ctx.root))) {
+    for (const h of off) {
+      if (checkStays.has(h) && rulesExist && !(await gate.token())) {
+        out(`· ${hostById(h)?.name ?? h} stays on: rules exist, and turning off its tool.before check needs your review`);
+        continue;
+      }
+      try {
+        setHostDisabled(distsFile(ctx.root), h, true);
+      } catch (e) {
+        out(`· couldn't mark ${h} as uninstalled in ${ctx.display(distsFile(ctx.root))}: ${e.message}`);
+      }
+    }
+  }
+
+  // No host uses the copied package any more: 3.1.0's launcher and its copies go too.
   if (!Object.keys(ledger.hosts).length && fs.existsSync(path.join(ctx.root, "memory", "bin"))) {
     for (const p of ["pkg", "bin", "current.json"]) fs.rmSync(path.join(ctx.root, "memory", p), { recursive: true, force: true });
     out(`· removed the launcher (${ctx.display(path.join(ctx.root, "memory", "bin", "launch.mjs"))}): an entry you added by hand that starts it stops working`);
+  }
+  // The stable launcher stays while anything still starts it (Decision 11).
+  let launcherRefs = [];
+  if (fs.existsSync(launchDir(ctx.root))) {
+    launcherRefs = await launcherReferences(ctx, readLedger2(ctx.root).items.map((i) => i.file));
+    if (!launcherRefs.length) {
+      for (const p of [launchDir(ctx.root), path.join(ctx.root, "memory", "dist")]) {
+        try {
+          fs.rmSync(p, { recursive: true, force: true });
+        } catch (e) {
+          out(`· couldn't remove ${ctx.display(p)}: ${e.message}`);
+        }
+      }
+    }
   }
   const removed = ids.length - fails;
   let purgeFailed = false;
   if (opts.purgeData) purgeFailed = Boolean(await purgeData(ctx, adOwned, opts));
   // The summary (L3, Decision 10): what went, what stayed and why, what is still on disk.
-  const removedItems = before.filter((i) => outcome.get(i.id)?.action === "removed");
-  const kept = before.filter((i) => outcome.get(i.id)?.action === "kept").map((item) => ({ item, why: outcome.get(item.id).why }));
-  for (const line of uninstallReport({ removed: removedItems, kept, left: leftOnDisk(ctx.root) }, { display: ctx.display })) out(line);
-  if (!fails && !purgeFailed) return 0;
-  return removed > 0 ? 2 : 1;
+  const items = [...before, ...direct];
+  const removedItems = items.filter((i) => outcome.get(i.id)?.action === "removed");
+  const kept = items.filter((i) => outcome.get(i.id)?.action === "kept").map((item) => ({ item, why: outcome.get(item.id).why, how: outcome.get(item.id).how }));
+  for (const line of uninstallReport({ removed: removedItems, kept, left: leftOnDisk(ctx, launcherRefs) }, { display: ctx.display })) out(line);
+  if (held.length) out(`Run ${ctx.command("uninstall")} again in your own terminal to remove what the review gate kept.`);
+  if (!fails && !purgeFailed && !held.length && !retries.length) return 0;
+  return removed > 0 || directResults.some((r) => r.action === "removed") ? 2 : 1;
 }
 
 // What uninstall leaves on disk on purpose (your notes stay unless --purge-data).
 const LEFT = [
   ["episodic.db", "your memory notes (remove with uninstall --purge-data)"],
+  ["projects", "per-project journals and buffers"],
   [path.join("memory", "backups"), "copies of config files from before ad changed them"],
   [path.join("hooks", "hook.log"), "the hook log"],
 ];
 
-function leftOnDisk(root) {
+// Bytes under a folder (bounded: a huge tree is reported as at least what was counted).
+function treeBytes(p, budget = { files: 20_000 }) {
+  let n = 0;
+  let st;
+  try {
+    st = fs.statSync(p);
+  } catch {
+    return 0;
+  }
+  if (st.isFile()) return st.size;
+  if (!st.isDirectory()) return 0;
+  let names = [];
+  try {
+    names = fs.readdirSync(p);
+  } catch {
+    return 0;
+  }
+  for (const name of names) {
+    if (--budget.files < 0) break;
+    n += treeBytes(path.join(p, name), budget);
+  }
+  return n;
+}
+
+function leftOnDisk(ctx, launcherRefs = []) {
   const out = [];
   for (const [rel, what] of LEFT) {
-    const p = path.join(root, rel);
-    try {
-      const st = fs.statSync(p);
-      out.push({ path: p, bytes: st.isFile() ? st.size : 0, what });
-    } catch {
-      // not there
-    }
+    const p = path.join(ctx.root, rel);
+    if (fs.existsSync(p)) out.push({ path: p, bytes: treeBytes(p), what });
+  }
+  if (fs.existsSync(launchDir(ctx.root))) {
+    out.push({ path: launchDir(ctx.root), bytes: 0, what: `the launcher, still started by ${launcherRefs.map(ctx.display).join(", ") || "an entry"}` });
+    const dist = path.join(ctx.root, "memory", "dist");
+    if (fs.existsSync(dist)) out.push({ path: dist, bytes: treeBytes(dist), what: "the copies the launcher runs" });
   }
   return out;
 }

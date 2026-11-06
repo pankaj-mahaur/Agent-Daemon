@@ -51,6 +51,8 @@ function home({ claude = true, claudeDir = true, codex = true, cursor = true, fi
     resolve: (name) => (name === "claude" && claude ? { cmd: process.execPath, prefix: [SHIM], via: "env", file: SHIM } : null),
     out: (l) => lines.push(String(l)),
     ask: async () => answers.shift() ?? "",
+    // No terminal, whatever runs the tests: setup's own step is then skipped (L3).
+    isTTY: () => false,
   });
   return { h, env, ctx, lines, answers, text: () => lines.join("\n"), claudeLog: () => (fs.existsSync(env.FAKE_CLAUDE_LOG) ? fs.readFileSync(env.FAKE_CLAUDE_LOG, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : []) };
 }
@@ -122,8 +124,10 @@ test("P5.4: VS Code (the portable Copilot file) and Gemini CLI (user settings): 
 test("P5.4: one route per host — with the Claude Code plugin enabled, the installer leaves Claude Code alone and doctor flags both", async () => {
   const t = home({ codex: false, cursor: false });
   fs.writeFileSync(path.join(t.h, ".claude", "settings.json"), JSON.stringify({ enabledPlugins: { "agent-daemon-memory@agent-daemon": true, "other@x": true } }));
-  assert.equal(await install({ ctx: t.ctx, yes: true }), 0, t.text());
+  // The MCP part leaves Claude Code alone; setup's hooks need a terminal (L3), so: finish there.
+  assert.equal(await install({ ctx: t.ctx, yes: true }), 2, t.text());
   assert.match(t.text(), /Claude Code\s+leaves it: ad's memory is already enabled here as a plugin \(agent-daemon-memory@agent-daemon\)/);
+  assert.match(t.text(), /Finish in a terminal \(the hooks need one\): (ad memory setup|npx -y agent-daemon-memory@\S+ setup)/);
   assert.equal(t.claudeLog().filter((a) => a[1] === "add").length, 0, "no second server");
   // A disabled plugin doesn't count.
   const u = home({ codex: false, cursor: false });

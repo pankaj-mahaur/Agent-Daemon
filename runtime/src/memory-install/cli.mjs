@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // agent-daemon-memory — ad's memory for other agents (P5.3).
-//   install [--host <id> …] [--yes] [--dry-run] [--capture auto|hooks|tools] [--adopt]
+//   install [--host <id> …] [--yes] [--dry-run] [--capture auto|hooks|tools] [--adopt] [--no-plugin]
+//   setup [--host claude-code] [--no-plugin] [--dry-run]   the hooks and the agent-shell marker
 //   doctor [--json]   repair [--host <id>] [--adopt]   status [--json]
 //   uninstall [--host <id> …] [--purge-data [--force]]
 //   serve [--project <dir>] [--host <id>] [--capture …]   (what hosts start)
@@ -12,7 +13,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { PRODUCT } from "../product.mjs";
 
 const USAGE = `${PRODUCT.package}: ad's memory server for Claude Code, Codex, Cursor, VS Code and Gemini CLI.
-  install [--host <id> …] [--yes] [--dry-run] [--capture auto|hooks|tools]
+  install [--host <id> …] [--yes] [--dry-run] [--capture auto|hooks|tools] [--no-plugin]
+  setup [--host claude-code] [--no-plugin] [--dry-run]   the hooks (in your own terminal)
   doctor [--json]  ·  repair [--host <id>]  ·  status [--json]
   uninstall [--host <id> …] [--purge-data [--force]]
   review [--accept <file>] [--accept-all] [--global]   (in your own terminal)
@@ -33,6 +35,7 @@ export function parseFlags(argv) {
     else if (a === "--adopt") flags.adopt = true;
     else if (a === "--purge-data") flags.purgeData = true;
     else if (a === "--force") flags.force = true;
+    else if (a === "--no-plugin") flags.noPlugin = true;
     else return { error: `unknown option ${a}` };
   }
   return flags;
@@ -60,7 +63,20 @@ async function ask(q) {
   }
 }
 
-export async function main(argv = process.argv.slice(2), { log = (l) => console.log(l) } = {}) {
+// Changes to a host's hooks and settings (L3, Decision 12): never from the agent's own
+// shell; setup's own step needs a terminal (install and repair then skip it and say so).
+const GATED = new Set(["install", "setup", "repair", "uninstall"]);
+const realTTY = () => Boolean(process.stdin.isTTY && process.stdout.isTTY);
+
+/** → why cmd can't run here, or null. */
+export function commandGate(cmd, { env = process.env, isTTY = realTTY, command = (v) => `npx -y ${PRODUCT.package} ${v}` } = {}) {
+  if (!GATED.has(cmd)) return null;
+  if (env.AD_TOOL_SHELL === "1") return `${cmd} can't run from the agent's own shell. Run it yourself in a terminal: ${command(cmd)}`;
+  if (cmd === "setup" && !isTTY()) return "setup needs an interactive terminal. In Git Bash (mintty, which node doesn't see as a terminal), run it through winpty, or use PowerShell or Windows Terminal.";
+  return null;
+}
+
+export async function main(argv = process.argv.slice(2), { log = (l) => console.log(l), env = process.env, isTTY = realTTY, ctx: ctxOpts = {} } = {}) {
   const [cmd, ...rest] = argv;
   if (cmd === "serve") {
     // The server reads its own flags from process.argv.
@@ -91,15 +107,24 @@ export async function main(argv = process.argv.slice(2), { log = (l) => console.
     log(`${flags.error}\n${USAGE}`);
     return 1;
   }
-  const opts = { ...flags, hosts: flags.hosts.length ? flags.hosts : undefined, ask, out: log };
+  const opts = { ask, out: log, env, isTTY, ...ctxOpts, ...flags, hosts: flags.hosts.length ? flags.hosts : undefined };
   const inst = await import("./install.mjs");
+  const refused = commandGate(cmd, { env, isTTY, command: inst.makeContext(opts).command });
+  if (refused) {
+    log(refused);
+    return 2;
+  }
   switch (cmd) {
     case "install":
       return inst.install(opts);
+    case "setup":
+      return (await import("./setup.mjs")).setup({ ...opts, ctx: inst.makeContext(opts) });
     case "repair": {
       const { readLedger } = await import("./ledger.mjs");
+      const { readLedger2 } = await import("./ledger2.mjs");
       const ctx = inst.makeContext(opts);
-      const owned = Object.keys(readLedger(ctx.root).hosts);
+      // The hosts ad set up: MCP entries (v1) and setup's items (v2).
+      const owned = [...new Set([...Object.keys(readLedger(ctx.root).hosts), ...readLedger2(ctx.root).items.filter((i) => !i.source).map((i) => i.host)])];
       return inst.install({ ...opts, ctx, hosts: opts.hosts ?? (owned.length ? owned : undefined) });
     }
     case "uninstall":
