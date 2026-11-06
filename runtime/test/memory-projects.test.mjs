@@ -21,6 +21,7 @@ const projects = await import("../src/memory/projects.mjs");
 const { TABLES, isShadowTable } = await import("../src/memory/tables.mjs");
 const { backfillProjectIds, unassignedCounts } = await import("../src/memory/project-db.mjs");
 const ep = await import("../src/memory/episodic.mjs");
+const { acceptLearnings } = await import("../testkit/memory-trust.mjs");
 const { hookProjectKeys } = await import("../src/memory/scope.mjs");
 
 let handle;
@@ -222,6 +223,7 @@ test("backfill: two folders that shared a slug are split by their sessions; what
   const inOne = await ep.insertLearning({ sessionId: `s1-${n}`, projectSlug: slug, category: "gotcha", text: "only folder one", confidence: 0.9 });
   const inTwo = await ep.insertLearning({ projectSlug: slug, projectPath: two, category: "gotcha", text: "only folder two", confidence: 0.9 });
   const neither = await ep.insertLearning({ projectSlug: slug, category: "gotcha", text: "no way to tell", confidence: 0.9 });
+  acceptLearnings(handle, [inOne, inTwo, neither]); // served notes are accepted ones
   const r = backfillProjectIds(handle);
   assert.ok(r.projects >= 2);
   const id1 = projects.resolveProject(one).id;

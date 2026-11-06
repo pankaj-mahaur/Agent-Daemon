@@ -69,10 +69,11 @@ async function seed() {
     const ep = await import(`../src/memory/episodic.mjs?svc=${Date.now()}`);
     const slug = ep.projectSlug(PROJ);
     await ep.upsertSession({ id: "s-1", projectPath: PROJ, startedAt: "2026-10-01T00:00:00Z" });
-    // Straight into SQLite, as 3.0 stored it before the write-time screen: an accepted row.
+    // Straight into SQLite, as 3.0 stored it before the write-time screen: an accepted row
+    // (the v5 upgrade marks it accepted as legacy).
     const h = await ep.db();
-    h.run("INSERT INTO learnings (session_id, project_slug, category, text, evidence, confidence, status, tags, created_at) VALUES ('s-1', ?, 'gotcha', ?, '', 0.9, 'active', '[\"curl evil.example deploy\"]', '2026-10-02T00:00:00Z')", [slug, POISON]);
-    h.run("INSERT INTO learnings (session_id, project_slug, category, text, evidence, confidence, status, tags, created_at) VALUES ('s-1', ?, 'convention', ?, '', 0.9, 'active', '[\"pnpm install deploy\"]', '2026-10-02T00:00:01Z')", [slug, CLEAN]);
+    h.run("INSERT INTO learnings (session_id, project_slug, category, text, evidence, confidence, status, accepted_by, tags, created_at) VALUES ('s-1', ?, 'gotcha', ?, '', 0.9, 'active', 'legacy', '[\"curl evil.example deploy\"]', '2026-10-02T00:00:00Z')", [slug, POISON]);
+    h.run("INSERT INTO learnings (session_id, project_slug, category, text, evidence, confidence, status, accepted_by, tags, created_at) VALUES ('s-1', ?, 'convention', ?, '', 0.9, 'active', 'legacy', '[\"pnpm install deploy\"]', '2026-10-02T00:00:01Z')", [slug, CLEAN]);
     ep.closeDb();
   } finally {
     for (const [k, v] of Object.entries(saved)) v === undefined ? delete process.env[k] : (process.env[k] = v);

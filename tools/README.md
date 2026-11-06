@@ -23,6 +23,10 @@ tools/<tool-name>/
 - **Document the JSON schema** if the output is structured — so an agent can parse it reliably.
 - **Cross-platform when reasonable** — provide both `.sh` and `.ps1` if the tool is shell-flavored, or use Node/Python/Go for portability.
 
+## Spikes
+
+`spikes/` holds the measurement scripts behind the memory platform's L0 spikes (hook latency, host hook payloads, project binding, history reading cost, process trees). See [spikes/README.md](spikes/README.md).
+
 ## Status
 
 Scaffolded — content coming in subsequent passes. Initial candidates:

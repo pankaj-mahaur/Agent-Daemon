@@ -147,23 +147,25 @@ test("hello command exits 0", async () => {
 
 ## Adding a new hook
 
-1. **Decide which event**: `PreToolUse`, `PostToolUse`, `SessionStart`, `SessionEnd`, `UserPromptSubmit`, `PreCompact`, `Stop`
-2. **Create the handler** at `runtime/src/hooks/<event>-<name>.mjs`. Use [`io.mjs`](../runtime/src/hooks/io.mjs) for stdin/stdout protocol.
-3. **Wire it into the hook dispatcher** (`cmdHook` in `cli-full.mjs`)
-4. **Create a JSON snippet** at `hooks/<event>-<name>.json` so users can copy-paste
-5. **Add to a profile** in `runtime/profiles/profiles.json` if it's part of `developer` or `security`
-6. **Test it** with a subprocess test (see `runtime/test/hooks.test.mjs` for the pattern)
-7. **Document** in `hooks/README.md`
+Every installed hook runs the dispatcher, `runtime/bin/hook.mjs <event>`; a handler is a step behind one of its events.
 
-Hooks in `profiles.json` are also rendered into the engine home (`CODEX_HOME/hooks.json`, see `runtime/src/engine/codex/hooks-config.mjs`). There the handler runs with `--host ad`, so read input and write decisions through `io.mjs`, which adapts the engine's shapes. Skill-use hooks are skipped in the harness.
+1. **Decide the host event and the dispatcher event**: an existing route in [`hooks/routes.mjs`](../runtime/src/hooks/routes.mjs) `ROUTES` (add a step to its `steps`, or a `stepMatchers` entry when the step runs for certain tools), or a new row (one per host event and dispatcher event; `hosts` when only one host has it)
+2. **Create the handler** at `runtime/src/hooks/<name>.mjs` taking the payload as an argument (`handler(given)`: the dispatcher has already read stdin). Use [`io.mjs`](../runtime/src/hooks/io.mjs) for the output shapes.
+3. **Run it from the event** in `runtime/bin/hook.mjs` by dynamic import, so other events don't load it, and give it a `cmdHook` name in `cli-full.mjs` for running by hand
+4. **Add the step to a profile** in `runtime/profiles/profiles.json` (its id is the step name); `ad init` and the engine's `hooks.json` then get the route
+5. **Test it**: a spawned dispatcher test (`runtime/test/hook-routes.test.mjs`), and keep `startup.test.mjs` (what each event loads) and `hook-latency.test.mjs` (the budgets) green
+6. **Document** in the README's "How the hooks run" table and `hooks/README.md`
+
+The engine's home gets the same routes (`CODEX_HOME/hooks.json`, see `runtime/src/engine/codex/hooks-config.mjs`) with `--host ad`, so read input and write decisions through `io.mjs`, which adapts the engine's shapes. Routes for events the engine doesn't have (Skill, UserPromptExpansion, CronCreate, SubagentStop) are skipped there.
 
 Hook handler contract:
 
-- Reads JSON from `stdin`
+- Reads its payload from the dispatcher (or JSON on `stdin` when run by hand)
 - Writes a JSON decision to `stdout`
-- Logs warnings to `stderr` (never `stdout`)
-- Finishes in **< 200 ms** for `PreToolUse` and `Stop`
+- Logs warnings to `stderr` (never `stdout`); what the user should see later goes to the hook log (`hooks/hook-log.mjs`)
+- Stays within the budgets (`tool.before` 150/200/400 ms, `session.start` and `prompt.submit` 250/350/900 ms on Linux/macOS/Windows)
 - **Never answers allow on its own**: no objection is `{}` (`{"decision":"approve"}` on PreToolUse skips the user's permission prompt); an unexpected error is `{}` and exit 0
+- **Never migrates the memory store** (the dispatcher sets `AD_HOOK_NO_MIGRATE=1`; `db()` returns null on a store that isn't at this ad's version: buffer instead)
 
 ---
 

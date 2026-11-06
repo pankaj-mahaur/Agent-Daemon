@@ -59,10 +59,12 @@ export function projectFolderName(dir, { platform = process.platform } = {}) {
  * The folder outside the project for its capture files: adRoot()/projects/<project id>
  * (P7.1a); a folder from before ids (projects/<path key>) is used until the backfill
  * (project-db.mjs, a long-lived process) moves it to the id.
+ * create: false only looks the id up (no registry write): for a caller that
+ * only needs to know whether such a folder exists.
  */
-export function outsideDir(cwd) {
+export function outsideDir(cwd, { create = true } = {}) {
   const legacy = path.join(root(), "projects", projectFolderName(cwd));
-  const id = projectIdOf(path.resolve(cwd), { create: !isDir(legacy) });
+  const id = projectIdOf(path.resolve(cwd), { create: create && !isDir(legacy) });
   if (!id) return legacy;
   const byId = path.join(root(), "projects", id);
   return isDir(byId) || !isDir(legacy) ? byId : legacy;
@@ -84,8 +86,10 @@ export function moveToIdFolder(dir, id) {
 /** @returns {string} where this project's capture files go (not created) */
 export function projectDataDir(cwd) {
   const own = path.join(path.resolve(cwd), PROJECT_FOLDER);
-  const outside = outsideDir(cwd);
-  if (!isDir(own)) return outside;
+  if (!isDir(own)) return outsideDir(cwd);
+  // Only to adopt an outside folder that already exists: no id is made for that
+  // (a registry write under its lock, on every hook of an initialised project).
+  const outside = outsideDir(cwd, { create: false });
   // The project got its own folder (ad init) after capture started outside it:
   // bring those files in, so no journal, proposal or memory file is stranded.
   // The folder is claimed by a rename first, so two processes never both adopt it.

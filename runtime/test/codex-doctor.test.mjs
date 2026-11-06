@@ -56,7 +56,7 @@ test("live checks: skipped without a harness home; report login, hooks, sandbox"
     const by = Object.fromEntries(checks.map((c) => [c.code, c]));
     assert.equal(by["engine.login"].ok, false);
     assert.equal(by["engine.hooks"].ok, false);
-    assert.deepEqual(by["engine.hooks"].data, { trusted: 1, total: 2 });
+    assert.deepEqual(by["engine.hooks"].data, { trusted: 1, total: 2, untrusted: ["? (modified)"] }, "the hook Codex skips is named");
     assert.equal(by["engine.windowsSandbox"].ok, true);
     assert.equal(by["engine.windowsSandbox"].data.status, "ready");
     const broken = await engineLiveChecks({ env: { AD_CODEX_HOME: home }, engineFactory: async () => { throw new Error("boom"); } });

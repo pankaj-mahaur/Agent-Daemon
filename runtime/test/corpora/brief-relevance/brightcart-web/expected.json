@@ -1,0 +1,32 @@
+{
+  "relevant": ["brightcart-web-01", "brightcart-web-02", "brightcart-web-03", "brightcart-web-04", "brightcart-web-05", "brightcart-web-06", "brightcart-web-07", "brightcart-web-08", "brightcart-web-09", "brightcart-web-24"],
+  "irrelevant": ["brightcart-web-10", "brightcart-web-11", "brightcart-web-13", "brightcart-web-14", "brightcart-web-15", "brightcart-web-18", "brightcart-web-20", "brightcart-web-21", "brightcart-web-25"],
+  "neutral": ["brightcart-web-12", "brightcart-web-16", "brightcart-web-17", "brightcart-web-19", "brightcart-web-22", "brightcart-web-23"],
+  "reasons": {
+    "brightcart-web-01": "The branch handles refund webhooks (route.ts); local refund status needs the webhook forwarder.",
+    "brightcart-web-02": "src/payments/stripe-client.ts is a recent path and createRefund must go through it.",
+    "brightcart-web-03": "Refund amounts and the currency-rounding tests use src/lib/money.ts, a recent path.",
+    "brightcart-web-04": "Directly about the latest commit: charge.refunded for partial refunds.",
+    "brightcart-web-05": "Test command for refund.test.ts, plus the rule not to hit Stripe from unit tests.",
+    "brightcart-web-06": "e2e/refund.spec.ts is a recent path; the seeded delivered order is the refund fixture.",
+    "brightcart-web-07": "The branch adds a Refund model and a migration.",
+    "brightcart-web-08": "The branch adds refund/actions.ts, a mutation that must check order ownership.",
+    "brightcart-web-09": "src/emails/refund-confirmation.tsx is a recent path.",
+    "brightcart-web-10": "Stale: superseded by the refund code this branch is writing (see -24).",
+    "brightcart-web-11": "Stale: tests moved to Vitest and pnpm (see -05).",
+    "brightcart-web-12": "Project-wide and true, but not specific to refunds.",
+    "brightcart-web-13": "Search indexing is an unrelated area.",
+    "brightcart-web-14": "Marketing pages are an unrelated area.",
+    "brightcart-web-15": "Recommendations carousel is an unrelated area.",
+    "brightcart-web-16": "Project-wide PR convention; harmless but not needed for this work.",
+    "brightcart-web-17": "Project-wide React style; mildly useful for the refund page.",
+    "brightcart-web-18": "Admin image uploads are an unrelated area.",
+    "brightcart-web-19": "Project-wide pre-push check; harmless but generic.",
+    "brightcart-web-20": "Stale: emails moved to React Email in src/emails/ (see -09).",
+    "brightcart-web-21": "Gift cards are an unrelated feature.",
+    "brightcart-web-22": "Currency background; loosely related to rounding but not needed.",
+    "brightcart-web-23": "Storybook is a project tool; the branch touches no shared components.",
+    "brightcart-web-24": "The refund eligibility rule; src/payments/refund-policy.ts is a recent path.",
+    "brightcart-web-25": "CDN purge after theme changes is an unrelated area."
+  }
+}

@@ -90,6 +90,9 @@ export async function runEpisode(spec, inject = {}) {
           const c = await driver.captured(ctx, { cwd, text: e.phrasing.text });
           Object.assign(rec, { captured: c.captured, capturedText: c.stored.map((t) => scrubPaths(t, scrubRoots)) });
         }
+        // Captures wait for the user's review; one review that accepts everything
+        // stands between the sessions (PROTOCOL.md, revision 2026-11-06).
+        if ((condition.adHooks || condition.adTools) && driver.review) await driver.review(ctx, { cwd });
       }
     } catch (err) {
       Object.assign(rec, { status: /timed? ?out/i.test(String(err?.message)) ? "timeout" : "crash", error: scrubPaths(String(err?.message ?? err), scrubRoots).slice(0, 500) });

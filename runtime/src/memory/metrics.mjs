@@ -23,6 +23,7 @@
 
 import { normKey } from "./sqlite.mjs";
 import { learningVisibility } from "./episodic.mjs";
+import { acceptedSql } from "./trust.mjs";
 import { idOfKeys, slugOfKeys } from "./projects.mjs";
 
 const EARLIER_MS = 10 * 60 * 1000;
@@ -83,7 +84,7 @@ export function lessonIdsInFile(handle, keys, content) {
   if (!handle || !keys?.length || !nks.length) return [];
   try {
     return handle.all(
-      `SELECT id FROM learnings WHERE status = 'active' AND project_slug IN (${keys.map(() => "?").join(",")}) AND norm_key IN (${nks.map(() => "?").join(",")})`,
+      `SELECT id FROM learnings WHERE ${acceptedSql()} AND project_slug IN (${keys.map(() => "?").join(",")}) AND norm_key IN (${nks.map(() => "?").join(",")})`,
       [...keys, ...nks]
     ).map((r) => r.id);
   } catch {
@@ -106,10 +107,26 @@ export function rewordInFile(content, oldText, newText) {
   return hit ? out.join("") : null;
 }
 
+/** Drop a lesson's lines from a memory file, with the `  > evidence` lines under them; → the new content, or null when it isn't there. */
+export function dropFromFile(content, text) {
+  const nk = normKey(text);
+  const lines = String(content ?? "").split(/(?<=\n)/);
+  const kept = [];
+  let dropping = false;
+  for (const line of lines) {
+    const bare = line.replace(/\r?\n$/, "");
+    const m = FILE_LINE.exec(bare);
+    if (m) dropping = normKey(m[1]) === nk;
+    else if (!/^ {2}> /.test(bare)) dropping = false;
+    if (!dropping) kept.push(line);
+  }
+  return kept.length === lines.length ? null : kept.join("");
+}
+
 // Accepted lessons this project may use, as candidates for a repeat.
 function candidates(handle, keys) {
   const vis = learningVisibility("l", keys, "any");
-  return { sql: `l.status = 'active' AND (l.project_slug IS NOT NULL OR l.global_accepted_at IS NOT NULL) AND ${vis.sql}`, params: vis.params };
+  return { sql: `${acceptedSql("l")} AND (l.project_slug IS NOT NULL OR l.global_accepted_at IS NOT NULL) AND ${vis.sql}`, params: vis.params };
 }
 
 function earlier(row, captureRef, now) {

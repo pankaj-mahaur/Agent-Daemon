@@ -16,8 +16,8 @@ Common failure modes and how to diagnose them. Each entry: **symptom → root ca
 
 **Fix (v0.3+):**
 1. Upgrade: `git pull && npm install && npm link` in the agent-daemon repo.
-2. Re-run `ad init` in each project. This wires the new `UserPromptSubmit` hook (`ad hook user-prompt-extract`) — fires before every user turn, extracts learnings from corrections / decisions / gotchas / explicit `"remember: X"` notes via regex. **Works in VS Code extension.**
-3. Verify: `cat ~/.claude/settings.json | grep user-prompt-extract` → should match. Then talk to Claude normally and check `.agent-daemon/learning-journal.jsonl` grows.
+2. Re-run `ad init` in each project. This wires the `UserPromptSubmit` hook (the dispatcher's `prompt.submit`) — fires before every user turn, extracts learnings from corrections / decisions / gotchas / explicit `"remember: X"` notes via regex. **Works in VS Code extension.**
+3. Verify: `cat ~/.claude/settings.json | grep prompt.submit` → should match. Then talk to Claude normally and check `.agent-daemon/learning-journal.jsonl` grows.
 4. The v0.3 parser also accepts both tag forms + JSON or YAML if Claude does emit a block.
 
 The historical sessions before this upgrade can't be retroactively recovered without a working LLM fallback (see entry #6) — the digest blocks weren't there to parse.
@@ -178,17 +178,12 @@ git diff -- .agent-daemon/memory/
 ✗  SessionEnd hook → agent-daemon    missing
 ```
 
-**Root cause:** Sometimes `ad init` skips hook injection if it detects existing entries it doesn't recognize (conservative — never overwrites user's hooks).
+**Root cause:** `ad init` didn't write `~/.claude/settings.json`: it refuses a file it can't parse (so a hand edit isn't lost), and says so. Or `ad doctor` read a different home than `ad init` wrote (`HOME`/`USERPROFILE`, `CLAUDE_CONFIG_DIR`).
 
 **Fix:**
 
-- Inspect `~/.claude/settings.json` and confirm the existing hooks
-- If you want the daemon hooks added on top, edit the file manually:
-  - Copy entries from `hooks/session-start-load.json`
-  - Copy entries from `hooks/session-end-digest.json`
-  - Merge into the `hooks` object
-
-Or remove conflicting entries first, then re-run `ad init`.
+- Run `ad init` again and read its output: a settings file it can't parse is named, unchanged.
+- Fix the file (or close Claude Code, which may be mid-write) and re-run `ad init`. It replaces only ad's own entries (dispatcher routes and older `ad …` entries) and never touches other hooks.
 
 ---
 
@@ -673,12 +668,12 @@ For "The engine reported a problem", inspect those details first. `ad doctor` sh
 ## 45. A note I expected doesn't show up in memory
 
 **Cause:** one of these, by design:
-- it was written by the agent about itself (from its own turn), so it waits as **pending** for your review;
+- it waits as **pending** for your review: every note does, including what ad's hooks captured from your prompts (a hook can't tell a typed prompt from a scheduled one or another agent's text);
 - the injection screen flagged it, or it held a provider key, so it is **held back** (`ad memory scan` holds back older notes like this once);
 - it belongs to another project, or it was a "global" note from ad 3.0 written in another project (those stay in their project);
 - it is a user fact observed in another project.
 
-**Fix:** `ad memory held` lists what is waiting or held back in this project. Run it in your own terminal: `ad memory held accept L12` serves a waiting note, `release` brings back one the injection screen held (never one holding a secret), `drop` clears it; each asks you to type the id. Or say it again in your own words, or use `/remember` in `ad tui`: what you type yourself applies at once.
+**Fix:** `ad memory held` lists what is waiting or held back in this project. Run it in your own terminal: `ad memory held accept L12` serves a waiting note, `release` brings back one the injection screen held (never one holding a secret), `drop` clears it; each asks you to type the id. Saying the note again doesn't accept it: only you do, in review.
 
 ## 46. `ad doctor` says older notes from folders that shared one key reach neither
 
@@ -726,13 +721,17 @@ See [harness.md](harness.md#working-in-your-home-folder).
 
 **Cause:** a note the agent recorded is **pending** until you accept it: only this project's `memory_search` and `memory_get` show it, marked `(unreviewed)`. A note it asked to make cross-project also waits for a second OK.
 
-**Fix:** run `ad review` in your own terminal and accept it (type `accept`), or `ad review --accept <file>` / `--accept-all`. Saying the same note yourself also accepts it.
+**Fix:** run `ad review` in your own terminal and accept it (type `accept`), or `ad review --accept <file>` / `--accept-all`, or `ad memory held accept <id>`. Saying the same note again doesn't accept it.
 
-## 52. `ad review: accepting notes can't run from the agent's own shell` or `… needs an interactive terminal`
+## 52. `ad review: accepting notes can't run from the agent's own shell`, `… needs an interactive terminal`, `… under an agent (claude)`, or it asks for a code from a dialog
 
-**Cause:** accepting a memory note changes what reaches your sessions, so only you can do it. `ad review` (and `ad memory promote`, `ad memory held accept`) refuse inside ad's engine tool shells and when stdin or stdout isn't a terminal; there is no `--yes` and no environment variable that skips it.
+**Cause:** accepting a memory note changes what reaches your sessions, so only you can do it. `ad review` (and `ad memory promote`, `ad memory held accept`, `ad review --import`, `ad memory consolidate --apply-merges/--apply-stale`) refuse:
+- inside ad's engine tool shells, and when stdin or stdout isn't a terminal;
+- when an agent process (Claude Code, Codex, Gemini, Copilot, Cursor's agent, OpenCode) is anywhere above the terminal.
 
-**Fix:** run it yourself in a terminal window (not through the agent, not piped). Listing works anywhere: plain `ad review` without a terminal lists what is queued.
+A terminal window passes as it is when ad recognises the program that started it and that program is installed where your own processes can't write. On Windows: under Program Files (or the Windows folder's `explorer.exe`, for a window opened from Run or Start), and the program file owned by SYSTEM, Administrators or TrustedInstaller with no one else allowed to change it. On macOS and Linux: root owns the program and every folder above it, none writable by a group or by everyone. So Windows Terminal, macOS Terminal and a distribution's own terminals pass; terminals in `/Applications` (iTerm2, Ghostty, WezTerm, Warp, kitty: that folder is writable by admin users), Homebrew or `~/.local` ask for the code each time. On a Windows machine locked down with WDAC or AppLocker (constrained language), review can't check its terminal and refuses. Otherwise ad shows a code in a dialog that you type back: in an editor's terminal (VS Code, Cursor, Zed, JetBrains), where an editor's agent can run commands too, and inside tmux, screen, `script`, ssh, an app ad doesn't know, or a terminal installed in your own folders. There is no `--yes` and no environment variable that skips any of this.
+
+**Fix:** run it yourself in a terminal window (not through the agent, not piped), and type the dialog's code when asked. `… none can be shown` means no dialog could open: no desktop session, Linux without `/usr/bin/zenity`, or on Linux a host other than an editor installed in a system folder (ad takes the display only from that editor, never from its own environment). Run it in a terminal window of its own, outside the editor, tmux and ssh. `/memory forget` in `ad tui` can't ask for the code yet: in an editor's terminal, run `ad tui` in a terminal outside the editor to forget a note. Listing works anywhere: plain `ad review` without a terminal lists what is queued.
 
 ## 53. The memory installer refused my config
 
@@ -1012,6 +1011,89 @@ Stray text on top of ad's screen while it runs (a library writing straight to th
 **Cause:** the account list (`~/.agent-daemon/accounts/registry.json`) is damaged, or a sign-in or key change was interrupted (a crash, a closed window) and left a half-made account or a key no account names. ad never resets the list by itself. A list from a newer ad is only read, never changed.
 
 **Fix:** run `ad auth repair` in your own terminal. It finishes what it safely can and asks before the rest: restoring the list from its backup (the damaged file is kept), finishing or removing a half-made account, deleting a key no account uses. It never prints a key. "Another ad is updating" passes once the other command ends; "written by a newer ad" means updating ad here.
+
+## 92. ad mistakes: "Run it again with --yes to read them"
+
+**Symptom:** `ad mistakes` prints what it would read, then `Run it again with --yes to read them.` and exits with code 2 without a report.
+
+**Cause:** ad reads your agent history only after you say yes, and there was no terminal to ask in: the command ran from a script, CI, an editor task or with its input piped.
+
+**Fix:** run it in a terminal and answer `y`, or pass `--yes` (`ad mistakes --yes --share > summary.md`). Nothing was read in the run that stopped. See [mistakes.md](mistakes.md).
+
+## 93. ad mistakes: "No Claude Code or Codex history found for this project"
+
+**Symptom:** `ad mistakes` says it found no history and names the folders it looked in.
+
+**Cause:** one of these:
+- "This project" is the git repository you're in. Sessions started in another checkout or worktree of the same repository, or in a folder above it, belong to other projects. Outside a git repository only sessions started in exactly that folder count.
+- Claude Code deletes transcripts after `cleanupPeriodDays` (30 days by default).
+- Your agents keep their history somewhere else: `CLAUDE_CONFIG_DIR` and `CODEX_HOME` move it, and ad reads them from the environment it runs in.
+- The only sessions were headless (`claude -p`, `codex exec`): those are left out of the counts.
+
+**Fix:** run `ad mistakes --all-projects` to see every project. Run it from the folder you work in, with the same `CLAUDE_CONFIG_DIR` or `CODEX_HOME` your agents use. To keep more Claude Code history, raise `cleanupPeriodDays` in `~/.claude/settings.json`.
+
+## 94. ad mistakes: "Skipped N compressed Codex sessions"
+
+**Symptom:** the report ends with `Skipped N compressed Codex sessions (this Node can't read .zst; Node 22.15+ can).`
+
+**Cause:** Codex compresses older session files (`.jsonl.zst`), and the Node running ad is older than 22.15, which added zstd.
+
+**Fix:** update Node to 22.15 or later (`node --version` shows yours) and run `ad mistakes` again. The other sessions were counted.
+
+---
+
+## 95. The rules file is unreadable
+
+**Symptom:** Claude Code shows `ad: the rules file was unreadable; using the last good copy.` or `ad: the rules file is unreadable, so no rules apply right now.` `ad doctor` shows a `Rules file` row marked ✗.
+
+**Cause:** the rules check reads only `~/.agent-daemon/guards.json` (never the memory store), so it stays fast. ad writes that file whole and keeps the previous good one as `guards.last-good.json`. A hand edit, a full disk or a copy from another machine can leave it unreadable. With the last good copy, the rules from before your latest change apply. With neither, no rule applies: a broken rules file never blocks your tools.
+
+**Fix:**
+1. Look at the file: `node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" ~/.agent-daemon/guards.json` prints where it breaks. (On Windows the folder is `%USERPROFILE%\.agent-daemon`, or your `AD_ROOT`.)
+2. If you edited it, undo the edit. Otherwise move it aside (`guards.json.broken`): with no rules file, ad uses the last good copy without a warning. If that copy is unreadable too, move it aside as well (then no rule applies until ad writes the file again).
+3. Run `ad doctor` again: `Rules file` should be ✓ (it says when it is using the last good copy).
+
+The hook log (`~/.agent-daemon/hooks/hook.log`, shown by `ad doctor`) records each time a hook found the file unreadable.
+
+---
+
+## 96. `ad doctor`: `Hook routes … run twice`
+
+**Symptom:** `✗ Hook routes  run twice: user-prompt-extract (.claude/settings.json: prompt.submit, .claude/settings.json: an older ad hook entry)`.
+
+**Cause:** two of ad's hook entries run the same step: an entry from before the hook dispatcher (`ad hook …`) next to a dispatcher route, the same route twice, or ad's hooks in a project's `.claude/settings.json` as well as your own settings. Each prompt is then captured, and its notes shown, twice.
+
+**Fix:** run `ad init`. It keeps one route per step in your settings (and keeps any guard you had, such as `bash.guard`). Entries in a project's settings files are that project's: remove ad's entries there by hand.
+
+---
+
+## 97. `ad doctor`: `Hook script … is gone`
+
+**Symptom:** `✗ Hook script  <path>/runtime/bin/hook.mjs is gone`, and every Claude Code hook fails.
+
+**Cause:** the hooks point at the copy of ad that ran `ad init`. That copy was moved or deleted (an `npx` cache, a temporary folder, a git worktree). `ad init` warns when it runs from such a copy.
+
+**Fix:** run `ad init` again from the ad you use: it points the routes at that copy. Until then the memory plugin, if you have it, does the memory steps itself.
+
+---
+
+## 98. `ad doctor`: `Memory plugin hooks … predates ad's hook dispatcher`
+
+**Symptom:** with the `agent-daemon-memory` plugin on in Claude Code, notes show twice at session start and with prompts.
+
+**Cause:** plugin versions from before the hook dispatcher only recognise ad's older `ad hook …` entries. `ad init` knows this: while such a plugin is on, it writes its prompt and session-start hooks as command strings ending in the words that plugin looks for (`node '<ad>/runtime/bin/hook.mjs' prompt.submit # ad hook user-prompt-extract ad query-retrieve`), and the plugin stands aside. The row is ✗ when the hooks were written before the plugin was turned on, or by hand.
+
+**Fix:** run `ad init` again. Better, update the plugin from Claude Code's `/plugin` menu and then run `ad init` (the hooks go back to the faster exec form). Captures aren't stored twice either way (the journal drops duplicates).
+
+---
+
+## 99. Captures wait in the journal: "the memory store is schema vN"
+
+**Symptom:** the hook log (`ad doctor`, `Hook log`) shows `the memory store is schema v4, older than this ad's v5: upgrading it in the background`, or `… newer than this ad's …`.
+
+**Cause:** hooks never upgrade the memory store: a host stops a hook that runs past its time limit, and an upgrade cut off half-way is worse than one that waits. An older store is upgraded by a background job (one at a time); until it finishes, captures wait in the project's journal. A newer store means an older ad is running the hooks, for example a second install: captures wait until that ad is updated.
+
+**Fix:** usually none: the next session finds the store upgraded and drains the journal. If the message keeps coming, run any `ad` command that opens memory (`ad doctor`, `ad memory held`): it upgrades the store in the foreground and shows an error if it can't. For "newer", update the ad your hooks run (`ad doctor` shows its path under `Hook script`), or the memory plugin if it is the one logging.
 
 ---
 

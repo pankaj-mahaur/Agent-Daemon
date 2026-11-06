@@ -9,6 +9,7 @@ import fs from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { TERMINAL } from "../testkit/memory-trust.mjs";
 
 const HOME = await fs.mkdtemp(path.join(os.tmpdir(), "ad-review-skill-"));
 process.env.HOME = HOME;
@@ -49,7 +50,7 @@ const lines = () => {
   const l = [];
   return { l, out: (x) => l.push(String(x)) };
 };
-const tty = { isTTY: () => true, env: {} };
+const tty = { isTTY: () => true, env: {}, ancestry: TERMINAL };
 
 test("the loop shows the diff; a typed accept applies it, prints the version and hosts, and files the proposal", async () => {
   const s = await setup();

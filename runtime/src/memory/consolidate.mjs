@@ -18,6 +18,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { db } from "./episodic.mjs";
+import { acceptedSql } from "./trust.mjs";
 
 const JACCARD_THRESHOLD = 0.8;
 const STALE_DAYS = 90;
@@ -58,7 +59,7 @@ export async function analyzeConsolidation(opts = {}) {
   const handle = await db();
   if (!handle) return { driver: false, scanned: 0, mergeClusters: [], staleCandidates: [], contradictions: [] };
 
-  let where = "status = 'active' AND COALESCE(applied_to, '') NOT LIKE 'quarantined%'";
+  let where = `${acceptedSql()} AND COALESCE(applied_to, '') NOT LIKE 'quarantined%'`;
   const params = [];
   if (opts.projectSlug) {
     where += " AND project_slug = ?";
@@ -247,27 +248,12 @@ export async function writeConsolidationProposals(analysis, { cwd, dryRun }) {
  * @param {Awaited<ReturnType<typeof analyzeConsolidation>>} analysis
  * @returns {Promise<number>} rows superseded
  */
-export async function applyMerges(analysis) {
+export async function applyMerges(analysis, token) {
   const handle = await db();
   if (!handle) return 0;
-  let superseded = 0;
-  handle.transaction(() => {
-    for (const c of analysis.mergeClusters) {
-      const extraObserved = c.duplicates.reduce((a, d) => a + (d.observed_count || 1), 0);
-      handle.run(
-        `UPDATE learnings SET observed_count = observed_count + ? WHERE id = ?`,
-        [extraObserved, c.survivor.id]
-      );
-      for (const d of c.duplicates) {
-        handle.run(
-          `UPDATE learnings SET status = 'superseded', superseded_by = ? WHERE id = ? AND status = 'active'`,
-          [c.survivor.id, d.id]
-        );
-        superseded++;
-      }
-    }
-  });
-  return superseded;
+  // Retiring accepted notes is the review service's (a review token, like an accept).
+  const { supersedeLearnings } = await import("./review-service.mjs");
+  return supersedeLearnings(handle, token, analysis.mergeClusters);
 }
 
 /**
@@ -276,15 +262,9 @@ export async function applyMerges(analysis) {
  * @param {Awaited<ReturnType<typeof analyzeConsolidation>>} analysis
  * @returns {Promise<number>} rows archived
  */
-export async function applyStaleArchive(analysis) {
+export async function applyStaleArchive(analysis, token) {
   const handle = await db();
   if (!handle) return 0;
-  let archived = 0;
-  handle.transaction(() => {
-    for (const r of analysis.staleCandidates) {
-      handle.run(`UPDATE learnings SET status = 'archived' WHERE id = ? AND status = 'active'`, [r.id]);
-      archived++;
-    }
-  });
-  return archived;
+  const { archiveStale } = await import("./review-service.mjs");
+  return archiveStale(handle, token, analysis.staleCandidates.map((r) => r.id));
 }

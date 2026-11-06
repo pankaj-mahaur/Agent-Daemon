@@ -266,12 +266,12 @@ test("deduplication: same session twice, hook and tool in either order, other pr
   const afterHook = await captureExplicit({ ...learning("lint runs before every commit in this repo.", { session_id: "S" }), scope, mode: "tools", limiter: lim });
   assert.equal(afterHook.status, "duplicate", "normalized text: one note");
   assert.equal(rows("lint runs before every commit in this repo")[0].capture_ref, "S");
-  // Tool first, then the user says it: the user's words accept the pending note, one row.
+  // Tool first, then the user says it: still one row, and still pending: only review accepts (L1).
   await captureExplicit({ ...learning("the api client is generated, never edit it", { session_id: "S" }), scope, mode: "tools", limiter: lim });
   await applyLearnings({ classified: [{ ...hookNote, learning: { ...hookNote.learning, text: "the api client is generated, never edit it" } }], sessionId: null, sessionSummary: "t", cwd: dir });
   const both = rows("the api client is generated, never edit it");
   assert.equal(both.length, 1);
-  assert.equal(both[0].status, "active");
+  assert.equal(both[0].status, "pending");
   // The same text in another project is that project's own note.
   const other = await project();
   const x = await captureExplicit({ ...learning("vitest runs with the threads pool here"), scope: other.scope, mode: "tools", limiter: lim });

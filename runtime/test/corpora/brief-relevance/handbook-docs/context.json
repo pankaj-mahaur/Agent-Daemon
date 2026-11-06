@@ -1,0 +1,25 @@
+{
+  "name": "handbook-docs",
+  "stack": ["Docusaurus 3", "MDX", "React", "TypeScript", "Vale", "npm"],
+  "branch": "docs/api-v2-migration-guide",
+  "recent_paths": [
+    "docs/guides/migrate-to-api-v2.mdx",
+    "docs/reference/api-v2/authentication.mdx",
+    "docs/reference/api-v2/pagination.mdx",
+    "docs/reference/api-v1/deprecation.mdx",
+    "sidebars.ts",
+    "docusaurus.config.ts",
+    "redirects.json",
+    "static/img/guides/v2-token-flow.svg",
+    "src/components/VersionBadge.tsx",
+    ".vale/styles/Handbook/Terms.yml"
+  ],
+  "recent_commits": [
+    "docs: draft the API v2 migration guide",
+    "docs(reference): v2 cursor pagination page",
+    "feat(components): VersionBadge for v1/v2 labels",
+    "chore: add the v1 deprecation banner and redirects",
+    "style(vale): accept 'API key' and 'access token' terms"
+  ],
+  "session_cwd": "/work/handbook-docs"
+}

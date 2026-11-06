@@ -88,6 +88,7 @@ Commands:
   memory install [--host <id>] [--yes] [--dry-run]   Add ad's memory server to other agents (doctor, repair, status, uninstall)
   memory report [--days 30] [--all-projects] [--json] [--share]   Is memory working: repeated corrections, what was shown, feedback
                          --all-projects       span every project (default: current --cwd only)
+  mistakes [--all-projects] [--share | --json] [--yes]   Read-only report of the corrections you typed to your coding agents (offline, stores nothing)
   route stats            Route-advice effectiveness: advised / followed / diverged / ignored per skill
                          --days <n>           window (default 30); --json for machine output
   route rebuild          Recompile route maps from installed skills (global + project lanes)
@@ -355,26 +356,26 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
       return 1;
     }
   }
-  const existingHooksMap = existingSettings.hooks || {};
-
-  // Determine which profile-specified hooks are missing from the user's settings.
-  function hookAlreadyPresent(event, command) {
-    return (existingHooksMap[event] || []).some(h =>
-      (h.hooks || []).some(hh => hh.command === command),
-    );
-  }
-  const hooksToAdd = resolved.hooks.filter(h => !hookAlreadyPresent(h.event, h.command));
-  if (hooksToAdd.length > 0) {
-    const summary = hooksToAdd.map(h => `${h.event}/${h.id}`).join(", ");
-    actions.push(`+ ${hooksToAdd.length} hook(s) in ~/.claude/settings.json (${summary})`);
-  }
-  const hasLegacySessionEndCommand = (existingHooksMap.SessionEnd || []).some(h =>
-    (h.hooks || []).some(hh =>
-      /\b(?:ad|agent-daemon)\s+digest\b/.test(hh.command || "")
-    )
-  );
-  if (hasLegacySessionEndCommand) {
-    actions.push("↻ Replace direct SessionEnd digest command with stdin-aware Claude hook");
+  // The profile's hooks as dispatcher routes (hooks/routes.mjs): one exec-form
+  // entry per host event and dispatcher event; ad's older `ad hook …` entries
+  // are replaced, and a step already installed (a guard) is kept.
+  const { planClaudeHooks, HOOK_PATH, EXEC_FORM_MIN_VERSION } = await import("./hooks/routes.mjs");
+  const hookDoctor = await import("./hooks/hook-doctor.mjs");
+  const { cmpVersion } = await import("./hooks/host-capabilities.mjs");
+  // Exec form unless Claude Code is known to predate the version it was verified on.
+  const ccVersion = await hookDoctor.claudeCodeVersion();
+  const hookForm = ccVersion && cmpVersion(ccVersion, EXEC_FORM_MIN_VERSION) < 0 ? "string" : "exec";
+  // A memory plugin from before the dispatcher only stands aside for ad's older command
+  // words: the prompt and session-start routes then carry them (routes.mjs OLD_PLUGIN_TAGS).
+  const memPlugin = hookDoctor.memoryPluginState({ home, cwd });
+  const hookPlan = planClaudeHooks(existingSettings.hooks, { steps: resolved.hooks.map((h) => h.id), form: hookForm, oldPluginTags: memPlugin?.outdated === true });
+  const transient = hookDoctor.transientInstall(HOOK_PATH);
+  if (transient) console.log(`  ⚠ The hooks would run ${HOOK_PATH}, which is in ${transient}: they stop working when it goes. Run ad init from your installed ad.`);
+  if (memPlugin?.outdated) console.log(`  ⚠ ${memPlugin.key}${memPlugin.version ? ` ${memPlugin.version}` : ""} predates ad's hook dispatcher, so ad's prompt and session-start hooks are written in its older form, which it recognises. Update the plugin from Claude Code's /plugin menu, then run ad init again.`);
+  if (hookPlan.changed) {
+    const replaced = hookPlan.removed.filter((o) => o.info.kind === "legacy").length;
+    const summary = hookPlan.routes.map((r) => `${r.hostEvent}/${r.event}`).join(", ");
+    actions.push(`${replaced ? "↻" : "+"} ${hookPlan.routes.length} hook route(s) in ~/.claude/settings.json through the dispatcher (${summary})${replaced ? `, replacing ${replaced} older ad hook entr${replaced === 1 ? "y" : "ies"}` : ""}`);
   }
 
   // Resolve which skills to install — modes:
@@ -591,35 +592,17 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
     } catch { /* not installed — nothing to deprecate */ }
   }
 
-  // Install profile-specified hooks in ~/.claude/settings.json (merge — preserve existing settings)
-  if (hooksToAdd.length > 0 || hasLegacySessionEndCommand) {
+  // Install the profile's hook routes in ~/.claude/settings.json (merge — the user's own hooks and settings stay)
+  if (hookPlan.changed) {
     try {
-      const hooks = existingSettings.hooks || {};
-      if (hasLegacySessionEndCommand) {
-        hooks.SessionEnd = (hooks.SessionEnd || []).map(group => ({
-          ...group,
-          hooks: (group.hooks || []).filter(hh =>
-            !(/\b(?:ad|agent-daemon)\s+digest\b/.test(hh.command || ""))
-          )
-        })).filter(group => group.hooks.length > 0);
-      }
-      for (const h of hooksToAdd) {
-        const arr = hooks[h.event] || [];
-        arr.push({
-          matcher: h.matcher,
-          hooks: [{ type: "command", command: h.command, timeout: h.timeout }],
-        });
-        hooks[h.event] = arr;
-      }
-      existingSettings.hooks = hooks;
-
+      existingSettings.hooks = hookPlan.hooks;
       await fs.mkdir(path.join(home, ".claude"), { recursive: true });
       // Atomic: Claude Code reads this file while it runs.
       const { writeJsonAtomic } = await import("./atomic-write.mjs");
       await writeJsonAtomic(globalSettingsPath, existingSettings);
-      if (hasLegacySessionEndCommand) console.log("  ✓ Replaced direct SessionEnd digest command with stdin-aware hook");
-      if (hooksToAdd.length > 0) console.log(`  ✓ Added ${hooksToAdd.length} hook(s) to ~/.claude/settings.json`);
-      for (const h of hooksToAdd) console.log(`      ${h.event} ← ${h.id}`);
+      const replaced = hookPlan.removed.filter((o) => o.info.kind === "legacy").length;
+      console.log(`  ✓ ${hookPlan.routes.length} hook route(s) in ~/.claude/settings.json go through the dispatcher${replaced ? ` (${replaced} older ad hook entr${replaced === 1 ? "y" : "ies"} replaced)` : ""}`);
+      for (const r of hookPlan.routes) console.log(`      ${r.hostEvent}${r.matcher ? ` [${r.matcher}]` : ""} ← ${r.event}`);
     } catch (err) {
       console.error(`  ⚠ Could not install hooks: ${err.message}`);
     }
@@ -1108,34 +1091,48 @@ async function cmdDoctor({ cwd = process.cwd(), tokens, limit, model } = {}) {
     checks.push({ name: "Claude Code settings.json", ok: false, note: err.code === "ENOENT" ? `not found at ${settingsPath}` : `parse error: ${err.message}` });
   }
 
-  // Check 4: hooks wired
+  // Check 4: hooks wired (dispatcher routes, or ad's older entries; hooks/routes.mjs)
   try {
     const settings = JSON.parse(await fs.readFile(settingsPath, "utf8"));
-    const hooks = settings.hooks || {};
-    const matchesHook = (h) => { const s = JSON.stringify(h).toLowerCase(); return s.includes("agent-daemon") || s.includes("agent daemon") || s.includes("ad session-start") || s.includes("ad digest") || s.includes("ad hook session-end-digest"); };
-    const containsCommand = (event, text) => (hooks[event] || []).some(h =>
-      (h.hooks || []).some(hh => (hh.command || "").includes(text))
-    );
-    const sessionStart = (hooks.SessionStart || []).some(matchesHook);
-    const sessionEnd   = (hooks.SessionEnd   || []).some(matchesHook);
-    const promptRetrieve = containsCommand("UserPromptSubmit", "query-retrieve");
-    const promptExtract = containsCommand("UserPromptSubmit", "user-prompt-extract");
-    const skillTool = containsCommand("PreToolUse", "hook skill-use");
-    const skillSlash = containsCommand("UserPromptExpansion", "hook skill-use");
-    const legacyFallback = (hooks.SessionEnd || []).some(h =>
-      (h.hooks || []).some(hh =>
-        (hh.command || "").includes("--fallback-to-llm") ||
-        /\b(?:ad|agent-daemon)\s+digest\b/.test(hh.command || "")
-      )
-    );
-    checks.push({ name: "SessionStart hook → agent-daemon", ok: sessionStart, note: sessionStart ? "wired" : "missing — run setup.sh --hooks" });
-    checks.push({ name: "SessionEnd hook → agent-daemon",   ok: sessionEnd,   note: sessionEnd   ? "wired" : "missing — run setup.sh --hooks" });
-    checks.push({ name: "Prompt retrieval hook", ok: promptRetrieve, note: promptRetrieve ? "wired" : "missing — run ad init" });
-    checks.push({ name: "Continuous extraction hook", ok: promptExtract, note: promptExtract ? "wired" : "missing — run ad init" });
-    checks.push({ name: "Skill invocation telemetry", ok: skillTool && skillSlash, note: skillTool && skillSlash ? "Skill + slash command events wired" : "missing — run ad init" });
+    const { ourHandlers, entryAlive } = await import("./hooks/routes.mjs");
+    const ours = ourHandlers(settings.hooks);
+    // Wired = an entry that can run (a route whose script is gone is reported under "Hook script").
+    const has = (step) => ours.some((o) => o.info.steps.includes(step) && entryAlive(o.info));
+    const legacy = ours.filter((o) => o.info.kind === "legacy").length;
+    const legacyFallback = ours.some((o) => o.hostEvent === "SessionEnd" && /--fallback-to-llm|\b(?:ad|agent-daemon)\s+digest(?=\s|$)/.test(String(o.handler.command ?? "")));
+    checks.push({ name: "SessionStart hook → agent-daemon", ok: has("session-start"), note: has("session-start") ? "wired" : "missing — run ad init" });
+    checks.push({ name: "SessionEnd hook → agent-daemon", ok: has("session-end"), note: has("session-end") ? "wired" : "missing — run ad init" });
+    checks.push({ name: "Prompt retrieval hook", ok: has("query-retrieve"), note: has("query-retrieve") ? "wired" : "missing — run ad init" });
+    checks.push({ name: "Continuous extraction hook", ok: has("user-prompt-extract"), note: has("user-prompt-extract") ? "wired" : "missing — run ad init" });
+    const skills = has("skill-use") && has("slash-command-use");
+    checks.push({ name: "Skill invocation telemetry", ok: skills, note: skills ? "Skill + slash command events wired" : "missing — run ad init" });
+    checks.push({ name: "Rules check hook (tool.before)", ok: has("rules-check"), note: has("rules-check") ? "wired: Bash, PowerShell, Write and Edit calls are checked against your rules" : "missing — run ad init" });
+    checks.push({ name: "Hook dispatcher", ok: legacy === 0, note: legacy ? `${legacy} hook entr${legacy === 1 ? "y loads" : "ies load"} the whole CLI (\`ad hook …\`) — run ad init to route them through the dispatcher` : "every ad hook goes through the dispatcher" });
     checks.push({ name: "No-API SessionEnd default", ok: !legacyFallback, note: legacyFallback ? "legacy direct/fallback digest hook installed — run ad init" : "stdin-aware deterministic digest default" });
   } catch {
     checks.push({ name: "Hook wiring", ok: false, note: "could not read settings.json" });
+  }
+
+  // Check 4a: the hook routes across Claude Code's settings files (plan L2, hooks/hook-doctor.mjs)
+  try {
+    const hd = await import("./hooks/hook-doctor.mjs");
+    const { claudeHookSources, HOOK_PATH } = await import("./hooks/routes.mjs");
+    const { loadGuards, guardsPath } = await import("./hooks/guards.mjs");
+    const { hookLogTail } = await import("./hooks/hook-log.mjs");
+    const guards = loadGuards();
+    checks.push(hd.rulesFileRow(guards, guardsPath()));
+    const sources = claudeHookSources({ home, cwd });
+    const claudeVersion = await hd.claudeCodeVersion();
+    checks.push(hd.duplicateRow(sources));
+    checks.push(hd.scriptRow(sources, HOOK_PATH));
+    const execRow = hd.execFormRow(sources, claudeVersion);
+    if (execRow) checks.push(execRow);
+    const pluginRow = hd.pluginRow({ plugin: hd.memoryPluginState({ home, cwd }), sources });
+    if (pluginRow) checks.push(pluginRow);
+    checks.push(...hd.failClosedRows({ sources, rules: hd.ruleCount(guards.snapshot), claudeVersion }));
+    checks.push(hd.logRow(hookLogTail(5)));
+  } catch (e) {
+    checks.push({ name: "Hook routes", ok: true, note: `not checked (${e.message})` });
   }
 
   // Check project-managed Claude instructions and memory quality.
@@ -1681,7 +1678,7 @@ async function cmdMemory(sub, opts) {
       // The one-time upkeep after an upgrade (note keys, the journal secret scrub),
       // all of it now. ad also runs it from long-lived commands; hooks never do.
       const { runMemoryMaintenance } = await import("./memory/maintenance.mjs");
-      const r = await runMemoryMaintenance({ budgetMs: 10 * 60 * 1000 });
+      const r = await runMemoryMaintenance({ budgetMs: 10 * 60 * 1000, compact: true });
       if (!r) {
         console.error("agent-daemon: the memory store is unavailable (run ad doctor)");
         return 1;
@@ -1787,13 +1784,23 @@ async function cmdMemory(sub, opts) {
       console.log(`  contradictions:   ${analysis.contradictions.length}`);
 
       if (opts.applyMerges || opts.applyStale) {
-        // Explicit apply — the user reviewed the prior proposal.
+        // Explicit apply — the user reviewed the prior proposal. Retiring accepted notes needs
+        // the review token, in the user's own terminal (memory/review-service.mjs).
+        const { reviewToken } = await import("./memory/review-service.mjs");
+        const { createInterface } = await import("node:readline/promises");
+        const rl = process.stdin.isTTY ? createInterface({ input: process.stdin, output: process.stdout }) : null;
+        const gate = await reviewToken({ ask: rl ? (q) => rl.question(q) : undefined }).finally(() => rl?.close());
+        if (gate.refused) {
+          console.error(`ad memory consolidate: ${gate.refused}`);
+          return 2;
+        }
+        const token = gate.token;
         if (opts.applyMerges) {
-          const n = await con.applyMerges(analysis);
+          const n = await con.applyMerges(analysis, token);
           console.log(`  ✓ superseded ${n} duplicate(s)`);
         }
         if (opts.applyStale) {
-          const n = await con.applyStaleArchive(analysis);
+          const n = await con.applyStaleArchive(analysis, token);
           console.log(`  ✓ archived ${n} stale learning(s)`);
         }
         return 0;

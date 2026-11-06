@@ -9,8 +9,9 @@ import { readStdinJson, passthrough, warn } from "./io.mjs";
 
 const PR_URL_RE = /https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+/;
 
-export async function bashPost() {
-  const input = await readStdinJson();
+/** @param {object} [given]  the payload, when the hook dispatcher already read stdin */
+export async function bashPost(given) {
+  const input = given ?? (await readStdinJson());
   const cmd = String(input?.tool_input?.command || input?.command || "");
   const output = String(input?.tool_response?.output || input?.output || input?.result || "");
 

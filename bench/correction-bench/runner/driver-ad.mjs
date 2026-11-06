@@ -147,6 +147,26 @@ export async function captured(ctx, { cwd, text }) {
   return { captured: hits.length > 0, stored: [...new Set(hits)].slice(0, 3) };
 }
 
+/**
+ * The user's review between sessions. Every capture is stored pending and is
+ * recalled only once the user accepts it (MCP launch plan, L1). The bench stands
+ * in for one review that accepts everything: drain the journal the hooks wrote
+ * (as the next session start would), then accept what is pending, as `ad review`
+ * does with a token from the user's own terminal.
+ */
+export async function review(ctx, { cwd }) {
+  const { drainJournal } = await imp("src/hooks/journal-drain.mjs");
+  await drainJournal({ cwd });
+  const { acceptAllPending } = await imp("testkit/memory-trust.mjs");
+  const ep = await imp("src/memory/episodic.mjs");
+  try {
+    const h = await ep.db();
+    if (h) acceptAllPending(h);
+  } finally {
+    ep.closeDb();
+  }
+}
+
 /** How many session rows ad's store has (SessionEnd's digest adds one per session). */
 export async function sessionCount() {
   const ep = await imp("src/memory/episodic.mjs");

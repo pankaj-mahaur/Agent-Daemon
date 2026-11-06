@@ -1,0 +1,67 @@
+{
+  "host": "claude-code",
+  "version": "2.1.314",
+  "scenario": "mode-default-deny",
+  "captured": "2026-10-31",
+  "os": "win32",
+  "outcome": {
+    "name": "mode-default-deny",
+    "code": 0,
+    "hooks": "UserPromptSubmit,PreToolUse",
+    "permission_mode": "default",
+    "toolRan": false,
+    "toolResult": "\"PreToolUse:Bash hook error: SPIKE_REASON  <system-reminder> <total_tokens>14999985 tokens left</total_tokens> </system-reminder>\"",
+    "sysmsgInStdout": true,
+    "reasonInStdout": true,
+    "denials": "\"permission_denials\":[{\"tool_name\":\"Bash\",\"tool_use_id\":\"toolu_mock_1793476607719\",\"tool_input\":{\"command\":\"echo hello-from-bash\",\"description\":\"echo\"}}]"
+  },
+  "hooks": [
+    {
+      "label": "UserPromptSubmit",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CONFIG_DIR": "<TMP>\\home\\.claude",
+        "CLAUDE_PROJECT_DIR": "<TMP>/project"
+      },
+      "payload": {
+        "session_id": "32d25ac9-27d1-4c0b-aaf7-9b2464ebc669",
+        "transcript_path": "<TMP>\\home\\.claude\\projects\\-TMP--pr-24kkn7\\32d25ac9-27d1-4c0b-aaf7-9b2464ebc669.jsonl",
+        "cwd": "<TMP>\\project",
+        "prompt_id": "1a00f127-7c13-4fb4-ac5a-532e0519b5f8",
+        "permission_mode": "default",
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "SPIKE_BASH run it"
+      }
+    },
+    {
+      "label": "PreToolUse",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CONFIG_DIR": "<TMP>\\home\\.claude",
+        "CLAUDE_PROJECT_DIR": "<TMP>/project"
+      },
+      "payload": {
+        "session_id": "32d25ac9-27d1-4c0b-aaf7-9b2464ebc669",
+        "transcript_path": "<TMP>\\home\\.claude\\projects\\-TMP--pr-24kkn7\\32d25ac9-27d1-4c0b-aaf7-9b2464ebc669.jsonl",
+        "cwd": "<TMP>\\project",
+        "prompt_id": "1a00f127-7c13-4fb4-ac5a-532e0519b5f8",
+        "permission_mode": "default",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "echo hello-from-bash",
+          "description": "echo"
+        },
+        "tool_use_id": "toolu_mock_1793476607719"
+      }
+    }
+  ]
+}

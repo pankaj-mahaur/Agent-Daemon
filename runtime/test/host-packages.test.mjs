@@ -17,7 +17,9 @@ import { validate } from "../testkit/json-schema-lite.mjs";
 const RUNTIME = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SCHEMAS = path.join(RUNTIME, "test", "fixtures", "schemas", "agent-plugins-1.0.0");
 const { build, checkOut, packageVersion, BUILD_MARK, NAME } = await import("../scripts/build-host-packages.mjs");
-const { adHookInClaudeSettings } = await import("../src/memory/plugin-hook.mjs");
+const { adStepInClaudeSettings } = await import("../src/hooks/routes.mjs");
+const { open: openStore } = await import("../src/memory/sqlite.mjs");
+const { acceptAllPending } = await import("../testkit/memory-trust.mjs");
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "ad-hostpkg-"));
 after(() => fs.rmSync(TMP, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
@@ -56,7 +58,11 @@ test("Claude Code: marketplace and plugin manifests, ./ paths, the hooks wrapper
   const hooks = json(path.join(CC_PLUGIN, "hooks", "hooks.json"));
   assert.ok(hooks.hooks?.UserPromptSubmit && hooks.hooks?.SessionStart, "the event map sits under \"hooks\"");
   const commands = Object.values(hooks.hooks).flatMap((gs) => gs.flatMap((g) => g.hooks.map((h) => h.command)));
-  for (const c of commands) assert.match(c, /^node "\$\{CLAUDE_PLUGIN_ROOT\}\/server\/hook\.mjs" (user-prompt-extract|query-retrieve|session-start) --host claude-code$/);
+  for (const c of commands) assert.match(c, /^node "\$\{CLAUDE_PLUGIN_ROOT\}\/server\/hook\.mjs" (prompt\.submit|session\.start|tool\.after|subagent\.stop) --host claude-code --plugin$/);
+  // The prompts the model scheduled and the subagents' reports are recorded, so they aren't captured as typed.
+  assert.equal(hooks.hooks.PostToolUse[0].matcher, "CronCreate|ScheduleWakeup");
+  assert.ok(hooks.hooks.SubagentStop);
+  assert.ok(fs.existsSync(path.join(CC_PLUGIN, "server", "bin", "hook.mjs")), "the dispatcher is in the plugin");
   const server = json(path.join(CC_PLUGIN, ".mcp.json")).mcpServers[NAME];
   assert.ok(server.args.includes("${CLAUDE_PLUGIN_ROOT}/server/server.mjs"));
   assert.deepEqual(server.args.slice(-2), ["--project", "${CLAUDE_PROJECT_DIR:-}"], "a default, so a missing variable isn't a config error");
@@ -196,31 +202,43 @@ test("unexpanded variables: an unexpanded script path fails in Node (the install
   assert.deepEqual([bound.kind, bound.source], ["project", "arg"], "--project=<dir> binds like --project <dir>");
 });
 
-function runHook(name, env, payload, cwd) {
-  return spawnSync(process.execPath, [path.join(CC_PLUGIN, "server", "hook.mjs"), name, "--host", "claude-code"], { env, cwd, input: JSON.stringify(payload), encoding: "utf8", timeout: 20000 });
+function runHook(event, env, payload, cwd) {
+  return spawnSync(process.execPath, [path.join(CC_PLUGIN, "server", "hook.mjs"), event, "--host", "claude-code", "--plugin"], { env, cwd, input: JSON.stringify(payload), encoding: "utf8", timeout: 20000 });
 }
 const journals = (h) => {
   const root = path.join(h, ".agent-daemon", "projects");
   return fs.existsSync(root) ? walk(root).filter((f) => /learning-journal/.test(path.basename(f))) : [];
 };
 
-test("the plugin's hooks: capture into ad's folder (never the repo), then drain and show it in the next session, memory only", () => {
+test("the plugin's hooks: capture into ad's folder (never the repo), then drain; accepted in review, it shows in the next session, memory only", async () => {
   const { h, env } = tempHome();
   const repo = path.join(h, "work", "shop-app");
   fs.mkdirSync(path.join(repo, ".git"), { recursive: true });
-  const r = runHook("user-prompt-extract", env, { session_id: "s1", cwd: repo, prompt: "Actually we use pnpm for installs, not npm." }, repo);
+  const r = runHook("prompt.submit", env, { session_id: "s1", cwd: repo, prompt: "Actually we use pnpm for installs, not npm." }, repo);
   assert.equal(r.status, 0, r.stderr);
   assert.ok(!fs.existsSync(path.join(repo, ".agent-daemon")), "no folder in the repo");
   assert.equal(journals(h).length, 1, r.stderr);
   assert.match(fs.readFileSync(journals(h)[0], "utf8"), /pnpm/);
+  assert.doesNotMatch(r.stdout, /This is a .* request|Relevant installed skill/, "no routing advice: memory only");
+  // A prompt the model scheduled earlier comes back looking typed: the plugin recorded it, so no capture.
+  const later = "Actually we use yarn for installs, not npm.";
+  assert.equal(runHook("tool.after", env, { session_id: "s1", cwd: repo, tool_name: "ScheduleWakeup", tool_input: { prompt: later } }, repo).status, 0);
+  runHook("prompt.submit", env, { session_id: "s1", cwd: repo, prompt: later }, repo);
+  assert.doesNotMatch(fs.readFileSync(journals(h)[0], "utf8"), /yarn/);
   // The repo's own files and other tools' rules are the host's business, not the plugin's.
   fs.writeFileSync(path.join(repo, "CLAUDE.md"), "# PROJECT-RULES-MARKER\n");
   fs.mkdirSync(path.join(repo, ".cursor", "rules"), { recursive: true });
   fs.writeFileSync(path.join(repo, ".cursor", "rules", "x.mdc"), "CURSOR-RULES-MARKER\n");
-  const s = runHook("session-start", env, { session_id: "s2", cwd: repo }, repo);
+  const s = runHook("session.start", env, { session_id: "s2", cwd: repo }, repo);
   assert.equal(s.status, 0, s.stderr);
-  const shown = JSON.parse(s.stdout).hookSpecificOutput?.additionalContext ?? "";
-  assert.match(shown, /pnpm/, "the captured lesson comes back in the next session");
+  assert.doesNotMatch(JSON.parse(s.stdout).hookSpecificOutput?.additionalContext ?? "", /pnpm/, "a captured lesson waits for review (MCP launch plan L1)");
+  const store = await openStore({ dbPath: path.join(h, ".agent-daemon", "episodic.db") });
+  acceptAllPending(store); // the user accepts it in review
+  store.close();
+  const s3 = runHook("session.start", env, { session_id: "s3", cwd: repo }, repo);
+  assert.equal(s3.status, 0, s3.stderr);
+  const shown = JSON.parse(s3.stdout).hookSpecificOutput?.additionalContext ?? "";
+  assert.match(shown, /pnpm/, "the accepted lesson comes back in the next session");
   for (const absent of [/constitution\/core\.md/, /agent-daemon-init-hint|initialize the daemon/, /PROJECT-RULES-MARKER/, /CURSOR-RULES-MARKER/, /\bad (status|memory scan)\b/, /graphify|mcp__qmd/]) assert.doesNotMatch(shown, absent);
   assert.ok(!fs.existsSync(path.join(repo, ".agent-daemon")));
 });
@@ -230,16 +248,26 @@ test("duplicate guard: with ad init's hooks in Claude Code's settings, the plugi
   const repo = path.join(h, "work", "shop-app");
   fs.mkdirSync(path.join(repo, ".git"), { recursive: true });
   fs.mkdirSync(path.join(h, ".claude"), { recursive: true });
-  fs.writeFileSync(path.join(h, ".claude", "settings.json"), JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: "command", command: "ad hook user-prompt-extract" }] }], SessionStart: [{ hooks: [{ type: "command", command: "ad session-start --output-json" }] }] } }));
-  const r = runHook("user-prompt-extract", env, { session_id: "s1", cwd: repo, prompt: "Actually we use pnpm for installs, not npm." }, repo);
+  // ad's older entries (before ad init moved them to the dispatcher) count too.
+  const settings = path.join(h, ".claude", "settings.json");
+  fs.writeFileSync(settings, JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: "command", command: "ad hook user-prompt-extract" }] }], SessionStart: [{ hooks: [{ type: "command", command: "ad session-start --output-json" }] }] } }));
+  const r = runHook("prompt.submit", env, { session_id: "s1", cwd: repo, prompt: "Actually we use pnpm for installs, not npm." }, repo);
   assert.equal(r.status, 0);
-  assert.equal(r.stdout, "{}");
+  assert.deepEqual(JSON.parse(r.stdout), {}, "recall (not among ad's entries) ran and found nothing");
   assert.equal(journals(h).length, 0, "ad's own hook captures; the plugin's doesn't");
-  assert.equal(runHook("session-start", env, { cwd: repo }, repo).stdout, "{}");
-  // query-retrieve isn't among these hooks: the plugin's own still runs.
-  const q = runHook("query-retrieve", env, { cwd: repo, prompt: "how do we install packages here" }, repo);
-  assert.equal(q.status, 0);
-  assert.notEqual(q.stdout, "");
+  assert.equal(runHook("session.start", env, { cwd: repo }, repo).stdout, "{}");
+  // ad init's dispatcher routes: the plugin's hooks pass through whole.
+  const hookPath = path.join(h, "ad", "runtime", "bin", "hook.mjs");
+  fs.mkdirSync(path.dirname(hookPath), { recursive: true });
+  fs.writeFileSync(hookPath, "");
+  fs.writeFileSync(settings, JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: "command", command: "node", args: [hookPath, "prompt.submit"] }] }], SessionStart: [{ hooks: [{ type: "command", command: "node", args: [hookPath, "session.start"] }] }] } }));
+  runHook("prompt.submit", env, { session_id: "s1", cwd: repo, prompt: "Actually we use pnpm for installs, not npm." }, repo);
+  assert.equal(journals(h).length, 0);
+  assert.equal(runHook("session.start", env, { cwd: repo }, repo).stdout, "{}");
+  // The script those routes run is gone (an ad init from a removed checkout): they can't run, so the plugin's do.
+  fs.rmSync(hookPath);
+  runHook("prompt.submit", env, { session_id: "s1", cwd: repo, prompt: "Actually we use pnpm for installs, not npm." }, repo);
+  assert.equal(journals(h).length, 1, "the plugin captures again");
 });
 
 test("duplicate guard: only ad's own commands count; a conditional hook or another tool's never silences the plugin", () => {
@@ -247,21 +275,34 @@ test("duplicate guard: only ad's own commands count; a conditional hook or anoth
   const repo = path.join(h, "work", "app");
   fs.mkdirSync(path.join(repo, ".claude"), { recursive: true });
   fs.mkdirSync(path.join(h, ".claude"), { recursive: true });
-  const put = (file, cmd, extra = {}) => fs.writeFileSync(file, JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: "command", command: cmd, ...extra }] }], UserPromptSubmit: [{ hooks: [{ type: "command", command: cmd, ...extra }] }] } }));
-  const on = (name) => adHookInClaudeSettings(name, { env: {}, home: h, cwd: repo });
+  // cmd: a command string, or an exec-form {command, args}.
+  const handler = (cmd) => (typeof cmd === "string" ? { type: "command", command: cmd } : { type: "command", ...cmd });
+  const put = (file, cmd, extra = {}) => fs.writeFileSync(file, JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ ...handler(cmd), ...extra }] }], UserPromptSubmit: [{ hooks: [{ ...handler(cmd), ...extra }] }] } }));
+  const on = (name) => adStepInClaudeSettings(name, { env: {}, home: h, cwd: repo });
   const user = path.join(h, ".claude", "settings.json");
+  const live = path.join(h, "ad", "runtime", "bin", "hook.mjs");
+  fs.mkdirSync(path.dirname(live), { recursive: true });
+  fs.writeFileSync(live, "");
   const cases = [
     ["ad hook user-prompt-extract", [1, 0, 0]],
     ["agent-daemon session-start --output-json", [0, 0, 1]],
     ["ad query-retrieve --output-json", [0, 1, 0]],
     ['"C:/n/node.exe" "D:/x/runtime/src/cli.mjs" session-start', [0, 0, 1]],
+    [{ command: "node", args: [live, "prompt.submit"] }, [1, 1, 0]],
+    [{ command: "node", args: [live, "session.start"] }, [0, 0, 1]],
+    [`node '${live}' session.start`, [0, 0, 1]],
+    [{ command: "node", args: [path.join(h, "gone", "runtime", "bin", "hook.mjs"), "prompt.submit"] }, [0, 0, 0]],
     ["bash ~/.claude/hooks/session-start.sh", [0, 0, 0]],
     ["my-tool query-retrieve", [0, 0, 0]],
+    ['node "C:/tools/mem/dist/cli.mjs" session-start', [0, 0, 0]],
+    [{ command: "node", args: ["C:/tools/guard/hook.mjs", "session.start"] }, [0, 0, 0]],
     ['node "${CLAUDE_PLUGIN_ROOT}/server/hook.mjs" session-start --host claude-code', [0, 0, 0]],
+    ['node "${CLAUDE_PLUGIN_ROOT}/server/hook.mjs" session.start --host claude-code --plugin', [0, 0, 0]],
+    [{ command: "node", args: ["/x/server/hook.mjs", "prompt.submit", "--plugin"] }, [0, 0, 0]],
   ];
   for (const [cmd, steps] of cases) {
     put(user, cmd);
-    assert.deepEqual(["user-prompt-extract", "query-retrieve", "session-start"].map((n) => (on(n) ? 1 : 0)), steps, cmd);
+    assert.deepEqual(["user-prompt-extract", "query-retrieve", "session-start"].map((n) => (on(n) ? 1 : 0)), steps, JSON.stringify(cmd));
   }
   put(user, "agent-daemon session-start --output-json", { if: 'test -d "$CLAUDE_PROJECT_DIR/.agent-daemon"' });
   assert.equal(on("session-start"), false, "a conditional hook may not fire: the plugin keeps its step");

@@ -13,6 +13,8 @@ import { refuseInAgentShell, confirmTyped } from "../security/agent-shell.mjs";
 import { redactSecrets } from "../security/secret-patterns.mjs";
 import { neutralizeText } from "../digest/sanitize.mjs";
 import { isProjectId, projectClause } from "./projects.mjs";
+import { acceptFact, acceptLearning, reviewToken } from "./review-service.mjs";
+import { pendingSql, statusSql } from "./trust.mjs";
 
 const preview = (t) => neutralizeText(redactSecrets(String(t ?? "")).text).replace(/\s+/g, " ").slice(0, 100);
 
@@ -36,14 +38,14 @@ function keyClause(keys) {
 export function heldNotes(handle, keys) {
   const lk = keyClause(keys);
   const learnings = handle.all(
-    `SELECT id, project_slug, status, quarantine_reason, origin, created_at, text FROM learnings
-      WHERE status IN ('pending', 'quarantined') AND ${lk.sql} ORDER BY id`,
+    `SELECT id, project_slug, ${statusSql()} AS status, quarantine_reason, origin, created_at, text FROM learnings
+      WHERE (${pendingSql()} OR status = 'quarantined') AND ${lk.sql} ORDER BY id`,
     lk.params
   ).map((r) => ({ ref: `L${r.id}`, kind: "learning", id: r.id, project: r.project_slug, status: r.status, why: r.quarantine_reason ?? (r.origin === "agent" ? "written by the agent" : r.status), at: r.created_at, preview: preview(r.text) }));
   const fk = factClause(keys);
   const facts = handle.all(
-    `SELECT id, status, quarantine_reason, origin, created_at, text FROM user_facts
-      WHERE status IN ('pending', 'quarantined') AND ${fk.sql} ORDER BY id`,
+    `SELECT id, ${statusSql()} AS status, quarantine_reason, origin, created_at, text FROM user_facts
+      WHERE (${pendingSql()} OR status = 'quarantined') AND ${fk.sql} ORDER BY id`,
     fk.params
   ).map((r) => ({ ref: `F${r.id}`, kind: "fact", id: r.id, project: null, status: r.status, why: r.quarantine_reason ?? r.status, at: r.created_at, preview: preview(r.text) }));
   return [...learnings, ...facts];
@@ -58,7 +60,7 @@ export const heldLine = (n) => `${n} memory notes are waiting or held back. Revi
  *           out?: (line:string)=>void }} deps
  * @returns {Promise<number>} exit code
  */
-export async function memoryHeld(sub, { ref, keys, handle, json = false, env = process.env, isTTY, io, out = (l) => console.log(l) }) {
+export async function memoryHeld(sub, { ref, keys, handle, json = false, env = process.env, isTTY, io, out = (l) => console.log(l), ancestry, dialog }) {
   if (!sub || sub === "list") {
     const rows = heldNotes(handle, keys);
     if (json) {
@@ -81,6 +83,11 @@ export async function memoryHeld(sub, { ref, keys, handle, json = false, env = p
   const refused = refuseInAgentShell({ cmd: `memory held ${sub}`, env, ...(isTTY ? { isTTY } : {}) });
   if (refused) {
     out(refused);
+    return 2;
+  }
+  const gate = await reviewToken({ env, ...(isTTY ? { isTTY } : {}), ...(ancestry ? { ancestry } : {}), ...(dialog ? { dialog } : {}), ask: io?.ask, out });
+  if (gate.refused) {
+    out(gate.refused);
     return 2;
   }
   const row = heldNotes(handle, keys).find((r) => r.ref.toLowerCase() === String(ref ?? "").toLowerCase() || (/^\d+$/.test(String(ref)) && r.kind === "learning" && r.id === Number(ref)));
@@ -109,7 +116,8 @@ export async function memoryHeld(sub, { ref, keys, handle, json = false, env = p
     handle.run(`UPDATE ${table} SET status = 'rejected', text = '[dropped]' WHERE id = ?`, [row.id]);
     out(`Dropped ${row.ref}.`);
   } else {
-    handle.run(`UPDATE ${table} SET status = 'active', quarantine_reason = NULL${table === "learnings" ? ", applied_to = NULL" : ""} WHERE id = ?`, [row.id]);
+    if (row.kind === "fact") acceptFact(handle, gate.token, row.id, { keys });
+    else acceptLearning(handle, gate.token, row.id, { appliedTo: null });
     out(`${sub === "accept" ? "Accepted" : "Released"} ${row.ref}: it is served in this project from the next session.`);
   }
   return 0;

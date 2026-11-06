@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { identityBlock } from "../engine/attribution.mjs";
 import { engineDebugUi, engineHome, engineHooks, engineVersion, engineErrorText, engineErrorDetail } from "../engine/index.mjs";
 import { needsWindowsSandbox, setupWindowsSandbox } from "./sandbox.mjs";
+import { installedSteps } from "../hooks/routes.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 export const MEMORY_SERVER = path.join(REPO_ROOT, "runtime", "src", "mcp", "memory-server.mjs");
@@ -121,10 +122,8 @@ export function skillRoots({ cwd, home = homedir(), engineHome = null, refresh =
 export function installedProfile({ env = process.env, home = homedir() } = {}) {
   if (env.AD_PROFILE) return env.AD_PROFILE;
   try {
-    const settings = readFileSync(path.join(home, ".claude", "settings.json"), "utf8");
-    if (settings.includes("ad hook bash-pre") || settings.includes("ad hook mcp-pre")) return "security";
-    if (settings.includes("ad hook") || settings.includes("ad session-start")) return "developer";
-    return "developer";
+    const steps = installedSteps(JSON.parse(readFileSync(path.join(home, ".claude", "settings.json"), "utf8"))?.hooks);
+    return steps.has("bash-pre-guard") || steps.has("mcp-pre-audit") ? "security" : "developer";
   } catch {
     return "developer";
   }

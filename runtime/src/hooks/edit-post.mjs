@@ -11,8 +11,9 @@ const JS_RE = /\.(ts|tsx|js|jsx|mjs|cjs)$/;
 const CONSOLE_LOG_RE = /(^|[^.\w])console\.log\s*\(/;
 const MAX_LINES_REPORTED = 5;
 
-export async function editPost() {
-  const input = await readStdinJson();
+/** @param {object} [given]  the payload, when the hook dispatcher already read stdin */
+export async function editPost(given) {
+  const input = given ?? (await readStdinJson());
   // apply_patch can touch several files (hooks/io.mjs fills file_paths).
   const single = input?.tool_input?.file_path || input?.path || input?.file || "";
   const files = input?.tool_input?.file_paths?.length ? input.tool_input.file_paths : single ? [single] : [];

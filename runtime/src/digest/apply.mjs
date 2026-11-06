@@ -1,18 +1,13 @@
 // Digest pipeline — Stage 4: apply (or queue) each classified learning.
 //
-// Targets behavior:
-//   - episodic-only       → SQLite-only insert (low-risk audit trail)
-//   - memory:project      → SQLite + append to <data>/memory/activeContext.md
-//   - memory:global       → SQLite + append to ~/.agent-daemon/user.md
-//   - skill-edit          → SQLite + write a proposal markdown to <data>/proposed/
-//   - constitution-add    → SQLite + write a proposal markdown to <data>/proposed/
+// Every learning lands in SQLite as 'pending' (or 'quarantined'): it waits for the
+// user in review (MCP launch plan D3). Accepting a note in `ad review` appends it to
+// the project's memory file (review.mjs acceptMemory); nothing here does.
+//   - skill-edit, constitution-add → also a proposal markdown in <data>/proposed/
+//   - user-fact                    → also a pending user fact
 //
 // <data> is the project's capture folder (memory/project-dir.mjs): its own
 // .agent-daemon when the user set one up, else a folder under ad's root.
-//
-// Every learning lands in SQLite (the durable audit trail), regardless of which
-// markdown surface it also writes to. SQLite reads are used by session-start
-// for retrieval-augmented context loading.
 
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -20,7 +15,7 @@ import path from "node:path";
 import { insertLearnings, projectSlug, observeUserFact } from "../memory/episodic.mjs";
 import { screenLearning, neutralizeText } from "./sanitize.mjs";
 import { redactSecrets } from "../security/secret-patterns.mjs";
-import { appendToMemory, writeMemoryProposal, writeProposal } from "./proposals.mjs";
+import { writeMemoryProposal, writeProposal } from "./proposals.mjs";
 import { ensureProjectDataDir, projectDataDir } from "../memory/project-dir.mjs";
 import { adRoot, statePath } from "../ad-root.mjs";
 
@@ -64,32 +59,26 @@ export async function applyLearnings(opts) {
   };
 
   const stamp = new Date().toISOString();
-  const dateOnly = stamp.slice(0, 10);
   const slug = projectSlug(opts.cwd);
   // File-aware tags — merged into the SQLite audit row only (NOT the markdown
   // render, which stays human-readable). Feeds searchLearningsByFile + the
   // SessionStart working-set boost.
   const sessionFiles = Array.isArray(opts.sessionFiles) ? opts.sessionFiles : [];
 
-  // Resolve memory locations
-  const projectMemoryPath = await resolveProjectMemoryPath(opts.cwd);
-  const globalMemoryPath  = statePath("user.md");
-  const proposedDir       = path.join(projectDataDir(opts.cwd), "proposed");
+  const proposedDir = path.join(projectDataDir(opts.cwd), "proposed");
 
   if (!opts.dryRun && opts.classified.length) ensureProjectDataDir(opts.cwd);
 
-  // Group learnings by target file so we batch one append per file
-  const projectAppends = [];
-  const globalAppends  = [];
-  const sqliteRows     = [];
+  const sqliteRows = [];
 
   for (const raw of opts.classified) {
     // Secrets go first, before any surface (SQLite, memory files, proposals,
     // the pending queue) sees the text.
     const item = redactItem(raw);
-    // Who wrote it: the user's own words apply at once within their project;
-    // agent-written notes (assistant turns, agent evidence) wait as 'pending'
-    // and touch no memory file, mirror or user fact.
+    // Who wrote it: agent-written notes (assistant turns, agent evidence) wait as
+    // 'pending' and touch no memory file, mirror or user fact. The user's words wait
+    // too (MCP launch plan D3): a transcript can't prove the user typed them, so they
+    // reach memory files only when accepted in review (review.mjs acceptMemory).
     const origin = originOf(item.learning);
     // Automatic global is off: a global target becomes a project row that
     // asks the user for promotion (promote_request 'global').
@@ -167,12 +156,6 @@ export async function applyLearnings(opts) {
 
     if (item.targets.includes("episodic-only")) result.episodicOnly++;
 
-    if (item.targets.includes("memory:project")) {
-      projectAppends.push(item);
-    }
-    if (item.targets.includes("memory:global")) {
-      globalAppends.push(item);
-    }
     if (item.targets.includes("skill-edit") || item.targets.includes("constitution-add")) {
       const proposalPath = await writeProposal({
         item,
@@ -200,7 +183,7 @@ export async function applyLearnings(opts) {
       } catch { /* user-fact observation is best-effort */ }
     }
 
-    // Build SQLite row — every learning lands in the audit trail
+    // Build SQLite row — every learning lands in the audit trail, pending review.
     // Every new row belongs to its project; nothing is written global any more.
     const l = item.learning;
     sqliteRows.push({
@@ -211,7 +194,8 @@ export async function applyLearnings(opts) {
       evidence: l.evidence_quote,
       confidence: l.confidence,
       tags: mergeFileTags(l.tags, sessionFiles),
-      appliedTo: item.targets.filter(t => t !== "episodic-only").join(",") || "episodic",
+      appliedTo: "pending",
+      status: "pending",
       origin,
       promoteRequest: wantsGlobal ? "global" : null,
       captureRef: l.capture_ref,
@@ -235,41 +219,6 @@ export async function applyLearnings(opts) {
   // Drain any previously queued pending_messages (best-effort)
   if (!opts.dryRun) {
     await drainPendingMessages(opts.verbose);
-  }
-
-  // Project memory append
-  if (projectAppends.length > 0) {
-    if (!opts.dryRun) {
-      await appendToMemory(projectMemoryPath, projectAppends, opts.sessionId, stamp);
-    }
-    result.memoryProjectAppended = projectAppends.length;
-    result.memoryFilesTouched.push(projectMemoryPath);
-    if (opts.verbose) console.error(`agent-daemon: appended ${projectAppends.length} project-memory entries → ${projectMemoryPath}`);
-  }
-
-  // Global memory append
-  if (globalAppends.length > 0) {
-    if (!opts.dryRun) {
-      await appendToMemory(globalMemoryPath, globalAppends, opts.sessionId, stamp);
-    }
-    result.memoryGlobalAppended = globalAppends.length;
-    result.memoryFilesTouched.push(globalMemoryPath);
-    if (opts.verbose) console.error(`agent-daemon: appended ${globalAppends.length} global-memory entries → ${globalMemoryPath}`);
-  }
-
-  // Optional: mirror learnings to CLAUDE.md managed section
-  if (!opts.dryRun && (projectAppends.length > 0 || globalAppends.length > 0)) {
-    try {
-      const config = await loadConfig();
-      if (config.mirror_to_claude_md) {
-        const claudeMdPath = path.join(opts.cwd, "CLAUDE.md");
-        const allAppends = [...projectAppends, ...globalAppends];
-        await mirrorToClaudeMd(claudeMdPath, allAppends, dateOnly);
-        if (opts.verbose) console.error(`agent-daemon: mirrored ${allAppends.length} learning(s) to CLAUDE.md`);
-      }
-    } catch {
-      // mirror is best-effort
-    }
   }
 
   return result;
@@ -312,54 +261,6 @@ function redactItem(item) {
 export function originOf(l) {
   const s = l?.source_speaker ?? l?.evidence_speaker;
   return s === "user" || s === "agent" ? s : "unknown";
-}
-
-async function loadConfig() {
-  const configPath = statePath("config.json");
-  try {
-    return JSON.parse(await fs.readFile(configPath, "utf8"));
-  } catch {
-    return {};
-  }
-}
-
-const MANAGED_START = "<!-- agent-daemon:learnings:start -->";
-const MANAGED_END = "<!-- agent-daemon:learnings:end -->";
-
-async function mirrorToClaudeMd(claudeMdPath, items, dateOnly) {
-  let content;
-  try {
-    content = await fs.readFile(claudeMdPath, "utf8");
-  } catch {
-    return;
-  }
-
-  const summaries = items.map(it => {
-    const l = it.learning;
-    return `- **${l.type}**: ${neutralizeText(l.text).replace(/\s+/g, " ").trim()}`;
-  });
-
-  const newSection = [
-    MANAGED_START,
-    `## Recent learnings (agent-daemon, ${dateOnly})`,
-    "",
-    ...summaries,
-    MANAGED_END
-  ].join("\n");
-
-  if (content.includes(MANAGED_START)) {
-    // Replace existing managed section (idempotent)
-    const re = new RegExp(`${escapeRegExp(MANAGED_START)}[\\s\\S]*?${escapeRegExp(MANAGED_END)}`);
-    content = content.replace(re, newSection);
-  } else {
-    content += "\n" + newSection + "\n";
-  }
-
-  await fs.writeFile(claudeMdPath, content, "utf8");
-}
-
-function escapeRegExp(s) {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /**

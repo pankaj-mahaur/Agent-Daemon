@@ -128,6 +128,24 @@
       "reason": "the memory schema's comment lists the session adapter ids; `codex` is the adapter for the user's own Codex"
     },
     {
+      "path": "runtime/src/memory/ancestry.mjs",
+      "rules": ["A"],
+      "match": "\"codex\"|\\]codex",
+      "reason": "the review gate refuses under an agent process; the user's own Codex CLI is one of them, matched by its executable and npm package name"
+    },
+    {
+      "path": "runtime/test/memory-ancestry.test.mjs",
+      "rules": ["A"],
+      "match": "codex",
+      "reason": "agent-detection fixtures: the process chain of the user's own Codex CLI (its executable and npm package), as S-REVIEW-TTY captured it"
+    },
+    {
+      "path": "runtime/test/fixtures/db/v3.1.0-memory.sql",
+      "rules": ["A"],
+      "match": "-- 'claude-code' \\| 'cline' \\| 'cursor' \\| 'codex' \\| 'aider'",
+      "reason": "a 3.1.0 memory DB as it was written: its schema keeps the same adapter-id comment as runtime/src/memory/sqlite.mjs"
+    },
+    {
       "path": "adapters/codex/",
       "rules": ["A"],
       "reason": "reference config for the `codex` session adapter: the user's own Codex is a third-party product ad reads (descriptive)"
@@ -289,8 +307,8 @@
     {
       "path": "SECURITY.md",
       "rules": ["A"],
-      "match": "Claude Code, Cursor, Codex|Claude Code / Cursor / Codex",
-      "reason": "the agents ad's hooks may run inside: descriptive statements about tools a user may run"
+      "match": "Claude Code, Cursor, Codex|Claude Code / Cursor / Codex|\\(Claude Code, Codex, Gemini",
+      "reason": "the agents ad's hooks may run inside, and the agents the memory review gate refuses under: descriptive statements about tools a user may run"
     },
     {
       "path": "SECURITY.md",
@@ -411,6 +429,136 @@
       "reason": "the memory package's npm page names the hosts it installs into, Codex among them"
     },
     {
+      "path": "runtime/src/mistakes/**",
+      "rules": ["A", "C"],
+      "reason": "the mistakes report (L4a) reads the user's own Codex history (CODEX_HOME, rollouts) as one of two hosts and names that host in the report; this is the user's separate install, not ad's engine"
+    },
+    {
+      "path": "runtime/src/hooks/host-capabilities.mjs",
+      "rules": ["A", "C"],
+      "reason": "the hook dispatcher's table of what each host does with a hook's answer; Codex is one of the two hosts (the user's own CLI, not ad's engine)"
+    },
+    {
+      "path": "runtime/src/hooks/tool-before.mjs",
+      "rules": ["A", "C"],
+      "reason": "the dispatcher's tool check describes the payloads the user's Codex host sends (its shell tool, its patches)"
+    },
+    {
+      "path": "runtime/src/hooks/prompt-source.mjs",
+      "rules": ["A", "C"],
+      "reason": "the prompt-source check names the hosts whose prompts it classifies, the user's Codex among them"
+    },
+    {
+      "path": "runtime/src/hooks/typed-text.mjs",
+      "rules": ["A", "C"],
+      "reason": "names the context the user's Codex host injects as a user message"
+    },
+    {
+      "path": "runtime/bin/hook.mjs",
+      "rules": ["A"],
+      "reason": "the hook dispatcher's header names the hosts it serves"
+    },
+    {
+      "path": "runtime/src/hooks/routes.mjs",
+      "rules": ["A"],
+      "reason": "the hook routes table: which host events each host has, Codex (the user's own CLI and ad's engine speak its hook protocol) among them"
+    },
+    {
+      "path": "runtime/src/hooks/hook-doctor.mjs",
+      "rules": ["A", "C"],
+      "reason": "doctor's hook rows name the host whose behaviour they report: Codex's fail-open hooks and its hook trust"
+    },
+    {
+      "path": "runtime/test/hook-routes.test.mjs",
+      "rules": ["A"],
+      "reason": "route tests check the entries written for the Codex host and its payload shapes"
+    },
+    {
+      "path": "runtime/test/hook-doctor.test.mjs",
+      "rules": ["A"],
+      "reason": "doctor tests replay the S-HOOKS capture of untrusted Codex hooks"
+    },
+    {
+      "path": "runtime/test/hook-latency.test.mjs",
+      "rules": ["A"],
+      "reason": "the latency budget for the Codex host, which runs hooks through PowerShell on Windows"
+    },
+    {
+      "path": "runtime/test/startup.test.mjs",
+      "rules": ["A"],
+      "reason": "the import-graph test sends a payload in the Codex host's shape"
+    },
+    {
+      "path": "runtime/test/hook-dispatch.test.mjs",
+      "rules": ["A"],
+      "reason": "dispatcher tests send payloads in the shapes the user's Codex host sends"
+    },
+    {
+      "path": "runtime/src/rules/**",
+      "rules": ["A", "C"],
+      "reason": "the rule matcher (L4c) reads calls from the user's own hosts, Codex among them: its shell tool runs through PowerShell on Windows and sends argv arrays; the names describe that host, not ad's engine"
+    },
+    {
+      "path": "runtime/test/rules-*.test.mjs",
+      "rules": ["A"],
+      "reason": "matcher tests build calls in the shapes the user's Codex host sends"
+    },
+    {
+      "path": "runtime/test/fixtures/rules/**",
+      "rules": ["A"],
+      "reason": "the L4c development sets label each call with its host (claude-code or codex), as the held-out corpora do"
+    },
+    {
+      "path": "docs/mistakes.md",
+      "rules": ["A"],
+      "reason": "the guide to `ad mistakes`, which reads the user's own Codex history (CODEX_HOME, sessions, `codex exec`) as one of two hosts; not ad's engine"
+    },
+    {
+      "path": "docs/troubleshooting.md",
+      "rules": ["A"],
+      "match": "Claude Code or Codex history found|`CODEX_HOME` move it|`codex exec`\\)|`CODEX_HOME` your agents use|compressed Codex sessions|Codex compresses older session files",
+      "reason": "the `ad mistakes` entries (#93, #94): the user's own Codex history, its home variable and its compressed sessions"
+    },
+    {
+      "path": "skills/daemon/harness-troubleshoot/SKILL.md",
+      "rules": ["A"],
+      "match": "Claude Code or Codex history found|`CODEX_HOME` move the history|`codex exec`\\)|compressed Codex sessions|Codex's older `\\.jsonl\\.zst`",
+      "reason": "the `ad mistakes` rows (#93, #94): the user's own Codex history"
+    },
+    {
+      "path": "SECURITY.md",
+      "rules": ["A"],
+      "match": "reads Claude Code and Codex transcripts",
+      "reason": "what `ad mistakes` reads: the user's own Codex history"
+    },
+    {
+      "path": "docs/architecture.md",
+      "rules": ["A"],
+      "match": "lists Claude Code transcripts and Codex rollouts|`CLAUDE\\.md` rules Codex doesn't read|--host claude\\|codex|Codex denies with the reason",
+      "reason": "the mistakes report's reader and coverage line, and the hook dispatcher's hosts: the user's own Codex, not ad's engine"
+    },
+    {
+      "path": "docs/testing.md",
+      "rules": ["A"],
+      "match": "2,000 Claude Code and 2,000 Codex sessions",
+      "reason": "the `ad mistakes` perf gate generates synthetic sessions of the user's hosts"
+    },
+    {
+      "path": "runtime/test/mistakes-*.test.mjs",
+      "rules": ["A"],
+      "reason": "mistakes-report tests build a fake Codex home and read the L0 Codex rollout fixtures"
+    },
+    {
+      "path": "runtime/testkit/agent-history.mjs",
+      "rules": ["A"],
+      "reason": "writes fake Codex rollouts (the user's host) into a temp home for the mistakes-report tests"
+    },
+    {
+      "path": "runtime/scripts/mistakes-perf.mjs",
+      "rules": ["A"],
+      "reason": "generates synthetic Codex rollouts (the user's host) for the mistakes-report perf gate"
+    },
+    {
       "path": "runtime/scripts/memory-install-matrix.mjs",
       "rules": ["A"],
       "reason": "the installer's config matrix sets up a fake Codex home per case"
@@ -474,8 +622,8 @@
     {
       "path": "docs/troubleshooting.md",
       "rules": ["A"],
-      "match": "✗ Codex: …|Codex's `mcp_servers`|Codex: start a new session",
-      "reason": "the memory installer's messages and the Codex host's restart step"
+      "match": "✗ Codex: …|Codex's `mcp_servers`|Codex: start a new session|\\(Claude Code, Codex, Gemini",
+      "reason": "the memory installer's messages, the Codex host's restart step, and the agents the review gate refuses under (the user's own Codex CLI is one)"
     },
     {
       "path": "mcp/agent-daemon-memory/README.md",
@@ -543,6 +691,21 @@
       "rules": ["A"],
       "match": "env.CODEX_CA_CERTIFICATE",
       "reason": "P3.3: the engine's own CA variable, which users already set; the gateway honours it so provider calls work behind the same company certificate"
+    },
+    {
+      "path": "runtime/test/corpora/",
+      "rules": ["A"],
+      "reason": "MCP platform L0: held-out corpora model prompts and tool calls in the two tier-1 hosts (Claude Code and Codex) and name them as hosts; written clean-room and frozen (MANIFEST.json), so they can't be reworded"
+    },
+    {
+      "path": "runtime/test/fixtures/hosts/",
+      "rules": ["A"],
+      "reason": "MCP platform L0: hook payloads, transcripts and rollouts captured from the real host binaries, in their own field names"
+    },
+    {
+      "path": "tools/spikes/",
+      "rules": ["A"],
+      "reason": "MCP platform L0 spikes: scripts that drive the real host binaries (claude, codex) and their homes by name in throwaway folders"
     }
   ]
 }

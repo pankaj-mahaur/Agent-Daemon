@@ -20,6 +20,7 @@
 
 import fs from "node:fs/promises";
 import { patchPaths } from "../hooks/io.mjs";
+import { isInjectedContext } from "../hooks/typed-text.mjs";
 
 const EDIT_TOOLS = new Set(["apply_patch"]);
 const SHELL_TOOLS = new Set(["shell_command", "exec_command", "shell", "local_shell", "exec"]);
@@ -162,10 +163,8 @@ function pickSource(...sources) {
 
 // role=user response items also carry context Codex injects on the user's
 // behalf (AGENTS.md, environment, hook context); none of it is a prompt.
-const INJECTED_RE = /^\s*(?:# AGENTS\.md instructions|<(?:environment_context|user_instructions|INSTRUCTIONS|permissions|skills_instructions|user_shell_command|turn_aborted)\b|<!-- agent-daemon)/;
-export function isInjectedContext(text) {
-  return INJECTED_RE.test(text);
-}
+// One definition, shared with the prompt hook and the history reader.
+export { isInjectedContext };
 
 function contentText(content) {
   if (typeof content === "string") return content;

@@ -16,6 +16,7 @@ import path from "node:path";
 import { open } from "../src/memory/sqlite.mjs";
 import { deriveTier, representationToMarkdown } from "../src/memory/episodic.mjs";
 import { neutralizeText } from "../src/digest/sanitize.mjs";
+import { acceptAllPending } from "../testkit/memory-trust.mjs";
 
 async function withEpisodic(fn) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ad-core-rep-"));
@@ -87,6 +88,7 @@ test("buildUserRepresentation groups facts + high-confidence learnings", async (
     await mod.insertLearning({ category: "gotcha", text: "windows crlf breaks the shell script", projectSlug: slug, confidence: 0.8 });
     await mod.insertLearning({ category: "pattern", text: "we always run tests before claiming done", projectSlug: slug, confidence: 0.8 });
     await mod.insertLearning({ category: "fact", text: "low confidence noise", projectSlug: slug, confidence: 0.4 }); // < 0.6 → excluded
+    acceptAllPending(await mod.db()); // the representation is built from accepted notes
     return mod.buildUserRepresentation({ projectSlug: slug });
   });
   assert.ok(profile, "representation built");
@@ -128,6 +130,7 @@ test("searchLearnings prefers an explicit fact over an inferred one on a tie", a
     // Same query term, same confidence/recency → derivation factor breaks the tie.
     await mod.insertLearning({ category: "pattern", text: "deployment is usually flaky on fridays", confidence: 0.7 });
     await mod.insertLearning({ category: "fact", text: "deployment uses the blue-green strategy", confidence: 0.7 });
+    acceptAllPending(await mod.db());
     return mod.searchLearnings("deployment", { limit: 2 });
   });
   assert.equal(top.length, 2);

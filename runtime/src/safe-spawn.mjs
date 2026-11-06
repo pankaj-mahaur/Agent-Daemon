@@ -129,6 +129,21 @@ export function resolveCommand(name, { env = process.env, platform = process.pla
 }
 
 /**
+ * The Windows folder this process's system DLLs were loaded from (ntdll.dll in its
+ * System32), or null. The environment can't change it: SystemRoot is the caller's to set,
+ * the loader's path isn't. For checks an agent must not steer (the memory review gate).
+ */
+export function loaderWindowsDir({ report = () => process.report.getReport() } = {}) {
+  try {
+    const loaded = report()?.sharedObjects ?? [];
+    const ntdll = loaded.find((s) => /^[a-z]:\\.*\\system32\\ntdll\.dll$/i.test(String(s)));
+    return ntdll ? W.dirname(W.dirname(ntdll)) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * A Windows system tool by absolute path under %SystemRoot%\System32, or null
  * when it isn't there (callers report it missing; never a bare-name fallback).
  * Not used on POSIX.

@@ -8,6 +8,7 @@
 //   renderReport(data, {share}) → text
 
 import { projectClause } from "./projects.mjs";
+import { pendingSql } from "./trust.mjs";
 
 const median = (xs) => {
   if (!xs.length) return 0;
@@ -43,7 +44,7 @@ export function memoryReport(handle, { keys, days = 30, now = Date.now() }) {
   const fb = Object.fromEntries(handle.all(`SELECT verdict, COUNT(*) AS n FROM feedback WHERE datetime(ts) >= datetime(?) AND ${fbScope.sql} GROUP BY verdict`, [since, ...fbScope.params]).map((r) => [r.verdict, r.n]));
   const fbTotal = (fb.useful ?? 0) + (fb.stale ?? 0) + (fb.wrong ?? 0);
   const pend = scope("project_slug", keys);
-  const waiting = handle.get(`SELECT COUNT(*) AS n FROM learnings WHERE status = 'pending' AND ${pend.sql}`, pend.params).n;
+  const waiting = handle.get(`SELECT COUNT(*) AS n FROM learnings WHERE ${pendingSql()} AND ${pend.sql}`, pend.params).n;
   return {
     days,
     allProjects: keys === null,

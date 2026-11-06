@@ -1,0 +1,29 @@
+{
+  "relevant": ["handbook-docs-01", "handbook-docs-02", "handbook-docs-03", "handbook-docs-04", "handbook-docs-05", "handbook-docs-06", "handbook-docs-07", "handbook-docs-08", "handbook-docs-17"],
+  "irrelevant": ["handbook-docs-10", "handbook-docs-11", "handbook-docs-12", "handbook-docs-13", "handbook-docs-14", "handbook-docs-18", "handbook-docs-19", "handbook-docs-20", "handbook-docs-22"],
+  "neutral": ["handbook-docs-09", "handbook-docs-15", "handbook-docs-16", "handbook-docs-21"],
+  "reasons": {
+    "handbook-docs-01": "How to preview and really check the new pages.",
+    "handbook-docs-02": "The branch adds redirects (redirects.json is a recent path).",
+    "handbook-docs-03": "The branch edits the Vale terms file and writes new prose.",
+    "handbook-docs-04": "New guide and reference pages must be added to sidebars.ts, a recent path.",
+    "handbook-docs-05": "The migration guide needs runnable code samples.",
+    "handbook-docs-06": "Core fact for the v2 authentication page and the v1 deprecation date.",
+    "handbook-docs-07": "Core fact for the v2 pagination page.",
+    "handbook-docs-08": "The branch adds static/img/guides/v2-token-flow.svg.",
+    "handbook-docs-09": "Project-wide heading style; harmless but generic.",
+    "handbook-docs-10": "Stale: the site moved to Docusaurus (see -01).",
+    "handbook-docs-11": "Stale: v2 is now public; this branch documents it.",
+    "handbook-docs-12": "The changelog page is an unrelated area.",
+    "handbook-docs-13": "The blog is an unrelated area.",
+    "handbook-docs-14": "Generated SDK pages are an unrelated area.",
+    "handbook-docs-15": "Project-wide review flow; harmless but generic.",
+    "handbook-docs-16": "Search indexing; only matters if a page is unlisted.",
+    "handbook-docs-17": "Matches the VersionBadge commit and the v1/v2 reference pages.",
+    "handbook-docs-18": "Theme and branding are an unrelated area.",
+    "handbook-docs-19": "Translations are not part of this branch.",
+    "handbook-docs-20": "The status widget is an unrelated area.",
+    "handbook-docs-21": "Admonition rule; a deprecation warning may use one, but it is generic.",
+    "handbook-docs-22": "Stale: the v1 cutoff moved to 2027-03-31 (see -06)."
+  }
+}

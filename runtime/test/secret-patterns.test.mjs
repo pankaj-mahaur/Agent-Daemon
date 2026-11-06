@@ -118,6 +118,13 @@ test("ordinary text that looks a bit like a secret is left alone", () => {
   }
 });
 
+test("a run-together secret name counts (PGPASSWORD, GHTOKEN); HOTKEY and MONKEY don't", () => {
+  for (const t of ["PGPASSWORD=Tr0ub4dor3xyz", "MYSQLPASSWORD=correcthorse", "GHTOKEN=a1B2c3D4e5F6g7H8"]) {
+    assert.match(redactSecrets(t).text, /^[A-Z]+=\[redacted:env-assignment\]$/, t);
+  }
+  for (const t of ["HOTKEY=ctrl-shift-k9", "MONKEY=Banana42split"]) assert.equal(redactSecrets(t).text, t);
+});
+
 test("redacting twice equals redacting once", () => {
   for (const [text] of CAUGHT) {
     const once = redactSecrets(`x ${text} y`).text;

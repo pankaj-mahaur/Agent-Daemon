@@ -1,0 +1,187 @@
+{
+  "host": "codex",
+  "version": "0.164.0",
+  "scenario": "exit2-never",
+  "captured": "2026-10-31",
+  "os": "win32",
+  "outcome": {
+    "name": "exit2-never",
+    "code": 0,
+    "ms": 16667,
+    "trust": "preToolUse:untrusted,postToolUse:untrusted,preCompact:untrusted,postCompact:untrusted,sessionStart:untrusted,sessionEnd:untrusted,userPromptSubmit:untrusted,stop:untrusted",
+    "hooks": "SessionStart,UserPromptSubmit,PreToolUse,PostToolUse,Stop,SessionEnd",
+    "toolRan": true,
+    "commandStatus": "in_progress|completed",
+    "sysmsgInStdout": false,
+    "reasonSeenByModel": false,
+    "stderrTail": "WARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir \"<HOME>\\\\AppData\\\\Local\\\\Temp\\\\\" (codex_home: AbsolutePathBuf(\"C:\\\\U"
+  },
+  "trust": {
+    "hooks": [
+      {
+        "key": "<HOME>\\AppData\\Local\\Temp\\claude\\-REPO-\\79250214-f20e-4d40-a2c1-a5a98eecf8ac\\scratchpad\\spikes\\cx-exit2-never-Vsplmu\\home\\.codex\\hooks.json:pre_tool_use:0:0",
+        "eventName": "preToolUse",
+        "trustStatus": "untrusted",
+        "hash": "present"
+      },
+      {
+        "key": "<HOME>\\AppData\\Local\\Temp\\claude\\-REPO-\\79250214-f20e-4d40-a2c1-a5a98eecf8ac\\scratchpad\\spikes\\cx-exit2-never-Vsplmu\\home\\.codex\\hooks.json:post_tool_use:0:0",
+        "eventName": "postToolUse",
+        "trustStatus": "untrusted",
+        "hash": "present"
+      },
+      {
+        "key": "<HOME>\\AppData\\Local\\Temp\\claude\\-REPO-\\79250214-f20e-4d40-a2c1-a5a98eecf8ac\\scratchpad\\spikes\\cx-exit2-never-Vsplmu\\home\\.codex\\hooks.json:pre_compact:0:0",
+        "eventName": "preCompact",
+        "trustStatus": "untrusted",
+        "hash": "present"
+      },
+      {
+        "key": "<HOME>\\AppData\\Local\\Temp\\claude\\-REPO-\\79250214-f20e-4d40-a2c1-a5a98eecf8ac\\scratchpad\\spikes\\cx-exit2-never-Vsplmu\\home\\.codex\\hooks.json:post_compact:0:0",
+        "eventName": "postCompact",
+        "trustStatus": "untrusted",
+        "hash": "present"
+      },
+      {
+        "key": "<HOME>\\AppData\\Local\\Temp\\claude\\-REPO-\\79250214-f20e-4d40-a2c1-a5a98eecf8ac\\scratchpad\\spikes\\cx-exit2-never-Vsplmu\\home\\.codex\\hooks.json:session_start:0:0",
+        "eventName": "sessionStart",
+        "trustStatus": "untrusted",
+        "hash": "present"
+      },
+      {
+        "key": "<HOME>\\AppData\\Local\\Temp\\claude\\-REPO-\\79250214-f20e-4d40-a2c1-a5a98eecf8ac\\scratchpad\\spikes\\cx-exit2-never-Vsplmu\\home\\.codex\\hooks.json:session_end:0:0",
+        "eventName": "sessionEnd",
+        "trustStatus": "untrusted",
+        "hash": "present"
+      },
+      {
+        "key": "<HOME>\\AppData\\Local\\Temp\\claude\\-REPO-\\79250214-f20e-4d40-a2c1-a5a98eecf8ac\\scratchpad\\spikes\\cx-exit2-never-Vsplmu\\home\\.codex\\hooks.json:user_prompt_submit:0:0",
+        "eventName": "userPromptSubmit",
+        "trustStatus": "untrusted",
+        "hash": "present"
+      },
+      {
+        "key": "<HOME>\\AppData\\Local\\Temp\\claude\\-REPO-\\79250214-f20e-4d40-a2c1-a5a98eecf8ac\\scratchpad\\spikes\\cx-exit2-never-Vsplmu\\home\\.codex\\hooks.json:stop:0:0",
+        "eventName": "stop",
+        "trustStatus": "untrusted",
+        "hash": "present"
+      }
+    ]
+  },
+  "hooks": [
+    {
+      "label": "SessionStart",
+      "env": {
+        "CODEX_HOME": "<TMP>\\home\\.codex",
+        "CODEX_MANAGED_BY_NPM": "1",
+        "CODEX_MANAGED_PACKAGE_ROOT": "<HOME>\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex"
+      },
+      "payload": {
+        "session_id": "01a1938e-d52c-76a0-8bf4-2ad90b29c79d",
+        "transcript_path": "<TMP>\\home\\.codex\\sessions\\2026\\11\\01\\rollout-2026-11-01T01-32-53-01a1938e-d52c-76a0-8bf4-2ad90b29c79d.jsonl",
+        "cwd": "<TMP>\\project",
+        "hook_event_name": "SessionStart",
+        "model": "mock-model",
+        "permission_mode": "bypassPermissions",
+        "source": "startup"
+      }
+    },
+    {
+      "label": "UserPromptSubmit",
+      "env": {
+        "CODEX_HOME": "<TMP>\\home\\.codex",
+        "CODEX_MANAGED_BY_NPM": "1",
+        "CODEX_MANAGED_PACKAGE_ROOT": "<HOME>\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex"
+      },
+      "payload": {
+        "session_id": "01a1938e-d52c-76a0-8bf4-2ad90b29c79d",
+        "turn_id": "01a1938e-d5c2-72c2-846b-69058b9d5896",
+        "transcript_path": "<TMP>\\home\\.codex\\sessions\\2026\\11\\01\\rollout-2026-11-01T01-32-53-01a1938e-d52c-76a0-8bf4-2ad90b29c79d.jsonl",
+        "cwd": "<TMP>\\project",
+        "hook_event_name": "UserPromptSubmit",
+        "model": "mock-model",
+        "permission_mode": "bypassPermissions",
+        "prompt": "SPIKE_SHELL run it"
+      }
+    },
+    {
+      "label": "PreToolUse",
+      "env": {
+        "CODEX_HOME": "<TMP>\\home\\.codex",
+        "CODEX_MANAGED_BY_NPM": "1",
+        "CODEX_MANAGED_PACKAGE_ROOT": "<HOME>\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex"
+      },
+      "payload": {
+        "session_id": "01a1938e-d52c-76a0-8bf4-2ad90b29c79d",
+        "turn_id": "01a1938e-d5c2-72c2-846b-69058b9d5896",
+        "transcript_path": "<TMP>\\home\\.codex\\sessions\\2026\\11\\01\\rollout-2026-11-01T01-32-53-01a1938e-d52c-76a0-8bf4-2ad90b29c79d.jsonl",
+        "cwd": "<TMP>\\project",
+        "hook_event_name": "PreToolUse",
+        "model": "mock-model",
+        "permission_mode": "bypassPermissions",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "cmd.exe /d /c echo hello-from-codex"
+        },
+        "tool_use_id": "call-1793476978629"
+      }
+    },
+    {
+      "label": "PostToolUse",
+      "env": {
+        "CODEX_HOME": "<TMP>\\home\\.codex",
+        "CODEX_MANAGED_BY_NPM": "1",
+        "CODEX_MANAGED_PACKAGE_ROOT": "<HOME>\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex"
+      },
+      "payload": {
+        "session_id": "01a1938e-d52c-76a0-8bf4-2ad90b29c79d",
+        "turn_id": "01a1938e-d5c2-72c2-846b-69058b9d5896",
+        "transcript_path": "<TMP>\\home\\.codex\\sessions\\2026\\11\\01\\rollout-2026-11-01T01-32-53-01a1938e-d52c-76a0-8bf4-2ad90b29c79d.jsonl",
+        "cwd": "<TMP>\\project",
+        "hook_event_name": "PostToolUse",
+        "model": "mock-model",
+        "permission_mode": "bypassPermissions",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "cmd.exe /d /c echo hello-from-codex"
+        },
+        "tool_response": "hello-from-codex\r\n",
+        "tool_use_id": "call-1793476978629"
+      }
+    },
+    {
+      "label": "Stop",
+      "env": {
+        "CODEX_HOME": "<TMP>\\home\\.codex",
+        "CODEX_MANAGED_BY_NPM": "1",
+        "CODEX_MANAGED_PACKAGE_ROOT": "<HOME>\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex"
+      },
+      "payload": {
+        "session_id": "01a1938e-d52c-76a0-8bf4-2ad90b29c79d",
+        "turn_id": "01a1938e-d5c2-72c2-846b-69058b9d5896",
+        "transcript_path": "<TMP>\\home\\.codex\\sessions\\2026\\11\\01\\rollout-2026-11-01T01-32-53-01a1938e-d52c-76a0-8bf4-2ad90b29c79d.jsonl",
+        "cwd": "<TMP>\\project",
+        "hook_event_name": "Stop",
+        "model": "mock-model",
+        "permission_mode": "bypassPermissions",
+        "stop_hook_active": false,
+        "last_assistant_message": "done"
+      }
+    },
+    {
+      "label": "SessionEnd",
+      "env": {
+        "CODEX_HOME": "<TMP>\\home\\.codex",
+        "CODEX_MANAGED_BY_NPM": "1",
+        "CODEX_MANAGED_PACKAGE_ROOT": "<HOME>\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex"
+      },
+      "payload": {
+        "session_id": "01a1938e-d52c-76a0-8bf4-2ad90b29c79d",
+        "transcript_path": "<TMP>\\home\\.codex\\sessions\\2026\\11\\01\\rollout-2026-11-01T01-32-53-01a1938e-d52c-76a0-8bf4-2ad90b29c79d.jsonl",
+        "cwd": "<TMP>\\project",
+        "hook_event_name": "SessionEnd",
+        "reason": "other"
+      }
+    }
+  ]
+}

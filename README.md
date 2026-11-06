@@ -121,7 +121,22 @@ Expected result: `CLAUDE_DAEMON_OK`, with no `SessionEnd hook failed` message af
 | `developer` (default) | minimal + `console.log` warn on Edit, build/PR-URL log on Bash | a core set (bootstrap-daemon, orchestrate-team, implement-feature, debug-triage, review-slice, …) | Day-to-day coding |
 | `security` | developer + blocks `git --no-verify`, blocks dev-server-without-tmux, audits every MCP call, warns on untrusted MCP servers | developer + 3 (security-audit, production-readiness, llm-app-safety) | High-stakes work, regulated repos |
 
-Profile manifest: [runtime/profiles/profiles.json](runtime/profiles/profiles.json). Hook handlers under [runtime/src/hooks/](runtime/src/hooks/) are invoked via `ad hook <name>` and consume Claude Code's tool-use JSON on stdin. Profile shape adapted from [`everything-claude-code`](https://github.com/affaan-m/everything-claude-code) — see [ATTRIBUTION.md](ATTRIBUTION.md).
+Profile manifest: [runtime/profiles/profiles.json](runtime/profiles/profiles.json). Profile shape adapted from [`everything-claude-code`](https://github.com/affaan-m/everything-claude-code) — see [ATTRIBUTION.md](ATTRIBUTION.md).
+
+**How the hooks run.** Every hook `ad init` writes is one entry for the hook dispatcher, `node <ad>/runtime/bin/hook.mjs <event>`, in Claude Code's exec form (no shell in front). Two cases get a command string instead: a Claude Code older than 2.1.314, and the prompt and session-start hooks while a memory plugin from before the dispatcher is on. Each event loads only what it needs: the rules check before each tool call adds well under 100 ms to node's own start, and the prompt and session-start hooks stay within 250/350/900 ms on Linux/macOS/Windows.
+
+| Event | Host event | What it does |
+|---|---|---|
+| `session.start` | SessionStart | Drains captured corrections, injects this project's memory |
+| `prompt.submit` | UserPromptSubmit | Captures corrections you typed (held for review), recalls related notes, suggests a skill |
+| `tool.before` | PreToolUse (Bash, PowerShell, Write, Edit) | Checks the call against your rules; with no rules it prints nothing. Reads only `~/.agent-daemon/guards.json`, never the memory store |
+| `tool.after` | PostToolUse | Remembers prompts the model scheduled (CronCreate, ScheduleWakeup) so they aren't taken as typed; build and PR-URL notes; `console.log` warnings |
+| `subagent.stop` | SubagentStop | Remembers a subagent's report, for the same reason |
+| `session.end` | SessionEnd | Starts the session digest in the background and exits |
+| `skill.use` | PreToolUse (Skill), UserPromptExpansion | Records skill invocations |
+| `bash.guard`, `mcp.audit` | PreToolUse (security profile) | Block `--no-verify` and dev servers outside tmux; log MCP calls |
+
+A hook never upgrades the memory store: if the store is older than this ad, captures wait in the journal and the upgrade runs in the background; if it is newer (an older ad), captures only wait. Problems a hook couldn't report go to `~/.agent-daemon/hooks/hook.log`, and `ad doctor` shows its last lines along with any hook that runs twice, a hook script that is gone, and the rules check's mode. The handlers can also be run by hand: `ad hook <name>` reads the same JSON on stdin.
 
 ## Agent harness
 
@@ -539,6 +554,7 @@ ad memory redact <table>:<id>          # Replace what looks like a key in one ro
 ad memory install [--host <id>] [--yes] [--dry-run]   # Add the memory server to Claude Code, Codex, Cursor, VS Code, Gemini CLI (docs/memory/install.md)
 ad memory doctor | repair | status | uninstall
 ad memory report [--days 30] [--all-projects] [--json] [--share]   # Is memory working: repeated corrections, what was shown, feedback (docs/memory/metrics.md)
+ad mistakes [--all-projects] [--share | --json] [--yes]            # Read-only: the corrections you keep typing to your coding agents, offline (docs/mistakes.md)
 ad memory migrate                      # Run the one-time upkeep now (note keys, journal secret scrub, project ids)
 ad memory assign --list | <table>:<id> --project <dir>   # Place a note two folders shared (typed confirmation)
 ad memory consolidate                  # Evolution pass: near-dup merges, stale archive, contradictions
@@ -823,30 +839,28 @@ rm -f .git/ad-checkpoint-index
 
 ### 4. Clean `~/.claude/settings.json`
 
-The hooks `ad init` injects look like this (commands all start with `ad`):
+The hooks `ad init` injects all run ad's hook dispatcher, `runtime/bin/hook.mjs`, with an event name:
 
 ```json
 {
   "hooks": {
-    "SessionStart":  [ { "hooks": [{ "command": "ad session-start --output-json" }] } ],
-    "SessionEnd":    [ { "hooks": [{ "command": "ad digest ..." }] } ],
-    "UserPromptSubmit": [ { "hooks": [
-      { "command": "ad hook user-prompt-extract" },
-      { "command": "ad query-retrieve ..." }
-    ] } ],
-    "PostToolUse":   [
-      { "matcher": "Edit|Write|MultiEdit", "hooks": [{ "command": "ad hook edit-post" }] },
-      { "matcher": "Bash",                 "hooks": [{ "command": "ad hook bash-post" }] }
+    "SessionStart":     [ { "hooks": [{ "type": "command", "command": "node", "args": ["<ad>/runtime/bin/hook.mjs", "session.start"] }] } ],
+    "SessionEnd":       [ { "hooks": [{ "type": "command", "command": "node", "args": ["<ad>/runtime/bin/hook.mjs", "session.end"] }] } ],
+    "UserPromptSubmit": [ { "hooks": [{ "type": "command", "command": "node", "args": ["<ad>/runtime/bin/hook.mjs", "prompt.submit"] }] } ],
+    "PreToolUse": [
+      { "matcher": "Bash|PowerShell|Write|Edit", "hooks": [{ "type": "command", "command": "node", "args": ["<ad>/runtime/bin/hook.mjs", "tool.before"] }] },
+      { "matcher": "Skill", "hooks": [{ "type": "command", "command": "node", "args": ["<ad>/runtime/bin/hook.mjs", "skill.use"] }] }
     ],
-    "PreToolUse":    [
-      { "matcher": "Bash",     "hooks": [{ "command": "ad hook bash-pre" }] },
-      { "matcher": "mcp__.*",  "hooks": [{ "command": "ad hook mcp-pre" }] }
+    "PostToolUse": [
+      { "matcher": "CronCreate|ScheduleWakeup|Bash|Edit|Write|MultiEdit", "hooks": [{ "type": "command", "command": "node", "args": ["<ad>/runtime/bin/hook.mjs", "tool.after"] }] }
     ]
   }
 }
 ```
 
-To remove them by hand: open `~/.claude/settings.json`, drop any hook entry whose `command` starts with `ad `. Keep any other entries (those belong to other tools).
+Plus `UserPromptExpansion` (`skill.use`) and `SubagentStop` (`subagent.stop`); the security profile adds `bash.guard` and `mcp.audit`. Installs from before the dispatcher used commands starting with `ad ` (`ad hook …`, `ad session-start`); `ad init` replaces those.
+
+To remove them by hand: open `~/.claude/settings.json`, drop any hook entry whose `args` (or `command`) name `runtime/bin/hook.mjs`, and any whose `command` starts with `ad `. Keep any other entries (those belong to other tools).
 
 Or do it programmatically:
 
@@ -858,7 +872,7 @@ const p = path.join(process.env.HOME || process.env.USERPROFILE, '.claude/settin
 const s = JSON.parse(fs.readFileSync(p, 'utf8'));
 for (const ev of Object.keys(s.hooks || {})) {
   s.hooks[ev] = (s.hooks[ev] || [])
-    .map(e => ({ ...e, hooks: (e.hooks || []).filter(h => !/^ad(\\s|\$)/.test(h.command || '')) }))
+    .map(e => ({ ...e, hooks: (e.hooks || []).filter(h => !/^ad(\\s|\$)/.test(h.command || '') && !/runtime[\\\\/]bin[\\\\/]hook\\.mjs/.test([h.command, ...(h.args || [])].join(' '))) }))
     .filter(e => (e.hooks || []).length > 0);
   if (s.hooks[ev].length === 0) delete s.hooks[ev];
 }

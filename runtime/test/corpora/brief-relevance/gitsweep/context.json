@@ -1,0 +1,26 @@
+{
+  "name": "gitsweep",
+  "stack": ["Rust", "clap 4 (derive)", "serde / serde_json", "git2", "anyhow", "thiserror", "insta", "assert_cmd", "cargo-nextest"],
+  "branch": "feat/dry-run-json-output",
+  "recent_paths": [
+    "src/cli.rs",
+    "src/output/mod.rs",
+    "src/output/json.rs",
+    "src/output/table.rs",
+    "src/commands/prune.rs",
+    "src/candidates.rs",
+    "tests/cli_dry_run.rs",
+    "tests/snapshots/cli_dry_run__json_output.snap",
+    "Cargo.toml",
+    "CHANGELOG.md",
+    "README.md"
+  ],
+  "recent_commits": [
+    "feat(cli): add --format json to prune --dry-run",
+    "refactor(output): split table and json renderers",
+    "test: snapshot the JSON dry-run output with insta",
+    "fix(prune): never list the current branch as a candidate",
+    "docs: document --format in the README"
+  ],
+  "session_cwd": "/work/gitsweep"
+}

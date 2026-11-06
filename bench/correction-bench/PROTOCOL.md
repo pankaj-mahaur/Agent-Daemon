@@ -231,3 +231,4 @@ moves its own calls out of the exempt file, and they count as violations.
   - comments are ignored by the oracles, and they cover `.mjs`, `.cjs` and `.ts`;
   - Holm uses the pre-registered m;
   - power is checked at a stated smallest effect.
+- 2026-11-06: ad stores every capture as pending and recalls it only after the user accepts it. So `on-hooks` and `on-tools` now include one review between session 1 and session 2 that accepts everything ad captured, standing in for the user's one-keypress review. The measured effect is "a correction the user reviewed once", not "a correction recalled with no review".

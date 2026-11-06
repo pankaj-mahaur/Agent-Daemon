@@ -684,6 +684,9 @@ async function memoryWorld() {
     await ep.upsertSession({ id: "sb", projectPath: B, startedAt: "2026-10-01T00:00:00Z" });
     await ep.insertLearning({ sessionId: "sa", projectSlug: ep.projectSlug(A), category: "gotcha", text: "ALPHA-ONLY note", confidence: 0.8, origin: "user" });
     await ep.insertLearning({ sessionId: "sb", projectSlug: ep.projectSlug(B), category: "gotcha", text: "BETA-ONLY note", confidence: 0.8, origin: "user" });
+    // Every writer stores a note as pending; the server recalls only what the user accepted.
+    const { acceptAllPending } = await import("../testkit/memory-trust.mjs");
+    acceptAllPending(await ep.db());
     ep.closeDb();
   } finally {
     for (const [k, v] of Object.entries(saved)) v === undefined ? delete process.env[k] : (process.env[k] = v);

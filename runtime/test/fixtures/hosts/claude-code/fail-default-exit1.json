@@ -1,0 +1,80 @@
+{
+  "host": "claude-code",
+  "version": "2.1.314",
+  "scenario": "fail-default-exit1",
+  "captured": "2026-10-31",
+  "os": "win32",
+  "outcome": {
+    "name": "fail-default-exit1",
+    "code": 0,
+    "hooks": "PreToolUse,PostToolUse",
+    "permission_mode": "default",
+    "toolRan": true,
+    "toolResult": "\"hello-from-bash Shell cwd was reset to <HOME>\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\-REPO-",
+    "sysmsgInStdout": false,
+    "reasonInStdout": false,
+    "denials": "\"permission_denials\":[]"
+  },
+  "hooks": [
+    {
+      "label": "PreToolUse",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CONFIG_DIR": "<TMP>\\home\\.claude",
+        "CLAUDE_PROJECT_DIR": "<TMP>/project"
+      },
+      "payload": {
+        "session_id": "959a36ba-4c0f-4fa4-8e47-a68663a08051",
+        "transcript_path": "<TMP>\\home\\.claude\\projects\\-TMP--p-18dvbg\\959a36ba-4c0f-4fa4-8e47-a68663a08051.jsonl",
+        "cwd": "<TMP>\\project",
+        "prompt_id": "dabbc9dc-c332-4df1-aa9d-99d3a706d8df",
+        "permission_mode": "default",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "echo hello-from-bash",
+          "description": "echo"
+        },
+        "tool_use_id": "toolu_mock_1793476905617"
+      }
+    },
+    {
+      "label": "PostToolUse",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CONFIG_DIR": "<TMP>\\home\\.claude",
+        "CLAUDE_PROJECT_DIR": "<TMP>/project"
+      },
+      "payload": {
+        "session_id": "959a36ba-4c0f-4fa4-8e47-a68663a08051",
+        "transcript_path": "<TMP>\\home\\.claude\\projects\\-TMP--p-18dvbg\\959a36ba-4c0f-4fa4-8e47-a68663a08051.jsonl",
+        "cwd": "<TMP>\\project",
+        "prompt_id": "dabbc9dc-c332-4df1-aa9d-99d3a706d8df",
+        "permission_mode": "default",
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "echo hello-from-bash",
+          "description": "echo"
+        },
+        "tool_response": {
+          "stdout": "hello-from-bash",
+          "stderr": "\nShell cwd was reset to <TMP>\\project",
+          "interrupted": false,
+          "isImage": false,
+          "noOutputExpected": false
+        },
+        "tool_use_id": "toolu_mock_1793476905617",
+        "duration_ms": 4798
+      }
+    }
+  ]
+}

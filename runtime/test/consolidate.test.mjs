@@ -9,6 +9,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import * as ep from "../src/memory/episodic.mjs";
+import { acceptAllPending, testReviewToken } from "../testkit/memory-trust.mjs";
 
 // One shared episodic module — closeDb() between tests resets the singleton
 // so the next db() call re-opens under the new tmp HOME (consolidate.mjs uses
@@ -60,6 +61,7 @@ test("consolidation finds near-duplicate clusters and picks the strongest surviv
     await ep.insertLearning({ category: "gotcha", projectSlug: "proj-x", confidence: 0.7,
       text: "completely unrelated learning about database migrations and schemas" });
 
+    acceptAllPending(await ep.db()); // consolidation works on accepted notes
     const analysis = await con.analyzeConsolidation({ projectSlug: "proj-x" });
     ep.closeDb();
     assert.equal(analysis.driver, true);
@@ -78,9 +80,11 @@ test("applyMerges supersedes duplicates and sums observed_count onto the survivo
     await ep.insertLearning({ category: "pattern", projectSlug: "proj-y", confidence: 0.4,
       text: "use the project linter configuration instead of editor defaults" });
 
+    acceptAllPending(await ep.db());
     const analysis = await con.analyzeConsolidation({ projectSlug: "proj-y" });
     assert.equal(analysis.mergeClusters.length, 1);
-    const superseded = await con.applyMerges(analysis);
+    await assert.rejects(con.applyMerges(analysis, null), /review token/, "retiring accepted notes needs the review token");
+    const superseded = await con.applyMerges(analysis, testReviewToken());
     assert.equal(superseded, 1);
 
     const handle = await ep.db();
@@ -102,6 +106,7 @@ test("contradiction detection pairs a statement with its negation", async () => 
     await ep.insertLearning({ category: "decision", projectSlug: "proj-z", confidence: 0.7,
       text: "never use polling mode for the transcript watcher on Windows machines" });
 
+    acceptAllPending(await ep.db());
     const analysis = await con.analyzeConsolidation({ projectSlug: "proj-z" });
     ep.closeDb();
     assert.equal(analysis.contradictions.length, 1, "negation pair flagged");
@@ -127,6 +132,7 @@ test("user fact observation upserts: re-observation bumps count and accrues proj
     assert.equal(second.observed, 2);
     assert.deepEqual(second.projects.sort(), ["proj-a", "proj-b"], "cross-project provenance accrues");
 
+    acceptAllPending(await ep.db()); // served once accepted
     const top = await ep.topUserFacts({ limit: 3 });
     ep.closeDb();
     assert.equal(top.length, 1);

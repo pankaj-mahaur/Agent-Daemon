@@ -1,0 +1,22 @@
+{"id":"infra-orbit-01","text":"Never run `terraform apply` locally against prod. Open a PR; plan.yml posts the plan and apply runs from CI after approval.","created":"2026-03-12","kind":"workflow"}
+{"id":"infra-orbit-02","text":"Each environment has its own root in envs/<env>/. Run `terraform -chdir=envs/staging plan`; there is no root module at the repo top.","created":"2026-02-20","kind":"paths"}
+{"id":"infra-orbit-03","text":"An RDS major upgrade needs a new parameter group with the new family (postgres16). The old group can't be reused and the apply fails late.","created":"2026-10-21","kind":"fact"}
+{"id":"infra-orbit-04","text":"Set allow_major_version_upgrade = true only in the upgrade PR, then turn it off again; left on, a stray engine_version bump can upgrade prod.","created":"2026-10-24","kind":"fact"}
+{"id":"infra-orbit-05","text":"Prod database changes need a fresh manual snapshot and a maintenance window announced in #ops-changes 48 hours ahead.","created":"2026-05-08","kind":"workflow"}
+{"id":"infra-orbit-06","text":"Use RDS blue/green deployments for prod major upgrades; the in-place upgrade on staging caused about 25 minutes of downtime.","created":"2026-10-27","kind":"fact"}
+{"id":"infra-orbit-07","text":"Before a PR: `make fmt validate lint` (terraform fmt, validate, tflint) plus checkov. CI blocks on any failure.","created":"2026-04-02","kind":"tooling"}
+{"id":"infra-orbit-08","text":"Every new module input goes in variables.tf with a type and description; then regenerate the module README with `terraform-docs .`.","created":"2026-06-17","kind":"style"}
+{"id":"infra-orbit-09","text":"Prod RDS stays on Postgres 13 until the vendor extension supports newer versions.","created":"2025-08-12","kind":"fact"}
+{"id":"infra-orbit-10","text":"State lives in local terraform.tfstate files committed to the repo.","created":"2025-01-20","kind":"fact"}
+{"id":"infra-orbit-11","text":"Remote state is S3 with DynamoDB locking, one state per env. Use `terraform force-unlock` only after checking that no CI run holds the lock.","created":"2026-02-20","kind":"fact"}
+{"id":"infra-orbit-12","text":"The EKS module pins the VPC CNI add-on version; upgrade add-ons one minor version at a time.","created":"2026-07-15","kind":"fact"}
+{"id":"infra-orbit-13","text":"CloudFront distributions for the marketing site live in envs/global/cdn.tf and are owned by the web team.","created":"2026-05-19","kind":"paths"}
+{"id":"infra-orbit-14","text":"GitHub OIDC roles are in modules/github-oidc; trust is per branch, so a new deploy branch needs a trust-policy update.","created":"2026-04-30","kind":"fact"}
+{"id":"infra-orbit-15","text":"Change one environment per PR: staging changes merge and soak for a day before the prod PR is opened.","created":"2026-03-12","kind":"workflow"}
+{"id":"infra-orbit-16","text":"S3 buckets need a public access block and default encryption; checkov CKV_AWS_18 (access logging) is waived only for the logs bucket.","created":"2026-06-03","kind":"fact"}
+{"id":"infra-orbit-17","text":"Terraform is pinned in .terraform-version (1.9.x) via tfenv; provider versions are pinned in each module's versions.tf.","created":"2026-01-15","kind":"tooling"}
+{"id":"infra-orbit-18","text":"Every resource needs team and cost_center tags, set through default_tags in the provider block.","created":"2026-02-28","kind":"style"}
+{"id":"infra-orbit-19","text":"Session Redis (ElastiCache) is defined in envs/prod/cache.tf; failover is tested every quarter.","created":"2026-08-09","kind":"paths"}
+{"id":"infra-orbit-20","text":"Use parameter_group_name = \"default.postgres13\" on aws_db_instance; custom parameter groups aren't needed.","created":"2025-09-01","kind":"fact"}
+{"id":"infra-orbit-21","text":"After a Postgres major upgrade, run ALTER EXTENSION ... UPDATE for pg_stat_statements and postgis on each database.","created":"2026-10-27","kind":"workflow"}
+{"id":"infra-orbit-22","text":"Route53 records for customer custom domains are managed by the domains service through the API, not Terraform; don't import them.","created":"2026-07-02","kind":"fact"}

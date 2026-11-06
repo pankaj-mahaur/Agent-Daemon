@@ -31,7 +31,7 @@ test("SessionStart prioritizes active memory and recent learnings under the 9 KB
   await fs.writeFile(path.join(memory, "activeContext.md"), "# Active\nACTIVE-SURVIVES\n" + "context ".repeat(1800), "utf8");
   await fs.writeFile(path.join(root, ".claude.json"), JSON.stringify({ mcpServers: { qmd: { command: "qmd" } } }), "utf8");
   const db = await open({ dbPath: path.join(root, ".agent-daemon", "episodic.db") });
-  db.run("INSERT INTO learnings (project_slug, category, text, confidence) VALUES (?, 'correction', 'RECENT-SURVIVES use pnpm for this project', 0.9)", [projectSlug(project)]);
+  db.run("INSERT INTO learnings (project_slug, category, text, confidence, accepted_by) VALUES (?, 'correction', 'RECENT-SURVIVES use pnpm for this project', 0.9, 'review')", [projectSlug(project)]);
   db.close();
   try {
     const result = await runCli(["session-start", "--output-json", "--cwd", project], null, root);
@@ -52,7 +52,7 @@ test("UserPromptSubmit retrieval reads the prompt payload and uses the official 
   const project = path.join(root, "project");
   await fs.mkdir(project);
   const db = await open({ dbPath: path.join(root, ".agent-daemon", "episodic.db") });
-  db.run("INSERT INTO learnings (project_slug, category, text, confidence) VALUES (?, 'gotcha', 'pnpm workspace requires frozen lockfile', 0.9)", [projectSlug(project)]);
+  db.run("INSERT INTO learnings (project_slug, category, text, confidence, accepted_by) VALUES (?, 'gotcha', 'pnpm workspace requires frozen lockfile', 0.9, 'review')", [projectSlug(project)]);
   db.close();
   try {
     const result = await runCli(

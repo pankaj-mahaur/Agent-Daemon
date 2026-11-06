@@ -16,6 +16,14 @@ import os from "node:os";
 import path from "node:path";
 
 import { touchedFiles } from "../src/digest/digest.mjs";
+import { acceptLearnings } from "../testkit/memory-trust.mjs";
+
+// Readers serve accepted notes (MCP launch plan L1): each seed is accepted as review would.
+async function seed(mod, learning) {
+  const id = await mod.insertLearning(learning);
+  acceptLearnings(await mod.db(), id);
+  return id;
+}
 
 async function withEpisodic(fn) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ad-progressive-"));
@@ -38,9 +46,9 @@ async function withEpisodic(fn) {
 
 test("getLearningsByIds returns full rows for the given ids", async () => {
   const { rows, id1, id2 } = await withEpisodic(async (mod) => {
-    const id1 = await mod.insertLearning({ category: "pattern", text: "alpha learning", evidence: "ev-a", confidence: 0.8, tags: ["x"] });
-    const id2 = await mod.insertLearning({ category: "gotcha", text: "beta learning", confidence: 0.6 });
-    await mod.insertLearning({ category: "fact", text: "gamma learning" });
+    const id1 = await seed(mod, { category: "pattern", text: "alpha learning", evidence: "ev-a", confidence: 0.8, tags: ["x"] });
+    const id2 = await seed(mod, { category: "gotcha", text: "beta learning", confidence: 0.6 });
+    await seed(mod, { category: "fact", text: "gamma learning" });
     const rows = await mod.getLearningsByIds([id1, id2]);
     return { rows, id1, id2 };
   });
@@ -56,7 +64,7 @@ test("getLearningsByIds returns full rows for the given ids", async () => {
 
 test("getLearningsByIds ignores non-integer ids and handles empties", async () => {
   const { empty, mixed, id1 } = await withEpisodic(async (mod) => {
-    const id1 = await mod.insertLearning({ category: "pattern", text: "only one" });
+    const id1 = await seed(mod, { category: "pattern", text: "only one" });
     const empty = await mod.getLearningsByIds([]);
     const mixed = await mod.getLearningsByIds([id1, "nope", null, 99999]);
     return { empty, mixed, id1 };
@@ -77,12 +85,12 @@ test("learningTimeline returns the session and sibling learnings", async () => {
       endedAt: "2026-06-01T10:30:00.000Z"
     });
     const slug = mod.projectSlug("/tmp/projA");
-    const target = await mod.insertLearning({ sessionId: "sess-A", projectSlug: slug, category: "pattern", text: "the target learning" });
-    await mod.insertLearning({ sessionId: "sess-A", projectSlug: slug, category: "gotcha", text: "sibling one" });
-    await mod.insertLearning({ sessionId: "sess-A", projectSlug: slug, category: "fact", text: "sibling two" });
+    const target = await seed(mod, { sessionId: "sess-A", projectSlug: slug, category: "pattern", text: "the target learning" });
+    await seed(mod, { sessionId: "sess-A", projectSlug: slug, category: "gotcha", text: "sibling one" });
+    await seed(mod, { sessionId: "sess-A", projectSlug: slug, category: "fact", text: "sibling two" });
     // a learning from a different session must NOT appear as a neighbor
     await mod.upsertSession({ id: "sess-B", projectPath: "/tmp/projA", startedAt: "2026-06-02T10:00:00.000Z" });
-    await mod.insertLearning({ sessionId: "sess-B", projectSlug: slug, category: "pattern", text: "unrelated other session" });
+    await seed(mod, { sessionId: "sess-B", projectSlug: slug, category: "pattern", text: "unrelated other session" });
     return mod.learningTimeline(target);
   });
   assert.ok(tl, "timeline returned");
@@ -103,8 +111,8 @@ test("learningTimeline returns null for an unknown id", async () => {
 
 test("searchLearningsByFile matches on full path and on basename", async () => {
   const { byPath, byBase, miss } = await withEpisodic(async (mod) => {
-    await mod.insertLearning({ category: "gotcha", text: "auth race condition", tags: ["src/auth/login.ts", "login.ts"] });
-    await mod.insertLearning({ category: "pattern", text: "unrelated learning", tags: ["other.ts"] });
+    await seed(mod, { category: "gotcha", text: "auth race condition", tags: ["src/auth/login.ts", "login.ts"] });
+    await seed(mod, { category: "pattern", text: "unrelated learning", tags: ["other.ts"] });
     const byPath = await mod.searchLearningsByFile("src/auth/login.ts");
     const byBase = await mod.searchLearningsByFile("login.ts");
     const miss = await mod.searchLearningsByFile("does-not-exist.ts");
@@ -119,7 +127,7 @@ test("searchLearningsByFile matches on full path and on basename", async () => {
 
 test("searchLearningsByFile normalizes backslash paths to forward slashes", async () => {
   const hits = await withEpisodic(async (mod) => {
-    await mod.insertLearning({ category: "gotcha", text: "windows path learning", tags: ["src/win/file.ts"] });
+    await seed(mod, { category: "gotcha", text: "windows path learning", tags: ["src/win/file.ts"] });
     // query with a Windows-style separator → should still match
     return mod.searchLearningsByFile("src\\win\\file.ts");
   });

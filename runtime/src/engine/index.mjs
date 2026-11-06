@@ -1428,7 +1428,7 @@ const DOCTOR_WORDS = {
   "engine.homeError": (d) => ({ name: "Engine home", note: d.message }),
   "engine.compat": (d) => ({ name: "Engine compatibility", note: `tested: ${d.tested.join(", ")}. ${d.note}` }),
   "engine.login": (d) => ({ name: "Engine sign-in", note: d.loggedIn ? d.label : "not signed in. Run: ad auth login chatgpt" }),
-  "engine.hooks": (d) => ({ name: "Engine hooks", note: `${d.trusted}/${d.total} trusted${d.trusted < d.total ? "; the next ad run trusts them again" : ""}` }),
+  "engine.hooks": (d) => ({ name: "Engine hooks", note: `${d.trusted}/${d.total} trusted${d.trusted < d.total ? `; not running until trusted: ${(d.untrusted ?? []).join(", ") || "some"} (the next ad run trusts them again)` : ""}` }),
   "engine.homeFolder": (d) => ({ name: "Home folder", note: homeDoctorNote(d) }),
   "engine.windowsSandbox": (d) => ({ name: "Windows sandbox", note: d.status === "ready" ? `ready (${d.mode ?? "?"})` : `${d.status}. Run: ad sandbox setup` }),
   "engine.unreachable": (d) => {

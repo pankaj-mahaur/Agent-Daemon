@@ -558,7 +558,7 @@ async function mergeDb(dir, status, { env }) {
         const secret = findSecrets(`${text}\n${r.evidence ?? ""}`).length > 0;
         const kept = r.status === "quarantined" || r.status === "rejected" ? r.status : screen.verdict !== "clean" || secret ? "quarantined" : "pending";
         const row = {
-          ...pick(r, "learnings", ["id", "project_id", "project_slug", "project_path", "content_hash", "norm_key", "status", "origin", "applied_to", "quarantine_reason", "supersedes", "superseded_by", "session_id", "promote_request", "global_accepted_at", "retrieval_count"]),
+          ...pick(r, "learnings", ["id", "project_id", "project_slug", "project_path", "content_hash", "norm_key", "status", "origin", "applied_to", "quarantine_reason", "supersedes", "superseded_by", "session_id", "promote_request", "global_accepted_at", "retrieval_count", "accepted_by", "accepted_at", "provenance", "status_at"]),
           project_id: p.id,
           project_slug: p.slug,
           content_hash: scopedContentHash(p.slug, text),
@@ -568,6 +568,8 @@ async function mergeDb(dir, status, { env }) {
         if (lc.has("norm_key")) row.norm_key = nk;
         if (lc.has("project_path")) row.project_path = p.path ?? null;
         if (lc.has("origin")) row.origin = origin;
+        // Who accepted it is never imported: the user accepts in ad review --import.
+        if (lc.has("provenance")) row.provenance = "import";
         if (lc.has("applied_to")) row.applied_to = kept === "quarantined" ? "quarantined:import" : "proposed:import";
         if (lc.has("quarantine_reason") && kept === "quarantined") row.quarantine_reason = secret ? "secret-shaped text" : screen.reasons.join(", ") || "imported as quarantined";
         const nid = insert("learnings", row);
@@ -590,7 +592,8 @@ async function mergeDb(dir, status, { env }) {
           continue;
         }
         const flaggedFact = screenLearning({ text, evidence: r.evidence ?? "" }).verdict !== "clean" || findSecrets(text).length > 0;
-        const row = { ...pick(r, "user_facts", ["id", "projects", "project_ids", "promoted_at", "export_project", "content_hash", "status", "origin", "source_session", "supersedes"]), status: flaggedFact ? "quarantined" : "pending" };
+        const row = { ...pick(r, "user_facts", ["id", "projects", "project_ids", "promoted_at", "export_project", "content_hash", "status", "origin", "source_session", "supersedes", "global_accepted_at", "accepted_by", "accepted_at", "provenance", "status_at"]), status: flaggedFact ? "quarantined" : "pending" };
+        if (fc.has("provenance")) row.provenance = "import";
         if (fc.has("project_ids")) row.project_ids = JSON.stringify(p ? [p.id] : []);
         if (fc.has("projects")) row.projects = JSON.stringify(p ? [p.slug] : []);
         if (fc.has("content_hash")) row.content_hash = hash;
@@ -800,14 +803,16 @@ export async function verifyImport(importId, { env = process.env } = {}) {
 }
 
 /**
- * ad review --import <id> [--accept-all]: imported lessons and facts, accepted (active) or
- * rejected, in your own terminal with a typed confirmation; never from an agent's shell. The
- * internal AD_INTERNAL_TEST_CONFIRM=<id> stands in for the terminal (CI), never under a shell marker.
+ * ad review --import <id> [--accept-all]: imported lessons and facts, accepted (through the
+ * review service) or rejected, in your own terminal with a typed confirmation; never from an
+ * agent's shell. No environment variable stands in for the terminal: tests pass isTTY.
  */
-export async function reviewImport(importId, { acceptAll = false, env = process.env, isTTY = Boolean(process.stdin.isTTY && process.stdout.isTTY), ask, out = process.stdout } = {}) {
+export async function reviewImport(importId, { acceptAll = false, env = process.env, isTTY = Boolean(process.stdin.isTTY && process.stdout.isTTY), ask, out = process.stdout, ancestry, dialog } = {}) {
   if (env.AD_TOOL_SHELL === "1") throw fail("IMPORT_REFUSED", IMPORT_TEXTS.REVIEW_SHELL, { exitCode: 2 });
-  const override = env.AD_INTERNAL_TEST_CONFIRM === importId;
-  if (!isTTY && !override) throw fail("IMPORT_REFUSED", IMPORT_TEXTS.REVIEW_TTY, { exitCode: 2 });
+  if (!isTTY) throw fail("IMPORT_REFUSED", IMPORT_TEXTS.REVIEW_TTY, { exitCode: 2 });
+  const { reviewToken, acceptLearning, acceptFact } = await import("../memory/review-service.mjs");
+  const gate = await reviewToken({ env, isTTY: () => isTTY, ...(ancestry ? { ancestry } : {}), ...(dialog ? { dialog } : {}), ask, out: (l) => out.write(`${l}\n`) });
+  if (gate.refused) throw fail("IMPORT_REFUSED", gate.refused, { exitCode: 2 });
   const { open } = await import("../memory/sqlite.mjs");
   const saved = process.env.AD_ROOT;
   if (env.AD_ROOT) process.env.AD_ROOT = env.AD_ROOT;
@@ -818,11 +823,11 @@ export async function reviewImport(importId, { acceptAll = false, env = process.
   try {
     const rowsOf = (table) => db.prepare(`SELECT x.id, x.text, x.status FROM "${table}" x JOIN import_rows r ON r.row_id = x.id AND r.table_name = ? AND r.import_id = ? WHERE x.status = 'pending'`).all(table, importId);
     const items = [...rowsOf("learnings").map((r) => ({ ...r, table: "learnings" })), ...rowsOf("user_facts").map((r) => ({ ...r, table: "user_facts" }))];
-    const accept = (it) => db.prepare(`UPDATE "${it.table}" SET status = 'active'${it.table === "learnings" ? ", applied_to = 'import:accepted'" : ""} WHERE id = ?`).run(it.id);
+    const accept = (it) => (it.table === "learnings" ? acceptLearning(t, gate.token, it.id, { appliedTo: "import:accepted" }) : acceptFact(t, gate.token, it.id));
     const reject = (it) => db.prepare(`UPDATE "${it.table}" SET status = 'rejected' WHERE id = ?`).run(it.id);
     let decided = 0;
     if (acceptAll) {
-      const typed = override ? importId : await ask(`Accept all ${items.length} imported item(s)? Type ${importId} to confirm: `);
+      const typed = await ask(`Accept all ${items.length} imported item(s)? Type ${importId} to confirm: `);
       if (String(typed ?? "").trim() !== importId) return { accepted: 0, rejected: 0, left: items.length, changed: false };
       for (const it of items) accept(it);
       decided = items.length;

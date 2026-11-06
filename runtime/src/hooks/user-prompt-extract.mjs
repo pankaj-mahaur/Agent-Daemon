@@ -35,19 +35,29 @@ import { isGeneratedPrompt } from "./generated-prompts.mjs";
 // the next prompt (~6% of real prompts). Reading 1 MB costs ~ms.
 const TRANSCRIPT_TAIL_BYTES = 1024 * 1024;
 
-export async function userPromptExtract() {
+/**
+ * @param {object} [given]  the payload, when the dispatcher already read stdin
+ * @param {{source?:{typed:boolean, why:string, provisionalEligible:boolean}}} [opts]
+ *   source: the dispatcher's prompt-source verdict (hooks/prompt-source.mjs).
+ *   A prompt no one typed (a subagent's report, a scheduled prompt, a wrapper)
+ *   is not captured; a headless run is, marked so. Every capture is stamped
+ *   with the verdict, and the drain stores it pending either way (L5 adds
+ *   provisional notes for allow-listed hosts).
+ *   print: false when the dispatcher prints one answer for all prompt steps.
+ */
+export async function userPromptExtract(given, { source, print = true } = {}) {
+  const done = () => {
+    if (print) passthrough();
+    return 0;
+  };
   try {
-    const input = await readStdinJson();
+    const input = given ?? (await readStdinJson());
     // Team workers (AD_WORKER=1) are prompted by the leader, not the user.
-    if (process.env.AD_WORKER === "1") {
-      passthrough();
-      return 0;
-    }
+    if (process.env.AD_WORKER === "1") return done();
+    if (source && !source.typed && source.why !== "headless") return done();
+    const sourceStamp = source ? { prompt_source: source.why, provisional_eligible: Boolean(source.provisionalEligible) } : {};
     // A prompt the client wrote (the engine's plan hand-off) isn't the user's words.
-    if (isGeneratedPrompt(input.prompt)) {
-      passthrough();
-      return 0;
-    }
+    if (isGeneratedPrompt(input.prompt)) return done();
     const cwd = String(input.cwd || process.env.CLAUDE_PROJECT_DIR || process.cwd());
     const userPrompt = String(input.prompt || "");
     const transcriptPath = String(input.transcript_path || process.env.CLAUDE_TRANSCRIPT_PATH || "");
@@ -61,7 +71,7 @@ export async function userPromptExtract() {
     if (userPrompt) {
       const fromUser = extractFromText(userPrompt, { speaker: "user", maxLearnings: 4 });
       for (const l of fromUser) {
-        learnings.push(stamp(l, { sessionId, source_speaker: "user" }));
+        learnings.push(stamp(l, { sessionId, source_speaker: "user", ...sourceStamp }));
       }
       const failure = fromUser.find(l =>
         (l.type === "correction" || l.type === "gotcha") && l.confidence >= 0.55
@@ -102,8 +112,7 @@ export async function userPromptExtract() {
     // Fail-safe: hooks must never crash the session.
   }
 
-  passthrough();
-  return 0;
+  return done();
 }
 
 function isInjectedDaemonContent(text) {

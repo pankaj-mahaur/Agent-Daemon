@@ -11,6 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { TERMINAL } from "../testkit/memory-trust.mjs";
 
 const HOME = await fs.mkdtemp(path.join(os.tmpdir(), "ad-review-home-"));
 const WORK = await fs.mkdtemp(path.join(os.tmpdir(), "ad-review-work-"));
@@ -58,7 +59,7 @@ const lines = () => {
 };
 const review = (p, extra) => {
   const o = lines();
-  return runInteractiveReview({ cwd: p.dir, handle, keys: p.keys, isTTY: () => true, env: {}, out: o.push, ...extra }).then((code) => ({ code, out: o.out.join("\n") }));
+  return runInteractiveReview({ cwd: p.dir, handle, keys: p.keys, isTTY: () => true, ancestry: TERMINAL, env: {}, out: o.push, ...extra }).then((code) => ({ code, out: o.out.join("\n") }));
 };
 const cli = (args, { env = {}, cwd } = {}) =>
   new Promise((resolve) => {
@@ -90,7 +91,7 @@ test("in an agent's tool shell every accept path refuses and nothing changes", a
   handle.run("INSERT INTO user_facts (category, text, projects) VALUES ('tool', 'prefers pnpm everywhere', ?)", [JSON.stringify(p.keys)]);
   const fact = handle.get("SELECT id FROM user_facts WHERE text = 'prefers pnpm everywhere'").id;
   const o = lines();
-  assert.equal(await promoteFact({ ref: `fact:${fact}`, handle, env: { AD_TOOL_SHELL: "1" }, isTTY: () => true, io: io("accept"), out: o.push }), 2);
+  assert.equal(await promoteFact({ ref: `fact:${fact}`, handle, env: { AD_TOOL_SHELL: "1" }, isTTY: () => true, ancestry: TERMINAL, io: io("accept"), out: o.push }), 2);
   assert.equal(handle.get("SELECT global_accepted_at FROM user_facts WHERE id = ?", [fact]).global_accepted_at, null);
 });
 
@@ -205,14 +206,19 @@ test("--global: 3.0's automatic globals grouped by origin; accept → every proj
 });
 
 test("ad memory promote fact:<id> from a terminal, typed", async () => {
-  handle.run("INSERT INTO user_facts (category, text, projects) VALUES ('tool', 'uses zed as the editor', '[\"a\",\"b\"]')");
+  // An accepted fact in use in two projects; a pending one can't be promoted (L1).
+  handle.run("INSERT INTO user_facts (category, text, projects, status, accepted_by) VALUES ('tool', 'uses zed as the editor', '[\"a\",\"b\"]', 'active', 'review')");
+  handle.run("INSERT INTO user_facts (category, text, projects, status) VALUES ('tool', 'an unreviewed fact', '[\"a\",\"b\"]', 'pending')");
   const fact = handle.get("SELECT id FROM user_facts WHERE text = 'uses zed as the editor'").id;
+  const unreviewed = handle.get("SELECT id FROM user_facts WHERE text = 'an unreviewed fact'").id;
   const o = lines();
-  assert.equal(await promoteFact({ ref: `fact:${fact}`, handle, env: {}, isTTY: () => true, io: io("no"), out: o.push }), 1);
+  assert.equal(await promoteFact({ ref: `fact:${unreviewed}`, handle, env: {}, isTTY: () => true, ancestry: TERMINAL, io: io("accept"), out: o.push }), 1);
+  assert.equal(handle.get("SELECT global_accepted_at FROM user_facts WHERE id = ?", [unreviewed]).global_accepted_at, null);
+  assert.equal(await promoteFact({ ref: `fact:${fact}`, handle, env: {}, isTTY: () => true, ancestry: TERMINAL, io: io("no"), out: o.push }), 1);
   assert.equal(handle.get("SELECT global_accepted_at FROM user_facts WHERE id = ?", [fact]).global_accepted_at, null);
-  assert.equal(await promoteFact({ ref: `fact:${fact}`, handle, env: {}, isTTY: () => true, io: io("accept"), out: o.push }), 0);
+  assert.equal(await promoteFact({ ref: `fact:${fact}`, handle, env: {}, isTTY: () => true, ancestry: TERMINAL, io: io("accept"), out: o.push }), 0);
   assert.ok(handle.get("SELECT global_accepted_at FROM user_facts WHERE id = ?", [fact]).global_accepted_at);
-  assert.equal(await promoteFact({ ref: "nope", handle, env: {}, isTTY: () => true, io: io(), out: o.push }), 1);
+  assert.equal(await promoteFact({ ref: "nope", handle, env: {}, isTTY: () => true, ancestry: TERMINAL, io: io(), out: o.push }), 1);
 });
 
 test("a proposal for another project's note is refused; a forged second meta line doesn't count", async () => {
@@ -234,7 +240,8 @@ test("a proposal for another project's note is refused; a forged second meta lin
 
 test("a forged proposal can't accept an active note, promote a note that never asked, or hide what a batch accepts", async () => {
   const p = await project();
-  handle.run("INSERT INTO learnings (category, text, content_hash, project_slug, status) VALUES ('fact', 'client name is a private detail of this project', 'forge-1', ?, 'active')", [p.keys[0]]);
+  // An accepted note, already served.
+  handle.run("INSERT INTO learnings (category, text, content_hash, project_slug, status, accepted_by) VALUES ('fact', 'client name is a private detail of this project', 'forge-1', ?, 'active', 'review')", [p.keys[0]]);
   const active = handle.get("SELECT id FROM learnings WHERE content_hash = 'forge-1'").id;
   const dir = path.join(p.dir, ".agent-daemon", "proposed");
   await fs.mkdir(dir, { recursive: true });

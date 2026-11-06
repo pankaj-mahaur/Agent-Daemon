@@ -152,10 +152,11 @@ export function wrapNodeSqlite(native) {
 
 /**
  * @param {string} file
- * @param {{prefer?: "better-sqlite3"|"node:sqlite", env?: object}} [opts]
+ * @param {{prefer?: "better-sqlite3"|"node:sqlite", env?: object, readonly?: boolean}} [opts]
+ *   readonly: open an existing file without the right to change it (never creates one)
  * @returns {Promise<object|null>} the database (with .driver), or null when no driver loads
  */
-export async function openDatabase(file, { prefer, env = process.env } = {}) {
+export async function openDatabase(file, { prefer, env = process.env, readonly = false } = {}) {
   const wanted = DRIVERS.includes(env.AD_SQLITE_DRIVER) ? env.AD_SQLITE_DRIVER : prefer;
   const order = wanted === "node:sqlite" ? ["node:sqlite", "better-sqlite3"] : ["better-sqlite3", "node:sqlite"];
   // An explicit AD_SQLITE_DRIVER is the only one tried: a test that asks for node:sqlite must get it.
@@ -163,13 +164,13 @@ export async function openDatabase(file, { prefer, env = process.env } = {}) {
     if (name === "better-sqlite3") {
       const Database = await loadBetterSqlite3();
       if (!Database) continue;
-      const native = new Database(file, { timeout: BUSY_TIMEOUT_MS });
+      const native = new Database(file, { timeout: BUSY_TIMEOUT_MS, ...(readonly ? { readonly: true, fileMustExist: true } : {}) });
       native.driver = "better-sqlite3";
       return native;
     }
     const DatabaseSync = await loadNodeSqlite();
     if (!DatabaseSync) continue;
-    const native = new DatabaseSync(file, { timeout: BUSY_TIMEOUT_MS });
+    const native = new DatabaseSync(file, { timeout: BUSY_TIMEOUT_MS, ...(readonly ? { readOnly: true } : {}) });
     // The timeout option is newer than Node 22.13: the pragma covers every version.
     native.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
     return wrapNodeSqlite(native);

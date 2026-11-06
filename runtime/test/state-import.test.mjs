@@ -61,6 +61,7 @@ function rebundle(file, change) {
   return writeArchive([{ name: "manifest.json", data: JSON.stringify(m) }, ...files]);
 }
 import { createHash } from "node:crypto";
+import { TERMINAL } from "../testkit/memory-trust.mjs";
 const require_sha = (b) => createHash("sha256").update(b).digest("hex");
 
 // A hand-built tar.gz with any names, for names the writer would never produce.
@@ -292,10 +293,12 @@ test("ad review --import: refused in an agent's shell and without a terminal; a 
   await runImport(plan, { env: w.env });
   const id = plan.importId;
   const out = { write: () => true };
-  await assert.rejects(reviewImport(id, { acceptAll: true, env: { ...w.env, AD_TOOL_SHELL: "1", AD_INTERNAL_TEST_CONFIRM: id }, isTTY: true, out }), (e) => e.exitCode === 2);
-  await assert.rejects(reviewImport(id, { acceptAll: true, env: w.env, isTTY: false, out }), (e) => e.message === IMPORT_TEXTS.REVIEW_TTY);
-  assert.equal((await reviewImport(id, { acceptAll: true, env: w.env, isTTY: true, ask: async () => "nope", out })).changed, false);
-  const r = await reviewImport(id, { acceptAll: true, env: { ...w.env, AD_INTERNAL_TEST_CONFIRM: id }, isTTY: false, out });
+  await assert.rejects(reviewImport(id, { acceptAll: true, env: { ...w.env, AD_TOOL_SHELL: "1" }, isTTY: true, ancestry: TERMINAL, ask: async () => id, out }), (e) => e.exitCode === 2);
+  await assert.rejects(reviewImport(id, { acceptAll: true, env: w.env, isTTY: false, ask: async () => id, out }), (e) => e.message === IMPORT_TEXTS.REVIEW_TTY);
+  // The old test override no longer stands in for a terminal (MCP launch plan D3).
+  await assert.rejects(reviewImport(id, { acceptAll: true, env: { ...w.env, AD_INTERNAL_TEST_CONFIRM: id }, isTTY: false, ask: async () => id, out }), (e) => e.message === IMPORT_TEXTS.REVIEW_TTY);
+  assert.equal((await reviewImport(id, { acceptAll: true, env: w.env, isTTY: true, ancestry: TERMINAL, ask: async () => "nope", out })).changed, false);
+  const r = await reviewImport(id, { acceptAll: true, env: w.env, isTTY: true, ancestry: TERMINAL, ask: async () => id, out });
   assert.equal(r.left, 0);
   const db = await dbOf(w);
   assert.deepEqual([...new Set(db.prepare("SELECT status FROM learnings").all().map((x) => x.status))], ["active"]);
@@ -369,4 +372,25 @@ test("the project marker: the same id written another way isn't a conflict; anot
   assert.deepEqual((await planImport({ file: w.bundle, env: w.env, maps: w.map })).conflicts, [], "a re-import of the same bundle goes through");
   fs.writeFileSync(marker, JSON.stringify({ schemaVersion: 1, id: "prj_01J0CCCCCCCCCCCCCCCCCCCCCC" }));
   assert.deepEqual((await planImport({ file: w.bundle, env: w.env, maps: w.map })).conflicts.map((c) => path.basename(c.path)), ["project.json"]);
+});
+
+test("an import never carries who accepted a note, or a fact's every-project flag (L1 review M6)", async () => {
+  const src = await makeStateFixture({ root: fresh("trust-src") });
+  const sdb = await openDatabase(path.join(src.env.AD_ROOT, "episodic.db"));
+  sdb.exec("UPDATE learnings SET status = 'active', accepted_by = 'review', accepted_at = '2026-01-01', provenance = 'user-cli'; UPDATE user_facts SET status = 'active', accepted_by = 'review', global_accepted_at = '2026-01-01'");
+  sdb.close();
+  const r = await runExport({ out: path.join(src.root, "t.adstate"), env: src.env, dirs: [src.A.dir], redact: true });
+  const root = fresh("trust-dst");
+  const env = { ...process.env, AD_ROOT: path.join(root, ".agent-daemon"), HOME: root, USERPROFILE: root };
+  delete env.AD_TOOL_SHELL;
+  const here = path.join(root, "code", "app");
+  fs.mkdirSync(here, { recursive: true });
+  await runImport(await planImport({ file: r.out, env, maps: [{ key: "app-a", dir: here }] }), { env });
+  const db = await openDatabase(path.join(env.AD_ROOT, "episodic.db"));
+  const lessons = db.prepare("SELECT status, accepted_by, accepted_at, provenance FROM learnings").all();
+  const facts = db.prepare("SELECT status, accepted_by, global_accepted_at, provenance FROM user_facts").all();
+  db.close();
+  assert.ok(lessons.length > 0 && facts.length > 0, "the bundle carried lessons and facts");
+  for (const l of lessons) assert.deepEqual({ ...l, status: l.status === "quarantined" ? "pending" : l.status }, { status: "pending", accepted_by: null, accepted_at: null, provenance: "import" });
+  for (const f of facts) assert.deepEqual({ ...f, status: f.status === "quarantined" ? "pending" : f.status }, { status: "pending", accepted_by: null, global_accepted_at: null, provenance: "import" });
 });

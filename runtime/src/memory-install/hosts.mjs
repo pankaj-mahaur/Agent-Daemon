@@ -17,6 +17,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { installedSteps } from "../hooks/routes.mjs";
 
 export const SERVER_NAME = "agent-daemon-memory";
 
@@ -29,11 +30,11 @@ const exists = (p) => {
   }
 };
 
-/** ad init's hooks are in Claude Code's settings (the prompt hook captures there). */
+/** ad init's hooks are in Claude Code's settings (the prompt hook captures there): a dispatcher route or an older entry. */
 export function claudeHasAdHooks(home) {
   try {
     const j = JSON.parse(fs.readFileSync(path.join(home, ".claude", "settings.json"), "utf8"));
-    return (j?.hooks?.UserPromptSubmit ?? []).some((g) => (g?.hooks ?? []).some((h) => /\bhook user-prompt-extract\b/.test(String(h?.command ?? ""))));
+    return installedSteps(j?.hooks, { live: true }).has("user-prompt-extract");
   } catch {
     return false;
   }

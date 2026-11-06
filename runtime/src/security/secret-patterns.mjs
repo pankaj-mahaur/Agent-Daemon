@@ -60,11 +60,15 @@ const DATA_KEY_PREFIX = new Set(["PRIMARY", "SORT", "SORTING", "CACHE", "FOREIGN
 // A short value needs mixed case and a digit to look like a secret (AUTH=oauth2 isn't).
 const secretLooking = (v) => (v.length >= 12 && (/\d/.test(v) || entropy(v) >= 3.5)) || (/[a-z]/.test(v) && /[A-Z]/.test(v) && /\d/.test(v));
 
+// A run-together name ends in the secret word: PGPASSWORD, MYSQLPWD aside, GHTOKEN.
+const GLUED_SECRET = /^[A-Z0-9]+(?:PASSWORD|PASSWD|SECRET|TOKEN)$/;
+const isSecretSegment = (s) => SECRET_SEGMENTS.has(s) || GLUED_SECRET.test(s);
+
 const envNameIsSecret = (raw) => {
   const name = raw.toUpperCase();
   if (name === "PWD" || name === "OLDPWD" || NOT_SECRET_SUFFIX.test(name)) return false;
   const segs = name.split("_");
-  const hits = segs.map((s, i) => [s, i]).filter(([s]) => SECRET_SEGMENTS.has(s));
+  const hits = segs.map((s, i) => [s, i]).filter(([s]) => isSecretSegment(s));
   if (!hits.length) return false;
   return !hits.every(([s, i]) => s === "KEY" && i > 0 && DATA_KEY_PREFIX.has(segs[i - 1]));
 };
@@ -77,7 +81,7 @@ const PASSWORD_SEGMENTS = new Set(["PASSWORD", "PASSWD", "SECRET", "CREDENTIAL",
 const envAssignment = (m) => {
   const value = m[2].replace(/^["']|["']$/g, "");
   if (!envNameIsSecret(m[1]) || value.length < 6 || digitsOnly(value) || isPlaceholder(value)) return false;
-  return m[1].toUpperCase().split("_").some((s) => PASSWORD_SEGMENTS.has(s)) || secretLooking(value);
+  return m[1].toUpperCase().split("_").some((s) => PASSWORD_SEGMENTS.has(s) || /^[A-Z0-9]+(?:PASSWORD|PASSWD|SECRET)$/.test(s)) || secretLooking(value);
 };
 
 const keywordValue = (m) => {

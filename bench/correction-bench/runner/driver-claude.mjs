@@ -25,7 +25,7 @@ const RUNTIME = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..",
 const CLI = path.join(RUNTIME, "src", "cli.mjs");
 const MEMORY_SERVER = path.join(RUNTIME, "src", "mcp", "memory-server.mjs");
 
-export { captured, hookEvidence, sessionCount } from "./driver-ad.mjs";
+export { captured, hookEvidence, review, sessionCount } from "./driver-ad.mjs";
 
 export const name = "claude";
 export const rulesFile = "CLAUDE.md";

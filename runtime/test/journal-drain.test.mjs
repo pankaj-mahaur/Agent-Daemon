@@ -32,7 +32,7 @@ test("drain on empty journal is a no-op", async () => {
   assert.equal(res.applied, null);
 });
 
-test("drain routes a project-scoped pattern into activeContext.md", async () => {
+test("drain stores a project-scoped pattern as pending; activeContext.md waits for review", async () => {
   const cwd = await makeTmp();
   await appendLearnings({
     cwd,
@@ -55,9 +55,11 @@ test("drain routes a project-scoped pattern into activeContext.md", async () => 
   const j = await readJournal({ cwd });
   assert.equal(j.entries.length, 0);
 
-  // activeContext.md should mention the learning
-  const active = await fs.readFile(path.join(cwd, ".agent-daemon", "memory", "activeContext.md"), "utf8");
-  assert.match(active, /rebase before pushing/i);
+  // The note waits for review (MCP launch plan L1): accepting it appends it to activeContext.md.
+  const active = await fs.readFile(path.join(cwd, ".agent-daemon", "memory", "activeContext.md"), "utf8").catch(() => "");
+  assert.doesNotMatch(active, /rebase before pushing/i);
+  const { db } = await import("../src/memory/episodic.mjs");
+  assert.equal((await db()).get("SELECT status FROM learnings WHERE text = ?", ["we always rebase before pushing"])?.status, "pending");
 });
 
 test("drain dedupes by text-prefix + type within the journal", async () => {

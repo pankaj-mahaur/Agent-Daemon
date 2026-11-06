@@ -1,0 +1,22 @@
+{"id":"trailmate-app-01","text":"`npm test` runs Jest with the jest-expo preset. Native modules (expo-sqlite, expo-file-system, MapLibre) are mocked in jest.setup.ts.","created":"2026-04-08","kind":"testing"}
+{"id":"trailmate-app-02","text":"E2E flows are Maestro YAML files in maestro/. Run `maestro test maestro/<flow>.yaml` against a dev build, not Expo Go.","created":"2026-06-15","kind":"testing"}
+{"id":"trailmate-app-03","text":"MapLibre needs native code, so the app can't run in Expo Go. Use the dev client: `npx expo run:ios` or `npx expo run:android`.","created":"2026-03-02","kind":"tooling"}
+{"id":"trailmate-app-04","text":"Offline tiles are capped at 2 GB. tileStore evicts the least recently viewed region first and never a region used by an active trail recording.","created":"2026-10-19","kind":"fact"}
+{"id":"trailmate-app-05","text":"SQLite migrations are numbered files in src/db/migrations/, applied at startup by src/db/migrate.ts. Never edit a shipped migration; add a new one.","created":"2026-05-27","kind":"workflow"}
+{"id":"trailmate-app-06","text":"Use isOnline() and useNetwork() from src/lib/network.ts. NetInfo's isConnected is true behind captive portals, so these helpers also ping our health endpoint.","created":"2026-08-30","kind":"fact"}
+{"id":"trailmate-app-07","text":"Tile downloads must use expo-file-system background download tasks; iOS kills foreground downloads about 30 s after the app goes to the background.","created":"2026-10-23","kind":"fact"}
+{"id":"trailmate-app-08","text":"The public OSM tile servers forbid bulk downloads. Offline packs must come from our own tile CDN (TILE_CDN_URL in app.config.ts).","created":"2026-09-12","kind":"fact"}
+{"id":"trailmate-app-09","text":"Builds: `eas build --profile development` for the dev client, `--profile preview` for internal testers.","created":"2026-03-02","kind":"tooling"}
+{"id":"trailmate-app-10","text":"Offline mode is out of scope for v1; show a 'no connection' screen instead.","created":"2025-06-20","kind":"fact"}
+{"id":"trailmate-app-11","text":"Maps use react-native-maps with Google tiles.","created":"2025-04-11","kind":"architecture"}
+{"id":"trailmate-app-12","text":"Push notifications go through the Expo push service; tokens are registered in src/features/notifications/register.ts after login.","created":"2026-07-07","kind":"paths"}
+{"id":"trailmate-app-13","text":"In-app purchases (Pro plan) use RevenueCat. Test only with sandbox accounts, never a real Apple ID.","created":"2026-05-09","kind":"testing"}
+{"id":"trailmate-app-14","text":"Translations live in src/i18n/locales/*.json and are pulled from the translation platform with `npm run i18n:pull`; don't edit de.json by hand.","created":"2026-04-26","kind":"workflow"}
+{"id":"trailmate-app-15","text":"Step counting uses HealthKit on iOS only; on Android the steps screen is hidden behind a Platform.OS check.","created":"2026-08-14","kind":"fact"}
+{"id":"trailmate-app-16","text":"Style with StyleSheet.create and tokens from src/theme. No inline style objects in list items (FlatList re-render cost).","created":"2026-02-18","kind":"style"}
+{"id":"trailmate-app-17","text":"Branch from develop, not main; main only receives release merges.","created":"2026-01-12","kind":"git"}
+{"id":"trailmate-app-18","text":"Release: bump the version in app.config.ts, then `eas build --profile production --auto-submit`. Use `eas update` (OTA) only for JS-only fixes.","created":"2026-03-21","kind":"workflow"}
+{"id":"trailmate-app-19","text":"Trail recording writes a GPS point every 5 s to track_points; battery saver mode switches to 15 s.","created":"2026-06-02","kind":"fact"}
+{"id":"trailmate-app-20","text":"Social sharing renders a trail card image with react-native-view-shot; Android needs the storage permission only below API 29.","created":"2026-07-21","kind":"fact"}
+{"id":"trailmate-app-21","text":"`npm run typecheck` and `npm run lint` run in CI on every PR; fix errors locally first.","created":"2026-02-18","kind":"workflow"}
+{"id":"trailmate-app-22","text":"Store offline region metadata in AsyncStorage under the key offlineRegions.","created":"2026-01-30","kind":"architecture"}

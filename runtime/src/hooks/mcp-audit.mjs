@@ -63,8 +63,9 @@ function maybeRotate(path) {
   }
 }
 
-export async function mcpAudit() {
-  const input = await readStdinJson();
+/** @param {object} [given]  the payload, when the hook dispatcher already read stdin */
+export async function mcpAudit(given) {
+  const input = given ?? (await readStdinJson());
   const toolName = String(input?.tool_name || input?.name || "");
 
   // Tool name shape: mcp__<server>__<tool>

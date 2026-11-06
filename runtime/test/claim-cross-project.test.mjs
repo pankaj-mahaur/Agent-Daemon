@@ -26,6 +26,7 @@ const ep = await import("../src/memory/episodic.mjs");
 const { captureExplicit, createLimiter } = await import("../src/memory/capture.mjs");
 const { runInteractiveReview, promoteFact } = await import("../src/review.mjs");
 const { driveServer, text } = await import("../testkit/mcp-client.mjs");
+const { acceptFacts, acceptLearnings, TERMINAL } = await import("../testkit/memory-trust.mjs");
 
 // One word per row of A, found nowhere else.
 const W = { learning: "zephyrquill", fact: "obsidianmarrow", global: "cobaltlantern", agent: "vermilionsextant" };
@@ -44,11 +45,17 @@ before(async () => {
   assert.equal(ep.projectSlug(COLLIDING), slugA, "the fixture needs two folders with one slug");
   await ep.upsertSession({ id: "sa", projectPath: A, startedAt: "2026-10-01T00:00:00.000Z" });
   await ep.upsertSession({ id: "sb", projectPath: B, startedAt: "2026-10-01T00:00:00.000Z" });
-  await ep.insertLearning({ sessionId: "sa", projectSlug: slugA, category: "gotcha", text: `the ${W.learning} build needs a warm cache`, confidence: 0.9, origin: "user" });
-  await ep.insertLearning({ sessionId: "sb", projectSlug: ep.projectSlug(B), category: "gotcha", text: "the beta build runs on node 22", confidence: 0.9, origin: "user" });
+  // Each project's own notes and A's fact are accepted (in review), so the surfaces serve them.
+  const own = [
+    await ep.insertLearning({ sessionId: "sa", projectSlug: slugA, category: "gotcha", text: `the ${W.learning} build needs a warm cache`, confidence: 0.9, origin: "user" }),
+    await ep.insertLearning({ sessionId: "sb", projectSlug: ep.projectSlug(B), category: "gotcha", text: "the beta build runs on node 22", confidence: 0.9, origin: "user" }),
+  ];
   factId = (await ep.observeUserFact({ category: "tool", text: `prefers the ${W.fact} editor`, sessionId: "sa", projectSlug: slugA, confidence: 0.9 })).id;
-  // 3.0 wrote automatic globals: no project, only the session says where it came from.
-  handle.run("INSERT INTO learnings (session_id, category, text, content_hash, confidence, status) VALUES ('sa', 'pattern', ?, 'claim-g1', 0.9, 'active')", [`release notes go through ${W.global} first`]);
+  acceptLearnings(handle, own);
+  acceptFacts(handle, factId);
+  // 3.0 wrote automatic globals: no project, only the session says where it came from
+  // (the v5 upgrade marks such a row accepted as legacy).
+  handle.run("INSERT INTO learnings (session_id, category, text, content_hash, confidence, status, accepted_by) VALUES ('sa', 'pattern', ?, 'claim-g1', 0.9, 'active', 'legacy')", [`release notes go through ${W.global} first`]);
   const scope = { kind: "project", dir: A, keys: [slugA], source: "arg" };
   const r = await captureExplicit({ kind: "learning", fields: { text: `the ${W.agent} service owns retries`, kind: "decision", scope: "global" }, scope, mode: "tools", limiter: createLimiter() });
   assert.equal(r.status, "saved", r.message);
@@ -106,11 +113,11 @@ test("before any accept: B, the folder sharing A's slug and an unbound server ge
 test("after a guarded accept of the fact and the global row, B sees exactly those two", async () => {
   const lines = [];
   const typed = (...answers) => ({ ask: () => Promise.resolve(answers.shift() ?? "") });
-  assert.equal(await promoteFact({ ref: `fact:${factId}`, handle, env: {}, isTTY: () => true, io: typed("accept"), out: (l) => lines.push(l) }), 0, lines.join("\n"));
+  assert.equal(await promoteFact({ ref: `fact:${factId}`, handle, env: {}, isTTY: () => true, ancestry: TERMINAL, io: typed("accept"), out: (l) => lines.push(l) }), 0, lines.join("\n"));
   // --global lists 3.0's automatic globals: accept the one from A; the agent's request is a
   // separate proposal and stays pending.
   const keys = [ep.projectSlug(B)];
-  const code = await runInteractiveReview({ cwd: B, handle, keys, isTTY: () => true, env: {}, out: (l) => lines.push(String(l)), global: true, io: typed("a", "accept") });
+  const code = await runInteractiveReview({ cwd: B, handle, keys, isTTY: () => true, ancestry: TERMINAL, env: {}, out: (l) => lines.push(String(l)), global: true, io: typed("a", "accept") });
   assert.equal(code, 0, lines.join("\n"));
   assert.ok(handle.get("SELECT global_accepted_at FROM learnings WHERE content_hash = 'claim-g1'").global_accepted_at, lines.join("\n"));
 

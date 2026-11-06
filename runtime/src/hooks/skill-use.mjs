@@ -3,9 +3,10 @@
 import { readStdinJson, passthrough } from "./io.mjs";
 import { recordSkillExecution, upsertSession, correlateRouteInvocation } from "../memory/episodic.mjs";
 
-export async function skillUse() {
+/** @param {object} [given]  the payload, when the hook dispatcher already read stdin */
+export async function skillUse(given) {
   try {
-    const input = await readStdinJson();
+    const input = given ?? (await readStdinJson());
     const event = String(input.hook_event_name || "");
     const sessionId = String(input.session_id || process.env.CLAUDE_SESSION_ID || "");
     const cwd = String(input.cwd || process.env.CLAUDE_PROJECT_DIR || process.cwd());

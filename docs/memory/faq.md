@@ -6,7 +6,8 @@ Most hosts now keep some memory of their own. ad's memory differs in four ways:
 - the same notes in every agent you install it in;
 - corrections captured from your own words where ad's hooks run, and
   recorded by the agent elsewhere;
-- what an agent records waits for your review;
+- every note waits for your review, in your own terminal, before an agent
+  sees it unprompted;
 - notes stay in their project.
 
 Whether it beats a host's own memory, or writing the correction into your rules

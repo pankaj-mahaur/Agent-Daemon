@@ -23,6 +23,13 @@ import { adRoot, legacyAdRoots } from "../ad-root.mjs";
 import { availableDrivers, openDatabase } from "./driver.mjs";
 import { migrateProjectIds, syncProjectKeys } from "./project-db.mjs";
 
+/**
+ * The schema version this code writes: the highest `schema_version` row its
+ * migrations insert (open() below). Bump it with every new versioned migration
+ * (memory-store test: a fresh store is at exactly this version).
+ */
+export const SCHEMA_VERSION = 5;
+
 
 /**
  * Full schema (idempotent — uses IF NOT EXISTS everywhere).
@@ -358,8 +365,60 @@ export async function dumpSchema(outPath) {
 // SQLITE_BUSY, SQLITE_LOCKED and SQLITE_IOERR (its extended codes keep the low byte 10).
 const transientOpenError = (e) => e?.code === "SQLITE_BUSY" || /^SQLITE_IOERR/.test(String(e?.code ?? "")) || [5, 6, 10].includes(Number(e?.errcode) & 0xff);
 
+/**
+ * The store's schema version, read without changing anything: the check a
+ * hook makes before it opens the store (plan L2: hooks never migrate).
+ * @returns {Promise<{state: "missing"|"current"|"older"|"newer"|"unreadable", version: number|null, expected: number, error?: string}>}
+ */
+export async function schemaState(dbPath = defaultDbPath(), { env = process.env, drivers = null } = {}) {
+  const expected = SCHEMA_VERSION;
+  // No driver: nothing can create or upgrade a store (the drain then goes to the markdown
+  // memory, as before; an existing store reports it below, through openDatabase).
+  if (!existsSync(dbPath)) {
+    const loaded = drivers ?? (await availableDrivers());
+    // AD_SQLITE_DRIVER names the only driver openDatabase tries.
+    const forced = ["better-sqlite3", "node:sqlite"].includes(env.AD_SQLITE_DRIVER) ? env.AD_SQLITE_DRIVER : null;
+    const usable = forced ? loaded.includes(forced) : loaded.length > 0;
+    return usable ? { state: "missing", version: null, expected } : { state: "unreadable", version: null, expected, error: "no SQLite driver" };
+  }
+  let raw = null;
+  try {
+    raw = await openDatabase(dbPath, { readonly: true });
+    if (!raw) return { state: "unreadable", version: null, expected, error: "no SQLite driver" };
+    const v = raw.prepare("SELECT MAX(version) AS v FROM schema_version").get()?.v;
+    const version = v == null ? null : Number(v);
+    const state = version == null || version < expected ? "older" : version > expected ? "newer" : "current";
+    return { state, version, expected };
+  } catch (e) {
+    // A store from before schema versions has no such table.
+    if (/no such table/i.test(String(e?.message))) return { state: "older", version: null, expected };
+    return { state: "unreadable", version: null, expected, error: String(e?.message ?? e) };
+  } finally {
+    try {
+      raw?.close();
+    } catch {
+      // already closed
+    }
+  }
+}
+
+/**
+ * Open (or create) the store. In a process the hook dispatcher started
+ * (AD_HOOK_NO_MIGRATE=1, or opts.noMigrate) it opens only a store already at
+ * SCHEMA_VERSION and otherwise returns null without touching it, so the hook
+ * buffers instead (memory/no-migrate.mjs: the upgrade runs detached).
+ * opts.defer: what to do with the schemaState instead (tests).
+ */
 export async function open(opts = {}) {
   const dbPath = opts.dbPath || defaultDbPath();
+  if (opts.noMigrate ?? process.env.AD_HOOK_NO_MIGRATE === "1") {
+    const s = await schemaState(dbPath);
+    if (s.state !== "current") {
+      const defer = opts.defer ?? (async (state) => (await import("./no-migrate.mjs")).deferStore(state, { dbPath }));
+      await defer(s);
+      return null;
+    }
+  }
   await fs.mkdir(path.dirname(dbPath), { recursive: true });
 
   // better-sqlite3 or node:sqlite (memory/driver.mjs); null when neither loads.
@@ -370,6 +429,9 @@ export async function open(opts = {}) {
     raw = await openDatabase(dbPath, { prefer: opts.prefer });
     if (!raw) return null;
     try {
+      // Freed pages are zeroed, so a forgotten note's text doesn't linger in them
+      // (memory/purge.mjs). A per-connection setting: every opener sets it.
+      raw.exec("PRAGMA secure_delete = ON");
       raw.exec(SCHEMA);
       // Run migrations AFTER SCHEMA exec. Each migration is idempotent + safe to
       // re-run on already-migrated DBs.
@@ -384,6 +446,7 @@ export async function open(opts = {}) {
       // P7.1a: project ids (additive), and the registry's slugs mirrored for the triggers.
       migrateProjectIds(raw);
       syncProjectKeys(raw);
+      migrateTrustCore(raw);
       break;
     } catch (e) {
       try {
@@ -693,6 +756,51 @@ export function migrateLearningValue(raw) {
     CREATE INDEX IF NOT EXISTS idx_feedback_learning ON feedback(learning_id, project_slug);
     INSERT OR IGNORE INTO schema_version (version) VALUES (3);
   `);
+}
+
+/**
+ * Schema v5 (MCP launch plan L1, 02 §6): who accepted a note (memory/trust.mjs).
+ *   provenance   where the note came from: legacy | user-prompt | user-cli | agent |
+ *                tool | digest | buffered | import
+ *   accepted_by  'review' (the review service) or 'legacy' (accepted before v5);
+ *                NULL = not accepted
+ *   accepted_at  when it was accepted
+ *   status_at    when the status last changed (provisional expiry, hidden purge)
+ * Only rows present at the upgrade are backfilled: older ad names its columns on
+ * insert, so a row it adds later keeps accepted_by NULL and reads as pending. The
+ * check and the backfill share one IMMEDIATE transaction, so two processes upgrading
+ * at once backfill once. Additive only: 3.1.0 ignores the columns. The search index gets
+ * FTS5's secure-delete (stored with the index): a deleted row's terms leave its segments.
+ *
+ * @param {any} raw
+ */
+export function migrateTrustCore(raw) {
+  const done = () => raw.prepare("SELECT 1 FROM schema_version WHERE version = 5").get();
+  if (done()) return;
+  raw.transaction(() => {
+    if (done()) return;
+    for (const table of ["learnings", "user_facts"]) {
+      const cols = new Set(raw.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name));
+      for (const col of ["provenance", "accepted_by", "accepted_at", "status_at"]) {
+        if (!cols.has(col)) raw.exec(`ALTER TABLE ${table} ADD COLUMN ${col} TEXT`);
+      }
+    }
+    raw.exec(`
+      UPDATE learnings SET provenance = 'legacy',
+        accepted_by = CASE WHEN status = 'active' AND COALESCE(applied_to, '') NOT LIKE 'quarantined%' THEN 'legacy' END,
+        accepted_at = CASE WHEN status = 'active' AND COALESCE(applied_to, '') NOT LIKE 'quarantined%' THEN created_at END
+        WHERE provenance IS NULL;
+      UPDATE user_facts SET provenance = 'legacy',
+        accepted_by = CASE WHEN status = 'active' THEN 'legacy' END,
+        accepted_at = CASE WHEN status = 'active' THEN created_at END
+        WHERE provenance IS NULL;
+      INSERT OR IGNORE INTO schema_version (version) VALUES (5);`);
+    try {
+      raw.exec("INSERT INTO learnings_fts(learnings_fts, rank) VALUES('secure-delete', 1)");
+    } catch {
+      // SQLite before 3.44: purges rebuild the index instead (memory/purge.mjs)
+    }
+  }).immediate();
 }
 
 /**

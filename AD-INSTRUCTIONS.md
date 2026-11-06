@@ -41,18 +41,21 @@ Routing advice is also generated automatically: the `capability-route-advice` ho
 ## Daemon workflow (what fires automatically)
 
 ```
-SessionStart hook  →  `ad session-start` injects prioritized context:
+Every hook is one entry: `node <ad>/runtime/bin/hook.mjs <event>` (ad init writes them).
+
+SessionStart hook  →  `session.start` injects prioritized context:
                       - .agent-daemon/memory/activeContext.md (recent decisions)
                       - Recent SQLite learnings and compact operating guidance
 
-UserPromptSubmit   →  `ad hook user-prompt-extract` stores deterministic corrections
-                      + `ad query-retrieve` recalls prompt-relevant SQLite learnings
+UserPromptSubmit   →  `prompt.submit` stores deterministic corrections (held for review)
+                      + recalls prompt-relevant SQLite learnings + skill routing advice
 
-PreToolUse/Expand  →  `ad hook skill-use` records local Claude skill invocations
+PreToolUse         →  `tool.before` checks Bash/PowerShell/Write/Edit against your rules
+                      `skill.use` records local Claude skill invocations
 
-PostToolUse        →  `ad hook bash-post` / `edit-post` report relevant tool issues
+PostToolUse        →  `tool.after` reports relevant tool issues
 
-SessionEnd hook    →  `ad hook session-end-digest` parses your `<agent-daemon-digest>` block
+SessionEnd hook    →  `session.end` starts the digest of your `<agent-daemon-digest>` block
                       → SQLite learnings table + appends to memory/*.md
 ```
 

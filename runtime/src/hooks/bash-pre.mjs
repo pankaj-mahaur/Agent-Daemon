@@ -20,8 +20,9 @@ const DEV_SERVER_RE = /\b(npm\s+run\s+dev|pnpm(?:\s+run)?\s+dev|yarn\s+dev|bun\s
 const TMUX_LAUNCH_RE = /^\s*tmux\s+(new|new-session|new-window|split-window)\b/;
 const GIT_PUSH_RE = /\bgit\s+push\b/;
 
-export async function bashPre() {
-  const input = await readStdinJson();
+/** @param {object} [given]  the payload, when the hook dispatcher already read stdin */
+export async function bashPre(given) {
+  const input = given ?? (await readStdinJson());
   const cmd = getCommand(input);
 
   if (NO_VERIFY_RE.test(cmd)) {
