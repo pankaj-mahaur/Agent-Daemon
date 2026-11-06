@@ -35,7 +35,7 @@ test("Codex loads the installer's entry and its memory_stats answers for the thr
   const lines = [];
   const { makeContext, install } = await import("../src/memory-install/install.mjs");
   const ctx = makeContext({ env, home: fake, root: env.AD_ROOT, resolve: () => null, out: (l) => lines.push(l), ask: async () => "" });
-  assert.equal(await install({ ctx, hosts: ["codex"], yes: true }), 0, lines.join("\n"));
+  assert.equal(await install({ ctx, hosts: ["codex"], yes: true, noSetup: true }), 0, lines.join("\n"));
   const server = new CodexAppServer({
     command: PINNED,
     cwd: proj,
