@@ -19,6 +19,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { adRoot } from "../ad-root.mjs";
+import { PRODUCT } from "../product.mjs";
 import { resolveCommand } from "../safe-spawn.mjs";
 import { HOSTS, SERVER_NAME, claudePluginEnabled, hostById } from "./hosts.mjs";
 import { backup, inspect, sha256, writeChecked } from "./fsx.mjs";
@@ -50,7 +51,7 @@ export function makeContext(o = {}) {
   const home = o.home ?? os.homedir();
   const root = o.root ?? adRoot({ env, homedir: () => home });
   const pkg = packageInfo(o.packageRoot ?? PACKAGE_ROOT);
-  const viaLauncher = o.viaLauncher ?? pkg.name === SERVER_NAME;
+  const viaLauncher = o.viaLauncher ?? pkg.name === PRODUCT.package;
   return {
     env,
     home,
@@ -184,7 +185,7 @@ async function planHost(ctx, host, { capture, adopt, ledger }) {
     if (rec?.driver === "cli" && rec.argsSha256 === entrySha(entry)) return { ...item, action: "same" };
     // Only an entry ad itself added is replaced (Claude Code keeps no copy of a removed one).
     if (rec?.driver === "cli") return { ...item, action: "update" };
-    return { ...item, action: "refuse", reason: "Claude Code already has a user-scope server named agent-daemon-memory that ad didn't add", snippet: claudeSnippet(entry) };
+    return { ...item, action: "refuse", reason: `Claude Code already has a user-scope server named ${PRODUCT.mcpServerKey} that ad didn't add`, snippet: claudeSnippet(entry) };
   }
   const file = host.file(ctx);
   if (inside(file, ctx.root)) return { ...item, action: "refuse", reason: "that config is ad's own engine home, which ad sets up itself", file };
@@ -279,7 +280,7 @@ export async function install(opts = {}) {
   if (ctx.viaLauncher && (todo.length || plans.some((p) => p.action === "same")) && currentPackage(ctx.root)?.version !== ctx.version) {
     try {
       installPackage(ctx);
-      out(`· the launcher now starts agent-daemon-memory ${ctx.version}`);
+      out(`· the launcher now starts ${PRODUCT.package} ${ctx.version}`);
     } catch (e) {
       out(`✗ couldn't copy the package to ${ctx.display(path.join(ctx.root, "memory", "pkg"))}: ${e.message}`);
       return 1;
@@ -367,7 +368,7 @@ async function applyCli(ctx, p) {
   const got = await claudeGet(p.resolved, ctx.target, ctx.claudeOpts);
   // Added (exit 0): recorded so uninstall can remove it, even when a project or local
   // entry of the same name wins in some folders (then get shows that one).
-  if (!got.present) ctx.out(`  note: ${got.otherScope ? `Claude Code also has an agent-daemon-memory in its ${got.otherScope} scope, which wins where it applies` : "claude mcp get doesn't show the new entry"}`);
+  if (!got.present) ctx.out(`  note: ${got.otherScope ? `Claude Code also has an ${PRODUCT.mcpServerKey} in its ${got.otherScope} scope, which wins where it applies` : "claude mcp get doesn't show the new entry"}`);
   return {
     driver: "cli",
     command: "claude",
@@ -448,22 +449,22 @@ async function removeFile(ctx, host, rec) {
     }
   }
   // Changed since: take out only ad's entry, from text ad can write back unchanged.
-  if (!Buffer.from(t.text, "utf8").equals(t.bytes)) throw new Error(`it isn't UTF-8 text any more, so ad can't edit it without changing other bytes; remove agent-daemon-memory from ${ctx.display(rec.file)} yourself`);
+  if (!Buffer.from(t.text, "utf8").equals(t.bytes)) throw new Error(`it isn't UTF-8 text any more, so ad can't edit it without changing other bytes; remove ${PRODUCT.mcpServerKey} from ${ctx.display(rec.file)} yourself`);
   const plan = host.driver === "toml" ? planTomlRemove(t.text, { entry: rec.entry }) : planJsonRemove(t.text, { entry: rec.entry });
   if (plan.action === "absent") return "ad's entry is gone already";
   if (plan.action === "edited") throw new Error(plan.reason);
-  if (plan.action === "refuse") throw new Error(`${plan.reason}; remove agent-daemon-memory from ${ctx.display(rec.file)} yourself`);
+  if (plan.action === "refuse") throw new Error(`${plan.reason}; remove ${PRODUCT.mcpServerKey} from ${ctx.display(rec.file)} yourself`);
   await writeChecked(t.realFile, plan.text, t.bytes);
   return "removed ad's entry (everything else in the file is kept)";
 }
 
 async function removeCli(ctx, rec) {
   const resolved = ctx.resolve("claude");
-  if (!resolved) throw new Error("the claude command isn't on PATH: run `claude mcp remove --scope user agent-daemon-memory` yourself");
+  if (!resolved) throw new Error(`the claude command isn't on PATH: run \`claude mcp remove --scope user ${PRODUCT.mcpServerKey}\` yourself`);
   await claudeRemove(resolved, ctx.claudeOpts);
   const got = await claudeGet(resolved, null, ctx.claudeOpts);
   if (got.error) throw new Error(got.error);
-  if (got.present) throw new Error("claude mcp get still shows a user-scope agent-daemon-memory");
+  if (got.present) throw new Error(`claude mcp get still shows a user-scope ${PRODUCT.mcpServerKey}`);
   return `removed with \`claude mcp remove\`${got.otherScope ? ` (the ${got.otherScope}-scope one you added yourself stays)` : ""}`;
 }
 
@@ -505,7 +506,7 @@ export function status(opts = {}) {
     ctx.out(JSON.stringify({ version: ctx.version, current, hosts: ledger.hosts }));
     return 0;
   }
-  ctx.out(`agent-daemon-memory ${ctx.version}${current ? ` (installed: ${current.version})` : ""}`);
+  ctx.out(`${PRODUCT.package} ${ctx.version}${current ? ` (installed: ${current.version})` : ""}`);
   const ids = Object.keys(ledger.hosts);
   if (!ids.length) ctx.out("No hosts set up by the installer.");
   for (const id of ids) {

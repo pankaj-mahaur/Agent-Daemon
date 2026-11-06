@@ -18,8 +18,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { installedSteps } from "../hooks/routes.mjs";
+import { PRODUCT } from "../product.mjs";
 
-export const SERVER_NAME = "agent-daemon-memory";
+export const SERVER_NAME = PRODUCT.mcpServerKey;
 
 const exists = (p) => {
   try {
@@ -42,14 +43,14 @@ export function claudeHasAdHooks(home) {
 
 /**
  * The agent-daemon-memory plugin is enabled in Claude Code's user settings
- * (`enabledPlugins["agent-daemon-memory@<marketplace>"]: true`) → that key, else null.
+ * (`enabledPlugins["<plugin>@<marketplace>"]: true`, the plugin named in product.mjs) → that key, else null.
  * One route per host: with the plugin, the installer leaves Claude Code alone.
  */
 export function claudePluginEnabled(home, env = {}) {
   const dir = env.CLAUDE_CONFIG_DIR && path.isAbsolute(env.CLAUDE_CONFIG_DIR) ? env.CLAUDE_CONFIG_DIR : path.join(home, ".claude");
   try {
     const j = JSON.parse(fs.readFileSync(path.join(dir, "settings.json"), "utf8"));
-    return Object.entries(j?.enabledPlugins ?? {}).find(([k, v]) => v === true && k.startsWith(`${SERVER_NAME}@`))?.[0] ?? null;
+    return Object.entries(j?.enabledPlugins ?? {}).find(([k, v]) => v === true && k.startsWith(`${PRODUCT.plugin}@`))?.[0] ?? null;
   } catch {
     return null;
   }

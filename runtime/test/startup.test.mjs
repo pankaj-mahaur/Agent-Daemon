@@ -64,5 +64,8 @@ test("the dispatcher's static imports are only the stdin reader; everything else
   assert.deepEqual(statics, ["../src/hooks/io.mjs"]);
   // The stdin reader's own graph is small and has no store.
   const io = fs.readFileSync(new URL("../src/hooks/io.mjs", import.meta.url), "utf8");
-  assert.ok(specifiers(io).every((s) => s.startsWith("node:") || s === "../product-values.mjs"), "io.mjs imports");
+  assert.ok(specifiers(io).every((s) => s.startsWith("node:") || s === "../memory/host-ids.mjs"), "io.mjs imports");
+  // host-ids.mjs is constants only: it imports nothing.
+  const ids = fs.readFileSync(new URL("../src/memory/host-ids.mjs", import.meta.url), "utf8");
+  assert.deepEqual(specifiers(ids), []);
 });

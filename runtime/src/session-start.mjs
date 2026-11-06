@@ -19,6 +19,7 @@ import { drainJournal } from "./hooks/journal-drain.mjs";
 import { neutralizeMemoryFile } from "./digest/sanitize.mjs";
 import { safeNoteText } from "./memory/render-safe.mjs";
 import { projectDataDir } from "./memory/project-dir.mjs";
+import { PRODUCT } from "./product.mjs";
 
 const MAX_OUTPUT_BYTES = 9000;
 const SWEEP_THROTTLE_MS = 10 * 60 * 1000;
@@ -72,7 +73,7 @@ export async function runSessionStart(opts) {
         `## Carried over from prior session(s)`,
         ``,
         `${drain.drained} learning(s) captured by UserPromptSubmit hooks were applied: ${detail}.`,
-        full ? `Run \`ad status\` to review anything queued.` : a.proposalsQueued ? "Some wait for your review: npx agent-daemon-memory review." : null
+        full ? `Run \`ad status\` to review anything queued.` : a.proposalsQueued ? `Some wait for your review: npx ${PRODUCT.package} review.` : null
       ].filter((l) => l !== null).join("\n"));
     }
   } catch { /* fail-safe — never block session-start */ }

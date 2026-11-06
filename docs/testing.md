@@ -152,6 +152,8 @@ ad runs on a pinned third-party engine; the product says "the engine", and the e
 
 The allowed zone and the other legitimate places are `runtime/scripts/brand-allowlist.json`: one entry per place, each with a reason, and every docs/tests entry narrowed to the exact phrases it covers (`match`). An entry that matches nothing is reported as stale. `npm run lint:brand` runs in strict mode. Report mode (the default when calling the script directly) prints counts and exits 0; `--strict` fails on any hit or stale entry, and CI runs `node runtime/scripts/check-brand.mjs --strict --tracked`. `--verbose` lists every hit, `--json` prints the result. The tests in `test/check-brand.test.mjs` plant one hit per rule and prove that strict mode fails on each; `test/attribution.test.mjs` proves the attribution module's texts and that the two files that reproduce upstream's prompts keep their license headers.
 
+The memory product's shipped trees get their own checks, because the lint reads source files, not build output. `test/memory-package.test.mjs` and `test/host-packages.test.mjs` compute each tree's import closure (the npm `dist/` and the Claude Code plugin's `server/`): no module under `runtime/src/engine/`, `harness/` or `tui/` may reach either, and the hook entries (`bin/hook.mjs` and the migrate job) may need no npm package but the optional SQLite driver, since a plugin can't install one. The product's names live in `runtime/src/product.mjs` only: a test fails on the name anywhere else in `runtime/src`, `runtime/scripts` or `runtime/bin` outside comments, so a rename stays one change.
+
 ## CI
 
 `.github/workflows/test.yml` runs on every push to `main`, every PR that targets `main`, and on demand:

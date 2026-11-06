@@ -9,6 +9,8 @@ ad mistakes --share          # a redacted Markdown summary to post
 ad mistakes --json           # the numbers as JSON
 ```
 
+Without ad, the memory package runs the same report: `npx agent-daemon-memory mistakes` (same flags).
+
 ## What you see first
 
 Before it reads anything, ad shows what it will read and asks:

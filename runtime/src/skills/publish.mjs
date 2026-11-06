@@ -21,6 +21,7 @@ import { writeJsonAtomic } from "../atomic-write.mjs";
 import { SKILL_TARGETS, userSkillRoot } from "../hosts/skill-formats.mjs";
 import { libraryCurrent, libraryRoot, writeSkillDir } from "./library.mjs";
 import { isSkillName, skillSha } from "./proposal.mjs";
+import { PRODUCT } from "../product.mjs";
 
 export const MARKER = ".ad-skill.json";
 export const PUBLISH_TEXTS = Object.freeze({
@@ -183,7 +184,7 @@ export async function publishCommand({ name, host, replace = false, dryRun = fal
     // Only an opt-in folder: an installed host gets every accepted skill again on the next
     // accept (uninstall ad's memory there to stop it).
     if (!name || !host || !SKILL_TARGETS[host].optIn) {
-      err("ad skill publish --remove: name a skill and an opt-in folder (--host agents). For an installed host, uninstall ad's memory there: npx agent-daemon-memory uninstall --host <id>");
+      err("ad skill publish --remove: name a skill and an opt-in folder (--host agents). For an installed host, uninstall ad's memory there: npx " + PRODUCT.package + " uninstall --host <id>");
       return 1;
     }
     return unpublish(name, host, { home, env, out });

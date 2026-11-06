@@ -9,8 +9,9 @@ import os from "node:os";
 import path from "node:path";
 import { EXEC_FORM_MIN_VERSION, OLD_PLUGIN_TAGS, duplicateSteps, entryAlive, ourHandlers } from "./routes.mjs";
 import { HOSTS, cmpVersion } from "./host-capabilities.mjs";
+import { PRODUCT } from "../product.mjs";
 
-const PLUGIN_NAME = "agent-daemon-memory";
+const PLUGIN_NAME = PRODUCT.plugin;
 const claudeDir = (env, home) => (env.CLAUDE_CONFIG_DIR && path.isAbsolute(env.CLAUDE_CONFIG_DIR) ? env.CLAUDE_CONFIG_DIR : path.join(home, ".claude"));
 const readJson = (file) => {
   try {

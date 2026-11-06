@@ -14,6 +14,7 @@ import { inspect } from "./fsx.mjs";
 import { jsonEntry } from "./edit-json.mjs";
 import { claudeGet } from "./claude-cli.mjs";
 import { makeContext } from "./install.mjs";
+import { PRODUCT } from "../product.mjs";
 
 const MIN_NODE = [22, 13];
 const META = { "io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientCapabilities": {} };
@@ -155,7 +156,7 @@ export async function doctor(opts = {}) {
     if (id === "cursor") {
       const proj = path.join(opts.cwd ?? process.cwd(), ".cursor", "mcp.json");
       const dup = path.resolve(proj) !== path.resolve(host.file(ctx)) && fs.existsSync(proj) && jsonEntry(fs.readFileSync(proj, "utf8")).entry !== undefined;
-      add("entry.duplicate", !dup, dup ? `${proj} also defines agent-daemon-memory (Cursor shows it twice)` : "no project copy", id);
+      add("entry.duplicate", !dup, dup ? `${proj} also defines ${PRODUCT.mcpServerKey} (Cursor shows it twice)` : "no project copy", id);
     }
   }
   try {

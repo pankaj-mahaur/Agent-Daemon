@@ -5,7 +5,8 @@
 // git). With --out, a full package folder is written there (package.json,
 // README.md, LICENSE, dist/), which is what the tests pack.
 //
-// dist/ is the import closure of the CLI and the memory server, copied with
+// dist/ is the import closure of the CLI, the memory server, the hook dispatcher
+// and the migrate job it starts, copied with
 // their runtime-relative paths, plus dist/cli.mjs (the bin) and dist/package.json
 // (name and version, read by the code at run time). The closure must not reach
 // ad's engine, harness or terminal UI, and may import only node:*, the two
@@ -15,13 +16,20 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { PRODUCT } from "../src/product.mjs";
 
 const RUNTIME = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const REPO = path.resolve(RUNTIME, "..");
-const TEMPLATE = path.join(REPO, "packages", "agent-daemon-memory");
-export const ENTRIES = ["src/memory-install/cli.mjs", "src/mcp/memory-server.mjs"];
+const TEMPLATE = path.join(REPO, "packages", PRODUCT.package);
+// The hook dispatcher and the migrate job it starts by path (memory/no-migrate.mjs)
+// run from every shipped tree: the npm dist (through the stable launcher, L3) and
+// the plugin's server/. Their closure may need no npm package but better-sqlite3.
+export const HOOK_ENTRIES = ["bin/hook.mjs", "src/memory/migrate-job.mjs"];
+export const ENTRIES = ["src/memory-install/cli.mjs", "src/mcp/memory-server.mjs", ...HOOK_ENTRIES];
 export const ALLOWED_BARE = new Set(["jsonc-parser", "smol-toml", "better-sqlite3"]);
-export const FORBIDDEN = [/^src\/engine\/codex\//, /^src\/harness\//, /^src\/tui\//];
+// The brand zone (all of engine/, attribution.mjs included), the harness and the
+// terminal UI never ship in the memory product (MCP launch plan, invariant 7).
+export const FORBIDDEN = [/^src\/engine\//, /^src\/harness\//, /^src\/tui\//];
 const FORBIDDEN_BARE = new Set(["@openai/codex", "chokidar"]);
 
 // import … from "x"; import "x"; export … from "x"; import("x") with a literal.
@@ -82,7 +90,7 @@ export function build({ out = TEMPLATE } = {}) {
   if (c.problems.length) throw new Error(`memory package closure:\n  ${c.problems.join("\n  ")}`);
   const tpl = JSON.parse(fs.readFileSync(path.join(TEMPLATE, "package.json"), "utf8"));
   const runtimeVersion = JSON.parse(fs.readFileSync(path.join(RUNTIME, "package.json"), "utf8")).version;
-  if (tpl.version !== runtimeVersion) throw new Error(`packages/agent-daemon-memory/package.json is ${tpl.version}, the runtime ${runtimeVersion}: bump them together`);
+  if (tpl.version !== runtimeVersion) throw new Error(`packages/${PRODUCT.package}/package.json is ${tpl.version}, the runtime ${runtimeVersion}: bump them together`);
   const dist = path.join(out, "dist");
   fs.rmSync(dist, { recursive: true, force: true });
   for (const rel of c.files) {
@@ -103,5 +111,5 @@ export function build({ out = TEMPLATE } = {}) {
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const i = process.argv.indexOf("--out");
   const r = build({ out: i > 0 ? path.resolve(process.argv[i + 1]) : TEMPLATE });
-  console.log(`agent-daemon-memory ${r.version}: ${r.files} files in ${r.out}`);
+  console.log(`${PRODUCT.package} ${r.version}: ${r.files} files in ${r.out}`);
 }

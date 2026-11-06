@@ -64,6 +64,25 @@ export function memoryReport(handle, { keys, days = 30, now = Date.now() }) {
 
 const k = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
 
+/**
+ * The report's command line (the npm CLI's `report` and the plugin's server/report.mjs):
+ * [--days N] [--all-projects] [--json] [--share]. → exit code
+ */
+export async function reportMain(argv, { cwd = process.cwd(), out = (l) => console.log(l) } = {}) {
+  const r = { cwd, out };
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === "--days") r.days = argv[++i];
+    else if (argv[i] === "--all-projects") r.allProjects = true;
+    else if (argv[i] === "--json") r.json = true;
+    else if (argv[i] === "--share") r.share = true;
+    else {
+      out(`unknown option ${argv[i]}`);
+      return 1;
+    }
+  }
+  return reportCommand(r);
+}
+
 /** The command (ad memory report, npx agent-daemon-memory report). → exit code */
 export async function reportCommand({ cwd = process.cwd(), days = 30, allProjects = false, json = false, share = false, out = (l) => console.log(l) } = {}) {
   const { db } = await import("./episodic.mjs");

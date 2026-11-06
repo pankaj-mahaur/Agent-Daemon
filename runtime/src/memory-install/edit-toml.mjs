@@ -13,8 +13,9 @@
 
 import { parse } from "smol-toml";
 import { isDeepStrictEqual } from "node:util";
+import { PRODUCT } from "../product.mjs";
 
-export const ENTRY_KEY = "agent-daemon-memory";
+export const ENTRY_KEY = PRODUCT.mcpServerKey;
 export const BEGIN = "# >>> agent-daemon-memory (managed by ad; edits inside are kept but not updated) >>>";
 export const END = "# <<< agent-daemon-memory <<<";
 
@@ -87,7 +88,7 @@ export function planTomlAdd(text, entry, { owned = false } = {}) {
   if (!out.ok) return { action: "refuse", reason: out.error };
   const ms = out.doc.mcp_servers;
   if (ms !== undefined && (typeof ms !== "object" || Array.isArray(ms) || ms instanceof Date)) return { action: "refuse", reason: "its mcp_servers isn't a table" };
-  if (entryOf(out.doc) !== undefined) return { action: "refuse", reason: "it already defines agent-daemon-memory outside ad's markers" };
+  if (entryOf(out.doc) !== undefined) return { action: "refuse", reason: `it already defines ${ENTRY_KEY} outside ad's markers` };
 
   const eol = /\r\n/.test(src) ? "\r\n" : "\n";
   if (o.block) {

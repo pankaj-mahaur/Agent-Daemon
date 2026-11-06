@@ -9,8 +9,9 @@
 
 import { applyEdits, findNodeAtLocation, modify, parse, parseTree, printParseErrorCode } from "jsonc-parser";
 import { isDeepStrictEqual } from "node:util";
+import { PRODUCT } from "../product.mjs";
 
-export const ENTRY_KEY = "agent-daemon-memory";
+export const ENTRY_KEY = PRODUCT.mcpServerKey;
 const PATH = ["mcpServers", ENTRY_KEY];
 
 function format(text) {
@@ -108,7 +109,7 @@ function planJsonAddBody(text, entry, { owned }) {
   if (!p.ok) return { action: "refuse", reason: p.error };
   const current = p.root?.mcpServers?.[ENTRY_KEY];
   if (isDeepStrictEqual(current, entry)) return { action: "same" };
-  if (current !== undefined && !owned) return { action: "refuse", reason: "it already defines agent-daemon-memory" };
+  if (current !== undefined && !owned) return { action: "refuse", reason: `it already defines ${ENTRY_KEY}` };
   const base = String(text ?? "").trim() ? text : "{}\n";
   const candidate = current === undefined ? insertEntry(base, entry) : applyEdits(base, modify(base, PATH, entry, {}));
   if (!verify(p.root, candidate, entry)) return { action: "refuse", reason: "ad couldn't add its entry without changing something else" };

@@ -5,6 +5,13 @@
 
 export const HOST_IDS = Object.freeze(["ad", "claude-code", "codex", "cursor", "vscode", "gemini", "opencode", "windsurf", "agent-plugins"]);
 
+/**
+ * Hosts whose hooks speak the engine's wire format (hooks/io.mjs): ad's own engine,
+ * and the other host it is built on, whose --host value is also what ad 2.x wrote
+ * for its engine (design C11).
+ */
+export const ENGINE_WIRE_HOSTS = Object.freeze(["ad", "codex"]);
+
 /** A known host id, or null. */
 export function hostId(name) {
   const n = String(name ?? "").trim().toLowerCase();

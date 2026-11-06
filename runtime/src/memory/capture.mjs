@@ -29,6 +29,7 @@ import { writeMemoryProposal } from "../digest/proposals.mjs";
 import { ensureProjectDataDir } from "./project-dir.mjs";
 import { classifyCorrection, mcpCaptureRef } from "./metrics.mjs";
 import { idOfKeys, isProjectId, slugOfKeys } from "./projects.mjs";
+import { PRODUCT } from "../product.mjs";
 
 export const LEARNING_KINDS = Object.freeze(["pattern", "gotcha", "decision", "tool"]);
 const WINDOW_MS = 10 * 60 * 1000;
@@ -42,7 +43,7 @@ export const TEXTS = Object.freeze({
   duplicate: (t) => `Already known: "${t}".`,
   quarantined: "Saved for review only: it reads like an instruction to an agent, not a lesson.",
   secret: (kind) => `Not saved: that looks like it contains a secret (${kind}). Leave the secret out and try again.`,
-  unbound: "Not saved: this memory server isn't bound to a project. Install with npx agent-daemon-memory install to get per-project memory here.",
+  unbound: `Not saved: this memory server isn't bound to a project. Install with npx ${PRODUCT.package} install to get per-project memory here.`,
   rateLimited: "Not saved: too many memory writes this session. Ask the user to run ad review.",
   hooksActive: "This host's hooks already capture corrections; nothing extra saved.",
 });

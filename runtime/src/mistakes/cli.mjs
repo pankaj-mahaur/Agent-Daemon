@@ -12,7 +12,8 @@ import { ruleCoverage } from "./coverage.mjs";
 import { buildReport, renderText, renderShare, renderJson, projectLabel } from "./report.mjs";
 import { accountNames } from "./redact.mjs";
 
-export const MISTAKES_USAGE = `Usage: ad mistakes [--all-projects] [--share | --json] [--yes]
+/** The usage text, for the command the user ran (`ad mistakes`, or the memory package's). */
+export const mistakesUsage = (command = "ad mistakes") => `Usage: ${command} [--all-projects] [--share | --json] [--yes]
 
 A read-only report of the corrections you typed to Claude Code and Codex: how
 often you corrected them, which corrections repeated, and in which agent.
@@ -22,6 +23,7 @@ Offline: no model call, no network, nothing stored or changed.
   --share         print a redacted Markdown summary you can post
   --json          print the report as JSON
   --yes, -y       don't ask before reading (needed when there's no terminal)`;
+export const MISTAKES_USAGE = mistakesUsage();
 
 const fmtDay = (ms) => new Date(ms).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 
@@ -39,8 +41,8 @@ function span(files) {
 const count = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 /** The consent screen: what will be read, before anything is read. */
-export function consentScreen(sources, { tilde = (p) => p } = {}) {
-  const lines = ["ad mistakes counts the corrections you typed to your coding agents.", "", "It will read, without changing anything:"];
+export function consentScreen(sources, { tilde = (p) => p, command = "ad mistakes" } = {}) {
+  const lines = [`${command} counts the corrections you typed to your coding agents.`, "", "It will read, without changing anything:"];
   const cc = sources.claude;
   const cx = sources.codex;
   const rows = [];
@@ -61,7 +63,7 @@ export function consentScreen(sources, { tilde = (p) => p } = {}) {
 /**
  * @returns {Promise<number>} the exit code
  */
-export async function runMistakes(argv, { env = process.env, home = os.homedir(), cwd = process.cwd(), stdin = process.stdin, stdout = process.stdout, stderr = process.stderr, now = Date.now() } = {}) {
+export async function runMistakes(argv, { env = process.env, home = os.homedir(), cwd = process.cwd(), stdin = process.stdin, stdout = process.stdout, stderr = process.stderr, now = Date.now(), command = "ad mistakes" } = {}) {
   let values;
   try {
     ({ values } = parseArgs({
@@ -77,15 +79,15 @@ export async function runMistakes(argv, { env = process.env, home = os.homedir()
       strict: true,
     }));
   } catch (err) {
-    stderr.write(`ad mistakes: ${err.message}\n\n${MISTAKES_USAGE}\n`);
+    stderr.write(`${command}: ${err.message}\n\n${mistakesUsage(command)}\n`);
     return 2;
   }
   if (values.help) {
-    stdout.write(`${MISTAKES_USAGE}\n`);
+    stdout.write(`${mistakesUsage(command)}\n`);
     return 0;
   }
   if (values.share && values.json) {
-    stderr.write("ad mistakes: use --share or --json, not both\n");
+    stderr.write(`${command}: use --share or --json, not both\n`);
     return 2;
   }
   const allProjects = values["all-projects"] === true;
@@ -101,7 +103,7 @@ export async function runMistakes(argv, { env = process.env, home = os.homedir()
     if (!allProjects) out.write("Run with --all-projects to look at every project.\n");
     return 0;
   }
-  ui.write(consentScreen(sources, { tilde }));
+  ui.write(consentScreen(sources, { tilde, command }));
   if (!values.yes) {
     if (!stdin.isTTY) {
       ui.write("\nRun it again with --yes to read them.\n");
@@ -143,7 +145,7 @@ export async function runMistakes(argv, { env = process.env, home = os.homedir()
     redact: { home, names: accountNames({ home, env }) },
   });
   if (values.json) stdout.write(renderJson(report));
-  else if (values.share) stdout.write(renderShare(report));
+  else if (values.share) stdout.write(renderShare(report, { command }));
   else stdout.write(renderText(report, { projectName: projectLabel(sources.root), claudeSettings: tilde(path.join(claudeConfigDir({ env, home }), "settings.json")) }));
   return 0;
 }

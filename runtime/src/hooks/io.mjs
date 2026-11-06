@@ -20,13 +20,18 @@
 //   - apply_patch sends the patch text as tool_input.command, not a file_path
 
 import path from "node:path";
-import { productValue } from "../product-values.mjs";
+// Not product-values.mjs: it imports engine/attribution.mjs, which is in the brand
+// zone and must stay out of the memory package and the plugin (MCP launch plan L3).
+import { ENGINE_WIRE_HOSTS } from "../memory/host-ids.mjs";
+
+/** "ad" for a host whose hooks speak the engine's wire format; any other value unchanged. */
+const wireHost = (v) => (ENGINE_WIRE_HOSTS.includes(v) ? "ad" : v);
 
 const MAX_STDIN = 1024 * 1024; // 1 MB safety cap
 
 let lastEvent = null;
 
-export const hookHost = () => (productValue(process.env.AD_HOOK_HOST) === "ad" ? "ad" : "claude");
+export const hookHost = () => (wireHost(process.env.AD_HOOK_HOST) === "ad" ? "ad" : "claude");
 
 // Paths touched by an apply_patch body ("*** Update File: x", …),
 // resolved against cwd — or as written when resolve is false.
@@ -74,7 +79,7 @@ export async function readStdinJson() {
 
 // The output a decision takes for the current host/event. Exported for tests.
 export function renderDecision(kind, value, { host = hookHost(), event = lastEvent } = {}) {
-  host = productValue(host);
+  host = wireHost(host);
   if (host !== "ad") {
     // "approve" renders as pass-through: never an allow (see the header).
     if (kind === "block") return { decision: "block", reason: value };

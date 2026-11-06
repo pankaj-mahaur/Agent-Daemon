@@ -19,10 +19,11 @@ import { identityBlock } from "../engine/attribution.mjs";
 import { engineDebugUi, engineHome, engineHooks, engineVersion, engineErrorText, engineErrorDetail } from "../engine/index.mjs";
 import { needsWindowsSandbox, setupWindowsSandbox } from "./sandbox.mjs";
 import { installedSteps } from "../hooks/routes.mjs";
+import { PRODUCT } from "../product.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 export const MEMORY_SERVER = path.join(REPO_ROOT, "runtime", "src", "mcp", "memory-server.mjs");
-export const MEMORY_SERVER_ID = "agent-daemon-memory";
+export const MEMORY_SERVER_ID = PRODUCT.mcpServerKey;
 // The engine's own calls home (verified on the pinned engine: each value is accepted), with what
 // the config says now: [key, the off value, the current value].
 export const ENGINE_PRIVACY = (config) => [

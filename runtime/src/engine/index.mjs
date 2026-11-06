@@ -30,6 +30,7 @@ import { MIRROR_MARKER, MIRRORED_FLAG, runStockUi, stockUiArgs, syncSkills } fro
 import PINNED_SNAPSHOT from "./codex/protocol-snapshot.json" with { type: "json" };
 import UPSTREAM_COMMANDS from "./codex/upstream-commands.json" with { type: "json" };
 import { redact } from "../auth/redact.mjs";
+import { PRODUCT } from "../product.mjs";
 
 export { engineError };
 export { assertRetargeted, RETARGET_BUSY_TEXT, RETARGET_IGNORED_TEXT } from "./retarget.mjs";
@@ -51,8 +52,8 @@ const ENGINE_CODES = new Set(["ENGINE_EXITED", "ENGINE_SPAWN_FAILED", "ENGINE_TI
  * @returns {Record<string,string>}
  */
 export function memoryScopeConfig(folder, cfg) {
-  if (!folder || !cfg?.mcp_servers?.["agent-daemon-memory"]) return {};
-  return { "mcp_servers.agent-daemon-memory.env.AD_MEMORY_PROJECT": folder };
+  if (!folder || !cfg?.mcp_servers?.[PRODUCT.mcpServerKey]) return {};
+  return { [`mcp_servers.${PRODUCT.mcpServerKey}.env.AD_MEMORY_PROJECT`]: folder };
 }
 
 /** True for an error that came from the engine (its numeric JSON-RPC codes) or from talking to it. */

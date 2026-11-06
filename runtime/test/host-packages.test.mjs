@@ -16,7 +16,8 @@ import { validate } from "../testkit/json-schema-lite.mjs";
 
 const RUNTIME = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SCHEMAS = path.join(RUNTIME, "test", "fixtures", "schemas", "agent-plugins-1.0.0");
-const { build, checkOut, packageVersion, BUILD_MARK, NAME } = await import("../scripts/build-host-packages.mjs");
+const { build, checkOut, packageVersion, BUILD_MARK, NAME, SERVER_ENTRIES } = await import("../scripts/build-host-packages.mjs");
+const { closure } = await import("../scripts/build-memory-package.mjs");
 const { adStepInClaudeSettings } = await import("../src/hooks/routes.mjs");
 const { open: openStore } = await import("../src/memory/sqlite.mjs");
 const { acceptAllPending } = await import("../testkit/memory-trust.mjs");
@@ -46,6 +47,31 @@ test("Agent Plugins: plugin.json and mcp.json validate against the 1.0.0 schemas
   assert.notDeepEqual(validate(pluginSchema, { ...plugin, mcpServers: "./mcp.json" }), []);
   assert.notDeepEqual(validate(pluginSchema, { ...plugin, name: "Agent_Daemon" }), [], "the name rule");
   assert.notDeepEqual(validate(mcpSchema, { ...mcp, mcpServers: { [NAME]: { ...server, env: { PLUGIN_ROOT: "x" } } } }), []);
+});
+
+test("the plugin's server/: no engine, harness, TUI or installer code; nothing to install but the optional driver", () => {
+  // Invariant 7 (MCP launch plan): no brand-zone module in the plugin. The installer
+  // modules need parsers a plugin can't install, so they stay in the npm dist.
+  const c = closure(SERVER_ENTRIES);
+  assert.deepEqual(c.problems, []);
+  assert.deepEqual(c.bare, ["better-sqlite3"]);
+  assert.deepEqual(c.files.filter((f) => /^src\/(engine|harness|tui|memory-install)\//.test(f)), []);
+  // The built tree is that closure plus the four wrappers, and nothing from engine/.
+  const server = path.join(CC_PLUGIN, "server");
+  const rel = walk(server).map((f) => path.relative(server, f).split(path.sep).join("/"));
+  assert.deepEqual(rel.sort(), [...c.files, "server.mjs", "hook.mjs", "report.mjs", "package.json"].sort());
+});
+
+test("the plugin's report runs offline from server/report.mjs", () => {
+  const home = fs.mkdtempSync(path.join(TMP, "report-home-"));
+  const env = { ...process.env, HOME: home, USERPROFILE: home, AD_ROOT: path.join(home, ".agent-daemon") };
+  for (const k of ["CLAUDE_CONFIG_DIR", "CODEX_HOME", "AD_MEMORY_DB", "CLAUDE_PROJECT_DIR"]) delete env[k];
+  const r = spawnSync(process.execPath, [path.join(CC_PLUGIN, "server", "report.mjs"), "--json"], { cwd: home, env, encoding: "utf8", timeout: 60_000 });
+  assert.equal(r.status, 0, r.stderr);
+  assert.doesNotThrow(() => JSON.parse(r.stdout), r.stdout);
+  const bad = spawnSync(process.execPath, [path.join(CC_PLUGIN, "server", "report.mjs"), "--nope"], { cwd: home, env, encoding: "utf8", timeout: 60_000 });
+  assert.equal(bad.status, 1);
+  assert.match(bad.stdout, /unknown option --nope/);
 });
 
 test("Claude Code: marketplace and plugin manifests, ./ paths, the hooks wrapper, the plugin-root variable", () => {
