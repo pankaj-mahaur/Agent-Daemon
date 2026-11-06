@@ -25,6 +25,8 @@ import { HOSTS, SERVER_NAME, claudePluginEnabled, hostById } from "./hosts.mjs";
 import { backup, inspect, sha256, writeChecked } from "./fsx.mjs";
 import { readLedger, writeLedger } from "./ledger.mjs";
 import { mergeV1, readLedger2, uninstallReport } from "./ledger2.mjs";
+import { cmpVersion, distsFile, launchDir, registerDist, unregisterDist } from "../memory/launch/dists.mjs";
+import { createRequire } from "node:module";
 import { jsonEntry, planJsonAdd, planJsonRemove } from "./edit-json.mjs";
 import { isDeepStrictEqual } from "node:util";
 import { planTomlAdd, planTomlRemove, tomlBlock } from "./edit-toml.mjs";
@@ -121,6 +123,115 @@ export function installPackage(ctx) {
   const byTime = versions.sort((a, b) => fs.statSync(path.join(pkgDir, b)).mtimeMs - fs.statSync(path.join(pkgDir, a)).mtimeMs);
   for (const old of byTime.filter((v) => v !== ctx.version).slice(1)) fs.rmSync(path.join(pkgDir, old), { recursive: true, force: true });
   return dest;
+}
+
+// The folder of a dependency as this running code resolves it: under npx that is the
+// package being installed, so the copy gets the very versions it was built with.
+function dependencyFolder(name) {
+  let p = path.dirname(createRequire(import.meta.url).resolve(name));
+  for (let i = 0; i < 8 && p !== path.dirname(p); i++, p = path.dirname(p)) {
+    try {
+      if (JSON.parse(fs.readFileSync(path.join(p, "package.json"), "utf8")).name === name) return p;
+    } catch {
+      // not the package root yet
+    }
+  }
+  throw new Error(`can't find the ${name} package`);
+}
+
+const versionOf = (dir) => {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8")).version ?? null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * An npm copy for the stable launcher: memory/dist/<version>, with the two parsers
+ * its install, doctor and uninstall need (3.1.0's pkg/ copy runs only `serve`).
+ * A version already in place is left alone, so a repair or re-install never opens a
+ * window in which running hooks find no copy.
+ */
+function copyDist(ctx) {
+  const distDir = path.join(ctx.root, "memory", "dist");
+  const dest = path.join(distDir, ctx.version);
+  if (path.resolve(ctx.packageRoot) === path.resolve(dest)) return dest;
+  if (versionOf(dest) === ctx.version && fs.existsSync(path.join(dest, "bin", "hook.mjs")) && fs.existsSync(path.join(dest, "node_modules", "smol-toml"))) return dest;
+  const tmp = `${dest}.tmp-${process.pid}`;
+  // Leftovers of an interrupted install (old ones only: another install may be copying now).
+  if (fs.existsSync(distDir)) {
+    for (const d of fs.readdirSync(distDir).filter((n) => n.includes(".tmp-"))) {
+      const p = path.join(distDir, d);
+      if (Date.now() - fs.statSync(p).mtimeMs > 3_600_000) fs.rmSync(p, { recursive: true, force: true });
+    }
+  }
+  fs.cpSync(ctx.packageRoot, tmp, { recursive: true, filter: (src) => !path.relative(ctx.packageRoot, src).split(path.sep).includes("node_modules") });
+  for (const name of ["jsonc-parser", "smol-toml"]) fs.cpSync(dependencyFolder(name), path.join(tmp, "node_modules", name), { recursive: true });
+  // A broken copy of this version (no hook, no parsers) is moved aside, then replaced.
+  const aside = fs.existsSync(dest) ? `${dest}.tmp-old-${process.pid}` : null;
+  if (aside) fs.renameSync(dest, aside);
+  try {
+    fs.renameSync(tmp, dest);
+  } catch (e) {
+    if (aside) fs.renameSync(aside, dest);
+    throw e;
+  }
+  try {
+    if (aside) fs.rmSync(aside, { recursive: true, force: true });
+  } catch {
+    // busy: an old leftover the next install sweeps (it is named .tmp-)
+  }
+  return dest;
+}
+
+// After registering the new copy: other versions go except the newest one besides
+// this, each on its own (a folder Windows keeps busy stays for the next install).
+function pruneDists(ctx, keep) {
+  const distDir = path.join(ctx.root, "memory", "dist");
+  let versions;
+  try {
+    versions = fs.readdirSync(distDir).filter((v) => !v.includes(".tmp-") && v !== keep && fs.statSync(path.join(distDir, v)).isDirectory());
+  } catch {
+    return;
+  }
+  for (const old of versions.sort((a, b) => cmpVersion(b, a)).slice(1)) {
+    const p = path.join(distDir, old);
+    try {
+      unregisterDist(distsFile(ctx.root), { path: p });
+      fs.rmSync(p, { recursive: true, force: true });
+    } catch {
+      // still in use: tried again next time
+    }
+  }
+}
+
+/**
+ * The stable launcher (L3, Decision 4): memory/launch/{dists.mjs, run.mjs,
+ * product.json}, and this copy registered in dists.json (npm: a copy under
+ * memory/dist/; the clone: the checkout itself). → the registered entry
+ */
+export function installLauncher(ctx, { now } = {}) {
+  const dir = launchDir(ctx.root);
+  fs.mkdirSync(dir, { recursive: true });
+  const put = (name, bytes) => {
+    const tmp = path.join(dir, `${name}.tmp-${process.pid}`);
+    fs.writeFileSync(tmp, bytes);
+    fs.renameSync(tmp, path.join(dir, name));
+  };
+  // dists.mjs first: a new run.mjs never meets an older dists.mjs.
+  for (const f of ["dists.mjs", "run.mjs"]) put(f, fs.readFileSync(path.join(ctx.packageRoot, "src", "memory", "launch", f)));
+  put("product.json", JSON.stringify({ package: PRODUCT.package, displayName: PRODUCT.displayName, version: ctx.version }, null, 2) + "\n");
+  let entry;
+  if (ctx.viaLauncher) {
+    const dest = copyDist(ctx);
+    entry = { path: dest, version: ctx.version, route: "npm", hook: path.join(dest, "bin", "hook.mjs"), cli: path.join(dest, "cli.mjs") };
+  } else {
+    entry = { path: ctx.packageRoot, version: ctx.version, route: "clone", hook: path.join(ctx.packageRoot, "bin", "hook.mjs"), cli: path.join(ctx.packageRoot, "src", "memory-install", "cli.mjs") };
+  }
+  registerDist(distsFile(ctx.root), entry, now ? { now } : {});
+  if (ctx.viaLauncher) pruneDists(ctx, ctx.version);
+  return entry;
 }
 
 /* ------------------------------------------------------------------ */
@@ -285,6 +396,15 @@ export async function install(opts = {}) {
     } catch (e) {
       out(`✗ couldn't copy the package to ${ctx.display(path.join(ctx.root, "memory", "pkg"))}: ${e.message}`);
       return 1;
+    }
+  }
+  // The stable launcher (L3) and this copy registered as a dist it can run. Entries
+  // move to it with setup; until then a failure here only warns.
+  if (todo.length || plans.some((p) => p.action === "same")) {
+    try {
+      installLauncher(ctx);
+    } catch (e) {
+      out(`· couldn't set up the launcher in ${ctx.display(launchDir(ctx.root))}: ${e.message}`);
     }
   }
 

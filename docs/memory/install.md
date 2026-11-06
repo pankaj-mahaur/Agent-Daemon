@@ -67,6 +67,13 @@ launcher (`~/.agent-daemon/memory/bin/launch.mjs`), so hosts never run `npx`
 and an upgrade only changes which version the launcher starts. It needs Node
 22.16 or newer and builds nothing: memory runs on Node's built-in SQLite.
 
+Install also writes the stable launcher that hooks will start,
+`~/.agent-daemon/memory/launch/run.mjs`, and keeps a copy of the package with
+its two parsers in `~/.agent-daemon/memory/dist/<version>/` (the two newest
+versions). The launcher's path never changes, so an update never asks you to
+trust a hook again. A hook whose package is gone exits quietly and tells you
+once per session to run `npx -y agent-daemon-memory@<version> uninstall`.
+
 Gemini CLI disconnects local servers in folders you haven't trusted: trust the project folder in Gemini if the memory tools are missing.
 
 With ad's memory plugin enabled in Claude Code, install leaves Claude Code alone (one route per host). Plugins (Claude Code's marketplace, Agent Plugins for VS Code and others) are the other way in: [Memory as host plugins](hosts.md).

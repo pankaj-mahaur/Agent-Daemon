@@ -25,7 +25,8 @@ const TEMPLATE = path.join(REPO, "packages", PRODUCT.package);
 // run from every shipped tree: the npm dist (through the stable launcher, L3) and
 // the plugin's server/. Their closure may need no npm package but better-sqlite3.
 export const HOOK_ENTRIES = ["bin/hook.mjs", "src/memory/migrate-job.mjs"];
-export const ENTRIES = ["src/memory-install/cli.mjs", "src/mcp/memory-server.mjs", ...HOOK_ENTRIES];
+// The stable launcher is copied out of the dist by install (memory/launch/), not imported.
+export const ENTRIES = ["src/memory-install/cli.mjs", "src/mcp/memory-server.mjs", ...HOOK_ENTRIES, "src/memory/launch/run.mjs"];
 export const ALLOWED_BARE = new Set(["jsonc-parser", "smol-toml", "better-sqlite3"]);
 // The brand zone (all of engine/, attribution.mjs included), the harness and the
 // terminal UI never ship in the memory product (MCP launch plan, invariant 7).

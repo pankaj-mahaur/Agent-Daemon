@@ -677,6 +677,12 @@
       "reason": "L3 part 2: ledger items and v1 records for the other host the installer sets up, by its host id (--host codex), in temp roots"
     },
     {
+      "path": "runtime/test/launcher.test.mjs",
+      "rules": ["A"],
+      "match": "\"codex\"",
+      "reason": "L3 part 3a: the launcher's per-host behaviour (--host codex, a disabled host), by the host id, in temp roots"
+    },
+    {
       "path": "runtime/test/skills-cross-host.test.mjs",
       "rules": ["A"],
       "reason": "P5.7: the cross-host test checks each host's folder in a temp home"

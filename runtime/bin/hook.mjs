@@ -2,7 +2,7 @@
 // The hook dispatcher (plan L2): one entry for every host and event, run in
 // exec form so no shell sits in front of it:
 //
-//   node <root>/runtime/bin/hook.mjs <event> [--host claude|codex|ad] [--plugin]
+//   node <root>/runtime/bin/hook.mjs <event> [--host claude|codex|ad] [--plugin] [--memory-only]
 //
 // Events (hooks/routes.mjs maps host events to them): tool.before,
 // tool.after, prompt.submit, session.start, session.end, stop, subagent.stop,
@@ -13,6 +13,10 @@
 // --plugin: run as the agent-daemon-memory plugin's hook. Memory only (no
 // routing advice, no digest), and a step passes through when ad's own entry
 // in Claude Code's settings runs it, so nothing is captured or injected twice.
+//
+// --memory-only: memory steps only, the same as --plugin without its pass-through
+// rule. The memory product's stable launcher (memory/launch/run.mjs) passes it: its
+// copy has no repo root, no full CLI for a digest, no routing map.
 //
 // Memory hooks always exit 0 with valid JSON; a failure never blocks the
 // session. tool.before answers ask when it can't check a call that a rule
@@ -29,6 +33,7 @@ const flag = (name) => {
 };
 const hostFlag = flag("--host");
 const plugin = args.includes("--plugin");
+const memoryOnly = plugin || args.includes("--memory-only");
 // hooks/io.mjs adapts input and output to Codex-protocol hosts by this variable.
 if (hostFlag) process.env.AD_HOOK_HOST = hostFlag;
 // A hook never migrates the memory store (memory/sqlite.mjs open, memory/no-migrate.mjs);
@@ -92,9 +97,9 @@ async function main() {
           const { recordScheduled } = await import("../src/hooks/prompt-source.mjs");
           recordScheduled(input?.tool_input?.prompt, { session: input?.session_id ?? null, kind: "scheduled" });
         }
-      } else if (!plugin && name === "Bash") {
+      } else if (!memoryOnly && name === "Bash") {
         return (await import("../src/hooks/bash-post.mjs")).bashPost(input) ?? 0;
-      } else if (!plugin && /^(?:Edit|Write|MultiEdit|apply_patch)$/.test(name)) {
+      } else if (!memoryOnly && /^(?:Edit|Write|MultiEdit|apply_patch)$/.test(name)) {
         return (await import("../src/hooks/edit-post.mjs")).editPost(input) ?? 0;
       }
       print({});
@@ -116,7 +121,7 @@ async function main() {
         await userPromptExtract(input, { source, print: false });
       }
       const parts = [];
-      if (!plugin) parts.push(await quietly(async () => (await import("../src/hooks/capability-route-advice.mjs")).routeAdviceContext(input)));
+      if (!memoryOnly) parts.push(await quietly(async () => (await import("../src/hooks/capability-route-advice.mjs")).routeAdviceContext(input)));
       if (!(await pluginSkips("query-retrieve", host))) {
         parts.push(await quietly(async () => (await import("../src/query-retrieve.mjs")).queryRetrieveContext(input, { cwd: projectDir(input, host) || undefined })));
       }
@@ -133,15 +138,15 @@ async function main() {
       const { runSessionStart } = await import("../src/session-start.mjs");
       const cwd = String(input?.cwd || projectDir(input, host) || process.cwd());
       // The plugin has no repo root (ad's skills and constitution aren't in it).
-      const projectRoot = plugin ? undefined : process.env.AGENT_DAEMON_HOME ? path.resolve(process.env.AGENT_DAEMON_HOME) : path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
-      await runSessionStart({ cwd, outputJson: true, projectRoot, sessionId: input?.session_id, transcript: input?.transcript_path, memoryOnly: plugin });
+      const projectRoot = memoryOnly ? undefined : process.env.AGENT_DAEMON_HOME ? path.resolve(process.env.AGENT_DAEMON_HOME) : path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
+      await runSessionStart({ cwd, outputJson: true, projectRoot, sessionId: input?.session_id, transcript: input?.transcript_path, memoryOnly });
       return 0;
     }
     case "session.end":
     case "stop": {
       // The digest runs detached: the host kills a hook that outlives its timeout.
       // The plugin has no digest (ad's full CLI isn't in it).
-      if (event === "session.end" && !plugin) {
+      if (event === "session.end" && !memoryOnly) {
         const { digestArgs } = await import("../src/hooks/engine-session-end.mjs");
         const { spawnDetached, jobEnv } = await import("../src/hooks/detached.mjs");
         const a = digestArgs({ ...input, cwd: input?.cwd || projectDir(input, host) || process.cwd() });
@@ -152,13 +157,13 @@ async function main() {
       return 0;
     }
     case "skill.use":
-      if (plugin) break;
+      if (memoryOnly) break;
       return (await import("../src/hooks/skill-use.mjs")).skillUse(input) ?? 0;
     case "bash.guard":
-      if (plugin) break;
+      if (memoryOnly) break;
       return (await import("../src/hooks/bash-pre.mjs")).bashPre(input) ?? 0;
     case "mcp.audit":
-      if (plugin) break;
+      if (memoryOnly) break;
       return (await import("../src/hooks/mcp-audit.mjs")).mcpAudit(input) ?? 0;
   }
   print({});

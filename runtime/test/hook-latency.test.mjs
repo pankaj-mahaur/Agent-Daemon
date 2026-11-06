@@ -119,6 +119,29 @@ test("hook latency (Claude Code, exec form): p50 within the budget's ratio to no
   }
 });
 
+test("hook latency through the stable launcher (L3): the same budgets, the extra module load included", { timeout: 600_000 }, async (t) => {
+  const fx = fixture();
+  try {
+    (await open({ dbPath: path.join(fx.root, "episodic.db"), noMigrate: false }))?.close();
+    // The launcher folder as install writes it, with this checkout registered as the clone dist.
+    const { installLauncher, makeContext } = await import("../src/memory-install/install.mjs");
+    const runtime = path.resolve(path.dirname(HOOK_PATH), "..");
+    installLauncher(makeContext({ env: fx.env, home: fx.home, root: fx.root, packageRoot: runtime, viaLauncher: false, out: () => {} }));
+    const launcher = path.join(fx.root, "memory", "launch", "run.mjs");
+    const floor = [process.execPath, ["-e", "0"], "", fx.env];
+    const failed = [];
+    for (const [event, payload] of Object.entries(payloads(fx.project))) {
+      const m = measure([process.execPath, [launcher, "hook", event, "--host", "claude-code"], JSON.stringify(payload), fx.env], floor);
+      const res = check(event, m, m.floor, "launcher");
+      t.diagnostic(res.line);
+      if (!res.ok) failed.push(res.line);
+    }
+    assert.deepEqual(failed, []);
+  } finally {
+    fs.rmSync(fx.home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  }
+});
+
 const hasPwsh = process.platform === "win32" && spawnSync("pwsh", ["-NoProfile", "-Command", "exit 0"], { windowsHide: true }).status === 0;
 
 test("hook latency (Codex on Windows, through pwsh): p50 within the budget's ratio to pwsh running node -e 0", { skip: !hasPwsh && "Windows with pwsh only", timeout: 900_000 }, async (t) => {
