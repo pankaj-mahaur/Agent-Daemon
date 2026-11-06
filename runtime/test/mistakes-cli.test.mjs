@@ -89,7 +89,9 @@ function snapshot(dir) {
 }
 
 function setup() {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), "ad-mistakes-cli-"));
+  // The physical path: hosts record the cwd they get from the OS (macOS's /private/var),
+  // and so does the CLI below, so the fixture's project folders are named from it too.
+  const base = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "ad-mistakes-cli-")));
   const s = buildScenario(base);
   const guard = path.join(base, "guard.mjs");
   fs.writeFileSync(guard, GUARD);
@@ -177,7 +179,7 @@ test("the guard trips: a network call or a process start would be caught", () =>
 });
 
 test("no history, --help and bad flags", () => {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), "ad-mistakes-cli-"));
+  const base = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "ad-mistakes-cli-")));
   const home = path.join(base, "home");
   const project = path.join(base, "p");
   fs.mkdirSync(home);

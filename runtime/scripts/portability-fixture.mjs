@@ -22,6 +22,7 @@ import { spawnSync, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { makeStateFixture } from "../testkit/state-fixture.mjs";
 import { reviewImport } from "../src/portability/import.mjs";
+import { TERMINAL } from "../testkit/memory-trust.mjs";
 
 const CLI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "src", "cli.mjs");
 const REMOTE = "https://example.invalid/org/app.git";
@@ -105,8 +106,10 @@ async function importOne(bundle) {
   // Accepting needs the user's own terminal (MCP launch plan D3); no variable stands in for it.
   const refused = ad(["review", "--import", id, "--accept-all"], { ...env, AD_INTERNAL_TEST_CONFIRM: id });
   check(refused.code === 2, `${tag}: review --import refuses without a terminal`, refused.out);
+  // In process, this script stands in for the user's terminal: the TTY and the ancestry
+  // probe's answer (a CI runner's process chain reaches no known terminal).
   let reviewOut = "";
-  const review = await reviewImport(id, { acceptAll: true, env, isTTY: true, ask: async () => id, out: { write: (s) => (reviewOut += s) } }).then((r) => ({ ok: r.left === 0, out: reviewOut }), (e) => ({ ok: false, out: `${reviewOut}${e.message}` }));
+  const review = await reviewImport(id, { acceptAll: true, env, isTTY: true, ancestry: TERMINAL, ask: async () => id, out:{ write: (s) => (reviewOut += s) } }).then((r) => ({ ok: r.left === 0, out: reviewOut }), (e) => ({ ok: false, out: `${reviewOut}${e.message}` }));
   check(review.ok, `${tag}: review --import --accept-all`, review.out);
 
   const recall = ad(["query-retrieve", "--output-json", "--cwd", clone], env, JSON.stringify({ hook_event_name: "UserPromptSubmit", cwd: clone, prompt: LESSON_QUERY }));
