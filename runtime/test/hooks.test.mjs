@@ -1,7 +1,7 @@
 // Tests for runtime/src/hooks/* — exercise each handler via subprocess so we
 // observe its actual stdin → stdout → stderr → exit-code behavior.
 
-import { test } from "node:test";
+import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { writeFileSync, mkdtempSync, rmSync } from "node:fs";
@@ -13,10 +13,19 @@ import { dirname, resolve } from "node:path";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CLI = resolve(HERE, "..", "src", "cli.mjs");
 
+// Every handler runs in a scratch home: the MCP audit appends to ad's state
+// root, which must never be the user's own.
+const SCRATCH = mkdtempSync(join(tmpdir(), "ad-hooks-test-"));
+const HOOK_ENV = { ...process.env, HOME: SCRATCH, USERPROFILE: SCRATCH, AD_ROOT: join(SCRATCH, ".agent-daemon") };
+delete HOOK_ENV.CLAUDE_CONFIG_DIR;
+delete HOOK_ENV.CODEX_HOME;
+after(() => rmSync(SCRATCH, { recursive: true, force: true }));
+
 function runHook(handler, stdinObj) {
   return new Promise((res) => {
     const child = spawn(process.execPath, [CLI, "hook", handler], {
       stdio: ["pipe", "pipe", "pipe"],
+      env: HOOK_ENV,
     });
     let out = "";
     let err = "";
@@ -42,14 +51,14 @@ test("bash-pre blocks `git commit --no-verify`", async () => {
   assert.equal(JSON.parse(out).decision, "block");
 });
 
-test("bash-pre approves harmless commands", async () => {
+test("bash-pre passes harmless commands through, never allowing them", async () => {
   const { out } = await runHook("bash-pre", { tool_input: { command: "ls -la" } });
-  assert.equal(JSON.parse(out).decision, "approve");
+  assert.deepEqual(JSON.parse(out), {}, "no allow: the user's own permission prompt still applies");
 });
 
-test("bash-pre approves `git push` but warns on stderr", async () => {
+test("bash-pre passes `git push` through but warns on stderr", async () => {
   const { out, err } = await runHook("bash-pre", { tool_input: { command: "git push origin main" } });
-  assert.equal(JSON.parse(out).decision, "approve");
+  assert.deepEqual(JSON.parse(out), {}, "no allow: the user's own permission prompt still applies");
   assert.match(err, /review changes first/i);
 });
 
@@ -75,22 +84,35 @@ test("bash-post is silent for unrelated commands", async () => {
 
 // -- mcp-audit ---------------------------------------------------------------
 
-test("mcp-audit approves trusted servers without warning", async () => {
+test("mcp-audit passes trusted servers through without warning", async () => {
   const { out, err } = await runHook("mcp-pre", { tool_name: "mcp__qmd__search" });
-  assert.equal(JSON.parse(out).decision, "approve");
+  assert.deepEqual(JSON.parse(out), {}, "no allow: the user's own permission prompt still applies");
   assert.equal(err, "");
 });
 
 test("mcp-audit warns on untrusted servers", async () => {
   const { out, err } = await runHook("mcp-pre", { tool_name: "mcp__sketchy__exfil" });
-  assert.equal(JSON.parse(out).decision, "approve");
+  assert.deepEqual(JSON.parse(out), {}, "no allow: the user's own permission prompt still applies");
   assert.match(err, /non-trusted server 'sketchy'/);
 });
 
 test("mcp-audit ignores non-MCP tool names", async () => {
   const { out, err } = await runHook("mcp-pre", { tool_name: "Bash" });
-  assert.equal(JSON.parse(out).decision, "approve");
+  assert.deepEqual(JSON.parse(out), {}, "no allow: the user's own permission prompt still applies");
   assert.equal(err, "");
+});
+
+test("no PreToolUse hook answers allow, even on a malformed payload", async () => {
+  // A hook's own failure must fall back to the host's permission check, not to an allow.
+  for (const handler of ["bash-pre", "mcp-pre"]) {
+    for (const payload of [{}, { tool_input: null }, { tool_name: 42 }]) {
+      const { code, out } = await runHook(handler, payload);
+      assert.equal(code, 0, `${handler} exits 0`);
+      const d = JSON.parse(out);
+      assert.notEqual(d.decision, "approve", `${handler} ${JSON.stringify(payload)}`);
+      assert.notEqual(d.hookSpecificOutput?.permissionDecision, "allow", `${handler} ${JSON.stringify(payload)}`);
+    }
+  }
 });
 
 // -- edit-post ---------------------------------------------------------------

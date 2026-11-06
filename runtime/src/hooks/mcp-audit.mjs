@@ -9,7 +9,7 @@
 
 import { mkdirSync, appendFileSync, statSync, renameSync, existsSync, unlinkSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { readStdinJson, approve, warn } from "./io.mjs";
+import { readStdinJson, passthrough, warn } from "./io.mjs";
 import { adRoot } from "../ad-root.mjs";
 
 // Rotation policy: when the audit log exceeds ROTATE_BYTES, move it to
@@ -68,9 +68,11 @@ export async function mcpAudit() {
   const toolName = String(input?.tool_name || input?.name || "");
 
   // Tool name shape: mcp__<server>__<tool>
+  // An audit never answers allow: Claude Code reads `decision: "approve"` on
+  // PreToolUse as allow, which would skip the user's own permission prompt.
   const m = toolName.match(/^mcp__([^_]+(?:_[^_]+)*)__(.+)$/);
   if (!m) {
-    approve();
+    passthrough();
     return;
   }
   const server = m[1];
@@ -96,5 +98,5 @@ export async function mcpAudit() {
     warn(`MCP call to non-trusted server '${server}' (tool ${tool}). Add to AGENT_DAEMON_TRUSTED_MCP to silence.`);
   }
 
-  approve();
+  passthrough();
 }

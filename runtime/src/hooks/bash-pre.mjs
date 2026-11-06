@@ -9,7 +9,7 @@
 // Warns to stderr (still allows):
 //   - `git push` without prior diff review
 
-import { readStdinJson, approve, block, warn } from "./io.mjs";
+import { readStdinJson, passthrough, block, warn } from "./io.mjs";
 
 function getCommand(input) {
   return String(input?.tool_input?.command || input?.command || "");
@@ -42,5 +42,7 @@ export async function bashPre() {
     warn("git push detected — review changes first with: git diff origin/main...HEAD");
   }
 
-  approve();
+  // No objection: pass through. Claude Code reads `decision: "approve"` on
+  // PreToolUse as allow, which would skip the user's own permission prompt.
+  passthrough();
 }

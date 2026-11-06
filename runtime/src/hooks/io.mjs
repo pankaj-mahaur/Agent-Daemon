@@ -3,9 +3,12 @@
 // decision on stdout (or a non-zero exit to block).
 //
 // Decision shape (Claude Code):
-//   { decision: "approve" }                 — explicit allow
 //   { decision: "block",  reason: "..." }   — block with a message shown to the model
-//   {}                                       — pass-through (default allow)
+//   {}                                       — pass-through: no objection, the user's
+//                                              own permission rules still decide
+// There is deliberately no allow: Claude Code reads `{decision:"approve"}` on
+// PreToolUse as allow and skips the user's permission prompt. A hook with no
+// objection passes through; one that hits its own error passes through too.
 //
 // Hosts: handlers are shared between Claude Code and ad's engine. With
 // AD_HOOK_HOST=ad (set by `ad hook … --host ad`; the old value is still
@@ -73,7 +76,7 @@ export async function readStdinJson() {
 export function renderDecision(kind, value, { host = hookHost(), event = lastEvent } = {}) {
   host = productValue(host);
   if (host !== "ad") {
-    if (kind === "approve") return { decision: "approve" };
+    // "approve" renders as pass-through: never an allow (see the header).
     if (kind === "block") return { decision: "block", reason: value };
     if (kind === "advise") return { additionalContext: value };
     return {};
@@ -89,10 +92,6 @@ export function renderDecision(kind, value, { host = hookHost(), event = lastEve
     return { hookSpecificOutput: { hookEventName: event ?? "UserPromptSubmit", additionalContext: value } };
   }
   return {};
-}
-
-export function approve() {
-  process.stdout.write(JSON.stringify(renderDecision("approve")));
 }
 
 export function block(reason) {

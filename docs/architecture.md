@@ -67,7 +67,7 @@ agent-daemon is best understood as three nested loops:
 Each hook is a small handler that reads JSON from stdin (the harness sends tool-call details) and writes a decision to stdout. Hooks must:
 
 - **Finish in < 200 ms** for `PreToolUse` and `Stop`
-- **Fail-safe to approve** — any thrown error → `{"decision":"approve"}`
+- **Fail safe** — any thrown error → `{}` and exit 0, never an allow (`{"decision":"approve"}` on PreToolUse would skip the user's own permission prompt)
 - **Log warnings to stderr only**, prefixed with `[agent-daemon]`
 - **Wrap persistence in try/catch** — disk-full / permission errors must not block
 
@@ -453,8 +453,8 @@ The terminal UI (`ad tui`, bare `ad`) builds on the same engine: [tui-architectu
 
 A few load-bearing decisions:
 
-### Fail-safe to approve
-A daemon bug must never block the user's tool execution. Trade-off: an adversary who controls the hook's stdin could bypass it. But the stdin comes from the Claude Code host, which is the user's own machine — out of scope.
+### Fail safe, never allow
+A daemon bug must never block the user's tool execution, and a hook never decides for the user either: no objection and its own errors are both `{}`, so the host's permission prompt still applies. Trade-off: an adversary who controls the hook's stdin could bypass it. But the stdin comes from the Claude Code host, which is the user's own machine — out of scope.
 
 ### Zero-LLM digest (with optional fallback)
 Default extraction is parse-only — the agent emits a structured block during the session. Cheap, deterministic, no API key needed. LLM fallback exists for sessions where the agent didn't follow protocol; it runs on `claude` or ad's engine (`--llm claude|ad|auto`).

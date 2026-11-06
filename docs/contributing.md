@@ -87,7 +87,7 @@ Read [`docs/architecture.md`](./architecture.md) for the full picture.
 
 ### Error handling
 
-- **Hook handlers must fail-safe to approve** — see [`SECURITY.md`](../SECURITY.md)
+- **Hook handlers fail safe and never answer allow**: their own error and "no objection" are both `{}` — see [`SECURITY.md`](../SECURITY.md#the-fail-safe-decision)
 - Top-level async functions wrap in try/catch and log to stderr with `[agent-daemon]` prefix
 - Persistence (fs writes, SQLite inserts) is always best-effort — never let a write failure crash a CLI command
 
@@ -163,7 +163,7 @@ Hook handler contract:
 - Writes a JSON decision to `stdout`
 - Logs warnings to `stderr` (never `stdout`)
 - Finishes in **< 200 ms** for `PreToolUse` and `Stop`
-- **Returns approve on any unexpected error** (fail-safe)
+- **Never answers allow on its own**: no objection is `{}` (`{"decision":"approve"}` on PreToolUse skips the user's permission prompt); an unexpected error is `{}` and exit 0
 
 ---
 
