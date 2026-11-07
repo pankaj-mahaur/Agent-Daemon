@@ -11,7 +11,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir, userInfo } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { classifyHolder, identityOf as osIdentityOf, selfIdentity } from "./process-identity.mjs";
 
 /**
@@ -78,6 +78,61 @@ function alive(pid) {
   }
 }
 
+const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+const WIN_TRANSIENT = new Set(["EPERM", "EACCES", "EBUSY"]);
+const isListed = (file) => readdirSync(dirname(file)).includes(basename(file));
+
+/**
+ * Create `file` with O_EXCL. On Windows, a name whose last holder is deleting it
+ * can't be created for a moment: the create fails with EPERM (or EACCES/EBUSY),
+ * not EEXIST. Two processes taking turns on one lock hit that window (CI saw it
+ * as a lost spend charge). So it is retried briefly; a name still listed after
+ * that is in use, and throws EEXIST (busy). The same failure on a name that
+ * isn't there is a real error (an unwritable folder) and is thrown as it is.
+ */
+export function createExclusive(file, data, { platform = process.platform, write = writeFileSync, listed = isListed, sleep = sleepSync, tries = 5 } = {}) {
+  for (let i = 0; ; i++) {
+    try {
+      write(file, data, { flag: "wx" });
+      return;
+    } catch (err) {
+      if (platform !== "win32" || !WIN_TRANSIENT.has(err.code)) throw err;
+      if (i + 1 < tries) {
+        sleep(10 * 2 ** i);
+        continue;
+      }
+      let present = false;
+      try {
+        present = listed(file);
+      } catch {
+        // The folder can't be listed either: report the create's own error.
+      }
+      if (!present) throw err;
+      const busy = new Error(`${basename(file)} is still being released`, { cause: err });
+      busy.code = "EEXIST";
+      throw busy;
+    }
+  }
+}
+
+/**
+ * Remove `file`, retrying briefly on Windows while another process has it open
+ * (EPERM/EBUSY). A lock file left behind with this process's token would look
+ * held by a live process, and the next acquire, its own included, would wait
+ * out its whole budget.
+ */
+export function removeFile(file, { platform = process.platform, remove = (f) => rmSync(f, { force: true }), sleep = sleepSync, tries = 5 } = {}) {
+  for (let i = 0; ; i++) {
+    try {
+      remove(file);
+      return;
+    } catch (err) {
+      if (platform !== "win32" || !WIN_TRANSIENT.has(err.code) || i + 1 >= tries) throw err;
+      sleep(10 * 2 ** i);
+    }
+  }
+}
+
 export class LockBusyError extends Error {
   constructor(name, holder) {
     super(`${name} is held by another ad (pid ${holder?.pid ?? "unknown"})`);
@@ -105,13 +160,14 @@ export function acquireLock(name, opts = {}) {
   let record = { pid, ...self(), threadId: name, token, ...pickMeta(opts.meta) };
   const me = JSON.stringify(record);
   const busy = (holder) => busyError(holder ?? { pid: "unknown" });
+  const exclusive = (f, data) => createExclusive(f, data, opts.fs);
   try {
-    writeFileSync(file, me, { flag: "wx" });
+    exclusive(file, me);
   } catch (err) {
     if (err.code !== "EEXIST") throw err;
     const guard = `${file}.takeover`;
     try {
-      writeFileSync(guard, String(pid), { flag: "wx" });
+      exclusive(guard, String(pid));
     } catch (e) {
       if (e.code !== "EEXIST") throw e;
       // Another process is taking it over; a guard left by a crash expires.
@@ -143,7 +199,7 @@ export function acquireLock(name, opts = {}) {
       if (gone) {
         // Released meanwhile: another process may have just taken it with O_EXCL. Never overwrite that.
         try {
-          writeFileSync(file, me, { flag: "wx" });
+          exclusive(file, me);
         } catch (e) {
           if (e.code === "EEXIST") throw busy(null);
           throw e;
@@ -168,9 +224,9 @@ export function acquireLock(name, opts = {}) {
     released = true;
     clearInterval(beat);
     try {
-      if (JSON.parse(readFileSync(file, "utf8")).token === token) rmSync(file, { force: true });
+      if (JSON.parse(readFileSync(file, "utf8")).token === token) removeFile(file, opts.fs);
     } catch {
-      // Already gone, or someone else's now.
+      // Already gone, or someone else's now (or still held open by another process after the retries).
     }
   };
   /** Merge meta (kind, home, child) into the lock, under the same token; false when it is no longer ours. */

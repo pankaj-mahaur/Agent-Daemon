@@ -58,8 +58,11 @@ test("two processes × 50 charges: nothing lost", async () => {
   const script = path.join(TMP, "spender.mjs");
   fs.writeFileSync(script, `import { addCharge } from ${JSON.stringify(new URL("../src/providers/spend.mjs", import.meta.url).href)};\nfor (let i = 0; i < 50; i++) await addCharge({ accountId: "shared", usage: { input_tokens: 1, output_tokens: 0 }, price: { input: "1", output: "1" } }, { waitMs: 30000, now: ${NOW} });\n`);
   const run = () => new Promise((resolve, reject) => {
-    const p = spawn(process.execPath, [script], { env: process.env, stdio: "ignore" });
-    p.on("exit", (c) => (c === 0 ? resolve() : reject(new Error(`exit ${c}`))));
+    // stderr kept: a failing spender says why (CI once showed only "exit 1").
+    const p = spawn(process.execPath, [script], { env: process.env, stdio: ["ignore", "ignore", "pipe"] });
+    let err = "";
+    p.stderr.on("data", (d) => (err += d));
+    p.on("close", (c) => (c === 0 ? resolve() : reject(new Error(`exit ${c}: ${err.slice(-2000)}`))));
   });
   await Promise.all([run(), run()]);
   const t = S.today("shared", { now: NOW });
