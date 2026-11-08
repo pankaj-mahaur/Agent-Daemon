@@ -13,8 +13,7 @@
 import path from "node:path";
 import { screenPrompt, FLAG_PHRASES } from "./prompt-screen.mjs";
 import { writeProvisional } from "./provisional-write.mjs";
-import { createHash } from "node:crypto";
-import { recordEvent } from "./l5-tables.mjs";
+import { recordEvent, tombstoneHash } from "./l5-tables.mjs";
 import { normKey } from "./sqlite.mjs";
 import { ownWords } from "../mistakes/classify.mjs";
 
@@ -271,7 +270,7 @@ function discardedBefore(handle, nk, projectId) {
 }
 
 /** The tombstone a deleted capture leaves: a hash of its normalised text, never the text. */
-export const tombstoneHash = (nk) => createHash("sha256").update(String(nk)).digest("hex").slice(0, 32);
+export { tombstoneHash };
 
 /**
  * The dispatcher's capture for one typed prompt (L5 decisions 1, 3, 8, 9).

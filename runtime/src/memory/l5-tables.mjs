@@ -8,6 +8,11 @@
 //
 // A later column change needs a version bump (hooks never migrate).
 
+import { createHash } from "node:crypto";
+
+/** The tombstone a deleted capture leaves: a hash of its normalised text, never the text. */
+export const tombstoneHash = (nk) => createHash("sha256").update(String(nk)).digest("hex").slice(0, 32);
+
 export const EVENT_KINDS = Object.freeze([
   "captured", "provisional", "hidden", "restored", "marked", "forget-requested", "expired",
   "repeated", "discarded", "strict-on", "strict-off", "reviewed",
