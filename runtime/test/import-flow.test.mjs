@@ -211,9 +211,10 @@ test("outside a project (the home folder): nothing is listed or read", async () 
   assert.equal(listed, 0);
   assert.match(r.text, /inside a project/);
   assert.equal(fs.existsSync(root), false);
-  // The filesystem root and ad's own folder are never projects either.
+  // The filesystem root and ad's own folder are never projects either. Only ad's folder
+  // (under this test's temp folder) is made: the root exists, and Windows refuses mkdir C:\.
+  fs.mkdirSync(root, { recursive: true });
   for (const cwd of [path.parse(S.home).root, root]) {
-    fs.mkdirSync(cwd, { recursive: true });
     const r2 = await run({ cwd, ask: asker("a").ask, isTTY: () => true, list: () => (listed++, { claude: { files: [] }, codex: { files: [] } }) });
     assert.equal(r2.code, 1, cwd);
     assert.equal(listed, 0, cwd);
