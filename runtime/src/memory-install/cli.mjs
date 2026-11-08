@@ -22,6 +22,7 @@ const USAGE = `${PRODUCT.package}: ad's memory server for Claude Code, Codex, Cu
   config review [strict|auto]   review-first for every learning, or not
   report [--days 30] [--all-projects] [--json] [--share]   is memory working here
   mistakes [--all-projects] [--share | --json] [--yes]   the corrections you keep typing (read-only, offline)
+  mistakes --save                                        save them and your instruction files' rules for review (asks first)
 Hosts: claude-code, codex, cursor, vscode, gemini. Memory stays on this computer.`;
 
 /** --flag values: repeated --host collects; booleans are present or not. */

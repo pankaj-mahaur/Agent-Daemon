@@ -2,6 +2,7 @@
 // user typed to Claude Code and Codex. Consent first (D13): the screen names
 // the folders, the session count and the date range before anything is read.
 // Writes nothing, installs nothing, makes no network or model call.
+// `--save` is the one exception (L4b): memory/import-flow.mjs, with its own consent.
 
 import os from "node:os";
 import path from "node:path";
@@ -14,6 +15,7 @@ import { accountNames } from "./redact.mjs";
 
 /** The usage text, for the command the user ran (`ad mistakes`, or the memory package's). */
 export const mistakesUsage = (command = "ad mistakes") => `Usage: ${command} [--all-projects] [--share | --json] [--yes]
+       ${command} --save [--import-history] [--import-files]
 
 A read-only report of the corrections you typed to Claude Code and Codex: how
 often you corrected them, which corrections repeated, and in which agent.
@@ -22,12 +24,18 @@ Offline: no model call, no network, nothing stored or changed.
   --all-projects  read every project's history (default: this project only)
   --share         print a redacted Markdown summary you can post
   --json          print the report as JSON
-  --yes, -y       don't ask before reading (needed when there's no terminal)`;
+  --yes, -y       don't ask before reading (needed when there's no terminal)
+
+  --save            save this project's repeated corrections and the rules in
+                    its instruction files (CLAUDE.md, AGENTS.md, ...) for your
+                    review, after asking; nothing applies until you accept it
+  --import-history  with --save and no terminal: save the repeated corrections
+  --import-files    with --save and no terminal: save the instruction files`;
 export const MISTAKES_USAGE = mistakesUsage();
 
 const fmtDay = (ms) => new Date(ms).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 
-function span(files) {
+export function span(files) {
   if (!files.length) return "";
   let lo = Infinity;
   let hi = -Infinity;
@@ -38,7 +46,7 @@ function span(files) {
   return fmtDay(lo) === fmtDay(hi) ? fmtDay(lo) : `${fmtDay(lo)} to ${fmtDay(hi)}`;
 }
 
-const count = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+export const count = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 /** The consent screen: what will be read, before anything is read. */
 export function consentScreen(sources, { tilde = (p) => p, command = "ad mistakes" } = {}) {
@@ -73,6 +81,9 @@ export async function runMistakes(argv, { env = process.env, home = os.homedir()
         share: { type: "boolean" },
         json: { type: "boolean" },
         yes: { type: "boolean", short: "y" },
+        save: { type: "boolean" },
+        "import-history": { type: "boolean" },
+        "import-files": { type: "boolean" },
         help: { type: "boolean", short: "h" },
       },
       allowPositionals: false,
@@ -89,6 +100,39 @@ export async function runMistakes(argv, { env = process.env, home = os.homedir()
   if (values.share && values.json) {
     stderr.write(`${command}: use --share or --json, not both\n`);
     return 2;
+  }
+  const importHistory = values["import-history"] === true;
+  const importFiles = values["import-files"] === true;
+  if ((importHistory || importFiles) && !values.save) {
+    stderr.write(`${command}: --import-history and --import-files go with --save\n`);
+    return 2;
+  }
+  if (values.save) {
+    if (values.share || values.json || values["all-projects"]) {
+      stderr.write(`${command}: --save works on this project's history only, without --share, --json or --all-projects\n`);
+      return 2;
+    }
+    const { runImport } = await import("../memory/import-flow.mjs");
+    const ask = async (q) => {
+      const rl = readline.createInterface({ input: stdin, output: stdout });
+      try {
+        return await rl.question(q);
+      } finally {
+        rl.close();
+      }
+    };
+    const r = await runImport({
+      cwd,
+      env,
+      home,
+      now: new Date(now),
+      out: (l) => stdout.write(`${l}\n`),
+      ask,
+      isTTY: () => Boolean(stdin.isTTY && stdout.isTTY),
+      choice: importHistory && importFiles ? "all" : importHistory ? "history" : importFiles ? "files" : null,
+      base: command.replace(/ mistakes$/, ""),
+    });
+    return r.code;
   }
   const allProjects = values["all-projects"] === true;
   // stdout carries only the report when it's machine output or redirected to a file.

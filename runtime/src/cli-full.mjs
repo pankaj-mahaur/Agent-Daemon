@@ -89,6 +89,7 @@ Commands:
   memory report [--days 30] [--all-projects] [--json] [--share]   Is memory working: repeated corrections, what was shown, feedback
                          --all-projects       span every project (default: current --cwd only)
   mistakes [--all-projects] [--share | --json] [--yes]   Read-only report of the corrections you typed to your coding agents (offline, stores nothing)
+  mistakes --save [--import-history] [--import-files]   Save this project's repeated corrections and instruction-file rules for review (asks first)
   remember <text>        Save a learning for this project (accepted at once only in your own terminal)
   forget <n> · restore <n>   Remove a learning (restore within 7 days); an accepted one asks you to type its number
   config review [strict|auto]   Review-first for every learning, or let typed corrections apply at once where a host can prove them
