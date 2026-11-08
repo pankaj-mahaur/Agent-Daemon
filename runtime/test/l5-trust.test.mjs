@@ -351,7 +351,8 @@ test("rememberAccepted: no project, nothing written; a hidden note it can't acce
 
 test("only the review service and the provisional writer write the user's proven provenance", () => {
   // remember.mjs names it only for a first-party verdict (provenanceOf; the provisional writer stores it).
-  const ALLOWED = new Set(["memory/provisional-write.mjs", "memory/review-service.mjs", "memory/trust.mjs", "memory/episodic.mjs", "memory/sqlite.mjs", "memory/capture-prompt.mjs", "hooks/remember.mjs"]);
+  const ALLOWED = new Set(["memory/provisional-write.mjs", "memory/review-service.mjs", "memory/trust.mjs", "memory/episodic.mjs", "memory/sqlite.mjs", "memory/capture-prompt.mjs", "hooks/remember.mjs", "memory/checklist-rows.mjs"]);
+  // checklist-rows.mjs only labels rows by provenance ("you typed", "you ran remember"); it writes none.
   for (const file of walk(SRC)) {
     const rel = path.relative(SRC, file).split(path.sep).join("/");
     if (ALLOWED.has(rel)) continue;

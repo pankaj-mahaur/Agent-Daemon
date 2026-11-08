@@ -74,7 +74,7 @@ Commands:
                          --skills-mode <mode> smart (default — stack-detect) | all | minimal | manual (profile-listed only)
                          --plan               print actions without applying
   status                 Show queued proposals (skill diffs, constitution rule additions)
-  review                 Interactively accept/reject queued proposals
+  review [--list | --plain | --accept-all [--with-agent] | --proposals]   Decide what waits for review: a checklist in your own terminal (space use · x delete · enter apply)
                          --accept <file> / --accept-all   accept memory proposals (asks you to type it)
                          --global             notes from older versions that apply in every project
   query-retrieve         Extract keywords from user prompt and inject relevant past learnings (UserPromptSubmit hook)
@@ -2539,6 +2539,9 @@ async function main(argv) {
         share:            { type: "boolean" },
         reject:           { type: "string" },
         list:             { type: "boolean" },
+        plain:            { type: "boolean" },
+        proposals:        { type: "boolean" },
+        "with-agent":     { type: "boolean" },
         to:               { type: "string" },
         from:             { type: "string" },
         bundled:          { type: "boolean" },
@@ -2604,7 +2607,7 @@ async function main(argv) {
     case "status":         return cmdStatus(opts);
     // ad review --import <id> (P7.3): imported lessons and facts, under the same gate.
     case "review":         if (parsed.values.import) return (await import("./portability/state-cli.mjs")).cmdReviewImport(parsed.values.import, { acceptAll: Boolean(parsed.values["accept-all"]) });
-                           return cmdReview({ ...opts, accept: parsed.values.accept, acceptAll: parsed.values["accept-all"] || false, global: parsed.values.global || false, yes: parsed.values.yes || false, reject: parsed.values.reject, list: parsed.values.list || false });
+                           return cmdReview({ ...opts, accept: parsed.values.accept, acceptAll: parsed.values["accept-all"] || false, global: parsed.values.global || false, yes: parsed.values.yes || false, reject: parsed.values.reject, list: parsed.values.list || false, plain: parsed.values.plain || false, proposals: parsed.values.proposals || false, withAgent: parsed.values["with-agent"] || false });
     case "watch":          return cmdWatch({ ...opts, logFile: parsed.values["log-file"] });
     case "query-retrieve": return cmdQueryRetrieve(opts);
     case "memory":

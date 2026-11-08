@@ -11,15 +11,15 @@
 // review verbs. It is a gate against accidents and prompt injection, not a sandbox.
 
 import { stdin as input, stdout as output } from "node:process";
-import { learningContentHash, scopedContentHash } from "./sqlite.mjs";
+import { learningContentHash, scopedContentHash, normKey } from "./sqlite.mjs";
 import { readFileSync, writeFileSync } from "node:fs";
 import { purgeLearnings } from "./purge.mjs";
 import { isProjectId, projectClause } from "./projects.mjs";
 import { dropFromFile } from "./metrics.mjs";
 import { probeAncestry } from "./ancestry.mjs";
 import { confirmByDialog } from "./dialog-code.mjs";
-import { reviewableSql } from "./trust.mjs";
-import { putSetting, recordEvent } from "./l5-tables.mjs";
+import { reviewableSql, openSql } from "./trust.mjs";
+import { putSetting, recordEvent, tombstoneHash } from "./l5-tables.mjs";
 import { writeLearning, sameNote } from "./episodic.mjs";
 
 const issued = new WeakSet();
@@ -320,4 +320,33 @@ export function setReviewAuto(handle, token, { now = new Date() } = {}) {
     recordEvent(handle, { kind: "strict-off", actor: "review", at: now });
     return true;
   });
+}
+
+/**
+ * Delete a note for good from the review checklist (L5 decision 11): only a note of these
+ * projects that was never accepted (waiting, in use before review, flagged or removed).
+ * It leaves a hash-only tombstone (an events row of kind `discarded`, never the text), so
+ * the same capture comes back as "You deleted this before". The caller records L4b's
+ * rejection first (proposal-tables.mjs recordRejection). → rows purged (0 or 1)
+ */
+export function discardReviewed(handle, token, id, { keys, now } = {}) {
+  must(token);
+  const scope = inProject(keys);
+  const row = handle.get(`SELECT id, text, project_id FROM learnings WHERE id = ? AND (${openSql()} OR (status = 'hidden' AND accepted_by IS NULL)) AND ${scope.sql}`, [id, ...scope.params]);
+  if (!row) return 0;
+  const nk = normKey(row.text);
+  if (nk) recordEvent(handle, { kind: "discarded", projectId: row.project_id ?? null, actor: "review", detail: { hash: tombstoneHash(nk) }, at: now });
+  return purgeLearnings(handle, [row.id]);
+}
+
+/** "You asked to remove", answered keep in review: the mark goes, the note stays as it is. → marks cleared */
+export function clearMark(handle, token, id, { keys } = {}) {
+  must(token);
+  const scope = inProject(keys);
+  if (!handle.get(`SELECT 1 AS ok FROM learnings WHERE id = ? AND ${scope.sql}`, [id, ...scope.params])) return 0;
+  try {
+    return handle.run("DELETE FROM events WHERE kind = 'marked' AND learning_id = ?", [id]).changes;
+  } catch {
+    return 0; // no events table: no marks
+  }
 }

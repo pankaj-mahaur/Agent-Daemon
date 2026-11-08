@@ -44,6 +44,7 @@ import { sameNote } from "./memory/episodic.mjs";
 import { acceptFactGlobal, acceptGlobal, acceptLearning, promoteLearning, reviewToken } from "./memory/review-service.mjs";
 import { acceptedSql, statusSql } from "./memory/trust.mjs";
 import { neutralizeText } from "./digest/sanitize.mjs";
+import { screenPrompt } from "./memory/prompt-screen.mjs";
 import { parseProposal } from "./skills/proposal.mjs";
 
 const DIVIDER = "─".repeat(72);
@@ -246,6 +247,36 @@ export function decideGlobal(handle, row, accept, now = new Date(), token = null
   });
 }
 
+// Pointer files for notes the checklist decided (accepted, deleted or no longer waiting)
+// move to applied, so they aren't offered twice. → the files still waiting
+async function settleDecided(handle, entries) {
+  const left = [];
+  for (const e of entries) {
+    let meta = null;
+    try {
+      meta = readProposalMeta(await fs.readFile(e.file, "utf8"));
+    } catch {
+      meta = null;
+    }
+    if (meta && ["memory-add", "quarantined-learning"].includes(meta.kind) && meta.learning != null) {
+      let row = null;
+      try {
+        row = learningRow(handle, meta.learning);
+      } catch {
+        row = { status: "pending" }; // unreadable: keep the file
+      }
+      // Still waiting: pending, held back, or an older writer's unaccepted "active".
+      const waiting = row && !row.accepted_by && ["pending", "quarantined", "active"].includes(row.status);
+      if (!waiting) {
+        await moveToApplied(e).catch(() => {});
+        continue;
+      }
+    }
+    left.push(e);
+  }
+  return left;
+}
+
 async function moveToApplied(p) {
   const dir = path.join(path.dirname(p.dir), "applied");
   await fs.mkdir(dir, { recursive: true });
@@ -289,6 +320,43 @@ export async function runInteractiveReview(opts) {
       token = g.token;
     }
     if (opts.global) return await reviewGlobal({ ...(await store()), question, out, token });
+    // L5: what waits in the store is reviewed with the checklist first; proposal files keep
+    // the loop below (review --proposals, and when the store has nothing waiting).
+    if (!opts.proposals && !opts.accept && !opts.reject) {
+      const { reviewChecklist } = await import("./memory/review-checklist.mjs");
+      const code = await reviewChecklist({
+        ...(await store()),
+        cwd: opts.cwd,
+        out,
+        ask: question,
+        isTTY,
+        env,
+        list: opts.list,
+        plain: opts.plain,
+        acceptAll: opts.acceptAll,
+        withAgent: opts.withAgent,
+        command: opts.command,
+        stdin: opts.stdin,
+        stdout: opts.stdout,
+        onApply: opts.onApply,
+        release: () => rl?.close(),
+        gate: async () => (token ? { token } : gate({ env, isTTY, ask: question, out, ...standIns(opts) })),
+      });
+      if (code !== null) {
+        const { handle } = await store();
+        let left = await listProposals(opts.cwd).catch(() => []);
+        // A memory-add or quarantined-learning file whose note the checklist decided is done.
+        // Only after a review in your own terminal: a listing changes nothing.
+        if (handle && !opts.list && isTTY()) left = await settleDecided(handle, left);
+        if (left.length) {
+          if (opts.list || !isTTY()) {
+            out(`${left.length} queued proposal file(s):`);
+            for (const e of left) out(`  ${e.name}`);
+          } else out(`${left.length} other proposal${left.length === 1 ? "" : "s"}: ${(opts.command ?? ((v) => `ad ${v}`))("review --proposals")}`);
+        }
+        return code;
+      }
+    }
     const entries = await listProposals(opts.cwd);
     if (opts.reject) return await rejectByFlag({ entries, name: opts.reject, out, store, env });
     if (opts.accept) {
@@ -331,7 +399,11 @@ async function acceptByFlag({ entries, opts, handle, keys, question, out, token 
     const meta = readProposalMeta(await fs.readFile(e.file, "utf8"));
     if (!meta) continue;
     const d = describeMemory(handle, meta, keys);
-    if (d.ok) memory.push({ e, meta, line: d.line });
+    // A note the prompt screen flags is never accepted in a batch (L5): decide it on its own.
+    if (d.ok && opts.acceptAll && meta.kind === "memory-add" && screenPrompt(d.row.text, { userWords: false }).flags.length) {
+      out(`${e.name}: #${d.row.id} was flagged for a closer look; decide it on its own in ${(opts.command ?? ((v) => `ad ${v}`))("review")}`);
+      refused++;
+    } else if (d.ok) memory.push({ e, meta, line: d.line });
     else {
       out(`${e.name}: ${d.text}`);
       refused++;
