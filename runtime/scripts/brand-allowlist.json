@@ -454,6 +454,17 @@
       "reason": "names the context the user's Codex host injects as a user message"
     },
     {
+      "path": "runtime/test/install-import-step.test.mjs",
+      "rules": ["A"],
+      "reason": "L3 D26's test installs into a temp home with the user's own Codex as the host setup has work for (its folder, CODEX_HOME, setup's ✓ Codex lines)"
+    },
+    {
+      "path": "runtime/test/fixtures/tools-list.golden.json",
+      "rules": ["A"],
+      "match": "\"codex/(auto|hooks|off|tools)\"",
+      "reason": "tools/list hashes per host id (L3 D24); codex is the id of the user's own Codex host"
+    },
+    {
       "path": "runtime/src/hooks/remember.mjs",
       "rules": ["A"],
       "reason": "a typed remember (L3 D21) on each host it reaches: the plugin's command on Claude Code and the skill setup writes for the user's own Codex"

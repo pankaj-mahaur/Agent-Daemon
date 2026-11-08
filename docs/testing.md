@@ -172,7 +172,7 @@ The real-engine job is non-blocking (`continue-on-error`): **read its result**, 
 
 Run the same pipeline before pushing, on this machine and in a Linux container, with the project skill [`ad-ci-readiness`](../.claude/skills/ad-ci-readiness/SKILL.md): it also reads a PR's CI test by test and holds the release-readiness checklist.
 
-Two more workflows: `skills-lint.yml` lints the skills and smoke-runs the skills diff; `release-memory.yml` builds the memory package and host plugins. It is started by hand by the owner, is a dry run by default (every artifact and `SHA256SUMS`, nothing published), and publishes only behind an approved environment; `test/release-memory-workflow.test.mjs` checks those guards.
+Two more workflows: `skills-lint.yml` lints the skills and smoke-runs the skills diff; `release-memory.yml` builds the memory package and host plugins. It is started by hand by the owner, is a dry run by default (every artifact and `SHA256SUMS`, nothing published), and publishes only behind an approved environment; `test/release-memory-workflow.test.mjs` checks those guards and runs the build script offline (every artifact but the SBOM), and `test/tools-list.test.mjs` compares each server's `tools/list` with the reviewed golden.
 
 `.github/workflows/engine-upgrade.yml` runs `npm test` and the same real-engine tests in its own Linux job before it opens the PR that bumps the engine pin, and puts the results in the PR body. The PR's own `test.yml` run (all three OSes) happens only when the repo has an `ENGINE_UPGRADE_TOKEN` secret (the old `CODEX_UPGRADE_TOKEN` also works): PRs opened with the default token don't trigger other workflows.
 

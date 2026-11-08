@@ -383,13 +383,27 @@ export async function install(opts = {}) {
   if (mcp.stop || opts.noSetup || ctx.noSetup) return mcp.code;
   for (const s of mcp.setupPlans.filter((x) => x.w.none)) for (const n of s.w.notes) ctx.out(n);
   const todo = mcp.setupPlans.filter((s) => s.writes.length);
-  if (!todo.length) return mcp.code;
+  if (!todo.length) {
+    if (ctx.isTTY() && mcp.code !== 1) await consentedImport(ctx, opts);
+    return mcp.code;
+  }
   if (!ctx.isTTY()) {
     ctx.out(`Finish in a terminal (the hooks need one): ${ctx.command(opts.noPlugin ? "setup --no-plugin" : "setup")}`);
     return mcp.code === 1 ? 1 : 2;
   }
   const code = await setup({ ctx, hosts: todo.map((s) => s.id), noPlugin: opts.noPlugin });
+  // After a setup that did something (1: nothing was done, so there is nothing to build on).
+  if (code !== 1) await consentedImport(ctx, opts);
   return code === mcp.code ? code : 2;
+}
+
+/**
+ * L4b's consented rule import (L3, Decision 26): reserved here, after setup and only in
+ * a terminal, so L4b adds no new install screen. Empty at L3; ctx.consentedImport lets a
+ * test see where it runs.
+ */
+export async function consentedImport(ctx, opts) {
+  return ctx.consentedImport ? ctx.consentedImport(opts) : null;
 }
 
 // What setup would write for each host found here (nothing is written).
