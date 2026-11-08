@@ -15,6 +15,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import Database from "better-sqlite3";
 import xtermHeadless from "@xterm/headless";
 import unicode11 from "@xterm/addon-unicode11";
 import { defaultScript, ev, lastUserText, startMockResponses, writeMockCodexHome } from "../testkit/mock-responses.mjs";
@@ -86,6 +87,8 @@ function world(mockUrl) {
   const env = { ...process.env, HOME: home, USERPROFILE: home, AD_CODEX_HOME: codexHome, AD_TUI: "1" };
   for (const k of Object.keys(env)) if (new RegExp(`^${ENGINE.name.toUpperCase()}_`).test(k) || k === "AD_CODEX_BIN") delete env[k];
   delete env.CI; // the TUI is interactive here
+  // ad's store lives under this home (journalTextOf reads it there), never a developer's own.
+  for (const k of ["AD_ROOT", "AD_MEMORY_DB", "CLAUDE_CONFIG_DIR", "CODEX_HOME"]) delete env[k];
   return { root, home, codexHome, cwd, env, git };
 }
 
@@ -95,10 +98,26 @@ function world(mockUrl) {
 function journalTextOf(w) {
   const projects = join(w.home, ".agent-daemon", "projects");
   const dirs = [join(w.cwd, ".agent-daemon"), ...(existsSync(projects) ? readdirSync(projects).map((n) => join(projects, n)) : [])];
-  return dirs
+  const journals = dirs
     .filter((d) => existsSync(d))
-    .flatMap((d) => readdirSync(d).filter((n) => n.startsWith("learning-journal")).map((n) => readFileSync(join(d, n), "utf8")))
-    .join("\n");
+    .flatMap((d) => readdirSync(d).filter((n) => n.startsWith("learning-journal")).map((n) => readFileSync(join(d, n), "utf8")));
+  // A prompt's capture goes straight to a current store (L5 decision 3): its notes count too.
+  const dbPath = join(w.home, ".agent-daemon", "episodic.db");
+  if (existsSync(dbPath)) {
+    let db;
+    try {
+      db = new Database(dbPath, { readonly: true, fileMustExist: true, timeout: 5000 });
+      // Unflagged notes only: a held-back capture isn't "captured" for these checks.
+      journals.push(...db.prepare("SELECT text FROM learnings WHERE status <> 'quarantined' AND COALESCE(applied_to, '') NOT LIKE 'quarantined%'").all().map((r) => r.text));
+    } catch (e) {
+      // A store still being created has no learnings table yet: the journals alone this time.
+      // Anything else (busy past the timeout, damaged) fails the check rather than passing it unseen.
+      if (!/no such table/i.test(String(e?.message))) throw e;
+    } finally {
+      db?.close();
+    }
+  }
+  return journals.join("\n");
 }
 
 // Every pty started, so a test can close them all (an open ConPTY keeps node alive).
@@ -421,8 +440,8 @@ test("FC4 live: ad's own features in ad tui on the real engine binary", { skip, 
     await run("/private", /Private is off/, "private off");
 
     // A correction: captured by ad's hooks during the turn, shown right after it.
-    await run("actually we use pnpm, not npm", /Learned: pnpm, not npm/, "the learned row");
-    await run("/memory recent", /\[correction\] pnpm, not npm/, "the captured learning");
+    await run("actually we use pnpm, not npm", /Learned: we use pnpm, not npm/, "the learned row");
+    await run("/memory recent", /\[correction\] we use pnpm, not npm/, "the captured learning");
     await run("/schedule", /No scheduled jobs/, "schedules");
     await run("/team", /No teams/, "teams");
     await run("/proposals", /No skill proposals waiting/, "proposals");

@@ -91,6 +91,11 @@ export function reviewableSql(alias = "", { withFlagged = false } = {}) {
   return `(${open} AND COALESCE(${a}quarantine_reason, '') NOT LIKE 'secret%')`;
 }
 
+/** SQL: a note captured from a typed prompt (the checklist's group 1, `forget last`): provenance user-prompt or prompt. */
+export function ownWordsSql(alias = "") {
+  return `(${prefix(alias)}provenance IN ('user-prompt', 'prompt'))`;
+}
+
 /** The tag a recalled note carries (L6), or null for a plain accepted note. */
 export function tagOf(row) {
   if (row?.status === "provisional") return "provisional";
