@@ -23,5 +23,8 @@ export const PRODUCT = Object.freeze({
   displayName: "agent-daemon memory",
 });
 
+/** The names the product carried before its launch name (C-L3-NAME): the release refuses a real run under one unless told. */
+export const LEGACY_NAMES = Object.freeze(["agent-daemon-memory"]);
+
 /** What a user types for a verb, pinned to the installed version (no version skew, offline once cached). */
 export const pinnedCommand = (verb, version) => `npx -y ${PRODUCT.package}@${version} ${verb}`;

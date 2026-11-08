@@ -93,11 +93,13 @@ node runtime/scripts/build-host-packages.mjs --out <dir> --target claude-code
 
 `.github/workflows/release-memory.yml` runs only when the owner dispatches it.
 
-- **A dry run** (the default) builds and checks everything and uploads the artifacts with `SHA256SUMS`: the npm tarball and the ZIPs for Agent Plugins, Cursor, the Claude Code marketplace and the Gemini extension. It publishes nothing.
+- **The build is one script**, `runtime/scripts/release-memory-build.mjs --out <empty folder>`, so running it locally is a dry run of the job (it needs `npm`, `zip` and the npm registry for the SBOM; `--no-sbom` stays offline).
+- **A dry run** (the default) builds and checks everything and uploads the artifacts with `SHA256SUMS`: the npm tarball and its SBOM (CycloneDX, from a scratch install of that tarball), `tools-list.json` (the sha256 of each shipped server's `tools/list` per host and capture mode, which must match the reviewed `runtime/test/fixtures/tools-list.golden.json`: after changing a tool's text, review it and run `node runtime/scripts/tools-list.mjs --out runtime/test/fixtures/tools-list.golden.json`), and the ZIPs for Agent Plugins, Cursor, the Claude Code marketplace (exec-form hooks), the same marketplace with command-string hooks (for Claude Code before 2.1.314), the product repository and the Gemini extension. It publishes nothing.
+- **Inputs:** `dist_tag` (`beta`, the default, or `latest`) and `legacy_name`. While the product still has its old name, a real run refuses unless `legacy_name` is set.
 - **A real run** also needs the `release-memory` environment's approval. Then it:
-  - runs `npm publish --provenance` through npm's trusted publisher (this repository, `release-memory.yml`, environment `release-memory`; set on the package's npm settings page), so no npm token is stored;
-  - pushes the Claude Code marketplace tree and the Gemini extension tree to their own repositories (variables `MEMORY_MARKETPLACE_REPO`, `MEMORY_GEMINI_REPO`; deploy keys `MARKETPLACE_DEPLOY_KEY`, `GEMINI_DEPLOY_KEY`);
-  - creates the GitHub release `memory-v<version>`, not marked Latest (that badge stays on ad's own release).
+  - checks the downloads against `SHA256SUMS` and runs `npm publish --provenance --tag <dist_tag>` through npm's trusted publisher (this repository, `release-memory.yml`, environment `release-memory`; set on the package's npm settings page), so no npm token is stored;
+  - pushes the product repository's tree (the marketplace and a README for every host) to `PRODUCT_REPO` (deploy key `PRODUCT_DEPLOY_KEY`), the command-string marketplace to `MEMORY_MARKETPLACE_REPO` (where 3.1.0's plugin users update from; `MARKETPLACE_DEPLOY_KEY`), and the Gemini extension to `MEMORY_GEMINI_REPO` (`GEMINI_DEPLOY_KEY`);
+  - creates the GitHub release `memory-v<version>` with every artifact, not marked Latest (that badge stays on ad's own release).
 
   A target that isn't configured is skipped with a notice.
-- `runtime/test/release-memory-workflow.test.mjs` keeps it that way: dispatch only, a dry run by default, publishing only behind the environment.
+- `runtime/test/release-memory-workflow.test.mjs` keeps it that way: dispatch only, a dry run by default, the name gate, inputs only through the environment, publishing only behind the environment, and every artifact built by the script.

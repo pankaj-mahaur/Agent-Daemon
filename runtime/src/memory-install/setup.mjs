@@ -584,6 +584,7 @@ export async function setupPending(ctx, id, work) {
         writes.push({ kind: "hook", event: r.event, action: "add", file: hooksFile });
       }
       if (work.marker && tomlMarkerAdd(toml).action === "add") writes.push({ kind: "env", action: "add", file: config });
+      writes.push(...(await import("./codex-skills.mjs")).pendingCodexSkills(ctx));
       return writes;
     }
     const file = claudeSettingsFile(ctx);
@@ -804,6 +805,13 @@ export async function setup(opts = {}) {
           continue;
         }
         const r = id === "codex" ? await setupCodex(ctx, w, { dryRun: opts.dryRun }) : await setupClaude(ctx, w, { dryRun: opts.dryRun });
+        // Codex's command skills (L3, D20): only with the hooks (a refused root would
+        // also break the report skill's command line, and without hooks remember saves nothing).
+        if (id === "codex" && !w.refused && r.code !== 1) {
+          const s = await (await import("./codex-skills.mjs")).setupCodexSkills(ctx, { dryRun: opts.dryRun });
+          r.code = r.code || s.code;
+          r.changed ||= s.changed;
+        }
         if (r.changed && id === "claude-code") restartClaude = true;
         codes.push(r.code);
         changed ||= Boolean(r.changed);

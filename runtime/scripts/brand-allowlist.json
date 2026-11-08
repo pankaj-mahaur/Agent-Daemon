@@ -484,6 +484,42 @@
       "reason": "names the context the user's Codex host injects as a user message"
     },
     {
+      "path": "runtime/test/install-import-step.test.mjs",
+      "rules": ["A"],
+      "reason": "L3 D26's test installs into a temp home with the user's own Codex as the host setup has work for (its folder, CODEX_HOME, setup's ✓ Codex lines)"
+    },
+    {
+      "path": "runtime/test/fixtures/tools-list.golden.json",
+      "rules": ["A"],
+      "match": "\"codex/(auto|hooks|off|tools)\"",
+      "reason": "tools/list hashes per host id (L3 D24); codex is the id of the user's own Codex host"
+    },
+    {
+      "path": "runtime/src/hooks/remember.mjs",
+      "rules": ["A"],
+      "reason": "a typed remember (L3 D21) on each host it reaches: the plugin's command on Claude Code and the skill setup writes for the user's own Codex"
+    },
+    {
+      "path": "runtime/test/remember.test.mjs",
+      "rules": ["A"],
+      "reason": "remember tests replay the prompt the user's Codex host sends for its skill, captured from the pinned engine"
+    },
+    {
+      "path": "runtime/test/plugin-remember.test.mjs",
+      "rules": ["A"],
+      "reason": "spawned remember tests run the dispatcher as the user's Codex host starts it (the launcher's --host codex)"
+    },
+    {
+      "path": "runtime/test/command-skills.test.mjs",
+      "rules": ["A"],
+      "reason": "the command skills are rendered for two hosts, the user's own Codex among them (its skills folder and agents/openai.yaml)"
+    },
+    {
+      "path": "runtime/test/plugin-live.test.mjs",
+      "rules": ["A"],
+      "reason": "the live plugin test keeps the user's Codex home (CODEX_HOME) out of the child's environment"
+    },
+    {
       "path": "runtime/bin/hook.mjs",
       "rules": ["A"],
       "reason": "the hook dispatcher's header names the hosts it serves"
@@ -654,6 +690,12 @@
       "rules": ["A"],
       "match": "✗ Codex: …|Codex's `mcp_servers`|Codex: start a new session|\\(Claude Code, Codex, Gemini",
       "reason": "the memory installer's messages, the Codex host's restart step, and the agents the review gate refuses under (the user's own Codex CLI is one)"
+    },
+    {
+      "path": "docs/troubleshooting.md",
+      "rules": ["A"],
+      "match": "<text>` \\(Codex\\)|On Codex, run `setup --host codex`",
+      "reason": "entry #100 (remember): the command the user types in their own Codex, and setup's Codex step"
     },
     {
       "path": "mcp/agent-daemon-memory/README.md",

@@ -1,0 +1,150 @@
+{
+  "host": "codex",
+  "version": "0.163.0",
+  "scenario": "remember-skill",
+  "captured": "2026-11-07",
+  "os": "linux",
+  "outcome": {
+    "name": "remember-skill",
+    "code": 0,
+    "ms": 705,
+    "trust": "preToolUse:untrusted,postToolUse:untrusted,preCompact:untrusted,postCompact:untrusted,sessionStart:untrusted,sessionEnd:untrusted,userPromptSubmit:untrusted,stop:untrusted",
+    "hooks": "SessionStart,UserPromptSubmit,Stop,SessionEnd",
+    "toolRan": false,
+    "commandStatus": "",
+    "sysmsgInStdout": false,
+    "reasonSeenByModel": false,
+    "stderrTail": "WARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir \"/tmp\" (codex_home: AbsolutePathBuf(\"<TMP>/",
+    "extra": {
+      "skillBodySeen": true,
+      "userTexts": [
+        "<environment_context>\n  <cwd><TMP>/project</cwd>\n  <shell>bash</shell>\n  <current_date>2026-11-08</current_date>\n  <timezone>Asia/Calcutta</timezone>\n  <filesystem><",
+        "$agent-daemon-memory-remember use pnpm, not npm",
+        "<skill>\n<name>agent-daemon-memory-remember</name>\n<path><TMP>/home/.codex/skills/agent-daemon-memory-remember/SKILL.md</path>\n---\nname: agent-daemon-memory-remember\n"
+      ]
+    }
+  },
+  "trust": {
+    "hooks": [
+      {
+        "key": "<TMP>/home/.codex/hooks.json:pre_tool_use:0:0",
+        "eventName": "preToolUse",
+        "trustStatus": "untrusted",
+        "hash": "present"
+      },
+      {
+        "key": "<TMP>/home/.codex/hooks.json:post_tool_use:0:0",
+        "eventName": "postToolUse",
+        "trustStatus": "untrusted",
+        "hash": "present"
+      },
+      {
+        "key": "<TMP>/home/.codex/hooks.json:pre_compact:0:0",
+        "eventName": "preCompact",
+        "trustStatus": "untrusted",
+        "hash": "present"
+      },
+      {
+        "key": "<TMP>/home/.codex/hooks.json:post_compact:0:0",
+        "eventName": "postCompact",
+        "trustStatus": "untrusted",
+        "hash": "present"
+      },
+      {
+        "key": "<TMP>/home/.codex/hooks.json:session_start:0:0",
+        "eventName": "sessionStart",
+        "trustStatus": "untrusted",
+        "hash": "present"
+      },
+      {
+        "key": "<TMP>/home/.codex/hooks.json:session_end:0:0",
+        "eventName": "sessionEnd",
+        "trustStatus": "untrusted",
+        "hash": "present"
+      },
+      {
+        "key": "<TMP>/home/.codex/hooks.json:user_prompt_submit:0:0",
+        "eventName": "userPromptSubmit",
+        "trustStatus": "untrusted",
+        "hash": "present"
+      },
+      {
+        "key": "<TMP>/home/.codex/hooks.json:stop:0:0",
+        "eventName": "stop",
+        "trustStatus": "untrusted",
+        "hash": "present"
+      }
+    ]
+  },
+  "hooks": [
+    {
+      "label": "SessionStart",
+      "env": {
+        "CODEX_MANAGED_PACKAGE_ROOT": "<REPO>/runtime/node_modules/@openai/codex",
+        "CODEX_MANAGED_BY_NPM": "1",
+        "CODEX_HOME": "<TMP>/home/.codex"
+      },
+      "payload": {
+        "session_id": "01a1b7a9-5575-78f0-b8d8-55b228bc9d6a",
+        "transcript_path": "<TMP>/home/.codex/sessions/2026/11/08/rollout-2026-11-08T01-48-10-01a1b7a9-5575-78f0-b8d8-55b228bc9d6a.jsonl",
+        "cwd": "<TMP>/project",
+        "hook_event_name": "SessionStart",
+        "model": "mock-model",
+        "permission_mode": "bypassPermissions",
+        "source": "startup"
+      }
+    },
+    {
+      "label": "UserPromptSubmit",
+      "env": {
+        "CODEX_MANAGED_PACKAGE_ROOT": "<REPO>/runtime/node_modules/@openai/codex",
+        "CODEX_MANAGED_BY_NPM": "1",
+        "CODEX_HOME": "<TMP>/home/.codex"
+      },
+      "payload": {
+        "session_id": "01a1b7a9-5575-78f0-b8d8-55b228bc9d6a",
+        "turn_id": "01a1b7a9-557c-7f80-a64c-a636fa381ec5",
+        "transcript_path": "<TMP>/home/.codex/sessions/2026/11/08/rollout-2026-11-08T01-48-10-01a1b7a9-5575-78f0-b8d8-55b228bc9d6a.jsonl",
+        "cwd": "<TMP>/project",
+        "hook_event_name": "UserPromptSubmit",
+        "model": "mock-model",
+        "permission_mode": "bypassPermissions",
+        "prompt": "$agent-daemon-memory-remember use pnpm, not npm"
+      }
+    },
+    {
+      "label": "Stop",
+      "env": {
+        "CODEX_MANAGED_PACKAGE_ROOT": "<REPO>/runtime/node_modules/@openai/codex",
+        "CODEX_MANAGED_BY_NPM": "1",
+        "CODEX_HOME": "<TMP>/home/.codex"
+      },
+      "payload": {
+        "session_id": "01a1b7a9-5575-78f0-b8d8-55b228bc9d6a",
+        "turn_id": "01a1b7a9-557c-7f80-a64c-a636fa381ec5",
+        "transcript_path": "<TMP>/home/.codex/sessions/2026/11/08/rollout-2026-11-08T01-48-10-01a1b7a9-5575-78f0-b8d8-55b228bc9d6a.jsonl",
+        "cwd": "<TMP>/project",
+        "hook_event_name": "Stop",
+        "model": "mock-model",
+        "permission_mode": "bypassPermissions",
+        "stop_hook_active": false,
+        "last_assistant_message": "ok"
+      }
+    },
+    {
+      "label": "SessionEnd",
+      "env": {
+        "CODEX_MANAGED_PACKAGE_ROOT": "<REPO>/runtime/node_modules/@openai/codex",
+        "CODEX_MANAGED_BY_NPM": "1",
+        "CODEX_HOME": "<TMP>/home/.codex"
+      },
+      "payload": {
+        "session_id": "01a1b7a9-5575-78f0-b8d8-55b228bc9d6a",
+        "transcript_path": "<TMP>/home/.codex/sessions/2026/11/08/rollout-2026-11-08T01-48-10-01a1b7a9-5575-78f0-b8d8-55b228bc9d6a.jsonl",
+        "cwd": "<TMP>/project",
+        "hook_event_name": "SessionEnd",
+        "reason": "other"
+      }
+    }
+  ]
+}

@@ -37,6 +37,8 @@ test("the closure reaches no engine, harness or TUI code, and only allowed packa
   assert.deepEqual(c.bare, ["better-sqlite3", "jsonc-parser", "smol-toml"]);
   // The scanner sees every import shape the code uses.
   assert.deepEqual(specifiers(`import a from "./a.mjs";\nimport { b } from './b.mjs';\nimport "./c.mjs";\nexport { d } from "./d.mjs";\nconst e = await import("./e.mjs");\n// import "./not.mjs"\n`), ["./a.mjs", "./b.mjs", "./c.mjs", "./d.mjs", "./e.mjs"]);
+  // A string that says "import" (a provenance value) is no import statement.
+  assert.deepEqual(specifiers(`const P = new Set(["tool", "import"]);\nconst s = "x";\nimport "./f.mjs";\n`), ["./f.mjs"]);
   // A forbidden import is caught.
   const root = tmp("ad-closure-");
   fs.mkdirSync(path.join(root, "src", "harness"), { recursive: true });

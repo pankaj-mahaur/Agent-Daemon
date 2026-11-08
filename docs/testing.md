@@ -22,6 +22,7 @@ Install with `npm ci` (or `npm install`) in `runtime/`, devDependencies included
 | `AD_REAL_ENGINE=1` | `test/fallback-real.test.mjs` | automatic fallback F1–F13 (below) |
 | `AD_REAL_ENGINE=1` | `test/engine-real-failures.test.mjs` | each provider failure as the engine reports it; `AD_WRITE_FIXTURE=1` rewrites `test/fixtures/engine-failures-0.163.json`, which the pure tests read |
 | `AD_REAL_ENGINE=1` | `test/engine-network.test.mjs` | with ad's privacy settings, a turn reaches no host but the model provider (a recording proxy) |
+| `AD_REAL_CLAUDE=1` | `test/plugin-live.test.mjs` | the built Claude Code plugin installed from its marketplace tree into a real `claude` (2.1.314+) in a temp home: `claude plugin validate --profile directory` and `doctor` pass; a headless session against the S-HOOKS mock API saves a typed remember once with its receipt, and the plugin's env-file line reaches Bash. The temp root must sit outside your profile (`AD_LIVE_TMP` on Windows); `AD_LIVE_FIXTURE=<dir>` re-captures `fixtures/hosts/claude-code/plugin-remember.json` |
 | `AD_ROLLBACK_30=1` | `test/rollback-30.test.mjs` | ad 3.0 still starts and finds its sign-ins after this branch wrote its account files; needs the `v3.0.0` tag and the network |
 
 `AD_WRITE_FIXTURE=1` on `test/engine-real.test.mjs` also refreshes `test/fixtures/engine-items-0.163.json` (what the session record maps).
@@ -171,7 +172,7 @@ The real-engine job is non-blocking (`continue-on-error`): **read its result**, 
 
 Run the same pipeline before pushing, on this machine and in a Linux container, with the project skill [`ad-ci-readiness`](../.claude/skills/ad-ci-readiness/SKILL.md): it also reads a PR's CI test by test and holds the release-readiness checklist.
 
-Two more workflows: `skills-lint.yml` lints the skills and smoke-runs the skills diff; `release-memory.yml` builds the memory package and host plugins. It is started by hand by the owner, is a dry run by default (every artifact and `SHA256SUMS`, nothing published), and publishes only behind an approved environment; `test/release-memory-workflow.test.mjs` checks those guards.
+Two more workflows: `skills-lint.yml` lints the skills and smoke-runs the skills diff; `release-memory.yml` builds the memory package and host plugins. It is started by hand by the owner, is a dry run by default (every artifact and `SHA256SUMS`, nothing published), and publishes only behind an approved environment; `test/release-memory-workflow.test.mjs` checks those guards and runs the build script offline (every artifact but the SBOM), and `test/tools-list.test.mjs` compares each server's `tools/list` with the reviewed golden.
 
 `.github/workflows/engine-upgrade.yml` runs `npm test` and the same real-engine tests in its own Linux job before it opens the PR that bumps the engine pin, and puts the results in the PR body. The PR's own `test.yml` run (all three OSes) happens only when the repo has an `ENGINE_UPGRADE_TOKEN` secret (the old `CODEX_UPGRADE_TOKEN` also works): PRs opened with the default token don't trigger other workflows.
 

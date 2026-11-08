@@ -180,6 +180,8 @@ export async function doctor(opts = {}) {
     if (by("changed").length) parts.push(`you changed ad's ${by("changed").join(", ")} hook`);
     add("hooks.trust", trust.every((t) => !["pending", "modified", "unknown"].includes(t.state)), parts.join("; ") || "no hooks of ad's found", "codex");
   }
+  // The plugin and Codex's command skills (L3 P4): their own module.
+  for (const c of await (await import("./doctor-product.mjs")).productChecks(ctx, opts)) add(c.code, c.ok, c.note, c.host);
   // The newest copy the launcher runs (npx installs; none for a clone: nothing to compare).
   const cur = currentDist(ctx.root);
   if (cur) add("pkg.stale", !newer(ctx.version, cur), newer(ctx.version, cur) ? `installed ${cur}, this is ${ctx.version}: run install to update` : `installed ${cur}`);
