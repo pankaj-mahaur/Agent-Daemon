@@ -362,12 +362,38 @@ export async function install(opts = {}) {
 }
 
 /**
- * L4b's consented rule import (L3, Decision 26): reserved here, after setup and only in
- * a terminal, so L4b adds no new install screen. Empty at L3; ctx.consentedImport lets a
- * test see where it runs.
+ * L4b's consented rule import (L3, Decision 26): after setup and only in a terminal, so
+ * L4b adds no new install screen. memory/import-flow.mjs asks its own question (never
+ * answered by --yes) and saves nothing without it. ctx.consentedImport lets a test see
+ * where it runs. A context built with its own env (a test's) never reaches the default
+ * store, which follows process.env.
  */
-export async function consentedImport(ctx, opts) {
-  return ctx.consentedImport ? ctx.consentedImport(opts) : null;
+export async function consentedImport(ctx, opts = {}) {
+  if (ctx.consentedImport) return ctx.consentedImport(opts);
+  if (!ctx.isTTY?.() || ctx.env !== process.env || ctx.home !== os.homedir() || ctx.root !== adRoot({ env: process.env })) return null;
+  const { runImport, IMPORT_TEXTS } = await import("../memory/import-flow.mjs");
+  const base = ctx.installedBy === "npx" ? ctx.command("").trim() : "ad";
+  // --yes answers install's own questions, never this one: a scripted install in a
+  // terminal mustn't stop on it, so it only says how to do it later.
+  if (opts.yes) {
+    const cwd = opts.cwd ?? process.cwd();
+    const { findProject } = await import("../mistakes/history.mjs");
+    const { neverValid } = await import("../memory/scope.mjs");
+    const o = { env: ctx.env, home: ctx.home };
+    if (!neverValid(cwd, o) && !neverValid(findProject(cwd).root, o)) ctx.out(`\n${IMPORT_TEXTS.later(base)}`);
+    return { code: 0, saved: false };
+  }
+  ctx.out("");
+  return runImport({
+    cwd: opts.cwd ?? process.cwd(),
+    env: ctx.env,
+    home: ctx.home,
+    out: ctx.out,
+    ask: ctx.ask,
+    isTTY: ctx.isTTY,
+    // npx: the pinned package command; from ad: `ad mistakes`, `ad review`.
+    base,
+  });
 }
 
 // What setup would write for each host found here (nothing is written).

@@ -21,6 +21,7 @@ for (const k of ["AD_ROOT", "CLAUDE_CONFIG_DIR", "AD_MEMORY_DB", "AD_MEMORY_PROJ
 const { runImport, parseChoice, IMPORT_TEXTS } = await import("../src/memory/import-flow.mjs");
 const { runMistakes } = await import("../src/mistakes/cli.mjs");
 const { closeDb } = await import("../src/memory/episodic.mjs");
+const { makeContext, consentedImport } = await import("../src/memory-install/install.mjs");
 
 const SECRET = `sk-ant-api03-${"Q7".repeat(45)}`;
 // What must never reach the store: a single, a non-correction, a secret, a managed block.
@@ -317,4 +318,46 @@ test("ad mistakes --save: flags pick the parts; --save with --json or --all-proj
   t = io();
   assert.equal(await runMistakes(["--yes"], { env: process.env, home: S.home, cwd: S.project, ...t }), 0);
   assert.equal(fs.existsSync(root), false, "the report stores nothing");
+});
+
+test("install's reserved step runs the flow in a terminal, after setup, with install's own answers", async () => {
+  freshRoot();
+  const lines = [];
+  const { ask, asked } = asker("n");
+  const ctx = makeContext({ env: process.env, home: S.home, out: (l) => lines.push(String(l)), ask, isTTY: () => true });
+  const r = await consentedImport(ctx, { cwd: S.project });
+  assert.equal(r?.saved, false, lines.join("\n"));
+  assert.equal(asked.length, 1);
+  assert.match(lines.join("\n"), /Nothing applies until you accept it/);
+  assert.match(lines.join("\n"), /mistakes --save/, "names how to do it later");
+  assert.equal(fs.existsSync(root), false);
+
+  // install --yes answers install's questions, never this one: no question, the later line.
+  const before = asked.length;
+  lines.length = 0;
+  const y = await consentedImport(ctx, { cwd: S.project, yes: true });
+  assert.equal(y?.saved, false);
+  assert.equal(asked.length, before, "--yes never reaches the question");
+  assert.match(lines.join("\n"), /ad mistakes --save/);
+  assert.equal(fs.existsSync(root), false);
+  // ... and outside a project it says nothing at all.
+  lines.length = 0;
+  assert.equal((await consentedImport(ctx, { cwd: S.home, yes: true }))?.saved, false);
+  assert.doesNotMatch(lines.join("\n"), /mistakes --save/);
+  // A context whose ad root isn't the default store's: the step does nothing.
+  const elsewhere = makeContext({ env: process.env, home: S.home, root: path.join(BASE, "install-root"), out: () => {}, ask: asker("a").ask, isTTY: () => true });
+  assert.equal(await consentedImport(elsewhere, { cwd: S.project }), null);
+  // A context with its own home folder: the default store follows the real one, so nothing.
+  const otherHome = fs.mkdtempSync(path.join(BASE, "other-home-"));
+  const homeless = makeContext({ env: process.env, home: otherHome, out: () => {}, ask: asker("a").ask, isTTY: () => true });
+  assert.equal(await consentedImport(homeless, { cwd: S.project }), null);
+  assert.equal(fs.existsSync(root), false);
+  // No terminal: the step does nothing (install already said to finish in one).
+  const quiet = makeContext({ env: process.env, home: S.home, out: (l) => lines.push(String(l)), ask, isTTY: () => false });
+  assert.equal(await consentedImport(quiet, { cwd: S.project }), null);
+  // A context built with its own env never reaches the default store.
+  const foreign = makeContext({ env: { ...process.env }, home: S.home, out: () => {}, ask: asker("a").ask, isTTY: () => true });
+  assert.equal(foreign.root, ctx.root, "the same ad root: only the env object differs");
+  assert.equal(await consentedImport(foreign, { cwd: S.project }), null);
+  assert.equal(fs.existsSync(root), false);
 });
