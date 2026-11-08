@@ -83,6 +83,11 @@ async function launch() {
     const { runMistakes } = await import("./mistakes/cli.mjs");
     return runMistakes(rest);
   }
+  // L5: the memory verbs (memory/memory-cli.mjs), before the full command module.
+  if (["remember", "forget", "restore"].includes(command) || (command === "config" && rest[0] === "review")) {
+    const { memoryVerbMain } = await import("./memory/memory-cli.mjs");
+    return memoryVerbMain(command, rest, { command: (v) => `ad ${v}` });
+  }
   // The hand-off to the engine's own UI left the product in 3.0 (design C4): a tombstone says what replaced it.
   if (command === LEGACY.command) {
     const { tombstoneEngineUiCommand } = await import("./engine/attribution.mjs");

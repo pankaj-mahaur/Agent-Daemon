@@ -829,6 +829,24 @@
       "rules": ["A"],
       "match": "\"codex\"|codex exec|codex-subagent",
       "reason": "the L5 poisoning dev set mirrors the held-out corpus schema: a host field and Codex prompt sources (codex exec, Codex subagent turns)"
+    },
+    {
+      "path": "runtime/src/memory/reminder.mjs",
+      "rules": ["A", "C"],
+      "match": "[Cc]odex",
+      "reason": "L5's review reminder counts captures from the second host by its name (\"2 from Codex\"), as decision 18 words it; the capture event records host \"codex\""
+    },
+    {
+      "path": "runtime/src/hooks/memory-command.mjs",
+      "rules": ["A"],
+      "match": "[Cc]odex",
+      "reason": "names the second host's typed forms of forget and restore ($<package>-forget, $<package>-restore)"
+    },
+    {
+      "path": "runtime/test/l5-hook-cli.test.mjs",
+      "rules": ["A"],
+      "match": "[Cc]odex|CODEX",
+      "reason": "spawns the hook as the second host (--host codex, CODEX_HOME unset) and checks its forget, reminder and capture-count lines"
     }
   ]
 }

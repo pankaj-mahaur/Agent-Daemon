@@ -18,6 +18,8 @@ const USAGE = `${PRODUCT.package}: ad's memory server for Claude Code, Codex, Cu
   doctor [--json]  ·  repair [--host <id>]  ·  status [--json]
   uninstall [--host <id> …] [--purge-data [--force]]
   review [--accept <file>] [--accept-all] [--global]   (in your own terminal)
+  remember <text>  ·  forget <number>  ·  restore <number>   (accepted at once only in your own terminal)
+  config review [strict|auto]   review-first for every learning, or not
   report [--days 30] [--all-projects] [--json] [--share]   is memory working here
   mistakes [--all-projects] [--share | --json] [--yes]   the corrections you keep typing (read-only, offline)
 Hosts: claude-code, codex, cursor, vscode, gemini. Memory stays on this computer.`;
@@ -103,6 +105,9 @@ export async function main(argv = process.argv.slice(2), { log = (l) => console.
     }
     return (await import("../review.mjs")).runInteractiveReview({ cwd: process.cwd(), ...r });
   }
+  // L5: remember, forget, restore, config review (memory/memory-cli.mjs: trusted only with
+  // the review token, in your own terminal).
+  if (["remember", "forget", "restore", "config"].includes(cmd)) return (await import("../memory/memory-cli.mjs")).memoryVerbMain(cmd, rest, { out: log });
   const flags = parseFlags(rest);
   if (flags.error) {
     log(`${flags.error}\n${USAGE}`);

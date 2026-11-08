@@ -123,7 +123,18 @@ async function main() {
       let remember = rememberText(input?.prompt, host);
       // The short /remember, when it can only be the plugin's command.
       if (remember === null && host === "claude" && looksBare(input?.prompt) && bareRememberIsOurs({ cwd: projectDir(input, host) || undefined })) remember = rememberText(input.prompt, host, { bare: true });
+      // A typed forget or restore (L5): the same forms and the same owner as remember.
+      const { memoryVerb, bareVerb } = await import("../src/hooks/remember.mjs");
+      let verbCmd = remember === null ? memoryVerb(input?.prompt, host) : null;
+      if (remember === null && !verbCmd && host === "claude" && bareVerb(input?.prompt) && bareRememberIsOurs({ cwd: projectDir(input, host) || undefined, name: bareVerb(input.prompt) })) verbCmd = memoryVerb(input.prompt, host, { bare: true });
       let receipt = null;
+      if (verbCmd && (plugin || host !== "claude")) {
+        receipt = await quietly(async () => {
+          const { ownVersion } = await import("../src/memory/own-version.mjs");
+          const r = await (await import("../src/hooks/memory-command.mjs")).runMemoryVerb({ ...verbCmd, input, source, host, cwd: String(input?.cwd || projectDir(input, host) || process.cwd()), version: ownVersion() });
+          return r?.receipt ?? null;
+        });
+      }
       if (remember !== null && (plugin || host !== "claude")) {
         const R = await import("../src/hooks/remember.mjs");
         const { ownVersion } = await import("../src/memory/own-version.mjs");
@@ -135,7 +146,7 @@ async function main() {
         // L5: what the user's prompt teaches goes through the capture library (screen,
         // L4a's extractor, dedupe, the store or the journal); the older extractor keeps only
         // the previous assistant turn's notes (no double capture).
-        if (remember === null && !receipt) {
+        if (remember === null && !verbCmd && !receipt) {
           receipt = await quietly(async () => {
             const { capturePrompt, captureReceipt } = await import("../src/memory/capture-prompt.mjs");
             const r = await capturePrompt(input, { source, host, cwd: String(input?.cwd || projectDir(input, host) || process.cwd()) });
@@ -149,7 +160,15 @@ async function main() {
         }
         const { userPromptExtract } = await import("../src/hooks/user-prompt-extract.mjs");
         // A remember's words were saved above: the extractor doesn't see them (no double capture).
-        await userPromptExtract(remember !== null ? { ...input, prompt: "" } : input, { source, print: false, userHandled: true });
+        await userPromptExtract(remember !== null || verbCmd ? { ...input, prompt: "" } : input, { source, print: false, userHandled: true });
+        // The agent's hides and forget requests, once, on the next typed Claude Code prompt.
+        if (host === "claude" && source?.typed) {
+          const notice = await quietly(async () => {
+            const { ownVersion } = await import("../src/memory/own-version.mjs");
+            return (await import("../src/hooks/memory-command.mjs")).agentActionsNotice({ cwd: String(input?.cwd || projectDir(input, host) || process.cwd()), version: ownVersion() });
+          });
+          if (notice) receipt = { systemMessage: receipt?.systemMessage ? `${receipt.systemMessage}\n${notice}` : notice, context: receipt?.context ?? null };
+        }
       }
       const parts = receipt?.context ? [receipt.context] : [];
       if (!memoryOnly) parts.push(await quietly(async () => (await import("../src/hooks/capability-route-advice.mjs")).routeAdviceContext(input)));
@@ -193,7 +212,25 @@ async function main() {
           return `${PRODUCT.displayName}: AD_TOOL_SHELL is gone from ${gone.file}, so Codex's agent shell isn't marked any more. Run ${cmd} in your own terminal.`;
         });
       }
-      await runSessionStart({ cwd, outputJson: true, projectRoot, sessionId: input?.session_id, transcript: input?.transcript_path, memoryOnly, systemMessage: systemMessage ?? pluginNote ?? undefined });
+      // L5: new learnings from the user's prompts wait for review (daily, then weekly). Only a
+      // Claude Code session someone attends: a headless run, ad's worker or a child session
+      // would use up the day's reminder unseen.
+      const attended = host === "claude" && process.env.CLAUDE_CODE_ENTRYPOINT !== "sdk-cli" && process.env.CLAUDE_CODE_SESSION_ATTENDED !== "0" && process.env.AD_WORKER !== "1" && !process.env.CLAUDE_CODE_CHILD_SESSION;
+      const reminder = !attended ? null : await quietly(async () => {
+        const ep = await import("../src/memory/episodic.mjs");
+        const store = await ep.db();
+        if (!store) return null;
+        const { slugCollides } = await import("../src/memory/safety.mjs");
+        if (slugCollides(store, ep.projectSlug(path.resolve(cwd)), path.resolve(cwd))) return null;
+        const { projectIdOf } = await import("../src/memory/projects.mjs");
+        const { PRODUCT, pinnedCommand } = await import("../src/product.mjs");
+        const { ownVersion } = await import("../src/memory/own-version.mjs");
+        const v = ownVersion();
+        const projectId = projectIdOf(path.resolve(cwd));
+        return (await import("../src/memory/reminder.mjs")).reviewReminder(store, { keys: [ep.projectSlug(path.resolve(cwd)), projectId].filter(Boolean), projectId, product: PRODUCT.displayName, review: v ? pinnedCommand("review", v) : `npx -y ${PRODUCT.package} review` });
+      });
+      const message = [systemMessage ?? pluginNote, reminder].filter(Boolean).join("\n");
+      await runSessionStart({ cwd, outputJson: true, projectRoot, sessionId: input?.session_id, transcript: input?.transcript_path, memoryOnly, systemMessage: message || undefined });
       return 0;
     }
     case "session.end":

@@ -18,6 +18,7 @@ import { flaggedSql } from "./trust.mjs";
 import { writeLearning, sameNote } from "./episodic.mjs";
 import { isStrict } from "./review-mode.mjs";
 import { recordEvent, latestEvent } from "./l5-tables.mjs";
+import { PROVISIONAL_DAYS } from "./purge.mjs";
 
 const bound = (r) => Boolean(r && typeof r.project_id === "string" && r.project_id.startsWith("prj_") && r.project_slug);
 
@@ -26,10 +27,12 @@ const bound = (r) => Boolean(r && typeof r.project_id === "string" && r.project_
  * @param {object} handle  the store
  * @param {object} verdict promptSource()'s verdict for the prompt this note came from
  * @param {{id?:number, row?:object}} target  an existing note's id, or a new row (writeLearning's shape)
- * @param {{now?:Date}} [opts]
+ * @param {{now?:Date, captureActor?:string|null, captureDetail?:object|null, restore?:boolean}} [opts]
+ *   restore: a typed restore of a hidden note (L5 decision 12; forget.mjs passes it only for
+ *   a first-party asker): back to provisional only when it was provisional when hidden.
  * @returns {{id:number|null, status:string, why?:string}}
  */
-export function writeProvisional(handle, verdict, { id = null, row = null } = {}, { now = new Date(), captureActor = null } = {}) {
+export function writeProvisional(handle, verdict, { id = null, row = null } = {}, { now = new Date(), captureActor = null, captureDetail = null, restore = false } = {}) {
   const t = now.toISOString();
   return handle.transaction(() => {
     let noteId = id;
@@ -49,7 +52,7 @@ export function writeProvisional(handle, verdict, { id = null, row = null } = {}
       if (noteId == null) return { id: null, status: "none", why: "not stored" };
       noteId = Number(noteId);
       // The capture's event, in the same transaction as the row (L5 decision 13).
-      if (inserted != null && captureActor) recordEvent(handle, { kind: "captured", learningId: noteId, projectId: row.projectId ?? null, actor: captureActor, at: now });
+      if (inserted != null && captureActor) recordEvent(handle, { kind: "captured", learningId: noteId, projectId: row.projectId ?? null, actor: captureActor, detail: captureDetail, at: now });
     }
     const cur = handle.get(`SELECT id, text, status, accepted_by, project_id, project_slug, ${flaggedSql()} AS flagged FROM learnings WHERE id = ?`, [noteId]);
     if (!cur) return { id: noteId, status: "none", why: "no such note" };
@@ -66,6 +69,7 @@ export function writeProvisional(handle, verdict, { id = null, row = null } = {}
       }
       return { id: noteId, status: cur.status, why };
     };
+    if (restore) return restoreHidden(handle, verdict, cur, now);
     if (!isFirstParty(verdict)) return pend("not first-party");
     if (!verdictCovers(verdict, cur.text)) return pend("not this prompt's words");
     if (isStrict(handle)) return pend("strict", { revive: true });
@@ -83,4 +87,36 @@ export function writeProvisional(handle, verdict, { id = null, row = null } = {}
     recordEvent(handle, { kind: "provisional", learningId: noteId, projectId: cur.project_id, actor: "user", at: now });
     return { id: noteId, status: "provisional" };
   });
+}
+
+// A first-party restore (L5 decision 12): the note comes back provisional only when all
+// hold — this process's first-party verdict for a prompt that names the note's id, strict
+// off, one project, the note was provisional when it was hidden, and its first provisional
+// time is still inside the 30 days (that time is put back, so hide-and-restore can't renew
+// them). Otherwise it comes back pending.
+function restoreHidden(handle, verdict, cur, now) {
+  const t = now.toISOString();
+  if (cur.status !== "hidden") return { id: cur.id, status: cur.status, why: "not hidden" };
+  const back = (why) => {
+    handle.run("UPDATE learnings SET status = 'pending', status_at = ? WHERE id = ? AND status = 'hidden' AND accepted_by IS NULL", [t, cur.id]);
+    recordEvent(handle, { kind: "restored", learningId: cur.id, projectId: cur.project_id, actor: "user", detail: { to: "pending" }, at: now });
+    return { id: cur.id, status: "pending", why };
+  };
+  if (!isFirstParty(verdict) || !verdictCovers(verdict, String(cur.id))) return back("not first-party");
+  if (isStrict(handle)) return back("strict");
+  if (!bound(cur)) return back("no project");
+  if (latestEvent(handle, "hidden", cur.id)?.detail?.from !== "provisional") return back("was not in use");
+  let first = null;
+  try {
+    first = handle.get("SELECT MIN(at) AS at FROM events WHERE kind = 'provisional' AND learning_id = ?", [cur.id])?.at ?? null;
+  } catch {
+    first = null;
+  }
+  if (!first || Date.parse(first) <= now.getTime() - PROVISIONAL_DAYS * 86_400_000) return back("its 30 days are over");
+  handle.run(
+    "UPDATE learnings SET status = 'provisional', status_at = ? WHERE id = ? AND status = 'hidden' AND accepted_by IS NULL",
+    [first, cur.id]
+  );
+  recordEvent(handle, { kind: "restored", learningId: cur.id, projectId: cur.project_id, actor: "user", detail: { to: "provisional" }, at: now });
+  return { id: cur.id, status: "provisional" };
 }

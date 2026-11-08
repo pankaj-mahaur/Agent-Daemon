@@ -106,14 +106,14 @@ test("Claude Code: marketplace and plugin manifests, ./ paths, the hooks wrapper
 
 test("Claude Code: the command skills (typed only), the memory skill (model-invocable), README, LICENSE, author, icon", () => {
   const front = (f) => /^---\r?\n([\s\S]*?)\r?\n---/.exec(fs.readFileSync(f, "utf8"))[1];
-  for (const c of ["remember", "recall", "report"]) {
+  for (const c of ["remember", "recall", "report", "forget", "restore"]) {
     const f = path.join(CC_PLUGIN, "skills", c, "SKILL.md");
     assert.match(front(f), /^disable-model-invocation: true$/m, `${c}: only when the user types /${NAME}:${c}`);
     assert.match(front(f), new RegExp(`^name: ${c}$`, "m"));
     assert.ok(fs.readFileSync(f, "utf8").includes(`npx -y ${NAME}@${version} `), `${c}: commands pinned to this version`);
   }
   assert.doesNotMatch(front(path.join(CC_PLUGIN, "skills", NAME, "SKILL.md")), /disable-model-invocation/, "the memory skill stays model-invocable");
-  assert.deepEqual(fs.readdirSync(path.join(CC_PLUGIN, "skills")).sort(), [NAME, "recall", "remember", "report"].sort(), "no forget before L5");
+  assert.deepEqual(fs.readdirSync(path.join(CC_PLUGIN, "skills")).sort(), [NAME, "forget", "recall", "remember", "report", "restore"].sort(), "forget and restore since L5");
   // The plugin directory refuses a plugin without a README (40+ words) and a licence; it warns without author and icon.
   const readme = fs.readFileSync(path.join(CC_PLUGIN, "README.md"), "utf8");
   assert.ok(readme.split(/\s+/).filter(Boolean).length >= 40);

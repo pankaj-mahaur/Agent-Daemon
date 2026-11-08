@@ -5,7 +5,8 @@
 //                agents/openai.yaml), typed $<package>-<command>; setup writes them
 // Explicit only: `disable-model-invocation: true` on both hosts, and Codex's
 // `policy.allow_implicit_invocation: false`. The memory skill (model-invocable) is
-// a separate, hand-written skill. `forget` arrives with L5.
+// a separate, hand-written skill. `forget` and `restore` came with L5 (the prompt hook
+// does the work, memory/forget.mjs; the skill only passes on the hook's line).
 //
 // Pure: the builder and setup write the files. Bodies name tools by their bare names
 // (Decision 1); Claude Code's allowed-tools lists both prefixed forms (the plugin's
@@ -13,7 +14,7 @@
 
 import { PRODUCT, pinnedCommand } from "../product.mjs";
 
-export const COMMANDS = Object.freeze(["remember", "recall", "report"]);
+export const COMMANDS = Object.freeze(["remember", "recall", "report", "forget", "restore"]);
 export const COMMAND_HOSTS = Object.freeze(["claude-code", "codex"]);
 
 /** Codex's folder (and skill) name for a command: <package>-<command>. */
@@ -41,9 +42,11 @@ const DESCRIPTIONS = {
   remember: (host) => `Saves a note for ${PRODUCT.displayName} to recall in later sessions in this project, once the user accepts it in review. Use when the user types ${invocation(host, "remember")} <what to remember>.`,
   recall: (host) => `Searches ${PRODUCT.displayName} for notes from earlier sessions in this project. Use when the user types ${invocation(host, "recall")} <topic>.`,
   report: (host) => `Shows whether ${PRODUCT.displayName} is working in this project: what it captured, what waits for review, what it recalled. Use when the user types ${invocation(host, "report")}.`,
+  forget: (host) => `Removes a learning ${PRODUCT.displayName} saved in this project (restore within 7 days). Use when the user types ${invocation(host, "forget")} <number or last>.`,
+  restore: (host) => `Brings back a learning removed from ${PRODUCT.displayName} in the last 7 days. Use when the user types ${invocation(host, "restore")} <number>.`,
 };
 
-const HINTS = { remember: "<what to remember>", recall: "<topic>", report: "" };
+const HINTS = { remember: "<what to remember>", recall: "<topic>", report: "", forget: "<#number or last>", restore: "<#number>" };
 
 function body(host, command, { launcher, cmd }) {
   const typed = invocation(host, command);
@@ -87,6 +90,19 @@ function body(host, command, { launcher, cmd }) {
       "",
       "- It reads the local memory store only: nothing leaves this computer.",
       `- If it fails, show the error and suggest \`${doctor}\` in the user's own terminal.`,
+      "",
+    ].join("\n");
+  }
+  if (command === "forget" || command === "restore") {
+    return [
+      `# ${PRODUCT.displayName}: ${command}`,
+      "",
+      `The user typed ${typed} followed by a learning's number${command === "forget" ? " (or `last`)" : ""}.`,
+      "",
+      `The memory hook already answered in a line starting with ${PRODUCT.displayName}. Pass on what it says in one short line, then carry on with anything else the user asked.`,
+      "",
+      "- Don't call a memory tool and don't diagnose it: the hook did the work, and only the user decides about a learning they saved.",
+      `- If there is no such line, the hook isn't running here: tell the user nothing changed, and that \`${doctor}\` in their own terminal shows why.`,
       "",
     ].join("\n");
   }

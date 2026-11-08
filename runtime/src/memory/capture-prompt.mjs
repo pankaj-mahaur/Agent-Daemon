@@ -164,7 +164,7 @@ export const MAX_NOTE = 2000;
  *         flagged-again | deleted-before | superseded | none
  * @param {{handle:object, text:string, kind:"correction"|"remember", source:object,
  *   promptFlagged?:{flags:string[], phrases:object}, projectSlug:string, projectId?:string|null,
- *   projectPath?:string, sessionId?:string, now?:Date, discardedHash?:Function}} o
+ *   projectPath?:string, sessionId?:string, host?:string, now?:Date, discardedHash?:Function}} o
  */
 export async function captureNote(o) {
   const { handle, source } = o;
@@ -201,7 +201,8 @@ export async function captureNote(o) {
   if (nk && discardedBefore(handle, nk, o.projectId)) return { status: "deleted-before", id: null, text, flags, phrases };
 
   const same = ep.sameNote(handle, o.projectSlug, text, nk ?? undefined, o.projectId ?? null);
-  const event = (kind, id, actor = source?.typed ? "user" : "system") => recordEvent(handle, { kind, learningId: id, projectId: o.projectId ?? null, actor, at: o.now });
+  const hostDetail = o.host ? { host: String(o.host).slice(0, 20) } : null;
+  const event = (kind, id, actor = source?.typed ? "user" : "system") => recordEvent(handle, { kind, learningId: id, projectId: o.projectId ?? null, actor, detail: kind === "captured" ? hostDetail : null, at: o.now });
 
   if (same) {
     const cur = handle.get(`SELECT id, status, accepted_by, origin, superseded_by, observed_count, applied_to FROM learnings WHERE id = ?`, [same.id]);
@@ -257,7 +258,7 @@ export async function captureNote(o) {
     return { status: "quarantined", id: qid, text, flags, phrases };
   }
   const actor = source?.typed && source?.why !== "headless" ? "user" : "system";
-  const r = writeProvisional(handle, source, { row }, { now: o.now ?? new Date(), captureActor: actor });
+  const r = writeProvisional(handle, source, { row }, { now: o.now ?? new Date(), captureActor: actor, captureDetail: hostDetail });
   return { status: r.status === "provisional" ? "provisional" : "pending", id: r.id, text, flags, phrases };
 }
 
@@ -315,7 +316,7 @@ export async function capturePrompt(input, { source, host = "claude", cwd, remem
     // An adopted sentence (the user adopts a quoted comment) isn't the user's words: never provisional.
     const s = adopted ? Object.freeze({ ...source, firstParty: false, provisionalEligible: false }) : source;
     try {
-      const r = await captureNote({ handle: store, text, kind: isRemember ? "remember" : "correction", source: s, promptFlagged: pf, projectSlug, projectId, projectPath: dir, sessionId: input?.session_id, now });
+      const r = await captureNote({ handle: store, text, kind: isRemember ? "remember" : "correction", source: s, promptFlagged: pf, projectSlug, projectId, projectPath: dir, sessionId: input?.session_id, host, now });
       if (r.status === "pending" && r.id) {
         try {
           r.first = store.get("SELECT COUNT(*) AS n FROM events WHERE kind = 'captured' AND actor = 'user'")?.n === 1;

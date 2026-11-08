@@ -29,6 +29,27 @@ const BARE = /^\s*\/remember(?=\s|$)/;
 /** Does the prompt start with the short form (/remember)? Cheap: the check that reads files runs only then. */
 export const looksBare = (prompt) => typeof prompt === "string" && BARE.test(prompt);
 
+// forget and restore (L5 decision 9): the same three forms as remember.
+const VERB_FORMS = {
+  claude: new RegExp(`^\\s*/${escape(PRODUCT.plugin)}:(forget|restore)(?=\\s|$)`),
+  codex: new RegExp(`^\\s*\\$${escape(PRODUCT.package)}-(forget|restore)(?=\\s|$)`),
+};
+const BARE_VERB = /^\s*\/(forget|restore)(?=\s|$)/;
+
+/** The short /forget or /restore's verb, or null. */
+export const bareVerb = (prompt) => (typeof prompt === "string" ? BARE_VERB.exec(prompt)?.[1] ?? null : null);
+
+/**
+ * A typed forget or restore → { verb, arg }, or null. bare: the short /forget, /restore
+ * count too (only when bareRememberIsOurs, given the name, says it can only be ours).
+ */
+export function memoryVerb(prompt, host, { bare = false } = {}) {
+  const form = VERB_FORMS[host];
+  if (!form || typeof prompt !== "string") return null;
+  const m = form.exec(prompt) ?? (bare && host === "claude" ? BARE_VERB.exec(prompt) : null);
+  return m ? { verb: m[1], arg: prompt.slice(m[0].length).trim() } : null;
+}
+
 /**
  * The words after the host's remember command ("" for the command alone), or null when
  * the prompt isn't one. bare: the short /remember counts too (see bareRememberIsOurs).
@@ -46,7 +67,7 @@ export function rememberText(prompt, host, { bare = false } = {}) {
  * called remember, or another enabled plugin's. Unsure: no (the prompt goes to the
  * extractor as any other prompt).
  */
-export function bareRememberIsOurs({ env = process.env, home, cwd } = {}) {
+export function bareRememberIsOurs({ env = process.env, home, cwd, name = "remember" } = {}) {
   const dir = env.CLAUDE_CONFIG_DIR && path.isAbsolute(env.CLAUDE_CONFIG_DIR) ? env.CLAUDE_CONFIG_DIR : path.join(home ?? os.homedir(), ".claude");
   const readJson = (f) => {
     try {
@@ -55,7 +76,7 @@ export function bareRememberIsOurs({ env = process.env, home, cwd } = {}) {
       return null;
     }
   };
-  const has = (root) => fs.existsSync(path.join(root, "commands", "remember.md")) || fs.existsSync(path.join(root, "skills", "remember", "SKILL.md"));
+  const has = (root) => fs.existsSync(path.join(root, "commands", `${name}.md`)) || fs.existsSync(path.join(root, "skills", name, "SKILL.md"));
   // On or off per settings file, the project's (shared, then local) over the user's.
   const merged = {};
   for (const f of [path.join(dir, "settings.json"), ...(cwd ? [path.join(cwd, ".claude", "settings.json"), path.join(cwd, ".claude", "settings.local.json")] : [])]) Object.assign(merged, readJson(f)?.enabledPlugins ?? {});

@@ -20,7 +20,7 @@ const made = [];
 after(() => {
   for (const d of made) fs.rmSync(d, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
-const NAMES = ["remember", "recall", "report"].map((c) => `${PRODUCT.package}-${c}`);
+const NAMES = ["remember", "recall", "report", "forget", "restore"].map((c) => `${PRODUCT.package}-${c}`);
 
 function home() {
   const h = fs.mkdtempSync(path.join(os.tmpdir(), "ad-codex-skills-"));
@@ -42,7 +42,7 @@ function home() {
 const skillItems = (t) => readLedger2(t.adRoot).items.filter((i) => i.kind === "skill-dir");
 const snapshot = (dir) => Object.fromEntries(fs.readdirSync(dir, { recursive: true }).filter((f) => fs.statSync(path.join(dir, f)).isFile()).map((f) => [f, fs.readFileSync(path.join(dir, f), "utf8")]));
 
-test("setup writes the three skills with ad's marker and ledgers them; a re-run changes nothing; uninstall removes them", async () => {
+test("setup writes the command skills with ad's marker and ledgers them; a re-run changes nothing; uninstall removes them", async () => {
   const t = home();
   assert.equal(await S.setup({ ctx: t.ctx, hosts: ["codex"] }), 0, t.text());
   for (const n of NAMES) {
@@ -75,7 +75,7 @@ test("a folder of that name that isn't ad's is left alone, by setup and by unins
   assert.equal(await S.setup({ ctx: t.ctx, hosts: ["codex"] }), 0, t.text());
   assert.equal(fs.readFileSync(path.join(mine, "SKILL.md"), "utf8"), "---\nname: mine\ndescription: my own recall\n---\nmine\n");
   assert.match(t.text(), /the skill \$agent-daemon-memory-recall: .* is a skill of that name that isn't ad's; left as it is\. To use ad's, remove that folder/);
-  assert.deepEqual(skillItems(t).map((i) => i.locator.name).sort(), [NAMES[0], NAMES[2]].sort(), "only ad's folders are ledgered");
+  assert.deepEqual(skillItems(t).map((i) => i.locator.name).sort(), NAMES.filter((x) => x !== NAMES[1]).sort(), "only ad's folders are ledgered");
   // A forged record for it (a ledger edited by hand): no marker, so uninstall keeps the folder.
   const opened = openLedger2ForWrite(t.adRoot);
   upsertItem(opened.ledger, { host: "codex", kind: "skill-dir", file: mine, locator: { name: NAMES[1] }, value: { sha256: K.liveSkill(mine, NAMES[1]).sha256 } });

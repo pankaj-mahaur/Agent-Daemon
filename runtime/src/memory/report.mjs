@@ -8,7 +8,8 @@
 //   renderReport(data, {share}) → text
 
 import { projectClause } from "./projects.mjs";
-import { pendingSql } from "./trust.mjs";
+import { pendingSql, provisionalSql } from "./trust.mjs";
+import { PROVISIONAL_DAYS } from "./purge.mjs";
 
 const median = (xs) => {
   if (!xs.length) return 0;
@@ -45,6 +46,12 @@ export function memoryReport(handle, { keys, days = 30, now = Date.now() }) {
   const fbTotal = (fb.useful ?? 0) + (fb.stale ?? 0) + (fb.wrong ?? 0);
   const pend = scope("project_slug", keys);
   const waiting = handle.get(`SELECT COUNT(*) AS n FROM learnings WHERE ${pendingSql()} AND ${pend.sql}`, pend.params).n;
+  // L5 decisions 18-19: in use before review (provisional), and how many go back to waiting this week.
+  const inUse = handle.get(`SELECT COUNT(*) AS n FROM learnings WHERE ${provisionalSql()} AND ${pend.sql}`, pend.params).n;
+  const weekFrom = new Date(now - PROVISIONAL_DAYS * 86_400_000).toISOString();
+  const weekTo = new Date(now - (PROVISIONAL_DAYS - 7) * 86_400_000).toISOString();
+  const expiringThisWeek = handle.get(`SELECT COUNT(*) AS n FROM learnings WHERE ${provisionalSql()} AND status_at >= ? AND status_at < ? AND ${pend.sql}`, [weekFrom, weekTo, ...pend.params]).n;
+  const removedByPrompt = handle.get(`SELECT COUNT(*) AS n FROM learnings WHERE status = 'hidden' AND accepted_by IS NULL AND status_at IS NULL AND ${pend.sql}`, pend.params).n;
   return {
     days,
     allProjects: keys === null,
@@ -59,6 +66,9 @@ export function memoryReport(handle, { keys, days = 30, now = Date.now() }) {
     shown: { sessions: perSession.length, medianLessons: median(perSession.map((s) => s.n)), medianTokens: Math.round(median(perSession.map((s) => (s.chars ?? 0) / 4))) },
     feedback: { useful: fb.useful ?? 0, stale: fb.stale ?? 0, wrong: fb.wrong ?? 0, precision: fbTotal ? (fb.useful ?? 0) / fbTotal : null },
     waiting,
+    inUse,
+    expiringThisWeek,
+    removedByPrompt,
   };
 }
 
@@ -111,6 +121,8 @@ export function renderReport(r, { share = false } = {}) {
     `  Feedback                    useful ${r.feedback.useful}, stale ${r.feedback.stale}, wrong ${r.feedback.wrong}${r.feedback.precision === null ? "" : ` (precision ${r.feedback.precision.toFixed(2)})`}`,
     `  Waiting for review          ${r.waiting}${share ? "" : r.waiting ? "   (ad review)" : ""}`,
   ];
+  if (r.inUse) lines.push(`  In use before review        ${r.inUse}${r.expiringThisWeek ? `, ${r.expiringThisWeek} expiring this week` : ""}`);
+  if (r.removedByPrompt) lines.push(`  Removed by a prompt         ${r.removedByPrompt}${share ? "" : "   (restore in ad review)"}`);
   if (share) lines.push("  (numbers only: no project, path, lesson or session; nothing was sent anywhere)");
   return lines.join("\n");
 }

@@ -107,7 +107,8 @@ test("only the review service writes accepted_by or stores 'active' on a note", 
 
 test("review tokens are requested only by the CLI review verbs and ad's own terminal UI", () => {
   const callers = sources().filter((f) => /\breviewToken\(/.test(readFileSync(f, "utf8"))).map(rel).sort();
-  assert.deepEqual(callers, ["cli-full.mjs", "memory/held.mjs", "memory/review-service.mjs", "portability/import.mjs", "review.mjs", "tui/ad-layer.mjs"]);
+  // memory/memory-cli.mjs: the CLI remember, forget, restore and config review verbs (L5).
+  assert.deepEqual(callers, ["cli-full.mjs", "memory/held.mjs", "memory/memory-cli.mjs", "memory/review-service.mjs", "portability/import.mjs", "review.mjs", "tui/ad-layer.mjs"]);
   // The sync check mints a token from injected probes: only the service itself (and the testkit) may call it.
   const syncCallers = sources().filter((f) => /\bcheckReviewToken\(/.test(readFileSync(f, "utf8"))).map(rel);
   assert.deepEqual(syncCallers, ["memory/review-service.mjs"]);

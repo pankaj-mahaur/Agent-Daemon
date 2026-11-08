@@ -89,6 +89,9 @@ Commands:
   memory report [--days 30] [--all-projects] [--json] [--share]   Is memory working: repeated corrections, what was shown, feedback
                          --all-projects       span every project (default: current --cwd only)
   mistakes [--all-projects] [--share | --json] [--yes]   Read-only report of the corrections you typed to your coding agents (offline, stores nothing)
+  remember <text>        Save a learning for this project (accepted at once only in your own terminal)
+  forget <n> · restore <n>   Remove a learning (restore within 7 days); an accepted one asks you to type its number
+  config review [strict|auto]   Review-first for every learning, or let typed corrections apply at once where a host can prove them
   route stats            Route-advice effectiveness: advised / followed / diverged / ignored per skill
                          --days <n>           window (default 30); --json for machine output
   route rebuild          Recompile route maps from installed skills (global + project lanes)
@@ -1005,6 +1008,17 @@ async function printHeldLine(cwd) {
     const { db, projectSlug } = await import("./memory/episodic.mjs");
     const { heldNotes, heldLine } = await import("./memory/held.mjs");
     const handle = await db();
+    // L5: what waits for review, counted in the store (never from proposal files).
+    if (handle) {
+      const { projectIdOf } = await import("./memory/projects.mjs");
+      const { reviewCounts } = await import("./memory/reminder.mjs");
+      const projectId = projectIdOf(cwd);
+      // A slug another folder shares counts that folder's notes too: then the project id alone.
+      const { slugCollides } = await import("./memory/safety.mjs");
+      const keys = slugCollides(handle, projectSlug(cwd), cwd) ? [projectId].filter(Boolean) : [projectSlug(cwd), projectId].filter(Boolean);
+      const c = reviewCounts(handle, { keys, projectId });
+      if (c.waiting) console.log(`${c.waiting} learning${c.waiting === 1 ? "" : "s"} wait${c.waiting === 1 ? "s" : ""} for review here${c.ownNew ? ` (${c.ownNew} new from your prompts)` : ""}: ad review`);
+    }
     const n = handle ? heldNotes(handle, [projectSlug(cwd)]).length : 0;
     if (n) console.log(heldLine(n));
   } catch { /* memory store unavailable: nothing to add */ }

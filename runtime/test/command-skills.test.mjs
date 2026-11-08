@@ -99,6 +99,6 @@ test("remember: points at the receipt and the review, and says not to save it tw
 
 test("bad input is refused", () => {
   assert.throws(() => renderCommandSkill("cursor", "remember", { version: VERSION }), /unknown host/);
-  assert.throws(() => renderCommandSkill("codex", "forget", { version: VERSION }), /unknown command/);
+  assert.throws(() => renderCommandSkill("codex", "purge", { version: VERSION }), /unknown command/);
   assert.throws(() => renderCommandSkill("codex", "remember", {}), /version/);
 });
