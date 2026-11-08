@@ -5,11 +5,15 @@
 // Targets (P5.4a):
 //   claude-code   <out>/claude-code: a marketplace repo tree
 //                   .claude-plugin/marketplace.json
-//                   plugins/agent-daemon-memory/{.claude-plugin/plugin.json, .mcp.json,
-//                     hooks/hooks.json, skills/agent-daemon-memory/SKILL.md, server/}
-//                 hooks: ad's hook dispatcher with --plugin (UserPromptSubmit: capture,
-//                 recall; SessionStart; the scheduled-prompt and subagent records);
-//                 capture files go to projectDataDir (P5.2), so no repo gets a folder.
+//                   plugins/agent-daemon-memory/{.claude-plugin/{plugin.json, icon.png},
+//                     .mcp.json, hooks/hooks.json, skills/agent-daemon-memory/SKILL.md,
+//                     skills/{remember,recall,report}/SKILL.md, server/, README.md, LICENSE}
+//                 hooks: ad's hook dispatcher with --plugin, exec form (L3, D18): no
+//                 shell in front, so a path with spaces or a missing Git Bash can't break
+//                 it; needs Claude Code 2.1.314+. UserPromptSubmit: capture, remember,
+//                 recall; SessionStart; the scheduled-prompt and subagent records. No
+//                 tool.before: setup writes that one (a plugin can't require a version).
+//                 Capture files go to projectDataDir (P5.2), so no repo gets a folder.
 //   agent-plugin  <out>/agent-plugin/agent-daemon-memory: Agent Plugins 1.0.0
 //                 (VS Code, Copilot, Kiro, OpenHands…): plugin.json, mcp.json, skills/,
 //                 server/; record tools only. These hosts start servers in the plugin
@@ -32,9 +36,12 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { closure, HOOK_ENTRIES } from "./build-memory-package.mjs";
-import { PRODUCT } from "../src/product.mjs";
+import { PRODUCT, pinnedCommand } from "../src/product.mjs";
 import { renderAll } from "./render-copy.mjs";
 import { renderSkill } from "../src/hosts/skill-formats.mjs";
+import { COMMANDS, invocation, renderCommandSkill } from "../src/memory-install/command-skills.mjs";
+import { EXEC_FORM_MIN_VERSION } from "../src/hooks/routes.mjs";
+import { iconPng } from "./plugin-icon.mjs";
 
 const RUNTIME = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const REPO = path.resolve(RUNTIME, "..");
@@ -107,10 +114,60 @@ function writeCommon(pluginDir, version) {
   fs.copyFileSync(path.join(REPO, "LICENSE"), path.join(pluginDir, "LICENSE"));
 }
 
-// One hook command: node and the dispatcher by the plugin's own path, quoted (a
-// path may have spaces). Shell form: whether Claude Code expands
-// ${CLAUDE_PLUGIN_ROOT} inside an exec-form `args` isn't verified yet.
-const claudeHook = (event, timeout = 10) => ({ type: "command", command: `node "\${CLAUDE_PLUGIN_ROOT}/server/hook.mjs" ${event} --host claude-code --plugin`, timeout });
+// One hook: node and the dispatcher by the plugin's own path, in exec form (S-L3P:
+// Claude Code expands ${CLAUDE_PLUGIN_ROOT} in `args`), so no shell parses it.
+export const claudeHook = (event, timeout = 10) => ({ type: "command", command: "node", args: ["${CLAUDE_PLUGIN_ROOT}/server/hook.mjs", event, "--host", "claude-code", "--plugin"], timeout });
+
+// The command skills (D20): typed only, never picked by the model.
+function writeCommandSkills(pluginDir, version) {
+  for (const c of COMMANDS) {
+    for (const f of renderCommandSkill("claude-code", c, { version })) {
+      const dest = path.join(pluginDir, "skills", c, f.path);
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.writeFileSync(dest, f.text);
+    }
+  }
+}
+
+// The plugin folder's README: the plugin directory refuses a plugin without one.
+const pluginReadme = (version) => `# ${PRODUCT.displayName} for Claude Code
+
+${DESCRIPTION}
+
+## Install
+
+\`\`\`
+/plugin marketplace add <this repository>
+/plugin install ${NAME}@${PRODUCT.marketplace}
+\`\`\`
+
+Then one step in your own terminal finishes setup. It marks the agent's shell, so the review can tell you from the agent, and adds the check that later runs your rules before a tool call:
+
+\`\`\`
+${pinnedCommand("setup", version)}
+\`\`\`
+
+Until you run it, the plugin says so once a week at session start.
+
+## Commands
+
+- \`${invocation("claude-code", "remember")} <text>\`: save a note. It is saved for review (you see "Saved for review: …") and recalled only after you accept it.
+- \`${invocation("claude-code", "recall")} <topic>\`: search your notes from earlier sessions in this project.
+- \`${invocation("claude-code", "report")}\`: is memory working here: what it captured, what waits for review, what it recalled.
+
+Review and accept notes in your own terminal: \`${pinnedCommand("review", version)}\`.
+
+## Requirements
+
+- Claude Code ${EXEC_FORM_MIN_VERSION} or later. The plugin's hooks use the exec form; an older Claude Code may ignore their arguments and show a hook error on each prompt.
+- Node.js 22.16 or later on your PATH (the plugin uses Node's own SQLite; nothing to build).
+
+## Uninstall
+
+\`/plugin uninstall ${NAME}@${PRODUCT.marketplace}\`, then in your own terminal \`${pinnedCommand("uninstall", version)}\` (it removes what setup added and keeps anything you changed).
+
+Your notes stay on this computer. Generated from ${REPOSITORY} (version ${version}); don't edit here.
+`;
 
 function buildClaudeCode(out, version) {
   const root = path.join(out, "claude-code");
@@ -151,6 +208,9 @@ function buildClaudeCode(out, version) {
     },
   });
   writeCommon(plugin, version);
+  writeCommandSkills(plugin, version);
+  fs.writeFileSync(path.join(plugin, "README.md"), pluginReadme(version));
+  fs.writeFileSync(path.join(plugin, ".claude-plugin", "icon.png"), iconPng());
   fs.writeFileSync(
     path.join(root, "README.md"),
     `# Agent Daemon plugins for Claude Code\n\n\`\`\`\n/plugin marketplace add <this repository>\n/plugin install ${NAME}@${PRODUCT.marketplace}\n\`\`\`\n\n${DESCRIPTION}\n\nGenerated from ${REPOSITORY} (version ${version}); don't edit here.\n`

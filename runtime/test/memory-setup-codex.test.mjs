@@ -65,7 +65,7 @@ test("Codex: hooks in hooks.json with the exact line, the marker in config.toml;
   assert.equal(fs.readFileSync(t.config, "utf8"), `${USER_TOML}\n[shell_environment_policy.set]\nAD_TOOL_SHELL = "1"\n`);
   assert.match(t.text(), /run \/hooks to trust ad's hooks/);
   const items = readLedger2(t.env.AD_ROOT).items.filter((i) => i.host === "codex");
-  assert.deepEqual(items.map((i) => i.kind).sort(), ["env", "hook", "hook", "hook"]);
+  assert.deepEqual(items.map((i) => i.kind).sort(), ["env", "hook", "hook", "hook", "skill-dir", "skill-dir", "skill-dir"], "the command skills too (P4, D20)");
   const bytes = [fs.readFileSync(t.config), fs.readFileSync(t.hooksFile)];
   assert.equal(await S.setup({ ctx: t.ctx, hosts: ["codex"] }), 0);
   assert.ok(fs.readFileSync(t.config).equals(bytes[0]) && fs.readFileSync(t.hooksFile).equals(bytes[1]), "the same bytes: Codex's trust in them holds");

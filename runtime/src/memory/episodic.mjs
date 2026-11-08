@@ -269,10 +269,13 @@ export function sameNote(handle, projectKey, text, nk = normKey(text), projectId
 // (memory/review-service.mjs), so no writer here stores 'active': older ad, which
 // reads status = 'active', would serve it unreviewed.
 const INSERT_LEARNING_SQL = `INSERT OR IGNORE INTO learnings
-  (session_id, project_slug, category, text, evidence, confidence, tags, applied_to, content_hash, derivation, status, origin, quarantine_reason, promote_request, norm_key, capture_ref, project_path, project_id)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+  (session_id, project_slug, category, text, evidence, confidence, tags, applied_to, content_hash, derivation, status, origin, quarantine_reason, promote_request, norm_key, capture_ref, project_path, project_id, provenance)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
 const LEARNING_STATUSES = new Set(["pending", "quarantined"]);
+// Schema v5's provenance values a writer may name (memory/sqlite.mjs migrateTrustCore);
+// a row whose writer names none keeps it NULL, as before.
+const PROVENANCES = new Set(["user-prompt", "user-cli", "agent", "tool", "digest", "buffered", "import"]);
 
 function redactLearning(l) {
   const r = (s) => (typeof s === "string" ? redactSecrets(s).text : s);
@@ -300,6 +303,7 @@ function learningRow(l, contentHash, nk) {
     l.projectPath || null,
     // A project row whose writer knows the id; else the insert trigger fills it from the slug.
     l.projectSlug && typeof l.projectId === "string" && l.projectId.startsWith("prj_") ? l.projectId : null,
+    PROVENANCES.has(l.provenance) ? l.provenance : null,
   ];
 }
 

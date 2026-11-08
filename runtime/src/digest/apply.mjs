@@ -125,6 +125,7 @@ export async function applyLearnings(opts) {
         quarantineReason: `injection:${screen.reasons.join(",")}`,
         origin,
         captureRef: l.capture_ref,
+        provenance: l.provenance,
         projectPath: path.resolve(opts.cwd)
       });
       continue;
@@ -145,6 +146,7 @@ export async function applyLearnings(opts) {
         origin,
         promoteRequest: wantsGlobal ? "global" : null,
         captureRef: l.capture_ref,
+        provenance: l.provenance,
         projectPath: path.resolve(opts.cwd)
       });
       result.pending = (result.pending || 0) + 1;
@@ -199,6 +201,7 @@ export async function applyLearnings(opts) {
       origin,
       promoteRequest: wantsGlobal ? "global" : null,
       captureRef: l.capture_ref,
+      provenance: l.provenance,
       projectPath: path.resolve(opts.cwd)
     });
   }

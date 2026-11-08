@@ -215,6 +215,10 @@ export function toLearning(e) {
     confidence: typeof e.confidence === "number" ? Math.max(0, Math.min(1, e.confidence)) : 0.5,
     tags: Array.isArray(e.tags) ? e.tags.slice(0, 12) : [],
     // The host's session id: deduplication only (P5.2), never a foreign key.
-    ...(typeof e.sessionId === "string" && e.sessionId ? { capture_ref: e.sessionId.slice(0, 128) } : {})
+    ...(typeof e.sessionId === "string" && e.sessionId ? { capture_ref: e.sessionId.slice(0, 128) } : {}),
+    // Where the words came from, for a typed remember only (L3, D21). The journal is a
+    // file anyone can append to, so "the user's prompt" also needs the line's own
+    // prompt source to say typed; any other line keeps NULL.
+    ...(e.remember === true && (e.provenance === "agent" || (e.provenance === "user-prompt" && e.prompt_source === "typed")) ? { provenance: e.provenance } : {})
   };
 }

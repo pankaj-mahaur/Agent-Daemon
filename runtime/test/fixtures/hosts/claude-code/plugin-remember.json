@@ -1,0 +1,86 @@
+{
+  "host": "claude-code",
+  "version": "2.1.319",
+  "scenario": "plugin-remember",
+  "captured": "2026-11-07",
+  "os": "linux",
+  "outcome": {
+    "name": "plugin-remember",
+    "code": 0,
+    "hooks": "SessionStart,UserPromptSubmit,UserPromptExpansion",
+    "permission_mode": "default",
+    "toolRan": true,
+    "toolResult": "\"[line seen] [AD_TOOL_SHELL=1]  <system-reminder> <total_tokens>14999985 tokens left</total_tokens> </system-reminder>\"",
+    "sysmsgInStdout": false,
+    "reasonInStdout": false,
+    "denials": "\"permission_denials\":[]"
+  },
+  "hooks": [
+    {
+      "label": "SessionStart",
+      "env": {
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CONFIG_DIR": "<TMP>/home/.claude",
+        "CLAUDE_PROJECT_DIR": "<TMP>/project",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_ENV_FILE": "<TMP>/home/.claude/session-env/ad63888f-3e40-4e30-98d0-e83d6b49a2de/sessionstart-hook-0.sh"
+      },
+      "payload": {
+        "session_id": "ad63888f-3e40-4e30-98d0-e83d6b49a2de",
+        "transcript_path": "<TMP>/home/.claude/projects/-TMP--project/ad63888f-3e40-4e30-98d0-e83d6b49a2de.jsonl",
+        "cwd": "<TMP>/project",
+        "hook_event_name": "SessionStart",
+        "source": "startup"
+      }
+    },
+    {
+      "label": "UserPromptSubmit",
+      "env": {
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CONFIG_DIR": "<TMP>/home/.claude",
+        "CLAUDE_PROJECT_DIR": "<TMP>/project",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli"
+      },
+      "payload": {
+        "session_id": "ad63888f-3e40-4e30-98d0-e83d6b49a2de",
+        "transcript_path": "<TMP>/home/.claude/projects/-TMP--project/ad63888f-3e40-4e30-98d0-e83d6b49a2de.jsonl",
+        "cwd": "<TMP>/project",
+        "prompt_id": "452c13ae-e95e-4384-91d9-694f664c7504",
+        "permission_mode": "default",
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "/agent-daemon-memory:remember use pnpm, not npm"
+      }
+    },
+    {
+      "label": "UserPromptExpansion",
+      "env": {
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CONFIG_DIR": "<TMP>/home/.claude",
+        "CLAUDE_PROJECT_DIR": "<TMP>/project",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli"
+      },
+      "payload": {
+        "session_id": "ad63888f-3e40-4e30-98d0-e83d6b49a2de",
+        "transcript_path": "<TMP>/home/.claude/projects/-TMP--project/ad63888f-3e40-4e30-98d0-e83d6b49a2de.jsonl",
+        "cwd": "<TMP>/project",
+        "prompt_id": "452c13ae-e95e-4384-91d9-694f664c7504",
+        "permission_mode": "default",
+        "hook_event_name": "UserPromptExpansion",
+        "expansion_type": "slash_command",
+        "command_name": "agent-daemon-memory:remember",
+        "command_args": "use pnpm, not npm",
+        "command_source": "plugin",
+        "prompt": "/agent-daemon-memory:remember use pnpm, not npm"
+      }
+    }
+  ]
+}

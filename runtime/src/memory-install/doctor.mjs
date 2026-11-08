@@ -159,6 +159,8 @@ export async function doctor(opts = {}) {
       add("entry.duplicate", !dup, dup ? `${proj} also defines ${PRODUCT.mcpServerKey} (Cursor shows it twice)` : "no project copy", id);
     }
   }
+  // The plugin and Codex's command skills (L3 P4): their own module.
+  for (const c of await (await import("./doctor-product.mjs")).productChecks(ctx, opts)) add(c.code, c.ok, c.note, c.host);
   try {
     const cur = JSON.parse(fs.readFileSync(path.join(ctx.root, "memory", "current.json"), "utf8"));
     add("pkg.stale", !newer(ctx.version, cur.version), newer(ctx.version, cur.version) ? `installed ${cur.version}, this is ${ctx.version}: run install to update` : `installed ${cur.version}`);

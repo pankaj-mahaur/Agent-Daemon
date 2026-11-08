@@ -609,7 +609,7 @@ async function uninstallLocked(ctx, opts) {
   const all = mergeV1(readLedger2(ctx.root), ledger).items;
   const before = all.filter((i) => i.source === "v1");
   // Items setup wrote (hooks, the marker): removed per item, by content.
-  const direct = all.filter((i) => !i.source && (i.kind === "hook" || i.kind === "env") && (!wanted || wanted.includes(i.host)));
+  const direct = all.filter((i) => !i.source && (i.kind === "hook" || i.kind === "env" || i.kind === "skill-dir") && (!wanted || wanted.includes(i.host)));
   if (!ids.length && !direct.length && !opts.purgeData) {
     out("Nothing to remove: ad's installer didn't set up any host here.");
     return 0;
@@ -655,7 +655,7 @@ async function uninstallLocked(ctx, opts) {
   const gate = { rulesExist, token: async () => (tokenAnswer ??= Boolean(await ctx.confirmReview())) };
   const directResults = [];
   const byFile = new Map();
-  for (const i of direct) byFile.set(i.file, [...(byFile.get(i.file) ?? []), i]);
+  for (const i of direct) if (i.kind !== "skill-dir") byFile.set(i.file, [...(byFile.get(i.file) ?? []), i]);
   for (const [file, items] of byFile) {
     try {
       // config.toml (Codex's inline hooks, its marker) as text; JSON settings and hooks.json by structure.
@@ -666,6 +666,9 @@ async function uninstallLocked(ctx, opts) {
       for (const item of items) directResults.push({ item, action: "kept", why: `${ctx.display(file)}: ${e.message}; run uninstall again`, retry: true });
     }
   }
+  // Codex's command skills (L3, D20): folders, removed by ad's marker and their content.
+  const skillDirs = direct.filter((i) => i.kind === "skill-dir");
+  if (skillDirs.length) directResults.push(...(await import("./codex-skills.mjs")).removeCodexSkills(ctx, skillDirs));
   for (const r of directResults) outcome.set(r.item.id, { action: r.action, why: r.why, how: r.how });
   const held = directResults.filter((r) => r.held);
   // The file was the problem (unreadable, busy, not written): those items stay ad's, to try again.

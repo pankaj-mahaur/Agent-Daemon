@@ -22,6 +22,7 @@ Install with `npm ci` (or `npm install`) in `runtime/`, devDependencies included
 | `AD_REAL_ENGINE=1` | `test/fallback-real.test.mjs` | automatic fallback F1–F13 (below) |
 | `AD_REAL_ENGINE=1` | `test/engine-real-failures.test.mjs` | each provider failure as the engine reports it; `AD_WRITE_FIXTURE=1` rewrites `test/fixtures/engine-failures-0.163.json`, which the pure tests read |
 | `AD_REAL_ENGINE=1` | `test/engine-network.test.mjs` | with ad's privacy settings, a turn reaches no host but the model provider (a recording proxy) |
+| `AD_REAL_CLAUDE=1` | `test/plugin-live.test.mjs` | the built Claude Code plugin installed from its marketplace tree into a real `claude` (2.1.314+) in a temp home: `claude plugin validate --profile directory` and `doctor` pass; a headless session against the S-HOOKS mock API saves a typed remember once with its receipt, and the plugin's env-file line reaches Bash. The temp root must sit outside your profile (`AD_LIVE_TMP` on Windows); `AD_LIVE_FIXTURE=<dir>` re-captures `fixtures/hosts/claude-code/plugin-remember.json` |
 | `AD_ROLLBACK_30=1` | `test/rollback-30.test.mjs` | ad 3.0 still starts and finds its sign-ins after this branch wrote its account files; needs the `v3.0.0` tag and the network |
 
 `AD_WRITE_FIXTURE=1` on `test/engine-real.test.mjs` also refreshes `test/fixtures/engine-items-0.163.json` (what the session record maps).
