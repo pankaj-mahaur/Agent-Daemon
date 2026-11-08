@@ -65,6 +65,12 @@ export const TABLES = Object.freeze([
   t("meta", { export: "exclude" }),
   t("import_rows", { export: "exclude" }),
   t("import_updates", { export: "exclude" }),
+  // L4b (memory/proposal-tables.mjs, made by the imports): history sentences and import
+  // records never leave this computer; project columns, so backfill and re-keying cover them.
+  t("history_clusters", { ...P, export: "exclude" }),
+  t("instruction_imports", { ...P, export: "exclude" }),
+  t("instruction_import_notes", { export: "exclude" }),
+  t("proposal_rejections", { ...P, export: "exclude" }),
 ]);
 
 /** Tables that carry project_slug and get a project_id column. */

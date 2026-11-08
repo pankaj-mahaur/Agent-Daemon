@@ -50,6 +50,7 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 - `--allow-cross-project` served held-back, hidden and rejected notes to `memory_get` and the timeline.
 - Seeing an accepted user fact in another project no longer serves it there.
 - On Windows, two `ad` processes using the same store at once (spend and quota tracking, accounts, the fallback order, the session index, state import) could fail with "EPERM: operation not permitted, open '…\.locks\….lock'" and lose that write. A lock file its last holder was still deleting is now treated as busy and waited for, and a lock's release retries a delete another process briefly blocks.
+- `ad mistakes` no longer counts the lines of the "Recent learnings" block an older ad wrote into `CLAUDE.md` as your rules, and a block ad started but never closed no longer counts either.
 
 ## [3.1.0] — 2026-10-30
 

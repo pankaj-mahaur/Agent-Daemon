@@ -434,6 +434,36 @@
       "reason": "the mistakes report (L4a) reads the user's own Codex history (CODEX_HOME, rollouts) as one of two hosts and names that host in the report; this is the user's separate install, not ad's engine"
     },
     {
+      "path": "runtime/src/memory/history-import.mjs",
+      "rules": ["A"],
+      "reason": "the history import (L4b) reads the same user-owned Codex history as the mistakes report (L4a) and says so; not ad's engine"
+    },
+    {
+      "path": "runtime/test/history-import.test.mjs",
+      "rules": ["A"],
+      "reason": "fixture history of the user's own two hosts, Codex one of them (CODEX_HOME, host id `codex`); not ad's engine"
+    },
+    {
+      "path": "runtime/src/memory/instruction-import.mjs",
+      "rules": ["A"],
+      "reason": "which of the user's own hosts already loads each instruction file (Codex reads AGENTS.md, AGENTS.override.md); not ad's engine"
+    },
+    {
+      "path": "runtime/test/instruction-import.test.mjs",
+      "rules": ["A"],
+      "reason": "tests which of the user's own hosts loads each file (Codex's config fallback, CODEX_HOME); not ad's engine"
+    },
+    {
+      "path": "runtime/testkit/instruction-files.mjs",
+      "rules": ["A"],
+      "reason": "fixture expectations naming the user's own hosts that load each file; not ad's engine"
+    },
+    {
+      "path": "runtime/test/review-queue.test.mjs",
+      "rules": ["A"],
+      "reason": "test isolation: the user's own Codex home (CODEX_HOME, .codex) pointed at a temp folder"
+    },
+    {
       "path": "runtime/src/hooks/host-capabilities.mjs",
       "rules": ["A", "C"],
       "reason": "the hook dispatcher's table of what each host does with a hook's answer; Codex is one of the two hosts (the user's own CLI, not ad's engine)"
@@ -534,7 +564,7 @@
     {
       "path": "docs/architecture.md",
       "rules": ["A"],
-      "match": "lists Claude Code transcripts and Codex rollouts|`CLAUDE\\.md` rules Codex doesn't read|--host claude\\|codex|Codex denies with the reason",
+      "match": "lists Claude Code transcripts and Codex rollouts|correction cluster of the Claude Code and Codex history|`CLAUDE\\.md` rules Codex doesn't read|--host claude\\|codex|Codex denies with the reason",
       "reason": "the mistakes report's reader and coverage line, and the hook dispatcher's hosts: the user's own Codex, not ad's engine"
     },
     {
