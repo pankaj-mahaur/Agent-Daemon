@@ -170,6 +170,8 @@ Installer tests run in fake homes only (HOME, USERPROFILE, APPDATA, XDG_CONFIG_H
 
 The real-engine job is non-blocking (`continue-on-error`): **read its result**, don't rely on the run's overall status.
 
+The unit job stops after 30 minutes (the suite takes about 10 on Windows). `npm test` runs without `--test-force-exit`, so a test file that leaves a handle open never ends: the timeout turns that into a failure instead of a six-hour wait. The last `ok` line in the job's log names the test before the file that hung.
+
 Run the same pipeline before pushing, on this machine and in a Linux container, with the project skill [`ad-ci-readiness`](../.claude/skills/ad-ci-readiness/SKILL.md): it also reads a PR's CI test by test and holds the release-readiness checklist.
 
 Two more workflows: `skills-lint.yml` lints the skills and smoke-runs the skills diff; `release-memory.yml` builds the memory package and host plugins. It is started by hand by the owner, is a dry run by default (every artifact and `SHA256SUMS`, nothing published), and publishes only behind an approved environment; `test/release-memory-workflow.test.mjs` checks those guards and runs the build script offline (every artifact but the SBOM), and `test/tools-list.test.mjs` compares each server's `tools/list` with the reviewed golden.
@@ -185,7 +187,7 @@ Two more workflows: `skills-lint.yml` lints the skills and smoke-runs the skills
 | A path check passes on Windows locally, fails on macOS or the Windows runner | the same folder has two spellings: macOS's `/var` is `/private/var`, the runner's temp folder is the 8.3 short name `RUNNER~1` | compare folders by `statSync(p, { bigint: true })` `dev:ino`, or build fixtures from `realpathSync.native`; code that stops at a folder checks every spelling of it |
 | A lock test with a made-up pid fails on Linux only | pid 111 can be a real process there; its start time makes the record read as a reused pid | pass `identityOf: () => ({ unknown: "test pid" })` |
 | `ENOTEMPTY` removing a temp repo on Linux | a big commit started git's background auto-gc, still writing | `git config gc.auto 0` in test repos; retry `rmSync` |
-| A test file never exits | an open pseudo-terminal or a long timer | close ptys in `finally`; keep fake timers short |
+| A test file never exits | an open pseudo-terminal or a long timer | close ptys in `finally`; keep fake timers short; on Windows (ConPTY) kill the child and close the pty on every path, and check with plain `node --test <file>` (no `--test-force-exit`) |
 | Strings with `\` or `$` mangled in an edit | bash heredocs and `node -e` eat backslashes | edit with an editor tool or a script file; build escape bytes with `"\x1b"` |
 | Windows: every command fails with `CreateProcessAsUserW failed` | PowerShell 7 from the Store; the sandbox can't start MSIX apps | handled by the engine's PATH: `withoutStoreAliases()` drops every `WindowsApps` entry ([troubleshooting #16](troubleshooting.md#16-harness-on-windows-every-agent-command-fails-access-is-denied-or-createprocessasuserw-failed)) |
 | A live step times out after a patch | the first sandboxed action set up the Windows sandbox | allow minutes for the first one |

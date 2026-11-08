@@ -15,6 +15,9 @@ jobs:
   test:
     name: ${{ matrix.os }} / node ${{ matrix.node }}
     runs-on: ${{ matrix.os }}
+    # The suite takes ~10 min on Windows. A test file that never exits (an open handle,
+    # a pty left running) would otherwise hold the job for GitHub's 6-hour default.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
