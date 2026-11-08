@@ -1132,6 +1132,64 @@ The hook log (`~/.agent-daemon/hooks/hook.log`, shown by `ad doctor`) records ea
 
 A saved note waits for your review: accept it with `npx -y agent-daemon-memory review` in your own terminal.
 
+## 104. Memory setup refused, or added nothing
+
+**Symptom:** `install`, `setup`, `repair` or `uninstall` says `can't run from the agent's own shell`; setup says `needs an interactive terminal`; or a setup line starts with `✗` or says `no hooks`.
+
+**Cause and fix**, by what the line says:
+- **`can't run from the agent's own shell`**: the command ran in a shell the agent started (`AD_TOOL_SHELL=1`), and nothing was changed. Run the printed command yourself in a terminal.
+- **`needs an interactive terminal`**: no terminal (a pipe, a script), or Git Bash's mintty, which node doesn't see as one. Use PowerShell or Windows Terminal, or in Git Bash `winpty npx.cmd -y agent-daemon-memory setup`.
+- **`Claude Code <version> predates the hook form ad writes`**: update Claude Code to 2.1.314 or later and run setup again.
+- **``Codex: no hooks: ad's folder … holds $, `, % or "``**: Codex's shell would read those characters. Set `AD_ROOT` to a plain path and run setup again.
+- **`its hooks.<Event> isn't a list`**, **`its env isn't an object`**, or a Codex hook list that isn't an array of tables: your file has that key in a shape setup won't rewrite, so setup changed nothing there. Fix the shape and run setup again, or add the entry by hand.
+- **`AD_TOOL_SHELL is set to …`**: you set it yourself; setup leaves it alone.
+- **Claude Code without the plugin or `--no-plugin`**: setup writes nothing and prints the two `/plugin` lines. Install the plugin, or run `setup --no-plugin`.
+
+## 105. Memory install: "Finish in a terminal"
+
+**Symptom:** `install` adds the MCP entries, then prints `Finish in a terminal (the hooks need one): npx -y agent-daemon-memory@<version> setup` and exits 2 (1 if adding the MCP entries failed too).
+
+**Cause:** install ran without a terminal (a script, a pipe), and the hooks setup adds need one. In the agent's own shell install refuses outright instead (#104).
+
+**Fix:** run the printed command yourself in a terminal. For scripts and CI that want only the MCP entries, `install --no-setup` skips setup and exits with the MCP step's own code (0 when every host is set up).
+
+## 106. `doctor`: `hooks.trust` (Codex hooks not reviewed, or changed)
+
+**Symptom:** `hooks.trust` says `not reviewed yet: …`, `Codex won't run … until you review it again in /hooks`, `can't confirm … on this Codex`, or `you changed ad's … hook`.
+
+**Cause:** Codex runs a hook only after you trust it, and it stops running it when the hook changes after you trusted it. Codex records trust per hook, by its position in the list, so a hook that moved (one added before it) shows as not reviewed. `not reviewed yet`: you haven't trusted setup's hooks there. `won't run … again`: the hook at that position changed since you trusted it. `can't confirm`: your Codex is newer than the one ad checked its trust records against, so ad doesn't guess. `you changed ad's … hook`: the line isn't setup's any more.
+
+**Fix:** open Codex and run `/hooks`, then trust ad's hooks. For a hook you changed, delete your version and run the printed setup command again to get ad's back, or keep yours (ad never edits it). `turned off in /hooks` is your choice: turn them on in `/hooks` to capture again.
+
+## 107. Codex: "AD_TOOL_SHELL is gone", or setup says `include_only` drops it
+
+**Symptom:** a Codex session starts with `AD_TOOL_SHELL is gone from …/config.toml, so Codex's agent shell isn't marked any more`, or setup prints `your shell_environment_policy.include_only drops AD_TOOL_SHELL, so the marker does nothing`.
+
+**Cause:** setup marks the agent's shell with `AD_TOOL_SHELL = "1"` under `[shell_environment_policy.set]`, so review and the installer can tell the agent from you. The line was removed from `config.toml`, or your `include_only` list leaves this variable out of the shell's environment.
+
+**Fix:** run the printed `setup --host codex` command again in your own terminal, and add `"AD_TOOL_SHELL"` to `include_only` if you use it.
+
+## 108. A hook says "isn't installed any more" or "the plugin was removed"
+
+**Symptom:** once per session: `agent-daemon memory isn't installed any more: run npx -y agent-daemon-memory@<version> uninstall to remove its hooks` (or `the agent-daemon memory plugin was removed` / `is turned off`).
+
+**Cause:** a host still starts ad's launcher (`~/.agent-daemon/memory/launch/run.mjs`), but no copy of the package is left for it to run (it was deleted, or the Claude Code plugin it follows was uninstalled or turned off). The hook does nothing and never blocks the agent.
+
+**Fix:** run the printed `uninstall` command in your own terminal to remove the leftover entries, or `npx agent-daemon-memory install` (or turn the plugin back on) to keep using memory.
+
+## 109. Uninstall "Kept" an entry
+
+**Symptom:** uninstall's summary lists an item under **Kept**, with a reason and, where it can, how to remove it.
+
+**Cause and fix**, by the reason:
+- **`you changed it`**: ad removes only what is still exactly as it wrote it. Remove the entry yourself, or keep it: the host is marked uninstalled, so ad's hooks in it do nothing, and a kept Claude Code `tool.before` entry is set to `onFailure: "continue"` so it can't block a tool call (both unless rules exist and you didn't confirm the review, below).
+- **`you had it before`**: it was there before setup (for example your own `AD_TOOL_SHELL`), so it stays.
+- **`it isn't ad's`** or **`it isn't in a host's skills folder`**: the record points at something ad didn't write, so ad won't touch it.
+- **`rules exist, and removing it needs your review in your own terminal`**: with rules, the check before tool calls and the marker go only through your own terminal. Run the uninstall there, or follow the printed manual step.
+- **`… run uninstall again`**: the file couldn't be edited safely: it doesn't parse, is read-only or isn't UTF-8 text, another program kept changing it, or the write failed. Fix that (or close the other program) and run uninstall again.
+
+The launcher folder (`~/.agent-daemon/memory/launch/`) stays under **Left on disk** while any config still starts it. In Codex, uninstall never edits a hook you changed (Codex would stop trusting it); it says when hooks you added after ad's need trusting again in `/hooks`.
+
 ---
 
 For harness problems, the [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill walks through login → hooks → sandbox → the engine's own log. See also [harness.md](harness.md) and, for the terminal UI, [tui.md](tui.md).

@@ -130,7 +130,7 @@ export function renderAdInstructions(startMarker, endMarker) {
     "",
     "## Recalling memory mid-session + privacy",
     "",
-    "You don't have to wait for SessionStart injection — query past project memory mid-task via the `" + PRODUCT.mcpServerKey + "` MCP server. ad's own agent has it built in. In Claude Code and other agents, add it once with `ad memory install` (or `npx " + PRODUCT.package + " install`): it shows what it changes and keeps a backup. It serves only the open project's notes. It uses a token-cheap **progressive-disclosure** flow:",
+    "You don't have to wait for SessionStart injection — query past project memory mid-task via the `" + PRODUCT.mcpServerKey + "` MCP server. ad's own agent has it built in. In Claude Code and other agents, add it once with `ad memory install` (or `npx " + PRODUCT.package + " install`) in your own terminal: it shows what it changes, keeps a backup, and finishes with the memory hooks (an agent that asks you to trust new hooks lists them in its `/hooks`). In Claude Code the hooks come with the `" + PRODUCT.plugin + "` plugin (`/plugin install`), or from `ad memory setup --no-plugin`. It serves only the open project's notes. It uses a token-cheap **progressive-disclosure** flow:",
     "",
     "1. **Index (cheap):** `memory_search(query)`, `memory_recent`, or `memory_files(path)` → compact `[id …]` lines.",
     "2. **Context:** `memory_timeline(id)` → the originating session + the sibling learnings around a hit.",

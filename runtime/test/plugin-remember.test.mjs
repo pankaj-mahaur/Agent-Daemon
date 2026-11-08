@@ -144,7 +144,15 @@ test("the short /remember (Claude Code runs the plugin's skill by it): ours only
   fs.rmSync(path.join(w.repo, ".claude", "settings.local.json"));
   fs.rmSync(proj);
   fs.writeFileSync(settings, JSON.stringify({ enabledPlugins: { [`${PRODUCT.plugin}@${PRODUCT.marketplace}`]: true } }));
-  assert.match(ask().systemMessage ?? "", /^\S[^:]*: (?:Saved for review|Said \d+ times now)/, "a second remember of the same words is a repeat (L5 dedupe)");
+  // The first remember was journaled (no store yet) and started the detached store
+  // creation; whether the second lands in the journal or the new store depends on that
+  // job's speed (on Windows it won: "Saved your correction #1", the store's first
+  // capture). As a real next session would, wait for the store and drain the journal:
+  // then the same words are a repeat of that one note.
+  await storeReady(w);
+  out(pluginHook("session.start", w, { session_id: "s2", cwd: w.repo, source: "startup" }));
+  assert.match(ask().systemMessage ?? "", /^\S[^:]*: Said 2 times now; approve #\d+/, "a second remember of the same words is a repeat (L5 dedupe)");
+  assert.equal((await rows(w)).filter((r) => r.text === "actually we use pnpm, not npm").length, 1, "one note");
   // A user command of that name: Claude Code may run that one, so the plugin leaves it.
   for (const own of [path.join(w.h, ".claude", "commands", "remember.md"), path.join(w.repo, ".claude", "skills", "remember", "SKILL.md")]) {
     fs.mkdirSync(path.dirname(own), { recursive: true });
@@ -240,4 +248,17 @@ test("the env-file line: written once across startup, resume and compact, and be
   assert.match(s.systemMessage ?? "", /^One terminal step finishes setup: run `npx -y agent-daemon-memory@/, "no tool.before entry yet: the setup line, once");
   const again = out(pluginHook("session.start", w2, { session_id: "s2", cwd: w2.repo, source: "resume" }, { CLAUDE_ENV_FILE: env2 }));
   assert.equal(again.systemMessage, undefined, "not again this week");
+});
+
+test("the racing order: a remember journaled before the store existed and the same words saved into the new store become one note at the drain", async () => {
+  const w = world();
+  fs.writeFileSync(path.join(w.h, ".claude", "settings.json"), JSON.stringify({ enabledPlugins: { [`${PRODUCT.plugin}@${PRODUCT.marketplace}`]: true } }));
+  const said = "we deploy from the release branch only";
+  const ask = (sid) => out(pluginHook("prompt.submit", w, { session_id: sid, cwd: w.repo, prompt: `${CC} ${said}` }));
+  assert.match(ask("s1").systemMessage ?? "", /Saved for review: "we deploy/, "no store yet: journaled");
+  assert.equal(journal(w).length, 1);
+  await storeReady(w); // the detached creation the first hook started
+  assert.match(ask("s2").systemMessage ?? "", /Saved your correction #\d+ "we deploy/, "the new store's first capture");
+  out(pluginHook("session.start", w, { session_id: "s3", cwd: w.repo, source: "startup" }));
+  assert.equal((await rows(w)).filter((r) => r.text === said).length, 1, "the drained journal copy dedupes against the store's note");
 });
