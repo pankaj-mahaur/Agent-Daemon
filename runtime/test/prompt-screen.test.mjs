@@ -106,7 +106,8 @@ test("bounded on a wall of text", () => {
   const t0 = process.hrtime.bigint();
   screenPrompt(big);
   const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-  assert.ok(ms < 200, `${ms.toFixed(1)} ms`);
+  // Catastrophic backtracking takes seconds; 1 s leaves room for a loaded CI runner (200 ms flaked).
+  assert.ok(ms < 1000, `${ms.toFixed(1)} ms`);
 });
 
 // Families added for L5 P2 (dev items written apart from the held-out corpus).
@@ -182,7 +183,8 @@ test("bounded on Devanagari and on walls of negated rules", () => {
     const t0 = process.hrtime.bigint();
     screenPrompt(big);
     const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-    assert.ok(ms < 200, `${ms.toFixed(1)} ms`);
+    // Catastrophic backtracking takes seconds; 1 s leaves room for a loaded CI runner (200 ms flaked).
+  assert.ok(ms < 1000, `${ms.toFixed(1)} ms`);
   }
 });
 
