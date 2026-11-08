@@ -51,7 +51,14 @@ const journal = (w) =>
     .filter((f) => /learning-journal\.jsonl$/.test(f))
     .flatMap((f) => fs.readFileSync(f, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)));
 async function rows(w) {
-  const store = await openStore({ dbPath: path.join(w.h, ".agent-daemon", "episodic.db") });
+  // Never create or migrate the store here: a hook's detached job may be creating it right
+  // now (opening it then races that job). No store: no rows; one being created: wait for it.
+  const dbPath = path.join(w.h, ".agent-daemon", "episodic.db");
+  if (!fs.existsSync(dbPath)) return [];
+  for (const end = Date.now() + 20000; (await schemaState(dbPath)).state !== "current"; await new Promise((r) => setTimeout(r, 50))) {
+    if (Date.now() > end) assert.fail("the detached store creation never finished");
+  }
+  const store = await openStore({ dbPath });
   try {
     return store.all("SELECT text, status, accepted_by, provenance, origin FROM learnings ORDER BY id");
   } finally {
