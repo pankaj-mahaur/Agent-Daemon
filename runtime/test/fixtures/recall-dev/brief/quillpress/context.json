@@ -1,0 +1,26 @@
+{
+  "name": "quillpress",
+  "stack": "Django 5 + Celery 5 + PostgreSQL + Redis newsroom CMS",
+  "branch": "feat/scheduled-publishing-retry",
+  "recent_paths": [
+    "cms/publishing/tasks.py",
+    "cms/publishing/models.py",
+    "cms/publishing/services/scheduler.py",
+    "cms/publishing/migrations/0042_publishjob_attempts.py",
+    "cms/publishing/tests/test_tasks.py",
+    "cms/publishing/tests/factories.py",
+    "config/celery.py",
+    "config/settings/base.py",
+    "config/settings/test.py",
+    "cms/articles/signals.py",
+    "docs/runbooks/publishing.md"
+  ],
+  "recent_commits": [
+    "publishing: add attempts counter to PublishJob",
+    "publishing: retry publish_article with exponential backoff",
+    "publishing: lock PublishJob row so publish_article is idempotent",
+    "celery: route publishing tasks to the 'publish' queue",
+    "test(publishing): cover retry exhaustion path"
+  ],
+  "session_cwd": "/home/dev/code/quillpress"
+}

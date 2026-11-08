@@ -182,6 +182,12 @@ export async function doctor(opts = {}) {
   }
   // The plugin and Codex's command skills (L3 P4): their own module.
   for (const c of await (await import("./doctor-product.mjs")).productChecks(ctx, opts)) add(c.code, c.ok, c.note, c.host);
+  // Recall (L6): what it sends from this folder, and other memory loaded next to it. Information only.
+  try {
+    for (const c of await (await import("../memory/recall-doctor.mjs")).recallDoctorRows({ cwd: opts.cwd ?? process.cwd(), home: ctx.home, env: ctx.env, command: (v) => (ctx.version ? `npx -y ${PRODUCT.package}@${ctx.version} ${v}` : `npx -y ${PRODUCT.package} ${v}`) })) add(c.code, c.ok, c.note, c.host);
+  } catch (e) {
+    add("recall.tokens", true, `not checked (${e.message})`);
+  }
   // The newest copy the launcher runs (npx installs; none for a clone: nothing to compare).
   const cur = currentDist(ctx.root);
   if (cur) add("pkg.stale", !newer(ctx.version, cur), newer(ctx.version, cur) ? `installed ${cur}, this is ${ctx.version}: run install to update` : `installed ${cur}`);

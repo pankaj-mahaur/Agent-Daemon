@@ -1,0 +1,24 @@
+{"id":"tm-01","text":"TileCache budget is measured in bytes on disk (TileDao.sumBytes()), not tile count; tiles range from 4 to 60 KB.","created":"2026-10-21","kind":"architecture"}
+{"id":"tm-02","text":"Tile unit tests: ./gradlew :app:testDebugUnitTest --tests 'com.trailmark.maps.tiles.*' (Robolectric, no emulator needed).","created":"2026-08-30","kind":"testing"}
+{"id":"tm-03","text":"Room migration tests are instrumented: ./gradlew :app:connectedDebugAndroidTest with an emulator running; they read the exported app/schemas/*.json.","created":"2026-10-24","kind":"testing"}
+{"id":"tm-04","text":"Offline map tiles are cached in context.cacheDir so Android can clear them under storage pressure.","created":"2025-04-17","kind":"architecture"}
+{"id":"tm-05","text":"Offline tiles live in filesDir/tiles since v3.4 (the OS kept wiping downloaded regions from cacheDir); eviction is our job now.","created":"2026-09-02","kind":"architecture"}
+{"id":"tm-06","text":"TileDownloadWorker is a CoroutineWorker and must call setForeground() for offline map downloads over 50 tiles.","created":"2025-07-22","kind":"architecture"}
+{"id":"tm-07","text":"Since work-runtime 2.10 TileDownloadWorker is enqueued as expedited work; override getForegroundInfo() instead of calling setForeground().","created":"2026-10-26","kind":"architecture"}
+{"id":"tm-08","text":"Format Kotlin with ./gradlew ktlintFormat before committing.","created":"2025-03-05","kind":"tooling"}
+{"id":"tm-09","text":"Formatting is Spotless + ktfmt now: ./gradlew spotlessApply. The ktlint plugin was removed.","created":"2026-06-11","kind":"tooling"}
+{"id":"tm-10","text":"Room schema JSONs in app/schemas/ are committed; bump the AppDatabase version and add its Migration in the same commit.","created":"2025-12-03","kind":"workflow"}
+{"id":"tm-11","text":"StatFs and file size walks are disk I/O: run them on Dispatchers.IO. Debug builds enable StrictMode and crash on main-thread reads.","created":"2026-02-14","kind":"fact"}
+{"id":"tm-12","text":"Large downloads must use NetworkType.UNMETERED unless the user enabled 'Allow mobile data'; Play review flagged this once.","created":"2026-05-09","kind":"fact"}
+{"id":"tm-13","text":"Workers get dependencies via @HiltWorker + HiltWorkerFactory; the default WorkManager initializer is removed in the manifest.","created":"2025-11-20","kind":"architecture"}
+{"id":"tm-14","text":"Map style JSON for dark mode is app/src/main/assets/styles/dark.json; designers edit it in Maputnik, don't hand-edit.","created":"2026-04-28","kind":"paths"}
+{"id":"tm-15","text":"Avatar images use Coil's disk cache (50 MB cap); Settings > Debug > Clear image cache wipes it.","created":"2026-10-12","kind":"fact"}
+{"id":"tm-16","text":"GPX export (com.trailmark.export) writes timestamps as ISO-8601 UTC; Strava rejects local offsets.","created":"2025-08-14","kind":"fact"}
+{"id":"tm-17","text":"Play Billing test purchases only work for accounts listed as license testers in the Play Console.","created":"2026-01-09","kind":"testing"}
+{"id":"tm-18","text":"ACTIVITY_RECOGNITION must be requested at runtime on API 29+ before the step counter starts a hike.","created":"2025-06-26","kind":"fact"}
+{"id":"tm-19","text":"Compose previews of HikeSummary need @PreviewParameter(HikeSampleProvider::class); real ViewModels crash the preview.","created":"2026-09-15","kind":"testing"}
+{"id":"tm-20","text":"Conventional Commits with scopes: tiles, db, hike, billing, export, deps.","created":"2025-02-18","kind":"git"}
+{"id":"tm-21","text":"Release: bump versionCode/versionName in app/build.gradle.kts and add a CHANGELOG.md entry; merges to main ship to the internal track.","created":"2026-03-27","kind":"workflow"}
+{"id":"tm-22","text":"Library versions live only in gradle/libs.versions.toml; never hardcode a version in a build.gradle.kts.","created":"2025-10-02","kind":"paths"}
+{"id":"tm-23","text":"Setup: JDK 17, copy local.properties.example to local.properties and add MAPTILER_KEY.","created":"2025-01-24","kind":"workflow"}
+{"id":"tm-24","text":"detekt runs in CI with maxIssues=0; suppress only with @Suppress plus a ticket link in a comment.","created":"2026-07-30","kind":"tooling"}

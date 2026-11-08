@@ -1,0 +1,31 @@
+{
+  "relevant": ["sw-01", "sw-02", "sw-03", "sw-05", "sw-07", "sw-10", "sw-11", "sw-12", "sw-14", "sw-15"],
+  "irrelevant": ["sw-04", "sw-06", "sw-08", "sw-16", "sw-17", "sw-18", "sw-19", "sw-20", "sw-21"],
+  "neutral": ["sw-09", "sw-13", "sw-22", "sw-23", "sw-24"],
+  "reasons": {
+    "sw-01": "Idempotency key format, the subject of the bulk refund job commit.",
+    "sw-02": "Test command for the refund service and job specs being changed.",
+    "sw-03": "How to run the new admin bulk refunds system spec.",
+    "sw-04": "Stale: synchronous refunds superseded by sw-05 (BulkIssuer + BulkRefundJob).",
+    "sw-05": "Current refund flow the branch builds.",
+    "sw-06": "Stale: ActiveAdmin batch_action superseded by sw-07 (plain controllers + Stimulus).",
+    "sw-07": "How admin bulk actions are wired now; matches the bulk-select commit.",
+    "sw-08": "Stale: Capistrano replaced by Kamal, see sw-09.",
+    "sw-09": "Current deploy tool; project-wide.",
+    "sw-10": "Refund amounts must be integer cents; low word overlap.",
+    "sw-11": "Handling repeated refunds in a bulk run (partial failures); low word overlap.",
+    "sw-12": "config/sidekiq.yml is in recent paths; refund job belongs on the payments queue.",
+    "sw-13": "i18n convention; project-wide even though en.yml was touched.",
+    "sw-14": "Branch adds batch_id (and its index) to refunds; strong_migrations rules apply.",
+    "sw-15": "Branch touches app/services/refunds, so the payments CODEOWNERS review applies.",
+    "sw-16": "Inventory sync job, other area; shares the app/jobs path segment only.",
+    "sw-17": "Product CSV imports, other area; shares the word 'batch' only.",
+    "sw-18": "Product image processing, other area.",
+    "sw-19": "Tax rates, other area.",
+    "sw-20": "Customer search, other area.",
+    "sw-21": "Storefront caching, other area.",
+    "sw-22": "Commit convention; project-wide.",
+    "sw-23": "Setup; project-wide.",
+    "sw-24": "Linter; project-wide."
+  }
+}

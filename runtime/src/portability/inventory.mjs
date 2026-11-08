@@ -48,6 +48,7 @@ export const CLASSES = Object.freeze([
   C("quota-cache", "global", /^(quota|catalog|spend)\//, "out", "—", "re-read from the providers"),
   C("machine-local", "global", /^(locks|running-agents|logs|schedule-logs|schedule-locks|audit|telemetry|teams|worktrees|loops|skill-traces|checkpoints)(\/|$)|^(STOP|viewer\.html|.*\.flag)$/, "out", "—"),
   C("tui-cache", "global", /^tui\/(?!prefs\.json$|state\.json$|history\.jsonl$)/, "out", "—", "the terminal UI's own caches"),
+  C("recall-cache", "global", /^recall\//, "out", "—", "recall's repo-context caches and delivery markers (L6): rebuilt by the next session"),
   C("project-journals", "project", /^(sessions\.jsonl|learning-journal(\.archive)?\.jsonl|.*\.draining-[^/]*\.jsonl)$/, "opt", "append, dedup by line hash", "raw capture"),
   C("project-machine-local", "project", /^(logs|loops|telemetry|skill-traces)(\/|$)|^(STOP|.*\.flag)$/, "out", "—"),
   C("project-memory", "project", /^(memory|archive|handoffs|proposed|applied)(\/|$)|^(config\.json|route-map\.json|skill-author-log\.jsonl|project\.json|activeContext\.md)$/, "in", "screened, then place / conflict"),

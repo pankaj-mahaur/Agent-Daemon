@@ -161,7 +161,7 @@ Until you run it, the plugin says so once a week at session start.
 ## Commands
 
 - \`${invocation("claude-code", "remember")} <text>\`: save a note. It is saved for review (you see "Saved for review: …") and recalled only after you accept it.
-- \`${invocation("claude-code", "recall")} <topic>\`: search your notes from earlier sessions in this project.
+- \`${invocation("claude-code", "recall")} [topic]\`: what this session received from your notes and why, or the ones matching a topic.
 - \`${invocation("claude-code", "report")}\`: is memory working here: what it captured, what waits for review, what it recalled.
 
 Review and accept notes in your own terminal: \`${pinnedCommand("review", version)}\`.

@@ -869,6 +869,47 @@
       "rules": ["A"],
       "match": "\\(Codex\\)| in Codex",
       "reason": "the capture and review guide names the typed command forms on the user's own Codex CLI ($agent-daemon-memory-remember, -forget), not ad's engine"
+    },
+    {
+      "path": "runtime/src/memory/recall-coexist.mjs",
+      "rules": ["A"],
+      "reason": "doctor's coexistence check (L6) reads whether claude-mem is enabled in the user's own Codex config ($CODEX_HOME/config.toml) and names that host; not ad's engine"
+    },
+    {
+      "path": "runtime/test/recall-coexist.test.mjs",
+      "rules": ["A"],
+      "reason": "fixtures of the user's own Codex config for the claude-mem check (L6); not ad's engine"
+    },
+    {
+      "path": "runtime/src/memory/recall-doctor.mjs",
+      "rules": ["A"],
+      "reason": "doctor's recall rows (L6) say on which of the user's own hosts claude-mem is on; not ad's engine"
+    },
+    {
+      "path": "runtime/src/memory/recall-command.mjs",
+      "rules": ["A"],
+      "reason": "the recall command's typed forms per user host (L6): the Codex skill form `$<package>-recall`, as remember.mjs does; not ad's engine"
+    },
+    {
+      "path": "runtime/testkit/recall-hook.mjs",
+      "rules": ["A"],
+      "reason": "spawned-hook helpers (L6) run the dispatcher as each of the user's hosts calls it, Codex's --host flag and payload included; not ad's engine"
+    },
+    {
+      "path": "runtime/test/recall-hook.test.mjs",
+      "rules": ["A"],
+      "reason": "end-to-end recall tests (L6) per user host, Codex included; not ad's engine"
+    },
+    {
+      "path": "docs/memory/recall.md",
+      "rules": ["A"],
+      "reason": "the recall page names the user's hosts recall serves (Claude Code and Codex) and the Codex skill form; not ad's engine"
+    },
+    {
+      "path": "docs/troubleshooting.md",
+      "rules": ["A"],
+      "match": "The host isn't Claude Code or Codex\\*\\*, or ad's hooks aren't trusted there \\(Codex: `/hooks`",
+      "reason": "the recall entry (#110): which of the user's own hosts recall serves, and Codex's /hooks trust step"
     }
   ]
 }
