@@ -155,7 +155,11 @@ test("nothing waits here: the projects that have waiting learnings, and the one 
   assert.equal(status(h, other).accepted_by, "review", "reviewed in the project picked");
 });
 
-test("pty: the checklist on a real terminal — a, enter, y accepts the three new notes; the terminal comes back", { skip: !pty && "node-pty unavailable", timeout: 60000 }, async () => {
+// On Windows the ConPTY run kept node --test alive after every test passed (CI run
+// 42454029040 sat for 36 minutes), and that it now closes can't be shown off Windows: it
+// skips there until a Windows run proves the cleanup below.
+const ptySkip = !pty ? "node-pty unavailable" : process.platform === "win32" ? "skipped on Windows: a ConPTY handle kept node --test from exiting (CI run 42454029040); re-enable once a Windows run proves the cleanup" : false;
+test("pty: the checklist on a real terminal — a, enter, y accepts the three new notes; the terminal comes back", { skip: ptySkip, timeout: 60000 }, async () => {
   const { h, dbPath, dir } = await store();
   const ids = [note(h, "pty one"), note(h, "pty two"), note(h, "pty three")];
   const agent = note(h, "pty agent", { provenance: "agent", origin: "agent" });
@@ -169,8 +173,10 @@ test("pty: the checklist on a real terminal — a, enter, y accepts the three ne
   for (const k of ["CLAUDE_CONFIG_DIR", "CODEX_HOME", "AD_TOOL_SHELL"]) delete env[k];
   const child = pty.spawn(process.execPath, [path.join(RUNTIME, "testkit", "checklist-pty.mjs"), dbPath, KEYS.join(","), outFile], { cols: 100, rows: 30, cwd: dir, env, name: "xterm-256color" });
   let screen = "";
-  child.onData((d) => (screen += d));
-  const exited = new Promise((resolve) => child.onExit(resolve));
+  let done = false;
+  const data = child.onData((d) => (screen += d));
+  const exited = new Promise((resolve) => child.onExit((e) => ((done = true), resolve(e))));
+  try {
   const until = async (re, what) => {
     for (const end = Date.now() + 20000; !re.test(screen); await new Promise((r) => setTimeout(r, 50))) if (Date.now() > end) throw new Error(`timed out waiting for ${what}\n${screen.slice(-2000)}`);
   };
@@ -180,7 +186,9 @@ test("pty: the checklist on a real terminal — a, enter, y accepts the three ne
   child.write("\r");
   await until(/Accept 3: 3 from your prompts · y\/n/, "the summary");
   child.write("y");
-  const { exitCode } = await exited;
+  // The child exits by itself after y; if it doesn't within 20 s, the test fails (and the
+  // finally below still ends it).
+  const { exitCode } = await Promise.race([exited, new Promise((_, reject) => setTimeout(() => reject(new Error(`the checklist didn't exit\n${screen.slice(-2000)}`)), 20000).unref())]);
   assert.equal(exitCode, 0, screen.slice(-2000));
   const r = JSON.parse(readFileSync(outFile, "utf8"));
   assert.equal(r.ended, "applied");
@@ -195,6 +203,17 @@ test("pty: the checklist on a real terminal — a, enter, y accepts the three ne
     after2.close();
   }
   assert.ok(existsSync(outFile));
+  } finally {
+    // Every path ends the pty and its listener: an open pty keeps node alive (ConPTY on Windows).
+    data.dispose?.();
+    if (!done) {
+      try {
+        child.kill();
+      } catch {
+        // it exited between the check and the kill
+      }
+    }
+  }
 });
 
 test("--accept-all with only the agent's notes accepts nothing without --with-agent, and never falls back to the proposal files", async () => {
