@@ -323,6 +323,18 @@ export function setReviewAuto(handle, token, { now = new Date() } = {}) {
 }
 
 /**
+ * Turn recall on or off for one project (plan L6, design decision 13). The review token
+ * both ways: off would stop recall of accepted notes (02 §7 invariant 3), and the agent
+ * mustn't undo the user's off either.
+ */
+export function setRecallMode(handle, token, projectId, mode, { now = new Date() } = {}) {
+  must(token);
+  if (!projectId || !["on", "off"].includes(mode)) throw new Error("recall mode: on or off, for a project");
+  putSetting(handle, `recall_mode:${projectId}`, mode, { now });
+  return mode;
+}
+
+/**
  * Delete a note for good from the review checklist (L5 decision 11): only a note of these
  * projects that was never accepted (waiting, in use before review, flagged or removed).
  * It leaves a hash-only tombstone (an events row of kind `discarded`, never the text), so

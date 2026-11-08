@@ -102,6 +102,15 @@ export function ownWordsSql(alias = "") {
   return `(${prefix(alias)}provenance IN ('user-prompt', 'prompt'))`;
 }
 
+/**
+ * SQL: the user's own words — a typed prompt (`user-prompt`, `prompt`) or `remember` run
+ * in their own terminal (`user-cli`). L6 sends these every session for 14 days after
+ * acceptance, and only own words supersede them.
+ */
+export function ownWordsAnySql(alias = "") {
+  return `(${prefix(alias)}provenance IN ('user-prompt', 'prompt', 'user-cli'))`;
+}
+
 /** The tag a recalled note carries (L6), or null for a plain accepted note. */
 export function tagOf(row) {
   if (row?.status === "provisional") return "provisional";

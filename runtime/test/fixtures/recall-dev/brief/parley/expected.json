@@ -1,0 +1,31 @@
+{
+  "relevant": ["pa-01", "pa-02", "pa-04", "pa-06", "pa-09", "pa-10", "pa-11", "pa-12", "pa-13"],
+  "irrelevant": ["pa-03", "pa-05", "pa-07", "pa-14", "pa-15", "pa-16", "pa-17", "pa-18", "pa-19"],
+  "neutral": ["pa-08", "pa-20", "pa-21", "pa-22", "pa-23", "pa-24"],
+  "reasons": {
+    "pa-01": "Presence meta update semantics; the branch stores typing in Presence metas.",
+    "pa-02": "Test command for the channel and presence tests being changed.",
+    "pa-03": "Stale: separate typing PubSub topic superseded by pa-04 (typing in Presence metas).",
+    "pa-04": "Current design the branch implements.",
+    "pa-05": "Stale: server-side debounce superseded by pa-06 (client-side throttle in typing_hook.js).",
+    "pa-06": "Where throttling lives now; matches the hooks commit and rate_limiter.ex.",
+    "pa-07": "Stale: superseded by pa-08 (mix check).",
+    "pa-08": "Current pre-push check; project-wide.",
+    "pa-09": "Shape of the typing indicator component in room_live.",
+    "pa-10": "Needed to filter typing from muted members in join/3; low word overlap.",
+    "pa-11": "Client activity detection for the typing hook; low word overlap.",
+    "pa-12": "Flake fix for the presence_diff assertions the branch adds.",
+    "pa-13": "rate_limiter.ex is in recent paths; limits are per node.",
+    "pa-14": "Infinite scroll hook, other area; shares the assets/js/hooks path only.",
+    "pa-15": "Attachment uploads, other area; shares config/runtime.exs path only.",
+    "pa-16": "Digest emails, other area.",
+    "pa-17": "Read receipts, other area.",
+    "pa-18": "OAuth login, other area.",
+    "pa-19": "Reactions, other area.",
+    "pa-20": "Commit convention; project-wide.",
+    "pa-21": "Setup; project-wide.",
+    "pa-22": "Deploy process; project-wide.",
+    "pa-23": "CSS/Tailwind convention; project-wide, harmless though app.css was touched.",
+    "pa-24": "Dialyzer cache tip; project-wide."
+  }
+}

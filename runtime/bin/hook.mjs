@@ -127,7 +127,26 @@ async function main() {
       const { memoryVerb, bareVerb } = await import("../src/hooks/remember.mjs");
       let verbCmd = remember === null ? memoryVerb(input?.prompt, host) : null;
       if (remember === null && !verbCmd && host === "claude" && bareVerb(input?.prompt) && bareRememberIsOurs({ cwd: projectDir(input, host) || undefined, name: bareVerb(input.prompt) })) verbCmd = memoryVerb(input.prompt, host, { bare: true });
+      // A typed recall (plan L6): answered here like remember and forget, by the same owner.
+      const RC = await import("../src/memory/recall-command.mjs");
+      let recallCmd = remember === null && !verbCmd ? RC.recallTopic(input?.prompt, host) : null;
+      if (recallCmd === null && remember === null && !verbCmd && host === "claude" && RC.looksBareRecall(input?.prompt) && bareRememberIsOurs({ cwd: projectDir(input, host) || undefined, name: "recall" })) recallCmd = RC.recallTopic(input.prompt, host, { bare: true });
+      const { contextHost } = await import("../src/hooks/host-capabilities.mjs");
+      const recallHost = contextHost(input, { flag: hostFlag, plugin });
       let receipt = null;
+      if (recallCmd !== null && (plugin || host !== "claude")) {
+        receipt = await quietly(async () => {
+          if (recallHost === "unknown") return null;
+          const { hookProjectKeys } = await import("../src/memory/scope.mjs");
+          const { db } = await import("../src/memory/episodic.mjs");
+          const { ownVersion } = await import("../src/memory/own-version.mjs");
+          const handle = await db();
+          if (!handle) return null;
+          const keys = await hookProjectKeys(String(projectDir(input, host) || process.cwd())).catch(() => []);
+          const a = await RC.answerRecall(handle, { keys, topic: recallCmd, sessionId: input?.session_id ?? null, host, version: ownVersion(), plugin });
+          return { systemMessage: a.systemMessage ?? undefined, context: a.context };
+        });
+      }
       if (verbCmd && (plugin || host !== "claude")) {
         receipt = await quietly(async () => {
           const { ownVersion } = await import("../src/memory/own-version.mjs");
@@ -146,7 +165,7 @@ async function main() {
         // L5: what the user's prompt teaches goes through the capture library (screen,
         // L4a's extractor, dedupe, the store or the journal); the older extractor keeps only
         // the previous assistant turn's notes (no double capture).
-        if (remember === null && !verbCmd && !receipt) {
+        if (remember === null && !verbCmd && recallCmd === null && !receipt) {
           receipt = await quietly(async () => {
             const { capturePrompt, captureReceipt } = await import("../src/memory/capture-prompt.mjs");
             const r = await capturePrompt(input, { source, host, cwd: String(input?.cwd || projectDir(input, host) || process.cwd()) });
@@ -160,7 +179,7 @@ async function main() {
         }
         const { userPromptExtract } = await import("../src/hooks/user-prompt-extract.mjs");
         // A remember's words were saved above: the extractor doesn't see them (no double capture).
-        await userPromptExtract(remember !== null || verbCmd ? { ...input, prompt: "" } : input, { source, print: false, userHandled: true });
+        await userPromptExtract(remember !== null || verbCmd || recallCmd !== null ? { ...input, prompt: "" } : input, { source, print: false, userHandled: true });
         // The agent's hides and forget requests, once, on the next typed Claude Code prompt.
         if (host === "claude" && source?.typed) {
           const notice = await quietly(async () => {
@@ -172,10 +191,12 @@ async function main() {
       }
       const parts = receipt?.context ? [receipt.context] : [];
       if (!memoryOnly) parts.push(await quietly(async () => (await import("../src/hooks/capability-route-advice.mjs")).routeAdviceContext(input)));
-      if (!(await pluginSkips("query-retrieve", host))) {
+      // Prompt-time recall (plan L6): only into a host that honours it, named by a positive
+      // signal; a typed recall already answered.
+      if (recallHost !== "unknown" && recallCmd === null && !(await pluginSkips("query-retrieve", host))) {
         parts.push(await quietly(async () => (await import("../src/query-retrieve.mjs")).queryRetrieveContext(input, { cwd: projectDir(input, host) || undefined })));
       }
-      print({ ...(receipt ? { systemMessage: receipt.systemMessage } : {}), ...context("UserPromptSubmit", parts.filter(Boolean).join("\n\n")) });
+      print({ ...(receipt?.systemMessage ? { systemMessage: receipt.systemMessage } : {}), ...context("UserPromptSubmit", parts.filter(Boolean).join("\n\n")) });
       return 0;
     }
     case "session.start": {
@@ -230,7 +251,16 @@ async function main() {
         return (await import("../src/memory/reminder.mjs")).reviewReminder(store, { keys: [ep.projectSlug(path.resolve(cwd)), projectId].filter(Boolean), projectId, product: PRODUCT.displayName, review: v ? pinnedCommand("review", v) : `npx -y ${PRODUCT.package} review` });
       });
       const message = [systemMessage ?? pluginNote, reminder].filter(Boolean).join("\n");
-      await runSessionStart({ cwd, outputJson: true, projectRoot, sessionId: input?.session_id, transcript: input?.transcript_path, memoryOnly, systemMessage: message || undefined });
+      // Recall (plan L6): only into a host that honours it, named by a positive signal.
+      const { contextHost } = await import("../src/hooks/host-capabilities.mjs");
+      const recallHost = contextHost(input, { flag: hostFlag, plugin });
+      const review = await quietly(async () => {
+        const { PRODUCT, pinnedCommand } = await import("../src/product.mjs");
+        const { ownVersion } = await import("../src/memory/own-version.mjs");
+        const v = ownVersion();
+        return v ? pinnedCommand("review", v) : `npx -y ${PRODUCT.package} review`;
+      });
+      await runSessionStart({ cwd, outputJson: true, projectRoot, sessionId: input?.session_id, source: typeof input?.source === "string" ? input.source : null, transcript: input?.transcript_path, memoryOnly, systemMessage: message || undefined, host: recallHost === "unknown" ? null : recallHost, recall: recallHost !== "unknown", review });
       return 0;
     }
     case "session.end":

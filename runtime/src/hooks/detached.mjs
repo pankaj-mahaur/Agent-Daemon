@@ -45,6 +45,7 @@ export function spawnDetached(args, { key, windowMs = 60_000, root = adRoot(), n
   // its working folder (the user's project could not be moved or deleted meanwhile).
   // Jobs take every path they need as an argument.
   const child = spawnFn(process.execPath, args, { detached: true, stdio: "ignore", windowsHide: true, env, cwd: path.dirname(process.execPath) });
+  child.on?.("error", () => {}); // a failed start (EACCES, EAGAIN) must not crash the hook
   child.unref?.();
   return true;
 }

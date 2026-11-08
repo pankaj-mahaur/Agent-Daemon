@@ -1,0 +1,26 @@
+{
+  "name": "emberforge",
+  "stack": "C++20 game engine tools: CMake presets + Ninja, vcpkg manifest, Qt 6 editor, Catch2 tests",
+  "branch": "perf/asset-cooker-parallel-textures",
+  "recent_paths": [
+    "tools/assetcooker/src/TextureCooker.cpp",
+    "tools/assetcooker/src/TextureCooker.h",
+    "tools/assetcooker/src/JobGraph.cpp",
+    "tools/assetcooker/src/CookCache.cpp",
+    "tools/assetcooker/CMakeLists.txt",
+    "tools/assetcooker/tests/TextureCookerTests.cpp",
+    "tools/assetcooker/tests/data/bc7_reference.dds",
+    "engine/core/include/ember/ThreadPool.h",
+    "CMakePresets.json",
+    "vcpkg.json",
+    "docs/tools/assetcooker.md"
+  ],
+  "recent_commits": [
+    "assetcooker: cook textures on the shared ThreadPool",
+    "assetcooker: cache keys include compressor version",
+    "assetcooker: cap BC7 workers at physical core count",
+    "tests: golden-image check for BC7 output",
+    "vcpkg: add bc7enc to the manifest"
+  ],
+  "session_cwd": "D:/dev/emberforge"
+}
