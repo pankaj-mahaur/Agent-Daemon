@@ -454,6 +454,16 @@
       "reason": "tests which of the user's own hosts loads each file (Codex's config fallback, CODEX_HOME); not ad's engine"
     },
     {
+      "path": "runtime/src/memory/import-flow.mjs",
+      "rules": ["A", "C"],
+      "reason": "the import question (L4b part 4) names what it reads before reading it: the user's own Codex history and config.toml, beside Claude Code's; not ad's engine"
+    },
+    {
+      "path": "runtime/test/import-flow.test.mjs",
+      "rules": ["A"],
+      "reason": "fake listings of the user's own two hosts' history (claude, codex) for the import question; not ad's engine"
+    },
+    {
       "path": "runtime/testkit/instruction-files.mjs",
       "rules": ["A"],
       "reason": "fixture expectations naming the user's own hosts that load each file; not ad's engine"
