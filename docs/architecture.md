@@ -139,6 +139,7 @@ transcript.jsonl
 - `learnings` — one row per extracted learning, queryable by tag / scope / confidence
 - `skill_failures` — feedback signal for the GEPA evolve loop
 - `injections`, `correction_events`, `feedback` — what each session was shown, each correction and whether it repeated a lesson, and memory_feedback verdicts; read by `ad memory report` ([Memory metrics](memory/metrics.md))
+- `history_clusters`, `instruction_imports`, `instruction_import_notes` — what a consented import found (`memory/history-import.mjs`, `memory/instruction-import.mjs`, made by the import itself, no schema bump): per project, each correction cluster of the Claude Code and Codex history (the redacted sentence only for 2+ repeats, keyed hashes otherwise) and each instruction file's version with the pending notes it became. Never exported; once proposed, a cluster's sentence lives only in its note, so rejecting or purging the note removes it. `proposal_rejections` keeps what you rejected in review out of later imports (keyed hashes, key in `memory/history.key`). `memory/review-queue.mjs` orders the review screen: up to 5 notes you saved in the last week, then every other pending note by repeat count, then one row per instruction file
 
 The database opens through `better-sqlite3`, or Node's built-in `node:sqlite` (Node 22.16 or newer) when that isn't installed (`runtime/src/memory/driver.mjs`; `AD_SQLITE_DRIVER` picks one, `ad doctor` shows which).
 

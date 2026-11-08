@@ -459,6 +459,11 @@
       "reason": "fixture expectations naming the user's own hosts that load each file; not ad's engine"
     },
     {
+      "path": "runtime/test/review-queue.test.mjs",
+      "rules": ["A"],
+      "reason": "test isolation: the user's own Codex home (CODEX_HOME, .codex) pointed at a temp folder"
+    },
+    {
       "path": "runtime/src/hooks/host-capabilities.mjs",
       "rules": ["A", "C"],
       "reason": "the hook dispatcher's table of what each host does with a hook's answer; Codex is one of the two hosts (the user's own CLI, not ad's engine)"
@@ -559,7 +564,7 @@
     {
       "path": "docs/architecture.md",
       "rules": ["A"],
-      "match": "lists Claude Code transcripts and Codex rollouts|`CLAUDE\\.md` rules Codex doesn't read|--host claude\\|codex|Codex denies with the reason",
+      "match": "lists Claude Code transcripts and Codex rollouts|correction cluster of the Claude Code and Codex history|`CLAUDE\\.md` rules Codex doesn't read|--host claude\\|codex|Codex denies with the reason",
       "reason": "the mistakes report's reader and coverage line, and the hook dispatcher's hosts: the user's own Codex, not ad's engine"
     },
     {
