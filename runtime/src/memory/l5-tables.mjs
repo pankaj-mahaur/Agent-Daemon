@@ -16,6 +16,8 @@ export const tombstoneHash = (nk) => createHash("sha256").update(String(nk)).dig
 export const EVENT_KINDS = Object.freeze([
   "captured", "provisional", "hidden", "restored", "marked", "forget-requested", "expired",
   "repeated", "discarded", "strict-on", "strict-off", "reviewed",
+  // L7 (rules-service.mjs): rules and their controls.
+  "rule-on", "rule-off", "rule-declined", "rule-deferred", "rules-paused", "rules-resumed", "allow-once",
 ]);
 export const ACTORS = Object.freeze(["user", "agent", "review", "system"]);
 

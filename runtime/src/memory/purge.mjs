@@ -137,14 +137,15 @@ export function retainNotes(handle, { now = Date.now() } = {}) {
  * Events older than EVENT_DAYS go, except what later decisions read (L5 decision 13):
  * `discarded` tombstones; a user's `captured` and every `provisional` event while their
  * note exists; `hidden` events while their note is still hidden; the latest `reviewed`
- * event of each project. → rows deleted.
+ * event of each project; L7's rule history (`rule-on`, `rule-off`, `rule-declined`: a
+ * declined proposal must not come back after 180 days). → rows deleted.
  */
 export function pruneEvents(handle, { now = Date.now() } = {}) {
   const cut = new Date(now - EVENT_DAYS * DAY).toISOString();
   try {
     return handle.run(
       `DELETE FROM events WHERE at < ?
-         AND kind <> 'discarded'
+         AND kind NOT IN ('discarded', 'rule-on', 'rule-off', 'rule-declined')
          AND NOT (kind IN ('captured', 'provisional') AND learning_id IS NOT NULL AND (kind = 'provisional' OR actor = 'user') AND EXISTS (SELECT 1 FROM learnings l WHERE l.id = events.learning_id))
          AND NOT (kind = 'hidden' AND EXISTS (SELECT 1 FROM learnings l WHERE l.id = events.learning_id AND l.status = 'hidden'))
          AND NOT (kind = 'reviewed' AND id = (SELECT MAX(e.id) FROM events e WHERE e.kind = 'reviewed' AND e.project_id IS events.project_id))`,
