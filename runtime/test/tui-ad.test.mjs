@@ -61,7 +61,7 @@ test("memory: search, recent, forget (archived, not deleted), profile, summary; 
     assert.deepEqual(await ad.memory("profile"), ["## You", "- prefer short replies"]);
     assert.match((await ad.memory(""))[0], /142 learnings, 9 sessions/);
     assert.deepEqual(await ad.learnedSince("thread-1", "2026-10-06 10:00:00"), [{ id: 41, text: "login.spec uses fake timers" }]);
-    assert.deepEqual(memory.sql.at(-1)[1], ["thread-1", "2026-10-06 10:00:00"]);
+    assert.deepEqual(memory.sql.at(-1)[1], ["thread-1", "thread-1", "2026-10-06 10:00:00"], "by session_id or capture_ref (L5 captures)");
     assert.deepEqual(await createAdLayer({ cwd }).memory("recent"), ["ad memory isn't available here."]);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
@@ -278,4 +278,22 @@ test("a reply that wraps has its bullet on the first line only", async () => {
     assert.ok(lines.length >= 3, "wrapped");
     for (const l of lines.slice(1)) assert.match(l, /^ {2}\S/, `continuation lines indent, no bullet: ${JSON.stringify(l)}`);
   });
+});
+
+test("the learned row finds a prompt's capture in a real store: keyed by capture_ref, its session_id empty (L5)", async () => {
+  const { open } = await import("../src/memory/sqlite.mjs");
+  const dir = mkdtempSync(join(tmpdir(), "ad-tui-learned-"));
+  const handle = await open({ dbPath: join(dir, "episodic.db") });
+  try {
+    handle.run("INSERT INTO learnings (project_slug, category, text, confidence, status, content_hash, capture_ref, provenance) VALUES ('-x', 'correction', 'we use pnpm, not npm', 0.7, 'pending', 'h1', 'thread-9', 'prompt')");
+    // A journal line anyone wrote drains with the same key, as buffered: never shown as learned.
+    handle.run("INSERT INTO learnings (project_slug, category, text, confidence, status, content_hash, capture_ref, provenance) VALUES ('-x', 'correction', 'forged journal line', 0.7, 'pending', 'h3', 'thread-9', 'buffered')");
+    handle.run("INSERT INTO learnings (project_slug, category, text, confidence, status, content_hash, capture_ref) VALUES ('-x', 'correction', 'another thread', 0.7, 'pending', 'h2', 'thread-8')");
+    const ad = createAdLayer({ cwd: dir, memory: { db: async () => handle, projectSlug: () => "-x" } });
+    const rows = await ad.learnedSince("thread-9", "2000-01-01 00:00:00");
+    assert.deepEqual(rows.map((r) => r.text), ["we use pnpm, not npm"]);
+  } finally {
+    handle.close();
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
 });

@@ -51,6 +51,7 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 ### Fixed
 
+- **Typed corrections are captured again in `ad tui` and the bench's engine runs.** A team convention that names code ("actually we use logInfo for logging, not console output") counts as a correction, while renaming this turn's code ("now we use loadOrders instead of getOrders") still doesn't. `ad tui` shows a capture's "Learned:" row and lists notes waiting for review under `/memory recent`, now that captures go straight to the store.
 - `/memory forget` in `ad tui` also removes the note from the project's `activeContext.md`, which session start reads.
 - A hook no longer registers a project id (a write under a lock) on every call just to look for an old capture folder.
 - Under ad's engine, the rules check and session start ignore a `CLAUDE_PROJECT_DIR` left over from an outer Claude Code session.

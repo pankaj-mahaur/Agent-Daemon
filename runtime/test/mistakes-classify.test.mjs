@@ -46,6 +46,9 @@ const POSITIVE = [
   ["widened scope", "use the Result type, please stick to that everywhere, not just in this module"],
   ["keep under", "keep functions under 50 lines"],
   ["thanks, then a rule", "thanks, but never push to main"],
+  // The team's convention names code too (the bench's smoke phrasing; L5 P2 fix).
+  ["we use, a code name", "Actually we use logInfo for logging, not console output."],
+  ["in this repo, a code name", "in this repo we use logInfo, not console.log"],
 ];
 const NEGATIVE = [
   ["stop alone", "stop"],
@@ -81,6 +84,14 @@ const NEGATIVE = [
   ["stop and", "stop and look at the logs first"],
   ["a value", "use 8, not 4"],
   ["naming this code", "call it loadOrders, not getOrders"],
+  ["naming this code, we", "we need to use loadOrders here, not getOrders"],
+  // "we" elsewhere in the clause, or tied to this turn, isn't the team's convention (fix review).
+  ["naming this code, we elsewhere", "we log a lot here, so use fetchUsers instead of getUsers"],
+  ["naming this code, we don't", "we don't need fooBar, use bazQux instead of fooBar"],
+  ["naming this code, now", "ok so now we use loadOrders instead of getOrders, update the tests"],
+  ["naming this code, that call", "wait, we use getUserById in that call, not getUser"],
+  ["naming this code, after", "after your refactor we use newHelper instead of oldHelper"],
+  ["naming this code, here", "so we use useMemo here instead of useCallback"],
   ["one design choice", "instead of a dropdown, use a radio group"],
   ["outage", "the staging API is down"],
   ["same error", "always the same error: module not found"],

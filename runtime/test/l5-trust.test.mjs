@@ -7,6 +7,7 @@
 
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
+import { openFilesUnder } from "../testkit/open-files.mjs";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -27,7 +28,21 @@ const { retainNotes, pruneEvents, expiringSoon } = await import("../src/memory/p
 const { promptSource } = await import("../src/hooks/prompt-source.mjs");
 const { testReviewToken } = await import("../testkit/memory-trust.mjs");
 
-after(() => rmSync(ROOT, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
+// Every store this file opens is closed before ROOT goes: Windows can't delete an open database (EBUSY).
+const opened = [];
+after(async () => {
+  for (const h of opened) {
+    try {
+      h.close();
+    } catch {
+      // a test closed it already
+    }
+  }
+  (await import("../src/memory/episodic.mjs")).closeDb();
+  const left = await openFilesUnder(ROOT);
+  rmSync(ROOT, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  assert.deepEqual(left, [], "every database is closed before the folder goes (Windows: EBUSY)");
+});
 
 const SLUG = "-work-shop-app";
 const PID = "prj_shop0000000000000000";
@@ -36,7 +51,9 @@ let n = 0;
 async function store() {
   const dir = path.join(ROOT, `db-${++n}`);
   mkdirSync(dir, { recursive: true });
-  return open({ dbPath: path.join(dir, "episodic.db") });
+  const h = await open({ dbPath: path.join(dir, "episodic.db") });
+  opened.push(h);
+  return h;
 }
 function note(h, text, { status = "pending", accepted = false, slug = SLUG, pid = PID, origin = "agent", reason = null, appliedTo = null } = {}) {
   const id = Number(h.run(
