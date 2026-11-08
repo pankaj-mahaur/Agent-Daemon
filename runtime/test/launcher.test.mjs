@@ -151,7 +151,14 @@ test("the launcher with nothing to run: told once per session, exit 0; a passing
   const s = run(launchRoot(), ["serve"]);
   assert.equal(s.code, 1);
   assert.equal(s.out, "");
-  assert.match(s.err, /isn't installed here any more: run npx -y .*@9\.9\.9 serve/);
+  assert.match(s.err, /isn't installed here any more: run npx -y .*@9\.9\.9 install/, "the fix, never `serve` again");
+  // A list that can't be read: says so and points at repair.
+  const garbled = launchRoot();
+  fs.writeFileSync(D.distsFile(garbled), "{ not json");
+  const g = run(garbled, ["serve"]);
+  assert.equal(g.code, 1);
+  assert.equal(g.out, "");
+  assert.match(g.err, /dists\.json can't be read \(garbled\): run npx -y .*@9\.9\.9 repair/);
   // No dists.mjs next to it (an interrupted install): a hook still exits 0 with JSON.
   const broken = launchRoot();
   fs.rmSync(path.join(D.launchDir(broken), "dists.mjs"));

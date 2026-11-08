@@ -116,21 +116,63 @@ async function main() {
     case "prompt.submit": {
       const { promptSource } = await import("../src/hooks/prompt-source.mjs");
       const source = promptSource(input, { host });
-      if (!(await pluginSkips("user-prompt-extract", host))) {
-        const { userPromptExtract } = await import("../src/hooks/user-prompt-extract.mjs");
-        await userPromptExtract(input, { source, print: false });
+      // A typed remember (L3, D21): saved once, pending, with a receipt. The plugin's
+      // copy never passes it through; ad's own Claude Code entries leave it to the
+      // plugin (the command is the plugin's); on Codex the entry that captures saves it.
+      const { bareRememberIsOurs, looksBare, rememberText } = await import("../src/hooks/remember.mjs");
+      let remember = rememberText(input?.prompt, host);
+      // The short /remember, when it can only be the plugin's command.
+      if (remember === null && host === "claude" && looksBare(input?.prompt) && bareRememberIsOurs({ cwd: projectDir(input, host) || undefined })) remember = rememberText(input.prompt, host, { bare: true });
+      let receipt = null;
+      if (remember !== null && (plugin || host !== "claude")) {
+        const R = await import("../src/hooks/remember.mjs");
+        const { ownVersion } = await import("../src/memory/own-version.mjs");
+        // The extractor goes to an older ad's entry, which would capture the prompt too: one capture, its.
+        if (plugin && (await pluginSkips("user-prompt-extract", host)) && !(await R.adEntriesKnowRemember())) receipt = R.rememberReceipt({ text: remember, saved: false, why: R.OLDER_AD, version: ownVersion(), host });
+        else receipt = (await R.captureRemember({ text: remember, input, source, host, cwd: String(input?.cwd || projectDir(input, host) || process.cwd()), version: ownVersion() })).receipt;
       }
-      const parts = [];
+      if (!(await pluginSkips("user-prompt-extract", host))) {
+        // L5: what the user's prompt teaches goes through the capture library (screen,
+        // L4a's extractor, dedupe, the store or the journal); the older extractor keeps only
+        // the previous assistant turn's notes (no double capture).
+        if (remember === null && !receipt) {
+          receipt = await quietly(async () => {
+            const { capturePrompt, captureReceipt } = await import("../src/memory/capture-prompt.mjs");
+            const r = await capturePrompt(input, { source, host, cwd: String(input?.cwd || projectDir(input, host) || process.cwd()) });
+            if (!["pending", "provisional", "journal", "quarantined", "said-again", "repeat", "refused-secret", "deleted-before"].includes(r.status)) return null;
+            const { PRODUCT, pinnedCommand } = await import("../src/product.mjs");
+            const { ownVersion } = await import("../src/memory/own-version.mjs");
+            const v = ownVersion();
+            const line = captureReceipt({ ...r, review: v ? pinnedCommand("review", v) : `npx -y ${PRODUCT.package} review`, product: PRODUCT.displayName, forget: plugin ? `/${PRODUCT.plugin}:forget` : `${v ? pinnedCommand("forget", v) : `npx -y ${PRODUCT.package} forget`}`, remember: `/${PRODUCT.plugin}:remember` });
+            return line ? { systemMessage: line, context: null } : null;
+          });
+        }
+        const { userPromptExtract } = await import("../src/hooks/user-prompt-extract.mjs");
+        // A remember's words were saved above: the extractor doesn't see them (no double capture).
+        await userPromptExtract(remember !== null ? { ...input, prompt: "" } : input, { source, print: false, userHandled: true });
+      }
+      const parts = receipt?.context ? [receipt.context] : [];
       if (!memoryOnly) parts.push(await quietly(async () => (await import("../src/hooks/capability-route-advice.mjs")).routeAdviceContext(input)));
       if (!(await pluginSkips("query-retrieve", host))) {
         parts.push(await quietly(async () => (await import("../src/query-retrieve.mjs")).queryRetrieveContext(input, { cwd: projectDir(input, host) || undefined })));
       }
-      print(context("UserPromptSubmit", parts.filter(Boolean).join("\n\n")));
+      print({ ...(receipt ? { systemMessage: receipt.systemMessage } : {}), ...context("UserPromptSubmit", parts.filter(Boolean).join("\n\n")) });
       return 0;
     }
     case "session.start": {
+      // The plugin, before any skip (L3, D19): the env-file marker, its dists entry, the setup line.
+      let pluginNote = null;
+      if (plugin && host === "claude") {
+        pluginNote = await quietly(async () => {
+          const os = await import("node:os");
+          const { adRoot } = await import("../src/ad-root.mjs");
+          const { ownVersion } = await import("../src/memory/own-version.mjs");
+          const { pluginSessionStart } = await import("../src/hooks/plugin-session.mjs");
+          return pluginSessionStart({ input, home: os.homedir(), root: adRoot(), version: ownVersion() });
+        });
+      }
       if (await pluginSkips("session-start", host)) {
-        print({});
+        print(pluginNote ? { systemMessage: pluginNote } : {});
         return 0;
       }
       const path = await import("node:path");
@@ -151,7 +193,7 @@ async function main() {
           return `${PRODUCT.displayName}: AD_TOOL_SHELL is gone from ${gone.file}, so Codex's agent shell isn't marked any more. Run ${cmd} in your own terminal.`;
         });
       }
-      await runSessionStart({ cwd, outputJson: true, projectRoot, sessionId: input?.session_id, transcript: input?.transcript_path, memoryOnly, systemMessage: systemMessage ?? undefined });
+      await runSessionStart({ cwd, outputJson: true, projectRoot, sessionId: input?.session_id, transcript: input?.transcript_path, memoryOnly, systemMessage: systemMessage ?? pluginNote ?? undefined });
       return 0;
     }
     case "session.end":

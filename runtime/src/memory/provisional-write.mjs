@@ -29,7 +29,7 @@ const bound = (r) => Boolean(r && typeof r.project_id === "string" && r.project_
  * @param {{now?:Date}} [opts]
  * @returns {{id:number|null, status:string, why?:string}}
  */
-export function writeProvisional(handle, verdict, { id = null, row = null } = {}, { now = new Date() } = {}) {
+export function writeProvisional(handle, verdict, { id = null, row = null } = {}, { now = new Date(), captureActor = null } = {}) {
   const t = now.toISOString();
   return handle.transaction(() => {
     let noteId = id;
@@ -37,15 +37,19 @@ export function writeProvisional(handle, verdict, { id = null, row = null } = {}
       // A quarantined row stays quarantined (never upgraded here); provenance is the
       // user's proven words only with a first-party verdict, else "prompt".
       if (row.status === "quarantined") {
-        const q = writeLearning(handle, { ...row, provenance: "prompt" });
+        const q = writeLearning(handle, row);
         return { id: q == null ? null : Number(q), status: "quarantined", why: "flagged" };
       }
       const proven = isFirstParty(verdict) && verdictCovers(verdict, row.text);
-      const fields = { ...row, status: "pending", origin: "user", provenance: proven ? "user-prompt" : "prompt" };
-      noteId = writeLearning(handle, fields);
-      if (noteId == null) noteId = sameNote(handle, row.projectSlug, row.text, undefined, row.projectId)?.id ?? null;
+      // The caller's origin and provenance stand (a headless run stays `headless`), unless the
+      // words are proven the user's typing.
+      const fields = { ...row, status: "pending", ...(proven ? { origin: "user", provenance: "user-prompt" } : {}) };
+      const inserted = writeLearning(handle, fields);
+      noteId = inserted ?? sameNote(handle, row.projectSlug, row.text, undefined, row.projectId)?.id ?? null;
       if (noteId == null) return { id: null, status: "none", why: "not stored" };
       noteId = Number(noteId);
+      // The capture's event, in the same transaction as the row (L5 decision 13).
+      if (inserted != null && captureActor) recordEvent(handle, { kind: "captured", learningId: noteId, projectId: row.projectId ?? null, actor: captureActor, at: now });
     }
     const cur = handle.get(`SELECT id, text, status, accepted_by, project_id, project_slug, ${flaggedSql()} AS flagged FROM learnings WHERE id = ?`, [noteId]);
     if (!cur) return { id: noteId, status: "none", why: "no such note" };

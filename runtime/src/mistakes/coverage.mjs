@@ -6,15 +6,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import { claudeConfigDir, codexHomeDir } from "./history.mjs";
+// ad's own blocks (`ad init`'s and 3.x's learnings mirror) are product text, not the user's rules.
+import { stripManaged } from "../memory/managed-blocks.mjs";
 
-// ad's own managed block is product text, not the user's rules.
-const MANAGED = /<!-- agent-daemon:start -->[\s\S]*?<!-- agent-daemon:end -->/g;
-
-/** The rule-shaped lines of a Markdown file: list items outside code fences and ad's block. */
+/** The rule-shaped lines of a Markdown file: list items outside code fences and ad's blocks. */
 export function ruleLines(text) {
   const out = [];
   let fence = false;
-  for (const line of String(text).replace(MANAGED, "").split(/\r?\n/)) {
+  for (const line of stripManaged(String(text)).split(/\r?\n/)) {
     if (/^\s*(?:```|~~~)/.test(line)) {
       fence = !fence;
       continue;

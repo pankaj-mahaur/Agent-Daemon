@@ -434,6 +434,36 @@
       "reason": "the mistakes report (L4a) reads the user's own Codex history (CODEX_HOME, rollouts) as one of two hosts and names that host in the report; this is the user's separate install, not ad's engine"
     },
     {
+      "path": "runtime/src/memory/history-import.mjs",
+      "rules": ["A"],
+      "reason": "the history import (L4b) reads the same user-owned Codex history as the mistakes report (L4a) and says so; not ad's engine"
+    },
+    {
+      "path": "runtime/test/history-import.test.mjs",
+      "rules": ["A"],
+      "reason": "fixture history of the user's own two hosts, Codex one of them (CODEX_HOME, host id `codex`); not ad's engine"
+    },
+    {
+      "path": "runtime/src/memory/instruction-import.mjs",
+      "rules": ["A"],
+      "reason": "which of the user's own hosts already loads each instruction file (Codex reads AGENTS.md, AGENTS.override.md); not ad's engine"
+    },
+    {
+      "path": "runtime/test/instruction-import.test.mjs",
+      "rules": ["A"],
+      "reason": "tests which of the user's own hosts loads each file (Codex's config fallback, CODEX_HOME); not ad's engine"
+    },
+    {
+      "path": "runtime/testkit/instruction-files.mjs",
+      "rules": ["A"],
+      "reason": "fixture expectations naming the user's own hosts that load each file; not ad's engine"
+    },
+    {
+      "path": "runtime/test/review-queue.test.mjs",
+      "rules": ["A"],
+      "reason": "test isolation: the user's own Codex home (CODEX_HOME, .codex) pointed at a temp folder"
+    },
+    {
       "path": "runtime/src/hooks/host-capabilities.mjs",
       "rules": ["A", "C"],
       "reason": "the hook dispatcher's table of what each host does with a hook's answer; Codex is one of the two hosts (the user's own CLI, not ad's engine)"
@@ -452,6 +482,42 @@
       "path": "runtime/src/hooks/typed-text.mjs",
       "rules": ["A", "C"],
       "reason": "names the context the user's Codex host injects as a user message"
+    },
+    {
+      "path": "runtime/test/install-import-step.test.mjs",
+      "rules": ["A"],
+      "reason": "L3 D26's test installs into a temp home with the user's own Codex as the host setup has work for (its folder, CODEX_HOME, setup's ✓ Codex lines)"
+    },
+    {
+      "path": "runtime/test/fixtures/tools-list.golden.json",
+      "rules": ["A"],
+      "match": "\"codex/(auto|hooks|off|tools)\"",
+      "reason": "tools/list hashes per host id (L3 D24); codex is the id of the user's own Codex host"
+    },
+    {
+      "path": "runtime/src/hooks/remember.mjs",
+      "rules": ["A"],
+      "reason": "a typed remember (L3 D21) on each host it reaches: the plugin's command on Claude Code and the skill setup writes for the user's own Codex"
+    },
+    {
+      "path": "runtime/test/remember.test.mjs",
+      "rules": ["A"],
+      "reason": "remember tests replay the prompt the user's Codex host sends for its skill, captured from the pinned engine"
+    },
+    {
+      "path": "runtime/test/plugin-remember.test.mjs",
+      "rules": ["A"],
+      "reason": "spawned remember tests run the dispatcher as the user's Codex host starts it (the launcher's --host codex)"
+    },
+    {
+      "path": "runtime/test/command-skills.test.mjs",
+      "rules": ["A"],
+      "reason": "the command skills are rendered for two hosts, the user's own Codex among them (its skills folder and agents/openai.yaml)"
+    },
+    {
+      "path": "runtime/test/plugin-live.test.mjs",
+      "rules": ["A"],
+      "reason": "the live plugin test keeps the user's Codex home (CODEX_HOME) out of the child's environment"
     },
     {
       "path": "runtime/bin/hook.mjs",
@@ -534,7 +600,7 @@
     {
       "path": "docs/architecture.md",
       "rules": ["A"],
-      "match": "lists Claude Code transcripts and Codex rollouts|`CLAUDE\\.md` rules Codex doesn't read|--host claude\\|codex|Codex denies with the reason",
+      "match": "lists Claude Code transcripts and Codex rollouts|correction cluster of the Claude Code and Codex history|`CLAUDE\\.md` rules Codex doesn't read|--host claude\\|codex|Codex denies with the reason",
       "reason": "the mistakes report's reader and coverage line, and the hook dispatcher's hosts: the user's own Codex, not ad's engine"
     },
     {
@@ -626,6 +692,12 @@
       "reason": "the memory installer's messages, the Codex host's restart step, and the agents the review gate refuses under (the user's own Codex CLI is one)"
     },
     {
+      "path": "docs/troubleshooting.md",
+      "rules": ["A"],
+      "match": "<text>` \\(Codex\\)|On Codex, run `setup --host codex`",
+      "reason": "entry #100 (remember): the command the user types in their own Codex, and setup's Codex step"
+    },
+    {
       "path": "mcp/agent-daemon-memory/README.md",
       "rules": ["A"],
       "match": "Install \\(Claude Code, Codex, Cursor(, VS Code, Gemini CLI)?\\)",
@@ -688,6 +760,11 @@
       "reason": "L3 part 3c: setup's items in the user's own Codex install (a fake CODEX_HOME: its config.toml, hooks.json and trust keys), not ad's engine"
     },
     {
+      "path": "runtime/test/memory-codex-entry.test.mjs",
+      "rules": ["A"],
+      "reason": "L3 part 3d: the memory server's entry in the user's own Codex config.toml (a fake CODEX_HOME), including what that host's `mcp add` leaves of 3.1.0's block; not ad's engine"
+    },
+    {
       "path": "runtime/src/memory/codex-marker.mjs",
       "rules": ["A"],
       "reason": "L3 part 3c (D22): session.start for the user's own Codex host checks the marker setup wrote into that host's config.toml; it names the host it checks"
@@ -728,6 +805,30 @@
       "path": "tools/spikes/",
       "rules": ["A"],
       "reason": "MCP platform L0 spikes: scripts that drive the real host binaries (claude, codex) and their homes by name in throwaway folders"
+    },
+    {
+      "path": "runtime/src/memory/prompt-screen.mjs",
+      "rules": ["A"],
+      "match": "codex|openai",
+      "reason": "L5's prompt screen matches text that addresses or impersonates coding agents and their vendors (\"if you are Codex\", \"from the OpenAI team\", `.codex/config.toml`); naming them is the point"
+    },
+    {
+      "path": "runtime/test/capture-gates.test.mjs",
+      "rules": ["A"],
+      "match": "codex",
+      "reason": "the poisoning gate simulates each corpus item's host (claude-code or codex) and its prompt-source signals"
+    },
+    {
+      "path": "runtime/test/capture-prompt.test.mjs",
+      "rules": ["A"],
+      "match": "Codex skill",
+      "reason": "names the Codex skill form of the remember command ($<pkg>-remember)"
+    },
+    {
+      "path": "runtime/test/fixtures/capture/poisoning-dev.jsonl",
+      "rules": ["A"],
+      "match": "\"codex\"|codex exec|codex-subagent",
+      "reason": "the L5 poisoning dev set mirrors the held-out corpus schema: a host field and Codex prompt sources (codex exec, Codex subagent turns)"
     }
   ]
 }

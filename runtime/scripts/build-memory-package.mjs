@@ -34,7 +34,8 @@ export const FORBIDDEN = [/^src\/engine\//, /^src\/harness\//, /^src\/tui\//];
 const FORBIDDEN_BARE = new Set(["@openai/codex", "chokidar"]);
 
 // import … from "x"; import "x"; export … from "x"; import("x") with a literal.
-const SPEC_RE = /(?:^|[^\w$.])(?:import|export)\s*(?:[\w${},*\s]+?\s*from\s*)?["']([^"']+)["']|(?:^|[^\w$.])import\(\s*["']([^"']+)["']\s*\)/g;
+// Never right after a quote: the string "import" (a provenance value) is no statement.
+const SPEC_RE = /(?:^|[^\w$."'`])(?:import|export)\s*(?:[\w${},*\s]+?\s*from\s*)?["']([^"']+)["']|(?:^|[^\w$."'`])import\(\s*["']([^"']+)["']\s*\)/g;
 
 /** Every specifier a source file imports (comments stripped first). */
 export function specifiers(source) {

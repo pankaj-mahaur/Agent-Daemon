@@ -273,11 +273,10 @@ const INSERT_LEARNING_SQL = `INSERT OR IGNORE INTO learnings
   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
 const LEARNING_STATUSES = new Set(["pending", "quarantined"]);
-
 // Where a note came from (L5 decision 14). Only user-prompt (a first-party typed prompt)
 // and user-cli (CLI remember with the review token) are the user's proven words; every
 // other value, and an unknown one (stored NULL), is not.
-export const PROVENANCES = Object.freeze(["user-prompt", "prompt", "headless", "user-cli", "agent", "buffered", "digest", `import`, "transcript", "instruction-file"]); // `import` in backticks: the package closure scanner reads a quoted "import" as a module specifier
+export const PROVENANCES = Object.freeze(["user-prompt", "prompt", "headless", "user-cli", "agent", "buffered", "digest", "tool", `import`, "transcript", "instruction-file"]); // `import` in backticks: the package closure scanner reads a quoted "import" as a module specifier
 
 function redactLearning(l) {
   const r = (s) => (typeof s === "string" ? redactSecrets(s).text : s);

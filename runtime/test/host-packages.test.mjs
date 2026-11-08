@@ -83,8 +83,17 @@ test("Claude Code: marketplace and plugin manifests, ./ paths, the hooks wrapper
   assert.equal(json(path.join(CC_PLUGIN, ".claude-plugin", "plugin.json")).name, NAME);
   const hooks = json(path.join(CC_PLUGIN, "hooks", "hooks.json"));
   assert.ok(hooks.hooks?.UserPromptSubmit && hooks.hooks?.SessionStart, "the event map sits under \"hooks\"");
-  const commands = Object.values(hooks.hooks).flatMap((gs) => gs.flatMap((g) => g.hooks.map((h) => h.command)));
-  for (const c of commands) assert.match(c, /^node "\$\{CLAUDE_PLUGIN_ROOT\}\/server\/hook\.mjs" (prompt\.submit|session\.start|tool\.after|subagent\.stop) --host claude-code --plugin$/);
+  // L3 D18: exec form (no shell in front), the plugin's own copy, memory events only.
+  const handlers = Object.values(hooks.hooks).flatMap((gs) => gs.flatMap((g) => g.hooks));
+  for (const h of handlers) {
+    assert.equal(h.command, "node", JSON.stringify(h));
+    assert.equal(h.args[0], "${CLAUDE_PLUGIN_ROOT}/server/hook.mjs");
+    assert.match(h.args[1], /^(prompt\.submit|session\.start|tool\.after|subagent\.stop)$/);
+    assert.deepEqual(h.args.slice(2), ["--host", "claude-code", "--plugin"]);
+  }
+  // No tool.before in the plugin: setup writes it (a plugin can't require a Claude Code version).
+  assert.equal(hooks.hooks.PreToolUse, undefined);
+  assert.ok(!handlers.some((h) => h.args.includes("tool.before")));
   // The prompts the model scheduled and the subagents' reports are recorded, so they aren't captured as typed.
   assert.equal(hooks.hooks.PostToolUse[0].matcher, "CronCreate|ScheduleWakeup");
   assert.ok(hooks.hooks.SubagentStop);
@@ -93,6 +102,34 @@ test("Claude Code: marketplace and plugin manifests, ./ paths, the hooks wrapper
   assert.ok(server.args.includes("${CLAUDE_PLUGIN_ROOT}/server/server.mjs"));
   assert.deepEqual(server.args.slice(-2), ["--project", "${CLAUDE_PROJECT_DIR:-}"], "a default, so a missing variable isn't a config error");
   assert.ok(fs.existsSync(path.join(CC_PLUGIN, "skills", NAME, "SKILL.md")));
+});
+
+test("Claude Code: the command skills (typed only), the memory skill (model-invocable), README, LICENSE, author, icon", () => {
+  const front = (f) => /^---\r?\n([\s\S]*?)\r?\n---/.exec(fs.readFileSync(f, "utf8"))[1];
+  for (const c of ["remember", "recall", "report"]) {
+    const f = path.join(CC_PLUGIN, "skills", c, "SKILL.md");
+    assert.match(front(f), /^disable-model-invocation: true$/m, `${c}: only when the user types /${NAME}:${c}`);
+    assert.match(front(f), new RegExp(`^name: ${c}$`, "m"));
+    assert.ok(fs.readFileSync(f, "utf8").includes(`npx -y ${NAME}@${version} `), `${c}: commands pinned to this version`);
+  }
+  assert.doesNotMatch(front(path.join(CC_PLUGIN, "skills", NAME, "SKILL.md")), /disable-model-invocation/, "the memory skill stays model-invocable");
+  assert.deepEqual(fs.readdirSync(path.join(CC_PLUGIN, "skills")).sort(), [NAME, "recall", "remember", "report"].sort(), "no forget before L5");
+  // The plugin directory refuses a plugin without a README (40+ words) and a licence; it warns without author and icon.
+  const readme = fs.readFileSync(path.join(CC_PLUGIN, "README.md"), "utf8");
+  assert.ok(readme.split(/\s+/).filter(Boolean).length >= 40);
+  assert.ok(readme.includes("2.1.314 or later"), "the exec-form version the plugin can't require");
+  assert.ok(readme.includes(`npx -y ${NAME}@${version} setup`) && readme.includes(`/plugin uninstall ${NAME}@`) && readme.includes(`npx -y ${NAME}@${version} uninstall`), "setup, and both uninstall steps, pinned");
+  assert.ok(fs.readFileSync(path.join(CC_PLUGIN, "LICENSE"), "utf8").length > 100);
+  const manifest = json(path.join(CC_PLUGIN, ".claude-plugin", "plugin.json"));
+  assert.ok(manifest.author?.name && manifest.license === "MIT");
+  // A square PNG of 512 px (the directory takes 512–2048, under 2 MB), the same bytes every build.
+  const png = fs.readFileSync(path.join(CC_PLUGIN, ".claude-plugin", "icon.png"));
+  assert.deepEqual([...png.subarray(0, 8)], [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  assert.equal(png.toString("ascii", 12, 16), "IHDR");
+  assert.deepEqual([png.readUInt32BE(16), png.readUInt32BE(20)], [512, 512]);
+  assert.ok(png.length < 2 * 1024 * 1024);
+  const again = build({ out: path.join(TMP, "again"), targets: ["claude-code"] });
+  assert.ok(fs.readFileSync(path.join(again.built["claude-code"], "plugins", NAME, ".claude-plugin", "icon.png")).equals(png), "deterministic");
 });
 
 const CURSOR = built.cursor;
@@ -189,7 +226,8 @@ function startServer(script, args, env) {
 }
 const tempHome = () => {
   const h = fs.mkdtempSync(path.join(TMP, "home-"));
-  return { h, env: { ...process.env, HOME: h, USERPROFILE: h, AD_ROOT: path.join(h, ".agent-daemon"), CLAUDE_CONFIG_DIR: path.join(h, ".claude"), CLAUDE_PROJECT_DIR: "", AD_MEMORY_PROJECT: "" } };
+  // The runner's own session markers (a headless run, ad's worker) never leak into the hooks.
+  return { h, env: { ...process.env, HOME: h, USERPROFILE: h, AD_ROOT: path.join(h, ".agent-daemon"), CLAUDE_CONFIG_DIR: path.join(h, ".claude"), CLAUDE_PROJECT_DIR: "", AD_MEMORY_PROJECT: "", CLAUDE_CODE_ENTRYPOINT: "", CLAUDE_CODE_SESSION_ATTENDED: "", AD_WORKER: "", CLAUDE_ENV_FILE: "" } };
 };
 
 test("each built server answers server/discover and a legacy initialize, with the package version", async () => {
@@ -231,6 +269,24 @@ test("unexpanded variables: an unexpanded script path fails in Node (the install
 function runHook(event, env, payload, cwd) {
   return spawnSync(process.execPath, [path.join(CC_PLUGIN, "server", "hook.mjs"), event, "--host", "claude-code", "--plugin"], { env, cwd, input: JSON.stringify(payload), encoding: "utf8", timeout: 20000 });
 }
+// Captures land in the journal, or straight in the store once a current one exists (L5):
+// count both. The store is read only when it exists (opening it would create one).
+async function captures(h) {
+  let n = journals(h).length;
+  const file = path.join(h, ".agent-daemon", "episodic.db");
+  if (fs.existsSync(file)) {
+    const { openDatabase } = await import("../src/memory/driver.mjs");
+    const db = await openDatabase(file, { readonly: true });
+    try {
+      n += db.prepare("SELECT COUNT(*) AS n FROM learnings").get().n;
+    } catch {
+      // no table yet
+    } finally {
+      db.close();
+    }
+  }
+  return n;
+}
 const journals = (h) => {
   const root = path.join(h, ".agent-daemon", "projects");
   return fs.existsSync(root) ? walk(root).filter((f) => /learning-journal/.test(path.basename(f))) : [];
@@ -269,7 +325,7 @@ test("the plugin's hooks: capture into ad's folder (never the repo), then drain;
   assert.ok(!fs.existsSync(path.join(repo, ".agent-daemon")));
 });
 
-test("duplicate guard: with ad init's hooks in Claude Code's settings, the plugin's hook for that step does nothing", () => {
+test("duplicate guard: with ad init's hooks in Claude Code's settings, the plugin's hook for that step does nothing", async () => {
   const { h, env } = tempHome();
   const repo = path.join(h, "work", "shop-app");
   fs.mkdirSync(path.join(repo, ".git"), { recursive: true });
@@ -281,19 +337,23 @@ test("duplicate guard: with ad init's hooks in Claude Code's settings, the plugi
   assert.equal(r.status, 0);
   assert.deepEqual(JSON.parse(r.stdout), {}, "recall (not among ad's entries) ran and found nothing");
   assert.equal(journals(h).length, 0, "ad's own hook captures; the plugin's doesn't");
-  assert.equal(runHook("session.start", env, { cwd: repo }, repo).stdout, "{}");
+  // Passed through: nothing injected. (No tool.before entry yet, so the plugin may add its
+  // weekly setup line: L3 D19, before any skip.)
+  const passed = JSON.parse(runHook("session.start", env, { cwd: repo }, repo).stdout);
+  assert.equal(passed.hookSpecificOutput, undefined);
+  assert.match(passed.systemMessage ?? "", /^One terminal step finishes setup/);
   // ad init's dispatcher routes: the plugin's hooks pass through whole.
   const hookPath = path.join(h, "ad", "runtime", "bin", "hook.mjs");
   fs.mkdirSync(path.dirname(hookPath), { recursive: true });
   fs.writeFileSync(hookPath, "");
   fs.writeFileSync(settings, JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: "command", command: "node", args: [hookPath, "prompt.submit"] }] }], SessionStart: [{ hooks: [{ type: "command", command: "node", args: [hookPath, "session.start"] }] }] } }));
   runHook("prompt.submit", env, { session_id: "s1", cwd: repo, prompt: "Actually we use pnpm for installs, not npm." }, repo);
-  assert.equal(journals(h).length, 0);
-  assert.equal(runHook("session.start", env, { cwd: repo }, repo).stdout, "{}");
+  assert.equal(await captures(h), 0);
+  assert.equal(runHook("session.start", env, { cwd: repo }, repo).stdout, "{}", "and the setup line only once a week");
   // The script those routes run is gone (an ad init from a removed checkout): they can't run, so the plugin's do.
   fs.rmSync(hookPath);
   runHook("prompt.submit", env, { session_id: "s1", cwd: repo, prompt: "Actually we use pnpm for installs, not npm." }, repo);
-  assert.equal(journals(h).length, 1, "the plugin captures again");
+  assert.equal(await captures(h), 1, "the plugin captures again");
 });
 
 test("duplicate guard: only ad's own commands count; a conditional hook or another tool's never silences the plugin", () => {

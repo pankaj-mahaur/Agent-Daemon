@@ -60,6 +60,9 @@ export async function reviewToken({ ask, out, dialog = confirmByDialog, ...check
   return proved?.ok ? { token: mint() } : { refused: proved?.text ?? "accepting notes needs the dialog code." };
 }
 
+/** Is this a token the review service issued (in this process)? */
+export const isReviewToken = (token) => Boolean(token && typeof token === "object" && issued.has(token));
+
 function must(token) {
   if (!issued.has(token)) throw new Error("review service: this needs a review token (ad review, in your own terminal)");
 }

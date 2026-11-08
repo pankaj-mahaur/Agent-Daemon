@@ -65,7 +65,7 @@ test("Codex: hooks in hooks.json with the exact line, the marker in config.toml;
   assert.equal(fs.readFileSync(t.config, "utf8"), `${USER_TOML}\n[shell_environment_policy.set]\nAD_TOOL_SHELL = "1"\n`);
   assert.match(t.text(), /run \/hooks to trust ad's hooks/);
   const items = readLedger2(t.env.AD_ROOT).items.filter((i) => i.host === "codex");
-  assert.deepEqual(items.map((i) => i.kind).sort(), ["env", "hook", "hook", "hook"]);
+  assert.deepEqual(items.map((i) => i.kind).sort(), ["env", "hook", "hook", "hook", "skill-dir", "skill-dir", "skill-dir"], "the command skills too (P4, D20)");
   const bytes = [fs.readFileSync(t.config), fs.readFileSync(t.hooksFile)];
   assert.equal(await S.setup({ ctx: t.ctx, hosts: ["codex"] }), 0);
   assert.ok(fs.readFileSync(t.config).equals(bytes[0]) && fs.readFileSync(t.hooksFile).equals(bytes[1]), "the same bytes: Codex's trust in them holds");
@@ -365,4 +365,67 @@ test("install --no-setup: the MCP entry only, without setup's preview or files",
   assert.equal(await install({ ctx: u.ctx, hosts: ["codex"], yes: true }), 0, u.text());
   assert.match(u.text(), /setup: add the session\.start hook/);
   assert.ok(fs.existsSync(u.hooksFile));
+});
+
+test("trust doctor: each of ad's Codex hooks is pending, trusted, modified, disabled, changed — or can't be confirmed on a newer Codex", async () => {
+  const t = home({ config: "" });
+  assert.equal(await S.setup({ ctx: t.ctx, hosts: ["codex"] }), 0);
+  const states = () => Object.fromEntries(S.codexTrust(t.ctx).map((x) => [x.item.locator.event, x.state]));
+  assert.deepEqual(states(), { "session.start": "pending", "prompt.submit": "pending", "tool.before": "pending" });
+  const rows = S.codexTrust(t.ctx);
+  const key = (ev) => rows.find((x) => x.item.locator.event === ev).key;
+  assert.equal(key("session.start"), `${t.hooksFile}:session_start:0:0`, "Codex's positional key");
+  // Trust as Codex records it (trusted_hash under hooks.state), a stale hash, and a hook turned off.
+  const ss = t.json().hooks.SessionStart[0].hooks[0];
+  const tb = t.json().hooks.PreToolUse[0];
+  const state = [
+    `[hooks.state.${JSON.stringify(key("session.start"))}]`, `trusted_hash = "${S.codexTrustHash("SessionStart", null, ss)}"`,
+    `[hooks.state.${JSON.stringify(key("tool.before"))}]`, `trusted_hash = "${S.codexTrustHash("PreToolUse", "Bash", tb.hooks[0])}"`,
+    `[hooks.state.${JSON.stringify(key("prompt.submit"))}]`, "enabled = false", "",
+  ].join("\n");
+  fs.appendFileSync(t.config, state);
+  assert.deepEqual(states(), { "session.start": "trusted", "prompt.submit": "disabled", "tool.before": "modified" });
+  assert.equal(S.codexTrust(t.ctx, { codexVersion: "99.0.0" }).find((x) => x.item.locator.event === "tool.before").state, "unknown");
+  assert.equal(S.codexTrust(t.ctx, { codexVersion: "99.0.0" }).find((x) => x.item.locator.event === "session.start").state, "trusted", "an equal hash is trusted on any version");
+  // Doctor says it in words.
+  const { doctor } = await import("../src/memory-install/doctor.mjs");
+  t.lines.length = 0;
+  await doctor({ ctx: t.ctx });
+  assert.match(t.text(), /✗ Codex hooks\.trust: trusted: session\.start; Codex won't run tool\.before until you review it again in \/hooks; turned off in \/hooks: prompt\.submit/);
+  // The user edits ad's entry: theirs now, not a trust question.
+  const j = t.json();
+  j.hooks.SessionStart[0].hooks[0].command += " --mine";
+  fs.writeFileSync(t.hooksFile, JSON.stringify(j, null, 2));
+  assert.equal(states()["session.start"], "changed");
+});
+
+test("the trust hash is checked on the engine ad pins", async () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(RUNTIME, "package.json"), "utf8"));
+  assert.equal(S.TRUST_HASH_CHECKED_ON, pkg.dependencies["@openai/codex"], "a new engine pin re-runs the golden test (memory-host-codex.test.mjs) and moves this");
+  // The formula on a known value (the pinned engine's hooks/list gave this for this group).
+  const cmd = 'node "/tmp/ad-trust-spike-LtCMHc/ad/memory/launch/run.mjs" hook session.start --host codex';
+  assert.equal(S.codexTrustHash("SessionStart", null, { type: "command", command: cmd, timeout: 10 }), "sha256:5284a0d9169dcc09a91fe93e7b20a2141ecc47cc20e8b5b55bcb51835f0fd508");
+});
+
+test("uninstall from an editor's terminal: no terminal, no dialog, no rules — it never asks and removes everything", async () => {
+  const t = home({ config: USER_TOML });
+  assert.equal(await S.setup({ ctx: t.ctx, hosts: ["codex"] }), 0);
+  t.ctx.isTTY = () => false;
+  t.ctx.confirmReview = async () => {
+    throw new Error("asked for the review gate with no rules");
+  };
+  assert.equal(await uninstall({ ctx: t.ctx, hosts: ["codex"] }), 0, t.text());
+  assert.equal(fs.readFileSync(t.config, "utf8"), USER_TOML);
+});
+
+test("review: with a linked CODEX_HOME the trust key uses the real folder, as Codex does", { skip: process.platform === "win32" ? "symlinks need privileges on Windows" : false }, async () => {
+  const t = home({ config: "" });
+  const real = fs.mkdtempSync(path.join(os.tmpdir(), "ad-real-codex-"));
+  made.push(real);
+  fs.cpSync(path.join(t.h, ".codex"), real, { recursive: true });
+  fs.rmSync(path.join(t.h, ".codex"), { recursive: true });
+  fs.symlinkSync(real, path.join(t.h, ".codex"));
+  assert.equal(await S.setup({ ctx: t.ctx, hosts: ["codex"] }), 0, t.text());
+  const rows = S.codexTrust(t.ctx);
+  assert.ok(rows.every((r) => r.key.startsWith(`${fs.realpathSync.native(real)}${path.sep}hooks.json:`)), rows.map((r) => r.key).join("\n"));
 });

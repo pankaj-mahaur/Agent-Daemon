@@ -5,11 +5,15 @@
 // Targets (P5.4a):
 //   claude-code   <out>/claude-code: a marketplace repo tree
 //                   .claude-plugin/marketplace.json
-//                   plugins/agent-daemon-memory/{.claude-plugin/plugin.json, .mcp.json,
-//                     hooks/hooks.json, skills/agent-daemon-memory/SKILL.md, server/}
-//                 hooks: ad's hook dispatcher with --plugin (UserPromptSubmit: capture,
-//                 recall; SessionStart; the scheduled-prompt and subagent records);
-//                 capture files go to projectDataDir (P5.2), so no repo gets a folder.
+//                   plugins/agent-daemon-memory/{.claude-plugin/{plugin.json, icon.png},
+//                     .mcp.json, hooks/hooks.json, skills/agent-daemon-memory/SKILL.md,
+//                     skills/{remember,recall,report}/SKILL.md, server/, README.md, LICENSE}
+//                 hooks: ad's hook dispatcher with --plugin, exec form (L3, D18): no
+//                 shell in front, so a path with spaces or a missing Git Bash can't break
+//                 it; needs Claude Code 2.1.314+. UserPromptSubmit: capture, remember,
+//                 recall; SessionStart; the scheduled-prompt and subagent records. No
+//                 tool.before: setup writes that one (a plugin can't require a version).
+//                 Capture files go to projectDataDir (P5.2), so no repo gets a folder.
 //   agent-plugin  <out>/agent-plugin/agent-daemon-memory: Agent Plugins 1.0.0
 //                 (VS Code, Copilot, Kiro, OpenHands…): plugin.json, mcp.json, skills/,
 //                 server/; record tools only. These hosts start servers in the plugin
@@ -32,14 +36,17 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { closure, HOOK_ENTRIES } from "./build-memory-package.mjs";
-import { PRODUCT } from "../src/product.mjs";
+import { PRODUCT, pinnedCommand } from "../src/product.mjs";
 import { renderAll } from "./render-copy.mjs";
 import { renderSkill } from "../src/hosts/skill-formats.mjs";
+import { COMMANDS, invocation, renderCommandSkill } from "../src/memory-install/command-skills.mjs";
+import { EXEC_FORM_MIN_VERSION } from "../src/hooks/routes.mjs";
+import { iconPng } from "./plugin-icon.mjs";
 
 const RUNTIME = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const REPO = path.resolve(RUNTIME, "..");
 export const NAME = PRODUCT.plugin;
-export const TARGETS = ["claude-code", "agent-plugin", "cursor", "gemini", "registry"];
+export const TARGETS = ["claude-code", "product-repo", "agent-plugin", "cursor", "gemini", "registry"];
 // The plugin's server/: the MCP server, the hook entries (memory-package's
 // HOOK_ENTRIES) and the report (run offline by the plugin's report command). No
 // installer module: a plugin can't install the parsers they need.
@@ -107,13 +114,100 @@ function writeCommon(pluginDir, version) {
   fs.copyFileSync(path.join(REPO, "LICENSE"), path.join(pluginDir, "LICENSE"));
 }
 
-// One hook command: node and the dispatcher by the plugin's own path, quoted (a
-// path may have spaces). Shell form: whether Claude Code expands
-// ${CLAUDE_PLUGIN_ROOT} inside an exec-form `args` isn't verified yet.
-const claudeHook = (event, timeout = 10) => ({ type: "command", command: `node "\${CLAUDE_PLUGIN_ROOT}/server/hook.mjs" ${event} --host claude-code --plugin`, timeout });
+// One hook: node and the dispatcher by the plugin's own path, in exec form (S-L3P:
+// Claude Code expands ${CLAUDE_PLUGIN_ROOT} in `args`), so no shell parses it.
+export const claudeHook = (event, timeout = 10, form = "exec") =>
+  form === "string"
+    ? // The shell form, for the old marketplace's users on Claude Code before 2.1.314 (D24).
+      { type: "command", command: `node "\${CLAUDE_PLUGIN_ROOT}/server/hook.mjs" ${event} --host claude-code --plugin`, timeout }
+    : { type: "command", command: "node", args: ["${CLAUDE_PLUGIN_ROOT}/server/hook.mjs", event, "--host", "claude-code", "--plugin"], timeout };
+export const HOOK_FORMS = ["exec", "string"];
 
-function buildClaudeCode(out, version) {
-  const root = path.join(out, "claude-code");
+// The command skills (D20): typed only, never picked by the model.
+function writeCommandSkills(pluginDir, version) {
+  for (const c of COMMANDS) {
+    for (const f of renderCommandSkill("claude-code", c, { version })) {
+      const dest = path.join(pluginDir, "skills", c, f.path);
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.writeFileSync(dest, f.text);
+    }
+  }
+}
+
+// The plugin folder's README: the plugin directory refuses a plugin without one.
+const requirement = (form) =>
+  form === "string"
+    ? `- This build's hooks are command strings, for Claude Code before ${EXEC_FORM_MIN_VERSION}. On ${EXEC_FORM_MIN_VERSION} or later, install the plugin from the product's own repository (its hooks need no shell).`
+    : `- Claude Code ${EXEC_FORM_MIN_VERSION} or later. The plugin's hooks use the exec form; an older Claude Code may ignore their arguments and show a hook error on each prompt.`;
+const pluginReadme = (version, form = "exec") => `# ${PRODUCT.displayName} for Claude Code
+
+${DESCRIPTION}
+
+## Install
+
+\`\`\`
+/plugin marketplace add <this repository>
+/plugin install ${NAME}@${PRODUCT.marketplace}
+\`\`\`
+
+Then one step in your own terminal finishes setup. It marks the agent's shell, so the review can tell you from the agent, and adds the check that later runs your rules before a tool call:
+
+\`\`\`
+${pinnedCommand("setup", version)}
+\`\`\`
+
+Until you run it, the plugin says so once a week at session start.
+
+## Commands
+
+- \`${invocation("claude-code", "remember")} <text>\`: save a note. It is saved for review (you see "Saved for review: …") and recalled only after you accept it.
+- \`${invocation("claude-code", "recall")} <topic>\`: search your notes from earlier sessions in this project.
+- \`${invocation("claude-code", "report")}\`: is memory working here: what it captured, what waits for review, what it recalled.
+
+Review and accept notes in your own terminal: \`${pinnedCommand("review", version)}\`.
+
+## Requirements
+
+${requirement(form)}
+- Node.js 22.16 or later on your PATH (the plugin uses Node's own SQLite; nothing to build).
+
+## Uninstall
+
+\`/plugin uninstall ${NAME}@${PRODUCT.marketplace}\`, then in your own terminal \`${pinnedCommand("uninstall", version)}\` (it removes what setup added and keeps anything you changed).
+
+Your notes stay on this computer. Generated from ${REPOSITORY} (version ${version}); don't edit here.
+`;
+
+// The product repository's front page (D24): the Claude Code plugin first, then the
+// npm package's own README (one source for every other host). repo: the repository's
+// owner/name when the release knows it (vars.PRODUCT_REPO), for a copyable command.
+function productReadme(version, repo) {
+  const npmReadme = fs.readFileSync(path.join(REPO, "packages", PRODUCT.package, "README.md"), "utf8").replace(/\r\n/g, "\n").replace(/^# .*\n+/, "");
+  return `# ${PRODUCT.displayName}
+
+${DESCRIPTION}
+
+## Claude Code
+
+\`\`\`
+/plugin marketplace add ${repo || "<this repository>"}
+/plugin install ${NAME}@${PRODUCT.marketplace}
+\`\`\`
+
+Then, in your own terminal: \`${pinnedCommand("setup", version)}\`. The plugin's commands, requirements and uninstall steps are in [its README](plugins/${NAME}/README.md).
+
+## Every other agent: the npm package
+
+${npmReadme.trimEnd()}
+
+Generated from ${REPOSITORY} (version ${version}); don't edit here.
+`;
+}
+
+function buildClaudeCode(out, version, { hookForm = "exec", dir = "claude-code", rootReadme } = {}) {
+  if (!HOOK_FORMS.includes(hookForm)) throw new Error(`unknown hook form "${hookForm}" (${HOOK_FORMS.join(", ")})`);
+  const claudeHook_ = (event, timeout) => claudeHook(event, timeout, hookForm);
+  const root = path.join(out, dir);
   const plugin = path.join(root, "plugins", NAME);
   writeJson(path.join(root, ".claude-plugin", "marketplace.json"), {
     name: PRODUCT.marketplace,
@@ -144,16 +238,19 @@ function buildClaudeCode(out, version) {
   writeJson(path.join(plugin, "hooks", "hooks.json"), {
     description: `${PRODUCT.plugin}: capture the user's corrections, recall notes for the prompt, show this project's notes at session start.`,
     hooks: {
-      UserPromptSubmit: [{ hooks: [claudeHook("prompt.submit")] }],
-      SessionStart: [{ hooks: [claudeHook("session.start")] }],
-      PostToolUse: [{ matcher: "CronCreate|ScheduleWakeup", hooks: [claudeHook("tool.after", 5)] }],
-      SubagentStop: [{ hooks: [claudeHook("subagent.stop", 5)] }],
+      UserPromptSubmit: [{ hooks: [claudeHook_("prompt.submit")] }],
+      SessionStart: [{ hooks: [claudeHook_("session.start")] }],
+      PostToolUse: [{ matcher: "CronCreate|ScheduleWakeup", hooks: [claudeHook_("tool.after", 5)] }],
+      SubagentStop: [{ hooks: [claudeHook_("subagent.stop", 5)] }],
     },
   });
   writeCommon(plugin, version);
+  writeCommandSkills(plugin, version);
+  fs.writeFileSync(path.join(plugin, "README.md"), pluginReadme(version, hookForm));
+  fs.writeFileSync(path.join(plugin, ".claude-plugin", "icon.png"), iconPng());
   fs.writeFileSync(
     path.join(root, "README.md"),
-    `# Agent Daemon plugins for Claude Code\n\n\`\`\`\n/plugin marketplace add <this repository>\n/plugin install ${NAME}@${PRODUCT.marketplace}\n\`\`\`\n\n${DESCRIPTION}\n\nGenerated from ${REPOSITORY} (version ${version}); don't edit here.\n`
+    rootReadme ?? `# Agent Daemon plugins for Claude Code\n\n\`\`\`\n/plugin marketplace add <this repository>\n/plugin install ${NAME}@${PRODUCT.marketplace}\n\`\`\`\n\n${DESCRIPTION}\n\nGenerated from ${REPOSITORY} (version ${version}); don't edit here.\n`
   );
   return root;
 }
@@ -269,7 +366,15 @@ function buildRegistry(out, version) {
   return dir;
 }
 
-const BUILDERS = { "claude-code": buildClaudeCode, "agent-plugin": buildAgentPlugin, cursor: buildCursor, gemini: buildGemini, registry: buildRegistry };
+const BUILDERS = {
+  "claude-code": (out, version, o) => buildClaudeCode(out, version, { hookForm: o.hookForm }),
+  // The product repository (D24): the same marketplace, with the product's front page.
+  "product-repo": (out, version, o) => buildClaudeCode(out, version, { hookForm: o.hookForm, dir: "product-repo", rootReadme: productReadme(version, o.productRepo) }),
+  "agent-plugin": buildAgentPlugin,
+  cursor: buildCursor,
+  gemini: buildGemini,
+  registry: buildRegistry,
+};
 
 // A folder this script made: only such a folder (or an empty one) is ever emptied.
 export const BUILD_MARK = ".agent-daemon-host-build";
@@ -285,7 +390,9 @@ export function checkOut(out) {
 }
 
 /** Build `targets` into `out` (emptied first, if this script made it). → { version, built: {target: dir} } */
-export function build({ out, targets = TARGETS } = {}) {
+export function build({ out, targets = TARGETS, hookForm = "exec", productRepo = process.env.PRODUCT_REPO } = {}) {
+  // owner/name only (vars.PRODUCT_REPO): anything else leaves the README's placeholder.
+  if (productRepo && !/^[\w.-]+\/[\w.-]+$/.test(productRepo)) productRepo = undefined;
   if (!out) throw new Error("--out <dir> is required");
   const version = packageVersion();
   const runtimeVersion = JSON.parse(fs.readFileSync(path.join(RUNTIME, "package.json"), "utf8")).version;
@@ -297,7 +404,7 @@ export function build({ out, targets = TARGETS } = {}) {
   const built = {};
   for (const t of targets) {
     if (!BUILDERS[t]) throw new Error(`unknown target "${t}" (${TARGETS.join(", ")})`);
-    built[t] = BUILDERS[t](out, version);
+    built[t] = BUILDERS[t](out, version, { hookForm, productRepo });
   }
   return { version, built };
 }

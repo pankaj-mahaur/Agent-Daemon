@@ -137,7 +137,8 @@ export async function runScenario(name, sc, { outDir, keep = false } = {}) {
   fs.writeFileSync(path.join(configDir, "settings.json"), JSON.stringify(settings, null, 2));
 
   const mock = await startMockAnthropic({ rulesFile });
-  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(CLAUDE|ANTHROPIC|CODEX|OPENAI|AD)_/i.test(k)));
+  // CLAUDECODE too: run from inside a Claude Code session, it makes the nested one a child session.
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(CLAUDE|ANTHROPIC|CODEX|OPENAI|AD)_/i.test(k) && k !== "CLAUDECODE"));
   Object.assign(env, {
     HOME: home,
     USERPROFILE: home,

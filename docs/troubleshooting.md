@@ -1095,6 +1095,19 @@ The hook log (`~/.agent-daemon/hooks/hook.log`, shown by `ad doctor`) records ea
 
 **Fix:** usually none: the next session finds the store upgraded and drains the journal. If the message keeps coming, run any `ad` command that opens memory (`ad doctor`, `ad memory held`): it upgrades the store in the foreground and shows an error if it can't. For "newer", update the ad your hooks run (`ad doctor` shows its path under `Hook script`), or the memory plugin if it is the one logging.
 
+## 100. Remember: "Nothing saved: …" or no "Saved for review" line
+
+**Symptom:** after `/agent-daemon-memory:remember <text>` (Claude Code) or `$agent-daemon-memory-remember <text>` (Codex), the agent says nothing was saved, or you see no `Saved for review: …` line.
+
+**Cause and fix**, by what the line says:
+- **`type … followed by what to remember`**: the command had no text. Type it again with the note after it.
+- **`the note is too long`**: a remembered note is at most 2,000 characters. Save the gist.
+- **`this folder shares its memory with another folder`**: two project folders map to one memory key, so neither captures. `ad doctor` names them.
+- **`ad's own hooks here are from an older ad`**: `ad init` wired this project's prompt hook to an ad that predates remember, and that hook would capture the same prompt as an ordinary correction. Update ad and run `ad init` again.
+- **No line at all**: capture isn't running for that host. Run `npx -y agent-daemon-memory doctor` in your own terminal. On Claude Code the plugin's hooks need 2.1.314 or later. On Codex, run `setup --host codex` and trust the hooks with `/hooks`. A short `/remember` counts only while the plugin is on and no other command, skill or plugin of yours is called `remember`; type the full `/agent-daemon-memory:remember` otherwise.
+
+A saved note waits for your review: accept it with `npx -y agent-daemon-memory review` in your own terminal.
+
 ---
 
 For harness problems, the [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill walks through login → hooks → sandbox → the engine's own log. See also [harness.md](harness.md) and, for the terminal UI, [tui.md](tui.md).

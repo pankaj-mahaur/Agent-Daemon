@@ -6,14 +6,15 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { availableDrivers } from "../memory/driver.mjs";
 import { HOSTS, SERVER_NAME, claudeHasAdHooks, claudePluginEnabled, hostById } from "./hosts.mjs";
 import { readLedger } from "./ledger.mjs";
 import { inspect } from "./fsx.mjs";
 import { jsonEntry } from "./edit-json.mjs";
 import { claudeGet } from "./claude-cli.mjs";
-import { makeContext } from "./install.mjs";
+import { currentDist, makeContext } from "./install.mjs";
+import { codexTrust } from "./setup.mjs";
 import { PRODUCT } from "../product.mjs";
 
 const MIN_NODE = [22, 13];
@@ -105,6 +106,11 @@ export async function doctor(opts = {}) {
 
   const ledger = readLedger(ctx.root);
   for (const [id, rec] of Object.entries(ledger.hosts)) {
+    if (Array.isArray(rec.entry?.args) && rec.entry.args.some((a) => /[\\/]memory[\\/]bin[\\/]launch\.mjs$/.test(String(a)))) {
+      // Claude Code with the plugin on: install leaves its entry alone (one route per host), so the old one goes.
+      const fix = id === "claude-code" && claudePluginEnabled(ctx.home, ctx.env) ? "the plugin serves memory now: run uninstall --host claude-code to remove it" : "run install to move it to the stable one";
+      add("entry.legacy", false, `still starts 3.1.0's launcher (memory/bin/launch.mjs): ${fix}`, id);
+    }
     const host = hostById(id);
     if (!host) continue;
     const entry = rec.entry;
@@ -159,12 +165,26 @@ export async function doctor(opts = {}) {
       add("entry.duplicate", !dup, dup ? `${proj} also defines ${PRODUCT.mcpServerKey} (Cursor shows it twice)` : "no project copy", id);
     }
   }
-  try {
-    const cur = JSON.parse(fs.readFileSync(path.join(ctx.root, "memory", "current.json"), "utf8"));
-    add("pkg.stale", !newer(ctx.version, cur.version), newer(ctx.version, cur.version) ? `installed ${cur.version}, this is ${ctx.version}: run install to update` : `installed ${cur.version}`);
-  } catch {
-    // not installed through npx: nothing to compare
+  // Codex runs a new or changed hook only once you trust it in /hooks (L3, D16).
+  // The Codex version matters only for a hash that doesn't match: asked then, not on every run.
+  let trust = codexTrust(ctx);
+  if (trust.some((t) => t.state === "modified")) trust = codexTrust(ctx, { codexVersion: codexVersionOf(ctx) });
+  if (trust.length) {
+    const by = (s) => trust.filter((t) => t.state === s).map((t) => t.item.locator.event);
+    const parts = [];
+    if (by("trusted").length) parts.push(`trusted: ${by("trusted").join(", ")}`);
+    if (by("pending").length) parts.push(`not reviewed yet: ${by("pending").join(", ")} (open Codex and run /hooks)`);
+    if (by("modified").length) parts.push(`Codex won't run ${by("modified").join(", ")} until you review ${by("modified").length === 1 ? "it" : "them"} again in /hooks`);
+    if (by("unknown").length) parts.push(`can't confirm ${by("unknown").join(", ")} on this Codex, newer than the one ad checked (see /hooks)`);
+    if (by("disabled").length) parts.push(`turned off in /hooks: ${by("disabled").join(", ")}`);
+    if (by("changed").length) parts.push(`you changed ad's ${by("changed").join(", ")} hook`);
+    add("hooks.trust", trust.every((t) => !["pending", "modified", "unknown"].includes(t.state)), parts.join("; ") || "no hooks of ad's found", "codex");
   }
+  // The plugin and Codex's command skills (L3 P4): their own module.
+  for (const c of await (await import("./doctor-product.mjs")).productChecks(ctx, opts)) add(c.code, c.ok, c.note, c.host);
+  // The newest copy the launcher runs (npx installs; none for a clone: nothing to compare).
+  const cur = currentDist(ctx.root);
+  if (cur) add("pkg.stale", !newer(ctx.version, cur), newer(ctx.version, cur) ? `installed ${cur}, this is ${ctx.version}: run install to update` : `installed ${cur}`);
 
   if (opts.json) ctx.out(JSON.stringify(checks));
   else {
@@ -172,4 +192,16 @@ export async function doctor(opts = {}) {
     if (!Object.keys(ledger.hosts).length) ctx.out(`No hosts set up yet: run install (${HOSTS.map((h) => h.id).join(", ")}).`);
   }
   return checks.every((c) => c.ok) ? 0 : 1;
+}
+
+// The user's Codex version (for the trust check), or null when it can't be asked.
+function codexVersionOf(ctx) {
+  const r = ctx.resolve("codex");
+  if (!r) return null;
+  try {
+    const p = spawnSync(r.cmd, [...(r.prefix ?? []), "--version"], { encoding: "utf8", timeout: 10_000, env: ctx.env, windowsHide: true });
+    return /(\d+\.\d+\.\d+)/.exec(p.stdout ?? "")?.[1] ?? null;
+  } catch {
+    return null;
+  }
 }

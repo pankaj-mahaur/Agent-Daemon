@@ -216,6 +216,8 @@ export function toLearning(e) {
     confidence: typeof e.confidence === "number" ? Math.max(0, Math.min(1, e.confidence)) : 0.5,
     tags: Array.isArray(e.tags) ? e.tags.slice(0, 12) : [],
     // The host's session id: deduplication only (P5.2), never a foreign key.
-    ...(typeof e.sessionId === "string" && e.sessionId ? { capture_ref: e.sessionId.slice(0, 128) } : {})
+    ...(typeof e.sessionId === "string" && e.sessionId ? { capture_ref: e.sessionId.slice(0, 128) } : {}),
+    // No provenance from the journal: anyone can write it, so the drain stores every line
+    // `buffered` (L5 decision 2), whatever the line claims.
   };
 }

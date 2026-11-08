@@ -255,7 +255,11 @@ function* walk(dir) {
 test("only capture-prompt.mjs and forget.mjs import the provisional writer; no other code writes 'provisional'", () => {
   const ALLOWED_IMPORTERS = new Set(["memory/capture-prompt.mjs", "memory/forget.mjs"]);
   const WRITE = /(?:status\s*=\s*'provisional'|status:\s*["'`]provisional["'`]|\bIN\s*\([^)]*'provisional'|THEN\s+'provisional'|VALUES\s*\([^)]*'provisional')/i;
-  const READS = new Set(["memory/trust.mjs", "memory/purge.mjs", "memory/review-mode.mjs", "portability/export.mjs", "memory/review-service.mjs"]);
+  const READS = new Set(["memory/trust.mjs", "memory/purge.mjs", "memory/review-mode.mjs", "portability/export.mjs", "memory/review-service.mjs", "memory/review-queue.mjs"]);
+  // capture-prompt.mjs returns "provisional" as a result status; it may never write it in SQL.
+  const SQL_WRITE = /(?:SET\s+status\s*=\s*'provisional'|VALUES\s*\([^)]*'provisional'|THEN\s+'provisional')/i;
+  assert.doesNotMatch(readFileSync(path.join(SRC, "memory/capture-prompt.mjs"), "utf8"), SQL_WRITE);
+  READS.add("memory/capture-prompt.mjs");
   for (const file of walk(SRC)) {
     const rel = path.relative(SRC, file).split(path.sep).join("/");
     const text = readFileSync(file, "utf8");
@@ -329,7 +333,8 @@ test("rememberAccepted: no project, nothing written; a hidden note it can't acce
 });
 
 test("only the review service and the provisional writer write the user's proven provenance", () => {
-  const ALLOWED = new Set(["memory/provisional-write.mjs", "memory/review-service.mjs", "memory/trust.mjs", "memory/episodic.mjs", "memory/sqlite.mjs", "memory/capture-prompt.mjs"]);
+  // remember.mjs names it only for a first-party verdict (provenanceOf; the provisional writer stores it).
+  const ALLOWED = new Set(["memory/provisional-write.mjs", "memory/review-service.mjs", "memory/trust.mjs", "memory/episodic.mjs", "memory/sqlite.mjs", "memory/capture-prompt.mjs", "hooks/remember.mjs"]);
   for (const file of walk(SRC)) {
     const rel = path.relative(SRC, file).split(path.sep).join("/");
     if (ALLOWED.has(rel)) continue;

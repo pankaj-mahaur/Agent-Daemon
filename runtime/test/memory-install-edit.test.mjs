@@ -100,7 +100,7 @@ for (const [name, text] of Object.entries(TOML_OK)) {
     assert.ok(add.text.startsWith(text.replace(/\r?\n?$/, "")), "the file's own text comes first, unchanged");
     if (text.includes("\r\n")) assert.ok(!/[^\r]\n/.test(add.text), "CRLF kept");
     assert.equal(planTomlAdd(add.text, ENTRY).action, "same");
-    const rm = planTomlRemove(add.text, { entry: ENTRY });
+    const rm = planTomlRemove(add.text, { entry: ENTRY, headerAdded: add.placement === "table" });
     assert.equal(rm.action, "remove");
     assert.equal(rm.text.replace(/\r?\n$/, ""), text.replace(/\r?\n$/, ""), "back to the original text");
     if (text.includes("# keep me")) assert.ok(rm.text.includes("# keep me"));
@@ -119,8 +119,8 @@ test("toml: every hidden shape of an existing entry is refused, file untouched",
   };
   // Each refusal says why: the user fixes their file from this text.
   const why = {
-    table: /outside ad's markers/, dotted: /outside ad's markers/, inlineUnder: /outside ad's markers/, quotedKey: /outside ad's markers/,
-    inlineRoot: /can't go into this file/, notTable: /mcp_servers isn't a table/, broken: /doesn't parse as TOML/,
+    table: /which ad didn't write/, dotted: /which ad didn't write/, inlineUnder: /which ad didn't write/, quotedKey: /which ad didn't write/,
+    inlineRoot: /couldn't add its entry without changing something else/, notTable: /mcp_servers isn't a table/, broken: /doesn't parse as TOML/,
   };
   for (const [name, text] of Object.entries(shapes)) {
     const r = planTomlAdd(text, ENTRY);

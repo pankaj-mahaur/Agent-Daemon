@@ -7,10 +7,10 @@
 //   status({json}) → exit code
 //
 // Two ways in, one code path:
-//   npx agent-daemon-memory install  copies the package to adRoot()/memory/pkg/<version>/
-//                                    and points hosts at the version-independent
-//                                    launcher adRoot()/memory/bin/launch.mjs
-//   ad memory install                points hosts at this clone's server file
+//   npx agent-daemon-memory install  copies the package to adRoot()/memory/dist/<version>/
+//   ad memory install                registers this clone instead
+// Either way every host starts the stable launcher, adRoot()/memory/launch/run.mjs
+// serve …, which runs the newest registered copy (L3, D4).
 // Hosts never start the server through npx, and get the absolute node path (GUI
 // hosts often lack the shell's PATH).
 
@@ -25,7 +25,7 @@ import { HOSTS, SERVER_NAME, claudePluginEnabled, hostById } from "./hosts.mjs";
 import { backup, inspect, sha256, writeChecked } from "./fsx.mjs";
 import { readLedger, writeLedger } from "./ledger.mjs";
 import { dropItem, mergeV1, openLedger2ForWrite, readLedger2, uninstallReport, writeLedger2 } from "./ledger2.mjs";
-import { cmpVersion, distsFile, launchDir, launcherFile, registerDist, setHostDisabled, unregisterDist } from "../memory/launch/dists.mjs";
+import { cmpVersion, distsFile, launchDir, launcherFile, readDists, registerDist, setHostDisabled, unregisterDist } from "../memory/launch/dists.mjs";
 import { SETUP_HOSTS, claudeSettingsFile, launcherReferences, parseSettings, removeSettingsItems, removeTomlItems, setup, setupPending, setupWork, withLedgerLock } from "./setup.mjs";
 import { codexConfigFile, codexHooksFile, safeToml } from "./setup-codex.mjs";
 import { ourHandlers } from "../hooks/routes.mjs";
@@ -64,7 +64,10 @@ export function makeContext(o = {}) {
     root,
     node: o.node ?? process.execPath,
     viaLauncher,
-    target: o.target ?? (viaLauncher ? path.join(root, "memory", "bin", "launch.mjs") : path.join(PACKAGE_ROOT, "src", "mcp", "memory-server.mjs")),
+    // Every entry starts the stable launcher (L3, D4): `run.mjs serve` runs the newest
+    // installed copy (npm or this clone), so an update never changes an entry.
+    target: o.target ?? launcherFile(root),
+    targetIsLauncher: o.target === undefined,
     packageRoot: o.packageRoot ?? PACKAGE_ROOT,
     version: pkg.version,
     installedBy: viaLauncher ? "npx" : "ad",
@@ -98,52 +101,13 @@ export function makeContext(o = {}) {
 }
 
 /* ------------------------------------------------------------------ */
-/* The package copy and the launcher (npx only)                        */
+/* The copies the launcher runs                                        */
 /* ------------------------------------------------------------------ */
 
-const LAUNCHER = `#!/usr/bin/env node
-// agent-daemon-memory launcher: hosts start this file, which runs the installed
-// version named in ../current.json (written by \`npx agent-daemon-memory install\`).
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
-const here = path.dirname(fileURLToPath(import.meta.url));
-const current = JSON.parse(fs.readFileSync(path.join(here, "..", "current.json"), "utf8"));
-await import(pathToFileURL(path.join(current.path, "cli.mjs")).href);
-`;
-
-/** The version the launcher starts now, or null. */
-export function currentPackage(root) {
-  try {
-    const cur = JSON.parse(fs.readFileSync(path.join(root, "memory", "current.json"), "utf8"));
-    return fs.existsSync(path.join(cur.path, "cli.mjs")) ? cur : null;
-  } catch {
-    return null;
-  }
-}
-
-/** Copy this package to pkg/<version>, point current.json at it, keep the two newest. */
-export function installPackage(ctx) {
-  const pkgDir = path.join(ctx.root, "memory", "pkg");
-  const dest = path.join(pkgDir, ctx.version);
-  if (path.resolve(ctx.packageRoot) !== path.resolve(dest)) {
-    // Copied next to its place, then renamed: current.json never points at a half copy.
-    // The package's own files only (npx keeps it inside a node_modules folder; its
-    // dependencies are for install and doctor, which run through npx, not serve).
-    const tmp = `${dest}.tmp-${process.pid}`;
-    // Leftover copies from a run that couldn't rename (a locked folder on Windows).
-    if (fs.existsSync(pkgDir)) for (const d of fs.readdirSync(pkgDir).filter((n) => n.includes(".tmp-"))) fs.rmSync(path.join(pkgDir, d), { recursive: true, force: true });
-    fs.cpSync(ctx.packageRoot, tmp, { recursive: true, filter: (src) => !path.relative(ctx.packageRoot, src).split(path.sep).includes("node_modules") });
-    fs.rmSync(dest, { recursive: true, force: true });
-    fs.renameSync(tmp, dest);
-  }
-  fs.mkdirSync(path.join(ctx.root, "memory", "bin"), { recursive: true });
-  fs.writeFileSync(path.join(ctx.root, "memory", "current.json"), JSON.stringify({ version: ctx.version, path: dest }, null, 2) + "\n");
-  fs.writeFileSync(path.join(ctx.root, "memory", "bin", "launch.mjs"), LAUNCHER);
-  const versions = fs.readdirSync(pkgDir).filter((v) => !v.includes(".tmp-") && fs.statSync(path.join(pkgDir, v)).isDirectory());
-  const byTime = versions.sort((a, b) => fs.statSync(path.join(pkgDir, b)).mtimeMs - fs.statSync(path.join(pkgDir, a)).mtimeMs);
-  for (const old of byTime.filter((v) => v !== ctx.version).slice(1)) fs.rmSync(path.join(pkgDir, old), { recursive: true, force: true });
-  return dest;
+/** The newest npm copy the stable launcher runs (its version), or null. */
+export function currentDist(root) {
+  const npm = readDists(distsFile(root)).dists.filter((d) => d.route === "npm" && d.version);
+  return npm.sort((x, y) => cmpVersion(y.version, x.version))[0]?.version ?? null;
 }
 
 // The folder of a dependency as this running code resolves it: under npx that is the
@@ -383,13 +347,27 @@ export async function install(opts = {}) {
   if (mcp.stop || opts.noSetup || ctx.noSetup) return mcp.code;
   for (const s of mcp.setupPlans.filter((x) => x.w.none)) for (const n of s.w.notes) ctx.out(n);
   const todo = mcp.setupPlans.filter((s) => s.writes.length);
-  if (!todo.length) return mcp.code;
+  if (!todo.length) {
+    if (ctx.isTTY() && mcp.code !== 1) await consentedImport(ctx, opts);
+    return mcp.code;
+  }
   if (!ctx.isTTY()) {
     ctx.out(`Finish in a terminal (the hooks need one): ${ctx.command(opts.noPlugin ? "setup --no-plugin" : "setup")}`);
     return mcp.code === 1 ? 1 : 2;
   }
   const code = await setup({ ctx, hosts: todo.map((s) => s.id), noPlugin: opts.noPlugin });
+  // After a setup that did something (1: nothing was done, so there is nothing to build on).
+  if (code !== 1) await consentedImport(ctx, opts);
   return code === mcp.code ? code : 2;
+}
+
+/**
+ * L4b's consented rule import (L3, Decision 26): reserved here, after setup and only in
+ * a terminal, so L4b adds no new install screen. Empty at L3; ctx.consentedImport lets a
+ * test see where it runs.
+ */
+export async function consentedImport(ctx, opts) {
+  return ctx.consentedImport ? ctx.consentedImport(opts) : null;
 }
 
 // What setup would write for each host found here (nothing is written).
@@ -452,23 +430,27 @@ async function installMcp(ctx, opts) {
       }
     }
   }
-  // npx: hosts start the launcher, so an upgrade is a new copy (even when every entry is unchanged).
-  if (ctx.viaLauncher && (todo.length || plans.some((p) => p.action === "same")) && currentPackage(ctx.root)?.version !== ctx.version) {
-    try {
-      installPackage(ctx);
-      out(`· the launcher now starts ${PRODUCT.package} ${ctx.version}`);
-    } catch (e) {
-      out(`✗ couldn't copy the package to ${ctx.display(path.join(ctx.root, "memory", "pkg"))}: ${e.message}`);
-      return { stop: true, code: 1 };
-    }
-  }
-  // The stable launcher (L3) and this copy registered as a dist it can run. Entries
-  // move to it with setup; until then a failure here only warns.
+  // Entries start the stable launcher (L3, D4), so it and this copy (an npm copy under
+  // memory/dist/, or this clone) are in place before any entry is written; an upgrade
+  // is a new copy even when every entry is unchanged. 3.1.0's pkg/ and bin/launch.mjs
+  // are no longer written (its entries move to the launcher here; uninstall removes them).
   if (todo.length || plans.some((p) => p.action === "same")) {
     try {
-      installLauncher(ctx);
+      const was = currentDist(ctx.root);
+      const reg = installLauncher(ctx);
+      // 3.1.0's launcher (memory/bin/launch.mjs) runs current.json's copy: while an
+      // entry that wasn't moved still starts it, it runs this version too.
+      const cur = path.join(ctx.root, "memory", "current.json");
+      if (ctx.viaLauncher && fs.existsSync(cur)) {
+        // Through a temp file: a 3.1.0 entry starting now reads the old file or the new one.
+        const tmp = `${cur}.tmp-${process.pid}`;
+        fs.writeFileSync(tmp, JSON.stringify({ version: ctx.version, path: reg.path }, null, 2) + "\n");
+        fs.renameSync(tmp, cur);
+      }
+      if (ctx.viaLauncher && was !== ctx.version) out(`· the launcher now starts ${PRODUCT.package} ${ctx.version}`);
     } catch (e) {
-      out(`· couldn't set up the launcher in ${ctx.display(launchDir(ctx.root))}: ${e.message}`);
+      out(`✗ couldn't set up the launcher in ${ctx.display(launchDir(ctx.root))}: ${e.message}`);
+      return { stop: true, code: 1 };
     }
   }
 
@@ -531,6 +513,8 @@ function fileRecord(ctx, p, postBytesSha256) {
     entryKey: SERVER_NAME,
     entry: p.entry,
     entrySha256: entrySha(p.entry),
+    // Codex: ad appended the [mcp_servers] header too (uninstall takes it back).
+    ...(p.placement ? { tomlPlacement: p.placement } : {}),
     postBytesSha256,
     version: ctx.version,
     capture: p.capture,
@@ -553,7 +537,9 @@ async function applyFile(ctx, p, ledger) {
   const preBytesSha256 = first ? sha256(t.bytes) : prev.preBytesSha256;
   const restorable = first ? true : prev.restorable !== false && sha256(t.bytes) === prev.postBytesSha256;
   await writeChecked(t.realFile, p.text, t.bytes);
-  return { ...fileRecord(ctx, p, sha256(Buffer.from(p.text))), preBytesSha256, originalBackup, restorable };
+  // An update that lands under the [mcp_servers] header ad appended earlier: that header is still ad's.
+  const placement = prev?.tomlPlacement === "table" && p.placement === "under" ? { tomlPlacement: "table" } : {};
+  return { ...fileRecord(ctx, p, sha256(Buffer.from(p.text))), ...placement, preBytesSha256, originalBackup, restorable };
 }
 
 async function applyCli(ctx, p) {
@@ -609,7 +595,7 @@ async function uninstallLocked(ctx, opts) {
   const all = mergeV1(readLedger2(ctx.root), ledger).items;
   const before = all.filter((i) => i.source === "v1");
   // Items setup wrote (hooks, the marker): removed per item, by content.
-  const direct = all.filter((i) => !i.source && (i.kind === "hook" || i.kind === "env") && (!wanted || wanted.includes(i.host)));
+  const direct = all.filter((i) => !i.source && (i.kind === "hook" || i.kind === "env" || i.kind === "skill-dir") && (!wanted || wanted.includes(i.host)));
   if (!ids.length && !direct.length && !opts.purgeData) {
     out("Nothing to remove: ad's installer didn't set up any host here.");
     return 0;
@@ -655,7 +641,7 @@ async function uninstallLocked(ctx, opts) {
   const gate = { rulesExist, token: async () => (tokenAnswer ??= Boolean(await ctx.confirmReview())) };
   const directResults = [];
   const byFile = new Map();
-  for (const i of direct) byFile.set(i.file, [...(byFile.get(i.file) ?? []), i]);
+  for (const i of direct) if (i.kind !== "skill-dir") byFile.set(i.file, [...(byFile.get(i.file) ?? []), i]);
   for (const [file, items] of byFile) {
     try {
       // config.toml (Codex's inline hooks, its marker) as text; JSON settings and hooks.json by structure.
@@ -666,6 +652,9 @@ async function uninstallLocked(ctx, opts) {
       for (const item of items) directResults.push({ item, action: "kept", why: `${ctx.display(file)}: ${e.message}; run uninstall again`, retry: true });
     }
   }
+  // Codex's command skills (L3, D20): folders, removed by ad's marker and their content.
+  const skillDirs = direct.filter((i) => i.kind === "skill-dir");
+  if (skillDirs.length) directResults.push(...(await import("./codex-skills.mjs")).removeCodexSkills(ctx, skillDirs));
   for (const r of directResults) outcome.set(r.item.id, { action: r.action, why: r.why, how: r.how });
   const held = directResults.filter((r) => r.held);
   // The file was the problem (unreadable, busy, not written): those items stay ad's, to try again.
@@ -812,7 +801,7 @@ async function removeFile(ctx, host, rec) {
   }
   // Changed since: take out only ad's entry, from text ad can write back unchanged.
   if (!Buffer.from(t.text, "utf8").equals(t.bytes)) throw new Error(`it isn't UTF-8 text any more, so ad can't edit it without changing other bytes; remove ${PRODUCT.mcpServerKey} from ${ctx.display(rec.file)} yourself`);
-  const plan = host.driver === "toml" ? planTomlRemove(t.text, { entry: rec.entry }) : planJsonRemove(t.text, { entry: rec.entry });
+  const plan = host.driver === "toml" ? planTomlRemove(t.text, { entry: rec.entry, headerAdded: rec.tomlPlacement === "table" }) : planJsonRemove(t.text, { entry: rec.entry });
   if (plan.action === "absent") return "ad's entry is gone already";
   if (plan.action === "edited") throw new Error(plan.reason);
   if (plan.action === "refuse") throw new Error(`${plan.reason}; remove ${PRODUCT.mcpServerKey} from ${ctx.display(rec.file)} yourself`);
@@ -858,12 +847,9 @@ async function purgeData(ctx, adOwned, opts) {
 export function status(opts = {}) {
   const ctx = opts.ctx ?? makeContext(opts);
   const ledger = readLedger(ctx.root);
-  let current = null;
-  try {
-    current = JSON.parse(fs.readFileSync(path.join(ctx.root, "memory", "current.json"), "utf8"));
-  } catch {
-    // not installed through npx
-  }
+  // The newest copy the launcher runs (npx installs); none for a clone.
+  const v = currentDist(ctx.root);
+  const current = v ? { version: v } : null;
   if (opts.json) {
     ctx.out(JSON.stringify({ version: ctx.version, current, hosts: ledger.hosts }));
     return 0;

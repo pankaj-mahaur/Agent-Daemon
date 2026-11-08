@@ -21,6 +21,8 @@ export const CLASSES = Object.freeze([
   // The engine's rollouts before its folders: the rest of an engine folder is never taken.
   C("engine-rollouts", "global", /^(engine|a\/[^/]+)\/sessions\//, "opt", "imports/<id>/engine-sessions/ (view-only)"),
   C("engine-homes", "global", new RegExp(`^(engine|${legacyHomeName}|a/[^/]+)(/|$)`), "never", "regenerated on the target", "engine folders hold sign-ins"),
+  // L4b: the key of the history hashes; a store copied without it gives nothing away.
+  C("history-key", "global", /^memory\/history\.key$/, "never", "made again on the target (history imports there start fresh)"),
   C("machine-state", "global", /^(migrate\.json|agy-consent\.json|siwc\/host\.json|imports|exports)(\/|$)/, "never", "regenerated on the target"),
   C("memory-db", "global", /^episodic\.db$/, "in", "rebuilt row by row (P7.3)", "a snapshot; -wal and -shm never"),
   C("memory-db-sidecar", "global", /^episodic\.db-(wal|shm|journal)$/, "out", "—"),
