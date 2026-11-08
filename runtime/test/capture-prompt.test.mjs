@@ -2,6 +2,7 @@
 
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
+import { openFilesUnder } from "../testkit/open-files.mjs";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -20,7 +21,21 @@ const mode = await import("../src/memory/review-mode.mjs");
 const svc = await import("../src/memory/review-service.mjs");
 const { testReviewToken } = await import("../testkit/memory-trust.mjs");
 
-after(() => rmSync(ROOT, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
+// Every store this file opens is closed before ROOT goes: Windows can't delete an open database (EBUSY).
+const opened = [];
+after(async () => {
+  for (const h of opened) {
+    try {
+      h.close();
+    } catch {
+      // a test closed it already
+    }
+  }
+  (await import("../src/memory/episodic.mjs")).closeDb();
+  const left = await openFilesUnder(ROOT);
+  rmSync(ROOT, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  assert.deepEqual(left, [], "every database is closed before the folder goes (Windows: EBUSY)");
+});
 
 const LIST = [{ host: "claude", signal: "source-user", minVersion: "2.1.400", parentExe: /\/claude\/versions\// }];
 let n = 0;
@@ -28,7 +43,9 @@ async function project() {
   const dir = path.join(ROOT, `p${++n}`);
   mkdirSync(dir, { recursive: true });
   resolveProject(dir);
-  return { dir, handle: await open({ dbPath: path.join(dir, "episodic.db") }) };
+  const handle = await open({ dbPath: path.join(dir, "episodic.db") });
+  opened.push(handle);
+  return { dir, handle };
 }
 const first = (prompt) => promptSource({ prompt, source: "user" }, { host: "claude", env: {}, scheduled: [], list: LIST, parent: () => ({ ok: true, version: "2.1.400" }) });
 const typed = (prompt) => promptSource({ prompt }, { host: "claude", env: {}, scheduled: [] });
@@ -224,4 +241,14 @@ test("the drain stores a forged journal line `buffered`, whatever provenance it 
   const h = await db();
   const got = h.get("SELECT provenance FROM learnings WHERE text = 'forged line claims the user typed it'");
   assert.equal(got?.provenance, "buffered");
+});
+
+test("a typed team convention that names code is captured (the bench's on-hooks phrasing)", async () => {
+  const p = await project();
+  const prompt = "Actually we use logInfo for logging, not console output.";
+  const r = await run(p, prompt, typed(prompt));
+  assert.equal(r.status, "pending");
+  assert.match(r.text, /we use logInfo for logging, not console output/);
+  const row = p.handle.get("SELECT capture_ref, provenance, origin FROM learnings WHERE id = ?", [r.id]);
+  assert.deepEqual([row.capture_ref, row.provenance, row.origin], ["s1", "prompt", "user"], "keyed by the prompt's session (ad tui's learned row reads it)");
 });
