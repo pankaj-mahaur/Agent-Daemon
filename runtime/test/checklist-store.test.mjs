@@ -128,7 +128,7 @@ test("openChecklist: a, enter, y accepts the three new notes in three keys; a re
   assert.match(t.written.join(""), /\x1b\[\?1049l/, "the alternate screen is left");
 });
 
-test("quit without saving: nothing changes, but removed notes it showed start their clock; no token: refused", async () => {
+test("quit without saving: nothing changes, and a removed note keeps no clock (only a review starts it); no token: refused", async () => {
   const h = await store();
   const a = note(h, "stay");
   const hid = note(h, "removed by a prompt");
@@ -141,7 +141,7 @@ test("quit without saving: nothing changes, but removed notes it showed start th
   const r = await run;
   assert.equal(r.ended, "quit");
   assert.equal(row(h, a).status, "pending");
-  assert.ok(row(h, hid).status_at);
+  assert.equal(row(h, hid).status_at, null, "a quit isn't a review: the hide waits to be shown again");
   assert.equal(latestEvent(h, "reviewed"), null, "a quit isn't a review");
   await assert.rejects(openChecklist({ handle: h, keys: KEYS, token: { issuedAt: 1 }, stdin: t.stdin, stdout: t.stdout }), /review token/);
   assert.deepEqual((await openChecklist({ handle: h, keys: KEYS, token: testReviewToken(), stdin: t.stdin, stdout: t.stdout, filter: (x) => x.kind === "file" })).ended, "empty");
@@ -173,6 +173,7 @@ test("apply: delete leaves a hash-only tombstone; forget, keep, restore, unmark;
   assert.equal(row(h, del), undefined);
   const tomb = latestEvent(h, "discarded");
   assert.deepEqual(tomb.detail, { hash: tombstoneHash(normKey("delete me please")) }, "the tombstone is a hash, never the text");
+  assert.ok(h.get("SELECT COUNT(*) AS n FROM proposal_rejections").n >= 1, "L4b's rejection is recorded first, so no import proposes it again");
   assert.equal(row(h, fr), undefined);
   assert.equal(row(h, keep).status, "active");
   assert.equal(row(h, hid).status, "pending");
@@ -207,4 +208,36 @@ test("the model over real rows: the first a never takes a flagged, headless, mar
   recordEvent(h, { kind: "marked", learningId: mk, projectId: PID, actor: "user" });
   const s = press(createChecklist(checklistRows(h, KEYS), { pageSize: 50 }), "a");
   assert.deepEqual(plan(s).accept.flatMap((a) => a.ids), [mine]);
+});
+
+test("a removed note on a page that was never drawn keeps no clock, even when the review applies", async () => {
+  const h = await store();
+  const many = Array.from({ length: 30 }, (_, i) => note(h, `waiting note ${i}`));
+  const hid = note(h, "removed on the last page");
+  h.run("UPDATE learnings SET status = 'hidden', status_at = NULL WHERE id = ?", [hid]);
+  const t = fakeTty();
+  t.stdout.rows = 12;
+  const run = openChecklist({ handle: h, keys: KEYS, token: testReviewToken(), stdin: t.stdin, stdout: t.stdout, escTimeout: 10 });
+  t.type("a");
+  t.type("\r");
+  t.type("y");
+  const r = await run;
+  assert.equal(r.ended, "applied");
+  assert.ok(r.applied.accepted.length > 0 && r.applied.accepted.length < many.length, "only the drawn page");
+  assert.equal(row(h, hid).status_at, null, "never drawn: its 7 days haven't started");
+});
+
+test("accepting appends the note's line to the project's memory file; an edit of another project's id does nothing", async () => {
+  const h = await store();
+  const { readFileSync, writeFileSync } = await import("node:fs");
+  const file = path.join(ROOT, `mem-${n}.md`);
+  writeFileSync(file, "# Active context\n");
+  const a = note(h, "use tabs in go");
+  const other = note(h, "their note", { slug: "-work-other", pid: "prj_other000000000000000" });
+  const r = await applyPlan(h, testReviewToken(), { accept: [{ ids: [a] }, { ids: [other], text: "an edit of theirs" }], delete: [], forget: [], keep: [], restore: [], unmark: [] }, { keys: KEYS, projectMemory: file });
+  assert.deepEqual(r.accepted, [a]);
+  assert.match(readFileSync(file, "utf8"), /use tabs in go/);
+  assert.equal(row(h, other).status, "pending", "another project's note is never superseded");
+  assert.equal(h.get("SELECT COUNT(*) AS n FROM learnings WHERE text = 'an edit of theirs'").n, 0, "and no row is written for it anywhere");
+  await assert.rejects(applyPlan(h, testReviewToken(), { accept: [], delete: [], forget: [], keep: [], restore: [], unmark: [] }, { keys: [] }), /project keys/);
 });

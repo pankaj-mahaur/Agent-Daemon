@@ -46,7 +46,8 @@ test("`a` never selects a flagged, secret, marked, accepted, file, history or of
   const twice = press(once, "a");
   assert.deepEqual(Object.keys(twice.choice).sort(), ["note:1", "note:3", "note:4"], "second a: the agent's group too, nothing else");
   // Off-page rows are never chosen.
-  const paged = createChecklist([note(1), note(2), note(3), note(4), note(5)], { pageSize: 2 });
+  // A page of 3 lines: the group's header and two rows.
+  const paged = createChecklist([note(1), note(2), note(3), note(4), note(5)], { pageSize: 3 });
   assert.deepEqual(Object.keys(press(paged, "a").choice), ["note:1", "note:2"]);
   assert.deepEqual(Object.keys(keys(paged, "pgdn", "a").choice), ["note:3", "note:4"]);
 });
@@ -244,10 +245,48 @@ test("driver: a lone esc acts after the timeout; Windows \\r\\n is one enter; \\
 
 test("pageRows follows the page; the page size comes from the terminal's rows", async () => {
   const { pageSizeFor } = await import("../src/memory/checklist-run.mjs");
-  assert.equal(pageSizeFor(24), 15);
+  assert.equal(pageSizeFor(24), 17);
   assert.equal(pageSizeFor(8), 3);
-  const s = createChecklist([1, 2, 3, 4, 5, 6, 7].map((i) => note(i)), { pageSize: 3 });
-  assert.deepEqual(pageRows(s).map((r) => r.ids[0]), [1, 2, 3]);
+  const s = createChecklist([1, 2, 3, 4, 5, 6, 7].map((i) => note(i)), { pageSize: 4 });
+  assert.deepEqual(pageRows(s).map((r) => r.ids[0]), [1, 2, 3], "a header line and three rows");
   assert.deepEqual(pageRows(press(s, "pgdn")).map((r) => r.ids[0]), [4, 5, 6]);
   assert.match(render(s).join("\n"), /page 1 of 3/);
+});
+
+test("a page fits its lines: every group that starts on it costs a header line; a resize re-pages it", async () => {
+  const { repage, pageStarts } = await import("../src/memory/checklist.mjs");
+  const rows = [note(1), note(2, "agent"), { key: "repeat:3", kind: "repeat", group: "history", ids: [3], text: "r" }, note(4, "agent"), note(5)];
+  const s = createChecklist(rows, { pageSize: 4 });
+  for (let p = 0; p < pageStarts(s).length; p++) {
+    const st = { ...s, page: p };
+    const page = pageRows(st);
+    const lines = page.length + new Set(page.map((r) => r.group)).size;
+    assert.ok(lines <= 4, `page ${p}: ${lines} lines`);
+  }
+  const big = repage(press(s, "a"), 20);
+  assert.equal(pageStarts(big).length, 1, "a taller terminal: one page");
+  assert.deepEqual(Object.keys(big.choice), Object.keys(press(s, "a").choice), "choices kept");
+});
+
+test("e never edits a flagged or secret row; an unchanged edit is a plain yes (no relabel)", () => {
+  const flagged = createChecklist([note(1, "flagged", { flagged: true })]);
+  const s = press(flagged, "e");
+  assert.equal(s.mode, "list");
+  assert.match(s.message, /can't be edited/);
+  let same = press(createChecklist([note(2)]), "e");
+  same = press(same, "enter");
+  assert.equal(same.choice["note:2"], "yes");
+  assert.equal(plan(same).accept[0].text, null, "no edit: the note keeps where it came from");
+  // A row the screen found a secret in shows only the delete verb, whatever its kind.
+  const secret = createChecklist([note(3, "flagged", { flagged: true, secret: true })]);
+  assert.match(render(secret).join("\n"), /x: delete \(it holds what looks like a secret\)/);
+  assert.doesNotMatch(render(secret).join("\n"), /space: start using/);
+});
+
+test("the edit line never puts raw control characters on the screen", () => {
+  let s = press(createChecklist([note(1, "new", { text: "ok" })]), "e");
+  s = press(s, { char: String.fromCharCode(0x9b) + "2J" });
+  s = press(s, { char: String.fromCharCode(27) + "]52;c;eA" });
+  const out = render(s).join("\n");
+  assert.doesNotMatch(out, /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/);
 });

@@ -8,6 +8,12 @@
 // are dropped), and restores raw mode and the cursor on every exit: normal, ctrl-c, an
 // error, SIGTERM.
 
+import { StringDecoder } from "node:string_decoder";
+
+// Signals that end the loop with the terminal restored: a kill, a closed terminal, an
+// interrupt from outside (ctrl-c itself arrives as \x03 in raw mode).
+const SIGNALS = ["SIGTERM", "SIGHUP", "SIGINT"];
+
 const NAMED = new Map([
   ["[A", "up"], ["OA", "up"], ["[B", "down"], ["OB", "down"], ["[C", "right"], ["OC", "right"], ["[D", "left"], ["OD", "left"],
   ["[5~", "pgup"], ["[6~", "pgdn"], ["[H", "home"], ["OH", "home"], ["[1~", "home"], ["[7~", "home"], ["[F", "end"], ["OF", "end"], ["[4~", "end"], ["[8~", "end"],
@@ -119,6 +125,8 @@ export function asText(key) {
 export function runKeys({ stdin, stdout, onKey, escTimeout = 60, signals = process }) {
   return new Promise((resolve) => {
     const decoder = createDecoder();
+    // A UTF-8 character split across two reads stays one character.
+    const utf8 = new StringDecoder("utf8");
     const wasRaw = Boolean(stdin.isRaw);
     let timer = null;
     let finished = false;
@@ -132,7 +140,7 @@ export function runKeys({ stdin, stdout, onKey, escTimeout = 60, signals = proce
     const restore = () => {
       clearTimeout(timer);
       stdin.removeListener("data", onData);
-      signals.removeListener?.("SIGTERM", onSignal);
+      for (const sig of SIGNALS) signals.removeListener?.(sig, onSignal);
       try {
         if (typeof stdin.setRawMode === "function") stdin.setRawMode(wasRaw);
       } catch {
@@ -172,7 +180,7 @@ export function runKeys({ stdin, stdout, onKey, escTimeout = 60, signals = proce
     };
     function onData(chunk) {
       clearTimeout(timer);
-      handle(decoder.feed(Buffer.isBuffer(chunk) ? chunk.toString("utf8") : chunk));
+      handle(decoder.feed(Buffer.isBuffer(chunk) ? utf8.write(chunk) : chunk));
       if (decoder.waiting) timer = setTimeout(() => handle(decoder.flushEsc()), escTimeout);
     }
     function onSignal() {
@@ -182,7 +190,7 @@ export function runKeys({ stdin, stdout, onKey, escTimeout = 60, signals = proce
       if (typeof stdin.setRawMode === "function") stdin.setRawMode(true);
       stdin.on("data", onData);
       stdin.resume?.();
-      signals.on?.("SIGTERM", onSignal);
+      for (const sig of SIGNALS) signals.on?.(sig, onSignal);
     } catch (e) {
       end("error", e);
     }

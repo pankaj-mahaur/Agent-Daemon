@@ -88,7 +88,7 @@ export function checklistRows(handle, keys, { now = Date.now() } = {}) {
     }
     const own = OWN.has(m.provenance);
     const status = m.status === "provisional" ? provisionalStatus(m.status_at, now) : "waiting";
-    const row = { ...base, kind: item.kind === "repeat" ? "repeat" : "note", status, count: item.count };
+    const row = { ...base, kind: item.kind === "repeat" ? "repeat" : "note", status, count: item.count, provisional: m.status === "provisional" };
     row.source = item.kind === "repeat" ? sourceWord("transcript", { count: item.count }) : sourceWord(m.provenance);
     if (item.kind === "repeat") row.group = "history";
     else if (marked.has(id)) {

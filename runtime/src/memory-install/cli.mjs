@@ -17,7 +17,7 @@ const USAGE = `${PRODUCT.package}: ad's memory server for Claude Code, Codex, Cu
   setup [--host claude-code|codex] [--no-plugin] [--dry-run]   the hooks (in your own terminal)
   doctor [--json]  ·  repair [--host <id>]  ·  status [--json]
   uninstall [--host <id> …] [--purge-data [--force]]
-  review [--accept <file>] [--accept-all] [--global]   (in your own terminal)
+  review [--list | --plain | --accept-all [--with-agent] | --proposals] [--accept <file>] [--global]   decide what waits (in your own terminal)
   remember <text>  ·  forget <number>  ·  restore <number>   (accepted at once only in your own terminal)
   config review [strict|auto]   review-first for every learning, or not
   report [--days 30] [--all-projects] [--json] [--share]   is memory working here
@@ -49,6 +49,10 @@ function parseReviewFlags(argv) {
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--accept") r.accept = argv[++i];
     else if (argv[i] === "--accept-all") r.acceptAll = true;
+    else if (argv[i] === "--with-agent") r.withAgent = true;
+    else if (argv[i] === "--list") r.list = true;
+    else if (argv[i] === "--plain") r.plain = true;
+    else if (argv[i] === "--proposals") r.proposals = true;
     else if (argv[i] === "--global") r.global = true;
     else if (argv[i] === "--yes" || argv[i] === "-y") r.yes = true; // refused by review itself
     else return { error: `unknown option ${argv[i]}` };
@@ -103,7 +107,7 @@ export async function main(argv = process.argv.slice(2), { log = (l) => console.
       log(r.error);
       return 1;
     }
-    return (await import("../review.mjs")).runInteractiveReview({ cwd: process.cwd(), ...r });
+    return (await import("../review.mjs")).runInteractiveReview({ cwd: process.cwd(), command: (v) => `npx -y ${PRODUCT.package} ${v}`, ...r });
   }
   // L5: remember, forget, restore, config review (memory/memory-cli.mjs: trusted only with
   // the review token, in your own terminal).

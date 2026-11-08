@@ -7,22 +7,27 @@
 // screen opens) and checks for a TTY; a plain or non-TTY run uses checklistText instead.
 // filter(row) narrows the rows (L4b's install step: history and instruction files only).
 
-import { GROUPS, createChecklist, press, plan, choiceCount } from "./checklist.mjs";
+import { GROUPS, createChecklist, press, plan, choiceCount, pageRows, repage } from "./checklist.mjs";
 import { render, clean } from "./checklist-view.mjs";
 import { checklistRows } from "./checklist-rows.mjs";
-import { applyPlan, startClocks } from "./checklist-apply.mjs";
+import { applyPlan } from "./checklist-apply.mjs";
 import { runKeys, asText } from "./keys.mjs";
 import { screenPrompt } from "./prompt-screen.mjs";
 import { isReviewToken } from "./review-service.mjs";
 
-/** The page size for a terminal this many rows high (header, banner, footer, the focused row's second line). */
-export const pageSizeFor = (rows) => Math.max(3, (Number(rows) || 24) - 9);
+/**
+ * The lines a page may use (rows and group headers) on a terminal this many rows high:
+ * the rest is the header, the banner, the focused row's second line, the page line, two
+ * lines for a prompt or the summary, and the footer.
+ */
+export const pageSizeFor = (rows) => Math.max(3, (Number(rows) || 24) - 7);
 
 /**
  * @param {{handle:object, keys:string[], token:object, stdin:object, stdout:object,
  *   rows?:object[], filter?:(row:object)=>boolean, header?:string|null, effect?:string|null,
  *   projectId?:string|null, slug?:string|null, memoryFile?:string|string[],
- *   onApply?:(rows:object[])=>any, now?:()=>Date, escTimeout?:number}} o
+ *   projectMemory?:string|null, onApply?:(rows:object[])=>any, now?:()=>Date, escTimeout?:number}} o
+ *   projectMemory: the project's memory file, where an accepted note's line is appended
  */
 export async function openChecklist(o) {
   if (!isReviewToken(o.token)) throw new Error("the review checklist needs a review token (your own terminal)");
@@ -33,10 +38,19 @@ export async function openChecklist(o) {
   const started = now().getTime();
   const out = o.stdout;
   let state = createChecklist(rows, { pageSize: pageSizeFor(out.rows) });
+  // The rows actually drawn: only a removed note the user saw starts its 7 days (decision 12).
+  const seen = new Set();
   const draw = () => {
+    if (!["units", "help"].includes(state.mode)) for (const r of pageRows(state)) seen.add(r.key);
     const lines = render(state, { width: out.columns || 80, header: o.header ?? null, effect: o.effect ?? null });
     out.write(`\x1b[?25l\x1b[H\x1b[2J${lines.join("\r\n")}`);
   };
+  // A resized terminal gets pages that fit it again.
+  const onResize = () => {
+    state = repage(state, pageSizeFor(out.rows));
+    draw();
+  };
+  out.on?.("resize", onResize);
   out.write("\x1b[?1049h"); // the alternate screen: the user's scrollback is left as it was
   let result;
   try {
@@ -46,19 +60,19 @@ export async function openChecklist(o) {
       stdout: out,
       escTimeout: o.escTimeout,
       onKey: (key) => {
-        state = press(state, state.mode === "edit" ? asText(key) : key, { screen: (t) => screenPrompt(t, { userWords: true }) });
+        state = press(state, state.mode === "edit" ? asText(key) : key, { screen: (t, so) => screenPrompt(t, so) });
         if (state.mode === "done" || state.mode === "quit-done") return true;
         draw();
         return false;
       },
     });
   } finally {
+    out.removeListener?.("resize", onResize);
     out.write("\x1b[?1049l\x1b[?25h");
   }
-  // Removed notes it listed were shown: their 7 days start, whatever was chosen.
-  const shownHidden = rows.filter((r) => r.kind === "hidden" && r.statusAtNull).flatMap((r) => r.ids);
+  // Only the review (apply) starts a shown removed note's clock: a quit leaves it unseen.
+  const shownHidden = rows.filter((r) => r.kind === "hidden" && r.statusAtNull && seen.has(r.key)).flatMap((r) => r.ids);
   if (result.ended !== "done" || state.mode !== "done") {
-    if (shownHidden.length) startClocks(o.handle, shownHidden, now());
     return { ended: result.ended === "done" ? "quit" : result.ended, error: result.error, rows, choices: choiceCount(state) };
   }
   const applied = await applyPlan(o.handle, o.token, plan(state), {
@@ -68,6 +82,7 @@ export async function openChecklist(o) {
     rows,
     shownHidden,
     memoryFile: o.memoryFile,
+    projectMemory: o.projectMemory ?? null,
     seconds: Math.round((now().getTime() - started) / 1000),
     now: now(),
     onApply: o.onApply,

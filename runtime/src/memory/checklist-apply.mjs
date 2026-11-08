@@ -20,18 +20,21 @@ import { recordRejection } from "./proposal-tables.mjs";
 import { restoreLearning } from "./forget.mjs";
 import { recordEvent } from "./l5-tables.mjs";
 import { projectClause } from "./projects.mjs";
+import { openSql } from "./trust.mjs";
 
 /**
  * @param {object} handle
  * @param {object} token  a review token (reviewToken)
  * @param {ReturnType<import("./checklist.mjs").plan>} p
  * @param {{keys:string[], projectId?:string|null, slug?:string|null, rows?:object[], shownHidden?:number[],
- *   memoryFile?:string|string[], seconds?:number, now?:Date, onApply?:(rows:object[])=>any}} o
+ *   memoryFile?:string|string[], projectMemory?:string|null, seconds?:number, now?:Date, onApply?:(rows:object[])=>any}} o
  * @returns {Promise<{accepted:number[], deleted:number[], forgotten:number[], kept:number[], restored:number[], unmarked:number[]}>}
  */
 export async function applyPlan(handle, token, p, o) {
   if (!isReviewToken(token)) throw new Error("the review checklist applies only with a review token (your own terminal)");
   const { keys, now = new Date() } = o;
+  // Without this project's keys every scope check would match every project.
+  if (!Array.isArray(keys) || !keys.length) throw new Error("the review checklist applies only within one project (no project keys)");
   const res = { accepted: [], deleted: [], forgotten: [], kept: [], restored: [], unmarked: [] };
   const acceptedRows = [];
 
@@ -39,11 +42,14 @@ export async function applyPlan(handle, token, p, o) {
     if (a.text) {
       // The edit is what gets saved: a new note in the user's words, accepted, and the old
       // one superseded (never deleted: its history stays).
-      const old = handle.get("SELECT id, project_slug, project_id, project_path, category, confidence FROM learnings WHERE id = ? AND accepted_by IS NULL", [a.ids[0]]);
+      // Only a note of this project that still waits (a stale or other project's id: nothing).
+      const scope = projectClause("", keys);
+      const old = handle.get(`SELECT id, text, project_slug, project_id, project_path, category, confidence FROM learnings WHERE id = ? AND ${openSql()} AND ${scope.sql}`, [a.ids[0], ...scope.params]);
       if (!old) continue;
       const r = rememberAccepted(handle, token, { projectSlug: old.project_slug, projectId: old.project_id, projectPath: old.project_path, category: old.category, text: a.text, evidence: `edited in review (was #${old.id})`, confidence: old.confidence ?? 0.8 }, { keys, now });
       if (r.status !== "accepted" || r.id == null) continue;
-      handle.run("UPDATE learnings SET status = 'superseded', superseded_by = ?, status_at = ? WHERE id = ? AND accepted_by IS NULL", [r.id, now.toISOString(), old.id]);
+      // Every note the row stood for gives way to the edit (a history row may hold several).
+      for (const id of a.ids) handle.run("UPDATE learnings SET status = 'superseded', superseded_by = ?, status_at = ? WHERE id = ? AND accepted_by IS NULL AND id <> ?", [r.id, now.toISOString(), id, r.id]);
       res.accepted.push(r.id);
       acceptedRows.push({ ...a, ids: [r.id] });
       continue;
@@ -60,6 +66,8 @@ export async function applyPlan(handle, token, p, o) {
 
   for (const d of p.delete) {
     for (const id of d.ids) {
+      // This project's unaccepted note only, checked before anything is recorded about it.
+      if (!inProject(handle, id, keys)) continue;
       const row = handle.get("SELECT text FROM learnings WHERE id = ? AND accepted_by IS NULL", [id]);
       if (!row) continue;
       // L4b: neither import proposes this text again (its history wordings and file lines too).
@@ -81,6 +89,17 @@ export async function applyPlan(handle, token, p, o) {
   }
   for (const id of p.unmark) if (clearMark(handle, token, id, { keys })) res.unmarked.push(id);
 
+  // The project's memory file gets each accepted note's line, as the older review did
+  // (acceptMemory); forgetting one drops it again.
+  if (o.projectMemory && res.accepted.length) {
+    try {
+      const { appendToMemory } = await import("../digest/proposals.mjs");
+      const rows = res.accepted.map((id) => handle.get("SELECT category, text, evidence, confidence, tags FROM learnings WHERE id = ?", [id])).filter(Boolean);
+      await appendToMemory(o.projectMemory, rows.map((r) => ({ learning: { type: r.category, text: r.text, evidence_quote: r.evidence, confidence: r.confidence, tags: tagsOf(r.tags) } })), null, now.toISOString());
+    } catch {
+      // no memory file here: the store is what recall reads
+    }
+  }
   reviewed(handle, { ...o, now, choices: Object.fromEntries(Object.entries(res).map(([k, v]) => [k, v.length])) });
   if (acceptedRows.length && typeof o.onApply === "function") await o.onApply(acceptedRows);
   return res;
@@ -102,6 +121,14 @@ export function reviewed(handle, { projectId = null, slug = null, rows = [], sho
 export function startClocks(handle, ids, now = new Date()) {
   for (const id of ids) handle.run("UPDATE learnings SET status_at = ? WHERE id = ? AND status = 'hidden' AND accepted_by IS NULL AND status_at IS NULL", [now.toISOString(), id]);
 }
+
+const tagsOf = (t) => {
+  try {
+    return JSON.parse(t || "[]");
+  } catch {
+    return [];
+  }
+};
 
 function inProject(handle, id, keys) {
   const scope = projectClause("", keys);

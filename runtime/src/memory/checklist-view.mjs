@@ -2,7 +2,7 @@
 // One line per row — focus marker, [x] / [-] / [ ], #id, the text cut to fit, a source and
 // a status word — and a second line under the focused row saying what space and x do.
 
-import { GROUPS, VERBS, focused, pageRows, visible, plan, summaryLine } from "./checklist.mjs";
+import { GROUPS, VERBS, focused, pageRows, pageStarts, visible, plan, summaryLine } from "./checklist.mjs";
 
 export const FOOTER = "space use · x delete · e edit · a all new · enter apply · ? help";
 export const HELP = [
@@ -21,7 +21,7 @@ const cut = (s, n) => (n <= 1 ? "" : s.length > n ? `${s.slice(0, n - 1)}…` : 
 const title = (id) => GROUPS.find((g) => g.id === id)?.title ?? id;
 
 function verbsLine(row) {
-  const key = row.kind === "flagged" && row.secret ? "flagged-secret" : row.kind;
+  const key = row.secret ? "flagged-secret" : row.kind === "flagged" || row.flagged ? "flagged" : row.kind;
   const v = VERBS[key] ?? VERBS.note;
   return [v.yes ? `space: ${v.yes}` : null, `x: ${v.no}`].filter(Boolean).join(" · ");
 }
@@ -52,7 +52,7 @@ export function render(s, { width = 80, header = null, effect = null } = {}) {
   if (s.mode === "units") return [...lines, ...renderUnits(s, w)];
 
   const rows = pageRows(s);
-  const start = s.page * s.pageSize;
+  const start = pageStarts(s)[s.page] ?? 0;
   const vis = visible(s);
   let group = null;
   rows.forEach((r, i) => {
@@ -77,10 +77,10 @@ export function render(s, { width = 80, header = null, effect = null } = {}) {
       lines.push(cut(`    ${extra.join(" · ")}`, w));
     }
   });
-  const pages = Math.max(1, Math.ceil(vis.length / s.pageSize));
+  const pages = pageStarts(s).length;
   if (pages > 1) lines.push(`page ${s.page + 1} of ${pages} · pgup/pgdn`);
 
-  if (s.mode === "edit") lines.push(cut(`edit: ${s.buffer}▏ (enter keeps it · esc drops it)`, w));
+  if (s.mode === "edit") lines.push(cut(`edit: ${clean(s.buffer)}▏ (enter keeps it · esc drops it)`, w));
   else if (s.mode === "confirm-flagged") lines.push(cut("This one was flagged for a closer look. Start using it anyway? y/n", w));
   else if (s.mode === "summary") lines.push(cut(summaryLine(plan(s)), w), "agents use these from your next session");
   else if (s.mode === "quit") lines.push(`Quit without saving ${Object.keys(s.choice).length} choice${Object.keys(s.choice).length === 1 ? "" : "s"}? y/n`);

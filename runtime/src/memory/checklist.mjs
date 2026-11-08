@@ -39,7 +39,11 @@ export const VERBS = Object.freeze({
   hidden: { yes: "restore", no: "leave removed" },
 });
 
-const verbsOf = (row) => VERBS[row.kind === "flagged" && row.secret ? "flagged-secret" : row.kind] ?? VERBS.note;
+// A row holding what looks like a secret can only be deleted, whatever its kind (L1).
+const verbsOf = (row) => VERBS[row.secret ? "flagged-secret" : row.kind === "flagged" || row.flagged ? "flagged" : row.kind] ?? VERBS.note;
+
+// Text from any writer, as one plain line: no control or format characters (M3).
+const oneLine = (t) => String(t ?? "").replace(/[\p{Cc}\p{Cf}]/gu, " ").replace(/\s+/g, " ").trim();
 
 // Kinds `a` may select, and the groups it reaches (first press, second press).
 const BULK_KINDS = new Set(["note"]);
@@ -48,7 +52,7 @@ const BULK_GROUPS = [["new"], ["new", "agent"]];
 /**
  * A new checklist.
  * @param {object[]} rows
- * @param {{pageSize?:number}} [o]
+ * @param {{pageSize?:number}} [o]  pageSize: the lines a page may use (rows and group headers)
  */
 export function createChecklist(rows, { pageSize = 10 } = {}) {
   const sorted = [...rows].sort((a, b) => ORDER.indexOf(a.group) - ORDER.indexOf(b.group));
@@ -61,7 +65,7 @@ export function createChecklist(rows, { pageSize = 10 } = {}) {
     bulk: 0, // presses of `a` on the current page
     focus: 0, // index into visible()
     page: 0,
-    pageSize: Math.max(1, pageSize),
+    pageSize: Math.max(2, pageSize),
     // The agent's forget requests start as a one-line banner, expanded with ↑ (decision 11).
     expanded: forget.length === 0,
     mode: "list", // list | confirm-flagged | units | edit | summary | quit | help | done | quit-done
@@ -74,7 +78,7 @@ export function createChecklist(rows, { pageSize = 10 } = {}) {
   const vis = visible(s);
   const first = vis.findIndex((r) => r.group === "new");
   s.focus = first >= 0 ? first : 0;
-  s.page = Math.floor(s.focus / s.pageSize);
+  s.page = pageOf(s, s.focus);
   return Object.freeze(s);
 }
 
@@ -83,9 +87,44 @@ export function visible(s) {
   return s.rows.filter((r) => s.expanded || r.group !== "forget");
 }
 
+/**
+ * Where each page starts (indexes into visible()): a page holds rows and a header line
+ * for each group that starts on it, within pageSize lines.
+ */
+export function pageStarts(s) {
+  const rows = visible(s);
+  const starts = [0];
+  let used = 0;
+  let group = null;
+  rows.forEach((r, i) => {
+    const cost = 1 + (r.group !== group ? 1 : 0);
+    if (used > 0 && used + cost > s.pageSize) {
+      starts.push(i);
+      used = 2; // the next page starts with this row's group header
+    } else used += cost;
+    group = r.group;
+  });
+  return starts;
+}
+
+/** The page a row index is on. */
+export function pageOf(s, index) {
+  const starts = pageStarts(s);
+  let p = 0;
+  for (let i = 0; i < starts.length; i++) if (starts[i] <= index) p = i;
+  return p;
+}
+
 /** The rows of the current page. */
 export function pageRows(s) {
-  return visible(s).slice(s.page * s.pageSize, (s.page + 1) * s.pageSize);
+  const starts = pageStarts(s);
+  return visible(s).slice(starts[s.page] ?? 0, starts[s.page + 1] ?? undefined);
+}
+
+/** The checklist for a new page size (the terminal was resized): same choices and focus. */
+export function repage(s, pageSize) {
+  const next = Object.freeze({ ...s, pageSize: Math.max(2, pageSize) });
+  return Object.freeze({ ...next, page: pageOf(next, next.focus), bulk: 0 });
 }
 
 export const focused = (s) => visible(s)[s.focus] ?? null;
@@ -99,7 +138,8 @@ const withChoice = (s, key, value) => {
 const move = (s, focus) => {
   const n = visible(s).length;
   const f = Math.max(0, Math.min(n - 1, focus));
-  return set(s, { focus: f, page: Math.floor(f / s.pageSize), bulk: Math.floor(f / s.pageSize) === s.page ? s.bulk : 0, message: null });
+  const page = pageOf(s, f);
+  return set(s, { focus: f, page, bulk: page === s.page ? s.bulk : 0, message: null });
 };
 
 /** How many choices are made. */
@@ -153,9 +193,9 @@ function pressList(s, key) {
     case "j":
       return move(s, s.focus + 1);
     case "pgup":
-      return move(s, s.focus - s.pageSize);
+      return move(s, s.page > 0 ? pageStarts(s)[s.page - 1] : 0);
     case "pgdn":
-      return move(s, s.focus + s.pageSize);
+      return move(s, pageStarts(s)[s.page + 1] ?? visible(s).length - 1);
     case "home":
       return move(s, 0);
     case "end":
@@ -169,7 +209,8 @@ function pressList(s, key) {
       return bulk(s);
     case "e":
       if (!row || !["note", "repeat"].includes(row.kind)) return set(s, { message: "Only a waiting note can be edited." });
-      return set(s, { mode: "edit", buffer: s.edits[row.key] ?? row.text, message: null });
+      if (row.flagged || row.secret) return set(s, { message: "A flagged note can't be edited here: space then y to use it, x to delete it." });
+      return set(s, { mode: "edit", buffer: s.edits[row.key] ?? oneLine(row.text), message: null });
     case "right":
       if (row?.kind !== "file") return s;
       return set(s, { mode: "units", open: row.key, unitFocus: 0, message: null });
@@ -243,10 +284,17 @@ function pressEdit(s, key, screen) {
   const row = focused(s);
   if (key === "esc") return set(s, { mode: "list", buffer: "", message: "Edit dropped." });
   if (key === "enter") {
-    const text = s.buffer.replace(/\s+/g, " ").trim();
+    const text = oneLine(s.buffer);
     if (!text) return set(s, { mode: "list", buffer: "", message: "An empty note isn't saved: x deletes it." });
-    // The edit is screened like any capture: a flagged edit isn't taken (decision 11).
-    const flags = screen ? screen(text).flags ?? [] : [];
+    // Unchanged: a plain yes (the note keeps where it came from).
+    if (text === oneLine(row.text)) {
+      const edits = { ...s.edits };
+      delete edits[row.key];
+      return set(s, { mode: "list", buffer: "", edits: Object.freeze(edits), choice: withChoice(s, row.key, "yes"), message: null });
+    }
+    // The edit is screened like any capture, by the row's own words rule: a flagged edit
+    // isn't taken (decision 11).
+    const flags = screen ? screen(text, { userWords: row.group === "new" }).flags ?? [] : [];
     if (flags.length) return set(s, { mode: "list", buffer: "", message: `Edit not taken: it mentions ${flags[0]}.` });
     const edits = { ...s.edits, [row.key]: text };
     return set(s, { mode: "list", buffer: "", edits: Object.freeze(edits), choice: withChoice(s, row.key, "yes"), message: null });
@@ -283,7 +331,7 @@ export function plan(s) {
       if (r.secret) continue;
       const ids = r.kind === "file" ? [...(s.units[r.key] ?? r.ids)] : r.ids;
       if (!ids.length) continue;
-      out.accept.push({ key: r.key, ids, kind: r.kind, text: s.edits[r.key] ?? null, flagged: Boolean(r.flagged || r.kind === "flagged"), provisional: r.status === "provisional", fromPrompt: r.group === "new", source: r.source });
+      out.accept.push({ key: r.key, ids, kind: r.kind, text: s.edits[r.key] ?? null, flagged: Boolean(r.flagged || r.kind === "flagged"), provisional: Boolean(r.provisional), fromPrompt: r.group === "new", source: r.source });
     } else {
       out.delete.push({ ids: r.kind === "file" ? r.ids : r.ids, text: r.text, units: r.units ?? null });
     }
