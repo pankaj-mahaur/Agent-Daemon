@@ -16,7 +16,7 @@ import { projectSlug } from "../src/memory/episodic.mjs";
 
 const RUNTIME = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const { build, NAME } = await import("../scripts/build-host-packages.mjs");
-const { open: openStore } = await import("../src/memory/sqlite.mjs");
+const { open: openStore, schemaState } = await import("../src/memory/sqlite.mjs");
 const { PRODUCT } = await import("../src/product.mjs");
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "ad-plugin-remember-"));
@@ -58,6 +58,16 @@ async function rows(w) {
     store.close();
   }
 }
+// A hook never migrates the store (L2): the first one finds none and creates it in a
+// detached job, and a drain that runs before that job ends waits in the journal for a
+// later session. A real next session comes later; wait for the store as it would.
+async function storeReady(w) {
+  const dbPath = path.join(w.h, ".agent-daemon", "episodic.db");
+  for (const end = Date.now() + 20000; Date.now() < end; await new Promise((r) => setTimeout(r, 50))) {
+    if ((await schemaState(dbPath)).state === "current") return;
+  }
+  assert.fail("the detached store creation never finished");
+}
 const out = (r) => {
   assert.equal(r.status, 0, r.stderr);
   return JSON.parse(r.stdout || "{}");
@@ -74,6 +84,7 @@ test("the plugin: a typed remember → one pending row (journaled, drained `buff
   assert.equal(j.length, 1, JSON.stringify(j));
   assert.deepEqual([j[0].text, j[0].remember, j[0].provenance, j[0].provisional_eligible], [said, true, undefined, false]);
   // The next session drains it into the store: pending, never accepted, `buffered` (anyone can write the journal).
+  await storeReady(w);
   out(pluginHook("session.start", w, { session_id: "s2", cwd: w.repo, hook_event_name: "SessionStart", source: "startup" }));
   const all = await rows(w);
   assert.equal(all.length, 1, JSON.stringify(all));
@@ -90,6 +101,7 @@ test("Codex: the prompt captured from the pinned engine, through the launcher's 
   const r = out(codexHook("prompt.submit", w, payload));
   assert.match(r.systemMessage ?? "", /^\S[^:]*: Saved for review: "use pnpm, not npm"/);
   assert.equal(journal(w).length, 1);
+  await storeReady(w);
   out(codexHook("session.start", w, { session_id: payload.session_id, cwd: w.repo, hook_event_name: "SessionStart", source: "startup" }));
   assert.deepEqual(await rows(w), [{ text: "use pnpm, not npm", status: "pending", accepted_by: null, provenance: "buffered", origin: "user" }]);
 });
@@ -101,6 +113,7 @@ test("the Claude Code payload captured through the installed plugin → one pend
   assert.equal(payload.prompt, `${CC} use pnpm, not npm`);
   const r = out(pluginHook("prompt.submit", w, payload));
   assert.match(r.systemMessage ?? "", /^\S[^:]*: Saved for review: "use pnpm, not npm"/);
+  await storeReady(w);
   out(pluginHook("session.start", w, { session_id: payload.session_id, cwd: w.repo, source: "startup" }));
   assert.deepEqual(await rows(w), [{ text: "use pnpm, not npm", status: "pending", accepted_by: null, provenance: "buffered", origin: "user" }]);
 });
