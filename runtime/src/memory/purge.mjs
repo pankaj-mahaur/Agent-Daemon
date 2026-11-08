@@ -11,9 +11,13 @@
 // Rows that only point at the note (injections, feedback) go with it; correction events
 // keep their counts but lose its text.
 
+import { recordEvent } from "./l5-tables.mjs";
+import { projectClause } from "./projects.mjs";
+
 const DAY = 86_400_000;
 export const HIDDEN_DAYS = 7;
 export const PROVISIONAL_DAYS = 30;
+export const EVENT_DAYS = 180;
 const COMPACT_STEP = "compact-after-purge";
 
 /** Rewrite the store and truncate its WAL. → { vacuumed, walCleared } (false: another process held it; retried by maintenance). */
@@ -81,6 +85,12 @@ export function purgeLearnings(handle, ids, { compact = true } = {}) {
     } catch {
       // older store without the table
     }
+    try {
+      // L5 events keep their counts but no longer point at the gone note.
+      handle.run(`UPDATE events SET learning_id = NULL WHERE learning_id IN (${marks})`, list);
+    } catch {
+      // older store without the table
+    }
     handle.run(`UPDATE learnings SET supersedes = NULL WHERE supersedes IN (${marks})`, list);
     handle.run(`UPDATE learnings SET superseded_by = NULL WHERE superseded_by IN (${marks})`, list);
     return handle.run(`DELETE FROM learnings WHERE id IN (${marks})`, list).changes;
@@ -98,14 +108,61 @@ export function purgeLearnings(handle, ids, { compact = true } = {}) {
  */
 export function retainNotes(handle, { now = Date.now() } = {}) {
   const before = (days) => new Date(now - days * DAY).toISOString();
+  // A hidden note waits for its clock: status_at stays NULL until the user was shown it
+  // (L5 decision 12), so a hide nobody saw is never purged.
   const stale = handle.all(
     "SELECT id FROM learnings WHERE status = 'hidden' AND accepted_by IS NULL AND status_at IS NOT NULL AND status_at < ?",
     [before(HIDDEN_DAYS)]
   ).map((r) => r.id);
   const purged = stale.length ? purgeLearnings(handle, stale, { compact: false }) : 0;
-  const expired = handle.run(
-    "UPDATE learnings SET status = 'pending', status_at = ? WHERE status = 'provisional' AND accepted_by IS NULL AND status_at IS NOT NULL AND status_at < ?",
-    [new Date(now).toISOString(), before(PROVISIONAL_DAYS)]
-  ).changes;
-  return { purged, expired };
+  const expiring = handle.all(
+    "SELECT id, project_id FROM learnings WHERE status = 'provisional' AND accepted_by IS NULL AND status_at IS NOT NULL AND status_at < ?",
+    [before(PROVISIONAL_DAYS)]
+  );
+  let expired = 0;
+  if (expiring.length) {
+    handle.transaction(() => {
+      for (const r of expiring) {
+        const c = handle.run("UPDATE learnings SET status = 'pending', status_at = ? WHERE id = ? AND status = 'provisional' AND accepted_by IS NULL", [new Date(now).toISOString(), r.id]).changes;
+        if (c) recordEvent(handle, { kind: "expired", learningId: r.id, projectId: r.project_id, actor: "system", at: now });
+        expired += c;
+      }
+    });
+  }
+  const events = pruneEvents(handle, { now });
+  return { purged, expired, events };
+}
+
+/**
+ * Events older than EVENT_DAYS go, except what later decisions read (L5 decision 13):
+ * `discarded` tombstones; a user's `captured` and every `provisional` event while their
+ * note exists; `hidden` events while their note is still hidden; the latest `reviewed`
+ * event of each project. → rows deleted.
+ */
+export function pruneEvents(handle, { now = Date.now() } = {}) {
+  const cut = new Date(now - EVENT_DAYS * DAY).toISOString();
+  try {
+    return handle.run(
+      `DELETE FROM events WHERE at < ?
+         AND kind <> 'discarded'
+         AND NOT (kind IN ('captured', 'provisional') AND learning_id IS NOT NULL AND (kind = 'provisional' OR actor = 'user') AND EXISTS (SELECT 1 FROM learnings l WHERE l.id = events.learning_id))
+         AND NOT (kind = 'hidden' AND EXISTS (SELECT 1 FROM learnings l WHERE l.id = events.learning_id AND l.status = 'hidden'))
+         AND NOT (kind = 'reviewed' AND id = (SELECT MAX(e.id) FROM events e WHERE e.kind = 'reviewed' AND e.project_id IS events.project_id))`,
+      [cut]
+    ).changes;
+  } catch {
+    return 0; // older store without the table
+  }
+}
+
+/** Provisional notes of these projects that go back to pending within `days` (L5 decision 19). */
+export function expiringSoon(handle, keys, { days = 7, now = Date.now() } = {}) {
+  if (!Array.isArray(keys) || !keys.length) return 0;
+  const scope = projectClause("", keys);
+  const from = new Date(now - PROVISIONAL_DAYS * DAY).toISOString();
+  const to = new Date(now - (PROVISIONAL_DAYS - days) * DAY).toISOString();
+  return handle.get(
+    `SELECT COUNT(*) AS n FROM learnings WHERE status = 'provisional' AND accepted_by IS NULL AND status_at >= ? AND status_at < ? AND ${scope.sql}`,
+    [from, to, ...scope.params]
+  )?.n ?? 0;
 }

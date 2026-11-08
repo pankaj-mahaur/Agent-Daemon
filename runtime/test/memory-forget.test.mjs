@@ -105,7 +105,7 @@ test("retention: hidden unaccepted notes go after 7 days, provisional ones retur
     for (const [id, days] of [[oldHidden, 8], [newHidden, 2], [oldProvisional, 31], [requested, 400], [hiddenAccepted, 400]]) h.run("UPDATE learnings SET status_at = ? WHERE id = ?", [at(days), id]);
 
     const r = retainNotes(h, { now });
-    assert.deepEqual(r, { purged: 1, expired: 1 });
+    assert.deepEqual(r, { purged: 1, expired: 1, events: 0 });
     assert.equal(statusOf(h, oldHidden), null);
     assert.equal(statusOf(h, newHidden), "hidden");
     assert.equal(statusOf(h, oldProvisional), "pending");
@@ -273,7 +273,7 @@ test("a retention purge never compacts the store (secure_delete zeroed what it f
     let vacuums = 0;
     const exec = h.raw.exec.bind(h.raw);
     h.raw.exec = (sql) => (/VACUUM/i.test(sql) && vacuums++, exec(sql));
-    assert.deepEqual(retainNotes(h, { now: Date.parse("2026-02-01T00:00:00Z") }), { purged: 1, expired: 0 });
+    assert.deepEqual(retainNotes(h, { now: Date.parse("2026-02-01T00:00:00Z") }), { purged: 1, expired: 0, events: 0 });
     assert.equal(vacuums, 0);
     assert.equal(compactionPending(h), false);
   } finally {

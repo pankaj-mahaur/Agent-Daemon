@@ -193,6 +193,8 @@ export async function captureExplicit({ kind, fields, scope, host = null, mode =
     confidence: 0.6,
     tags: note.files.length ? note.files : undefined,
     origin: "agent",
+    // A model-callable path (02 §7 invariant 4).
+    provenance: "agent",
     captureRef,
   };
   let screen = { verdict: "clean", reasons: [] };

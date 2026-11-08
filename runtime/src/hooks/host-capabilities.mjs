@@ -6,7 +6,7 @@
 //   Codex              no (fails open) yes (JSON)    no                     no (exec)
 //   * in bypassPermissions and dontAsk a hook "ask" may be skipped, so it is sent as deny.
 //
-// The provisional allow-list (02 §2.1) is empty at launch: no host gives a
+// The provisional allow-list (02 §2.1, L5 decision 4) is empty at launch: no host gives a
 // positive signal for a typed prompt yet, so every capture waits for review.
 
 export const HOSTS = Object.freeze({
@@ -29,12 +29,26 @@ export const HOSTS = Object.freeze({
 });
 
 /**
- * Hosts and versions whose typed prompts may become provisional notes. A host
- * joins only when it gives a documented signal for every non-typed source
- * (Claude Code: UserPromptSubmit `source: "user"`, not shipped in 2.1.314).
- * @type {{host:string, minVersion:string}[]}
+ * Hosts whose typed prompts may become provisional notes (L5 design decision 4). An entry
+ * names a POSITIVE signal (a missing field is never enough), the first host version that
+ * sends it, and where the host's own executable lives (the hook's parent must be it). It
+ * stays empty until L6 serves provisional notes, L7's self-protection is live and the
+ * S-L5-PARENT spike shows a difference the agent can't fake between a hook and the
+ * agent's own Bash tool (both are children of the host).
+ * @type {{host:string, signal:string, minVersion:string, parentExe:RegExp}[]}
  */
 export const PROVISIONAL_ALLOW_LIST = Object.freeze([]);
+
+/** Positive signals an allow-list entry may name: each must hold on the payload itself. */
+export const SIGNALS = Object.freeze({
+  // Claude Code's UserPromptSubmit `source` field (rolling out; absent in 2.1.314).
+  "source-user": (input) => input?.source === "user",
+});
+
+/** The allow-list entry this payload's host and signal match, or null. */
+export function allowEntry(input, host, { list = PROVISIONAL_ALLOW_LIST } = {}) {
+  return list.find((e) => e.host === host && typeof SIGNALS[e.signal] === "function" && SIGNALS[e.signal](input)) ?? null;
+}
 
 /** Compare dotted versions ("2.1.314" vs "2.1.295"): negative, zero or positive. */
 export const cmpVersion = (a, b) => {
@@ -44,9 +58,9 @@ export const cmpVersion = (a, b) => {
   return 0;
 };
 
-/** Is this host and version on the provisional allow-list? */
-export function allowListed(host, version, { list = PROVISIONAL_ALLOW_LIST } = {}) {
-  return list.some((e) => e.host === host && version && cmpVersion(version, e.minVersion) >= 0);
+/** Is this version at or above the entry's floor? An unknown version never is. */
+export function versionOk(entry, version) {
+  return Boolean(entry && version && cmpVersion(version, entry.minVersion) >= 0);
 }
 
 /** Which host sent this payload: the --host flag, else Codex's turn_id (Claude Code sends prompt_id). */

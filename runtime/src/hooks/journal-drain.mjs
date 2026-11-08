@@ -141,6 +141,7 @@ export async function drainJournal(opts) {
       classified,
       sessionId: null,
       sessionSummary: `Continuous extraction across ${entries.length} prior-turn hook fire(s).`,
+      provenance: "buffered",
       cwd,
       dryRun: opts.dryRun,
       verbose: opts.verbose

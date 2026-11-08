@@ -12,15 +12,18 @@
 //   a wrapper or generated text (typed-text.mjs);
 //   the same text as a recorded CronCreate/ScheduleWakeup input or a
 //   SubagentStop message (hashes kept in adRoot()/hooks/scheduled.jsonl).
-// A provisional note (applied at once) also needs the host and version on the
-// allow-list, which is empty at launch: every capture waits for review.
+// A first-party prompt (L5 decision 4: may become a provisional note) also needs an
+// allow-list entry whose positive signal holds, the hook's parent to be that host's own
+// executable, and the running host's version at or above the entry's floor. The list is
+// empty at launch: every capture waits for review.
 
 import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { adRoot } from "../ad-root.mjs";
 import { typedText } from "./typed-text.mjs";
-import { allowListed } from "./host-capabilities.mjs";
+import { allowEntry, versionOk } from "./host-capabilities.mjs";
+import { parentIsHost } from "./parent-host.mjs";
 
 const KEEP = 500;
 const KEEP_MS = 7 * 86_400_000;
@@ -67,16 +70,36 @@ export function readScheduled({ root = adRoot(), now = Date.now() } = {}) {
   return out;
 }
 
+// Verdicts this module issued with firstParty true. Only an object minted here passes
+// isFirstParty(), so a caller can't hand the provisional writer a home-made verdict.
+const FIRST = new WeakMap();
+
+/** Did promptSource() issue this verdict as first-party? */
+export const isFirstParty = (v) => Boolean(v && typeof v === "object" && FIRST.has(v));
+
+const fold = (t) => String(t ?? "").toLowerCase().replace(/\s+/g, " ").trim();
+
+/** The prompt a first-party verdict was issued for (folded), or null: a verdict only vouches for its own prompt's words. */
+export const promptOfVerdict = (v) => (isFirstParty(v) ? FIRST.get(v) : null);
+
+/** Do these words come from the prompt this verdict was issued for? */
+export const verdictCovers = (v, text) => {
+  const p = promptOfVerdict(v);
+  const t = fold(text);
+  return Boolean(p && t && p.includes(t));
+};
+
 /**
  * Classify a prompt.
  * @param {object} input  the UserPromptSubmit payload
- * @param {{host?:string, version?:string|null, env?:object, scheduled?:object[]|null, root?:string, list?:object[]}} [opts]
+ * @param {{host?:string, env?:object, scheduled?:object[]|null, root?:string, list?:object[], parent?:Function}} [opts]
  *   list: the provisional allow-list (default host-capabilities' PROVISIONAL_ALLOW_LIST)
- * @returns {{typed:boolean, why:string, provisionalEligible:boolean}}
+ *   parent: (entry) => {ok, version} (default parent-host.mjs parentIsHost; tests inject it)
+ * @returns {{typed:boolean, why:string, firstParty:boolean, provisionalEligible:boolean}}
  */
-export function promptSource(input, { host = "claude", version = null, env = process.env, scheduled = null, root, list } = {}) {
+export function promptSource(input, { host = "claude", env = process.env, scheduled = null, root, list, parent = parentIsHost } = {}) {
   const prompt = String(input?.prompt ?? "");
-  const not = (why) => ({ typed: false, why, provisionalEligible: false });
+  const not = (why) => Object.freeze({ typed: false, why, firstParty: false, provisionalEligible: false });
   if (input?.agent_id || input?.agent_type) return not("subagent");
   if (env.CLAUDE_CODE_ENTRYPOINT === "sdk-cli" || env.CLAUDE_CODE_SESSION_ATTENDED === "0") return not("headless");
   if (env.AD_WORKER === "1") return not("ad worker");
@@ -86,5 +109,13 @@ export function promptSource(input, { host = "claude", version = null, env = pro
   const h = promptHash(prompt);
   const hit = recorded.find((e) => e.h === h);
   if (hit) return not(hit.k === "subagent" ? "a subagent's message" : "a scheduled prompt");
-  return { typed: true, why: "typed", provisionalEligible: allowListed(host, version, list ? { list } : undefined) };
+  const typed = (firstParty) => Object.freeze({ typed: true, why: "typed", firstParty, provisionalEligible: firstParty });
+  const entry = allowEntry(input, host, list ? { list } : undefined);
+  // The parent check (a process lookup) runs only once everything else holds.
+  if (!entry) return typed(false);
+  const p = parent(entry) ?? {};
+  if (!p.ok || !versionOk(entry, p.version)) return typed(false);
+  const v = typed(true);
+  FIRST.set(v, fold(prompt));
+  return v;
 }

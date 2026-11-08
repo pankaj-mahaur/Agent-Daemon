@@ -12,8 +12,8 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { loadGuards, writeGuards, projectFor, guardsPath, lastGoodPath } from "../src/hooks/guards.mjs";
 import { toolBefore, callOf } from "../src/hooks/tool-before.mjs";
-import { promptSource, recordScheduled, readScheduled, promptHash } from "../src/hooks/prompt-source.mjs";
-import { toolDecision, hostOf, allowListed, PROVISIONAL_ALLOW_LIST } from "../src/hooks/host-capabilities.mjs";
+import { promptSource, recordScheduled, readScheduled, promptHash, isFirstParty } from "../src/hooks/prompt-source.mjs";
+import { toolDecision, hostOf, allowEntry, versionOk, PROVISIONAL_ALLOW_LIST } from "../src/hooks/host-capabilities.mjs";
 import { jobEnv, spawnDetached } from "../src/hooks/detached.mjs";
 
 const HOOK = fileURLToPath(new URL("../bin/hook.mjs", import.meta.url));
@@ -109,39 +109,65 @@ test("Codex calls: Bash is the shell (PowerShell on Windows), patches arrive in 
   assert.equal(hostOf({}, { flag: "codex" }), "codex");
 });
 
-test("the provisional allow-list is empty at launch: no host's prompts become provisional", () => {
+test("the provisional allow-list is empty at launch, and an entry needs a positive signal and a version floor", () => {
   assert.deepEqual(PROVISIONAL_ALLOW_LIST, []);
-  assert.equal(allowListed("claude", "9.9.9"), false);
-  const list = [{ host: "claude", minVersion: "2.1.400" }];
-  assert.equal(allowListed("claude", "2.1.314", { list }), false, "older than the version that ships the signal");
-  assert.equal(allowListed("claude", "2.1.400", { list }), true);
-  assert.equal(allowListed("claude", "2.2.0", { list }), true);
-  assert.equal(allowListed("codex", "9.0.0", { list }), false);
-  assert.equal(allowListed("claude", null, { list }), false, "an unknown version never qualifies");
-  const typed = promptSource({ prompt: "never use npm here" }, { env: {}, scheduled: [] });
-  assert.deepEqual(typed, { typed: true, why: "typed", provisionalEligible: false });
+  const list = [{ host: "claude", signal: "source-user", minVersion: "2.1.400", parentExe: /\/claude\/versions\// }];
+  assert.equal(allowEntry({ prompt: "x" }, "claude"), null, "empty list");
+  assert.equal(allowEntry({ prompt: "x" }, "claude", { list }), null, "a missing source field is never a signal");
+  assert.equal(allowEntry({ prompt: "x", source: "user" }, "codex", { list }), null, "another host");
+  assert.equal(allowEntry({ prompt: "x", source: "user" }, "claude", { list }), list[0]);
+  assert.equal(versionOk(list[0], "2.1.314"), false, "older than the floor");
+  assert.equal(versionOk(list[0], "2.1.400"), true);
+  assert.equal(versionOk(list[0], null), false, "an unknown version never qualifies");
+  const typed = promptSource({ prompt: "never use npm here", source: "user" }, { env: {}, scheduled: [] });
+  assert.deepEqual(typed, { typed: true, why: "typed", firstParty: false, provisionalEligible: false });
+  assert.equal(isFirstParty(typed), false);
 });
 
-test("on an allow-listed host only typed prompts become provisional; every other source stays pending", async () => {
+test("first-party needs the entry, the host as parent and its version; every other source stays pending", async () => {
   const { PLAN_CLEAR_CONTEXT_PREFIX } = await import("../src/hooks/generated-prompts.mjs");
-  const list = [{ host: "claude", minVersion: "2.1.400" }];
-  const opts = (extra = {}) => ({ host: "claude", version: "2.1.400", env: {}, scheduled: [], list, ...extra });
-  assert.deepEqual(promptSource({ prompt: "never use npm in this repo" }, opts()), { typed: true, why: "typed", provisionalEligible: true });
+  const list = [{ host: "claude", signal: "source-user", minVersion: "2.1.400", parentExe: /\/claude\/versions\// }];
+  const host = () => ({ ok: true, version: "2.1.400" });
+  const opts = (extra = {}) => ({ host: "claude", env: {}, scheduled: [], list, parent: host, ...extra });
+  const yes = promptSource({ prompt: "never use npm in this repo", source: "user" }, opts());
+  assert.deepEqual(yes, { typed: true, why: "typed", firstParty: true, provisionalEligible: true });
+  assert.equal(isFirstParty(yes), true);
+  assert.equal(isFirstParty({ ...yes }), false, "a copy of a verdict isn't one this module issued");
   const wake = "check the deploy again and report back";
+  const u = (o) => ({ source: "user", ...o });
   const others = [
-    [{ prompt: "never use npm here", agent_id: "a1" }, opts(), "a subagent"],
-    [{ prompt: "never use npm here", agent_type: "Explore" }, opts(), "a subagent type"],
-    [{ prompt: `${PLAN_CLEAR_CONTEXT_PREFIX}\n\n1. use pnpm` }, opts(), "a plan hand-off"],
-    [{ prompt: "<task-notification>\n<result>use pnpm</result>\n</task-notification>" }, opts(), "a background task's report"],
-    [{ prompt: wake }, opts({ scheduled: [{ h: promptHash(wake), k: "scheduled", t: Date.now() }] }), "a ScheduleWakeup prompt"],
-    [{ prompt: wake }, opts({ scheduled: [{ h: promptHash(wake), k: "subagent", t: Date.now() }] }), "a subagent's last message"],
-    [{ prompt: "never use npm here" }, opts({ env: { CLAUDE_CODE_SESSION_ATTENDED: "0" } }), "headless"],
-    [{ prompt: "never use npm here" }, opts({ env: { AD_WORKER: "1" } }), "ad's worker"],
+    [u({ prompt: "never use npm here" }), opts({ parent: () => ({ ok: false, version: "2.1.400" }) }), "the parent isn't the host (the agent's shell), even with a good version"],
+    [u({ prompt: "never use npm here" }), opts({ parent: () => ({ ok: true, version: "2.1.314" }) }), "an older running host"],
+    [u({ prompt: "never use npm here" }), opts({ parent: () => ({ ok: true, version: null }) }), "an unknown version"],
+    [{ prompt: "never use npm here" }, opts(), "no source field"],
+    [u({ prompt: "never use npm here", agent_id: "a1" }), opts(), "a subagent"],
+    [u({ prompt: "never use npm here", agent_type: "Explore" }), opts(), "a subagent type"],
+    [u({ prompt: `${PLAN_CLEAR_CONTEXT_PREFIX}\n\n1. use pnpm` }), opts(), "a plan hand-off"],
+    [u({ prompt: "<task-notification>\n<result>use pnpm</result>\n</task-notification>" }), opts(), "a background task's report"],
+    [u({ prompt: wake }), opts({ scheduled: [{ h: promptHash(wake), k: "scheduled", t: Date.now() }] }), "a ScheduleWakeup prompt"],
+    [u({ prompt: wake }), opts({ scheduled: [{ h: promptHash(wake), k: "subagent", t: Date.now() }] }), "a subagent's last message"],
+    [u({ prompt: "never use npm here" }), opts({ env: { CLAUDE_CODE_SESSION_ATTENDED: "0" } }), "headless"],
+    [u({ prompt: "never use npm here" }), opts({ env: { AD_WORKER: "1" } }), "ad's worker"],
     [{ prompt: "never use npm here", source: "loop_wakeup" }, opts(), "a loop wake-up"],
-    [{ prompt: "never use npm here" }, opts({ host: "codex" }), "a host not on the list"],
-    [{ prompt: "never use npm here" }, opts({ version: "2.1.314" }), "an older version"],
+    [u({ prompt: "never use npm here" }), opts({ host: "codex" }), "a host not on the list"],
   ];
-  for (const [input, o, why] of others) assert.equal(promptSource(input, o).provisionalEligible, false, why);
+  for (const [input, o, why] of others) {
+    const v = promptSource(input, o);
+    assert.equal(v.firstParty, false, why);
+    assert.equal(isFirstParty(v), false, why);
+  }
+});
+
+test("the parent check: executable path only, never node, version from the install", async () => {
+  const { parentIsHost, versionNear } = await import("../src/hooks/parent-host.mjs");
+  const entry = { host: "claude", signal: "source-user", minVersion: "2.1.400", parentExe: /\/claude\/versions\// };
+  assert.deepEqual(parentIsHost(entry, { parentExe: () => "/home/u/.local/share/claude/versions/2.1.401" }), { ok: true, version: "2.1.401" });
+  assert.equal(parentIsHost(entry, { parentExe: () => "/usr/bin/bash" }).ok, false, "a shell");
+  assert.equal(parentIsHost(entry, { parentExe: () => "/usr/bin/node" }).ok, false, "node (an npm-hosted host, or anything the agent starts)");
+  assert.equal(parentIsHost(entry, { parentExe: () => "/tmp/claude/versions/node" }).ok, false, "node even inside a matching folder");
+  assert.equal(parentIsHost(entry, { parentExe: () => null }).ok, false, "unknown (Windows)");
+  assert.equal(versionNear("/x/claude/versions/2.1.402"), "2.1.402");
+  assert.equal(versionNear("/x/bin/claude", { read: () => { throw new Error("none"); } }), null);
 });
 
 test("prompt sources from the real S-HOOKS captures, and the other non-typed shapes", () => {

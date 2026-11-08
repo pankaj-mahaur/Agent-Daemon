@@ -249,7 +249,23 @@ async function snapshotDb(plan, dbFile, { roots, ci, count }) {
       }
     }
   }
+  dropUnshared(db);
   return db;
+}
+
+// A provisional note (in use in its project only, unreviewed) and a hidden one (on its way
+// out) never leave this machine (L5 decision 16), nor the rows that point at them.
+function dropUnshared(db) {
+  const has = (t) => Boolean(db.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(t));
+  if (!has("learnings")) return;
+  const gone = "SELECT id FROM learnings WHERE status IN ('provisional', 'hidden')";
+  for (const [t, col] of [["feedback", "learning_id"], ["injections", "learning_id"], ["correction_events", "learning_id"], ["correction_events", "matched_learning_id"]]) {
+    if (has(t) && cols(db, t).includes(col)) db.exec(`DELETE FROM "${t}" WHERE "${col}" IN (${gone})`);
+  }
+  db.exec("DELETE FROM learnings WHERE status IN ('provisional', 'hidden')");
+  for (const col of ["supersedes", "superseded_by"]) {
+    if (cols(db, "learnings").includes(col)) db.exec(`UPDATE learnings SET "${col}" = NULL WHERE "${col}" IS NOT NULL AND "${col}" NOT IN (SELECT id FROM learnings)`);
+  }
 }
 
 // A fact goes once per selected project it belongs to (export_project = that id); a global fact

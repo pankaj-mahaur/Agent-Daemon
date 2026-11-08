@@ -18,6 +18,9 @@ import { isProjectId, projectClause } from "./projects.mjs";
 import { dropFromFile } from "./metrics.mjs";
 import { probeAncestry } from "./ancestry.mjs";
 import { confirmByDialog } from "./dialog-code.mjs";
+import { reviewableSql } from "./trust.mjs";
+import { putSetting, recordEvent } from "./l5-tables.mjs";
+import { writeLearning, sameNote } from "./episodic.mjs";
 
 const issued = new WeakSet();
 
@@ -97,7 +100,8 @@ export function acceptFact(handle, token, id, { now, keys } = {}) {
 export function acceptGlobal(handle, token, id, { now } = {}) {
   must(token);
   const t = iso(now);
-  return handle.run("UPDATE learnings SET global_accepted_at = ?, accepted_by = COALESCE(accepted_by, 'review'), accepted_at = COALESCE(accepted_at, ?) WHERE id = ?", [t, t, id]).changes;
+  // A provisional note is project-only (L5 decision 16): it becomes global only after it is accepted in its project.
+  return handle.run("UPDATE learnings SET global_accepted_at = ?, accepted_by = COALESCE(accepted_by, 'review'), accepted_at = COALESCE(accepted_at, ?) WHERE id = ? AND status <> 'provisional'", [t, t, id]).changes;
 }
 
 /** A user fact, accepted for every project. */
@@ -115,6 +119,8 @@ export function acceptFactGlobal(handle, token, id, { now } = {}) {
  */
 export function promoteLearning(handle, token, row, now = new Date()) {
   must(token);
+  // A provisional note is project-only (L5 decision 16).
+  if (handle.get("SELECT status FROM learnings WHERE id = ?", [row.id])?.status === "provisional") return { ok: false, text: `Learning #${row.id} is in use in this project only; accept it there first.` };
   const plain = learningContentHash(row.text);
   const t = iso(now);
   return handle.transaction(() => {
@@ -254,4 +260,61 @@ export function archiveLearning(handle, token, id, projectSlug, { memoryFile } =
   ).changes;
   if (changed) dropFromMemoryFile(memoryFile, row?.text);
   return changed;
+}
+
+// ── L5: the review checklist, CLI remember with the token, review mode ────────────────
+
+/**
+ * Accept one note from the review checklist (L5 decision 11): only while it is still
+ * reviewable in these projects (pending or provisional; a flagged one only with
+ * withFlagged, never one held back for a secret), so a stale row changes nothing.
+ * → rows changed (0 or 1).
+ */
+export function acceptReviewed(handle, token, id, { keys, withFlagged = false, appliedTo = "memory:project", now } = {}) {
+  must(token);
+  const scope = inProject(keys);
+  const t = iso(now);
+  return handle.run(
+    `UPDATE learnings SET status = 'active', accepted_by = 'review', accepted_at = ?, status_at = ?, quarantine_reason = NULL, applied_to = ?
+      WHERE id = ? AND ${reviewableSql("", { withFlagged })} AND ${scope.sql}`,
+    [t, t, appliedTo, id, ...scope.params]
+  ).changes;
+}
+
+/**
+ * CLI `remember` run with the token (02 §2): the screened note is stored and accepted at
+ * once, provenance user-cli. row: writeLearning's shape (the caller screened it; a flagged
+ * note never comes here). An existing note with that text in the project is accepted in
+ * place when it is reviewable. → { id, status }.
+ */
+export function rememberAccepted(handle, token, row, { keys, now } = {}) {
+  must(token);
+  if (!Array.isArray(keys) || !keys.length) return { id: null, status: "no-project" };
+  return handle.transaction(() => {
+    let id = writeLearning(handle, { ...row, status: "pending", origin: "user", provenance: "user-cli" });
+    if (id == null) id = sameNote(handle, row.projectSlug, row.text, undefined, row.projectId)?.id ?? null;
+    if (id == null) return { id: null, status: "none" };
+    id = Number(id);
+    const cur = handle.get("SELECT status, accepted_by FROM learnings WHERE id = ?", [id]);
+    if (cur?.accepted_by) return { id, status: "accepted-before" };
+    // A hidden note the user now remembers in their own terminal: back, and accepted. If the
+    // accept can't happen (another project, flagged), it goes back to hidden as it was.
+    const hidden = cur?.status === "hidden" ? handle.get("SELECT status_at FROM learnings WHERE id = ?", [id]) : null;
+    if (hidden) handle.run("UPDATE learnings SET status = 'pending' WHERE id = ? AND status = 'hidden' AND accepted_by IS NULL", [id]);
+    const changed = acceptReviewed(handle, token, id, { keys, now });
+    if (changed) handle.run("UPDATE learnings SET provenance = 'user-cli', origin = 'user' WHERE id = ?", [id]);
+    else if (hidden) handle.run("UPDATE learnings SET status = 'hidden', status_at = ? WHERE id = ? AND status = 'pending' AND accepted_by IS NULL", [hidden.status_at, id]);
+    const now2 = handle.get("SELECT status FROM learnings WHERE id = ?", [id])?.status ?? "none";
+    return { id, status: changed ? "accepted" : now2 };
+  });
+}
+
+/** Turn review mode back to auto (L5 decision 10): it widens trust, so it needs the token. */
+export function setReviewAuto(handle, token, { now = new Date() } = {}) {
+  must(token);
+  return handle.transaction(() => {
+    putSetting(handle, "review_mode", "auto", { now });
+    recordEvent(handle, { kind: "strict-off", actor: "review", at: now });
+    return true;
+  });
 }
