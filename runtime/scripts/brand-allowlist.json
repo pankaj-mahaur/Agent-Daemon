@@ -708,6 +708,12 @@
       "reason": "entry #100 (remember): the command the user types in their own Codex, and setup's Codex step"
     },
     {
+      "path": "docs/troubleshooting.md",
+      "rules": ["A"],
+      "match": "Codex: no hooks: ad's folder|Codex's shell would read|a Codex hook list|\\(Codex hooks not reviewed|`Codex won't run|on this Codex`|Codex runs a hook only after you trust it|Codex records trust per hook|open Codex and run `/hooks`|## 107\\. Codex:|a Codex session starts with|Codex's agent shell isn't marked|run the printed `setup --host codex`|In Codex, uninstall never edits|\\(Codex would stop trusting it\\)|your Codex is newer",
+      "reason": "entries #104-#109 (memory setup, Codex's /hooks trust, the shell marker, uninstall's kept items): the user's own Codex CLI, its messages and its trust step"
+    },
+    {
       "path": "mcp/agent-daemon-memory/README.md",
       "rules": ["A"],
       "match": "Install \\(Claude Code, Codex, Cursor(, VS Code, Gemini CLI)?\\)",
