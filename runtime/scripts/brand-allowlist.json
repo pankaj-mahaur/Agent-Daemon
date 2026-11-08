@@ -857,6 +857,12 @@
       "rules": ["A"],
       "match": "[Cc]odex|CODEX",
       "reason": "spawns the hook as the second host (--host codex, CODEX_HOME unset) and checks its forget, reminder and capture-count lines"
+    },
+    {
+      "path": "docs/memory/review.md",
+      "rules": ["A"],
+      "match": "\\(Codex\\)| in Codex",
+      "reason": "the capture and review guide names the typed command forms on the user's own Codex CLI ($agent-daemon-memory-remember, -forget), not ad's engine"
     }
   ]
 }

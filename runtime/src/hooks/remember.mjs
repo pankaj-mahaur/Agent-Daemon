@@ -155,7 +155,7 @@ export async function captureRemember({ text, input, source, host, cwd, version,
     if (r.status === "collides") return { saved: false, status: r.status, id: null, receipt: rememberReceipt({ text, saved: false, why: "this folder shares its memory with another folder, so nothing is saved here", version, host }) };
     const saved = ["pending", "provisional", "journal", "quarantined", "said-again"].includes(r.status);
     const forget = host === "codex" ? `$${PRODUCT.package}-forget` : `/${PRODUCT.plugin}:forget`;
-    const line = captureReceipt({ ...r, text: r.text ?? text, review, product: PRODUCT.displayName, remember: TYPED_FORM[host] ?? TYPED_FORM.claude, forget });
+    const line = captureReceipt({ ...r, text: r.text ?? text, review, product: PRODUCT.displayName, remember: TYPED_FORM[host] ?? TYPED_FORM.claude, terminalRemember: version ? pinnedCommand("remember", version) : `npx -y ${PRODUCT.package} remember`, forget });
     const shown = clip(String(r.text ?? text).replace(/\s+/g, " "), 120);
     const context = saved
       ? `${PRODUCT.displayName} saved the note "${shown}"${r.id ? ` as #${r.id}` : ""} ${r.status === "provisional" ? "and it is in use now" : "for review"} (once: don't record it again). The user accepts it with \`${review}\` in their own terminal.`

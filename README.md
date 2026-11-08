@@ -411,6 +411,10 @@ ad skill list                          # both lanes, with provenance
 
 Conversationally: tell Claude *"install this skill <url>"* — the bundled `skill-installer` skill drives the same CLI. Installs are copy-only (no code execution), and removal stays manifest-aware via `ad skill remove`.
 
+## Corrections you type: capture, review, forget
+
+Correct your agent once ("no, we use pnpm here") and ad saves it for this project, with a one-line receipt. Each capture is screened for text aimed at the agent or its memory, and nothing is used until you accept it: run `ad review` in your own terminal, where `a`, `enter`, `y` accepts the new notes from your prompts on the page. `ad remember <text>`, `ad forget <n>` and `ad restore <n>` work in the terminal, and `/agent-daemon-memory:forget 12` in Claude Code; a prompt or the agent can never remove what you said or anything you accepted. Details: [capture, review and forget](docs/memory/review.md).
+
 ## Memory evolution (Hermes-style)
 
 Learnings live a lifecycle instead of accumulating forever:

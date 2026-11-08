@@ -21,17 +21,21 @@ Restart each host afterwards.
 | `repair [--host <id>]` | put back an entry the installer owns |
 | `status [--json]` | what is installed where |
 | `uninstall [--host <id>] [--purge-data]` | remove exactly what it added; memory data stays unless you ask |
-| `review [--accept <file>] [--accept-all] [--global]` | accept or reject the notes an agent recorded (run it yourself, in a terminal) |
+| `review [--list \| --plain \| --accept-all [--with-agent] \| --proposals]` | decide what waits for review in a checklist (run it yourself, in a terminal) |
+| `remember <text>` · `forget <n>` · `restore <n>` | save, remove or bring back a note (accepted or removed at once only in your own terminal) |
+| `config review [strict\|auto]` | every note waits for review, or a typed correction applies at once where a host can prove it |
 
 The installer's hosts: `claude-code` (through `claude mcp add`, user scope),
 `codex` (`~/.codex/config.toml`), `cursor` (`~/.cursor/mcp.json`), `vscode`
 (`~/.copilot/mcp-config.json`), `gemini` (`~/.gemini/settings.json`). Which are
 tested live: [the support matrix](https://github.com/pankaj-mahaur/Agent-Daemon/blob/main/docs/support-matrix.md).
 
-What an agent records waits for your review: until you accept it with
-`npx agent-daemon-memory review` (or `ad review`) in your own terminal, the
-agent sees it only when it searches, marked unreviewed, and it is never shown
-at session start. Accepting refuses inside an agent's shell and asks you to type `accept`.
+What your hooks capture and what an agent records wait for your review: until
+you accept them with `npx agent-daemon-memory review` (or `ad review`) in your
+own terminal, the agent sees them only when it searches, marked unreviewed, and
+they are never shown at session start. Review is a checklist: `a`, `enter`, `y`
+accepts the new notes from your prompts on the page; flagged notes are decided one at a
+time. It refuses inside an agent's shell. More: [capture, review and forget](https://github.com/pankaj-mahaur/Agent-Daemon/blob/main/docs/memory/review.md).
 
 Part of [agent-daemon](https://github.com/pankaj-mahaur/Agent-Daemon). Needs
 Node 22.16 or newer; no native build.

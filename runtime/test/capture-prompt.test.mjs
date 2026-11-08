@@ -252,3 +252,20 @@ test("a typed team convention that names code is captured (the bench's on-hooks 
   const row = p.handle.get("SELECT capture_ref, provenance, origin FROM learnings WHERE id = ?", [r.id]);
   assert.deepEqual([row.capture_ref, row.provenance, row.origin], ["s1", "prompt", "user"], "keyed by the prompt's session (ad tui's learned row reads it)");
 });
+
+test("a deleted note: a typed capture or remember meets its tombstone; the receipt names the terminal's remember, which does save it", async () => {
+  const p = await project();
+  const said = "prefer small pull requests over big ones";
+  const first = await run(p, said, typed(said));
+  const projectId = row(p, first.id).project_id;
+  const nk = p.handle.get("SELECT norm_key FROM learnings WHERE id = ?", [first.id]).norm_key;
+  p.handle.run("DELETE FROM learnings WHERE id = ?", [first.id]);
+  recordEvent(p.handle, { kind: "discarded", actor: "review", projectId, detail: { hash: cap.tombstoneHash(nk) } });
+  const again = await run(p, `/agent-daemon-memory:remember ${said}`, typed(`/agent-daemon-memory:remember ${said}`), { remember: said });
+  assert.equal(again.status, "deleted-before", "a typed remember meets the tombstone too");
+  const line = cap.captureReceipt({ ...again, review: "R", product: "P", remember: "/p:remember", terminalRemember: "npx -y p@1 remember" });
+  assert.equal(line, "P: You deleted this before; to save it anyway, run npx -y p@1 remember <text> in your own terminal");
+  assert.doesNotMatch(line, /\/p:remember/, "never points at the typed form, which can't override it");
+  const cli = await cap.captureCli(said, { handle: p.handle, cwd: p.dir, token: testReviewToken() });
+  assert.equal(cli.status, "accepted", "the terminal's remember with the token saves it anyway");
+});
