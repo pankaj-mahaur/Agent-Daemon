@@ -434,6 +434,16 @@
       "reason": "the mistakes report (L4a) reads the user's own Codex history (CODEX_HOME, rollouts) as one of two hosts and names that host in the report; this is the user's separate install, not ad's engine"
     },
     {
+      "path": "runtime/src/memory/history-import.mjs",
+      "rules": ["A"],
+      "reason": "the history import (L4b) reads the same user-owned Codex history as the mistakes report (L4a) and says so; not ad's engine"
+    },
+    {
+      "path": "runtime/test/history-import.test.mjs",
+      "rules": ["A"],
+      "reason": "fixture history of the user's own two hosts, Codex one of them (CODEX_HOME, host id `codex`); not ad's engine"
+    },
+    {
       "path": "runtime/src/hooks/host-capabilities.mjs",
       "rules": ["A", "C"],
       "reason": "the hook dispatcher's table of what each host does with a hook's answer; Codex is one of the two hosts (the user's own CLI, not ad's engine)"

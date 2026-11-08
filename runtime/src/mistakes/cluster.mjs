@@ -124,9 +124,11 @@ export const NEAR = 0.5;
 
 /**
  * Cluster corrections.
- * @param {{sentence:string, host:string, ts:number|null}[]} items  in time order
- * @returns {{id:string, key:string, count:number, hosts:Record<string,number>, firstTs:number|null, lastTs:number|null, sentences:string[]}[]}
- *   largest first; ties by first seen
+ * @param {{sentence:string, host:string, ts:number|null, session?:string}[]} items  in time order
+ * @returns {{id:string, key:string, count:number, hosts:Record<string,number>, sessions:Record<string,number>, memberKeys:string[],
+ *   firstTs:number|null, lastTs:number|null, sentences:string[]}[]}
+ *   largest first; ties by first seen. sessions: repeats per session id (items with one);
+ *   memberKeys: the token key of each distinct wording, the first wording's first
  */
 export function clusterCorrections(items, { near = NEAR } = {}) {
   const clusters = [];
@@ -151,7 +153,7 @@ export function clusterCorrections(items, { near = NEAR } = {}) {
       }
       c = best;
       if (!c) {
-        c = { key, tokens: tok, memberTokens: [], count: 0, hosts: {}, firstTs: it.ts ?? null, lastTs: it.ts ?? null, sentences: [], order: clusters.length };
+        c = { key, tokens: tok, memberTokens: [], count: 0, hosts: {}, sessions: {}, keys: new Set(), firstTs: it.ts ?? null, lastTs: it.ts ?? null, sentences: [], order: clusters.length };
         clusters.push(c);
       }
       if (c.memberTokens.length < 20) c.memberTokens.push(tok);
@@ -159,6 +161,10 @@ export function clusterCorrections(items, { near = NEAR } = {}) {
     }
     c.count++;
     c.hosts[it.host] = (c.hosts[it.host] ?? 0) + 1;
+    // L4b: repeats per session (a loop can't stand for many) and each wording's key (the
+    // cluster's identity when the first wording leaves the history).
+    if (it.session != null) c.sessions[it.session] = (c.sessions[it.session] ?? 0) + 1;
+    c.keys.add(key);
     if (it.ts != null) {
       c.firstTs = c.firstTs == null ? it.ts : Math.min(c.firstTs, it.ts);
       c.lastTs = c.lastTs == null ? it.ts : Math.max(c.lastTs, it.ts);
@@ -167,7 +173,7 @@ export function clusterCorrections(items, { near = NEAR } = {}) {
   }
   return clusters
     .sort((a, b) => b.count - a.count || a.order - b.order)
-    .map((c) => ({ id: hashOf(c.key), key: c.key, count: c.count, hosts: c.hosts, firstTs: c.firstTs, lastTs: c.lastTs, sentences: c.sentences }));
+    .map((c) => ({ id: hashOf(c.key), key: c.key, count: c.count, hosts: c.hosts, sessions: c.sessions, memberKeys: [...c.keys], firstTs: c.firstTs, lastTs: c.lastTs, sentences: c.sentences }));
 }
 
 /** The sentence that names a cluster: the most frequent wording, then the shortest, then the first. */

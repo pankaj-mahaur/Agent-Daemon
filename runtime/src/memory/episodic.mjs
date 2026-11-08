@@ -214,7 +214,7 @@ export async function insertLearning(learning) {
  * scoped to its project, so the same text in another project is its own row.
  * Returns the new id, or null (a re-observation; callers count inserts by it).
  */
-function writeLearning(handle, raw) {
+export function writeLearning(handle, raw) {
   const l = redactLearning(raw);
   // A note that records its folder takes that folder's project id (not the slug's).
   if (!l.projectId && l.projectSlug && l.projectPath) l.projectId = projectIdOf(l.projectPath);
