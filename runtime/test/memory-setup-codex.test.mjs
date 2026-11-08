@@ -374,7 +374,9 @@ test("trust doctor: each of ad's Codex hooks is pending, trusted, modified, disa
   assert.deepEqual(states(), { "session.start": "pending", "prompt.submit": "pending", "tool.before": "pending" });
   const rows = S.codexTrust(t.ctx);
   const key = (ev) => rows.find((x) => x.item.locator.event === ev).key;
-  assert.equal(key("session.start"), `${t.hooksFile}:session_start:0:0`, "Codex's positional key");
+  // Codex resolves the folder (macOS /var → /private/var, Windows short names) but keeps the file name.
+  const real = path.join(fs.realpathSync.native(path.dirname(t.hooksFile)), path.basename(t.hooksFile));
+  assert.equal(key("session.start"), `${real}:session_start:0:0`, "Codex's positional key");
   // Trust as Codex records it (trusted_hash under hooks.state), a stale hash, and a hook turned off.
   const ss = t.json().hooks.SessionStart[0].hooks[0];
   const tb = t.json().hooks.PreToolUse[0];

@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { parse as parseToml } from "smol-toml";
 
 const T = await import("../src/memory-install/edit-toml.mjs");
@@ -145,7 +146,7 @@ test("review: 3.1.0 entries not moved yet run this version, and doctor names the
   const env = { HOME: h, USERPROFILE: h, CODEX_HOME: path.join(h, ".codex-none"), CLAUDE_CONFIG_DIR: path.join(h, ".claude-none"), AD_ROOT: root, PATH: process.env.PATH };
   const lines = [];
   // An npx install of this version, with 3.1.0's current.json still there.
-  const RT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+  const RT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   const pkg = fs.mkdtempSync(path.join(os.tmpdir(), "ad-fakepkg-"));
   made.push(pkg);
   fs.writeFileSync(path.join(pkg, "package.json"), JSON.stringify({ name: "agent-daemon-memory", version: "3.3.0" }));
