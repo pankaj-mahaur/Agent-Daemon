@@ -1106,6 +1106,30 @@ The hook log (`~/.agent-daemon/hooks/hook.log`, shown by `ad doctor`) records ea
 - **`ad's own hooks here are from an older ad`**: `ad init` wired this project's prompt hook to an ad that predates remember, and that hook would capture the same prompt as an ordinary correction. Update ad and run `ad init` again.
 - **No line at all**: capture isn't running for that host. Run `npx -y agent-daemon-memory doctor` in your own terminal. On Claude Code the plugin's hooks need 2.1.314 or later. On Codex, run `setup --host codex` and trust the hooks with `/hooks`. A short `/remember` counts only while the plugin is on and no other command, skill or plugin of yours is called `remember`; type the full `/agent-daemon-memory:remember` otherwise.
 
+## 101. A correction was saved but agents don't use it
+
+**Symptom:** you saw `Saved for review: #12 …`, but later sessions don't follow it.
+
+**Cause:** every note waits for your review before it is used: no host can prove today that you typed a prompt, so nothing is accepted on its word ([capture, review and forget](memory/review.md)).
+
+**Fix:** run `npx agent-daemon-memory review` (or `ad review`) in your own terminal and accept it (`a`, `enter`, `y` takes the new notes from your prompts on the page). Saying it again only counts it ("Said 3 times now").
+
+## 102. Review: "needs your own terminal", or no checklist
+
+**Symptom:** `review` prints a numbered list and "Run … review in your own terminal", or refuses with "can't run from the agent's own shell".
+
+**Cause:** accepting needs a real terminal that isn't an agent's: not the agent's shell (`AD_TOOL_SHELL=1`), not a pipe. Git Bash's mintty isn't a terminal node can read keys from.
+
+**Fix:** run it yourself in a terminal; in Git Bash use `winpty npx agent-daemon-memory review` or Windows Terminal. `review --plain` gives a numbered line mode, `review --list` only lists.
+
+## 103. Forget: "#12 is in use", "won't be used", or "belongs to …"
+
+**Cause and fix**, by what the line says:
+- **`#12 is in use; forget it in your own terminal`**: a prompt can't remove an accepted note (anyone's prompt could ask). Run `npx agent-daemon-memory forget 12` in your own terminal and type the number back.
+- **`#12 won't be used; delete it in your next review`** (or `stays in use until you delete it`, for a note already in use): a prompt only marks your own note (it can't prove you typed it). Delete it in review, where it's listed under "You asked to remove", or run `forget 12` in your terminal.
+- **`#12 belongs to <project>`**: the note is another project's. Run the command in that project's folder.
+- **`this folder shares its memory with another folder`**: two folders map to one memory key, so nothing changes; `ad doctor` names them.
+
 A saved note waits for your review: accept it with `npx -y agent-daemon-memory review` in your own terminal.
 
 ---

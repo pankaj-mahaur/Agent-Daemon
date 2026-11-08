@@ -108,7 +108,7 @@ const clip = (s, n = 60) => {
 
 /**
  * The line the user sees (systemMessage on Claude Code) for a capture outcome.
- * @param {{status:string, id?:number|null, text?:string, flags?:string[], phrases?:object, kind?:string, secretKind?:string, review:string, forget?:string, first?:boolean, sessionCount?:number, project?:string|null, product?:string}} o
+ * @param {{status:string, id?:number|null, text?:string, flags?:string[], phrases?:object, kind?:string, secretKind?:string, review:string, forget?:string, terminalRemember?:string, first?:boolean, sessionCount?:number, project?:string|null, product?:string}} o
  */
 export function captureReceipt(o) {
   const name = o.product ? `${o.product}: ` : "";
@@ -137,7 +137,9 @@ export function captureReceipt(o) {
     case "flagged-again":
       return `${name}${ref.trim()} is already saved for a closer look · ${o.review}`;
     case "deleted-before":
-      return `${name}You deleted this before; ${o.remember ?? "/remember"} it to save it anyway`;
+      // Only the terminal's remember (with the review token) overrides a deletion: a typed
+      // remember meets the same tombstone, so the line never points at it.
+      return `${name}You deleted this before; to save it anyway, run ${o.terminalRemember ?? "remember"} <text> in your own terminal`;
     case "superseded":
       return `${name}Already learned as ${ref.trim()}`;
     case "none":

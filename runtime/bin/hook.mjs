@@ -154,7 +154,7 @@ async function main() {
             const { PRODUCT, pinnedCommand } = await import("../src/product.mjs");
             const { ownVersion } = await import("../src/memory/own-version.mjs");
             const v = ownVersion();
-            const line = captureReceipt({ ...r, review: v ? pinnedCommand("review", v) : `npx -y ${PRODUCT.package} review`, product: PRODUCT.displayName, forget: plugin ? `/${PRODUCT.plugin}:forget` : `${v ? pinnedCommand("forget", v) : `npx -y ${PRODUCT.package} forget`}`, remember: `/${PRODUCT.plugin}:remember` });
+            const line = captureReceipt({ ...r, review: v ? pinnedCommand("review", v) : `npx -y ${PRODUCT.package} review`, terminalRemember: v ? pinnedCommand("remember", v) : `npx -y ${PRODUCT.package} remember`, product: PRODUCT.displayName, forget: plugin ? `/${PRODUCT.plugin}:forget` : `${v ? pinnedCommand("forget", v) : `npx -y ${PRODUCT.package} forget`}`, remember: `/${PRODUCT.plugin}:remember` });
             return line ? { systemMessage: line, context: null } : null;
           });
         }

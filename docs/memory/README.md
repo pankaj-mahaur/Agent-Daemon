@@ -25,9 +25,10 @@ afterwards. Details and every option: [install](install.md).
      agent records through the memory tools. A hook can't prove that you typed
      a prompt (scheduled prompts, background reports and other agents arrive
      the same way), so nothing is accepted on its word.
-   - You accept in your own terminal: `ad memory held` (or `ad review`, or
-     `npx agent-daemon-memory review`). It refuses inside an agent's shell and
-     without a terminal. Until then the agent sees a note only when it
+   - You accept in your own terminal: `npx agent-daemon-memory review` (or
+     `ad review`) opens a checklist where `a`, `enter`, `y` accepts the new
+     notes from your prompts on the page. Without a terminal it only lists;
+     inside an agent's shell it refuses. Keys, forget and restore: [capture, review and forget](review.md). Until then the agent sees a note only when it
      searches, marked unreviewed, and it is never shown at session start.
    - Notes from one project are never served in another unless you accept
      them as cross-project.
@@ -52,6 +53,7 @@ afterwards. Details and every option: [install](install.md).
 |---|---|
 | [install](install.md) | The installer, the hosts it supports, doctor, uninstall |
 | [hosts and plugins](hosts.md) | Each host's plugin route, and when to use the installer instead |
+| [capture, review and forget](review.md) | What a correction becomes, the review checklist, forget and restore, review mode |
 | [tools](tools.md) | Every memory tool, which project the server serves, protocol versions |
 | [security](security.md) | What keeps notes in their project, and the limits |
 | [metrics](metrics.md) | `ad memory report`: is memory working here? |
