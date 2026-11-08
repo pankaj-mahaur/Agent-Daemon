@@ -7,6 +7,7 @@
 
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
+import { openFilesUnder } from "../testkit/open-files.mjs";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -26,7 +27,21 @@ const { retainNotes } = await import("../src/memory/purge.mjs");
 const { promptSource } = await import("../src/hooks/prompt-source.mjs");
 const { testReviewToken } = await import("../testkit/memory-trust.mjs");
 
-after(() => rmSync(ROOT, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
+// Every store this file opens is closed before the folder goes: Windows can't delete an open database (EBUSY).
+const opened = [];
+after(async () => {
+  for (const h of opened) {
+    try {
+      h.close();
+    } catch {
+      // a test closed it already
+    }
+  }
+  (await import("../src/memory/episodic.mjs")).closeDb();
+  const left = await openFilesUnder(ROOT);
+  rmSync(ROOT, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  assert.deepEqual(left, [], "every database is closed before the folder goes (Windows: EBUSY)");
+});
 
 const SLUG = "-work-shop-app";
 const PID = "prj_shop0000000000000000";
@@ -36,7 +51,9 @@ let n = 0;
 async function store() {
   const dir = path.join(ROOT, `db-${++n}`);
   mkdirSync(dir, { recursive: true });
-  return open({ dbPath: path.join(dir, "episodic.db") });
+  const h = await open({ dbPath: path.join(dir, "episodic.db") });
+  opened.push(h);
+  return h;
 }
 function note(h, text, { status = "pending", accepted = false, slug = SLUG, pid = PID, origin = "agent", provenance = null, captureRef = null, appliedTo = null, reason = null } = {}) {
   const id = Number(h.run(
@@ -359,4 +376,23 @@ test("a user's hide of the agent's note (first-party or the token) comes back on
   const o = { verb: "forget", product: "P", forget: "/p:forget", restore: "/p:restore", review: "r", terminalForget: (id) => `t ${id}` };
   assert.equal(F.commandReceipt({ status: "marked", id: 3, text: "use tabs", was: "pending", last: true }, o), 'P: #3 "use tabs" won\'t be used; delete it in your next review (it\'s listed under "You asked to remove")');
   assert.doesNotMatch(F.commandReceipt({ status: "hidden", id: 3, text: `a${String.fromCodePoint(0xe0041)}b` }, o), new RegExp(String.fromCodePoint(0xe0041), "u"), "tag characters neutralised");
+});
+
+test("folderPaths: a linked folder is named by its link, its real path and a shell's PWD; the verbs look under all of them", async () => {
+  const { mkdirSync: mk, symlinkSync, realpathSync } = await import("node:fs");
+  const base = path.join(ROOT, "links");
+  mk(path.join(base, "real"), { recursive: true });
+  const link = path.join(base, "link");
+  // A junction on Windows: no admin needed, and realpath resolves it like a link.
+  symlinkSync(path.join(base, "real"), link, process.platform === "win32" ? "junction" : "dir");
+  const real = realpathSync(path.join(base, "real"));
+  assert.deepEqual(F.folderPaths(link, { env: {} }), [link, real]);
+  assert.deepEqual(F.folderPaths(real, { env: { PWD: link } }), [real, link], "node's physical cwd plus the shell's PWD");
+  assert.deepEqual(F.folderPaths(real, { env: { PWD: ROOT } }), [real], "a PWD that is another folder doesn't count");
+  // A note keyed by the link's slug is found from the physical path when PWD names the link.
+  const h = await store();
+  const { projectSlug } = await import("../src/memory/episodic.mjs");
+  const id = note(h, "linked note", { slug: projectSlug(link), pid: null });
+  const keys = F.folderSlugs(real, { env: { PWD: link } });
+  assert.equal((await F.forgetLearning(h, { ref: { id }, asker: "agent", keys })).status, "hidden");
 });

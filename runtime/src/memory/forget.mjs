@@ -27,6 +27,9 @@ import { recordEvent, latestEvent } from "./l5-tables.mjs";
 import { projectClause } from "./projects.mjs";
 import { acceptedSql, openSql, ownWordsSql, flaggedSql } from "./trust.mjs";
 import { HIDDEN_DAYS } from "./purge.mjs";
+import { realpathSync } from "node:fs";
+import path from "node:path";
+import { projectSlug } from "./episodic.mjs";
 
 export const ASKERS = Object.freeze(["first-party", "cli-token", "typed", "agent"]);
 
@@ -312,3 +315,28 @@ export function agentActionsLine(actions, { product, review }) {
   const parts = [hidden ? `removed ${hidden} learning${hidden === 1 ? "" : "s"}` : null, asked ? `asked to forget ${asked}` : null].filter(Boolean);
   return `${name}The agent ${parts.join(" and ")} · see ${review}`;
 }
+
+/**
+ * Every path that names this folder: as given, its real path (Node's process.cwd() is
+ * always the physical path), and $PWD when it is the same folder (what a shell sets for a
+ * linked folder). Captures key a note by the host's cwd, which may be either, so a verb
+ * run in a linked folder must look under both. → unique absolute paths
+ */
+export function folderPaths(dir, { env = process.env } = {}) {
+  const out = [path.resolve(dir)];
+  const real = (p) => {
+    try {
+      return realpathSync(p);
+    } catch {
+      return null;
+    }
+  };
+  const r = real(dir);
+  if (r) out.push(r);
+  const pwd = env.PWD;
+  if (pwd && path.isAbsolute(pwd) && r && real(pwd) === r) out.push(path.resolve(pwd));
+  return [...new Set(out)];
+}
+
+/** The slugs of every path that names this folder (folderPaths). */
+export const folderSlugs = (dir, o) => [...new Set(folderPaths(dir, o).map((p) => projectSlug(p)))];
