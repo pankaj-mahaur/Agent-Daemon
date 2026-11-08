@@ -59,7 +59,7 @@ npx -y agent-daemon-memory config recall off
 
 Recall is off in this project: agents get none of your learnings. Rules still ask or
 stop, and corrections are still saved. Turn it back on with `config recall on`. Both
-need your own terminal (an agent can't change it).
+need your own terminal (an agent can't change it). Something missing? See [troubleshooting #110](../troubleshooting.md#110-the-agent-didnt-get-a-learning-i-accepted).
 
 ## Other memory on the same machine
 

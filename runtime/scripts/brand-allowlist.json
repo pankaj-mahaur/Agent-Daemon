@@ -904,6 +904,12 @@
       "path": "docs/memory/recall.md",
       "rules": ["A"],
       "reason": "the recall page names the user's hosts recall serves (Claude Code and Codex) and the Codex skill form; not ad's engine"
+    },
+    {
+      "path": "docs/troubleshooting.md",
+      "rules": ["A"],
+      "match": "The host isn't Claude Code or Codex\\*\\*, or ad's hooks aren't trusted there \\(Codex: `/hooks`",
+      "reason": "the recall entry (#110): which of the user's own hosts recall serves, and Codex's /hooks trust step"
     }
   ]
 }
