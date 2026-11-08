@@ -131,7 +131,11 @@ yours, so the hooks you already trusted stay trusted. On Windows the check befor
 tool calls waits for your first rule (Codex starts a shell for every hook, which
 costs a second or more per tool call). An ad folder whose path holds `$`, a
 backtick, `%` or `"` gets no Codex hooks (Codex's shell would read them); set
-`AD_ROOT` to a plain path. If `include_only` in your `shell_environment_policy`
+`AD_ROOT` to a plain path. With the hooks come three commands you type in Codex
+(the model never starts them): `$agent-daemon-memory-remember <text>` saves a
+note for your review, `$agent-daemon-memory-recall <topic>` searches this
+project's notes, and `$agent-daemon-memory-report` shows whether memory is
+working (skills in `$CODEX_HOME/skills/`). If `include_only` in your `shell_environment_policy`
 would drop `AD_TOOL_SHELL`, setup says so. When the marker later disappears from
 `config.toml`, the next Codex session says how to put it back. Uninstall removes
 Codex's entries only as setup wrote them and never edits one you changed (Codex
@@ -238,4 +242,6 @@ See [the memory server](../../mcp/agent-daemon-memory/README.md#recording-lesson
   unchanged with a message.
 - Paths with `'` are written as escaped TOML strings.
 
-If something goes wrong: [troubleshooting](../troubleshooting.md#53-the-memory-installer-refused-my-config).
+If something goes wrong: [troubleshooting](../troubleshooting.md#53-the-memory-installer-refused-my-config),
+and for setup, Codex's `/hooks` trust, a missing package copy and entries
+uninstall kept, [#104–#109](../troubleshooting.md#104-memory-setup-refused-or-added-nothing).

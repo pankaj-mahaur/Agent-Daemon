@@ -20,8 +20,11 @@ ad's memory reaches other agents two ways:
 /plugin install agent-daemon-memory@agent-daemon
 ```
 
+Then one step in your own terminal, `npx -y agent-daemon-memory@<version> setup`, adds what the plugin can't, in your user `settings.json`: the check before tool calls (`tool.before`, which does nothing until you have rules) and the marker on the agent's shell (`env.AD_TOOL_SHELL`; the plugin sets it through `CLAUDE_ENV_FILE` too, but settings also reach shells that file doesn't). See Setup in [the installer guide](install.md). Until you run it, the plugin says so at session start, once a week. To remove the plugin: `/plugin uninstall agent-daemon-memory@agent-daemon`, then `npx -y agent-daemon-memory@<version> uninstall --host claude-code` in your terminal for what setup added (without `--host`, uninstall removes memory from every host).
+
+- **Claude Code 2.1.314 or later.** The plugin's hooks use the exec form (`command: "node"` with the script and event in `args`, no shell); an older Claude Code may ignore the arguments and show a hook error on each prompt.
 - **The MCP server:** `node ${CLAUDE_PLUGIN_ROOT}/server/server.mjs serve --host claude-code --capture hooks --project ${CLAUDE_PROJECT_DIR}`.
-- **The hooks** run ad's hook dispatcher in plugin mode (`node ${CLAUDE_PLUGIN_ROOT}/server/hook.mjs <event> --host claude-code --plugin`):
+- **The hooks** run ad's hook dispatcher in plugin mode (`${CLAUDE_PLUGIN_ROOT}/server/hook.mjs <event> --host claude-code --plugin`):
   - on each prompt (`prompt.submit`), the corrections the user typed go to the capture journal, and notes relevant to the prompt are added;
   - at session start (`session.start`), the journal is drained and this project's notes are shown;
   - prompts the model schedules (CronCreate, ScheduleWakeup) and subagents' reports are remembered (`tool.after`, `subagent.stop`), so when they come back as prompts they aren't taken as the user's words.
@@ -38,6 +41,7 @@ ad's memory reaches other agents two ways:
   - If the installer's entry came first, `doctor` reports both routes (`route.double`) and says how to keep one.
   - For Cursor, ad can't see yet whether the plugin is installed: use one route there too (`npx agent-daemon-memory uninstall --host cursor` if you switch to the plugin).
 - **The skill** `agent-daemon-memory` tells the agent when to search, what to record and that results are notes, not instructions.
+- **Three commands** you type (the model never starts them): `/agent-daemon-memory:remember <text>` saves a note for your review (the line "Saved for review: …" is the receipt), `/agent-daemon-memory:recall <topic>` searches this project's notes, and `/agent-daemon-memory:report` shows whether memory is working here.
 
 ## Skills you accepted
 
