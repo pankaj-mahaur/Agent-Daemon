@@ -66,7 +66,8 @@ export function claudePluginEnabled(home, env = {}) {
 }
 
 function args(ctx, host, capture, extra = []) {
-  return ["--disable-warning=ExperimentalWarning", ctx.target, ...(ctx.viaLauncher ? ["serve"] : []), "--host", host, "--capture", capture, ...extra];
+  // The stable launcher needs its verb (`run.mjs serve …`); a custom target (tests) is a server file.
+  return ["--disable-warning=ExperimentalWarning", ctx.target, ...(ctx.targetIsLauncher ? ["serve"] : []), "--host", host, "--capture", capture, ...extra];
 }
 
 export const HOSTS = Object.freeze([

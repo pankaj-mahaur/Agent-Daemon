@@ -51,7 +51,7 @@ For daily use, run the installer instead: it starts the server directly, with no
 | Host | Where the entry goes | Capture | Project the server serves |
 |---|---|---|---|
 | Claude Code | `claude mcp add --scope user` (ad never edits `~/.claude.json`, which Claude Code rewrites itself) | ad's hooks when `ad init` set them up, else the record tools | the open project (`CLAUDE_PROJECT_DIR`) |
-| Codex | `~/.codex/config.toml` (or `$CODEX_HOME`), between ad's markers | the record tools | the session's folder |
+| Codex | `~/.codex/config.toml` (or `$CODEX_HOME`), one line under `[mcp_servers]` (`codex mcp add` leaves it as written) | the record tools | the session's folder |
 | Cursor | `~/.cursor/mcp.json` | the record tools | `${workspaceFolder}`, else the working folder if it is a project |
 | VS Code (Copilot) | `~/.copilot/mcp-config.json` (or `$COPILOT_HOME`), the personal file VS Code's docs prefer | the record tools | the open workspace folder (VS Code starts the server there) |
 | Gemini CLI | `~/.gemini/settings.json` (or under `$GEMINI_CLI_HOME`); ad edits the file itself, its own entry only (`gemini mcp add` defaults to the project scope) | the record tools | the folder Gemini runs in, if it is a project |
@@ -62,18 +62,22 @@ snippets and writes nothing; `--yes` skips the question; `--no-plugin` sets up
 Claude Code's memory hooks without the plugin (see Setup below).
 
 Hosts start the server with the absolute path of the Node that ran the
-installer (GUI apps often don't have your shell's PATH). The npx install copies
-the package to `~/.agent-daemon/memory/pkg/<version>/` and points hosts at a
-launcher (`~/.agent-daemon/memory/bin/launch.mjs`), so hosts never run `npx`
-and an upgrade only changes which version the launcher starts. It needs Node
-22.16 or newer and builds nothing: memory runs on Node's built-in SQLite.
+installer (GUI apps often don't have your shell's PATH), through a stable
+launcher: `~/.agent-daemon/memory/launch/run.mjs serve …`. The npx install keeps
+a copy of the package with its two parsers in
+`~/.agent-daemon/memory/dist/<version>/` (the two newest versions); `ad memory
+install` registers your clone instead. Hosts never run `npx`, and an upgrade only
+changes which copy the launcher starts: no entry changes, so no host asks you to
+trust anything again. It needs Node 22.16 or newer and builds nothing: memory
+runs on Node's built-in SQLite. A hook whose package is gone exits quietly and
+tells you once per session to run `npx -y agent-daemon-memory@<version>
+uninstall`.
 
-Install also writes the stable launcher that hooks will start,
-`~/.agent-daemon/memory/launch/run.mjs`, and keeps a copy of the package with
-its two parsers in `~/.agent-daemon/memory/dist/<version>/` (the two newest
-versions). The launcher's path never changes, so an update never asks you to
-trust a hook again. A hook whose package is gone exits quietly and tells you
-once per session to run `npx -y agent-daemon-memory@<version> uninstall`.
+Upgrading from 3.1.0: install moves its entries (they started
+`~/.agent-daemon/memory/bin/launch.mjs`) to the launcher, and Codex's from the
+block between ad's markers to the one-line form (also when `codex mcp add` has
+since moved the markers). 3.1.0's package copy (`memory/pkg/`, `memory/bin/`)
+stays until uninstall.
 
 Gemini CLI disconnects local servers in folders you haven't trusted: trust the project folder in Gemini if the memory tools are missing.
 
@@ -145,7 +149,7 @@ refuse to run from the agent's own shell.
 ## What it never does
 
 - Change anything in a host's config but its own entry. JSON keeps your
-  comments, order and formatting; TOML gets one marked block at the end.
+  comments, order and formatting; TOML gets one line under `[mcp_servers]`.
 - Edit a file it can't edit safely. It refuses, leaves the file as it is, and
   prints the snippet to add yourself, when: the file doesn't parse; Codex's
   `mcp_servers` isn't a table; `agent-daemon-memory` is already there and
@@ -174,7 +178,9 @@ npx agent-daemon-memory uninstall     # --host <id> for one host
 both MCP handshakes. Its codes: `node.version`, `node.path`, `sqlite.driver`,
 `db.open`, `db.schema`, `db.stray`, and per host `config.parse`, `entry`,
 `command.exists`, `smoke.legacy`, `smoke.modern`, `capture.double`, `route.double` (Claude Code: the installer's entry and the plugin both serve memory),
-`entry.duplicate`; `pkg.stale` when an older version is installed.
+`entry.duplicate`; `pkg.stale` when an older version is installed; `hooks.trust`
+(Codex: whether you trusted setup's hooks in `/hooks`: trusted, not reviewed yet,
+changed since you trusted them, or turned off).
 
 `uninstall` puts a file back exactly as it was when nothing else ever changed
 it between ad's writes (or removes it, if ad created it). If anyone else wrote

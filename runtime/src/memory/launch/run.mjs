@@ -107,11 +107,20 @@ async function runHook({ distsFile, pickDist, readDists }) {
 }
 
 async function runCli({ distsFile, pickDist, readDists }) {
-  const dist = pickDist(readDists(distsFile(root)), { needCli: true });
+  // A list being written right now (a Windows read lock) is tried again briefly: a
+  // server that gives up here is gone for the host's whole session.
+  let d = readDists(distsFile(root));
+  for (let i = 0; i < 5 && d.unreadable === "busy"; i++) {
+    await new Promise((r) => setTimeout(r, 100));
+    d = readDists(distsFile(root));
+  }
+  const dist = pickDist(d, { needCli: true });
   if (!dist?.cli) {
-    // stderr: for `serve`, stdout belongs to the MCP protocol.
+    // stderr: for `serve`, stdout belongs to the MCP protocol. The fix is an install or
+    // a repair, never the verb that was asked for (serve would start a server).
     const { shown, pinned } = product();
-    process.stderr.write(`${shown} isn't installed here any more: run ${pinned(verb ?? "install")}\n`);
+    const why = d.unreadable ? `${distsFile(root)} can't be read (${d.unreadable})` : "it isn't installed here any more";
+    process.stderr.write(`${shown}: ${why}: run ${pinned(d.unreadable ? "repair" : "install")}\n`);
     process.exitCode = 1;
     return;
   }

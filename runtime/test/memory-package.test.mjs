@@ -154,7 +154,7 @@ function run(cmd, args, { env, input, cwd }) {
   });
 }
 
-test("install through the built package: the installed copy serves via the launcher with no dependencies", async () => {
+test("install through the built package: the copy it registers serves through the stable launcher", async () => {
   const out = tmp("ad-pkg-run-");
   build({ out });
   // npx installs the parsers next to the package; the copy it installs has none.
@@ -171,11 +171,14 @@ test("install through the built package: the installed copy serves via the launc
   const inst = await run(process.execPath, [cli, "install", "--host", "cursor", "--yes"], { env });
   assert.equal(inst.code, 0, inst.out + inst.err);
   assert.match(inst.out, /✓ Cursor: added/);
-  const cur = JSON.parse(fs.readFileSync(path.join(env.AD_ROOT, "memory", "current.json"), "utf8"));
-  assert.ok(fs.existsSync(path.join(cur.path, "cli.mjs")));
-  assert.ok(!fs.existsSync(path.join(cur.path, "node_modules")), "the installed copy has no dependencies");
+  // The copy the stable launcher runs: memory/dist/<version>, with its two parsers.
+  const dists = JSON.parse(fs.readFileSync(path.join(env.AD_ROOT, "memory", "launch", "dists.json"), "utf8")).dists.filter((d) => d.route === "npm");
+  assert.equal(dists.length, 1);
+  assert.ok(fs.existsSync(path.join(dists[0].path, "cli.mjs")));
+  assert.ok(fs.existsSync(path.join(dists[0].path, "node_modules", "smol-toml")), "the copy carries the parsers its uninstall needs");
+  assert.ok(!fs.existsSync(path.join(env.AD_ROOT, "memory", "pkg")), "3.1.0's package copy is no longer written");
   const entry = JSON.parse(fs.readFileSync(path.join(home, ".cursor", "mcp.json"), "utf8")).mcpServers["agent-daemon-memory"];
-  assert.equal(entry.args[1], path.join(env.AD_ROOT, "memory", "bin", "launch.mjs"));
+  assert.deepEqual(entry.args.slice(1, 3), [path.join(env.AD_ROOT, "memory", "launch", "run.mjs"), "serve"]);
   // Start the entry as Cursor would (with the project instead of ${workspaceFolder}).
   const args = entry.args.map((a) => (a === "${workspaceFolder}" ? proj : a));
   const served = await run(entry.command, args, {

@@ -13,6 +13,7 @@
 // (one re-plan when the host wrote the file meanwhile, then a refusal).
 // Codex's items arrive in L3 part 3c.
 
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -1053,4 +1054,73 @@ export async function launcherReferences(ctx, ledgerFiles = []) {
     }
   }
   return out;
+}
+
+/* ------------------------------------------------------------------ */
+/* Codex's trust in ad's hooks (Decision 16)                           */
+/* ------------------------------------------------------------------ */
+
+/** The Codex version the hash below was checked on (the golden test, against hooks/list); follows the engine pin. */
+export const TRUST_HASH_CHECKED_ON = "0.163.0";
+
+/** Codex's event names in its trust keys and hashes: SessionStart → session_start. */
+export const snakeEvent = (hostEvent) => String(hostEvent).replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
+
+const sortedJson = (v) => (Array.isArray(v) ? v.map(sortedJson) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sortedJson(v[k])])) : v);
+
+/**
+ * The hash Codex keeps as trusted_hash for one hook group holding one of ad's
+ * handlers: sha256 of the key-sorted compact JSON of {event_name, hooks: [handler
+ * with Codex's defaults], matcher when set}. Only the fields ad writes are known.
+ */
+export function codexTrustHash(hostEvent, matcher, handler) {
+  const h = { async: handler.async ?? false, command: handler.command, timeout: handler.timeout, type: handler.type ?? "command" };
+  const g = { event_name: snakeEvent(hostEvent), hooks: [h], ...(matcher ? { matcher } : {}) };
+  return `sha256:${crypto.createHash("sha256").update(JSON.stringify(sortedJson(g))).digest("hex")}`;
+}
+
+/**
+ * Codex's trust in each hook ad's setup wrote, read from config.toml's
+ * [hooks.state."<file>:<event>:<group>:<handler>"] (positional, so a hook's key
+ * moves with its place). → [{item, key?, state}], state: "trusted" (Codex runs it),
+ * "pending" (never reviewed: open /hooks), "modified" (trusted as something else:
+ * Codex won't run it until reviewed again), "disabled", "changed" (you edited ad's
+ * entry), "gone", or "unknown" (a mismatch on a Codex newer than the one the hash
+ * was checked on: can't confirm).
+ */
+export function codexTrust(ctx, { codexVersion = null } = {}) {
+  const items = readLedger2(ctx.root).items.filter((i) => i.host === "codex" && i.kind === "hook" && !i.source);
+  if (!items.length) return [];
+  let state = {};
+  try {
+    state = safeToml(fs.readFileSync(codexConfigFile(ctx), "utf8")).doc?.hooks?.state ?? {};
+  } catch {
+    // no config.toml: nothing trusted yet
+  }
+  const newer = Boolean(codexVersion) && cmpVersion(String(codexVersion), TRUST_HASH_CHECKED_ON) > 0;
+  return items.map((item) => {
+    let doc;
+    try {
+      const text = fs.readFileSync(item.file, "utf8");
+      doc = /\.toml$/i.test(item.file) ? safeToml(text).doc : parseSettings(text).root;
+    } catch {
+      return { item, state: "gone" };
+    }
+    const loc = locateHook(doc ?? {}, item.locator)[0];
+    if (!loc) return { item, state: "gone" };
+    if (canonicalSha256(loc.handler, { kind: "hook" }) !== item.canonicalSha256) return { item, state: "changed" };
+    // Codex resolves its home folder (a linked ~/.codex, the case on Windows) but keeps the file name.
+    let dir = path.dirname(item.file);
+    try {
+      dir = fs.realpathSync.native(dir);
+    } catch {
+      // as recorded
+    }
+    const key = `${path.join(dir, path.basename(item.file))}:${snakeEvent(item.locator.hostEvent)}:${loc.gi}:${loc.hi}`;
+    const s = state[key];
+    if (s?.enabled === false) return { item, key, state: "disabled" };
+    if (!s?.trusted_hash) return { item, key, state: "pending" };
+    if (s.trusted_hash === codexTrustHash(item.locator.hostEvent, loc.matcher, loc.handler)) return { item, key, state: "trusted" };
+    return { item, key, state: newer ? "unknown" : "modified" };
+  });
 }

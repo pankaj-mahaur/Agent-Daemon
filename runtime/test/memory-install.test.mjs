@@ -222,7 +222,7 @@ test("refusals leave the file untouched and print the snippet: malformed JSON, r
   assert.equal(await install({ ctx: t.ctx, yes: true }), 1, t.text());
   assert.equal(fs.readFileSync(cursorFile(t.h), "utf8"), bad);
   assert.equal(fs.readFileSync(codexFile(t.h), "utf8"), dotted);
-  assert.match(t.text(), /✗ Codex: it already defines agent-daemon-memory outside ad's markers; add this yourself:\n# >>> agent-daemon-memory/);
+  assert.match(t.text(), /✗ Codex: it already defines agent-daemon-memory, which ad didn't write; add this yourself:\n\[mcp_servers\]\nagent-daemon-memory = \{ command = /);
   assert.match(t.text(), /✗ Cursor: it isn't valid JSON/);
   // Read-only.
   const r = home({ claude: false, claudeDir: false, codex: false, files: { ".cursor/mcp.json": "{}\n" } });
@@ -347,26 +347,37 @@ test("review H1: a hand edit to ad's entry is kept by install and repair", async
   assert.match(t.text(), /already defines agent-daemon-memory/);
 });
 
-test("review H2: an npx upgrade copies the new package even when every entry is unchanged", async () => {
+test("review H2: an npx upgrade registers the new copy for the launcher even when every entry is unchanged", async () => {
   const t = home({ claude: false, claudeDir: false, codex: false });
+  const RT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   const pkg = (v) => {
     const d = fs.mkdtempSync(path.join(os.tmpdir(), "ad-fakepkg-"));
     made.push(d);
     fs.writeFileSync(path.join(d, "package.json"), JSON.stringify({ name: "agent-daemon-memory", version: v }));
     fs.writeFileSync(path.join(d, "cli.mjs"), "// fake\n");
+    fs.mkdirSync(path.join(d, "bin"));
+    fs.writeFileSync(path.join(d, "bin", "hook.mjs"), "// fake\n");
+    fs.mkdirSync(path.join(d, "src", "memory", "launch"), { recursive: true });
+    for (const f of ["run.mjs", "dists.mjs"]) fs.copyFileSync(path.join(RT, "src", "memory", "launch", f), path.join(d, "src", "memory", "launch", f));
     return d;
   };
   const npx = (v) => makeContext({ env: t.env, home: t.h, root: t.env.AD_ROOT, resolve: () => null, out: (l) => t.lines.push(l), ask: async () => "", packageRoot: pkg(v) });
+  const { currentDist } = await import("../src/memory-install/install.mjs");
   assert.equal(await install({ ctx: npx("3.2.0"), yes: true }), 0, t.text());
-  assert.equal(JSON.parse(fs.readFileSync(path.join(t.env.AD_ROOT, "memory", "current.json"), "utf8")).version, "3.2.0");
+  assert.equal(currentDist(t.env.AD_ROOT), "3.2.0");
+  // The entry starts the stable launcher, whatever the version.
+  const entry = JSON.parse(fs.readFileSync(cursorFile(t.h), "utf8")).mcpServers["agent-daemon-memory"];
+  assert.deepEqual(entry.args.slice(1, 3), [path.join(t.env.AD_ROOT, "memory", "launch", "run.mjs"), "serve"]);
   t.lines.length = 0;
   assert.equal(await install({ ctx: npx("3.2.1"), yes: true }), 0, t.text());
   assert.match(t.text(), /already set up/);
-  assert.equal(JSON.parse(fs.readFileSync(path.join(t.env.AD_ROOT, "memory", "current.json"), "utf8")).version, "3.2.1");
-  assert.ok(fs.existsSync(path.join(t.env.AD_ROOT, "memory", "pkg", "3.2.1", "cli.mjs")));
-  // Uninstalling the last host removes the launcher and the copies.
+  assert.match(t.text(), /the launcher now starts agent-daemon-memory 3\.2\.1/);
+  assert.equal(currentDist(t.env.AD_ROOT), "3.2.1");
+  assert.ok(fs.existsSync(path.join(t.env.AD_ROOT, "memory", "dist", "3.2.1", "cli.mjs")));
+  assert.ok(!fs.existsSync(path.join(t.env.AD_ROOT, "memory", "pkg")), "3.1.0's package copy is no longer written");
+  // Uninstalling the last host removes the launcher and the copies (nothing starts it).
   assert.equal(await uninstall({ ctx: npx("3.2.1") }), 0);
-  assert.ok(!fs.existsSync(path.join(t.env.AD_ROOT, "memory", "pkg")) && !fs.existsSync(path.join(t.env.AD_ROOT, "memory", "bin")));
+  assert.ok(!fs.existsSync(path.join(t.env.AD_ROOT, "memory", "launch")) && !fs.existsSync(path.join(t.env.AD_ROOT, "memory", "dist")));
 });
 
 test("review H3: a config that changes while ad asks isn't written over", async () => {
