@@ -16,6 +16,7 @@
 
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
+import { openFilesUnder } from "../testkit/open-files.mjs";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -32,7 +33,21 @@ const { screenPrompt } = await import("../src/memory/prompt-screen.mjs");
 const { promptSource, promptHash } = await import("../src/hooks/prompt-source.mjs");
 const { resolveProject } = await import("../src/memory/projects.mjs");
 
-after(() => rmSync(ROOT, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
+// Every store this file opens is closed before the folder goes: Windows can't delete an open database (EBUSY).
+const opened = [];
+after(async () => {
+  for (const h of opened) {
+    try {
+      h.close();
+    } catch {
+      // a test closed it already
+    }
+  }
+  (await import("../src/memory/episodic.mjs")).closeDb();
+  const left = await openFilesUnder(ROOT);
+  rmSync(ROOT, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  assert.deepEqual(left, [], "every database is closed before the folder goes (Windows: EBUSY)");
+});
 
 const jsonl = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8").trim().split("\n").map((l) => JSON.parse(l));
 const sub = (t) => String(t).replaceAll("{pkg}", "agent-daemon-memory").replaceAll("{adroot}", "~/.agent-daemon");
@@ -48,6 +63,7 @@ async function project() {
   mkdirSync(dir, { recursive: true });
   resolveProject(dir);
   const handle = await open({ dbPath: path.join(dir, "episodic.db") });
+  opened.push(handle);
   return { dir, handle };
 }
 

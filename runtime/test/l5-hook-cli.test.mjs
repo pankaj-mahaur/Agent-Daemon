@@ -6,6 +6,7 @@
 
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
+import { openFilesUnder } from "../testkit/open-files.mjs";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -17,7 +18,21 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "ad-l5-hookcli-"));
 process.env.HOME = TMP;
 process.env.USERPROFILE = TMP;
 for (const k of ["AD_ROOT", "AD_MEMORY_DB", "AD_MEMORY_PROJECT", "CLAUDE_PROJECT_DIR", "AD_TOOL_SHELL", "CLAUDE_CONFIG_DIR", "CODEX_HOME"]) delete process.env[k];
-after(() => fs.rmSync(TMP, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
+// Every store this file opens is closed before the folder goes: Windows can't delete an open database (EBUSY).
+const opened = [];
+after(async () => {
+  for (const h of opened) {
+    try {
+      h.close();
+    } catch {
+      // a test closed it already
+    }
+  }
+  (await import("../src/memory/episodic.mjs")).closeDb();
+  const left = await openFilesUnder(TMP);
+  fs.rmSync(TMP, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  assert.deepEqual(left, [], "every database is closed before the folder goes (Windows: EBUSY)");
+});
 
 const { build, NAME } = await import("../scripts/build-host-packages.mjs");
 const { open: openStore } = await import("../src/memory/sqlite.mjs");
@@ -53,7 +68,9 @@ const pluginHook = (event, w, payload, extraEnv = {}) =>
   spawnSync(process.execPath, [path.join(PLUGIN, "server", "hook.mjs"), event, "--host", "claude-code", "--plugin"], { env: { ...w.env, ...extraEnv }, cwd: w.repo, input: JSON.stringify({ cwd: w.repo, ...payload }), encoding: "utf8", timeout: 30000 });
 const codexHook = (event, w, payload) =>
   spawnSync(process.execPath, [path.join(RUNTIME, "bin", "hook.mjs"), event, "--host", "codex", "--memory-only"], { env: w.env, cwd: w.repo, input: JSON.stringify({ cwd: w.repo, ...payload }), encoding: "utf8", timeout: 30000 });
-const adCli = (w, args, extraEnv = {}) => spawnSync(process.execPath, [path.join(RUNTIME, "src", "cli.mjs"), ...args], { env: { ...w.env, ...extraEnv }, cwd: w.repo, encoding: "utf8", timeout: 30000, input: "" });
+// As a shell runs it: PWD names the folder as the user reached it (it may be a link, as
+// macOS temp folders are: /var → /private/var), while node sees the physical path.
+const adCli = (w, args, extraEnv = {}) => spawnSync(process.execPath, [path.join(RUNTIME, "src", "cli.mjs"), ...args], { env: { ...w.env, PWD: w.repo, ...extraEnv }, cwd: w.repo, encoding: "utf8", timeout: 30000, input: "" });
 const out = (r) => {
   assert.equal(r.status, 0, r.stderr);
   return JSON.parse(r.stdout || "{}");
@@ -61,6 +78,7 @@ const out = (r) => {
 async function withStore(w, fn) {
   // fn may be async: the store stays open until it finishes.
   const s = await openStore({ dbPath: w.dbPath });
+  opened.push(s);
   try {
     return await fn(s);
   } finally {
@@ -260,7 +278,7 @@ test("both CLIs route the verbs: `ad remember` and the package's `remember` in t
   const a = adCli(w, ["remember", "use", "pnpm", "in", "this", "repo"], { AD_TOOL_SHELL: "1" });
   assert.equal(a.status, 0, a.stderr + a.stdout);
   assert.match(a.stdout, /Saved for review as #\d+/);
-  const p = spawnSync(process.execPath, [path.join(RUNTIME, "src", "memory-install", "cli.mjs"), "remember", "prefer", "tabs"], { env: { ...w.env, AD_TOOL_SHELL: "1" }, cwd: w.repo, encoding: "utf8", timeout: 30000, input: "" });
+  const p = spawnSync(process.execPath, [path.join(RUNTIME, "src", "memory-install", "cli.mjs"), "remember", "prefer", "tabs"], { env: { ...w.env, PWD: w.repo, AD_TOOL_SHELL: "1" }, cwd: w.repo, encoding: "utf8", timeout: 30000, input: "" });
   assert.equal(p.status, 0, p.stderr + p.stdout);
   assert.match(p.stdout, /Saved for review as #\d+/);
   const help = adCli(w, ["help"]);

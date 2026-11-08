@@ -56,12 +56,16 @@ export async function memoryVerbMain(verb, argv = [], o = {}) {
     return r?.token && svc.isReviewToken(r.token) ? { token: r.token } : { refused: r?.refused ?? "not your own terminal" };
   };
   const { projectIdOf } = await import("./projects.mjs");
-  const keys = [ep.projectSlug(cwd), projectIdOf(cwd)].filter(Boolean);
+  // Every name of this folder: a linked folder's notes may be keyed by its logical path
+  // (the host's cwd) while node runs in the physical one.
+  const { folderPaths } = await import("./forget.mjs");
+  const paths = folderPaths(cwd, { env: o.env ?? process.env });
+  const keys = [...new Set(paths.map((p) => ep.projectSlug(p))), projectIdOf(cwd)].filter(Boolean);
   // A folder that shares its memory with another can't tell their notes apart (the slug
   // matches the other folder's rows): nothing changes there. Review mode is store-wide.
   if (verb !== "config") {
     const { slugCollides } = await import("./safety.mjs");
-    if (slugCollides(handle, ep.projectSlug(cwd), cwd)) {
+    if (paths.some((p) => slugCollides(handle, ep.projectSlug(p), p))) {
       out(`${PRODUCT.displayName}: Nothing changed: this folder shares its memory with another folder`);
       return 1;
     }
