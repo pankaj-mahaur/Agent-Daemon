@@ -48,6 +48,7 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 - Under ad's engine, the rules check and session start ignore a `CLAUDE_PROJECT_DIR` left over from an outer Claude Code session.
 - `--allow-cross-project` served held-back, hidden and rejected notes to `memory_get` and the timeline.
 - Seeing an accepted user fact in another project no longer serves it there.
+- `ad mistakes` no longer counts the lines of the "Recent learnings" block an older ad wrote into `CLAUDE.md` as your rules, and a block ad started but never closed no longer counts either.
 
 ## [3.1.0] — 2026-10-30
 
