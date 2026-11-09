@@ -17,9 +17,22 @@
 // Every hook runs the dispatcher by absolute path with the current node binary,
 // so it works whether or not `ad` is on PATH; the file is rewritten on every
 // ad run/chat, so a moved node heals itself.
+//
+// tool.before (MCP launch plan L7, D10): through the memory product's launcher when it
+// set up a guard copy — the rules check then runs from the same copy as the user's own
+// hosts, not from ad's install (which the agent may be able to write); else ad's install.
 
+import fs from "node:fs";
 import { resolveProfile } from "../../profiles.mjs";
 import { HOOK_PATH, routesFor } from "../../hooks/routes.mjs";
+import { adRoot } from "../../ad-root.mjs";
+import { launcherFile, readGuard } from "../../memory/launch/dists.mjs";
+
+/** The launcher, when a guard copy is recorded next to it; else null. */
+export function guardLauncher(root = adRoot()) {
+  const launcher = launcherFile(root);
+  return fs.existsSync(launcher) && readGuard(root).path ? launcher : null;
+}
 
 const CODEX_EVENTS = new Set(["SessionStart", "SessionEnd", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PreCompact", "PostCompact", "Stop"]);
 
@@ -29,15 +42,17 @@ export const shQuote = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
 export const psQuote = (s) => `'${String(s).replace(/['‘-‛]/g, "$&$&")}'`;
 
 // hooks: resolved hook definitions [{id, event, matcher, command, timeout}]: only the ids (steps) matter
-export function buildCodexHooksJson({ hooks: defs, node = process.execPath, hook = HOOK_PATH }) {
+export function buildCodexHooksJson({ hooks: defs, node = process.execPath, hook = HOOK_PATH, launcher = guardLauncher() }) {
   const hooks = {};
   for (const route of routesFor(defs.map((d) => d.id), "codex")) {
     if (!CODEX_EVENTS.has(route.hostEvent)) continue;
-    const args = [route.event, "--host", "ad"];
+    const guarded = Boolean(launcher) && route.event === "tool.before";
+    const script = guarded ? launcher : hook;
+    const args = guarded ? ["hook", route.event, "--host", "ad"] : [route.event, "--host", "ad"];
     const handler = {
       type: "command",
-      command: [shQuote(node), shQuote(hook), ...args].join(" "),
-      commandWindows: ["&", psQuote(node), psQuote(hook), ...args].join(" "),
+      command: [shQuote(node), shQuote(script), ...args].join(" "),
+      commandWindows: ["&", psQuote(node), psQuote(script), ...args].join(" "),
       timeout: route.timeout,
       statusMessage: `agent-daemon: ${route.event}`,
     };

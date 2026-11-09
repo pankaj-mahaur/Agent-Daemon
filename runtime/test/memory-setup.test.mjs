@@ -158,12 +158,13 @@ test("setup --no-plugin routes every memory step through the launcher; neither p
   assert.equal(readLedger2(t.env.AD_ROOT).items.length, 6);
 });
 
-test("setup skips a route ad init's own live entry runs; refuses hooks on an old Claude Code; leaves a marker the user set", async () => {
+test("setup adopts ad init's own rules-check (L7: it runs in the launcher's entry); refuses hooks on an old Claude Code; leaves a marker the user set", async () => {
   const adEntry = { matcher: "Bash|PowerShell|Write|Edit", hooks: [{ type: "command", command: "node", args: [R.HOOK_PATH, "tool.before"], timeout: 5 }] };
   const t = home({ plugin: true, settings: { hooks: { PreToolUse: [adEntry] } } });
   assert.equal(await S.setup({ ctx: t.ctx }), 0);
-  assert.deepEqual(t.settings().hooks.PreToolUse, [adEntry], "ad's own tool.before already runs rules-check");
-  assert.match(t.text(), /ad's own hooks already run rules-check/);
+  const pre = R.ourHandlers(t.settings().hooks).filter((o) => o.info.event === "tool.before");
+  assert.deepEqual(pre.map((o) => Boolean(o.info.launcher)), [true], "only the launcher's tool.before is left");
+  assert.match(t.text(), /now runs ad's own rules check/);
   assert.equal(t.settings().env.AD_TOOL_SHELL, "1");
 
   const old = home({ plugin: true, version: "2.1.300" });
@@ -277,17 +278,22 @@ test("while rules exist, tool.before and the marker go only with the review toke
 });
 
 test("ad init adopts the launcher's entries; memory uninstall then leaves ad's routes", async () => {
-  const t = home({ plugin: true });
-  assert.equal(await S.setup({ ctx: t.ctx }), 0);
+  // --no-plugin: the launcher runs the memory routes too, so ad init has entries to adopt.
+  const t = home({ plugin: false });
+  assert.equal(await S.setup({ ctx: t.ctx, noPlugin: true }), 0, t.text());
   const s = t.settings();
-  const plan = R.planClaudeHooks(s.hooks, { steps: [] });
-  assert.ok(plan.removed.some((o) => o.info.launcher), "ad init replaces the launcher's tool.before");
+  // L7 (D10): a live launcher tool.before is the rules check's entry: ad init keeps it and
+  // writes no rules-check of its own beside it.
+  const plan = R.planClaudeHooks(s.hooks, { steps: ["rules-check", "query-retrieve"] });
+  assert.ok(!plan.removed.some((o) => o.info.launcher && o.info.event === "tool.before"), "ad init keeps the launcher's tool.before");
+  assert.ok(!plan.routes.some((r) => r.steps.includes("rules-check")), "and adds no rules-check of its own");
+  assert.equal(R.ourHandlers(plan.hooks).filter((o) => o.info.event === "tool.before").length, 1);
   fs.writeFileSync(t.file, JSON.stringify({ ...s, hooks: plan.hooks }, null, 2));
   const n = await adoptLauncherHooks(t.env.AD_ROOT, { file: t.file, handlers: plan.removed.filter((o) => o.info.launcher).map((o) => ({ hostEvent: o.hostEvent, event: o.info.event, script: o.info.script })) });
-  assert.equal(n, 1);
+  assert.ok(n >= 1, "the launcher's memory routes are ad's now");
   assert.equal(await uninstall({ ctx: t.ctx }), 0, t.text());
   const left = R.ourHandlers(t.settings().hooks);
-  assert.ok(left.some((o) => o.info.event === "tool.before" && !o.info.launcher), "ad's own tool.before stays");
+  assert.ok(left.some((o) => o.info.event === "prompt.submit" && !o.info.launcher), "ad's own routes stay");
   assert.equal(t.settings().env, undefined, "the marker setup wrote goes");
 });
 
@@ -425,7 +431,7 @@ test("a settings file with comments still shows the plugin to setup", async () =
   assert.equal(ours(S.parseSettings(fs.readFileSync(t.file, "utf8")).root).length, 1);
 });
 
-test("with ad init's hooks capturing and no plugin, setup writes the marker and skips every hook", async () => {
+test("with ad init's hooks capturing and no plugin, setup writes the marker, skips every memory hook and adopts ad's rules-check", async () => {
   const adPrompt = { hooks: [{ type: "command", command: "node", args: [R.HOOK_PATH, "prompt.submit"], timeout: 10 }] };
   const adTool = { matcher: "Bash|PowerShell|Write|Edit", hooks: [{ type: "command", command: "node", args: [R.HOOK_PATH, "tool.before"], timeout: 5 }] };
   const adStart = { hooks: [{ type: "command", command: "node", args: [R.HOOK_PATH, "session.start"], timeout: 10 }] };
@@ -434,7 +440,9 @@ test("with ad init's hooks capturing and no plugin, setup writes the marker and 
   assert.doesNotMatch(t.text(), /\/plugin install/);
   assert.equal(t.settings().env.AD_TOOL_SHELL, "1");
   assert.deepEqual(t.settings().hooks.UserPromptSubmit, [adPrompt]);
-  assert.deepEqual(t.settings().hooks.PreToolUse, [adTool]);
+  // L7 (D10): the rules check moves into the launcher's entry; ad's own goes.
+  const pre = R.ourHandlers(t.settings().hooks).filter((o) => o.info.event === "tool.before");
+  assert.deepEqual(pre.map((o) => Boolean(o.info.launcher)), [true]);
 });
 
 test("doctor, dry runs, backups, install and the gate's command after P3b's review", async () => {
@@ -471,4 +479,72 @@ test("doctor, dry runs, backups, install and the gate's command after P3b's revi
   const lines = [];
   await main(["uninstall"], { env: { AD_TOOL_SHELL: "1" }, log: (l) => lines.push(l) });
   assert.match(lines.join("\n"), /Run it yourself in a terminal: (ad memory uninstall|npx -y agent-daemon-memory@\S+ uninstall)/);
+});
+
+test("L7: setup takes over ad init's rules check without lowering it, and uninstall puts it back", async () => {
+  const adTool = { matcher: "Bash|PowerShell|Write|Edit", hooks: [{ type: "command", command: "node", args: [R.HOOK_PATH, "tool.before"], timeout: 10, onFailure: "block" }] };
+  const t = home({ plugin: true, settings: { hooks: { PreToolUse: [adTool] } } });
+  assert.equal(await S.setup({ ctx: t.ctx }), 0, t.text());
+  const pre = R.ourHandlers(t.settings().hooks).filter((o) => o.info.event === "tool.before");
+  assert.equal(pre.length, 1);
+  assert.ok(pre[0].info.launcher);
+  assert.equal(pre[0].handler.onFailure, "block", "a blocking check stays blocking");
+  assert.equal(pre[0].handler.timeout, 10, "and keeps the longer timeout");
+  assert.ok(readLedger2(t.env.AD_ROOT).items.some((i) => i.adopted?.length === 1), "the ledger remembers what it took over");
+  assert.equal(await uninstall({ ctx: t.ctx }), 0, t.text());
+  const back = R.ourHandlers(t.settings().hooks).filter((o) => o.info.event === "tool.before");
+  assert.deepEqual(back.map((o) => Boolean(o.info.launcher)), [false], "ad's own rules check is back");
+  assert.match(t.text(), /ad's own rules check is back/);
+  // The launcher's entry already in place, ad init's blocking one added later: raised, not lowered.
+  const t2 = home({ plugin: true });
+  assert.equal(await S.setup({ ctx: t2.ctx }), 0, t2.text());
+  const s2 = t2.settings();
+  fs.writeFileSync(t2.file, JSON.stringify({ ...s2, hooks: { ...s2.hooks, PreToolUse: [...s2.hooks.PreToolUse, adTool] } }, null, 2));
+  assert.equal(await S.setup({ ctx: t2.ctx }), 0, t2.text());
+  const pre2 = R.ourHandlers(t2.settings().hooks).filter((o) => o.info.event === "tool.before");
+  assert.deepEqual(pre2.map((o) => [Boolean(o.info.launcher), o.handler.onFailure, o.handler.timeout]), [[true, "block", 10]]);
+});
+
+test("L7: uninstall says so when ad init's hooks are left with no rules check", async () => {
+  const adPrompt = { hooks: [{ type: "command", command: "node", args: [R.HOOK_PATH, "prompt.submit"], timeout: 10 }] };
+  const t = home({ plugin: true });
+  assert.equal(await S.setup({ ctx: t.ctx }), 0, t.text());
+  // ad init ran after setup: it kept the launcher's tool.before and wrote its other routes.
+  const s = t.settings();
+  fs.writeFileSync(t.file, JSON.stringify({ ...s, hooks: { ...s.hooks, UserPromptSubmit: [adPrompt] } }, null, 2));
+  assert.equal(await uninstall({ ctx: t.ctx }), 0, t.text());
+  assert.match(t.text(), /no longer run a rules check: run `ad init`/);
+});
+
+test("L7: memory uninstall keeps the launcher while ad's engine hooks.json runs tool.before through it", async () => {
+  const t = home({ plugin: true });
+  assert.equal(await S.setup({ ctx: t.ctx }), 0, t.text());
+  const engineHooks = path.join(t.env.AD_ROOT, "engine", "hooks.json");
+  fs.mkdirSync(path.dirname(engineHooks), { recursive: true });
+  fs.writeFileSync(engineHooks, JSON.stringify({ hooks: { PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: `'node' '${t.launcher}' hook tool.before --host ad` }] }] } }));
+  assert.equal(await uninstall({ ctx: t.ctx }), 0, t.text());
+  assert.ok(fs.existsSync(t.launcher), "the launcher stays for ad's own workers");
+});
+
+test("L7: a launcher entry ad has no record of leaves ad's own check beside it; a hand-deleted one still gets ad's back on uninstall; ad init keeps both", async () => {
+  const adTool = { matcher: "Bash|PowerShell|Write|Edit", hooks: [{ type: "command", command: "node", args: [R.HOOK_PATH, "tool.before"], timeout: 10, onFailure: "block" }] };
+  // A launcher tool.before ad has no record of ("keep"): ad's own blocking entry stays.
+  const t = home({ plugin: true });
+  const launcherEntry = { matcher: "Bash|PowerShell|Write|Edit", hooks: [{ type: "command", command: "node", args: [t.launcher, "hook", "tool.before", "--host", "claude-code", "--verbose"], timeout: 7, onFailure: "continue" }] };
+  fs.writeFileSync(t.file, JSON.stringify({ enabledPlugins: t.settings().enabledPlugins, hooks: { PreToolUse: [launcherEntry, adTool] } }, null, 2));
+  assert.equal(await S.setup({ ctx: t.ctx }), 0, t.text());
+  const kinds = R.ourHandlers(t.settings().hooks).filter((o) => o.info.event === "tool.before").map((o) => Boolean(o.info.launcher)).sort();
+  assert.deepEqual(kinds, [false, true], "ad's own check isn't taken over by an entry ad didn't write");
+  // ad init with both live: ad's own stays (nothing lowered).
+  const plan = R.planClaudeHooks(t.settings().hooks, { steps: ["rules-check"] });
+  const own = R.ourHandlers(plan.hooks).filter((o) => !o.info.launcher && o.info.event === "tool.before");
+  assert.equal(own.length, 1, "ad init keeps ad's own check beside the launcher's");
+  assert.equal(own[0].handler.onFailure, "block", "as it was");
+  // Adopted, then the launcher's entry deleted by hand: uninstall still puts ad's back.
+  const t2 = home({ plugin: true, settings: { hooks: { PreToolUse: [adTool] } } });
+  assert.equal(await S.setup({ ctx: t2.ctx }), 0, t2.text());
+  const s2 = t2.settings();
+  fs.writeFileSync(t2.file, JSON.stringify({ ...s2, hooks: { ...s2.hooks, PreToolUse: [] } }, null, 2));
+  assert.equal(await uninstall({ ctx: t2.ctx }), 0, t2.text());
+  assert.ok(R.ourHandlers(t2.settings().hooks).some((o) => !o.info.launcher && o.info.event === "tool.before"), t2.text());
 });

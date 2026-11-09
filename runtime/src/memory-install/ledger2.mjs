@@ -121,7 +121,10 @@ const validDate = (d) => (d instanceof Date && !Number.isNaN(d.getTime()) ? d : 
  * restores); updatedAt moves on every write. A write without a source is a direct
  * v2 write and clears "v1".
  */
-export function upsertItem(ledger, { host, kind, file, locator, value, preExisted = false, version, source, created, fileCreated, appended, now = new Date() }) {
+// What a launcher entry took over, gathered over runs (each entry once).
+const unionAdopted = (a = [], b = []) => [...a, ...b].filter((x, i, all) => all.findIndex((y) => JSON.stringify(y) === JSON.stringify(x)) === i);
+
+export function upsertItem(ledger, { host, kind, file, locator, value, preExisted = false, version, source, created, fileCreated, appended, adopted, now = new Date() }) {
   const at = validDate(now).toISOString();
   const id = itemId({ host, kind, file, locator });
   const prev = ledger.items.find((i) => i.id === id);
@@ -143,6 +146,8 @@ export function upsertItem(ledger, { host, kind, file, locator, value, preExiste
     ...((fileCreated ?? prev?.fileCreated) ? { fileCreated: true } : {}),
     // Text ad appended (TOML): what it put before its lines and the line ending, to take back exactly.
     ...((appended ?? prev?.appended) ? { appended: appended ?? prev.appended } : {}),
+    // ad init's own entries this one took over (L7 D10): uninstall puts them back.
+    ...(unionAdopted(prev?.adopted, adopted).length ? { adopted: unionAdopted(prev?.adopted, adopted) } : {}),
     ...(source ? { source } : {}),
   };
   ledger.items = [...ledger.items.filter((i) => i.id !== id), item];

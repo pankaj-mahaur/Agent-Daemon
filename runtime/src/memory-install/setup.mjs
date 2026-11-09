@@ -41,7 +41,9 @@ export function claudeSettingsFile(ctx) {
 /** One route's handler through the launcher (exec form: no shell). */
 export function launcherHandler(launcher, route, host = "claude-code") {
   const h = { type: "command", command: "node", args: [launcher, "hook", route.event, "--host", host], timeout: route.timeout };
-  // A tool.before that can't run must never block a tool call (02 §3).
+  // A tool.before that can't run never blocks a tool call by default (02 §3); while rules
+  // exist the switch raises it to "block" (L7 D13), and setup carries a "block" from an
+  // entry of ad's own it takes over (D10).
   if (route.event === "tool.before") h.onFailure = "continue";
   return h;
 }
@@ -338,11 +340,35 @@ export function planClaudeSetup(text, { launcher, routes, marker = true, owned =
   const ownedItem = (kind, locator) => owned.find((i) => i.id === itemId({ host, kind, file, locator }));
   // ad's own entries (ad init's dispatcher) that can run: their steps aren't routed again.
   const adSteps = new Set(ourHandlers(root.hooks).filter((o) => !o.info.launcher && !o.info.plugin && o.handler.if === undefined && entryAlive(o.info)).flatMap((o) => o.info.steps));
+  // ad init's own tool.before entries (the checkout's dispatcher, which the agent can write)
+  // that the launcher's takes over (L7 D10; Claude Code only: Codex trusts hooks by place).
+  const adopt = [];
+  if (host === "claude-code" && routes.some((r) => r.event === "tool.before")) {
+    for (const [hostEvent, groups] of Object.entries(isObj(root.hooks) ? root.hooks : {})) {
+      if (!Array.isArray(groups)) continue;
+      groups.forEach((g, gi) => (Array.isArray(g?.hooks) ? g.hooks : []).forEach((h, hi) => {
+        const info = classifyHandler(h, { hostEvent, matcher: g?.matcher });
+        if (info && !info.launcher && !info.plugin && info.event === "tool.before") adopt.push({ hostEvent, gi, hi, size: g.hooks.length, matcher: g?.matcher ?? null, handler: h });
+      }));
+    }
+  }
+  // Taking an entry over never lowers the check (S1): "block" and the longest timeout carry.
+  const raise = (h) => {
+    const next = { ...h };
+    if (adopt.some((a) => a.handler.onFailure === "block")) next.onFailure = "block";
+    const longest = Math.max(0, ...adopt.map((a) => (Number.isFinite(a.handler.timeout) ? a.handler.timeout : 0)));
+    if (longest > (next.timeout ?? 0)) next.timeout = longest;
+    return next;
+  };
+  const adopted = adopt.map((a) => ({ hostEvent: a.hostEvent, matcher: a.matcher, handler: a.handler }));
   for (const route of routes) {
     const locator = { hostEvent: route.hostEvent, event: route.event, script: launcher };
-    const want = handlerFor(route);
+    const guardRoute = route.event === "tool.before" && adopt.length > 0;
+    const want = guardRoute ? raise(handlerFor(route)) : handlerFor(route);
     const served = route.steps.filter((s) => adSteps.has(s));
-    if (served.length) {
+    // L7 (D10): the rules check always runs from the launcher's entry (the guard copy);
+    // ad's own rules-check entry beside it is adopted below, never a reason to skip.
+    if (served.length && route.event !== "tool.before") {
       results.push({ kind: "hook", event: route.event, action: "skip", why: `ad's own hooks already run ${served.join(", ")} here` });
       continue;
     }
@@ -352,7 +378,7 @@ export function planClaudeSetup(text, { launcher, routes, marker = true, owned =
       continue;
     }
     const found = locateHook(root, locator);
-    const item = { kind: "hook", locator, value: want, preExisted: false };
+    const item = { kind: "hook", locator, value: want, preExisted: false, ...(guardRoute ? { adopted } : {}) };
     if (!found.length) {
       const created = push({ path: ["hooks", route.hostEvent, -1], value: route.matcher ? { matcher: route.matcher, hooks: [want] } : { hooks: [want] }, insert: true });
       results.push({ kind: "hook", event: route.event, action: "add", item: { ...item, created } });
@@ -362,7 +388,14 @@ export function planClaudeSetup(text, { launcher, routes, marker = true, owned =
     // onFailure and timeout are ad's to change later (the review service): a difference
     // there alone is not a new version of the entry, and is never undone here.
     if (canonicalSha256(live, { kind: "hook" }) === canonicalSha256(want, { kind: "hook" })) {
-      results.push({ kind: "hook", event: route.event, action: "same", item: ownedItem("hook", locator) ? item : { ...item, preExisted: true } });
+      // A live entry below what it takes over is raised to it (never lowered).
+      const raised = guardRoute ? raise(live) : live;
+      if (raised.onFailure !== live.onFailure || raised.timeout !== live.timeout) {
+        push({ path: ["hooks", route.hostEvent, found[0].gi, "hooks", found[0].hi], value: raised });
+        results.push({ kind: "hook", event: route.event, action: "update", item: { ...item, value: raised, preExisted: !ownedItem("hook", locator) } });
+        continue;
+      }
+      results.push({ kind: "hook", event: route.event, action: "same", item: ownedItem("hook", locator) ? { ...item, value: live } : { ...item, value: live, preExisted: true } });
       continue;
     }
     const mine = ownedItem("hook", locator);
@@ -378,6 +411,25 @@ export function planClaudeSetup(text, { launcher, routes, marker = true, owned =
     } else {
       results.push({ kind: "hook", event: route.event, action: "keep", why: mine ? "you changed it, so it was left as it is" : "an entry like ad's that ad has no record of; left as it is" });
     }
+  }
+  // Adopt ad init's rules-check (L7 D10): once the launcher's tool.before is in place, ad's
+  // own tool.before entries go — the check runs in the launcher's entry, which carries their
+  // onFailure and timeout. The ledger item records them: uninstall puts them back. Last
+  // first, so earlier positions stay right; a host event left empty goes.
+  // Only an entry this run wrote or found exactly as ad's (raised): one the user changed, or
+  // ad has no record of, leaves ad's own beside it (a second check is safe).
+  const placed = results.some((r) => r.kind === "hook" && r.event === "tool.before" && ["add", "same", "update"].includes(r.action));
+  if (placed && adopt.length) {
+    const order = [...adopt].sort((a, b) => (a.hostEvent === b.hostEvent ? b.gi - a.gi || b.hi - a.hi : a.hostEvent < b.hostEvent ? -1 : 1));
+    const emptied = new Map();
+    for (const a of order) {
+      const key = `${a.hostEvent}/${a.gi}`;
+      const left = (emptied.get(key) ?? a.size) - 1;
+      emptied.set(key, left);
+      push({ path: left === 0 ? ["hooks", a.hostEvent, a.gi] : ["hooks", a.hostEvent, a.gi, "hooks", a.hi], value: undefined });
+    }
+    for (const he of new Set(adopt.map((a) => a.hostEvent))) if (Array.isArray(running.hooks?.[he]) && !running.hooks[he].length) push({ path: ["hooks", he], value: undefined });
+    results.push({ kind: "hook", event: "tool.before", action: "adopt", why: "ad's own rules check now runs in this entry (the launcher's)" });
   }
   if (marker) {
     const item = { kind: "env", locator: { path: [...MARKER_PATH] }, value: "1", preExisted: false };
@@ -431,7 +483,7 @@ export async function withLedgerLock(ctx, fn) {
 /* setup                                                               */
 /* ------------------------------------------------------------------ */
 
-const ACTION_WORD = { add: "added", update: "updated", same: "already there" };
+const ACTION_WORD = { add: "added", update: "updated", same: "already there", adopt: "now runs ad's own rules check (ad's separate entry for it was removed)" };
 const what = (r) => (r.kind === "env" ? "the agent-shell marker (AD_TOOL_SHELL)" : `the ${r.event} hook`);
 
 /** The /plugin lines (Decision 13): Claude Code's memory route is the plugin. */
@@ -510,6 +562,7 @@ async function setupClaude(ctx, work, { dryRun }) {
       else if (r.action === "refuse" || r.action === "keep") out(`${r.action === "refuse" ? "✗" : "·"} Claude Code: ${what(r)}: ${r.why}`);
     }
     if (dryRun) {
+      if (plan.results.some((x) => x.action === "adopt")) out(`  would remove ad's own rules-check entry from ${ctx.display(file)} (the launcher's tool.before runs it)`);
       for (const r of plan.results.filter((x) => x.action === "add" || x.action === "update")) out(`  would ${r.action === "add" ? "add" : "update"} ${what(r)} in ${ctx.display(file)}`);
       return { code: 0 };
     }
@@ -543,7 +596,7 @@ async function setupClaude(ctx, work, { dryRun }) {
       await writeChecked(t.realFile, text, t.exists ? t.bytes : null);
     }
     for (const r of plan.results.filter((x) => x.item)) {
-      upsertItem(opened.ledger, { host: "claude-code", kind: r.item.kind, file, locator: r.item.locator, value: r.item.value, preExisted: r.item.preExisted, version: ctx.version, created: r.item.created, fileCreated: (!t.exists && r.action === "add") || undefined });
+      upsertItem(opened.ledger, { host: "claude-code", kind: r.item.kind, file, locator: r.item.locator, value: r.item.value, preExisted: r.item.preExisted, version: ctx.version, created: r.item.created, adopted: r.item.adopted, fileCreated: (!t.exists && r.action === "add") || undefined });
     }
     await writeLedger2(ctx.root, opened.ledger);
     for (const r of plan.results.filter((x) => ACTION_WORD[x.action])) out(`${r.action === "same" ? "·" : "✓"} Claude Code: ${what(r)} ${ACTION_WORD[r.action]}${r.action === "same" ? "" : ` in ${ctx.display(file)}`}`);
@@ -838,7 +891,7 @@ const GATED = (item) => (item.kind === "hook" && item.locator?.event === "tool.b
 export function manualStep(item, display = (p) => p) {
   if (item.kind === "env" && item.host === "codex") return `delete the line AD_TOOL_SHELL = "1" under [shell_environment_policy.set] in ${display(item.file)}`;
   if (item.kind === "env") return `delete "AD_TOOL_SHELL" from "env" in ${display(item.file)}`;
-  if (item.kind === "hook") return `delete the ${item.locator.hostEvent} entry that runs memory/launch/run.mjs hook ${item.locator.event} from ${display(item.file)}`;
+  if (item.kind === "hook") return `delete the ${item.locator.hostEvent} entry that runs memory/launch/run.mjs hook ${item.locator.event} from ${display(item.file)}${item.adopted?.length ? ", then run `ad init` in your own terminal (it took over ad's own rules check)" : ""}`;
   return null;
 }
 
@@ -908,6 +961,26 @@ export async function removeSettingsItems(ctx, file, items, gate) {
       if (r.item.host === "codex" && r.loc.groupSize === 1 && after > 0 && !hookRemovals.some((x) => x !== r && x.item.locator.hostEvent === he && x.loc.gi > r.loc.gi)) {
         notes.push(`Codex: the ${he} hook${after === 1 ? "" : "s"} you added after ad's moved up one place; trust ${after === 1 ? "it" : "them"} again in /hooks`);
       }
+    }
+    // ad init's own entries that a removed launcher tool.before took over (L7 D10) go back,
+    // while their script is still there; else ad's remaining hooks run no rules check, said.
+    const restored = [];
+    // Removed now, gone already (deleted by hand), or kept but turned off with its host: the
+    // launcher's check no longer runs here. Not one the review gate held (it still runs).
+    const ended = results.filter((r) => r.item.kind === "hook" && r.item.host === "claude-code" && r.item.locator.event === "tool.before" && !r.held && ["removed", "gone", "kept"].includes(r.action)).map((r) => r.item);
+    const adOwnCheck = () => ourHandlers(applyOpsTo(p.root, ops).hooks).some((o) => !o.info.launcher && !o.info.plugin && o.info.event === "tool.before");
+    for (const item of ended) {
+      for (const a of item.adopted ?? []) {
+        const info = classifyHandler(a.handler, { hostEvent: a.hostEvent, matcher: a.matcher });
+        if (!info || !entryAlive(info) || restored.some((x) => isDeepStrictEqual(x, a)) || adOwnCheck()) continue;
+        ops.push({ path: ["hooks", a.hostEvent, -1], value: a.matcher ? { matcher: a.matcher, hooks: [a.handler] } : { hooks: [a.handler] }, insert: true });
+        restored.push(a);
+      }
+    }
+    const checkGone = ended.length > 0;
+    if (restored.length) notes.push(`ad's own rules check is back in ${ctx.display(file)} (the entry ad's memory setup had taken over)`);
+    else if (checkGone && ourHandlers(p.root.hooks).some((o) => !o.info.launcher && !o.info.plugin) && !ourHandlers(p.root.hooks).some((o) => !o.info.launcher && !o.info.plugin && o.info.event === "tool.before")) {
+      notes.push("ad's own hooks here no longer run a rules check: run `ad init` in your own terminal to add it back");
     }
     if (removals.some((r) => r.item.kind === "env")) ops.push({ path: [...MARKER_PATH], value: undefined });
     if (!ops.length) return results;
@@ -1043,6 +1116,8 @@ export function launcherReferenceFiles(ctx, ledgerFiles = []) {
   const codexHome = ctx.env.CODEX_HOME && path.isAbsolute(ctx.env.CODEX_HOME) ? ctx.env.CODEX_HOME : path.join(ctx.home, ".codex");
   files.add(path.join(codexHome, "config.toml"));
   files.add(path.join(codexHome, "hooks.json"));
+  // ad's own engine home: its hooks.json runs tool.before through the launcher (L7 D10).
+  for (const name of ["engine", "codex-home"]) files.add(path.join(ctx.root, name, "hooks.json"));
   return [...files];
 }
 
