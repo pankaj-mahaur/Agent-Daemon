@@ -1,0 +1,24 @@
+{"id":"sw-01","text":"Stripe refund Idempotency-Key is 'refund-<order_id>-<batch_id>'; keying on the order id alone blocks a legitimate second partial refund.","created":"2026-10-26","kind":"architecture"}
+{"id":"sw-02","text":"Refund specs: bin/rspec spec/services/refunds spec/jobs; Stripe calls replay from spec/cassettes (VCR), re-record with VCR_RECORD=1.","created":"2026-09-08","kind":"testing"}
+{"id":"sw-03","text":"System specs run headless Chrome via Cuprite: bin/rspec spec/system; HEADLESS=0 opens a visible browser for debugging.","created":"2025-10-14","kind":"testing"}
+{"id":"sw-04","text":"Refunds are issued synchronously in Admin::RefundsController#create; there is no background job for refunds.","created":"2025-04-30","kind":"architecture"}
+{"id":"sw-05","text":"All refunds, even single ones, go through Refunds::BulkIssuer in BulkRefundJob (Sidekiq queue: payments); the controller only enqueues.","created":"2026-10-28","kind":"architecture"}
+{"id":"sw-06","text":"Bulk actions in admin (refunds, exports) use the ActiveAdmin batch_action DSL.","created":"2025-01-28","kind":"architecture"}
+{"id":"sw-07","text":"ActiveAdmin is gone: admin bulk actions are plain controllers fed by the bulk_select Stimulus controller posting ids[].","created":"2026-06-19","kind":"architecture"}
+{"id":"sw-08","text":"Deploy with Capistrano: bundle exec cap production deploy.","created":"2025-03-19","kind":"workflow"}
+{"id":"sw-09","text":"Deploys are Kamal (kamal deploy, run by CI on main); the Capistrano config was deleted.","created":"2026-04-08","kind":"workflow"}
+{"id":"sw-10","text":"Money is integer cents everywhere (amount_cents + currency); never pass floats to Stripe or Money.new.","created":"2025-07-16","kind":"fact"}
+{"id":"sw-11","text":"Stripe answers charge_already_refunded on double submits; record it as success instead of surfacing an error to staff.","created":"2026-08-03","kind":"fact"}
+{"id":"sw-12","text":"config/sidekiq.yml keeps the payments queue at concurrency 2 to respect Stripe rate limits; put new payment jobs on that queue.","created":"2026-02-11","kind":"fact"}
+{"id":"sw-13","text":"User-facing strings go in config/locales/en.yml under admin.<controller>.<action>; i18n-tasks missing runs in CI.","created":"2025-09-01","kind":"workflow"}
+{"id":"sw-14","text":"strong_migrations is on: an index on a big table needs algorithm: :concurrently plus disable_ddl_transaction!.","created":"2025-11-25","kind":"workflow"}
+{"id":"sw-15","text":"Changes under app/services/refunds or other payment code need approval from the payments CODEOWNERS group.","created":"2026-05-05","kind":"workflow"}
+{"id":"sw-16","text":"app/jobs/inventory_sync_job.rb pulls stock from the warehouse API every 15 min and skips discontinued SKUs.","created":"2026-10-15","kind":"fact"}
+{"id":"sw-17","text":"Batch product imports (CSV) use activerecord-import with validate: false; run ProductValidator afterwards.","created":"2026-03-22","kind":"fact"}
+{"id":"sw-18","text":"Product images use ActiveStorage variants via libvips; install vips locally or thumbnails return 500.","created":"2025-06-11","kind":"tooling"}
+{"id":"sw-19","text":"Tax rates come from TaxJar; TaxRatesRefreshJob caches them in Redis for 24h.","created":"2025-12-18","kind":"fact"}
+{"id":"sw-20","text":"Admin customer search is pg_search over name and email; SKU lookup uses a trigram index.","created":"2026-07-21","kind":"fact"}
+{"id":"sw-21","text":"Storefront product pages are fragment-cached by cache_key_with_version; touch the product to bust them.","created":"2026-01-30","kind":"architecture"}
+{"id":"sw-22","text":"Commit subjects: imperative, sentence case, no prefix, 72 chars max.","created":"2025-02-05","kind":"git"}
+{"id":"sw-23","text":"Setup: bin/setup (gems, DB, seeds), then bin/dev runs web, css and sidekiq via foreman.","created":"2025-05-27","kind":"workflow"}
+{"id":"sw-24","text":"Linter is standardrb: bundle exec standardrb --fix. .rubocop.yml is ignored.","created":"2026-09-30","kind":"tooling"}

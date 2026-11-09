@@ -1190,6 +1190,34 @@ A saved note waits for your review: accept it with `npx -y agent-daemon-memory r
 
 The launcher folder (`~/.agent-daemon/memory/launch/`) stays under **Left on disk** while any config still starts it. In Codex, uninstall never edits a hook you changed (Codex would stop trusting it); it says when hooks you added after ad's need trusting again in `/hooks`.
 
+## 110. The agent didn't get a learning I accepted
+
+**Symptom:** a learning you accepted in `review` isn't in the session's context; `/agent-daemon-memory:recall` doesn't list it under "this session received".
+
+**Cause and fix**, in order:
+- **It doesn't fit this work.** The session brief sends your own corrections from the last 14 days every session, plus the learnings that match the current branch, recently changed files and last commits; others come with a prompt that matches them. Check: `/agent-daemon-memory:recall <a word from it>` lists it if it matches. Recall matches words, not meaning: a learning phrased very differently from the work won't come up.
+- **A newer learning on the same subject replaced it.** When a learning written months later about the same thing is shown, the older one stays out. Forget the one you no longer want (`npx -y agent-daemon-memory forget <n>`) so the right one is always the newer.
+- **Recall is off in this project.** `doctor` says so; turn it on in your own terminal: `npx -y agent-daemon-memory config recall on`.
+- **No repo context yet.** The first session in a repository (or on a new branch) gets the freshest learnings while a background job reads the branch, changed files and commits; the next session uses them. Outside a git repository, the brief is always the freshest learnings.
+- **The host isn't Claude Code or Codex**, or ad's hooks aren't trusted there (Codex: `/hooks`; see #106).
+
+## 111. `doctor`: auto memory, claude-mem, or an `agent-daemon:learnings` block
+
+**Symptom:** `doctor` shows `coexist.auto-memory`, `coexist.claude-mem` or `coexist.mirror`.
+
+These are information, not failures: other memory that loads next to ad's learnings.
+- **Claude Code auto memory** keeps its own notes (`MEMORY.md`) and loads them each session; a learning you forget here can still arrive from there. Keep both, or set `"autoMemoryEnabled": false` in the settings file `doctor` names.
+- **claude-mem** also adds notes at session start and captures prompts, so a correction can arrive twice. Both can stay on; its session-start notes are set by `CLAUDE_MEM_CONTEXT_OBSERVATIONS` in `~/.claude-mem/settings.json`.
+- **An `agent-daemon:learnings` block** in CLAUDE.md or AGENTS.md was written by ad 3.x. Claude Code loads it, so those learnings arrive twice and forgotten ones stay: delete the lines between `<!-- agent-daemon:learnings:start -->` and `<!-- agent-daemon:learnings:end -->` (the file may be committed to your repository).
+
+## 112. `config recall` says "recall stays as it is"
+
+**Symptom:** `config recall on` or `off` prints `recall stays as it is: changing it needs your own terminal`.
+
+**Cause:** turning recall off would stop your accepted learnings from reaching the agent, and turning it back on would undo your choice, so both need the review check: a real terminal, not an agent's shell or a script.
+
+**Fix:** run it yourself in a terminal (Windows Terminal, iTerm2, macOS Terminal, a Linux terminal). In an editor's terminal, follow the dialog it shows. Without a value, `config recall` only shows the current setting and works anywhere.
+
 ---
 
 For harness problems, the [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill walks through login → hooks → sandbox → the engine's own log. See also [harness.md](harness.md) and, for the terminal UI, [tui.md](tui.md).

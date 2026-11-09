@@ -1,0 +1,26 @@
+{
+  "name": "parley",
+  "stack": "Elixir 1.17 + Phoenix 1.7 (LiveView, Channels, Presence) + Ecto/PostgreSQL chat app",
+  "branch": "feat/presence-typing-indicators",
+  "recent_paths": [
+    "lib/parley/chat/presence.ex",
+    "lib/parley_web/channels/room_channel.ex",
+    "lib/parley_web/live/room_live/show.ex",
+    "lib/parley_web/live/room_live/typing_indicator.ex",
+    "assets/js/hooks/typing_hook.js",
+    "lib/parley/chat/rate_limiter.ex",
+    "test/parley_web/channels/room_channel_test.exs",
+    "test/parley/chat/presence_test.exs",
+    "config/runtime.exs",
+    "assets/css/app.css",
+    "mix.exs"
+  ],
+  "recent_commits": [
+    "chat: track typing state in Presence metas",
+    "room_live: render typing indicator under the composer",
+    "hooks: throttle typing pushes to one every 2s",
+    "channel: ignore typing events from muted members",
+    "test: presence diff clears typing on leave"
+  ],
+  "session_cwd": "/home/dev/work/parley"
+}

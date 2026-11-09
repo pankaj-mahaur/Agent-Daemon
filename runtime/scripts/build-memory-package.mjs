@@ -24,7 +24,9 @@ const TEMPLATE = path.join(REPO, "packages", PRODUCT.package);
 // The hook dispatcher and the migrate job it starts by path (memory/no-migrate.mjs)
 // run from every shipped tree: the npm dist (through the stable launcher, L3) and
 // the plugin's server/. Their closure may need no npm package but better-sqlite3.
-export const HOOK_ENTRIES = ["bin/hook.mjs", "src/memory/migrate-job.mjs"];
+// The detached jobs a hook starts by file path (no import reaches them): the migration and
+// recall's repo-context job (plan L6).
+export const HOOK_ENTRIES = ["bin/hook.mjs", "src/memory/migrate-job.mjs", "src/memory/recall-context-job.mjs"];
 // The stable launcher is copied out of the dist by install (memory/launch/), not imported.
 export const ENTRIES = ["src/memory-install/cli.mjs", "src/mcp/memory-server.mjs", ...HOOK_ENTRIES, "src/memory/launch/run.mjs"];
 export const ALLOWED_BARE = new Set(["jsonc-parser", "smol-toml", "better-sqlite3"]);

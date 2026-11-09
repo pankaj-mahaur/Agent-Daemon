@@ -128,10 +128,38 @@ export async function memoryVerbMain(verb, argv = [], o = {}) {
     return ["hidden", "restored", "forgotten", "forget-requested", "marked"].includes(r.status) ? 0 : 1;
   }
 
+  if (verb === "config" && argv[0] === "recall") {
+    // Plan L6 (design decision 13): recall on or off for this project, the token both ways.
+    const value = argv[1];
+    const { recallMode } = await import("./recall-mode.mjs");
+    const projectId = projectIdOf(cwd);
+    if (value && !["on", "off"].includes(value)) {
+      out(`usage: ${command("config recall")} [on|off]`);
+      return 1;
+    }
+    if (value) {
+      if (!projectId) {
+        out(`${PRODUCT.displayName}: this folder isn't a project, so recall has no setting here.`);
+        return 1;
+      }
+      const t = await getToken();
+      if (!t.token) {
+        out(`${PRODUCT.displayName}: recall stays as it is: changing it needs your own terminal (${t.refused}).`);
+        return 2;
+      }
+      (await import("./review-service.mjs")).setRecallMode(handle, t.token, projectId, value, { now });
+    }
+    const mode = recallMode(handle, projectId);
+    out(mode === "off"
+      ? `Recall is off in this project: agents get none of your learnings. Rules still ask or stop; corrections are still saved. Turn on: ${command("config recall on")}`
+      : `Recall is on in this project: agents get the learnings that fit each session and prompt. Turn off: ${command("config recall off")}`);
+    return 0;
+  }
+
   if (verb === "config") {
     const [what, value] = argv;
     if (what !== "review" || (value && !["strict", "auto"].includes(value))) {
-      out(`usage: ${command("config review")} [strict|auto]`);
+      out(`usage: ${command("config review")} [strict|auto] · ${command("config recall")} [on|off]`);
       return 1;
     }
     const M = await import("./review-mode.mjs");

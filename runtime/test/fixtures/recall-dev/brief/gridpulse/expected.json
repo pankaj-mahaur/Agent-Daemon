@@ -1,0 +1,31 @@
+{
+  "relevant": ["gp-01", "gp-02", "gp-03", "gp-05", "gp-07", "gp-10", "gp-11", "gp-12", "gp-24"],
+  "irrelevant": ["gp-04", "gp-06", "gp-08", "gp-13", "gp-14", "gp-15", "gp-16", "gp-17", "gp-18"],
+  "neutral": ["gp-09", "gp-19", "gp-20", "gp-21", "gp-22", "gp-23"],
+  "reasons": {
+    "gp-01": "How axis/tooltip formatters must apply the timezone; matches the charts commits.",
+    "gp-02": "Test command for the zones.test.ts DST tests the branch adds.",
+    "gp-03": "How to run the new tests/e2e/timezone.spec.ts.",
+    "gp-04": "Stale: site-only timezone superseded by gp-05 (user preference, else site.tz).",
+    "gp-05": "Current timezone resolution rule the branch implements.",
+    "gp-06": "Stale: localStorage-only preferences superseded by gp-07 (server sync).",
+    "gp-07": "How to add the timezone key to the preferences store.",
+    "gp-08": "Stale: Node 18 superseded by gp-09 (Node 22).",
+    "gp-09": "Current Node version; project-wide.",
+    "gp-10": "Which timezone library to use for this work.",
+    "gp-11": "Fallback the TimezoneSelect picker needs; low word overlap.",
+    "gp-12": "Non-hour offsets affect axis tick bucketing; low word overlap.",
+    "gp-13": "Billing route loading, other area; shares the src/routes/(app) path and +page.ts only.",
+    "gp-14": "Site list search, other area; shares the word 'search' with the TimezoneSelect commit.",
+    "gp-15": "Alert threshold form, other area; shares the src/lib/components path only.",
+    "gp-16": "Live websocket, other area.",
+    "gp-17": "CSV export, other area.",
+    "gp-18": "Auth typing in app.d.ts, other area; shares the path only.",
+    "gp-19": "Commit convention; project-wide.",
+    "gp-20": "Lint/check commands; project-wide.",
+    "gp-21": "Setup; project-wide.",
+    "gp-22": "Svelte runes style; project-wide.",
+    "gp-23": "Deploy process; project-wide.",
+    "gp-24": "Testing TimezoneSelect needs the preferences store wrapper."
+  }
+}

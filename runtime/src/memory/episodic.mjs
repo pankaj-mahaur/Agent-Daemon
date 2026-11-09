@@ -952,27 +952,31 @@ export function usefulnessFactor(alias, keys) {
  * stated 'explicit' facts) into a small structured profile. Pure data; callers
  * render + neutralize via representationToMarkdown.
  *
- * @param {{ projectSlug?: string, factLimit?: number, learningLimit?: number }} [opts]
- * @returns {Promise<{identity:string[],preferences:string[],tools:string[],conventions:string[],gotchas:string[],counts:object}|null>}
+ * @param {{ projectSlug?: string, factLimit?: number, learningLimit?: number, scope?: "any"|"global" }} [opts]
+ *   scope "global" (session start, L6): global notes only; this project's come through the brief, tagged
+ * @returns {Promise<{identity:string[],preferences:string[],tools:string[],conventions:string[],gotchas:string[],counts:object,ids:number[]}|null>}
  */
-export async function buildUserRepresentation({ projectSlug, projectKeys, factLimit = 8, learningLimit = 12 } = {}) {
+export async function buildUserRepresentation({ projectSlug, projectKeys, factLimit = 8, learningLimit = 12, scope = "any" } = {}) {
   const handle = await db();
   if (!handle) return null;
   const keys = keysOf({ projectKeys, projectSlug });
 
-  const fvis = factVisibility("", keys);
+  // scope "global" (L6): global facts only, and a note the agent asked to forget is never
+  // sent untagged here.
+  const fvis = scope === "global" ? { sql: "global_accepted_at IS NOT NULL", params: [] } : factVisibility("", keys);
+  const inUse = scope === "global" ? "(status = 'active' AND accepted_by IS NOT NULL)" : acceptedSql();
   const facts = handle.all(
-    `SELECT category, text FROM user_facts WHERE ${acceptedSql()} AND ${fvis.sql}
+    `SELECT category, text FROM user_facts WHERE ${inUse} AND ${fvis.sql}
       ORDER BY confidence DESC, observed_count DESC LIMIT ?`,
     [...fvis.params, factLimit]
   );
 
-  const vis = learningVisibility("", keys);
-  const where = `${acceptedSql()} AND confidence >= 0.6 AND ${vis.sql}`;
+  const vis = learningVisibility("", keys, scope);
+  const where = `${inUse} AND confidence >= 0.6 AND ${vis.sql}`;
   const params = [...vis.params];
   // Explicit (stated) facts first, then by confidence + reinforcement.
   const learnings = handle.all(
-    `SELECT category, text FROM learnings
+    `SELECT id, category, text FROM learnings
       WHERE ${where}
       ORDER BY (CASE WHEN derivation = 'explicit' THEN 1 ELSE 0 END) DESC,
                confidence DESC, observed_count DESC
@@ -997,6 +1001,10 @@ export async function buildUserRepresentation({ projectSlug, projectKeys, factLi
     profile[k] = [...new Set(profile[k])].slice(0, 6);  // dedup + cap each bucket
   }
   profile.counts = { facts: facts.length, learnings: learnings.length };
+  // The learnings actually kept (a duplicate or a capped bucket drops some).
+  const kept = new Set([...profile.preferences, ...profile.tools, ...profile.conventions, ...profile.gotchas]);
+  profile.ids = learnings.filter((l) => kept.has(l.text)).map((l) => l.id);
+  profile.items = learnings.filter((l) => kept.has(l.text)).map((l) => ({ id: l.id, text: l.text }));
 
   const total = profile.identity.length + profile.preferences.length +
                 profile.tools.length + profile.conventions.length + profile.gotchas.length;

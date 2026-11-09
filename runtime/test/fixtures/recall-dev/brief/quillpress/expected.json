@@ -1,0 +1,31 @@
+{
+  "relevant": ["qp-01", "qp-02", "qp-03", "qp-05", "qp-07", "qp-11", "qp-12", "qp-13", "qp-14", "qp-22", "qp-24"],
+  "irrelevant": ["qp-04", "qp-06", "qp-08", "qp-15", "qp-16", "qp-17", "qp-18", "qp-19"],
+  "neutral": ["qp-09", "qp-10", "qp-20", "qp-21", "qp-23"],
+  "reasons": {
+    "qp-01": "Core of the idempotency commit: the PublishJob row lock in publish_article.",
+    "qp-02": "Test command for cms/publishing, the area being changed.",
+    "qp-03": "How to assert retry/backoff in the eager-mode task tests the branch adds.",
+    "qp-04": "Stale: autoretry_for approach superseded by qp-05 (explicit self.retry with backoff).",
+    "qp-05": "Current retry/backoff design that the branch implements.",
+    "qp-06": "Stale: single default queue superseded by qp-07 (dedicated 'publish' queue).",
+    "qp-07": "Matches the commit routing publishing tasks to the 'publish' queue; how to run that worker.",
+    "qp-08": "Stale: flake8/isort replaced by ruff, see qp-09.",
+    "qp-09": "Current lint command; project-wide, not specific to this work.",
+    "qp-10": "Commit convention; project-wide.",
+    "qp-11": "Branch adds migration 0042, so the reversibility check applies.",
+    "qp-12": "Backoff countdowns must stay under the broker visibility timeout; low word overlap but directly relevant.",
+    "qp-13": "Decides which publish failures deserve another attempt; low word overlap.",
+    "qp-14": "cms/articles/signals.py is in recent paths; worker saves must not re-trigger the reindex.",
+    "qp-15": "Newsletter tasks, other area; shares only the tasks.py path segment.",
+    "qp-16": "Editor frontend publish button, other area; shares only the word 'publish'.",
+    "qp-17": "Image renditions, other area.",
+    "qp-18": "Search index command, other area.",
+    "qp-19": "Paywall rules, other area.",
+    "qp-20": "Setup steps; project-wide.",
+    "qp-21": "Release process; project-wide.",
+    "qp-22": "Branch changes Celery queue routing, so the PR needs a Rollout section.",
+    "qp-23": "Settings layout; true project-wide fact, not needed for this change.",
+    "qp-24": "mypy --strict applies to cms/publishing, which is being edited."
+  }
+}

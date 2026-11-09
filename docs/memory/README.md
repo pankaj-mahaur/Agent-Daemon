@@ -54,6 +54,7 @@ afterwards. Details and every option: [install](install.md).
 | [install](install.md) | The installer, the hosts it supports, doctor, uninstall |
 | [hosts and plugins](hosts.md) | Each host's plugin route, and when to use the installer instead |
 | [capture, review and forget](review.md) | What a correction becomes, the review checklist, forget and restore, review mode |
+| [recall](recall.md) | What your agents get back: the session brief, prompt-time learnings, `/recall`, turning it off, other memory on the machine |
 | [tools](tools.md) | Every memory tool, which project the server serves, protocol versions |
 | [security](security.md) | What keeps notes in their project, and the limits |
 | [metrics](metrics.md) | `ad memory report`: is memory working here? |

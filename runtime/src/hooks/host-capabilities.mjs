@@ -72,6 +72,26 @@ export function hostOf(input, { flag = null, env = process.env } = {}) {
   return input && typeof input === "object" && "turn_id" in input ? "codex" : "claude";
 }
 
+// Claude Code's hook events (code.claude.com hooks reference).
+const CLAUDE_EVENTS = new Set(["SessionStart", "SessionEnd", "UserPromptSubmit", "UserPromptExpansion", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "SubagentStop", "SubagentStart", "Notification", "PreCompact", "PermissionRequest"]);
+
+/**
+ * The host whose context recall may write into (plan L6, design decision 11), from a
+ * positive signal only: the --host flag (codex, ad, claude), the plugin's own hook, a
+ * Codex payload (turn_id), or a Claude Code payload (its exact event name and a session
+ * id) inside a Claude Code hook (CLAUDE_PROJECT_DIR set). Anything else — a host that
+ * merely reads Claude Code's hook files — is "unknown" and gets no recalled context.
+ * @returns {"claude"|"codex"|"unknown"}
+ */
+export function contextHost(input, { flag = null, plugin = false, env = process.env } = {}) {
+  const h = flag ?? env.AD_HOOK_HOST ?? null;
+  if (h === "codex" || h === "ad") return "codex";
+  if (h === "claude" || h === "claude-code" || plugin) return "claude";
+  if (input && typeof input === "object" && "turn_id" in input) return "codex";
+  if (input && typeof input === "object" && CLAUDE_EVENTS.has(input.hook_event_name) && typeof input.session_id === "string" && input.session_id && env.CLAUDE_PROJECT_DIR) return "claude";
+  return "unknown";
+}
+
 /**
  * The JSON a PreToolUse hook prints for a rule decision.
  * @param {"ask"|"deny"} decision  the rule's decision
