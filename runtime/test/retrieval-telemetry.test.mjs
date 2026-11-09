@@ -8,6 +8,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { markOwnFolder } from "../src/memory/projects.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CLI = path.resolve(HERE, "..", "src", "cli.mjs");
@@ -16,7 +17,7 @@ const PROJECT_ROOT = path.resolve(HERE, "..", "..");
 function run(args, home, extraEnv = {}) {
   return new Promise(resolve => {
     const child = spawn(process.execPath, [CLI, ...args], {
-      env: { ...process.env, HOME: home, USERPROFILE: home, AGENT_DAEMON_DISABLE_SWEEP: "1", ...extraEnv },
+      env: { ...process.env, HOME: home, USERPROFILE: home, AD_ROOT: path.join(home, ".agent-daemon"), AGENT_DAEMON_DISABLE_SWEEP: "1", ...extraEnv },
       stdio: ["ignore", "pipe", "pipe"]
     });
     let stdout = "", stderr = "";
@@ -30,6 +31,8 @@ async function makeProject(root, activeContextBytes) {
   const project = path.join(root, "proj");
   const memDir = path.join(project, ".agent-daemon", "memory");
   await fs.mkdir(memDir, { recursive: true });
+  // ad init, in the registry the spawned hook reads (its ad root is under its HOME)
+  markOwnFolder(project, { env: { ...process.env, AD_ROOT: path.join(root, ".agent-daemon") } });
   // Build an activeContext of the requested size from dated one-liners
   const line = "- 2026-06-01: a representative activeContext memory line for telemetry sizing tests\n";
   const repeats = Math.ceil(activeContextBytes / line.length);

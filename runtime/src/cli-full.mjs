@@ -250,6 +250,9 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
   const actions = [];
   try {
     await fs.access(target);
+    // Set up before ad recorded which folders are the user's (or the mark is gone): an
+    // ad init run here again records it, even when nothing else needs doing.
+    if (!(await import("./memory/projects.mjs")).ownFolderIsUsers(cwd)) actions.push("+ record this folder's .agent-daemon/ as yours (capture files go in it)");
   } catch {
     actions.push(`+ .agent-daemon/memory/       (new — ${await countTemplates(templatesDir)} memory templates)`);
     actions.push(`+ session-logs/                (new — gitignored local journal directory)`);
@@ -462,6 +465,26 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
 
   // Create memory dir + copy templates
   await fs.mkdir(target, { recursive: true });
+  // The folder is the user's now: hooks may keep capture files in it (a mark in ad's own
+  // registry; a repository's own .agent-daemon/ never gets one).
+  try {
+    const { gitIgnores } = await import("./memory/git-tracked.mjs");
+    // ad's own ignore file first (never over one the folder has).
+    (await import("./memory/project-dir.mjs")).ensureIgnoreFile(path.join(cwd, ".agent-daemon"));
+    // A repository's own .agent-daemon/.gitignore can un-ignore everything ("!*"): capture
+    // files (your prompts) would then go into the next commit. Not recorded until it's fixed.
+    const leaks = ["learning-journal.jsonl", "learning-journal.archive.jsonl", "learning-journal.draining-1.jsonl", "proposed/x.md", "applied/x.md"].filter((f) => !gitIgnores(cwd, `.agent-daemon/${f}`));
+    if (leaks.length) {
+      console.error(`agent-daemon init: git wouldn't ignore .agent-daemon/${leaks[0]} here (the folder's .gitignore, or files the repository tracks there), so capture files stay outside this repository. Add these lines to .agent-daemon/.gitignore, then run ad init again:\n  ${["learning-journal*.jsonl", "*.draining-*.jsonl", "proposed/", "applied/"].join("\n  ")}`);
+    } else if ((await import("./memory/projects.mjs")).markOwnFolder(cwd)) {
+      // Capture files kept outside it so far move in now (the user asked for this folder).
+      (await import("./memory/project-dir.mjs")).projectDataDir(cwd);
+    } else {
+      console.error("agent-daemon init: this folder can't be recorded as a project (a home or filesystem root folder, or a newer ad's registry); capture files stay outside it");
+    }
+  } catch (err) {
+    console.error(`agent-daemon init: couldn't record this folder as initialised (${err.message}); capture files stay outside it`);
+  }
   const entries = await fs.readdir(templatesDir);
   let copied = 0;
   for (const entry of entries) {
@@ -1069,6 +1092,26 @@ async function cmdDoctor({ cwd = process.cwd(), tokens, limit, model } = {}) {
     checks.push({ name: "Home-folder jobs", ok: true, note: `could not read the schedule: ${e.message}` });
   }
 
+  // A .agent-daemon/ here that ad doesn't know as the user's (a repository shipped it, or an
+  // ad init from before the mark whose files are committed): capture goes outside it.
+  try {
+    const own = path.join(cwd, ".agent-daemon");
+    const { statSync } = await import("node:fs");
+    let isDir = false;
+    try { isDir = statSync(own).isDirectory(); } catch { /* none here */ }
+    if (isDir) {
+      const { ownFolderIsUsers } = await import("./memory/projects.mjs");
+      const { gitTracksAnyUnder } = await import("./memory/git-tracked.mjs");
+      if (!ownFolderIsUsers(cwd)) {
+        const note = gitTracksAnyUnder(cwd, ".agent-daemon")
+          ? "this repository ships its own .agent-daemon/ (git tracks files in it), so ad keeps your capture files outside it"
+          : "this folder's .agent-daemon/ isn't marked as yours, so capture files stay outside it. If you made it with ad init, run ad init here again";
+        checks.push({ name: "Project folder", ok: true, note });
+      }
+    }
+  } catch (e) {
+    checks.push({ name: "Project folder", ok: true, note: `could not check .agent-daemon/: ${e.message}` });
+  }
   // Check 2b: Auth — ANTHROPIC_API_KEY or OAuth/keychain
   // As of v0.5, --bare is no longer used. OAuth/keychain auth works for GEPA.
   if (process.env.ANTHROPIC_API_KEY) {

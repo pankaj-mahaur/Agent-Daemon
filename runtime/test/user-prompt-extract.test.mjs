@@ -10,6 +10,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
+import { markOwnFolder } from "../src/memory/projects.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -27,6 +28,7 @@ delete process.env.AD_MEMORY_DB;
 async function makeTmp() {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ad-uph-"));
   await fs.mkdir(path.join(dir, ".agent-daemon"));
+  markOwnFolder(dir); // ad init
   return dir;
 }
 

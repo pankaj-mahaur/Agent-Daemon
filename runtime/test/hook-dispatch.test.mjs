@@ -15,6 +15,7 @@ import { toolBefore, callOf } from "../src/hooks/tool-before.mjs";
 import { promptSource, recordScheduled, readScheduled, promptHash, isFirstParty } from "../src/hooks/prompt-source.mjs";
 import { toolDecision, hostOf, allowEntry, versionOk, PROVISIONAL_ALLOW_LIST } from "../src/hooks/host-capabilities.mjs";
 import { jobEnv, spawnDetached } from "../src/hooks/detached.mjs";
+import { markOwnFolder } from "../src/memory/projects.mjs";
 
 const HOOK = fileURLToPath(new URL("../bin/hook.mjs", import.meta.url));
 const FIXTURES = fileURLToPath(new URL("./fixtures/hosts/", import.meta.url));
@@ -267,6 +268,8 @@ test("spawned prompt.submit: a typed correction is journaled with its source; a 
   const root = path.join(base, "ad");
   const project = path.join(base, "work", "app");
   fs.mkdirSync(path.join(project, ".agent-daemon", "memory"), { recursive: true });
+  // As ad init leaves it: the folder marked as the user's in ad's registry.
+  markOwnFolder(project, { env: { ...process.env, AD_ROOT: root } });
   const journal = path.join(project, ".agent-daemon", "learning-journal.jsonl");
   const typed = runHook("prompt.submit", { session_id: "s1", cwd: project, prompt: "actually we use pnpm in this repo", hook_event_name: "UserPromptSubmit" }, { root, home: base });
   assert.equal(typed.status, 0, typed.stderr);

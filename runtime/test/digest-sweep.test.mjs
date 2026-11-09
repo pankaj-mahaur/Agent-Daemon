@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import { open } from "../src/memory/sqlite.mjs";
 import { SETTLED_DIGEST_STATUSES } from "../src/memory/episodic.mjs";
 import { spawnDigestSweep } from "../src/session-start.mjs";
+import { markOwnFolder } from "../src/memory/projects.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CLI = path.resolve(HERE, "..", "src", "cli.mjs");
@@ -159,6 +160,7 @@ test("spawnDigestSweep throttles via flag file and respects the disable env", as
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "ad-sweep-throttle-"));
   const project = path.join(root, "proj");
   await fs.mkdir(path.join(project, ".agent-daemon"), { recursive: true });
+  markOwnFolder(project); // ad init
 
   try {
     // Disabled via env → never spawns

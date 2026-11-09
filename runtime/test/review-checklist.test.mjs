@@ -237,6 +237,8 @@ test("a picked project is named as such and its folder's memory file is used", a
   const api = path.join(dir, "api");
   mk(path.join(api, ".agent-daemon", "memory"), { recursive: true });
   writeFileSync(path.join(api, ".agent-daemon", "memory", "activeContext.md"), "# Active context\n");
+  const { markOwnFolder } = await import("../src/memory/projects.mjs");
+  markOwnFolder(api); // ad init
   const id = Number(h.run("INSERT INTO learnings (project_slug, project_id, project_path, category, text, confidence, status, content_hash, origin, provenance) VALUES ('-work-api', 'prj_api00000000000000000', ?, 'correction', 'api note', 0.8, 'pending', 'h-api', 'user', 'prompt')", [api]).lastInsertRowid);
   const r = await run(h, { answers: ["1", "1", "y"], flags: { plain: true } });
   assert.equal(r.code, 0, r.out);
