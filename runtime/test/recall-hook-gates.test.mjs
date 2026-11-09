@@ -24,9 +24,20 @@ process.env.HOME = ROOT;
 process.env.USERPROFILE = ROOT;
 process.env.AD_ROOT = AD;
 for (const k of ["AD_MEMORY_DB", "AD_MEMORY_PROJECT", "CLAUDE_PROJECT_DIR", "AD_TOOL_SHELL", "CLAUDE_CONFIG_DIR", "CODEX_HOME"]) delete process.env[k];
-after(() => fs.rmSync(ROOT, { recursive: true, force: true }));
+after(async () => {
+  // A context job the hooks started may still run git in a project folder, and a store
+  // may be open: both block the delete on Windows (EBUSY). Wait for them, then delete.
+  (await import("../src/memory/episodic.mjs")).closeDb();
+  assert.ok(await waitForRecallJobs(AD), "the context jobs ended");
+  assert.deepEqual(cwdsUnder(ROOT), [], "no process works inside the temp folder");
+  assert.deepEqual(await openFilesUnder(ROOT), [], "no file under the temp folder is still open");
+  fs.rmSync(ROOT, { recursive: true, force: true });
+});
 
 const H = await import("../testkit/recall-hook.mjs");
+const { waitForRecallJobs, cwdsUnder } = await import("../testkit/recall-jobs.mjs");
+const { openFilesUnder } = await import("../testkit/open-files.mjs");
+
 const E = await import("../testkit/recall-eval.mjs");
 const HELDOUT = process.env.AD_HELDOUT === "1" || Boolean(process.env.AD_L6_BRIEF_DIR);
 const { writeContext } = await import("../src/memory/recall-context.mjs");
