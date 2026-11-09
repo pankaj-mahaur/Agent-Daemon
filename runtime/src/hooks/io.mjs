@@ -57,6 +57,44 @@ export function normalizeEngineInput(input) {
   return out;
 }
 
+/**
+ * tool.before's read (L7 D5): the whole payload up to `max` (a Write of a large file is
+ * still checked), and no silent `{}` — a payload over the cap or not JSON comes back as
+ * {input: null, raw, why}, so the caller can fail closed while rules exist.
+ * @returns {Promise<{input:object|null, raw:string, why:string|null}>}
+ */
+export async function readStdinWhole({ max = 64 * 1024 * 1024, stream = process.stdin } = {}) {
+  const got = await new Promise((resolve) => {
+    const chunks = [];
+    let size = 0;
+    let over = false;
+    stream.on("data", (chunk) => {
+      if (over) return;
+      const b = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+      size += b.length;
+      if (size > max) {
+        over = true;
+        return;
+      }
+      chunks.push(b);
+    });
+    stream.on("end", () => resolve({ text: Buffer.concat(chunks).toString("utf8"), over }));
+    stream.on("error", () => resolve({ text: Buffer.concat(chunks).toString("utf8"), over: true }));
+  });
+  const head = got.text.slice(0, 64 * 1024);
+  if (got.over) return { input: null, raw: head, why: "the call was too large to check" };
+  if (!got.text.trim()) return { input: null, raw: "", why: "the call was empty" };
+  let input;
+  try {
+    input = JSON.parse(got.text);
+  } catch {
+    return { input: null, raw: head, why: "the call couldn't be read" };
+  }
+  if (!input || typeof input !== "object" || Array.isArray(input)) return { input: null, raw: head, why: "the call couldn't be read" };
+  lastEvent = input.hook_event_name ?? null;
+  return { input: hookHost() === "ad" ? normalizeEngineInput(input) : input, raw: "", why: null };
+}
+
 export async function readStdinJson() {
   const input = await new Promise((resolve) => {
     let raw = "";

@@ -68,11 +68,12 @@ test("tool.before decisions: Claude Code asks (deny in bypass and dontAsk), Code
   const ask = toolBefore(bash("cd web && npm i x", web), { root, env: {} });
   assert.equal(ask.hookSpecificOutput.permissionDecision, "ask");
   assert.match(ask.hookSpecificOutput.permissionDecisionReason, /use pnpm, not npm/);
-  assert.match(ask.systemMessage, /ad rules allow-once 7/);
+  // L7 D8: an ask names remove and pause (the host's prompt already allows once); a stop adds allow-once.
+  assert.match(ask.systemMessage, /ad rules rm 7/);
   for (const mode of ["bypassPermissions", "dontAsk"]) assert.equal(toolBefore(bash("npm i", web, { permission_mode: mode }), { root, env: {} }).hookSpecificOutput.permissionDecision, "deny", mode);
   const codex = toolBefore({ ...bash("npm ci", web), turn_id: "t" }, { root, env: {}, host: "codex" });
   assert.equal(codex.hookSpecificOutput.permissionDecision, "deny");
-  assert.equal(codex.systemMessage, undefined, "Codex exec doesn't show it");
+  assert.match(codex.systemMessage, /ad rules allow-once 7 [0-9a-f]{6}/, "L7 P0: Codex shows the user's line (a warning entry), never to the model");
   // A write rule with decision deny.
   const w = toolBefore({ session_id: "s", cwd: project, tool_name: "Write", tool_input: { file_path: path.join(project, "src", "gen", "a.ts") }, permission_mode: "default" }, { root, env: {} });
   assert.equal(w.hookSpecificOutput.permissionDecision, "deny");

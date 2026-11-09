@@ -17,16 +17,17 @@ import { open } from "./sqlite.mjs";
 import { rebuildGuards } from "./guards-build.mjs";
 
 // The root this copy was installed for: <root>/memory/dist/<version>/… when it runs from
-// the guard copy; else the home folder's (a clone). Never AD_ROOT (S1).
+// the guard copy (the launcher starts it there, D3); else the home folder's (a clone).
+// AD_ROOT is compared, never followed (S1).
 function installedRoot() {
   const here = fileURLToPath(import.meta.url);
   const m = /^(.*)[\\/]memory[\\/]dist[\\/][^\\/]+[\\/]/.exec(here);
   return m ? m[1] : path.join(os.homedir(), ".agent-daemon");
 }
 
-// Two spellings of one folder (a link, /var vs /private/var, 8.3 names, letter case where
+// Two spellings of one path (a link, /var vs /private/var, 8.3 names, letter case where
 // the filesystem ignores it) are the same folder.
-function sameFolder(a, b) {
+function samePath(a, b) {
   const real = (p) => {
     try {
       return realpathSync.native(p);
@@ -38,13 +39,13 @@ function sameFolder(a, b) {
   return fold(real(a)) === fold(real(b));
 }
 
-// ad's own store: this copy's root first, then where the hooks look (HOME, then USERPROFILE:
-// Git Bash's HOME can differ) — never through AD_MEMORY_DB or AD_ROOT. None → nothing to do
-// (and no stray empty store made). Another store is refused by the rebuild's store-id check.
+// ad's own store: <root>/episodic.db, nothing else (S1). An AD_MEMORY_DB naming another file
+// means the user's hooks read another store: the job refuses rather than rebuild from it.
 function ownStore(root) {
-  const homes = [process.env.HOME, process.env.USERPROFILE, os.homedir()].filter(Boolean);
-  const roots = [...new Set([root, ...homes.map((h) => path.join(h, ".agent-daemon"))])];
-  return roots.map((r) => path.join(r, "episodic.db")).find((f) => existsSync(f)) ?? null;
+  const file = path.join(root, "episodic.db");
+  const named = process.env.AD_MEMORY_DB ? path.resolve(process.env.AD_MEMORY_DB) : null;
+  if (named && !samePath(named, file)) throw new Error(`AD_MEMORY_DB (${named}) isn't this root's store (${file})`);
+  return existsSync(file) ? file : null;
 }
 
 const root = installedRoot();
@@ -52,8 +53,9 @@ let db = null;
 try {
   // AD_ROOT is a documented setting: when it names another root than this copy's, the job
   // does nothing (it never rebuilds someone else's snapshot from its own store, S1).
-  const override = process.env.AD_ROOT && path.isAbsolute(process.env.AD_ROOT) ? process.env.AD_ROOT : null;
-  if (override && !sameFolder(override, root)) throw new Error(`AD_ROOT (${override}) isn't the root this copy was installed for (${root})`);
+  // Any AD_ROOT (relative ones included) must name this root.
+  const override = process.env.AD_ROOT ? path.resolve(process.env.AD_ROOT) : null;
+  if (override && !samePath(override, root)) throw new Error(`AD_ROOT (${override}) isn't the root this copy was installed for (${root})`);
   const file = ownStore(root);
   if (file) {
     db = await open({ dbPath: file });

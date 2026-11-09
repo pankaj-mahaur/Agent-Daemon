@@ -183,6 +183,58 @@ export function buildSnapshot(handle, { root, now = new Date(), cmd = null, prev
   };
 }
 
+const rulesById = (snap) => {
+  const m = new Map();
+  for (const g of snap?.global?.rules ?? []) if (Number.isInteger(g?.id)) m.set(g.id, { ...g, scope: "all" });
+  for (const [pid, p] of Object.entries(snap?.projects ?? {})) for (const g of p?.rules ?? []) if (Number.isInteger(g?.id)) m.set(g.id, { ...g, scope: "project", project: pid });
+  return m;
+};
+const same = (a, b) => a.decision === b.decision && a.scope === b.scope && (a.scope === "all" || a.project === b.project) && JSON.stringify(a.rule) === JSON.stringify(b.rule);
+
+/**
+ * What a token run would loosen that it didn't say it would (S1): another store, rules
+ * dropped or changed beyond `expected.rules`, a pause the snapshot didn't have unless
+ * `expected.pause`. → null, or {text, otherStore, rules: [{id, reason}], pause}
+ */
+function surprises(previous, next, { storeWas, expected = {}, now = Date.now() }) {
+  const ok = new Set([expected.rules ?? []].flat().map(Number));
+  const before = rulesById(previous);
+  const after = rulesById(next);
+  const rules = [];
+  for (const [id, g] of before) if (!ok.has(id) && !(after.has(id) && same(g, after.get(id)))) rules.push({ id, reason: g.reason ?? "" });
+  const otherStore = Boolean(storeWas && next.store_id && storeWas !== next.store_id);
+  // A pause per key (all, each project) that is new, or longer than the previous one still
+  // in force, loosens enforcement: a surprise unless this run made it.
+  const end = (p) => (p === true || (p && p.until == null) ? Infinity : p ? Date.parse(p.until) : -Infinity);
+  const live = (p) => end(p) > now;
+  const longer = (was, now) => live(now) && (!live(was) || end(now) > end(was));
+  const keys = new Set([...Object.keys(previous?.projects ?? {}), ...Object.keys(next.projects ?? {})]);
+  const pause = !expected.pause && (longer(previous?.pausedAll, next.pausedAll) || [...keys].some((k) => longer(previous?.projects?.[k]?.paused, next.projects?.[k]?.paused)));
+  // A root dropped while its folder still exists (the registry changes without a token).
+  const exists = (r) => {
+    try {
+      return fs.statSync(r).isDirectory();
+    } catch {
+      return false;
+    }
+  };
+  const roots = [];
+  for (const [k, p] of Object.entries(previous?.projects ?? {})) {
+    // A project that left the snapshot left because its rules went (counted above, or
+    // expected) or its pause ended: its folders leave with it.
+    if (!next.projects?.[k]) continue;
+    const now2 = new Set(next.projects[k].roots ?? []);
+    for (const r of p?.roots ?? []) if (!now2.has(r) && exists(r) && !(expected.roots ?? []).includes(r)) roots.push(r);
+  }
+  if (!otherStore && !rules.length && !pause && !roots.length) return null;
+  const parts = [];
+  if (otherStore) parts.push("this isn't the store the rules snapshot was built from");
+  if (rules.length) parts.push(`${rules.length} rule${rules.length === 1 ? "" : "s"} would end or change (${rules.map((r) => `#${r.id}`).join(", ")})`);
+  if (pause) parts.push("rules would be paused");
+  if (roots.length) parts.push(`${roots.length} folder${roots.length === 1 ? "" : "s"} would leave its project (${roots.join(", ")})`);
+  return { text: parts.join("; "), otherStore, rules, pause, roots };
+}
+
 /** Delete consumed markers whose token left the snapshot (expired past the grace). */
 function sweepMarkers(root, keep) {
   let names = [];
@@ -198,11 +250,16 @@ function sweepMarkers(root, keep) {
 
 /**
  * Rebuild guards.json from the store, under the guards lock. Tokenless callers (repair, the
- * session-start refresh job) get the never-shrink-roots rule. → {generation, ruleCount}
+ * session-start refresh job) get the one-way rules (S1). A token run drops or changes only
+ * what it says it changed (`expected`): another store, any other dropped or changed rule,
+ * or a new pause throws UNEXPECTED_DROP with the list, and the caller shows "N rules would
+ * end" and takes the typed code before retrying with `confirmed: true` (design D3).
+ * → {generation, ruleCount}
  * @param {any} handle
- * @param {{root:string, token?:object|null, now?:Date, cmd?:string|null, addAllowOnce?:object[], waitMs?:number}} o
+ * @param {{root:string, token?:object|null, now?:Date, cmd?:string|null, addAllowOnce?:object[], waitMs?:number,
+ *   expected?:{rules?:number[], pause?:boolean}, confirmed?:boolean}} o
  */
-export async function rebuildGuards(handle, { root, token = null, now = new Date(), cmd = null, addAllowOnce = [], waitMs = 10_000 } = {}) {
+export async function rebuildGuards(handle, { root, token = null, now = new Date(), cmd = null, addAllowOnce = [], waitMs = 10_000, expected = {}, confirmed = false } = {}) {
   if (!root) throw new Error("rebuildGuards: no root");
   const release = await acquireLockWithin("guards", { dir: path.join(root, "locks"), waitMs });
   try {
@@ -220,6 +277,15 @@ export async function rebuildGuards(handle, { root, token = null, now = new Date
     }
     const previous = loaded.snapshot;
     const snap = buildSnapshot(handle, { root, now, cmd, previous, token, addAllowOnce });
+    if (isReviewToken(token) && !confirmed) {
+      const surprise = surprises(previous, snap, { storeWas: previous?.store_id ?? active?.store_id ?? null, expected, now: now.getTime() });
+      if (surprise) {
+        const e = new Error(`rebuildGuards: ${surprise.text}`);
+        e.code = "UNEXPECTED_DROP";
+        e.detail = surprise;
+        throw e;
+      }
+    }
     // The sentinel goes first when rules exist and last when they don't: a reader that finds
     // both snapshot files unreadable must never mistake rules for none. Only a token run
     // removes it (a tokenless one keeps every rule, so its count never reaches 0 from >0).

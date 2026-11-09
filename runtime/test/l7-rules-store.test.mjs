@@ -257,7 +257,7 @@ test("pause and allow-once state carried into the snapshot; markers kept until e
   };
   for (const x of ["a", "b", "c"]) writeFileSync(path.join(consumed, x.repeat(32)), "1");
   writeGuards(previous, { root });
-  await rebuildGuards(h, { root, token: t, now, cmd: "ad" });
+  await rebuildGuards(h, { root, token: t, now, cmd: "ad", expected: { pause: true } });
   const s = loadGuards({ root }).snapshot;
   assert.deepEqual(s.projects[PID].paused, { at: now.toISOString(), until: "2026-11-08T11:00:00.000Z" });
   assert.deepEqual(s.allowOnce.map((x) => x.nonce[0]).sort(), ["a", "b"], "expired within the grace: kept");
@@ -295,7 +295,7 @@ test("guards.active exists while rules do; writeGuards keeps every field; no rul
   for (const k of ["version", "generation", "updatedAt", "projects", "global", "allowOnce", "ruleCount", "rules_rev", "cmd"]) assert.ok(k in s, `${k} kept`);
   assert.equal(s.cmd, "npx -y agent-daemon-memory@3.1.0");
   rules.removeRule(h, t, r);
-  await rebuildGuards(h, { root, token: t, cmd: "ad" });
+  await rebuildGuards(h, { root, token: t, cmd: "ad", expected: { rules: [r] } });
   assert.ok(!existsSync(path.join(root, ACTIVE_FILE)), "no rules: no sentinel");
   // A snapshot that holds rules but no count can't be trusted: the reader falls back.
   const good = JSON.parse(readFileSync(guardsPath(root), "utf8"));
@@ -363,8 +363,12 @@ test("the detached refresh job rebuilds the snapshot from the store without a to
   const r0 = spawnSync(process.execPath, [job], { encoding: "utf8", env: { ...process.env, HOME: home, USERPROFILE: home, AD_ROOT: elsewhere } });
   assert.equal(r0.status, 0, r0.stderr);
   assert.ok(!existsSync(guardsPath(root)) && !existsSync(guardsPath(elsewhere)));
-  // Arguments and AD_MEMORY_DB point elsewhere: the job uses ad's own store under its own root.
-  const r = spawnSync(process.execPath, [job, otherFile, elsewhere], { encoding: "utf8", env: { ...process.env, HOME: home, USERPROFILE: home, AD_ROOT: root, AD_MEMORY_DB: otherFile } });
+  // AD_MEMORY_DB naming another store: refused, nothing written.
+  const r1 = spawnSync(process.execPath, [job], { encoding: "utf8", env: { ...process.env, HOME: home, USERPROFILE: home, AD_ROOT: root, AD_MEMORY_DB: otherFile } });
+  assert.equal(r1.status, 0, r1.stderr);
+  assert.ok(!existsSync(guardsPath(root)));
+  // Arguments point elsewhere: ignored; the job uses ad's own store under its own root.
+  const r = spawnSync(process.execPath, [job, otherFile, elsewhere], { encoding: "utf8", env: { ...process.env, HOME: home, USERPROFILE: home, AD_ROOT: root } });
   assert.equal(r.status, 0, r.stderr);
   const s = loadGuards({ root }).snapshot;
   assert.equal(s.ruleCount, 1);
@@ -392,8 +396,8 @@ test("S1: a tokenless rebuild is one-way: another store is refused, rules and pa
   await rebuildGuards(h, { root });
   assert.equal(loadGuards({ root }).snapshot.pausedAll, null);
   await assert.rejects(rebuildGuards(h, { root, addAllowOnce: [{ nonce: "d".repeat(32), expires: new Date(Date.now() + 60_000).toISOString() }] }), /token/);
-  // With the token the store decides.
-  await rebuildGuards(h, { root, token: t });
+  // With the token the store decides — for what this run says it changed.
+  await rebuildGuards(h, { root, token: t, expected: { rules: [r], pause: true } });
   const s = loadGuards({ root }).snapshot;
   assert.equal(s.ruleCount, 0);
   assert.ok(s.pausedAll);
@@ -409,7 +413,7 @@ test("S1: an expired pause is dropped by a tokenless rebuild (raising), a live o
   rules.addRule(h, t, { learningId: a, projectId: PID, kind: "command", pattern: NPM, reason: "use pnpm" });
   const at = new Date("2026-11-08T10:00:00Z");
   rules.pauseRules(h, t, { projectId: PID, until: new Date("2026-11-08T11:00:00Z"), now: at });
-  await rebuildGuards(h, { root, token: t, now: at });
+  await rebuildGuards(h, { root, token: t, now: at, expected: { pause: true } });
   await rebuildGuards(h, { root, now: new Date("2026-11-08T10:30:00Z") });
   assert.ok(loadGuards({ root }).snapshot.projects[PID].paused, "still paused");
   await rebuildGuards(h, { root, now: new Date("2026-11-08T11:30:00Z") });
@@ -426,7 +430,7 @@ test("S1: a tokenless rebuild keeps a rule exactly as the snapshot had it and ne
   const r = rules.addRule(h, t, { learningId: a, projectId: PID, kind: "command", pattern: PUSH, reason: "never force push", decision: "deny", scope: "all" });
   const at = new Date("2026-11-08T10:00:00Z");
   rules.pauseRules(h, t, { projectId: PID, until: new Date("2026-11-08T11:00:00Z"), now: at });
-  await rebuildGuards(h, { root, token: t, now: at });
+  await rebuildGuards(h, { root, token: t, now: at, expected: { pause: true } });
   // The store changes behind the snapshot's back: laxer decision, narrower pattern, smaller scope, a longer pause.
   h.run("UPDATE rules SET decision = 'ask', scope = 'project', pattern = ? WHERE id = ?", [JSON.stringify({ ...PUSH, flags: ["--force-only"] }), r]);
   h.run("UPDATE memory_settings SET value = ? WHERE key = 'rules_paused'", [JSON.stringify({ all: { at: at.toISOString(), until: null }, projects: { [PID]: { at: at.toISOString(), until: null } } })]);
@@ -609,4 +613,71 @@ test("ruleReason stays fast on hostile text (no backtracking blow-up)", () => {
   for (const k of [30, 60, 200]) ruleReason("npx " + "--aa ".repeat(k) + "zz");
   ruleReason("ad " + "x ".repeat(5000));
   assert.ok(performance.now() - t0 < 500, `took ${Math.round(performance.now() - t0)} ms`);
+});
+
+test("S1: a token run drops only what it says it changed; another store or a surprise drop needs confirmation", async () => {
+  const h = await store();
+  const root = adRootDir();
+  registry(root, [[PID, ["/work/shop/app"]]]);
+  const t = testReviewToken();
+  const a = note(h, "use pnpm", { accepted: true });
+  const b = note(h, "no generated edits", { accepted: true });
+  const ra = rules.addRule(h, t, { learningId: a, projectId: PID, kind: "command", pattern: NPM, reason: "use pnpm" });
+  const rb = rules.addRule(h, t, { learningId: b, projectId: PID, kind: "write", pattern: GEN, reason: "gen" });
+  await rebuildGuards(h, { root, token: t });
+  // Another store in the user's own terminal (a planted AD_MEMORY_DB): refused unseen, allowed once confirmed.
+  const other = await store();
+  await assert.rejects(rebuildGuards(other, { root, token: t }), (e) => e.code === "UNEXPECTED_DROP" && e.detail.otherStore && e.detail.rules.length === 2);
+  assert.equal(loadGuards({ root }).snapshot.ruleCount, 2, "nothing written");
+  // A rule removed by this run is expected; another one gone is a surprise.
+  rules.removeRule(h, t, ra);
+  rules.removeRule(h, t, rb);
+  await assert.rejects(rebuildGuards(h, { root, token: t, expected: { rules: [ra] } }), (e) => e.code === "UNEXPECTED_DROP" && e.detail.rules.map((x) => x.id).join() === String(rb));
+  await rebuildGuards(h, { root, token: t, expected: { rules: [ra, rb] } });
+  assert.equal(loadGuards({ root }).snapshot.ruleCount, 0);
+  await rebuildGuards(other, { root, token: t, confirmed: true });
+  assert.equal(loadGuards({ root }).snapshot.store_id, other.get("SELECT value FROM memory_settings WHERE key = 'store_id'").value, "confirmed: the user chose that store");
+});
+
+test("S1 in a token run: a changed rule, a longer pause, a dropped root that still exists are surprises", async () => {
+  const h = await store();
+  const root = adRootDir();
+  const live = path.join(ROOT, `live-${++n}`);
+  mkdirSync(live);
+  registry(root, [[PID, ["/work/shop/app", live]]]);
+  const t = testReviewToken();
+  const a = note(h, "never force push", { accepted: true });
+  const r = rules.addRule(h, t, { learningId: a, projectId: PID, kind: "command", pattern: NPM, reason: "x", decision: "deny" });
+  const at = new Date("2026-11-09T10:00:00Z");
+  rules.pauseRules(h, t, { projectId: PID, until: new Date("2026-11-09T11:00:00Z"), now: at });
+  await rebuildGuards(h, { root, token: t, now: at, expected: { pause: true } });
+  // The store's rule becomes laxer behind the run's back.
+  h.run("UPDATE rules SET decision = 'ask' WHERE id = ?", [r]);
+  await assert.rejects(rebuildGuards(h, { root, token: t, now: at }), (e) => e.code === "UNEXPECTED_DROP" && e.detail.rules[0].id === r);
+  h.run("UPDATE rules SET decision = 'deny' WHERE id = ?", [r]);
+  // A pause already exists; a longer one (or one for all) appears in the store.
+  h.run("UPDATE memory_settings SET value = ? WHERE key = 'rules_paused'", [JSON.stringify({ all: null, projects: { [PID]: { at: at.toISOString(), until: null } } })]);
+  await assert.rejects(rebuildGuards(h, { root, token: t, now: at }), (e) => e.code === "UNEXPECTED_DROP" && e.detail.pause);
+  h.run("UPDATE memory_settings SET value = ? WHERE key = 'rules_paused'", [JSON.stringify({ all: { at: at.toISOString(), until: null }, projects: { [PID]: { at: at.toISOString(), until: "2026-11-09T11:00:00.000Z" } } })]);
+  await assert.rejects(rebuildGuards(h, { root, token: t, now: at }), (e) => e.code === "UNEXPECTED_DROP" && e.detail.pause);
+  h.run("UPDATE memory_settings SET value = ? WHERE key = 'rules_paused'", [JSON.stringify({ all: null, projects: { [PID]: { at: at.toISOString(), until: "2026-11-09T11:00:00.000Z" } } })]);
+  // The registry (no token needed) drops a folder that still exists.
+  registry(root, [[PID, ["/work/shop/app"]]]);
+  await assert.rejects(rebuildGuards(h, { root, token: t, now: at }), (e) => e.code === "UNEXPECTED_DROP" && e.detail.roots.includes(path.resolve(live)));
+  await rebuildGuards(h, { root, token: t, now: at, expected: { roots: [path.resolve(live)] } });
+});
+
+test("a token run removing a project's last rule is no surprise, though its folder still exists", async () => {
+  const h = await store();
+  const root = adRootDir();
+  const live = path.join(ROOT, `proj-${++n}`);
+  mkdirSync(live);
+  registry(root, [[PID, [live]]]);
+  const t = testReviewToken();
+  const a = note(h, "use pnpm", { accepted: true });
+  const r = rules.addRule(h, t, { learningId: a, projectId: PID, kind: "command", pattern: NPM, reason: "use pnpm" });
+  await rebuildGuards(h, { root, token: t });
+  rules.removeRule(h, t, r);
+  await rebuildGuards(h, { root, token: t, expected: { rules: [r] } });
+  assert.equal(loadGuards({ root }).snapshot.ruleCount, 0);
 });

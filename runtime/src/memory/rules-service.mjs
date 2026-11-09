@@ -12,7 +12,7 @@ import { isReviewToken } from "./review-service.mjs";
 import { ruleProposalSql } from "./trust.mjs";
 import { recordEvent, getSetting, putSetting } from "./l5-tables.mjs";
 import { noRulesTable } from "./rules-tables.mjs";
-import { PRODUCT, LEGACY_NAMES } from "../product.mjs";
+import { neutralText } from "../rules/neutral.mjs";
 
 const iso = (now) => (now instanceof Date ? now : new Date(now ?? Date.now())).toISOString();
 
@@ -20,26 +20,8 @@ function must(token) {
   if (!isReviewToken(token)) throw new Error("rules: this needs a review token (run it yourself, in your own terminal)");
 }
 
-// ad's command names (S4): a rule's reason reaches the model's text, so an accepted
-// learning must not carry a command that runs ad (a lowering one above all) into it.
-const ENTRY_NAMES = [...new Set(["ad", "agent-daemon", "teachonce", PRODUCT.bin, PRODUCT.package, ...LEGACY_NAMES])];
-const esc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, (c) => "\\" + c);
-const ENTRY_COMMAND = new RegExp(
-  // Each token has one way to match (no nested alternatives over the same text): no backtracking blow-up.
-  String.raw`(?:\b(?:npx|pnpm\s+dlx|pnpm\s+exec|yarn\s+dlx|yarn\s+exec|npm\s+exec|npm\s+x|bunx)\s+(?:-[\w-]*\s+)*)?(?<![\w-])(?:${ENTRY_NAMES.map(esc).join("|")})(?:@[\w.-]+)?(?:\s+[\w-]+)+`,
-  "gi"
-);
-
-/** The learning's words as a rule's reason: one line, no control characters, no ad commands, ≤ 120 characters. */
-export function ruleReason(text) {
-  const one = String(text ?? "")
-    .slice(0, 1000) // the reason keeps 120 characters; never scan more than this
-    .replace(/[\u{0}-\u{1f}\u{7f}-\u{9f}\u{200b}-\u{200f}\u{202a}-\u{202e}\u{2066}-\u{2069}]/gu, " ")
-    .replace(ENTRY_COMMAND, "…")
-    .replace(/\s+/g, " ")
-    .trim();
-  return one.length > 120 ? `${one.slice(0, 119)}…` : one;
-}
+/** The learning's words as a rule's reason: one line, no control characters, no ad commands, ≤ 120 characters (S4). */
+export const ruleReason = (text) => neutralText(text);
 
 const isText = (s) => typeof s === "string" && s.trim().length > 0;
 const list = (v) => (Array.isArray(v) ? v : null);

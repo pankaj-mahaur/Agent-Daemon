@@ -99,32 +99,49 @@ export function loadGuards({ root = adRoot() } = {}) {
   return { snapshot: null, source: "none", warning: "ad: the rules file is unreadable, so no rules apply right now. Run `ad doctor`." };
 }
 
+const pathFor = (os) => (os === "win32" ? path.win32 : path.posix);
 const caseFold = (os) => os === "win32" || os === "darwin";
 const norm = (p, os) => {
-  const r = path.resolve(String(p)).replace(/[\\/]+$/, "");
+  const r = pathFor(os).resolve(String(p)).replace(/[\\/]+$/, "");
   return caseFold(os) ? r.toLowerCase() : r;
 };
 
 /**
- * The project a folder belongs to: the snapshot project whose root is the
- * longest prefix of `dir`. Read-only.
- * @returns {{id:string, project:object}|null}
+ * The project a folder belongs to: the snapshot project whose root is the longest prefix
+ * of `dir` (compared as the folder's own OS compares paths). Read-only.
+ * @returns {{id:string, project:object, root:string}|null}
  */
 export function projectFor(snapshot, dir, { platform = process.platform } = {}) {
   if (!validSnapshot(snapshot) || !dir) return null;
+  const sep = pathFor(platform).sep;
   const d = norm(dir, platform);
   let best = null;
   let bestLen = -1;
   for (const [id, project] of Object.entries(snapshot.projects)) {
     for (const root of project?.roots ?? []) {
       const r = norm(root, platform);
-      if ((d === r || d.startsWith(r + path.sep)) && r.length > bestLen) {
-        best = { id, project };
+      if ((d === r || d.startsWith(r + sep)) && r.length > bestLen) {
+        best = { id, project, root };
         bestLen = r.length;
       }
     }
   }
   return best;
+}
+
+/** Is this pause in force at `now`? L2 wrote `true` (until resumed); L7 writes {at, until}. */
+export function pauseLive(p, now = Date.now()) {
+  if (p === true) return true;
+  if (!isObj(p)) return false;
+  return p.until === null || p.until === undefined || Date.parse(p.until) > now;
+}
+
+/** Rules that would apply somewhere right now (pauses decided at read time, L7 D3). */
+export function activeRuleCount(snapshot, now = Date.now()) {
+  if (!validSnapshot(snapshot) || pauseLive(snapshot.pausedAll, now)) return 0;
+  let n = Array.isArray(snapshot.global?.rules) ? snapshot.global.rules.length : 0;
+  for (const p of Object.values(snapshot.projects)) if (!pauseLive(p?.paused, now)) n += Array.isArray(p?.rules) ? p.rules.length : 0;
+  return n;
 }
 
 /**

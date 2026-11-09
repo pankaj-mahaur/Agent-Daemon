@@ -27,6 +27,7 @@ export async function afterReview(handle, token, { root = adRoot(), cmd = null, 
   const snapshotRules = (loadGuards({ root }).snapshot?.ruleCount ?? 0) > 0;
   if (!storeHasRules(handle) && !snapshotRules) return null;
   const settled = maintainRules(handle, token, { now, confirmed });
-  const built = await rebuildGuards(handle, { root, token, now, cmd });
+  // Only what this run settled may change; anything else surfaces as UNEXPECTED_DROP (S1).
+  const built = await rebuildGuards(handle, { root, token, now, cmd, expected: { rules: [...settled.removed, ...settled.moved] } });
   return { ...settled, ...built };
 }
