@@ -58,10 +58,11 @@ for (const [event, payload, args, why] of cases) {
   });
 }
 
-test("the dispatcher's static imports are only the stdin reader; everything else is loaded per event", () => {
+test("the dispatcher has no static imports (L7: a module that fails to load reaches tool.before's last resort); everything is loaded per event", () => {
   const src = fs.readFileSync(HOOK_PATH, "utf8");
   const statics = [...src.matchAll(/^import\s[^;]*?from\s+["']([^"']+)["']/gm)].map((m) => m[1]);
-  assert.deepEqual(statics, ["../src/hooks/io.mjs"]);
+  assert.deepEqual(statics, []);
+  assert.match(src, /^const io = \(\) => import\("\.\.\/src\/hooks\/io\.mjs"\);$/m);
   // The stdin reader's own graph is small and has no store.
   const io = fs.readFileSync(new URL("../src/hooks/io.mjs", import.meta.url), "utf8");
   assert.ok(specifiers(io).every((s) => s.startsWith("node:") || s === "../memory/host-ids.mjs"), "io.mjs imports");

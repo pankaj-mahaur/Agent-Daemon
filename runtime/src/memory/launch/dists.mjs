@@ -21,6 +21,10 @@ import path from "node:path";
 export const launchDir = (root) => path.join(root, "memory", "launch");
 export const distsFile = (root) => path.join(launchDir(root), "dists.json");
 export const launcherFile = (root) => path.join(launchDir(root), "run.mjs");
+/** The guard copy's record (MCP launch plan L7, D10): its own file, so registerDist can't lose it. */
+export const guardFile = (root) => path.join(launchDir(root), "guard.json");
+/** The guard copy's manifest (every file's sha256), at the copy's top. */
+export const MANIFEST = "guard-manifest.json";
 
 const empty = () => ({ version: 1, dists: [], disabledHosts: [] });
 
@@ -94,6 +98,82 @@ export function unregisterDist(file, entry) {
   d.dists = d.dists.filter((x) => !sameEntry(x, entry));
   writeDists(file, d);
   return d;
+}
+
+/*
+ * The guard copy (L7, D10; design S2): the copy `tool.before` and the rules jobs run,
+ * whatever the plugin record says. Written only by setup, install and repair (user-run,
+ * under the ledger lock), never by a hook.
+ *
+ *   <root>/memory/launch/guard.json = {
+ *     version: 1, route: "npm" | "clone", path, distVersion,
+ *     manifestSha256: sha256 of <path>/guard-manifest.json (npm) | null (clone), at
+ *   }
+ *
+ * An npm copy lives at <root>/memory/dist/<version>, inside ad's protected root; a
+ * record naming any other folder isn't one install wrote. The clone route's guard is
+ * the checkout itself (stated: it isn't under ad's root).
+ */
+
+const realOr = (p) => {
+  try {
+    return fs.realpathSync.native(p);
+  } catch {
+    return path.resolve(p);
+  }
+};
+
+/** → { route, path, version, manifestSha256, hook, job } | { missing: true } | { unreadable: "busy" | "garbled" } */
+export function readGuard(root) {
+  const j = readJson(guardFile(root));
+  if (j === null) return { missing: true };
+  if (j === undefined) return { unreadable: lastReadBusy ? "busy" : "garbled" };
+  const garbled = { unreadable: "garbled" };
+  if (!j || j.version !== 1 || typeof j.path !== "string" || !path.isAbsolute(j.path) || typeof j.distVersion !== "string") return garbled;
+  if (j.route === "npm") {
+    if (!/^[0-9a-f]{64}$/.test(String(j.manifestSha256))) return garbled;
+    // Real paths on both sides: the launcher's own path is its real one (node resolves the
+    // main module's links), install's may go through a link (/var vs /private/var, 8.3 names).
+    const rel = path.relative(realOr(path.join(root, "memory", "dist")), realOr(j.path));
+    if (!rel || rel.startsWith("..") || path.isAbsolute(rel) || rel.split(/[\\/]/).length !== 1) return garbled;
+  } else if (j.route !== "clone") return garbled;
+  return {
+    route: j.route,
+    path: j.path,
+    version: j.distVersion,
+    manifestSha256: j.route === "npm" ? j.manifestSha256 : null,
+    hook: path.join(j.path, "bin", "hook.mjs"),
+    job: path.join(j.path, "src", "memory", "guards-refresh-job.mjs"),
+  };
+}
+
+/** For setup, install and repair only (under the ledger lock). */
+export function writeGuard(root, { route, path: dir, version, manifestSha256 = null }, { now = new Date() } = {}) {
+  // A record readGuard would reject is never written (every hook would then refuse it).
+  if (route === "npm" && !/^[0-9a-f]{64}$/.test(String(manifestSha256))) throw new Error("an npm guard record needs its manifest's sha256");
+  if (route !== "npm" && route !== "clone") throw new Error(`unknown guard route ${route}`);
+  const file = guardFile(root);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.tmp-${process.pid}`;
+  fs.writeFileSync(tmp, JSON.stringify({ version: 1, route, path: dir, distVersion: version, manifestSha256: route === "npm" ? manifestSha256 : null, at: now.toISOString() }, null, 2) + "\n");
+  fs.renameSync(tmp, file);
+}
+
+/**
+ * Does the copy's manifest still hash to what the record says? One small file, not the
+ * tree (S2 rests on ad's root being protected; repair checks the tree). The clone route
+ * has no manifest (stated).
+ */
+export async function guardIntact(g) {
+  if (g.route === "clone") return true;
+  let bytes;
+  try {
+    bytes = fs.readFileSync(path.join(g.path, MANIFEST));
+  } catch {
+    return false;
+  }
+  const { createHash } = await import("node:crypto");
+  return createHash("sha256").update(bytes).digest("hex") === g.manifestSha256;
 }
 
 /** A host's hooks do nothing while it is disabled (after an uninstall); setup clears it. */

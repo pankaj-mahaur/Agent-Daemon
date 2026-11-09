@@ -129,6 +129,20 @@ function projectsHere(snapshot, dirs, { platform, realpath }) {
  * a snapshot that can't be read while rules exist): ask (deny where the host can't or may
  * not ask) while any rule is active; nothing when none is.
  */
+/**
+ * The snapshot the failure path may judge "no active rules" by (D5, D10): a current one the
+ * sentinel vouches for (a known count it holds, the same store); otherwise none, and the
+ * sentinel decides. With no sentinel, whatever was read.
+ */
+export function failSnapshot(g, active) {
+  if (!active) return g?.snapshot ?? null;
+  const s = g?.source === "current" ? g.snapshot : null;
+  if (!s || !Number.isInteger(active.ruleCount)) return null;
+  if (active.ruleCount > Number(s.ruleCount ?? 0)) return null;
+  if (active.store_id && s.store_id !== active.store_id) return null;
+  return s;
+}
+
 export function failDecision(input, { host = "claude", snapshot = null, rulesExist = false, now = Date.now(), why = "couldn't check this call against your rules" } = {}) {
   const active = snapshot ? activeRuleCount(snapshot, now) > 0 : rulesExist;
   if (!active) return null;
@@ -155,9 +169,11 @@ export function toolBefore(input, { host = "claude", env = process.env, root, pl
     return warning ? noticeOnly(host, warning) : null;
   }
   // The snapshot in use (current or last-good) must hold every rule the sentinel knows of
-  // and come from its store: a forged, truncated or stale guards.json can't read as "fewer
-  // rules" (D5). rebuildGuards writes the sentinel first, so at worst a call asks while a
-  // rule is being added. An unreadable sentinel ({}) can vouch only for the current file.
+  // and come from its store: a truncated, stale or other-store guards.json can't read as
+  // "fewer rules" (D5). A check against accidents and naive rewrites: a write past the
+  // self-protection filter can forge both files (the filter's limit, stated).
+  // rebuildGuards writes the sentinel first, so at worst a call asks while a rule is being
+  // added. An unreadable sentinel ({}) can vouch only for the current file.
   const active = readActive(opts);
   if (active) {
     const unknown = !Number.isInteger(active.ruleCount);

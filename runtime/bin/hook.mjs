@@ -23,7 +23,9 @@
 // may cover. The dispatcher never migrates the store; jobs that need it run
 // detached (session-start drains in its own budget, as before).
 
-import { readStdinJson, readStdinWhole } from "../src/hooks/io.mjs";
+// Loaded when needed (no static import): a module that fails to load reaches tool.before's
+// last resort, which decides while rules are active (L7 D10), instead of failing the start.
+const io = () => import("../src/hooks/io.mjs");
 
 const args = process.argv.slice(2);
 const event = args[0] ?? "";
@@ -73,6 +75,8 @@ const projectDir = (input, host) => (host === "claude" ? process.env.CLAUDE_PROJ
 // itself broke while rules are active — an unreadable payload, a snapshot that can't be
 // read while guards.active exists, or an internal error all give the failure decision.
 async function toolBeforeMain() {
+  const { readStdinWhole } = await io();
+  stdinTaken = true;
   const { input, raw, why } = await readStdinWhole();
   lastRaw = raw || (input ? JSON.stringify({ permission_mode: input.permission_mode, ...("turn_id" in input ? { turn_id: 1 } : {}) }) : "");
   const { hostOf } = await import("../src/hooks/host-capabilities.mjs");
@@ -82,9 +86,9 @@ async function toolBeforeMain() {
     const { loadGuards, readActive } = await import("../src/hooks/guards.mjs");
     const g = loadGuards();
     const active = readActive();
-    // Only the current snapshot decides "no active rules"; an older copy, or none, defers to the sentinel.
-    const snapshot = g.source === "current" ? g.snapshot : active ? null : g.snapshot;
-    return tb.failDecision(payload, { host, snapshot, rulesExist: Boolean(active), why: reason });
+    // Only a current snapshot the sentinel vouches for decides "no active rules" (fewer rules
+    // or another store defers to the sentinel, as toolBefore's backstop does).
+    return tb.failDecision(payload, { host, snapshot: tb.failSnapshot(g, active), rulesExist: Boolean(active), why: reason });
   };
   let out = null;
   let warning = null;
@@ -105,8 +109,35 @@ async function toolBeforeMain() {
   return 0;
 }
 
-// The raw payload tool.before read (the last resort reads its mode).
+// The raw payload tool.before read (the last resort reads its mode), and whether stdin was taken.
 let lastRaw = "";
+let stdinTaken = false;
+
+// The whole payload, node: only, for a last resort that runs before tool.before read it
+// (its stdin module failed to load): up to 64 MB, 5 s.
+function rawStdin(max = 64 * 1024 * 1024, ms = 5000) {
+  if (process.stdin.isTTY) return Promise.resolve("");
+  return new Promise((resolve) => {
+    const chunks = [];
+    let size = 0;
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      process.stdin.removeAllListeners("data");
+      process.stdin.destroy();
+      resolve(Buffer.concat(chunks).toString("utf8"));
+    };
+    setTimeout(finish, ms).unref();
+    process.stdin.on("data", (d) => {
+      chunks.push(Buffer.from(d));
+      size += d.length;
+      if (size > max) finish();
+    });
+    process.stdin.on("end", finish);
+    process.stdin.on("error", finish);
+  });
+}
 
 // The last resort when tool.before's own failure path fails: node:fs only. While the
 // sentinel says rules exist, a fixed decision — ask only on Claude Code in a mode known to
@@ -119,10 +150,33 @@ async function toolBeforeLastResort(err) {
     const os = await import("node:os");
     const root = process.env.AD_ROOT && path.isAbsolute(process.env.AD_ROOT) ? process.env.AD_ROOT : path.join(os.homedir(), ".agent-daemon");
     if (!fs.existsSync(path.join(root, "guards.active"))) return print({});
-    const codex = hostFlag === "codex" || hostFlag === "ad" || /"turn_id"\s*:/.test(lastRaw);
-    const mode = /"permission_mode"\s*:\s*"([A-Za-z]+)"/.exec(lastRaw)?.[1];
+    // Every rule paused in a current snapshot the sentinel vouches for (`rules pause --all`,
+    // the user's): nothing to enforce, as the launcher reads it (D10).
+    let cmd = "ad";
+    try {
+      const active = JSON.parse(fs.readFileSync(path.join(root, "guards.active"), "utf8"));
+      const s = JSON.parse(fs.readFileSync(path.join(root, "guards.json"), "utf8"));
+      if (typeof s?.cmd === "string" && s.cmd) cmd = s.cmd;
+      const p = s?.pausedAll;
+      const paused = p === true || (Boolean(p) && typeof p === "object" && (p.until == null || Date.parse(p.until) > Date.now()));
+      if (paused && typeof s.store_id === "string" && s.store_id === active?.store_id && Number.isInteger(active?.ruleCount) && Number(s.ruleCount) === active.ruleCount) return print({});
+    } catch {
+      // unreadable: the sentinel decides
+    }
+    if (!stdinTaken) lastRaw = await rawStdin();
+    let obj = null;
+    try {
+      const v = JSON.parse(lastRaw);
+      obj = v && typeof v === "object" ? v : null;
+    } catch {
+      // unparseable or cut: the raw text, where every spelling of the mode must agree
+    }
+    const modes = obj ? [obj.permission_mode] : [...new Set([...lastRaw.matchAll(/"permission_mode"\s*:\s*"([A-Za-z]+)"/g)].map((m) => m[1]))];
+    const mode = modes.length === 1 ? modes[0] : undefined;
+    const codex = hostFlag === "codex" || hostFlag === "ad" || (obj ? "turn_id" in obj : /"turn_id"\s*:/.test(lastRaw));
     const ask = !codex && ["default", "acceptEdits", "plan", "auto"].includes(mode);
-    process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: ask ? "ask" : "deny", permissionDecisionReason: "The rules check failed. Tell the user." }, systemMessage: `rules check failed (${String(err?.message ?? err).slice(0, 120)})` }));
+    // The recoveries go to the user only (S4); the snapshot's own command names them.
+    process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: ask ? "ask" : "deny", permissionDecisionReason: "The rules check failed. Tell the user." }, systemMessage: `the rules check failed (${String(err?.message ?? err).slice(0, 120)}) · pause rules: \`${cmd} rules pause --all\` · repair: \`${cmd} repair\`` }));
   } catch {
     process.exitCode = 1;
   }
@@ -138,7 +192,7 @@ async function main() {
       return 0;
     }
   }
-  const input = await readStdinJson();
+  const input = await (await io()).readStdinJson();
   const { hostOf } = await import("../src/hooks/host-capabilities.mjs");
   const host = hostOf(input, { flag: hostFlag });
 
@@ -269,6 +323,8 @@ async function main() {
         print(pluginNote ? { systemMessage: pluginNote } : {});
         return 0;
       }
+      // L7 (D3): the rules snapshot's refresh, detached through the launcher, while rules may exist.
+      await quietly(async () => (await import("../src/hooks/guards-refresh-start.mjs")).startGuardsRefresh());
       const path = await import("node:path");
       const { fileURLToPath } = await import("node:url");
       const { runSessionStart } = await import("../src/session-start.mjs");
