@@ -25,6 +25,9 @@ process.env.AD_ROOT = AD;
 for (const k of ["AD_MEMORY_DB", "AD_MEMORY_PROJECT", "CLAUDE_PROJECT_DIR", "AD_TOOL_SHELL", "CLAUDE_CONFIG_DIR", "CODEX_HOME"]) delete process.env[k];
 
 const H = await import("../testkit/recall-hook.mjs");
+const { waitForRecallJobs, cwdsUnder } = await import("../testkit/recall-jobs.mjs");
+const { openFilesUnder } = await import("../testkit/open-files.mjs");
+
 const { estimateTokens, UNTRUSTED_LINE } = await import("../src/memory/recall-render.mjs");
 const { writeContext } = await import("../src/memory/recall-context.mjs");
 
@@ -62,7 +65,15 @@ before(async () => {
   fs.writeFileSync(path.join(P, ".agent-daemon", "memory", "activeContext.md"), `# Active context\n\nWe are shipping bulk refunds this sprint.\n\n- **correction** (conf 0.90): Refunds are issued synchronously in the refunds controller; there is no background job for refunds\n  > the user said so\n`);
   S.close();
 });
-after(() => fs.rmSync(ROOT, { recursive: true, force: true }));
+after(async () => {
+  // A context job the hooks started may still run git in a project folder, and a store
+  // may be open: both block the delete on Windows (EBUSY). Wait for them, then delete.
+  (await import("../src/memory/episodic.mjs")).closeDb();
+  assert.ok(await waitForRecallJobs(AD), "the context jobs ended");
+  assert.deepEqual(cwdsUnder(ROOT), [], "no process works inside the temp folder");
+  assert.deepEqual(await openFilesUnder(ROOT), [], "no file under the temp folder is still open");
+  fs.rmSync(ROOT, { recursive: true, force: true });
+});
 
 const skip = !H.hasGit;
 
@@ -148,6 +159,10 @@ test("the hook never runs git; it starts the context job, and the next session u
     const calls = fs.existsSync(log) ? fs.readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : [];
     assert.ok(!calls.some(([, cmd, args]) => /(^|[\\/])git(\.exe)?$/i.test(cmd) || args.some((a) => /(^|[\\/])git(\.exe)?$/i.test(a))), JSON.stringify(calls));
     assert.ok(calls.some(([, , args]) => args.some((a) => a.endsWith("recall-context-job.mjs"))), "the job was started");
+    // the hook recorded the job (so cleanup can wait for it), and the job clears it as it ends
+    assert.ok(await waitForRecallJobs(AD), "the job ended and cleared its marker");
+    assert.deepEqual(fs.readdirSync(path.join(AD, "recall", "jobs")).filter((f) => /^\d+$/.test(f)).filter((pid) => { try { process.kill(Number(pid), 0); return true; } catch { return false; } }), []);
+    assert.deepEqual(cwdsUnder(p2), [], "nothing works inside the project folder any more");
     // the job writes the cache in the background
     const { readContext } = await import("../src/memory/recall-context.mjs");
     let ctx;

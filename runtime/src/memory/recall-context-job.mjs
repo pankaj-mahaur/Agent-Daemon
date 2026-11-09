@@ -10,7 +10,7 @@
 
 import path from "node:path";
 import { adRoot } from "../ad-root.mjs";
-import { pruneDir, repoRoot, writeContext } from "./recall-context.mjs";
+import { clearJobMarker, jobsDir, pruneDir, repoRoot, writeContext } from "./recall-context.mjs";
 import { collectContext, jobAllowed } from "./recall-context-git.mjs";
 
 const dir = process.argv[2];
@@ -25,7 +25,14 @@ try {
 try {
   pruneDir(path.join(adRoot(), "recall", "context"));
   pruneDir(path.join(adRoot(), "recall", "served"), { days: 1 });
+  pruneDir(jobsDir(), { days: 1 }); // markers of jobs that died before clearing them
 } catch {
   // best-effort
+}
+// Last: git has exited, nothing of this job holds the repository folder any more.
+try {
+  clearJobMarker();
+} catch {
+  // a marker left behind is pruned after a day; a waiting test sees the pid gone
 }
 process.exit(0);

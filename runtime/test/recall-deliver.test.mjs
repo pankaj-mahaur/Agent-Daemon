@@ -61,3 +61,21 @@ test("a stale marker is replaced by one entry only (the replacement token is exc
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("a context job's marker: written for its pid as it starts, gone as it ends; a dead pid counts as ended", async () => {
+  const { markJobRunning, clearJobMarker, jobsDir } = await import("../src/memory/recall-context.mjs");
+  const { waitForRecallJobs } = await import("../testkit/recall-jobs.mjs");
+  const ad = fs.mkdtempSync(path.join(os.tmpdir(), "ad-l6-jobs-"));
+  try {
+    assert.equal(await waitForRecallJobs(ad, { timeoutMs: 200 }), true, "no job ever started");
+    markJobRunning(process.pid, "/repo", { root: ad });
+    assert.deepEqual(fs.readdirSync(jobsDir(ad)), [String(process.pid)]);
+    assert.equal(await waitForRecallJobs(ad, { timeoutMs: 200 }), false, "a live job is waited for");
+    clearJobMarker(process.pid, { root: ad });
+    assert.equal(await waitForRecallJobs(ad, { timeoutMs: 200 }), true);
+    markJobRunning(2 ** 22 + 12345, "/repo", { root: ad }); // no such process
+    assert.equal(await waitForRecallJobs(ad, { timeoutMs: 200 }), true, "a dead pid counts as ended");
+  } finally {
+    fs.rmSync(ad, { recursive: true, force: true });
+  }
+});

@@ -26,6 +26,8 @@ const ep = await import("../src/memory/episodic.mjs");
 
 after(async () => {
   ep.closeDb();
+  // L6: a context job the session start started may still run git in a repo here.
+  assert.ok(await (await import("../testkit/recall-jobs.mjs")).waitForRecallJobs(process.env.AD_ROOT), "the context jobs ended");
   const left = await openFilesUnder(ROOT);
   fs.rmSync(ROOT, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   assert.deepEqual(left, [], "every database is closed before the folder goes (Windows: EBUSY)");

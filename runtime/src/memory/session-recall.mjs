@@ -15,7 +15,8 @@ export const JOB_WINDOW_MS = 10 * 60_000;
 /** Start the context job for a stale cache (single-flight per root and branch). */
 export async function spawnContextJob(ctx) {
   const { spawnDetached } = await import("../hooks/detached.mjs");
-  return spawnDetached([RECALL_JOB, ctx.root], { key: jobKey(ctx.root, ctx.branch), windowMs: JOB_WINDOW_MS });
+  const { markJobRunning } = await import("./recall-context.mjs");
+  return spawnDetached([RECALL_JOB, ctx.root], { key: jobKey(ctx.root, ctx.branch), windowMs: JOB_WINDOW_MS, onSpawn: (child) => markJobRunning(child.pid, ctx.root) });
 }
 
 /**
