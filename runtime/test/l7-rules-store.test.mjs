@@ -681,3 +681,22 @@ test("a token run removing a project's last rule is no surprise, though its fold
   await rebuildGuards(h, { root, token: t, expected: { rules: [r] } });
   assert.equal(loadGuards({ root }).snapshot.ruleCount, 0);
 });
+
+test("a token run compares folders by what they are: a root's real-path twin is the same folder", async () => {
+  const h = await store();
+  const root = adRootDir();
+  const real = path.join(ROOT, `twin-${++n}`);
+  mkdirSync(real);
+  const link = path.join(ROOT, `twin-link-${n}`);
+  symlinkSync(real, link, "junction");
+  registry(root, [[PID, ["/work/shop/app", link]]]);
+  const t = testReviewToken();
+  const a = note(h, "use pnpm", { accepted: true });
+  rules.addRule(h, t, { learningId: a, projectId: PID, kind: "command", pattern: NPM, reason: "use pnpm" });
+  await rebuildGuards(h, { root, token: t });
+  assert.ok(loadGuards({ root }).snapshot.projects[PID].roots.includes(realOf(real)), "both spellings kept");
+  // The registry drops the folder; the run names it by its link spelling: its real-path twin goes with it.
+  registry(root, [[PID, ["/work/shop/app"]]]);
+  await rebuildGuards(h, { root, token: t, expected: { roots: [path.resolve(link)] } });
+  assert.ok(!loadGuards({ root }).snapshot.projects[PID].roots.includes(realOf(real)));
+});

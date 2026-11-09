@@ -26,6 +26,7 @@ import { matchRule } from "../rules/match.mjs";
 import { neutralText } from "../rules/neutral.mjs";
 import { toolDecision, noticeOnly } from "./host-capabilities.mjs";
 import { appendRuleEvent } from "./rule-events.mjs";
+import { allowability, matchedParts, tryAllowOnce } from "./allow-once.mjs";
 import { PRODUCT } from "../product.mjs";
 
 const OS = { win32: "windows", darwin: "macos" };
@@ -153,13 +154,18 @@ export function toolBefore(input, { host = "claude", env = process.env, root, pl
     if (readActive(opts)) return failDecision(input, { host, rulesExist: true, now, why: "can't read your rules right now" });
     return warning ? noticeOnly(host, warning) : null;
   }
-  if (source === "last-good") {
-    // The fallback copy is a generation behind: if the sentinel knows of more rules (or another
-    // store), the newest rules would be skipped unseen — can't check.
-    const active = readActive(opts);
-    // An unreadable sentinel ({}: present, count unknown) can't vouch for the older copy either.
-    if (active && (!Number.isInteger(active.ruleCount) || active.ruleCount > Number(snapshot.ruleCount ?? 0) || (active.store_id && snapshot.store_id && active.store_id !== snapshot.store_id))) {
-      return failDecision(input, { host, rulesExist: true, now, why: "can't read your newest rules right now" });
+  // The snapshot in use (current or last-good) must hold every rule the sentinel knows of
+  // and come from its store: a forged, truncated or stale guards.json can't read as "fewer
+  // rules" (D5). rebuildGuards writes the sentinel first, so at worst a call asks while a
+  // rule is being added. An unreadable sentinel ({}) can vouch only for the current file.
+  const active = readActive(opts);
+  if (active) {
+    const unknown = !Number.isInteger(active.ruleCount);
+    const behind = !unknown && active.ruleCount > Number(snapshot.ruleCount ?? 0);
+    // L7 writers always record the store: a snapshot without one while the sentinel names one is not ours.
+    const otherStore = Boolean(active.store_id && snapshot.store_id !== active.store_id);
+    if (behind || otherStore || (unknown && source === "last-good")) {
+      return failDecision(input, { host, rulesExist: true, now, why: source === "last-good" ? "can't read your newest rules right now" : "can't trust the rules file right now" });
     }
   }
   // Nothing in force: no folder lookups, no matching (the common case stays near node's start-up).
@@ -186,28 +192,48 @@ export function toolBefore(input, { host = "claude", env = process.env, root, pl
     // Command rules don't use the base; write rules match against every base (stricter is safe).
     const bases = c.r.rule?.type === "write" ? c.bases : c.bases.slice(0, 1);
     let res = { match: false };
+    let call = null;
     for (const base of bases.length ? bases : [null]) {
-      res = matchRule(c.r.rule, callOf(input, { host, platform, root: base ?? callDir ?? sessionDir }));
+      call = callOf(input, { host, platform, root: base ?? callDir ?? sessionDir });
+      res = matchRule(c.r.rule, call);
       if (res.match || res.error) break;
     }
     if (!res.match && !res.error) continue;
-    hits.push({ ...c, decision: res.error || res.incomplete ? "ask" : c.r.decision === "deny" ? "deny" : "ask" });
+    hits.push({ ...c, call, decision: res.error || res.incomplete ? "ask" : c.r.decision === "deny" ? "deny" : "ask" });
   }
   if (!hits.length) return null;
   const lead = hits.find((h) => h.decision === "deny") ?? hits[0];
-  // One hash for the message and the log (a large Write is hashed once).
-  const callHash = sha256(canonicalCall(input, { host, cwd: host === "claude" ? realpath(callDir ?? "") ?? String(callDir ?? "") : undefined }));
+  // One canonical call and one hash for allow-once, the message and the log (a large Write is hashed once).
+  const canonical = canonicalCall(input, { host, cwd: host === "claude" ? realpath(callDir ?? "") ?? String(callDir ?? "") : undefined });
+  const callHash = sha256(canonical);
+  const writeLog = log ?? ((e) => appendRuleEvent(e, root ? { root, now } : { now }));
+  const ruleIds = [...new Set(hits.map((h) => h.r.id).filter((id) => id !== undefined && id !== null))];
+  const mode = typeof input?.permission_mode === "string" ? input.permission_mode.slice(0, 40) : null;
+  // The user allowed exactly this call once (D9): every rule that stops it must be covered.
+  if (ruleIds.length === hits.length && tryAllowOnce(snapshot, { callHash, projectId: lead.projectId ?? null, ruleIds, root: root ?? undefined, now })) {
+    writeLog({ project: lead.projectId, rules: ruleIds.map((id) => ({ id })), decision: "passed", host, mode, callId: callHash.slice(0, 6), callHash });
+    const { name } = naming(snapshot);
+    return noticeOnly(host, `${name}: allowed once: rule ${ruleIds.join(", rule ")}`) ?? {};
+  }
   const out = render(input, { host, snapshot, lead, hits, callId: callHash.slice(0, 6) });
   const final = out.hookSpecificOutput.permissionDecision;
-  (log ?? ((e) => appendRuleEvent(e, root ? { root, now } : { now })))({
+  const notAllowable = final === "deny" ? allowability(canonical) : null;
+  // Only a stop the user can be shown in full keeps any of its text (its call, its matched parts).
+  const keepText = final === "deny" && !notAllowable;
+  const entry = {
     project: lead.projectId,
-    rules: hits.map((h) => ({ id: h.r.id ?? null })),
+    rules: hits.map((h) => ({ id: h.r.id ?? null, ...(keepText ? { matched: matchedParts(h.r.rule, h.call) } : {}) })),
     decision: final === "deny" ? "stopped" : "asked",
     host,
-    mode: typeof input?.permission_mode === "string" ? input.permission_mode.slice(0, 40) : null,
+    mode,
     callId: callHash.slice(0, 6),
     callHash,
-  });
+  };
+  // A stop keeps its call, so the user can see it in full before allowing it once — unless
+  // it can't be shown faithfully (too long, a secret, disguising characters): then no text.
+  if (notAllowable) entry.notAllowable = notAllowable;
+  else if (keepText) entry.call = canonical;
+  writeLog(entry);
   return out;
 }
 
