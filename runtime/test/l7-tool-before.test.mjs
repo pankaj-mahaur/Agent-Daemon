@@ -155,19 +155,24 @@ test("a linked folder finds its project; Windows paths judged as Windows; Linux 
   assert.equal(toolBefore(bash("npm i", path.join(base, "work", "app")), { root: lroot, env: {}, platform: "linux" }), null);
 });
 
-test("every ask and stop is logged without the command's text", () => {
+test("every ask and stop is logged; an ask without the command's text, a stop with its call (for allow-once)", () => {
   const { root, project } = setup();
-  toolBefore(bash("npm i secret-token-xyz", project), { root, env: {} });
-  toolBefore(bash("npm i secret-token-xyz", project, { permission_mode: "dontAsk" }), { root, env: {} });
+  toolBefore(bash("npm i asked-pkg-xyz", project), { root, env: {} });
+  toolBefore(bash("npm i stopped-pkg-xyz", project, { permission_mode: "dontAsk" }), { root, env: {} });
+  toolBefore(bash("GITHUB_TOKEN=ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789 npm i", project, { permission_mode: "dontAsk" }), { root, env: {} });
   const ev = readRuleEvents({ root });
-  assert.deepEqual(ev.map((e) => e.decision), ["asked", "stopped"]);
+  assert.deepEqual(ev.map((e) => e.decision), ["asked", "stopped", "stopped"]);
   for (const e of ev) {
     assert.match(e.callId, /^[0-9a-f]{6}$/);
     assert.match(e.callHash, /^[0-9a-f]{64}$/);
     assert.deepEqual(e.rules.map((r) => r.id), [7]);
     assert.equal(e.project, "p1");
   }
-  assert.doesNotMatch(fs.readFileSync(path.join(root, "hooks", "rule-events.jsonl"), "utf8"), /secret-token-xyz/);
+  const text = fs.readFileSync(path.join(root, "hooks", "rule-events.jsonl"), "utf8");
+  assert.doesNotMatch(text, /asked-pkg-xyz/, "an ask keeps no text");
+  assert.match(ev[1].call, /stopped-pkg-xyz/);
+  assert.equal(ev[2].notAllowable, "secret");
+  assert.doesNotMatch(text, /ghp_/, "a secret-bearing stop keeps no text");
 });
 
 test("failDecision: with active rules an internal error asks (deny in bypass), global-only rules count, a paused-all store doesn't", () => {
@@ -360,4 +365,19 @@ test("an unreadable sentinel can't vouch for an older copy; a link into a subfol
   fs.symlinkSync(path.join(r2.project, "web"), link, "junction");
   assert.equal(toolBefore(writeCall(link, path.join(r2.base, "elsewhere.ts")), { root: r2.root, env: {} }), null);
   void base;
+});
+
+test("backstop: a valid current guards.json with fewer rules than the sentinel (or another store) fails closed", () => {
+  const { root, project } = setup();
+  // A forged or truncated current file: valid, but empty, while guards.active says 2 rules.
+  writeGuards({ projects: {}, global: { rules: [] }, allowOnce: [], ruleCount: 0, store_id: "a".repeat(32), cmd: "ad" }, { root });
+  fs.writeFileSync(activePath(root), JSON.stringify({ ruleCount: 2, store_id: "a".repeat(32) }));
+  assert.equal(decision(toolBefore(bash("ls", project), { root, env: {} })), "ask");
+  // Same count, another store.
+  snapshot(root, { projects: { p1: { roots: [project], rules: [npmRule, genRule] } } });
+  fs.writeFileSync(activePath(root), JSON.stringify({ ruleCount: 2, store_id: "b".repeat(32) }));
+  assert.match(toolBefore(bash("ls", project), { root, env: {} }).systemMessage, /can't trust the rules file/);
+  // A sentinel that agrees: the rules themselves decide.
+  fs.writeFileSync(activePath(root), JSON.stringify({ ruleCount: 2, store_id: "a".repeat(32) }));
+  assert.equal(toolBefore(bash("ls", project), { root, env: {} }), null);
 });

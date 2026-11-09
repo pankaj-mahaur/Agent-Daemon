@@ -305,8 +305,29 @@ export async function rebuildGuards(handle, { root, token = null, now = new Date
     // The sentinel goes first when rules exist and last when they don't: a reader that finds
     // both snapshot files unreadable must never mistake rules for none. Only a token run
     // removes it (a tokenless one keeps every rule, so its count never reaches 0 from >0).
+    // If the snapshot can't be written, the sentinel goes back to what it said: a sentinel left
+    // ahead of the file would fail every call closed until the next rebuild.
+    let before = null;
+    let hadNone = false;
+    try {
+      before = fs.readFileSync(activePath(root), "utf8");
+    } catch (e) {
+      hadNone = e?.code === "ENOENT";
+    }
     if (snap.ruleCount > 0) fs.writeFileSync(activePath(root), `${JSON.stringify({ ruleCount: snap.ruleCount, store_id: snap.store_id })}\n`);
-    const generation = writeGuards(snap, { root, now: now.getTime() });
+    let generation;
+    try {
+      generation = writeGuards(snap, { root, now: now.getTime() });
+    } catch (e) {
+      try {
+        // Removed only when there was none; an unreadable one stays (rules may exist).
+        if (hadNone) fs.rmSync(activePath(root), { force: true });
+        else if (before !== null) fs.writeFileSync(activePath(root), before);
+      } catch {
+        // the original error is the one to report
+      }
+      throw e;
+    }
     if (snap.ruleCount === 0 && isReviewToken(token)) fs.rmSync(activePath(root), { force: true });
     sweepMarkers(root, new Set(snap.allowOnce.map((t) => t.nonce)));
     return { generation, ruleCount: snap.ruleCount };

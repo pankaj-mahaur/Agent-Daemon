@@ -13,6 +13,10 @@ import { ruleProposalSql } from "./trust.mjs";
 import { recordEvent, getSetting, putSetting } from "./l5-tables.mjs";
 import { noRulesTable } from "./rules-tables.mjs";
 import { neutralText } from "../rules/neutral.mjs";
+import { createHash, randomBytes } from "node:crypto";
+import { readRuleEvents } from "../hooks/rule-events.mjs";
+import { allowability, allowOnceView } from "../hooks/allow-once.mjs";
+import { rebuildGuards } from "./guards-build.mjs";
 
 const iso = (now) => (now instanceof Date ? now : new Date(now ?? Date.now())).toISOString();
 
@@ -236,4 +240,76 @@ function safeJson(s) {
   } catch {
     return null;
   }
+}
+
+/** How far back a stop can be allowed once. */
+export const ALLOW_ONCE_WINDOW_MS = 30 * 60_000;
+const NOT_ALLOWABLE = {
+  long: "it is too long to show in full",
+  chars: "it holds characters that could make it look like something else",
+  secret: "it holds what looks like a secret",
+};
+
+/**
+ * Find the stop the user wants to allow once (design D9). Tokenless: it only reads the
+ * protected log and shows what it found. → {entry, view} or {refused, choices?}
+ * @param {{root:string, rule:number, callId?:string|null, now?:number, windowMs?:number}} o
+ */
+export function findAllowable({ root, rule, callId = null, pick = null, now = Date.now(), windowMs = ALLOW_ONCE_WINDOW_MS } = {}) {
+  const ruleId = Number(rule);
+  const since = now - windowMs;
+  const stops = readRuleEvents({ root }).filter((e) => e?.decision === "stopped" && Date.parse(e.at) >= since && (e.rules ?? []).some((r) => r?.id === ruleId));
+  if (!stops.length) return { refused: `rule ${ruleId} hasn't stopped anything in the last ${Math.round(windowMs / 60_000)} minutes` };
+  let found = stops;
+  // Every list shown numbers the stops the same way: by their place among this rule's
+  // stops in the window (one per distinct call), so a number picked means what it showed.
+  const listed = latestPer(stops);
+  const choice = (e) => ({ number: listed.findIndex((x) => x.callHash === e.callHash) + 1, callId: e.callId, callHash: e.callHash, at: e.at, view: e.call ? allowOnceView(e) : `(not allowable: ${NOT_ALLOWABLE[e.notAllowable] ?? "no text"})` });
+  if (pick !== null && pick !== undefined && pick !== "") {
+    // The user's pick from a list we showed: its full hash (preferred) or its number.
+    const p = String(pick).toLowerCase();
+    found = /^[0-9a-f]{64}$/.test(p) ? stops.filter((e) => e.callHash === p) : /^\d+$/.test(p) && listed[Number(p) - 1] ? [listed[Number(p) - 1]] : [];
+    if (!found.length) return { refused: `no stop of rule ${ruleId} matches ${pick}`, choices: listed.map(choice) };
+  } else if (callId) {
+    found = stops.filter((e) => e.callId === String(callId).toLowerCase());
+    if (!found.length) return { refused: `no stop of rule ${ruleId} has the call id ${callId}` };
+    const distinct = new Set(found.map((e) => e.callHash));
+    if (distinct.size > 1) return { refused: `two different stops share the call id ${callId}: pick one by its number`, choices: latestPer(found).map(choice) };
+  } else {
+    const distinct = new Set(stops.map((e) => e.callHash));
+    if (distinct.size > 1) return { refused: `rule ${ruleId} stopped ${distinct.size} different calls: name one by its call id`, choices: latestPer(stops).map(choice) };
+  }
+  const entry = found[found.length - 1];
+  if (entry.notAllowable || typeof entry.call !== "string") return { refused: `this call can't be allowed once (${NOT_ALLOWABLE[entry.notAllowable] ?? "it wasn't recorded"}): run it yourself` };
+  // What the prompt shows is what the token binds: recompute the hash from it.
+  if (allowability(entry.call)) return { refused: "this call can't be shown faithfully: run it yourself" };
+  if (createHash("sha256").update(entry.call).digest("hex") !== entry.callHash) return { refused: "the recorded call doesn't match its hash: run it yourself" };
+  return { entry, view: allowOnceView(entry) };
+}
+
+const latestPer = (stops) => [...new Map(stops.map((e) => [e.callHash, e])).values()];
+
+/**
+ * Write the single-use token for a stop findAllowable returned (the review service: token;
+ * the CLI takes the typed code first, D16). Every rule that stopped the call is covered.
+ * → the token written
+ */
+export async function grantAllowOnce(handle, token, entry, { root, minutes = 5, now = Date.now(), expected = {}, confirmed = false } = {}) {
+  must(token);
+  if (!entry?.callHash || typeof entry.call !== "string") throw new Error("allow-once: no allowable stop");
+  // The token binds what the user was shown: re-check it here too, whoever built the entry.
+  if (allowability(entry.call)) throw new Error("allow-once: this call can't be shown faithfully");
+  if (createHash("sha256").update(entry.call).digest("hex") !== entry.callHash) throw new Error("allow-once: the call doesn't match its hash");
+  const m = Math.min(30, Math.max(1, Math.round(Number(minutes) || 5)));
+  const tok = {
+    callHash: entry.callHash,
+    rules: [...new Set((entry.rules ?? []).map((r) => r.id).filter((id) => Number.isInteger(id)))],
+    project: entry.project ?? null,
+    nonce: randomBytes(16).toString("hex"),
+    expires: new Date(now + m * 60_000).toISOString(),
+  };
+  // The token lands first; the event records only a grant that happened.
+  await rebuildGuards(handle, { root, token, now: new Date(now), addAllowOnce: [tok], expected, confirmed });
+  handle.transaction(() => recordEvent(handle, { kind: "allow-once", projectId: tok.project, actor: "review", detail: { rules: tok.rules, callId: entry.callId, minutes: m } }));
+  return tok;
 }
