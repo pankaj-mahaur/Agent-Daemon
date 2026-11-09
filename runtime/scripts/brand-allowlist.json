@@ -570,6 +570,11 @@
       "reason": "dispatcher tests send payloads in the shapes the user's Codex host sends"
     },
     {
+      "path": "runtime/test/l7-tool-before.test.mjs",
+      "rules": ["A"],
+      "reason": "rule decisions per host: Codex payloads and Codex's deny-only behaviour are what the tests check"
+    },
+    {
       "path": "runtime/src/rules/**",
       "rules": ["A", "C"],
       "reason": "the rule matcher (L4c) reads calls from the user's own hosts, Codex among them: its shell tool runs through PowerShell on Windows and sends argv arrays; the names describe that host, not ad's engine"

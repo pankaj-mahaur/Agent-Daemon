@@ -21,13 +21,59 @@ import { adRoot } from "../ad-root.mjs";
 
 export const GUARDS_FILE = "guards.json";
 export const LAST_GOOD_FILE = "guards.last-good.json";
+/** Exists while the store has rules (L7 D3): both snapshot files unreadable then means "can't check", not "no rules". */
+export const ACTIVE_FILE = "guards.active";
+/** Allow-once consumed markers (L7 D9): the only files the hook creates in the guard state. */
+export const CONSUMED_DIR = "guards-consumed";
 
 export const guardsPath = (root = adRoot()) => path.join(root, GUARDS_FILE);
 export const lastGoodPath = (root = adRoot()) => path.join(root, LAST_GOOD_FILE);
+export const activePath = (root = adRoot()) => path.join(root, ACTIVE_FILE);
+export const consumedDir = (root = adRoot()) => path.join(root, CONSUMED_DIR);
 
-/** Is this a snapshot we can use? */
+const isObj = (v) => Boolean(v && typeof v === "object" && !Array.isArray(v));
+const countRules = (s) => Object.values(s.projects).reduce((n, p) => n + (Array.isArray(p?.rules) ? p.rules.length : 0), 0) + (Array.isArray(s.global?.rules) ? s.global.rules.length : 0);
+
+// L2 wrote paused: true|false; L7 writes false or {at, until}.
+const isPause = (p) => typeof p === "boolean" || p === null || p === undefined || (isObj(p) && typeof p.at === "string" && (p.until === null || typeof p.until === "string"));
+const isToken = (t) => isObj(t) && typeof t.nonce === "string" && /^[0-9a-f]{32}$/.test(t.nonce) && typeof t.expires === "string";
+
+/**
+ * Is this a snapshot we can use? L7's fields are optional for an older writer's file, but
+ * when present they must be well formed, and a snapshot that holds rules must say how many
+ * (a count that disagrees, or an L7 file without one, would read as "no rules" on the
+ * failure paths: fail-open).
+ */
 export function validSnapshot(s) {
-  return Boolean(s && typeof s === "object" && s.version === 1 && Number.isInteger(s.generation) && s.projects && typeof s.projects === "object" && !Array.isArray(s.projects));
+  if (!(isObj(s) && s.version === 1 && Number.isInteger(s.generation) && isObj(s.projects))) return false;
+  if ("global" in s && !(isObj(s.global) && (s.global.rules === undefined || Array.isArray(s.global.rules)))) return false;
+  if ("allowOnce" in s && !(Array.isArray(s.allowOnce) && s.allowOnce.every(isToken))) return false;
+  if ("ruleCount" in s && !(Number.isInteger(s.ruleCount) && s.ruleCount >= 0)) return false;
+  if ("pausedAll" in s && !isPause(s.pausedAll)) return false;
+  if ("store_id" in s && !(s.store_id === null || typeof s.store_id === "string")) return false;
+  for (const p of Object.values(s.projects)) {
+    if (!isObj(p) || ("rules" in p && !Array.isArray(p.rules)) || ("roots" in p && !Array.isArray(p.roots)) || !isPause(p.paused)) return false;
+  }
+  const n = countRules(s);
+  if ("ruleCount" in s && s.ruleCount !== n) return false; // the count must match
+  if (n > 0 && "global" in s && !("ruleCount" in s)) return false; // an L7 writer's file must say
+  return true;
+}
+
+/** guards.active (L7 D3), parsed: {ruleCount, store_id} or {} for an older plain count; null when absent. */
+export function readActive({ root = adRoot() } = {}) {
+  let text;
+  try {
+    text = fs.readFileSync(activePath(root), "utf8");
+  } catch (err) {
+    return err?.code === "ENOENT" ? null : {}; // unreadable: present, store unknown
+  }
+  try {
+    const j = JSON.parse(text);
+    return isObj(j) ? j : {};
+  } catch {
+    return {};
+  }
 }
 
 function readJson(file) {
@@ -53,32 +99,49 @@ export function loadGuards({ root = adRoot() } = {}) {
   return { snapshot: null, source: "none", warning: "ad: the rules file is unreadable, so no rules apply right now. Run `ad doctor`." };
 }
 
+const pathFor = (os) => (os === "win32" ? path.win32 : path.posix);
 const caseFold = (os) => os === "win32" || os === "darwin";
 const norm = (p, os) => {
-  const r = path.resolve(String(p)).replace(/[\\/]+$/, "");
+  const r = pathFor(os).resolve(String(p)).replace(/[\\/]+$/, "");
   return caseFold(os) ? r.toLowerCase() : r;
 };
 
 /**
- * The project a folder belongs to: the snapshot project whose root is the
- * longest prefix of `dir`. Read-only.
- * @returns {{id:string, project:object}|null}
+ * The project a folder belongs to: the snapshot project whose root is the longest prefix
+ * of `dir` (compared as the folder's own OS compares paths). Read-only.
+ * @returns {{id:string, project:object, root:string}|null}
  */
 export function projectFor(snapshot, dir, { platform = process.platform } = {}) {
   if (!validSnapshot(snapshot) || !dir) return null;
+  const sep = pathFor(platform).sep;
   const d = norm(dir, platform);
   let best = null;
   let bestLen = -1;
   for (const [id, project] of Object.entries(snapshot.projects)) {
     for (const root of project?.roots ?? []) {
       const r = norm(root, platform);
-      if ((d === r || d.startsWith(r + path.sep)) && r.length > bestLen) {
-        best = { id, project };
+      if ((d === r || d.startsWith(r + sep)) && r.length > bestLen) {
+        best = { id, project, root };
         bestLen = r.length;
       }
     }
   }
   return best;
+}
+
+/** Is this pause in force at `now`? L2 wrote `true` (until resumed); L7 writes {at, until}. */
+export function pauseLive(p, now = Date.now()) {
+  if (p === true) return true;
+  if (!isObj(p)) return false;
+  return p.until === null || p.until === undefined || Date.parse(p.until) > now;
+}
+
+/** Rules that would apply somewhere right now (pauses decided at read time, L7 D3). */
+export function activeRuleCount(snapshot, now = Date.now()) {
+  if (!validSnapshot(snapshot) || pauseLive(snapshot.pausedAll, now)) return 0;
+  let n = Array.isArray(snapshot.global?.rules) ? snapshot.global.rules.length : 0;
+  for (const p of Object.values(snapshot.projects)) if (!pauseLive(p?.paused, now)) n += Array.isArray(p?.rules) ? p.rules.length : 0;
+  return n;
 }
 
 /**
@@ -89,8 +152,11 @@ export function projectFor(snapshot, dir, { platform = process.platform } = {}) 
 export function writeGuards(snapshot, { root = adRoot(), now = Date.now() } = {}) {
   fs.mkdirSync(root, { recursive: true });
   const previous = readJson(guardsPath(root));
-  const generation = (validSnapshot(previous) ? previous.generation : 0) + 1;
-  const next = { version: 1, generation, updatedAt: new Date(now).toISOString(), projects: snapshot.projects ?? {} };
+  const lastGood = readJson(lastGoodPath(root));
+  // A corrupt current file must not restart the count (a reader compares generations).
+  const generation = Math.max(validSnapshot(previous) ? previous.generation : 0, validSnapshot(lastGood) ? lastGood.generation : 0) + 1;
+  // Every field the writer gave is kept (L7: global, pausedAll, allowOnce, ruleCount, rules_rev, cmd).
+  const next = { ...snapshot, version: 1, generation, updatedAt: new Date(now).toISOString(), projects: snapshot.projects ?? {} };
   if (!validSnapshot(next)) throw new Error("writeGuards: not a valid snapshot");
   if (validSnapshot(previous)) fs.copyFileSync(guardsPath(root), lastGoodPath(root));
   const tmp = `${guardsPath(root)}.${process.pid}.tmp`;

@@ -3,7 +3,7 @@
 //
 //                      ask            deny          fail-closed on error   shows systemMessage
 //   Claude Code        yes*           yes           onFailure:"block"      yes
-//   Codex              no (fails open) yes (JSON)    no                     no (exec)
+//   Codex              no (fails open) yes (JSON)    no                     yes (a warning entry; never the model)
 //   * in bypassPermissions and dontAsk a hook "ask" may be skipped, so it is sent as deny.
 //
 // The provisional allow-list (02 §2.1, L5 decision 4) is empty at launch: no host gives a
@@ -13,6 +13,8 @@ export const HOSTS = Object.freeze({
   claude: {
     name: "Claude Code",
     ask: true,
+    // The modes where a hook's ask reaches the user (S-HOOKS; auto reports default).
+    askModes: new Set(["default", "acceptEdits", "plan", "auto"]),
     denyModes: new Set(["bypassPermissions", "dontAsk"]),
     failClosed: "onFailure",
     minFailClosedVersion: "2.1.295",
@@ -21,10 +23,12 @@ export const HOSTS = Object.freeze({
   codex: {
     name: "Codex",
     ask: false,
+    askModes: new Set(),
     denyModes: new Set(),
     failClosed: null,
     minFailClosedVersion: null,
-    systemMessage: false,
+    // L7 P0: Codex shows a hook's systemMessage to the user (a warning entry) and doesn't send it to the model.
+    systemMessage: true,
   },
 });
 
@@ -101,7 +105,9 @@ export function contextHost(input, { flag = null, plugin = false, env = process.
 export function toolDecision(decision, { host, permissionMode, reason, notice }) {
   const caps = HOSTS[host] ?? HOSTS.claude;
   // An ask the host can't show, or may skip in this mode, becomes a deny with the reason.
-  const final = decision === "ask" && (!caps.ask || caps.denyModes.has(permissionMode)) ? "deny" : decision;
+  // Only the modes known to show an ask ask; anything else — a bypass mode, a missing or
+  // garbled one, one a later version adds — denies (L7 D7).
+  const final = decision === "ask" && (!caps.ask || !caps.askModes.has(permissionMode)) ? "deny" : decision;
   const out = {
     hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: final, permissionDecisionReason: reason },
   };

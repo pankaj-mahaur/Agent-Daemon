@@ -75,6 +75,8 @@ export const TABLES = Object.freeze([
   // No projectColumn: project tables get id triggers that need a project_slug column (project-db.mjs).
   t("events", { export: "exclude", parents: [{ column: "learning_id", table: "learnings" }] }),
   t("memory_settings", { export: "exclude" }),
+  // L7 (rules-tables.mjs): the user's rules. Export arrives with L8 (rules travel with their learning).
+  t("rules", { export: "exclude", parents: [{ column: "learning_id", table: "learnings" }] }),
 ]);
 
 /** Tables that carry project_slug and get a project_id column. */

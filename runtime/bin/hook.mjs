@@ -23,7 +23,7 @@
 // may cover. The dispatcher never migrates the store; jobs that need it run
 // detached (session-start drains in its own budget, as before).
 
-import { readStdinJson } from "../src/hooks/io.mjs";
+import { readStdinJson, readStdinWhole } from "../src/hooks/io.mjs";
 
 const args = process.argv.slice(2);
 const event = args[0] ?? "";
@@ -69,26 +69,80 @@ async function pluginSkips(step, host) {
 /** The project folder: Claude Code's CLAUDE_PROJECT_DIR (only there: elsewhere it is an outer session's), else the payload's cwd. */
 const projectDir = (input, host) => (host === "claude" ? process.env.CLAUDE_PROJECT_DIR : null) || input?.cwd || null;
 
+// tool.before (L7 D5, D10): the whole payload, and never "let it run" because the check
+// itself broke while rules are active — an unreadable payload, a snapshot that can't be
+// read while guards.active exists, or an internal error all give the failure decision.
+async function toolBeforeMain() {
+  const { input, raw, why } = await readStdinWhole();
+  lastRaw = raw || (input ? JSON.stringify({ permission_mode: input.permission_mode, ...("turn_id" in input ? { turn_id: 1 } : {}) }) : "");
+  const { hostOf } = await import("../src/hooks/host-capabilities.mjs");
+  const host = input ? hostOf(input, { flag: hostFlag }) : hostOf(/"turn_id"\s*:/.test(raw) ? { turn_id: "?" } : {}, { flag: hostFlag });
+  const tb = await import("../src/hooks/tool-before.mjs");
+  const failed = async (reason, payload) => {
+    const { loadGuards, readActive } = await import("../src/hooks/guards.mjs");
+    const g = loadGuards();
+    const active = readActive();
+    // Only the current snapshot decides "no active rules"; an older copy, or none, defers to the sentinel.
+    const snapshot = g.source === "current" ? g.snapshot : active ? null : g.snapshot;
+    return tb.failDecision(payload, { host, snapshot, rulesExist: Boolean(active), why: reason });
+  };
+  let out = null;
+  let warning = null;
+  if (!input) {
+    await log(`couldn't read a call: ${why}`);
+    // The mode decides ask vs deny; read it from the raw text (a bypass mode may skip an ask).
+    out = await failed(why, { permission_mode: /"permission_mode"\s*:\s*"([A-Za-z]+)"/.exec(raw)?.[1] });
+  } else {
+    try {
+      out = tb.toolBefore(input, { host, onWarning: (w) => (warning = w) });
+    } catch (err) {
+      await log(`couldn't check a call against the rules: ${err?.message ?? err}`);
+      out = await failed("couldn't check this call against your rules", input); // a throw here reaches the last resort
+    }
+  }
+  if (warning) await log(warning);
+  if (out) print(out);
+  return 0;
+}
+
+// The raw payload tool.before read (the last resort reads its mode).
+let lastRaw = "";
+
+// The last resort when tool.before's own failure path fails: node:fs only. While the
+// sentinel says rules exist, a fixed decision — ask only on Claude Code in a mode known to
+// show an ask, deny otherwise; else nothing. Exit 1 when even that fails (the host's
+// onFailure decides: "block" with rules).
+async function toolBeforeLastResort(err) {
+  try {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const os = await import("node:os");
+    const root = process.env.AD_ROOT && path.isAbsolute(process.env.AD_ROOT) ? process.env.AD_ROOT : path.join(os.homedir(), ".agent-daemon");
+    if (!fs.existsSync(path.join(root, "guards.active"))) return print({});
+    const codex = hostFlag === "codex" || hostFlag === "ad" || /"turn_id"\s*:/.test(lastRaw);
+    const mode = /"permission_mode"\s*:\s*"([A-Za-z]+)"/.exec(lastRaw)?.[1];
+    const ask = !codex && ["default", "acceptEdits", "plan", "auto"].includes(mode);
+    process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: ask ? "ask" : "deny", permissionDecisionReason: "The rules check failed. Tell the user." }, systemMessage: `rules check failed (${String(err?.message ?? err).slice(0, 120)})` }));
+  } catch {
+    process.exitCode = 1;
+  }
+}
+
 async function main() {
+  if (event === "tool.before") {
+    try {
+      return await toolBeforeMain();
+    } catch (err) {
+      await log(`tool.before failed: ${err?.message ?? err}`);
+      await toolBeforeLastResort(err);
+      return 0;
+    }
+  }
   const input = await readStdinJson();
   const { hostOf } = await import("../src/hooks/host-capabilities.mjs");
   const host = hostOf(input, { flag: hostFlag });
 
   switch (event) {
-    case "tool.before": {
-      const { toolBefore } = await import("../src/hooks/tool-before.mjs");
-      let out = null;
-      let warning = null;
-      try {
-        out = toolBefore(input, { host, onWarning: (w) => (warning = w) });
-      } catch (err) {
-        await log(`couldn't check a call against the rules: ${err?.message ?? err}`);
-        out = await failClosed(input, host, err);
-      }
-      if (warning) await log(warning);
-      if (out) print(out);
-      return 0;
-    }
     case "tool.after": {
       const name = String(input?.tool_name ?? "");
       // CronCreate and ScheduleWakeup prompts come back later as if typed: remember them.
@@ -291,23 +345,11 @@ async function main() {
   return 0;
 }
 
-// tool.before broke: ask if a rule might cover this call, else let it run.
-async function failClosed(input, host, err) {
-  try {
-    const { loadGuards, projectFor } = await import("../src/hooks/guards.mjs");
-    const { toolDecision } = await import("../src/hooks/host-capabilities.mjs");
-    const found = projectFor(loadGuards().snapshot, projectDir(input, host));
-    if (!found || found.project.paused || !found.project.rules?.length) return null;
-    return toolDecision("ask", { host, permissionMode: input?.permission_mode, reason: "ad couldn't check this call against your rules.", notice: `ad: couldn't check this call against your rules (${String(err?.message ?? err).slice(0, 120)}).` });
-  } catch {
-    return null;
-  }
-}
-
 // Exit 0 once stdout has drained (a pipe can lose a write cut off by exit).
-// Never another code: a decision travels as JSON, and Codex reads exit 2 as a
-// block while both hosts report other codes as a failed hook.
-const done = () => process.stdout.write("", () => process.exit(0));
+// Never another code — a decision travels as JSON, and Codex reads exit 2 as a block while
+// both hosts report other codes as a failed hook — except tool.before's last resort, which
+// sets 1 when it couldn't even print (the host's onFailure decides: "block" while rules exist).
+const done = () => process.stdout.write("", () => process.exit(process.exitCode === 1 && event === "tool.before" ? 1 : 0));
 main().then(done, async (err) => {
   await log(`failed: ${err?.message ?? err}`);
   process.stdout.write("{}");
