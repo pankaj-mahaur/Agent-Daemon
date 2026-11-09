@@ -229,10 +229,14 @@ test("every hook event runs from the built npm package through the launcher: val
   const entry = installLauncher(ctx);
   assert.equal(entry.route, "npm");
   for (const name of ["jsonc-parser", "smol-toml"]) assert.ok(fs.existsSync(path.join(entry.path, "node_modules", name, "package.json")), `${name} copied into the dist`);
-  // A second install of the same version leaves the copy in place (no window without one).
+  // A second install of the same version leaves an intact copy in place (no window without
+  // one); L7: a file the copy never had makes it a changed copy, copied again.
+  const ino = fs.statSync(entry.hook).ino;
+  installLauncher(ctx);
+  assert.equal(fs.statSync(entry.hook).ino, ino, "not copied again");
   fs.writeFileSync(path.join(entry.path, "kept.txt"), "x");
   installLauncher(ctx);
-  assert.ok(fs.existsSync(path.join(entry.path, "kept.txt")), "not copied again");
+  assert.ok(!fs.existsSync(path.join(entry.path, "kept.txt")), "copied again");
   const project = path.join(home, "work", "app");
   fs.mkdirSync(path.join(project, ".git"), { recursive: true });
   const env = { HOME: home, USERPROFILE: home, AD_ROOT: root, CLAUDE_PROJECT_DIR: project, AGENT_DAEMON_DISABLE_SWEEP: "1" };

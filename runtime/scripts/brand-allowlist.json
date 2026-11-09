@@ -570,6 +570,16 @@
       "reason": "dispatcher tests send payloads in the shapes the user's Codex host sends"
     },
     {
+      "path": "runtime/src/memory/launch/run.mjs",
+      "rules": ["A"],
+      "reason": "the launcher's tool.before decision when it can't run the guard copy (L7 D10): a Codex host (--host codex, its turn_id) can't show an ask, so it denies"
+    },
+    {
+      "path": "runtime/test/l7-launcher-guard.test.mjs",
+      "rules": ["A"],
+      "reason": "the guard copy's failure layers per host: Codex payloads and Codex's deny-only behaviour are what the tests check"
+    },
+    {
       "path": "runtime/test/l7-allow-once.test.mjs",
       "rules": ["A"],
       "reason": "allow-once binds the call text only on Codex (it hides the command's folder): the tests send Codex payloads"

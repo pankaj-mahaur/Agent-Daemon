@@ -49,7 +49,7 @@ jobs:
         working-directory: runtime
         env:
           AD_HOOK_LATENCY: strict
-        run: node --test --test-concurrency=1 test/hook-latency.test.mjs test/startup.test.mjs
+        run: node --test --test-concurrency=1 test/hook-latency.test.mjs test/startup.test.mjs test/l7-latency.test.mjs
 
       - name: Lint skills
         run: node runtime/scripts/lint-skills.mjs

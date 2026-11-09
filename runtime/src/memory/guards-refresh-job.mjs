@@ -17,12 +17,16 @@ import { open } from "./sqlite.mjs";
 import { rebuildGuards } from "./guards-build.mjs";
 
 // The root this copy was installed for: <root>/memory/dist/<version>/… when it runs from
-// the guard copy (the launcher starts it there, D3); else the home folder's (a clone).
-// AD_ROOT is compared, never followed (S1).
+// the guard copy (the launcher starts it there, D3); a clone's job gets it from the
+// launcher that started it (AD_LAUNCHER_ROOT, set with AD_ROOT to the launcher's own
+// root); else the home folder's. AD_ROOT is compared, never followed (S1).
 function installedRoot() {
   const here = fileURLToPath(import.meta.url);
   const m = /^(.*)[\\/]memory[\\/]dist[\\/][^\\/]+[\\/]/.exec(here);
-  return m ? m[1] : path.join(os.homedir(), ".agent-daemon");
+  if (m) return m[1];
+  const launcher = process.env.AD_LAUNCHER_ROOT;
+  if (launcher && path.isAbsolute(launcher) && existsSync(path.join(launcher, "memory", "launch", "run.mjs"))) return launcher;
+  return path.join(os.homedir(), ".agent-daemon");
 }
 
 // Two spellings of one path (a link, /var vs /private/var, 8.3 names, letter case where

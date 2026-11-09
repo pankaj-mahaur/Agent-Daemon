@@ -32,10 +32,15 @@ let clkTck; // cached; null when unknown
 function linuxClkTck(run) {
   if (clkTck !== undefined) return clkTck;
   try {
-    const n = Number(String(run("getconf", ["CLK_TCK"], { encoding: "utf8", timeout: 2000 })).trim());
+    // By its absolute path (as ps below), never through PATH: hooks and the jobs they start
+    // run this outside the host's sandbox (L7 D10), where a PATH folder the agent can write
+    // would run its program.
+    const n = Number(String(run("/usr/bin/getconf", ["CLK_TCK"], { encoding: "utf8", timeout: 2000 })).trim());
     clkTck = n > 0 ? n : null;
   } catch {
-    clkTck = null;
+    // No /usr/bin/getconf (NixOS, Guix): /proc counts in USER_HZ, 100 on Linux's mainstream
+    // architectures.
+    clkTck = 100;
   }
   return clkTck;
 }

@@ -25,7 +25,8 @@ import { HOSTS, SERVER_NAME, claudePluginEnabled, hostById } from "./hosts.mjs";
 import { backup, inspect, sha256, writeChecked } from "./fsx.mjs";
 import { readLedger, writeLedger } from "./ledger.mjs";
 import { dropItem, mergeV1, openLedger2ForWrite, readLedger2, uninstallReport, writeLedger2 } from "./ledger2.mjs";
-import { cmpVersion, distsFile, launchDir, launcherFile, readDists, registerDist, setHostDisabled, unregisterDist } from "../memory/launch/dists.mjs";
+import { MANIFEST, cmpVersion, distsFile, launchDir, launcherFile, readDists, readGuard, registerDist, setHostDisabled, unregisterDist, writeGuard } from "../memory/launch/dists.mjs";
+import { copyIntact, expectedTree, manifestSha, sameTree, treeHashes, writeManifest } from "./guard-copy.mjs";
 import { SETUP_HOSTS, claudeSettingsFile, launcherReferences, parseSettings, removeSettingsItems, removeTomlItems, setup, setupPending, setupWork, withLedgerLock } from "./setup.mjs";
 import { codexConfigFile, codexHooksFile, safeToml } from "./setup-codex.mjs";
 import { ourHandlers } from "../hooks/routes.mjs";
@@ -141,8 +142,24 @@ const versionOf = (dir) => {
 function copyDist(ctx) {
   const distDir = path.join(ctx.root, "memory", "dist");
   const dest = path.join(distDir, ctx.version);
-  if (path.resolve(ctx.packageRoot) === path.resolve(dest)) return dest;
-  if (versionOf(dest) === ctx.version && fs.existsSync(path.join(dest, "bin", "hook.mjs")) && fs.existsSync(path.join(dest, "node_modules", "smol-toml"))) return dest;
+  // Run from a copy under memory/dist itself (the launcher's CLI route; real paths: a linked
+  // home or root must not hide it): nothing to compare it with, so only a copy whose tree,
+  // manifest and guard record agree goes on (L7 D10); never a fresh manifest over a tree
+  // nobody checked.
+  if (realish(ctx.packageRoot) === realish(dest) || inside(ctx.packageRoot, distDir)) {
+    const g = readGuard(ctx.root);
+    const agree = g.route === "npm" && realish(g.path) === realish(dest) && realish(ctx.packageRoot) === realish(dest) && manifestSha(dest) === g.manifestSha256 && copyIntact(dest);
+    if (!agree) throw new Error(`the copy in ${dest} can't be checked from itself; run ${ctx.command("repair")} in your own terminal`);
+    return dest;
+  }
+  const deps = Object.fromEntries(["jsonc-parser", "smol-toml"].map((name) => [name, dependencyFolder(name)]));
+  // A copy of this version stays only when it is exactly the package being run (L7 D10): a
+  // changed file, a planted one, or files rewritten together with their manifest are copied
+  // over. Its manifest is written again when only that differs.
+  if (versionOf(dest) === ctx.version && sameTree(treeHashes(dest), expectedTree(ctx.packageRoot, deps))) {
+    if (!copyIntact(dest)) writeManifest(dest);
+    return dest;
+  }
   const tmp = `${dest}.tmp-${process.pid}`;
   // Leftovers of an interrupted install (old ones only: another install may be copying now).
   if (fs.existsSync(distDir)) {
@@ -152,8 +169,10 @@ function copyDist(ctx) {
     }
   }
   fs.cpSync(ctx.packageRoot, tmp, { recursive: true, filter: (src) => !path.relative(ctx.packageRoot, src).split(path.sep).includes("node_modules") });
-  for (const name of ["jsonc-parser", "smol-toml"]) fs.cpSync(dependencyFolder(name), path.join(tmp, "node_modules", name), { recursive: true });
-  // A broken copy of this version (no hook, no parsers) is moved aside, then replaced.
+  for (const [name, dir] of Object.entries(deps)) fs.cpSync(dir, path.join(tmp, "node_modules", name), { recursive: true });
+  fs.rmSync(path.join(tmp, MANIFEST), { force: true }); // a package never brings its own
+  writeManifest(tmp);
+  // A broken or changed copy of this version is moved aside, then replaced.
   const aside = fs.existsSync(dest) ? `${dest}.tmp-old-${process.pid}` : null;
   if (aside) fs.renameSync(dest, aside);
   try {
@@ -172,11 +191,11 @@ function copyDist(ctx) {
 
 // After registering the new copy: other versions go except the newest one besides
 // this, each on its own (a folder Windows keeps busy stays for the next install).
-function pruneDists(ctx, keep) {
+function pruneDists(ctx, keep, guardPath = null) {
   const distDir = path.join(ctx.root, "memory", "dist");
   let versions;
   try {
-    versions = fs.readdirSync(distDir).filter((v) => !v.includes(".tmp-") && v !== keep && fs.statSync(path.join(distDir, v)).isDirectory());
+    versions = fs.readdirSync(distDir).filter((v) => !v.includes(".tmp-") && v !== keep && !(guardPath && realish(path.join(distDir, v)) === realish(guardPath)) && fs.statSync(path.join(distDir, v)).isDirectory());
   } catch {
     return;
   }
@@ -188,6 +207,30 @@ function pruneDists(ctx, keep) {
     } catch {
       // still in use: tried again next time
     }
+  }
+}
+
+const sentinelExists = (root) => fs.existsSync(path.join(root, "guards.active"));
+
+// A package installed in the current project's node_modules (the project lists it) is the
+// project's to change — an `npm install` after editing package.json rewrites it, and no rule
+// asks: never the guard's source, on either route (L7 D10). npx's cache and global installs
+// sit apart from the folder the command runs in.
+function refuseProjectInstall(ctx) {
+  const parts = path.resolve(ctx.packageRoot).split(path.sep);
+  const nm = parts.indexOf("node_modules"); // the outermost: pnpm nests its store inside the project's
+  if (nm <= 0) return;
+  // A trailing separator keeps a drive root a root ("C:" alone is that drive's current folder).
+  const project = path.resolve(parts.slice(0, nm).join(path.sep) + path.sep);
+  const cwd = ctx.cwd ?? process.cwd();
+  if (realish(cwd) === realish(project) || inside(cwd, project)) throw new Error(`${ctx.packageRoot} is the install of the project in ${project}, which that project can change; run ${ctx.command("repair")} from a folder outside it`);
+}
+const guardInUse = (root) => sentinelExists(root) || fs.existsSync(launcherFile(root)) || !readGuard(root).missing;
+function launcherVersion(dir) {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(dir, "product.json"), "utf8")).version ?? null;
+  } catch {
+    return null;
   }
 }
 
@@ -204,9 +247,15 @@ export function installLauncher(ctx, { now } = {}) {
     fs.writeFileSync(tmp, bytes);
     fs.renameSync(tmp, path.join(dir, name));
   };
-  // dists.mjs first: a new run.mjs never meets an older dists.mjs.
-  for (const f of ["dists.mjs", "run.mjs"]) put(f, fs.readFileSync(path.join(ctx.packageRoot, "src", "memory", "launch", f)));
-  put("product.json", JSON.stringify({ package: PRODUCT.package, displayName: PRODUCT.displayName, version: ctx.version }, null, 2) + "\n");
+  // No downgrade without the token while rules exist (L7 D10, S1): an older package keeps
+  // the newer launcher and guard record (the token and the typed code allow it, P3).
+  const guard = readGuard(ctx.root);
+  const newer = sentinelExists(ctx.root) && !ctx.allowGuardDowngrade ? [launcherVersion(dir), guard.version].find((v) => v && cmpVersion(v, ctx.version) > 0) : null;
+  if (newer) ctx.out?.(`· the rules check stays at ${newer}: rules exist, and going back to ${ctx.version} needs your review in your own terminal`);
+  // The copy first (checked against the package, or made from it; L7 D10): a copy that
+  // can't be checked, or a source the project can change, stops here, before any launcher
+  // file is written.
+  refuseProjectInstall(ctx);
   let entry;
   if (ctx.viaLauncher) {
     const dest = copyDist(ctx);
@@ -214,9 +263,22 @@ export function installLauncher(ctx, { now } = {}) {
   } else {
     entry = { path: ctx.packageRoot, version: ctx.version, route: "clone", hook: path.join(ctx.packageRoot, "bin", "hook.mjs"), cli: path.join(ctx.packageRoot, "src", "memory-install", "cli.mjs") };
   }
+  if (!newer) {
+    // The manifest's hash first: one that can't be read now (a Windows lock) fails the
+    // install before any launcher file changes, rather than leave a record every hook rejects.
+    const sha = entry.route === "npm" ? manifestSha(entry.path) : null;
+    if (entry.route === "npm" && !sha) throw new Error(`couldn't read ${path.join(entry.path, MANIFEST)}; try again`);
+    // From the checked copy (npm) or the clone being run; dists.mjs first: a new run.mjs
+    // never meets an older dists.mjs.
+    for (const f of ["dists.mjs", "run.mjs"]) put(f, fs.readFileSync(path.join(entry.path, "src", "memory", "launch", f)));
+    put("product.json", JSON.stringify({ package: PRODUCT.package, displayName: PRODUCT.displayName, version: ctx.version, route: entry.route }, null, 2) + "\n");
+    // The guard record before pruning: the copy the old record named may go next.
+    writeGuard(ctx.root, { route: entry.route, path: entry.path, version: ctx.version, manifestSha256: sha }, now ? { now } : {});
+  }
   registerDist(distsFile(ctx.root), entry, now ? { now } : {});
-  if (ctx.viaLauncher) pruneDists(ctx, ctx.version);
-  return entry;
+  // Pruning never takes the copy the guard record names (a kept newer one included).
+  if (ctx.viaLauncher) pruneDists(ctx, ctx.version, newer ? guard.path : null);
+  return newer ? { ...entry, keptNewer: newer } : entry;
 }
 
 /* ------------------------------------------------------------------ */
@@ -249,7 +311,9 @@ function realish(p) {
 }
 const inside = (child, parent) => {
   const fold = (p) => (process.platform === "win32" ? p.toLowerCase() : p);
-  return fold(realish(child)).startsWith(fold(realish(parent)) + path.sep);
+  const base = fold(realish(parent));
+  // A root (`/`, `C:\`) already ends in the separator.
+  return fold(realish(child)).startsWith(base.endsWith(path.sep) ? base : base + path.sep);
 };
 
 /** Our entry as the host's file holds it now (parsed), or undefined. */
@@ -460,20 +524,22 @@ async function installMcp(ctx, opts) {
   // memory/dist/, or this clone) are in place before any entry is written; an upgrade
   // is a new copy even when every entry is unchanged. 3.1.0's pkg/ and bin/launch.mjs
   // are no longer written (its entries move to the launcher here; uninstall removes them).
-  if (todo.length || plans.some((p) => p.action === "same")) {
+  // L7 (D10): also whenever a launcher, a guard record or rules exist — the plugin route's
+  // repair included, so a changed guard copy is checked and copied again.
+  if (todo.length || plans.some((p) => p.action === "same") || guardInUse(ctx.root)) {
     try {
       const was = currentDist(ctx.root);
       const reg = installLauncher(ctx);
       // 3.1.0's launcher (memory/bin/launch.mjs) runs current.json's copy: while an
       // entry that wasn't moved still starts it, it runs this version too.
       const cur = path.join(ctx.root, "memory", "current.json");
-      if (ctx.viaLauncher && fs.existsSync(cur)) {
+      if (ctx.viaLauncher && fs.existsSync(cur) && !reg.keptNewer) {
         // Through a temp file: a 3.1.0 entry starting now reads the old file or the new one.
         const tmp = `${cur}.tmp-${process.pid}`;
         fs.writeFileSync(tmp, JSON.stringify({ version: ctx.version, path: reg.path }, null, 2) + "\n");
         fs.renameSync(tmp, cur);
       }
-      if (ctx.viaLauncher && was !== ctx.version) out(`· the launcher now starts ${PRODUCT.package} ${ctx.version}`);
+      if (ctx.viaLauncher && was !== ctx.version && !reg.keptNewer) out(`· the launcher now starts ${PRODUCT.package} ${ctx.version}`);
     } catch (e) {
       out(`✗ couldn't set up the launcher in ${ctx.display(launchDir(ctx.root))}: ${e.message}`);
       return { stop: true, code: 1 };
