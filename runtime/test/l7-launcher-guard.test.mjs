@@ -729,3 +729,60 @@ test("an unreadable call with a snapshot behind the sentinel still decides (the 
   assert.equal(r.code, 0, r.err);
   assert.equal(parse(r.out)?.hookSpecificOutput?.permissionDecision, "ask", r.out);
 });
+
+test("ad's own engine workers run tool.before through the launcher's guard copy when one exists", async () => {
+  const { buildCodexHooksJson, guardLauncher } = await import("../src/engine/codex/hooks-config.mjs");
+  const t = installed({ plugin: false });
+  assert.equal(guardLauncher(t.root), D.launcherFile(t.root));
+  const defs = [{ id: "rules-check" }, { id: "query-retrieve" }];
+  const commands = (j) => Object.values(j.hooks).flatMap((gs) => gs.flatMap((g) => g.hooks.map((h) => h.command)));
+  const withGuard = commands(buildCodexHooksJson({ hooks: defs, launcher: guardLauncher(t.root) }));
+  const before = withGuard.filter((c) => c.includes("tool.before"));
+  const { shQuote } = await import("../src/engine/codex/hooks-config.mjs");
+  assert.ok(before.length > 0 && before.every((c) => c.endsWith(`${shQuote(D.launcherFile(t.root))} hook tool.before --host ad`)), before.join("\n"));
+  assert.ok(withGuard.filter((c) => !c.includes("tool.before")).every((c) => !c.includes(D.launcherFile(t.root))), "other events stay on ad's install");
+  // No guard record: ad's install, as before L7.
+  fs.rmSync(D.guardFile(t.root));
+  assert.equal(guardLauncher(t.root), null);
+  assert.ok(commands(buildCodexHooksJson({ hooks: defs, launcher: guardLauncher(t.root) })).every((c) => !c.includes(D.launcherFile(t.root))));
+});
+
+test("ad init's gate: the setup marker, no terminal, or an agent ancestor each mean the agent's shell", async () => {
+  const { initFromAgentShell } = await import("../src/init-gate.mjs");
+  const tty = () => true;
+  const user = () => ({ verdict: "terminal", root: "kitty" });
+  assert.equal(initFromAgentShell({ env: {}, isTTY: tty, probe: user }), null);
+  assert.equal(initFromAgentShell({ env: { AD_TOOL_SHELL: "1" }, isTTY: tty, probe: user }), "AD_TOOL_SHELL");
+  assert.equal(initFromAgentShell({ env: {}, isTTY: () => false, probe: user }), "no terminal");
+  assert.equal(initFromAgentShell({ env: {}, isTTY: tty, probe: () => ({ verdict: "agent", agent: "claude" }) }), "claude runs it");
+  // An unknown chain (a wrapper, a probe that failed) isn't an agent by itself.
+  assert.equal(initFromAgentShell({ env: {}, isTTY: tty, probe: () => ({ verdict: "unknown", why: "tmux" }) }), null);
+});
+
+test("setup adopts only ad's own rules-check handler from a group the user shares; ad init replaces a dead launcher entry as before", async () => {
+  const S = await import("../src/memory-install/setup.mjs");
+  const R = await import("../src/hooks/routes.mjs");
+  const home = fresh("adopt");
+  const launcher = path.join(home, ".agent-daemon", "memory", "launch", "run.mjs");
+  const mine = { type: "command", command: "my-own-check" };
+  const ad = { type: "command", command: "node", args: [R.HOOK_PATH, "tool.before"], timeout: 5 };
+  const text = JSON.stringify({ hooks: { PreToolUse: [{ matcher: "Bash|PowerShell|Write|Edit", hooks: [ad, mine] }] } });
+  const plan = S.planClaudeSetup(text, { launcher, routes: S.claudeRoutes({ plugin: true }), marker: false, file: path.join(home, "settings.json") });
+  assert.ok(plan.ok, plan.error);
+  const pre = plan.expected.hooks.PreToolUse;
+  assert.deepEqual(pre[0].hooks, [mine], "the user's own handler stays in its group");
+  assert.ok(R.ourHandlers(plan.expected.hooks).every((o) => o.info.event !== "tool.before" || o.info.launcher));
+  assert.ok(plan.results.some((r) => r.action === "adopt"));
+  // Codex trusts hooks by place: its hooks.json is never rearranged to adopt.
+  const codex = S.planClaudeSetup(text, { launcher, routes: S.claudeRoutes({ plugin: true }), marker: false, file: path.join(home, "hooks.json"), host: "codex" });
+  assert.ok(codex.ok && !codex.results.some((r) => r.action === "adopt"));
+  assert.deepEqual(codex.expected.hooks.PreToolUse[0].hooks, [ad, mine]);
+  // ad init: a launcher tool.before whose launcher is gone isn't a guard; ad's routes replace it as before L7.
+  const hooks = { PreToolUse: [{ matcher: "Bash|PowerShell|Write|Edit", hooks: [S.launcherHandler(launcher, R.routesFor([], "claude").find((r) => r.event === "tool.before"))] }] };
+  const dead = R.planClaudeHooks(hooks, { steps: [], exists: () => false });
+  assert.ok(dead.removed.some((o) => o.info.launcher));
+  assert.ok(dead.routes.some((r) => r.steps.includes("rules-check")));
+  const live = R.planClaudeHooks(hooks, { steps: [], exists: () => true });
+  assert.ok(!live.removed.some((o) => o.info.launcher));
+  assert.ok(!live.routes.some((r) => r.steps.includes("rules-check")));
+});

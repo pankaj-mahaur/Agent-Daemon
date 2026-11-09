@@ -62,8 +62,8 @@ const timeoutFor = (r, host) => (host !== "codex" ? r.timeout : r.hostEvent === 
  * The routes that serve `steps` (and the always-installed steps) on `host`.
  * @returns {{event:string, hostEvent:string, matcher:string|null, steps:string[], timeout:number}[]}
  */
-export function routesFor(steps, host = "claude") {
-  const want = new Set([...steps, ...(ALWAYS_STEPS[host] ?? [])]);
+export function routesFor(steps, host = "claude", { without = [] } = {}) {
+  const want = new Set([...steps, ...(ALWAYS_STEPS[host] ?? [])].filter((s) => !without.includes(s)));
   const out = [];
   for (const r of ROUTES) {
     if (r.hosts && !r.hosts.includes(host)) continue;
@@ -277,10 +277,17 @@ function carryInto(group, route, ours) {
  *   steps: the profile's; oldPluginTags: a memory plugin from before the dispatcher is on (OLD_PLUGIN_TAGS)
  * @returns {{hooks: object, changed: boolean, routes: object[], removed: object[]}}
  */
-export function planClaudeHooks(hooks, { steps = [], hookPath = HOOK_PATH, form = "exec", oldPluginTags = false } = {}) {
+export function planClaudeHooks(hooks, { steps = [], hookPath = HOOK_PATH, form = "exec", oldPluginTags = false, exists } = {}) {
   const current = hooks && typeof hooks === "object" && !Array.isArray(hooks) ? hooks : {};
-  const ours = ourHandlers(current);
-  const routes = routesFor([...new Set([...steps, ...ours.flatMap((o) => o.info.steps)])], "claude");
+  const all = ourHandlers(current);
+  // L7 (D10): a live launcher tool.before is the rules check's entry (it runs the guard
+  // copy): it stays as it is, and ad writes no rules-check route of its own beside it.
+  const guard = new Set(all.filter((o) => o.info.launcher && o.info.event === "tool.before" && entryAlive(o.info, exists ? { exists } : {})).map((o) => o.handler));
+  const ours = all.filter((o) => !guard.has(o.handler));
+  // ad's own tool.before already beside it stays (a second check is safe; setup takes it
+  // over with its onFailure and timeout): only a missing one isn't added.
+  const ownCheck = ours.some((o) => !o.info.launcher && !o.info.plugin && o.info.event === "tool.before");
+  const routes = routesFor([...new Set([...steps, ...ours.flatMap((o) => o.info.steps)])], "claude", { without: guard.size && !ownCheck ? ["rules-check"] : [] });
   const groups = routes.map((route) => ({ route, group: carryInto(claudeGroup(route, { hookPath, form, oldPluginTags }), route, ours) }));
   // Already exactly these routes, each once, and nothing else of ad's: leave the file alone.
   const have = ours.map((o) => canon(o.hostEvent, o.matcher, o.handler)).sort();
@@ -299,7 +306,7 @@ export function planClaudeHooks(hooks, { steps = [], hookPath = HOOK_PATH, form 
         kept.push(g);
         continue;
       }
-      const hs = g.hooks.filter((h) => !classifyHandler(h, { hostEvent, matcher: g.matcher }));
+      const hs = g.hooks.filter((h) => guard.has(h) || !classifyHandler(h, { hostEvent, matcher: g.matcher }));
       if (hs.length) kept.push(hs.length === g.hooks.length ? g : { ...g, hooks: hs });
     }
     next[hostEvent] = kept;

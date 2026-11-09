@@ -376,6 +376,16 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
   // words: the prompt and session-start routes then carry them (routes.mjs OLD_PLUGIN_TAGS).
   const memPlugin = hookDoctor.memoryPluginState({ home, cwd });
   const hookPlan = planClaudeHooks(existingSettings.hooks, { steps: resolved.hooks.map((h) => h.id), form: hookForm, oldPluginTags: memPlugin?.outdated === true });
+  // L7 (D10, S2): from the agent's shell (the marker setup puts in Claude Code's env, no
+  // terminal, or an agent among this process's ancestors) ad init scaffolds only: no hook
+  // entry is written or changed — the hooks are the user's to change, in their own terminal.
+  // A plan or dry run writes nothing: it shows the routes either way.
+  const fromAgentShell = hookPlan.changed && !dryRun ? (await import("./init-gate.mjs")).initFromAgentShell() : null;
+  if (fromAgentShell) {
+    hookPlan.changed = false;
+    const gitBash = fromAgentShell === "no terminal" && process.platform === "win32" ? " (in Git Bash, through winpty; or use PowerShell or Windows Terminal)" : "";
+    console.log(`  · hooks unchanged (${fromAgentShell}): run \`ad init\` in your own terminal to set them up${gitBash}`);
+  }
   const transient = hookDoctor.transientInstall(HOOK_PATH);
   if (transient) console.log(`  ⚠ The hooks would run ${HOOK_PATH}, which is in ${transient}: they stop working when it goes. Run ad init from your installed ad.`);
   if (memPlugin?.outdated) console.log(`  ⚠ ${memPlugin.key}${memPlugin.version ? ` ${memPlugin.version}` : ""} predates ad's hook dispatcher, so ad's prompt and session-start hooks are written in its older form, which it recognises. Update the plugin from Claude Code's /plugin menu, then run ad init again.`);
@@ -448,7 +458,7 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
   }
 
   if (actions.length === 0) {
-    console.log("\n  Nothing to do — agent-daemon is fully initialized in this project.");
+    console.log(fromAgentShell ? "\n  Nothing else to do here; the hooks wait for `ad init` in your own terminal." : "\n  Nothing to do — agent-daemon is fully initialized in this project.");
     return 0;
   }
 
