@@ -218,13 +218,29 @@ function surprises(previous, next, { storeWas, expected = {}, now = Date.now() }
       return false;
     }
   };
+  // Folders are compared by what they are, not how they are spelled: a root and its real
+  // path (/var vs /private/var, RUNNER~1 vs runneradmin, a link) are one folder.
+  const ident = (r) => {
+    try {
+      return fs.realpathSync.native(r);
+    } catch {
+      return path.resolve(r);
+    }
+  };
+  const expectedIds = new Set((expected.roots ?? []).map(ident));
   const roots = [];
+  const seenIds = new Set();
   for (const [k, p] of Object.entries(previous?.projects ?? {})) {
     // A project that left the snapshot left because its rules went (counted above, or
     // expected) or its pause ended: its folders leave with it.
     if (!next.projects?.[k]) continue;
-    const now2 = new Set(next.projects[k].roots ?? []);
-    for (const r of p?.roots ?? []) if (!now2.has(r) && exists(r) && !(expected.roots ?? []).includes(r)) roots.push(r);
+    const now2 = new Set((next.projects[k].roots ?? []).map(ident));
+    for (const r of p?.roots ?? []) {
+      const id = ident(r);
+      if (now2.has(id) || expectedIds.has(id) || seenIds.has(id) || !exists(r)) continue;
+      seenIds.add(id);
+      roots.push(r);
+    }
   }
   if (!otherStore && !rules.length && !pause && !roots.length) return null;
   const parts = [];
