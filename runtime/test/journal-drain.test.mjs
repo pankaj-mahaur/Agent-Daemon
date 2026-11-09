@@ -8,6 +8,7 @@ import path from "node:path";
 import os from "node:os";
 import { appendLearnings, readJournal } from "../src/hooks/journal.mjs";
 import { drainJournal } from "../src/hooks/journal-drain.mjs";
+import { markOwnFolder } from "../src/memory/projects.mjs";
 
 // Isolation: the drain and apply write the episodic DB (and user.md) under
 // HOME; point it at a temp folder so the real ~/.agent-daemon is never touched.
@@ -21,6 +22,7 @@ async function makeTmp() {
   // Scaffold a minimal .agent-daemon/memory/ so apply.mjs has a target
   await fs.mkdir(path.join(dir, ".agent-daemon", "memory"), { recursive: true });
   await fs.writeFile(path.join(dir, ".agent-daemon", "memory", "activeContext.md"), "# Active context\n\n", "utf8");
+  markOwnFolder(dir); // ad init
   return dir;
 }
 

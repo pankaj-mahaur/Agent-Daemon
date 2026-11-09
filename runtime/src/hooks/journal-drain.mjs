@@ -12,6 +12,7 @@
 
 import path from "node:path";
 import fsp from "node:fs/promises";
+import { gitTracked } from "../memory/git-tracked.mjs";
 import { readJournal, archiveJournal, journalPath } from "./journal.mjs";
 import { classify } from "../digest/classify.mjs";
 import { applyLearnings } from "../digest/apply.mjs";
@@ -32,6 +33,9 @@ const ORPHAN_ADOPT_AGE_MS = 60 * 60 * 1000;  // crashed-drain leftovers older th
 async function claimJournal(cwd) {
   const live = journalPath(cwd);
   const dir = path.dirname(live);
+  // A journal git tracks came with the repository (anyone can commit one): it is never
+  // drained into the user's store, nor moved.
+  if (trackedByGit(live, cwd)) return null;
   const claimed = path.join(dir, `learning-journal.draining-${process.pid}.jsonl`);
 
   let adopted = "";
@@ -39,6 +43,8 @@ async function claimJournal(cwd) {
     for (const name of await fsp.readdir(dir)) {
       if (!/^learning-journal\.draining-\d+\.jsonl$/.test(name)) continue;
       const p = path.join(dir, name);
+      // A committed "leftover" is the repository's file: never drained, never removed.
+      if (trackedByGit(p, cwd)) continue;
       try {
         const st = await fsp.stat(p);
         if (Date.now() - st.mtimeMs > ORPHAN_ADOPT_AGE_MS) {
@@ -63,6 +69,9 @@ async function claimJournal(cwd) {
   }
   return haveLive ? claimed : null;
 }
+
+// Is this file inside the project and tracked by git there (fails closed)? See git-tracked.mjs.
+export const trackedByGit = gitTracked;
 
 /**
  * Drain the learning journal into memory + episodic store.

@@ -21,6 +21,7 @@ const { renderSkillProposal, skillSha } = await import("../src/skills/proposal.m
 const { runInteractiveReview, listProposals } = await import("../src/review.mjs");
 const { runSkillCommand } = await import("../src/skills/cli.mjs");
 const ep = await import("../src/memory/episodic.mjs");
+const { markOwnFolder } = await import("../src/memory/projects.mjs");
 
 let handle;
 before(async () => {
@@ -41,6 +42,7 @@ async function setup() {
   const cwd = path.join(HOME, "work", `p${n}`);
   await fs.mkdir(path.join(cwd, ".agent-daemon", "proposed"), { recursive: true });
   await fs.mkdir(path.join(cwd, ".git"), { recursive: true });
+  markOwnFolder(cwd); // ad init
   const file = path.join(cwd, ".agent-daemon", "proposed", `skill-${name}-1.md`);
   await fs.writeFile(file, renderSkillProposal({ skill: name, base: skillSha(skill(name, "A")), body: skill(name, "B"), origin: "gepa", run: "r1" }));
   return { name, installed, cwd, file };

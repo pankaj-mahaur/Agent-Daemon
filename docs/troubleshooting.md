@@ -1218,6 +1218,17 @@ These are information, not failures: other memory that loads next to ad's learni
 
 **Fix:** run it yourself in a terminal (Windows Terminal, iTerm2, macOS Terminal, a Linux terminal). In an editor's terminal, follow the dialog it shows. Without a value, `config recall` only shows the current setting and works anywhere.
 
+## 113. Capture files go outside a project that has `.agent-daemon/`
+
+**Symptom:** `ad doctor` shows `Project folder`, or the journal and proposals land under `~/.agent-daemon/projects/<project id>/` although the project has a `.agent-daemon/` folder.
+
+**Cause:** ad writes into a project's own `.agent-daemon/` only when you ran `ad init` there. A repository can ship that folder (with a journal or a `.gitignore` that un-ignores everything), so ad doesn't trust the folder alone.
+
+**Fix:**
+- `this repository ships its own .agent-daemon/`: nothing to do. Your capture files stay outside the repository on purpose.
+- `isn't marked as yours`: if you made the folder (an `ad init` from an older version), run `ad init` there again.
+- `ad init` says `git wouldn't ignore .agent-daemon/…`: add the lines it lists to `.agent-daemon/.gitignore`, then run `ad init` again. Until then capture files (your prompts) stay out of the repository.
+
 ---
 
 For harness problems, the [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill walks through login → hooks → sandbox → the engine's own log. See also [harness.md](harness.md) and, for the terminal UI, [tui.md](tui.md).
