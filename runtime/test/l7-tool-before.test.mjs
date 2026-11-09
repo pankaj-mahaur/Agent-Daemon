@@ -140,6 +140,8 @@ test("a git worktree enforces its main project's rules, with write globs from th
 
 test("a linked folder finds its project; Windows paths judged as Windows; Linux roots are case-sensitive", () => {
   const { base, root, project } = setup();
+  // As rebuildGuards writes it: each root as registered and as its real path.
+  snapshot(root, { projects: { p1: { roots: [project, fs.realpathSync.native(project)], rules: [npmRule, genRule] } } });
   const link = path.join(base, "link");
   fs.symlinkSync(project, link, "junction");
   assert.equal(decision(toolBefore(bash("npm i", link), { root, env: {} })), "ask");
