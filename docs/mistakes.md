@@ -112,6 +112,21 @@ How well this works is checked on held-out sets written by someone other than th
 - `--share` adds no project name and no path. **Names of other people inside a sentence aren't found automatically**, so read the summary before you post it.
 - `--json` has the numbers and the redacted sentences, plus the project folder's name (not its path).
 
+## Saving them for review (`--save`)
+
+The report stores nothing. `ad mistakes --save` is the one way to keep what it finds, and it asks first, in its own words:
+
+```sh
+ad mistakes --save                                   # asks: [a]ll / [h]istory only / [f]iles only / [N]o
+ad mistakes --save --import-history --import-files   # without a terminal: the flags are the answer
+```
+
+- **From your history:** one redacted sentence per correction you repeated in this project (at most 20 at a time, the most repeated first), and only the dates and counts of the ones you made once. Only sessions started in this project's folder are counted (every Codex session file is opened to see where it started).
+- **From your instruction files:** each rule in `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.cursor/rules`, `.cursorrules` and the Copilot instructions, one review decision per file. The blocks ad itself wrote into those files are skipped.
+- **Everything waits for you.** Each item is saved as pending: nothing reaches your agents until you accept it in `ad review`. A rejected item is deleted and isn't proposed again. Text that reads like instructions to the agent is held back and shown as flagged.
+- **Only an answer saves.** `y`, a blank line and `--yes` save nothing; nothing is opened or created before you answer.
+- `install` asks the same question once, after setup, when you run it in a terminal inside a project.
+
 ## When it doesn't work
 
 - "Run it again with --yes to read them": there was no terminal to ask in ([troubleshooting #92](troubleshooting.md#92-ad-mistakes-run-it-again-with---yes-to-read-them)).

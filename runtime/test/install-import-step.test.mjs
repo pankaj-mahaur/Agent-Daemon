@@ -52,9 +52,9 @@ test("a setup that did nothing (Codex's config can't be read): the import step w
   assert.equal(t.calls.length, 0, t.lines.join("\n"));
 });
 
-test("no terminal: install stops at 'finish in a terminal' and the import step waits too; empty at L3", async () => {
+test("no terminal: install stops at 'finish in a terminal' and the import step waits too", async () => {
   const t = home({ tty: false });
   assert.equal(await install({ ctx: t.ctx, hosts: ["codex"], yes: true }), 2, t.lines.join("\n"));
   assert.equal(t.calls.length, 0);
-  assert.equal(await consentedImport({}, {}), null, "reserved: does nothing until L4b fills it");
+  assert.equal(await consentedImport({}, {}), null, "no terminal, no import");
 });

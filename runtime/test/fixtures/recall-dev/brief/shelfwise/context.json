@@ -1,0 +1,27 @@
+{
+  "name": "shelfwise",
+  "stack": "Ruby on Rails 7.2 e-commerce admin: Hotwire (Turbo + Stimulus), Sidekiq, PostgreSQL, Stripe",
+  "branch": "feat/bulk-refunds",
+  "recent_paths": [
+    "app/controllers/admin/refunds_controller.rb",
+    "app/jobs/bulk_refund_job.rb",
+    "app/services/refunds/bulk_issuer.rb",
+    "app/models/refund.rb",
+    "app/views/admin/orders/_bulk_actions.html.erb",
+    "app/javascript/controllers/bulk_select_controller.js",
+    "db/migrate/20261027101500_add_batch_id_to_refunds.rb",
+    "spec/services/refunds/bulk_issuer_spec.rb",
+    "spec/jobs/bulk_refund_job_spec.rb",
+    "spec/system/admin/bulk_refunds_spec.rb",
+    "config/sidekiq.yml",
+    "config/locales/en.yml"
+  ],
+  "recent_commits": [
+    "Add batch_id to refunds",
+    "Issue bulk refunds in a job with per-order idempotency keys",
+    "Add bulk refund action to the admin orders index",
+    "Add bulk-select Stimulus controller with select-all",
+    "Cover partial failures in bulk refund specs"
+  ],
+  "session_cwd": "/home/dev/apps/shelfwise"
+}

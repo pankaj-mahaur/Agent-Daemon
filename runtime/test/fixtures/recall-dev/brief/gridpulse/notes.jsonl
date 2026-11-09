@@ -1,0 +1,24 @@
+{"id":"gp-01","text":"ECharts formatters get epoch ms: format with formatInTimeZone(ts, tz, fmt). new Date(ts).toLocale* uses the browser zone and is wrong here.","created":"2026-10-24","kind":"architecture"}
+{"id":"gp-02","text":"Time unit tests: npx vitest run src/lib/time. DST cases pin the clock with vi.setSystemTime; vitest.config.ts forces TZ=UTC.","created":"2026-10-20","kind":"testing"}
+{"id":"gp-03","text":"E2E: npm run test:e2e -- tests/e2e/timezone.spec.ts; Playwright expects the mock API (npm run mock) on :8787.","created":"2026-08-11","kind":"testing"}
+{"id":"gp-04","text":"Charts always render in the site's own timezone (site.tz from the API); users can't pick a different one.","created":"2025-06-19","kind":"architecture"}
+{"id":"gp-05","text":"Chart timezone is the user preference if set, else site.tz; read it from effectiveTz in src/lib/time/zones.ts, not from the store directly.","created":"2026-10-27","kind":"architecture"}
+{"id":"gp-06","text":"Timezone and other user preferences live only in localStorage via a hand-rolled writable; nothing syncs to the server.","created":"2025-04-02","kind":"architecture"}
+{"id":"gp-07","text":"Preferences sync to /api/me/preferences (1s debounce) and localStorage is just a cache; add new keys to the PreferencesSchema zod type.","created":"2026-09-29","kind":"architecture"}
+{"id":"gp-08","text":"Use Node 18 (nvm use 18) for this repo.","created":"2025-01-30","kind":"tooling"}
+{"id":"gp-09","text":"Node 22 LTS is required (.nvmrc); Node 18 breaks since the Vite 6 upgrade.","created":"2026-05-21","kind":"tooling"}
+{"id":"gp-10","text":"moment-timezone was removed for bundle size; use date-fns-tz. ESLint no-restricted-imports blocks moment imports.","created":"2026-03-04","kind":"tooling"}
+{"id":"gp-11","text":"Safari before 15.4 lacks Intl.supportedValuesOf; keep the static IANA list as the picker's fallback.","created":"2025-11-17","kind":"fact"}
+{"id":"gp-12","text":"Offsets aren't always whole hours (Asia/Kolkata +5:30, Asia/Kathmandu +5:45); bucketing code must not assume 60-minute steps.","created":"2026-07-02","kind":"fact"}
+{"id":"gp-13","text":"src/routes/(app)/billing/+page.server.ts loads invoices server-side only; never move it to a universal +page.ts (it uses an API key).","created":"2026-10-18","kind":"paths"}
+{"id":"gp-14","text":"Site list search is fuzzy (fuse.js, threshold 0.3); tune it in src/lib/search.ts.","created":"2026-09-10","kind":"fact"}
+{"id":"gp-15","text":"Alert thresholds in src/lib/components/alerts/ThresholdForm.svelte are re-validated by the API; client checks are UX only.","created":"2026-02-17","kind":"fact"}
+{"id":"gp-16","text":"The live readings websocket (src/lib/live/socket.ts) reconnects with jittered backoff capped at 30s.","created":"2025-08-27","kind":"architecture"}
+{"id":"gp-17","text":"CSV export is streamed by the API; the frontend only builds the download URL.","created":"2025-12-05","kind":"fact"}
+{"id":"gp-18","text":"Auth is cookie-based in hooks.server.ts; locals.user is typed in src/app.d.ts.","created":"2026-04-14","kind":"fact"}
+{"id":"gp-19","text":"Conventional Commits with scopes charts, prefs, ui, time, api; release-please writes the changelog.","created":"2025-03-08","kind":"git"}
+{"id":"gp-20","text":"Before a PR: npm run lint (eslint + prettier --check) and npm run check (svelte-check) must both pass.","created":"2025-09-23","kind":"tooling"}
+{"id":"gp-21","text":"Setup: npm ci, cp .env.example .env, npm run dev; start the mock API with npm run mock.","created":"2025-05-15","kind":"workflow"}
+{"id":"gp-22","text":"New components use Svelte 5 runes ($state, $derived, $props); no legacy $: statements.","created":"2026-01-12","kind":"style"}
+{"id":"gp-23","text":"main auto-deploys to staging on Cloudflare Pages; production is a manual promote in the dashboard.","created":"2026-06-24","kind":"workflow"}
+{"id":"gp-24","text":"Component tests mount with @testing-library/svelte; wrap anything reading the preferences store in withPreferences() from tests/helpers.ts.","created":"2026-02-08","kind":"testing"}

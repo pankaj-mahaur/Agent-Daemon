@@ -89,6 +89,7 @@ Commands:
   memory report [--days 30] [--all-projects] [--json] [--share]   Is memory working: repeated corrections, what was shown, feedback
                          --all-projects       span every project (default: current --cwd only)
   mistakes [--all-projects] [--share | --json] [--yes]   Read-only report of the corrections you typed to your coding agents (offline, stores nothing)
+  mistakes --save [--import-history] [--import-files]   Save this project's repeated corrections and instruction-file rules for review (asks first)
   remember <text>        Save a learning for this project (accepted at once only in your own terminal)
   forget <n> · restore <n>   Remove a learning (restore within 7 days); an accepted one asks you to type its number
   config review [strict|auto]   Review-first for every learning, or let typed corrections apply at once where a host can prove them
@@ -1161,6 +1162,14 @@ async function cmdDoctor({ cwd = process.cwd(), tokens, limit, model } = {}) {
     checks.push(hd.logRow(hookLogTail(5)));
   } catch (e) {
     checks.push({ name: "Hook routes", ok: true, note: `not checked (${e.message})` });
+  }
+
+  // Check 4b: recall (plan L6) — what it sends from this folder, and other memory next to it.
+  try {
+    const { recallDoctorRows } = await import("./memory/recall-doctor.mjs");
+    for (const r of await recallDoctorRows({ cwd, home, command: (v) => `ad ${v}` })) checks.push({ name: r.code, ok: r.ok, note: r.note });
+  } catch (e) {
+    checks.push({ name: "recall.tokens", ok: true, note: `not checked (${e.message})` });
   }
 
   // Check project-managed Claude instructions and memory quality.

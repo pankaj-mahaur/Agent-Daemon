@@ -84,7 +84,7 @@ async function launch() {
     return runMistakes(rest);
   }
   // L5: the memory verbs (memory/memory-cli.mjs), before the full command module.
-  if (["remember", "forget", "restore"].includes(command) || (command === "config" && rest[0] === "review")) {
+  if (["remember", "forget", "restore"].includes(command) || (command === "config" && ["review", "recall"].includes(rest[0]))) {
     const { memoryVerbMain } = await import("./memory/memory-cli.mjs");
     return memoryVerbMain(command, rest, { command: (v) => `ad ${v}` });
   }
