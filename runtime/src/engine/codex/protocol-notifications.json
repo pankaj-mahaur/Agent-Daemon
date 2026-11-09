@@ -1,5 +1,5 @@
 {
-  "codexVersion": "0.163.0",
+  "codexVersion": "0.167.0",
   "source": "codex-rs/app-server-protocol/src/protocol/common.rs",
   "stable": [
     "error",
@@ -12,6 +12,7 @@
     "thread/reverted",
     "skills/changed",
     "thread/name/updated",
+    "thread/section/changed",
     "thread/attachment/updated",
     "thread/goal/updated",
     "thread/goal/cleared",

@@ -1,5 +1,5 @@
 {
-  "codexVersion": "0.163.0",
+  "codexVersion": "0.167.0",
   "methods": {
     "clientRequests": [
       "account/gatewayOAuth/cancel",
@@ -32,6 +32,7 @@
       "externalAgentConfig/import",
       "externalAgentConfig/import/readHistories",
       "externalAgentConfig/import/recordHistory",
+      "feedback/save",
       "feedback/upload",
       "fs/copy",
       "fs/createDirectory",
@@ -196,6 +197,7 @@
       "thread/realtime/transcript/delta",
       "thread/realtime/transcript/done",
       "thread/reverted",
+      "thread/section/changed",
       "thread/settings/updated",
       "thread/started",
       "thread/status/changed",
@@ -325,6 +327,7 @@
       "thread/realtime/transcript/delta": "ThreadRealtimeTranscriptDeltaNotification",
       "thread/realtime/transcript/done": "ThreadRealtimeTranscriptDoneNotification",
       "thread/reverted": "ThreadRevertedNotification",
+      "thread/section/changed": "ThreadSectionChangedNotification",
       "thread/settings/updated": "ThreadSettingsUpdatedNotification",
       "thread/started": "ThreadStartedNotification",
       "thread/status/changed": "ThreadStatusChangedNotification",
@@ -1079,7 +1082,8 @@
         "extensions",
         "mcpServerOpenaiFormElicitation",
         "optOutNotificationMethods",
-        "requestAttestation"
+        "requestAttestation",
+        "requiredHumanApproval"
       ],
       "types": {
         "experimentalApi": "boolean",
@@ -1087,7 +1091,8 @@
         "extensions": "null|object",
         "mcpServerOpenaiFormElicitation": "boolean",
         "optOutNotificationMethods": "array<string>|null",
-        "requestAttestation": "boolean"
+        "requestAttestation": "boolean",
+        "requiredHumanApproval": "boolean"
       }
     },
     "ItemGuardianApprovalReviewCompletedNotification": {
@@ -1498,6 +1503,7 @@
       ],
       "props": [
         "exitCode",
+        "outputDrainTimedOut",
         "processHandle",
         "stderr",
         "stderrCapReached",
@@ -1506,6 +1512,7 @@
       ],
       "types": {
         "exitCode": "integer",
+        "outputDrainTimedOut": "boolean|null",
         "processHandle": "string",
         "stderr": "string",
         "stderrCapReached": "boolean",
@@ -1647,7 +1654,6 @@
     },
     "ReviewDelivery": {
       "enum": [
-        "detached",
         "inline"
       ]
     },
@@ -2411,6 +2417,20 @@
       ],
       "types": {
         "beforeTurnId": "string",
+        "threadId": "string"
+      }
+    },
+    "ThreadSectionChangedNotification": {
+      "required": [
+        "sectionId",
+        "threadId"
+      ],
+      "props": [
+        "sectionId",
+        "threadId"
+      ],
+      "types": {
+        "sectionId": "null|string",
         "threadId": "string"
       }
     },
@@ -3272,12 +3292,10 @@
         {
           "tag": "audio",
           "props": [
-            "type",
-            "url"
+            "type"
           ],
           "types": {
-            "type": "enum(audio)",
-            "url": "string"
+            "type": "enum(audio)"
           }
         },
         {
@@ -3550,8 +3568,9 @@
           "tag": "imageGeneration",
           "props": [
             "failure",
+            "generationId",
             "id",
-            "result",
+            "inputImages",
             "revisedPrompt",
             "savedPath",
             "status",
@@ -3560,8 +3579,9 @@
           ],
           "types": {
             "failure": "ImageGenerationFailure|null",
+            "generationId": "null|string",
             "id": "string",
-            "result": "string",
+            "inputImages": "array<ImageGenerationInputImage>",
             "revisedPrompt": "null|string",
             "savedPath": "AbsolutePathBuf|null",
             "status": "string",
@@ -4103,10 +4123,12 @@
     "HooksListParams": {
       "required": [],
       "props": [
-        "cwds"
+        "cwds",
+        "threadId"
       ],
       "types": {
-        "cwds": "array<string>"
+        "cwds": "array<string>",
+        "threadId": "null|string"
       }
     },
     "HookMetadata": {
