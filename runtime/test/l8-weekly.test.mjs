@@ -288,3 +288,38 @@ test("the doctor nudge: day 6 nothing, day 7 the feedback thread; epoch dates an
   assert.equal(feedbackNudge(root, { now: NOW + 0 }), null, "6 days");
   assert.match(feedbackNudge(root, { now: Date.parse("2026-11-19T12:00:01.000Z") }), /github\.com\/pankaj-mahaur\/Agent-Daemon\/discussions/);
 });
+
+test("with rules present: report --json carries both the rules section and the weeks, and their asked/stopped agree; the share link stays counts only", async () => {
+  const { reportCommand } = await import("../src/memory/report.mjs");
+  const { addRule } = await import("../src/memory/rules-service.mjs");
+  const h = await store();
+  const id = note(h, "never run npm install here");
+  svc.acceptLearning(h, testReviewToken(), id, { now: at("2026-11-16T08:00:00Z") });
+  addRule(h, testReviewToken(), { learningId: id, projectId: PID, kind: "command", pattern: { type: "command", program: "npm", subcommands: ["install"] }, reason: "never run npm install here", now: new Date(NOW) });
+  // All inside the current week and the 30-day window, so both views count the same events.
+  const ruleEvents = [
+    { at: "2026-11-16T09:00:00.000Z", project: PID, decision: "asked", rules: [{ id: 1 }] },
+    { at: "2026-11-17T09:00:00.000Z", project: PID, decision: "stopped", rules: [{ id: 1, matched: "CANARY-CALL" }], call: "npm install CANARY-CALL" },
+    { at: "2026-11-17T09:01:00.000Z", project: PID, decision: "passed", rules: [{ id: 1 }] },
+    { at: "2026-11-17T09:02:00.000Z", decision: "self-protect", outcome: "deny" },
+    { at: "2026-11-17T09:03:00.000Z", project: OTHER, decision: "stopped", rules: [{ id: 9 }] },
+  ];
+  const json = [];
+  assert.equal(await reportCommand({ handle: h, keys: KEYS, json: true, weeks: 1, ruleEvents, now: NOW, out: (l) => json.push(l) }), 0);
+  const r = JSON.parse(json[0]);
+  assert.deepEqual([r.weekly[0].asked, r.weekly[0].stopped], [1, 1]);
+  assert.deepEqual([r.rules.asked, r.rules.stopped, r.rules.passes, r.rules.selfProtect.stopped], [1, 1, 1, 1]);
+  assert.doesNotMatch(json[0], /CANARY-CALL/);
+  const text = [];
+  await reportCommand({ handle: h, keys: KEYS, weeks: 1, ruleEvents, now: NOW, out: (l) => text.push(l) });
+  assert.doesNotMatch(text.join("\n"), /CANARY-CALL/);
+  const link = [];
+  await reportCommand({ handle: h, keys: KEYS, shareLink: true, weeks: 1, ruleEvents, now: NOW, out: (l) => link.push(l) });
+  const body = new URL(link.at(-1)).searchParams.get("body");
+  assert.match(body, /rules asked 1\b[\s\S]*rules stopped 1\b/);
+  assert.doesNotMatch(decodeURIComponent(link.join(" ")), /CANARY|npm install/);
+  // --purge with rules present: the rule and its accepted note stay.
+  const { reportPurgeMain } = await import("../src/memory/report-purge.mjs");
+  assert.equal(await reportPurgeMain(["--purge"], { handle: h, keys: KEYS, token: async () => ({ token: testReviewToken() }), ask: async () => "y", out: () => {} }), 0);
+  assert.ok(h.get("SELECT 1 AS x FROM rules WHERE learning_id = ?", [id]));
+});
