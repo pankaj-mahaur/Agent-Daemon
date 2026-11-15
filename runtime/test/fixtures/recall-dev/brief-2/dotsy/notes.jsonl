@@ -1,0 +1,22 @@
+{"id":"dt-01","text":"Templates render with minijinja using UndefinedBehavior::Strict. An undefined variable must be a hard error that names the file and line (minijinja::Error has line()), never an empty string.","created":"2026-10-24","kind":"architecture"}
+{"id":"dt-02","text":"Templating is a small regex `{{var}}` replace in src/template.rs, no engine, to keep the dependency tree small.","created":"2025-03-02","kind":"architecture"}
+{"id":"dt-03","text":"Snapshot tests use insta. After changing rendered output run `cargo insta test --review`; snapshots live in tests/snapshots/ and CI fails if any .snap.new is left over.","created":"2026-02-14","kind":"testing"}
+{"id":"dt-04","text":"MSRV is 1.74 (rust-version in Cargo.toml) and CI builds with that toolchain. Check a new dependency's MSRV before adding it; `cargo msrv verify` is quicker than waiting for CI.","created":"2025-11-19","kind":"tooling"}
+{"id":"dt-05","text":"Config file is ~/.dotsy.toml.","created":"2024-08-05","kind":"architecture"}
+{"id":"dt-06","text":"Config is read from $XDG_CONFIG_HOME/dotsy/dotsy.toml (via the directories crate). The old ~/.dotsy.toml still loads but prints a deprecation warning; keep both paths working in config.rs until 1.0.","created":"2026-05-21","kind":"architecture"}
+{"id":"dt-07","text":"On macOS the hostname crate returns names like `Foo-MacBook.local`. Strip the .local suffix before matching, otherwise per-host sections never apply.","created":"2026-06-08","kind":"gotcha"}
+{"id":"dt-08","text":"Symlinks on Windows need Developer Mode. `dotsy apply` falls back to copy mode there and prints a hint.","created":"2025-07-17","kind":"gotcha"}
+{"id":"dt-09","text":"Before a PR: `cargo fmt --all && cargo clippy --all-targets -- -D warnings && cargo test`.","created":"2024-09-30","kind":"workflow"}
+{"id":"dt-10","text":"Releases: cargo-dist builds 5 targets on tag push and the workflow updates the homebrew tap. Don't edit the formula by hand.","created":"2025-12-12","kind":"deploy"}
+{"id":"dt-11","text":"`dotsy diff` shells out to `git diff --no-index` for colour; if git isn't on PATH it falls back to the similar crate.","created":"2025-04-26","kind":"architecture"}
+{"id":"dt-12","text":"Use anyhow for errors everywhere, lib included.","created":"2024-11-08","kind":"style"}
+{"id":"dt-13","text":"Library modules return DotsyError (thiserror); anyhow is only for main.rs. Template problems go in DotsyError::Template { path, line, msg }.","created":"2026-07-03","kind":"style"}
+{"id":"dt-14","text":"env.* in templates: don't hand the whole environment to the template context, people keep tokens in env. Only expose names listed under [vars.env], read with std::env::var_os, and treat non-UTF-8 values as an error.","created":"2026-10-27","kind":"security"}
+{"id":"dt-15","text":"Shell completions are generated in build.rs with clap_complete; `dotsy completions zsh` prints them.","created":"2025-02-21","kind":"tooling"}
+{"id":"dt-16","text":"Commit subjects: `area: imperative summary`, lowercase. git-cliff groups the changelog by area.","created":"2024-10-15","kind":"git"}
+{"id":"dt-17","text":"`dotsy watch` uses notify with a 300ms debounce. 'No space left on device' from inotify means fs.inotify.max_user_watches is too low, not a full disk.","created":"2025-09-09","kind":"debugging"}
+{"id":"dt-18","text":"Integration tests HOME ko tempdir pe point karke chalte hain (assert_fs). Test mein apna real home kabhi mat chhuna.","created":"2025-06-02","kind":"testing"}
+{"id":"dt-19","text":"Encrypted secrets (age) were prototyped on spike/age and parked; docs/secrets.md explains why.","created":"2026-03-18","kind":"workflow"}
+{"id":"dt-20","text":"lib.rs has `#![doc = include_str!(\"../README.md\")]`, so README code blocks run as doctests. Template examples in the README must actually render, mark shell snippets as ```text.","created":"2026-04-11","kind":"testing"}
+{"id":"dt-21","text":"Paths banane ke liye PathBuf::join use karo, string concat se mat banao. Windows CI job turant pakad leta hai.","created":"2025-08-27","kind":"style"}
+{"id":"dt-22","text":"`dotsy status` runs from shell rc files, so startup time matters. git2 is opened lazily only for commands that need it; `hyperfine 'dotsy status'` should stay under 15ms.","created":"2026-01-06","kind":"performance"}

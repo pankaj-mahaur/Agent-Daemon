@@ -18,9 +18,11 @@ import { isProjectId, projectClause } from "./projects.mjs";
 import { dropFromFile } from "./metrics.mjs";
 import { probeAncestry } from "./ancestry.mjs";
 import { confirmByDialog } from "./dialog-code.mjs";
-import { reviewableSql, openSql } from "./trust.mjs";
+import { reviewableSql, openSql, acceptedSql } from "./trust.mjs";
 import { putSetting, recordEvent, tombstoneHash } from "./l5-tables.mjs";
 import { writeLearning, sameNote } from "./episodic.mjs";
+import { scrubForgotten } from "./scrub.mjs";
+import { gitTracked } from "./git-tracked.mjs";
 
 const issued = new WeakSet();
 
@@ -50,6 +52,15 @@ export function checkReviewToken({ env = process.env, isTTY = realTTY, ancestry 
   if (found.verdict === "agent") return { refused: REVIEW_TEXTS.agent(found.agent) };
   if (found.verdict !== "terminal") return { needsCode: found };
   return { token: mint() };
+}
+
+/**
+ * Is this the user's own terminal, by the token's checks without the dialog code? Mints
+ * nothing: for what a command shows (L8: an agent's shell sees neutral text), never to write.
+ */
+export function inOwnTerminal({ env = process.env, isTTY = realTTY, ancestry = probeAncestry } = {}) {
+  if (env.AD_TOOL_SHELL === "1" || !isTTY()) return false;
+  return (ancestry() ?? { verdict: "unknown" }).verdict === "terminal";
 }
 
 /** → { token } in the user's own terminal (asking for the dialog code when needed), else { refused: text }. */
@@ -244,13 +255,43 @@ export function keepNote(handle, token, id, { now } = {}) {
 }
 
 /** The user forgets an accepted note for good: purged, bytes and index entries included, and its memory-file line. */
-export function forgetAccepted(handle, token, id, { memoryFile } = {}) {
+export function forgetAccepted(handle, token, id, { memoryFile, onScrub, tracked } = {}) {
   must(token);
-  const row = handle.get("SELECT text FROM learnings WHERE id = ? AND status IN ('active', 'forget-requested') AND accepted_by IS NOT NULL", [id]);
+  const row = handle.get("SELECT text, project_slug, project_id, project_path FROM learnings WHERE id = ? AND status IN ('active', 'forget-requested') AND accepted_by IS NOT NULL", [id]);
   if (!row) return 0;
-  const purged = purgeLearnings(handle, [id]);
-  dropFromMemoryFile(memoryFile, row.text);
+  // L8 (design decision 7): the words it replaced go too — the superseded rows an edit or a
+  // reword left behind, walked back to the first. Otherwise purging this row would orphan
+  // them (superseded_by nulled) with the old words for good.
+  const chain = supersededChain(handle, id);
+  const texts = [row.text, ...chain.map((r) => r.text)];
+  const purged = purgeLearnings(handle, [id, ...chain.map((r) => r.id)]);
+  for (const t of texts) dropFromMemoryFile(memoryFile, t);
+  // L8 (design decision 16): and from the journals and proposal files (best effort).
+  if (purged) {
+    try {
+      const project = row.project_slug === null || row.project_slug === undefined ? null : { slug: row.project_slug, id: row.project_id ?? null, paths: [row.project_path, ...chain.map((r) => r.project_path)] };
+      const res = scrubForgotten(handle, texts, { project, tracked: tracked ?? ((f, repo) => gitTracked(f, repo)) });
+      onScrub?.({ ...res, older: chain.length });
+    } catch {
+      // the store no longer holds the note; the files are best effort
+    }
+  }
   return purged;
+}
+
+/** The superseded rows behind a note (each one's superseded_by is the next), newest first. */
+export function supersededChain(handle, id, { max = 1000 } = {}) {
+  const out = [];
+  const seen = new Set([Number(id)]);
+  let frontier = [Number(id)];
+  while (frontier.length && out.length < max) {
+    const marks = frontier.map(() => "?").join(",");
+    const rows = handle.all(`SELECT id, text, project_path FROM learnings WHERE status = 'superseded' AND superseded_by IN (${marks})`, frontier).filter((r) => !seen.has(r.id));
+    for (const r of rows) seen.add(r.id);
+    out.push(...rows);
+    frontier = rows.map((r) => r.id);
+  }
+  return out;
 }
 
 /** `/memory forget` in ad's terminal UI: archived (not served, still listed), this project's or a global note, and its memory-file line dropped. */
@@ -361,4 +402,84 @@ export function clearMark(handle, token, id, { keys } = {}) {
   } catch {
     return 0; // no events table: no marks
   }
+}
+
+/**
+ * The user edits a note in their own terminal (MCP launch plan L8, design decision 6).
+ * The path is chosen by the trust predicates, never the raw status:
+ *   - accepted (active or forget-requested, accepted_by set) → a new accepted row with the
+ *     new words (provenance and origin kept) supersedes it; the caller runs afterReview so
+ *     its rules move to the new row;
+ *   - unreviewed (pending, provisional, held back) → changed in place, back to pending;
+ *   - anything else (hidden, archived, rejected, superseded) → "closed".
+ * The new words pass the same screens as `remember` in the user's terminal: a secret or any
+ * flag refuses the edit (it never launders text past the screen).
+ * @returns {Promise<{status:"replaced"|"edited"|"same"|"empty"|"too-long"|"refused-secret"|"flagged"|"duplicate"|"closed"|"other"|"none", id?:number, newId?:number, twin?:number, flags?:string[], label?:string}>}
+ */
+export async function editLearning(handle, token, id, text, { keys, now = new Date() } = {}) {
+  must(token);
+  const row = handle.get("SELECT * FROM learnings WHERE id = ?", [id]);
+  if (!row) return { status: "none" };
+  const scope = inProject(keys);
+  if (!handle.get(`SELECT 1 AS x FROM learnings WHERE id = ? AND (${scope.sql} OR (project_slug IS NULL AND ${acceptedSql()}))`, [id, ...scope.params])) return { status: "other" };
+  const t = String(text ?? "").replace(/^\u{FEFF}/u, "").replace(/[\p{Cc}\p{Cf}]/gu, " ").replace(/\s+/g, " ").trim();
+  if (!t) return { status: "empty", id };
+  if (normKey(t) === normKey(row.text)) return { status: "same", id };
+  if (t.length > 2000) return { status: "too-long", id };
+  const { screenPrompt } = await import("./prompt-screen.mjs");
+  const { screenLearning } = await import("../digest/sanitize.mjs");
+  const flags = [...screenPrompt(t, { userWords: true }).flags];
+  if (flags.includes("secret")) return { status: "refused-secret", id };
+  if (screenLearning({ text: t, evidence_quote: "", tags: [] }).verdict !== "clean" && !flags.includes("instruction")) flags.push("instruction");
+  if (flags.length) return { status: "flagged", id, flags };
+  const accepted = Boolean(handle.get(`SELECT 1 AS x FROM learnings WHERE id = ? AND ${acceptedSql()}`, [id]));
+  const open = Boolean(handle.get(`SELECT 1 AS x FROM learnings WHERE id = ? AND ${openSql()}`, [id]));
+  if (!accepted && !open) return { status: "closed", id, label: row.status };
+  const global = row.project_slug === null || row.project_slug === undefined;
+  const nk = normKey(t);
+  const hash = global ? learningContentHash(t) : scopedContentHash(row.project_id || row.project_slug, t);
+  // A twin with these words that is served or waits refuses the edit; one that is never
+  // served again (an older wording, rejected, archived, hidden) gives up its hash, as
+  // promoteLearning does, so editing back to earlier words works.
+  const CLOSED = ["superseded", "rejected", "archived", "hidden"];
+  const twins = [
+    ...handle.all("SELECT id, status FROM learnings WHERE id <> ? AND (norm_key = ? OR content_hash = ?) AND (project_slug IS ? OR (? IS NOT NULL AND project_id = ?))", [id, nk, hash, row.project_slug ?? null, row.project_id ?? null, row.project_id ?? null]),
+    ...handle.all("SELECT id, status FROM learnings WHERE content_hash = ? AND id <> ?", [hash, id]),
+  ].filter((x, i, all) => all.findIndex((y) => y.id === x.id) === i);
+  const live = twins.find((x) => !CLOSED.includes(x.status));
+  if (live) return { status: "duplicate", id, twin: live.id };
+  const retire = () => {
+    for (const x of twins) handle.run("UPDATE learnings SET content_hash = ?, norm_key = NULL WHERE id = ?", [`retired-${x.id}`, x.id]);
+  };
+  const at = iso(now);
+  const detail = { from: learningContentHash(row.text), to: learningContentHash(t) };
+  if (accepted) {
+    return handle.transaction(() => {
+      retire();
+      const newId = Number(handle.run(
+        `INSERT INTO learnings (session_id, project_slug, project_id, project_path, category, text, evidence, confidence, status, supersedes, tags, applied_to,
+                                content_hash, norm_key, provenance, origin, accepted_by, accepted_at, status_at, global_accepted_at, created_at)
+         SELECT session_id, project_slug, project_id, project_path, category, ?, ?, confidence, 'active', id, tags, applied_to,
+                ?, ?, provenance, origin, 'review', ?, ?, global_accepted_at, ? FROM learnings WHERE id = ?`,
+        // Not the old evidence: it quotes the old words (as ad review's reword does).
+        [t, `edited in your terminal (was #${id})`, hash, nk, at, at, at, id]
+      ).lastInsertRowid);
+      handle.run("UPDATE learnings SET status = 'superseded', superseded_by = ?, status_at = ? WHERE id = ?", [newId, at, id]);
+      recordEvent(handle, { kind: "edited", learningId: newId, projectId: row.project_id ?? null, actor: "review", detail: { ...detail, was: id }, at: now });
+      return { status: "replaced", id, newId, text: t };
+    });
+  }
+  return handle.transaction(() => {
+    retire();
+    handle.run(
+      `UPDATE learnings SET text = ?, content_hash = ?, norm_key = ?, status_at = ?, evidence = 'edited in your terminal',
+              status = CASE WHEN status IN ('provisional', 'quarantined') THEN 'pending' ELSE status END,
+              quarantine_reason = NULL,
+              applied_to = CASE WHEN COALESCE(applied_to, '') LIKE 'quarantined%' THEN NULL ELSE applied_to END
+        WHERE id = ? AND accepted_by IS NULL`,
+      [t, hash, nk, at, id]
+    );
+    recordEvent(handle, { kind: "edited", learningId: id, projectId: row.project_id ?? null, actor: "review", detail, at: now });
+    return { status: "edited", id, text: t };
+  });
 }

@@ -17,6 +17,7 @@ import { findSecrets } from "../security/secret-patterns.mjs";
 import { commandsIn } from "../rules/shell.mjs";
 import { argvMatches, dialectOf, writeTargets } from "../rules/match.mjs";
 import { projectRelative, globsMatch } from "../rules/paths.mjs";
+import { matchPolicy } from "../rules/policy.mjs";
 import { consumedDir } from "./guards.mjs";
 
 /** Calls longer than this can't be shown in a prompt the user reads. */
@@ -62,6 +63,10 @@ function collectStrings(v, out = []) {
 /** Every sub-command (or project-relative path) a rule matched in a matcher call. */
 export function matchedParts(rule, call) {
   try {
+    if (rule?.type === "policy") {
+      const r = matchPolicy(rule.family, call);
+      return r.argv ? [r.argv.join(" ")] : r.path ? [r.path] : [];
+    }
     if (rule?.type === "command") {
       const command = call?.input?.command ?? call?.input?.cmd;
       if (command == null) return [];

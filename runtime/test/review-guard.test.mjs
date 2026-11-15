@@ -25,6 +25,7 @@ const ep = await import("../src/memory/episodic.mjs");
 const { learningContentHash, scopedContentHash } = await import("../src/memory/sqlite.mjs");
 const { captureExplicit, createLimiter } = await import("../src/memory/capture.mjs");
 const { runInteractiveReview, promoteFact, GUARD_TEXTS, globalPending } = await import("../src/review.mjs");
+const { markOwnFolder, resolveProject } = await import("../src/memory/projects.mjs");
 
 let handle;
 before(async () => {
@@ -39,7 +40,10 @@ let n = 0;
 async function project({ init = true } = {}) {
   const dir = path.join(WORK, `p${++n}`);
   await fs.mkdir(path.join(dir, ".git"), { recursive: true });
-  if (init) await fs.mkdir(path.join(dir, ".agent-daemon", "memory"), { recursive: true });
+  if (init) {
+    await fs.mkdir(path.join(dir, ".agent-daemon", "memory"), { recursive: true });
+    markOwnFolder(dir); // ad init
+  }
   const keys = [ep.projectSlug(dir)];
   return { dir, keys, scope: { kind: "project", dir, keys, source: "arg" } };
 }
@@ -163,7 +167,8 @@ test("memory-promote with a global duplicate: one global row, this one supersede
   handle.run("INSERT INTO learnings (category, text, content_hash, global_accepted_at, status) VALUES ('decision', ?, ?, '2026-01-01', 'active')", [text, learningContentHash(text)]);
   const existing = handle.get("SELECT id FROM learnings WHERE text = ? AND project_slug IS NULL", [text]).id;
   const r = await record(p, text, { scope: "global" });
-  assert.equal(status(r.id).content_hash, scopedContentHash(p.keys[0], text));
+  // ad init registered the project: its rows are keyed by the project's id.
+  assert.equal(status(r.id).content_hash, scopedContentHash(resolveProject(p.dir, { create: false }).id, text));
   const promote = path.basename(r.proposalPaths[1]);
   assert.match(promote, /^memory-promote-/);
   const res = await review(p, { accept: promote, io: io("accept") });

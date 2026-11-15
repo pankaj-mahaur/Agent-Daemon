@@ -24,9 +24,12 @@ For this work (feat/checkout-refunds):
   yesterday is there today whatever you work on. At most 5.
 - **For this work:** the learnings that match what you are working on now — the branch
   name, the files changed recently and the last commit messages. At most 10.
-- **Only what fits:** a learning about another part of the project stays out, and so
-  does an old one that a newer learning on the same subject replaces. A learning that
-  reads like an instruction to the agent is never sent.
+- **Only what fits:** a learning about another part of the project stays out: one that
+  shares only words of the changed files' paths or a commit's scope (`chat: …`) with
+  your work needs a much closer match than one that shares a word of the branch name or
+  the commit messages. An old learning that a newer one on the same subject replaces
+  stays out too; when the newer one says things changed, it is sent in its place. A
+  learning that reads like an instruction to the agent is never sent.
 - **Tags:** `[the agent asked to forget this; …]` is a learning the agent asked to
   forget; it stays in use until you decide in `review`.
 - **Within a budget:** everything memory adds at session start stays within about 1,200
@@ -38,8 +41,10 @@ For this work (feat/checkout-refunds):
 ## With each prompt
 
 When a prompt clearly matches up to 3 learnings, they are added for that prompt
-(learnings already sent this session are not sent again). Most prompts get none: recall
-matches words, not meaning, and it would rather send nothing than send noise.
+(learnings already sent this session are not sent again). A file path in the prompt
+counts less than your own words, and a learning that several of your words reach counts
+more than one a single word reaches (in the recall command's topic search too). Most prompts get none: recall matches words, not
+meaning, and it would rather send nothing than send noise.
 
 ## See what was sent: `/agent-daemon-memory:recall`
 

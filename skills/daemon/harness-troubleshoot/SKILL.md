@@ -95,6 +95,14 @@ Any harness command errors out, hangs, or finishes without doing the work ("my s
 | `ad mistakes`: "Skipped N compressed Codex sessions" (#94) | Codex's older `.jsonl.zst` files need Node 22.15+ (zstd) | update Node |
 | capture files missing from `<repo>/.agent-daemon` | a folder without its own `.agent-daemon/` keeps journal, proposals, session log and telemetry in `~/.agent-daemon/projects/<slug>-<hash8>/` (`memory/project-dir.mjs`) | by design: capture never creates a folder in a repo; `ad init` gives the project its own folder |
 
+### Starter safety policy (off by default)
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| "The user's starter safety policy asks before this command" / "stops this command here" (#130) | the user turned on the starter safety policy: it asks before a recursive delete of home, a root or the project folder, a force push to the default branch, reading `.env`/`.env.local`/`.env.*.local`, and `--no-verify` on git commit or push; Codex and bypass modes can't ask, so the call is stopped | don't retry or work around it: tell the user what you wanted to run and why. Only the user allows it (one call, or turning the policy off), in their own terminal; `safety status` there shows how |
+| "the starter safety policy is turned on by the user, in their own terminal. Nothing changed" (#131) | `safety on`/`off` ran from the agent's shell (`AD_TOOL_SHELL=1` or no terminal): only the user's own terminal changes it | ask the user to run it in their own terminal |
+| `safety on`: "nothing changed: there is no guard copy yet" / "the guard copy … is older" (#132) | the hook runs from a guard copy under `~/.agent-daemon/memory/dist/` that doesn't know the policy yet | the user runs `repair` in their own terminal, then `safety on` |
+
 ### Accounts, providers, limits and fallback
 
 API keys live in ad's local gateway, never in the engine: provider errors are often the gateway's own words ("ad: …").

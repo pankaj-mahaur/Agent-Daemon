@@ -414,6 +414,11 @@ export async function spawnDigestSweep(opts) {
   if (process.env.AGENT_DAEMON_DISABLE_SWEEP === "1") return false;  // service users / tests
   const daemonDir = path.join(opts.cwd, ".agent-daemon");
   try { await fs.access(daemonDir); } catch { return false; }  // not an ad project
+  // A .agent-daemon/ a repository shipped isn't an ad project: nothing is written into it.
+  try {
+    const { ownFolderIsUsers } = await import("./memory/projects.mjs");
+    if (!ownFolderIsUsers(opts.cwd)) return false;
+  } catch { return false; }  // can't tell: no flag, no sweep
 
   const flagPath = path.join(daemonDir, "last-digest-sweep.flag");
   try {

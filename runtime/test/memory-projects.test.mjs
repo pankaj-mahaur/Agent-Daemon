@@ -65,6 +65,7 @@ test("resolveProject: created once; the same folder resolves to the same id; the
 
 test("a moved folder keeps its id through its marker; a copy whose original still exists is a new project", () => {
   const d = folder(`work/move-${++n}`, { init: true });
+  projects.markOwnFolder(d); // ad init writes the marker (resolveProject only writes into a folder marked as the user's)
   const { id } = projects.resolveProject(d);
   assert.equal(JSON.parse(readFileSync(path.join(d, ".agent-daemon", "project.json"), "utf8")).id, id);
   assert.match(readFileSync(path.join(d, ".git", "info", "exclude"), "utf8"), /^\.agent-daemon\/project\.json$/m, "kept out of git, locally");

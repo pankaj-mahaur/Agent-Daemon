@@ -135,6 +135,24 @@ export function pruneDir(dir, { now = Date.now(), days = PRUNE_DAYS } = {}) {
   return n;
 }
 
+// A running context job: `recall/jobs/<pid>`, written by the hook as it starts the job
+// and removed by the job as it exits. While one exists, the job's git may be holding
+// the repository folder (on Windows a folder in use can't be deleted): tests wait for
+// these before removing their temp folders, and `doctor` could report a stuck one.
+export const jobsDir = (ad = adRoot()) => path.join(ad, "recall", "jobs");
+
+/** Record a started context job (the hook calls this with the child's pid). */
+export function markJobRunning(pid, root, { root: ad = adRoot(), now = Date.now() } = {}) {
+  if (!Number.isInteger(pid)) return;
+  fs.mkdirSync(jobsDir(ad), { recursive: true });
+  fs.writeFileSync(path.join(jobsDir(ad), String(pid)), JSON.stringify({ root: path.resolve(root), at: new Date(now).toISOString() }));
+}
+
+/** The job's own marker goes as it exits. */
+export function clearJobMarker(pid = process.pid, { root: ad = adRoot() } = {}) {
+  fs.rmSync(path.join(jobsDir(ad), String(pid)), { force: true });
+}
+
 /** Remove context caches older than 30 days. */
 export const pruneContexts = ({ root: ad = adRoot(), now = Date.now(), days = PRUNE_DAYS } = {}) => pruneDir(path.join(ad, "recall", "context"), { now, days });
 

@@ -13,6 +13,7 @@ import { spawnSync } from "node:child_process";
 import { open, schemaState, SCHEMA_VERSION } from "../src/memory/sqlite.mjs";
 import { deferStore, MIGRATE_JOB } from "../src/memory/no-migrate.mjs";
 import { HOOK_PATH } from "../src/hooks/routes.mjs";
+import { markOwnFolder } from "../src/memory/projects.mjs";
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "ad-nomig-"));
 // Anything this process does through adRoot() (a log line, a job marker) lands in a temp root, never the user's.
@@ -36,6 +37,9 @@ function setup() {
   const project = path.join(home, "work", "app");
   fs.mkdirSync(path.join(project, ".agent-daemon", "memory"), { recursive: true });
   fs.mkdirSync(root, { recursive: true });
+  // As ad init leaves it: the folder marked as the user's in ad's registry (a hook keeps
+  // capture files in a repo's .agent-daemon/ only then).
+  markOwnFolder(project, { env: { ...process.env, AD_ROOT: root } });
   return { home, root, project, dbPath: path.join(root, "episodic.db"), journal: path.join(project, ".agent-daemon", "learning-journal.jsonl") };
 }
 

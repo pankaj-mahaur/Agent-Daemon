@@ -186,6 +186,7 @@ test("every reviewToken( call site maps to verbs self-protection keeps from the 
     "src/cli-full.mjs": { token: ["ad consolidate --apply-merges", "ad consolidate --apply-stale"] },
     "src/memory/held.mjs": { token: ["ad memory held"] },
     "src/memory/memory-cli.mjs": { variant: ["teachonce remember x", "teachonce forget 1", "teachonce restore 1"] },
+    "src/memory/safety-cli.mjs": { token: ["ad safety on", "ad safety off", "teachonce safety off"] },
     "src/portability/import.mjs": { token: ["ad review --import x.json"] },
     "src/tui/ad-layer.mjs": { variant: ["ad tui"] },
   };

@@ -16,6 +16,7 @@ import { createRenderer } from "../src/tui/terminal/renderer.mjs";
 import { createInputDecoder } from "../src/tui/terminal/input.mjs";
 import { modelScreen } from "../testkit/screen.mjs";
 import { TERMINAL } from "../testkit/memory-trust.mjs";
+import { markOwnFolder } from "../src/memory/projects.mjs";
 
 const FAKE = fileURLToPath(new URL("../testkit/fake-codex-app-server.mjs", import.meta.url));
 const command = { cmd: process.execPath, prefix: [FAKE] };
@@ -74,6 +75,7 @@ test("learned rows and /memory include what the hooks captured this session (the
     const memory = fakeMemory();
     const ad = createAdLayer({ cwd, memory });
     mkdirSync(join(cwd, ".agent-daemon"), { recursive: true });
+    markOwnFolder(cwd); // ad init
     const entry = (ts, sessionId, text, type = "correction") => JSON.stringify({ ts, type, text, sessionId });
     writeFileSync(join(cwd, ".agent-daemon", "learning-journal.jsonl"), [
       entry("2026-10-06T10:00:05.000Z", "thread-1", "pnpm, not npm"),

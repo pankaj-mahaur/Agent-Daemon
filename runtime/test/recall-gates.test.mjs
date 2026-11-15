@@ -4,11 +4,13 @@
 // through the spawned hooks are in recall-hook-gates.test.mjs (P3, P4).
 //
 //   brief:  a relevant note for ≥ 7 of 8 projects; ≤ 20% of the brief's notes
-//           irrelevant (pooled); ours: ≤ 34% in any one project, ≥ 2 relevant notes per
+//           irrelevant (pooled); ours: ≤ 34% in any one project (the projects above
+//           20%, the owner's per-project target, are reported), ≥ 2 relevant notes per
 //           brief on average; and the same with every note seeded as the user's own
 //           words (the every-session tier filled by the newest)
 //   prompt: precision ≥ 0.8 above the threshold; ours: at least 10 notes returned over
-//           the corpus (no pass by silence); recall of relevant notes reported
+//           the corpus (no pass by silence), recall of relevant notes ≥ 0.3 (L6's own
+//           target, gated since the 15 Nov pass)
 
 // Held-out runs are deliberate and logged (design decision 3): only with AD_HELDOUT=1.
 import { test } from "node:test";
@@ -26,7 +28,7 @@ test("held-out brief gate (totals)", { skip: !HELDOUT && "held-out runs need AD_
   const projects = E.loadBriefCorpus(path.join(CORPORA, "brief-relevance"));
   for (const seed of ["legacy", "own"]) {
     const s = E.scoreBriefs(projects.map((p) => ({ ids: E.coreBriefIds(p, { now: NOW, seed }), expected: p.expected })));
-    t.diagnostic(`held-out brief (${seed} seeding): ${s.withRelevant}/${s.projects} with a relevant note; ${E.pct(s.share)} irrelevant (${s.irrelevant}/${s.total}); per-project max ${E.pct(s.maxShare)}; ${s.relevantPerBrief.toFixed(1)} relevant per brief`);
+    t.diagnostic(`held-out brief (${seed} seeding): ${s.withRelevant}/${s.projects} with a relevant note; ${E.pct(s.share)} irrelevant (${s.irrelevant}/${s.total}); per-project max ${E.pct(s.maxShare)}, ${s.over20} above 20%; ${s.relevantPerBrief.toFixed(1)} relevant per brief`);
     assert.equal(s.projects, 8);
     assert.ok(s.withRelevant >= 7, `${seed}: projects with a relevant note ${s.withRelevant}/8`);
     assert.ok(s.share <= 0.2, `${seed}: irrelevant share ${E.pct(s.share)}`);
@@ -44,4 +46,5 @@ test("held-out prompt-recall gate (totals)", { skip: !HELDOUT && "held-out runs 
   assert.equal(s.prompts, 64);
   assert.ok(s.precision >= 0.8, `precision ${s.precision.toFixed(3)}`);
   assert.ok(s.returned >= 10, `returned ${s.returned}`);
+  assert.ok(s.recall >= 0.3, `recall of relevant ${s.recall.toFixed(3)}`);
 });

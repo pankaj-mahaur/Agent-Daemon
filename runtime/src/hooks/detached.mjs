@@ -25,9 +25,10 @@ export function jobEnv(env = process.env, drop = []) {
 
 /**
  * Start `node <args…>` detached unless the same key started within windowMs.
+ * onSpawn(child): called with the started child before the hook goes on (its pid).
  * @returns {boolean} whether it started
  */
-export function spawnDetached(args, { key, windowMs = 60_000, root = adRoot(), now = Date.now(), spawnFn = spawn, env = jobEnv() } = {}) {
+export function spawnDetached(args, { key, windowMs = 60_000, root = adRoot(), now = Date.now(), spawnFn = spawn, env = jobEnv(), onSpawn } = {}) {
   if (key) {
     const dir = path.join(root, "hooks", "jobs");
     const file = path.join(dir, `${String(key).replace(/[^A-Za-z0-9_.-]/g, "_")}.started`);
@@ -47,5 +48,10 @@ export function spawnDetached(args, { key, windowMs = 60_000, root = adRoot(), n
   const child = spawnFn(process.execPath, args, { detached: true, stdio: "ignore", windowsHide: true, env, cwd: path.dirname(process.execPath) });
   child.on?.("error", () => {}); // a failed start (EACCES, EAGAIN) must not crash the hook
   child.unref?.();
+  try {
+    onSpawn?.(child);
+  } catch {
+    // the caller's bookkeeping must not undo a started job
+  }
   return true;
 }

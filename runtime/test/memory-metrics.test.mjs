@@ -20,6 +20,7 @@ const { classifyCorrection, recordInjections, findRepeat, jaccard, mcpCaptureRef
 const { applyLearnings } = await import("../src/digest/apply.mjs");
 const { runInteractiveReview } = await import("../src/review.mjs");
 const { acceptLearnings, TERMINAL } = await import("../testkit/memory-trust.mjs");
+const { markOwnFolder } = await import("../src/memory/projects.mjs");
 
 let handle;
 before(async () => {
@@ -35,6 +36,7 @@ async function project() {
   const dir = path.join(WORK, `p${++n}`);
   await fs.mkdir(path.join(dir, ".git"), { recursive: true });
   await fs.mkdir(path.join(dir, ".agent-daemon"), { recursive: true });
+  markOwnFolder(dir); // ad init
   return { dir, key: ep.projectSlug(dir) };
 }
 const OLD = Date.parse("2026-10-01T00:00:00Z");

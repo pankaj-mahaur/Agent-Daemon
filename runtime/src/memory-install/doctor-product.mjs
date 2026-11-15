@@ -52,6 +52,13 @@ export async function productChecks(ctx, { claudeVersion } = {}) {
       add("plugin.version", ok, ok ? `Claude Code ${v}` : `Claude Code ${v}: the plugin's hooks use the exec form, which needs ${EXEC_FORM_MIN_VERSION} or later (older versions may ignore their arguments and show a hook error on each prompt). Update Claude Code`, "claude-code");
     }
   }
+  // L7b: other command guards the starter safety policy overlaps (D18): keep one.
+  try {
+    const { coexistLines } = await import("../memory/policy-coexist.mjs");
+    for (const line of coexistLines({ home: ctx.home, env: ctx.env ?? process.env })) add("safety.coexist", true, line, null);
+  } catch {
+    // a config that can't be read: nothing to report
+  }
   const twice = duplicateCodexSkills(ctx);
   if (twice.length) add("skills.duplicate", false, `${twice.join(", ")} ${twice.length === 1 ? "is" : "are"} in ${ctx.display(path.join(ctx.home, ".agents", "skills"))} too, so Codex lists ${twice.length === 1 ? "it" : "them"} twice: remove the copy there`, "codex");
   return rows;

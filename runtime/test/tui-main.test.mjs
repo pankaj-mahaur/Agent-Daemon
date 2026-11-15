@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { hookRows, preflight, sinceLastTime, splitArgs, splitUnifiedDiff } from "../src/tui/main.mjs";
 import { stockUiArgs as codexArgs, MIRROR_MARKER, MIRRORED_FLAG, runStockUi as runStockCodex, syncSkills } from "../src/engine/codex/stock-ui.mjs";
 import { skillRoots } from "../src/harness/setup.mjs";
+import { markOwnFolder } from "../src/memory/projects.mjs";
 
 const tty = { isTTY: true };
 
@@ -68,6 +69,7 @@ test("sinceLastTime: proposals waiting and loops newer than the last visit", asy
   const cwd = mkdtempSync(path.join(tmpdir(), "ad-since-"));
   try {
     mkdirSync(path.join(cwd, ".agent-daemon", "proposed"), { recursive: true });
+    markOwnFolder(cwd); // ad init
     writeFileSync(path.join(cwd, ".agent-daemon", "proposed", "a.md"), "x");
     mkdirSync(path.join(cwd, ".agent-daemon", "loops"), { recursive: true });
     writeFileSync(path.join(cwd, ".agent-daemon", "loops", "t1.jsonl"), JSON.stringify({ ts: new Date().toISOString(), turnStatus: "completed", status: { progress: "docs green" } }) + "\n");

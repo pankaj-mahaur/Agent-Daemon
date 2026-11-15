@@ -6,11 +6,13 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import os from "node:os";
 import { rotateActiveContextIfNeeded } from "../src/session-start.mjs";
+import { markOwnFolder } from "../src/memory/projects.mjs";
 
 async function setupFixture(opts = {}) {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ad-rotate-test-"));
   const memDir = path.join(cwd, ".agent-daemon", "memory");
   await fs.mkdir(memDir, { recursive: true });
+  markOwnFolder(cwd); // ad init
   const filePath = path.join(memDir, "activeContext.md");
   if (opts.content !== undefined) {
     await fs.writeFile(filePath, opts.content, "utf8");

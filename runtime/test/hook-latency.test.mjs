@@ -19,6 +19,7 @@
 // Inside the parallel suite the limit is doubled: other test files load the
 // machine in bursts the alternation can't fully cancel.
 
+import { waitForRecallJobs } from "../testkit/recall-jobs.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -120,6 +121,8 @@ test("hook latency (Claude Code, exec form): p50 within the budget's ratio to no
     }
     assert.deepEqual(failed, []);
   } finally {
+    // L6: session start starts the repo-context job, whose git may still hold the project folder.
+    await waitForRecallJobs(fx.root);
     fs.rmSync(fx.home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   }
 });
@@ -143,6 +146,8 @@ test("hook latency through the stable launcher (L3): the same budgets, the extra
     }
     assert.deepEqual(failed, []);
   } finally {
+    // L6: session start starts the repo-context job, whose git may still hold the project folder.
+    await waitForRecallJobs(fx.root);
     fs.rmSync(fx.home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   }
 });
@@ -166,6 +171,8 @@ test("hook latency (Codex on Windows, through pwsh): p50 within the budget's rat
     }
     assert.deepEqual(failed, []);
   } finally {
+    // L6: session start starts the repo-context job, whose git may still hold the project folder.
+    await waitForRecallJobs(fx.root);
     fs.rmSync(fx.home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   }
 });

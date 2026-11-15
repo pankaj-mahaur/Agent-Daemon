@@ -371,7 +371,18 @@ async function main() {
         const projectId = projectIdOf(path.resolve(cwd));
         return (await import("../src/memory/reminder.mjs")).reviewReminder(store, { keys: [ep.projectSlug(path.resolve(cwd)), projectId].filter(Boolean), projectId, product: PRODUCT.displayName, review: v ? pinnedCommand("review", v) : `npx -y ${PRODUCT.package} review` });
       });
-      const message = [systemMessage ?? pluginNote, reminder].filter(Boolean).join("\n");
+      // L8 (design decision 14): once a week, last week's numbers, for the same attended session.
+      const weekly = !attended ? null : await quietly(async () => {
+        const ep = await import("../src/memory/episodic.mjs");
+        const store = await ep.db();
+        if (!store) return null;
+        const { hookProjectKeys } = await import("../src/memory/scope.mjs");
+        const keys = await hookProjectKeys(path.resolve(cwd));
+        const { idOfKeys } = await import("../src/memory/projects.mjs");
+        const { readRuleEvents } = await import("../src/hooks/rule-events.mjs");
+        return (await import("../src/memory/weekly.mjs")).weeklyLine(store, { keys, projectId: idOfKeys(keys), ruleEvents: () => readRuleEvents() });
+      });
+      const message = [systemMessage ?? pluginNote, reminder, weekly].filter(Boolean).join("\n");
       // Recall (plan L6): only into a host that honours it, named by a positive signal.
       const { contextHost } = await import("../src/hooks/host-capabilities.mjs");
       const recallHost = contextHost(input, { flag: hostFlag, plugin });

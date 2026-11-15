@@ -1218,9 +1218,87 @@ These are information, not failures: other memory that loads next to ad's learni
 
 **Fix:** run it yourself in a terminal (Windows Terminal, iTerm2, macOS Terminal, a Linux terminal). In an editor's terminal, follow the dialog it shows. Without a value, `config recall` only shows the current setting and works anywhere.
 
+## 113. Capture files go outside a project that has `.agent-daemon/`
+
+**Symptom:** `ad doctor` shows `Project folder`, or the journal and proposals land under `~/.agent-daemon/projects/<project id>/` although the project has a `.agent-daemon/` folder.
+
+**Cause:** ad writes into a project's own `.agent-daemon/` only when you ran `ad init` there. A repository can ship that folder (with a journal or a `.gitignore` that un-ignores everything), so ad doesn't trust the folder alone.
+
+**Fix:**
+- `this repository ships its own .agent-daemon/`: nothing to do. Your capture files stay outside the repository on purpose.
+- `isn't marked as yours`: if you made the folder (an `ad init` from an older version), run `ad init` there again.
+- `ad init` says `git wouldn't ignore .agent-daemon/…`: add the lines it lists to `.agent-daemon/.gitignore`, then run `ad init` again. Until then capture files (your prompts) stay out of the repository.
+
+## 130. A command is asked about or stopped by "the starter safety policy"
+
+**Symptom:** Claude Code asks before a command and the line under it says `starter safety policy (rule N): asks before …`, or the agent reports `The user's starter safety policy stops this command here`.
+
+**Cause:** you turned on the starter safety policy (`safety on`). It asks before a recursive delete of your home folder, a root or the project folder, a force push to the default branch, reading `.env`, `.env.local` or `.env.*.local`, and `--no-verify` on git commit or push. Claude Code in bypass or don't-ask mode, and Codex, can't ask, so the call is stopped with the reason.
+
+**Fix:**
+- Meant it: answer the prompt, or let one stopped call through with the `rules allow-once N <id>` line the message shows, in your own terminal.
+- A look-alike that shouldn't be asked about (a subfolder, a feature branch, `.env.example`): report it with the command; the policy is a fixed list and a fix ships in a release.
+- Don't want it: `safety off` in your own terminal (it asks you to type a code); `safety status` shows each family.
+
+## 131. `safety on` or `off` says "Nothing changed"
+
+**Symptom:** `the starter safety policy is turned on by the user, in their own terminal. Nothing changed.`
+
+**Cause:** it ran from an agent's shell or a script. Only your own terminal turns the policy on or off, so an agent can't switch it off to get past it.
+
+**Fix:** run it yourself in a terminal. `safety status` works anywhere.
+
+## 132. `safety on`: "there is no guard copy yet" or "the guard copy … is older"
+
+**Symptom:** `safety on` stops with `Update it first: … repair`.
+
+**Cause:** the check before each tool call runs from a copy of the package under `~/.agent-daemon/memory/dist/`. A copy from before the policy existed would read the new rules as unknown, so `on` waits for a current copy.
+
+**Fix:** run `repair` with the same command (`npx -y agent-daemon-memory repair`), then `safety on` again.
+
+## 150. `doctor` prints a "Readiness" section, and a line in it fails
+
+**Symptom:** after the checks, `npx agent-daemon-memory doctor` prints `Readiness` with a block per host. A line starts with `✗` and ends with `→` and a command.
+
+**Cause:** the section says whether memory works end to end on that host: installed, hooks wired (Codex: trusted in `/hooks`), how a failing rules check behaves, what recall sends, whether capture is review-first, the learning and rule counts, and what else loads next to it. A `✗` is a gap; the command after `→` is the one thing that fixes it. Lines for something your installed version doesn't have are left out, and the section never changes `doctor`'s exit code.
+
+**Fix:** run the command the line ends with. For `hooks … not trusted yet in Codex`, open Codex and run `/hooks`. For `marker … gone`, run the repair command it shows. `doctor --json` gives the same lines as rows with `"section": "readiness"` (home folder shown as `~`), which is what to attach to a bug report.
+
+## 151. `view` wrote a page, but a learning or rule looks cut short or says "withheld"
+
+**Symptom:** a row in `view.html` reads `[withheld: …]`, `https[:]//…`, or ends early.
+
+**Cause:** the page is a safe copy. A note that reads like an instruction to an agent, or that held a secret, is withheld whole; web addresses are shown as words so nothing in the page is a link; long texts are cut at 600 characters; your home folder shows as `~`. The page never changes anything: each row names the command to run in your terminal.
+
+**Fix:** nothing to fix. To read the full note, run `learnings show <number>` (or `learnings edit <number>` in your own terminal). The page is rewritten each time you run `view`, so run it again after a change.
+
 ---
 
 For harness problems, the [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill walks through login → hooks → sandbox → the engine's own log. See also [harness.md](harness.md) and, for the terminal UI, [tui.md](tui.md).
+
+## 140. `learnings edit` says "the editor returned at once"
+
+**Symptom:** `learnings edit <number>` prints `Nothing changed: The editor returned at once without waiting`.
+
+**Cause:** your editor opened the file in a window that was already running and returned to the terminal straight away (VS Code without `--wait`, or Windows 11's Notepad opening a tab in a running Notepad), so ad saw the words unchanged.
+
+**Fix:** set an editor that waits: `EDITOR="code --wait"`, or pass the words directly with `learnings edit <number> --text "<new words>"`.
+
+## 141. `learnings export`, `import`, `edit` or `list --all-projects` says it "needs your own terminal"
+
+**Symptom:** the command prints `Nothing written`, `Nothing imported`, `Nothing changed` or `Nothing shown` with "needs your own terminal".
+
+**Cause:** these read every project's learnings, write them to a file, or change them, so they run only in a terminal you typed into, not in an agent's shell or a script (the same check as `review`).
+
+**Fix:** run it yourself in a terminal. In an editor's terminal, follow the dialog it shows. `learnings list` and `show` for this project work anywhere.
+
+## 142. A forget says "capture file still holds its words"
+
+**Symptom:** after `forget <number>` the receipt lists one or more files that still hold the learning's words.
+
+**Cause:** the file is tracked by git (ad never rewrites a tracked file), or it is a journal a session is reading at that moment.
+
+**Fix:** for a tracked file, remove the line yourself and commit. For a journal in use, run `forget` again later; the journal is cleaned then.
 
 ## Still stuck?
 

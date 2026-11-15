@@ -16,7 +16,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { adRoot } from "../ad-root.mjs";
-import { projectIdOf } from "./projects.mjs";
+import { ownFolderIsUsers, projectIdOf } from "./projects.mjs";
 
 export const PROJECT_FOLDER = ".agent-daemon";
 export const IGNORE_LINES = ["learning-journal*.jsonl", "*.draining-*.jsonl", "proposed/", "applied/"];
@@ -87,6 +87,13 @@ export function moveToIdFolder(dir, id) {
 export function projectDataDir(cwd) {
   const own = path.join(path.resolve(cwd), PROJECT_FOLDER);
   if (!isDir(own)) return outsideDir(cwd);
+  // Nothing writes into, or adopts into, a .agent-daemon/ the user didn't make: a
+  // repository can ship one, with a journal and a .gitignore of its own (01 §7: repo
+  // writes none). Only the user's own folder (ad init, marked in ad's registry) is used,
+  // by a hook or a command alike; anything else keeps the capture files outside it.
+  if (!ownFolderIsUsers(cwd)) return outsideDir(cwd);
+  // A hook never adopts, even into the user's folder (a move under a host's time limit).
+  if (process.env.AD_HOOK_EVENT) return own;
   // Only to adopt an outside folder that already exists: no id is made for that
   // (a registry write under its lock, on every hook of an initialised project).
   const outside = outsideDir(cwd, { create: false });
