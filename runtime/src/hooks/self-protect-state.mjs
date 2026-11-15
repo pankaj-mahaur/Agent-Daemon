@@ -501,6 +501,9 @@ export function judgeState(f, s, cwd, cwdKnown, { inlineCode = () => null } = {}
   };
   const writeOne = (word) => {
     if (s.deadline && Date.now() > s.deadline) return void worst(ASK("a line too long to check for writes to ad's state"));
+    // Claude Code's env file, named by its variable (the hook's env may not have it).
+    // (Any spelling: a default, a substitution, its folder; or a target built on a line that names it.)
+    if (/CLAUDE_ENV_FILE/i.test(String(word)) || (/[$`%]/.test(String(word)) && /CLAUDE_ENV_FILE/i.test(s.line ?? ""))) return void worst(DENY(STATE));
     if (plainCwd && !/[\\/~$%*?[]/.test(String(word)) && String(word) !== ".git" && !/^[A-Za-z]:/.test(String(word)) && !SPECIAL_NAME(String(word))) return;
     const w = pathOf(word, s, cwd, cwdKnown);
     if (!w) return;
@@ -796,7 +799,8 @@ function sqliteState(argv, f, s, cwd, cwdKnown) {
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === "-init") {
-      nullInit = /^(?:\/dev\/null|nul)$/i.test(args[i + 1] ?? "");
+      // (NUL is the null device on Windows only: elsewhere it's a file in the folder.)
+      nullInit = args[i + 1] === "/dev/null" || (s.windows && /^nul$/i.test(args[i + 1] ?? ""));
       i++;
     } else if (/^-/.test(a)) {
       if (!SQLITE_OPTS.test(a)) optsOk = false;

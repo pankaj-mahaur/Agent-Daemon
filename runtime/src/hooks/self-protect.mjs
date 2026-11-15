@@ -97,6 +97,8 @@ function joinConcat(t) {
 /** Words as the shell may join them at run time: escapes, concatenations, operators and brackets as spaces. */
 const mentionText = (t) => flat(joinConcat(t).replace(/\\[ntr0]|\^M|\{ENTER\}/gi, " ")).replace(/[+,()[\]{};|&<>=]/g, " ");
 
+// D12h's verbs: a program built at run time with one of these as its first argument asks.
+const H_VERBS = "review|rules|uninstall|repair|held|consolidate|learnings";
 const VERB_RE = "review|rules|safety|learnings?|setup|install|repair|uninstall|config|consolidate|memory|remember|forget|restore|tui|init|hook|session-start|user-prompt-extract|query-retrieve";
 const ENTRY_RE = [...ENTRIES].map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
 const MENTION = new RegExp(`(?<![\\w$-])(?:${ENTRY_RE})(?:@[^\\s@]*)?(?:\\.\\w+)?\\s+(?:-\\S+\\s+)*(?:${VERB_RE})(?![\\w-])`, "i");
@@ -963,7 +965,7 @@ function backgroundsEntry(u, ps, word = ENTRY_WORD) {
 /** PowerShell's `& (…) <verb>` and `. (…)`: the parser drops the group, so it is read from the text. */
 function psCallGroups(text) {
   let out = null;
-  const verb = new RegExp(`^(?:${VERB_RE})$`, "i");
+  const verb = new RegExp(`^(?:${H_VERBS})$`, "i");
   for (const m of joinConcat(text).matchAll(/[&.]\s*\(([^()]*)\)[ \t]*([^\s;|]*)((?:[ \t]+[^\s;|]+)*)/g)) {
     const inner = m[1].trim();
     const lit = /^(['"])([^'"]*)\1$/.exec(inner)?.[2];
@@ -1316,7 +1318,7 @@ function otherRoutes(prog, argv, ctx, via, depth, facts) {
   if (stdinShell || builtScript || evaluator) {
     if (facts.mention() || mentionsVerb(substituteLiterals(argv.slice(1).join(" "), literals))) out = worst(out, deny("a", WORDS.nonliteral));
     else if (facts.encoded) out = worst(out, ask("h", WORDS.built));
-    else if (evaluator && new RegExp(`(?:\\$\\{?\\w+\\}?|\\$\\([^)]*\\)|\`[^\`]*\`)\\s+(?:${VERB_RE})(?![\\w-])`, "i").test(facts.evaluates ? decoded : argv.slice(1).join(" "))) out = worst(out, ask("h", WORDS.built));
+    else if (evaluator && new RegExp(`(?:\\$\\{?\\w+\\}?|\\$\\([^)]*\\)|\`[^\`]*\`)\\s+(?:${H_VERBS})(?![\\w-])`, "i").test(facts.evaluates ? decoded : argv.slice(1).join(" "))) out = worst(out, ask("h", WORDS.built));
   }
   // A program held in a variable or built at run time.
   if (isExpansion(argv[0], ps) || /^\[scriptblock\]/i.test(argv[0])) {
@@ -1324,7 +1326,8 @@ function otherRoutes(prog, argv, ctx, via, depth, facts) {
     else {
       let k = 1;
       while (k < argv.length && /^-/.test(argv[k])) k += AD_VALUE_OPTIONS.has(argv[k]) ? 2 : 1;
-      if (/^(?:review|rules|learnings?|setup|install|repair|uninstall|held|consolidate|memory|config|forget|remember|restore)$/i.test(argv[k] ?? "")) out = worst(out, ask("h", WORDS.built));
+      // (D12h's list: install and setup are too common as other tools' first word.)
+      if (new RegExp(`^(?:${H_VERBS})$`, "i").test(argv[k] ?? "")) out = worst(out, ask("h", WORDS.built));
     }
   }
   // PowerShell: `& (gcm <entry>) <verb>` runs what the lookup found.

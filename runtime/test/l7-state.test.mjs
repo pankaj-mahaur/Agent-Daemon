@@ -296,3 +296,19 @@ test("review round 3: trailing slashes, readers that write, cd into a glob, valu
     ["allow", "find ~ -name '*.py' | xargs grep foo"],
   ]);
 });
+
+test("review P2b-3: sqlite3's NUL is the null device on Windows only; CLAUDE_ENV_FILE in any spelling; class h's own verbs", () => {
+  check([
+    ["deny", `sqlite3 -init NUL ~/.agent-daemon/episodic.db "SELECT 1"`],
+    ["deny", "echo x >> ${CLAUDE_ENV_FILE:-/tmp/x}"],
+    ["deny", "F=$CLAUDE_ENV_FILE; echo x >> $F"],
+    ["deny", 'echo x >> "$(dirname "$CLAUDE_ENV_FILE")/x.sh"'],
+    ["allow", 'eval "$PM install"'],
+    ["allow", 'eval "$TOOL config get x"'],
+    ["ask", 'eval "$X review"'],
+  ]);
+  check([
+    ["allow", `sqlite3 -init NUL -readonly $env:USERPROFILE\\.agent-daemon\\episodic.db "SELECT 1"`],
+    ["allow", "& ($pm) install"],
+  ], { platform: "win32", tool: "PowerShell" });
+});

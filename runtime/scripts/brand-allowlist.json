@@ -610,6 +610,11 @@
       "reason": "host config protection (L7 D12d): Claude Code's settings files and Codex's config are what the tests check"
     },
     {
+      "path": "runtime/test/l7-gate.test.mjs",
+      "rules": ["A"],
+      "reason": "the self-protection gate per host (L7 Done-when 2): Codex payloads (turn_id, apply_patch forms) and Claude Code's are replayed"
+    },
+    {
       "path": "runtime/test/l7-allow-once.test.mjs",
       "rules": ["A"],
       "reason": "allow-once binds the call text only on Codex (it hides the command's folder): the tests send Codex payloads"
