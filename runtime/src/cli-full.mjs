@@ -93,6 +93,7 @@ Commands:
   remember <text>        Save a learning for this project (accepted at once only in your own terminal)
   forget <n> · restore <n>   Remove a learning (restore within 7 days); an accepted one asks you to type its number
   learnings list|show|edit|forget|export|import   Your learnings: see, change, forget, export for a private repo, import for review
+  rules list [--json]    The rules that ask before or stop commands and file writes (changes: rules --help in your own terminal)
   config review [strict|auto]   Review-first for every learning, or let typed corrections apply at once where a host can prove them
   route stats            Route-advice effectiveness: advised / followed / diverged / ignored per skill
                          --days <n>           window (default 30); --json for machine output
@@ -1888,6 +1889,14 @@ async function cmdMemory(sub, opts) {
         if (opts.applyStale) {
           const n = await con.applyStaleArchive(analysis, token);
           console.log(`  ✓ archived ${n} stale learning(s)`);
+        }
+        // L7 D2: a merge moves its rules to the learning that replaced it; the snapshot follows.
+        try {
+          const handle = await (await import("./memory/episodic.mjs")).db();
+          const r = handle ? await (await import("./memory/rules-finish.mjs")).afterReview(handle, token, { cmd: "ad" }) : null;
+          if (r?.switch?.why) console.log(`  ${r.switch.why}`);
+        } catch (e) {
+          console.error(`  the rules file wasn't rebuilt (${e?.message ?? e}); it keeps the rules it had until the next review`);
         }
         return 0;
       }

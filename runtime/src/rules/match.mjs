@@ -18,6 +18,7 @@
 import { commandsIn, programName } from "./shell.mjs";
 import { projectRelative, globsMatch } from "./paths.mjs";
 import { patchPaths } from "../hooks/io.mjs";
+import { branchApplies } from "./branches.mjs";
 import { matchPolicy } from "./policy.mjs";
 
 const COMMAND_TOOLS = new Set(["bash", "powershell", "shell", "shell_command", "exec_command", "local_shell", "exec", "container.exec"]);
@@ -206,8 +207,11 @@ function decide(rule, call) {
     const command = commandOf(call.input);
     if (command == null) return { match: false };
     const commands = commandsOfCall(call.input, command, dialectOf(call), os);
-    for (const { argv, dialect } of commands) {
-      if (argvMatches(rule, argv, { os, dialect })) return { match: true, argv };
+    for (let i = 0; i < commands.length; i++) {
+      const { argv, dialect } = commands[i];
+      // A rule with branches (L7 D6) applies only where branchApplies says; the branch facts
+      // come from the caller (call.branch), missing → unknown → it applies.
+      if (argvMatches(rule, argv, { os, dialect }) && (!rule.branches?.length || branchApplies(rule, commands, i, call.branch))) return { match: true, argv };
     }
     if (commands.incomplete) {
       const text = Array.isArray(command) ? command.join(" ") : String(command);

@@ -22,6 +22,7 @@ const USAGE = `${PRODUCT.package}: ad's memory server for Claude Code, Codex, Cu
   learnings list|show <number>|edit <number>|forget <number>|export|import <file>   your learnings (edit and forget in your own terminal)
   config review [strict|auto]   review-first for every learning, or not
   safety [on|status]   ask before four kinds of catastrophic commands (off by default; in your own terminal)
+  rules list [--json]   the rules that ask before or stop commands and file writes (changes: rules --help in your own terminal)
   view [--all-projects]   write a read-only HTML page of your learnings, rules and weekly numbers
   report [--days 30] [--weeks 4] [--all-projects] [--json] [--share] [--share-link] [--purge]   is memory working here
   mistakes [--all-projects] [--share | --json] [--yes]   the corrections you keep typing (read-only, offline)
@@ -135,6 +136,8 @@ export async function main(argv = process.argv.slice(2), { log = (l) => console.
   if (["remember", "forget", "restore", "config"].includes(cmd)) return (await import("../memory/memory-cli.mjs")).memoryVerbMain(cmd, rest, { out: log });
   // L7b: the starter safety policy (off by default; on and off only in your own terminal).
   if (cmd === "safety") return (await import("../memory/safety-cli.mjs")).safetyMain(rest, { out: log, env, isTTY, cmdName: `npx -y ${PRODUCT.package}` });
+  // L7: rules (memory/rules-cli.mjs): list without a token; changes in your own terminal.
+  if (cmd === "rules") return (await import("../memory/rules-cli.mjs")).rulesMain(rest, { out: log, env, isTTY, cmdName: `npx -y ${PRODUCT.package}` });
   // L8: your learnings (memory/learnings-cli.mjs): list, show, edit, forget, export, import.
   if (cmd === "learnings") return (await import("../memory/learnings-cli.mjs")).learningsMain(rest[0], rest.slice(1), { out: log });
   const flags = parseFlags(rest);

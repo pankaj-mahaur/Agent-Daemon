@@ -19,6 +19,11 @@ import { createChecklist, plan, summaryLine } from "./checklist.mjs";
 import { applyPlan } from "./checklist-apply.mjs";
 import { clean } from "./checklist-view.mjs";
 import { openSql } from "./trust.mjs";
+import { ruleOffers } from "./rule-proposals.mjs";
+import { ruleStep, rawInput, plainInput, noteStepSeconds } from "./rule-step.mjs";
+import { previewConsent, startPreviewRead } from "./rule-preview.mjs";
+import { ruleOwners, rulesLeftBy, confirmRemovals } from "./rule-removal.mjs";
+import { afterReview } from "./rules-finish.mjs";
 
 const name = (slug) => String(slug ?? "").replace(/^-+/, "").split(/[-/\\]/).filter(Boolean).pop() ?? String(slug ?? "");
 
@@ -47,6 +52,7 @@ const keysOf = (p) => [p.slug, p.id].filter(Boolean);
 export async function reviewChecklist(o) {
   const { handle, out } = o;
   if (!handle) return null;
+  const started = Date.now();
   const command = o.command ?? ((v) => `ad ${v}`);
   const env = o.env ?? process.env;
   let keys = o.keys ?? [];
@@ -55,6 +61,21 @@ export async function reviewChecklist(o) {
   const projects = waitingProjects(handle);
   const here = keys.find((k) => !String(k).startsWith("prj_")) ?? null;
   const others = projects.filter((p) => p.slug !== here);
+  // L7 D17: the rule step runs when it has offers even if nothing else waits here.
+  if (!rows.length && keys.length && !o.list && !o.acceptAll && o.isTTY() && ruleOffers(handle, { keys }).length) {
+    const g = await o.gate();
+    if (!g.token) {
+      out(g.refused ?? "Reviewing needs your own terminal.");
+      return 2;
+    }
+    const projectId0 = keys.find((k) => String(k).startsWith("prj_")) ?? null;
+    const plain0 = isPlain(o);
+    if (!plain0) o.release?.(); // raw keys: the line reader lets go of stdin first
+    await rulesAfter({ ...o, keys, slug: here, projectId: projectId0, token: g.token, dialogProven: g.dialogProven, applied: null, before: ruleOwners(handle), hadChecklist: false, plain: plain0, started });
+    // Then what review did before: other projects' waiting learnings, or the proposal files (null).
+    if (!projects.length || !plain0) return projects.length ? (out(`Also waiting in other projects: ${projects.slice(0, 3).map((p) => `${name(p.slug)} (${p.n})`).join(", ")}. Run ${command("review")} in that project's folder.`), 0) : null;
+    o = { ...o, gate: async () => g };
+  }
   if (!rows.length) {
     if (!projects.length) return null;
     // Nothing waits here: which project?
@@ -102,7 +123,18 @@ export async function reviewChecklist(o) {
   const projectMemory = where ? await memoryPath(where) : null;
   const memoryFile = [projectMemory, path.join(o.home ?? os.homedir(), ".agent-daemon", "user.md")].filter(Boolean);
 
-  if (o.acceptAll) return acceptAll({ ...o, rows, keys, slug, projectId, token: g.token, memoryFile, projectMemory });
+  if (o.acceptAll) return finish(acceptAll({ ...o, rows, keys, slug, projectId, token: g.token, memoryFile, projectMemory }), { ...o, token: g.token });
+
+  // L7: the rule step's history read starts now when the user agreed to it (D18), and the
+  // rules each learning has are noted before anything changes ("also removes rule 7", D2).
+  const before = ruleOwners(handle);
+  const read = previewConsent(handle) === "on" && ruleOffersPossible(handle, keys) ? (o.startRead ?? startPreviewRead)({ cwd: o.cwd, env: o.env, home: o.home }) : null;
+  const accepted = [];
+  const onApply = async (applied) => {
+    for (const r of applied) accepted.push(...r.ids);
+    await o.onApply?.(applied);
+  };
+  const after = (code, applied) => rulesAfter({ ...o, keys, slug, projectId, token: g.token, dialogProven: g.dialogProven, applied, before, accepted, read, hadChecklist: Boolean(applied), plain: isPlain(o), code, started });
 
   const stdout = o.stdout ?? process.stdout;
   const stdin = o.stdin ?? process.stdin;
@@ -110,12 +142,77 @@ export async function reviewChecklist(o) {
   // input gets the line mode, which reads answers).
   const raw = Boolean(stdin?.isTTY && typeof stdin.setRawMode === "function");
   const plain = o.plain || !raw || env.TERM === "dumb" || (Number(stdout.rows) || 24) < 12;
-  if (plain) return plainMode({ ...o, rows, keys, slug, projectId, token: g.token, header, memoryFile, projectMemory });
+  try {
+    if (plain) {
+      const pm = await plainMode({ ...o, rows, keys, slug, projectId, token: g.token, header, memoryFile, projectMemory, onApply });
+      return await after(pm.code, pm.applied);
+    }
+    // The line reader lets go of stdin first: the checklist reads raw keys.
+    o.release?.();
+    const r = await openChecklist({ handle, keys, token: g.token, stdin, stdout, rows, header, slug, projectId, memoryFile, projectMemory, onApply });
+    const code = report(out, r);
+    if (r.ended === "signal") return code;
+    if (r.ended === "error") return (await finish(null, { ...o, keys, token: g.token }), code); // the snapshot still follows the store
+    return await after(code, r.ended === "applied" ? r.applied : null);
+  } finally {
+    read?.stop?.();
+  }
+}
 
-  // The line reader lets go of stdin first: the checklist reads raw keys.
-  o.release?.();
-  const r = await openChecklist({ handle, keys, token: g.token, stdin, stdout, rows, header, slug, projectId, memoryFile, projectMemory, onApply: o.onApply });
-  return report(out, r);
+const isPlain = (o) => {
+  const stdin = o.stdin ?? process.stdin;
+  const stdout = o.stdout ?? process.stdout;
+  const env = o.env ?? process.env;
+  return Boolean(o.plain || !(stdin?.isTTY && typeof stdin.setRawMode === "function") || env.TERM === "dumb" || (Number(stdout.rows) || 24) < 12);
+};
+
+// Could the rule step have something to offer once the checklist is done? (rows that
+// derive to a rule, or older offers): only then is the history read worth starting.
+const ruleOffersPossible = (handle, keys) => ruleOffers(handle, { keys, max: 1 }).length > 0 || checklistRows(handle, keys).some((r) => r.kind === "note");
+
+/**
+ * After the checklist (L7 D2, D17): confirm the removal of rules whose learning this run took
+ * away, offer rules, then settle and rebuild the snapshot (afterReview). → the exit code.
+ */
+async function rulesAfter(o) {
+  const out = o.out;
+  const t0 = Date.now();
+  const code = o.code ?? 0;
+  const input = o.plain ? plainInput(o.ask) : rawInput(o.stdin ?? process.stdin, o.stdout ?? process.stdout);
+  let confirmed = [];
+  const gone = o.applied ? [...(o.applied.forgotten ?? []), ...(o.applied.deleted ?? [])] : [];
+  const left = gone.length ? rulesLeftBy(o.handle, o.before, gone) : [];
+  if (left.length) confirmed = await confirmRemovals({ rules: left, out, tty: o.tty, confirm: o.confirmCode, proven: o.dialogProven === true, command: o.command });
+  let step = { added: [], seconds: 0 };
+  try {
+    step = await ruleStep({ handle: o.handle, token: o.token, keys: o.keys, projectId: o.projectId, justAccepted: o.accepted ?? [], out, input, read: o.read ?? null, cwd: o.cwd, env: o.env, home: o.home, startRead: o.startRead });
+  } catch (e) {
+    out(`The rule step stopped: ${e?.message ?? e}. Nothing more was changed.`);
+  }
+  // L7b (ask 5): the starter policy's "offer once" runs here, after the rule step, with this run's token.
+  if (typeof o.afterRuleStep === "function") {
+    try {
+      await o.afterRuleStep({ handle: o.handle, token: o.token, out, input, keys: o.keys });
+    } catch (e) {
+      out(`The starter safety policy's offer stopped: ${e?.message ?? e}.`);
+    }
+  }
+  if (step.offered) noteStepSeconds(o.handle, { projectId: o.projectId, slug: o.slug, step: step.seconds, total: Math.round((Date.now() - (o.started ?? t0)) / 100) / 10, hadChecklist: o.hadChecklist });
+  await finish(null, { ...o, confirmed });
+  return code;
+}
+
+/** afterReview at the end of a token run: move or end rules as the run decided, rebuild guards.json. */
+async function finish(codeP, o) {
+  const code = codeP === null ? null : await codeP;
+  try {
+    const r = await afterReview(o.handle, o.token, { ...(o.root ? { root: o.root } : {}), confirmed: o.confirmed ?? [], cmd: o.cmdName ?? null });
+    if (r?.switch?.why) o.out(r.switch.why);
+    if (r?.pending?.length) o.out(`${r.pending.length === 1 ? "Rule" : "Rules"} ${r.pending.join(", ")} still ${r.pending.length === 1 ? "has" : "have"} no learning in use: keep ${r.pending.length === 1 ? "it" : "them"} or remove ${r.pending.length === 1 ? "it" : "them"} with the typed code.`);
+  } catch (e) {
+    o.out(`The rules file wasn't rebuilt (${e?.message ?? e}); it keeps the rules it had until the next review.`);
+  }
+  return code;
 }
 
 async function memoryPath(dir) {
@@ -209,12 +306,12 @@ async function plainMode(o) {
   const p = plan(st);
   if (!Object.keys(choice).length) {
     o.out("Nothing chosen: nothing changed.");
-    return 0;
+    return { code: 0, applied: null };
   }
   if (String(await o.ask(`${summaryLine(p)} `)).trim().toLowerCase() !== "y") {
     o.out("Nothing saved.");
-    return 0;
+    return { code: 0, applied: null };
   }
   const res = await applyPlan(o.handle, o.token, p, { keys: o.keys, slug: o.slug, projectId: o.projectId, rows: o.rows, shownHidden: o.rows.filter((r) => r.kind === "hidden" && r.statusAtNull).flatMap((r) => r.ids), memoryFile: o.memoryFile, projectMemory: o.projectMemory, onApply: o.onApply });
-  return report(o.out, { ended: "applied", applied: res });
+  return { code: report(o.out, { ended: "applied", applied: res }), applied: res };
 }

@@ -116,8 +116,16 @@ export async function analyzeConsolidation(opts = {}) {
 
   // 2. Stale candidates.
   const staleCutoff = new Date(Date.now() - STALE_DAYS * 86400000).toISOString();
+  // L7 D2: a learning with a rule is in use (its rule stops commands): never stale.
+  const ruled = new Set();
+  try {
+    for (const r of handle.all("SELECT DISTINCT learning_id AS id FROM rules WHERE learning_id IS NOT NULL")) ruled.add(r.id);
+  } catch {
+    // an older store with no rules table
+  }
   const staleCandidates = rows
     .filter(r =>
+      !ruled.has(r.id) &&
       r.confidence < STALE_CONFIDENCE &&
       (r.last_retrieved_at || r.created_at) < staleCutoff &&
       (r.last_verified_at || r.created_at) < staleCutoff &&

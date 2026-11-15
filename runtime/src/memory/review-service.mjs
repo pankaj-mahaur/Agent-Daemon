@@ -194,7 +194,14 @@ export function archiveStale(handle, token, ids) {
   must(token);
   let archived = 0;
   handle.transaction(() => {
-    for (const id of ids) archived += handle.run("UPDATE learnings SET status = 'archived', status_at = ? WHERE id = ? AND status = 'active'", [iso(), id]).changes;
+    // L7 D2: a learning with a rule is in use (its rule stops commands): never stale.
+    const ruled = new Set();
+    try {
+      for (const r of handle.all("SELECT DISTINCT learning_id AS id FROM rules WHERE learning_id IS NOT NULL")) ruled.add(r.id);
+    } catch {
+      // an older store with no rules table
+    }
+    for (const id of ids) if (!ruled.has(Number(id))) archived += handle.run("UPDATE learnings SET status = 'archived', status_at = ? WHERE id = ? AND status = 'active'", [iso(), id]).changes;
   });
   return archived;
 }

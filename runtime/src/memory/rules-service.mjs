@@ -12,7 +12,7 @@ import { isReviewToken } from "./review-service.mjs";
 import { ruleProposalSql } from "./trust.mjs";
 import { recordEvent, getSetting, putSetting } from "./l5-tables.mjs";
 import { noRulesTable } from "./rules-tables.mjs";
-import { neutralText } from "../rules/neutral.mjs";
+import { neutralText, ENTRY_NAMES } from "../rules/neutral.mjs";
 import { createHash, randomBytes } from "node:crypto";
 import { readRuleEvents } from "../hooks/rule-events.mjs";
 import { allowability, allowOnceView } from "../hooks/allow-once.mjs";
@@ -43,8 +43,35 @@ function goodGlob(g) {
   return true;
 }
 
+// Patterns never name ad (design D19, v10): self-protection covers ad's own commands and
+// files, and a rule naming them would make `rules list` print a lowering command (S4).
+const entryWord = (w) => String(w ?? "").trim().toLowerCase().replace(/@[\w.-]*$/, "").replace(/\.(?:cmd|exe|ps1)$/, "");
+const ENTRY = new Set(ENTRY_NAMES.map((n) => entryWord(n)));
+const RUNNERS = new Set(["npx", "bunx", "pnpm", "yarn", "npm", "pnpx"]);
+const PROTECTED_SEGMENT = /^(?:\.agent-daemon|guards[^/]*\.json|guards\.active|guards-consumed|episodic\.db.*|rule-events\.jsonl|install-ledger\.json|dists\.json|guard\.json|learning-journal[^/]*\.jsonl|\.claude\.json)$/i;
+const PROTECTED_PAIR = /(?:^|\/)(?:\.claude\/settings[^/]*\.json|\.codex\/(?:hooks\.json|config\.toml))$/i;
+
+/** Does this pattern name one of ad's own entry points or protected files? */
+export function namesAd(kind, p) {
+  if (kind === "command") {
+    if (ENTRY.has(entryWord(p.program))) return true;
+    if (RUNNERS.has(entryWord(p.program))) return [...(p.subcommands ?? []), ...(p.flags ?? [])].some((w) => ENTRY.has(entryWord(w)));
+    return false;
+  }
+  return (p.globs ?? []).some((g) => {
+    const s = String(g).replace(/\\/g, "/");
+    return s.split("/").some((seg) => PROTECTED_SEGMENT.test(seg)) || PROTECTED_PAIR.test(s) || /^\.codex(?:\/|$)/i.test(s);
+  });
+}
+
 /** Validate a neutral-schema pattern for a rule kind. Throws on a bad one; → the clean pattern. */
 export function validPattern(kind, pattern) {
+  const out = cleanPattern(kind, pattern);
+  if (namesAd(kind, out)) throw new Error("rules: a rule can't name ad's own commands or files (they are protected already)");
+  return out;
+}
+
+function cleanPattern(kind, pattern) {
   const p = pattern && typeof pattern === "object" ? pattern : {};
   if (kind === "command" && p.type === "command" && isText(p.program) && !/[\s/\\]/.test(p.program.trim()) && p.program.length <= 80) {
     const subs = list(p.subcommands);
@@ -322,4 +349,16 @@ export async function grantAllowOnce(handle, token, entry, { root, minutes = 5, 
   await rebuildGuards(handle, { root, token, now: new Date(now), addAllowOnce: [tok], expected, confirmed });
   handle.transaction(() => recordEvent(handle, { kind: "allow-once", projectId: tok.project, actor: "review", detail: { rules: tok.rules, callId: entry.callId, minutes: m } }));
   return tok;
+}
+
+/**
+ * The user's answer to a rule offer at review (design D17), recorded as an event: `n` →
+ * rule-declined (offered again only after the correction repeats), `enter` → rule-deferred
+ * (offered again after 14 days; after two, only `rules add`). Token: the review run's.
+ */
+export function recordRuleAnswer(handle, token, { learningId, projectId = null, answer, now } = {}) {
+  must(token);
+  if (!["declined", "deferred"].includes(answer)) throw new Error(`rules: unknown answer ${answer}`);
+  if (!Number.isInteger(Number(learningId))) throw new Error("rules: an answer belongs to a learning");
+  return handle.transaction(() => recordEvent(handle, { kind: answer === "declined" ? "rule-declined" : "rule-deferred", learningId: Number(learningId), projectId, actor: "review", at: now }));
 }

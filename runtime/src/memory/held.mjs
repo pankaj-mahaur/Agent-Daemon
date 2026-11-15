@@ -112,6 +112,9 @@ export async function memoryHeld(sub, { ref, keys, handle, json = false, env = p
     return 1;
   }
   const table = row.kind === "fact" ? "user_facts" : "learnings";
+  // L7 D2: a dropped learning's rule ends only with the typed code; every token run ends with afterReview.
+  const R = await import("./rule-removal.mjs");
+  const before = R.ruleOwners(handle);
   if (sub === "drop") {
     handle.run(`UPDATE ${table} SET status = 'rejected', text = '[dropped]' WHERE id = ?`, [row.id]);
     out(`Dropped ${row.ref}.`);
@@ -120,5 +123,6 @@ export async function memoryHeld(sub, { ref, keys, handle, json = false, env = p
     else acceptLearning(handle, gate.token, row.id, { appliedTo: null });
     out(`${sub === "accept" ? "Accepted" : "Released"} ${row.ref}: it is served in this project from the next session.`);
   }
+  await R.settleRun({ handle, token: gate.token, before, changed: sub === "drop" && row.kind !== "fact" ? [row.id] : [], out, tty: io?.tty, proven: gate.dialogProven === true, verb: "Dropping", command: (v) => `ad ${v}` });
   return 0;
 }
