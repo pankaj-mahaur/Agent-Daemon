@@ -98,15 +98,20 @@ test("on needs the token; off needs the token and the typed code", async () => {
   assert.match(on.text, /Turn it off: `ad safety off`/);
   assert.doesNotMatch(on.text, /protects? you/i);
   assert.equal(policy.policyState(s.h).state, "on");
-  const wrong = await run(["off"], s, { code: () => "kqtw", ask: async () => "kqtx" });
+  const wrong = await run(["off"], s, { code: () => "kqtw", tty: { ask: async () => "kqtx" } });
   assert.equal(wrong.code, 1);
   assert.match(wrong.text, /code didn't match/);
   assert.equal(policy.policyState(s.h).state, "on");
-  const noTok = await run(["off"], s, { token: async () => ({ refused: "agent" }), code: () => "kqtw", ask: async () => "kqtw" });
+  const noTok = await run(["off"], s, { token: async () => ({ refused: "agent" }), code: () => "kqtw", tty: { ask: async () => "kqtw" } });
   assert.equal(noTok.code, 1);
   assert.equal(policy.policyState(s.h).state, "on");
+  // The code is read from the terminal, never from stdin's answer (L7 D16).
+  const stdin = await run(["off"], s, { code: () => "kqtw", ask: async () => "kqtw", tty: null });
+  assert.equal(stdin.code, 1);
+  assert.match(stdin.text, /code typed in your terminal/);
+  assert.equal(policy.policyState(s.h).state, "on");
   let prompt = "";
-  const off = await run(["off"], s, { code: () => "kqtw", ask: async (q) => ((prompt = q), "KQTW") });
+  const off = await run(["off"], s, { code: () => "kqtw", tty: { ask: async (q) => ((prompt = q), "KQTW") } });
   assert.equal(off.code, 0, off.text);
   assert.match(prompt, /Turn off the starter safety policy \(4 rules\) — type kqtw/);
   assert.equal(policy.policyState(s.h).state, "off");

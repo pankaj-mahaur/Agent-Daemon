@@ -63,12 +63,16 @@ export function inOwnTerminal({ env = process.env, isTTY = realTTY, ancestry = p
   return (ancestry() ?? { verdict: "unknown" }).verdict === "terminal";
 }
 
-/** → { token } in the user's own terminal (asking for the dialog code when needed), else { refused: text }. */
+/**
+ * → { token, dialogProven? } in the user's own terminal (asking for the dialog code when
+ * needed), else { refused: text }. dialogProven: this run typed L1's dialog code, so a
+ * lowering verb doesn't ask for the typed code of L7 D16 again.
+ */
 export async function reviewToken({ ask, out, dialog = confirmByDialog, ...checks } = {}) {
   const first = checkReviewToken(checks);
   if (!first.needsCode) return first;
   const proved = await dialog({ ask, out, found: first.needsCode });
-  return proved?.ok ? { token: mint() } : { refused: proved?.text ?? "accepting notes needs the dialog code." };
+  return proved?.ok ? { token: mint(), dialogProven: true } : { refused: proved?.text ?? "accepting notes needs the dialog code." };
 }
 
 /** Is this a token the review service issued (in this process)? */

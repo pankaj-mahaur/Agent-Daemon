@@ -8,10 +8,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { randomInt } from "node:crypto";
 import { PRODUCT } from "../product.mjs";
 
-const CODE_LETTERS = "acdefhjkmnprtvwxy"; // no look-alikes (b/6, g/9, i/l/1, o/0, q, s/5, u/v, z/2)
 
 async function askLine(q) {
   const readline = await import("node:readline/promises");
@@ -152,10 +150,10 @@ export async function safetyMain(argv = [], o = {}) {
     out(`${name}: the starter safety policy is already off.`);
     return 0;
   }
-  const code = (o.code ?? (() => Array.from({ length: 4 }, () => CODE_LETTERS[randomInt(CODE_LETTERS.length)]).join("")))();
-  const typed = String((await ask(`Turn off the starter safety policy (${n} rule${n === 1 ? "" : "s"}) — type ${code}: `)) ?? "").trim().toLowerCase();
-  if (typed !== code) {
-    out(`${name}: nothing changed (the code didn't match).`);
+  const { confirmTypedCode } = await import("./typed-code.mjs");
+  const c = await confirmTypedCode({ what: `Turn off the starter safety policy (${n} rule${n === 1 ? "" : "s"})`, proven: t.dialogProven === true, tty: o.tty, code: o.code?.() });
+  if (!c.ok) {
+    out(`${name}: nothing changed (${c.text.replace(/; nothing changed$/, "")}).`);
     return 1;
   }
   try {

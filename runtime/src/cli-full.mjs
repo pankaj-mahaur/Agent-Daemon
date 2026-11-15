@@ -387,6 +387,16 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
     const gitBash = fromAgentShell === "no terminal" && process.platform === "win32" ? " (in Git Bash, through winpty; or use PowerShell or Windows Terminal)" : "";
     console.log(`  · hooks unchanged (${fromAgentShell}): run \`ad init\` in your own terminal to set them up${gitBash}`);
   }
+  // L7 (D16): rewriting ad's own rules-check entry while rules exist changes what checks every
+  // call: it takes the review token and the typed code, else the hooks stay as they are.
+  const IG = await import("./init-gate.mjs");
+  if (hookPlan.changed && !dryRun && IG.rulesCheckChanged(existingSettings.hooks, hookPlan.hooks)) {
+    const gate = await IG.initRulesCheckGate();
+    if (!gate.ok) {
+      hookPlan.changed = false;
+      console.log(`  · hooks unchanged: ${gate.why}`);
+    }
+  }
   const transient = hookDoctor.transientInstall(HOOK_PATH);
   if (transient) console.log(`  ⚠ The hooks would run ${HOOK_PATH}, which is in ${transient}: they stop working when it goes. Run ad init from your installed ad.`);
   if (memPlugin?.outdated) console.log(`  ⚠ ${memPlugin.key}${memPlugin.version ? ` ${memPlugin.version}` : ""} predates ad's hook dispatcher, so ad's prompt and session-start hooks are written in its older form, which it recognises. Update the plugin from Claude Code's /plugin menu, then run ad init again.`);

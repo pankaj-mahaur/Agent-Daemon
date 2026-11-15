@@ -37,7 +37,7 @@ async function askLine(q) {
 export async function cliToken({ token, ask = askLine, out = (l) => console.log(l) } = {}) {
   const svc = await import("./review-service.mjs");
   const r = await (token ?? (() => svc.reviewToken({ ask, out })))();
-  return r?.token && svc.isReviewToken(r.token) ? { token: r.token } : { refused: r?.refused ?? "not your own terminal" };
+  return r?.token && svc.isReviewToken(r.token) ? { token: r.token, dialogProven: r.dialogProven === true } : { refused: r?.refused ?? "not your own terminal" };
 }
 
 /**
@@ -181,6 +181,15 @@ export async function memoryVerbMain(verb, argv = [], o = {}) {
       if (!t.token) {
         out(`${PRODUCT.displayName}: review stays as it is: turning review-first off needs your own terminal (${t.refused}).`);
         return 2;
+      }
+      // Widening trust lowers enforcement: the typed code (L7 D16).
+      if (M.reviewMode(handle) !== "auto") {
+        const { confirmTypedCode } = await import("./typed-code.mjs");
+        const c = await confirmTypedCode({ what: "Turn review-first off (corrections you type apply at once)", proven: t.dialogProven, tty: o.tty, code: o.code?.() });
+        if (!c.ok) {
+          out(`${PRODUCT.displayName}: review stays as it is: ${c.text}.`);
+          return 1;
+        }
       }
       (await import("./review-service.mjs")).setReviewAuto(handle, t.token, { now });
     }
