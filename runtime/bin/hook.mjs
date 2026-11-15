@@ -88,7 +88,13 @@ async function toolBeforeMain() {
     const active = readActive();
     // Only a current snapshot the sentinel vouches for decides "no active rules" (fewer rules
     // or another store defers to the sentinel, as toolBefore's backstop does).
-    return tb.failDecision(payload, { host, snapshot: tb.failSnapshot(g, active), rulesExist: Boolean(active), why: reason });
+    const out = tb.failDecision(payload, { host, snapshot: tb.failSnapshot(g, active), rulesExist: Boolean(active), why: reason });
+    // No active rules, but the text names ad's own commands or state: self-protection
+    // couldn't look, so the call is stopped (D10).
+    if (!out && tb.strongTrigger(input ? tb.callText(input) : String(raw).replace(/\\[nrt]/g, " "))) return tb.selfProtectDecision({ decision: "deny", class: "a", why: "a call that touches ad itself, which couldn't be checked" }, payload, host);
+    // A weaker sign that self-protection had something to look at: ask (deny where an ask can't show).
+    if (!out && input && tb.selfProtectTriggered(input)) return tb.selfProtectDecision({ decision: "ask", class: "a", why: "a call that self-protection couldn't check" }, payload, host);
+    return out;
   };
   let out = null;
   let warning = null;
@@ -97,11 +103,16 @@ async function toolBeforeMain() {
     // The mode decides ask vs deny; read it from the raw text (a bypass mode may skip an ask).
     out = await failed(why, { permission_mode: /"permission_mode"\s*:\s*"([A-Za-z]+)"/.exec(raw)?.[1] });
   } else {
+    let selfProtect = null;
     try {
-      out = tb.toolBefore(input, { host, onWarning: (w) => (warning = w) });
+      // Self-protection first, loaded only when the text needs it (D12 fast path).
+      selfProtect = tb.selfProtectTriggered(input) ? (await import("../src/hooks/self-protect.mjs")).selfProtect(input, { host }) : null;
+      out = tb.toolBefore(input, { host, onWarning: (w) => (warning = w), selfProtect });
     } catch (err) {
       await log(`couldn't check a call against the rules: ${err?.message ?? err}`);
       out = await failed("couldn't check this call against your rules", input); // a throw here reaches the last resort
+      // Self-protection had decided before the rules failed: its decision stands unless the failure denies.
+      if (selfProtect && out?.hookSpecificOutput?.permissionDecision !== "deny") out = tb.selfProtectDecision(selfProtect, input, host);
     }
   }
   if (warning) await log(warning);
@@ -158,7 +169,7 @@ async function toolBeforeLastResort(err) {
       const s = JSON.parse(fs.readFileSync(path.join(root, "guards.json"), "utf8"));
       if (typeof s?.cmd === "string" && s.cmd) cmd = s.cmd;
       const p = s?.pausedAll;
-      const paused = p === true || (Boolean(p) && typeof p === "object" && (p.until == null || Date.parse(p.until) > Date.now()));
+      const paused = p === true || (Boolean(p) && typeof p === "object" && typeof p.at === "string" && (p.until == null || Date.parse(p.until) > Date.now()));
       if (paused && typeof s.store_id === "string" && s.store_id === active?.store_id && Number.isInteger(active?.ruleCount) && Number(s.ruleCount) === active.ruleCount) return print({});
     } catch {
       // unreadable: the sentinel decides

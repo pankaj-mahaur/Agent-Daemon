@@ -28,6 +28,7 @@ import { toolDecision, noticeOnly } from "./host-capabilities.mjs";
 import { appendRuleEvent } from "./rule-events.mjs";
 import { allowability, matchedParts, tryAllowOnce } from "./allow-once.mjs";
 import { PRODUCT } from "../product.mjs";
+import * as SPW from "./self-protect-words.mjs";
 
 const OS = { win32: "windows", darwin: "macos" };
 const WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit", "apply_patch"]);
@@ -159,7 +160,7 @@ export function failDecision(input, { host = "claude", snapshot = null, rulesExi
  * Decide one PreToolUse call.
  * @returns {object|null} the JSON to print, or null for no output (the tool runs)
  */
-export function toolBefore(input, { host = "claude", env = process.env, root, platform = process.platform, onWarning = null, now = Date.now(), realpath = realOf, log = null } = {}) {
+function rulesBefore(input, { host = "claude", env = process.env, root, platform = process.platform, onWarning = null, now = Date.now(), realpath = realOf, log = null } = {}) {
   const opts = root ? { root } : undefined;
   const { snapshot, warning, source } = loadGuards(opts);
   if (warning) onWarning?.(warning);
@@ -269,4 +270,55 @@ function render(input, { host, snapshot, lead, hits, callId }) {
     reason: `Your rule ${id} (${why}) stops this ${what} here. Tell the user; only they can allow it.`,
     notice: `${base} · allow this once: \`${cmd} rules allow-once ${id} ${callId}\``,
   });
+}
+
+// ---- self-protection first (D12, D5 order) -----------------------------------------------
+
+// The fast path: self-protection is loaded and run only when the call's text, with quotes,
+// backslashes, carets and backticks removed, has one of the words it acts on (the same
+// lists it uses: hooks/self-protect-words.mjs), a background `&`, or PowerShell's dynamic
+// forms.
+const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const SP_ALT = [...new Set([...SPW.ENTRY_NAMES, ...SPW.VERB_WORDS, ...SPW.REPARENTING, ...SPW.TERMINALS, ...SPW.DESKTOP, ...SPW.INTERNAL_FILES, ...SPW.AGENTS, ...SPW.OTHER_TRIGGERS])].map(esc);
+const SP_ENV = SPW.ENV_NAMES.map((n) => `${esc(n)}\\w*`);
+const SP_TRIGGER = new RegExp(`(?<!\\w)(?:${[...SP_ALT, ...SP_ENV].join("|")})(?!\\w)|&\\s*(?:$|[;\\n)}!]|disown|wait)|\\biex\\b|invoke-expression|@args`, "im");
+// Strong triggers: an incomplete parse, or a failed check, with one of these denies.
+const STRONG = new RegExp(`(?<![\\w-])(?:ad|agent-daemon|teachonce|${PRODUCT.bin}|${PRODUCT.package})(?![\\w-])|\\.agent-daemon|agent-~|AD_TOOL_SHELL|AD_MEMORY_DB|run\\.mjs|hook\\.mjs|session-env|CLAUDE_ENV_FILE|disableAllHooks`, "i");
+
+/** The command text of a shell call (the payload's command, cmd or action.command). */
+export const callText = (input) => {
+  const tin = input?.tool_input;
+  const c = tin?.command ?? tin?.cmd ?? tin?.action?.command;
+  return Array.isArray(c) ? c.map(String).join(" ") : typeof c === "string" ? c : "";
+};
+/** Does the call's text need self-protection's look? (Shell calls; writes are P2b's.) */
+export const selfProtectTriggered = (input) => {
+  const raw = callText(input);
+  return /\$'|\$env:/i.test(raw) || SP_TRIGGER.test(raw.replace(/["'\\^`]/g, ""));
+};
+/** A strong trigger in the call's text (or raw payload text). */
+export const strongTrigger = (text) => STRONG.test(String(text ?? "").replace(/["'\\^`]/g, ""));
+
+/** The decision self-protection prints: the model is told to tell the user; nothing lowering is named (S4). */
+export function selfProtectDecision(sp, input, host = "claude") {
+  return toolDecision(sp.decision, {
+    host,
+    permissionMode: input?.permission_mode,
+    reason: `ad's self-protection stops this call: ${sp.why}. Tell the user.`,
+    notice: `ad: self-protection (${sp.class}) stopped a call: ${sp.why}`,
+  });
+}
+
+/**
+ * Decide one PreToolUse call: self-protection first (opts.selfProtect, its result for this
+ * call), then the rules. A deny from either wins; pause and allow-once never lift
+ * self-protection.
+ * @returns {object|null} the JSON to print, or null for no output (the tool runs)
+ */
+export function toolBefore(input, opts = {}) {
+  const sp = opts.selfProtect ?? null;
+  if (sp?.decision === "deny") return selfProtectDecision(sp, input, opts.host);
+  const out = rulesBefore(input, opts);
+  if (sp?.decision === "ask" && out?.hookSpecificOutput?.permissionDecision !== "deny") return selfProtectDecision(sp, input, opts.host);
+  return out;
 }

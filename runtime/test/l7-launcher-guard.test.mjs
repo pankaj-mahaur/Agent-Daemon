@@ -557,7 +557,7 @@ test("rules pause --all is a working recovery: every rule paused (matching the s
   fs.rmSync(t.entry.path, { recursive: true, force: true });
   const paused = (until) => {
     const g = JSON.parse(fs.readFileSync(guardsPath(t.root), "utf8"));
-    fs.writeFileSync(guardsPath(t.root), JSON.stringify({ ...g, pausedAll: until === undefined ? null : { until } }));
+    fs.writeFileSync(guardsPath(t.root), JSON.stringify({ ...g, pausedAll: until === undefined ? null : { at: new Date().toISOString(), until } }));
   };
   paused(null);
   const r = check(t, bash("ls", t.project));
@@ -630,7 +630,7 @@ test("a guard copy with a damaged inner file still decides, and rules pause --al
   fs.rmSync(path.join(t.entry.path, "src", "hooks", "tool-before.mjs"));
   assertFailDecision(t, "a damaged inner file");
   const g = JSON.parse(fs.readFileSync(guardsPath(t.root), "utf8"));
-  fs.writeFileSync(guardsPath(t.root), JSON.stringify({ ...g, pausedAll: { until: null } }));
+  fs.writeFileSync(guardsPath(t.root), JSON.stringify({ ...g, pausedAll: { at: new Date().toISOString(), until: null } }));
   const r = check(t, bash("ls", t.project));
   assert.equal(r.code, 0, r.err);
   assert.equal(parse(r.out)?.hookSpecificOutput, undefined, r.out);

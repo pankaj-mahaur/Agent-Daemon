@@ -6,7 +6,8 @@
 
 import { PRODUCT, LEGACY_NAMES } from "../product.mjs";
 
-const ENTRY_NAMES = [...new Set(["ad", "agent-daemon", "teachonce", PRODUCT.bin, PRODUCT.package, ...LEGACY_NAMES])];
+/** Every command word that runs ad: its CLI, the package bin, the decided name and every alias. */
+export const ENTRY_NAMES = [...new Set(["ad", "agent-daemon", "teachonce", PRODUCT.bin, PRODUCT.package, ...LEGACY_NAMES])];
 const esc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, (c) => "\\" + c);
 
 // Each token has one way to match (no nested alternatives over the same text), so hostile
