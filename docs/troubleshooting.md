@@ -1229,6 +1229,33 @@ These are information, not failures: other memory that loads next to ad's learni
 - `isn't marked as yours`: if you made the folder (an `ad init` from an older version), run `ad init` there again.
 - `ad init` says `git wouldn't ignore .agent-daemon/…`: add the lines it lists to `.agent-daemon/.gitignore`, then run `ad init` again. Until then capture files (your prompts) stay out of the repository.
 
+## 130. A command is asked about or stopped by "the starter safety policy"
+
+**Symptom:** Claude Code asks before a command and the line under it says `starter safety policy (rule N): asks before …`, or the agent reports `The user's starter safety policy stops this command here`.
+
+**Cause:** you turned on the starter safety policy (`safety on`). It asks before a recursive delete of your home folder, a root or the project folder, a force push to the default branch, reading `.env`, `.env.local` or `.env.*.local`, and `--no-verify` on git commit or push. Claude Code in bypass or don't-ask mode, and Codex, can't ask, so the call is stopped with the reason.
+
+**Fix:**
+- Meant it: answer the prompt, or let one stopped call through with the `rules allow-once N <id>` line the message shows, in your own terminal.
+- A look-alike that shouldn't be asked about (a subfolder, a feature branch, `.env.example`): report it with the command; the policy is a fixed list and a fix ships in a release.
+- Don't want it: `safety off` in your own terminal (it asks you to type a code); `safety status` shows each family.
+
+## 131. `safety on` or `off` says "Nothing changed"
+
+**Symptom:** `the starter safety policy is turned on by the user, in their own terminal. Nothing changed.`
+
+**Cause:** it ran from an agent's shell or a script. Only your own terminal turns the policy on or off, so an agent can't switch it off to get past it.
+
+**Fix:** run it yourself in a terminal. `safety status` works anywhere.
+
+## 132. `safety on`: "there is no guard copy yet" or "the guard copy … is older"
+
+**Symptom:** `safety on` stops with `Update it first: … repair`.
+
+**Cause:** the check before each tool call runs from a copy of the package under `~/.agent-daemon/memory/dist/`. A copy from before the policy existed would read the new rules as unknown, so `on` waits for a current copy.
+
+**Fix:** run `repair` with the same command (`npx -y agent-daemon-memory repair`), then `safety on` again.
+
 ---
 
 For harness problems, the [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill walks through login → hooks → sandbox → the engine's own log. See also [harness.md](harness.md) and, for the terminal UI, [tui.md](tui.md).

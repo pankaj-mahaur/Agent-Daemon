@@ -17,6 +17,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { readRuleEvents } from "../hooks/rule-events.mjs";
 import { allowability, allowOnceView } from "../hooks/allow-once.mjs";
 import { rebuildGuards } from "./guards-build.mjs";
+import { FAMILIES as POLICY_FAMILIES } from "../rules/policy.mjs";
 
 const iso = (now) => (now instanceof Date ? now : new Date(now ?? Date.now())).toISOString();
 
@@ -62,6 +63,13 @@ export function validPattern(kind, pattern) {
   throw new Error(`rules: not a usable pattern for a ${kind} rule: ${JSON.stringify(pattern)}`);
 }
 
+/** A starter safety policy pattern (L7b): {type:"policy", family} on an ask, all-projects command rule with no learning. */
+export function validPolicyPattern(pattern, { kind, decision, scope, learningId } = {}) {
+  if (pattern?.type !== "policy" || !POLICY_FAMILIES.includes(pattern.family)) throw new Error(`rules: not a starter safety policy family: ${JSON.stringify(pattern)}`);
+  if (kind !== "command" || decision !== "ask" || scope !== "all" || learningId != null) throw new Error("rules: the starter safety policy asks, in every project, and has no learning");
+  return { type: "policy", family: pattern.family };
+}
+
 /**
  * Add a rule from an accepted learning. → the rule id.
  * @param {{learningId:number|null, projectId:string, scope?:"project"|"all", kind:"command"|"write",
@@ -75,7 +83,9 @@ export function addRule(handle, token, o) {
   if (!["command", "write"].includes(kind)) throw new Error(`rules: unknown kind ${kind}`);
   if (!["learning", "policy"].includes(source)) throw new Error(`rules: unknown source ${source}`);
   if (!isText(projectId)) throw new Error("rules: a rule belongs to a project (its learning's)");
-  const pattern = validPattern(kind, o.pattern);
+  // The starter safety policy (L7b): one known family, asked before, everywhere, no learning.
+  // A learning's rule can never carry a policy pattern (validPattern refuses it).
+  const pattern = source === "policy" ? validPolicyPattern(o.pattern, { kind, decision, scope, learningId }) : validPattern(kind, o.pattern);
   return handle.transaction(() => {
     if (source === "learning") {
       const row = handle.get(`SELECT id, project_id FROM learnings WHERE id = ? AND ${ruleProposalSql()}`, [learningId]);
