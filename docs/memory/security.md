@@ -72,7 +72,12 @@ commands (dcg, claude-code-safety-net), so you can keep one.
 It is a gate against accidents, not a sandbox: a command hidden in a script the
 agent writes, in a variable, behind `eval` or `xargs`, or run through an MCP tool
 isn't seen; neither are reads that don't name the file (`grep -r KEY .`, `tar`,
-`git add -A`). The Read tool is checked once ad's hook entry covers it.
+`git add -A`). While the `.env` family is on, ad's hook entry in Claude Code also
+covers the Read tool; `safety status` says when it does.
+
+Setup's last step and `review` (after the rule step) ask once: "Ask before four
+kinds of catastrophic commands? (y/N)". A no is kept and never asked again; only
+your own terminal is asked, never an agent's shell.
 
 ## Secrets
 
