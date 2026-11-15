@@ -145,6 +145,7 @@ export async function memoryVerbMain(verb, argv = [], o = {}) {
       try {
         const done = await (await import("./rules-finish.mjs")).afterReview(handle, t.token, { now, confirmed, ...(o.root ? { root: o.root } : {}) });
         if (done?.switch?.why) out(done.switch.why);
+        for (const l of done?.switch?.codex ?? []) out(l.trim());
       } catch (e) {
         out(`The rules file wasn't rebuilt (${e?.message ?? e}); it keeps the rules it had until the next review.`);
       }

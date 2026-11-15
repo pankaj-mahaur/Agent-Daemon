@@ -69,6 +69,7 @@ export async function settleRun({ handle, token, before = null, changed = [], ou
     const { afterReview } = await import("./rules-finish.mjs");
     const r = await afterReview(handle, token, { confirmed, cmd: cmdName, ...(root ? { root } : {}) });
     if (r?.switch?.why) out(r.switch.why);
+    for (const l of r?.switch?.codex ?? []) out(l.trim());
   } catch (e) {
     out(`The rules file wasn't rebuilt (${e?.message ?? e}); it keeps the rules it had until the next review.`);
   }
