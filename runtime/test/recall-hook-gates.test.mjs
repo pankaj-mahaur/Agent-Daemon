@@ -68,7 +68,7 @@ test("held-out brief gate, end to end through the memory product's session start
       results.push({ ids: H.idsIn(r.context).map((id) => toCorpus.get(id)).filter(Boolean), expected: p.expected });
     }
     const s = E.scoreBriefs(results);
-    t.diagnostic(`${process.env.AD_L6_BRIEF_DIR ? "dev" : "held-out"} brief end to end (${seed} seeding): ${s.withRelevant}/${s.projects} with a relevant note; ${E.pct(s.share)} irrelevant (${s.irrelevant}/${s.total}); per-project max ${E.pct(s.maxShare)}; ${s.relevantPerBrief.toFixed(1)} relevant per brief`);
+    t.diagnostic(`${process.env.AD_L6_BRIEF_DIR ? "dev" : "held-out"} brief end to end (${seed} seeding): ${s.withRelevant}/${s.projects} with a relevant note; ${E.pct(s.share)} irrelevant (${s.irrelevant}/${s.total}); per-project max ${E.pct(s.maxShare)}, ${s.over20} above 20%; ${s.relevantPerBrief.toFixed(1)} relevant per brief`);
     assert.ok(s.withRelevant >= Math.ceil(s.projects * 7 / 8), `${seed}: ${s.withRelevant}/${s.projects}`);
     assert.ok(s.share <= 0.2, `${seed}: ${E.pct(s.share)}`);
     assert.ok(s.maxShare <= 0.34, `${seed}: per-project max ${E.pct(s.maxShare)}`);

@@ -1,0 +1,33 @@
+{
+  "relevant": ["tq-01", "tq-02", "tq-04", "tq-05", "tq-08", "tq-12", "tq-14", "tq-16", "tq-19", "tq-22", "tq-26"],
+  "irrelevant": ["tq-03", "tq-06", "tq-07", "tq-11", "tq-13", "tq-15", "tq-18", "tq-20", "tq-23", "tq-25"],
+  "neutral": ["tq-09", "tq-10", "tq-17", "tq-21", "tq-24"],
+  "reasons": {
+    "tq-01": "Out-of-order subscription webhooks; matches #418.",
+    "tq-02": "How to test the Stripe webhook route locally (route.ts in recent paths).",
+    "tq-03": "Stale: derived seat count replaced by tq-04 (stored Org.seatCount).",
+    "tq-04": "Current seat model; matches the add_seat_count migration and the owner off-by-one fix.",
+    "tq-05": "A migration was just added and schema.prisma changed.",
+    "tq-06": "Feature flags, other area; shares the word cache only.",
+    "tq-07": "Stale: Cypress replaced by tq-08 (Playwright).",
+    "tq-08": "e2e/billing.spec.ts is in recent paths; how to run it.",
+    "tq-09": "Package manager; project-wide.",
+    "tq-10": "Unit test command; project-wide.",
+    "tq-11": "Marketing pages, other area; shares the app/ prefix only.",
+    "tq-12": "Seat/billing server actions need the role check.",
+    "tq-13": "Invoice PDF route, other area; shares the invoices/[id] path segment.",
+    "tq-14": "Keyboard navigation work in LineItemsTable (#409).",
+    "tq-15": "CSV import, other area.",
+    "tq-16": "invoice-sent template now uses the org logo (#416); logo URL gotcha.",
+    "tq-17": "Commit convention; project-wide.",
+    "tq-18": "Stale: Prisma 5 pin replaced by tq-19 after the 6.4 bump.",
+    "tq-19": "Prisma 6.4 bump (#415) just landed.",
+    "tq-20": "Auth magic-link emails, other area; shares the word email.",
+    "tq-21": "Deploy flow; useful on main but project-wide.",
+    "tq-22": "Test clocks for the billing renewal specs (Hinglish).",
+    "tq-23": "Client search index, other area; shares the word migration.",
+    "tq-24": "TypeScript style (Hinglish); project-wide.",
+    "tq-25": "Dark mode, other area.",
+    "tq-26": "Seat reconciliation script; directly about the seat-count fixes."
+  }
+}

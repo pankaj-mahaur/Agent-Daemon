@@ -1,0 +1,20 @@
+{
+  "name": "dotsy",
+  "stack": "Rust 2021 CLI (dotfiles manager): clap 4, serde + toml, minijinja templates",
+  "branch": "feat/template-vars",
+  "recent_paths": [
+    "src/template.rs",
+    "src/config.rs",
+    "tests/template_render.rs",
+    "Cargo.toml",
+    "Cargo.lock",
+    "README.md"
+  ],
+  "recent_commits": [
+    "template: support host.* and env.* variables",
+    "config: [vars] table in dotsy.toml",
+    "template: error on undefined variable instead of empty string",
+    "deps: add minijinja"
+  ],
+  "session_cwd": "/home/dev/code/dotsy"
+}
