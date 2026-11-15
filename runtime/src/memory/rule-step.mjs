@@ -44,7 +44,13 @@ export function rawInput(stdin, stdout) {
     line: async (q, initial = "") => {
       const rl = readline.createInterface({ input: stdin, output: stdout, terminal: true });
       try {
-        const p = new Promise((resolve) => rl.question(q, resolve));
+        // Ctrl-C (or a closed input) answers "": no, or no change, at every line prompt, so the
+        // run still reaches its finish (the rules snapshot, afterReview) instead of exiting.
+        const p = new Promise((resolve) => {
+          rl.question(q, resolve);
+          rl.on("SIGINT", () => resolve(""));
+          rl.on("close", () => resolve(""));
+        });
         if (initial) rl.write(initial);
         return await p;
       } finally {

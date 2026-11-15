@@ -203,10 +203,15 @@ block a tool call, and the host is marked uninstalled, so the entry does
 nothing; if you later delete `~/.agent-daemon`, Claude Code shows node's
 missing-file error for it and carries on. The launcher
 (`~/.agent-daemon/memory/launch/`) and its copies go only when no config still
-starts it. Once you have rules (a later release), removing the `tool.before`
-entry or the marker needs your review in your own terminal; without it,
-uninstall removes everything else and prints the exact manual step for each of
-those two.
+starts it.
+
+While you have [rules](rules.md), removing or lowering the rules check (the
+`tool.before` entry, or the marker) needs your review in your own terminal and
+the [typed code](rules.md#the-typed-code). Without them, that entry and the marker
+stay, the host stays on, and uninstall says so and prints the exact manual step
+for each; everything else is removed. With them, uninstall puts back exactly what
+ad changed: an entry ad made fail closed gets back the `onFailure` and `timeout`
+it had before, and an entry you had before ad stays byte for byte.
 
 It ends with a summary in three lists: **Removed** (each entry ad took out),
 **Kept** (each entry left in place, and why: you edited it, or you had it

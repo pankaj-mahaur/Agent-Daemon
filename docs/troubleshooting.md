@@ -1229,6 +1229,43 @@ These are information, not failures: other memory that loads next to ad's learni
 - `isn't marked as yours`: if you made the folder (an `ad init` from an older version), run `ad init` there again.
 - `ad init` says `git wouldn't ignore .agent-daemon/…`: add the lines it lists to `.agent-daemon/.gitignore`, then run `ad init` again. Until then capture files (your prompts) stay out of the repository.
 
+## 120. Every tool call is blocked
+
+**Symptom:** in Claude Code every Bash, Write or Edit call (Read too, with the starter policy's `.env` rule) is blocked, with node's missing-file error, a timeout, or `ad: can't read your rules right now · pause rules: … · repair: …`.
+
+**Cause:** while you have rules, ad's `tool.before` entry in your user settings fails closed (`onFailure: "block"`): a rules check that can't run blocks the call instead of letting it through. It can't run when ad's folder (`~/.agent-daemon`) was deleted or moved, the copy of the package it runs is gone, or the rules file can't be read or trusted.
+
+**Fix**, in your own terminal (none of these needs the hook):
+- **Pause your rules:** `npx -y agent-daemon-memory rules pause --all` (or `ad rules pause --all`). With nothing in force, a rules file that can't be read no longer blocks anything. Self-protection keeps running.
+- **ad's folder was deleted:** `npx -y agent-daemon-memory@<version> repair` puts back the launcher and the copy the check runs. Use the version your settings entry names, or the one you installed.
+- **Neither works:** open `~/.claude/settings.json` and delete the `PreToolUse` entry whose command runs `memory/launch/run.mjs hook tool.before` (or ad's own `hook.mjs tool.before`). Then restart Claude Code: it reads hooks at session start.
+
+Then run `doctor` and look at the `rules.` rows and `Rules file` (#95).
+
+## 121. ad's rules check still blocks after I removed my last rule
+
+**Symptom:** you have no rules left, but `doctor` shows `rules.switch … no rule is left, but ad's rules check still fails closed`, and a check that fails still blocks the call.
+
+**Cause:** putting the entry back to the values it had before (its `onFailure` and `timeout`, and dropping Read) lowers enforcement, so ad does it only in a run that has your review from your own terminal. When the last rule went, that step didn't finish: Claude Code was writing the settings file, the file couldn't be read or written, or the rules file couldn't be trusted. Or the change was seen first by a run without your review (`repair`, `setup`), which only ever raises the check.
+
+**Fix:** run `review` in your own terminal (`npx -y agent-daemon-memory review` or `ad review`). The next review puts the entry back; nothing else in your settings changes. Claude Code uses it from your next session.
+
+## 122. The agent says ad stopped a change to its own files
+
+**Symptom:** the agent reports `ad's self-protection stops this call: …`, or Claude Code asks with that reason, although you have no rule about it.
+
+**Cause:** whatever your rules, ad stops or asks about calls that would change ad itself: its commands that change what is remembered or enforced run from the agent's shell (or through a wrapper, another terminal or a nested agent), writes to ad's state under `~/.agent-daemon`, edits that would remove ad's hook from a host's settings, the variables ad's hooks rely on, the Windows folder, startup files and programs built at run time. Pause and allow-once never apply to it.
+
+**Fix:** if you want the change, make it yourself in your own terminal: run the ad command there, or edit the file there. Don't ask the agent to work around it. It is a filter for the ways an agent would usually do this, not a sandbox ([rules](memory/rules.md#self-protection)).
+
+## 123. Asked for a code
+
+**Symptom:** a command prints what will change, then `— type <code>:`, and waits.
+
+**Cause:** the command lowers enforcement: `rules rm`, `rules pause`, `rules allow-once`, `safety off`, `config review auto`, `ad init` rewriting its rules check while rules exist, or `uninstall` removing or lowering the rules check while rules exist. After the usual "your own terminal" check, ad prints a 4-letter code to the terminal itself and reads it back from there, never from stdin, so a script that runs the command blind can't answer. If you typed the dialog code earlier in the same run, you aren't asked again.
+
+**Fix:** type the code you see. Without a terminal (a pipe, a script, an agent's shell) the command changes nothing; run it yourself in a terminal. A script that drives a terminal or reads the screen isn't stopped by this.
+
 ## 130. A command is asked about or stopped by "the starter safety policy"
 
 **Symptom:** Claude Code asks before a command and the line under it says `starter safety policy (rule N): asks before …`, or the agent reports `The user's starter safety policy stops this command here`.

@@ -987,6 +987,21 @@
       "reason": "L7 P3-3: the rules check in the user's own Codex install on Windows arrives with the first rule (a fake CODEX_HOME: hooks.json, config.toml), not ad's engine"
     },
     {
+      "path": "docs/memory/rules.md",
+      "rules": ["A"],
+      "reason": "L7 P5: the rules guide says how rules decide in the user's own Codex host (it can't ask, so rules stop there), not ad's engine"
+    },
+    {
+      "path": "runtime/test/l7-p5.test.mjs",
+      "rules": ["A"],
+      "reason": "L7 P5: doctor's rules rows for the user's own Codex install (Codex on Windows, its sandbox setting), not ad's engine"
+    },
+    {
+      "path": "runtime/test/l7-s4-sweep.test.mjs",
+      "rules": ["A"],
+      "reason": "L7 P5: the S4 sweep runs the package CLI with a fake CODEX_HOME (the user's own Codex install), not ad's engine"
+    },
+    {
       "path": "runtime/src/memory/policy-coexist.mjs",
       "rules": ["A"],
       "reason": "L7b: doctor reads the user's Codex hooks.json and config.toml to find other command guards (the user's own Codex host, not ad's engine)"

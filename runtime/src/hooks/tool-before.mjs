@@ -426,10 +426,19 @@ function renderPolicy(input, { host, cmd, name, id, what, family, callId, more }
  */
 export function toolBefore(input, opts = {}) {
   const sp = opts.selfProtect ?? null;
-  if (sp?.decision === "deny") return selfProtectDecision(sp, input, opts.host);
+  if (sp?.decision === "deny") return selfProtected(sp, input, opts);
   const out = rulesBefore(input, opts);
-  if (sp?.decision === "ask" && out?.hookSpecificOutput?.permissionDecision !== "deny") return selfProtectDecision(sp, input, opts.host);
+  if (sp?.decision === "ask" && out?.hookSpecificOutput?.permissionDecision !== "deny") return selfProtected(sp, input, opts);
   return out;
+}
+
+// A self-protection decision, counted in the rule events (report's rules section, D20): its
+// class only, never the command.
+function selfProtected(sp, input, opts) {
+  const mode = typeof input?.permission_mode === "string" ? input.permission_mode.slice(0, 40) : null;
+  const entry = { decision: "self-protect", outcome: sp.decision, class: typeof sp.class === "string" ? sp.class.slice(0, 40) : null, host: opts.host ?? "claude", mode };
+  (opts.log ?? ((e) => appendRuleEvent(e, opts.root ? { root: opts.root } : {})))(entry);
+  return selfProtectDecision(sp, input, opts.host);
 }
 
 /**

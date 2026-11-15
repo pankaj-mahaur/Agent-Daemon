@@ -136,6 +136,9 @@ async function runHook({ distsFile, pickDist, readDists }) {
   if (!dist || dist.gone) {
     const { shown, pinned } = product();
     const what = dist?.gone === "turned off" ? `the ${shown} plugin is turned off` : dist?.gone ? `the ${shown} plugin was removed` : `${shown} isn't installed any more`;
+    // Codex may hand a systemMessage of these events to the model (unverified until L9): no
+    // command for it to run there; it names one only in Claude Code, which shows it to you.
+    if (host === "codex" && rest[0] !== "tool.before") return sayOnce(`${what}; its hooks here do nothing until you remove them in your own terminal`);
     return sayOnce(`${what}: run ${pinned("uninstall")} to remove its hooks`);
   }
   process.argv = [process.argv[0], dist.hook, ...rest, "--memory-only"];

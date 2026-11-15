@@ -126,7 +126,8 @@ test("fail-closed mode: advisory with no rules, flagged with rules, and the Clau
   assert.match(old.note, /needs 2\.1\.295/);
   assert.equal(failClosedRows({ sources: closed, rules: 2, claudeVersion: null }).at(-1).ok, false, "an unknown version isn't assumed new enough");
   assert.deepEqual(failClosedRows({ sources: [], rules: 0 }), [], "no rules check route: nothing to say (the presence row covers it)");
-  assert.equal(ruleCount({ projects: { a: { rules: [1, 2] }, b: { rules: [3], paused: true }, c: {} } }), 2);
+  // Paused rules count (L7 D13: the check stays fail-closed through a pause), global ones too.
+  assert.equal(ruleCount({ projects: { a: { rules: [1, 2] }, b: { rules: [3], paused: true }, c: {} } }), 3);
 });
 
 test("Codex trust: the S-HOOKS untrusted capture is detected, other sources aren't counted", () => {

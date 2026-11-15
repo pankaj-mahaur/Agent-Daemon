@@ -35,6 +35,9 @@ afterwards. Details and every option: [install](install.md).
 3. **Recall.** At session start, with each prompt, or when the agent searches,
    the relevant notes come back. They reach the agent as notes, not
    instructions.
+4. **Rules.** An accepted correction that names a command or a file can
+   become a rule at review: the agent is then asked about, or stopped from,
+   repeating it. See [rules](rules.md).
 
 ## Where things live
 
@@ -57,6 +60,7 @@ afterwards. Details and every option: [install](install.md).
 | [your learnings](learnings.md) | `learnings list`, `show`, `edit`, `forget`, `export`, `import` |
 | [recall](recall.md) | What your agents get back: the session brief, prompt-time learnings, `/recall`, turning it off, other memory on the machine |
 | [tools](tools.md) | Every memory tool, which project the server serves, protocol versions |
+| [rules](rules.md) | When a correction asks or stops a command or a file edit: review's rule step, `rules` commands, allow once, pause, self-protection, fail-closed, the typed code |
 | [security](security.md) | What keeps notes in their project, and the limits |
 | [metrics](metrics.md) | `ad memory report`: is memory working here? `view` writes the same numbers, your learnings and your rules as one read-only HTML page |
 | [FAQ](faq.md) | Common questions |

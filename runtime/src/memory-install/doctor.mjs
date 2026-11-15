@@ -204,6 +204,12 @@ export async function doctor(opts = {}) {
       add(HOOK_ROW_CODES[r.name] ?? `hooks.${r.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`, r.ok, redactHome(ctx, r.note), /Codex/.test(r.name) ? "codex" : undefined);
     }
   }
+  // The rules (L7, D21): count and pauses, the store, the sentinel, the switch, the guard copy, Codex.
+  try {
+    for (const c of await (await import("./doctor-rules.mjs")).rulesChecks(ctx, { now: opts.now ?? Date.now() })) add(c.code, c.ok, redactHome(ctx, c.note), c.host);
+  } catch (e) {
+    add("rules.count", true, `rules not checked (${e.message})`);
+  }
   // Recall (L6): what it sends from this folder, and other memory loaded next to it. Information only.
   const command = (v) => (ctx.version ? `npx -y ${PRODUCT.package}@${ctx.version} ${v}` : `npx -y ${PRODUCT.package} ${v}`);
   let recallRows;

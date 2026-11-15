@@ -104,3 +104,32 @@ export function reviewReminder(handle, { keys, projectId = null, review, product
   }
   return `${product ? `${product}: ` : ""}${parts.join(" · ")}${also} · ${review}`;
 }
+
+/**
+ * The session-start line while rules are paused (L7 D21), or null: once a day, for this
+ * project's pause or a pause of every project. No command: a session-start message may reach
+ * the model, and resuming is the user's to do in their own terminal.
+ * @param {{projectId?:string|null, product?:string, now?:Date}} o
+ */
+export function pausedReminder(handle, { projectId = null, product, now = new Date() } = {}) {
+  let v = null;
+  try {
+    v = JSON.parse(getSetting(handle, "rules_paused") ?? "null");
+  } catch {
+    return null;
+  }
+  const t = now.getTime();
+  const live = (p) => Boolean(p && typeof p === "object" && typeof p.at === "string" && (p.until === null || Date.parse(p.until) > t));
+  const p = live(v?.all) ? { where: "in every project", ...v.all } : projectId && live(v?.projects?.[projectId]) ? { where: "in this project", ...v.projects[projectId] } : null;
+  if (!p) return null;
+  const key = "reminder:rules-paused";
+  try {
+    const last = JSON.parse(getSetting(handle, key) ?? "{}");
+    if (last.at && last.pause === p.at && t - Date.parse(last.at) < DAY) return null;
+    putSetting(handle, key, JSON.stringify({ at: now.toISOString(), pause: p.at }), { now });
+  } catch {
+    // shown anyway; it may come again sooner
+  }
+  const until = p.until === null ? "until you resume them" : `until ${String(p.until).slice(0, 16).replace("T", " ")}`;
+  return `${product ? `${product}: ` : ""}your rules are paused ${p.where} ${until} (self-protection still applies)`;
+}

@@ -11,6 +11,7 @@ import { projectClause } from "./projects.mjs";
 import { pendingSql, provisionalSql } from "./trust.mjs";
 import { PROVISIONAL_DAYS } from "./purge.mjs";
 import { idOfKeys } from "./projects.mjs";
+import { rulesLines, rulesSection } from "./rules-read.mjs";
 import { PRODUCT } from "../product.mjs";
 import { weeklyCounts, weeklyRuleCounts, ruleEventsSince, shareLink } from "./weekly.mjs";
 
@@ -74,7 +75,33 @@ export function memoryReport(handle, { keys, days = 30, now = Date.now(), weeks 
     removedByPrompt,
     // L8 (design decisions 10–11): week by week, this project's rule events by its id.
     weekly: mergeWeeks(weeklyCounts(handle, { keys, weeks, now }), weeklyRuleCounts(ruleEvents, { projectId: idOfKeys(keys), all: keys === null, weeks, now }), ruleEventsSince(ruleEvents)),
+    // L7 (design decision 20): rules, their asks and stops, pauses and ad's own files guarded.
+    rules: rulesOf(handle, { keys, ruleEvents, days, now }),
   };
+}
+
+function rulesOf(handle, { keys, ruleEvents, days, now }) {
+  const projectId = idOfKeys(keys);
+  const all = keys === null;
+  let rules = [];
+  let reminded = 0;
+  try {
+    // The rules this project is enforced by (its own and the scope-all ones), read directly:
+    // report stays light (the plugin's server bundles it).
+    rules = all ? handle.all("SELECT decision, orphaned_at FROM rules") : handle.all("SELECT decision, orphaned_at FROM rules WHERE project_id = ? OR scope = 'all'", [projectId ?? ""]);
+    const sc = scope("l.project_slug", keys);
+    reminded = handle.get(`SELECT COUNT(*) AS n FROM learnings l WHERE l.status = 'active' AND l.accepted_by IS NOT NULL AND ${sc.sql} AND NOT EXISTS (SELECT 1 FROM rules r WHERE r.learning_id = l.id)`, sc.params).n;
+  } catch {
+    // an older store with no rules table: no rules, nothing reminded counted here
+  }
+  let paused = { all: null, projects: {} };
+  try {
+    const v = JSON.parse(handle.get("SELECT value FROM memory_settings WHERE key = 'rules_paused'")?.value ?? "null");
+    if (v && typeof v === "object") paused = { all: v.all ?? null, projects: v.projects && typeof v.projects === "object" ? v.projects : {} };
+  } catch {
+    // no settings table, or a damaged value: nothing paused (rules stay enforced)
+  }
+  return rulesSection({ rules, reminded, events: ruleEvents, paused, projectId, all, days, now });
 }
 
 // A week that ended before the rule-events log's first line has no asked or stopped numbers (null).
@@ -168,6 +195,7 @@ export function renderReport(r, { share = false } = {}) {
     }
     if (r.weekly.some((w) => w.asked === null)) lines.push("    (– : the rule events log keeps only its most recent entries)");
   }
+  if (r.rules && (r.rules.rules || r.rules.asked || r.rules.stopped || r.rules.selfProtect.stopped || r.rules.selfProtect.asked)) lines.push(...rulesLines(r.rules, { share }));
   if (share) lines.push("  (numbers only: no project, path, lesson or session; nothing was sent anywhere)");
   return lines.join("\n");
 }

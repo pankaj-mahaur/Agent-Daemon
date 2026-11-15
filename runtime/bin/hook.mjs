@@ -391,7 +391,16 @@ async function main() {
         const { readRuleEvents } = await import("../src/hooks/rule-events.mjs");
         return (await import("../src/memory/weekly.mjs")).weeklyLine(store, { keys, projectId: idOfKeys(keys), ruleEvents: () => readRuleEvents() });
       });
-      const message = [systemMessage ?? pluginNote, reminder, weekly].filter(Boolean).join("\n");
+      // L7 (D21): daily while rules are paused, for the same attended session.
+      const paused = !attended ? null : await quietly(async () => {
+        const ep = await import("../src/memory/episodic.mjs");
+        const store = await ep.db();
+        if (!store) return null;
+        const { projectIdOf } = await import("../src/memory/projects.mjs");
+        const { PRODUCT } = await import("../src/product.mjs");
+        return (await import("../src/memory/reminder.mjs")).pausedReminder(store, { projectId: projectIdOf(path.resolve(cwd)), product: PRODUCT.displayName });
+      });
+      const message = [systemMessage ?? pluginNote, reminder, paused, weekly].filter(Boolean).join("\n");
       // Recall (plan L6): only into a host that honours it, named by a positive signal.
       const { contextHost } = await import("../src/hooks/host-capabilities.mjs");
       const recallHost = contextHost(input, { flag: hostFlag, plugin });

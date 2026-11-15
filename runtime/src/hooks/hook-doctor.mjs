@@ -148,9 +148,13 @@ export function pluginRow({ plugin, sources }) {
   return { name: "Memory plugin hooks", ok: true, note: all.length ? `${name} is on; its hooks pass through where ad init's run, so nothing is captured twice` : `${name} is on and runs the memory hooks` };
 }
 
-/** Active rules in the snapshot (not paused). */
+/**
+ * The rules in the snapshot, paused ones and global ones included: ad's rules check stays
+ * fail-closed while any rule exists (L7 D13), so this is the count its mode is judged by.
+ */
 export function ruleCount(snapshot) {
-  return Object.values(snapshot?.projects ?? {}).reduce((n, p) => n + (p && !p.paused && Array.isArray(p.rules) ? p.rules.length : 0), 0);
+  const list = (l) => (Array.isArray(l) ? l.length : 0);
+  return list(snapshot?.global?.rules) + Object.values(snapshot?.projects ?? {}).reduce((n, p) => n + list(p?.rules), 0);
 }
 
 /**

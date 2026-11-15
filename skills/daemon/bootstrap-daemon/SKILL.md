@@ -16,7 +16,7 @@ Full end-to-end initialization: scaffold files, read the project, populate memor
 
 ## Phase 0 — Scaffold
 
-1. Run `ad init` in the project root. If `.agent-daemon/` already exists, it will report "already initialized."
+1. Run `ad init` in the project root. If `.agent-daemon/` already exists, it will report "already initialized." From the agent's shell `ad init` only scaffolds: it writes or changes no hook. If the hooks aren't set up yet (`ad doctor` says so), ask the user to run `ad init` in their own terminal; hooks are theirs to change.
 2. Check if memory files contain `{{` placeholders:
    ```bash
    grep -l '{{' .agent-daemon/memory/*.md 2>/dev/null
@@ -119,7 +119,12 @@ Then auto-detect installed tools:
 node --version 2>/dev/null; python3 --version 2>/dev/null; go version 2>/dev/null; rustc --version 2>/dev/null; docker --version 2>/dev/null; gh --version 2>/dev/null
 ```
 
-Write `~/.agent-daemon/user.md` with the user's answers + detected tools.
+Fill in the profile with the user's answers + detected tools, and show it to the user. `~/.agent-daemon/user.md` is in ad's own state, so ad's self-protection asks before the agent writes it, and stops the write in bypass or don't-ask mode and on hosts that can't ask. Either:
+
+- write it, and the user approves the ask; or
+- if the write is stopped (or the user prefers), give them the filled-in profile and ask them to save it to `~/.agent-daemon/user.md` themselves.
+
+Never try to write it another way.
 
 ## Phase 4 — Verify
 
@@ -138,5 +143,5 @@ Write `~/.agent-daemon/user.md` with the user's answers + detected tools.
 - Do NOT exceed the size limits noted for each memory file
 - Do NOT populate gotchas or tech debt speculatively — leave them for the digest pipeline
 - Do NOT overwrite memory files that are already populated (no `{{` placeholders)
-- Do NOT skip `ad init` — always run it first for idempotent scaffolding
+- Do NOT skip `ad init` — always run it first for idempotent scaffolding (the hooks part is the user's, in their own terminal)
 - Do NOT put code samples in memory files — they're context docs, not code references

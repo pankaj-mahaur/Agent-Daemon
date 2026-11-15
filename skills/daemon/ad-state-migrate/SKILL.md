@@ -44,7 +44,7 @@ Ask once: "Are we on the side you're leaving (export), or the side you're moving
 9. `ad state verify --import <importId>` → "Recall: N/N lessons found in <project>" for each project. Fewer than N: report it plainly, offer `ad state rollback <importId>`, and don't call the move done.
 10. Review is the **user's** step: imported lessons and facts are searchable now but reach sessions only after they accept them. Tell them to run `ad review --import <importId>` (or `--accept-all`, typing the import id) in their own terminal; a fact meant for every project still needs `ad memory promote`.
 11. Sign in again: `ad auth list`; for each account that needs it, the user runs `ad auth login <provider> --label <label>` (a browser or a hidden prompt).
-12. `ad init` in each mapped project (hooks and managed blocks; engine folders rebuild on first start).
+12. The user runs `ad init` in each mapped project, in their own terminal (hooks and managed blocks; engine folders rebuild on first start). From the agent's shell `ad init` only scaffolds: hooks are the user's to change.
 13. Schedules come in switched off: `ad schedule list`, then `ad schedule enable <id>` for the ones wanted; `ad service install` if jobs should run here. Skills: show the reinstall list from the import **with its sources** (some are git URLs) and install only what the user confirms.
 14. Undo if needed: `ad state rollback <importId>` removes only what the import added and keeps anything changed since; the side left behind was never changed.
 

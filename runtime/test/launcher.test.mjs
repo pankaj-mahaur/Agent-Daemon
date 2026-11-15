@@ -136,6 +136,11 @@ test("the launcher with nothing to run: told once per session, exit 0; a passing
   assert.match(json(first.out).systemMessage, new RegExp(`isn't installed any more: run npx -y ${PRODUCT.package}@9\\.9\\.9 uninstall`));
   assert.deepEqual(json(run(root, ["hook", "tool.before"], { input: JSON.stringify({ session_id: "s1" }) }).out), {}, "said once");
   assert.ok(json(run(root, ["hook", "tool.before"], { input: JSON.stringify({ session_id: "s2" }) }).out).systemMessage, "a new session is told");
+  // The "codex" host, events other than tool.before (L7 v12): their systemMessage may reach the model, so no command.
+  const cx = json(run(root, ["hook", "session.start", "--host", "codex"], { input: JSON.stringify({ session_id: "c1" }) }).out).systemMessage;
+  assert.match(cx, /isn't installed any more; its hooks here do nothing until you remove them in your own terminal/);
+  assert.doesNotMatch(cx, /uninstall|npx|`/);
+  assert.match(json(run(root, ["hook", "tool.before", "--host", "codex"], { input: JSON.stringify({ session_id: "c2" }) }).out).systemMessage, /run npx -y .* uninstall/);
   // A garbled dists.json is "can't tell": quiet, and no marker for the session.
   fs.writeFileSync(D.distsFile(root), "{ half");
   const quiet = run(root, ["hook", "tool.before"], { input: JSON.stringify({ session_id: "s3" }) });
