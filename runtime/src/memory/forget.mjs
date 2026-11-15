@@ -143,8 +143,9 @@ export async function forgetLearning(handle, o) {
     // The user's own terminal: the id typed back, then purged for good.
     const ok = typeof o.confirm === "function" ? await o.confirm(row) : false;
     if (!ok) return { status: "not-confirmed", ...base };
-    const purged = forgetAccepted(handle, o.token, row.id, { memoryFile: o.memoryFile });
-    return { status: purged ? "forgotten" : "none", ...base };
+    let scrub = null;
+    const purged = forgetAccepted(handle, o.token, row.id, { memoryFile: o.memoryFile, onScrub: (x) => (scrub = x) });
+    return { status: purged ? "forgotten" : "none", ...base, ...(scrub ? { scrub } : {}) };
   }
 
   if (!row.open) return { status: "none", ...base };

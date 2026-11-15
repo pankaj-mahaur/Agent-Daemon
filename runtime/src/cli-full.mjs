@@ -86,12 +86,13 @@ Commands:
   state inspect|export|import|verify  Move ad to another computer: one .adstate file (ad state --help)
                          → proposals only; --apply-merges / --apply-stale execute after review
   memory install [--host <id>] [--yes] [--dry-run]   Add ad's memory server to other agents (setup, doctor, repair, status, uninstall)
-  memory report [--days 30] [--all-projects] [--json] [--share]   Is memory working: repeated corrections, what was shown, feedback
+  memory report [--days 30] [--weeks 4] [--all-projects] [--json] [--share] [--share-link] [--purge]   Is memory working: repeated corrections, what was shown, feedback
                          --all-projects       span every project (default: current --cwd only)
   mistakes [--all-projects] [--share | --json] [--yes]   Read-only report of the corrections you typed to your coding agents (offline, stores nothing)
   mistakes --save [--import-history] [--import-files]   Save this project's repeated corrections and instruction-file rules for review (asks first)
   remember <text>        Save a learning for this project (accepted at once only in your own terminal)
   forget <n> · restore <n>   Remove a learning (restore within 7 days); an accepted one asks you to type its number
+  learnings list|show|edit|forget|export|import   Your learnings: see, change, forget, export for a private repo, import for review
   config review [strict|auto]   Review-first for every learning, or let typed corrections apply at once where a host can prove them
   route stats            Route-advice effectiveness: advised / followed / diverged / ignored per skill
                          --days <n>           window (default 30); --json for machine output

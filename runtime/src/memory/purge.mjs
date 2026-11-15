@@ -86,6 +86,13 @@ export function purgeLearnings(handle, ids, { compact = true } = {}) {
       // older store without the table
     }
     try {
+      // L8 (weekly `captured`, design decision 10): a gone note keeps one `captured` event, its
+      // first; re-captures of it (said again while it waited) were never new notes.
+      handle.run(
+        `DELETE FROM events WHERE kind = 'captured' AND learning_id IN (${marks})
+           AND id NOT IN (SELECT MIN(id) FROM events WHERE kind = 'captured' AND learning_id IN (${marks}) GROUP BY learning_id)`,
+        [...list, ...list]
+      );
       // L5 events keep their counts but no longer point at the gone note.
       handle.run(`UPDATE events SET learning_id = NULL WHERE learning_id IN (${marks})`, list);
     } catch {

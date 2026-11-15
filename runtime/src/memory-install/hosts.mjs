@@ -50,6 +50,12 @@ export function claudeHasAdHooks(home) {
   }
 }
 
+/** Every host's own config folder, env overrides included (L8: `learnings export` never writes into one). */
+export function hostConfigDirs({ env = {}, home }) {
+  const own = (v, dflt) => (v && path.isAbsolute(v) ? v : path.join(home, dflt));
+  return [own(env.CLAUDE_CONFIG_DIR, ".claude"), own(env.CODEX_HOME, ".codex"), path.join(home, ".gemini"), path.join(home, ".cursor")];
+}
+
 /**
  * The agent-daemon-memory plugin is enabled in Claude Code's user settings
  * (`enabledPlugins["<plugin>@<marketplace>"]: true`, the plugin named in product.mjs) → that key, else null.

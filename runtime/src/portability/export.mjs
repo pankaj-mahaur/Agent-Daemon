@@ -508,6 +508,8 @@ export function exportSummary({ out, bytes, manifest }) {
     `  projects: ${projects} · global memory: ${manifest.scope.globalMemory ? "included" : "not included (add --include global-memory)"}`,
     `  settings, account list (${n} account${n === 1 ? "" : "s"}: sign in again after import)`,
     "  not included: secrets, the engine's own folders, logs, locks, other projects (see ad state inspect)",
+    // L8 (design decision 8): rules stay on this computer at launch (tables.mjs: export "exclude").
+    "  rules stay on this computer: after the import, propose them again in review",
     ...(manifest.warnings.some((w) => w.code === "redacted") ? [`  ${manifest.warnings.find((w) => w.code === "redacted").count} item(s) that looked like keys were replaced with [redacted] in the export (your own copy is unchanged)`] : []),
     `  ${EXPORT_TEXTS.PLAINTEXT}`,
   ].join("\n");

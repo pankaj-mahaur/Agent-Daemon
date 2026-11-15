@@ -192,6 +192,10 @@ export async function doctor(opts = {}) {
   const cur = currentDist(ctx.root);
   if (cur) add("pkg.stale", !newer(ctx.version, cur), newer(ctx.version, cur) ? `installed ${cur}, this is ${ctx.version}: run install to update` : `installed ${cur}`);
 
+  // L8: a week after the first install, the feedback thread (information, never a failure).
+  const nudge = (await import("./feedback-nudge.mjs")).feedbackNudge(ctx.root, { now: opts.now ?? Date.now() });
+  if (nudge) add("feedback.nudge", true, nudge);
+
   if (opts.json) ctx.out(JSON.stringify(checks));
   else {
     for (const c of checks) ctx.out(`${c.ok ? "✓" : "✗"} ${c.host ? `${hostById(c.host)?.name ?? c.host} ` : ""}${c.code}: ${c.note}`);

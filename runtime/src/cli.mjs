@@ -88,6 +88,17 @@ async function launch() {
     const { memoryVerbMain } = await import("./memory/memory-cli.mjs");
     return memoryVerbMain(command, rest, { command: (v) => `ad ${v}` });
   }
+  // L8: `ad memory report` takes the report's own flags (--weeks, --share-link, --purge too).
+  if (command === "memory" && rest[0] === "report") {
+    if (rest.includes("--purge")) return (await import("./memory/report-purge.mjs")).reportPurgeMain(rest.slice(1));
+    const { reportMain } = await import("./memory/report.mjs");
+    return reportMain(rest.slice(1));
+  }
+  // L8: your learnings (memory/learnings-cli.mjs), before the full command module.
+  if (command === "learnings") {
+    const { learningsMain } = await import("./memory/learnings-cli.mjs");
+    return learningsMain(rest[0], rest.slice(1), { command: (v) => `ad ${v}` });
+  }
   // The hand-off to the engine's own UI left the product in 3.0 (design C4): a tombstone says what replaced it.
   if (command === LEGACY.command) {
     const { tombstoneEngineUiCommand } = await import("./engine/attribution.mjs");
