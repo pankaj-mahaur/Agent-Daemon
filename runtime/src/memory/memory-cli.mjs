@@ -30,6 +30,17 @@ async function askLine(q) {
 }
 
 /**
+ * The review token for a CLI verb (remember, forget, config, and L8's learnings and
+ * `report --purge`), or why not. token: an injected () => {token}|{refused} (tests).
+ * → {token} | {refused}
+ */
+export async function cliToken({ token, ask = askLine, out = (l) => console.log(l) } = {}) {
+  const svc = await import("./review-service.mjs");
+  const r = await (token ?? (() => svc.reviewToken({ ask, out })))();
+  return r?.token && svc.isReviewToken(r.token) ? { token: r.token } : { refused: r?.refused ?? "not your own terminal" };
+}
+
+/**
  * Run one memory verb. → exit code.
  * @param {string} verb  remember | forget | restore | config
  * @param {string[]} argv the words after the verb
@@ -50,11 +61,7 @@ export async function memoryVerbMain(verb, argv = [], o = {}) {
     out(`${PRODUCT.displayName}: the memory store can't be opened (run ${command("doctor")}).`);
     return 1;
   }
-  const getToken = async () => {
-    const svc = await import("./review-service.mjs");
-    const r = await (o.token ?? (() => svc.reviewToken({ ask, out })))();
-    return r?.token && svc.isReviewToken(r.token) ? { token: r.token } : { refused: r?.refused ?? "not your own terminal" };
-  };
+  const getToken = () => cliToken({ token: o.token, ask, out });
   const { projectIdOf } = await import("./projects.mjs");
   // Every name of this folder: a linked folder's notes may be keyed by its logical path
   // (the host's cwd) while node runs in the physical one.
@@ -124,6 +131,9 @@ export async function memoryVerbMain(verb, argv = [], o = {}) {
       });
     }
     out(F.commandReceipt(r, words) ?? `${PRODUCT.displayName}: nothing changed.`);
+    // L8: the words also left the capture files, except what was in use or tracked by git.
+    if (r.scrub?.older) out(`Its ${r.scrub.older} older wording${r.scrub.older === 1 ? "" : "s"} went too.`);
+    if (r.scrub?.left?.length) out(`${r.scrub.left.length} capture file${r.scrub.left.length === 1 ? " still holds" : "s still hold"} its words (in use, or tracked by git): ${r.scrub.left.join(", ")}`);
     if (asker === "agent" && ["refused-own", "removed-by-you"].includes(r.status)) out(`(not your own terminal: ${t.refused})`);
     return ["hidden", "restored", "forgotten", "forget-requested", "marked"].includes(r.status) ? 0 : 1;
   }

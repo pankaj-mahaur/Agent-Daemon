@@ -30,7 +30,7 @@ import { normKey } from "./sqlite.mjs";
 import { idOfKeys, slugOfKeys, projectClause } from "./projects.mjs";
 import { pendingSql } from "./trust.mjs";
 import { ensureProposalTables, historyHashKey, keyedHash, rejectedHashes } from "./proposal-tables.mjs";
-import { purgeLearnings } from "./purge.mjs";
+import { compactStore, purgeLearnings } from "./purge.mjs";
 
 export const MIN_REPEATS = 2;
 export const PER_SESSION = 3;
@@ -267,7 +267,10 @@ export function purgeHistory(handle, keys) {
   const p = projectClause("", keys);
   if (!handle.get("SELECT 1 AS x FROM sqlite_schema WHERE type = 'table' AND name = 'history_clusters'")) return { rows: 0, notes: 0 };
   const ids = handle.all(`SELECT id FROM learnings WHERE provenance = ? AND (${pendingSql()} OR status = 'quarantined') AND ${p.sql}`, [PROVENANCE, ...p.params]).map((r) => r.id);
-  const rows = handle.run(`DELETE FROM history_clusters WHERE ${p.sql}`, p.params).changes;
-  purgeLearnings(handle, ids);
+  // L8 (report --purge): the rows in a transaction, then the notes (purgeLearnings' own), and the
+  // freed pages compacted even when no note went.
+  const rows = handle.transaction(() => handle.run(`DELETE FROM history_clusters WHERE ${p.sql}`, p.params).changes);
+  const notes = ids.length ? purgeLearnings(handle, ids) : 0;
+  if (rows && !notes) compactStore(handle);
   return { rows, notes: ids.length };
 }

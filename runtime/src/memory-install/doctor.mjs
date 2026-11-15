@@ -217,6 +217,10 @@ export async function doctor(opts = {}) {
   const cur = currentDist(ctx.root);
   if (cur) add("pkg.stale", !newer(ctx.version, cur), newer(ctx.version, cur) ? `installed ${cur}, this is ${ctx.version}: run install to update` : `installed ${cur}`);
 
+  // L8: a week after the first install, the feedback thread (information, never a failure).
+  const nudge = (await import("./feedback-nudge.mjs")).feedbackNudge(ctx.root, { now: opts.now ?? Date.now() });
+  if (nudge) add("feedback.nudge", true, nudge);
+
   // Readiness (L8b, D22): plain text after the checks, never part of the exit code.
   let ready = [];
   try {

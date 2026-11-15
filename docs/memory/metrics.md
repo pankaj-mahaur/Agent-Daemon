@@ -66,3 +66,22 @@ one project can't sink a lesson for every other project.
 - The report counts what happens in your projects; it can't say what would have
   happened without memory. The controlled comparison (no memory, the host's own
   memory, a rules file, ad) is the [correction benchmark](../../bench/correction-bench/PROTOCOL.md).
+
+## Week by week, the weekly line and sharing
+
+`report` ends with a `Week by week` table for the last 4 weeks (`--weeks N`, up to 25):
+new learnings captured (from every source), in use before review, accepted, recalled to an
+agent (each learning once a week), said again after you accepted it, and how often a rule
+asked or stopped. A `–` means the rule log no longer reaches back that far.
+
+- Once a week, the first attended Claude Code session shows one line such as
+  "Last week: 3 stopped, 2 asked, 1 repeated" (nothing when every number is 0).
+- `report --share-link` prints a prefilled GitHub Discussions post with those counts and
+  nothing else. Nothing is sent: you open it and decide.
+- `report --purge` removes what the history import found in this project (its sentences
+  and the learnings from it still waiting for review), in your own terminal after you
+  type `y`. Accepted learnings stay.
+- A week after you install, `doctor` points to the feedback thread.
+
+Your learnings themselves: [list, edit, forget, export](learnings.md).
+

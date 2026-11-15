@@ -1268,6 +1268,30 @@ These are information, not failures: other memory that loads next to ad's learni
 
 For harness problems, the [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill walks through login → hooks → sandbox → the engine's own log. See also [harness.md](harness.md) and, for the terminal UI, [tui.md](tui.md).
 
+## 140. `learnings edit` says "the editor returned at once"
+
+**Symptom:** `learnings edit <number>` prints `Nothing changed: The editor returned at once without waiting`.
+
+**Cause:** your editor opened the file in a window that was already running and returned to the terminal straight away (VS Code without `--wait`, or Windows 11's Notepad opening a tab in a running Notepad), so ad saw the words unchanged.
+
+**Fix:** set an editor that waits: `EDITOR="code --wait"`, or pass the words directly with `learnings edit <number> --text "<new words>"`.
+
+## 141. `learnings export`, `import`, `edit` or `list --all-projects` says it "needs your own terminal"
+
+**Symptom:** the command prints `Nothing written`, `Nothing imported`, `Nothing changed` or `Nothing shown` with "needs your own terminal".
+
+**Cause:** these read every project's learnings, write them to a file, or change them, so they run only in a terminal you typed into, not in an agent's shell or a script (the same check as `review`).
+
+**Fix:** run it yourself in a terminal. In an editor's terminal, follow the dialog it shows. `learnings list` and `show` for this project work anywhere.
+
+## 142. A forget says "capture file still holds its words"
+
+**Symptom:** after `forget <number>` the receipt lists one or more files that still hold the learning's words.
+
+**Cause:** the file is tracked by git (ad never rewrites a tracked file), or it is a journal a session is reading at that moment.
+
+**Fix:** for a tracked file, remove the line yourself and commit. For a journal in use, run `forget` again later; the journal is cleaned then.
+
 ## Still stuck?
 
 Open an issue at the repo with:
