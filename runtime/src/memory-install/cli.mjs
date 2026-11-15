@@ -20,6 +20,7 @@ const USAGE = `${PRODUCT.package}: ad's memory server for Claude Code, Codex, Cu
   review [--list | --plain | --accept-all [--with-agent] | --proposals] [--accept <file>] [--global]   decide what waits (in your own terminal)
   remember <text>  ·  forget <number>  ·  restore <number>   (accepted at once only in your own terminal)
   config review [strict|auto]   review-first for every learning, or not
+  safety [on|status]   ask before four kinds of catastrophic commands (off by default; in your own terminal)
   report [--days 30] [--all-projects] [--json] [--share]   is memory working here
   mistakes [--all-projects] [--share | --json] [--yes]   the corrections you keep typing (read-only, offline)
   mistakes --save                                        save them and your instruction files' rules for review (asks first)
@@ -113,6 +114,8 @@ export async function main(argv = process.argv.slice(2), { log = (l) => console.
   // L5: remember, forget, restore, config review (memory/memory-cli.mjs: trusted only with
   // the review token, in your own terminal).
   if (["remember", "forget", "restore", "config"].includes(cmd)) return (await import("../memory/memory-cli.mjs")).memoryVerbMain(cmd, rest, { out: log });
+  // L7b: the starter safety policy (off by default; on and off only in your own terminal).
+  if (cmd === "safety") return (await import("../memory/safety-cli.mjs")).safetyMain(rest, { out: log, env, isTTY, cmdName: `npx -y ${PRODUCT.package}` });
   const flags = parseFlags(rest);
   if (flags.error) {
     log(`${flags.error}\n${USAGE}`);

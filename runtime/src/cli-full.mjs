@@ -2652,6 +2652,8 @@ async function main(argv) {
     case "checkpoint":     return cmdCheckpoint(opts);
     case "init":           return cmdInit({ ...opts, profile: parsed.values.profile, plan: parsed.values.plan, skillsMode: parsed.values["skills-mode"] });
     case "status":         return cmdStatus(opts);
+    // L7b: the starter safety policy (on and off only in your own terminal).
+    case "safety":         return (await import("./memory/safety-cli.mjs")).safetyMain(parsed.positionals ?? [], { command: (v) => `ad ${v}`, cmdName: "ad" });
     // ad review --import <id> (P7.3): imported lessons and facts, under the same gate.
     case "review":         if (parsed.values.import) return (await import("./portability/state-cli.mjs")).cmdReviewImport(parsed.values.import, { acceptAll: Boolean(parsed.values["accept-all"]) });
                            return cmdReview({ ...opts, accept: parsed.values.accept, acceptAll: parsed.values["accept-all"] || false, global: parsed.values.global || false, yes: parsed.values.yes || false, reject: parsed.values.reject, list: parsed.values.list || false, plain: parsed.values.plain || false, proposals: parsed.values.proposals || false, withAgent: parsed.values["with-agent"] || false });

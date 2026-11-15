@@ -937,10 +937,53 @@
       "reason": "readiness tests set up a fake Codex home and read the user's Codex host lines (its hooks trust, config.toml); not ad's engine"
     },
     {
+      "path": "runtime/src/memory/safety-cli.mjs",
+      "rules": ["A", "C"],
+      "reason": "L7b: `safety on` tells the user how the starter safety policy decides in each of their hosts; Codex can't ask, so it stops (the user's own Codex host, not ad's engine)"
+    },
+    {
+      "path": "runtime/src/memory/policy-coexist.mjs",
+      "rules": ["A"],
+      "reason": "L7b: doctor reads the user's Codex hooks.json and config.toml to find other command guards (the user's own Codex host, not ad's engine)"
+    },
+    {
+      "path": "runtime/test/l7b-policy-enforce.test.mjs",
+      "rules": ["A"],
+      "reason": "L7b: the policy's decisions per host, Codex's deny included (the user's own Codex host, not ad's engine)"
+    },
+    {
+      "path": "runtime/test/l7b-safety-cli.test.mjs",
+      "rules": ["A"],
+      "reason": "L7b: coexistence fixtures in the user's Codex config folder (the user's own Codex host, not ad's engine)"
+    },
+    {
+      "path": "runtime/test/fixtures/starter-policy-call.mjs",
+      "rules": ["A"],
+      "reason": "L7b: the starter-policy corpus items name their host (claude-code or codex) (the user's own Codex host, not ad's engine)"
+    },
+    {
+      "path": "docs/memory/security.md",
+      "rules": ["A"],
+      "match": "and in Codex, which can't ask",
+      "reason": "L7b: how the starter safety policy decides in the user's hosts (the user's own Codex host, not ad's engine)"
+    },
+    {
+      "path": "skills/daemon/harness-troubleshoot/SKILL.md",
+      "rules": ["A"],
+      "match": "Codex and bypass modes can't ask",
+      "reason": "L7b row #130: how the starter safety policy decides in the user's hosts (the user's own Codex host, not ad's engine)"
+    },
+    {
       "path": "docs/troubleshooting.md",
       "rules": ["A"],
       "match": "Codex: trusted in|not trusted yet in Codex|open Codex and run",
       "reason": "the readiness entry (#150): the user's own Codex host and its /hooks trust step"
+    },
+    {
+      "path": "docs/troubleshooting.md",
+      "rules": ["A"],
+      "match": "Claude Code in bypass or don't-ask mode, and Codex, can't ask",
+      "reason": "L7b entry #130: how the starter safety policy decides in the user's hosts (the user's own Codex host, not ad's engine)"
     }
   ]
 }
