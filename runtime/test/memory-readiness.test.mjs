@@ -91,17 +91,47 @@ test("counts: learnings in use and waiting, rules; the starter policy appears on
   acceptLearnings(db, [a]);
   addRule(db, testReviewToken(), { learningId: a, projectId: PID, kind: "command", pattern: { type: "command", program: "git", subcommands: ["push"], flags: ["--force"] }, reason: "never force push", decision: "deny" });
   db.close();
-  const all = await readiness(t.ctx, { cwd: t.h, claudeVersion: null });
+  const all = await readiness(t.ctx, { cwd: t.h, claudeVersion: null, have: (id) => id === "rules" });
   assert.equal(line(all, "cursor", "learnings").text, "1 learning in use, 1 waiting for review");
   assert.equal(line(all, "cursor", "learnings").fix, t.ctx.command("review"));
   assert.equal(line(all, "cursor", "rules").text, "1 rule");
-  // The version has no starter policy module: no policy line, and no "from the starter policy" split.
-  assert.equal(line(all, "cursor", "policy"), undefined);
-  // A version that has it: the split and the policy line.
+  // A version without the starter policy: no policy line, no "from the starter policy" split.
+  const noPolicy = { cwd: t.h, claudeVersion: null, have: (id) => id === "rules" };
+  const bare = await readiness(t.ctx, noPolicy);
+  assert.equal(line(bare, "cursor", "rules").text, "1 rule");
+  assert.equal(line(bare, "cursor", "policy"), undefined);
+  // A version that has it, policy off (the default): the split, and the line with its fix.
   const withPolicy = await readiness(t.ctx, { cwd: t.h, claudeVersion: null, have: () => true });
   assert.equal(line(withPolicy, "cursor", "rules").text, "1 rule (1 from your learnings, 0 from the starter policy)");
-  assert.equal(line(withPolicy, "cursor", "policy").ok, false);
-  assert.equal(line(withPolicy, "cursor", "policy").fix, t.ctx.command("policy on"));
+  assert.equal(line(withPolicy, "cursor", "policy").text, "the starter safety policy is off");
+  assert.equal(line(withPolicy, "cursor", "policy").ok, true, "off is the default, not a failure");
+  assert.equal(line(withPolicy, "cursor", "policy").fix, t.ctx.command("safety on"));
+  // Switched on: the line passes and has no fix.
+  const { policyOn } = await import("../src/memory/starter-policy.mjs");
+  const db2 = await open({ dbPath: path.join(t.env.AD_ROOT, "episodic.db"), prefer: "node:sqlite" });
+  policyOn(db2, testReviewToken());
+  db2.close();
+  const on = await readiness(t.ctx, { cwd: t.h, claudeVersion: null, have: () => true });
+  assert.equal(line(on, "cursor", "policy").ok, true);
+  assert.equal(line(on, "cursor", "policy").text, "the starter safety policy is on");
+  assert.equal(line(on, "cursor", "policy").fix, undefined);
+  // Partly on (one family's rule removed): a gap with the fix.
+  const db3 = await open({ dbPath: path.join(t.env.AD_ROOT, "episodic.db"), prefer: "node:sqlite" });
+  const { removeRule } = await import("../src/memory/rules-service.mjs");
+  const { policyRules } = await import("../src/memory/starter-policy.mjs");
+  removeRule(db3, testReviewToken(), policyRules(db3)[0].id);
+  const some = await readiness(t.ctx, { cwd: t.h, claudeVersion: null, have: () => true });
+  assert.equal(line(some, "cursor", "policy").ok, false);
+  assert.match(line(some, "cursor", "policy").text, /partly on \(\d of \d kinds/);
+  assert.equal(line(some, "cursor", "policy").fix, t.ctx.command("safety on"));
+  // Everything paused: not ok, whatever the rules say.
+  const { pauseRules } = await import("../src/memory/rules-service.mjs");
+  pauseRules(db3, testReviewToken(), { projectId: null });
+  db3.close();
+  const paused = await readiness(t.ctx, { cwd: t.h, claudeVersion: null, have: () => true });
+  assert.equal(line(paused, "cursor", "policy").ok, false);
+  assert.match(line(paused, "cursor", "policy").text, /every rule is paused/);
+  assert.equal(line(paused, "cursor", "policy").fix, t.ctx.command("safety status"));
 });
 
 test("a feature missing from the installed version prints no line (rules, policy)", async () => {
@@ -115,8 +145,19 @@ test("a feature missing from the installed version prints no line (rules, policy
     assert.equal(line(noRules, host, "rules"), undefined, host);
     assert.equal(line(noRules, host, "policy"), undefined, host);
   }
-  // The default probe reads the files next to the module: the policy module isn't in this tree.
-  assert.equal(fs.existsSync(new URL("../src/memory/starter-policy.mjs", import.meta.url)), false);
+  // The default probe looks for each feature's file in the installed tree: a tree without the policy module has no policy line.
+  const tree = fs.mkdtempSync(path.join(os.tmpdir(), "ad-ready-tree-"));
+  made.push(tree);
+  fs.mkdirSync(path.join(tree, "memory"), { recursive: true });
+  fs.mkdirSync(path.join(tree, "memory-install"), { recursive: true });
+  fs.writeFileSync(path.join(tree, "memory", "rules-service.mjs"), "");
+  const featureRoot = path.join(tree, "memory-install");
+  (await open({ dbPath: path.join(t.env.AD_ROOT, "episodic.db"), prefer: "node:sqlite" })).close();
+  const noPolicy = await readiness(t.ctx, { cwd: t.h, claudeVersion: null, featureRoot });
+  assert.equal(line(noPolicy, "cursor", "policy"), undefined);
+  assert.ok(line(noPolicy, "cursor", "rules"));
+  fs.writeFileSync(path.join(tree, "memory", "starter-policy.mjs"), "");
+  assert.ok(line(await readiness(t.ctx, { cwd: t.h, claudeVersion: null, featureRoot }), "cursor", "policy"));
 });
 
 test("Claude Code through the plugin: installed, hooks wired, advisory enforcement with no routes", async () => {

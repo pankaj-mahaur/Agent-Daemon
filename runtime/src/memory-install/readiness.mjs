@@ -57,6 +57,13 @@ async function storeFacts(ctx, have) {
         facts.policy = 0;
       }
     }
+    if (have("policy")) {
+      try {
+        facts.policyState = (await import("../memory/starter-policy.mjs")).policyState(store);
+      } catch {
+        facts.policyState = null;
+      }
+    }
     try {
       facts.mode = (await import("../memory/review-mode.mjs")).reviewMode(store);
     } catch {
@@ -72,12 +79,13 @@ async function storeFacts(ctx, have) {
 
 /**
  * @param {object} ctx  install's context (home, env, root, display, command, claudeVersion)
- * @param {{cwd?: string, have?: (id: string) => boolean, claudeVersion?: string|null, recallRows?: {code: string, note: string}[]}} [o]
+ * @param {{cwd?: string, featureRoot?: string, have?: (id: string) => boolean, claudeVersion?: string|null, recallRows?: {code: string, note: string}[]}} [o]
  * @returns {Promise<{host: string, name: string, lines: {code: string, ok: boolean, text: string, fix?: string}[]}[]>}
  */
 export async function readiness(ctx, o = {}) {
   const cwd = o.cwd ?? process.cwd();
-  const have = o.have ?? ((id) => fs.existsSync(path.join(HERE, FEATURES[id] ?? "\0")));
+  // featureRoot: a folder laid out like this module's (tests; default: the installed tree).
+  const have = o.have ?? ((id) => fs.existsSync(path.resolve(o.featureRoot ?? HERE, FEATURES[id] ?? "\0")));
   const ledger = readLedger(ctx.root);
   const plugin = installedPlugin(ctx);
   const ids = new Set(Object.keys(ledger.hosts));
@@ -178,8 +186,12 @@ export async function readiness(ctx, o = {}) {
         add("rules", true, `${fmt(facts.rules)} rule${facts.rules === 1 ? "" : "s"}${have("policy") ? ` (${fmt(learned)} from your learnings, ${fmt(facts.policy)} from the starter policy)` : ""}`);
       }
     } else add("learnings", true, "no memory store yet: nothing learned");
-    if (have("policy") && facts?.policy !== null && facts?.policy !== undefined) {
-      add("policy", facts.policy > 0, facts.policy > 0 ? "the starter safety policy is on" : "the starter safety policy is off", facts.policy > 0 ? undefined : cmd("policy on"));
+    if (have("policy") && facts?.policyState) {
+      const st = facts.policyState;
+      const on = st.state === "on";
+      const n = st.families.filter((f) => f.rule !== null).length;
+      if (st.paused && st.state !== "off") add("policy", false, `the starter safety policy is ${on ? "on" : "partly on"} but every rule is paused${st.paused.until ? ` until ${st.paused.until}` : " until resumed"}, so nothing is asked or blocked`, cmd("safety status"));
+      else add("policy", st.state !== "some", on ? "the starter safety policy is on" : st.state === "some" ? `the starter safety policy is partly on (${n} of ${st.families.length} kinds of command)` : "the starter safety policy is off", on ? undefined : cmd("safety on"));
     }
 
     // coexisting tools (information; L7b adds dcg and claude-code-safety-net)
