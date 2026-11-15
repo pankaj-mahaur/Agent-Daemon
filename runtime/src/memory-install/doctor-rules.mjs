@@ -80,7 +80,7 @@ export async function rulesChecks(ctx, { now = Date.now(), platform = ctx.platfo
   // The sentinel (D3): present while rules exist, so an unreadable rules file never reads as none.
   if (snapshot && source === "current") {
     const ok = n > 0 ? sentinel !== null : true;
-    add("rules.sentinel", ok, n > 0 ? (sentinel !== null ? "present" : "missing although rules exist: run repair") : sentinel !== null ? "present from earlier rules (removed by your next review)" : "none (no rules)");
+    add("rules.sentinel", ok, n > 0 ? (sentinel !== null ? "present" : "missing although rules exist: your next review in your own terminal writes it again") : sentinel !== null ? "present from earlier rules (removed by your next review)" : "none (no rules)");
   }
 
   // The rule switch (D13): ad's tool.before fails closed while rules exist; the record says what it applied.
@@ -91,6 +91,7 @@ export async function rulesChecks(ctx, { now = Date.now(), platform = ctx.platfo
     if (rec?.failed) add("rules.switch", false, "ad couldn't switch its rules check the last time the rules changed: run repair (it raises it); a lowering waits for your next review");
     else if (!rec) add("rules.switch", !want.active, want.active ? "no record of the switch although rules exist: run repair" : "no rules yet: the check stays as setup wrote it");
     else if (rec.active !== want.active && want.active) add("rules.switch", false, "rules exist but ad's rules check isn't fail-closed yet: run repair");
+    else if (rec.pendingLower && want.active) add("rules.switch", true, "fail-closed; Read stays in it although no .env rule is left: your next review in your own terminal takes it out");
     else if (rec.pendingLower || (rec.active && !want.active)) add("rules.switch", true, "no rule is left, but ad's rules check still fails closed: your next review in your own terminal puts it back");
     else add("rules.switch", true, want.active ? `fail-closed${want.readMatcher ? ", Read included" : ""} (from your next session after a change)` : "resting values (no rules)");
   }
@@ -102,8 +103,8 @@ export async function rulesChecks(ctx, { now = Date.now(), platform = ctx.platfo
   } else if (g.unreadable) add("rules.guard", false, `the guard record is ${g.unreadable}: run repair`);
   else if (g.route === "npm") {
     const intact = copyIntact(g.path) && manifestSha(g.path) === g.manifestSha256;
-    add("rules.guard", intact, intact ? `${g.distVersion} (manifest verified)` : `${g.distVersion}: its files don't match the manifest ad recorded, so the rules check decides without it: run repair`);
-  } else add("rules.guard", true, `${g.distVersion} from ${g.path} (ad's clone)`);
+    add("rules.guard", intact, intact ? `${g.version} (manifest verified)` : `${g.version}: its files don't match the manifest ad recorded, so the rules check decides without it: run repair`);
+  } else add("rules.guard", true, `${g.version} from ${g.path} (ad's clone)`);
 
   // Codex on Windows: tool.before arrives with the first rule (C-L3-CODEXWIN).
   const codex = readLedger2(root).items.filter((i) => i.host === "codex" && i.kind === "hook");

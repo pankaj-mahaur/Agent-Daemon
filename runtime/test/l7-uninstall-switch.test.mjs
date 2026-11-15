@@ -226,3 +226,42 @@ test("confirmInOwnTerminal passes on the dialog's proof (so uninstall doesn't as
   assert.deepEqual(await confirmInOwnTerminal({ ...base, ancestry: () => ({ verdict: "unknown" }), dialog: async () => ({ ok: true }) }), { ok: true, dialogProven: true });
   assert.equal((await confirmInOwnTerminal({ ...base, ancestry: () => ({ verdict: "agent", agent: "claude" }) })).ok, false);
 });
+
+test("an owed lowering (pendingLower) is put back by afterReview, and by a review with nothing queued", async () => {
+  const { open } = await import("../src/memory/sqlite.mjs");
+  const { afterReview } = await import("../src/memory/rules-finish.mjs");
+  const { runInteractiveReview } = await import("../src/review.mjs");
+  for (const via of ["afterReview", "review"]) {
+    const t = home({ settings: { hooks: { PreToolUse: [USER_HOOK] } } });
+    const pristine = fs.readFileSync(t.file);
+    assert.equal(await S.setup({ ctx: t.ctx, hosts: ["claude-code"] }), 0, t.log());
+    const setupText = fs.readFileSync(t.file);
+    rules(t.root, [RULE]);
+    await W.switchAfterRules({ root: t.root, platform: "linux" });
+    rules(t.root, []);
+    fs.rmSync(activePath(t.root), { force: true });
+    // A run without the token (setup, repair) sees it first: it can't lower, so it records the debt.
+    await W.applyRuleSwitch({ ctx: { root: t.root, lockWaitMs: 50 } });
+    assert.equal(W.readSwitchRecord(t.root).pendingLower, true);
+    assert.equal(W.switchDue(t.root), false);
+    assert.equal(t.entry().handler.onFailure, "block");
+    const h = await open({ dbPath: path.join(t.root, "episodic.db") });
+    try {
+      if (via === "afterReview") {
+        const done = await afterReview(h, testReviewToken(), { root: t.root });
+        assert.equal(done?.switch?.changed, true, JSON.stringify(done));
+      } else {
+        const lines = [];
+        const empty = fs.mkdtempSync(path.join(t.h, "proj-"));
+        const code = await runInteractiveReview({ io: { ask: async () => "" }, handle: h, keys: [], cwd: empty, root: t.root, env: {}, isTTY: () => true, ancestry: () => ({ verdict: "terminal" }), out: (l) => lines.push(String(l)) });
+        assert.equal(code, 0, lines.join("\n"));
+        assert.match(lines.join("\n"), /resting values again/);
+      }
+    } finally {
+      h.close();
+    }
+    assert.ok(fs.readFileSync(t.file).equals(setupText), `${via}: the entry has its resting values`);
+    assert.equal(W.readSwitchRecord(t.root).pendingLower, false);
+    assert.ok(!fs.readFileSync(t.file).equals(pristine), "setup's entry itself stays");
+  }
+});
