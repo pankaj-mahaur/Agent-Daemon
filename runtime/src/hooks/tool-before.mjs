@@ -315,7 +315,7 @@ const STATE_TRIGGER = new RegExp(
     String.raw`\b(?:cd|pushd|chdir|set-location|sl|push-location)\s+${HOME_W}[\\/]?\.?(?:\s|$|[;&|)])`,
     String.raw`(?:^|[;&|(]\s*)cd\s*(?:$|[;&|)])`,
     String.raw`agent-[^\s]*\{|\{[^\s{}]*agent-`,
-    String.raw`\b(?:rm|rmdir|mv|remove-item|ri|move-item|mi|del|rd|erase)\b[^;&|\n]*\s(?:${HOME_W}|\/|[A-Za-z]:\\?)[\\/]?(?:\s|$|[;&|)])`,
+    String.raw`\b(?:rm|rmdir|mv|remove-item|ri|move-item|mi|del|rd|erase)\b[^;&|\n]{0,256}\s(?:${HOME_W}|\/|[A-Za-z]:\\?)[\\/]?(?:\s|$|[;&|)])`,
     String.raw`${HOME_W}[\\/][^\s;&|]*[*?[$]`,
     String.raw`(?<![\w-])\.git(?![\w-])`,
     String.raw`installed_plugins|known_marketplaces|plugins[\\/](?:cache|marketplaces)`,
@@ -323,7 +323,13 @@ const STATE_TRIGGER = new RegExp(
     // Backslash spellings (\ is dropped before the main trigger), find that deletes or runs,
     // and a home spelling as a tree command's destination or a last word.
     String.raw`\.agent-daemon|agent-~`,
-    String.raw`\bfind\b[^;&|\n]*\s-(?:delete|exec|ok|fprint|fls)`,
+    // D12 d, f, g: host config, the Windows folder, startup and persistence, shims.
+    String.raw`settings[\w.-]*\.json|\.claude\.json|(?<![\w-])\.(?:claude|codex)(?![\w-])|hooks\.json|config\.toml|\.mcp\.json`,
+    String.raw`(?<![\w-])windows(?:[\\/.;\s]|$)|windir|systemroot|systemdrive|appdata|\$profile`,
+    String.raw`register-scheduledtask|reg\s+import|systemctl\b[^;&|\n]{0,64}--user|\.gitconfig|\.git[\\/]config|git\s+config\b`,
+    String.raw`\.(?:bash|zsh|ksh|tcsh|csh|input)rc|\.(?:bash_profile|bash_login|bash_logout|profile|zprofile|zshenv|zlogin|zlogout|login)(?![\w-])|sqliterc|config\.fish|fish[\\/]conf\.d|autostart|systemd[\\/]user|launchagents|\.desktop(?![\w-])|\.git[\\/]hooks|crontab|core\.hookspath|bash_env|(?<![\w-])env=(?:[/~]|\$home)|[\\/]run(?:once)?\b|schtasks|start menu|profile\.ps1|\$profile`,
+    String.raw`[\\/](?:npx|node|nodejs|ad|agent-daemon|teachonce)(?:\.(?:cmd|exe|bat|ps1))?(?=$|[\s'";&|)])`,
+    String.raw`\bfind\b[^;&|\n]{0,256}\s-(?:delete|exec|ok|fprint|fls)`,
     String.raw`(?:\s-C|\s-d|--directory|--target-directory|-DestinationPath|-Destination)[\s=]+["']?${HOME_W}`,
     String.raw`\s["']?${HOME_W}[\\/]?["']?\s*(?:$|[;&|)\n])`,
   ].join("|"),
@@ -365,6 +371,9 @@ const insideAdState = (p) => {
   const real = path.isAbsolute(t) ? realDeepest(t) : null;
   return [t, real].some((x) => x && (/(?:^|[\\/])\.agent-daemon(?:[\\/]|$)/i.test(x) || /(?:^|[\\/])session-env(?:[\\/]|$)/i.test(x) || roots.some((r) => fold(x).startsWith(fold(r)))));
 };
+// A copy, move, link or download that names a shim (two linear tests: no backtracking).
+const COPY_VERB = /\b(?:cp|mv|install|ln|copy-item|cpi|copy|move-item|mi|move|rsync|scp|curl|wget|tee|dd)\b/i;
+const SHIM_WORD = /(?:^|[\s\\/'"])(?:npx|node|nodejs|ad|agent-daemon|teachonce)(?:\.(?:cmd|exe|bat|ps1))?(?=$|[\s;&|)'"])/i;
 export const selfProtectTriggered = (input) => {
   const files = filePaths(input);
   if (files) return files.some((p) => SP_TRIGGER.test(p) || STATE_TRIGGER.test(p) || insideAdState(p) || (input?.cwd && !path.isAbsolute(p) && insideAdState(input.cwd)));
@@ -375,7 +384,7 @@ export const selfProtectTriggered = (input) => {
   const cwd = String(input?.cwd ?? "");
   const home = os.homedir();
   const atHome = Boolean(cwd) && (cwd === home || home.startsWith(cwd.endsWith(path.sep) ? cwd : cwd + path.sep)) && /[*?[]|agent/.test(raw);
-  return /\$'|\$env:/i.test(raw) || SP_TRIGGER.test(text) || STATE_TRIGGER.test(raw) || atHome || (Boolean(raw) && (raw.includes(root) || insideAdState(input?.cwd)));
+  return /\$'|\$env:/i.test(raw) || SP_TRIGGER.test(text) || STATE_TRIGGER.test(raw) || STATE_TRIGGER.test(text) || (COPY_VERB.test(raw) && SHIM_WORD.test(raw)) || atHome || (Boolean(raw) && (raw.includes(root) || insideAdState(input?.cwd)));
 };
 /** A strong trigger in the call's text (or raw payload text). */
 export const strongTrigger = (text) => STRONG.test(String(text ?? "").replace(/["'\\^`]/g, ""));

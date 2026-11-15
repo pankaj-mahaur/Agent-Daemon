@@ -31,7 +31,7 @@ import { commandsIn, programName } from "../rules/shell.mjs";
 import { dialectOf } from "../rules/match.mjs";
 import { callOf, strongTrigger } from "./tool-before.mjs";
 import { isOwnTarget, recordNewSession, resolveTmuxCommand, subWords, tmuxGlobals } from "./tmux-sessions.mjs";
-import { stateContext, judgeState, readsState, isFilter, judgeFileTool, patchPaths, cdGlobRoot } from "./self-protect-state.mjs";
+import { stateContext, judgeState, readsState, isFilter, judgeFileTool, patchPaths, cdGlobRoot, startupDeny } from "./self-protect-state.mjs";
 import { ENTRY_NAMES, REPARENTING as REPARENTING_LIST, TERMINALS as TERMINAL_LIST, DESKTOP as DESKTOP_LIST } from "./self-protect-words.mjs";
 
 const lower = (s) => String(s ?? "").toLowerCase();
@@ -1169,8 +1169,8 @@ function judgeText(text, ctx, via, depth, joined = false) {
     // c: writes to ad's state (an ad command's own words are data; its verb is judged below).
     const kind = entryKind(argv[0]);
     if (ctx.state && !kind) {
-      const sc = { ...ctx.state, literals: stateLiterals, line: decoded, deadline: ctx.deadline };
-      out = worst(out, judgeState({ ...f, argv }, sc, cwd, cwdKnown, { inlineCode }));
+      const sc = { ...ctx.state, literals: stateLiterals, line: decoded, deadline: ctx.deadline, badLine: mentionsVerb(decoded) };
+      out = worst(out, startupDeny(judgeState({ ...f, argv }, sc, cwd, cwdKnown, { inlineCode }), sc));
       if (readsState({ ...f, argv }, sc, cwd, cwdKnown)) readers.add(f);
       if (f.pipedFrom && readers.has(f.pipedFrom)) {
         // A filter passes the reading on (find … | grep . | xargs rm); anything else could write.
@@ -1626,9 +1626,10 @@ export function selfProtect(input, { host = "claude", platform = process.platfor
     state: stateContext({ os: call.os, homeDir: home, adRoot, env, pathMod, ...(realpath ? { realpath } : {}), installDir: HERE_TREE }),
   };
   if (fileTool) {
+    ctx.state.mentions = mentionsVerb;
     const tin = call.input ?? {};
     const paths = call.tool.toLowerCase() === "apply_patch" ? patchPaths(tin.patch ?? tin.input ?? tin.command ?? "") : [tin.file_path ?? tin.path].filter((x) => typeof x === "string");
-    return judgeFileTool(paths, ctx.state, call.cwd);
+    return judgeFileTool(paths, ctx.state, call.cwd, { tool: call.tool, input: tin });
   }
   // Codex's [shell, -lc, script]: the script is the command line itself.
   const c = call.input?.command;

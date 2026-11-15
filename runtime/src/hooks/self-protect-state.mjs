@@ -10,6 +10,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { PRODUCT } from "../product.mjs";
+import { ENTRY_NAMES } from "./self-protect-words.mjs";
 
 const realNative = (p) => fs.realpathSync.native(p);
 
@@ -28,6 +29,13 @@ export function stateContext({ os, homeDir, adRoot, env = {}, pathMod, literals 
     adRoot,
     claudeDir: pick(env.CLAUDE_CONFIG_DIR, pm.join(homeDir, ".claude")),
     codexHome: pick(env.CODEX_HOME, pm.join(homeDir, ".codex")),
+    systemRoot: windows ? pick(env.SystemRoot ?? env.SYSTEMROOT ?? env.windir ?? env.WINDIR, "C:\\Windows") : null,
+    systemDrive: windows ? `${/^[A-Za-z]:$/.test(env.SystemDrive ?? "") ? env.SystemDrive : "C:"}\\` : null,
+    xdgConfig: pick(env.XDG_CONFIG_HOME, pm.join(homeDir, ".config")),
+    appData: pick(env.APPDATA, pm.join(homeDir, "AppData", "Roaming")),
+    localAppData: pick(env.LOCALAPPDATA, pm.join(homeDir, "AppData", "Local")),
+    // PATH folders (a file named like ad, npx or node written into one is a shim).
+    pathDirs: [...String(env.PATH ?? env.Path ?? "").split(windows ? ";" : ":").filter((d) => d && pm.isAbsolute(d)), ...(windows ? [pm.join(pick(env.APPDATA, pm.join(homeDir, "AppData", "Roaming")), "npm")] : [])],
     envFile: pick(env.CLAUDE_ENV_FILE, null),
     literals,
     realpath,
@@ -62,6 +70,11 @@ const VAR_DIRS = [
   [/^(?:\$CODEX_HOME|\$\{CODEX_HOME\}|%CODEX_HOME%|\$env:CODEX_HOME)(?=[\\/]|$)/i, "codexHome"],
   [/^(?:\$CLAUDE_CONFIG_DIR|\$\{CLAUDE_CONFIG_DIR\}|%CLAUDE_CONFIG_DIR%|\$env:CLAUDE_CONFIG_DIR)(?=[\\/]|$)/i, "claudeDir"],
   [/^(?:\$AD_ROOT|\$\{AD_ROOT\}|%AD_ROOT%|\$env:AD_ROOT)(?=[\\/]|$)/i, "adRoot"],
+  [/^(?:%SystemRoot%|%windir%|\$env:SystemRoot|\$env:windir|\$\{env:SystemRoot\}|\$\{env:windir\})(?=[\\/]|$)/i, "systemRoot"],
+  [/^(?:\$XDG_CONFIG_HOME|\$\{XDG_CONFIG_HOME\})(?=[\\/]|$)/i, "xdgConfig"],
+  [/^(?:%SystemDrive%|\$env:SystemDrive|\$\{env:SystemDrive\})[\\/]?(?=[\\/]|$|\w)/i, "systemDrive"],
+  [/^(?:%APPDATA%|\$env:APPDATA|\$\{env:APPDATA\})(?=[\\/]|$)/i, "appData"],
+  [/^(?:%LOCALAPPDATA%|\$env:LOCALAPPDATA|\$\{env:LOCALAPPDATA\})(?=[\\/]|$)/i, "localAppData"],
 ];
 
 /**
@@ -73,6 +86,10 @@ export function pathOf(word, s, cwd, cwdKnown = true) {
   if (!w) return null;
   // The line's own assignments first (their values may start with a home spelling).
   w = w.replace(/\$\{([A-Za-z_]\w*)\}|\$([A-Za-z_]\w*)/g, (m, a, b) => (s.literals.has(a ?? b) && !/^(?:HOME|AD_ROOT|CODEX_HOME|CLAUDE_CONFIG_DIR)$/.test(a ?? b) ? s.literals.get(a ?? b) : m));
+  // PowerShell's $PROFILE (and $PROFILE.CurrentUserAllHosts…): a profile script.
+  // An admin share of a drive (\\localhost\C$\) is that drive (its $ isn't an expansion).
+  if (s.windows) w = w.replace(/^\\\\(?:localhost|127\.0\.0\.1)\\([a-z])\$\\/i, "$1:\\");
+  if (/^\$profile(?:\.\w+)?$/i.test(w)) return { path: s.pm.join(s.homeDir, "Documents", "PowerShell", "Microsoft.PowerShell_profile.ps1") };
   const home = HOME_SPELLING.test(w);
   w = w.replace(HOME_SPELLING, s.homeDir.replace(/\$/g, "$$$$"));
   for (const [re, key] of VAR_DIRS) w = w.replace(re, (s[key] ?? "").replace(/\$/g, "$$$$"));
@@ -91,7 +108,7 @@ function normalise(w, s) {
   let p = w;
   p = p.replace(/^\/proc\/(?:self|thread-self|\d+)\/root(?=\/|$)/, "") || "/";
   if (s.windows) {
-    p = p.replace(/^\\\\\?\\(?:UNC\\)?/i, "").replace(/^\/\/\?\//, "");
+    p = p.replace(/^\\\\[?.]\\(?:UNC\\)?/i, "").replace(/^\/\/[?.]\//, "");
     p = p.replace(/^\\\\(?:localhost|127\.0\.0\.1)\\([a-z])\$\\/i, "$1:\\");
     p = p.replace(/^\/(?:mnt\/)?([a-z])(?=\/|$)/i, "$1:");
     // Trailing dots and spaces in each part, and 8.3 short names of ad's folder.
@@ -339,9 +356,64 @@ function sensitive(dir, s) {
   s.sensitiveCache ??= new Map();
   if (s.sensitiveCache.has(dir)) return s.sensitiveCache.get(dir);
   const real = realOf(dir, s);
-  const hit = [dir, real].some((d) => d && (segsOf(d, s).includes(".agent-daemon") || s.roots.some((r) => below(d, r, s)) || below(d, s.claudeDir, s) || below(d, s.codexHome, s) || segsOf(d, s).includes(".git")));
+  const hit = [dir, real].some((d) => d && (segsOf(d, s).includes(".agent-daemon") || s.roots.some((r) => below(d, r, s)) || below(d, s.claudeDir, s) || below(d, s.codexHome, s) || segsOf(d, s).some((x) => x === ".git" || x === ".claude" || x === ".codex") || (s.systemRoot && below(d, s.systemRoot, s))));
   s.sensitiveCache.set(dir, hit);
   return hit;
+}
+
+// ---- host config, the Windows folder, startup and persistence (D12d, f, g) --------------
+
+const GIT_RUN_KEYS = /^(?:core\.(?:hookspath|fsmonitor|sshcommand|pager|editor|askpass)|alias\..+|include\.path|includeif\..+\.path|diff\..+\.(?:textconv|command)|filter\..+\.(?:clean|smudge|process)|credential\.helper|sequence\.editor|gpg\.program|merge\..+\.driver)$/i;
+const RC_FILES = new Set([".bashrc", ".bash_profile", ".bash_login", ".bash_logout", ".profile", ".zshrc", ".zprofile", ".zshenv", ".zlogin", ".zlogout", ".kshrc", ".cshrc", ".tcshrc", ".login", ".sqliterc", ".inputrc"]);
+const SHIM_NAMES = new Set([...ENTRY_NAMES.map((n) => String(n).toLowerCase()), "npx", "node", "nodejs"]);
+const HOST = (decision, cls, why) => ({ decision, class: cls, why });
+// Bare names checked in any folder (rc files, shims, settings, startup entries).
+const SPECIAL_NAME = (w) => RC_FILES.has(w) || SHIM_NAMES.has(w.toLowerCase().replace(/\.(?:cmd|exe|bat|ps1|com)$/, "")) || /\.desktop$|^settings.*\.json$|^\.claude\.json$|^\.mcp\.json$|^\.gitconfig$|^(?:hooks\.json|config\.toml|config)$/.test(w);
+
+/** Which host file a path is: "claude-settings" | "claude-json" | "codex" | "mcp" | null. */
+export function hostFile(p, s) {
+  const n = segsOf(p, s);
+  const base = n.at(-1) ?? "";
+  if (base === ".claude.json") return "claude-json";
+  if (/^settings.*\.json$/.test(base) && (n.at(-2) === ".claude" || below(p, s.claudeDir, s)?.length === 1)) return "claude-settings";
+  if (/^(?:hooks\.json|config\.toml)$/.test(base) && (n.at(-2) === ".codex" || below(p, s.codexHome, s)?.length === 1)) return "codex";
+  if (base === ".mcp.json") return "mcp";
+  return null;
+}
+
+/** A folder whose files start programs (a copy into it names each file there). */
+function startupFolder(p, s) {
+  const n = segsOf(p, s);
+  const xdg = below(p, s.xdgConfig, s);
+  return (n.at(-1) === "hooks" && n.at(-2) === ".git") || (xdg && /^(?:autostart|systemd\/user|fish\/conf\.d)$/.test(xdg.join("/"))) || /\/library\/launchagents$/.test(n.join("/").toLowerCase()) || s.pathDirs.some((d) => below(p, d, s)?.length === 0);
+}
+
+/** The rule for a write to a host's config, the Windows folder, or a startup file (null: none). */
+export function hostRule(p, s) {
+  if (s.windows && [s.systemRoot, "C:\\Windows"].some((r) => r && below(p, r, s))) return HOST("deny", "f", "a write into the Windows folder");
+  const kind = hostFile(p, s);
+  if (kind === "claude-settings" || kind === "claude-json" || kind === "codex") return HOST("ask", "d", "a change to a host's settings, which run ad's hooks");
+  const n = segsOf(p, s);
+  const base = n.at(-1) ?? "";
+  const home = below(p, s.homeDir, s);
+  const xdg = below(p, s.xdgConfig, s);
+  const startup =
+    (home && home.length === 1 && RC_FILES.has(base)) ||
+    (xdg && /^(?:fish\/(?:config\.fish|conf\.d\/.+)|sqlite3\/sqliterc|autostart\/.+|systemd\/user\/.+|powershell\/.*profile.*\.ps1)$/.test(xdg.join("/"))) ||
+    (/\.desktop$/.test(base) && /^(?:autostart|applications)$/.test(n.at(-2) ?? "")) ||
+    (home && /^library\/launchagents\/.+/.test(home.join("/").toLowerCase())) ||
+    (home && /(?:^|\/)documents\/(?:windows)?powershell\/.*profile.*\.ps1$/.test(home.join("/").toLowerCase())) ||
+    /\/microsoft\/windows\/start menu\/programs\/startup\/.+/.test(n.join("/").toLowerCase()) ||
+    (n.at(-2) === "hooks" && n.at(-3) === ".git") ||
+    // git's config can move its hooks folder (core.hooksPath).
+    (base === "config" && n.at(-2) === ".git") ||
+    (home && home.length === 1 && base === ".gitconfig") ||
+    (xdg && xdg.join("/") === "git/config");
+  if (startup) return HOST("ask", "g", "a write to a file that runs at startup");
+  // A shim: a file named like ad, npx or node in a PATH folder.
+  const stem = base.replace(/\.(?:cmd|exe|bat|ps1|com)$/i, "");
+  if (SHIM_NAMES.has(stem) && s.pathDirs.some((d) => below(p, d, s)?.length === 1)) return HOST("deny", "g", "a file in a PATH folder named like a program ad runs");
+  return null;
 }
 
 /** A folder that holds protected paths: deleting or moving it (or copying a tree into it) touches them. */
@@ -429,11 +501,16 @@ export function judgeState(f, s, cwd, cwdKnown, { inlineCode = () => null } = {}
   };
   const writeOne = (word) => {
     if (s.deadline && Date.now() > s.deadline) return void worst(ASK("a line too long to check for writes to ad's state"));
-    if (plainCwd && !/[\\/~$%*?[]/.test(String(word)) && String(word) !== ".git" && !/^[A-Za-z]:/.test(String(word))) return;
+    if (plainCwd && !/[\\/~$%*?[]/.test(String(word)) && String(word) !== ".git" && !/^[A-Za-z]:/.test(String(word)) && !SPECIAL_NAME(String(word))) return;
     const w = pathOf(word, s, cwd, cwdKnown);
     if (!w) return;
     if (w.path && /[*?[]/.test(w.path)) worst(globRule(w.path, s));
-    else if (w.path) worst(stateRule(w.path, s));
+    else if (w.path) {
+      worst(stateRule(w.path, s));
+      worst(hostRule(w.path, s));
+      const kind = hostFile(w.path, s);
+      if ((kind === "claude-settings" || kind === "claude-json" || kind === "mcp") && (/disableAllHooks/i.test(s.line ?? "") || DISPATCHER_ONE.test(s.line ?? ""))) worst(HOST("deny", "d", "a host config that turns hooks off or names ad's dispatcher"));
+    }
     else if (w.unresolved) {
       worst(byText(w.text, s));
       if (w.home) worst(ASK("a write under the home folder to a path built at run time"));
@@ -441,6 +518,30 @@ export function judgeState(f, s, cwd, cwdKnown, { inlineCode = () => null } = {}
   };
   // Redirect targets.
   for (const r of f.redirects ?? []) if (r.write) write(r.target);
+  // g: commands that make something run later.
+  const startup = (why) => worst(HOST(s.badLine ? "deny" : "ask", "g", why));
+  if (prog === "crontab" && !args.includes("-l")) startup("a change to the crontab");
+  // git config keys that run a program or move the hooks: setting one (a read passes).
+  if (prog === "git" && args.includes("config")) {
+    const k = args.findIndex((a) => GIT_RUN_KEYS.test(a));
+    if (k >= 0) {
+      const value = args[k + 1];
+      const sets = (value !== undefined && !value.startsWith("-")) || args.some((a) => /^(?:set|--add|--replace-all|--unset(?:-all)?|unset)$/.test(a));
+      const reads = args.some((a) => /^(?:--get(?:-all|-regexp)?|get|--list|-l)$/.test(a));
+      if (sets && !reads && (!/^alias\./i.test(args[k]) || String(value ?? "").startsWith("!"))) startup("a git setting that runs a program");
+    }
+  }
+  if (/^(?:reg|reg\.exe)$/.test(prog) && /^add$/i.test(args[0] ?? "") && /\\run(?:once)?\b/i.test(args.join(" "))) startup("a Run key that starts a program at sign-in");
+  if (/^(?:set-itemproperty|sp|new-itemproperty)$/.test(prog) && /[\\/]run(?:once)?\b/i.test(args.join(" "))) startup("a Run key that starts a program at sign-in");
+  if (/^(?:reg|reg\.exe)$/.test(prog) && /^import$/i.test(args[0] ?? "")) startup("registry entries imported (a Run key among them, maybe)");
+  if (prog === "schtasks" && args.some((a) => /^[-/]create$/i.test(a))) startup("a scheduled task");
+  if (prog === "launchctl" && /^(?:load|bootstrap|enable|submit)$/.test(args[0] ?? "")) startup("a launch agent set to start");
+  if (prog === "systemd-run" && args.some((a) => /^--on-(?:calendar|boot|startup|unit-active|unit-inactive|active)/.test(a))) startup("a timer that runs a program later");
+  if (prog === "register-scheduledtask") startup("a scheduled task");
+  if (prog === "systemctl" && args.includes("--user") && args.some((a) => /^(?:enable|link|edit|add-wants|add-requires)$/.test(a))) startup("a user service set to start");
+  // BASH_ENV (any value) or ENV naming a file: a script every shell runs first.
+  const startupVar = (a) => /^BASH_ENV=/.test(a) || /^ENV=(?:[/~]|\$HOME|\$\{HOME\})/.test(a);
+  if ((f.assigns ?? []).some(startupVar) || (/^(?:export|env|declare|typeset)$/.test(prog) && args.some(startupVar))) startup("a shell startup file set for commands");
   // apply_patch fed a patch on stdin (Codex runs it as a shell command).
   if (prog === "apply_patch" || prog === "applypatch") {
     for (const h of f.heredocs ?? []) for (const p of patchPaths(h)) write(p);
@@ -497,7 +598,11 @@ export function judgeState(f, s, cwd, cwdKnown, { inlineCode = () => null } = {}
       const to = pos.at(-1);
       const tw = to && pathOf(to, s, cwd, cwdKnown);
       if (tw?.path && pos.length > 1 && (/[\\/]$/.test(to) || pos.length > 2 || s.isDir(tw.path) || holdsProtected(tw.path, s))) {
-        for (const src of pos.slice(0, -1)) worst(stateRule(s.pm.join(tw.path, String(src).split(/[\\/]/).filter(Boolean).pop() ?? ""), s));
+        for (const src of pos.slice(0, -1)) {
+          const j = s.pm.join(tw.path, String(src).split(/[\\/]/).filter(Boolean).pop() ?? "");
+          worst(stateRule(j, s));
+          worst(hostRule(j, s));
+        }
       }
     }
     return out;
@@ -521,8 +626,14 @@ export function judgeState(f, s, cwd, cwdKnown, { inlineCode = () => null } = {}
     // state): each source lands under its own name there.
     const sources = named ? positionals(args).filter((a) => a !== named) : t >= 0 ? positionals(args).filter((a) => a !== dest) : positionals(args).slice(0, -1);
     const tw = to && pathOf(to, s, cwd, cwdKnown);
-    const intoDir = to && (/[\\/]$/.test(to) || t >= 0 || sources.length > 1 || (tw?.path && (holdsProtected(tw.path, s) || segsOf(tw.path, s).at(-1) === ".agent-daemon" || s.isDir(tw.path))));
-    if (intoDir && tw?.path) for (const src of sources) worst(stateRule(s.pm.join(tw.path, String(src).split(/[\\/]/).filter(Boolean).pop() ?? ""), s));
+    const intoDir = to && (/[\\/]$/.test(to) || t >= 0 || sources.length > 1 || (tw?.path && (holdsProtected(tw.path, s) || segsOf(tw.path, s).at(-1) === ".agent-daemon" || s.isDir(tw.path) || startupFolder(tw.path, s))));
+    if (intoDir && tw?.path) {
+      for (const src of sources) {
+        const j = s.pm.join(tw.path, String(src).split(/[\\/]/).filter(Boolean).pop() ?? "");
+        worst(stateRule(j, s));
+        worst(hostRule(j, s));
+      }
+    }
     return out;
   }
   // Interpreters: a script is run, not written; inline code or stdin code naming a protected path → deny.
@@ -577,6 +688,11 @@ export function judgeState(f, s, cwd, cwdKnown, { inlineCode = () => null } = {}
   // Any other program: a protected path in its argv (positional or option value) is a write.
   for (const word of fileWords(args)) write(word);
   return out;
+}
+
+/** A startup write on a line that names one of ad's token or variant verbs: denied. */
+export function startupDeny(r, s) {
+  return r && r.class === "g" && r.decision === "ask" && s.badLine ? { ...r, decision: "deny" } : r;
 }
 
 // A path built from pieces in code: ".agent-daemon" with one of ad's state names, or with a recursive delete.
@@ -788,12 +904,88 @@ export function patchPaths(text) {
 }
 
 /** Write, Edit or apply_patch: → a decision or null. */
-export function judgeFileTool(paths, s, cwd) {
+export function judgeFileTool(paths, s, cwd, { tool = "write", input = {} } = {}) {
   let out = null;
+  const take = (r) => {
+    if (r && (!out || (out.decision === "ask" && r.decision === "deny"))) out = r;
+  };
   for (const p of paths) {
     const w = pathOf(p, s, cwd, Boolean(cwd));
-    const r = w?.path ? stateRule(w.path, s) : w ? byText(w.text ?? "", s) : null;
-    if (r && (!out || r.decision === "deny")) out = r;
+    if (!w?.path) {
+      take(w ? byText(w.text ?? "", s) : null);
+      continue;
+    }
+    take(stateRule(w.path, s));
+    const kind = hostFile(w.path, s);
+    // Claude Code's settings: the edit applied as the host would, the protected keys compared.
+    if ((kind === "claude-settings" || kind === "claude-json") && /^(?:write|edit|multiedit)$/i.test(tool)) take(settingsChange(w.path, kind, tool.toLowerCase(), input, s));
+    else if (kind === "mcp" && /^(?:write|edit|multiedit)$/i.test(tool)) take(namesDispatcher(w.path, tool.toLowerCase(), input) ? HOST("deny", "d", "a host config naming ad's dispatcher") : null);
+    else {
+      const r = hostRule(w.path, s);
+      // An ad verb written into a startup file: denied.
+      const text = [input.content, input.new_string, ...(Array.isArray(input.edits) ? input.edits.map((e) => e?.new_string) : [])].filter((x) => typeof x === "string").join("\n");
+      take(r && r.class === "g" && r.decision === "ask" && s.mentions?.(text) ? { ...r, decision: "deny" } : r);
+    }
   }
   return out;
+}
+
+const PROTECTED_KEYS = ["hooks", "disableAllHooks", "env", "statusLine", "apiKeyHelper", "awsAuthRefresh", "awsCredentialExport", "otelHeadersHelper", "enabledPlugins", "enableAllProjectMcpServers", "enabledMcpjsonServers"];
+const DISPATCHER_ONE = /bin[\\/]+hook\.mjs|memory[\\/]+launch[\\/]+run\.mjs|agent-daemon[^"']*\bhook\b/i;
+const DISPATCHER = /bin[\\/]+hook\.mjs|memory[\\/]+launch[\\/]+run\.mjs|agent-daemon[^"']*\bhook\b/gi;
+
+/** The file's text after this Write or Edit (null: an edit that doesn't apply exactly once). */
+function afterEdit(p, tool, input) {
+  let cur = null;
+  try {
+    // (A byte-order mark and CRLF line ends don't change what the host matches or parses.)
+    cur = fs.readFileSync(p, "utf8").replace(/^\uFEFF/, "").replace(/\r\n/g, "\n");
+  } catch {
+    cur = null;
+  }
+  if (tool === "write") return { cur, next: String(input.content ?? "").replace(/^\uFEFF/, "") };
+  let t = cur ?? "";
+  for (const e of tool === "multiedit" ? (Array.isArray(input.edits) ? input.edits : []) : [input]) {
+    const from = String(e?.old_string ?? "").replace(/\r\n/g, "\n");
+    const to = String(e?.new_string ?? "").replace(/\r\n/g, "\n");
+    if (!from) {
+      if (cur !== null && cur !== "") return { cur, next: null };
+      t = to;
+      continue;
+    }
+    const n = t.split(from).length - 1;
+    if (e.replace_all) t = t.split(from).join(to);
+    else if (n === 1) t = t.replace(from, () => to);
+    else return { cur, next: null };
+  }
+  return { cur, next: t };
+}
+
+function namesDispatcher(p, tool, input) {
+  const { cur, next } = afterEdit(p, tool, input);
+  if (next === null) return false;
+  return (String(next).match(DISPATCHER) ?? []).length > (String(cur ?? "").match(DISPATCHER) ?? []).length;
+}
+
+function settingsChange(p, kind, tool, input, s) {
+  const { cur, next } = afterEdit(p, tool, input);
+  if (next === null) return HOST("ask", "d", "an edit to a host's settings that doesn't apply cleanly");
+  let a;
+  let b;
+  try {
+    a = cur === null || !cur.trim() ? {} : JSON.parse(cur);
+    b = JSON.parse(next);
+  } catch {
+    return HOST("ask", "d", "a host's settings that can't be read");
+  }
+  if (b?.disableAllHooks && !a?.disableAllHooks) return HOST("deny", "d", "turning off every hook");
+  if ((String(next).match(DISPATCHER) ?? []).length > (String(cur ?? "").match(DISPATCHER) ?? []).length) return HOST("deny", "d", "a host's settings naming ad's dispatcher");
+  const keys = [...PROTECTED_KEYS, ...(kind === "claude-json" ? ["mcpServers"] : [])];
+  if (keys.some((k) => JSON.stringify(a?.[k]) !== JSON.stringify(b?.[k]))) return HOST("ask", "d", "a change to a host's hooks, environment or helpers");
+  // .claude.json keeps each project's MCP servers and approvals under projects[folder].
+  if (kind === "claude-json") {
+    const pick = (o) => JSON.stringify(Object.fromEntries(Object.entries(o?.projects ?? {}).map(([k, v]) => [k, [v?.mcpServers, v?.enabledMcpjsonServers, v?.enableAllProjectMcpServers]])));
+    if (pick(a) !== pick(b)) return HOST("ask", "d", "a change to a project's MCP servers in the host's settings");
+  }
+  return null;
 }

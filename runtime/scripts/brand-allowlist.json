@@ -605,6 +605,11 @@
       "reason": "the state protection per host: Codex apply_patch payloads and Claude Code's config folders are what the tests check"
     },
     {
+      "path": "runtime/test/l7-host.test.mjs",
+      "rules": ["A"],
+      "reason": "host config protection (L7 D12d): Claude Code's settings files and Codex's config are what the tests check"
+    },
+    {
       "path": "runtime/test/l7-allow-once.test.mjs",
       "rules": ["A"],
       "reason": "allow-once binds the call text only on Codex (it hides the command's folder): the tests send Codex payloads"

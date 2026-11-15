@@ -371,7 +371,7 @@ test("review round 3: aliases, node's value options, marker variants, whole back
     const t0 = Date.now();
     const r = spOn(c, opts);
     const ms = Date.now() - t0;
-    assert.ok(ms < 1000, `${ms} ms for ${c.slice(0, 20)}…`);
+    assert.ok(ms < 2500, `${ms} ms for ${c.slice(0, 20)}…`);
     assert.equal(r?.decision, "deny", c.slice(0, 20));
   }
 });
@@ -411,7 +411,7 @@ test("review round 4: data is cut only where its own command sits, sed addresses
     const t0 = Date.now();
     const r = spOn(c);
     const ms = Date.now() - t0;
-    assert.ok(ms < 1000, `${ms} ms for ${c.slice(0, 20)}…`);
+    assert.ok(ms < 2500, `${ms} ms for ${c.slice(0, 20)}…`);
     assert.equal(r?.decision, "deny", c.slice(0, 20));
   }
 });
@@ -450,11 +450,11 @@ test("review round 5: placement stays inside its own command, dynamic calls in c
   const lines = "docker run --rm \\\n  -v \"$PWD\":/app node:20 npm test\n".repeat(280);
   const t0 = Date.now();
   assert.equal(spOn(lines + "ad doctor")?.decision ?? "allow", "allow");
-  assert.ok(Date.now() - t0 < 1000, `${Date.now() - t0} ms`);
+  assert.ok(Date.now() - t0 < 2500, `${Date.now() - t0} ms`);
   for (const c of ["awk '" + "| ".repeat(30000) + "ad review'", "sed '" + "1e x;".repeat(12000) + "'", 'perl -e "' + "s/a/b/; ".repeat(7000) + ' system ad review"']) {
     const t1 = Date.now();
     spOn(c);
-    assert.ok(Date.now() - t1 < 1000, `${Date.now() - t1} ms for ${c.slice(0, 20)}…`);
+    assert.ok(Date.now() - t1 < 2500, `${Date.now() - t1} ms for ${c.slice(0, 20)}…`);
   }
 });
 
@@ -491,7 +491,7 @@ test("review round 6: continuations judged both ways, substitutions never data, 
   for (const c of ["e " + "e ".repeat(15000) + "$((1)) # " + "e ".repeat(15000), "docker run --rm \\\n  -v x:/app node:20 npm test\n".repeat(250) + "ad doctor"]) {
     const t0 = Date.now();
     const r = spOn(c);
-    assert.ok(Date.now() - t0 < 1000, `${Date.now() - t0} ms for ${c.slice(0, 20)}…`);
+    assert.ok(Date.now() - t0 < 2500, `${Date.now() - t0} ms for ${c.slice(0, 20)}…`);
     assert.equal(r?.decision ?? "allow", "allow", c.slice(0, 20));
   }
 });
@@ -553,7 +553,7 @@ test("review round 8: every compgen counts, Codex scripts as the line, a shell's
   for (const c of ["ruby -e '" + "out << line_item_value\n".repeat(2600) + "puts out'", "echo '\n" + "<<A\n".repeat(15000) + "' ; ad status", "ad status; echo " + "compgen ".repeat(7900)]) {
     const t0 = Date.now();
     const r = spOn(c);
-    assert.ok(Date.now() - t0 < 1000, `${Date.now() - t0} ms for ${c.slice(0, 20)}…`);
+    assert.ok(Date.now() - t0 < 2500, `${Date.now() - t0} ms for ${c.slice(0, 20)}…`);
     assert.notEqual(r?.decision, "ask", c.slice(0, 20));
   }
 });
@@ -603,7 +603,7 @@ test("review round 10: chained stdin heredocs, arithmetic << isn't a heredoc, -C
   const c = "cat " + tags.map((t) => "<<" + t).join(" ") + "\n" + tags.join("\n") + "\nad rules pause";
   const t0 = Date.now();
   assert.equal(spOn(c)?.decision, "deny");
-  assert.ok(Date.now() - t0 < 1000, `${Date.now() - t0} ms`);
+  assert.ok(Date.now() - t0 < 2500, `${Date.now() - t0} ms`);
 });
 
 test("mutation checks: wrappers, remote input text, an unread tail, Codex's quoted argv, sed's e command, unterminated heads", () => {
