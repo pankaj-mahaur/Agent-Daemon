@@ -345,7 +345,9 @@ async function editVerb(argv, o) {
     let moved = [];
     try {
       const { afterReview } = await import("./rules-finish.mjs");
-      moved = (await afterReview(handle, t.token, { now: o.now ?? new Date(), ...(o.root ? { root: o.root } : {}) }))?.moved ?? [];
+      const done = await afterReview(handle, t.token, { now: o.now ?? new Date(), ...(o.root ? { root: o.root } : {}) });
+      moved = done?.moved ?? [];
+      if (done?.switch?.why) out(`${PRODUCT.displayName}: ${done.switch.why}.`);
     } catch (e) {
       out(`${PRODUCT.displayName}: the rules snapshot couldn't be rebuilt (${e.message}); it is rebuilt at the next review.`);
     }

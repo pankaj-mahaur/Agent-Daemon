@@ -141,6 +141,7 @@ export async function safetyMain(argv = [], o = {}) {
     out("  While rules exist, Claude Code also asks when the check itself can't run (from your next session).");
     out(`  ${policy.POLICY_COPY.limits}`);
     out(`  Turn it off: \`${command("safety off")}\` · one call: \`${command("rules allow-once <rule>")}\``);
+    if (r.switch?.why) out(`  ! ${r.switch.why}`);
     return 0;
   }
 
@@ -160,6 +161,7 @@ export async function safetyMain(argv = [], o = {}) {
   try {
     const r = await policy.setPolicy(handle, t.token, false, { root, now, cmd });
     out(`${name} starter safety policy: off (${r.removed.length} rule${r.removed.length === 1 ? "" : "s"} removed). Turn it on again: \`${command("safety on")}\``);
+    if (r.switch?.why) out(`  ! ${r.switch.why}`);
     return 0;
   } catch (e) {
     out(`${name}: the policy is off in your store, but the rules file couldn't be rebuilt (${e?.message ?? e}); it still asks until \`${command("review")}\` rebuilds it.`);

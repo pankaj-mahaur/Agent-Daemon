@@ -871,6 +871,14 @@ export async function setup(opts = {}) {
         // Set up again: its entries capture again (uninstall turned the host off).
         if (!opts.dryRun && r.code !== 1) setHostDisabled(distsFile(ctx.root), id, false);
       }
+      // L7 D13: an entry written while rules exist fails closed from the start (a raise: no
+      // token needed, and setup never lowers it).
+      if (!opts.dryRun && works.some(([id, w]) => id === "claude-code" && w && !w.none)) {
+        const { switchLocked } = await import("./rule-switch.mjs");
+        const s = await switchLocked({ ctx });
+        if (s.changed && s.active) out("✓ rules exist, so ad's rules check fails closed (a failed check blocks the tool call)");
+        if (s.why) out(`! ${s.why}`);
+      }
     });
   } catch (e) {
     out(`✗ ${e.message}`);
