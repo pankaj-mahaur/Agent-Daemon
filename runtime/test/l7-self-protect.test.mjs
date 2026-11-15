@@ -26,7 +26,12 @@ const { writeGuards, activePath } = await import("../src/hooks/guards.mjs");
 const { closure } = await import("../scripts/build-memory-package.mjs");
 
 // Items whose check comes with a later part (each says which).
-const PENDING = { "sa-051": "P2a-2: tmux own-session record" };
+const PENDING = {};
+// sa-051 sends keys into the session sa-050 created: this agent session's tmux record holds it
+// (P2a-2), on the default socket of a server-less tmux with a fixed uid.
+const AD_ROOT_DIR = path.join(TMP, "ad-root");
+fs.mkdirSync(path.join(AD_ROOT_DIR, "hooks", "tmux"), { recursive: true });
+fs.writeFileSync(path.join(AD_ROOT_DIR, "hooks", "tmux", "s.json"), JSON.stringify({ sessions: [{ socket: "/tmp/tmux-1000/default", name: "dev" }] }));
 const HOME = { linux: "/home/dev", macos: "/Users/dev", windows: "C:\\Users\\dev" };
 
 function judge(it) {
@@ -35,7 +40,7 @@ function judge(it) {
   const platform = it.os === "windows" ? "win32" : it.os === "macos" ? "darwin" : "linux";
   const home = HOME[it.os];
   const folders = [it.os === "windows" ? `${home}\\.agent-daemon\\memory` : `${home}/.agent-daemon/memory`, "/work/ad/runtime"];
-  return SP.selfProtect(payload, { host: it.host === "codex" ? "codex" : "claude", platform, home, folders });
+  return SP.selfProtect(payload, { host: it.host === "codex" ? "codex" : "claude", platform, home, folders, root: AD_ROOT_DIR, env: {}, uid: 1000, realpath: (p) => p });
 }
 
 test("the dev set's verbs, wrappers, env and run-time-built items (D12 a, b, e, h), both sides", () => {

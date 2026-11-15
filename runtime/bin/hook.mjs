@@ -108,6 +108,15 @@ async function toolBeforeMain() {
       // Self-protection first, loaded only when the text needs it (D12 fast path).
       selfProtect = tb.selfProtectTriggered(input) ? (await import("../src/hooks/self-protect.mjs")).selfProtect(input, { host }) : null;
       out = tb.toolBefore(input, { host, onWarning: (w) => (warning = w), selfProtect });
+      // A `tmux new -s <name>` that runs without an ask: recorded before it runs, so keys sent
+      // to that session later aren't asked about (D12b). Not recorded → they ask.
+      if (!out && /\btmux\b/.test(tb.callText(input))) {
+        try {
+          (await import("../src/hooks/self-protect.mjs")).recordTmuxSessions(input, { host });
+        } catch (err) {
+          await log(`couldn't record a tmux session: ${err?.message ?? err}`);
+        }
+      }
     } catch (err) {
       await log(`couldn't check a call against the rules: ${err?.message ?? err}`);
       out = await failed("couldn't check this call against your rules", input); // a throw here reaches the last resort

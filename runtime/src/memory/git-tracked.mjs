@@ -3,10 +3,55 @@
 // tracks nothing in was made on this machine; one with tracked files was shipped.
 // Fails closed: inside a work tree, an answer git couldn't give (dubious ownership, a
 // timeout, no git) counts as tracked. Outside any repository nothing is tracked.
+// git runs only from a fixed, trusted path, never through PATH (MCP launch plan L7, D12b):
+// hooks and ad's background jobs load this, and a git planted earlier on PATH would run
+// there, outside the host's sandbox. No trusted git → git couldn't answer (fail closed).
 
 import fs from "node:fs";
 import path from "node:path";
-import { execFileSyncNoShell, resolveGit, resolvedArgv } from "../safe-spawn.mjs";
+import { execFileSyncNoShell, resolvedArgv } from "../safe-spawn.mjs";
+
+// The user's own terminal (ad's CLI) may use the git on their PATH: it sets this at startup.
+let gitFinder = null;
+/** For the CLI run in the user's terminal: find git another way (fn → a resolved command or null). */
+export function setGitFinder(fn) {
+  gitFinder = typeof fn === "function" ? fn : null;
+}
+
+const POSIX_GIT = ["/usr/bin/git", "/bin/git", "/usr/local/bin/git"];
+
+/**
+ * The git to run: on POSIX a root-owned git (file and folder not group- or world-writable)
+ * at /usr/bin, /bin or /usr/local/bin; on Windows Git for Windows under Program Files.
+ * → its absolute path, or null.
+ */
+export function trustedGit({ platform = process.platform, env = process.env, stat = fs.statSync, realpath = fs.realpathSync, isFile = (f) => fs.statSync(f).isFile() } = {}) {
+  if (platform === "win32") {
+    for (const v of ["ProgramW6432", "ProgramFiles"]) {
+      const root = env[v];
+      if (!root || !path.win32.isAbsolute(root)) continue;
+      const file = path.win32.join(root, "Git", "cmd", "git.exe");
+      try {
+        if (isFile(file)) return file;
+      } catch {
+        // not there
+      }
+    }
+    return null;
+  }
+  const ok = (st) => st.uid === 0 && (st.mode & 0o022) === 0;
+  for (const p of POSIX_GIT) {
+    try {
+      const real = realpath(p);
+      if (!POSIX_GIT.some((t) => path.posix.dirname(t) === path.posix.dirname(real))) continue;
+      const f = stat(real);
+      if (f.isFile() && ok(f) && ok(stat(path.posix.dirname(real)))) return real;
+    } catch {
+      // not there: the next one
+    }
+  }
+  return null;
+}
 
 /** A .git entry (a folder, or a worktree's or submodule's pointer file) here or above. */
 export function insideWorkTree(dir) {
@@ -20,8 +65,10 @@ export function insideWorkTree(dir) {
 // may be a download that ships its own .git/config: no fsmonitor program runs.
 function git(root, args, run) {
   if (run) return run(args, { cwd: root });
-  const argv = resolvedArgv(resolveGit(), ["-c", "core.fsmonitor=false", ...args]);
-  execFileSyncNoShell(argv[0], argv[1], { cwd: root, stdio: "ignore", timeout: 5000 });
+  const found = gitFinder?.();
+  const [cmd, argv] = found ? resolvedArgv(found, ["-c", "core.fsmonitor=false", ...args]) : [trustedGit(), ["-c", "core.fsmonitor=false", ...args]];
+  if (!cmd) throw new Error("no trusted git");
+  execFileSyncNoShell(cmd, argv, { cwd: root, stdio: "ignore", timeout: 5000 });
 }
 
 // `git ls-files --error-unmatch -- <pathspec>` in root: true when git lists it, false on

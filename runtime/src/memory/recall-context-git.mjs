@@ -12,7 +12,8 @@
 // The user's global and system config are their own (git-lfs users keep their paths).
 
 import path from "node:path";
-import { execFileSyncNoShell, resolveGit, resolvedArgv } from "../safe-spawn.mjs";
+import { execFileSyncNoShell } from "../safe-spawn.mjs";
+import { trustedGit } from "./git-tracked.mjs";
 import { readBranch, repoRoot } from "./repo-head.mjs";
 import { MAX_COMMITS, MAX_PATHS } from "./recall-context.mjs";
 
@@ -88,8 +89,10 @@ function gitRunner(root, timeoutMs, gitDir) {
       if (!gitDir) return null;
       // GIT_CEILING_DIRECTORIES: git never walks above the root repo-head.mjs found (a
       // broken .git there makes git look upward); git's own ownership check still runs.
-      const [cmd, argv] = resolvedArgv(resolveGit(), gitArgs(root, args));
-      return execFileSyncNoShell(cmd, argv, { encoding: "utf8", timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"], env: { ...gitEnv(), GIT_CEILING_DIRECTORIES: path.dirname(root) } });
+      // git from a fixed, trusted path only (never PATH: this runs outside the host's sandbox).
+      const cmd = trustedGit();
+      if (!cmd) return null;
+      return execFileSyncNoShell(cmd, gitArgs(root, args), { encoding: "utf8", timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"], env: { ...gitEnv(), GIT_CEILING_DIRECTORIES: path.dirname(root) } });
     } catch {
       return null;
     }

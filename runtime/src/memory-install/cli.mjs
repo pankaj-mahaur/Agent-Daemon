@@ -88,6 +88,21 @@ export function commandGate(cmd, { env = process.env, isTTY = realTTY, command =
 }
 
 export async function main(argv = process.argv.slice(2), { log = (l) => console.log(l), env = process.env, isTTY = realTTY, ctx: ctxOpts = {} } = {}) {
+  // Run in the user's own terminal: git-tracked may use the git on their PATH (hooks and jobs
+  // use a trusted git only, L7 D12b).
+  // (Only a command typed in a terminal: never serve, watch or a scheduled job, which run in the background.)
+  if (process.stdin.isTTY && process.stdout.isTTY && !["serve", "watch"].includes(argv[0]) && !process.env.AD_SCHEDULE_JOB) try {
+    const [{ setGitFinder }, { resolveGit }] = await Promise.all([import("../memory/git-tracked.mjs"), import("../safe-spawn.mjs")]);
+    setGitFinder(() => {
+      try {
+        return resolveGit();
+      } catch {
+        return null;
+      }
+    });
+  } catch {
+    // the trusted git only
+  }
   const [cmd, ...rest] = argv;
   if (cmd === "serve") {
     // The server reads its own flags from process.argv.

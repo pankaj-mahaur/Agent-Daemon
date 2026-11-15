@@ -30,6 +30,7 @@ import { fileURLToPath } from "node:url";
 import { commandsIn, programName } from "../rules/shell.mjs";
 import { dialectOf } from "../rules/match.mjs";
 import { callOf, strongTrigger } from "./tool-before.mjs";
+import { isOwnTarget, recordNewSession, resolveTmuxCommand, subWords, tmuxGlobals } from "./tmux-sessions.mjs";
 import { ENTRY_NAMES, REPARENTING as REPARENTING_LIST, TERMINALS as TERMINAL_LIST, DESKTOP as DESKTOP_LIST } from "./self-protect-words.mjs";
 
 const lower = (s) => String(s ?? "").toLowerCase();
@@ -754,16 +755,26 @@ function afterOptions(args, valueShort = "", valueLong = []) {
   return args.slice(i);
 }
 
-const TMUX_START = new Set(["new", "new-session", "run-shell", "run", "respawn-pane", "respawnp", "respawn-window", "respawnw", "display-popup", "popup", "pipe-pane", "pipep"]);
-const TMUX_INPUT = new Set(["send-keys", "send", "new-window", "neww", "split-window", "splitw", "paste-buffer", "pasteb"]);
-const tmuxSub = (args) => afterOptions(args, "cfLST"); // tmux's own options before the subcommand
+// (Full command names: tmuxSub resolves aliases and prefixes.)
+const TMUX_START = new Set(["new-session", "run-shell", "display-popup", "pipe-pane"]);
+const TMUX_OWN = new Set(["send-keys", "new-window", "split-window"]);
+// (respawn replaces what runs in an existing pane or window: input, like new-window.)
+const TMUX_INPUT = new Set(["send-keys", "new-window", "split-window", "paste-buffer", "respawn-pane", "respawn-window"]);
+// tmux's own options before the subcommand (read as tmux's getopt reads them), and the
+// subcommand by its full name (exact, alias or unique prefix; unresolved stays as written).
+const tmuxSub = (args) => {
+  const g = tmuxGlobals(args);
+  return g.sub === null ? [] : [resolveTmuxCommand(g.sub) ?? g.sub, ...g.rest];
+};
 // Each subcommand's options that take a value (tmux's manual).
 const TMUX_VALUES = new Map([["new", "cefFnstxy"], ["new-session", "cefFnstxy"], ["run-shell", "dt"], ["run", "dt"], ["respawn-pane", "cet"], ["respawnp", "cet"], ["respawn-window", "cet"], ["respawnw", "cet"], ["display-popup", "bcdehsStTwxy"], ["popup", "bcdehsStTwxy"], ["pipe-pane", "t"], ["pipep", "t"], ["send-keys", "Nt"], ["send", "Nt"], ["new-window", "cefFnt"], ["neww", "cefFnt"], ["split-window", "ceFlt"], ["splitw", "ceFlt"], ["paste-buffer", "bst"], ["pasteb", "bst"], ["set-buffer", "bnt"], ["setb", "bnt"]]);
+// The input subcommands' value letters (tmux 3.8), where the table above doesn't have them.
+for (const [k, v] of [["send-keys", "cNt"], ["new-window", "ceFnt"], ["split-window", "BceFlmpRsSTt"], ["pipe-pane", "t"], ["display-popup", "bcdehsStTwxy"]]) TMUX_VALUES.set(k, v);
 /** The shell text a tmux start or input command carries (keys and options dropped). */
-function tmuxText(sub, subArgs) {
+function tmuxText(sub, subArgs, sep = " ") {
   return afterOptions(subArgs, TMUX_VALUES.get(sub) ?? "t")
     .filter((x) => !/^(?:Enter|C-m|C-j|KPEnter|Escape|C-c|Space)$/.test(x))
-    .join(" ");
+    .join(sep);
 }
 
 const WT_SUBCOMMANDS = new Set(["new-tab", "nt", "split-pane", "sp", "focus-tab", "ft", "move-focus", "mf", "swap-pane", ";"]);
@@ -1293,7 +1304,10 @@ function otherRoutes(prog, argv, ctx, via, depth, facts) {
 }
 
 function isReparenting(prog, argv) {
-  if (prog === "tmux") return TMUX_START.has(tmuxSub(argv.slice(1))[0]);
+  if (prog === "tmux") {
+    const sub = tmuxSub(argv.slice(1))[0];
+    return TMUX_START.has(sub) || sub === "respawn-pane" || sub === "respawn-window";
+  }
   if (prog === "zellij") return argv.includes("run");
   if (prog === "schtasks") return argv.some((x) => /^\/create$/i.test(x));
   if (prog === "launchctl") return argv[1] === "submit";
@@ -1330,13 +1344,36 @@ function wrapperCheck(prog, argv, ctx, via, depth, text, facts) {
     case "tmux": {
       const rest = tmuxSub(args);
       const sub = rest[0];
-      // `tmux -c <command>` runs it as a shell command.
-      const c = args.indexOf("-c");
-      if (!sub && c >= 0) return inner(args[c + 1] ?? "", "tmux");
-      // if-shell runs its first argument; hooks and key bindings that run a shell command.
-      if (sub === "if-shell" || sub === "if") return inner(afterOptions(rest.slice(1), "t")[0] ?? "", "tmux");
+      // `tmux -c <command>` runs it as a shell command (its value attached or in a cluster too).
+      const c = tmuxGlobals(args).c;
+      if (c !== null) return inner(c, "tmux");
+      // A name tmux doesn't resolve to one command (or a newer one): asked.
+      if (sub && !resolveTmuxCommand(sub)) return worst(ask("b", WORDS.desktop), inner(rest.slice(1).join(" "), "tmux"));
+      // if-shell runs its first argument, then one of its tmux commands; run-shell -C runs a tmux
+      // command. A tmux command is judged as one (its own `;`, `{` or a newline: asked).
+      const tmuxCmd = (t) => (/(?<!\\);|[{}\n]/.test(t) ? worst(ask("b", WORDS.desktop), inner(t, "tmux")) : inner(`tmux ${t}`, "tmux"));
+      if (sub === "if-shell") {
+        const w = afterOptions(rest.slice(1), "t");
+        let r = inner(w[0] ?? "", "tmux");
+        for (const t of w.slice(1, 3)) r = worst(r, tmuxCmd(t));
+        return r;
+      }
+      if (sub === "run-shell" && rest.slice(1).some((a) => /^-[A-Za-z]*C/.test(a))) return tmuxCmd(afterOptions(rest.slice(1), "dt")[0] ?? "");
+      // Commands stored to run later (hooks, key bindings, a config file, command aliases): asked.
+      if (sub === "set-hook" || sub === "bind-key" || sub === "source-file" || (sub === "set-option" && rest.slice(1).some((a) => /command-alias/.test(a)))) {
+        return mentionsVerb(rest.slice(1).join(" ")) ? deny("a", WORDS.variant) : worst(ask("b", WORDS.desktop), inner(rest.slice(1).join(" "), "tmux"));
+      }
+      // pipe-pane -I types its command's output into the pane: input.
+      if (sub === "pipe-pane" && rest.slice(1).some((a) => /^-[A-Za-z]*I/.test(a))) return worst(ask("b", WORDS.desktop), inner(tmuxText(sub, rest.slice(1)), "tmux"));
       if (/^(?:set-hook|bind-key|bind|set-option|set|source-file|source)$/.test(sub ?? "") && mentionsVerb(rest.slice(1).join(" "))) return deny("a", WORDS.variant);
       if (TMUX_START.has(sub)) return inner(tmuxText(sub, rest.slice(1)), "tmux");
+      // Into a session this agent created (recorded, exact target): no ask; what it types is still judged.
+      // (Keys split across words type as one: judged joined too.)
+      if (TMUX_OWN.has(sub) && ctx.tmuxOwn?.(argv)) {
+        // (Read with tmux's own option parsing: an attached value can't hide what runs.)
+        const words = subWords(sub, rest.slice(1)).filter((x) => !/^(?:Enter|C-m|C-c|C-d|Escape)$/.test(x));
+        return worst(inner(words.join(" "), "tmux"), inner(words.join(""), "tmux"));
+      }
       if (TMUX_INPUT.has(sub) || sub === "set-buffer" || sub === "setb") return worst(ask("b", WORDS.desktop), inner(tmuxText(sub, rest.slice(1)), "tmux"));
       return null;
     }
@@ -1487,10 +1524,34 @@ function commandText(call) {
 const SHELL_TOOLS = /^(?:bash|powershell|shell)$/i;
 
 /**
+ * Before a shell call runs: record each `tmux new -s <name>` in it whose name no session of
+ * the user's can have (D12b). The hook calls this when self-protection doesn't deny the call.
+ * → how many were recorded.
+ */
+export function recordTmuxSessions(input, { host = "claude", platform = process.platform, home = os.homedir(), root, env = process.env, uid = process.getuid?.() ?? 0, realpath, exists, spawn, tmuxBin } = {}) {
+  const call = callOf(input, { host, platform });
+  if (!SHELL_TOOLS.test(call.tool) || call.os === "windows") return 0;
+  const text = commandText(call);
+  if (!text || !/\btmux\b/.test(text) || !input?.session_id) return 0;
+  const adRoot = root ?? (process.env.AD_ROOT && path.posix.isAbsolute(process.env.AD_ROOT) ? process.env.AD_ROOT : path.posix.join(home, ".agent-daemon"));
+  let n = 0;
+  for (const f of commandsIn(text, { dialect: "bash", os: call.os })) {
+    if (lower(programName(f.argv[0])) !== "tmux") continue;
+    const opts = { line: text, env, uid, cwd: call.cwd, adRoot, sessionId: input.session_id, ...(realpath ? { realpath } : {}), ...(exists ? { exists } : {}), ...(spawn ? { spawn } : {}), ...(tmuxBin ? { tmuxBin } : {}) };
+    try {
+      if (recordNewSession(f.argv, opts)) n++;
+    } catch {
+      // not recorded: a later send-keys asks
+    }
+  }
+  return n;
+}
+
+/**
  * @param {object} input  the hook payload ({tool_name, tool_input, cwd, …})
  * @param {{host?: string, platform?: string, home?: string, root?: string, folders?: string[]}} [opts]
  */
-export function selfProtect(input, { host = "claude", platform = process.platform, home = os.homedir(), root, folders } = {}) {
+export function selfProtect(input, { host = "claude", platform = process.platform, home = os.homedir(), root, folders, env = process.env, uid = process.getuid?.() ?? 0, realpath } = {}) {
   const call = callOf(input, { host, platform });
   if (!SHELL_TOOLS.test(call.tool)) return null;
   const text = commandText(call);
@@ -1511,6 +1572,8 @@ export function selfProtect(input, { host = "claude", platform = process.platfor
     background: input?.tool_input?.run_in_background === true,
     // The work budget (well inside the hook's 5 s timeout).
     deadline: Date.now() + 1000,
+    // tmux sessions this agent created in this session (D12b's exception; not on Windows).
+    tmuxOwn: windows ? null : (argv) => isOwnTarget(argv, { line: text, env, uid, cwd: call.cwd, adRoot, sessionId: input?.session_id, ...(realpath ? { realpath } : {}) }),
   };
   // Codex's [shell, -lc, script]: the script is the command line itself.
   const c = call.input?.command;

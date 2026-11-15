@@ -2452,6 +2452,21 @@ async function cmdSpawn(opts) {
 /* ------------------------------------------------------------------ */
 
 async function main(argv) {
+  // ad's CLI runs in the user's own terminal: git-tracked may use the git on their PATH there
+  // (hooks and background jobs use a trusted git only, L7 D12b).
+  // (Only a command typed in a terminal: never serve, watch or a scheduled job, which run in the background.)
+  if (process.stdin.isTTY && process.stdout.isTTY && !["serve", "watch"].includes(argv[0]) && !process.env.AD_SCHEDULE_JOB) try {
+    const [{ setGitFinder }, { resolveGit }] = await Promise.all([import("./memory/git-tracked.mjs"), import("./safe-spawn.mjs")]);
+    setGitFinder(() => {
+      try {
+        return resolveGit();
+      } catch {
+        return null;
+      }
+    });
+  } catch {
+    // the trusted git only
+  }
   // Show help if no args or --help
   // Only before "--": after it everything is a positional (e.g. a scheduled
   // job's prompt that happens to be "-h").
