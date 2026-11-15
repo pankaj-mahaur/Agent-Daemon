@@ -930,6 +930,17 @@
       "rules": ["A"],
       "match": "The host isn't Claude Code or Codex\\*\\*, or ad's hooks aren't trusted there \\(Codex: `/hooks`",
       "reason": "the recall entry (#110): which of the user's own hosts recall serves, and Codex's /hooks trust step"
+    },
+    {
+      "path": "runtime/test/memory-readiness.test.mjs",
+      "rules": ["A"],
+      "reason": "readiness tests set up a fake Codex home and read the user's Codex host lines (its hooks trust, config.toml); not ad's engine"
+    },
+    {
+      "path": "docs/troubleshooting.md",
+      "rules": ["A"],
+      "match": "Codex: trusted in|not trusted yet in Codex|open Codex and run",
+      "reason": "the readiness entry (#150): the user's own Codex host and its /hooks trust step"
     }
   ]
 }

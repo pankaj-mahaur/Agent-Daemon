@@ -1229,6 +1229,14 @@ These are information, not failures: other memory that loads next to ad's learni
 - `isn't marked as yours`: if you made the folder (an `ad init` from an older version), run `ad init` there again.
 - `ad init` says `git wouldn't ignore .agent-daemon/…`: add the lines it lists to `.agent-daemon/.gitignore`, then run `ad init` again. Until then capture files (your prompts) stay out of the repository.
 
+## 150. `doctor` prints a "Readiness" section, and a line in it fails
+
+**Symptom:** after the checks, `npx agent-daemon-memory doctor` prints `Readiness` with a block per host. A line starts with `✗` and ends with `→` and a command.
+
+**Cause:** the section says whether memory works end to end on that host: installed, hooks wired (Codex: trusted in `/hooks`), how a failing rules check behaves, what recall sends, whether capture is review-first, the learning and rule counts, and what else loads next to it. A `✗` is a gap; the command after `→` is the one thing that fixes it. Lines for something your installed version doesn't have are left out, and the section never changes `doctor`'s exit code.
+
+**Fix:** run the command the line ends with. For `hooks … not trusted yet in Codex`, open Codex and run `/hooks`. For `marker … gone`, run the repair command it shows. `doctor --json` gives the same lines as rows with `"section": "readiness"` (home folder shown as `~`), which is what to attach to a bug report.
+
 ---
 
 For harness problems, the [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill walks through login → hooks → sandbox → the engine's own log. See also [harness.md](harness.md) and, for the terminal UI, [tui.md](tui.md).
