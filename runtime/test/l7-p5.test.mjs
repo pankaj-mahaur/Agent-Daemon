@@ -46,8 +46,10 @@ test("rulesSection: stoppable vs reminded, asked/stopped/passes in the window an
     null,
   ];
   const paused = { all: null, projects: { p1: { at: ago(1), until: new Date(NOW + 3_600_000).toISOString() }, p2: { at: ago(9), until: ago(1) } } };
-  const s = RR.rulesSection({ rules: [R(1), R(2, "ask"), R(3, "deny", { orphaned_at: ago(1) })], reminded: 5, events, paused, projectId: "p1", days: 30, now: NOW });
-  assert.deepEqual({ ...s, paused: undefined }, { rules: 3, stop: 2, ask: 1, orphaned: 1, reminded: 5, paused: undefined, asked: 1, stopped: 1, passes: 1, selfProtect: { stopped: 1, asked: 1 } });
+  // Two rules on learning 10, one on 11, a policy rule (no learning), an orphaned one.
+  const rules = [R(1, "deny", { learning_id: 10 }), R(2, "ask", { learning_id: 10 }), R(3, "deny", { learning_id: 11 }), R(4, "ask", { learning_id: null, source: "policy" }), R(5, "deny", { learning_id: null, orphaned_at: ago(1) })];
+  const s = RR.rulesSection({ rules, reminded: 5, events, paused, projectId: "p1", days: 30, now: NOW });
+  assert.deepEqual({ ...s, paused: undefined }, { rules: 5, stop: 3, ask: 2, orphaned: 1, stoppable: 2, reminded: 5, paused: undefined, asked: 1, stopped: 1, passes: 1, selfProtect: { stopped: 1, asked: 1 } });
   assert.equal(s.paused.project, new Date(NOW + 3_600_000).toISOString());
   assert.equal(s.paused.all, false);
   const all = RR.rulesSection({ events, all: true, paused: { all: { at: ago(1), until: null }, projects: {} }, now: NOW });
@@ -58,10 +60,10 @@ test("rulesSection: stoppable vs reminded, asked/stopped/passes in the window an
 });
 
 test("rulesLines: the copy line and its limits line, the counts, the pause; never a lowering command", () => {
-  const s = RR.rulesSection({ rules: [R(1), R(2, "ask")], reminded: 3, events: [{ at: ago(1), decision: "self-protect", outcome: "deny" }], paused: { all: { at: ago(1), until: null }, projects: {} }, all: true, now: NOW });
+  const s = RR.rulesSection({ rules: [R(1, "deny", { learning_id: 7 }), R(2, "ask", { learning_id: null, source: "policy" })], reminded: 3, events: [{ at: ago(1), decision: "self-protect", outcome: "deny" }], paused: { all: { at: ago(1), until: null }, projects: {} }, all: true, now: NOW });
   const text = RR.rulesLines(s).join("\n");
   assert.match(text, /Rules\s+2 \(stop 1, ask 1\)/);
-  assert.match(text, /stoppable \/ reminded\s+2 \/ 3/);
+  assert.match(text, /stoppable \/ reminded\s+1 \/ 3/);
   assert.match(text, /ad's own files guarded\s+1 stopped, 0 asked/);
   assert.match(text, /paused everywhere until you resume them/);
   assert.ok(text.includes(RR.RULES_COPY) && text.includes(RR.RULES_LIMITS));
@@ -160,6 +162,9 @@ test("doctor's rules rows: count and pauses, the store, the sentinel, the switch
   assert.equal(r["rules.codex-windows"].ok, false);
   assert.equal(r["rules.limits"].note, RR.RULES_LIMITS);
   for (const row of Object.values(r)) assert.doesNotMatch(row.note, LOWERING, row.code);
+  // The guard copy's version, as recorded.
+  D.writeGuard(root, { route: "clone", path: path.join(root, "ad-clone"), version: "9.9.9" });
+  assert.match((await rows())["rules.guard"].note, /^9\.9\.9 from .* \(ad's clone\)$/);
 });
 
 test("session start, daily while rules are paused: this project's pause or every project's; no command", async () => {
@@ -175,6 +180,7 @@ test("session start, daily while rules are paused: this project's pause or every
     assert.match(line, /^ad: your rules are paused in this project until .* \(self-protection still applies\)$/);
     assert.doesNotMatch(line, LOWERING);
     assert.equal(pausedReminder(h, { projectId: "p1", now: new Date(NOW + 60_000) }), null, "once a day");
+    assert.equal(pausedReminder(h, { projectId: "p2", now: new Date(NOW + 120_000) }), null, "another project's live pause isn't this one's");
     assert.equal(pausedReminder(h, { projectId: "p2", now: new Date(NOW + 2 * 86_400_000) }), null, "another project's pause");
     assert.equal(pausedReminder(h, { projectId: "p1", now: new Date(NOW + 2 * 3_600_000) }), null, "the pause ended");
     putSetting(h, "rules_paused", JSON.stringify({ all: { at: ago(0.5), until: null }, projects: {} }), { now });
@@ -197,4 +203,11 @@ test("the rule step's line prompt: Ctrl-C answers \"\" (no, or no change) instea
   const q = input.line("  y/n ");
   setImmediate(() => stdin.write("y\r"));
   assert.equal(await q, "y");
+});
+
+test("self-protection: learnings export/import and report --purge are the review token's from the agent's shell (L8's second layer)", async () => {
+  const SP = await import("../src/hooks/self-protect.mjs");
+  const sp = (command) => SP.selfProtect({ tool_name: "Bash", tool_input: { command }, cwd: "/work/app", session_id: "s" }, { host: "claude", platform: "linux", home: "/home/dev", folders: ["/home/dev/.agent-daemon/memory", "/work/ad/runtime"] })?.decision ?? null;
+  for (const c of ["ad learnings export x.json", "ad learnings import x.json", "ad learnings edit 3", "ad report --purge", "ad memory report --purge", "ad memory learnings import f.json"]) assert.equal(sp(c), "deny", c);
+  for (const c of ["ad learnings list", "ad learnings show 3", "ad report", "ad report --weeks 4", "ad memory report"]) assert.equal(sp(c), null, c);
 });

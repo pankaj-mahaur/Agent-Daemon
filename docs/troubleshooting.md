@@ -1046,11 +1046,11 @@ Stray text on top of ad's screen while it runs (a library writing straight to th
 
 **Symptom:** Claude Code shows `ad: the rules file was unreadable; using the last good copy.` or `ad: the rules file is unreadable, so no rules apply right now.` `ad doctor` shows a `Rules file` row marked ✗.
 
-**Cause:** the rules check reads only `~/.agent-daemon/guards.json` (never the memory store), so it stays fast. ad writes that file whole and keeps the previous good one as `guards.last-good.json`. A hand edit, a full disk or a copy from another machine can leave it unreadable. With the last good copy, the rules from before your latest change apply. With neither, no rule applies: a broken rules file never blocks your tools.
+**Cause:** the rules check reads only `~/.agent-daemon/guards.json` (never the memory store), so it stays fast. ad writes that file whole and keeps the previous good one as `guards.last-good.json`. A hand edit, a full disk or a copy from another machine can leave it unreadable. With the last good copy, the rules from before your latest change apply. With neither, the check can't tell which rules apply: while you have rules (ad keeps `guards.active` beside the file to say so), every call it covers is asked about (stopped in bypass and don't-ask modes, and in a host that can't ask) until the file is rebuilt. With no rules, nothing applies.
 
 **Fix:**
 1. Look at the file: `node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" ~/.agent-daemon/guards.json` prints where it breaks. (On Windows the folder is `%USERPROFILE%\.agent-daemon`, or your `AD_ROOT`.)
-2. If you edited it, undo the edit. Otherwise move it aside (`guards.json.broken`): with no rules file, ad uses the last good copy without a warning. If that copy is unreadable too, move it aside as well (then no rule applies until ad writes the file again).
+2. If you edited it, undo the edit. Otherwise rebuild it from your memory store: run `ad rules resume --all` (or `npx -y agent-daemon-memory rules resume --all`) in your own terminal. It writes the rules file again, and with nothing paused it changes nothing else. Don't move the file aside: the check then still can't read your rules.
 3. Run `ad doctor` again: `Rules file` should be ✓ (it says when it is using the last good copy).
 
 The hook log (`~/.agent-daemon/hooks/hook.log`, shown by `ad doctor`) records each time a hook found the file unreadable.

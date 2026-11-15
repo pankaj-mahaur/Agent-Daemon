@@ -88,7 +88,7 @@ function rulesOf(handle, { keys, ruleEvents, days, now }) {
   try {
     // The rules this project is enforced by (its own and the scope-all ones), read directly:
     // report stays light (the plugin's server bundles it).
-    rules = all ? handle.all("SELECT decision, orphaned_at FROM rules") : handle.all("SELECT decision, orphaned_at FROM rules WHERE project_id = ? OR scope = 'all'", [projectId ?? ""]);
+    rules = all ? handle.all("SELECT decision, orphaned_at, learning_id, source FROM rules") : handle.all("SELECT decision, orphaned_at, learning_id, source FROM rules WHERE project_id = ? OR scope = 'all'", [projectId ?? ""]);
     const sc = scope("l.project_slug", keys);
     reminded = handle.get(`SELECT COUNT(*) AS n FROM learnings l WHERE l.status = 'active' AND l.accepted_by IS NOT NULL AND ${sc.sql} AND NOT EXISTS (SELECT 1 FROM rules r WHERE r.learning_id = l.id)`, sc.params).n;
   } catch {

@@ -29,7 +29,8 @@ export async function afterReview(handle, token, { root = adRoot(), cmd = null, 
     // No rules left, but the switch that lowers ad's rules check may still be owed (L7 D13: a
     // tokened lowering that failed). This run has the token: it retries.
     const { readSwitchRecord, switchDue, switchAfterRules } = await import("../memory-install/rule-switch.mjs");
-    if (!readSwitchRecord(root) || !switchDue(root, now.getTime())) return null;
+    const rec = readSwitchRecord(root);
+    if (!rec || !(rec.pendingLower || switchDue(root, now.getTime()))) return null;
     return { moved: [], removed: [], pending: [], switch: await switchAfterRules({ root, token, now: now.getTime() }) };
   }
   const settled = maintainRules(handle, token, { now, confirmed });

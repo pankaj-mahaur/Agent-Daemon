@@ -13,7 +13,7 @@ const live = (p, now) => Boolean(p && typeof p === "object" && typeof p.at === "
  * @param {{rules?: object[], reminded?: number, events?: object[], paused?: {all: object|null, projects: object},
  *   projectId?: string|null, all?: boolean, days?: number, now?: number}} o
  *   rules: listRules rows (decision, orphaned_at, project_id, scope); events: readRuleEvents
- * @returns {{rules: number, stop: number, ask: number, orphaned: number, reminded: number,
+ * @returns {{rules: number, stop: number, ask: number, orphaned: number, stoppable: number, reminded: number,
  *   paused: {all: string|null|false, project: string|null|false}, asked: number, stopped: number,
  *   passes: number, selfProtect: {stopped: number, asked: number}}}
  *   paused.*: false (not paused), null (until resumed) or the until time
@@ -26,6 +26,8 @@ export function rulesSection({ rules = [], reminded = 0, events = [], paused = {
     stop: list.filter((r) => r.decision === "deny").length,
     ask: list.filter((r) => r.decision !== "deny").length,
     orphaned: list.filter((r) => r.orphaned_at).length,
+    // Learnings with a rule (the starter policy's rules have none; two rules on one learning count once).
+    stoppable: new Set(list.filter((r) => r.learning_id !== null && r.learning_id !== undefined).map((r) => r.learning_id)).size,
     reminded: Number.isFinite(reminded) ? reminded : 0,
     paused: { all: false, project: false },
     asked: 0,
@@ -59,7 +61,7 @@ const until = (u) => (u === null ? "until you resume them" : `until ${String(u).
 /** The section's lines (indented like the rest of report). No command is named: an agent's shell may print it (S4). */
 export function rulesLines(s, { share = false } = {}) {
   const lines = [`  Rules                       ${s.rules} (stop ${s.stop}, ask ${s.ask})${s.orphaned ? `, ${s.orphaned} whose learning is gone` : ""}`];
-  lines.push(`    stoppable / reminded      ${s.rules} / ${s.reminded}`);
+  lines.push(`    stoppable / reminded      ${s.stoppable} / ${s.reminded}   (learnings with a rule / without)`);
   lines.push(`    asked / stopped           ${s.asked} / ${s.stopped}${s.passes ? `   (allowed once ${s.passes})` : ""}`);
   if (s.selfProtect.stopped || s.selfProtect.asked) lines.push(`    ad's own files guarded    ${s.selfProtect.stopped} stopped, ${s.selfProtect.asked} asked (every project)`);
   if (!share && s.paused.all !== false) lines.push(`    paused everywhere ${until(s.paused.all)}`);

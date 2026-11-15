@@ -368,6 +368,7 @@ export async function runInteractiveReview(opts) {
 
     if (entries.length === 0) {
       out("No queued proposals.");
+      await owedSwitch({ env, isTTY, question, out, opts, token });
       return 0;
     }
     if (opts.list || !isTTY()) {
@@ -803,3 +804,30 @@ async function openInEditor(filePath) {
     await fs.rm(dir, { recursive: true, force: true, maxRetries: 3 });
   }
 }
+
+/**
+ * A lowering of ad's rules check that is still owed (L7 D13: no rule left, but a run without
+ * the token, or a failed write, left it fail-closed): this review, in your own terminal, puts
+ * it back. Only asks for the token when something is owed.
+ */
+async function owedSwitch({ env, isTTY, question, out, opts, token = null }) {
+  try {
+    const { adRoot } = await import("./ad-root.mjs");
+    const root = opts.root ?? adRoot();
+    const W = await import("./memory-install/rule-switch.mjs");
+    const rec = W.readSwitchRecord(root);
+    if (!rec || !(rec.pendingLower || rec.failed)) return;
+    let t = token;
+    if (!t) {
+      const g = await gate({ env, isTTY, ask: question, out, ...standIns(opts) });
+      if (g.refused) return void out(`ad's rules check stays fail-closed for now: ${g.refused}`);
+      t = g.token;
+    }
+    const r = await W.switchAfterRules({ root, token: t });
+    if (r.why) out(r.why);
+    else if (r.changed) out("ad's rules check has its resting values again (no rule is left).");
+  } catch (e) {
+    out(`ad's rules check couldn't be switched: ${e?.message ?? e}`);
+  }
+}
+

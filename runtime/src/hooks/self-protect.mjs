@@ -551,6 +551,7 @@ function resolveProgram(argv, literals) {
 
 const MEMORY_TOKEN = new Set(["held", "install", "setup", "uninstall", "repair", "promote", "redact", "assign", "migrate"]);
 const HOOK_VERBS = new Set(["hook", "session-start", "user-prompt-extract", "query-retrieve", "bash-pre", "bash-post", "edit-post", "mcp-pre", "session-end-digest", "skill-use", "capability-route-advice"]);
+const LEARNINGS_TOKEN = new Set(["edit", "forget", "export", "import"]);
 const READS = new Set(["report", "doctor", "status", "serve", "help", "--help", "-h", "--version", "-v", "-V"]);
 const AD_VALUE_OPTIONS = new Set(["--cwd", "--profile", "--home", "--root", "--host", "--project", "--model"]);
 const SUB_VALUE_OPTIONS = new Set(["--days", "--project", "--limit", "--format", "--since", "--cwd", "--host", "--id", "--learning", "--table"]);
@@ -590,6 +591,8 @@ export function verbClass(kind, args, { ps = false } = {}) {
   const words = positionals(rest);
   if (words.some((w) => isExpansion(w, ps)) && ["memory", "learning", "learnings", "rules", "config", "safety", "consolidate"].includes(lower(verb))) return { cls: "nonliteral", verb: lower(verb) };
   const v = lower(verb);
+  // report --purge removes what the history import found: the review token's (L8; it refuses itself too).
+  if (v === "report" && rest.some((x) => /^--purge(=|$)/i.test(x))) return { cls: "token", verb: "report --purge" };
   if (READS.has(v)) return { cls: "read", verb: v };
   switch (v) {
     case "review":
@@ -598,7 +601,8 @@ export function verbClass(kind, args, { ps = false } = {}) {
       return { cls: only("list") || only("list", "--json") || only("--help") || only("-h") ? "read" : "token", verb: v };
     case "learning":
     case "learnings":
-      return { cls: words.some((w) => ["edit", "forget"].includes(lower(w))) ? "token" : "read", verb: v };
+      // Changing, exporting and importing learnings are the review token's (L8); list and show are reads.
+      return { cls: words.some((w) => LEARNINGS_TOKEN.has(lower(w))) ? "token" : "read", verb: v };
     case "setup":
     case "install":
     case "repair":
@@ -613,6 +617,8 @@ export function verbClass(kind, args, { ps = false } = {}) {
       const sub = words.find((w) => MEMORY_TOKEN.has(lower(w)));
       if (sub) return { cls: lower(sub) === "assign" && rest.includes("--list") ? "read" : "token", verb: `memory ${lower(sub)}` };
       if (words.some((w) => lower(w) === "consolidate") && rest.some((x) => /^--apply/i.test(x))) return { cls: "token", verb: "memory consolidate" };
+      if (words.some((w) => lower(w) === "report") && rest.some((x) => /^--purge(=|$)/i.test(x))) return { cls: "token", verb: "memory report --purge" };
+      if (words.some((w) => ["learning", "learnings"].includes(lower(w))) && words.some((w) => LEARNINGS_TOKEN.has(lower(w)))) return { cls: "token", verb: "memory learnings" };
       return { cls: "read", verb: v };
     }
     case "remember":
