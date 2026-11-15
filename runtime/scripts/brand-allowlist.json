@@ -997,6 +997,37 @@
       "reason": "L7b: the starter-policy corpus items name their host (claude-code or codex) (the user's own Codex host, not ad's engine)"
     },
     {
+      "path": "runtime/src/memory/rule-step.mjs",
+      "rules": ["A", "C"],
+      "reason": "L7 P4: the rule step says how a rule decides in each of the user's hosts (Codex can't ask, so it stops) and offers a preview over their Codex history (the user's own Codex host, not ad's engine)"
+    },
+    {
+      "path": "runtime/src/memory/rule-preview.mjs",
+      "rules": ["A"],
+      "reason": "L7 P4: the preview reads the user's Claude Code and Codex transcripts of the last 30 days (the user's own Codex host, not ad's engine)"
+    },
+    {
+      "path": "runtime/src/memory/rules-cli.mjs",
+      "rules": ["A", "C"],
+      "reason": "L7 P4: `rules list` says Codex stops the call (the user's own Codex host, not ad's engine)"
+    },
+    {
+      "path": "runtime/src/memory/rules-service.mjs",
+      "rules": ["A"],
+      "reason": "L7 P4: a rule's pattern may not name the user's Codex config (.codex/hooks.json, config.toml), which self-protection covers (the user's own Codex host, not ad's engine)"
+    },
+    {
+      "path": "runtime/src/memory/memory-cli.mjs",
+      "rules": ["A", "C"],
+      "match": "Codex history",
+      "reason": "L7 P4: `config history-preview` names the user's Codex history the preview reads (the user's own Codex host, not ad's engine)"
+    },
+    {
+      "path": "runtime/test/l7-p4-*.test.mjs",
+      "rules": ["A"],
+      "reason": "L7 P4: branch rules and the preview on the user's Codex host (deny, transcripts) (the user's own Codex host, not ad's engine)"
+    },
+    {
       "path": "docs/memory/security.md",
       "rules": ["A"],
       "match": "and in Codex, which can't ask",

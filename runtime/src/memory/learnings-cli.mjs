@@ -392,7 +392,9 @@ async function forgetVerb(argv, o) {
   const { memoryVerbMain } = await import("./memory-cli.mjs");
   const code = await memoryVerbMain("forget", [String(id)], { ...o, ask: o.ask ?? askLine, handle: handle ?? undefined });
   if (code === 0 && rules.length && handle && !handle.get("SELECT 1 AS x FROM learnings WHERE id = ?", [id])) {
-    out(`Rule ${rules.join(", rule ")} stays: it keeps asking or stopping until you remove it.`);
+    // L7 D2: the forget asked to remove them with the typed code; the ones kept stay.
+    const kept = rules.filter((r) => handle.get("SELECT 1 AS x FROM rules WHERE id = ?", [r]));
+    if (kept.length) out(`Rule ${kept.join(", rule ")} stays: it keeps asking or stopping until you remove it.`);
   }
   return code;
 }

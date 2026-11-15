@@ -2,6 +2,7 @@
 //   currentBranch(dir)    <gitdir>/HEAD "ref: refs/heads/X" → X; detached or unreadable → null
 //   defaultBranches(dir)  <commondir>/refs/remotes/origin/HEAD "ref: refs/remotes/origin/X"
 //                         → [X]; unknown → ["main", "master"] (stricter: both are asked)
+//   upstreamMerge(dir, b) <commondir>/config [branch "b"] merge → "refs/heads/X" (L7 P4)
 // A linked worktree's .git is a file naming its gitdir; that gitdir's `commondir` names the
 // main repository's .git, where remote refs live. Small file reads only.
 
@@ -53,6 +54,36 @@ export function currentBranch(dir, opts = {}) {
   const p = pathFor(opts.platform ?? process.platform);
   const m = /^ref:\s*refs\/heads\/(.+?)\s*$/m.exec(readText(opts.fsx ?? fs, p.join(g.gitdir, "HEAD")) ?? "");
   return m ? m[1] : null;
+}
+
+/**
+ * The upstream a branch pushes to by default: `branch.<name>.merge` in the main repository's
+ * config (L7 D6, push rules). → "refs/heads/X" or null. A small text read, no spawn.
+ */
+export function upstreamMerge(dir, branch, opts = {}) {
+  if (!branch) return null;
+  const g = gitDirs(dir, opts);
+  if (!g) return null;
+  const p = pathFor(opts.platform ?? process.platform);
+  const text = readText(opts.fsx ?? fs, p.join(g.commondir, "config"));
+  if (!text) return null;
+  let inSection = false;
+  let found = null;
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.replace(/[;#].*$/, "").trim();
+    const head = /^\[\s*branch\s+"((?:[^"\\]|\\.)*)"\s*\]$/i.exec(line);
+    if (head) {
+      inSection = head[1].replace(/\\(.)/g, "$1") === branch;
+      continue;
+    }
+    if (line.startsWith("[")) {
+      inSection = false;
+      continue;
+    }
+    const kv = inSection && /^merge\s*=\s*(.+)$/i.exec(line);
+    if (kv) found = kv[1].trim().replace(/^"(.*)"$/, "$1"); // the last one wins, as in git
+  }
+  return found;
 }
 
 export function defaultBranches(dir, opts = {}) {

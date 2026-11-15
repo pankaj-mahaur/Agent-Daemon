@@ -84,7 +84,7 @@ async function launch() {
     return runMistakes(rest);
   }
   // L5: the memory verbs (memory/memory-cli.mjs), before the full command module.
-  if (["remember", "forget", "restore"].includes(command) || (command === "config" && ["review", "recall"].includes(rest[0]))) {
+  if (["remember", "forget", "restore"].includes(command) || (command === "config" && ["review", "recall", "history-preview"].includes(rest[0]))) {
     const { memoryVerbMain } = await import("./memory/memory-cli.mjs");
     return memoryVerbMain(command, rest, { command: (v) => `ad ${v}` });
   }
@@ -95,6 +95,8 @@ async function launch() {
     const { reportMain } = await import("./memory/report.mjs");
     return reportMain(rest.slice(1));
   }
+  // L7: rules (memory/rules-cli.mjs), before the full command module (its own flags).
+  if (command === "rules") return (await import("./memory/rules-cli.mjs")).rulesMain(rest, { command: (v) => `ad ${v}`, cmdName: "ad" });
   // L8: your learnings (memory/learnings-cli.mjs), before the full command module.
   if (command === "learnings") {
     const { learningsMain } = await import("./memory/learnings-cli.mjs");

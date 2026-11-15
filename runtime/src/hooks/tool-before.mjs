@@ -31,7 +31,7 @@ import { allowability, matchedParts, tryAllowOnce } from "./allow-once.mjs";
 import { PRODUCT } from "../product.mjs";
 import * as SPW from "./self-protect-words.mjs";
 import { FAMILY_TEXT } from "../rules/policy.mjs";
-import { currentBranch, defaultBranches } from "./git-branch.mjs";
+import { currentBranch, defaultBranches, upstreamMerge } from "./git-branch.mjs";
 
 const OS = { win32: "windows", darwin: "macos" };
 const WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit", "apply_patch"]);
@@ -212,6 +212,9 @@ function rulesBefore(input, { host = "claude", env = process.env, root, platform
   // The policy's context, built once and only when a policy rule is judged (L7b design §3).
   let pctx = null;
   const policyContext = () => (pctx ??= lazyPolicyContext({ here, dirs, callDir, sessionDir, env, platform, realpath, homes, gitRead }));
+  let bctx = null;
+  // Codex hides the command's folder (D5): its branch is unknown there, so a branch rule applies.
+  const branchContext = () => (bctx ??= host === "codex" ? { current: () => null, upstream: () => null } : branchContextOf({ dir: callDir ?? sessionDir, platform, gitRead }));
   const hits = [];
   for (const c of candidates) {
     if (!c.r || typeof c.r !== "object" || !c.r.rule) continue;
@@ -223,6 +226,8 @@ function rulesBefore(input, { host = "claude", env = process.env, root, platform
       call = callOf(input, { host, platform, root: base ?? callDir ?? sessionDir });
       // Lazy: a family reads the folders it needs inside matchRule, whose catch turns a failed read into an ask.
       if (c.r.rule?.type === "policy") call.policy = policyContext();
+      // Branch-aware rules (L7 D6): the folder's branch and upstream, read lazily from .git files.
+      else if (Array.isArray(c.r.rule?.branches) && c.r.rule.branches.length) call.branch = branchContext();
       res = matchRule(c.r.rule, call);
       if (res.match || res.error) break;
     }
@@ -462,6 +467,23 @@ function policyContextOf({ here, dirs, callDir, sessionDir, env, platform, realp
   const dir = callDir ?? sessionDir;
   const read = gitRead ?? { currentBranch: (d) => currentBranch(d, { platform }), defaultBranches: (d) => defaultBranches(d, { platform }) };
   return { homes: homeList, project_root: [...roots], current_branch: () => (dir ? read.currentBranch(dir) : null), default_branches: () => (dir ? read.defaultBranches(dir) : ["main", "master"]) };
+}
+
+/** The branch facts a branch-aware rule needs (L7 D6): the folder's current branch and a branch's upstream, each read once. */
+function branchContextOf({ dir, platform, gitRead }) {
+  const read = gitRead ?? {};
+  let cur;
+  const ups = new Map();
+  return {
+    current: () => {
+      if (cur === undefined) cur = dir ? (read.currentBranch ?? ((d) => currentBranch(d, { platform })))(dir) : null;
+      return cur;
+    },
+    upstream: (b) => {
+      if (!ups.has(b)) ups.set(b, dir ? (read.upstreamMerge ?? ((d, x) => upstreamMerge(d, x, { platform })))(dir, b) : null);
+      return ups.get(b);
+    },
+  };
 }
 
 /** The policy context with the folder reads deferred until a family asks for them (latency). */

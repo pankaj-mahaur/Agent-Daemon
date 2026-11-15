@@ -114,6 +114,10 @@ export async function memoryVerbMain(verb, argv = [], o = {}) {
     }
     const t = await getToken();
     const asker = F.askerOf({ cli: true, token: t.token ?? null });
+    // L7 D2: the rules each learning has, before the forget (a forgotten learning's rule stays
+    // until the user confirms its removal with the typed code).
+    const R = t.token ? await import("./rule-removal.mjs") : null;
+    const before = R ? R.ruleOwners(handle) : null;
     const words = { verb, product: PRODUCT.displayName, forget: command("forget"), restore: command("restore"), review: command("review"), terminalForget: (id) => command(`forget ${id}`) };
     let r;
     if (verb === "restore") r = F.restoreLearning(handle, { ref, asker, keys, token: t.token, now });
@@ -135,7 +139,41 @@ export async function memoryVerbMain(verb, argv = [], o = {}) {
     if (r.scrub?.older) out(`Its ${r.scrub.older} older wording${r.scrub.older === 1 ? "" : "s"} went too.`);
     if (r.scrub?.left?.length) out(`${r.scrub.left.length} capture file${r.scrub.left.length === 1 ? " still holds" : "s still hold"} its words (in use, or tracked by git): ${r.scrub.left.join(", ")}`);
     if (asker === "agent" && ["refused-own", "removed-by-you"].includes(r.status)) out(`(not your own terminal: ${t.refused})`);
+    if (R && t.token && verb === "forget" && r.status === "forgotten") {
+      const left = R.rulesLeftBy(handle, before, [r.id ?? ref.id].filter((x) => x != null));
+      const confirmed = await R.confirmRemovals({ rules: left, out, tty: o.tty, confirm: o.confirm, proven: t.dialogProven === true, command });
+      try {
+        const done = await (await import("./rules-finish.mjs")).afterReview(handle, t.token, { now, confirmed, ...(o.root ? { root: o.root } : {}) });
+        if (done?.switch?.why) out(done.switch.why);
+      } catch (e) {
+        out(`The rules file wasn't rebuilt (${e?.message ?? e}); it keeps the rules it had until the next review.`);
+      }
+    }
     return ["hidden", "restored", "forgotten", "forget-requested", "marked"].includes(r.status) ? 0 : 1;
+  }
+
+  if (verb === "config" && argv[0] === "history-preview") {
+    // L7 D18: the rule step's preview over this project's last 30 days of transcripts.
+    const value = argv[1];
+    const P = await import("./rule-preview.mjs");
+    if (value && !["on", "off"].includes(value)) {
+      out(`usage: ${command("config history-preview")} [on|off]`);
+      return 1;
+    }
+    if (value === "off") P.setPreviewConsent(handle, "off", { now });
+    else if (value === "on") {
+      const t = await getToken();
+      if (!t.token) {
+        out(`${PRODUCT.displayName}: the history preview stays as it is: turning it on needs your own terminal (${t.refused}).`);
+        return 2;
+      }
+      P.setPreviewConsent(handle, "on", { token: t.token, now });
+    }
+    const c = P.previewConsent(handle);
+    out(c === "on"
+      ? `The rule step's preview is on: review shows what a proposed rule would have done on this project's last 30 days of Claude Code and Codex history (read here, nothing stored). Turn off: ${command("config history-preview off")}`
+      : `The rule step's preview is ${c === "off" ? "off" : "not set (review asks once)"}.`);
+    return 0;
   }
 
   if (verb === "config" && argv[0] === "recall") {
