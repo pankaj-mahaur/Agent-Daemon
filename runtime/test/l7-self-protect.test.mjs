@@ -194,6 +194,8 @@ test("every reviewToken( call site maps to verbs self-protection keeps from the 
     "src/init-gate.mjs": { variant: ["ad init"] },
     "src/memory/memory-cli.mjs": { variant: ["teachonce remember x", "teachonce forget 1", "teachonce restore 1"] },
     "src/memory/safety-cli.mjs": { token: ["ad safety on", "ad safety off", "teachonce safety off"] },
+    // L7b: the starter safety policy's offer at setup's end and after review's rule step.
+    "src/memory/safety-offer.mjs": { token: ["ad setup", "teachonce setup", "ad review"] },
     "src/memory/rules-cli.mjs": { token: ["ad rules rm 1", "ad rules pause --all", "ad rules allow-once 1 abc123", "ad rules resume", "ad rules add 3", "teachonce rules pause"] },
     "src/portability/import.mjs": { token: ["ad review --import x.json"] },
     "src/tui/ad-layer.mjs": { variant: ["ad tui"] },

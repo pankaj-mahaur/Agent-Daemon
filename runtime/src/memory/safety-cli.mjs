@@ -40,6 +40,53 @@ export async function guardNotReady(root, { version = null } = {}) {
   return null;
 }
 
+/**
+ * Turn the policy on with a token this run already holds (safety on, and the offer in setup
+ * and review). → exit code. Checks the guard copy first (review H1).
+ */
+export async function turnPolicyOn({ handle, token, root, version = null, now = new Date(), cmd = null, out, command }) {
+  const policy = await import("./starter-policy.mjs");
+  const name = PRODUCT.displayName;
+  const notReady = await guardNotReady(root, { version });
+  if (notReady) {
+    out(`${name}: nothing changed: ${notReady}. Update it first: \`${command("repair")}\`, then \`${command("safety on")}\`.`);
+    return 1;
+  }
+  let r;
+  try {
+    r = await policy.setPolicy(handle, token, true, { root, now, cmd });
+  } catch (e) {
+    if (policy.policyState(handle).state === "off") {
+      out(`${name}: nothing changed: ${e?.message ?? e}`);
+      return 1;
+    }
+    out(`${name}: the policy is on in your store, but the rules file couldn't be rebuilt (${e?.message ?? e}); it starts asking once \`${command("review")}\` rebuilds it.`);
+    return 1;
+  }
+  out(`${name} starter safety policy: on (${r.added.length} rule${r.added.length === 1 ? "" : "s"} added). It asks before:`);
+  for (const f of policy.policyState(handle).families) out(`  ${f.text} (rule ${f.rule})`);
+  out("  Claude Code asks you; in bypass or don't-ask mode, and in Codex (which can't ask), these calls are stopped with the reason.");
+  out("  While rules exist, Claude Code also asks when the check itself can't run (from your next session).");
+  out(`  ${policy.POLICY_COPY.limits}`);
+  out(`  Turn it off: \`${command("safety off")}\` · one call: \`${command("rules allow-once <rule>")}\``);
+  if (r.switch?.why) out(`  ! ${r.switch.why}`);
+  for (const l of r.switch?.codex ?? []) out(`  ${l.trim()}`);
+  return 0;
+}
+
+/** Is the Read tool checked on Claude Code? (L7 D13: the rule switch adds Read to ad's entry.) */
+function readLine(root) {
+  let rec = null;
+  try {
+    rec = JSON.parse(fs.readFileSync(path.join(root, "memory", "switch.json"), "utf8"));
+  } catch {
+    // no record yet
+  }
+  return rec?.readMatcher === true && rec?.failed !== true
+    ? "Claude Code's Read tool is asked about too (ad's hook entry covers Read)."
+    : "Claude Code's Read tool isn't asked about until ad's hook entry covers Read (it is updated at the next session start).";
+}
+
 function snapshotPolicyIds(root) {
   try {
     const raw = JSON.parse(fs.readFileSync(path.join(root, "guards.json"), "utf8"));
@@ -95,7 +142,7 @@ export async function safetyMain(argv = [], o = {}) {
     if (enforced.some((id) => !inStore.includes(id))) out("  off in your store, but the rules file still asks until it is rebuilt" + (fromAgent ? " (the user can settle this in their own terminal)." : ` (\`${command("review")}\`).`));
     else if (inStore.some((id) => !enforced.includes(id))) out("  on in your store; the rules file catches up at the next session start.");
     out(`  ${policy.POLICY_COPY.limits}`);
-    out("  The Read tool on Claude Code is asked about once ad's hook entry covers Read (from the release that adds it).");
+    if (s.families.some((f) => f.family === "env-read" && f.rule !== null)) out(`  ${readLine(root)}`);
     const others = await (o.others ?? (async () => (await import("./policy-coexist.mjs")).coexistLines({ env, home: env.HOME || env.USERPROFILE || undefined })))();
     for (const l of others ?? []) out(`  ${l}`);
     if (!fromAgent) out(s.state === "off" ? `  Turn it on: \`${command("safety on")}\`` : `  Turn it off: \`${command("safety off")}\``);
@@ -117,31 +164,7 @@ export async function safetyMain(argv = [], o = {}) {
       return 0;
     }
     const version = o.version !== undefined ? o.version : (await import("./own-version.mjs")).ownVersion?.() ?? null;
-    const notReady = await guardNotReady(root, { version });
-    if (notReady) {
-      out(`${name}: nothing changed: ${notReady}. Update it first: \`${command("repair")}\`, then \`${command("safety on")}\`.`);
-      return 1;
-    }
-    let r;
-    try {
-      r = await policy.setPolicy(handle, t.token, true, { root, now, cmd });
-    } catch (e) {
-      if (policy.policyState(handle).state === "off") {
-        out(`${name}: nothing changed: ${e?.message ?? e}`);
-        return 1;
-      }
-      out(`${name}: the policy is on in your store, but the rules file couldn't be rebuilt (${e?.message ?? e}); it starts asking once \`${command("review")}\` rebuilds it.`);
-      return 1;
-    }
-    out(`${name} starter safety policy: on (${r.added.length} rule${r.added.length === 1 ? "" : "s"} added). It asks before:`);
-    for (const f of policy.policyState(handle).families) out(`  ${f.text} (rule ${f.rule})`);
-    out("  Claude Code asks you; in bypass or don't-ask mode, and in Codex (which can't ask), these calls are stopped with the reason.");
-    out("  While rules exist, Claude Code also asks when the check itself can't run (from your next session).");
-    out(`  ${policy.POLICY_COPY.limits}`);
-    out(`  Turn it off: \`${command("safety off")}\` · one call: \`${command("rules allow-once <rule>")}\``);
-    if (r.switch?.why) out(`  ! ${r.switch.why}`);
-    for (const l of r.switch?.codex ?? []) out(`  ${l.trim()}`);
-    return 0;
+    return turnPolicyOn({ handle, token: t.token, root, version, now, cmd, out, command });
   }
 
   // off: lowers enforcement → the typed code (L7 design decision 16).
