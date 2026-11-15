@@ -67,7 +67,7 @@ for (const [host, shapes] of Object.entries(SHAPES)) {
       w.out.length = 0;
       await doctor({ ctx: w.ctx, json: true, cwd: w.h });
       const checks = JSON.parse(w.out.at(-1));
-      r.doctor = checks.filter((c) => c.host === host).every((c) => c.ok) && checks.some((c) => c.code === "smoke.modern" && c.host === host && c.ok);
+      r.doctor = checks.filter((c) => c.host === host && c.section !== "readiness").every((c) => c.ok) && checks.some((c) => c.code === "smoke.modern" && c.host === host && c.ok);
       w.out.length = 0;
       r.reinstall = (await install({ ctx: w.ctx, hosts: [host], yes: true, noSetup: true })) === 0 && w.out.some((l) => /already set up/.test(l));
       r.uninstall = (await uninstall({ ctx: w.ctx, hosts: [host] })) === 0;

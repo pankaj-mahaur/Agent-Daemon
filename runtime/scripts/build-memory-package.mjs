@@ -33,7 +33,9 @@ export const ENTRIES = ["src/memory-install/cli.mjs", "src/mcp/memory-server.mjs
 export const ALLOWED_BARE = new Set(["jsonc-parser", "smol-toml", "better-sqlite3"]);
 // The brand zone (all of engine/, attribution.mjs included), the harness and the
 // terminal UI never ship in the memory product (MCP launch plan, invariant 7).
-export const FORBIDDEN = [/^src\/engine\//, /^src\/harness\//, /^src\/tui\//];
+// The runtime-only code `ad doctor` (cmdDoctor) imports stays out as well (L8b, T18): the
+// full CLI, the token instrument and the accounts code.
+export const FORBIDDEN = [/^src\/engine\//, /^src\/harness\//, /^src\/tui\//, /^src\/cli-full\.mjs$/, /^src\/instrument\.mjs$/, /^src\/auth\//];
 const FORBIDDEN_BARE = new Set(["@openai/codex", "chokidar"]);
 
 // import … from "x"; import "x"; export … from "x"; import("x") with a literal.

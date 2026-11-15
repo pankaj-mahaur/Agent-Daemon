@@ -1195,26 +1195,11 @@ async function cmdDoctor({ cwd = process.cwd(), tokens, limit, model } = {}) {
     checks.push({ name: "Hook wiring", ok: false, note: "could not read settings.json" });
   }
 
-  // Check 4a: the hook routes across Claude Code's settings files (plan L2, hooks/hook-doctor.mjs)
-  try {
-    const hd = await import("./hooks/hook-doctor.mjs");
-    const { claudeHookSources, HOOK_PATH } = await import("./hooks/routes.mjs");
-    const { loadGuards, guardsPath } = await import("./hooks/guards.mjs");
-    const { hookLogTail } = await import("./hooks/hook-log.mjs");
-    const guards = loadGuards();
-    checks.push(hd.rulesFileRow(guards, guardsPath()));
-    const sources = claudeHookSources({ home, cwd });
-    const claudeVersion = await hd.claudeCodeVersion();
-    checks.push(hd.duplicateRow(sources));
-    checks.push(hd.scriptRow(sources, HOOK_PATH));
-    const execRow = hd.execFormRow(sources, claudeVersion);
-    if (execRow) checks.push(execRow);
-    const pluginRow = hd.pluginRow({ plugin: hd.memoryPluginState({ home, cwd }), sources });
-    if (pluginRow) checks.push(pluginRow);
-    checks.push(...hd.failClosedRows({ sources, rules: hd.ruleCount(guards.snapshot), claudeVersion }));
-    checks.push(hd.logRow(hookLogTail(5)));
-  } catch (e) {
-    checks.push({ name: "Hook routes", ok: true, note: `not checked (${e.message})` });
+  // Check 4a: the hook routes across Claude Code's settings files (plan L2, hooks/hook-doctor.mjs;
+  // the package's doctor runs the same builder, L8b).
+  {
+    const { hookRouteChecks } = await import("./hooks/hook-doctor.mjs");
+    checks.push(...(await hookRouteChecks({ home, cwd })));
   }
 
   // Check 4b: recall (plan L6) — what it sends from this folder, and other memory next to it.

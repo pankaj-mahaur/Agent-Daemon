@@ -214,3 +214,33 @@ export function rulesFileRow(g, file) {
 export function logRow(lines) {
   return { name: "Hook log", ok: true, note: lines.length ? lines.slice(-3).join(" | ") : "nothing logged" };
 }
+
+/**
+ * The L2 hook checks as rows ({ name, ok, note }), for `ad doctor` and the package's own
+ * doctor. packaged: the caller runs from an npm copy, so HOOK_PATH is a transient copy
+ * there: with no routes in the settings there is no script to check.
+ */
+export async function hookRouteChecks({ home = os.homedir(), cwd = process.cwd(), claudeVersion, packaged = false, sources, root } = {}) {
+  const rows = [];
+  try {
+    const { claudeHookSources, HOOK_PATH } = await import("./routes.mjs");
+    const { loadGuards, guardsPath } = await import("./guards.mjs");
+    const { hookLogTail } = await import("./hook-log.mjs");
+    const guards = loadGuards({ root });
+    rows.push(rulesFileRow(guards, guardsPath(root)));
+    const srcs = sources ?? claudeHookSources({ home, cwd });
+    const version = claudeVersion === undefined ? await claudeCodeVersion() : claudeVersion;
+    rows.push(duplicateRow(srcs));
+    const hasRoutes = srcs.some((s) => ourHandlers(s.hooks).some((o) => o.info.kind === "dispatcher" && !o.info.plugin && o.info.script));
+    if (!packaged || hasRoutes) rows.push(scriptRow(srcs, HOOK_PATH));
+    const execRow = execFormRow(srcs, version);
+    if (execRow) rows.push(execRow);
+    const row = pluginRow({ plugin: memoryPluginState({ home, cwd }), sources: srcs });
+    if (row) rows.push(row);
+    rows.push(...failClosedRows({ sources: srcs, rules: ruleCount(guards.snapshot), claudeVersion: version }));
+    rows.push(logRow(hookLogTail(5, { root })));
+  } catch (e) {
+    rows.push({ name: "Hook routes", ok: true, note: `not checked (${e.message})` });
+  }
+  return rows;
+}

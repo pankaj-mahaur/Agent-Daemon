@@ -11,7 +11,7 @@ import { PRODUCT } from "../product.mjs";
 const fmt = (n) => n.toLocaleString("en-US");
 
 /** A read-only view of the store with the get/all the recall readers use, or null. */
-async function readOnlyStore(dbPath) {
+export async function readOnlyStore(dbPath) {
   try {
     if (!fs.existsSync(dbPath)) return null;
     const { openDatabase } = await import("./driver.mjs");

@@ -16,6 +16,20 @@ import { claudeGet } from "./claude-cli.mjs";
 import { currentDist, makeContext } from "./install.mjs";
 import { codexTrust } from "./setup.mjs";
 import { PRODUCT } from "../product.mjs";
+import { readiness, readinessRows, redactHome, renderReadiness } from "./readiness.mjs";
+
+// Stable codes for the L2 hook rows (hooks/hook-doctor.mjs hookRouteChecks).
+const HOOK_ROW_CODES = {
+  "Rules file": "rules.file",
+  "Hook routes": "hooks.routes",
+  "Hook script": "hooks.script",
+  "Claude Code version (hooks)": "hooks.exec-form",
+  "Memory plugin hooks": "hooks.plugin",
+  "Rules check mode (Claude Code)": "rules.mode",
+  "Rules check mode (Codex)": "rules.mode",
+  "Claude Code version (fail-closed)": "rules.version",
+  "Hook log": "hooks.log",
+};
 
 const MIN_NODE = [22, 13];
 const META = { "io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientCapabilities": {} };
@@ -182,9 +196,20 @@ export async function doctor(opts = {}) {
   }
   // The plugin and Codex's command skills (L3 P4): their own module.
   for (const c of await (await import("./doctor-product.mjs")).productChecks(ctx, opts)) add(c.code, c.ok, c.note, c.host);
+  // The hook checks `ad doctor` runs too (L2): one builder, two callers (L8b).
+  const cv = (await Promise.resolve((opts.claudeVersion ?? ctx.claudeVersion)?.()).catch(() => null)) ?? null;
+  {
+    const { hookRouteChecks } = await import("../hooks/hook-doctor.mjs");
+    for (const r of await hookRouteChecks({ home: ctx.home, cwd: opts.cwd ?? process.cwd(), claudeVersion: cv ?? null, packaged: true, root: ctx.root })) {
+      add(HOOK_ROW_CODES[r.name] ?? `hooks.${r.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`, r.ok, redactHome(ctx, r.note), /Codex/.test(r.name) ? "codex" : undefined);
+    }
+  }
   // Recall (L6): what it sends from this folder, and other memory loaded next to it. Information only.
+  const command = (v) => (ctx.version ? `npx -y ${PRODUCT.package}@${ctx.version} ${v}` : `npx -y ${PRODUCT.package} ${v}`);
+  let recallRows;
   try {
-    for (const c of await (await import("../memory/recall-doctor.mjs")).recallDoctorRows({ cwd: opts.cwd ?? process.cwd(), home: ctx.home, env: ctx.env, command: (v) => (ctx.version ? `npx -y ${PRODUCT.package}@${ctx.version} ${v}` : `npx -y ${PRODUCT.package} ${v}`) })) add(c.code, c.ok, c.note, c.host);
+    recallRows = await (await import("../memory/recall-doctor.mjs")).recallDoctorRows({ cwd: opts.cwd ?? process.cwd(), home: ctx.home, env: ctx.env, command });
+    for (const c of recallRows) add(c.code, c.ok, redactHome(ctx, c.note), c.host);
   } catch (e) {
     add("recall.tokens", true, `not checked (${e.message})`);
   }
@@ -192,9 +217,17 @@ export async function doctor(opts = {}) {
   const cur = currentDist(ctx.root);
   if (cur) add("pkg.stale", !newer(ctx.version, cur), newer(ctx.version, cur) ? `installed ${cur}, this is ${ctx.version}: run install to update` : `installed ${cur}`);
 
-  if (opts.json) ctx.out(JSON.stringify(checks));
+  // Readiness (L8b, D22): plain text after the checks, never part of the exit code.
+  let ready = [];
+  try {
+    ready = await readiness(ctx, { cwd: opts.cwd, recallRows, claudeVersion: cv, have: opts.have });
+  } catch (e) {
+    add("ready.error", true, `readiness not checked (${e.message})`);
+  }
+  if (opts.json) ctx.out(JSON.stringify([...checks, ...readinessRows(ready)]));
   else {
     for (const c of checks) ctx.out(`${c.ok ? "✓" : "✗"} ${c.host ? `${hostById(c.host)?.name ?? c.host} ` : ""}${c.code}: ${c.note}`);
+    for (const l of renderReadiness(ready)) ctx.out(l);
     if (!Object.keys(ledger.hosts).length) ctx.out(`No hosts set up yet: run install (${HOSTS.map((h) => h.id).join(", ")}).`);
   }
   return checks.every((c) => c.ok) ? 0 : 1;
