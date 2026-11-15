@@ -208,6 +208,7 @@ async function finish(codeP, o) {
   try {
     const r = await afterReview(o.handle, o.token, { ...(o.root ? { root: o.root } : {}), confirmed: o.confirmed ?? [], cmd: o.cmdName ?? null });
     if (r?.switch?.why) o.out(r.switch.why);
+    for (const l of r?.switch?.codex ?? []) o.out(l.trim());
     if (r?.pending?.length) o.out(`${r.pending.length === 1 ? "Rule" : "Rules"} ${r.pending.join(", ")} still ${r.pending.length === 1 ? "has" : "have"} no learning in use: keep ${r.pending.length === 1 ? "it" : "them"} or remove ${r.pending.length === 1 ? "it" : "them"} with the typed code.`);
   } catch (e) {
     o.out(`The rules file wasn't rebuilt (${e?.message ?? e}); it keeps the rules it had until the next review.`);

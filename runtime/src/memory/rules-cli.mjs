@@ -143,6 +143,7 @@ export async function rulesMain(argv = [], o = {}) {
   };
   const done = (r) => {
     if (r?.switch?.why) out(r.switch.why);
+    for (const l of r?.switch?.codex ?? []) out(l.trim()); // Codex on Windows: the entry's cost and the /hooks step
     return 0;
   };
   try {

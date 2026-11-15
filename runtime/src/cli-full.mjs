@@ -1895,6 +1895,7 @@ async function cmdMemory(sub, opts) {
           const handle = await (await import("./memory/episodic.mjs")).db();
           const r = handle ? await (await import("./memory/rules-finish.mjs")).afterReview(handle, token, { cmd: "ad" }) : null;
           if (r?.switch?.why) console.log(`  ${r.switch.why}`);
+          for (const l of r?.switch?.codex ?? []) console.log(`  ${l.trim()}`);
         } catch (e) {
           console.error(`  the rules file wasn't rebuilt (${e?.message ?? e}); it keeps the rules it had until the next review`);
         }

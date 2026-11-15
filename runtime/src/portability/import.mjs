@@ -854,6 +854,7 @@ export async function reviewImport(importId, { acceptAll = false, env = process.
     try {
       const r = await (await import("../memory/rules-finish.mjs")).afterReview(t, gate.token, { root: adRoot({ env }) });
       if (r?.switch?.why) out.write(`${r.switch.why}\n`);
+      for (const l of r?.switch?.codex ?? []) out.write(`${l.trim()}\n`);
     } catch (e) {
       out.write(`The rules file wasn't rebuilt (${e?.message ?? e}); it keeps the rules it had until the next review.\n`);
     }
