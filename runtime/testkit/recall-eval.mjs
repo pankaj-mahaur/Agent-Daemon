@@ -57,6 +57,7 @@ export function scoreBriefs(results) {
   let irrelevant = 0;
   let relevant = 0;
   let maxShare = 0;
+  let over20 = 0;
   for (const { ids, expected } of results) {
     const r = ids.filter((id) => expected.relevant.includes(id)).length;
     const i = ids.filter((id) => expected.irrelevant.includes(id)).length;
@@ -65,8 +66,9 @@ export function scoreBriefs(results) {
     irrelevant += i;
     relevant += r;
     if (ids.length) maxShare = Math.max(maxShare, i / ids.length);
+    if (ids.length && i / ids.length > 0.2) over20++;
   }
-  return { projects: results.length, withRelevant, total, irrelevant, relevant, share: total ? irrelevant / total : 0, maxShare, relevantPerBrief: results.length ? relevant / results.length : 0 };
+  return { projects: results.length, withRelevant, total, irrelevant, relevant, share: total ? irrelevant / total : 0, maxShare, over20, relevantPerBrief: results.length ? relevant / results.length : 0 };
 }
 
 /** The ids prompt recall would deliver for each prompt (project-scoped), through the core and the renderer. */

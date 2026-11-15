@@ -1,0 +1,24 @@
+{
+  "name": "vesper-serve",
+  "stack": "Python 3.12 FastAPI + SQLAlchemy 2.0 (async) + Alembic model-serving API, ONNX Runtime (GPU), Redis, uv",
+  "branch": "fix/batch-inference-timeouts",
+  "recent_paths": [
+    "app/inference/batcher.py",
+    "app/inference/onnx_session.py",
+    "app/api/routes/predict.py",
+    "app/core/settings.py",
+    "app/main.py",
+    "tests/inference/test_batcher.py",
+    "tests/api/test_predict.py",
+    "docker/Dockerfile.gpu",
+    "pyproject.toml"
+  ],
+  "recent_commits": [
+    "batcher: flush on max_wait_ms even when the queue is short",
+    "predict: return 503 with Retry-After when the queue is full",
+    "onnx: one InferenceSession per worker instead of per request",
+    "settings: BATCH_MAX_WAIT_MS default 15 -> 8",
+    "tests: deterministic batcher tests with a fake clock"
+  ],
+  "session_cwd": "/home/dev/projects/vesper-serve"
+}

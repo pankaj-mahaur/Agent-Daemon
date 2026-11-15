@@ -1,0 +1,31 @@
+{
+  "relevant": ["hr-01", "hr-03", "hr-04", "hr-05", "hr-06", "hr-08", "hr-15", "hr-18", "hr-24"],
+  "irrelevant": ["hr-02", "hr-07", "hr-09", "hr-10", "hr-13", "hr-14", "hr-16", "hr-17", "hr-20", "hr-21", "hr-22"],
+  "neutral": ["hr-11", "hr-12", "hr-19", "hr-23"],
+  "reasons": {
+    "hr-01": "Synchronous save on quit; the core of the bug.",
+    "hr-02": "Stale: direct WriteAllText replaced by hr-03 (tmp + File.Replace).",
+    "hr-03": "Current atomic save scheme; matches the first commit.",
+    "hr-04": "SaveMigrations.cs is in recent paths; header/format changes need a version bump.",
+    "hr-05": "How to run the EditMode and PlayMode save tests the branch adds.",
+    "hr-06": "Where save files actually live when checking corruption reports.",
+    "hr-07": "Stale: Auto-Cloud replaced by hr-08.",
+    "hr-08": "SteamCloudSync.cs is changed; why uploads are controlled in code.",
+    "hr-09": "Addressables, other area.",
+    "hr-10": "Input rebinding in PlayerPrefs, other area; persistence-adjacent wording only.",
+    "hr-11": "Unity version pin; project-wide.",
+    "hr-12": "LFS / merge setup; project-wide.",
+    "hr-13": "Dungeon generation, other area.",
+    "hr-14": "Combat GC, other area; shares the Core/ folder only.",
+    "hr-15": "Checksum implementation used by the backup fallback.",
+    "hr-16": "Stale: Test Runner only, replaced by hr-05 (batchmode works).",
+    "hr-17": "Localization, other area.",
+    "hr-18": "How to reproduce the quit-time corruption (Hinglish).",
+    "hr-19": "C# style; project-wide.",
+    "hr-20": "Parked Switch port, other area.",
+    "hr-21": "FMOD audio, other area.",
+    "hr-22": "Balance CSV import (Hinglish), other area.",
+    "hr-23": "Steam build upload; project-wide.",
+    "hr-24": "GameBootstrap quit hooks; GameBootstrap.cs is in recent paths."
+  }
+}

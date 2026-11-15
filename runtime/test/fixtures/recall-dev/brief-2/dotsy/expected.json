@@ -1,0 +1,29 @@
+{
+  "relevant": ["dt-01", "dt-03", "dt-04", "dt-06", "dt-07", "dt-13", "dt-14", "dt-20"],
+  "irrelevant": ["dt-02", "dt-05", "dt-08", "dt-11", "dt-12", "dt-15", "dt-17", "dt-19", "dt-22"],
+  "neutral": ["dt-09", "dt-10", "dt-16", "dt-18", "dt-21"],
+  "reasons": {
+    "dt-01": "Strict undefined behaviour; matches the 'error on undefined variable' commit.",
+    "dt-02": "Stale: regex templating replaced by dt-01 (minijinja), not stated explicitly.",
+    "dt-03": "Rendered output changes; insta snapshot workflow for tests/template_render.rs.",
+    "dt-04": "Branch adds the minijinja dependency; MSRV check.",
+    "dt-05": "Stale: ~/.dotsy.toml replaced by dt-06 (XDG path).",
+    "dt-06": "config.rs gains a [vars] table; where config is loaded from.",
+    "dt-07": "host.* variables; macOS hostname gotcha.",
+    "dt-08": "Windows symlinks, other area.",
+    "dt-09": "Pre-PR checks; project-wide.",
+    "dt-10": "Release process; project-wide.",
+    "dt-11": "diff command, other area.",
+    "dt-12": "Stale: anyhow-everywhere replaced by dt-13.",
+    "dt-13": "Error type for template errors with path and line.",
+    "dt-14": "env.* variables; what may be exposed.",
+    "dt-15": "Shell completions, other area.",
+    "dt-16": "Commit convention; project-wide.",
+    "dt-17": "watch command, other area.",
+    "dt-18": "Test isolation (Hinglish); project-wide.",
+    "dt-19": "Parked secrets spike, other area.",
+    "dt-20": "README.md is in recent paths and is a doctest source.",
+    "dt-21": "Path style (Hinglish); project-wide.",
+    "dt-22": "status startup time, other area."
+  }
+}
