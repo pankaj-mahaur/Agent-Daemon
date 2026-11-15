@@ -129,7 +129,10 @@ export async function main(argv = process.argv.slice(2), { log = (l) => console.
       log(r.error);
       return 1;
     }
-    return (await import("../review.mjs")).runInteractiveReview({ cwd: process.cwd(), command: (v) => `npx -y ${PRODUCT.package} ${v}`, ...r });
+    // L7b: after the rule step, the starter safety policy is offered once (with this run's token).
+    const { reviewOffer } = await import("../memory/safety-offer.mjs");
+    const command = (v) => `npx -y ${PRODUCT.package} ${v}`;
+    return (await import("../review.mjs")).runInteractiveReview({ cwd: process.cwd(), command, afterRuleStep: reviewOffer({ env, isTTY, cmdName: `npx -y ${PRODUCT.package}`, command }), ...r });
   }
   // L5: remember, forget, restore, config review (memory/memory-cli.mjs: trusted only with
   // the review token, in your own terminal).
@@ -155,8 +158,15 @@ export async function main(argv = process.argv.slice(2), { log = (l) => console.
   switch (cmd) {
     case "install":
       return inst.install(opts);
-    case "setup":
-      return (await import("./setup.mjs")).setup({ ...opts, ctx: inst.makeContext(opts) });
+    case "setup": {
+      const code = await (await import("./setup.mjs")).setup({ ...opts, ctx: inst.makeContext(opts) });
+      // L7b: the starter safety policy is offered once, at the end of a setup that didn't fail.
+      if (code !== 1 && !opts.dryRun) {
+        const { setupOffer } = await import("../memory/safety-offer.mjs");
+        await setupOffer({ out: log, env, isTTY, ask: opts.ask, cmdName: `npx -y ${PRODUCT.package}`, command: inst.makeContext(opts).command }).catch((e) => log(`The starter safety policy's offer stopped: ${e?.message ?? e}.`));
+      }
+      return code;
+    }
     case "repair": {
       const { readLedger } = await import("./ledger.mjs");
       const { readLedger2 } = await import("./ledger2.mjs");

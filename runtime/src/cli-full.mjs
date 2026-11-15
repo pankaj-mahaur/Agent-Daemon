@@ -1071,7 +1071,9 @@ async function printHeldLine(cwd) {
 }
 
 async function cmdReview(opts) {
-  return runInteractiveReview(opts);
+  // L7b: after the rule step, the starter safety policy is offered once (with this run's token).
+  const { reviewOffer } = await import("./memory/safety-offer.mjs");
+  return runInteractiveReview({ afterRuleStep: reviewOffer({ cmdName: "ad", command: (v) => `ad ${v}` }), ...opts });
 }
 
 async function cmdDoctor({ cwd = process.cwd(), tokens, limit, model } = {}) {
