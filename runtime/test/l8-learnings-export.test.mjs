@@ -103,14 +103,14 @@ test("export writes accepted notes only: nothing pending, in use before review, 
 
 test("export redacts: secrets masked, the home folder and account name replaced, rule patterns too", async () => {
   const h = await store();
-  const id = note(h, `keep the deploy key ghp_abcdefghijklmnopqrstuvwxyz0123456789 out of ${ROOT}/shop/.env and /Users/pankajx/app, says the pankajx team`);
+  const id = note(h, `keep the deploy key ghp_abcdefghijklmnopqrstuvwxyz0123456789 out of ${ROOT}/shop/.env and /Users/samdev/app, says the samdev team`);
   accept(h, id);
   h.run("INSERT INTO rules (learning_id, project_id, scope, kind, decision, pattern, reason, approved_at) VALUES (?, ?, 'project', 'write', 'deny', ?, 'x', '2026-11-11')", [id, PID, JSON.stringify({ type: "write", globs: [`${ROOT}/shop/.env`] })]);
-  const { notes } = L.exportNotes(h, { keys: KEYS, home: ROOT, user: "pankajx" });
+  const { notes } = L.exportNotes(h, { keys: KEYS, home: ROOT, user: "samdev" });
   assert.equal(notes.length, 1);
-  assert.doesNotMatch(JSON.stringify(notes), /ghp_|\/pankajx|ad-l8-export/);
-  // The account name only as a path segment: "the pankajx team" keeps its word.
-  assert.match(notes[0].text, /\[redacted:[\w-]+\] out of ~\/shop\/\.env and \/Users\/<user>\/app, says the pankajx team/);
+  assert.doesNotMatch(JSON.stringify(notes), /ghp_|\/samdev|ad-l8-export/);
+  // The account name only as a path segment: "the samdev team" keeps its word.
+  assert.match(notes[0].text, /\[redacted:[\w-]+\] out of ~\/shop\/\.env and \/Users\/<user>\/app, says the samdev team/);
   assert.deepEqual(notes[0].rules, [{ kind: "write", decision: "deny", pattern: { type: "write", globs: ["~/shop/.env"] } }]);
 });
 
