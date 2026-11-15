@@ -1,0 +1,31 @@
+{
+  "relevant": ["rb-01", "rb-03", "rb-04", "rb-05", "rb-07", "rb-08", "rb-09", "rb-17", "rb-24"],
+  "irrelevant": ["rb-02", "rb-06", "rb-11", "rb-12", "rb-13", "rb-15", "rb-18", "rb-20", "rb-22", "rb-23"],
+  "neutral": ["rb-10", "rb-14", "rb-16", "rb-19", "rb-21"],
+  "reasons": {
+    "rb-01": "delivery.proto gets a RetryPolicy field; buf generate and buf breaking apply directly.",
+    "rb-02": "Stale: offset-based retries replaced by rb-03 (attempts table + retry worker).",
+    "rb-03": "Current retry design the branch builds on.",
+    "rb-04": "Fake clock pattern for the retry schedule tests (matches the test commit).",
+    "rb-05": "Why jitter is per attempt; core to the backoff change.",
+    "rb-06": "Stale: maxAttempts const replaced by rb-07.",
+    "rb-07": "Where the attempt limit comes from now; worker dead-letters after max attempts.",
+    "rb-08": "Branch changes attempts.go / next_attempt_at queries; partial index gotcha.",
+    "rb-09": "Branch adds migration 0019.",
+    "rb-10": "Generic test command; project-wide.",
+    "rb-11": "Gateway rate limiting, other area; shares config only.",
+    "rb-12": "Admin UI XSS, other area.",
+    "rb-13": "Stale: confluent image replaced by rb-14 (Redpanda).",
+    "rb-14": "Local setup; project-wide.",
+    "rb-15": "tenant.proto reserved field, other proto; shares the word proto.",
+    "rb-16": "Commit convention; project-wide.",
+    "rb-17": "Dead-lettering after max attempts is a branch commit; DLQ fields matter.",
+    "rb-18": "Webhook signing, other area.",
+    "rb-19": "Lint tip (Hinglish); project-wide.",
+    "rb-20": "Config hot reload, other area; shares config/ path only.",
+    "rb-21": "Deploy process; project-wide.",
+    "rb-22": "Admin UI heap profile, other area.",
+    "rb-23": "Grafana panels (Hinglish), other area.",
+    "rb-24": "Which failures get retried; needed for the backoff logic, low word overlap."
+  }
+}

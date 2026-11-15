@@ -263,7 +263,7 @@ export async function captureNote(o) {
   return { status: r.status === "provisional" ? "provisional" : "pending", id: r.id, text, flags, phrases };
 }
 
-function discardedBefore(handle, nk, projectId) {
+export function discardedBefore(handle, nk, projectId) {
   try {
     return Boolean(handle.get("SELECT 1 AS ok FROM events WHERE kind = 'discarded' AND detail = ? AND project_id IS ?", [JSON.stringify({ hash: tombstoneHash(nk) }), projectId ?? null]));
   } catch {

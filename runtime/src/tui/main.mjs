@@ -7,7 +7,8 @@
 // handing the terminal to another program) is built here as `actions`.
 
 import { spawn, execFile } from "node:child_process";
-import { editorCommand, editorInvocation, resolveGit, resolvedArgv } from "../safe-spawn.mjs";
+import { editorCommand, resolveGit, resolvedArgv } from "../safe-spawn.mjs";
+import { editInEditor } from "../edit-text.mjs";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import path from "node:path";
@@ -162,34 +163,8 @@ export function splitArgs(s) {
 // shared with `ad review`.
 export { editorCommand };
 
-// How the editor starts: by full path, through cmd.exe only for a .cmd/.bat
-// editor (safe-spawn.mjs editorInvocation).
-
-/**
- * Edits `text` in the user's editor (the terminal is handed over) and returns
- * the result, or null when the editor failed. The temp file is private and removed.
- */
-export async function editInEditor(text, { run, env = process.env, platform = process.platform, now = () => Date.now(), resolve, cmdExe } = {}) {
-  const { mkdtempSync, readFileSync: read, rmSync, writeFileSync } = await import("node:fs");
-  const { tmpdir } = await import("node:os");
-  const dir = mkdtempSync(path.join(tmpdir(), "ad-prompt-"));
-  const file = path.join(dir, "prompt.md");
-  try {
-    writeFileSync(file, text, { mode: 0o600 });
-    const { cmd, args } = editorCommand(env, platform);
-    const spawnAs = editorInvocation(cmd, [...args, file], { platform, env, resolve, cmdExe });
-    const t0 = now();
-    const code = await run(spawnAs.cmd, spawnAs.args, spawnAs.verbatim);
-    if (code !== 0) return null;
-    const out = read(file, "utf8");
-    // Back at once with nothing changed: the editor didn't wait (it opened the
-    // file in an existing window). Keep the prompt rather than lose the edit.
-    if (out === text && now() - t0 < 1500) throw new Error("The editor returned at once without waiting. Set EDITOR to one that waits (e.g. \"code --wait\"); your prompt is unchanged.");
-    return out;
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-}
+// How the editor starts and what comes back: edit-text.mjs (shared with `learnings edit`, L8).
+export { editInEditor };
 
 /* ------------------------------------------------------------------ */
 /* git                                                                 */

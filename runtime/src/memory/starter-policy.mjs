@@ -74,10 +74,13 @@ export function policyOff(handle, token, { now } = {}) {
 /**
  * Turn the policy on or off and rebuild guards.json with the same token (only the rules
  * this run removed may leave the snapshot: L7 D3's expected list).
- * → {added|removed: ids, ruleCount}
+ * → {added|removed: ids, ruleCount, switch: the rule switch's result (L7 D13)}
  */
 export async function setPolicy(handle, token, on, { root, now = new Date(), cmd = null } = {}) {
   const change = on ? policyOn(handle, token, { now }) : policyOff(handle, token, { now });
   const built = await rebuildGuards(handle, { root, token, now, cmd, expected: { rules: change.removed ?? [] } });
-  return { ...change, ruleCount: built?.ruleCount ?? null };
+  // L7 D13: ad's rules check follows the rules (the installer's code: never in a hook's graph).
+  const { switchAfterRules } = await import("../memory-install/rule-switch.mjs");
+  const switched = await switchAfterRules({ root, token, now: now.getTime() });
+  return { ...change, ruleCount: built?.ruleCount ?? null, switch: switched };
 }

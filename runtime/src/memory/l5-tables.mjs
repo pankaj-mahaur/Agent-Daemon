@@ -18,6 +18,8 @@ export const EVENT_KINDS = Object.freeze([
   "repeated", "discarded", "strict-on", "strict-off", "reviewed",
   // L7 (rules-service.mjs): rules and their controls.
   "rule-on", "rule-off", "rule-declined", "rule-deferred", "rules-paused", "rules-resumed", "allow-once",
+  // L8 (learnings edit): old and new content hashes only, never text.
+  "edited",
 ]);
 export const ACTORS = Object.freeze(["user", "agent", "review", "system"]);
 

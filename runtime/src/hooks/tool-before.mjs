@@ -29,8 +29,9 @@ import { toolDecision, noticeOnly } from "./host-capabilities.mjs";
 import { appendRuleEvent } from "./rule-events.mjs";
 import { allowability, matchedParts, tryAllowOnce } from "./allow-once.mjs";
 import { PRODUCT } from "../product.mjs";
+import * as SPW from "./self-protect-words.mjs";
 import { FAMILY_TEXT } from "../rules/policy.mjs";
-import { currentBranch, defaultBranches } from "./git-branch.mjs";
+import { currentBranch, defaultBranches, upstreamMerge } from "./git-branch.mjs";
 
 const OS = { win32: "windows", darwin: "macos" };
 const WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit", "apply_patch"]);
@@ -162,7 +163,7 @@ export function failDecision(input, { host = "claude", snapshot = null, rulesExi
  * Decide one PreToolUse call.
  * @returns {object|null} the JSON to print, or null for no output (the tool runs)
  */
-export function toolBefore(input, { host = "claude", env = process.env, root, platform = process.platform, onWarning = null, now = Date.now(), realpath = realOf, log = null, homes = null, gitRead = null } = {}) {
+function rulesBefore(input, { host = "claude", env = process.env, root, platform = process.platform, onWarning = null, now = Date.now(), realpath = realOf, log = null, homes = null, gitRead = null } = {}) {
   const opts = root ? { root } : undefined;
   const { snapshot, warning, source } = loadGuards(opts);
   if (warning) onWarning?.(warning);
@@ -211,6 +212,9 @@ export function toolBefore(input, { host = "claude", env = process.env, root, pl
   // The policy's context, built once and only when a policy rule is judged (L7b design §3).
   let pctx = null;
   const policyContext = () => (pctx ??= lazyPolicyContext({ here, dirs, callDir, sessionDir, env, platform, realpath, homes, gitRead }));
+  let bctx = null;
+  // Codex hides the command's folder (D5): its branch is unknown there, so a branch rule applies.
+  const branchContext = () => (bctx ??= host === "codex" ? { current: () => null, upstream: () => null } : branchContextOf({ dir: callDir ?? sessionDir, platform, gitRead }));
   const hits = [];
   for (const c of candidates) {
     if (!c.r || typeof c.r !== "object" || !c.r.rule) continue;
@@ -222,6 +226,8 @@ export function toolBefore(input, { host = "claude", env = process.env, root, pl
       call = callOf(input, { host, platform, root: base ?? callDir ?? sessionDir });
       // Lazy: a family reads the folders it needs inside matchRule, whose catch turns a failed read into an ask.
       if (c.r.rule?.type === "policy") call.policy = policyContext();
+      // Branch-aware rules (L7 D6): the folder's branch and upstream, read lazily from .git files.
+      else if (Array.isArray(c.r.rule?.branches) && c.r.rule.branches.length) call.branch = branchContext();
       res = matchRule(c.r.rule, call);
       if (res.match || res.error) break;
     }
@@ -285,6 +291,119 @@ function render(input, { host, snapshot, lead, hits, callId }) {
   });
 }
 
+// ---- self-protection first (D12, D5 order) -----------------------------------------------
+
+// The fast path: self-protection is loaded and run only when the call's text, with quotes,
+// backslashes, carets and backticks removed, has one of the words it acts on (the same
+// lists it uses: hooks/self-protect-words.mjs), a background `&`, or PowerShell's dynamic
+// forms.
+const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const SP_ALT = [...new Set([...SPW.ENTRY_NAMES, ...SPW.VERB_WORDS, ...SPW.REPARENTING, ...SPW.TERMINALS, ...SPW.DESKTOP, ...SPW.INTERNAL_FILES, ...SPW.AGENTS, ...SPW.OTHER_TRIGGERS])].map(esc);
+const SP_ENV = SPW.ENV_NAMES.map((n) => `${esc(n)}\\w*`);
+const SP_TRIGGER = new RegExp(`(?<!\\w)(?:${[...SP_ALT, ...SP_ENV].join("|")})(?!\\w)|&\\s*(?:$|[;\\n)}!]|disown|wait)|\\biex\\b|invoke-expression|@args`, "im");
+// Strong triggers: an incomplete parse, or a failed check, with one of these denies.
+const STRONG = new RegExp(`(?<![\\w-])(?:ad|agent-daemon|teachonce|${PRODUCT.bin}|${PRODUCT.package})(?![\\w-])|\\.agent-daemon|agent-~|AD_TOOL_SHELL|AD_MEMORY_DB|run\\.mjs|hook\\.mjs|session-env|CLAUDE_ENV_FILE|disableAllHooks`, "i");
+
+/** The command text of a shell call (the payload's command, cmd or action.command). */
+export const callText = (input) => {
+  const tin = input?.tool_input;
+  const c = tin?.command ?? tin?.cmd ?? tin?.action?.command;
+  return Array.isArray(c) ? c.map(String).join(" ") : typeof c === "string" ? c : "";
+};
+/** Does the call's text need self-protection's look? (Shell calls; writes are P2b's.) */
+// Weak triggers for writes to ad's state (D12c): a home spelling as a cd, delete or move
+// target, a glob or expansion under a home spelling, a .git pointer, the host's plugin
+// records, links and mounts.
+const HOME_W = String.raw`(?:~|\$HOME|\$\{HOME\}|\$env:USERPROFILE|\$env:HOME|%USERPROFILE%|%HOMEPATH%)`;
+const STATE_TRIGGER = new RegExp(
+  [
+    String.raw`\b(?:cd|pushd|chdir|set-location|sl|push-location)\s+${HOME_W}[\\/]?\.?(?:\s|$|[;&|)])`,
+    String.raw`(?:^|[;&|(]\s*)cd\s*(?:$|[;&|)])`,
+    String.raw`agent-[^\s]*\{|\{[^\s{}]*agent-`,
+    String.raw`\b(?:rm|rmdir|mv|remove-item|ri|move-item|mi|del|rd|erase)\b[^;&|\n]{0,256}\s(?:${HOME_W}|\/|[A-Za-z]:\\?)[\\/]?(?:\s|$|[;&|)])`,
+    String.raw`${HOME_W}[\\/][^\s;&|]*[*?[$]`,
+    String.raw`(?<![\w-])\.git(?![\w-])`,
+    String.raw`installed_plugins|known_marketplaces|plugins[\\/](?:cache|marketplaces)`,
+    String.raw`(?<![\w-])(?:ln|mklink|new-item|ni|mount|subst)(?![\w-])`,
+    // Backslash spellings (\ is dropped before the main trigger), find that deletes or runs,
+    // and a home spelling as a tree command's destination or a last word.
+    String.raw`\.agent-daemon|agent-~`,
+    // D12 d, f, g: host config, the Windows folder, startup and persistence, shims.
+    String.raw`settings[\w.-]*\.json|\.claude\.json|(?<![\w-])\.(?:claude|codex)(?![\w-])|hooks\.json|config\.toml|\.mcp\.json`,
+    String.raw`(?<![\w-])windows(?:[\\/.;\s]|$)|windir|systemroot|systemdrive|appdata|\$profile`,
+    String.raw`register-scheduledtask|reg\s+import|systemctl\b[^;&|\n]{0,64}--user|\.gitconfig|\.git[\\/]config|git\s+config\b`,
+    String.raw`\.(?:bash|zsh|ksh|tcsh|csh|input)rc|\.(?:bash_profile|bash_login|bash_logout|profile|zprofile|zshenv|zlogin|zlogout|login)(?![\w-])|sqliterc|config\.fish|fish[\\/]conf\.d|autostart|systemd[\\/]user|launchagents|\.desktop(?![\w-])|\.git[\\/]hooks|crontab|core\.hookspath|bash_env|(?<![\w-])env=(?:[/~]|\$home)|[\\/]run(?:once)?\b|schtasks|start menu|profile\.ps1|\$profile`,
+    String.raw`[\\/](?:npx|node|nodejs|ad|agent-daemon|teachonce)(?:\.(?:cmd|exe|bat|ps1))?(?=$|[\s'";&|)])`,
+    String.raw`\bfind\b[^;&|\n]{0,256}\s-(?:delete|exec|ok|fprint|fls)`,
+    String.raw`(?:\s-C|\s-d|--directory|--target-directory|-DestinationPath|-Destination)[\s=]+["']?${HOME_W}`,
+    String.raw`\s["']?${HOME_W}[\\/]?["']?\s*(?:$|[;&|)\n])`,
+  ].join("|"),
+  "im",
+);
+/** The paths a file tool writes (Write, Edit, MultiEdit file_path; apply_patch headers). */
+export const filePaths = (input) => {
+  const tin = input?.tool_input ?? {};
+  const name = String(input?.tool_name ?? "");
+  if (/^apply_patch$/i.test(name)) return [...String(tin.command ?? tin.patch ?? tin.input ?? "").matchAll(/^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+?)\s*$/gm)].map((m) => m[1]);
+  if (/^(?:write|edit|multiedit)$/i.test(name)) return [tin.file_path ?? tin.path].filter((x) => typeof x === "string");
+  return null;
+};
+// ad's root as this machine spells it, for a payload cwd or a file path reached through a link.
+const adRootText = () => {
+  const r = process.env.AD_ROOT;
+  return r && path.isAbsolute(r) ? r : path.join(os.homedir(), ".agent-daemon");
+};
+const realDeepest = (p) => {
+  let cur = p;
+  const tail = [];
+  for (let i = 0; i < 64; i++) {
+    try {
+      return path.join(fs.realpathSync.native(cur), ...tail.reverse());
+    } catch {
+      const up = path.dirname(cur);
+      if (up === cur) return null;
+      tail.push(path.basename(cur));
+      cur = up;
+    }
+  }
+  return null;
+};
+const insideAdState = (p) => {
+  const t = String(p ?? "");
+  if (!t) return false;
+  const roots = [adRootText(), path.join(os.homedir(), ".agent-daemon")];
+  const fold = process.platform === "win32" || process.platform === "darwin" ? (x) => x.toLowerCase() : (x) => x;
+  const real = path.isAbsolute(t) ? realDeepest(t) : null;
+  return [t, real].some((x) => x && (/(?:^|[\\/])\.agent-daemon(?:[\\/]|$)/i.test(x) || /(?:^|[\\/])session-env(?:[\\/]|$)/i.test(x) || roots.some((r) => fold(x).startsWith(fold(r)))));
+};
+// A copy, move, link or download that names a shim (two linear tests: no backtracking).
+const COPY_VERB = /\b(?:cp|mv|install|ln|copy-item|cpi|copy|move-item|mi|move|rsync|scp|curl|wget|tee|dd)\b/i;
+const SHIM_WORD = /(?:^|[\s\\/'"])(?:npx|node|nodejs|ad|agent-daemon|teachonce)(?:\.(?:cmd|exe|bat|ps1))?(?=$|[\s;&|)'"])/i;
+export const selfProtectTriggered = (input) => {
+  const files = filePaths(input);
+  if (files) return files.some((p) => SP_TRIGGER.test(p) || STATE_TRIGGER.test(p) || insideAdState(p) || (input?.cwd && !path.isAbsolute(p) && insideAdState(input.cwd)));
+  const raw = callText(input);
+  const text = raw.replace(/["'\\^`]/g, "");
+  const root = adRootText();
+  // A payload cwd at the home folder or above, with a glob or ad's folder name in the text.
+  const cwd = String(input?.cwd ?? "");
+  const home = os.homedir();
+  const atHome = Boolean(cwd) && (cwd === home || home.startsWith(cwd.endsWith(path.sep) ? cwd : cwd + path.sep)) && /[*?[]|agent/.test(raw);
+  return /\$'|\$env:/i.test(raw) || SP_TRIGGER.test(text) || STATE_TRIGGER.test(raw) || STATE_TRIGGER.test(text) || (COPY_VERB.test(raw) && SHIM_WORD.test(raw)) || atHome || (Boolean(raw) && (raw.includes(root) || insideAdState(input?.cwd)));
+};
+/** A strong trigger in the call's text (or raw payload text). */
+export const strongTrigger = (text) => STRONG.test(String(text ?? "").replace(/["'\\^`]/g, ""));
+
+/** The decision self-protection prints: the model is told to tell the user; nothing lowering is named (S4). */
+export function selfProtectDecision(sp, input, host = "claude") {
+  return toolDecision(sp.decision, {
+    host,
+    permissionMode: input?.permission_mode,
+    reason: `ad's self-protection stops this call: ${sp.why}. Tell the user.`,
+    notice: `ad: self-protection (${sp.class}) stopped a call: ${sp.why}`,
+  });
+}
+
 /** The starter safety policy's messages (L7b design §4): it asks before; the model is told no command (S4). */
 function renderPolicy(input, { host, cmd, name, id, what, family, callId, more }) {
   const text = FAMILY_TEXT[family] ?? "a command the starter safety policy asks before";
@@ -297,6 +416,20 @@ function renderPolicy(input, { host, cmd, name, id, what, family, callId, more }
     reason: `The user's starter safety policy stops this ${what} here: ${text}. Tell the user; only they can allow it.`,
     notice: `${base} · allow this once: \`${cmd} rules allow-once ${id} ${callId}\``,
   });
+}
+
+/**
+ * Decide one PreToolUse call: self-protection first (opts.selfProtect, its result for this
+ * call), then the rules. A deny from either wins; pause and allow-once never lift
+ * self-protection.
+ * @returns {object|null} the JSON to print, or null for no output (the tool runs)
+ */
+export function toolBefore(input, opts = {}) {
+  const sp = opts.selfProtect ?? null;
+  if (sp?.decision === "deny") return selfProtectDecision(sp, input, opts.host);
+  const out = rulesBefore(input, opts);
+  if (sp?.decision === "ask" && out?.hookSpecificOutput?.permissionDecision !== "deny") return selfProtectDecision(sp, input, opts.host);
+  return out;
 }
 
 /**
@@ -334,6 +467,23 @@ function policyContextOf({ here, dirs, callDir, sessionDir, env, platform, realp
   const dir = callDir ?? sessionDir;
   const read = gitRead ?? { currentBranch: (d) => currentBranch(d, { platform }), defaultBranches: (d) => defaultBranches(d, { platform }) };
   return { homes: homeList, project_root: [...roots], current_branch: () => (dir ? read.currentBranch(dir) : null), default_branches: () => (dir ? read.defaultBranches(dir) : ["main", "master"]) };
+}
+
+/** The branch facts a branch-aware rule needs (L7 D6): the folder's current branch and a branch's upstream, each read once. */
+function branchContextOf({ dir, platform, gitRead }) {
+  const read = gitRead ?? {};
+  let cur;
+  const ups = new Map();
+  return {
+    current: () => {
+      if (cur === undefined) cur = dir ? (read.currentBranch ?? ((d) => currentBranch(d, { platform })))(dir) : null;
+      return cur;
+    },
+    upstream: (b) => {
+      if (!ups.has(b)) ups.set(b, dir ? (read.upstreamMerge ?? ((d, x) => upstreamMerge(d, x, { platform })))(dir, b) : null);
+      return ups.get(b);
+    },
+  };
 }
 
 /** The policy context with the folder reads deferred until a family asks for them (latency). */

@@ -130,7 +130,7 @@ Write the same content to BOTH locations. The `handoff` skill's body has full te
 Check for skills that have been failing repeatedly. Query the episodic DB:
 
 ```bash
-sqlite3 ~/.agent-daemon/episodic.db "SELECT skill_name, COUNT(*) as failures FROM skill_executions WHERE outcome = 'failure' AND created_at > datetime('now', '-30 days') GROUP BY skill_name HAVING failures >= 3 ORDER BY failures DESC LIMIT 5;" 2>/dev/null
+sqlite3 -init /dev/null -readonly ~/.agent-daemon/episodic.db "SELECT skill_name, COUNT(*) as failures FROM skill_executions WHERE outcome = 'failure' AND created_at > datetime('now', '-30 days') GROUP BY skill_name HAVING failures >= 3 ORDER BY failures DESC LIMIT 5;" 2>/dev/null
 ```
 
 For each result, write a queue stub:

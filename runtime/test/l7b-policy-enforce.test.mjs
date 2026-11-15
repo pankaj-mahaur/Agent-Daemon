@@ -226,7 +226,7 @@ test("spawned: decisions per host and permission_mode through bin/hook.mjs (L7 D
   for (const [mode, expect] of Object.entries(want)) {
     const fx = JSON.parse(fs.readFileSync(path.join(dir, `mode-${mode}-none.json`), "utf8"));
     const p = fx.hooks.find((x) => x.payload?.hook_event_name === "PreToolUse").payload;
-    const r = runHook(JSON.stringify({ ...p, cwd: g.project, tool_input: { ...p.tool_input, command: "rm -rf $HOME" } }), { root: g.root, home: g.home });
+    const r = runHook(JSON.stringify({ ...p, cwd: g.project, tool_input: { ...p.tool_input, command: `rm -rf ${g.project}` } }), { root: g.root, home: g.home }); // (rm -rf $HOME is self-protection's: a deny)
     assert.equal(r.status, 0, r.stderr);
     const out = JSON.parse(r.stdout);
     assert.equal(out.hookSpecificOutput.permissionDecision, expect, mode);

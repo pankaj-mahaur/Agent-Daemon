@@ -260,7 +260,7 @@ test("CLI forget and restore: the token's typed-id confirm forgets an accepted n
 test("CLI config review: strict needs no token and demotes what's in use; auto needs the token", async () => {
   const w = await world();
   const lines = [];
-  const run = (args, t) => withStore(w, (s) => memoryVerbMain("config", args, { out: (l) => lines.push(l), cwd: w.repo, handle: s, token: async () => (t ? { token: t } : { refused: "the agent's shell" }) }));
+  const run = (args, t) => withStore(w, (s) => memoryVerbMain("config", args, { out: (l) => lines.push(l), cwd: w.repo, handle: s, token: async () => (t ? { token: t } : { refused: "the agent's shell" }), code: () => "kqtw", tty: { ask: async () => "kqtw" } }));
   await withStore(w, (s) => addNote(s, w, "in use", { origin: "user", provenance: "user-prompt", status: "provisional" }));
   assert.equal(await run(["review", "strict"], null), 0);
   assert.ok(lines.some((l) => /Review-first is on: 1 learning in use now waits for review/.test(l)));

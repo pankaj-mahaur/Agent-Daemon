@@ -101,8 +101,14 @@ export function createAdLayer({ cwd, home = homedir(), memory = null, cli = null
       if (gate.refused) return [`/memory forget: ${gate.refused}`];
       // Its lines in the memory files go too (the project's, and the global user.md): session start injects both.
       const projectFile = await (await import("../digest/apply.mjs")).resolveProjectMemoryPath(cwd).catch(() => null);
+      const R = await import("../memory/rule-removal.mjs");
+      const before = R.ruleOwners(handle);
       const changed = archiveLearning(handle, gate.token, id, slug, { memoryFile: [projectFile, path.join(home, ".agent-daemon", "user.md")] });
-      return [changed ? `Forgot #${id}: it won't be recalled again.` : `No active learning #${id}.`];
+      // L7 D2: its rule stays until removed with the typed code (not read here yet); afterReview rebuilds.
+      const kept = changed && [...before.values()].includes(id) ? R.rulesLeftBy(handle, before, [id]).map((r) => r.id) : [];
+      const notes = [];
+      if (typeof handle.transaction === "function") await R.settleRun({ handle, token: gate.token, out: (l) => notes.push(l), confirm: async () => ({ ok: false, text: "not here" }), cmdName: "ad" });
+      return [changed ? `Forgot #${id}: it won't be recalled again.` : `No active learning #${id}.`, ...(kept.length ? [`Rule ${kept.join(", ")} stays: keep it, or remove it in your own terminal.`] : []), ...notes];
     }
     if (s === "profile") {
       const profile = await memory.buildUserRepresentation({ projectSlug: slug });

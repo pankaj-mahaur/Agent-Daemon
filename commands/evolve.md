@@ -27,7 +27,7 @@ Read `skills/$ARGUMENTS/SKILL.md` in full. This is the **baseline** you're evolv
 Query the episodic database for recent executions of this skill:
 
 ```bash
-sqlite3 ~/.agent-daemon/episodic.db "SELECT id, session_id, outcome, duration_ms, created_at FROM skill_executions WHERE skill_name = '$ARGUMENTS' ORDER BY created_at DESC LIMIT 20;"
+sqlite3 -init /dev/null -readonly ~/.agent-daemon/episodic.db "SELECT id, session_id, outcome, duration_ms, created_at FROM skill_executions WHERE skill_name = '$ARGUMENTS' ORDER BY created_at DESC LIMIT 20;"
 ```
 
 If no executions exist or the database doesn't exist, report that there's insufficient data and stop.

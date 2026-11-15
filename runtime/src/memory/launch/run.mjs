@@ -53,7 +53,7 @@ function rulesActive() {
   try {
     const s = JSON.parse(fs.readFileSync(path.join(root, "guards.json"), "utf8"));
     const p = s?.pausedAll;
-    const paused = p === true || (Boolean(p) && typeof p === "object" && (p.until == null || Date.parse(p.until) > Date.now()));
+    const paused = p === true || (Boolean(p) && typeof p === "object" && typeof p.at === "string" && (p.until == null || Date.parse(p.until) > Date.now()));
     if (paused && typeof s.store_id === "string" && s.store_id === active?.store_id && Number.isInteger(active?.ruleCount) && Number(s.ruleCount) === active.ruleCount) return false;
   } catch {
     // no readable snapshot: the sentinel decides

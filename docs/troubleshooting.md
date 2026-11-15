@@ -1256,9 +1256,49 @@ These are information, not failures: other memory that loads next to ad's learni
 
 **Fix:** run `repair` with the same command (`npx -y agent-daemon-memory repair`), then `safety on` again.
 
+## 150. `doctor` prints a "Readiness" section, and a line in it fails
+
+**Symptom:** after the checks, `npx agent-daemon-memory doctor` prints `Readiness` with a block per host. A line starts with `✗` and ends with `→` and a command.
+
+**Cause:** the section says whether memory works end to end on that host: installed, hooks wired (Codex: trusted in `/hooks`), how a failing rules check behaves, what recall sends, whether capture is review-first, the learning and rule counts, and what else loads next to it. A `✗` is a gap; the command after `→` is the one thing that fixes it. Lines for something your installed version doesn't have are left out, and the section never changes `doctor`'s exit code.
+
+**Fix:** run the command the line ends with. For `hooks … not trusted yet in Codex`, open Codex and run `/hooks`. For `marker … gone`, run the repair command it shows. `doctor --json` gives the same lines as rows with `"section": "readiness"` (home folder shown as `~`), which is what to attach to a bug report.
+
+## 151. `view` wrote a page, but a learning or rule looks cut short or says "withheld"
+
+**Symptom:** a row in `view.html` reads `[withheld: …]`, `https[:]//…`, or ends early.
+
+**Cause:** the page is a safe copy. A note that reads like an instruction to an agent, or that held a secret, is withheld whole; web addresses are shown as words so nothing in the page is a link; long texts are cut at 600 characters; your home folder shows as `~`. The page never changes anything: each row names the command to run in your terminal.
+
+**Fix:** nothing to fix. To read the full note, run `learnings show <number>` (or `learnings edit <number>` in your own terminal). The page is rewritten each time you run `view`, so run it again after a change.
+
 ---
 
 For harness problems, the [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill walks through login → hooks → sandbox → the engine's own log. See also [harness.md](harness.md) and, for the terminal UI, [tui.md](tui.md).
+
+## 140. `learnings edit` says "the editor returned at once"
+
+**Symptom:** `learnings edit <number>` prints `Nothing changed: The editor returned at once without waiting`.
+
+**Cause:** your editor opened the file in a window that was already running and returned to the terminal straight away (VS Code without `--wait`, or Windows 11's Notepad opening a tab in a running Notepad), so ad saw the words unchanged.
+
+**Fix:** set an editor that waits: `EDITOR="code --wait"`, or pass the words directly with `learnings edit <number> --text "<new words>"`.
+
+## 141. `learnings export`, `import`, `edit` or `list --all-projects` says it "needs your own terminal"
+
+**Symptom:** the command prints `Nothing written`, `Nothing imported`, `Nothing changed` or `Nothing shown` with "needs your own terminal".
+
+**Cause:** these read every project's learnings, write them to a file, or change them, so they run only in a terminal you typed into, not in an agent's shell or a script (the same check as `review`).
+
+**Fix:** run it yourself in a terminal. In an editor's terminal, follow the dialog it shows. `learnings list` and `show` for this project work anywhere.
+
+## 142. A forget says "capture file still holds its words"
+
+**Symptom:** after `forget <number>` the receipt lists one or more files that still hold the learning's words.
+
+**Cause:** the file is tracked by git (ad never rewrites a tracked file), or it is a journal a session is reading at that moment.
+
+**Fix:** for a tracked file, remove the line yourself and commit. For a journal in use, run `forget` again later; the journal is cleaned then.
 
 ## Still stuck?
 

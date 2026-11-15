@@ -148,6 +148,8 @@ export function upsertItem(ledger, { host, kind, file, locator, value, preExiste
     ...((appended ?? prev?.appended) ? { appended: appended ?? prev.appended } : {}),
     // ad init's own entries this one took over (L7 D10): uninstall puts them back.
     ...(unionAdopted(prev?.adopted, adopted).length ? { adopted: unionAdopted(prev?.adopted, adopted) } : {}),
+    // The handler's values before the rule switch first raised it (L7 D13): put back when no rule is left.
+    ...(prev?.orig ? { orig: prev.orig } : {}),
     ...(source ? { source } : {}),
   };
   ledger.items = [...ledger.items.filter((i) => i.id !== id), item];

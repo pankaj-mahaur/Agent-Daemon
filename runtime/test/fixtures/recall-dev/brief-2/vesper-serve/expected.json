@@ -1,0 +1,32 @@
+{
+  "relevant": ["vs-01", "vs-03", "vs-04", "vs-07", "vs-08", "vs-13", "vs-14", "vs-18", "vs-23"],
+  "irrelevant": ["vs-02", "vs-06", "vs-10", "vs-11", "vs-12", "vs-15", "vs-17", "vs-19", "vs-21", "vs-24"],
+  "neutral": ["vs-05", "vs-09", "vs-16", "vs-20", "vs-22", "vs-25"],
+  "reasons": {
+    "vs-01": "Blocking session.run() on the loop is a direct cause of batch timeouts.",
+    "vs-02": "Stale: per-request session replaced by vs-03.",
+    "vs-03": "Per-worker session; matches the onnx commit.",
+    "vs-04": "Fake clock for the batcher tests the branch adds.",
+    "vs-05": "Package manager; project-wide.",
+    "vs-06": "Stale: poetry replaced by vs-05 (uv), no explicit 'changed' wording.",
+    "vs-07": "How hung batches surface (502 vs timeout); debugging this exact symptom.",
+    "vs-08": "503 + Retry-After decision; matches the predict commit.",
+    "vs-09": "Alembic workflow; project-wide, branch has no migration.",
+    "vs-10": "Model registry sync, other area; shares the word model.",
+    "vs-11": "Feature store cache, other area.",
+    "vs-12": "Stale: CUDA 11 base replaced by vs-13.",
+    "vs-13": "Dockerfile.gpu is in recent paths; CPU fallback would also look like timeouts.",
+    "vs-14": "BATCH_MAX_WAIT_MS default changed; helm values override it.",
+    "vs-15": "DB session gotcha, other area; shares the word session with InferenceSession.",
+    "vs-16": "Pre-commit; project-wide.",
+    "vs-17": "API key storage, other area.",
+    "vs-18": "Load test to verify latency/timeouts (Hinglish).",
+    "vs-19": "/explain endpoint, other area.",
+    "vs-20": "Branch/PR convention; project-wide.",
+    "vs-21": "Skew report, other area.",
+    "vs-22": "Deploy process; project-wide.",
+    "vs-23": "Batch padding rule inside the batcher being changed.",
+    "vs-24": "Tokenizer assets (Hinglish), other area.",
+    "vs-25": "Serialization gotcha in responses; generic, touches predict.py only incidentally."
+  }
+}

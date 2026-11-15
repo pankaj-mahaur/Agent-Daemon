@@ -339,6 +339,7 @@ export async function runInteractiveReview(opts) {
         stdin: opts.stdin,
         stdout: opts.stdout,
         onApply: opts.onApply,
+        afterRuleStep: opts.afterRuleStep,
         release: () => rl?.close(),
         gate: async () => (token ? { token } : gate({ env, isTTY, ask: question, out, ...standIns(opts) })),
       });

@@ -60,10 +60,10 @@ export function backfillNormKeys(handle, { budgetMs = 5000, batch = BATCH, now =
   }
 }
 
-const JOURNAL_RE = /^learning-journal(?:\.archive|\.draining-\d+)?\.jsonl$/;
+export const JOURNAL_RE = /^learning-journal(?:\.archive|\.draining-\d+)?\.jsonl$/;
 
 /** Every folder that may hold a journal: each recorded project's own folder, and ad's capture folders. */
-function journalDirs(handle) {
+export function journalDirs(handle) {
   const dirs = new Set(rootProjectDirs());
   try {
     for (const r of handle.all("SELECT DISTINCT project_path FROM sessions WHERE project_path IS NOT NULL")) dirs.add(path.join(r.project_path, PROJECT_FOLDER));
@@ -101,25 +101,27 @@ const ORPHAN_AGE_MS = 60 * 60 * 1000;
  * finds nothing to take; the scrubbed lines are then appended to that path
  * (an append never replaces what a hook wrote meanwhile). A drain's own
  * .draining-<pid> file is left alone until it is an hour-old orphan.
+ * transform: what each claimed text becomes (default: secrets redacted; L8's forget drops
+ * the forgotten note's lines, memory/scrub.mjs).
  * → true when something was redacted.
  */
-export function scrubFile(file, { now = Date.now() } = {}) {
+export function scrubFile(file, { now = Date.now(), transform = scrubText } = {}) {
   if (/\.draining-\d+\.jsonl$/.test(file) && now - fs.statSync(file).mtimeMs < ORPHAN_AGE_MS) return false;
   const text = fs.readFileSync(file, "utf8");
-  if (scrubText(text) === text) return false;
+  if (transform(text) === text) return false;
   const claimed = `${file}.scrub-${process.pid}`;
   fs.renameSync(file, claimed);
   const mine = fs.readFileSync(claimed, "utf8");
   let out = mine;
   try {
-    out = scrubText(mine);
+    out = transform(mine);
   } catch {
     // keep the original lines rather than lose them
   }
   fs.appendFileSync(file, out && !out.endsWith("\n") ? `${out}\n` : out, "utf8");
   // A hook that opened the file before the rename may have written to the claimed copy since.
   const tail = fs.readFileSync(claimed, "utf8").slice(mine.length);
-  if (tail) fs.appendFileSync(file, scrubText(tail), "utf8");
+  if (tail) fs.appendFileSync(file, transform(tail), "utf8");
   fs.rmSync(claimed, { force: true });
   return out !== mine;
 }

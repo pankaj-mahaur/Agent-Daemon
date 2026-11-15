@@ -19,9 +19,12 @@ const USAGE = `${PRODUCT.package}: ad's memory server for Claude Code, Codex, Cu
   uninstall [--host <id> …] [--purge-data [--force]]
   review [--list | --plain | --accept-all [--with-agent] | --proposals] [--accept <file>] [--global]   decide what waits (in your own terminal)
   remember <text>  ·  forget <number>  ·  restore <number>   (accepted at once only in your own terminal)
+  learnings list|show <number>|edit <number>|forget <number>|export|import <file>   your learnings (edit and forget in your own terminal)
   config review [strict|auto]   review-first for every learning, or not
   safety [on|status]   ask before four kinds of catastrophic commands (off by default; in your own terminal)
-  report [--days 30] [--all-projects] [--json] [--share]   is memory working here
+  rules list [--json]   the rules that ask before or stop commands and file writes (changes: rules --help in your own terminal)
+  view [--all-projects]   write a read-only HTML page of your learnings, rules and weekly numbers
+  report [--days 30] [--weeks 4] [--all-projects] [--json] [--share] [--share-link] [--purge]   is memory working here
   mistakes [--all-projects] [--share | --json] [--yes]   the corrections you keep typing (read-only, offline)
   mistakes --save                                        save them and your instruction files' rules for review (asks first)
 Hosts: claude-code, codex, cursor, vscode, gemini. Memory stays on this computer.`;
@@ -86,6 +89,21 @@ export function commandGate(cmd, { env = process.env, isTTY = realTTY, command =
 }
 
 export async function main(argv = process.argv.slice(2), { log = (l) => console.log(l), env = process.env, isTTY = realTTY, ctx: ctxOpts = {} } = {}) {
+  // Run in the user's own terminal: git-tracked may use the git on their PATH (hooks and jobs
+  // use a trusted git only, L7 D12b).
+  // (Only a command typed in a terminal: never serve, watch or a scheduled job, which run in the background.)
+  if (process.stdin.isTTY && process.stdout.isTTY && !["serve", "watch"].includes(argv[0]) && !process.env.AD_SCHEDULE_JOB) try {
+    const [{ setGitFinder }, { resolveGit }] = await Promise.all([import("../memory/git-tracked.mjs"), import("../safe-spawn.mjs")]);
+    setGitFinder(() => {
+      try {
+        return resolveGit();
+      } catch {
+        return null;
+      }
+    });
+  } catch {
+    // the trusted git only
+  }
   const [cmd, ...rest] = argv;
   if (cmd === "serve") {
     // The server reads its own flags from process.argv.
@@ -97,6 +115,8 @@ export async function main(argv = process.argv.slice(2), { log = (l) => console.
     log(USAGE);
     return cmd ? 0 : 1;
   }
+  if (cmd === "view") return (await import("../memory/viewer-cli.mjs")).viewMain(rest, { out: log, env, command: (v) => `npx -y ${PRODUCT.package} ${v}` });
+  if (cmd === "report" && rest.includes("--purge")) return (await import("../memory/report-purge.mjs")).reportPurgeMain(rest, { out: log });
   if (cmd === "report") return (await import("../memory/report.mjs")).reportMain(rest, { out: log });
   if (cmd === "mistakes") {
     // L4a's read-only report (npx agent-daemon-memory@beta mistakes): offline, stores nothing.
@@ -116,6 +136,10 @@ export async function main(argv = process.argv.slice(2), { log = (l) => console.
   if (["remember", "forget", "restore", "config"].includes(cmd)) return (await import("../memory/memory-cli.mjs")).memoryVerbMain(cmd, rest, { out: log });
   // L7b: the starter safety policy (off by default; on and off only in your own terminal).
   if (cmd === "safety") return (await import("../memory/safety-cli.mjs")).safetyMain(rest, { out: log, env, isTTY, cmdName: `npx -y ${PRODUCT.package}` });
+  // L7: rules (memory/rules-cli.mjs): list without a token; changes in your own terminal.
+  if (cmd === "rules") return (await import("../memory/rules-cli.mjs")).rulesMain(rest, { out: log, env, isTTY, cmdName: `npx -y ${PRODUCT.package}` });
+  // L8: your learnings (memory/learnings-cli.mjs): list, show, edit, forget, export, import.
+  if (cmd === "learnings") return (await import("../memory/learnings-cli.mjs")).learningsMain(rest[0], rest.slice(1), { out: log });
   const flags = parseFlags(rest);
   if (flags.error) {
     log(`${flags.error}\n${USAGE}`);

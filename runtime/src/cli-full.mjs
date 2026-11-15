@@ -86,12 +86,14 @@ Commands:
   state inspect|export|import|verify  Move ad to another computer: one .adstate file (ad state --help)
                          → proposals only; --apply-merges / --apply-stale execute after review
   memory install [--host <id>] [--yes] [--dry-run]   Add ad's memory server to other agents (setup, doctor, repair, status, uninstall)
-  memory report [--days 30] [--all-projects] [--json] [--share]   Is memory working: repeated corrections, what was shown, feedback
+  memory report [--days 30] [--weeks 4] [--all-projects] [--json] [--share] [--share-link] [--purge]   Is memory working: repeated corrections, what was shown, feedback
                          --all-projects       span every project (default: current --cwd only)
   mistakes [--all-projects] [--share | --json] [--yes]   Read-only report of the corrections you typed to your coding agents (offline, stores nothing)
   mistakes --save [--import-history] [--import-files]   Save this project's repeated corrections and instruction-file rules for review (asks first)
   remember <text>        Save a learning for this project (accepted at once only in your own terminal)
   forget <n> · restore <n>   Remove a learning (restore within 7 days); an accepted one asks you to type its number
+  learnings list|show|edit|forget|export|import   Your learnings: see, change, forget, export for a private repo, import for review
+  rules list [--json]    The rules that ask before or stop commands and file writes (changes: rules --help in your own terminal)
   config review [strict|auto]   Review-first for every learning, or let typed corrections apply at once where a host can prove them
   route stats            Route-advice effectiveness: advised / followed / diverged / ignored per skill
                          --days <n>           window (default 30); --json for machine output
@@ -385,6 +387,16 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
     hookPlan.changed = false;
     const gitBash = fromAgentShell === "no terminal" && process.platform === "win32" ? " (in Git Bash, through winpty; or use PowerShell or Windows Terminal)" : "";
     console.log(`  · hooks unchanged (${fromAgentShell}): run \`ad init\` in your own terminal to set them up${gitBash}`);
+  }
+  // L7 (D16): rewriting ad's own rules-check entry while rules exist changes what checks every
+  // call: it takes the review token and the typed code, else the hooks stay as they are.
+  const IG = await import("./init-gate.mjs");
+  if (hookPlan.changed && !dryRun && IG.rulesCheckChanged(existingSettings.hooks, hookPlan.hooks)) {
+    const gate = await IG.initRulesCheckGate();
+    if (!gate.ok) {
+      hookPlan.changed = false;
+      console.log(`  · hooks unchanged: ${gate.why}`);
+    }
   }
   const transient = hookDoctor.transientInstall(HOOK_PATH);
   if (transient) console.log(`  ⚠ The hooks would run ${HOOK_PATH}, which is in ${transient}: they stop working when it goes. Run ad init from your installed ad.`);
@@ -1195,26 +1207,11 @@ async function cmdDoctor({ cwd = process.cwd(), tokens, limit, model } = {}) {
     checks.push({ name: "Hook wiring", ok: false, note: "could not read settings.json" });
   }
 
-  // Check 4a: the hook routes across Claude Code's settings files (plan L2, hooks/hook-doctor.mjs)
-  try {
-    const hd = await import("./hooks/hook-doctor.mjs");
-    const { claudeHookSources, HOOK_PATH } = await import("./hooks/routes.mjs");
-    const { loadGuards, guardsPath } = await import("./hooks/guards.mjs");
-    const { hookLogTail } = await import("./hooks/hook-log.mjs");
-    const guards = loadGuards();
-    checks.push(hd.rulesFileRow(guards, guardsPath()));
-    const sources = claudeHookSources({ home, cwd });
-    const claudeVersion = await hd.claudeCodeVersion();
-    checks.push(hd.duplicateRow(sources));
-    checks.push(hd.scriptRow(sources, HOOK_PATH));
-    const execRow = hd.execFormRow(sources, claudeVersion);
-    if (execRow) checks.push(execRow);
-    const pluginRow = hd.pluginRow({ plugin: hd.memoryPluginState({ home, cwd }), sources });
-    if (pluginRow) checks.push(pluginRow);
-    checks.push(...hd.failClosedRows({ sources, rules: hd.ruleCount(guards.snapshot), claudeVersion }));
-    checks.push(hd.logRow(hookLogTail(5)));
-  } catch (e) {
-    checks.push({ name: "Hook routes", ok: true, note: `not checked (${e.message})` });
+  // Check 4a: the hook routes across Claude Code's settings files (plan L2, hooks/hook-doctor.mjs;
+  // the package's doctor runs the same builder, L8b).
+  {
+    const { hookRouteChecks } = await import("./hooks/hook-doctor.mjs");
+    checks.push(...(await hookRouteChecks({ home, cwd })));
   }
 
   // Check 4b: recall (plan L6) — what it sends from this folder, and other memory next to it.
@@ -1893,6 +1890,14 @@ async function cmdMemory(sub, opts) {
           const n = await con.applyStaleArchive(analysis, token);
           console.log(`  ✓ archived ${n} stale learning(s)`);
         }
+        // L7 D2: a merge moves its rules to the learning that replaced it; the snapshot follows.
+        try {
+          const handle = await (await import("./memory/episodic.mjs")).db();
+          const r = handle ? await (await import("./memory/rules-finish.mjs")).afterReview(handle, token, { cmd: "ad" }) : null;
+          if (r?.switch?.why) console.log(`  ${r.switch.why}`);
+        } catch (e) {
+          console.error(`  the rules file wasn't rebuilt (${e?.message ?? e}); it keeps the rules it had until the next review`);
+        }
         return 0;
       }
 
@@ -2466,6 +2471,21 @@ async function cmdSpawn(opts) {
 /* ------------------------------------------------------------------ */
 
 async function main(argv) {
+  // ad's CLI runs in the user's own terminal: git-tracked may use the git on their PATH there
+  // (hooks and background jobs use a trusted git only, L7 D12b).
+  // (Only a command typed in a terminal: never serve, watch or a scheduled job, which run in the background.)
+  if (process.stdin.isTTY && process.stdout.isTTY && !["serve", "watch"].includes(argv[0]) && !process.env.AD_SCHEDULE_JOB) try {
+    const [{ setGitFinder }, { resolveGit }] = await Promise.all([import("./memory/git-tracked.mjs"), import("./safe-spawn.mjs")]);
+    setGitFinder(() => {
+      try {
+        return resolveGit();
+      } catch {
+        return null;
+      }
+    });
+  } catch {
+    // the trusted git only
+  }
   // Show help if no args or --help
   // Only before "--": after it everything is a positional (e.g. a scheduled
   // job's prompt that happens to be "-h").
