@@ -22,6 +22,7 @@ const USAGE = `${PRODUCT.package}: ad's memory server for Claude Code, Codex, Cu
   learnings list|show <number>|edit <number>|forget <number>|export|import <file>   your learnings (edit and forget in your own terminal)
   config review [strict|auto]   review-first for every learning, or not
   safety [on|status]   ask before four kinds of catastrophic commands (off by default; in your own terminal)
+  view [--all-projects]   write a read-only HTML page of your learnings, rules and weekly numbers
   report [--days 30] [--weeks 4] [--all-projects] [--json] [--share] [--share-link] [--purge]   is memory working here
   mistakes [--all-projects] [--share | --json] [--yes]   the corrections you keep typing (read-only, offline)
   mistakes --save                                        save them and your instruction files' rules for review (asks first)
@@ -98,6 +99,7 @@ export async function main(argv = process.argv.slice(2), { log = (l) => console.
     log(USAGE);
     return cmd ? 0 : 1;
   }
+  if (cmd === "view") return (await import("../memory/viewer-cli.mjs")).viewMain(rest, { out: log, env, command: (v) => `npx -y ${PRODUCT.package} ${v}` });
   if (cmd === "report" && rest.includes("--purge")) return (await import("../memory/report-purge.mjs")).reportPurgeMain(rest, { out: log });
   if (cmd === "report") return (await import("../memory/report.mjs")).reportMain(rest, { out: log });
   if (cmd === "mistakes") {

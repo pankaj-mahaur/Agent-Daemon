@@ -1264,6 +1264,14 @@ These are information, not failures: other memory that loads next to ad's learni
 
 **Fix:** run the command the line ends with. For `hooks … not trusted yet in Codex`, open Codex and run `/hooks`. For `marker … gone`, run the repair command it shows. `doctor --json` gives the same lines as rows with `"section": "readiness"` (home folder shown as `~`), which is what to attach to a bug report.
 
+## 151. `view` wrote a page, but a learning or rule looks cut short or says "withheld"
+
+**Symptom:** a row in `view.html` reads `[withheld: …]`, `https[:]//…`, or ends early.
+
+**Cause:** the page is a safe copy. A note that reads like an instruction to an agent, or that held a secret, is withheld whole; web addresses are shown as words so nothing in the page is a link; long texts are cut at 600 characters; your home folder shows as `~`. The page never changes anything: each row names the command to run in your terminal.
+
+**Fix:** nothing to fix. To read the full note, run `learnings show <number>` (or `learnings edit <number>` in your own terminal). The page is rewritten each time you run `view`, so run it again after a change.
+
 ---
 
 For harness problems, the [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill walks through login → hooks → sandbox → the engine's own log. See also [harness.md](harness.md) and, for the terminal UI, [tui.md](tui.md).

@@ -89,6 +89,7 @@ async function launch() {
     return memoryVerbMain(command, rest, { command: (v) => `ad ${v}` });
   }
   // L8: `ad memory report` takes the report's own flags (--weeks, --share-link, --purge too).
+  if (command === "memory" && rest[0] === "view") return (await import("./memory/viewer-cli.mjs")).viewMain(rest.slice(1), { command: (v) => `ad memory ${v}` });
   if (command === "memory" && rest[0] === "report") {
     if (rest.includes("--purge")) return (await import("./memory/report-purge.mjs")).reportPurgeMain(rest.slice(1));
     const { reportMain } = await import("./memory/report.mjs");
