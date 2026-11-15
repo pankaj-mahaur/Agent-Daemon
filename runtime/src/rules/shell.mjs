@@ -98,6 +98,12 @@ function closeParen(src, open, dialect) {
  * Scan bash/sh text into commands (arrays of words) and nested texts.
  * @returns {{commands:{words:object[], heredocs:string[]}[], nested:{text:string, dialect:string}[]}}
  */
+/** A redirection target (a descriptor duplicate like >&2 or a close >&- is none). */
+function redirect(list, op, target) {
+  if (/&$/.test(op ?? "") && /^(?:\d+|-)$/.test(target)) return;
+  list.push({ op: op ?? ">", target, write: /[>]/.test(op ?? ">") });
+}
+
 function scanBash(src) {
   const commands = [];
   const nested = [];
@@ -105,26 +111,30 @@ function scanBash(src) {
   let heredocs = [];
   let cur = null;
   let dropNext = false; // the next word is a redirection target (true) or a here-string ("data")
+  let redirects = []; // this command's redirection targets: { op, target }
+  let redirOp = null;
   let pipedFrom = null; // the command whose output feeds the next one
   let piping = false;
   const pending = []; // here-document delimiters waiting for the end of the line
   const endWord = () => {
     if (cur === null) return;
     if (dropNext === "data") heredocs.push(cur.text); // bash <<< 'npm install' feeds a shell
+    else if (dropNext) redirect(redirects, redirOp, cur.text);
     if (dropNext) dropNext = false;
     else words.push(cur);
     cur = null;
   };
   const endCommand = () => {
     endWord();
-    if (words.length) {
-      const cmd = { words, heredocs, pipedFrom: piping ? pipedFrom : null };
+    if (words.length || redirects.length) {
+      const cmd = { words, heredocs, redirects, pipedFrom: piping ? pipedFrom : null };
       commands.push(cmd);
       pipedFrom = cmd;
     }
     piping = false;
     words = [];
     heredocs = [];
+    redirects = [];
   };
   const add = (s, quoted = false) => {
     cur ??= word();
@@ -279,6 +289,7 @@ function scanBash(src) {
         i += 2;
       } else if (src[i + 1] === ">") {
         endWord();
+        redirOp = src[i + 2] === ">" ? "&>>" : "&>";
         i += src[i + 2] === ">" ? 3 : 2;
         dropNext = true;
       } else {
@@ -334,6 +345,7 @@ function scanBash(src) {
       }
       let j = i + 1;
       while (j < n && ">&|".includes(src[j])) j++;
+      redirOp = src.slice(i, j);
       i = j;
       dropNext = true;
       continue;
@@ -352,17 +364,28 @@ function scanPowerShell(src) {
   let words = [];
   let cur = null;
   let dropNext = false;
+  let redirects = [];
+  let redirOp = null;
+  let piping = false;
+  let psPipedFrom = null;
   let call = false; // & or . at command start: the next word is the command even if quoted
   const endWord = () => {
     if (cur === null) return;
+    if (dropNext) redirect(redirects, redirOp, cur.text);
     if (dropNext) dropNext = false;
     else words.push(cur);
     cur = null;
   };
   const endCommand = () => {
     endWord();
-    if (words.length) commands.push({ words, heredocs: [] });
+    if (words.length || redirects.length) {
+      const cmd = { words, heredocs: [], redirects, pipedFrom: piping ? psPipedFrom : null };
+      commands.push(cmd);
+      psPipedFrom = cmd;
+    }
+    piping = false;
     words = [];
+    redirects = [];
     call = false;
   };
   const add = (s, quoted = false) => {
@@ -458,7 +481,9 @@ function scanPowerShell(src) {
       continue;
     }
     if (c === "|") {
+      const pipe = src[i + 1] !== "|";
       endCommand();
+      piping = pipe;
       i += src[i + 1] === "|" ? 2 : 1;
       continue;
     }
@@ -511,7 +536,10 @@ function scanPowerShell(src) {
       let j = i + 1;
       while (j < n && ">&".includes(src[j])) j++;
       if (src[j - 1] === "&" && /\d/.test(src[j] ?? "")) j++; // 2>&1
-      else dropNext = true;
+      else {
+        dropNext = true;
+        redirOp = src.slice(i, j);
+      }
       i = j;
       continue;
     }
@@ -534,16 +562,20 @@ function scanCmd(src) {
   let words = [];
   let cur = null;
   let dropNext = false;
+  let redirects = [];
+  let redirOp = null;
   const endWord = () => {
     if (cur === null) return;
+    if (dropNext) redirect(redirects, redirOp, cur.text);
     if (dropNext) dropNext = false;
     else words.push(cur);
     cur = null;
   };
   const endCommand = () => {
     endWord();
-    if (words.length) commands.push({ words, heredocs: [] });
+    if (words.length) commands.push({ words, heredocs: [], redirects });
     words = [];
+    redirects = [];
   };
   const add = (s, quoted = false) => {
     cur ??= word();
@@ -597,7 +629,10 @@ function scanCmd(src) {
       let j = i + 1;
       while (j < n && ">&".includes(src[j])) j++;
       if (src[j - 1] === "&" && /\d/.test(src[j] ?? "")) j++;
-      else dropNext = true;
+      else {
+        dropNext = true;
+        redirOp = src.slice(i, j);
+      }
       i = j;
       continue;
     }
@@ -997,11 +1032,33 @@ export function commandsIn(command, { dialect = "bash", os = "linux" } = {}) {
     const src = text.slice(0, MAX_INPUT);
     const scanned = d === "powershell" ? scanPowerShell(src) : d === "cmd" ? scanCmd(src) : scanBash(src);
     for (const n of scanned.nested) visit(n.text, n.dialect, depth + 1);
+    const firstOf = new Map(); // a scanned command → the first command found from it (pipes)
     for (const cmd of scanned.commands) {
+      // Leading NAME=value words: the command's own assignments.
+      const assigns = [];
+      for (const w of cmd.words) {
+        if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(w.text)) assigns.push(w.text);
+        else break;
+      }
+      if (!cmd.words.length) {
+        // Only redirects (`{ …; } > f`, `> f`): no program, but the files are still written.
+        found.push({ argv: [], dialect: d, redirects: cmd.redirects ?? [], assigns, heredocs: [] });
+        continue;
+      }
+      let any = false;
       for (const r of resolve(cmd, d, os)) {
-        if (r.argv.length) found.push({ argv: r.argv, dialect: d });
+        if (r.argv.length) {
+          any = true;
+          const f = { argv: r.argv, dialect: d, redirects: cmd.redirects ?? [], assigns, heredocs: cmd.heredocs ?? [] };
+          const from = cmd.pipedFrom ? firstOf.get(cmd.pipedFrom) : undefined;
+          if (from) f.pipedFrom = from;
+          if (!firstOf.has(cmd)) firstOf.set(cmd, f);
+          found.push(f);
+        }
         for (const n of r.nested) visit(n.text, n.dialect, depth + 1);
       }
+      // A keyword (done, fi) or an expression that runs nothing, with redirects: they still write.
+      if (!any && cmd.redirects?.length) found.push({ argv: [], dialect: d, redirects: cmd.redirects, assigns, heredocs: [] });
     }
   };
   if (Array.isArray(command)) {

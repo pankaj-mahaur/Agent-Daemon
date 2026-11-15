@@ -306,9 +306,76 @@ export const callText = (input) => {
   return Array.isArray(c) ? c.map(String).join(" ") : typeof c === "string" ? c : "";
 };
 /** Does the call's text need self-protection's look? (Shell calls; writes are P2b's.) */
+// Weak triggers for writes to ad's state (D12c): a home spelling as a cd, delete or move
+// target, a glob or expansion under a home spelling, a .git pointer, the host's plugin
+// records, links and mounts.
+const HOME_W = String.raw`(?:~|\$HOME|\$\{HOME\}|\$env:USERPROFILE|\$env:HOME|%USERPROFILE%|%HOMEPATH%)`;
+const STATE_TRIGGER = new RegExp(
+  [
+    String.raw`\b(?:cd|pushd|chdir|set-location|sl|push-location)\s+${HOME_W}[\\/]?\.?(?:\s|$|[;&|)])`,
+    String.raw`(?:^|[;&|(]\s*)cd\s*(?:$|[;&|)])`,
+    String.raw`agent-[^\s]*\{|\{[^\s{}]*agent-`,
+    String.raw`\b(?:rm|rmdir|mv|remove-item|ri|move-item|mi|del|rd|erase)\b[^;&|\n]*\s(?:${HOME_W}|\/|[A-Za-z]:\\?)[\\/]?(?:\s|$|[;&|)])`,
+    String.raw`${HOME_W}[\\/][^\s;&|]*[*?[$]`,
+    String.raw`(?<![\w-])\.git(?![\w-])`,
+    String.raw`installed_plugins|known_marketplaces|plugins[\\/](?:cache|marketplaces)`,
+    String.raw`(?<![\w-])(?:ln|mklink|new-item|ni|mount|subst)(?![\w-])`,
+    // Backslash spellings (\ is dropped before the main trigger), find that deletes or runs,
+    // and a home spelling as a tree command's destination or a last word.
+    String.raw`\.agent-daemon|agent-~`,
+    String.raw`\bfind\b[^;&|\n]*\s-(?:delete|exec|ok|fprint|fls)`,
+    String.raw`(?:\s-C|\s-d|--directory|--target-directory|-DestinationPath|-Destination)[\s=]+["']?${HOME_W}`,
+    String.raw`\s["']?${HOME_W}[\\/]?["']?\s*(?:$|[;&|)\n])`,
+  ].join("|"),
+  "im",
+);
+/** The paths a file tool writes (Write, Edit, MultiEdit file_path; apply_patch headers). */
+export const filePaths = (input) => {
+  const tin = input?.tool_input ?? {};
+  const name = String(input?.tool_name ?? "");
+  if (/^apply_patch$/i.test(name)) return [...String(tin.command ?? tin.patch ?? tin.input ?? "").matchAll(/^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+?)\s*$/gm)].map((m) => m[1]);
+  if (/^(?:write|edit|multiedit)$/i.test(name)) return [tin.file_path ?? tin.path].filter((x) => typeof x === "string");
+  return null;
+};
+// ad's root as this machine spells it, for a payload cwd or a file path reached through a link.
+const adRootText = () => {
+  const r = process.env.AD_ROOT;
+  return r && path.isAbsolute(r) ? r : path.join(os.homedir(), ".agent-daemon");
+};
+const realDeepest = (p) => {
+  let cur = p;
+  const tail = [];
+  for (let i = 0; i < 64; i++) {
+    try {
+      return path.join(fs.realpathSync.native(cur), ...tail.reverse());
+    } catch {
+      const up = path.dirname(cur);
+      if (up === cur) return null;
+      tail.push(path.basename(cur));
+      cur = up;
+    }
+  }
+  return null;
+};
+const insideAdState = (p) => {
+  const t = String(p ?? "");
+  if (!t) return false;
+  const roots = [adRootText(), path.join(os.homedir(), ".agent-daemon")];
+  const fold = process.platform === "win32" || process.platform === "darwin" ? (x) => x.toLowerCase() : (x) => x;
+  const real = path.isAbsolute(t) ? realDeepest(t) : null;
+  return [t, real].some((x) => x && (/(?:^|[\\/])\.agent-daemon(?:[\\/]|$)/i.test(x) || /(?:^|[\\/])session-env(?:[\\/]|$)/i.test(x) || roots.some((r) => fold(x).startsWith(fold(r)))));
+};
 export const selfProtectTriggered = (input) => {
+  const files = filePaths(input);
+  if (files) return files.some((p) => SP_TRIGGER.test(p) || STATE_TRIGGER.test(p) || insideAdState(p) || (input?.cwd && !path.isAbsolute(p) && insideAdState(input.cwd)));
   const raw = callText(input);
-  return /\$'|\$env:/i.test(raw) || SP_TRIGGER.test(raw.replace(/["'\\^`]/g, ""));
+  const text = raw.replace(/["'\\^`]/g, "");
+  const root = adRootText();
+  // A payload cwd at the home folder or above, with a glob or ad's folder name in the text.
+  const cwd = String(input?.cwd ?? "");
+  const home = os.homedir();
+  const atHome = Boolean(cwd) && (cwd === home || home.startsWith(cwd.endsWith(path.sep) ? cwd : cwd + path.sep)) && /[*?[]|agent/.test(raw);
+  return /\$'|\$env:/i.test(raw) || SP_TRIGGER.test(text) || STATE_TRIGGER.test(raw) || atHome || (Boolean(raw) && (raw.includes(root) || insideAdState(input?.cwd)));
 };
 /** A strong trigger in the call's text (or raw payload text). */
 export const strongTrigger = (text) => STRONG.test(String(text ?? "").replace(/["'\\^`]/g, ""));

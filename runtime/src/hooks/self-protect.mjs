@@ -31,6 +31,7 @@ import { commandsIn, programName } from "../rules/shell.mjs";
 import { dialectOf } from "../rules/match.mjs";
 import { callOf, strongTrigger } from "./tool-before.mjs";
 import { isOwnTarget, recordNewSession, resolveTmuxCommand, subWords, tmuxGlobals } from "./tmux-sessions.mjs";
+import { stateContext, judgeState, readsState, isFilter, judgeFileTool, patchPaths, cdGlobRoot } from "./self-protect-state.mjs";
 import { ENTRY_NAMES, REPARENTING as REPARENTING_LIST, TERMINALS as TERMINAL_LIST, DESKTOP as DESKTOP_LIST } from "./self-protect-words.mjs";
 
 const lower = (s) => String(s ?? "").toLowerCase();
@@ -501,6 +502,25 @@ function agentHomeMoved(stripped, vars) {
   if (vars.clears) return true;
   if (new RegExp(String.raw`(?:^|[;&|\n(]\s*)(?:env\s+(?:-\S+\s+)*)?(?:[A-Za-z_]\w*=\S*\s+)*(?:${AGENT_HOME})=\S*\s+(?:[A-Za-z_]\w*=\S*\s+)*${AGENT_WORD}`, "i").test(t)) return true;
   return new RegExp(String.raw`\b(?:export|declare\s+-x|typeset\s+-x|set|setx)\s+(?:${AGENT_HOME})\b|\$\{?env:(?:${AGENT_HOME})\}?\s*=`, "i").test(t);
+}
+
+/** Assignments whose value is literal apart from a leading home spelling or ad's own variables (paths the state check expands). */
+function pathAssignments(text, literals) {
+  const out = new Map();
+  const lead = /^(?:~|\$HOME|\$\{HOME\}|\$env:USERPROFILE|\$env:HOME|%USERPROFILE%|\$AD_ROOT|\$\{AD_ROOT\}|\$CODEX_HOME|\$CLAUDE_CONFIG_DIR)(?=[\\/]|$)/i;
+  // In order: a later value that isn't literal (D=$(…)) drops the name.
+  for (const m of String(text).matchAll(/(?:^|[\s;&|(){}])(?:export\s+|local\s+|declare\s+(?:-\w+\s+)*)?([A-Za-z_]\w*)=((?:"[^"]*"|'[^']*'|\$\([^)]*\)|[^\s;&|<>()'"])*)/g)) {
+    // The value's pieces joined, as the shell joins them ("$HOME"/.agent-daemon).
+    const raw = m[2] ?? "";
+    const v = raw.replace(/"([^"]*)"|'([^']*)'/g, (x, a, b) => a ?? b ?? "");
+    if (/[`]|\$\(/.test(raw) || /\$/.test(v.replace(lead, ""))) out.delete(m[1]);
+    else out.set(m[1], v);
+  }
+  for (const m of String(text).matchAll(/\$([A-Za-z_]\w*)\s*=\s*(?:"([^"`]*)"|'([^']*)')/g)) {
+    const v = m[2] ?? m[3] ?? "";
+    if (!/\$/.test(v.replace(lead, ""))) out.set(m[1], v);
+  }
+  return out;
 }
 
 /** Literal assignments in the line (NAME → value), for a program held in a variable. */
@@ -1104,6 +1124,7 @@ function judgeText(text, ctx, via, depth, joined = false) {
   let out = ps ? psCallGroups(decoded) : null;
   let cwd = ctx.cwd;
   let cwdKnown = true;
+  const readers = new Set(); // commands reading ad's state (a pipe from one into a writer is a write)
   // Command substitutions: what runs inside one gets the line-level checks of its own (its
   // quotes hide it from them here).
   if (heredocs(decoded).over && strongTrigger(decoded)) return deny("a", WORDS.nonliteral);
@@ -1113,15 +1134,30 @@ function judgeText(text, ctx, via, depth, joined = false) {
   // A command held in a variable another program runs (GIT_PAGER, EDITOR…): judged as wrapped.
   for (const n of COMMAND_VARS) if (literals.has(n) && vars.set.has(n)) out = worst(out, judgeText(literals.get(n), ctx, [...via, n], depth + 1));
 
+  // The state check's own assignments: also values built from a home spelling or ad's own
+  // variables (`D=$HOME/.agent-daemon; rm -rf $D`), which the state check expands.
+  const stateLiterals = ctx.state ? pathAssignments(decoded, literals) : null;
   for (const f of found) {
     if (Date.now() > ctx.deadline) return worst(out, overBudget());
+    // Only redirects (`{ …; } > f`, `> f`): the files they write.
+    if (!f.argv.length) {
+      if (ctx.state) out = worst(out, judgeState(f, { ...ctx.state, literals: stateLiterals, line: decoded }, cwd, cwdKnown, { inlineCode }));
+      continue;
+    }
     const argv = resolveProgram(f.argv, literals);
     const prog = progOf(argv);
     // `cd` earlier in the line moves where later relative scripts resolve; one the check
     // can't follow makes it unknown.
     if (["cd", "pushd", "chdir", "set-location", "sl", "push-location"].includes(prog)) {
       const target = argv.slice(1).find((x) => !/^-/.test(x));
-      if (target !== undefined) {
+      if (target !== undefined && ctx.state && /[*?[{]/.test(target)) {
+        // A cd into a glob or braces: ad's root when it can be it; otherwise unknown.
+        const r = cdGlobRoot(target, { ...ctx.state, literals }, cwd, cwdKnown);
+        if (r) {
+          cwd = r;
+          cwdKnown = true;
+        } else cwdKnown = false;
+      } else if (target !== undefined) {
         if (isExpansion(target.replace(HOME_SPELLING, ""), ps)) cwdKnown = false;
         else {
           cwd = absolute(target, ctx, cwd ?? ctx.homeDir);
@@ -1130,9 +1166,20 @@ function judgeText(text, ctx, via, depth, joined = false) {
       }
       continue;
     }
+    // c: writes to ad's state (an ad command's own words are data; its verb is judged below).
+    const kind = entryKind(argv[0]);
+    if (ctx.state && !kind) {
+      const sc = { ...ctx.state, literals: stateLiterals, line: decoded, deadline: ctx.deadline };
+      out = worst(out, judgeState({ ...f, argv }, sc, cwd, cwdKnown, { inlineCode }));
+      if (readsState({ ...f, argv }, sc, cwd, cwdKnown)) readers.add(f);
+      if (f.pipedFrom && readers.has(f.pipedFrom)) {
+        // A filter passes the reading on (find … | grep . | xargs rm); anything else could write.
+        if (isFilter(prog, argv)) readers.add(f);
+        else out = worst(out, deny("c", "ad's state read into a program that can write it"));
+      }
+    }
     // a: ad's commands.
     let entry = null;
-    const kind = entryKind(argv[0]);
     if (kind) entry = { kind, args: argv.slice(1) };
     else {
       const ns = nodeScript(argv, ctx, cwd, cwdKnown);
@@ -1553,9 +1600,10 @@ export function recordTmuxSessions(input, { host = "claude", platform = process.
  */
 export function selfProtect(input, { host = "claude", platform = process.platform, home = os.homedir(), root, folders, env = process.env, uid = process.getuid?.() ?? 0, realpath } = {}) {
   const call = callOf(input, { host, platform });
-  if (!SHELL_TOOLS.test(call.tool)) return null;
-  const text = commandText(call);
-  if (!text) return null;
+  const fileTool = /^(?:write|edit|multiedit|apply_patch)$/i.test(call.tool);
+  if (!SHELL_TOOLS.test(call.tool) && !fileTool) return null;
+  const text = fileTool ? "" : commandText(call);
+  if (!text && !fileTool) return null;
   const windows = call.os === "windows";
   const pathMod = windows ? path.win32 : path.posix;
   const adRoot = root ?? (process.env.AD_ROOT && pathMod.isAbsolute(process.env.AD_ROOT) ? process.env.AD_ROOT : pathMod.join(home, ".agent-daemon"));
@@ -1574,7 +1622,14 @@ export function selfProtect(input, { host = "claude", platform = process.platfor
     deadline: Date.now() + 1000,
     // tmux sessions this agent created in this session (D12b's exception; not on Windows).
     tmuxOwn: windows ? null : (argv) => isOwnTarget(argv, { line: text, env, uid, cwd: call.cwd, adRoot, sessionId: input?.session_id, ...(realpath ? { realpath } : {}) }),
+    // D12c: what counts as ad's state here.
+    state: stateContext({ os: call.os, homeDir: home, adRoot, env, pathMod, ...(realpath ? { realpath } : {}), installDir: HERE_TREE }),
   };
+  if (fileTool) {
+    const tin = call.input ?? {};
+    const paths = call.tool.toLowerCase() === "apply_patch" ? patchPaths(tin.patch ?? tin.input ?? tin.command ?? "") : [tin.file_path ?? tin.path].filter((x) => typeof x === "string");
+    return judgeFileTool(paths, ctx.state, call.cwd);
+  }
   // Codex's [shell, -lc, script]: the script is the command line itself.
   const c = call.input?.command;
   if (Array.isArray(c) && c.length >= 3 && SHELL_PROGS.has(lower(programName(String(c[0])))) && isScriptFlag(String(c.at(-2))) && c.slice(1, -2).every((x) => /^[-+]/.test(String(x)) || /^(?:pipefail|errexit|nounset)$/.test(String(x)))) {
