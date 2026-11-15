@@ -79,11 +79,11 @@ async function gate({ env, isTTY, ask, out, ...o }) {
  * The same proof for the memory package's uninstall (L3, Decision 12): while rules
  * exist, removing the tool.before entry or the agent-shell marker needs it. Only a
  * yes/no leaves here; the token stays inside this module and the review service.
- * → { ok: true } or { ok: false, why }
+ * → { ok: true, dialogProven } or { ok: false, why }
  */
 export async function confirmInOwnTerminal({ env = process.env, isTTY = realTTY, ask, out, ...o } = {}) {
   const g = await gate({ env, isTTY, ask, out, ...o });
-  return g.token ? { ok: true } : { ok: false, why: g.refused ?? "it needs your own terminal" };
+  return g.token ? { ok: true, dialogProven: g.dialogProven === true } : { ok: false, why: g.refused ?? "it needs your own terminal" };
 }
 
 /** Where this project's proposals are, in review order. */

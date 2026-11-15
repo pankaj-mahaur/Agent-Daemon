@@ -14,7 +14,7 @@ import path from "node:path";
 import { loadGuards, readActive } from "../hooks/guards.mjs";
 import { inspect, writeChecked } from "./fsx.mjs";
 import { itemId, openLedger2ForWrite, writeLedger2 } from "./ledger2.mjs";
-import { applyOps, locateHook, parseSettings, withLedgerLock } from "./setup.mjs";
+import { applyOps, locateHook, parseSettings, restoreOps, withLedgerLock } from "./setup.mjs";
 
 export const BLOCK_TIMEOUT = 10;
 export const switchPath = (root) => path.join(root, "memory", "switch.json");
@@ -87,13 +87,40 @@ export async function applyRuleSwitch({ ctx, token = null, now = Date.now() } = 
   return withLedgerLock(ctx, () => switchLocked({ ctx, token, now }));
 }
 
-/** After a tokened rule write (afterReview, setPolicy): the switch, its failure as `why` (never thrown). */
-export async function switchAfterRules({ root, token = null, now = Date.now() }) {
+/**
+ * After a tokened rule write (afterReview, setPolicy): the switch, its failure as `why` (never
+ * thrown). On Windows the first rule also adds Codex's tool.before (setup for Codex, once: it
+ * stays after the last rule); its lines come back as `codex`. ctxFor: a test seam for that setup.
+ */
+export async function switchAfterRules({ root, token = null, now = Date.now(), platform = process.platform, ctxFor } = {}) {
+  let r;
   try {
-    return await applyRuleSwitch({ ctx: { root, lockWaitMs: 2000 }, token, now });
+    r = await applyRuleSwitch({ ctx: { root, lockWaitMs: 2000 }, token, now });
   } catch (e) {
-    return { why: `ad's rules check couldn't be switched: ${e?.message ?? e}` };
+    r = { why: `ad's rules check couldn't be switched: ${e?.message ?? e}` };
   }
+  if (platform === "win32" && r.active) {
+    try {
+      const lines = await codexCheckOnce({ root, ctxFor });
+      if (lines) r.codex = lines;
+    } catch (e) {
+      r.codex = [`Codex: ad's rules check couldn't be added (${e?.message ?? e}); run setup again in your own terminal`];
+    }
+  }
+  return r;
+}
+
+// Codex set up (ad's hooks in its ledger) without tool.before: set it up again, now with it.
+async function codexCheckOnce({ root, ctxFor }) {
+  const { readLedger2 } = await import("./ledger2.mjs");
+  const codex = readLedger2(root).items.filter((i) => i.host === "codex" && i.kind === "hook");
+  if (!codex.length || codex.some((i) => i.locator?.event === "tool.before")) return null;
+  const lines = [];
+  const out = (l) => lines.push(String(l));
+  const ctx = ctxFor ? ctxFor(out) : (await import("./install.mjs")).makeContext({ root, out, platform: "win32", lockWaitMs: 2000 });
+  const { setup } = await import("./setup.mjs");
+  await setup({ ctx, hosts: ["codex"] });
+  return lines;
 }
 
 /** The switch for a caller already holding the ledger lock (setup, uninstall). */
@@ -182,16 +209,12 @@ async function switchFile(file, items, { want, mayLower, out, persist }) {
         }
       } else if (orig) {
         // Back only what ad raised: a field the user changed since keeps their value.
-        const lowerOnFailure = h.onFailure === "block" && !(orig.had.onFailure && orig.onFailure === "block");
-        const lowerTimeout = h.timeout === BLOCK_TIMEOUT && !(orig.had.timeout && orig.timeout === BLOCK_TIMEOUT);
-        const lowerRead = Boolean(orig.readAdded) && String(f.matcher ?? "").split("|").includes("Read");
+        const back = restoreOps({ ...item, orig }, f, { blockTimeout: BLOCK_TIMEOUT });
         if (!mayLower) {
-          if (lowerOnFailure || lowerTimeout || lowerRead) out.pendingLower = true;
+          if (back.length) out.pendingLower = true;
           continue;
         }
-        if (lowerOnFailure) ops.push({ path: [...at, "hooks", f.hi, "onFailure"], value: orig.had.onFailure ? orig.onFailure : undefined });
-        if (lowerTimeout) ops.push({ path: [...at, "hooks", f.hi, "timeout"], value: orig.had.timeout ? orig.timeout : undefined });
-        if (lowerRead) ops.push({ path: [...at, "matcher"], value: withoutRead(f.matcher) });
+        ops.push(...back);
         after.push(() => delete item.orig);
       }
     }

@@ -140,6 +140,7 @@ export async function safetyMain(argv = [], o = {}) {
     out(`  ${policy.POLICY_COPY.limits}`);
     out(`  Turn it off: \`${command("safety off")}\` · one call: \`${command("rules allow-once <rule>")}\``);
     if (r.switch?.why) out(`  ! ${r.switch.why}`);
+    for (const l of r.switch?.codex ?? []) out(`  ${l.trim()}`);
     return 0;
   }
 

@@ -655,8 +655,12 @@ async function codexWork(ctx) {
   const notes = [];
   let routes = routesFor(MEMORY_STEPS, "codex");
   // C-L3-CODEXWIN: on Windows each hook starts a shell (1–4 s); tool.before does nothing
-  // before the first rule, so it arrives with that rule.
-  if ((ctx.platform ?? process.platform) === "win32") routes = routes.filter((r) => r.event !== "tool.before");
+  // before the first rule, so it arrives with that rule (L7 D13) and then stays.
+  if ((ctx.platform ?? process.platform) === "win32") {
+    const had = readLedger2(ctx.root).items.some((i) => i.host === "codex" && i.kind === "hook" && i.locator?.event === "tool.before");
+    if (had || (await ctx.rulesExist?.())) notes.push("  Codex on Windows: ad's rules check runs before each tool call (each call waits 1–4 s for it); it stays once added.");
+    else routes = routes.filter((r) => r.event !== "tool.before");
+  }
   if (UNSAFE_ROOT.test(launcherFile(ctx.root))) {
     notes.push(`  Codex: no hooks: ad's folder ${ctx.display(ctx.root)} holds $, \`, % or ", which Codex's shell would read. Set AD_ROOT to a plain path and run ${ctx.command("setup")} again.`);
     routes = [];
@@ -895,6 +899,21 @@ export async function setup(opts = {}) {
 
 const GATED = (item) => (item.kind === "hook" && item.locator?.event === "tool.before") || item.kind === "env";
 
+/**
+ * The ops that put back what the rule switch raised in one located handler (L7 D13): a field
+ * still at the raised value returns to orig (absence included); one changed since stays.
+ */
+export function restoreOps(item, loc, { blockTimeout = 10 } = {}) {
+  const o = item.orig;
+  const h = loc.handler;
+  const at = ["hooks", item.locator.hostEvent, loc.gi];
+  const ops = [];
+  if (h.onFailure === "block" && !(o.had?.onFailure && o.onFailure === "block")) ops.push({ path: [...at, "hooks", loc.hi, "onFailure"], value: o.had?.onFailure ? o.onFailure : undefined });
+  if (h.timeout === blockTimeout && !(o.had?.timeout && o.timeout === blockTimeout)) ops.push({ path: [...at, "hooks", loc.hi, "timeout"], value: o.had?.timeout ? o.timeout : undefined });
+  if (o.readAdded && String(loc.matcher ?? "").split("|").includes("Read")) ops.push({ path: [...at, "matcher"], value: String(loc.matcher).split("|").filter((x) => x !== "Read").join("|") });
+  return ops;
+}
+
 /** The manual step for one kept item. */
 export function manualStep(item, display = (p) => p) {
   if (item.kind === "env" && item.host === "codex") return `delete the line AD_TOOL_SHELL = "1" under [shell_environment_policy.set] in ${display(item.file)}`;
@@ -945,15 +964,21 @@ export async function removeSettingsItems(ctx, file, items, gate) {
     }
     const ops = [];
     // onFailure first (no index moves), then removals from the end so earlier indices hold.
+    // A kept entry the rule switch raised gets back what it had (orig, L7 D13); one you had
+    // before ad keeps its own values (no onFailure you never had); ad's own, changed by you,
+    // gets onFailure "continue" (a later deletion of ~/.agent-daemon can't block a tool call).
     for (const c of continues) {
-      if (c.loc.handler.onFailure === "continue") continue;
       const r = results.find((x) => x.item === c.item);
+      const back = c.item.orig ? restoreOps(c.item, c.loc) : c.item.preExisted || c.loc.handler.onFailure === "continue" ? [] : [{ path: ["hooks", c.item.locator.hostEvent, c.loc.gi, "hooks", c.loc.hi, "onFailure"], value: "continue" }];
+      if (!back.length) continue;
       if (gate.rulesExist && !(await gate.token())) {
         r.why += `; its onFailure stays ${JSON.stringify(c.loc.handler.onFailure ?? null)} (changing it needs your review)`;
+        // Still ad's (its orig with it): the last rule's switch, or uninstall run again, puts it back.
+        r.held = true;
         continue;
       }
-      ops.push({ path: ["hooks", c.item.locator.hostEvent, c.loc.gi, "hooks", c.loc.hi, "onFailure"], value: "continue" });
-      r.why += '; it now has onFailure "continue", so it can\'t block a tool call';
+      ops.push(...back);
+      r.why += c.item.orig ? "; it has the values it had before ad's rules made it fail closed" : '; it now has onFailure "continue", so it can\'t block a tool call';
     }
     const hookRemovals = removals.filter((r) => r.item.kind === "hook").sort((a, b) => b.loc.gi - a.loc.gi || b.loc.hi - a.loc.hi);
     const notes = [];

@@ -977,6 +977,16 @@
       "reason": "L7b: `safety on` tells the user how the starter safety policy decides in each of their hosts; Codex can't ask, so it stops (the user's own Codex host, not ad's engine)"
     },
     {
+      "path": "runtime/src/memory/learnings-cli.mjs",
+      "rules": ["A"],
+      "reason": "L7 P3-3: a rule edit prints the lines of adding ad's rules check to the user's own Codex install on Windows (not ad's engine)"
+    },
+    {
+      "path": "runtime/test/l7-uninstall-switch.test.mjs",
+      "rules": ["A"],
+      "reason": "L7 P3-3: the rules check in the user's own Codex install on Windows arrives with the first rule (a fake CODEX_HOME: hooks.json, config.toml), not ad's engine"
+    },
+    {
       "path": "runtime/src/memory/policy-coexist.mjs",
       "rules": ["A"],
       "reason": "L7b: doctor reads the user's Codex hooks.json and config.toml to find other command guards (the user's own Codex host, not ad's engine)"

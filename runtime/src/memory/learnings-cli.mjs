@@ -348,6 +348,7 @@ async function editVerb(argv, o) {
       const done = await afterReview(handle, t.token, { now: o.now ?? new Date(), ...(o.root ? { root: o.root } : {}) });
       moved = done?.moved ?? [];
       if (done?.switch?.why) out(`${PRODUCT.displayName}: ${done.switch.why}.`);
+      for (const l of done?.switch?.codex ?? []) out(l.trim());
     } catch (e) {
       out(`${PRODUCT.displayName}: the rules snapshot couldn't be rebuilt (${e.message}); it is rebuilt at the next review.`);
     }

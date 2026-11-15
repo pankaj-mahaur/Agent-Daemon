@@ -82,14 +82,29 @@ export function makeContext(o = {}) {
     claudeOpts: { env },
     /** A real terminal on stdin and stdout (setup's own step needs one). */
     isTTY: o.isTTY ?? (() => Boolean(process.stdin.isTTY && process.stdout.isTTY)),
-    /** Rules exist (L7 wires this): removing tool.before or the marker then needs the review token. None at L3. */
-    rulesExist: o.rulesExist ?? (() => false),
+    /**
+     * Rules exist (L7 D13): removing or lowering tool.before or the marker then needs the review
+     * token and the typed code. The snapshot's count, or guards.active (a missing snapshot never
+     * lets uninstall lower enforcement tokenless).
+     */
+    rulesExist:
+      o.rulesExist ??
+      (async () => {
+        const G = await import("../hooks/guards.mjs");
+        return G.readActive({ root }) !== null || (G.loadGuards({ root }).snapshot?.ruleCount ?? 0) > 0;
+      }),
     /** → true once the review gate (review.mjs, the review service's token) passed in the user's own terminal. */
     confirmReview:
       o.confirmReview ??
       (async () => {
         const { confirmInOwnTerminal } = await import("../review.mjs");
-        return (await confirmInOwnTerminal({ ask: o.ask ?? (async () => ""), out: o.out ?? ((l) => console.log(l)), env, isTTY: o.isTTY ?? (() => Boolean(process.stdin.isTTY && process.stdout.isTTY)) })).ok;
+        const g = await (o.ownTerminal ?? confirmInOwnTerminal)({ ask: o.ask ?? (async () => ""), out: o.out ?? ((l) => console.log(l)), env, isTTY: o.isTTY ?? (() => Boolean(process.stdin.isTTY && process.stdout.isTTY)) });
+        if (!g.ok) return false;
+        // It lowers enforcement while rules exist: the typed code too (L7 D16).
+        const { confirmTypedCode } = await import("../memory/typed-code.mjs");
+        const c = await confirmTypedCode({ what: "Remove or lower ad's rules check while rules exist", proven: g.dialogProven === true, tty: o.tty, code: o.code?.() });
+        if (!c.ok) (o.out ?? ((l) => console.log(l)))(`· ${c.text}`);
+        return c.ok;
       }),
     claudeVersion: o.claudeVersion ?? (async () => (await import("../hooks/hook-doctor.mjs")).claudeCodeVersion()),
     /** What the user types for a verb: the pinned npx command, or ad's own from a clone. */
