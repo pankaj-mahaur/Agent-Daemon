@@ -58,6 +58,6 @@ afterwards. Details and every option: [install](install.md).
 | [recall](recall.md) | What your agents get back: the session brief, prompt-time learnings, `/recall`, turning it off, other memory on the machine |
 | [tools](tools.md) | Every memory tool, which project the server serves, protocol versions |
 | [security](security.md) | What keeps notes in their project, and the limits |
-| [metrics](metrics.md) | `ad memory report`: is memory working here? |
+| [metrics](metrics.md) | `ad memory report`: is memory working here? `view` writes the same numbers, your learnings and your rules as one read-only HTML page |
 | [FAQ](faq.md) | Common questions |
 | [support matrix](../support-matrix.md) | Which hosts are tested live |
