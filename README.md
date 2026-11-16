@@ -2,7 +2,7 @@
 
 [![test](https://github.com/pankaj-mahaur/Agent-Daemon/actions/workflows/test.yml/badge.svg)](https://github.com/pankaj-mahaur/Agent-Daemon/actions/workflows/test.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![version](https://img.shields.io/badge/version-3.1.0-green.svg)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-3.2.0-green.svg)](CHANGELOG.md)
 [![harnesses](https://img.shields.io/badge/harnesses-Claude%20Code%20%7C%20Codex%20%7C%20Cursor-purple.svg)](#cross-harness-support)
 
 **Agent Daemon.** A terminal coding agent that remembers. Type `ad` in a project: it works in your repo, runs commands in a sandbox, asks before going beyond it (see [Safety model](#production-safety)), and keeps what it learns. It also gives Claude Code the same memory, guards and skills. To run the agent yourself you need a key from a supported provider (OpenAI, OpenRouter, Kimi, xAI, Groq and [more](docs/accounts.md)), a local model server (Ollama, LM Studio) or a ChatGPT plan; the Claude Code memory and guards need none.
@@ -12,6 +12,8 @@
 Ships with a full **team coordination layer**: spawn worker agents (sandboxed engine workers by default, Claude Code with `--engine claude`) in isolated git worktrees, coordinate them through filesystem-based inboxes, and manage task dependencies with auto-unblocking — all without a central server or database.
 
 Skills evolve too: [GEPA](runtime/src/digest/gepa/README.md) (Genetic-Pareto Prompt Evolution) reads execution traces and proposes Pareto-optimal skill refinements that you accept or reject via `agent-daemon review`.
+
+> **v3.2.0 — memory you review, and rules that ask before a call.** Every correction ad captures now waits for your review (`ad review`), and accepted learnings come back at session start and with each prompt. A correction that names a command or a file can become a rule that asks before, or stops, that call; ad's check protects itself, and in Claude Code it fails closed while rules exist. `ad safety on` adds an opt-in starter policy, `ad memory setup` wires the hooks, and `ad memory report`, `view` and `learnings` show what is remembered. Run `ad init` once after updating. See the [release notes](CHANGELOG.md#320--2026-11-16).
 
 > **v3.1.0 — several accounts, fallback, and memory in other agents.** Sign in to many providers side by side and pick one per conversation (`--account`, `/model`); `ad fallback` lets a task continue elsewhere when a limit runs out. ad's memory now works in other agents too: Claude Code, Cursor, VS Code (Copilot), Gemini CLI and [more](docs/memory/install.md) (`ad memory install`). `ad state export` / `import` moves ad to another computer, and `/tui` tries the early fullscreen terminal UI (scroll, select, copy, F3 to find). See [What's new in 3.1](docs/whats-new-3.1.md) and the [release notes](https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v3.1.0).
 

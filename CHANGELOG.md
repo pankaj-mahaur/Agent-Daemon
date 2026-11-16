@@ -4,6 +4,8 @@ All notable changes to agent-daemon. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [3.2.0] — 2026-11-16
+
 ### Added
 - **`view`: a page of your learnings, rules and weekly numbers.** `npx agent-daemon-memory view` (or `ad memory view`; `--all-projects` for every project) writes one HTML file, `~/.agent-daemon/view.html`, and says where it is. It is a read-only snapshot: no server, no browser started, nothing loaded from the internet, and it changes nothing. Each learning and rule shows the command to run in your terminal to accept, forget or remove it; each rule shows how often it asked and stopped. Texts are redacted like `learnings export` (your home folder shows as `~`, a note holding a secret is withheld), notes that read like instructions are withheld, links in a note show as words, and the page carries a policy that blocks everything but its own script.
 - **`learnings list|show|edit|forget|export|import`: your learnings, in your control.** List and show this project's learnings with where each came from, how often it was recalled and said again after you accepted it, and its rule. Edit them in your editor (an accepted one is replaced by a new accepted learning, and its rule moves with it), forget them for good (older wordings and the lines in the capture journals and proposal files go too), export your accepted learnings to a file for a private repository (redacted: no ids, paths or secrets), and import such a file for review. Changing, exporting and importing run only in your own terminal; from an agent's shell secrets are masked and held-back words are never shown.
@@ -667,7 +669,8 @@ Kept in the snapshot but not ported this release: `.codebuddy/`, `.kiro/`, `.tra
 
 Initial public state. Self-improving memory + skills runtime for Claude Code with multi-agent orchestration. 36 skills, 6 lifecycle hooks (SessionStart, SessionEnd, PreCompact, UserPromptSubmit, plus QMD-redirect), constitution layer, digest pipeline, GEPA skill evolution, multi-agent team templates, `ad init` / `ad doctor` / `ad team` / `ad spawn` CLI.
 
-[Unreleased]: https://github.com/pankaj-mahaur/Agent-Daemon/compare/v3.1.0...HEAD
+[Unreleased]: https://github.com/pankaj-mahaur/Agent-Daemon/compare/v3.2.0...HEAD
+[3.2.0]: https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v3.2.0
 [3.1.0]: https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v3.1.0
 [3.0.0]: https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v3.0.0
 [2.2.0]: https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v2.2.0
