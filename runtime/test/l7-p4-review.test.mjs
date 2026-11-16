@@ -221,11 +221,13 @@ test("validPattern refuses ad's entry points and protected paths (rules list nev
 
 // ---- preview -------------------------------------------------------------------------
 
-function fixtureHistory() {
-  const home = path.join(ROOT, `home-${++n}`);
+async function fixtureHistory(name = `home-${++n}`) {
+  const home = path.join(ROOT, name);
   const proj = path.join(home, "work", "shop");
   fs.mkdirSync(path.join(proj, ".git"), { recursive: true });
-  const slug = proj.replace(/[\\/:._]/g, "-");
+  // Claude Code's own folder name for a project: every character but letters and digits → "-"
+  // (a Windows temp folder like C:\Users\RUNNER~1\… has a "~").
+  const slug = (await import("../src/mistakes/history.mjs")).claudeProjectSlug(proj);
   const dir = path.join(home, ".claude", "projects", slug);
   fs.mkdirSync(dir, { recursive: true });
   const now = Date.now();
@@ -240,7 +242,7 @@ function fixtureHistory() {
 }
 
 test("preview: exact counts over this project's last 30 days, files filtered by date first", async () => {
-  const { home, proj } = fixtureHistory();
+  const { home, proj } = await fixtureHistory();
   const env = { HOME: home, USERPROFILE: home };
   const r = await preview.readPreviewCalls({ cwd: proj, env, home });
   const npm = proposalFor("use pnpm, not npm").pattern;
@@ -288,6 +290,13 @@ test("preview consent: asked once in the step and kept; no read without it; the 
   const ready = { result: Promise.resolve({ root: "/w", calls: [{ tool: "Bash", input: { command: "npm i x" }, os: "linux", cwd: "/w" }] }), stop() {} };
   const r4 = await step(h3, keys(""), { read: ready });
   assert.match(r4.out, /last 30 days here: would have stopped 1 command, e\.g\. npm i x/);
+});
+
+test("preview: a home folder with ~, spaces and dots (a Windows temp folder's short name) still finds the project's transcripts", async () => {
+  const { home, proj } = await fixtureHistory(`RUNNER~1 x.y-${++n}`);
+  const r = await preview.readPreviewCalls({ cwd: proj, env: { HOME: home, USERPROFILE: home }, home });
+  const { previewCounts } = await import("../src/memory/rule-proposals.mjs");
+  assert.equal(previewCounts(proposalFor("use pnpm, not npm").pattern, r.calls, { rootOf: () => r.root }).count, 3);
 });
 
 // ---- review wiring -------------------------------------------------------------------
