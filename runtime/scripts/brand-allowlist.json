@@ -1105,6 +1105,11 @@
       "rules": ["A"],
       "match": "Claude Code in bypass or don't-ask mode, and Codex, can't ask",
       "reason": "L7b entry #130: how the starter safety policy decides in the user's hosts (the user's own Codex host, not ad's engine)"
+    },
+    {
+      "path": "docs/whats-new-3.2.md",
+      "rules": ["A"],
+      "reason": "the 3.2 release in plain words: memory, recall and rules in the user's own hosts (Claude Code and Codex), not ad's engine"
     }
   ]
 }

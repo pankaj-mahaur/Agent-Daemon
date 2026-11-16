@@ -25,14 +25,18 @@ prints the `setup` command to finish with.
 |---|---|
 | `install [--host <id>] [--yes] [--dry-run] [--capture auto\|hooks\|tools] [--no-plugin] [--no-setup]` | add the server to the hosts it finds (backup first), then run `setup` |
 | `setup [--host claude-code\|codex] [--no-plugin] [--dry-run]` | add the memory hooks to Codex, and to Claude Code with the plugin or `--no-plugin` (in your own terminal) |
-| `doctor [--json]` | check each host's entry and talk to the server the way the host does; in Codex, whether you trusted the hooks |
+| `doctor [--json]` | check each host's entry and talk to the server the way the host does; in Codex, whether you trusted the hooks; a Readiness section per host says what works there and what's left to do |
 | `repair [--host <id>]` | put back an entry the installer owns |
 | `status [--json]` | what is installed where |
 | `uninstall [--host <id>] [--purge-data]` | remove exactly what it and `setup` added, keep what you changed, and list both; memory data stays unless you ask |
 | `review [--list \| --plain \| --accept-all [--with-agent] \| --proposals]` | decide what waits for review in a checklist (run it yourself, in a terminal) |
 | `remember <text>` · `forget <n>` · `restore <n>` | save, remove or bring back a note (accepted or removed at once only in your own terminal) |
+| `learnings list\|show <n>\|edit <n>\|forget <n>\|export\|import <file>` | your learnings: where each came from, edit or forget one (in your own terminal), move them between machines |
 | `config review [strict\|auto]` | every note waits for review, or a typed correction applies at once where a host can prove it |
-| `report [--days 30] [--json]` | is memory working here: what it captured, what waits, what it recalled |
+| `rules list [--json]` | the rules that ask before or stop a command or file write; `rules --help` in your own terminal for the rest |
+| `safety [on\|status]` | a starter safety policy, off by default: ask before four kinds of catastrophic commands |
+| `view [--all-projects]` | write a read-only HTML page of your learnings, rules and weekly numbers |
+| `report [--days 30] [--weeks 4] [--all-projects] [--json] [--share]` | is memory working here: week by week, what it captured, what waits, what it recalled, how often a rule asked or stopped |
 | `mistakes [--save]` | the corrections you keep typing (read-only, offline); `--save` puts them up for review |
 
 The installer's hosts: `claude-code` (through `claude mcp add`, user scope),

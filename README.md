@@ -13,7 +13,7 @@ Ships with a full **team coordination layer**: spawn worker agents (sandboxed en
 
 Skills evolve too: [GEPA](runtime/src/digest/gepa/README.md) (Genetic-Pareto Prompt Evolution) reads execution traces and proposes Pareto-optimal skill refinements that you accept or reject via `agent-daemon review`.
 
-> **v3.2.0 — memory you review, and rules that ask before a call.** Every correction ad captures now waits for your review (`ad review`), and accepted learnings come back at session start and with each prompt. A correction that names a command or a file can become a rule that asks before, or stops, that call; ad's check protects itself, and in Claude Code it fails closed while rules exist. `ad safety on` adds an opt-in starter policy, `ad memory setup` wires the hooks, and `ad memory report`, `view` and `learnings` show what is remembered. Run `ad init` once after updating. See the [release notes](CHANGELOG.md#320--2026-11-16).
+> **v3.2.0 — memory you review, and rules that ask before a call.** Every correction ad captures now waits for your review (`ad review`), and accepted learnings come back at session start and with each prompt. A correction that names a command or a file can become a rule that asks before, or stops, that call; ad's check protects itself, and in Claude Code it fails closed while rules exist. `ad safety on` adds an opt-in starter policy, `ad memory setup` wires the hooks, and `ad memory report`, `view` and `learnings` show what is remembered. Run `ad init` once after updating. See [what's new in 3.2](docs/whats-new-3.2.md) and the [release notes](CHANGELOG.md#320--2026-11-16).
 
 > **v3.1.0 — several accounts, fallback, and memory in other agents.** Sign in to many providers side by side and pick one per conversation (`--account`, `/model`); `ad fallback` lets a task continue elsewhere when a limit runs out. ad's memory now works in other agents too: Claude Code, Cursor, VS Code (Copilot), Gemini CLI and [more](docs/memory/install.md) (`ad memory install`). `ad state export` / `import` moves ad to another computer, and `/tui` tries the early fullscreen terminal UI (scroll, select, copy, F3 to find). See [What's new in 3.1](docs/whats-new-3.1.md) and the [release notes](https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v3.1.0).
 
@@ -415,7 +415,7 @@ Conversationally: tell Claude *"install this skill <url>"* — the bundled `skil
 
 ## Corrections you type: capture, review, forget
 
-Correct your agent once ("no, we use pnpm here") and ad saves it for this project, with a one-line receipt. Each capture is screened for text aimed at the agent or its memory, and nothing is used until you accept it: run `ad review` in your own terminal, where `a`, `enter`, `y` accepts the new notes from your prompts on the page. `ad remember <text>`, `ad forget <n>` and `ad restore <n>` work in the terminal, and `/agent-daemon-memory:forget 12` in Claude Code; a prompt or the agent can never remove what you said or anything you accepted. Details: [capture, review and forget](docs/memory/review.md).
+Correct your agent once ("no, we use pnpm here") and ad saves it for this project, with a one-line receipt. Each capture is screened for text aimed at the agent or its memory, and nothing is used until you accept it: run `ad review` in your own terminal, where `a`, `enter`, `y` accepts the new notes from your prompts on the page. `ad remember <text>`, `ad forget <n>` and `ad restore <n>` work in the terminal, and `/agent-daemon-memory:forget 12` in Claude Code; a prompt or the agent can never remove what you said or anything you accepted. Details: [capture, review and forget](docs/memory/review.md). `ad learnings list|show|edit|forget|export|import` shows where each learning came from and lets you change, forget or move them: [your learnings](docs/memory/learnings.md).
 
 ## When the agent repeats a mistake: rules
 
@@ -431,7 +431,7 @@ Learnings live a lifecycle instead of accumulating forever:
 
 - **Reinforce** — re-observing a known learning bumps confidence (+0.1, capped 0.95) and `observed_count` instead of being silently deduped away.
 - **Decay** — search ranking multiplies BM25 relevance by a 90-day half-life on last-verified/last-retrieved time, so stale entries sink without being deleted.
-- **Consolidate** — `ad memory consolidate` proposes near-duplicate merges (token Jaccard ≥ 0.8), stale archives, and contradiction candidates. Nothing applies without explicit acceptance (`--apply-merges` / `--apply-stale`).
+- **Consolidate** — `ad memory consolidate` proposes near-duplicate merges (token Jaccard ≥ 0.8), stale archives, and contradiction candidates. A learning that has a rule is never archived as stale. Nothing applies without explicit acceptance (`--apply-merges` / `--apply-stale`).
 - **User facts** — preferences are observed per project and served in the projects that observed them; nothing becomes cross-project by itself.
 - **Typed observations** ([Honcho](https://github.com/plastic-labs/honcho)-inspired, deterministic) — each learning is tagged `explicit` (directly stated) vs `inferred` (generalized pattern); recall and the representation prefer stated facts. We keep the honest 2-way split — distinguishing deductive from inductive reliably needs an LLM, so we don't fake it.
 - **User representation** — `buildUserRepresentation()` rolls facts + high-confidence stated learnings into a "how this user works" profile, surfaced at SessionStart and via the `memory_profile` MCP tool — the no-LLM analog of Honcho's dialectic.
@@ -1025,6 +1025,7 @@ Copy-paste configuration templates:
 - [Moving ad to another computer](docs/harness.md#moving-ad-to-another-computer) — `ad state export` / `import`: what travels, what never does, conflicts, rollback
 - [Upgrading to 3.0](docs/upgrade-3.0.md) — What changed from 2.x, renamed commands and folders, rolling back
 - [Correction benchmark](bench/correction-bench/README.md) — Does an agent repeat a corrected mistake, with and without ad's memory? Protocol, drivers, analysis
+- [What's new in 3.2](docs/whats-new-3.2.md) — The 3.2 release in plain words: review first, recall, rules, the starter safety policy, upgrading
 - [Testing](docs/testing.md) — The test layers, the live terminal UI tests, mutation checks, CI
 - [Manual test](docs/manual-test.md) — End-to-end checklist (Claude Code mode + harness + terminal UI)
 - [Ecosystem](docs/ecosystem.md) — Hermes interop, cross-agent awareness

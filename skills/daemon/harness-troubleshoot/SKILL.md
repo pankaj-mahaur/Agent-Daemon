@@ -5,7 +5,7 @@ license: MIT
 metadata:
   author: agent-daemon
   spec: agentskills.io
-  version: "1.3"
+  version: "1.4"
 allowed-tools: Bash, Read, Grep
 ---
 
@@ -67,6 +67,8 @@ Any harness command errors out, hangs, or finishes without doing the work ("my s
 | doctor `rules.switch`: no rule is left but the check still fails closed (#121) | lowering the check needs the user's review; the step didn't finish, or a run without review saw the change | ask the user to run `review` in their own terminal |
 | `ad's self-protection stops this call: …` (#122) | the call would change ad itself (its commands, state, hooks, variables) | tell the user what you were doing; if they want it, they make the change in their own terminal. Never retry it another way |
 | a command waits for `— type <code>:` (#123) | it lowers enforcement; the code is read from the terminal, never stdin | the user's step; never script or pipe an answer |
+| `ad memory rules …` / `ad memory safety …`: "unknown subcommand" | on a clone, rules, safety and learnings are top-level commands; `ad memory <verb>` reaches the package only for install, setup, doctor, repair, status and uninstall | `ad rules …`, `ad safety …`, `ad learnings …` |
+| a rule seems to miss, or to apply, on a feature branch | a branch rule (`on <branch>` in `rules list`) applies on that branch, when the branch is unknown, and for pushes that target it | by design; read `rules list` before calling it a miss |
 | hook log: `the memory store is schema vN, older/newer than this ad's` (#99) | hooks never upgrade the store: older → a background upgrade, captures wait in the journal; newer → an older ad runs the hooks | older: wait for the next session, or run any `ad` memory command; newer: update the ad that `Hook script` names |
 | `ad digest-latest` finds no harness session | it only searches `~/.claude/projects` | `ad digest --transcript ~/.agent-daemon/engine/sessions/<…>/rollout-*.jsonl --cwd <project>` |
 | `ad loop` stops right away (#18) | a STOP file exists, or a budget is too small | remove `.agent-daemon/STOP`; raise `--max-*` |
@@ -94,6 +96,7 @@ Any harness command errors out, hangs, or finishes without doing the work ("my s
 | doctor "no SQLite driver", or writes fail with "no such module: fts5" (#89) | memory runs on `better-sqlite3`, else Node's built-in SQLite, which has full-text search only from Node 22.16 | Node 22.16+, or `cd runtime && npm install`; doctor's "SQLite driver" row names the one in use (`AD_SQLITE_DRIVER` picks) |
 | the memory server stops: "the host didn't expand ${…}" (#90) | the host passed a variable it didn't replace (Cursor's `${PLUGIN_ROOT}`); ad won't read a wrong path | the installer route, which writes absolute paths: `npx agent-daemon-memory install` or `ad memory install` |
 | doctor `capture.double` (#55) | Claude Code has ad's hooks and the entry uses `--capture tools` | `install --host claude-code --capture hooks` |
+| a script counts `ok: false` rows in `doctor --json` as failures | rows with `section: "readiness"` are advisory per-host gaps (a starter policy that is paused or only partly on is one) | score only rows without that section; `safety status` shows the policy's state |
 | `ad mistakes`: "Run it again with --yes to read them" (#92) | it reads history only after a yes, and there was no terminal to ask in | the user runs it in a terminal and answers `y`, or passes `--yes` themselves; never run it on the user's real history for them |
 | `ad mistakes`: "No Claude Code or Codex history found for this project" (#93) | "this project" is the git repository (outside one: only that exact folder); Claude Code deletes transcripts after `cleanupPeriodDays` (30); `CLAUDE_CONFIG_DIR`/`CODEX_HOME` move the history; headless runs (`claude -p`, `codex exec`) are left out | `--all-projects`; run from the work folder with the agents' own env; raise `cleanupPeriodDays` |
 | `ad mistakes`: "Skipped N compressed Codex sessions" (#94) | Codex's older `.jsonl.zst` files need Node 22.15+ (zstd) | update Node |
@@ -106,6 +109,7 @@ Any harness command errors out, hangs, or finishes without doing the work ("my s
 | "The user's starter safety policy asks before this command" / "stops this command here" (#130) | the user turned on the starter safety policy: it asks before a recursive delete of home, a root or the project folder, a force push to the default branch, reading `.env`/`.env.local`/`.env.*.local`, and `--no-verify` on git commit or push; Codex and bypass modes can't ask, so the call is stopped | don't retry or work around it: tell the user what you wanted to run and why. Only the user allows it (one call, or turning the policy off), in their own terminal; `safety status` there shows how |
 | "the starter safety policy is turned on by the user, in their own terminal. Nothing changed" (#131) | `safety on`/`off` ran from the agent's shell (`AD_TOOL_SHELL=1` or no terminal): only the user's own terminal changes it | ask the user to run it in their own terminal |
 | `safety on`: "nothing changed: there is no guard copy yet" / "the guard copy … is older" (#132) | the hook runs from a guard copy under `~/.agent-daemon/memory/dist/` that doesn't know the policy yet | the user runs `repair` in their own terminal, then `safety on` |
+| setup or review asks "Ask before four kinds of catastrophic commands?" | the starter safety policy's one-time offer (install, `ad init` and a review with nothing waiting don't make it) | the user's choice: a no is kept, `safety status` shows the state, `safety on` turns it on any time |
 
 ### Accounts, providers, limits and fallback
 

@@ -5,7 +5,7 @@ license: MIT
 metadata:
   author: agent-daemon
   spec: agentskills.io
-  version: "1.0"
+  version: "1.1"
 allowed-tools: Bash, Read, Edit, Write, Grep, Glob
 disable-model-invocation: false
 ---
@@ -45,7 +45,7 @@ Map each change to the docs that describe it, and update every one that is now w
 | `runtime/src/cli*.mjs`, new commands or flags | README "CLI reference" + quick start, `docs/installation-guide.md` |
 | `runtime/src/memory/**`, `runtime/src/hooks/**`, `mcp/**` | README memory sections, `docs/architecture.md`, `mcp/agent-daemon-memory/README.md` |
 | `runtime/test/**`, `testkit/**`, `.github/workflows/**` | `docs/testing.md`, `docs/contributing.md` |
-| `runtime/scripts/check-brand.mjs`, `brand-allowlist.json`, `runtime/src/engine/attribution.mjs` | `docs/testing.md` "The brand lint"; a new allowlist entry needs a reason (and a `match` where a line will do); a new attribution text needs a pattern in `brandPatterns()` and a sample in `renderedSamples()`; the own-harness plan's status |
+| `runtime/scripts/check-brand.mjs`, `brand-allowlist.json`, `runtime/src/engine/attribution.mjs` | `docs/testing.md` "The brand lint"; a new allowlist entry needs a reason (and a `match` where a line will do), inserted as text (a JSON rewrite reformats the whole file); a host name inside an identifier counts too, so rerun `check-brand.mjs --strict --tracked` after adding a test that names one; a new attribution text needs a pattern in `brandPatterns()` and a sample in `renderedSamples()`; the own-harness plan's status |
 | `install.sh`, `install.ps1` | README quick start, `docs/installation-guide.md` |
 | a new error a user can hit | a numbered `docs/troubleshooting.md` entry + the index table at the end of `docs/tui.md` (for TUI errors) |
 
@@ -67,6 +67,7 @@ Map each change to the docs that describe it, and update every one that is now w
   - `skills/daemon/ad-harness` — how to hand work to the harness, when commands or safety defaults change.
   Skills ship to users' `~/.claude/skills/`: no personal names, paths, client projects or secrets in them.
 - **What was learned this session.** For each gotcha, decision or correction that cost time: one line in `.agent-daemon/memory/activeContext.md` (local project memory) and, if it changes how to work here, a line in the matching skill. Learnings are facts with the reason ("X happens because Y; do Z"), not a diary.
+- **In a worktree,** write learnings to shared notes, never to a new `.agent-daemon/` in the worktree root: the journal-drain and capture tests resolve the repo's folder and fail (ENOENT on `sessions.jsonl`).
 
 ### 5. Hygiene: nothing personal, internal or generated reaches GitHub
 
@@ -90,6 +91,12 @@ node --test runtime/test/claim-cross-project.test.mjs   # the approved "never se
 cd runtime && npm test
 AD_REAL_ENGINE=1 node --test --test-concurrency=1 --test-force-exit test/tui-live.test.mjs   # after app/session/view/engine changes
 ```
+- **In a worktree,** run `npm ci` in `runtime/` and `npm rebuild better-sqlite3` before `npm test`: without them imports fail (`jsonc-parser`) or load the main checkout's native build (`invalid ELF header`). Failures loading the native module are setup, not the change.
+- **A new ledger or plan item kind** needs a line in install's preview renderer (`pendingWhat`) and a test that no preview line prints `undefined`.
+- **A new `reviewToken(` caller** goes in `test/review-gate.test.mjs`'s callers list and `test/l7-self-protect.test.mjs`'s SITES; check first that self-protection already denies the verb from the agent's shell.
+- **A test that puts a temp path into a Bash command** quotes it or uses forward slashes: on Windows, unquoted backslashes are Bash escapes (`rm -rf D:\a\b` runs `rm -rf D:ab`). Parse a spawned hook's stdout through a helper that reports status, signal, stdout and stderr.
+- **The memory package's closure scanner** reads `export"` / `import"` inside string literals as module specifiers: write such strings (`"learnings export"`) as template literals, or the build reports a bogus bare import.
+- **Anything `report.mjs` imports lands in the plugin's server tree:** keep CLI-only work in its own module, loaded only by the CLIs.
 - Pushing to a branch with an open PR, opening one, or releasing: run the `ad-ci-readiness` skill too (the CI pipeline mirrored here and in a Linux container, the PR's CI read per test, the release-readiness checklist).
 - Stage files by name (never `git add -A`), never `--no-verify`, commit with the attribution trailer, push the feature branch (never `main` directly). After a PR: bind it, read CI (the real-engine job may fail without failing the run — read its result).
 - Report to the user in one short block: docs updated, skills updated, learnings recorded, hygiene result, verification result, what was pushed.

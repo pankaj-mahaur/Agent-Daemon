@@ -99,6 +99,10 @@ So a prompt that someone else wrote, or the agent itself, can never remove what 
 said or anything you accepted. When the agent removes or asks to forget a note, your
 next Claude Code prompt says so once, and review lists it.
 
+Forgetting an accepted note that has a [rule](rules.md) shows "also removes rule N"
+and ends the rule only with the typed code; otherwise the rule stays, and
+`rules list` marks its learning as gone.
+
 ## Review mode
 
 `npx agent-daemon-memory config review strict` makes every learning wait for review on
