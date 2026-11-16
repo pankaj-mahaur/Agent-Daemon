@@ -1,5 +1,5 @@
 {
-  "codexVersion": "0.163.0",
+  "codexVersion": "0.169.0",
   "methods": {
     "clientRequests": [
       "account/gatewayOAuth/cancel",
@@ -11,6 +11,7 @@
       "account/rateLimitResetCredit/consume",
       "account/rateLimits/read",
       "account/read",
+      "account/securitySetup/read",
       "account/sendAddCreditsNudgeEmail",
       "account/usage/read",
       "account/workspaceMessages/read",
@@ -32,6 +33,7 @@
       "externalAgentConfig/import",
       "externalAgentConfig/import/readHistories",
       "externalAgentConfig/import/recordHistory",
+      "feedback/save",
       "feedback/upload",
       "fs/copy",
       "fs/createDirectory",
@@ -54,6 +56,8 @@
       "mcpServerStatus/list",
       "model/list",
       "modelProvider/capabilities/read",
+      "modelProvider/config/write",
+      "modelProvider/list",
       "permissionProfile/list",
       "plugin/install",
       "plugin/installed",
@@ -196,6 +200,7 @@
       "thread/realtime/transcript/delta",
       "thread/realtime/transcript/done",
       "thread/reverted",
+      "thread/section/changed",
       "thread/settings/updated",
       "thread/started",
       "thread/status/changed",
@@ -325,6 +330,7 @@
       "thread/realtime/transcript/delta": "ThreadRealtimeTranscriptDeltaNotification",
       "thread/realtime/transcript/done": "ThreadRealtimeTranscriptDoneNotification",
       "thread/reverted": "ThreadRevertedNotification",
+      "thread/section/changed": "ThreadSectionChangedNotification",
       "thread/settings/updated": "ThreadSettingsUpdatedNotification",
       "thread/started": "ThreadStartedNotification",
       "thread/status/changed": "ThreadStatusChangedNotification",
@@ -914,11 +920,9 @@
         {
           "tag": "input_audio",
           "props": [
-            "audio_url",
             "type"
           ],
           "types": {
-            "audio_url": "string",
             "type": "enum(input_audio)"
           }
         },
@@ -998,12 +1002,14 @@
       "props": [
         "authUrl",
         "error",
+        "loginId",
         "providerId",
         "status"
       ],
       "types": {
         "authUrl": "null|string",
         "error": "null|string",
+        "loginId": "null|string",
         "providerId": "string",
         "status": "GatewayOAuthStatus"
       }
@@ -1079,7 +1085,8 @@
         "extensions",
         "mcpServerOpenaiFormElicitation",
         "optOutNotificationMethods",
-        "requestAttestation"
+        "requestAttestation",
+        "requiredHumanApproval"
       ],
       "types": {
         "experimentalApi": "boolean",
@@ -1087,7 +1094,8 @@
         "extensions": "null|object",
         "mcpServerOpenaiFormElicitation": "boolean",
         "optOutNotificationMethods": "array<string>|null",
-        "requestAttestation": "boolean"
+        "requestAttestation": "boolean",
+        "requiredHumanApproval": "boolean"
       }
     },
     "ItemGuardianApprovalReviewCompletedNotification": {
@@ -1151,6 +1159,9 @@
         "threadId": "string",
         "turnId": "string"
       }
+    },
+    "LegacyAppPathString": {
+      "type": "string"
     },
     "ListMcpServerStatusParams": {
       "required": [],
@@ -1332,12 +1343,14 @@
       "props": [
         "cursor",
         "includeHidden",
-        "limit"
+        "limit",
+        "modelProvider"
       ],
       "types": {
         "cursor": "null|string",
         "includeHidden": "boolean|null",
-        "limit": "integer|null"
+        "limit": "integer|null",
+        "modelProvider": "null|string"
       }
     },
     "ModelReroutedNotification": {
@@ -1498,6 +1511,7 @@
       ],
       "props": [
         "exitCode",
+        "outputDrainTimedOut",
         "processHandle",
         "stderr",
         "stderrCapReached",
@@ -1506,6 +1520,7 @@
       ],
       "types": {
         "exitCode": "integer",
+        "outputDrainTimedOut": "boolean|null",
         "processHandle": "string",
         "stderr": "string",
         "stderrCapReached": "boolean",
@@ -1647,7 +1662,6 @@
     },
     "ReviewDelivery": {
       "enum": [
-        "detached",
         "inline"
       ]
     },
@@ -1981,6 +1995,23 @@
       ],
       "types": {
         "threadId": "string"
+      }
+    },
+    "ThreadEnvironment": {
+      "required": [
+        "cwd",
+        "environmentId",
+        "runtimeWorkspaceRoots"
+      ],
+      "props": [
+        "cwd",
+        "environmentId",
+        "runtimeWorkspaceRoots"
+      ],
+      "types": {
+        "cwd": "LegacyAppPathString",
+        "environmentId": "string",
+        "runtimeWorkspaceRoots": "array<LegacyAppPathString>"
       }
     },
     "ThreadForkParams": {
@@ -2414,6 +2445,20 @@
         "threadId": "string"
       }
     },
+    "ThreadSectionChangedNotification": {
+      "required": [
+        "sectionId",
+        "threadId"
+      ],
+      "props": [
+        "sectionId",
+        "threadId"
+      ],
+      "types": {
+        "sectionId": "null|string",
+        "threadId": "string"
+      }
+    },
     "ThreadSetNameParams": {
       "required": [
         "name",
@@ -2494,6 +2539,7 @@
         "cwd",
         "disabledPluginIds",
         "effort",
+        "environments",
         "model",
         "multiAgentMode",
         "permissions",
@@ -2510,6 +2556,7 @@
         "cwd": "null|string",
         "disabledPluginIds": "array<string>|null",
         "effort": "ReasoningEffort|null",
+        "environments": "array<TurnEnvironmentParams>|null",
         "model": "null|string",
         "multiAgentMode": "MultiAgentMode|null",
         "permissions": "null|string",
@@ -2701,6 +2748,22 @@
         "diff": "string",
         "threadId": "string",
         "turnId": "string"
+      }
+    },
+    "TurnEnvironmentParams": {
+      "required": [
+        "cwd",
+        "environmentId"
+      ],
+      "props": [
+        "cwd",
+        "environmentId",
+        "runtimeWorkspaceRoots"
+      ],
+      "types": {
+        "cwd": "LegacyAppPathString",
+        "environmentId": "string",
+        "runtimeWorkspaceRoots": "array<LegacyAppPathString>|null"
       }
     },
     "TurnItemsView": {
@@ -3272,12 +3335,10 @@
         {
           "tag": "audio",
           "props": [
-            "type",
-            "url"
+            "type"
           ],
           "types": {
-            "type": "enum(audio)",
-            "url": "string"
+            "type": "enum(audio)"
           }
         },
         {
@@ -3364,6 +3425,7 @@
             "delivery",
             "id",
             "memoryCitation",
+            "moderation",
             "phase",
             "questions",
             "text",
@@ -3373,6 +3435,7 @@
             "delivery": "AgentMessageDelivery|null",
             "id": "string",
             "memoryCitation": "MemoryCitation|null",
+            "moderation": "AgentMessageModeration|null",
             "phase": "MessagePhase|null",
             "questions": "array<AsyncUserInputQuestion>|null",
             "text": "string",
@@ -3550,8 +3613,9 @@
           "tag": "imageGeneration",
           "props": [
             "failure",
+            "generationId",
             "id",
-            "result",
+            "inputImages",
             "revisedPrompt",
             "savedPath",
             "status",
@@ -3560,8 +3624,9 @@
           ],
           "types": {
             "failure": "ImageGenerationFailure|null",
+            "generationId": "null|string",
             "id": "string",
-            "result": "string",
+            "inputImages": "array<ImageGenerationInputImage>",
             "revisedPrompt": "null|string",
             "savedPath": "AbsolutePathBuf|null",
             "status": "string",
@@ -3779,12 +3844,14 @@
       ],
       "props": [
         "completedAtMs",
+        "contentTokenCount",
         "item",
         "threadId",
         "turnId"
       ],
       "types": {
         "completedAtMs": "integer",
+        "contentTokenCount": "integer|null",
         "item": "ThreadItem",
         "threadId": "string",
         "turnId": "string"
@@ -3889,11 +3956,13 @@
       ],
       "props": [
         "account",
-        "requiresOpenaiAuth"
+        "requiresOpenaiAuth",
+        "userId"
       ],
       "types": {
         "account": "Account|null",
-        "requiresOpenaiAuth": "boolean"
+        "requiresOpenaiAuth": "boolean",
+        "userId": "null|string"
       }
     },
     "LoginAccountParams": {
@@ -4103,10 +4172,12 @@
     "HooksListParams": {
       "required": [],
       "props": [
-        "cwds"
+        "cwds",
+        "threadId"
       ],
       "types": {
-        "cwds": "array<string>"
+        "cwds": "array<string>",
+        "threadId": "null|string"
       }
     },
     "HookMetadata": {
@@ -4172,6 +4243,7 @@
       "required": [],
       "props": [
         "archived",
+        "currentAccountOnly",
         "cursor",
         "cwd",
         "excludedThreadIds",
@@ -4187,6 +4259,7 @@
       ],
       "types": {
         "archived": "boolean|null",
+        "currentAccountOnly": "boolean",
         "cursor": "null|string",
         "cwd": "ThreadListCwdFilter|null",
         "excludedThreadIds": "array<string>|null",
