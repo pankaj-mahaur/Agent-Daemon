@@ -224,7 +224,8 @@ function pidAlive(pid) {
     return e.code === "EPERM";
   }
 }
-export function jobLocked(id, home) {
+// identityOf: the holder's OS identity lookup (lock.mjs's cached one by default).
+export function jobLocked(id, home, { identityOf } = {}) {
   // A 3.0 .pid file: busy while its pid lives and the file is recent, else gone.
   const legacy = legacyLockFile(id, home);
   if (existsSync(legacy)) {
@@ -236,7 +237,7 @@ export function jobLocked(id, home) {
     if (pid && pidAlive(pid) && fresh) return true;
     rmSync(legacy, { force: true });
   }
-  return liveLocks({ dir: lockDirOf(home) }).some((h) => h.name === leaseName(id));
+  return liveLocks({ dir: lockDirOf(home), ...(identityOf ? { identityOf } : {}) }).some((h) => h.name === leaseName(id));
 }
 
 function runJob(job, { home, spawnFn = spawn, onExit } = {}) {

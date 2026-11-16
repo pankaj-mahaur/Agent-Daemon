@@ -251,7 +251,9 @@ test("the norm-key backfill: never in a hook, resumes after a partial run", asyn
   const first = backfillNormKeys(handle, { budgetMs: 0, batch: 1000, now: () => (clock += 1) });
   assert.equal(first.finished, false);
   assert.ok(handle.get("SELECT COUNT(*) AS n FROM learnings WHERE norm_key IS NULL").n > 0);
-  const rest = backfillNormKeys(handle, { budgetMs: 60_000 });
+  // No budget: the rest must finish whatever the runner's speed (a 60 s budget ran out on
+  // CI's Windows runner, which took over a minute for these 100,000 rows).
+  const rest = backfillNormKeys(handle, { budgetMs: Infinity });
   assert.equal(rest.finished, true);
   assert.equal(handle.get("SELECT COUNT(*) AS n FROM learnings WHERE norm_key IS NULL").n, 0);
 });

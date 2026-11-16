@@ -10,6 +10,9 @@ import { join } from "node:path";
 import { createSecretStore, dpapiBackend, fileBackend, windowsPowerShellEnv } from "../src/auth/secrets.mjs";
 
 const FAKE_KEY = "sk-or-v1-test-0123456789abcdef";
+// The first Windows PowerShell start on a CI runner can take over the CLI's 15 s (CI
+// saw ETIMEDOUT); this test is about the ciphertext, not how fast PowerShell starts.
+const PS_COLD_START_MS = 120_000;
 
 function withDir(fn) {
   const dir = mkdtempSync(join(tmpdir(), "ad-secrets-"));
@@ -42,9 +45,9 @@ test("secret names cannot escape the store directory", () => {
   assert.throws(() => store.set("ok", "   "), /non-empty/);
 });
 
-test("DPAPI backend stores ciphertext, not the key", { skip: process.platform !== "win32" && "Windows only" }, () => {
+test("DPAPI backend stores ciphertext, not the key", { skip: process.platform !== "win32" && "Windows only", timeout: 4 * PS_COLD_START_MS }, () => {
   withDir((dir) => {
-    const store = createSecretStore(dpapiBackend(dir));
+    const store = createSecretStore(dpapiBackend(dir, { timeoutMs: PS_COLD_START_MS }));
     store.set("openrouter", FAKE_KEY);
     const [file] = readdirSync(dir);
     assert.equal(file, "openrouter.dpapi");

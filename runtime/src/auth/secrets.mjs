@@ -42,8 +42,8 @@ function ensureDir(dir) {
   if (process.platform !== "win32") chmodSync(dir, 0o700);
 }
 
-const run = (cmd, args, input, env) =>
-  execFileSync(cmd, args, { input, env, encoding: "utf8", windowsHide: true, timeout: TIMEOUT_MS, stdio: ["pipe", "pipe", "pipe"] });
+const run = (cmd, args, input, env, timeout = TIMEOUT_MS) =>
+  execFileSync(cmd, args, { input, env, encoding: "utf8", windowsHide: true, timeout, stdio: ["pipe", "pipe", "pipe"] });
 
 // Launched from pwsh 7, PSModulePath points Windows PowerShell 5.1 at the 7.x
 // Microsoft.PowerShell.Security module, which it cannot load
@@ -66,10 +66,10 @@ const PS_UNPROTECT_MANY =
   "[Console]::Out.Write((ConvertTo-Json -InputObject @($out) -Compress))";
 // By absolute path: it receives secret values on stdin, so a powershell.exe
 // planted in the folder `ad auth` runs from must never be the one started.
-const powershell = (script, input) => {
+const powershell = (script, input, timeoutMs) => {
   const exe = systemTool("powershell.exe");
   if (!exe) throw new Error("Windows PowerShell isn't in %SystemRoot%\\System32, so ad can't encrypt or read the secret.");
-  return run(exe, ["-NoProfile", "-NonInteractive", "-Command", script], input, windowsPowerShellEnv());
+  return run(exe, ["-NoProfile", "-NonInteractive", "-Command", script], input, windowsPowerShellEnv(), timeoutMs);
 };
 
 // Write a file that is 0600 from its first byte: a new temp file, renamed over the
@@ -109,10 +109,11 @@ export const fileBackend = (dir) => ({
   },
 });
 
-export const dpapiBackend = (dir, { ps = powershell } = {}) => ({
+// timeoutMs: how long one PowerShell start may take (a test on a cold CI runner waits longer).
+export const dpapiBackend = (dir, { ps = powershell, timeoutMs = TIMEOUT_MS } = {}) => ({
   name: "dpapi",
   set(name, value) {
-    const cipher = ps(PS_PROTECT, value).trim();
+    const cipher = ps(PS_PROTECT, value, timeoutMs).trim();
     if (!cipher) throw new Error("DPAPI encryption returned nothing");
     ensureDir(dir);
     writePrivate(join(dir, `${name}.dpapi`), cipher);
@@ -120,7 +121,7 @@ export const dpapiBackend = (dir, { ps = powershell } = {}) => ({
   get(name) {
     const p = join(dir, `${name}.dpapi`);
     if (!existsSync(p)) return null;
-    const value = ps(PS_UNPROTECT, readFileSync(p, "utf8"));
+    const value = ps(PS_UNPROTECT, readFileSync(p, "utf8"), timeoutMs);
     if (!value) throw new Error(`stored secret ${name} decrypted to nothing`);
     return value;
   },
@@ -129,7 +130,7 @@ export const dpapiBackend = (dir, { ps = powershell } = {}) => ({
     const present = names.filter((n) => existsSync(join(dir, `${n}.dpapi`)));
     const out = new Map(names.map((n) => [n, null]));
     if (!present.length) return out;
-    const values = JSON.parse(ps(PS_UNPROTECT_MANY, JSON.stringify(present.map((n) => readFileSync(join(dir, `${n}.dpapi`), "utf8")))) || "[]");
+    const values = JSON.parse(ps(PS_UNPROTECT_MANY, JSON.stringify(present.map((n) => readFileSync(join(dir, `${n}.dpapi`), "utf8"))), timeoutMs) || "[]");
     present.forEach((n, i) => out.set(n, values[i] || null));
     return out;
   },

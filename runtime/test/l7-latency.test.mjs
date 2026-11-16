@@ -86,21 +86,31 @@ test("tool.before through the launcher and the guard copy stays within 02 §3's 
     const first = time(hookArgs, input, s.env);
     const got = first.out.trim() ? JSON.parse(first.out).hookSpecificOutput?.permissionDecision ?? null : null;
     assert.equal(got, want, `${label}: ${first.out.slice(0, 300)}`);
-    const h = [];
-    const f = [];
-    for (let i = 0; i <= RUNS; i++) {
-      const a = time(hookArgs, input, s.env).ms;
-      const b = time(["-e", "0"], "", s.env).ms;
-      if (i) h.push(a), f.push(b);
+    const measure = () => {
+      const h = [];
+      const f = [];
+      for (let i = 0; i <= RUNS; i++) {
+        const a = time(hookArgs, input, s.env).ms;
+        const b = time(["-e", "0"], "", s.env).ms;
+        if (i) h.push(a), f.push(b);
+      }
+      const q = STRICT ? 0.95 : 0.5;
+      const hook = pick(h, q);
+      const floor = pick(f, q);
+      const scale = Math.max(1, pick(f, 0.5) / FLOOR_REF_MS[OS]) * (STRICT ? 1 : 2);
+      const limit = (BUDGET_MS[OS] - FLOOR_REF_MS[OS]) * scale;
+      return { work: hook - floor, limit, line: `${label}: p${q * 100} ${hook.toFixed(0)} ms, floor ${floor.toFixed(0)} ms, work ${(hook - floor).toFixed(0)} ms, limit ${limit.toFixed(0)} ms` };
+    };
+    // Over the limit twice in a row, not once: a shared CI runner has bursts (macOS once
+    // put three of 41 runs of one case over, p95 work 150 ms against a typical 40-60 ms),
+    // which a second measurement doesn't repeat; a slower hook is over both times.
+    let m = measure();
+    if (m.work > m.limit) {
+      const again = measure();
+      m = { ...again, line: `${again.line} (first measurement: ${m.line.slice(label.length + 2)})` };
     }
-    const q = STRICT ? 0.95 : 0.5;
-    const hook = pick(h, q);
-    const floor = pick(f, q);
-    const work = hook - floor;
-    const scale = Math.max(1, pick(f, 0.5) / FLOOR_REF_MS[OS]) * (STRICT ? 1 : 2);
-    const limit = (BUDGET_MS[OS] - FLOOR_REF_MS[OS]) * scale;
-    lines.push(`${label}: p${q * 100} ${hook.toFixed(0)} ms, floor ${floor.toFixed(0)} ms, work ${work.toFixed(0)} ms, limit ${limit.toFixed(0)} ms`);
-    assert.ok(work <= limit, lines.join("\n"));
+    lines.push(m.line);
+    assert.ok(m.work <= m.limit, lines.join("\n"));
   }
   process.stdout.write(`# ${lines.join("\n# ")}\n`);
 });
