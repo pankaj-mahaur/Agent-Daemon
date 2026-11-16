@@ -17,9 +17,12 @@ export const makeCode = (alphabet = CODE_LETTERS, n = 4) => Array.from({ length:
 
 /**
  * The controlling terminal, opened apart from stdin and stdout → { ask(question): Promise<string>,
- * close() } or null when this process has none.
+ * close() } or null when this process has none. A run whose stdin isn't a terminal (a script, a
+ * CI job, a test) has none: nothing is opened. On Windows a console can exist without anyone at
+ * it (a CI runner's), and reading it would wait forever.
  */
-export function openTty({ platform = process.platform, open = fs.openSync, read = fs.readSync, write = fs.writeSync, close = fs.closeSync } = {}) {
+export function openTty({ platform = process.platform, isTTY = () => Boolean(process.stdin.isTTY), open = fs.openSync, read = fs.readSync, write = fs.writeSync, close = fs.closeSync } = {}) {
+  if (!isTTY()) return null;
   let rfd;
   let wfd;
   try {
@@ -59,9 +62,9 @@ export function openTty({ platform = process.platform, open = fs.openSync, read 
  * hour"); proven: the run proved itself with the dialog code (no second ask); tty, alphabet,
  * code: seams for tests (tty: { ask(question) }).
  */
-export async function confirmTypedCode({ what, proven = false, tty, alphabet = CODE_LETTERS, code } = {}) {
+export async function confirmTypedCode({ what, proven = false, tty, alphabet = CODE_LETTERS, code, isTTY } = {}) {
   if (proven) return { ok: true };
-  const term = tty === undefined ? openTty() : tty;
+  const term = tty === undefined ? openTty(isTTY ? { isTTY } : {}) : tty;
   if (!term) return { ok: false, text: "this needs a code typed in your terminal, and this run has none; nothing changed" };
   const want = (code ?? makeCode(alphabet)).toLowerCase();
   let typed;

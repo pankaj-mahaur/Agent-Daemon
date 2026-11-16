@@ -84,17 +84,17 @@ test("openTty: /dev/tty (CONIN$/CONOUT$ on Windows), one line read byte by byte,
     },
     close: () => {},
   };
-  const t = T.openTty({ platform: "linux", ...fake });
+  const t = T.openTty({ platform: "linux", isTTY: () => true, ...fake });
   assert.equal(await t.ask("q? "), "kqtw");
   assert.deepEqual(opened, [["/dev/tty", "r+"]]);
   assert.deepEqual(written, [[11, "q? "]]);
   assert.equal(input.toString(), "rest", "nothing past the line is taken");
   opened.length = 0;
-  T.openTty({ platform: "win32", ...fake });
+  T.openTty({ platform: "win32", isTTY: () => true, ...fake });
   assert.deepEqual(opened, [["\\\\.\\CONIN$", "r+"], ["\\\\.\\CONOUT$", "r+"]], "the device namespace, opened only if it exists");
   // Node namespaces a bare name against the cwd (a file); the \\.\ form it leaves alone.
   assert.equal(path.win32.toNamespacedPath("\\\\.\\CONIN$"), "\\\\.\\CONIN$");
-  assert.equal(T.openTty({ platform: "linux", ...fake, open: () => { throw Object.assign(new Error("no tty"), { code: "ENXIO" }); } }), null);
+  assert.equal(T.openTty({ platform: "linux", isTTY: () => true, ...fake, open: () => { throw Object.assign(new Error("no tty"), { code: "ENXIO" }); } }), null);
 });
 
 test("reviewToken says when the run proved itself with the dialog code; cliToken passes it on", async () => {
@@ -194,3 +194,17 @@ test("ad init calls the gate before writing a changed rules-check entry (a spawn
   assert.ok(src.indexOf("hookPlan.changed = false;", at) > at);
   assert.ok(at < src.indexOf("if (hookPlan.changed) {", at), "before the plan is acted on");
 });
+
+test("no terminal on stdin (a script, a CI job, a test): nothing is opened, and the code is refused, never waited for", async () => {
+  // A Windows runner has a console nobody sits at: CONIN$ would open and the read wait forever.
+  let opened = 0;
+  const open = () => (opened++, 3);
+  for (const platform of ["win32", "linux", "darwin"]) assert.equal(T.openTty({ platform, isTTY: () => false, open }), null, platform);
+  assert.equal(opened, 0, "openTty never opens a device without a terminal on stdin");
+  const r = await T.confirmTypedCode({ what: "x", isTTY: () => false });
+  assert.equal(r.ok, false);
+  assert.match(r.text, /code typed in your terminal, and this run has none/);
+  // The default reads this process's own stdin: under the test runner it isn't a terminal.
+  if (!process.stdin.isTTY) assert.equal((await T.confirmTypedCode({ what: "x" })).ok, false);
+});
+
