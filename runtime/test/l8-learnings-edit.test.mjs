@@ -25,6 +25,12 @@ const svc = await import("../src/memory/review-service.mjs");
 const { learningsMain } = await import("../src/memory/learnings-cli.mjs");
 const { testReviewToken } = await import("../testkit/memory-trust.mjs");
 
+// No test may reach a real terminal or editor: on Windows a console handle (CONIN$) opens
+// even under CI and a read on it waits forever. Each call injects these (a test that needs
+// a terminal passes its own): no controlling terminal for the typed code, no TTY for the
+// editor, and an empty answer to any prompt.
+const NO_TERMINAL = Object.freeze({ tty: null, isTTY: () => false, ask: async () => "" });
+
 const opened = [];
 after(() => {
   for (const h of opened) {
@@ -64,7 +70,7 @@ const row = (h, id) => h.get("SELECT * FROM learnings WHERE id = ?", [id]);
 const TOKEN = async () => ({ token: testReviewToken() });
 async function edit(h, argv, extra = {}) {
   const lines = [];
-  const code = await learningsMain("edit", argv, { out: (l) => lines.push(l), handle: h, cwd: CWD, keys: KEYS, command: (v) => `ad ${v}`, token: TOKEN, root: path.join(ROOT, `adroot-${n}`), now: NOW, ...extra });
+  const code = await learningsMain("edit", argv, { ...NO_TERMINAL, out: (l) => lines.push(l), handle: h, cwd: CWD, keys: KEYS, command: (v) => `ad ${v}`, token: TOKEN, root: path.join(ROOT, `adroot-${n}`), now: NOW, ...extra });
   return { code, text: lines.join("\n") };
 }
 
@@ -173,7 +179,7 @@ test("a forget for good takes the whole chain: no row keeps any earlier words", 
   await edit(h, [String(second), "--text", "third words about pnpm"]);
   const third = row(h, second).superseded_by;
   const lines = [];
-  await learningsMain("forget", [String(third)], { out: (l) => lines.push(l), handle: h, cwd: CWD, command: (v) => `ad ${v}`, token: TOKEN, ask: async () => String(third) });
+  await learningsMain("forget", [String(third)], { ...NO_TERMINAL, out: (l) => lines.push(l), handle: h, cwd: CWD, command: (v) => `ad ${v}`, token: TOKEN, ask: async () => String(third) });
   assert.equal(h.get("SELECT COUNT(*) AS n FROM learnings WHERE text LIKE '%words about pnpm%'").n, 0, lines.join("\n"));
 });
 
