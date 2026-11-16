@@ -27,7 +27,7 @@ import { readLedger, writeLedger } from "./ledger.mjs";
 import { dropItem, mergeV1, openLedger2ForWrite, readLedger2, uninstallReport, writeLedger2 } from "./ledger2.mjs";
 import { MANIFEST, cmpVersion, distsFile, launchDir, launcherFile, readDists, readGuard, registerDist, setHostDisabled, unregisterDist, writeGuard } from "../memory/launch/dists.mjs";
 import { copyIntact, expectedTree, manifestSha, sameTree, treeHashes, writeManifest } from "./guard-copy.mjs";
-import { SETUP_HOSTS, claudeSettingsFile, launcherReferences, parseSettings, removeSettingsItems, removeTomlItems, setup, setupPending, setupWork, withLedgerLock } from "./setup.mjs";
+import { SETUP_HOSTS, claudeSettingsFile, launcherReferences, parseSettings, removeSettingsItems, removeTomlItems, setup, pendingWhat, setupPending, setupWork, withLedgerLock } from "./setup.mjs";
 import { codexConfigFile, codexHooksFile, safeToml } from "./setup-codex.mjs";
 import { ourHandlers } from "../hooks/routes.mjs";
 import { createRequire } from "node:module";
@@ -115,6 +115,13 @@ export function makeContext(o = {}) {
     noSetup: o.noSetup,
   };
 }
+
+/**
+ * How the policy and rules verbs are typed on this route, as the hook's notices name them
+ * (the guards snapshot's cmd): the npx package, or ad's own from a clone (`ad safety off`,
+ * `ad rules pause --all`: those verbs aren't under `ad memory`).
+ */
+export const verbBase = (ctx) => (ctx.viaLauncher ? `npx -y ${PRODUCT.package}` : "ad");
 
 /* ------------------------------------------------------------------ */
 /* The copies the launcher runs                                        */
@@ -514,7 +521,7 @@ async function installMcp(ctx, opts) {
   // --no-setup: no preview, no question on setup's behalf.
   const setupPlans = opts.noSetup || ctx.noSetup ? [] : await pendingSetup(ctx, found.map((h) => h.id).filter((id) => SETUP_HOSTS.includes(id)), opts);
   for (const s of setupPlans) {
-    for (const r of s.writes) out(`  ${hostById(s.id).name.padEnd(12)} setup: ${r.error ? `won't change ${ctx.display(r.file ?? "its config")}: ${r.error}` : `${r.action} ${r.kind === "env" ? "the agent-shell marker" : `the ${r.event} hook`} in ${ctx.display(r.file)}`}`);
+    for (const r of s.writes) out(`  ${hostById(s.id).name.padEnd(12)} setup: ${r.error ? `won't change ${ctx.display(r.file ?? "its config")}: ${r.error}` : `${r.action} ${pendingWhat(r)} in ${ctx.display(r.file)}`}`);
   }
   out(`Memory stays on this computer: ${ctx.display(path.join(ctx.root, "episodic.db"))}. No account.`);
   const todo = plans.filter((p) => p.action === "add" || p.action === "update");

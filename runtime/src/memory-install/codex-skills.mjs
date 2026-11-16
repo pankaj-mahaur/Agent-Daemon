@@ -89,7 +89,7 @@ export function pendingCodexSkills(ctx) {
   try {
     return planCodexSkills(ctx)
       .filter((p) => p.action === "add" || p.action === "update")
-      .map((p) => ({ kind: "skill-dir", action: p.action, file: p.dir }));
+      .map((p) => ({ kind: "skill-dir", action: p.action, file: p.dir, skill: invocation("codex", p.command) }));
   } catch (e) {
     return [{ error: e.message }];
   }

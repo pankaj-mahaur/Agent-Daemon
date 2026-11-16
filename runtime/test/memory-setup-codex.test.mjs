@@ -353,6 +353,16 @@ test("Codex uninstall after the user tidied config.toml: blank lines gone, the f
   }
 });
 
+test("install's preview names each Codex command skill setup adds (never 'the undefined hook')", async () => {
+  const { COMMANDS, invocation } = await import("../src/memory-install/command-skills.mjs");
+  const t = home({ config: "" });
+  assert.equal(await install({ ctx: t.ctx, hosts: ["codex"], yes: true }), 0, t.text());
+  const preview = t.lines.filter((l) => / setup: /.test(l));
+  assert.ok(preview.length > COMMANDS.length, t.text());
+  for (const l of preview) assert.doesNotMatch(l, /undefined/, l);
+  for (const c of COMMANDS) assert.ok(preview.some((l) => l.includes(`setup: add the skill ${invocation("codex", c)} in `)), `${c}\n${preview.join("\n")}`);
+});
+
 test("install --no-setup: the MCP entry only, without setup's preview or files", async () => {
   const t = home({ config: "" });
   assert.equal(await install({ ctx: t.ctx, hosts: ["codex"], yes: true, noSetup: true }), 0, t.text());

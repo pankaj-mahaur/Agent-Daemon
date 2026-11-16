@@ -105,6 +105,11 @@ export async function main(argv = process.argv.slice(2), { log = (l) => console.
     // the trusted git only
   }
   const [cmd, ...rest] = argv;
+  // How the policy and rules verbs are typed on this route (the hook's notices name it too).
+  const verbBase = async () => {
+    const inst = await import("./install.mjs");
+    return inst.verbBase(inst.makeContext({ env, ...ctxOpts }));
+  };
   if (cmd === "serve") {
     // The server reads its own flags from process.argv.
     const here = path.dirname(fileURLToPath(import.meta.url));
@@ -131,16 +136,23 @@ export async function main(argv = process.argv.slice(2), { log = (l) => console.
     }
     // L7b: after the rule step, the starter safety policy is offered once (with this run's token).
     const { reviewOffer } = await import("../memory/safety-offer.mjs");
-    const command = (v) => `npx -y ${PRODUCT.package} ${v}`;
-    return (await import("../review.mjs")).runInteractiveReview({ cwd: process.cwd(), command, afterRuleStep: reviewOffer({ env, isTTY, cmdName: `npx -y ${PRODUCT.package}`, command }), ...r });
+    const base = await verbBase();
+    const command = (v) => `${base} ${v}`;
+    return (await import("../review.mjs")).runInteractiveReview({ cwd: process.cwd(), command, afterRuleStep: reviewOffer({ env, isTTY, cmdName: base, command }), ...r });
   }
   // L5: remember, forget, restore, config review (memory/memory-cli.mjs: trusted only with
   // the review token, in your own terminal).
   if (["remember", "forget", "restore", "config"].includes(cmd)) return (await import("../memory/memory-cli.mjs")).memoryVerbMain(cmd, rest, { out: log });
   // L7b: the starter safety policy (off by default; on and off only in your own terminal).
-  if (cmd === "safety") return (await import("../memory/safety-cli.mjs")).safetyMain(rest, { out: log, env, isTTY, cmdName: `npx -y ${PRODUCT.package}` });
+  if (cmd === "safety") {
+    const base = await verbBase();
+    return (await import("../memory/safety-cli.mjs")).safetyMain(rest, { out: log, env, isTTY, cmdName: base, command: (v) => `${base} ${v}` });
+  }
   // L7: rules (memory/rules-cli.mjs): list without a token; changes in your own terminal.
-  if (cmd === "rules") return (await import("../memory/rules-cli.mjs")).rulesMain(rest, { out: log, env, isTTY, cmdName: `npx -y ${PRODUCT.package}` });
+  if (cmd === "rules") {
+    const base = await verbBase();
+    return (await import("../memory/rules-cli.mjs")).rulesMain(rest, { out: log, env, isTTY, cmdName: base, command: (v) => `${base} ${v}` });
+  }
   // L8: your learnings (memory/learnings-cli.mjs): list, show, edit, forget, export, import.
   if (cmd === "learnings") return (await import("../memory/learnings-cli.mjs")).learningsMain(rest[0], rest.slice(1), { out: log });
   const flags = parseFlags(rest);
@@ -163,7 +175,9 @@ export async function main(argv = process.argv.slice(2), { log = (l) => console.
       // L7b: the starter safety policy is offered once, at the end of a setup that didn't fail.
       if (code !== 1 && !opts.dryRun) {
         const { setupOffer } = await import("../memory/safety-offer.mjs");
-        await setupOffer({ out: log, env, isTTY, ask: opts.ask, cmdName: `npx -y ${PRODUCT.package}`, command: inst.makeContext(opts).command }).catch((e) => log(`The starter safety policy's offer stopped: ${e?.message ?? e}.`));
+        const ctx = inst.makeContext(opts);
+        // The offer names safety and rules verbs: ad's own on a clone, the pinned npx command otherwise.
+        await setupOffer({ out: log, env, isTTY, ask: opts.ask, cmdName: inst.verbBase(ctx), command: ctx.viaLauncher ? ctx.command : (v) => `ad ${v}` }).catch((e) => log(`The starter safety policy's offer stopped: ${e?.message ?? e}.`));
       }
       return code;
     }

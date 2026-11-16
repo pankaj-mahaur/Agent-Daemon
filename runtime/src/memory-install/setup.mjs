@@ -486,6 +486,9 @@ export async function withLedgerLock(ctx, fn) {
 const ACTION_WORD = { add: "added", update: "updated", same: "already there", adopt: "now runs ad's own rules check (ad's separate entry for it was removed)" };
 const what = (r) => (r.kind === "env" ? "the agent-shell marker (AD_TOOL_SHELL)" : `the ${r.event} hook`);
 
+/** One write in install's preview of setup (pendingSetup): a hook, the shell marker or a Codex command skill. */
+export const pendingWhat = (r) => (r.kind === "env" ? "the agent-shell marker" : r.kind === "skill-dir" ? `the skill ${r.skill ?? path.basename(String(r.file ?? ""))}` : `the ${r.event} hook`);
+
 /** The /plugin lines (Decision 13): Claude Code's memory route is the plugin. */
 export function pluginLines(command) {
   return [

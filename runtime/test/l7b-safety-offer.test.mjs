@@ -82,6 +82,27 @@ async function ask(h, root, answers, extra = {}) {
   return { r, questions, text: lines.join("\n") };
 }
 
+test("the hook's notice names the policy's commands as the install route types them", async () => {
+  const { makeContext, verbBase } = await import("../src/memory-install/install.mjs");
+  const { PRODUCT } = await import("../src/product.mjs");
+  const { loadGuards } = await import("../src/hooks/guards.mjs");
+  const { toolBefore } = await import("../src/hooks/tool-before.mjs");
+  // A clone (`ad memory setup`): `ad safety off` (there is no `ad memory safety`); the launcher: the npx package.
+  for (const [viaLauncher, base] of [[false, "ad"], [true, `npx -y ${PRODUCT.package}`]]) {
+    const { h, root } = await store();
+    const ctx = makeContext({ viaLauncher, env: {}, home: ROOT, root });
+    assert.equal(verbBase(ctx), base);
+    const a = await ask(h, root, ["y"], { cmdName: verbBase(ctx) });
+    assert.equal(a.r.answer, "yes", a.text);
+    assert.equal(loadGuards({ root }).snapshot.cmd, base);
+    const home = path.join(ROOT, `home-${++n}`);
+    fs.mkdirSync(home, { recursive: true });
+    const out = toolBefore({ session_id: "s", cwd: home, tool_name: "Bash", tool_input: { command: "rm -rf ~" }, permission_mode: "default" }, { root, homes: [home], log: () => {} });
+    assert.equal(out?.hookSpecificOutput?.permissionDecision, "ask", JSON.stringify(out));
+    assert.ok(out.systemMessage.includes(`turn it off: \`${base} safety off\` · pause every rule: \`${base} rules pause --all\``), out.systemMessage);
+  }
+});
+
 test("asked once: no (and enter) is kept and never asked again; the policy stays off", async () => {
   for (const answer of ["n", ""]) {
     const { h, root } = await store();

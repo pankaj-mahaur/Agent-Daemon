@@ -175,8 +175,9 @@ tools and nested agents with their own settings aren't checked.
 
 - A rule matches what a call says, not what a script it runs does: a command
   hidden in a script, a variable or `eval` isn't seen.
-- Not yet verified: a live check that Claude Code 2.1.319 blocks a call when the
-  raised check fails, and the typed code on a real Windows console.
+- Checked live on Claude Code 2.1.325: when the raised check crashes or times out
+  (10 seconds), the call is blocked, and auto mode still asks you when a rule asks.
+- Not yet verified: the typed code on a real Windows console.
 
 See also: [the starter safety policy](security.md#starter-safety-policy-off-by-default),
 [capture, review and forget](review.md), [uninstall](install.md#doctor-repair-status-uninstall).
