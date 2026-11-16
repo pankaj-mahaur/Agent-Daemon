@@ -86,9 +86,12 @@ test("the dev set's c, d, f and g items (writes to ad's state, host config, the 
   const wrong = [];
   for (const it of items) {
     const usesHome = JSON.stringify(it.input).includes("{home}");
+    // Items on real files (the seeded home and project) are judged on this host's own paths: a
+    // Windows runner's temp folder is a Windows path, which Linux rules can't place.
+    const real = usesHome || (it.os === "linux" && JSON.stringify([it.input, it.cwd]).includes("/work/app"));
     const fill = (v) => (typeof v === "string" ? v.replaceAll("{home}", home).replaceAll("/work/app", it.os === "linux" ? proj : "/work/app") : Array.isArray(v) ? v.map(fill) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, fill(x)])) : v);
     const input = fill(substitute(it.input, { tool: it.tool, os: it.os }));
-    const platform = it.os === "windows" ? "win32" : it.os === "macos" ? "darwin" : "linux";
+    const platform = real && process.platform === "win32" ? "win32" : it.os === "windows" ? "win32" : it.os === "macos" ? "darwin" : "linux";
     const r = selfProtect({ tool_name: it.tool, tool_input: input, cwd: fill(it.cwd), session_id: "s" }, { host: it.host === "codex" ? "codex" : "claude", platform, home: usesHome ? home : HOMES[it.os], env: {} });
     const got = r?.decision ?? "allow";
     if (got !== it.expect) wrong.push(`${it.id}: want ${it.expect}, got ${got}`);
@@ -96,7 +99,7 @@ test("the dev set's c, d, f and g items (writes to ad's state, host config, the 
   assert.deepEqual(wrong, []);
 });
 
-test("generated: every .agent-daemon path the shipped skills and commands name can be written (bar the listed ones), and ad sp workers can work", () => {
+test("generated: every .agent-daemon path the shipped skills and commands name can be written (bar the listed ones), and ad sp workers can work — Linux and Windows paths", () => {
   const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
   const files = [];
   const walk = (dir) => {
@@ -117,54 +120,61 @@ test("generated: every .agent-daemon path the shipped skills and commands name c
     ["home:hooks/hook.log", ["deny", "the hook's log (read)"]],
     ["home:memory/dist", ["deny", "the guard copy (read)"]],
     ["project:learning-journal.jsonl", ["deny", "the capture journal: ad writes it, never the agent (D12c)"]],
-    ["home:guards.json", ["deny", "the rules snapshot (named in troubleshooting; the user moves a broken one)"]],
+    ["home:guards.json", ["deny", "the rules snapshot (named in troubleshooting; rebuilt by the user's own `rules resume --all`)"]],
     ["home:episodic.db", ["deny", "the memory database (queried read-only)"]],
     ["home:user.md", ["ask", "the user's profile: bootstrap writes it once, with the user's answers (D12c asks)"]],
   ]);
-  const named = new Set();
-  const home = path.join(TMP, "gen-home");
-  const proj = path.join(TMP, "gen-app");
-  const seen = new Set();
-  const wrong = [];
-  for (const f of files) {
-    const text = fs.readFileSync(f, "utf8");
-    for (const m of text.matchAll(/(~\/)?\.agent-daemon\/([^\s`'"),;|]*)/g)) {
-      const where = m[1] ? "home" : "project";
-      const rel = m[2].replace(/<[^>]*>/g, "x").replace(/\{[^}]*\}/g, "x").replace(/[*…]/g, "a").replace(/[.:]+$/, "").replace(/\/+$/, "");
-      if (!rel) continue;
-      const key = `${where}:${rel}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      const target = path.join(where === "home" ? path.join(home, ".agent-daemon") : path.join(proj, ".agent-daemon"), rel, /\.\w+$/.test(rel) ? "" : "note.md");
-      const write = selfProtect({ tool_name: "Write", tool_input: { file_path: target, content: "x" }, cwd: proj, session_id: "s" }, { host: "claude", platform: "linux", home, env: {} })?.decision ?? "allow";
-      const shell = selfProtect({ tool_name: "Bash", tool_input: { command: `echo x >> '${target}'` }, cwd: proj, session_id: "s" }, { host: "claude", platform: "linux", home, env: {} })?.decision ?? "allow";
-      const listed = LISTED.get(key);
-      if (listed) {
-        named.add(key);
-        if (write !== listed[0]) wrong.push(`${key}: listed as ${listed[0]}, a write gets ${write}`);
-      } else if (write !== "allow" || shell !== "allow") wrong.push(`${key} (${path.relative(REPO, f)}): write ${write}, shell ${shell}`);
+  // The paths are judged as each OS spells them (no file is read): a fixed home and project per OS.
+  for (const os_ of [
+    { platform: "linux", P: path.posix, home: "/home/dev", proj: "/work/gen-app" },
+    { platform: "win32", P: path.win32, home: "C:\\Users\\dev", proj: "C:\\work\\gen-app" },
+  ]) {
+    const { platform, P, home, proj } = os_;
+    const decide = (tool_name, tool_input, cwd = proj) => selfProtect({ tool_name, tool_input, cwd, session_id: "s" }, { host: "claude", platform, home, env: {} })?.decision ?? "allow";
+    const named = new Set();
+    const seen = new Set();
+    const wrong = [];
+    for (const f of files) {
+      const text = fs.readFileSync(f, "utf8");
+      for (const m of text.matchAll(/(~\/)?\.agent-daemon\/([^\s`'"),;|]*)/g)) {
+        const where = m[1] ? "home" : "project";
+        const rel = m[2].replace(/<[^>]*>/g, "x").replace(/\{[^}]*\}/g, "x").replace(/[*…]/g, "a").replace(/[.:]+$/, "").replace(/\/+$/, "");
+        if (!rel) continue;
+        const key = `${where}:${rel}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const target = P.join(where === "home" ? P.join(home, ".agent-daemon") : P.join(proj, ".agent-daemon"), ...rel.split("/"), /\.\w+$/.test(rel) ? "" : "note.md");
+        const write = decide("Write", { file_path: target, content: "x" });
+        const shell = decide("Bash", { command: `echo x >> '${target}'` });
+        const listed = LISTED.get(key);
+        if (listed) {
+          named.add(key);
+          if (write !== listed[0]) wrong.push(`${platform} ${key}: listed as ${listed[0]}, a write gets ${write}`);
+        } else if (write !== "allow" || shell !== "allow") wrong.push(`${platform} ${key} (${path.relative(REPO, f)}): write ${write}, shell ${shell}`);
+      }
     }
-  }
-  assert.ok(seen.size > 15, `${seen.size} paths`);
-  assert.deepEqual([...LISTED.keys()].filter((k) => !named.has(k)), [], "every listed path is one the skills name");
-  assert.deepEqual(wrong, []);
-  // Every sqlite3 command on ad's database in them runs as a read (D12c: -init /dev/null, SELECTs only).
-  let sqls = 0;
-  for (const f of files) {
-    for (const m of fs.readFileSync(f, "utf8").matchAll(/^\s*(sqlite3 [^\n]*\.agent-daemon[^\n]*)$/gm)) {
-      sqls++;
-      const command = m[1].replace(/\$ARGUMENTS/g, "x");
-      const d = selfProtect({ tool_name: "Bash", tool_input: { command }, cwd: proj, session_id: "s" }, { host: "claude", platform: "linux", home, env: {} })?.decision ?? "allow";
-      if (d !== "allow") wrong.push(`${path.relative(REPO, f)}: ${command.slice(0, 80)} → ${d}`);
+    assert.ok(seen.size > 15, `${seen.size} paths`);
+    assert.deepEqual([...LISTED.keys()].filter((k) => !named.has(k)), [], "every listed path is one the skills name");
+    assert.deepEqual(wrong, []);
+    // Every sqlite3 command on ad's database in them runs as a read (D12c: -init /dev/null, SELECTs only).
+    if (platform === "linux") {
+      let sqls = 0;
+      for (const f of files) {
+        for (const m of fs.readFileSync(f, "utf8").matchAll(/^\s*(sqlite3 [^\n]*\.agent-daemon[^\n]*)$/gm)) {
+          sqls++;
+          const command = m[1].replace(/\$ARGUMENTS/g, "x");
+          const d = decide("Bash", { command });
+          if (d !== "allow") wrong.push(`${path.relative(REPO, f)}: ${command.slice(0, 80)} → ${d}`);
+        }
+      }
+      assert.ok(sqls >= 2, `${sqls} sqlite3 commands`);
+      assert.deepEqual(wrong, []);
     }
+    // ad sp workers work in ~/.agent-daemon/worktrees/<branch>: their ordinary work passes.
+    const wt = P.join(home, ".agent-daemon", "worktrees", "feat-x");
+    for (const c of ["git add -A && git commit -m 'feat: x'", "npm test", "echo x > src/a.js", "rm -rf node_modules dist", "git push -u origin feat/x", "sqlite3 test.db 'create table t(x)'", "mkdir -p .agent-daemon && echo n > .agent-daemon/notes.md"]) {
+      assert.equal(decide("Bash", { command: c }, wt), "allow", `${platform}: ${c}`);
+    }
+    assert.equal(decide("Write", { file_path: P.join(wt, "src", "b.js"), content: "x" }, wt), "allow", platform);
   }
-  assert.ok(sqls >= 2, `${sqls} sqlite3 commands`);
-  assert.deepEqual(wrong, []);
-  // ad sp workers work in ~/.agent-daemon/worktrees/<branch>: their ordinary work passes.
-  const wt = path.join(home, ".agent-daemon", "worktrees", "feat-x");
-  for (const c of ["git add -A && git commit -m 'feat: x'", "npm test", "echo x > src/a.js", "rm -rf node_modules dist", "git push -u origin feat/x", "sqlite3 test.db 'create table t(x)'", "mkdir -p .agent-daemon && echo n > .agent-daemon/notes.md"]) {
-    const d = selfProtect({ tool_name: "Bash", tool_input: { command: c }, cwd: wt, session_id: "s" }, { host: "claude", platform: "linux", home, env: {} })?.decision ?? "allow";
-    assert.equal(d, "allow", c);
-  }
-  assert.equal(selfProtect({ tool_name: "Write", tool_input: { file_path: path.join(wt, "src", "b.js"), content: "x" }, cwd: wt, session_id: "s" }, { host: "claude", platform: "linux", home, env: {} })?.decision ?? "allow", "allow");
 });

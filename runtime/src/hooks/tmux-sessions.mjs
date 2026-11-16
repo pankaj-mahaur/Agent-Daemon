@@ -11,6 +11,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
+// tmux sockets are POSIX paths wherever this runs (its records live on the host's own paths).
+const P = path.posix;
+
 /** The only tmux binaries ever run (by absolute path; never a PATH lookup). */
 export const TRUSTED_TMUX = ["/usr/bin/tmux", "/bin/tmux", "/usr/local/bin/tmux"];
 
@@ -58,8 +61,8 @@ function realSocket(p, realpath) {
   if (!p) return null;
   const r = realpath(p);
   if (r) return r;
-  const d = realpath(path.dirname(p));
-  return d ? path.join(d, path.basename(p)) : p;
+  const d = realpath(P.dirname(p));
+  return d ? P.join(d, P.basename(p)) : p;
 }
 
 /**
@@ -72,11 +75,11 @@ export function resolveSocket({ S, L }, { env = {}, uid, realpath = realpathOrNu
   if (S !== null && S !== undefined) {
     if (!literal(S)) return null;
     // (A relative path depends on a folder the hook can't follow: never resolved.)
-    return path.isAbsolute(S) ? realSocket(S, realpath) : null;
+    return P.isAbsolute(S) ? realSocket(S, realpath) : null;
   }
   const dir = () => {
     const t = env.TMUX_TMPDIR;
-    if (t !== undefined && t !== "") return literal(t) && path.isAbsolute(t) ? realpath(t) : null;
+    if (t !== undefined && t !== "") return literal(t) && P.isAbsolute(t) ? realpath(t) : null;
     return realpath("/tmp") ?? "/tmp";
   };
   if (L !== null && L !== undefined) {
@@ -86,7 +89,7 @@ export function resolveSocket({ S, L }, { env = {}, uid, realpath = realpathOrNu
   }
   if (env.TMUX) {
     const first = String(env.TMUX).split(",")[0];
-    return first && path.isAbsolute(first) && literal(first) ? realSocket(first, realpath) : null;
+    return first && P.isAbsolute(first) && literal(first) ? realSocket(first, realpath) : null;
   }
   const d = dir();
   return d ? realSocket(`${d}/tmux-${uid}/default`, realpath) : null;
@@ -147,9 +150,9 @@ export function trustedTmux({ stat = fs.statSync, realpath = realpathOrNull } = 
     try {
       const real = realpath(p);
       // (Where it really is must be one of those folders too: never home, a temp or the session folder.)
-      if (!real || !TRUSTED_TMUX.some((t) => path.dirname(t) === path.dirname(real))) continue;
+      if (!real || !TRUSTED_TMUX.some((t) => P.dirname(t) === P.dirname(real))) continue;
       const f = stat(real);
-      if (f.isFile() && ok(f) && ok(stat(path.dirname(real)))) return real;
+      if (f.isFile() && ok(f) && ok(stat(P.dirname(real)))) return real;
     } catch {
       // not there or unreadable: the next one
     }

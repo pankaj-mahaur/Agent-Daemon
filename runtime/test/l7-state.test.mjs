@@ -152,7 +152,8 @@ test("links are followed: a write through a link into ad's state is one", () => 
   fs.mkdirSync(path.join(ad, "hooks"), { recursive: true });
   fs.mkdirSync(path.join(TMP, "work"), { recursive: true });
   fs.symlinkSync(ad, path.join(TMP, "work", "ad-link"));
-  const opts = { home, cwd: path.join(TMP, "work"), realpath: (p) => fs.realpathSync.native(p) };
+  // Real links in this host's temp folder: judged on this host's own paths.
+  const opts = { home, cwd: path.join(TMP, "work"), realpath: (p) => fs.realpathSync.native(p), platform: process.platform === "win32" ? "win32" : "linux" };
   check([
     ["deny", "echo x > ad-link/guards.json"],
     ["deny", "touch ad-link/hooks/new"],

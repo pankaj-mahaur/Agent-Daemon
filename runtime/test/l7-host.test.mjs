@@ -14,6 +14,7 @@ after(() => fs.rmSync(TMP, { recursive: true, force: true, maxRetries: 30, retry
 for (const k of ["AD_ROOT", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "XDG_CONFIG_HOME"]) delete process.env[k];
 const SP = await import("../src/hooks/self-protect.mjs");
 
+const HOST_PLATFORM = process.platform === "win32" ? "win32" : "linux";
 const sp = (command, { platform = "linux", tool = "Bash", cwd, home = "/home/dev", env = {} } = {}) => {
   const win = platform === "win32";
   const input = { tool_name: tool, tool_input: typeof command === "string" ? { command } : command, cwd: cwd ?? (win ? "C:\\work\\app" : "/work/app"), session_id: "s" };
@@ -78,7 +79,9 @@ test("host config: shell writes ask; Claude Code's settings are compared key by 
   const settings = path.join(home, ".claude", "settings.json");
   fs.mkdirSync(path.dirname(settings), { recursive: true });
   fs.writeFileSync(settings, JSON.stringify({ model: "x", hooks: { PreToolUse: [] }, env: { A: "1" } }, null, 2));
-  const w = (input, tool = "Edit") => sp({ file_path: settings, ...input }, { tool, home });
+  // A real file in this host's temp folder: judged on this host's own paths (a Windows runner's
+  // temp folder is a Windows path, which Linux rules can't place).
+  const w = (input, tool = "Edit") => sp({ file_path: settings, ...input }, { tool, home, platform: HOST_PLATFORM });
   // An unrelated key: allowed.
   assert.equal(w({ old_string: '"model": "x"', new_string: '"model": "y"' }), "allow");
   // A protected key: asked.
@@ -91,9 +94,9 @@ test("host config: shell writes ask; Claude Code's settings are compared key by 
   assert.equal(w({ content: JSON.stringify({ model: "x", hooks: { PreToolUse: [] }, env: { A: "1" }, disableAllHooks: true }) }, "Write"), "deny");
   assert.equal(w({ old_string: '"model": "x"', new_string: '"model": "x", "statusLine": {"command": "node /x/bin/hook.mjs"}' }), "deny");
   // Codex's config: any write asks; .mcp.json naming ad's dispatcher: denied.
-  assert.equal(sp({ file_path: path.join(home, ".codex", "config.toml"), content: "x" }, { tool: "Write", home }), "ask");
-  assert.equal(sp({ file_path: path.join(TMP, "proj", ".mcp.json"), content: JSON.stringify({ mcpServers: { x: { command: "node", args: ["/a/memory/launch/run.mjs"] } } }) }, { tool: "Write", home }), "deny");
-  assert.equal(sp({ file_path: path.join(TMP, "proj", ".mcp.json"), content: JSON.stringify({ mcpServers: { x: { command: "uvx", args: ["srv"] } } }) }, { tool: "Write", home }), "allow");
+  assert.equal(sp({ file_path: path.join(home, ".codex", "config.toml"), content: "x" }, { tool: "Write", home, platform: HOST_PLATFORM }), "ask");
+  assert.equal(sp({ file_path: path.join(TMP, "proj", ".mcp.json"), content: JSON.stringify({ mcpServers: { x: { command: "node", args: ["/a/memory/launch/run.mjs"] } } }) }, { tool: "Write", home, platform: HOST_PLATFORM }), "deny");
+  assert.equal(sp({ file_path: path.join(TMP, "proj", ".mcp.json"), content: JSON.stringify({ mcpServers: { x: { command: "uvx", args: ["srv"] } } }) }, { tool: "Write", home, platform: HOST_PLATFORM }), "allow");
 });
 
 test("the fast path loads the check for host config, the Windows folder, startup files and shims", async () => {
@@ -141,8 +144,8 @@ test("review round 1: copies into startup folders and PATH folders, $PROFILE and
   fs.mkdirSync(home, { recursive: true });
   const cj = path.join(home, ".claude.json");
   fs.writeFileSync(cj, "\uFEFF" + JSON.stringify({ projects: { "/work/app": { mcpServers: {} } }, theme: "a" }, null, 2).replace(/\n/g, "\r\n"));
-  assert.equal(sp({ file_path: cj, content: JSON.stringify({ projects: { "/work/app": { mcpServers: { x: { command: "/tmp/evil" } } } }, theme: "a" }) }, { tool: "Write", home }), "ask");
-  assert.equal(sp({ file_path: cj, old_string: '"theme": "a"', new_string: '"theme": "b"' }, { tool: "Edit", home }), "allow");
+  assert.equal(sp({ file_path: cj, content: JSON.stringify({ projects: { "/work/app": { mcpServers: { x: { command: "/tmp/evil" } } } }, theme: "a" }) }, { tool: "Write", home, platform: HOST_PLATFORM }), "ask");
+  assert.equal(sp({ file_path: cj, old_string: '"theme": "a"', new_string: '"theme": "b"' }, { tool: "Edit", home, platform: HOST_PLATFORM }), "allow");
 });
 
 test("review round 2: Windows spellings, git settings that run programs, settings turning hooks off by shell, and a linear fast path", async () => {
