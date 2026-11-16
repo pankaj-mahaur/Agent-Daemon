@@ -84,11 +84,15 @@ test("the dev set's c, d, f and g items (writes to ad's state, host config, the 
   fs.writeFileSync(path.join(proj, ".claude", "settings.json"), '{"allow": []}');
   fs.writeFileSync(path.join(home, ".bashrc"), "# end\n");
   const wrong = [];
+  const realIds = new Set();
   for (const it of items) {
     const usesHome = JSON.stringify(it.input).includes("{home}");
-    // Items on real files (the seeded home and project) are judged on this host's own paths: a
-    // Windows runner's temp folder is a Windows path, which Linux rules can't place.
-    const real = usesHome || (it.os === "linux" && JSON.stringify([it.input, it.cwd]).includes("/work/app"));
+    // Items whose input names a real file (in the seeded home or project) are judged on this
+    // host's own paths: a Windows runner's temp folder is a Windows path, which Linux rules can't
+    // place. A shell item only run from the project folder stays a Linux item (sd-180: NUL is a
+    // file outside Windows, the null device on it).
+    const real = usesHome || (it.os === "linux" && JSON.stringify(it.input).includes("/work/app"));
+    if (real) realIds.add(it.id);
     const fill = (v) => (typeof v === "string" ? v.replaceAll("{home}", home).replaceAll("/work/app", it.os === "linux" ? proj : "/work/app") : Array.isArray(v) ? v.map(fill) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, fill(x)])) : v);
     const input = fill(substitute(it.input, { tool: it.tool, os: it.os }));
     const platform = real && process.platform === "win32" ? "win32" : it.os === "windows" ? "win32" : it.os === "macos" ? "darwin" : "linux";
@@ -97,6 +101,10 @@ test("the dev set's c, d, f and g items (writes to ad's state, host config, the 
     if (got !== it.expect) wrong.push(`${it.id}: want ${it.expect}, got ${got}`);
   }
   assert.deepEqual(wrong, []);
+  // Which items take this host's platform on Windows: those naming a real file, never a shell
+  // item that only runs in the project folder (Windows CI: sd-180's NUL is the null device there).
+  for (const id of ["sd-090", "sd-094", "sd-170", "sa-102", "sa-109", "sa-061", "sa-108"]) assert.ok(realIds.has(id), id);
+  assert.equal(realIds.has("sd-180"), false);
 });
 
 test("generated: every .agent-daemon path the shipped skills and commands name can be written (bar the listed ones), and ad sp workers can work — Linux and Windows paths", () => {
