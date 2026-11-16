@@ -316,7 +316,7 @@ test("the package doctor redacts home paths in the hook rows and reads the hook 
   hookLog("tool.before", "boom", { root: t.env.AD_ROOT });
   await doctor({ ctx: t.ctx, cwd: t.h, json: true });
   const rows = JSON.parse(t.lines.at(-1));
-  assert.match(rows.find((r) => r.code === "rules.file").note, /^~\//);
+  assert.match(rows.find((r) => r.code === "rules.file").note, /^~[\\/]/, "home shown as ~ (the separator is the OS's)");
   assert.match(rows.find((r) => r.code === "hooks.log").note, /boom/, "the log of ctx.root, not adRoot()");
   assert.ok(!JSON.stringify(rows).includes(t.h));
 });

@@ -93,8 +93,9 @@ export async function previewWithin(read, deadline, now = Date.now()) {
   const left = Math.max(0, deadline - now);
   let timer;
   const late = new Promise((resolve) => {
+    // Not unref'd: the worker is, so this timer is what keeps the process alive for the wait
+    // (with stdin closed, Node 22 would otherwise end the loop mid-await). Always cleared below.
     timer = setTimeout(() => resolve(null), left);
-    timer.unref?.();
   });
   try {
     return await Promise.race([read.result, late]);
