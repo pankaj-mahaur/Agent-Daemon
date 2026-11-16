@@ -19,8 +19,9 @@ A rule belongs to one accepted learning and holds one pattern:
 
 A git rule can name branches: `git push on main` matches a push to `main` (named,
 as `HEAD:main`, or through the branch's upstream), while a push from a feature
-branch passes. Commit, merge, rebase and reset look at the branch you are on.
-When the branch can't be told, the rule applies.
+branch passes. Commit, merge, rebase and reset look at the branch you are on;
+`git rebase <upstream> <branch>` is judged by `<branch>`. When the branch can't be
+told (in Codex it never can), the rule applies.
 
 Each rule either **asks** (the default) or **stops** (`--block`), in **this
 project** (the default) or in **all projects**. A project's rules also apply in
@@ -39,8 +40,15 @@ rule, one at a time:
 ```
 
 `r` adds it, `e` edits the pattern, `p` makes it apply in all projects, `b` makes
-it stop instead of ask, `n` never offers it again, and `enter` keeps it for a later
-review. `--accept-all` never offers rules.
+it stop instead of ask, and `n` declines it: it is offered again only if you
+repeat the correction. `enter` keeps it for later: it comes back after 14 days,
+and after two of those only `rules add` makes it a rule. `--accept-all` never
+offers rules.
+
+The "last 30 days here" line is a preview: with your consent (asked once, then
+kept), review replays the proposed rule on this project's Claude Code and Codex
+transcripts from the last 30 days, read on this computer, with nothing stored.
+`config history-preview on|off` changes that.
 
 ## The rules commands
 
@@ -57,6 +65,11 @@ Run them as `npx agent-daemon-memory rules …` or `ad rules …`.
 
 From the agent's shell, only `rules list` runs; the others change nothing and say
 that you decide in your own terminal.
+
+A learning that has a rule keeps it until you say otherwise. When you forget,
+delete, archive or reject such a learning (in review or with `forget`), ad shows
+"also removes rule N" after the run and asks for the typed code. Without the
+code the rule stays, and `rules list` and `doctor` mark its learning as gone.
 
 ## Ask or stop, per host
 
@@ -175,6 +188,16 @@ tools and nested agents with their own settings aren't checked.
 
 - A rule matches what a call says, not what a script it runs does: a command
   hidden in a script, a variable or `eval` isn't seen.
+- A push is judged by its arguments: a push that relies on git config
+  (`push.default=matching`, `remote.<name>.push`) or a `GIT_DIR=` prefix may name
+  no branch. A branch rule's preview counts every matching command.
+- The typed code stops a script that runs a lowering command blind in a terminal
+  the agent opened; it doesn't stop a script that drives a terminal (a PTY) or
+  reads the screen.
+- `report` doesn't count self-protection decisions made when the check itself
+  failed. Where Claude Code's settings put ad's check in a group shared with other
+  handlers, the group keeps its own matcher, and doctor's "Read included" shows
+  what ad asked for, not what the group kept.
 - Checked live on Claude Code 2.1.325: when the raised check crashes or times out
   (10 seconds), the call is blocked, and auto mode still asks you when a rule asks.
 - Not yet verified: the typed code on a real Windows console.

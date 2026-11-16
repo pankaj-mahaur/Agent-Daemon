@@ -5,7 +5,7 @@ license: MIT
 metadata:
   author: agent-daemon
   spec: agentskills.io
-  version: "2.1"
+  version: "2.2"
 allowed-tools: Bash
 ---
 
@@ -94,6 +94,7 @@ Role and team names may use only letters, digits, `.`, `_` and `-` (max 64): the
 - **Which worker.** The default is an `ad` worker: sandboxed, no network, approvals never asked (on Windows it needs `ad sandbox setup`). `--engine claude` runs Claude Code with `--dangerously-skip-permissions` (any command as the user, network included): use it only for tasks the user would run themselves, and say so in the approval request. Claude workers need `claude` on PATH (or `AD_CLAUDE_BIN`) and a Claude Code that knows `--append-system-prompt-file`.
 - **Which account.** `--account <provider>/<label>` (with `--model`) runs the worker on that account; without it, the project's or the default account.
 - **When a limit runs out.** Without fallback the worker's task ends in error (with a hint when the user has a fallback order). With the team's fallback on (`ad team set <team> fallback on`, the user's own terminal; it refuses from the agent's shell) the worker moves to the next target, or pauses when it can't move safely and the board shows the task blocked with the reason. Report either with its reason; never turn fallback on yourself.
+- **A worktree isolates files, not the repo.** `git stash`, `git config` and `git update-ref` in a worktree change state every worktree shares: restrict the git commands a worker may run, not only its paths.
 
 ### Step 6 — Monitor
 
@@ -114,6 +115,12 @@ Once agents complete:
 2. Ask the user if the changes look good
 3. Merge branches: `git merge <branch>`
 4. Clean up: `ad td --team <team-id>`
+
+Parallel lanes by hand (one session per lane):
+- One worktree per lane plus one integrate worktree. The coordinator merges each lane into integrate, runs the full verification there, and pushes only with the user's OK.
+- `git merge` refuses with "does not match index" for a file whose content equals HEAD (`core.autocrlf=true`): rewrite it from `git show HEAD:<f> | sed 's/$/\r/'`, run `git update-index --refresh`, merge, then put LF back with `sed -i 's/\r$//'`. No `checkout --`, no stash.
+- A lane file "modified" with an empty diff after mutation runs is line endings only: `git update-index --refresh` clears it.
+- Wrap-up: each lane writes one learnings file (learnings, doc gaps with file:line, skill lines, state: uncommitted files, unpushed commits, temp folders); then sync docs and skills from those files, then archive the sessions, then remove the worktrees. Clean test temp folders only when no suite is running.
 
 ## Key principles
 

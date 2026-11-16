@@ -218,6 +218,8 @@ For subprocess tests (CLI commands, hook handlers), see [`runtime/test/hooks.tes
 
 The full map of test layers, the live terminal UI tests and CI is in [testing.md](testing.md). The test tools (`@xterm/headless`, `@lydell/node-pty`) are devDependencies: install with plain `npm install` (or `npm ci`), not `--omit=dev`.
 
+Working in a git worktree? It has no `runtime/node_modules` of its own: run `npm ci` in its `runtime/` before `npm test`. If you used `npm ci --ignore-scripts`, also run `npm rebuild better-sqlite3`; a test that fails loading the native module (`invalid ELF header`, `NODE_MODULE_VERSION`) is a setup problem, not your change.
+
 Harness tests come in two kinds:
 
 - **Fake engine (default).** Most harness tests drive the scripted fake app-server in [`runtime/testkit/fake-codex-app-server.mjs`](../runtime/testkit/fake-codex-app-server.mjs): fast, and good for crashes and odd traffic. A test that builds `CodexAppServer` around the fake directly marks the command `source: "test-double"`.

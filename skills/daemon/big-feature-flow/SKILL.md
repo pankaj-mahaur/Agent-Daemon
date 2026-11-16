@@ -5,7 +5,7 @@ license: MIT
 metadata:
   author: agent-daemon
   spec: agentskills.io
-  version: "1.0"
+  version: "1.1"
   kind: flow
 allowed-tools: Agent, Bash, Read, Write, Edit, Grep, Glob, WebSearch, WebFetch
 ---
@@ -34,10 +34,14 @@ For work too big for one sitting: learn how others built the same thing, write a
    - an architecture sketch;
    - how the work survives upstream changes;
    - a parts table where each part is small enough for one loop and has a **Done-when**;
+   - anything the user relies on (cost, safety state, git state) computed in code; a step the model performs is an eval with a threshold, not a promise;
    - the per-part loop, the testing pyramid, risks, a "later" list, and a revision log.
 3. **Review rounds until final.** Each round uses fresh adversarial reviewers with different lenses: one technical (they verify claims against the code and the spec, not the plan's word), one product/UX. They return findings ranked critical/high/medium/low, with evidence and a concrete fix.
+   - Give reviewers a severity rubric (a risk that a spike, or a gate with a fallback, already covers is medium), or rounds never converge.
    - Apply every finding, or record why not.
    - Bump the version, and log what changed.
+   - Before the next round, grep every plan file for the terms this round changed (names, dates, counts, default rules): most late highs are stale copies of an old claim.
+   - A mechanism that draws new highs two rounds running: simplify the design instead of patching it, and do it early.
    - Repeat until a verification round finds no critical or high finding. Only then mark the plan **final**.
 4. **Spikes and checkpoints.** Prove each unknown with a throwaway spike in a scratch directory before building on it, and write the result into the plan. Put user feedback checkpoints where only the user can decide: look and feel, keys, scope.
 5. **Per part, loop:**
@@ -46,8 +50,9 @@ For work too big for one sitting: learn how others built the same thing, write a
    3. Run the full suite and lint; do a live smoke where the part has a runtime effect.
    4. Review the diff with a fresh-eyes review subagent, then do your own pass.
    5. Fix, and re-review the fix: a fresh reviewer for each new round, then the same reviewer (it still holds its probes) for a targeted check of the fixes, which costs a fraction of a round. Run its probe inputs verbatim; twice a fix passed its own test because the test put the trigger next to the bug, not on it. Stop when no finding of medium severity or above is left.
-   6. For guards and security fixes, run a **mutation check**: remove the guard and confirm that a test fails.
-   7. Update the plan's status and project memory, commit by file name, then move to the next part.
+   6. For guards and security fixes, run a **mutation check**: remove the guard and confirm that a test fails. The harness starts each test process in its own process group and kills the group on timeout (killing only the runner orphans a child that keeps a database open); run mutants only when no suite is running.
+   7. Tuning against a held-out set: decide the tuning rule on the dev set before any held-out run, log every held-out run with what changed, and after one build a fresh dev set rather than retune on the used one (a tuned-on dev set overstates gains).
+   8. Update the plan's status and project memory, commit by file name, then move to the next part.
 6. **Push and merge only with the user's OK**, every time. Report test counts and any skipped step plainly.
 
 ## Examples

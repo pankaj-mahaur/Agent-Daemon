@@ -5,7 +5,7 @@ license: MIT
 metadata:
   author: agent-daemon
   spec: agentskills.io
-  version: "1.3"
+  version: "1.4"
   kind: flow
 ---
 
@@ -53,9 +53,13 @@ Released separately, by `.github/workflows/release-memory.yml`, which runs only 
 1. Dispatch it with `dry_run` on (the default). Read the job, download the artifacts (`server.json` and the rendered listing copy included) and check `SHA256SUMS`.
 2. Install from the built trees on each host and record the result (host acceptance).
 3. Only on the owner's explicit OK, dispatch again with `dry_run` off and approve the `release-memory` environment. The npm package publishes first; then the marketplace and Gemini trees are pushed and the GitHub release is made (`memory-vX.Y.Z`, never marked Latest, so ad's own `vX.Y.Z` keeps the badge).
-   - The `dry_run` box in the web form starts checked and is easy to miss: a publish job that took 0 s was skipped. `gh workflow run release-memory.yml -f dry_run=false` leaves no doubt. Start one run only; a second fails on npm with E409.
-   - npm publishes through the package's trusted publisher (OIDC; no token secret). A 404 or "need auth" on publish means the trusted publisher on npmjs.com doesn't match the repository, workflow file name or environment. Check that the version is on npm afterwards.
-   - npm may stage the upload: the registry then shows a `0.0.0-stage` placeholder until the owner approves the version on npmjs.com. It is live once `latest` points at it.
+   - The `dry_run` box in the web form starts checked and is easy to miss: a publish job that took 0 s was skipped. `gh workflow run release-memory.yml -f dry_run=false` leaves no doubt. Start one run only; a second that also publishes fails on npm with E409.
+   - Before dispatching, read the environment's protection: `gh api repos/<o>/<r>/environments/release-memory -q '.protection_rules'`. With no required reviewer the publish job runs straight after the build, so the dispatch itself is the release: tell the owner.
+   - A run can sit "queued" with 0 jobs for 20+ minutes while GitHub reports Actions healthy (`gh run cancel` then calls it completed). After ~15 min dispatch again: a run with 0 jobs published nothing, so the second run is not a duplicate publish.
+   - npm publishes through the package's trusted publisher (OIDC; no token secret). A 404 or "need auth" on publish means the trusted publisher on npmjs.com doesn't match the repository, workflow file name or environment. It shows "pending validation" on npmjs.com until the first successful publish through it validates it.
+   - npm may stage the upload: the registry then shows a `0.0.0-stage` placeholder until the owner approves the version on npmjs.com. It is live once its dist-tag (`beta` or `latest`, whichever the run publishes to) points at it.
+   - After the publish npm says "Your package is being processed", and `npm view <pkg>@<ver>` 404s for 3–5 minutes: poll `npm view <pkg> dist-tags` until the tag points at the version, then check provenance with `npm view <pkg>@<ver> dist.attestations.provenance.predicateType` (SLSA v1).
+   - The plugin, marketplace and Gemini pushes skip with a `::notice::` when their repo variables or deploy keys are unset, and the run still succeeds: read the notices, not just the colour.
 4. After npm publishing, and only with the owner's OK, publish to the MCP Registry:
    - run `mcp-publisher login github`, then `mcp-publisher publish` with the artifact's `server.json`;
    - the Registry is in preview and may reset, so re-running is safe;
@@ -68,8 +72,9 @@ Released separately, by `.github/workflows/release-memory.yml`, which runs only 
 - `node --test runtime/test/launch-checks.test.mjs runtime/test/support-matrix.test.mjs`: privacy and security pages, MIT everywhere, no analytics, no network in the memory package, and no matrix row that overstates its evidence.
 - `node runtime/scripts/check-claims.mjs <files>` on public copy the release changed (README, listings): it flags superlatives, numbers without a linked baseline, and hosts not tested live in `docs/support-matrix.md`.
 - After an engine upgrade: `AD_REAL_ENGINE=1 node --test runtime/test/engine-network.test.mjs`. A new host it reaches means a new engine setting to turn off in `ENGINE_PRIVACY` (`runtime/src/harness/setup.mjs`), or a line on `docs/privacy.md`.
-- When the release changes what ad stores (accounts, memory schema, engine folders): `AD_ROLLBACK_30=1 node --test runtime/test/rollback-30.test.mjs` proves ad 3.0 still starts, shows its sign-in and finds its key on the new state (needs the `v3.0.0` tag and network); users must be able to go back.
+- When the release changes what ad stores (accounts, memory schema, engine folders): `AD_ROLLBACK_30=1 node --test runtime/test/rollback-30.test.mjs` proves ad 3.0 still starts, shows its sign-in and finds its key on the new state (needs the `v3.0.0` tag, network and Node 22: the old better-sqlite3 it installs won't build on newer Node); users must be able to go back.
 - **Read CI per job, not the run's colour.** The real-engine job can't fail the run, and the state export/import job pairs every OS with every other. Stacked branches have been merged with red POSIX jobs: read each job of each PR before calling it green.
+- A release made by hand: `gh release create --target <sha>` needs the full 40-character SHA; a short one is "invalid".
 
 ## Go / No-Go
 

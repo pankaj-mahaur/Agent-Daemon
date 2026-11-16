@@ -178,6 +178,13 @@ npx agent-daemon-memory status
 npx agent-daemon-memory uninstall     # --host <id> for one host
 ```
 
+After its checks, `doctor` prints a Readiness section: one block per host that
+is set up, with a line for each feature the installed version has (recall,
+rules, the starter safety policy, the hooks), and each gap ends with the one
+command that fixes it. It only reads. In `doctor --json` these rows carry
+`section: "readiness"`: they are advice, not failures, so a script that scores
+`ok` should skip them.
+
 `doctor` starts each installed entry the way the host does and talks to it with
 both MCP handshakes. Its codes: `node.version`, `node.path`, `sqlite.driver`,
 `db.open`, `db.schema`, `db.stray`, and per host `config.parse`, `entry`,

@@ -5,7 +5,7 @@ license: MIT
 metadata:
   author: agent-daemon
   spec: agentskills.io
-  version: "1.0"
+  version: "1.1"
 allowed-tools: Bash, Read, Edit, Write, Grep, Glob
 disable-model-invocation: false
 ---
@@ -38,6 +38,8 @@ node runtime/scripts/skills-diff.mjs --json  # must parse with a numeric `ours` 
 node runtime/scripts/check-doc-links.mjs     # links and duplicated sections
 ```
 
+CI runs Node 22. To match it on a newer local Node, run a Node 22 with `AD_SQLITE_DRIVER=node:sqlite`: the checkout's better-sqlite3 is built for the newer Node.
+
 The `engine-real` job (real Codex, mock model, real pseudo-terminal), in the background (15–20 min on Windows):
 
 ```bash
@@ -69,6 +71,8 @@ gh run view <id> --log-failed | grep -E "not ok [0-9]+ - " | sed 's/^.*Z //' | s
 - **`real engine / <os>` is `continue-on-error`.** The run can be green with it red. Read its failing tests every time.
 - **New test or regression?** Compare with the previous PR's run for the same jobs (`gh run view <older id> --json jobs`). A test that never ran on CI before is a new-test problem.
 - **A flake** is a test that fails, then passes on the next commit with no change to it. Fix its cause anyway (Gotchas): don't just re-run.
+- **Flakes a rerun turned green** are only in attempt 1, and `gh run list --status failure` never shows them: list runs with `run_attempt>1` (`gh api repos/<o>/<r>/actions/workflows/test.yml/runs --jq '.workflow_runs[]|select(.run_attempt>1)'`), then read the first attempt's failed jobs from `actions/runs/<id>/attempts/1/jobs`. Check every job in the run, not only `<os> / node 22`.
+- **A job's log:** `gh run view --job <id> --log` (the `actions/jobs/<id>/logs` API can return nothing). Grep `not ok|✖`, and skip passing tests whose names contain "not ok".
 
 ### 4. Production readiness (before a release)
 
@@ -115,6 +119,15 @@ One table per leg (this machine, the Linux container, the PR's CI per job), each
 | Local Windows live test stalls at a patch or background-terminal step, passes on CI | machine state (seen October 2026, gone two days later on the same code); not ad's code once the same commit passes on CI | read the process tree in the timeout message; rerun alone with `AD_LIVE_KEEP=1`; CI's per-test result is the proof. Never raise timeouts or skip for it |
 | `ad doctor` exits 1 locally | usually only "Session context budget": the project memory file is too big | compact `.agent-daemon/memory/activeContext.md` (keep a `.bak`) |
 | Local Git Bash: `--test-name-pattern="/cd"` runs 0 subtests yet reports `pass 1`; or `skill-install.test.mjs` "git URL install from a local repo" fails with exit 1 | MSYS turns an argument starting with `/` into a Windows path; `MSYS_NO_PATHCONV=1` stops that but git honours it too, so an exported value breaks the local-repo install test | prefix only the pattern-filtered command with `MSYS_NO_PATHCONV=1`; never `export` it in the shell that runs the suite |
+| Windows test fails after ~3 s or ~15 s | a PowerShell start timing out on a cold runner: the lock-identity lookup gives up at 3 s, DPAPI at 15 s | compare the test's `duration_ms` with the timeouts in src before blaming logic; pass the test its own `timeoutMs` / `identityOf` (the product's fallback is correct) |
+| A test hangs until the job is cancelled | it opened a console device (`\\.\CONIN$`, `/dev/tty`): on Windows a console handle opens even under CI, and the read waits forever | guard on `process.stdin.isTTY` and inject a fake terminal (`tty: null`, `isTTY`, `ask`, and `run` for editors). In product code open `\\.\CONIN$` with `"r+"`: a bare `CONIN$` is a file in the cwd |
+| A test passes on one OS and flips on another | a synthetic path judged with the host's platform (`NUL` is the null device only on Windows) | items judged with `process.platform` name real files; synthetic paths choose linux or win32 and `path.posix` / `path.win32` explicitly |
+| Windows CI misses a faked Claude Code transcript folder that Linux finds | Windows temp paths contain `~` (`RUNNER~1`) and a hand-written slug kept it | build the folder name with `claudeProjectSlug` (every non-alphanumeric character becomes `-`) |
+| macOS job cancelled at exactly 15 min with 0 steps run | no runner was assigned: not a test failure, not `timeout-minutes` | `gh run rerun <id> --failed`; it can take two reruns when runners are short |
+| Node 22 cancels a test: "Promise resolution is still pending" | an unref'd worker plus an unref'd wait timer leave nothing holding the event loop | keep the timer ref'd and always clear it |
+| A summary grep finds no pass/fail count | Node 22 prints TAP off a TTY (`# pass N`), Node 26 the spec reporter (`ℹ pass N`) | match both forms, or run with `--test-reporter=tap` |
+| journal-drain (ENOENT), capture-prompt or the outside-a-git-folder test fails in a full run and passes alone | load at `--test-concurrency=2` | rerun the file alone before blaming the change; a failure alone is real |
+| `AD_HOOK_LATENCY=strict`, or a latency budget, fails | a slow file system (a worktree on an NTFS mount fails the baseline too) or a runner burst (every case slow, not one) | run HEAD and the change back to back on the same machine; measure again rather than raise the budget |
 
 ## Anti-patterns
 

@@ -5,7 +5,7 @@ license: MIT
 metadata:
   author: agent-daemon
   spec: agentskills.io
-  version: "1.0"
+  version: "1.1"
 ---
 
 # Using ad's project memory
@@ -35,6 +35,7 @@ The `agent-daemon-memory` tools hold lessons and corrections from earlier sessio
 - Don't record secrets. Notes from these tools wait for the user's review (`ad review` or `npx agent-daemon-memory review`) before they are served as accepted.
 - When the host's own hooks capture corrections already, the record tools say so and store nothing: that is expected.
 - When the user types a remember, forget or restore command, the memory hook has already answered with a line starting with the product's name: pass it on, and don't call a memory tool or run the CLI for it. From your own shell, `forget` can only remove notes you saved; the user's own notes and anything accepted are theirs to decide in `review`.
+- When the user wants to see, change, forget or export their learnings, tell them to run `npx agent-daemon-memory learnings list|show|edit|forget|export|import` (or `ad learnings …`) in their own terminal: edit, forget, export and import refuse from your shell.
 
 ## Give feedback
 

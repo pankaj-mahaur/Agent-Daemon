@@ -77,7 +77,18 @@ covers the Read tool; `safety status` says when it does.
 
 Setup's last step and `review` (after the rule step) ask once: "Ask before four
 kinds of catastrophic commands? (y/N)". A no is kept and never asked again; only
-your own terminal is asked, never an agent's shell.
+your own terminal is asked, never an agent's shell. `install` and `ad init` don't
+offer it, nor does a review with nothing waiting; `safety on` works any time.
+
+## The view page
+
+`view` writes one HTML file on this computer and prints its path; nothing serves
+it. The page is read-only and loads nothing from outside: its one small script
+and its styles are inline, and its content security policy (`default-src 'none'`)
+blocks every network request and form. Values appear only as text, and a web
+address in a note is shown defanged (`https[:]//…`). Learnings
+are redacted the way `learnings export` redacts them, so a secret told in words
+doesn't show on the page.
 
 ## Secrets
 

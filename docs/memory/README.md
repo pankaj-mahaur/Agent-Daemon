@@ -62,6 +62,7 @@ afterwards. Details and every option: [install](install.md).
 | [tools](tools.md) | Every memory tool, which project the server serves, protocol versions |
 | [rules](rules.md) | When a correction asks or stops a command or a file edit: review's rule step, `rules` commands, allow once, pause, self-protection, fail-closed, the typed code |
 | [security](security.md) | What keeps notes in their project, and the limits |
+| [starter safety policy](security.md#starter-safety-policy-off-by-default) | `safety on` / `status` / `off`: ask before four kinds of catastrophic commands (off by default) |
 | [metrics](metrics.md) | `ad memory report`: is memory working here? `view` writes the same numbers, your learnings and your rules as one read-only HTML page |
 | [FAQ](faq.md) | Common questions |
 | [support matrix](../support-matrix.md) | Which hosts are tested live |
