@@ -178,7 +178,8 @@ test("rule coverage: CLAUDE.md rules Codex can't see, and the other way", () => 
   fs.mkdirSync(root, { recursive: true });
   fs.writeFileSync(
     path.join(root, "CLAUDE.md"),
-    ["# Rules", "- use pnpm, not npm", "- never push to main", "1. tests live next to the code", "- tbd", "- [the style guide](docs/style.md)", "- `npm run lint:fix`", "- Commands:", "```", "- not a rule (in a fence)", "```", "<!-- agent-daemon:start -->", "- ad's managed text", "<!-- agent-daemon:end -->"].join("\n"),
+    // ad's blocks: `ad init`'s, and 3.x's learnings mirror (L4b: the mirror wasn't skipped before).
+    ["# Rules", "- use pnpm, not npm", "- never push to main", "1. tests live next to the code", "- tbd", "- [the style guide](docs/style.md)", "- `npm run lint:fix`", "- Commands:", "```", "- not a rule (in a fence)", "```", "<!-- agent-daemon:start -->", "- ad's managed text", "<!-- agent-daemon:end -->", "<!-- agent-daemon:learnings:start -->", "- **correction**: a mirrored learning", "<!-- agent-daemon:learnings:end -->"].join("\n"),
   );
   fs.writeFileSync(path.join(home, ".claude", "CLAUDE.md"), "- reply in short bullets please\n");
   assert.deepEqual(ruleLines(fs.readFileSync(path.join(root, "CLAUDE.md"), "utf8")), ["use pnpm, not npm", "never push to main", "tests live next to the code"]);

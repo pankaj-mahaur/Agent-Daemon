@@ -6,14 +6,30 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { availableDrivers } from "../memory/driver.mjs";
 import { HOSTS, SERVER_NAME, claudeHasAdHooks, claudePluginEnabled, hostById } from "./hosts.mjs";
 import { readLedger } from "./ledger.mjs";
 import { inspect } from "./fsx.mjs";
 import { jsonEntry } from "./edit-json.mjs";
 import { claudeGet } from "./claude-cli.mjs";
-import { makeContext } from "./install.mjs";
+import { currentDist, makeContext } from "./install.mjs";
+import { codexTrust } from "./setup.mjs";
+import { PRODUCT } from "../product.mjs";
+import { readiness, readinessRows, redactHome, renderReadiness } from "./readiness.mjs";
+
+// Stable codes for the L2 hook rows (hooks/hook-doctor.mjs hookRouteChecks).
+const HOOK_ROW_CODES = {
+  "Rules file": "rules.file",
+  "Hook routes": "hooks.routes",
+  "Hook script": "hooks.script",
+  "Claude Code version (hooks)": "hooks.exec-form",
+  "Memory plugin hooks": "hooks.plugin",
+  "Rules check mode (Claude Code)": "rules.mode",
+  "Rules check mode (Codex)": "rules.mode",
+  "Claude Code version (fail-closed)": "rules.version",
+  "Hook log": "hooks.log",
+};
 
 const MIN_NODE = [22, 13];
 const META = { "io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientCapabilities": {} };
@@ -104,6 +120,11 @@ export async function doctor(opts = {}) {
 
   const ledger = readLedger(ctx.root);
   for (const [id, rec] of Object.entries(ledger.hosts)) {
+    if (Array.isArray(rec.entry?.args) && rec.entry.args.some((a) => /[\\/]memory[\\/]bin[\\/]launch\.mjs$/.test(String(a)))) {
+      // Claude Code with the plugin on: install leaves its entry alone (one route per host), so the old one goes.
+      const fix = id === "claude-code" && claudePluginEnabled(ctx.home, ctx.env) ? "the plugin serves memory now: run uninstall --host claude-code to remove it" : "run install to move it to the stable one";
+      add("entry.legacy", false, `still starts 3.1.0's launcher (memory/bin/launch.mjs): ${fix}`, id);
+    }
     const host = hostById(id);
     if (!host) continue;
     const entry = rec.entry;
@@ -155,20 +176,81 @@ export async function doctor(opts = {}) {
     if (id === "cursor") {
       const proj = path.join(opts.cwd ?? process.cwd(), ".cursor", "mcp.json");
       const dup = path.resolve(proj) !== path.resolve(host.file(ctx)) && fs.existsSync(proj) && jsonEntry(fs.readFileSync(proj, "utf8")).entry !== undefined;
-      add("entry.duplicate", !dup, dup ? `${proj} also defines agent-daemon-memory (Cursor shows it twice)` : "no project copy", id);
+      add("entry.duplicate", !dup, dup ? `${proj} also defines ${PRODUCT.mcpServerKey} (Cursor shows it twice)` : "no project copy", id);
     }
   }
-  try {
-    const cur = JSON.parse(fs.readFileSync(path.join(ctx.root, "memory", "current.json"), "utf8"));
-    add("pkg.stale", !newer(ctx.version, cur.version), newer(ctx.version, cur.version) ? `installed ${cur.version}, this is ${ctx.version}: run install to update` : `installed ${cur.version}`);
-  } catch {
-    // not installed through npx: nothing to compare
+  // Codex runs a new or changed hook only once you trust it in /hooks (L3, D16).
+  // The Codex version matters only for a hash that doesn't match: asked then, not on every run.
+  let trust = codexTrust(ctx);
+  if (trust.some((t) => t.state === "modified")) trust = codexTrust(ctx, { codexVersion: codexVersionOf(ctx) });
+  if (trust.length) {
+    const by = (s) => trust.filter((t) => t.state === s).map((t) => t.item.locator.event);
+    const parts = [];
+    if (by("trusted").length) parts.push(`trusted: ${by("trusted").join(", ")}`);
+    if (by("pending").length) parts.push(`not reviewed yet: ${by("pending").join(", ")} (open Codex and run /hooks)`);
+    if (by("modified").length) parts.push(`Codex won't run ${by("modified").join(", ")} until you review ${by("modified").length === 1 ? "it" : "them"} again in /hooks`);
+    if (by("unknown").length) parts.push(`can't confirm ${by("unknown").join(", ")} on this Codex, newer than the one ad checked (see /hooks)`);
+    if (by("disabled").length) parts.push(`turned off in /hooks: ${by("disabled").join(", ")}`);
+    if (by("changed").length) parts.push(`you changed ad's ${by("changed").join(", ")} hook`);
+    add("hooks.trust", trust.every((t) => !["pending", "modified", "unknown"].includes(t.state)), parts.join("; ") || "no hooks of ad's found", "codex");
   }
+  // The plugin and Codex's command skills (L3 P4): their own module.
+  for (const c of await (await import("./doctor-product.mjs")).productChecks(ctx, opts)) add(c.code, c.ok, c.note, c.host);
+  // The hook checks `ad doctor` runs too (L2): one builder, two callers (L8b).
+  const cv = (await Promise.resolve((opts.claudeVersion ?? ctx.claudeVersion)?.()).catch(() => null)) ?? null;
+  {
+    const { hookRouteChecks } = await import("../hooks/hook-doctor.mjs");
+    for (const r of await hookRouteChecks({ home: ctx.home, cwd: opts.cwd ?? process.cwd(), claudeVersion: cv ?? null, packaged: true, root: ctx.root })) {
+      add(HOOK_ROW_CODES[r.name] ?? `hooks.${r.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`, r.ok, redactHome(ctx, r.note), /Codex/.test(r.name) ? "codex" : undefined);
+    }
+  }
+  // The rules (L7, D21): count and pauses, the store, the sentinel, the switch, the guard copy, Codex.
+  try {
+    for (const c of await (await import("./doctor-rules.mjs")).rulesChecks(ctx, { now: opts.now ?? Date.now() })) add(c.code, c.ok, redactHome(ctx, c.note), c.host);
+  } catch (e) {
+    add("rules.count", true, `rules not checked (${e.message})`);
+  }
+  // Recall (L6): what it sends from this folder, and other memory loaded next to it. Information only.
+  const command = (v) => (ctx.version ? `npx -y ${PRODUCT.package}@${ctx.version} ${v}` : `npx -y ${PRODUCT.package} ${v}`);
+  let recallRows;
+  try {
+    recallRows = await (await import("../memory/recall-doctor.mjs")).recallDoctorRows({ cwd: opts.cwd ?? process.cwd(), home: ctx.home, env: ctx.env, command });
+    for (const c of recallRows) add(c.code, c.ok, redactHome(ctx, c.note), c.host);
+  } catch (e) {
+    add("recall.tokens", true, `not checked (${e.message})`);
+  }
+  // The newest copy the launcher runs (npx installs; none for a clone: nothing to compare).
+  const cur = currentDist(ctx.root);
+  if (cur) add("pkg.stale", !newer(ctx.version, cur), newer(ctx.version, cur) ? `installed ${cur}, this is ${ctx.version}: run install to update` : `installed ${cur}`);
 
-  if (opts.json) ctx.out(JSON.stringify(checks));
+  // L8: a week after the first install, the feedback thread (information, never a failure).
+  const nudge = (await import("./feedback-nudge.mjs")).feedbackNudge(ctx.root, { now: opts.now ?? Date.now() });
+  if (nudge) add("feedback.nudge", true, nudge);
+
+  // Readiness (L8b, D22): plain text after the checks, never part of the exit code.
+  let ready = [];
+  try {
+    ready = await readiness(ctx, { cwd: opts.cwd, recallRows, claudeVersion: cv, have: opts.have });
+  } catch (e) {
+    add("ready.error", true, `readiness not checked (${e.message})`);
+  }
+  if (opts.json) ctx.out(JSON.stringify([...checks, ...readinessRows(ready)]));
   else {
     for (const c of checks) ctx.out(`${c.ok ? "✓" : "✗"} ${c.host ? `${hostById(c.host)?.name ?? c.host} ` : ""}${c.code}: ${c.note}`);
+    for (const l of renderReadiness(ready)) ctx.out(l);
     if (!Object.keys(ledger.hosts).length) ctx.out(`No hosts set up yet: run install (${HOSTS.map((h) => h.id).join(", ")}).`);
   }
   return checks.every((c) => c.ok) ? 0 : 1;
+}
+
+// The user's Codex version (for the trust check), or null when it can't be asked.
+function codexVersionOf(ctx) {
+  const r = ctx.resolve("codex");
+  if (!r) return null;
+  try {
+    const p = spawnSync(r.cmd, [...(r.prefix ?? []), "--version"], { encoding: "utf8", timeout: 10_000, env: ctx.env, windowsHide: true });
+    return /(\d+\.\d+\.\d+)/.exec(p.stdout ?? "")?.[1] ?? null;
+  } catch {
+    return null;
+  }
 }

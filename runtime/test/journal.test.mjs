@@ -6,6 +6,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { appendLearnings, readJournal, archiveJournal, journalPath, archivePath } from "../src/hooks/journal.mjs";
+import { markOwnFolder } from "../src/memory/projects.mjs";
 
 async function makeTmp() {
   return await fs.mkdtemp(path.join(os.tmpdir(), "ad-journal-"));
@@ -87,6 +88,7 @@ test("journalPath / archivePath: the project's own .agent-daemon when it exists,
   assert.equal(path.basename(journalPath(cwd)), "learning-journal.jsonl");
   assert.equal(path.dirname(archivePath(cwd)), path.dirname(journalPath(cwd)));
   await fs.mkdir(path.join(cwd, ".agent-daemon"));
+  markOwnFolder(cwd); // ad init
   assert.equal(journalPath(cwd), path.join(cwd, ".agent-daemon", "learning-journal.jsonl"));
   assert.equal(archivePath(cwd), path.join(cwd, ".agent-daemon", "learning-journal.archive.jsonl"));
 });

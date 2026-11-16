@@ -62,8 +62,8 @@ const timeoutFor = (r, host) => (host !== "codex" ? r.timeout : r.hostEvent === 
  * The routes that serve `steps` (and the always-installed steps) on `host`.
  * @returns {{event:string, hostEvent:string, matcher:string|null, steps:string[], timeout:number}[]}
  */
-export function routesFor(steps, host = "claude") {
-  const want = new Set([...steps, ...(ALWAYS_STEPS[host] ?? [])]);
+export function routesFor(steps, host = "claude", { without = [] } = {}) {
+  const want = new Set([...steps, ...(ALWAYS_STEPS[host] ?? [])].filter((s) => !without.includes(s)));
   const out = [];
   for (const r of ROUTES) {
     if (r.hosts && !r.hosts.includes(host)) continue;
@@ -135,6 +135,12 @@ const LEGACY_STEPS = {
 // Another tool's hook.mjs is never ad's.
 const DISPATCH_ARG_RE = /(?:^|[\\/])runtime[\\/]bin[\\/]hook\.mjs$/i;
 const PLUGIN_ARG_RE = /(?:^|[\\/])server[\\/]hook\.mjs$/i;
+// The memory product's stable launcher (L3, D23): `<root>/memory/launch/run.mjs hook <event> --host <id>`.
+const LAUNCHER_ARG_RE = /(?:^|[\\/])memory[\\/]launch[\\/]run\.mjs$/i;
+const hostArg = (words) => {
+  const i = words.indexOf("--host");
+  return i >= 0 && words[i + 1] ? words[i + 1] : "claude-code";
+};
 
 // A shell command's words: '…' (with sh's '\'' escape), "…", or bare.
 const shellWords = (command) => [...String(command).matchAll(/'((?:[^']|'\\'')*)'|"((?:[^"\\]|\\.)*)"|(\S+)/g)].map((m) => (m[1] !== undefined ? m[1].replace(/'\\''/g, "'") : m[2] ?? m[3]));
@@ -163,6 +169,13 @@ export function classifyHandler(handler, { hostEvent = null, matcher = null } = 
   const plugin = Boolean(args?.includes("--plugin")) || /\s--plugin(?=\s|$|["'])/.test(command);
   let event = null;
   let script = null;
+  // The launcher: memory steps only, run through whichever copy is installed.
+  const words = args ?? shellWords(command);
+  const li = words.findIndex((w, k) => LAUNCHER_ARG_RE.test(w) && words[k + 1] === "hook" && EVENTS.includes(words[k + 2]));
+  if (li >= 0 && (!args || li === 0)) {
+    const ev = words[li + 2];
+    return { kind: "dispatcher", event: ev, steps: stepsOfRoute(ev, hostEvent, matcher), plugin: false, script: words[li], launcher: true, host: hostArg(words.slice(li + 3)) };
+  }
   const isScript = (s) => DISPATCH_ARG_RE.test(s) || (plugin && PLUGIN_ARG_RE.test(s));
   if (args && args.length >= 2 && EVENTS.includes(args[1]) && isScript(args[0])) [script, event] = args;
   else if (!args) {
@@ -185,7 +198,17 @@ export function classifyHandler(handler, { hostEvent = null, matcher = null } = 
  */
 export function entryAlive(info, { exists = fs.existsSync } = {}) {
   if (info?.kind !== "dispatcher" || info.plugin || !info.script || !path.isAbsolute(info.script)) return true;
-  return exists(info.script);
+  if (!exists(info.script)) return false;
+  // A launcher entry of a host uninstall turned off captures nothing (dists.json next to it).
+  if (info.launcher) {
+    try {
+      const d = JSON.parse(fs.readFileSync(path.join(path.dirname(info.script), "dists.json"), "utf8"));
+      if (Array.isArray(d?.disabledHosts) && d.disabledHosts.includes(info.host)) return false;
+    } catch {
+      // no list (or unreadable now): the entry runs
+    }
+  }
+  return true;
 }
 
 /** Every ad handler in a hooks map ({<HostEvent>: [{matcher, hooks: [...]}]}). */
@@ -254,10 +277,17 @@ function carryInto(group, route, ours) {
  *   steps: the profile's; oldPluginTags: a memory plugin from before the dispatcher is on (OLD_PLUGIN_TAGS)
  * @returns {{hooks: object, changed: boolean, routes: object[], removed: object[]}}
  */
-export function planClaudeHooks(hooks, { steps = [], hookPath = HOOK_PATH, form = "exec", oldPluginTags = false } = {}) {
+export function planClaudeHooks(hooks, { steps = [], hookPath = HOOK_PATH, form = "exec", oldPluginTags = false, exists } = {}) {
   const current = hooks && typeof hooks === "object" && !Array.isArray(hooks) ? hooks : {};
-  const ours = ourHandlers(current);
-  const routes = routesFor([...new Set([...steps, ...ours.flatMap((o) => o.info.steps)])], "claude");
+  const all = ourHandlers(current);
+  // L7 (D10): a live launcher tool.before is the rules check's entry (it runs the guard
+  // copy): it stays as it is, and ad writes no rules-check route of its own beside it.
+  const guard = new Set(all.filter((o) => o.info.launcher && o.info.event === "tool.before" && entryAlive(o.info, exists ? { exists } : {})).map((o) => o.handler));
+  const ours = all.filter((o) => !guard.has(o.handler));
+  // ad's own tool.before already beside it stays (a second check is safe; setup takes it
+  // over with its onFailure and timeout): only a missing one isn't added.
+  const ownCheck = ours.some((o) => !o.info.launcher && !o.info.plugin && o.info.event === "tool.before");
+  const routes = routesFor([...new Set([...steps, ...ours.flatMap((o) => o.info.steps)])], "claude", { without: guard.size && !ownCheck ? ["rules-check"] : [] });
   const groups = routes.map((route) => ({ route, group: carryInto(claudeGroup(route, { hookPath, form, oldPluginTags }), route, ours) }));
   // Already exactly these routes, each once, and nothing else of ad's: leave the file alone.
   const have = ours.map((o) => canon(o.hostEvent, o.matcher, o.handler)).sort();
@@ -276,7 +306,7 @@ export function planClaudeHooks(hooks, { steps = [], hookPath = HOOK_PATH, form 
         kept.push(g);
         continue;
       }
-      const hs = g.hooks.filter((h) => !classifyHandler(h, { hostEvent, matcher: g.matcher }));
+      const hs = g.hooks.filter((h) => guard.has(h) || !classifyHandler(h, { hostEvent, matcher: g.matcher }));
       if (hs.length) kept.push(hs.length === g.hooks.length ? g : { ...g, hooks: hs });
     }
     next[hostEvent] = kept;

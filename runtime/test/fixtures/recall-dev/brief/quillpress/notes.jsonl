@@ -1,0 +1,24 @@
+{"id":"qp-01","text":"publish_article must lock the PublishJob row with select_for_update() inside transaction.atomic(); without it two workers can publish the same article twice.","created":"2026-10-20","kind":"architecture"}
+{"id":"qp-02","text":"Run publishing tests: pytest cms/publishing --ds=config.settings.test -q. Needs Postgres from docker compose; SQLite is not supported.","created":"2026-09-14","kind":"testing"}
+{"id":"qp-03","text":"Tests run Celery eager (CELERY_TASK_ALWAYS_EAGER in config/settings/test.py); to assert backoff, patch the task's retry() and check the countdown kwarg.","created":"2026-10-22","kind":"testing"}
+{"id":"qp-04","text":"Publishing tasks retry via autoretry_for=(Exception,) with max_retries=10; don't add manual retry logic to publish_article.","created":"2025-06-03","kind":"architecture"}
+{"id":"qp-05","text":"publish_article no longer uses autoretry_for: it calls self.retry(countdown=30 * 2**attempts) and gives up after PUBLISH_MAX_ATTEMPTS=6.","created":"2026-10-18","kind":"architecture"}
+{"id":"qp-06","text":"Scheduled publishing runs on the default 'celery' queue; workers are started without a -Q flag.","created":"2025-03-11","kind":"fact"}
+{"id":"qp-07","text":"Workers are split by queue: run publishing with `celery -A config worker -Q publish -c 2`; the default queue only handles email and thumbnails.","created":"2026-10-25","kind":"workflow"}
+{"id":"qp-08","text":"Lint with flake8 + isort: `make lint` before pushing.","created":"2025-02-14","kind":"tooling"}
+{"id":"qp-09","text":"Lint is ruff only (flake8 and isort were removed): `ruff check . && ruff format --check .`","created":"2026-05-30","kind":"tooling"}
+{"id":"qp-10","text":"Commit subjects: '<app>: <imperative summary>'; test-only commits use 'test(<app>): ...'.","created":"2025-08-09","kind":"git"}
+{"id":"qp-11","text":"Every migration needs a working reverse; CI runs `manage.py migrate <app> zero` on a fresh DB to check it.","created":"2026-04-02","kind":"workflow"}
+{"id":"qp-12","text":"Broker visibility_timeout is 3600s: any countdown or eta longer than an hour gets redelivered and executed twice.","created":"2025-11-12","kind":"fact"}
+{"id":"qp-13","text":"CDN purge 4xx responses are permanent: mark the job failed at once. Only timeouts and 5xx are worth another attempt.","created":"2026-07-08","kind":"architecture"}
+{"id":"qp-14","text":"Article post_save (cms/articles/signals.py) enqueues a search reindex unless update_fields skips title/body; worker code should always pass update_fields.","created":"2026-01-15","kind":"architecture"}
+{"id":"qp-15","text":"Newsletter digest (cms/newsletter/tasks.py) sends 500 recipients per chunk to stay under the SES rate limit.","created":"2026-03-03","kind":"fact"}
+{"id":"qp-16","text":"The Publish button in frontend/editor/PublishBar.tsx stays disabled until autosave resolves; don't wire it to the save request.","created":"2026-10-27","kind":"fact"}
+{"id":"qp-17","text":"Image renditions: regenerate with `manage.py rebuild_renditions --since 7d` after changing crop presets.","created":"2025-12-01","kind":"workflow"}
+{"id":"qp-18","text":"Search is OpenSearch 2; rebuild the local index with `manage.py search_index --rebuild -f`.","created":"2026-02-20","kind":"tooling"}
+{"id":"qp-19","text":"Paywall meter rules live in cms/paywall/rules.yaml and hot-reload; meter changes don't need a deploy.","created":"2025-09-17","kind":"fact"}
+{"id":"qp-20","text":"Local setup: `docker compose up -d db redis`, `uv sync`, `python manage.py migrate`; Python 3.12.","created":"2025-05-22","kind":"workflow"}
+{"id":"qp-21","text":"Release: tag vYYYY.MM.N on main; deploy runs migrations, then swaps web pods, and workers restart last.","created":"2026-06-30","kind":"workflow"}
+{"id":"qp-22","text":"PRs that change Celery routing or queues need a 'Rollout' section; ops scales the worker deployments from it.","created":"2026-08-19","kind":"workflow"}
+{"id":"qp-23","text":"Settings split: base.py shared, dev.py local, test.py for pytest; never import dev settings in tests.","created":"2025-04-08","kind":"paths"}
+{"id":"qp-24","text":"mypy --strict is enforced only for cms/publishing and cms/paywall; run `mypy cms/publishing` before pushing changes there.","created":"2025-10-29","kind":"tooling"}

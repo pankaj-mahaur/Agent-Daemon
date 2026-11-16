@@ -25,6 +25,7 @@ const { captureExplicit, createLimiter, writeHeartbeat, TEXTS } = await import("
 const { projectFolderName, projectDataDir, outsideDir, IGNORE_LINES } = await import("../src/memory/project-dir.mjs");
 const { runMemoryMaintenance, backfillNormKeys, SCRUB_STEP } = await import("../src/memory/maintenance.mjs");
 const { hostId } = await import("../src/memory/host-ids.mjs");
+const { markOwnFolder } = await import("../src/memory/projects.mjs");
 
 let handle;
 before(async () => {
@@ -39,7 +40,10 @@ let n = 0;
 async function project(name = `p${++n}`, { init = false } = {}) {
   const dir = path.join(WORK, name);
   await fs.mkdir(path.join(dir, ".git"), { recursive: true });
-  if (init) await fs.mkdir(path.join(dir, ".agent-daemon"));
+  if (init) {
+    await fs.mkdir(path.join(dir, ".agent-daemon"));
+    markOwnFolder(dir); // ad init
+  }
   return { dir, scope: { kind: "project", dir, keys: [ep.projectSlug(dir)], source: "arg" } };
 }
 const learning = (text, extra = {}) => ({ kind: "learning", fields: { text, kind: "gotcha", ...extra } });
@@ -354,6 +358,7 @@ test("a project that gets its own .agent-daemon later takes over what was captur
   await fs.mkdir(path.join(outside, "notes"), { recursive: true });
   await fs.writeFile(path.join(outside, "notes", "same.md"), "outside copy");
   await fs.mkdir(path.join(dir, ".agent-daemon", "notes"), { recursive: true }); // ad init, with a file of the same name
+  markOwnFolder(dir);
   await fs.writeFile(path.join(dir, ".agent-daemon", "notes", "same.md"), "project copy");
   const now = projectDataDir(dir);
   assert.equal(now, path.join(dir, ".agent-daemon"));

@@ -34,7 +34,7 @@ function runNode(args, stdinObj) {
 }
 
 test("hooks.json: engine events only, every hook through the dispatcher, Edit|Write matcher, ≥10 s timeouts, --host ad", async () => {
-  const { hooks } = await codexHooksForProfile("developer", { node: "C:\\Program Files\\nodejs\\node.exe", hook: "D:\\Program Files\\ad\\runtime\\bin\\hook.mjs" });
+  const { hooks } = await codexHooksForProfile("developer", { launcher: null, node: "C:\\Program Files\\nodejs\\node.exe", hook: "D:\\Program Files\\ad\\runtime\\bin\\hook.mjs" });
   assert.deepEqual(Object.keys(hooks).sort(), ["PostToolUse", "PreToolUse", "SessionEnd", "SessionStart", "UserPromptSubmit"]);
   const all = Object.values(hooks).flat().flatMap((g) => g.hooks);
   assert.ok(all.every((h) => h.command.includes("--host ad") && h.commandWindows.includes("--host ad")));
@@ -49,7 +49,7 @@ test("hooks.json: engine events only, every hook through the dispatcher, Edit|Wr
 });
 
 test("SessionEnd: session.end within Codex's 3 s cap (it only spawns the digest)", async () => {
-  const { hooks } = await codexHooksForProfile("developer");
+  const { hooks } = await codexHooksForProfile("developer", { launcher: null });
   const h = hooks.SessionEnd[0].hooks[0];
   assert.equal(h.timeout, 3);
   assert.ok(h.command.includes(`${shQuote(HOOK_PATH)} session.end --host ad`));
@@ -59,7 +59,7 @@ test("SessionEnd: session.end within Codex's 3 s cap (it only spawns the digest)
 });
 
 test("security profile adds the Bash guard and MCP audit as PreToolUse routes", async () => {
-  const { hooks } = await codexHooksForProfile("security");
+  const { hooks } = await codexHooksForProfile("security", { launcher: null });
   assert.deepEqual(hooks.PreToolUse.map((g) => g.matcher).sort(), ["Bash", "Bash|Write|Edit", "mcp__.*"]);
 });
 
@@ -263,7 +263,7 @@ test("a 2.x hooks.json (--host codex, old launcher) is rewritten and silently re
   const command = { cmd: process.execPath, prefix: [FAKE] };
   const engine = await createEngine({ home, command });
   try {
-    const json = JSON.stringify(await codexHooksForProfile("developer"), null, 2)
+    const json = JSON.stringify(await codexHooksForProfile("developer", { launcher: null }), null, 2)
       .replaceAll("--host ad", "--host codex")
       .replaceAll("engine-session-end.mjs", "codex-session-end.mjs");
     assert.match(json, /--host codex/, "the 2.x shape is really in place");

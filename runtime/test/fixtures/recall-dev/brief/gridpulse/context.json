@@ -1,0 +1,26 @@
+{
+  "name": "gridpulse",
+  "stack": "SvelteKit 2 + Svelte 5 + Vite + TypeScript energy dashboard, ECharts, Vitest, Playwright",
+  "branch": "feat/chart-timezone-selector",
+  "recent_paths": [
+    "src/lib/components/charts/LoadChart.svelte",
+    "src/lib/components/charts/axis.ts",
+    "src/lib/components/TimezoneSelect.svelte",
+    "src/lib/stores/preferences.ts",
+    "src/lib/time/zones.ts",
+    "src/lib/time/zones.test.ts",
+    "src/routes/(app)/sites/[siteId]/+page.svelte",
+    "src/routes/(app)/sites/[siteId]/+page.ts",
+    "tests/e2e/timezone.spec.ts",
+    "src/app.d.ts",
+    "package.json"
+  ],
+  "recent_commits": [
+    "feat(charts): format axis ticks in the selected timezone",
+    "feat(prefs): persist timezone in the preferences store",
+    "feat(ui): searchable TimezoneSelect",
+    "test(time): DST transitions for Europe/London and America/Chicago",
+    "fix(charts): tooltip fell back to UTC after zoom"
+  ],
+  "session_cwd": "/home/dev/code/gridpulse-dashboard"
+}

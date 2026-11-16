@@ -434,6 +434,46 @@
       "reason": "the mistakes report (L4a) reads the user's own Codex history (CODEX_HOME, rollouts) as one of two hosts and names that host in the report; this is the user's separate install, not ad's engine"
     },
     {
+      "path": "runtime/src/memory/history-import.mjs",
+      "rules": ["A"],
+      "reason": "the history import (L4b) reads the same user-owned Codex history as the mistakes report (L4a) and says so; not ad's engine"
+    },
+    {
+      "path": "runtime/test/history-import.test.mjs",
+      "rules": ["A"],
+      "reason": "fixture history of the user's own two hosts, Codex one of them (CODEX_HOME, host id `codex`); not ad's engine"
+    },
+    {
+      "path": "runtime/src/memory/instruction-import.mjs",
+      "rules": ["A"],
+      "reason": "which of the user's own hosts already loads each instruction file (Codex reads AGENTS.md, AGENTS.override.md); not ad's engine"
+    },
+    {
+      "path": "runtime/test/instruction-import.test.mjs",
+      "rules": ["A"],
+      "reason": "tests which of the user's own hosts loads each file (Codex's config fallback, CODEX_HOME); not ad's engine"
+    },
+    {
+      "path": "runtime/src/memory/import-flow.mjs",
+      "rules": ["A", "C"],
+      "reason": "the import question (L4b part 4) names what it reads before reading it: the user's own Codex history and config.toml, beside Claude Code's; not ad's engine"
+    },
+    {
+      "path": "runtime/test/import-flow.test.mjs",
+      "rules": ["A"],
+      "reason": "fake listings of the user's own two hosts' history (claude, codex) for the import question; not ad's engine"
+    },
+    {
+      "path": "runtime/testkit/instruction-files.mjs",
+      "rules": ["A"],
+      "reason": "fixture expectations naming the user's own hosts that load each file; not ad's engine"
+    },
+    {
+      "path": "runtime/test/review-queue.test.mjs",
+      "rules": ["A"],
+      "reason": "test isolation: the user's own Codex home (CODEX_HOME, .codex) pointed at a temp folder"
+    },
+    {
       "path": "runtime/src/hooks/host-capabilities.mjs",
       "rules": ["A", "C"],
       "reason": "the hook dispatcher's table of what each host does with a hook's answer; Codex is one of the two hosts (the user's own CLI, not ad's engine)"
@@ -452,6 +492,42 @@
       "path": "runtime/src/hooks/typed-text.mjs",
       "rules": ["A", "C"],
       "reason": "names the context the user's Codex host injects as a user message"
+    },
+    {
+      "path": "runtime/test/install-import-step.test.mjs",
+      "rules": ["A"],
+      "reason": "L3 D26's test installs into a temp home with the user's own Codex as the host setup has work for (its folder, CODEX_HOME, setup's ✓ Codex lines)"
+    },
+    {
+      "path": "runtime/test/fixtures/tools-list.golden.json",
+      "rules": ["A"],
+      "match": "\"codex/(auto|hooks|off|tools)\"",
+      "reason": "tools/list hashes per host id (L3 D24); codex is the id of the user's own Codex host"
+    },
+    {
+      "path": "runtime/src/hooks/remember.mjs",
+      "rules": ["A"],
+      "reason": "a typed remember (L3 D21) on each host it reaches: the plugin's command on Claude Code and the skill setup writes for the user's own Codex"
+    },
+    {
+      "path": "runtime/test/remember.test.mjs",
+      "rules": ["A"],
+      "reason": "remember tests replay the prompt the user's Codex host sends for its skill, captured from the pinned engine"
+    },
+    {
+      "path": "runtime/test/plugin-remember.test.mjs",
+      "rules": ["A"],
+      "reason": "spawned remember tests run the dispatcher as the user's Codex host starts it (the launcher's --host codex)"
+    },
+    {
+      "path": "runtime/test/command-skills.test.mjs",
+      "rules": ["A"],
+      "reason": "the command skills are rendered for two hosts, the user's own Codex among them (its skills folder and agents/openai.yaml)"
+    },
+    {
+      "path": "runtime/test/plugin-live.test.mjs",
+      "rules": ["A"],
+      "reason": "the live plugin test keeps the user's Codex home (CODEX_HOME) out of the child's environment"
     },
     {
       "path": "runtime/bin/hook.mjs",
@@ -494,6 +570,61 @@
       "reason": "dispatcher tests send payloads in the shapes the user's Codex host sends"
     },
     {
+      "path": "runtime/src/memory/launch/run.mjs",
+      "rules": ["A"],
+      "reason": "the launcher's tool.before decision when it can't run the guard copy (L7 D10): a Codex host (--host codex, its turn_id) can't show an ask, so it denies"
+    },
+    {
+      "path": "runtime/test/l7-launcher-guard.test.mjs",
+      "rules": ["A"],
+      "reason": "the guard copy's failure layers per host: Codex payloads and Codex's deny-only behaviour are what the tests check"
+    },
+    {
+      "path": "runtime/src/hooks/self-protect.mjs",
+      "rules": ["A"],
+      "reason": "self-protection reads each host's shell call (L7 D12): Codex's exec argv and its [shell, -lc, script] form, and nested agents (claude, codex) whose homes moved are what it judges"
+    },
+    {
+      "path": "runtime/src/hooks/self-protect-words.mjs",
+      "rules": ["A"],
+      "reason": "the word lists self-protection acts on (L7 D12b): nested agents by name and their home variables (CLAUDE_CONFIG_DIR, CODEX_HOME)"
+    },
+    {
+      "path": "runtime/test/l7-self-protect.test.mjs",
+      "rules": ["A"],
+      "reason": "self-protection per host: Codex payloads and argv arrays, and nested agents started with a moved home, are what the tests check"
+    },
+    {
+      "path": "runtime/src/hooks/self-protect-state.mjs",
+      "rules": ["A"],
+      "reason": "ad's state protection (L7 D12c): the host folders it protects by name (Claude Code's config dir, session-env and plugin records, CODEX_HOME) and Codex's apply_patch calls"
+    },
+    {
+      "path": "runtime/test/l7-state.test.mjs",
+      "rules": ["A"],
+      "reason": "the state protection per host: Codex apply_patch payloads and Claude Code's config folders are what the tests check"
+    },
+    {
+      "path": "runtime/test/l7-host.test.mjs",
+      "rules": ["A"],
+      "reason": "host config protection (L7 D12d): Claude Code's settings files and Codex's config are what the tests check"
+    },
+    {
+      "path": "runtime/test/l7-gate.test.mjs",
+      "rules": ["A"],
+      "reason": "the self-protection gate per host (L7 Done-when 2): Codex payloads (turn_id, apply_patch forms) and Claude Code's are replayed"
+    },
+    {
+      "path": "runtime/test/l7-allow-once.test.mjs",
+      "rules": ["A"],
+      "reason": "allow-once binds the call text only on Codex (it hides the command's folder): the tests send Codex payloads"
+    },
+    {
+      "path": "runtime/test/l7-tool-before.test.mjs",
+      "rules": ["A"],
+      "reason": "rule decisions per host: Codex payloads and Codex's deny-only behaviour are what the tests check"
+    },
+    {
       "path": "runtime/src/rules/**",
       "rules": ["A", "C"],
       "reason": "the rule matcher (L4c) reads calls from the user's own hosts, Codex among them: its shell tool runs through PowerShell on Windows and sends argv arrays; the names describe that host, not ad's engine"
@@ -534,7 +665,7 @@
     {
       "path": "docs/architecture.md",
       "rules": ["A"],
-      "match": "lists Claude Code transcripts and Codex rollouts|`CLAUDE\\.md` rules Codex doesn't read|--host claude\\|codex|Codex denies with the reason",
+      "match": "lists Claude Code transcripts and Codex rollouts|correction cluster of the Claude Code and Codex history|`CLAUDE\\.md` rules Codex doesn't read|--host claude\\|codex|Codex denies with the reason",
       "reason": "the mistakes report's reader and coverage line, and the hook dispatcher's hosts: the user's own Codex, not ad's engine"
     },
     {
@@ -626,6 +757,18 @@
       "reason": "the memory installer's messages, the Codex host's restart step, and the agents the review gate refuses under (the user's own Codex CLI is one)"
     },
     {
+      "path": "docs/troubleshooting.md",
+      "rules": ["A"],
+      "match": "<text>` \\(Codex\\)|On Codex, run `setup --host codex`",
+      "reason": "entry #100 (remember): the command the user types in their own Codex, and setup's Codex step"
+    },
+    {
+      "path": "docs/troubleshooting.md",
+      "rules": ["A"],
+      "match": "Codex: no hooks: ad's folder|Codex's shell would read|a Codex hook list|\\(Codex hooks not reviewed|`Codex won't run|on this Codex`|Codex runs a hook only after you trust it|Codex records trust per hook|open Codex and run `/hooks`|## 107\\. Codex:|a Codex session starts with|Codex's agent shell isn't marked|run the printed `setup --host codex`|In Codex, uninstall never edits|\\(Codex would stop trusting it\\)|your Codex is newer",
+      "reason": "entries #104-#109 (memory setup, Codex's /hooks trust, the shell marker, uninstall's kept items): the user's own Codex CLI, its messages and its trust step"
+    },
+    {
       "path": "mcp/agent-daemon-memory/README.md",
       "rules": ["A"],
       "match": "Install \\(Claude Code, Codex, Cursor(, VS Code, Gemini CLI)?\\)",
@@ -671,6 +814,33 @@
       "reason": "P5.7: tests that a skill reaches each host's own folder in a temp home"
     },
     {
+      "path": "runtime/test/ledger2.test.mjs",
+      "rules": ["A"],
+      "match": "\"codex(:[a-z-]+)?\"|\\bcodex: \\{|hosts\\.codex\\b",
+      "reason": "L3 part 2: ledger items and v1 records for the other host the installer sets up, by its host id (--host codex), in temp roots"
+    },
+    {
+      "path": "runtime/test/launcher.test.mjs",
+      "rules": ["A"],
+      "match": "\"codex\"",
+      "reason": "L3 part 3a: the launcher's per-host behaviour (--host codex, a disabled host), by the host id, in temp roots"
+    },
+    {
+      "path": "runtime/test/memory-setup-codex.test.mjs",
+      "rules": ["A"],
+      "reason": "L3 part 3c: setup's items in the user's own Codex install (a fake CODEX_HOME: its config.toml, hooks.json and trust keys), not ad's engine"
+    },
+    {
+      "path": "runtime/test/memory-codex-entry.test.mjs",
+      "rules": ["A"],
+      "reason": "L3 part 3d: the memory server's entry in the user's own Codex config.toml (a fake CODEX_HOME), including what that host's `mcp add` leaves of 3.1.0's block; not ad's engine"
+    },
+    {
+      "path": "runtime/src/memory/codex-marker.mjs",
+      "rules": ["A"],
+      "reason": "L3 part 3c (D22): session.start for the user's own Codex host checks the marker setup wrote into that host's config.toml; it names the host it checks"
+    },
+    {
       "path": "runtime/test/skills-cross-host.test.mjs",
       "rules": ["A"],
       "reason": "P5.7: the cross-host test checks each host's folder in a temp home"
@@ -706,6 +876,235 @@
       "path": "tools/spikes/",
       "rules": ["A"],
       "reason": "MCP platform L0 spikes: scripts that drive the real host binaries (claude, codex) and their homes by name in throwaway folders"
+    },
+    {
+      "path": "runtime/src/memory/prompt-screen.mjs",
+      "rules": ["A"],
+      "match": "codex|openai",
+      "reason": "L5's prompt screen matches text that addresses or impersonates coding agents and their vendors (\"if you are Codex\", \"from the OpenAI team\", `.codex/config.toml`); naming them is the point"
+    },
+    {
+      "path": "runtime/test/capture-gates.test.mjs",
+      "rules": ["A"],
+      "match": "codex",
+      "reason": "the poisoning gate simulates each corpus item's host (claude-code or codex) and its prompt-source signals"
+    },
+    {
+      "path": "runtime/test/capture-prompt.test.mjs",
+      "rules": ["A"],
+      "match": "Codex skill",
+      "reason": "names the Codex skill form of the remember command ($<pkg>-remember)"
+    },
+    {
+      "path": "runtime/test/fixtures/capture/poisoning-dev.jsonl",
+      "rules": ["A"],
+      "match": "\"codex\"|codex exec|codex-subagent",
+      "reason": "the L5 poisoning dev set mirrors the held-out corpus schema: a host field and Codex prompt sources (codex exec, Codex subagent turns)"
+    },
+    {
+      "path": "runtime/src/memory/reminder.mjs",
+      "rules": ["A", "C"],
+      "match": "[Cc]odex",
+      "reason": "L5's review reminder counts captures from the second host by its name (\"2 from Codex\"), as decision 18 words it; the capture event records host \"codex\""
+    },
+    {
+      "path": "runtime/src/hooks/memory-command.mjs",
+      "rules": ["A"],
+      "match": "[Cc]odex",
+      "reason": "names the second host's typed forms of forget and restore ($<package>-forget, $<package>-restore)"
+    },
+    {
+      "path": "runtime/test/l5-hook-cli.test.mjs",
+      "rules": ["A"],
+      "match": "[Cc]odex|CODEX",
+      "reason": "spawns the hook as the second host (--host codex, CODEX_HOME unset) and checks its forget, reminder and capture-count lines"
+    },
+    {
+      "path": "docs/memory/review.md",
+      "rules": ["A"],
+      "match": "\\(Codex\\)| in Codex",
+      "reason": "the capture and review guide names the typed command forms on the user's own Codex CLI ($agent-daemon-memory-remember, -forget), not ad's engine"
+    },
+    {
+      "path": "runtime/src/memory/recall-coexist.mjs",
+      "rules": ["A"],
+      "reason": "doctor's coexistence check (L6) reads whether claude-mem is enabled in the user's own Codex config ($CODEX_HOME/config.toml) and names that host; not ad's engine"
+    },
+    {
+      "path": "runtime/test/recall-coexist.test.mjs",
+      "rules": ["A"],
+      "reason": "fixtures of the user's own Codex config for the claude-mem check (L6); not ad's engine"
+    },
+    {
+      "path": "runtime/src/memory/recall-doctor.mjs",
+      "rules": ["A"],
+      "reason": "doctor's recall rows (L6) say on which of the user's own hosts claude-mem is on; not ad's engine"
+    },
+    {
+      "path": "runtime/src/memory/recall-command.mjs",
+      "rules": ["A"],
+      "reason": "the recall command's typed forms per user host (L6): the Codex skill form `$<package>-recall`, as remember.mjs does; not ad's engine"
+    },
+    {
+      "path": "runtime/testkit/recall-hook.mjs",
+      "rules": ["A"],
+      "reason": "spawned-hook helpers (L6) run the dispatcher as each of the user's hosts calls it, Codex's --host flag and payload included; not ad's engine"
+    },
+    {
+      "path": "runtime/test/recall-hook.test.mjs",
+      "rules": ["A"],
+      "reason": "end-to-end recall tests (L6) per user host, Codex included; not ad's engine"
+    },
+    {
+      "path": "docs/memory/recall.md",
+      "rules": ["A"],
+      "reason": "the recall page names the user's hosts recall serves (Claude Code and Codex) and the Codex skill form; not ad's engine"
+    },
+    {
+      "path": "docs/troubleshooting.md",
+      "rules": ["A"],
+      "match": "The host isn't Claude Code or Codex\\*\\*, or ad's hooks aren't trusted there \\(Codex: `/hooks`",
+      "reason": "the recall entry (#110): which of the user's own hosts recall serves, and Codex's /hooks trust step"
+    },
+    {
+      "path": "runtime/test/memory-readiness.test.mjs",
+      "rules": ["A"],
+      "reason": "readiness tests set up a fake Codex home and read the user's Codex host lines (its hooks trust, config.toml); not ad's engine"
+    },
+    {
+      "path": "runtime/src/memory/safety-cli.mjs",
+      "rules": ["A", "C"],
+      "reason": "L7b: `safety on` tells the user how the starter safety policy decides in each of their hosts; Codex can't ask, so it stops (the user's own Codex host, not ad's engine)"
+    },
+    {
+      "path": "runtime/src/memory/learnings-cli.mjs",
+      "rules": ["A"],
+      "reason": "L7 P3-3: a rule edit prints the lines of adding ad's rules check to the user's own Codex install on Windows (not ad's engine)"
+    },
+    {
+      "path": "runtime/test/l7-uninstall-switch.test.mjs",
+      "rules": ["A"],
+      "reason": "L7 P3-3: the rules check in the user's own Codex install on Windows arrives with the first rule (a fake CODEX_HOME: hooks.json, config.toml), not ad's engine"
+    },
+    {
+      "path": "docs/memory/rules.md",
+      "rules": ["A"],
+      "reason": "L7 P5: the rules guide says how rules decide in the user's own Codex host (it can't ask, so rules stop there), not ad's engine"
+    },
+    {
+      "path": "runtime/test/l7-p5.test.mjs",
+      "rules": ["A"],
+      "reason": "L7 P5: doctor's rules rows for the user's own Codex install (Codex on Windows, its sandbox setting), not ad's engine"
+    },
+    {
+      "path": "runtime/test/l7-s4-sweep.test.mjs",
+      "rules": ["A"],
+      "reason": "L7 P5: the S4 sweep runs the package CLI with a fake CODEX_HOME (the user's own Codex install), not ad's engine"
+    },
+    {
+      "path": "runtime/src/memory/policy-coexist.mjs",
+      "rules": ["A"],
+      "reason": "L7b: doctor reads the user's Codex hooks.json and config.toml to find other command guards (the user's own Codex host, not ad's engine)"
+    },
+    {
+      "path": "runtime/test/l7b-policy-enforce.test.mjs",
+      "rules": ["A"],
+      "reason": "L7b: the policy's decisions per host, Codex's deny included (the user's own Codex host, not ad's engine)"
+    },
+    {
+      "path": "runtime/test/l7b-safety-cli.test.mjs",
+      "rules": ["A"],
+      "reason": "L7b: coexistence fixtures in the user's Codex config folder (the user's own Codex host, not ad's engine)"
+    },
+    {
+      "path": "runtime/test/fixtures/starter-policy-call.mjs",
+      "rules": ["A"],
+      "reason": "L7b: the starter-policy corpus items name their host (claude-code or codex) (the user's own Codex host, not ad's engine)"
+    },
+    {
+      "path": "runtime/src/memory/rule-step.mjs",
+      "rules": ["A", "C"],
+      "reason": "L7 P4: the rule step says how a rule decides in each of the user's hosts (Codex can't ask, so it stops) and offers a preview over their Codex history (the user's own Codex host, not ad's engine)"
+    },
+    {
+      "path": "runtime/src/memory/rule-preview.mjs",
+      "rules": ["A"],
+      "reason": "L7 P4: the preview reads the user's Claude Code and Codex transcripts of the last 30 days (the user's own Codex host, not ad's engine)"
+    },
+    {
+      "path": "runtime/src/memory/rules-cli.mjs",
+      "rules": ["A", "C"],
+      "reason": "L7 P4: `rules list` says Codex stops the call (the user's own Codex host, not ad's engine)"
+    },
+    {
+      "path": "runtime/src/memory/rules-service.mjs",
+      "rules": ["A"],
+      "reason": "L7 P4: a rule's pattern may not name the user's Codex config (.codex/hooks.json, config.toml), which self-protection covers (the user's own Codex host, not ad's engine)"
+    },
+    {
+      "path": "runtime/src/memory/memory-cli.mjs",
+      "rules": ["A", "C"],
+      "match": "Codex history",
+      "reason": "L7 P4: `config history-preview` names the user's Codex history the preview reads (the user's own Codex host, not ad's engine)"
+    },
+    {
+      "path": "runtime/src/cli-full.mjs",
+      "rules": ["A"],
+      "match": "switch\\?\\.codex",
+      "reason": "L7 P3-3/P4: the rule switch's lines for the user's Codex host on Windows (the entry's cost, the /hooks step), printed after a token run (the user's own Codex host, not ad's engine)"
+    },
+    {
+      "path": "runtime/src/memory/memory-cli.mjs",
+      "rules": ["A"],
+      "match": "switch\\?\\.codex",
+      "reason": "L7 P3-3/P4: the rule switch's lines for the user's Codex host on Windows (the entry's cost, the /hooks step), printed after a token run (the user's own Codex host, not ad's engine)"
+    },
+    {
+      "path": "runtime/src/portability/import.mjs",
+      "rules": ["A"],
+      "match": "switch\\?\\.codex",
+      "reason": "L7 P3-3/P4: the rule switch's lines for the user's Codex host on Windows (the entry's cost, the /hooks step), printed after a token run (the user's own Codex host, not ad's engine)"
+    },
+    {
+      "path": "runtime/src/memory/review-checklist.mjs",
+      "rules": ["A"],
+      "match": "switch\\?\\.codex",
+      "reason": "L7 P3-3/P4: the rule switch's lines for the user's Codex host on Windows (the entry's cost, the /hooks step), printed after a token run (the user's own Codex host, not ad's engine)"
+    },
+    {
+      "path": "runtime/src/memory/rule-removal.mjs",
+      "rules": ["A"],
+      "match": "switch\\?\\.codex",
+      "reason": "L7 P3-3/P4: the rule switch's lines for the user's Codex host on Windows (the entry's cost, the /hooks step), printed after a token run (the user's own Codex host, not ad's engine)"
+    },
+    {
+      "path": "runtime/test/l7-p4-*.test.mjs",
+      "rules": ["A"],
+      "reason": "L7 P4: branch rules and the preview on the user's Codex host (deny, transcripts) (the user's own Codex host, not ad's engine)"
+    },
+    {
+      "path": "docs/memory/security.md",
+      "rules": ["A"],
+      "match": "and in Codex, which can't ask",
+      "reason": "L7b: how the starter safety policy decides in the user's hosts (the user's own Codex host, not ad's engine)"
+    },
+    {
+      "path": "skills/daemon/harness-troubleshoot/SKILL.md",
+      "rules": ["A"],
+      "match": "Codex and bypass modes can't ask",
+      "reason": "L7b row #130: how the starter safety policy decides in the user's hosts (the user's own Codex host, not ad's engine)"
+    },
+    {
+      "path": "docs/troubleshooting.md",
+      "rules": ["A"],
+      "match": "Codex: trusted in|not trusted yet in Codex|open Codex and run",
+      "reason": "the readiness entry (#150): the user's own Codex host and its /hooks trust step"
+    },
+    {
+      "path": "docs/troubleshooting.md",
+      "rules": ["A"],
+      "match": "Claude Code in bypass or don't-ask mode, and Codex, can't ask",
+      "reason": "L7b entry #130: how the starter safety policy decides in the user's hosts (the user's own Codex host, not ad's engine)"
     }
   ]
 }

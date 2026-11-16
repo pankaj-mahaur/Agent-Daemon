@@ -21,6 +21,8 @@ export const CLASSES = Object.freeze([
   // The engine's rollouts before its folders: the rest of an engine folder is never taken.
   C("engine-rollouts", "global", /^(engine|a\/[^/]+)\/sessions\//, "opt", "imports/<id>/engine-sessions/ (view-only)"),
   C("engine-homes", "global", new RegExp(`^(engine|${legacyHomeName}|a/[^/]+)(/|$)`), "never", "regenerated on the target", "engine folders hold sign-ins"),
+  // L4b: the key of the history hashes; a store copied without it gives nothing away.
+  C("history-key", "global", /^memory\/history\.key$/, "never", "made again on the target (history imports there start fresh)"),
   C("machine-state", "global", /^(migrate\.json|agy-consent\.json|siwc\/host\.json|imports|exports)(\/|$)/, "never", "regenerated on the target"),
   C("memory-db", "global", /^episodic\.db$/, "in", "rebuilt row by row (P7.3)", "a snapshot; -wal and -shm never"),
   C("memory-db-sidecar", "global", /^episodic\.db-(wal|shm|journal)$/, "out", "—"),
@@ -46,6 +48,7 @@ export const CLASSES = Object.freeze([
   C("quota-cache", "global", /^(quota|catalog|spend)\//, "out", "—", "re-read from the providers"),
   C("machine-local", "global", /^(locks|running-agents|logs|schedule-logs|schedule-locks|audit|telemetry|teams|worktrees|loops|skill-traces|checkpoints)(\/|$)|^(STOP|viewer\.html|.*\.flag)$/, "out", "—"),
   C("tui-cache", "global", /^tui\/(?!prefs\.json$|state\.json$|history\.jsonl$)/, "out", "—", "the terminal UI's own caches"),
+  C("recall-cache", "global", /^recall\//, "out", "—", "recall's repo-context caches and delivery markers (L6): rebuilt by the next session"),
   C("project-journals", "project", /^(sessions\.jsonl|learning-journal(\.archive)?\.jsonl|.*\.draining-[^/]*\.jsonl)$/, "opt", "append, dedup by line hash", "raw capture"),
   C("project-machine-local", "project", /^(logs|loops|telemetry|skill-traces)(\/|$)|^(STOP|.*\.flag)$/, "out", "—"),
   C("project-memory", "project", /^(memory|archive|handoffs|proposed|applied)(\/|$)|^(config\.json|route-map\.json|skill-author-log\.jsonl|project\.json|activeContext\.md)$/, "in", "screened, then place / conflict"),

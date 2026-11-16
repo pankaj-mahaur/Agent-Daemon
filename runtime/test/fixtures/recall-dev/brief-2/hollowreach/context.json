@@ -1,0 +1,26 @@
+{
+  "name": "hollowreach",
+  "stack": "Unity 2022.3 LTS / C# 2D action roguelike: URP, Addressables, Input System, Steamworks.NET",
+  "branch": "fix/save-corruption-on-quit",
+  "recent_paths": [
+    "Assets/Scripts/Save/SaveSystem.cs",
+    "Assets/Scripts/Save/SaveSerializer.cs",
+    "Assets/Scripts/Save/SaveSlot.cs",
+    "Assets/Scripts/Save/SaveMigrations.cs",
+    "Assets/Scripts/Core/GameBootstrap.cs",
+    "Assets/Scripts/Core/Util/Crc32.cs",
+    "Assets/Scripts/Platform/SteamCloudSync.cs",
+    "Assets/Tests/EditMode/SaveSerializerTests.cs",
+    "Assets/Tests/PlayMode/SaveOnQuitTests.cs",
+    "Packages/manifest.json",
+    "ProjectSettings/ProjectSettings.asset"
+  ],
+  "recent_commits": [
+    "save: write to .tmp then File.Replace for atomic saves",
+    "save: flush synchronously on quit",
+    "save: keep last good backup and fall back on checksum mismatch",
+    "steam: don't upload to cloud while a save is in flight",
+    "tests: playmode test kills the save mid-write"
+  ],
+  "session_cwd": "D:\\dev\\hollowreach"
+}

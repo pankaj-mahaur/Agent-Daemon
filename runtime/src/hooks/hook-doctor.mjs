@@ -9,8 +9,9 @@ import os from "node:os";
 import path from "node:path";
 import { EXEC_FORM_MIN_VERSION, OLD_PLUGIN_TAGS, duplicateSteps, entryAlive, ourHandlers } from "./routes.mjs";
 import { HOSTS, cmpVersion } from "./host-capabilities.mjs";
+import { PRODUCT } from "../product.mjs";
 
-const PLUGIN_NAME = "agent-daemon-memory";
+const PLUGIN_NAME = PRODUCT.plugin;
 const claudeDir = (env, home) => (env.CLAUDE_CONFIG_DIR && path.isAbsolute(env.CLAUDE_CONFIG_DIR) ? env.CLAUDE_CONFIG_DIR : path.join(home, ".claude"));
 const readJson = (file) => {
   try {
@@ -37,7 +38,8 @@ export function memoryPluginState({ env = process.env, home = os.homedir(), cwd 
   const rec = Array.isArray(entry) ? entry.find((x) => x?.scope === "user") ?? entry[0] : entry;
   let outdated = null;
   try {
-    if (rec?.installPath) outdated = !/\s--plugin\b/.test(fs.readFileSync(path.join(rec.installPath, "hooks", "hooks.json"), "utf8"));
+    // A plugin from the dispatcher on passes --plugin (a command word, or an exec-form argument: D23).
+    if (rec?.installPath) outdated = !ourHandlers(JSON.parse(fs.readFileSync(path.join(rec.installPath, "hooks", "hooks.json"), "utf8"))?.hooks).some((o) => o.info.plugin);
   } catch {
     // not readable: unknown
   }
@@ -97,12 +99,16 @@ export function transientInstall(hookPath, { tmp = os.tmpdir() } = {}) {
 export function scriptRow(sources, hookPath, { transient = transientInstall } = {}) {
   const routes = sources.flatMap((s) => ourHandlers(s.hooks)).filter((o) => o.info.kind === "dispatcher" && !o.info.plugin && o.info.script);
   const scripts = [...new Set(routes.map((o) => o.info.script))];
-  const dead = [...new Set(routes.filter((o) => !entryAlive(o.info)).map((o) => o.info.script))];
+  // A memory launcher entry of a host its uninstall turned off is there and does nothing: not gone.
+  const off = (o) => o.info.launcher && fs.existsSync(o.info.script) && !entryAlive(o.info);
+  const dead = [...new Set(routes.filter((o) => !entryAlive(o.info) && !off(o)).map((o) => o.info.script))];
   if (dead.length) return { name: "Hook script", ok: false, note: `${dead.join(", ")} ${dead.length === 1 ? "is" : "are"} gone, so those hooks fail: run ad init from the ad you use` };
   const list = scripts.length ? scripts : [hookPath];
   const shaky = list.map((p) => [p, transient(p)]).filter(([, why]) => why);
   if (shaky.length) return { name: "Hook script", ok: false, note: `${shaky.map(([p, why]) => `${p} is in ${why}`).join("; ")}: hooks stop working when it goes. Run ad init from your installed ad` };
-  return { name: "Hook script", ok: true, note: list.join(", ") };
+  const quiet = routes.filter(off).length;
+  const offNote = quiet ? `; ${quiet} memory hook entr${quiet === 1 ? "y" : "ies"} turned off by its uninstall (doing nothing): remove ${quiet === 1 ? "it" : "them"}, or run its setup again` : "";
+  return { name: "Hook script", ok: true, note: list.join(", ") + offNote };
 }
 
 /** Exec-form routes on a Claude Code older than the version the form was verified on. */
@@ -142,9 +148,13 @@ export function pluginRow({ plugin, sources }) {
   return { name: "Memory plugin hooks", ok: true, note: all.length ? `${name} is on; its hooks pass through where ad init's run, so nothing is captured twice` : `${name} is on and runs the memory hooks` };
 }
 
-/** Active rules in the snapshot (not paused). */
+/**
+ * The rules in the snapshot, paused ones and global ones included: ad's rules check stays
+ * fail-closed while any rule exists (L7 D13), so this is the count its mode is judged by.
+ */
 export function ruleCount(snapshot) {
-  return Object.values(snapshot?.projects ?? {}).reduce((n, p) => n + (p && !p.paused && Array.isArray(p.rules) ? p.rules.length : 0), 0);
+  const list = (l) => (Array.isArray(l) ? l.length : 0);
+  return list(snapshot?.global?.rules) + Object.values(snapshot?.projects ?? {}).reduce((n, p) => n + list(p?.rules), 0);
 }
 
 /**
@@ -207,4 +217,34 @@ export function rulesFileRow(g, file) {
 /** The hook log's last lines. */
 export function logRow(lines) {
   return { name: "Hook log", ok: true, note: lines.length ? lines.slice(-3).join(" | ") : "nothing logged" };
+}
+
+/**
+ * The L2 hook checks as rows ({ name, ok, note }), for `ad doctor` and the package's own
+ * doctor. packaged: the caller runs from an npm copy, so HOOK_PATH is a transient copy
+ * there: with no routes in the settings there is no script to check.
+ */
+export async function hookRouteChecks({ home = os.homedir(), cwd = process.cwd(), claudeVersion, packaged = false, sources, root } = {}) {
+  const rows = [];
+  try {
+    const { claudeHookSources, HOOK_PATH } = await import("./routes.mjs");
+    const { loadGuards, guardsPath } = await import("./guards.mjs");
+    const { hookLogTail } = await import("./hook-log.mjs");
+    const guards = loadGuards({ root });
+    rows.push(rulesFileRow(guards, guardsPath(root)));
+    const srcs = sources ?? claudeHookSources({ home, cwd });
+    const version = claudeVersion === undefined ? await claudeCodeVersion() : claudeVersion;
+    rows.push(duplicateRow(srcs));
+    const hasRoutes = srcs.some((s) => ourHandlers(s.hooks).some((o) => o.info.kind === "dispatcher" && !o.info.plugin && o.info.script));
+    if (!packaged || hasRoutes) rows.push(scriptRow(srcs, HOOK_PATH));
+    const execRow = execFormRow(srcs, version);
+    if (execRow) rows.push(execRow);
+    const row = pluginRow({ plugin: memoryPluginState({ home, cwd }), sources: srcs });
+    if (row) rows.push(row);
+    rows.push(...failClosedRows({ sources: srcs, rules: ruleCount(guards.snapshot), claudeVersion: version }));
+    rows.push(logRow(hookLogTail(5, { root })));
+  } catch (e) {
+    rows.push({ name: "Hook routes", ok: true, note: `not checked (${e.message})` });
+  }
+  return rows;
 }

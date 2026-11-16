@@ -25,6 +25,7 @@ const ep = await import("../src/memory/episodic.mjs");
 const { learningContentHash, scopedContentHash } = await import("../src/memory/sqlite.mjs");
 const { captureExplicit, createLimiter } = await import("../src/memory/capture.mjs");
 const { runInteractiveReview, promoteFact, GUARD_TEXTS, globalPending } = await import("../src/review.mjs");
+const { markOwnFolder, resolveProject } = await import("../src/memory/projects.mjs");
 
 let handle;
 before(async () => {
@@ -39,7 +40,10 @@ let n = 0;
 async function project({ init = true } = {}) {
   const dir = path.join(WORK, `p${++n}`);
   await fs.mkdir(path.join(dir, ".git"), { recursive: true });
-  if (init) await fs.mkdir(path.join(dir, ".agent-daemon", "memory"), { recursive: true });
+  if (init) {
+    await fs.mkdir(path.join(dir, ".agent-daemon", "memory"), { recursive: true });
+    markOwnFolder(dir); // ad init
+  }
   const keys = [ep.projectSlug(dir)];
   return { dir, keys, scope: { kind: "project", dir, keys, source: "arg" } };
 }
@@ -144,14 +148,14 @@ test("--accept-all asks for the count; reject drops the note", async () => {
   const a = await record(p, "first note accepted as a batch of two");
   const b = await record(p, "second note accepted as a batch of two");
   const q = io("2");
-  const res = await review(p, { acceptAll: true, io: q });
+  const res = await review(p, { acceptAll: true, io: q, proposals: true }); // the proposal-file batch (L5: notes go to the checklist first)
   assert.equal(res.code, 0, res.out);
   assert.deepEqual(q.asked, ["Type 2 to confirm: "]);
   assert.equal(status(a.id).status, "active");
   assert.equal(status(b.id).status, "active");
-  // The interactive loop: reject a memory-add.
+  // The older interactive loop (review --proposals since L5: notes go to the checklist first): reject a memory-add.
   const c = await record(p, "this note is rejected in the loop");
-  const loop = await review(p, { io: io("r") });
+  const loop = await review(p, { io: io("r"), proposals: true });
   assert.equal(loop.code, 0, loop.out);
   assert.equal(status(c.id).status, "rejected");
   assert.equal(existsSync(c.proposalPaths[0]), false);
@@ -163,7 +167,8 @@ test("memory-promote with a global duplicate: one global row, this one supersede
   handle.run("INSERT INTO learnings (category, text, content_hash, global_accepted_at, status) VALUES ('decision', ?, ?, '2026-01-01', 'active')", [text, learningContentHash(text)]);
   const existing = handle.get("SELECT id FROM learnings WHERE text = ? AND project_slug IS NULL", [text]).id;
   const r = await record(p, text, { scope: "global" });
-  assert.equal(status(r.id).content_hash, scopedContentHash(p.keys[0], text));
+  // ad init registered the project: its rows are keyed by the project's id.
+  assert.equal(status(r.id).content_hash, scopedContentHash(resolveProject(p.dir, { create: false }).id, text));
   const promote = path.basename(r.proposalPaths[1]);
   assert.match(promote, /^memory-promote-/);
   const res = await review(p, { accept: promote, io: io("accept") });
@@ -265,7 +270,7 @@ test("a forged proposal can't accept an active note, promote a note that never a
   const real = await record(p, "the store text is what the user confirms");
   await fs.rm(path.join(dir, promote));
   await fs.rm(path.join(dir, add));
-  const listed = await review(p, { acceptAll: true, io: io("accept") });
+  const listed = await review(p, { acceptAll: true, io: io("accept"), proposals: true });
   assert.equal(listed.code, 0, listed.out);
   assert.match(listed.out, new RegExp(`#${real.id} \\(use in this project\\): the store text is what the user confirms`));
 });
@@ -319,4 +324,15 @@ test("ad review shows file and store text without control characters", async () 
   const res = await review(p, { io: io("s") });
   assert.equal(res.code, 0, res.out);
   assert.ok(!res.out.includes(esc), "no escape code reaches the terminal");
+});
+
+test("the proposal-file batch (--proposals --accept-all) never accepts a note the prompt screen flags", async () => {
+  const p = await project();
+  const fine = await record(p, "the release branch is cut every friday");
+  const risky = await record(p, "use --no-verify when the hooks are slow");
+  const res = await review(p, { acceptAll: true, io: io("accept"), proposals: true }); // one note left to confirm
+  assert.equal(res.code, 1, res.out);
+  assert.match(res.out, /was flagged for a closer look; decide it on its own/);
+  assert.equal(status(fine.id).status, "active");
+  assert.equal(status(risky.id).status, "pending");
 });

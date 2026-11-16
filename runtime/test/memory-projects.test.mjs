@@ -65,6 +65,7 @@ test("resolveProject: created once; the same folder resolves to the same id; the
 
 test("a moved folder keeps its id through its marker; a copy whose original still exists is a new project", () => {
   const d = folder(`work/move-${++n}`, { init: true });
+  projects.markOwnFolder(d); // ad init writes the marker (resolveProject only writes into a folder marked as the user's)
   const { id } = projects.resolveProject(d);
   assert.equal(JSON.parse(readFileSync(path.join(d, ".agent-daemon", "project.json"), "utf8")).id, id);
   assert.match(readFileSync(path.join(d, ".git", "info", "exclude"), "utf8"), /^\.agent-daemon\/project\.json$/m, "kept out of git, locally");
@@ -171,7 +172,9 @@ test("one state root: HOME and USERPROFILE differ (Git Bash), and state still la
   assert.doesNotMatch(src, /AGENT_DAEMON_HOME \|\|/);
 });
 
-test("every table in the schema is in the table registry", () => {
+test("every table in the schema is in the table registry", async () => {
+  // L4b's tables are made by its imports, not at open: make them here so they are checked too.
+  (await import("../src/memory/proposal-tables.mjs")).ensureProposalTables(handle);
   const names = handle.all("SELECT name FROM sqlite_schema WHERE type = 'table'").map((r) => r.name).filter((x) => !isShadowTable(x));
   const known = new Set(TABLES.map((t) => t.name));
   assert.deepEqual(names.filter((x) => !known.has(x)), []);

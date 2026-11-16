@@ -21,7 +21,7 @@ const key = (r) => `${r.hostEvent}:${r.event}`;
 
 function cleanEnv(home, extra = {}) {
   const env = { ...process.env, HOME: home, USERPROFILE: home, AD_ROOT: path.join(home, "ad-root"), ...extra };
-  for (const k of ["CLAUDE_CONFIG_DIR", "CODEX_HOME", "CLAUDE_PROJECT_DIR", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ATTENDED", "AD_WORKER", "AD_HOOK_HOST", "AD_PROFILE"]) if (!(k in extra)) delete env[k];
+  for (const k of ["CLAUDE_CONFIG_DIR", "CODEX_HOME", "CLAUDE_PROJECT_DIR", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ATTENDED", "AD_WORKER", "AD_HOOK_HOST", "AD_PROFILE", "AD_TOOL_SHELL"]) if (!(k in extra)) delete env[k];
   return env;
 }
 
@@ -198,7 +198,7 @@ function runInit(home, project, profile = "minimal") {
   });
 }
 
-test("duplicate routes: ad init twice leaves each route once; older and newer entries for one step are found, then merged", async () => {
+test("duplicate routes: ad init's planner twice leaves each route once; older and newer entries for one step are found, then merged; ad init without a terminal leaves them", async () => {
   const home = tmp();
   const project = path.join(home, "work", "app");
   fs.mkdirSync(project, { recursive: true });
@@ -222,10 +222,15 @@ test("duplicate routes: ad init twice leaves each route once; older and newer en
   const dups = duplicateSteps([{ name: settingsFile, hooks: seeded.hooks }]).map((d) => d.step).sort();
   assert.deepEqual(dups, ["rules-check", "user-prompt-extract"]);
   try {
-    const first = await runInit(home, project);
-    assert.equal(first.code, 0, first.out);
-    assert.match(first.out, /through the dispatcher/);
-    const s1 = JSON.parse(fs.readFileSync(settingsFile, "utf8"));
+    // L7 (D10, S2): ad init without a terminal (an agent's shell tool) scaffolds only.
+    const gated = await runInit(home, project);
+    assert.equal(gated.code, 0, gated.out);
+    assert.match(gated.out, /hooks unchanged \(no terminal\)/);
+    assert.deepEqual(JSON.parse(fs.readFileSync(settingsFile, "utf8")), seeded, "no hook entry written or changed");
+    // What ad init writes from the user's terminal: its planner, applied as it applies it.
+    const plan1 = planClaudeHooks(seeded.hooks, { steps: [] });
+    assert.ok(plan1.changed);
+    const s1 = { ...seeded, hooks: plan1.hooks };
     assert.equal(s1.model, "opus", "other settings stay");
     assert.deepEqual(duplicateSteps([{ name: "settings", hooks: s1.hooks }]), [], "no step runs twice");
     const ours = Object.entries(s1.hooks).flatMap(([ev, gs]) => gs.flatMap((g) => g.hooks.map((h) => [ev, classifyHandler(h, { hostEvent: ev, matcher: g.matcher })]))).filter(([, i]) => i);
@@ -233,10 +238,9 @@ test("duplicate routes: ad init twice leaves each route once; older and newer en
     assert.ok(ours.every(([, i]) => i.kind === "dispatcher"));
     assert.ok(installedSteps(s1.hooks).has("bash-pre-guard"), "the guard the user had is kept");
     assert.ok(JSON.stringify(s1.hooks).includes("my-own-hook"), "the user's own hook stays");
-    const second = await runInit(home, project);
-    assert.equal(second.code, 0, second.out);
-    assert.doesNotMatch(second.out, /hook route/, "nothing to do the second time");
-    assert.deepEqual(JSON.parse(fs.readFileSync(settingsFile, "utf8")), s1, "the second run leaves the file as it was");
+    const plan2 = planClaudeHooks(s1.hooks, { steps: [] });
+    assert.equal(plan2.changed, false, "nothing to do the second time");
+    assert.deepEqual(plan2.hooks, s1.hooks);
   } finally {
     fs.rmSync(home, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 }); // a store upgrade the hook started may still be running
   }

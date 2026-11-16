@@ -12,10 +12,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { PRODUCT } from "../src/product.mjs";
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 export const MATRIX = path.join(REPO, "docs", "support-matrix.md");
-export const TEMPLATES = path.join(REPO, "packages", "agent-daemon-memory", "listing");
+export const TEMPLATES = path.join(REPO, "packages", PRODUCT.package, "listing");
 export const TESTED = "tested live";
 export const STATUSES = new Set([TESTED, "built"]);
 // Every host name copy could mention: none may appear in a template by hand.

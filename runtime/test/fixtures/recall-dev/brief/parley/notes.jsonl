@@ -1,0 +1,24 @@
+{"id":"pa-01","text":"Presence.update/4 replaces the whole meta map, it doesn't merge: pass online_at and device along with typing or they're lost.","created":"2026-10-23","kind":"architecture"}
+{"id":"pa-02","text":"Channel and presence tests: mix test test/parley_web/channels test/parley/chat; run MIX_ENV=test mix ecto.reset once after pulling.","created":"2026-09-19","kind":"testing"}
+{"id":"pa-03","text":"Typing indicators are broadcast over a separate PubSub topic 'typing:<room_id>' and are never stored in Presence.","created":"2025-05-08","kind":"architecture"}
+{"id":"pa-04","text":"Typing state lives in Presence metas (typing: true/false) on 'room:<id>'; the old 'typing:<room_id>' PubSub topic was deleted.","created":"2026-10-27","kind":"architecture"}
+{"id":"pa-05","text":"Typing indicator events are debounced server-side in RoomChannel with a 500ms Process.send_after timer.","created":"2025-08-21","kind":"architecture"}
+{"id":"pa-06","text":"Typing throttling is client-side in assets/js/hooks/typing_hook.js (2s); the server only enforces RateLimiter's 10 events/min cap.","created":"2026-10-28","kind":"architecture"}
+{"id":"pa-07","text":"Before pushing run mix format and mix credo --strict.","created":"2025-02-27","kind":"tooling"}
+{"id":"pa-08","text":"Pre-push is `mix check` (format, credo, dialyzer, sobelow); credo alone skips the sobelow security pass.","created":"2026-07-15","kind":"tooling"}
+{"id":"pa-09","text":"Keep the typing indicator a function component, not a LiveComponent; presence_diff re-renders would remount a stateful one.","created":"2026-10-25","kind":"architecture"}
+{"id":"pa-10","text":"socket.assigns only carries user_id; load the membership once in join/3 with Chat.get_membership!/2 and keep it in assigns.","created":"2026-03-14","kind":"fact"}
+{"id":"pa-11","text":"iOS Safari autocorrect fires 'input' without 'keydown'; detect activity on the input event or swipes and autocorrect go unseen.","created":"2026-06-02","kind":"fact"}
+{"id":"pa-12","text":"assert_push \"presence_diff\" needs an explicit 500ms timeout; CI is slower than laptops and flakes at the default 100ms.","created":"2026-03-30","kind":"testing"}
+{"id":"pa-13","text":"RateLimiter keeps counters in a per-node ETS table keyed {user_id, event}; limits are per node, not cluster-wide.","created":"2025-12-11","kind":"fact"}
+{"id":"pa-14","text":"assets/js/hooks/infinite_scroll.js loads 50 messages per page; keep it in sync with the limit in Chat.list_messages/2.","created":"2026-08-08","kind":"paths"}
+{"id":"pa-15","text":"config/runtime.exs reads S3_BUCKET for attachments; uploads go straight to S3 with presigned URLs from AttachmentController.","created":"2026-10-09","kind":"fact"}
+{"id":"pa-16","text":"Digest emails are Oban jobs (Parley.Workers.DigestEmail) on the :mailers queue with max_attempts 5.","created":"2025-07-03","kind":"fact"}
+{"id":"pa-17","text":"Read receipts are buffered by ReadReceiptBuffer and flushed to message_reads every 5s.","created":"2026-04-21","kind":"architecture"}
+{"id":"pa-18","text":"GitHub OAuth goes through Ueberauth; the dev callback is http://localhost:4000/auth/github/callback.","created":"2025-11-04","kind":"fact"}
+{"id":"pa-19","text":"Reactions are capped at 20 distinct emoji per message by a unique index; Chat.add_reaction/3 maps the constraint error.","created":"2026-02-02","kind":"fact"}
+{"id":"pa-20","text":"Commit subjects: '<area>: <lowercase summary>', with areas like chat, room_live, channel, hooks, test.","created":"2025-03-20","kind":"git"}
+{"id":"pa-21","text":"Setup: asdf install (Erlang 27, Elixir 1.17), mix setup, then iex -S mix phx.server.","created":"2025-01-31","kind":"workflow"}
+{"id":"pa-22","text":"Deploys: fly deploy from main via GitHub Actions; migrations run in the release_command, not at boot.","created":"2026-05-13","kind":"workflow"}
+{"id":"pa-23","text":"Style with Tailwind classes in HEEx; assets/css/app.css holds only keyframes and third-party overrides.","created":"2025-09-26","kind":"style"}
+{"id":"pa-24","text":"Dialyzer PLTs are cached in priv/plts; delete that folder if dialyzer errors after an OTP upgrade.","created":"2025-06-18","kind":"tooling"}

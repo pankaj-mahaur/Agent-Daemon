@@ -1,0 +1,30 @@
+{
+  "relevant": ["si-01", "si-02", "si-05", "si-08", "si-13", "si-14", "si-17", "si-22"],
+  "irrelevant": ["si-03", "si-06", "si-09", "si-10", "si-12", "si-15", "si-16", "si-19", "si-21"],
+  "neutral": ["si-04", "si-07", "si-11", "si-18", "si-20", "si-23"],
+  "reasons": {
+    "si-01": "Parameter group ordering for the major upgrade; matches the first commit.",
+    "si-02": "apply_immediately / maintenance window for allow_major_version_upgrade.",
+    "si-03": "Stale: laptop applies replaced by si-04 (Atlantis).",
+    "si-04": "How every apply happens; project-wide.",
+    "si-05": "Extension checks for a major Postgres upgrade.",
+    "si-06": "Stale: DynamoDB locking replaced by si-07.",
+    "si-07": "State locking; project-wide.",
+    "si-08": "Pre-upgrade snapshot and rollback; matches the runbook commit.",
+    "si-09": "EKS node groups, other area.",
+    "si-10": "NAT gateway cost, other area.",
+    "si-11": "fmt/tflint in pre-commit; .tflint.hcl was touched but the note is project-wide.",
+    "si-12": "Stale: hand-written READMEs replaced by si-13 (terraform-docs), gap ~20 months.",
+    "si-13": "modules/rds/README.md and variables.tf changed; README must be regenerated.",
+    "si-14": "In-place vs blue/green decision for this upgrade.",
+    "si-15": "IAM policies, other area.",
+    "si-16": "DNS / external-dns, other area.",
+    "si-17": "Staging-first rollout and prod window (Hinglish).",
+    "si-18": "PR convention; project-wide.",
+    "si-19": "RDS storage alarm in monitoring module; shares 'RDS' but not about the upgrade.",
+    "si-20": "Tagging convention (Hinglish); project-wide.",
+    "si-21": "ElastiCache parameter group family; shares 'parameter group' wording only.",
+    "si-22": "Where engine_version is set per env; matches the staging bump commit.",
+    "si-23": "DB access via SSM; handy for checking extensions but generic."
+  }
+}

@@ -264,7 +264,7 @@ function ruleNote(t) {
 }
 
 /** `--share`: a redacted Markdown summary with no paths or project names. */
-export function renderShare(report) {
+export function renderShare(report, { command = "ad mistakes" } = {}) {
   const out = [];
   const both = report.hosts.claude.prompts > 0 && report.hosts.codex.prompts > 0;
   const agents = Object.keys(HOSTS).filter((h) => report.hosts[h].prompts).map((h) => HOSTS[h]).join(" + ") || "no agent";
@@ -289,7 +289,7 @@ export function renderShare(report) {
     }
   }
   out.push("");
-  out.push("_Made offline with `ad mistakes`. Secrets, paths, e-mail addresses and the account name are redacted automatically; names of people are not, so read it before you post._");
+  out.push(`_Made offline with \`${command}\`. Secrets, paths, e-mail addresses and the account name are redacted automatically; names of people are not, so read it before you post._`);
   return out.join("\n") + "\n";
 }
 

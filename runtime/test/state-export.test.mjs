@@ -219,3 +219,21 @@ db.close();`;
   db.close();
   assert.deepEqual(texts, texts.map((_, i) => i), "a prefix: 0..k with no gap");
 });
+
+test("L5: provisional and hidden notes never leave the machine, nor the rows that point at them", async () => {
+  const fx = await fixture({ keyish: false });
+  const live = await openDatabase(path.join(fx.ad, "episodic.db"));
+  const ins = (text, status, i) => Number(live.prepare("INSERT INTO learnings (project_slug, project_id, category, text, status, content_hash) VALUES (?, ?, 'correction', ?, ?, ?)").run(fx.A.slug, fx.A.id, text, status, `l5-${i}`).lastInsertRowid);
+  const prov = ins("PROVISIONAL-NOTE-7731 use pnpm", "provisional", 1);
+  ins("HIDDEN-NOTE-4410 old tip", "hidden", 2);
+  live.prepare("INSERT INTO feedback (learning_id, project_slug, project_id, verdict, ts) VALUES (?, ?, ?, 'helpful', '2026-11-01T00:00:00Z')").run(prov, fx.A.slug, fx.A.id);
+  live.close();
+  const r = await runExport({ out: path.join(fx.root, "l5.adstate"), env: fx.env, dirs: [fx.A.dir] });
+  const raw = gunzipSync(fs.readFileSync(r.out));
+  assert.equal(raw.includes(Buffer.from("PROVISIONAL-NOTE-7731")), false);
+  assert.equal(raw.includes(Buffer.from("HIDDEN-NOTE-4410")), false);
+  const db = await snapshotOf(r.out, fx.root);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM feedback WHERE learning_id = ?").get(prov).n, 0);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM learnings").get().n, 3, "A's accepted notes still go");
+  db.close();
+});

@@ -1,0 +1,22 @@
+{
+  "name": "stratus-infra",
+  "stack": "Terraform 1.9 + Terragrunt on AWS (VPC, EKS, RDS PostgreSQL, ElastiCache), applied through Atlantis",
+  "branch": "feat/rds-postgres16-upgrade",
+  "recent_paths": [
+    "modules/rds/main.tf",
+    "modules/rds/variables.tf",
+    "modules/rds/parameter_group.tf",
+    "modules/rds/README.md",
+    "live/staging/rds/terragrunt.hcl",
+    "live/prod/rds/terragrunt.hcl",
+    "docs/runbooks/rds-major-upgrade.md",
+    ".tflint.hcl"
+  ],
+  "recent_commits": [
+    "rds: add postgres16 parameter group alongside postgres14",
+    "rds: allow_major_version_upgrade behind a variable",
+    "staging: bump rds engine_version to 16.4",
+    "runbook: rds major upgrade steps and rollback"
+  ],
+  "session_cwd": "/home/dev/infra/stratus-infra"
+}

@@ -21,6 +21,7 @@ import { writeJsonAtomic } from "../atomic-write.mjs";
 import { SKILL_TARGETS, userSkillRoot } from "../hosts/skill-formats.mjs";
 import { libraryCurrent, libraryRoot, writeSkillDir } from "./library.mjs";
 import { isSkillName, skillSha } from "./proposal.mjs";
+import { PRODUCT } from "../product.mjs";
 
 export const MARKER = ".ad-skill.json";
 export const PUBLISH_TEXTS = Object.freeze({
@@ -121,18 +122,24 @@ export async function publishToHosts(name, { home = homeDir(), env = process.env
   return results;
 }
 
-/** For uninstall: remove the skill folders ad published for a host, if unchanged. → lines to print */
+/**
+ * For uninstall: remove the skill folders ad published for a host, if unchanged.
+ * → one result per skill: { name, path, action: "removed" | "kept" | "gone", why?, line? }
+ */
 export function removePublishedSkills(rec) {
-  const lines = [];
+  const results = [];
   for (const [name, s] of Object.entries(rec?.skills ?? {})) {
     if (!isSkillName(name) || !s?.path || path.basename(s.path) !== name) continue;
-    if (!fs.existsSync(s.path)) continue;
+    if (!fs.existsSync(s.path)) {
+      results.push({ name, path: s.path, action: "gone" });
+      continue;
+    }
     if (ownedUnchanged(s.path)) {
       fs.rmSync(s.path, { recursive: true, force: true, maxRetries: 3 });
-      lines.push(`removed the skill ${name} (${s.path})`);
-    } else lines.push(`kept the skill ${name} (${s.path}): it was changed outside ad`);
+      results.push({ name, path: s.path, action: "removed", line: `removed the skill ${name} (${s.path})` });
+    } else results.push({ name, path: s.path, action: "kept", why: "it was changed outside ad", line: `kept the skill ${name} (${s.path}): it was changed outside ad` });
   }
-  return lines;
+  return results;
 }
 
 /** Every skill with a library entry. */
@@ -183,7 +190,7 @@ export async function publishCommand({ name, host, replace = false, dryRun = fal
     // Only an opt-in folder: an installed host gets every accepted skill again on the next
     // accept (uninstall ad's memory there to stop it).
     if (!name || !host || !SKILL_TARGETS[host].optIn) {
-      err("ad skill publish --remove: name a skill and an opt-in folder (--host agents). For an installed host, uninstall ad's memory there: npx agent-daemon-memory uninstall --host <id>");
+      err("ad skill publish --remove: name a skill and an opt-in folder (--host agents). For an installed host, uninstall ad's memory there: npx " + PRODUCT.package + " uninstall --host <id>");
       return 1;
     }
     return unpublish(name, host, { home, env, out });

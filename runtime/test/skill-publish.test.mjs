@@ -134,9 +134,13 @@ test("uninstall removes only unchanged skill folders of ours", async () => {
   const s = await accepted();
   await fs.writeFile(path.join(geminiRoot, s.name, "SKILL.md"), skill(s.name, "edited"));
   const ledger = readLedger(ROOT);
-  assert.deepEqual(pub.removePublishedSkills(ledger.hosts.codex), [`removed the skill ${s.name} (${path.join(codexRoot, s.name)})`]);
+  assert.deepEqual(pub.removePublishedSkills(ledger.hosts.codex).map((r) => r.line), [`removed the skill ${s.name} (${path.join(codexRoot, s.name)})`]);
   assert.ok(!existsSync(path.join(codexRoot, s.name)));
-  assert.match(pub.removePublishedSkills(ledger.hosts.gemini)[0], /kept the skill .*: it was changed outside ad/);
+  const kept = pub.removePublishedSkills(ledger.hosts.gemini)[0];
+  assert.equal(kept.action, "kept");
+  assert.match(kept.line, /kept the skill .*: it was changed outside ad/);
+  // Already gone: said so, not counted as removed.
+  assert.deepEqual(pub.removePublishedSkills(ledger.hosts.codex).map((r) => r.action), ["gone"]);
   assert.ok(existsSync(path.join(geminiRoot, s.name, "SKILL.md")));
   // A forged ledger path outside a skill folder of that name is ignored.
   assert.deepEqual(pub.removePublishedSkills({ skills: { [s.name]: { path: HOME } } }), []);

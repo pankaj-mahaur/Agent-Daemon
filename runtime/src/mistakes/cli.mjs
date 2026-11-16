@@ -2,6 +2,7 @@
 // user typed to Claude Code and Codex. Consent first (D13): the screen names
 // the folders, the session count and the date range before anything is read.
 // Writes nothing, installs nothing, makes no network or model call.
+// `--save` is the one exception (L4b): memory/import-flow.mjs, with its own consent.
 
 import os from "node:os";
 import path from "node:path";
@@ -12,7 +13,9 @@ import { ruleCoverage } from "./coverage.mjs";
 import { buildReport, renderText, renderShare, renderJson, projectLabel } from "./report.mjs";
 import { accountNames } from "./redact.mjs";
 
-export const MISTAKES_USAGE = `Usage: ad mistakes [--all-projects] [--share | --json] [--yes]
+/** The usage text, for the command the user ran (`ad mistakes`, or the memory package's). */
+export const mistakesUsage = (command = "ad mistakes") => `Usage: ${command} [--all-projects] [--share | --json] [--yes]
+       ${command} --save [--import-history] [--import-files]
 
 A read-only report of the corrections you typed to Claude Code and Codex: how
 often you corrected them, which corrections repeated, and in which agent.
@@ -21,11 +24,18 @@ Offline: no model call, no network, nothing stored or changed.
   --all-projects  read every project's history (default: this project only)
   --share         print a redacted Markdown summary you can post
   --json          print the report as JSON
-  --yes, -y       don't ask before reading (needed when there's no terminal)`;
+  --yes, -y       don't ask before reading (needed when there's no terminal)
+
+  --save            save this project's repeated corrections and the rules in
+                    its instruction files (CLAUDE.md, AGENTS.md, ...) for your
+                    review, after asking; nothing applies until you accept it
+  --import-history  with --save and no terminal: save the repeated corrections
+  --import-files    with --save and no terminal: save the instruction files`;
+export const MISTAKES_USAGE = mistakesUsage();
 
 const fmtDay = (ms) => new Date(ms).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 
-function span(files) {
+export function span(files) {
   if (!files.length) return "";
   let lo = Infinity;
   let hi = -Infinity;
@@ -36,11 +46,11 @@ function span(files) {
   return fmtDay(lo) === fmtDay(hi) ? fmtDay(lo) : `${fmtDay(lo)} to ${fmtDay(hi)}`;
 }
 
-const count = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+export const count = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 /** The consent screen: what will be read, before anything is read. */
-export function consentScreen(sources, { tilde = (p) => p } = {}) {
-  const lines = ["ad mistakes counts the corrections you typed to your coding agents.", "", "It will read, without changing anything:"];
+export function consentScreen(sources, { tilde = (p) => p, command = "ad mistakes" } = {}) {
+  const lines = [`${command} counts the corrections you typed to your coding agents.`, "", "It will read, without changing anything:"];
   const cc = sources.claude;
   const cx = sources.codex;
   const rows = [];
@@ -61,7 +71,7 @@ export function consentScreen(sources, { tilde = (p) => p } = {}) {
 /**
  * @returns {Promise<number>} the exit code
  */
-export async function runMistakes(argv, { env = process.env, home = os.homedir(), cwd = process.cwd(), stdin = process.stdin, stdout = process.stdout, stderr = process.stderr, now = Date.now() } = {}) {
+export async function runMistakes(argv, { env = process.env, home = os.homedir(), cwd = process.cwd(), stdin = process.stdin, stdout = process.stdout, stderr = process.stderr, now = Date.now(), command = "ad mistakes" } = {}) {
   let values;
   try {
     ({ values } = parseArgs({
@@ -71,22 +81,58 @@ export async function runMistakes(argv, { env = process.env, home = os.homedir()
         share: { type: "boolean" },
         json: { type: "boolean" },
         yes: { type: "boolean", short: "y" },
+        save: { type: "boolean" },
+        "import-history": { type: "boolean" },
+        "import-files": { type: "boolean" },
         help: { type: "boolean", short: "h" },
       },
       allowPositionals: false,
       strict: true,
     }));
   } catch (err) {
-    stderr.write(`ad mistakes: ${err.message}\n\n${MISTAKES_USAGE}\n`);
+    stderr.write(`${command}: ${err.message}\n\n${mistakesUsage(command)}\n`);
     return 2;
   }
   if (values.help) {
-    stdout.write(`${MISTAKES_USAGE}\n`);
+    stdout.write(`${mistakesUsage(command)}\n`);
     return 0;
   }
   if (values.share && values.json) {
-    stderr.write("ad mistakes: use --share or --json, not both\n");
+    stderr.write(`${command}: use --share or --json, not both\n`);
     return 2;
+  }
+  const importHistory = values["import-history"] === true;
+  const importFiles = values["import-files"] === true;
+  if ((importHistory || importFiles) && !values.save) {
+    stderr.write(`${command}: --import-history and --import-files go with --save\n`);
+    return 2;
+  }
+  if (values.save) {
+    if (values.share || values.json || values["all-projects"]) {
+      stderr.write(`${command}: --save works on this project's history only, without --share, --json or --all-projects\n`);
+      return 2;
+    }
+    const { runImport } = await import("../memory/import-flow.mjs");
+    const ask = async (q) => {
+      const rl = readline.createInterface({ input: stdin, output: stdout });
+      try {
+        return await rl.question(q);
+      } finally {
+        rl.close();
+      }
+    };
+    const r = await runImport({
+      cwd,
+      env,
+      home,
+      now: new Date(now),
+      out: (l) => stdout.write(`${l}\n`),
+      ask,
+      isTTY: () => Boolean(stdin.isTTY && stdout.isTTY),
+      choice: importHistory && importFiles ? "all" : importHistory ? "history" : importFiles ? "files" : null,
+      base: command.replace(/ mistakes$/, ""),
+    });
+    return r.code;
   }
   const allProjects = values["all-projects"] === true;
   // stdout carries only the report when it's machine output or redirected to a file.
@@ -101,7 +147,7 @@ export async function runMistakes(argv, { env = process.env, home = os.homedir()
     if (!allProjects) out.write("Run with --all-projects to look at every project.\n");
     return 0;
   }
-  ui.write(consentScreen(sources, { tilde }));
+  ui.write(consentScreen(sources, { tilde, command }));
   if (!values.yes) {
     if (!stdin.isTTY) {
       ui.write("\nRun it again with --yes to read them.\n");
@@ -143,7 +189,7 @@ export async function runMistakes(argv, { env = process.env, home = os.homedir()
     redact: { home, names: accountNames({ home, env }) },
   });
   if (values.json) stdout.write(renderJson(report));
-  else if (values.share) stdout.write(renderShare(report));
+  else if (values.share) stdout.write(renderShare(report, { command }));
   else stdout.write(renderText(report, { projectName: projectLabel(sources.root), claudeSettings: tilde(path.join(claudeConfigDir({ env, home }), "settings.json")) }));
   return 0;
 }

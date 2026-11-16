@@ -2,7 +2,7 @@
 
 [![test](https://github.com/pankaj-mahaur/Agent-Daemon/actions/workflows/test.yml/badge.svg)](https://github.com/pankaj-mahaur/Agent-Daemon/actions/workflows/test.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![version](https://img.shields.io/badge/version-3.1.0-green.svg)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-3.2.0-green.svg)](CHANGELOG.md)
 [![harnesses](https://img.shields.io/badge/harnesses-Claude%20Code%20%7C%20Codex%20%7C%20Cursor-purple.svg)](#cross-harness-support)
 
 **Agent Daemon.** A terminal coding agent that remembers. Type `ad` in a project: it works in your repo, runs commands in a sandbox, asks before going beyond it (see [Safety model](#production-safety)), and keeps what it learns. It also gives Claude Code the same memory, guards and skills. To run the agent yourself you need a key from a supported provider (OpenAI, OpenRouter, Kimi, xAI, Groq and [more](docs/accounts.md)), a local model server (Ollama, LM Studio) or a ChatGPT plan; the Claude Code memory and guards need none.
@@ -12,6 +12,8 @@
 Ships with a full **team coordination layer**: spawn worker agents (sandboxed engine workers by default, Claude Code with `--engine claude`) in isolated git worktrees, coordinate them through filesystem-based inboxes, and manage task dependencies with auto-unblocking — all without a central server or database.
 
 Skills evolve too: [GEPA](runtime/src/digest/gepa/README.md) (Genetic-Pareto Prompt Evolution) reads execution traces and proposes Pareto-optimal skill refinements that you accept or reject via `agent-daemon review`.
+
+> **v3.2.0 — memory you review, and rules that ask before a call.** Every correction ad captures now waits for your review (`ad review`), and accepted learnings come back at session start and with each prompt. A correction that names a command or a file can become a rule that asks before, or stops, that call; ad's check protects itself, and in Claude Code it fails closed while rules exist. `ad safety on` adds an opt-in starter policy, `ad memory setup` wires the hooks, and `ad memory report`, `view` and `learnings` show what is remembered. Run `ad init` once after updating. See the [release notes](CHANGELOG.md#320--2026-11-16).
 
 > **v3.1.0 — several accounts, fallback, and memory in other agents.** Sign in to many providers side by side and pick one per conversation (`--account`, `/model`); `ad fallback` lets a task continue elsewhere when a limit runs out. ad's memory now works in other agents too: Claude Code, Cursor, VS Code (Copilot), Gemini CLI and [more](docs/memory/install.md) (`ad memory install`). `ad state export` / `import` moves ad to another computer, and `/tui` tries the early fullscreen terminal UI (scroll, select, copy, F3 to find). See [What's new in 3.1](docs/whats-new-3.1.md) and the [release notes](https://github.com/pankaj-mahaur/Agent-Daemon/releases/tag/v3.1.0).
 
@@ -129,7 +131,7 @@ Profile manifest: [runtime/profiles/profiles.json](runtime/profiles/profiles.jso
 |---|---|---|
 | `session.start` | SessionStart | Drains captured corrections, injects this project's memory |
 | `prompt.submit` | UserPromptSubmit | Captures corrections you typed (held for review), recalls related notes, suggests a skill |
-| `tool.before` | PreToolUse (Bash, PowerShell, Write, Edit) | Checks the call against your rules; with no rules it prints nothing. Reads only `~/.agent-daemon/guards.json`, never the memory store |
+| `tool.before` | PreToolUse (Bash, PowerShell, Write, Edit; Read with the starter policy's `.env` rule) | Stops or asks about calls that would change ad itself (always), then checks the call against your [rules](docs/memory/rules.md); otherwise it prints nothing. Reads only `~/.agent-daemon/guards.json`, never the memory store. While rules exist it fails closed in Claude Code |
 | `tool.after` | PostToolUse | Remembers prompts the model scheduled (CronCreate, ScheduleWakeup) so they aren't taken as typed; build and PR-URL notes; `console.log` warnings |
 | `subagent.stop` | SubagentStop | Remembers a subagent's report, for the same reason |
 | `session.end` | SessionEnd | Starts the session digest in the background and exits |
@@ -411,6 +413,18 @@ ad skill list                          # both lanes, with provenance
 
 Conversationally: tell Claude *"install this skill <url>"* — the bundled `skill-installer` skill drives the same CLI. Installs are copy-only (no code execution), and removal stays manifest-aware via `ad skill remove`.
 
+## Corrections you type: capture, review, forget
+
+Correct your agent once ("no, we use pnpm here") and ad saves it for this project, with a one-line receipt. Each capture is screened for text aimed at the agent or its memory, and nothing is used until you accept it: run `ad review` in your own terminal, where `a`, `enter`, `y` accepts the new notes from your prompts on the page. `ad remember <text>`, `ad forget <n>` and `ad restore <n>` work in the terminal, and `/agent-daemon-memory:forget 12` in Claude Code; a prompt or the agent can never remove what you said or anything you accepted. Details: [capture, review and forget](docs/memory/review.md).
+
+## When the agent repeats a mistake: rules
+
+Command and file repeats are asked about or stopped where the host can; other corrections are recalled and counted.
+
+At `ad review`, an accepted correction that names a command or a file ("use pnpm, not npm", "don't touch src/gen/") can become a rule. The check before each tool call then asks you before the agent repeats it, or stops the call: Claude Code asks (and stops in bypass or don't-ask mode); a host that can't ask stops it with the reason. `ad rules list` shows them; `rules allow-once` lets one stopped call through and `rules pause` pauses them, in your own terminal with a typed code. Whatever your rules, ad also stops the agent from changing ad itself. While rules exist, a check that crashes blocks the call in Claude Code instead of letting it run.
+
+File rules see edits made with the agent's file tools, not shell redirects; MCP tools and nested agents with their own settings aren't checked. Details: [rules](docs/memory/rules.md).
+
 ## Memory evolution (Hermes-style)
 
 Learnings live a lifecycle instead of accumulating forever:
@@ -552,8 +566,10 @@ ad memory held [--all-projects]        # Notes memory keeps back; accept|release
 ad memory promote fact:<id>            # Make a user fact apply in every project (your own terminal, typed)
 ad memory redact <table>:<id>          # Replace what looks like a key in one row (your own terminal, typed)
 ad memory install [--host <id>] [--yes] [--dry-run]   # Add the memory server to Claude Code, Codex, Cursor, VS Code, Gemini CLI (docs/memory/install.md)
+ad memory setup [--host <id>] [--no-plugin] [--dry-run]   # The memory hooks and the agent-shell marker for each host found (your own terminal)
 ad memory doctor | repair | status | uninstall
 ad memory report [--days 30] [--all-projects] [--json] [--share]   # Is memory working: repeated corrections, what was shown, feedback (docs/memory/metrics.md)
+ad rules list [--json]                 # Your rules; add|rm|pause|resume|allow-once in your own terminal (docs/memory/rules.md)
 ad mistakes [--all-projects] [--share | --json] [--yes]            # Read-only: the corrections you keep typing to your coding agents, offline (docs/mistakes.md)
 ad memory migrate                      # Run the one-time upkeep now (note keys, journal secret scrub, project ids)
 ad memory assign --list | <table>:<id> --project <dir>   # Place a note two folders shared (typed confirmation)

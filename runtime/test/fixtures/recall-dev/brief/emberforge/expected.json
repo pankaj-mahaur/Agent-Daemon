@@ -1,0 +1,31 @@
+{
+  "relevant": ["ef-01", "ef-02", "ef-04", "ef-06", "ef-09", "ef-10", "ef-11", "ef-12", "ef-13"],
+  "irrelevant": ["ef-03", "ef-05", "ef-07", "ef-14", "ef-15", "ef-16", "ef-17", "ef-18", "ef-19"],
+  "neutral": ["ef-08", "ef-20", "ef-21", "ef-22", "ef-23", "ef-24"],
+  "reasons": {
+    "ef-01": "Deadlock rule for jobs on the shared ThreadPool the cooker now uses.",
+    "ef-02": "Build and test command for the assetcooker tests being changed.",
+    "ef-03": "Stale: single-threaded nvtt cooking superseded by ef-04 (bc7enc, per-worker encoders).",
+    "ef-04": "Thread-safety rule for the parallel BC7 cooking the branch adds.",
+    "ef-05": "Stale: mtime-based keys superseded by ef-06 (content hash + compressor version).",
+    "ef-06": "Current CookCache key scheme; matches the cache-key commit.",
+    "ef-07": "Stale: VS generator superseded by ef-08 (CMake presets).",
+    "ef-08": "Configure step; project-wide setup, not specific to this change.",
+    "ef-09": "How the new BC7 golden-image test compares output.",
+    "ef-10": "How to measure the parallel speedup; low word overlap.",
+    "ef-11": "Required race check for threading changes; low word overlap.",
+    "ef-12": "bc7_reference.dds fixture was added; it must go through Git LFS.",
+    "ef-13": "bc7enc was added to vcpkg.json; the license list must be updated too.",
+    "ef-14": "Shader compiler cache, other tool; shares 'tools/' and 'cache' only.",
+    "ef-15": "Editor ThreadPool debug panel, other area; shares 'ThreadPool' only.",
+    "ef-16": "Audio build, other area.",
+    "ef-17": "Editor docking, other area.",
+    "ef-18": "Navmesh tuning, other area.",
+    "ef-19": "Lua bindings, other area.",
+    "ef-20": "Formatting rule; project-wide.",
+    "ef-21": "Commit convention; project-wide.",
+    "ef-22": "Release/signing policy; project-wide.",
+    "ef-23": "Warning policy; project-wide.",
+    "ef-24": "Exception policy; project-wide."
+  }
+}

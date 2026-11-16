@@ -74,7 +74,7 @@ Commands:
                          --skills-mode <mode> smart (default — stack-detect) | all | minimal | manual (profile-listed only)
                          --plan               print actions without applying
   status                 Show queued proposals (skill diffs, constitution rule additions)
-  review                 Interactively accept/reject queued proposals
+  review [--list | --plain | --accept-all [--with-agent] | --proposals]   Decide what waits for review: a checklist in your own terminal (space use · x delete · enter apply)
                          --accept <file> / --accept-all   accept memory proposals (asks you to type it)
                          --global             notes from older versions that apply in every project
   query-retrieve         Extract keywords from user prompt and inject relevant past learnings (UserPromptSubmit hook)
@@ -85,10 +85,16 @@ Commands:
   memory redact <table>:<id>   Replace what looks like a key in one row (your own terminal, typed confirmation)
   state inspect|export|import|verify  Move ad to another computer: one .adstate file (ad state --help)
                          → proposals only; --apply-merges / --apply-stale execute after review
-  memory install [--host <id>] [--yes] [--dry-run]   Add ad's memory server to other agents (doctor, repair, status, uninstall)
-  memory report [--days 30] [--all-projects] [--json] [--share]   Is memory working: repeated corrections, what was shown, feedback
+  memory install [--host <id>] [--yes] [--dry-run]   Add ad's memory server to other agents (setup, doctor, repair, status, uninstall)
+  memory report [--days 30] [--weeks 4] [--all-projects] [--json] [--share] [--share-link] [--purge]   Is memory working: repeated corrections, what was shown, feedback
                          --all-projects       span every project (default: current --cwd only)
   mistakes [--all-projects] [--share | --json] [--yes]   Read-only report of the corrections you typed to your coding agents (offline, stores nothing)
+  mistakes --save [--import-history] [--import-files]   Save this project's repeated corrections and instruction-file rules for review (asks first)
+  remember <text>        Save a learning for this project (accepted at once only in your own terminal)
+  forget <n> · restore <n>   Remove a learning (restore within 7 days); an accepted one asks you to type its number
+  learnings list|show|edit|forget|export|import   Your learnings: see, change, forget, export for a private repo, import for review
+  rules list [--json]    The rules that ask before or stop commands and file writes (changes: rules --help in your own terminal)
+  config review [strict|auto]   Review-first for every learning, or let typed corrections apply at once where a host can prove them
   route stats            Route-advice effectiveness: advised / followed / diverged / ignored per skill
                          --days <n>           window (default 30); --json for machine output
   route rebuild          Recompile route maps from installed skills (global + project lanes)
@@ -246,6 +252,9 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
   const actions = [];
   try {
     await fs.access(target);
+    // Set up before ad recorded which folders are the user's (or the mark is gone): an
+    // ad init run here again records it, even when nothing else needs doing.
+    if (!(await import("./memory/projects.mjs")).ownFolderIsUsers(cwd)) actions.push("+ record this folder's .agent-daemon/ as yours (capture files go in it)");
   } catch {
     actions.push(`+ .agent-daemon/memory/       (new — ${await countTemplates(templatesDir)} memory templates)`);
     actions.push(`+ session-logs/                (new — gitignored local journal directory)`);
@@ -369,6 +378,26 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
   // words: the prompt and session-start routes then carry them (routes.mjs OLD_PLUGIN_TAGS).
   const memPlugin = hookDoctor.memoryPluginState({ home, cwd });
   const hookPlan = planClaudeHooks(existingSettings.hooks, { steps: resolved.hooks.map((h) => h.id), form: hookForm, oldPluginTags: memPlugin?.outdated === true });
+  // L7 (D10, S2): from the agent's shell (the marker setup puts in Claude Code's env, no
+  // terminal, or an agent among this process's ancestors) ad init scaffolds only: no hook
+  // entry is written or changed — the hooks are the user's to change, in their own terminal.
+  // A plan or dry run writes nothing: it shows the routes either way.
+  const fromAgentShell = hookPlan.changed && !dryRun ? (await import("./init-gate.mjs")).initFromAgentShell() : null;
+  if (fromAgentShell) {
+    hookPlan.changed = false;
+    const gitBash = fromAgentShell === "no terminal" && process.platform === "win32" ? " (in Git Bash, through winpty; or use PowerShell or Windows Terminal)" : "";
+    console.log(`  · hooks unchanged (${fromAgentShell}): run \`ad init\` in your own terminal to set them up${gitBash}`);
+  }
+  // L7 (D16): rewriting ad's own rules-check entry while rules exist changes what checks every
+  // call: it takes the review token and the typed code, else the hooks stay as they are.
+  const IG = await import("./init-gate.mjs");
+  if (hookPlan.changed && !dryRun && IG.rulesCheckChanged(existingSettings.hooks, hookPlan.hooks)) {
+    const gate = await IG.initRulesCheckGate();
+    if (!gate.ok) {
+      hookPlan.changed = false;
+      console.log(`  · hooks unchanged: ${gate.why}`);
+    }
+  }
   const transient = hookDoctor.transientInstall(HOOK_PATH);
   if (transient) console.log(`  ⚠ The hooks would run ${HOOK_PATH}, which is in ${transient}: they stop working when it goes. Run ad init from your installed ad.`);
   if (memPlugin?.outdated) console.log(`  ⚠ ${memPlugin.key}${memPlugin.version ? ` ${memPlugin.version}` : ""} predates ad's hook dispatcher, so ad's prompt and session-start hooks are written in its older form, which it recognises. Update the plugin from Claude Code's /plugin menu, then run ad init again.`);
@@ -441,7 +470,7 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
   }
 
   if (actions.length === 0) {
-    console.log("\n  Nothing to do — agent-daemon is fully initialized in this project.");
+    console.log(fromAgentShell ? "\n  Nothing else to do here; the hooks wait for `ad init` in your own terminal." : "\n  Nothing to do — agent-daemon is fully initialized in this project.");
     return 0;
   }
 
@@ -458,6 +487,26 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
 
   // Create memory dir + copy templates
   await fs.mkdir(target, { recursive: true });
+  // The folder is the user's now: hooks may keep capture files in it (a mark in ad's own
+  // registry; a repository's own .agent-daemon/ never gets one).
+  try {
+    const { gitIgnores } = await import("./memory/git-tracked.mjs");
+    // ad's own ignore file first (never over one the folder has).
+    (await import("./memory/project-dir.mjs")).ensureIgnoreFile(path.join(cwd, ".agent-daemon"));
+    // A repository's own .agent-daemon/.gitignore can un-ignore everything ("!*"): capture
+    // files (your prompts) would then go into the next commit. Not recorded until it's fixed.
+    const leaks = ["learning-journal.jsonl", "learning-journal.archive.jsonl", "learning-journal.draining-1.jsonl", "proposed/x.md", "applied/x.md"].filter((f) => !gitIgnores(cwd, `.agent-daemon/${f}`));
+    if (leaks.length) {
+      console.error(`agent-daemon init: git wouldn't ignore .agent-daemon/${leaks[0]} here (the folder's .gitignore, or files the repository tracks there), so capture files stay outside this repository. Add these lines to .agent-daemon/.gitignore, then run ad init again:\n  ${["learning-journal*.jsonl", "*.draining-*.jsonl", "proposed/", "applied/"].join("\n  ")}`);
+    } else if ((await import("./memory/projects.mjs")).markOwnFolder(cwd)) {
+      // Capture files kept outside it so far move in now (the user asked for this folder).
+      (await import("./memory/project-dir.mjs")).projectDataDir(cwd);
+    } else {
+      console.error("agent-daemon init: this folder can't be recorded as a project (a home or filesystem root folder, or a newer ad's registry); capture files stay outside it");
+    }
+  } catch (err) {
+    console.error(`agent-daemon init: couldn't record this folder as initialised (${err.message}); capture files stay outside it`);
+  }
   const entries = await fs.readdir(templatesDir);
   let copied = 0;
   for (const entry of entries) {
@@ -603,6 +652,20 @@ async function cmdInit({ cwd = process.cwd(), dryRun = false, verbose = false, y
       const replaced = hookPlan.removed.filter((o) => o.info.kind === "legacy").length;
       console.log(`  ✓ ${hookPlan.routes.length} hook route(s) in ~/.claude/settings.json go through the dispatcher${replaced ? ` (${replaced} older ad hook entr${replaced === 1 ? "y" : "ies"} replaced)` : ""}`);
       for (const r of hookPlan.routes) console.log(`      ${r.hostEvent}${r.matcher ? ` [${r.matcher}]` : ""} ← ${r.event}`);
+      // Entries the memory product's setup wrote (its launcher) are ad's routes now:
+      // they leave its ledger, so its uninstall doesn't touch them (L3, D8).
+      const adopted = hookPlan.removed.filter((o) => o.info.launcher);
+      if (adopted.length) {
+        try {
+          const { adoptLauncherHooks } = await import("./memory-install/ledger2.mjs");
+          const { withLedgerLock } = await import("./memory-install/setup.mjs");
+          const { adRoot } = await import("./ad-root.mjs");
+          const root = adRoot();
+          await withLedgerLock({ root }, () => adoptLauncherHooks(root, { file: globalSettingsPath, handlers: adopted.map((o) => ({ hostEvent: o.hostEvent, event: o.info.event, script: o.info.script })) }));
+        } catch (err) {
+          console.log(`  ⚠ The memory ledger still lists the hooks ad just replaced (${err.message}); its uninstall finds them gone.`);
+        }
+      }
     } catch (err) {
       console.error(`  ⚠ Could not install hooks: ${err.message}`);
     }
@@ -991,13 +1054,26 @@ async function printHeldLine(cwd) {
     const { db, projectSlug } = await import("./memory/episodic.mjs");
     const { heldNotes, heldLine } = await import("./memory/held.mjs");
     const handle = await db();
+    // L5: what waits for review, counted in the store (never from proposal files).
+    if (handle) {
+      const { projectIdOf } = await import("./memory/projects.mjs");
+      const { reviewCounts } = await import("./memory/reminder.mjs");
+      const projectId = projectIdOf(cwd);
+      // A slug another folder shares counts that folder's notes too: then the project id alone.
+      const { slugCollides } = await import("./memory/safety.mjs");
+      const keys = slugCollides(handle, projectSlug(cwd), cwd) ? [projectId].filter(Boolean) : [projectSlug(cwd), projectId].filter(Boolean);
+      const c = reviewCounts(handle, { keys, projectId });
+      if (c.waiting) console.log(`${c.waiting} learning${c.waiting === 1 ? "" : "s"} wait${c.waiting === 1 ? "s" : ""} for review here${c.ownNew ? ` (${c.ownNew} new from your prompts)` : ""}: ad review`);
+    }
     const n = handle ? heldNotes(handle, [projectSlug(cwd)]).length : 0;
     if (n) console.log(heldLine(n));
   } catch { /* memory store unavailable: nothing to add */ }
 }
 
 async function cmdReview(opts) {
-  return runInteractiveReview(opts);
+  // L7b: after the rule step, the starter safety policy is offered once (with this run's token).
+  const { reviewOffer } = await import("./memory/safety-offer.mjs");
+  return runInteractiveReview({ afterRuleStep: reviewOffer({ cmdName: "ad", command: (v) => `ad ${v}` }), ...opts });
 }
 
 async function cmdDoctor({ cwd = process.cwd(), tokens, limit, model } = {}) {
@@ -1040,6 +1116,26 @@ async function cmdDoctor({ cwd = process.cwd(), tokens, limit, model } = {}) {
     checks.push({ name: "Home-folder jobs", ok: true, note: `could not read the schedule: ${e.message}` });
   }
 
+  // A .agent-daemon/ here that ad doesn't know as the user's (a repository shipped it, or an
+  // ad init from before the mark whose files are committed): capture goes outside it.
+  try {
+    const own = path.join(cwd, ".agent-daemon");
+    const { statSync } = await import("node:fs");
+    let isDir = false;
+    try { isDir = statSync(own).isDirectory(); } catch { /* none here */ }
+    if (isDir) {
+      const { ownFolderIsUsers } = await import("./memory/projects.mjs");
+      const { gitTracksAnyUnder } = await import("./memory/git-tracked.mjs");
+      if (!ownFolderIsUsers(cwd)) {
+        const note = gitTracksAnyUnder(cwd, ".agent-daemon")
+          ? "this repository ships its own .agent-daemon/ (git tracks files in it), so ad keeps your capture files outside it"
+          : "this folder's .agent-daemon/ isn't marked as yours, so capture files stay outside it. If you made it with ad init, run ad init here again";
+        checks.push({ name: "Project folder", ok: true, note });
+      }
+    }
+  } catch (e) {
+    checks.push({ name: "Project folder", ok: true, note: `could not check .agent-daemon/: ${e.message}` });
+  }
   // Check 2b: Auth — ANTHROPIC_API_KEY or OAuth/keychain
   // As of v0.5, --bare is no longer used. OAuth/keychain auth works for GEPA.
   if (process.env.ANTHROPIC_API_KEY) {
@@ -1113,26 +1209,19 @@ async function cmdDoctor({ cwd = process.cwd(), tokens, limit, model } = {}) {
     checks.push({ name: "Hook wiring", ok: false, note: "could not read settings.json" });
   }
 
-  // Check 4a: the hook routes across Claude Code's settings files (plan L2, hooks/hook-doctor.mjs)
+  // Check 4a: the hook routes across Claude Code's settings files (plan L2, hooks/hook-doctor.mjs;
+  // the package's doctor runs the same builder, L8b).
+  {
+    const { hookRouteChecks } = await import("./hooks/hook-doctor.mjs");
+    checks.push(...(await hookRouteChecks({ home, cwd })));
+  }
+
+  // Check 4b: recall (plan L6) — what it sends from this folder, and other memory next to it.
   try {
-    const hd = await import("./hooks/hook-doctor.mjs");
-    const { claudeHookSources, HOOK_PATH } = await import("./hooks/routes.mjs");
-    const { loadGuards, guardsPath } = await import("./hooks/guards.mjs");
-    const { hookLogTail } = await import("./hooks/hook-log.mjs");
-    const guards = loadGuards();
-    checks.push(hd.rulesFileRow(guards, guardsPath()));
-    const sources = claudeHookSources({ home, cwd });
-    const claudeVersion = await hd.claudeCodeVersion();
-    checks.push(hd.duplicateRow(sources));
-    checks.push(hd.scriptRow(sources, HOOK_PATH));
-    const execRow = hd.execFormRow(sources, claudeVersion);
-    if (execRow) checks.push(execRow);
-    const pluginRow = hd.pluginRow({ plugin: hd.memoryPluginState({ home, cwd }), sources });
-    if (pluginRow) checks.push(pluginRow);
-    checks.push(...hd.failClosedRows({ sources, rules: hd.ruleCount(guards.snapshot), claudeVersion }));
-    checks.push(hd.logRow(hookLogTail(5)));
+    const { recallDoctorRows } = await import("./memory/recall-doctor.mjs");
+    for (const r of await recallDoctorRows({ cwd, home, command: (v) => `ad ${v}` })) checks.push({ name: r.code, ok: r.ok, note: r.note });
   } catch (e) {
-    checks.push({ name: "Hook routes", ok: true, note: `not checked (${e.message})` });
+    checks.push({ name: "recall.tokens", ok: true, note: `not checked (${e.message})` });
   }
 
   // Check project-managed Claude instructions and memory quality.
@@ -1803,6 +1892,15 @@ async function cmdMemory(sub, opts) {
           const n = await con.applyStaleArchive(analysis, token);
           console.log(`  ✓ archived ${n} stale learning(s)`);
         }
+        // L7 D2: a merge moves its rules to the learning that replaced it; the snapshot follows.
+        try {
+          const handle = await (await import("./memory/episodic.mjs")).db();
+          const r = handle ? await (await import("./memory/rules-finish.mjs")).afterReview(handle, token, { cmd: "ad" }) : null;
+          if (r?.switch?.why) console.log(`  ${r.switch.why}`);
+          for (const l of r?.switch?.codex ?? []) console.log(`  ${l.trim()}`);
+        } catch (e) {
+          console.error(`  the rules file wasn't rebuilt (${e?.message ?? e}); it keeps the rules it had until the next review`);
+        }
         return 0;
       }
 
@@ -2376,6 +2474,21 @@ async function cmdSpawn(opts) {
 /* ------------------------------------------------------------------ */
 
 async function main(argv) {
+  // ad's CLI runs in the user's own terminal: git-tracked may use the git on their PATH there
+  // (hooks and background jobs use a trusted git only, L7 D12b).
+  // (Only a command typed in a terminal: never serve, watch or a scheduled job, which run in the background.)
+  if (process.stdin.isTTY && process.stdout.isTTY && !["serve", "watch"].includes(argv[0]) && !process.env.AD_SCHEDULE_JOB) try {
+    const [{ setGitFinder }, { resolveGit }] = await Promise.all([import("./memory/git-tracked.mjs"), import("./safe-spawn.mjs")]);
+    setGitFinder(() => {
+      try {
+        return resolveGit();
+      } catch {
+        return null;
+      }
+    });
+  } catch {
+    // the trusted git only
+  }
   // Show help if no args or --help
   // Only before "--": after it everything is a positional (e.g. a scheduled
   // job's prompt that happens to be "-h").
@@ -2511,6 +2624,9 @@ async function main(argv) {
         share:            { type: "boolean" },
         reject:           { type: "string" },
         list:             { type: "boolean" },
+        plain:            { type: "boolean" },
+        proposals:        { type: "boolean" },
+        "with-agent":     { type: "boolean" },
         to:               { type: "string" },
         from:             { type: "string" },
         bundled:          { type: "boolean" },
@@ -2574,9 +2690,11 @@ async function main(argv) {
     case "checkpoint":     return cmdCheckpoint(opts);
     case "init":           return cmdInit({ ...opts, profile: parsed.values.profile, plan: parsed.values.plan, skillsMode: parsed.values["skills-mode"] });
     case "status":         return cmdStatus(opts);
+    // L7b: the starter safety policy (on and off only in your own terminal).
+    case "safety":         return (await import("./memory/safety-cli.mjs")).safetyMain(parsed.positionals ?? [], { command: (v) => `ad ${v}`, cmdName: "ad" });
     // ad review --import <id> (P7.3): imported lessons and facts, under the same gate.
     case "review":         if (parsed.values.import) return (await import("./portability/state-cli.mjs")).cmdReviewImport(parsed.values.import, { acceptAll: Boolean(parsed.values["accept-all"]) });
-                           return cmdReview({ ...opts, accept: parsed.values.accept, acceptAll: parsed.values["accept-all"] || false, global: parsed.values.global || false, yes: parsed.values.yes || false, reject: parsed.values.reject, list: parsed.values.list || false });
+                           return cmdReview({ ...opts, accept: parsed.values.accept, acceptAll: parsed.values["accept-all"] || false, global: parsed.values.global || false, yes: parsed.values.yes || false, reject: parsed.values.reject, list: parsed.values.list || false, plain: parsed.values.plain || false, proposals: parsed.values.proposals || false, withAgent: parsed.values["with-agent"] || false });
     case "watch":          return cmdWatch({ ...opts, logFile: parsed.values["log-file"] });
     case "query-retrieve": return cmdQueryRetrieve(opts);
     case "memory":
@@ -2592,7 +2710,7 @@ async function main(argv) {
         }
       }
       // The memory installer for other hosts (same code as npx agent-daemon-memory; P5.3).
-      if (["install", "doctor", "repair", "status", "uninstall"].includes(parsed.positionals?.[0])) {
+      if (["install", "setup", "doctor", "repair", "status", "uninstall"].includes(parsed.positionals?.[0])) {
         const sub = parsed.positionals[0];
         return (await import("./memory-install/cli.mjs")).main([sub, ...rest.slice(rest.indexOf(sub) + 1)]);
       }

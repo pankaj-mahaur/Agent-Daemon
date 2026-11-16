@@ -216,7 +216,8 @@ export function judgeClause(clause) {
       // "call it fetchUsers, not getUsers": naming this turn's code. "use a drawer instead of a modal": one design choice.
       // "use 4, not 3": a value for this task.
       const numbers = /^[\d.,]+\s*,?\s*(?:not|instead of|rather than|over)\s+[\d.,]+\b/.test((ui ?? iu)[0].replace(/^\w+\s+/, ""));
-      if (/^(?:it|this|that|these|those|them)\b/.test(obj) || hasCodeName(clause, (ui ?? iu)[0]) || numbers) return { rule: false, why: "one-off" };
+      // "we use logInfo, not console.log" states the team's convention: a rule, code name or not (teamConvention).
+      if (/^(?:it|this|that|these|those|them)\b/.test(obj) || (hasCodeName(clause, (ui ?? iu)[0]) && !teamConvention(s, ui)) || numbers) return { rule: false, why: "one-off" };
       // "a drawer instead of a modal" is one design choice; "the logger, not console.log" may be a rule.
       if (/^(?:a|an)\s/.test(obj) || /\b(?:instead of|rather than) (?:a|an)\s/.test(s)) return { rule: false, why: "one-off" };
       return /^the\s/.test(obj) || /\b(?:instead of|rather than) the\s/.test(s) ? { rule: true, why: "use-instead", weak: true } : { rule: true, why: "use-instead" };
@@ -244,6 +245,15 @@ export function judgeClause(clause) {
     if (!hasCodeName(clause, xy[0]) && !numbers && !aux.test(x) && !vague.test(y.split(/\s+/)[0])) return { rule: true, why: "x-not-y", weak: true };
   }
   return { rule: false, why: "no marker" };
+}
+
+// The team's convention, not this turn's code: "we" (our team, in this repo) is the subject of
+// the use itself ("actually we use logInfo, not console.log"), and nothing ties it to this turn
+// ("now we use …", "we use fooBar here", "in that call", "after your refactor").
+const TEAM_SUBJECT = /\b(?:we|our team|our codebase|in this (?:project|repo|codebase|team))\s+(?:(?:always|usually|only|generally|strictly|all)\s+)?$/i;
+const TURN_ADJUNCT = /\b(?:now|here|in (?:that|this|the) (?!(?:project|repo|codebase|team|house)\b)\w+|after (?:your|the|this) \w+|for (?:this|that) (?:one|call|file|function))\b/i;
+function teamConvention(s, ui) {
+  return Boolean(ui) && /^(?:use|using|prefer|stick)\b/i.test(ui[0]) && TEAM_SUBJECT.test(s.slice(0, ui.index)) && !TURN_ADJUNCT.test(s);
 }
 
 /** Does this part of the clause name code (an internal capital: parseHeaders, fetchUsers)? */

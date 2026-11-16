@@ -1,0 +1,27 @@
+{
+  "name": "tallyhq",
+  "stack": "Next.js 15 (App Router, server actions) + Prisma 6 + PostgreSQL invoicing SaaS, Stripe billing, pnpm, Vitest + Playwright",
+  "branch": "main",
+  "recent_paths": [
+    "app/(dashboard)/invoices/[id]/page.tsx",
+    "components/invoice/LineItemsTable.tsx",
+    "app/api/webhooks/stripe/route.ts",
+    "lib/billing/subscription.ts",
+    "lib/billing/seats.ts",
+    "prisma/schema.prisma",
+    "prisma/migrations/20261028094512_add_seat_count/migration.sql",
+    "lib/email/templates/invoice-sent.tsx",
+    "e2e/billing.spec.ts",
+    "package.json",
+    "pnpm-lock.yaml"
+  ],
+  "recent_commits": [
+    "fix: seat count off by one when owner is removed (#420)",
+    "fix(webhooks): handle customer.subscription.updated arriving out of order (#418)",
+    "email: invoice-sent template uses org logo (#416)",
+    "chore(deps): bump prisma to 6.4 (#415)",
+    "billing: per-seat pricing for team plans (#412)",
+    "invoices: keyboard navigation in line items table (#409)"
+  ],
+  "session_cwd": "/Users/dev/code/tallyhq"
+}

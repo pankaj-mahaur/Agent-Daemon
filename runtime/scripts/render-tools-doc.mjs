@@ -11,6 +11,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { RECORD_TOOLS, TOOLS } from "../src/mcp/tools.mjs";
+import { PRODUCT } from "../src/product.mjs";
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 export const TOOLS_DOC = path.join(REPO, "docs", "memory", "tools.md");
@@ -72,7 +73,7 @@ export function renderToolsDoc() {
     ...TOOLS.flatMap((t) => [section(t), ""]),
     "## Recording tools",
     "",
-    "Listed when capture is `tools` or `auto` (the default). With `auto`, a call saves nothing while this host's hooks already capture in this project. Notes an agent records wait for your review (`ad review`, or `npx agent-daemon-memory review`) before any session is shown them as accepted.",
+    "Listed when capture is `tools` or `auto` (the default). With `auto`, a call saves nothing while this host's hooks already capture in this project. Notes an agent records wait for your review (`ad review`, or `npx " + PRODUCT.package + " review`) before any session is shown them as accepted.",
     "",
     ...RECORD_TOOLS.flatMap((t) => [section(t), ""]),
   ].join("\n");

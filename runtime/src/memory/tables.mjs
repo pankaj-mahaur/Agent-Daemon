@@ -65,6 +65,18 @@ export const TABLES = Object.freeze([
   t("meta", { export: "exclude" }),
   t("import_rows", { export: "exclude" }),
   t("import_updates", { export: "exclude" }),
+  // L4b (memory/proposal-tables.mjs, made by the imports): history sentences and import
+  // records never leave this computer; project columns, so backfill and re-keying cover them.
+  t("history_clusters", { ...P, export: "exclude" }),
+  t("instruction_imports", { ...P, export: "exclude" }),
+  t("instruction_import_notes", { export: "exclude" }),
+  t("proposal_rejections", { ...P, export: "exclude" }),
+  // L5 (l5-tables.mjs): machine-local audit and settings, never exported.
+  // No projectColumn: project tables get id triggers that need a project_slug column (project-db.mjs).
+  t("events", { export: "exclude", parents: [{ column: "learning_id", table: "learnings" }] }),
+  t("memory_settings", { export: "exclude" }),
+  // L7 (rules-tables.mjs): the user's rules. Export arrives with L8 (rules travel with their learning).
+  t("rules", { export: "exclude", parents: [{ column: "learning_id", table: "learnings" }] }),
 ]);
 
 /** Tables that carry project_slug and get a project_id column. */

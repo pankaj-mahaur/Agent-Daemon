@@ -132,8 +132,25 @@ const SCENARIOS = {
     extraConfig: (tmp) => [``, `[mcp_servers.spike]`, `command = ${JSON.stringify(process.execPath)}`, `args = [${JSON.stringify(path.join(HERE, "..", "s-bind", "hello-server.mjs"))}]`, `env = { SPIKE_BIND_LOG = ${JSON.stringify(path.join(tmp, "bind.jsonl"))} }`, ``].join("\n"),
     check: (tmp) => (fs.existsSync(path.join(tmp, "bind.jsonl")) ? fs.readFileSync(path.join(tmp, "bind.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l)) : "no server log"),
   },
+  // L3 D21: what UserPromptSubmit gets for a typed `$<pkg>-remember <text>`, with the
+  // memory product's command skills in $CODEX_HOME/skills (explicit only).
+  "remember-skill": {
+    prompt: "$agent-daemon-memory-remember use pnpm, not npm",
+    skills: async (tmp) => {
+      const { COMMANDS, codexSkillName, renderCommandSkill } = await import(pathToFileURL(path.join(REPO, "runtime/src/memory-install/command-skills.mjs")).href);
+      return Object.fromEntries(COMMANDS.map((c) => [codexSkillName(c), renderCommandSkill("codex", c, { version: "0.0.0-spike", launcher: path.join(tmp, "launch", "run.mjs") })]));
+    },
+    check: (tmp, r) => ({ skillBodySeen: r.requests.some((q) => JSON.stringify(q).includes("agent-daemon memory: remember")), userTexts: r.requests[0]?.userTexts?.map((t) => String(t).slice(0, 200)) }),
+  },
+  // L3 D21's receipt: does Codex show a UserPromptSubmit systemMessage, and pass its
+  // additionalContext to the model?
+  "prompt-receipt": {
+    prompt: "hello",
+    responses: { UserPromptSubmit: { systemMessage: "SPIKE_SYSMSG", hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: "SPIKE_CTX" } } },
+    check: (tmp, r) => ({ contextSeenByModel: r.requests.some((q) => JSON.stringify(q).includes("SPIKE_CTX")) }),
+  },
   // SessionEnd: a hook that sleeps 6 s; does Codex cut it at its cap?
-  "sessionend-cap": { prompt: "hello", timeouts: { SessionEnd: 30 }, responses: (tmp) => ({ SessionEnd: { _spike: { sleepMs: 6000, markDone: path.join(tmp, "hook-finished.marker"), detachedMarker: path.join(tmp, "detached.marker"), childDelayMs: 3000 } } }), afterMs: 9000, check: (tmp) => Object.fromEntries(["detached", "hook-finished"].map((m) => [m, fs.existsSync(path.join(tmp, `${m}.marker`))])) },
+  "sessionend-cap":{ prompt: "hello", timeouts: { SessionEnd: 30 }, responses: (tmp) => ({ SessionEnd: { _spike: { sleepMs: 6000, markDone: path.join(tmp, "hook-finished.marker"), detachedMarker: path.join(tmp, "detached.marker"), childDelayMs: 3000 } } }), afterMs: 9000, check: (tmp) => Object.fromEntries(["detached", "hook-finished"].map((m) => [m, fs.existsSync(path.join(tmp, `${m}.marker`))])) },
 };
 
 export async function runScenario(name, sc, { outDir } = {}) {
@@ -148,6 +165,13 @@ export async function runScenario(name, sc, { outDir } = {}) {
   const mock = await startMockResponses({ script, recordBodies: false });
   writeMockCodexHome(codexHome, { url: mock.url, approvalPolicy: sc.approval ?? "on-request", sandboxMode: sc.sandbox ?? "danger-full-access" });
   if (sc.extraConfig) fs.appendFileSync(path.join(codexHome, "config.toml"), sc.extraConfig(tmp));
+  for (const [dir, files] of Object.entries(sc.skills ? await sc.skills(tmp) : {})) {
+    for (const f of files) {
+      const dest = path.join(codexHome, "skills", dir, f.path);
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.writeFileSync(dest, f.text);
+    }
+  }
   const ps = (s) => `'${s.replaceAll("'", "''")}'`;
   const hooks = {};
   for (const ev of EVENTS) {
@@ -166,7 +190,8 @@ export async function runScenario(name, sc, { outDir } = {}) {
   if (sc.afterMs) await new Promise((r) => setTimeout(r, sc.afterMs));
   await mock.close();
   const hooksLog = fs.existsSync(logFile) ? fs.readFileSync(logFile, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : [];
-  return { name, tmp, code: run.code, ms, stdout: run.stdout, stderr: run.stderr, trust, hooks: hooksLog, requests: mock.requests, extra: sc.check?.(tmp) };
+  const r = { name, tmp, code: run.code, ms, stdout: run.stdout, stderr: run.stderr, trust, hooks: hooksLog, requests: mock.requests };
+  return { ...r, extra: sc.check?.(tmp, r) };
 }
 
 export function outcome(r) {

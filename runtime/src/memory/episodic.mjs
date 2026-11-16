@@ -214,7 +214,7 @@ export async function insertLearning(learning) {
  * scoped to its project, so the same text in another project is its own row.
  * Returns the new id, or null (a re-observation; callers count inserts by it).
  */
-function writeLearning(handle, raw) {
+export function writeLearning(handle, raw) {
   const l = redactLearning(raw);
   // A note that records its folder takes that folder's project id (not the slug's).
   if (!l.projectId && l.projectSlug && l.projectPath) l.projectId = projectIdOf(l.projectPath);
@@ -269,10 +269,14 @@ export function sameNote(handle, projectKey, text, nk = normKey(text), projectId
 // (memory/review-service.mjs), so no writer here stores 'active': older ad, which
 // reads status = 'active', would serve it unreviewed.
 const INSERT_LEARNING_SQL = `INSERT OR IGNORE INTO learnings
-  (session_id, project_slug, category, text, evidence, confidence, tags, applied_to, content_hash, derivation, status, origin, quarantine_reason, promote_request, norm_key, capture_ref, project_path, project_id)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+  (session_id, project_slug, category, text, evidence, confidence, tags, applied_to, content_hash, derivation, status, origin, quarantine_reason, promote_request, norm_key, capture_ref, project_path, project_id, provenance)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
 const LEARNING_STATUSES = new Set(["pending", "quarantined"]);
+// Where a note came from (L5 decision 14). Only user-prompt (a first-party typed prompt)
+// and user-cli (CLI remember with the review token) are the user's proven words; every
+// other value, and an unknown one (stored NULL), is not.
+export const PROVENANCES = Object.freeze(["user-prompt", "prompt", "headless", "user-cli", "agent", "buffered", "digest", "tool", `import`, "transcript", "instruction-file"]); // `import` in backticks: the package closure scanner reads a quoted "import" as a module specifier
 
 function redactLearning(l) {
   const r = (s) => (typeof s === "string" ? redactSecrets(s).text : s);
@@ -300,6 +304,7 @@ function learningRow(l, contentHash, nk) {
     l.projectPath || null,
     // A project row whose writer knows the id; else the insert trigger fills it from the slug.
     l.projectSlug && typeof l.projectId === "string" && l.projectId.startsWith("prj_") ? l.projectId : null,
+    PROVENANCES.includes(l.provenance) ? l.provenance : null,
   ];
 }
 
@@ -947,27 +952,31 @@ export function usefulnessFactor(alias, keys) {
  * stated 'explicit' facts) into a small structured profile. Pure data; callers
  * render + neutralize via representationToMarkdown.
  *
- * @param {{ projectSlug?: string, factLimit?: number, learningLimit?: number }} [opts]
- * @returns {Promise<{identity:string[],preferences:string[],tools:string[],conventions:string[],gotchas:string[],counts:object}|null>}
+ * @param {{ projectSlug?: string, factLimit?: number, learningLimit?: number, scope?: "any"|"global" }} [opts]
+ *   scope "global" (session start, L6): global notes only; this project's come through the brief, tagged
+ * @returns {Promise<{identity:string[],preferences:string[],tools:string[],conventions:string[],gotchas:string[],counts:object,ids:number[]}|null>}
  */
-export async function buildUserRepresentation({ projectSlug, projectKeys, factLimit = 8, learningLimit = 12 } = {}) {
+export async function buildUserRepresentation({ projectSlug, projectKeys, factLimit = 8, learningLimit = 12, scope = "any" } = {}) {
   const handle = await db();
   if (!handle) return null;
   const keys = keysOf({ projectKeys, projectSlug });
 
-  const fvis = factVisibility("", keys);
+  // scope "global" (L6): global facts only, and a note the agent asked to forget is never
+  // sent untagged here.
+  const fvis = scope === "global" ? { sql: "global_accepted_at IS NOT NULL", params: [] } : factVisibility("", keys);
+  const inUse = scope === "global" ? "(status = 'active' AND accepted_by IS NOT NULL)" : acceptedSql();
   const facts = handle.all(
-    `SELECT category, text FROM user_facts WHERE ${acceptedSql()} AND ${fvis.sql}
+    `SELECT category, text FROM user_facts WHERE ${inUse} AND ${fvis.sql}
       ORDER BY confidence DESC, observed_count DESC LIMIT ?`,
     [...fvis.params, factLimit]
   );
 
-  const vis = learningVisibility("", keys);
-  const where = `${acceptedSql()} AND confidence >= 0.6 AND ${vis.sql}`;
+  const vis = learningVisibility("", keys, scope);
+  const where = `${inUse} AND confidence >= 0.6 AND ${vis.sql}`;
   const params = [...vis.params];
   // Explicit (stated) facts first, then by confidence + reinforcement.
   const learnings = handle.all(
-    `SELECT category, text FROM learnings
+    `SELECT id, category, text FROM learnings
       WHERE ${where}
       ORDER BY (CASE WHEN derivation = 'explicit' THEN 1 ELSE 0 END) DESC,
                confidence DESC, observed_count DESC
@@ -992,6 +1001,10 @@ export async function buildUserRepresentation({ projectSlug, projectKeys, factLi
     profile[k] = [...new Set(profile[k])].slice(0, 6);  // dedup + cap each bucket
   }
   profile.counts = { facts: facts.length, learnings: learnings.length };
+  // The learnings actually kept (a duplicate or a capped bucket drops some).
+  const kept = new Set([...profile.preferences, ...profile.tools, ...profile.conventions, ...profile.gotchas]);
+  profile.ids = learnings.filter((l) => kept.has(l.text)).map((l) => l.id);
+  profile.items = learnings.filter((l) => kept.has(l.text)).map((l) => ({ id: l.id, text: l.text }));
 
   const total = profile.identity.length + profile.preferences.length +
                 profile.tools.length + profile.conventions.length + profile.gotchas.length;

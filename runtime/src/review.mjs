@@ -44,6 +44,7 @@ import { sameNote } from "./memory/episodic.mjs";
 import { acceptFactGlobal, acceptGlobal, acceptLearning, promoteLearning, reviewToken } from "./memory/review-service.mjs";
 import { acceptedSql, statusSql } from "./memory/trust.mjs";
 import { neutralizeText } from "./digest/sanitize.mjs";
+import { screenPrompt } from "./memory/prompt-screen.mjs";
 import { parseProposal } from "./skills/proposal.mjs";
 
 const DIVIDER = "─".repeat(72);
@@ -72,6 +73,17 @@ async function gate({ env, isTTY, ask, out, ...o }) {
   const refused = reviewGuard({ env, isTTY });
   if (refused) return { refused };
   return reviewToken({ env, isTTY, ask, out, ...standIns(o) });
+}
+
+/**
+ * The same proof for the memory package's uninstall (L3, Decision 12): while rules
+ * exist, removing the tool.before entry or the agent-shell marker needs it. Only a
+ * yes/no leaves here; the token stays inside this module and the review service.
+ * → { ok: true, dialogProven } or { ok: false, why }
+ */
+export async function confirmInOwnTerminal({ env = process.env, isTTY = realTTY, ask, out, ...o } = {}) {
+  const g = await gate({ env, isTTY, ask, out, ...o });
+  return g.token ? { ok: true, dialogProven: g.dialogProven === true } : { ok: false, why: g.refused ?? "it needs your own terminal" };
 }
 
 /** Where this project's proposals are, in review order. */
@@ -235,6 +247,36 @@ export function decideGlobal(handle, row, accept, now = new Date(), token = null
   });
 }
 
+// Pointer files for notes the checklist decided (accepted, deleted or no longer waiting)
+// move to applied, so they aren't offered twice. → the files still waiting
+async function settleDecided(handle, entries) {
+  const left = [];
+  for (const e of entries) {
+    let meta = null;
+    try {
+      meta = readProposalMeta(await fs.readFile(e.file, "utf8"));
+    } catch {
+      meta = null;
+    }
+    if (meta && ["memory-add", "quarantined-learning"].includes(meta.kind) && meta.learning != null) {
+      let row = null;
+      try {
+        row = learningRow(handle, meta.learning);
+      } catch {
+        row = { status: "pending" }; // unreadable: keep the file
+      }
+      // Still waiting: pending, held back, or an older writer's unaccepted "active".
+      const waiting = row && !row.accepted_by && ["pending", "quarantined", "active"].includes(row.status);
+      if (!waiting) {
+        await moveToApplied(e).catch(() => {});
+        continue;
+      }
+    }
+    left.push(e);
+  }
+  return left;
+}
+
 async function moveToApplied(p) {
   const dir = path.join(path.dirname(p.dir), "applied");
   await fs.mkdir(dir, { recursive: true });
@@ -278,6 +320,44 @@ export async function runInteractiveReview(opts) {
       token = g.token;
     }
     if (opts.global) return await reviewGlobal({ ...(await store()), question, out, token });
+    // L5: what waits in the store is reviewed with the checklist first; proposal files keep
+    // the loop below (review --proposals, and when the store has nothing waiting).
+    if (!opts.proposals && !opts.accept && !opts.reject) {
+      const { reviewChecklist } = await import("./memory/review-checklist.mjs");
+      const code = await reviewChecklist({
+        ...(await store()),
+        cwd: opts.cwd,
+        out,
+        ask: question,
+        isTTY,
+        env,
+        list: opts.list,
+        plain: opts.plain,
+        acceptAll: opts.acceptAll,
+        withAgent: opts.withAgent,
+        command: opts.command,
+        stdin: opts.stdin,
+        stdout: opts.stdout,
+        onApply: opts.onApply,
+        afterRuleStep: opts.afterRuleStep,
+        release: () => rl?.close(),
+        gate: async () => (token ? { token } : gate({ env, isTTY, ask: question, out, ...standIns(opts) })),
+      });
+      if (code !== null) {
+        const { handle } = await store();
+        let left = await listProposals(opts.cwd).catch(() => []);
+        // A memory-add or quarantined-learning file whose note the checklist decided is done.
+        // Only after a review in your own terminal: a listing changes nothing.
+        if (handle && !opts.list && isTTY()) left = await settleDecided(handle, left);
+        if (left.length) {
+          if (opts.list || !isTTY()) {
+            out(`${left.length} queued proposal file(s):`);
+            for (const e of left) out(`  ${e.name}`);
+          } else out(`${left.length} other proposal${left.length === 1 ? "" : "s"}: ${(opts.command ?? ((v) => `ad ${v}`))("review --proposals")}`);
+        }
+        return code;
+      }
+    }
     const entries = await listProposals(opts.cwd);
     if (opts.reject) return await rejectByFlag({ entries, name: opts.reject, out, store, env });
     if (opts.accept) {
@@ -288,6 +368,7 @@ export async function runInteractiveReview(opts) {
 
     if (entries.length === 0) {
       out("No queued proposals.");
+      await owedSwitch({ env, isTTY, question, out, opts, token });
       return 0;
     }
     if (opts.list || !isTTY()) {
@@ -320,7 +401,11 @@ async function acceptByFlag({ entries, opts, handle, keys, question, out, token 
     const meta = readProposalMeta(await fs.readFile(e.file, "utf8"));
     if (!meta) continue;
     const d = describeMemory(handle, meta, keys);
-    if (d.ok) memory.push({ e, meta, line: d.line });
+    // A note the prompt screen flags is never accepted in a batch (L5): decide it on its own.
+    if (d.ok && opts.acceptAll && meta.kind === "memory-add" && screenPrompt(d.row.text, { userWords: false }).flags.length) {
+      out(`${e.name}: #${d.row.id} was flagged for a closer look; decide it on its own in ${(opts.command ?? ((v) => `ad ${v}`))("review")}`);
+      refused++;
+    } else if (d.ok) memory.push({ e, meta, line: d.line });
     else {
       out(`${e.name}: ${d.text}`);
       refused++;
@@ -719,3 +804,30 @@ async function openInEditor(filePath) {
     await fs.rm(dir, { recursive: true, force: true, maxRetries: 3 });
   }
 }
+
+/**
+ * A lowering of ad's rules check that is still owed (L7 D13: no rule left, but a run without
+ * the token, or a failed write, left it fail-closed): this review, in your own terminal, puts
+ * it back. Only asks for the token when something is owed.
+ */
+async function owedSwitch({ env, isTTY, question, out, opts, token = null }) {
+  try {
+    const { adRoot } = await import("./ad-root.mjs");
+    const root = opts.root ?? adRoot();
+    const W = await import("./memory-install/rule-switch.mjs");
+    const rec = W.readSwitchRecord(root);
+    if (!rec || !(rec.pendingLower || rec.failed)) return;
+    let t = token;
+    if (!t) {
+      const g = await gate({ env, isTTY, ask: question, out, ...standIns(opts) });
+      if (g.refused) return void out(`ad's rules check stays fail-closed for now: ${g.refused}`);
+      t = g.token;
+    }
+    const r = await W.switchAfterRules({ root, token: t });
+    if (r.why) out(r.why);
+    else if (r.changed) out("ad's rules check has its resting values again (no rule is left).");
+  } catch (e) {
+    out(`ad's rules check couldn't be switched: ${e?.message ?? e}`);
+  }
+}
+

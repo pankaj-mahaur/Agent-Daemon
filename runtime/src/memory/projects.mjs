@@ -29,6 +29,7 @@ import crypto from "node:crypto";
 import { adRoot } from "../ad-root.mjs";
 import { acquireLock } from "../lock.mjs";
 import { ulid } from "../ids.mjs";
+import { gitTracksAnyUnder } from "./git-tracked.mjs";
 
 export const PROJECT_ID_RE = /^prj_[0-9A-HJKMNP-TV-Z]{26}$/;
 export { ulid };
@@ -165,8 +166,12 @@ function readMarker(dir) {
   }
 }
 // Only where ad init made .agent-daemon/; kept out of git locally (.git/info/exclude).
-function writeMarker(dir, id) {
+function writeMarker(dir, id, { owned = false } = {}) {
   if (!fs.existsSync(path.join(dir, ".agent-daemon"))) return;
+  // A hook never writes into a repository (01 §7): the folder may be one a repo shipped.
+  if (process.env.AD_HOOK_EVENT) return;
+  // Nor does anything else, unless the folder is the user's (ad init marked it).
+  if (!owned && !ownFolderIsUsers(dir)) return;
   try {
     if (readMarker(dir) === id) return;
     writeAtomicSync(markerPath(dir), JSON.stringify({ schemaVersion: 1, id }, null, 2) + "\n");
@@ -208,6 +213,67 @@ export function findProject(registry, dir, { platform = process.platform, marker
   const bySlug = registry.projects.find((p) => p.aliases?.episodic?.includes(slug) && !p.paths.some((x) => liveDir(x.path) && canonicalDir(x.path, { platform }) !== canon));
   if (bySlug) return { entry: bySlug, step: 3 };
   return null;
+}
+
+/**
+ * `ad init` ran in this folder: its .agent-daemon/ is the user's. The mark lives in ad's
+ * own registry, per folder path (`ownFolders`), which no repository can ship (a folder's
+ * marker file can be committed, and a moved or cloned folder never inherits the mark).
+ * → true when marked
+ */
+export function markOwnFolder(cwd, { env = process.env, platform = process.platform } = {}) {
+  const r = resolveProject(cwd, { env });
+  if (!r) return false;
+  const canon = canonicalDir(path.resolve(cwd), { platform });
+  transactRegistry((reg) => {
+    const e = reg.projects.find((x) => x.id === r.id);
+    if (!e) return false;
+    const own = Array.isArray(e.ownFolders) ? e.ownFolders : [];
+    if (own.includes(canon)) return false;
+    e.ownFolders = [...own, canon];
+    return true;
+  }, { env });
+  ownCache.clear();
+  writeMarker(path.resolve(cwd), r.id, { owned: true });
+  return true;
+}
+
+// Per process: hooks ask several times per run, and the registry rarely changes under them.
+const ownCache = new Map();
+
+/**
+ * Did the user make this folder's .agent-daemon/ (ad init)? Read-only. True when:
+ *   - the registry marks this exact path (markOwnFolder), or
+ *   - (an ad init from before the mark) the folder's marker names the id the registry has
+ *     for this path, the repository's own .git/info/exclude lists that marker, and git
+ *     tracks nothing under .agent-daemon/. 3.1.0 wrote the marker and the exclude line into
+ *     repositories that ship the folder too, so only a folder no clone brought counts; an
+ *     ad init folder whose files are committed needs ad init again (ad doctor says so).
+ * Never by the marker file alone (a repository can commit one).
+ */
+export function ownFolderIsUsers(cwd, { env = process.env, platform = process.platform } = {}) {
+  const dir = path.resolve(cwd);
+  const key = `${adRoot({ env })}\0${dir}`;
+  if (ownCache.has(key)) return ownCache.get(key);
+  let reg;
+  try {
+    reg = readRegistry({ env });
+  } catch {
+    return false; // a newer ad's registry: not provably the user's
+  }
+  const canon = canonicalDir(dir, { platform });
+  const e = reg.projects.find((x) => x.paths.some((y) => canonicalDir(y.path, { platform }) === canon));
+  let own = Boolean(e && Array.isArray(e.ownFolders) && e.ownFolders.includes(canon));
+  if (!own && e && readMarker(dir) === e.id) {
+    try {
+      const exclude = fs.readFileSync(path.join(dir, ".git", "info", "exclude"), "utf8");
+      own = exclude.split(/\r?\n/).includes(".agent-daemon/project.json") && !gitTracksAnyUnder(dir, ".agent-daemon");
+    } catch {
+      own = false; // no exclude file (or .git is a worktree's pointer file): not provable
+    }
+  }
+  ownCache.set(key, own);
+  return own;
 }
 
 /** Slugs that two or more projects claim. */

@@ -45,7 +45,7 @@ const TRANSCRIPT_TAIL_BYTES = 1024 * 1024;
  *   provisional notes for allow-listed hosts).
  *   print: false when the dispatcher prints one answer for all prompt steps.
  */
-export async function userPromptExtract(given, { source, print = true } = {}) {
+export async function userPromptExtract(given, { source, print = true, userHandled = false } = {}) {
   const done = () => {
     if (print) passthrough();
     return 0;
@@ -70,8 +70,11 @@ export async function userPromptExtract(given, { source, print = true } = {}) {
     //    usually the source of high-signal corrections ("actually we use X").
     if (userPrompt) {
       const fromUser = extractFromText(userPrompt, { speaker: "user", maxLearnings: 4 });
-      for (const l of fromUser) {
-        learnings.push(stamp(l, { sessionId, source_speaker: "user", ...sourceStamp }));
+      // userHandled: the dispatcher's capture library (L5) already took the user's words.
+      if (!userHandled) {
+        for (const l of fromUser) {
+          learnings.push(stamp(l, { sessionId, source_speaker: "user", ...sourceStamp }));
+        }
       }
       const failure = fromUser.find(l =>
         (l.type === "correction" || l.type === "gotcha") && l.confidence >= 0.55

@@ -72,6 +72,18 @@ export function createAdLayer({ cwd, home = homedir(), memory = null, cli = null
       const rows = await memory.listRecentLearnings({ limit: 10, projectSlug: slug });
       const waiting = pending().slice(-10).reverse();
       const out = rows.length ? ["Recent learnings:", ...rows.map(row)] : [];
+      // A prompt's capture goes straight to the store (L5): it waits there for review, not in the journal.
+      let review = [];
+      const handle = slug ? await memory.db() : null;
+      if (handle) {
+        try {
+          const { pendingSql, flaggedSql } = await import("../memory/trust.mjs");
+          review = handle.all(`SELECT id, category, text FROM learnings WHERE ${pendingSql()} AND NOT ${flaggedSql()} AND project_slug = ? ORDER BY id DESC LIMIT 10`, [slug]);
+        } catch {
+          review = []; // an older store: the journal list below still shows what was captured
+        }
+      }
+      if (review.length) out.push("Waiting for your review (ad review):", ...review.map(row));
       if (waiting.length) out.push("Captured, saved to memory when ad next starts:", ...waiting.map((e) => `  [${clean(e.type ?? "note")}] ${short(masked(e.text))}`));
       return out.length ? out : ["No learnings yet for this project."];
     }
@@ -89,8 +101,14 @@ export function createAdLayer({ cwd, home = homedir(), memory = null, cli = null
       if (gate.refused) return [`/memory forget: ${gate.refused}`];
       // Its lines in the memory files go too (the project's, and the global user.md): session start injects both.
       const projectFile = await (await import("../digest/apply.mjs")).resolveProjectMemoryPath(cwd).catch(() => null);
+      const R = await import("../memory/rule-removal.mjs");
+      const before = R.ruleOwners(handle);
       const changed = archiveLearning(handle, gate.token, id, slug, { memoryFile: [projectFile, path.join(home, ".agent-daemon", "user.md")] });
-      return [changed ? `Forgot #${id}: it won't be recalled again.` : `No active learning #${id}.`];
+      // L7 D2: its rule stays until removed with the typed code (not read here yet); afterReview rebuilds.
+      const kept = changed && [...before.values()].includes(id) ? R.rulesLeftBy(handle, before, [id]).map((r) => r.id) : [];
+      const notes = [];
+      if (typeof handle.transaction === "function") await R.settleRun({ handle, token: gate.token, out: (l) => notes.push(l), confirm: async () => ({ ok: false, text: "not here" }), cmdName: "ad" });
+      return [changed ? `Forgot #${id}: it won't be recalled again.` : `No active learning #${id}.`, ...(kept.length ? [`Rule ${kept.join(", ")} stays: keep it, or remove it in your own terminal.`] : []), ...notes];
     }
     if (s === "profile") {
       const profile = await memory.buildUserRepresentation({ projectSlug: slug });
@@ -111,7 +129,11 @@ export function createAdLayer({ cwd, home = homedir(), memory = null, cli = null
     const handle = memory ? await memory.db() : null;
     if (handle) {
       try {
-        rows = handle.all("SELECT id, text FROM learnings WHERE session_id = ? AND created_at > ? AND status IN ('active', 'pending') AND COALESCE(applied_to, '') NOT LIKE 'quarantined%' ORDER BY id", [threadId, sinceIso]);
+        // A prompt's capture (L5) goes straight to the store, keyed by the prompt's session in capture_ref.
+        // Only a typed prompt's own capture by that key: a journal line (anyone can write one) drains with a
+        // capture_ref too, but as `buffered`.
+        const { ownWordsSql } = await import("../memory/trust.mjs");
+        rows = handle.all(`SELECT id, text FROM learnings WHERE (session_id = ? OR (capture_ref = ? AND ${ownWordsSql()})) AND created_at > ? AND status IN ('active', 'pending') AND COALESCE(applied_to, '') NOT LIKE 'quarantined%' ORDER BY id`, [threadId, threadId, sinceIso]);
       } catch {
         rows = [];
       }

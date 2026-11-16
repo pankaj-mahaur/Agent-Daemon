@@ -21,6 +21,7 @@ const { runSkillCommand } = await import("../src/skills/cli.mjs");
 const { syncSkills } = await import("../src/engine/codex/stock-ui.mjs");
 const { writeLedger } = await import("../src/memory-install/ledger.mjs");
 const ep = await import("../src/memory/episodic.mjs");
+const { markOwnFolder } = await import("../src/memory/projects.mjs");
 after(async () => {
   ep.closeDb();
   await fs.rm(HOME, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
@@ -37,6 +38,7 @@ test("accepted once, present everywhere; undo restores everywhere", async () => 
   const cwd = path.join(HOME, "work", "shop-app");
   await fs.mkdir(path.join(cwd, ".agent-daemon", "proposed"), { recursive: true });
   await fs.mkdir(path.join(cwd, ".git"), { recursive: true });
+  markOwnFolder(cwd); // ad init
   await fs.writeFile(path.join(cwd, ".agent-daemon", "proposed", "skill-demo-skill-1.md"), renderSkillProposal({ skill: "demo-skill", base: skillSha(skill("A")), body: skill("B"), origin: "gepa-inline", host: "claude-code" }));
   const asks = ["a", "accept"];
   const lines = [];

@@ -51,6 +51,10 @@ function home({ claude = true, claudeDir = true, codex = true, cursor = true, fi
     resolve: (name) => (name === "claude" && claude ? { cmd: process.execPath, prefix: [SHIM], via: "env", file: SHIM } : null),
     out: (l) => lines.push(String(l)),
     ask: async () => answers.shift() ?? "",
+    // No terminal, whatever runs the tests: setup's own step is then skipped (L3).
+    isTTY: () => false,
+    // These tests are about the MCP entries: install --no-setup (setup has its own tests).
+    noSetup: true,
   });
   return { h, env, ctx, lines, answers, text: () => lines.join("\n"), claudeLog: () => (fs.existsSync(env.FAKE_CLAUDE_LOG) ? fs.readFileSync(env.FAKE_CLAUDE_LOG, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : []) };
 }
@@ -121,9 +125,12 @@ test("P5.4: VS Code (the portable Copilot file) and Gemini CLI (user settings): 
 
 test("P5.4: one route per host — with the Claude Code plugin enabled, the installer leaves Claude Code alone and doctor flags both", async () => {
   const t = home({ codex: false, cursor: false });
+  t.ctx.noSetup = false;
   fs.writeFileSync(path.join(t.h, ".claude", "settings.json"), JSON.stringify({ enabledPlugins: { "agent-daemon-memory@agent-daemon": true, "other@x": true } }));
-  assert.equal(await install({ ctx: t.ctx, yes: true }), 0, t.text());
+  // The MCP part leaves Claude Code alone; setup's hooks need a terminal (L3), so: finish there.
+  assert.equal(await install({ ctx: t.ctx, yes: true }), 2, t.text());
   assert.match(t.text(), /Claude Code\s+leaves it: ad's memory is already enabled here as a plugin \(agent-daemon-memory@agent-daemon\)/);
+  assert.match(t.text(), /Finish in a terminal \(the hooks need one\): (ad memory setup|npx -y agent-daemon-memory@\S+ setup)/);
   assert.equal(t.claudeLog().filter((a) => a[1] === "add").length, 0, "no second server");
   // A disabled plugin doesn't count.
   const u = home({ codex: false, cursor: false });
@@ -182,6 +189,32 @@ test("uninstall restores untouched configs byte for byte, and keeps hand edits",
   assert.ok(!fs.existsSync(codexFile(c.h)) && !fs.existsSync(cursorFile(c.h)));
 });
 
+test("ledger v2 mirrors every install; uninstall empties it and prints Removed, Kept and Left on disk", async () => {
+  const { readItems } = await import("../src/memory/ledger-read.mjs");
+  const a = home();
+  assert.equal(await install({ ctx: a.ctx, yes: true }), 0, a.text());
+  const items = readItems(a.env.AD_ROOT);
+  assert.deepEqual(items.map((i) => `${i.host}:${i.kind}`).sort(), ["claude-code:mcp", "codex:mcp", "cursor:mcp"]);
+  assert.ok(items.every((i) => i.preExisted === false && i.locator.key === "agent-daemon-memory" && i.canonicalSha256));
+  // The user edits ad's own entry in one host: that host keeps it, with the reason.
+  const cj = parseJsonc(fs.readFileSync(cursorFile(a.h), "utf8"));
+  cj.mcpServers["agent-daemon-memory"].env = { MINE: "1" };
+  fs.writeFileSync(cursorFile(a.h), JSON.stringify(cj, null, 2));
+  fs.mkdirSync(path.join(a.env.AD_ROOT), { recursive: true });
+  fs.writeFileSync(path.join(a.env.AD_ROOT, "episodic.db"), "x".repeat(2048));
+  a.lines.length = 0;
+  await uninstall({ ctx: a.ctx });
+  const out = a.text();
+  const removed = out.slice(out.indexOf("Removed:"), out.indexOf("Kept:"));
+  assert.match(removed, /config\.toml · agent-daemon-memory/);
+  assert.match(removed, /claude-code · agent-daemon-memory/);
+  assert.doesNotMatch(removed, /mcp\.json/);
+  assert.match(out, /Kept:\n {2}- .*mcp\.json · agent-daemon-memory: .+/);
+  assert.match(out, /Left on disk:\n {2}- .*episodic\.db \(2 KB\): your memory notes/);
+  // v2 keeps exactly what is still there: Cursor's entry.
+  assert.deepEqual(readItems(a.env.AD_ROOT).map((i) => i.host), ["cursor"]);
+});
+
 test("refusals leave the file untouched and print the snippet: malformed JSON, read-only, a hidden TOML entry", async () => {
   const bad = '{ "mcpServers": { ';
   const dotted = 'mcp_servers.agent-daemon-memory.command = "node"\n';
@@ -189,7 +222,7 @@ test("refusals leave the file untouched and print the snippet: malformed JSON, r
   assert.equal(await install({ ctx: t.ctx, yes: true }), 1, t.text());
   assert.equal(fs.readFileSync(cursorFile(t.h), "utf8"), bad);
   assert.equal(fs.readFileSync(codexFile(t.h), "utf8"), dotted);
-  assert.match(t.text(), /✗ Codex: it already defines agent-daemon-memory outside ad's markers; add this yourself:\n# >>> agent-daemon-memory/);
+  assert.match(t.text(), /✗ Codex: it already defines agent-daemon-memory, which ad didn't write; add this yourself:\n\[mcp_servers\]\nagent-daemon-memory = \{ command = /);
   assert.match(t.text(), /✗ Cursor: it isn't valid JSON/);
   // Read-only.
   const r = home({ claude: false, claudeDir: false, codex: false, files: { ".cursor/mcp.json": "{}\n" } });
@@ -314,26 +347,37 @@ test("review H1: a hand edit to ad's entry is kept by install and repair", async
   assert.match(t.text(), /already defines agent-daemon-memory/);
 });
 
-test("review H2: an npx upgrade copies the new package even when every entry is unchanged", async () => {
+test("review H2: an npx upgrade registers the new copy for the launcher even when every entry is unchanged", async () => {
   const t = home({ claude: false, claudeDir: false, codex: false });
+  const RT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   const pkg = (v) => {
     const d = fs.mkdtempSync(path.join(os.tmpdir(), "ad-fakepkg-"));
     made.push(d);
     fs.writeFileSync(path.join(d, "package.json"), JSON.stringify({ name: "agent-daemon-memory", version: v }));
     fs.writeFileSync(path.join(d, "cli.mjs"), "// fake\n");
+    fs.mkdirSync(path.join(d, "bin"));
+    fs.writeFileSync(path.join(d, "bin", "hook.mjs"), "// fake\n");
+    fs.mkdirSync(path.join(d, "src", "memory", "launch"), { recursive: true });
+    for (const f of ["run.mjs", "dists.mjs"]) fs.copyFileSync(path.join(RT, "src", "memory", "launch", f), path.join(d, "src", "memory", "launch", f));
     return d;
   };
   const npx = (v) => makeContext({ env: t.env, home: t.h, root: t.env.AD_ROOT, resolve: () => null, out: (l) => t.lines.push(l), ask: async () => "", packageRoot: pkg(v) });
+  const { currentDist } = await import("../src/memory-install/install.mjs");
   assert.equal(await install({ ctx: npx("3.2.0"), yes: true }), 0, t.text());
-  assert.equal(JSON.parse(fs.readFileSync(path.join(t.env.AD_ROOT, "memory", "current.json"), "utf8")).version, "3.2.0");
+  assert.equal(currentDist(t.env.AD_ROOT), "3.2.0");
+  // The entry starts the stable launcher, whatever the version.
+  const entry = JSON.parse(fs.readFileSync(cursorFile(t.h), "utf8")).mcpServers["agent-daemon-memory"];
+  assert.deepEqual(entry.args.slice(1, 3), [path.join(t.env.AD_ROOT, "memory", "launch", "run.mjs"), "serve"]);
   t.lines.length = 0;
   assert.equal(await install({ ctx: npx("3.2.1"), yes: true }), 0, t.text());
   assert.match(t.text(), /already set up/);
-  assert.equal(JSON.parse(fs.readFileSync(path.join(t.env.AD_ROOT, "memory", "current.json"), "utf8")).version, "3.2.1");
-  assert.ok(fs.existsSync(path.join(t.env.AD_ROOT, "memory", "pkg", "3.2.1", "cli.mjs")));
-  // Uninstalling the last host removes the launcher and the copies.
+  assert.match(t.text(), /the launcher now starts agent-daemon-memory 3\.2\.1/);
+  assert.equal(currentDist(t.env.AD_ROOT), "3.2.1");
+  assert.ok(fs.existsSync(path.join(t.env.AD_ROOT, "memory", "dist", "3.2.1", "cli.mjs")));
+  assert.ok(!fs.existsSync(path.join(t.env.AD_ROOT, "memory", "pkg")), "3.1.0's package copy is no longer written");
+  // Uninstalling the last host removes the launcher and the copies (nothing starts it).
   assert.equal(await uninstall({ ctx: npx("3.2.1") }), 0);
-  assert.ok(!fs.existsSync(path.join(t.env.AD_ROOT, "memory", "pkg")) && !fs.existsSync(path.join(t.env.AD_ROOT, "memory", "bin")));
+  assert.ok(!fs.existsSync(path.join(t.env.AD_ROOT, "memory", "launch")) && !fs.existsSync(path.join(t.env.AD_ROOT, "memory", "dist")));
 });
 
 test("review H3: a config that changes while ad asks isn't written over", async () => {

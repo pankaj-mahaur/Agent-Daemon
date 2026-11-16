@@ -47,6 +47,9 @@ import { adRoot, statePath } from "../ad-root.mjs";
  * @returns {Promise<ApplyResult>}
  */
 export async function applyLearnings(opts) {
+  // Where the rows came from (L5 decision 14): a drained journal line is `buffered`
+  // whatever it claims; the session digest is `digest`.
+  const rowProvenance = opts.provenance === "buffered" ? "buffered" : "digest";
   const result = {
     memoryProjectAppended: 0,
     memoryGlobalAppended:  0,
@@ -113,6 +116,7 @@ export async function applyLearnings(opts) {
       const l = item.learning;
       // status 'quarantined': held back from every reader, older ad included.
       sqliteRows.push({
+        provenance: rowProvenance,
         sessionId: opts.sessionId || null,
         projectSlug: slug,
         category: l.type,
@@ -133,6 +137,7 @@ export async function applyLearnings(opts) {
     if (origin === "agent") {
       const l = item.learning;
       sqliteRows.push({
+        provenance: rowProvenance,
         sessionId: opts.sessionId || null,
         projectSlug: slug,
         category: l.type,
@@ -187,6 +192,7 @@ export async function applyLearnings(opts) {
     // Every new row belongs to its project; nothing is written global any more.
     const l = item.learning;
     sqliteRows.push({
+        provenance: rowProvenance,
       sessionId: opts.sessionId || null,
       projectSlug: slug,
       category: l.type,

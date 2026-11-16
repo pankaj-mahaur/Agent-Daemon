@@ -9,6 +9,8 @@ ad mistakes --share          # a redacted Markdown summary to post
 ad mistakes --json           # the numbers as JSON
 ```
 
+Without ad, the memory package runs the same report: `npx agent-daemon-memory mistakes` (same flags).
+
 ## What you see first
 
 Before it reads anything, ad shows what it will read and asks:
@@ -56,7 +58,7 @@ Claude Code deletes transcripts after 30 days by default; raise "cleanupPeriodDa
 
 - **Rules and reminders.** Each top repeat is either a rule a tool call can show, or a reminder ([below](#which-repeats-could-become-rules)). The first line says how many could be rules and what they would have asked before on your own history.
 - **Both agents together.** The same correction typed to Claude Code and to Codex counts as one repeat, with a count per agent.
-- **Rule coverage.** Claude Code reads `CLAUDE.md` files and Codex reads `AGENTS.md` files. The line says how many rules from one file the other agent never sees. A rule is a list item in those files, outside code blocks and outside ad's own managed block. A bullet that is only a link, only a command, or the heading of a sub-list doesn't count. If `CLAUDE.md` imports `@AGENTS.md`, or Codex's `config.toml` sets `project_doc_fallback_filenames` to read `CLAUDE.md`, ad counts that too.
+- **Rule coverage.** Claude Code reads `CLAUDE.md` files and Codex reads `AGENTS.md` files. The line says how many rules from one file the other agent never sees. A rule is a list item in those files, outside code blocks and outside ad's own blocks (`ad init`'s, and the "Recent learnings" block an older ad wrote; one never closed runs to the end of the file). A bullet that is only a link, only a command, or the heading of a sub-list doesn't count. If `CLAUDE.md` imports `@AGENTS.md`, or Codex's `config.toml` sets `project_doc_fallback_filenames` to read `CLAUDE.md`, ad counts that too.
 - **Weekly trend:** corrections per week (weeks start on Monday, UTC), from your first prompt in the history, at most 8 weeks.
 - **Top repeats:** the 10 corrections you typed most, at least twice each. Each is shown as one redacted sentence of at most 200 characters, in the wording you used most.
 - **History found.** Claude Code deletes transcripts after `cleanupPeriodDays` (30 by default). Codex keeps its sessions, but compresses older ones (`.jsonl.zst`), which Node reads from 22.15 on.
@@ -109,6 +111,21 @@ How well this works is checked on held-out sets written by someone other than th
 - The sentences shown are redacted: secrets (keys, tokens, passwords), e-mail addresses, IP addresses, your account name, @handles, the folders of a path (only its last part stays: `<path>\app.log`), and everything after a URL's host (credentials included).
 - `--share` adds no project name and no path. **Names of other people inside a sentence aren't found automatically**, so read the summary before you post it.
 - `--json` has the numbers and the redacted sentences, plus the project folder's name (not its path).
+
+## Saving them for review (`--save`)
+
+The report stores nothing. `ad mistakes --save` is the one way to keep what it finds, and it asks first, in its own words:
+
+```sh
+ad mistakes --save                                   # asks: [a]ll / [h]istory only / [f]iles only / [N]o
+ad mistakes --save --import-history --import-files   # without a terminal: the flags are the answer
+```
+
+- **From your history:** one redacted sentence per correction you repeated in this project (at most 20 at a time, the most repeated first), and only the dates and counts of the ones you made once. Only sessions started in this project's folder are counted (every Codex session file is opened to see where it started).
+- **From your instruction files:** each rule in `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.cursor/rules`, `.cursorrules` and the Copilot instructions, one review decision per file. The blocks ad itself wrote into those files are skipped.
+- **Everything waits for you.** Each item is saved as pending: nothing reaches your agents until you accept it in `ad review`. A rejected item is deleted and isn't proposed again. Text that reads like instructions to the agent is held back and shown as flagged.
+- **Only an answer saves.** `y`, a blank line and `--yes` save nothing; nothing is opened or created before you answer.
+- `install` asks the same question once, after setup, when you run it in a terminal inside a project.
 
 ## When it doesn't work
 

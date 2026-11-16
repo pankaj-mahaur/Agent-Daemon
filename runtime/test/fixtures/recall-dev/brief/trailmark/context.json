@@ -1,0 +1,26 @@
+{
+  "name": "trailmark",
+  "stack": "Kotlin Android app: Jetpack Compose, Room, Hilt, WorkManager, Gradle KTS",
+  "branch": "fix/offline-map-tile-cache",
+  "recent_paths": [
+    "app/src/main/java/com/trailmark/maps/tiles/TileCache.kt",
+    "app/src/main/java/com/trailmark/maps/tiles/TileDownloadWorker.kt",
+    "app/src/main/java/com/trailmark/maps/tiles/TileDao.kt",
+    "app/src/main/java/com/trailmark/data/db/AppDatabase.kt",
+    "app/schemas/com.trailmark.data.db.AppDatabase/14.json",
+    "app/src/test/java/com/trailmark/maps/tiles/TileCacheTest.kt",
+    "app/src/androidTest/java/com/trailmark/maps/tiles/TileDaoMigrationTest.kt",
+    "app/src/main/java/com/trailmark/maps/OfflineRegionScreen.kt",
+    "gradle/libs.versions.toml",
+    "app/build.gradle.kts",
+    "CHANGELOG.md"
+  ],
+  "recent_commits": [
+    "fix(tiles): evict by last access instead of insert time",
+    "feat(tiles): cap offline cache at the user-selected size",
+    "db: schema 14 adds tiles.last_accessed_at",
+    "test(tiles): Room migration test 13 -> 14",
+    "chore(deps): bump work-runtime to 2.10.0"
+  ],
+  "session_cwd": "/Users/dev/src/trailmark-android"
+}

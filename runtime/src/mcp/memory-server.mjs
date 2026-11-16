@@ -47,6 +47,7 @@ import { captureExplicit } from "../memory/capture.mjs";
 import { hostId } from "../memory/host-ids.mjs";
 import { runMemoryMaintenance } from "../memory/maintenance.mjs";
 import { renderDetailed, renderFacts, renderLearnings, renderProfile, renderTimeline } from "./render.mjs";
+import { PRODUCT } from "../product.mjs";
 
 export const UNBOUND_TEXT = "This memory server isn't bound to a project (the host didn't say which folder is open), so it shows nothing. Open a project folder, or pass --project.";
 export const COLLISION_TEXT = "This folder shares its memory key with another folder, so ad keeps its notes out until each project gets its own ID. See ad doctor.";
@@ -66,7 +67,7 @@ const argValue = (name) => {
 // ${workspaceFolder} as it is, and an invalid project is already skipped, with a note.
 const unexpanded = process.argv.slice(2).find((a, i, all) => a.includes("${") && all[i - 1] !== "--project" && !a.startsWith("--project="));
 if (unexpanded !== undefined) {
-  process.stderr.write(`agent-daemon-memory: the host didn't expand ${unexpanded}; this host needs the installer route.\n`);
+  process.stderr.write(`${PRODUCT.mcpServerKey}: the host didn't expand ${unexpanded}; this host needs the installer route.\n`);
   process.exit(2);
 }
 
@@ -79,7 +80,7 @@ const VERSION = (() => {
     return "0.0.0";
   }
 })();
-const serverInfo = { name: "agent-daemon-memory", version: VERSION };
+const serverInfo = { name: PRODUCT.mcpServerKey, version: VERSION };
 
 // --capture: auto (default; the record tools defer to live hooks), tools, hooks or off.
 const CAPTURE = (() => {

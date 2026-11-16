@@ -850,6 +850,14 @@ export async function reviewImport(importId, { acceptAll = false, env = process.
       }
     }
     out.write(`${decided} decided, ${left} left.\n`);
+    // L7 D2: every token run ends with afterReview (imported rows are pending: no rule of theirs ends here).
+    try {
+      const r = await (await import("../memory/rules-finish.mjs")).afterReview(t, gate.token, { root: adRoot({ env }) });
+      if (r?.switch?.why) out.write(`${r.switch.why}\n`);
+      for (const l of r?.switch?.codex ?? []) out.write(`${l.trim()}\n`);
+    } catch (e) {
+      out.write(`The rules file wasn't rebuilt (${e?.message ?? e}); it keeps the rules it had until the next review.\n`);
+    }
     return { decided, left, changed: decided > 0 };
   } finally {
     await t.close?.();

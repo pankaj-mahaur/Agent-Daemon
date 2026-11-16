@@ -1046,11 +1046,11 @@ Stray text on top of ad's screen while it runs (a library writing straight to th
 
 **Symptom:** Claude Code shows `ad: the rules file was unreadable; using the last good copy.` or `ad: the rules file is unreadable, so no rules apply right now.` `ad doctor` shows a `Rules file` row marked ✗.
 
-**Cause:** the rules check reads only `~/.agent-daemon/guards.json` (never the memory store), so it stays fast. ad writes that file whole and keeps the previous good one as `guards.last-good.json`. A hand edit, a full disk or a copy from another machine can leave it unreadable. With the last good copy, the rules from before your latest change apply. With neither, no rule applies: a broken rules file never blocks your tools.
+**Cause:** the rules check reads only `~/.agent-daemon/guards.json` (never the memory store), so it stays fast. ad writes that file whole and keeps the previous good one as `guards.last-good.json`. A hand edit, a full disk or a copy from another machine can leave it unreadable. With the last good copy, the rules from before your latest change apply. With neither, the check can't tell which rules apply: while you have rules (ad keeps `guards.active` beside the file to say so), every call it covers is asked about (stopped in bypass and don't-ask modes, and in a host that can't ask) until the file is rebuilt. With no rules, nothing applies.
 
 **Fix:**
 1. Look at the file: `node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" ~/.agent-daemon/guards.json` prints where it breaks. (On Windows the folder is `%USERPROFILE%\.agent-daemon`, or your `AD_ROOT`.)
-2. If you edited it, undo the edit. Otherwise move it aside (`guards.json.broken`): with no rules file, ad uses the last good copy without a warning. If that copy is unreadable too, move it aside as well (then no rule applies until ad writes the file again).
+2. If you edited it, undo the edit. Otherwise rebuild it from your memory store: run `ad rules resume --all` (or `npx -y agent-daemon-memory rules resume --all`) in your own terminal. It writes the rules file again, and with nothing paused it changes nothing else. Don't move the file aside: the check then still can't read your rules.
 3. Run `ad doctor` again: `Rules file` should be ✓ (it says when it is using the last good copy).
 
 The hook log (`~/.agent-daemon/hooks/hook.log`, shown by `ad doctor`) records each time a hook found the file unreadable.
@@ -1095,9 +1095,247 @@ The hook log (`~/.agent-daemon/hooks/hook.log`, shown by `ad doctor`) records ea
 
 **Fix:** usually none: the next session finds the store upgraded and drains the journal. If the message keeps coming, run any `ad` command that opens memory (`ad doctor`, `ad memory held`): it upgrades the store in the foreground and shows an error if it can't. For "newer", update the ad your hooks run (`ad doctor` shows its path under `Hook script`), or the memory plugin if it is the one logging.
 
+## 100. Remember: "Nothing saved: …" or no "Saved for review" line
+
+**Symptom:** after `/agent-daemon-memory:remember <text>` (Claude Code) or `$agent-daemon-memory-remember <text>` (Codex), the agent says nothing was saved, or you see no `Saved for review: …` line.
+
+**Cause and fix**, by what the line says:
+- **`type … followed by what to remember`**: the command had no text. Type it again with the note after it.
+- **`the note is too long`**: a remembered note is at most 2,000 characters. Save the gist.
+- **`this folder shares its memory with another folder`**: two project folders map to one memory key, so neither captures. `ad doctor` names them.
+- **`ad's own hooks here are from an older ad`**: `ad init` wired this project's prompt hook to an ad that predates remember, and that hook would capture the same prompt as an ordinary correction. Update ad and run `ad init` again.
+- **No line at all**: capture isn't running for that host. Run `npx -y agent-daemon-memory doctor` in your own terminal. On Claude Code the plugin's hooks need 2.1.314 or later. On Codex, run `setup --host codex` and trust the hooks with `/hooks`. A short `/remember` counts only while the plugin is on and no other command, skill or plugin of yours is called `remember`; type the full `/agent-daemon-memory:remember` otherwise.
+
+## 101. A correction was saved but agents don't use it
+
+**Symptom:** you saw `Saved for review: #12 …`, but later sessions don't follow it.
+
+**Cause:** every note waits for your review before it is used: no host can prove today that you typed a prompt, so nothing is accepted on its word ([capture, review and forget](memory/review.md)).
+
+**Fix:** run `npx agent-daemon-memory review` (or `ad review`) in your own terminal and accept it (`a`, `enter`, `y` takes the new notes from your prompts on the page). Saying it again only counts it ("Said 3 times now").
+
+## 102. Review: "needs your own terminal", or no checklist
+
+**Symptom:** `review` prints a numbered list and "Run … review in your own terminal", or refuses with "can't run from the agent's own shell".
+
+**Cause:** accepting needs a real terminal that isn't an agent's: not the agent's shell (`AD_TOOL_SHELL=1`), not a pipe. Git Bash's mintty isn't a terminal node can read keys from.
+
+**Fix:** run it yourself in a terminal; in Git Bash use `winpty npx agent-daemon-memory review` or Windows Terminal. `review --plain` gives a numbered line mode, `review --list` only lists.
+
+## 103. Forget: "#12 is in use", "won't be used", or "belongs to …"
+
+**Cause and fix**, by what the line says:
+- **`#12 is in use; forget it in your own terminal`**: a prompt can't remove an accepted note (anyone's prompt could ask). Run `npx agent-daemon-memory forget 12` in your own terminal and type the number back.
+- **`#12 won't be used; delete it in your next review`** (or `stays in use until you delete it`, for a note already in use): a prompt only marks your own note (it can't prove you typed it). Delete it in review, where it's listed under "You asked to remove", or run `forget 12` in your terminal.
+- **`#12 belongs to <project>`**: the note is another project's. Run the command in that project's folder.
+- **`this folder shares its memory with another folder`**: two folders map to one memory key, so nothing changes; `ad doctor` names them.
+
+A saved note waits for your review: accept it with `npx -y agent-daemon-memory review` in your own terminal.
+
+## 104. Memory setup refused, or added nothing
+
+**Symptom:** `install`, `setup`, `repair` or `uninstall` says `can't run from the agent's own shell`; setup says `needs an interactive terminal`; or a setup line starts with `✗` or says `no hooks`.
+
+**Cause and fix**, by what the line says:
+- **`can't run from the agent's own shell`**: the command ran in a shell the agent started (`AD_TOOL_SHELL=1`), and nothing was changed. Run the printed command yourself in a terminal.
+- **`needs an interactive terminal`**: no terminal (a pipe, a script), or Git Bash's mintty, which node doesn't see as one. Use PowerShell or Windows Terminal, or in Git Bash `winpty npx.cmd -y agent-daemon-memory setup`.
+- **`Claude Code <version> predates the hook form ad writes`**: update Claude Code to 2.1.314 or later and run setup again.
+- **``Codex: no hooks: ad's folder … holds $, `, % or "``**: Codex's shell would read those characters. Set `AD_ROOT` to a plain path and run setup again.
+- **`its hooks.<Event> isn't a list`**, **`its env isn't an object`**, or a Codex hook list that isn't an array of tables: your file has that key in a shape setup won't rewrite, so setup changed nothing there. Fix the shape and run setup again, or add the entry by hand.
+- **`AD_TOOL_SHELL is set to …`**: you set it yourself; setup leaves it alone.
+- **Claude Code without the plugin or `--no-plugin`**: setup writes nothing and prints the two `/plugin` lines. Install the plugin, or run `setup --no-plugin`.
+
+## 105. Memory install: "Finish in a terminal"
+
+**Symptom:** `install` adds the MCP entries, then prints `Finish in a terminal (the hooks need one): npx -y agent-daemon-memory@<version> setup` and exits 2 (1 if adding the MCP entries failed too).
+
+**Cause:** install ran without a terminal (a script, a pipe), and the hooks setup adds need one. In the agent's own shell install refuses outright instead (#104).
+
+**Fix:** run the printed command yourself in a terminal. For scripts and CI that want only the MCP entries, `install --no-setup` skips setup and exits with the MCP step's own code (0 when every host is set up).
+
+## 106. `doctor`: `hooks.trust` (Codex hooks not reviewed, or changed)
+
+**Symptom:** `hooks.trust` says `not reviewed yet: …`, `Codex won't run … until you review it again in /hooks`, `can't confirm … on this Codex`, or `you changed ad's … hook`.
+
+**Cause:** Codex runs a hook only after you trust it, and it stops running it when the hook changes after you trusted it. Codex records trust per hook, by its position in the list, so a hook that moved (one added before it) shows as not reviewed. `not reviewed yet`: you haven't trusted setup's hooks there. `won't run … again`: the hook at that position changed since you trusted it. `can't confirm`: your Codex is newer than the one ad checked its trust records against, so ad doesn't guess. `you changed ad's … hook`: the line isn't setup's any more.
+
+**Fix:** open Codex and run `/hooks`, then trust ad's hooks. For a hook you changed, delete your version and run the printed setup command again to get ad's back, or keep yours (ad never edits it). `turned off in /hooks` is your choice: turn them on in `/hooks` to capture again.
+
+## 107. Codex: "AD_TOOL_SHELL is gone", or setup says `include_only` drops it
+
+**Symptom:** a Codex session starts with `AD_TOOL_SHELL is gone from …/config.toml, so Codex's agent shell isn't marked any more`, or setup prints `your shell_environment_policy.include_only drops AD_TOOL_SHELL, so the marker does nothing`.
+
+**Cause:** setup marks the agent's shell with `AD_TOOL_SHELL = "1"` under `[shell_environment_policy.set]`, so review and the installer can tell the agent from you. The line was removed from `config.toml`, or your `include_only` list leaves this variable out of the shell's environment.
+
+**Fix:** run the printed `setup --host codex` command again in your own terminal, and add `"AD_TOOL_SHELL"` to `include_only` if you use it.
+
+## 108. A hook says "isn't installed any more" or "the plugin was removed"
+
+**Symptom:** once per session: `agent-daemon memory isn't installed any more: run npx -y agent-daemon-memory@<version> uninstall to remove its hooks` (or `the agent-daemon memory plugin was removed` / `is turned off`).
+
+**Cause:** a host still starts ad's launcher (`~/.agent-daemon/memory/launch/run.mjs`), but no copy of the package is left for it to run (it was deleted, or the Claude Code plugin it follows was uninstalled or turned off). The hook does nothing and never blocks the agent.
+
+**Fix:** run the printed `uninstall` command in your own terminal to remove the leftover entries, or `npx agent-daemon-memory install` (or turn the plugin back on) to keep using memory.
+
+## 109. Uninstall "Kept" an entry
+
+**Symptom:** uninstall's summary lists an item under **Kept**, with a reason and, where it can, how to remove it.
+
+**Cause and fix**, by the reason:
+- **`you changed it`**: ad removes only what is still exactly as it wrote it. Remove the entry yourself, or keep it: the host is marked uninstalled, so ad's hooks in it do nothing, and a kept Claude Code `tool.before` entry is set to `onFailure: "continue"` so it can't block a tool call (both unless rules exist and you didn't confirm the review, below).
+- **`you had it before`**: it was there before setup (for example your own `AD_TOOL_SHELL`), so it stays.
+- **`it isn't ad's`** or **`it isn't in a host's skills folder`**: the record points at something ad didn't write, so ad won't touch it.
+- **`rules exist, and removing it needs your review in your own terminal`**: with rules, the check before tool calls and the marker go only through your own terminal. Run the uninstall there, or follow the printed manual step.
+- **`… run uninstall again`**: the file couldn't be edited safely: it doesn't parse, is read-only or isn't UTF-8 text, another program kept changing it, or the write failed. Fix that (or close the other program) and run uninstall again.
+
+The launcher folder (`~/.agent-daemon/memory/launch/`) stays under **Left on disk** while any config still starts it. In Codex, uninstall never edits a hook you changed (Codex would stop trusting it); it says when hooks you added after ad's need trusting again in `/hooks`.
+
+## 110. The agent didn't get a learning I accepted
+
+**Symptom:** a learning you accepted in `review` isn't in the session's context; `/agent-daemon-memory:recall` doesn't list it under "this session received".
+
+**Cause and fix**, in order:
+- **It doesn't fit this work.** The session brief sends your own corrections from the last 14 days every session, plus the learnings that match the current branch, recently changed files and last commits; others come with a prompt that matches them. Check: `/agent-daemon-memory:recall <a word from it>` lists it if it matches. Recall matches words, not meaning: a learning phrased very differently from the work won't come up.
+- **A newer learning on the same subject replaced it.** When a learning written months later about the same thing is shown, the older one stays out. Forget the one you no longer want (`npx -y agent-daemon-memory forget <n>`) so the right one is always the newer.
+- **Recall is off in this project.** `doctor` says so; turn it on in your own terminal: `npx -y agent-daemon-memory config recall on`.
+- **No repo context yet.** The first session in a repository (or on a new branch) gets the freshest learnings while a background job reads the branch, changed files and commits; the next session uses them. Outside a git repository, the brief is always the freshest learnings.
+- **The host isn't Claude Code or Codex**, or ad's hooks aren't trusted there (Codex: `/hooks`; see #106).
+
+## 111. `doctor`: auto memory, claude-mem, or an `agent-daemon:learnings` block
+
+**Symptom:** `doctor` shows `coexist.auto-memory`, `coexist.claude-mem` or `coexist.mirror`.
+
+These are information, not failures: other memory that loads next to ad's learnings.
+- **Claude Code auto memory** keeps its own notes (`MEMORY.md`) and loads them each session; a learning you forget here can still arrive from there. Keep both, or set `"autoMemoryEnabled": false` in the settings file `doctor` names.
+- **claude-mem** also adds notes at session start and captures prompts, so a correction can arrive twice. Both can stay on; its session-start notes are set by `CLAUDE_MEM_CONTEXT_OBSERVATIONS` in `~/.claude-mem/settings.json`.
+- **An `agent-daemon:learnings` block** in CLAUDE.md or AGENTS.md was written by ad 3.x. Claude Code loads it, so those learnings arrive twice and forgotten ones stay: delete the lines between `<!-- agent-daemon:learnings:start -->` and `<!-- agent-daemon:learnings:end -->` (the file may be committed to your repository).
+
+## 112. `config recall` says "recall stays as it is"
+
+**Symptom:** `config recall on` or `off` prints `recall stays as it is: changing it needs your own terminal`.
+
+**Cause:** turning recall off would stop your accepted learnings from reaching the agent, and turning it back on would undo your choice, so both need the review check: a real terminal, not an agent's shell or a script.
+
+**Fix:** run it yourself in a terminal (Windows Terminal, iTerm2, macOS Terminal, a Linux terminal). In an editor's terminal, follow the dialog it shows. Without a value, `config recall` only shows the current setting and works anywhere.
+
+## 113. Capture files go outside a project that has `.agent-daemon/`
+
+**Symptom:** `ad doctor` shows `Project folder`, or the journal and proposals land under `~/.agent-daemon/projects/<project id>/` although the project has a `.agent-daemon/` folder.
+
+**Cause:** ad writes into a project's own `.agent-daemon/` only when you ran `ad init` there. A repository can ship that folder (with a journal or a `.gitignore` that un-ignores everything), so ad doesn't trust the folder alone.
+
+**Fix:**
+- `this repository ships its own .agent-daemon/`: nothing to do. Your capture files stay outside the repository on purpose.
+- `isn't marked as yours`: if you made the folder (an `ad init` from an older version), run `ad init` there again.
+- `ad init` says `git wouldn't ignore .agent-daemon/…`: add the lines it lists to `.agent-daemon/.gitignore`, then run `ad init` again. Until then capture files (your prompts) stay out of the repository.
+
+## 120. Every tool call is blocked
+
+**Symptom:** in Claude Code every Bash, Write or Edit call (Read too, with the starter policy's `.env` rule) is blocked, with node's missing-file error, a timeout, or `ad: can't read your rules right now · pause rules: … · repair: …`.
+
+**Cause:** while you have rules, ad's `tool.before` entry in your user settings fails closed (`onFailure: "block"`): a rules check that can't run blocks the call instead of letting it through. It can't run when ad's folder (`~/.agent-daemon`) was deleted or moved, the copy of the package it runs is gone, or the rules file can't be read or trusted.
+
+**Fix**, in your own terminal (none of these needs the hook):
+- **Pause your rules:** `npx -y agent-daemon-memory rules pause --all` (or `ad rules pause --all`). With nothing in force, a rules file that can't be read no longer blocks anything. Self-protection keeps running.
+- **ad's folder was deleted:** `npx -y agent-daemon-memory@<version> repair` puts back the launcher and the copy the check runs. Use the version your settings entry names, or the one you installed.
+- **Neither works:** open `~/.claude/settings.json` and delete the `PreToolUse` entry whose command runs `memory/launch/run.mjs hook tool.before` (or ad's own `hook.mjs tool.before`). Then restart Claude Code: it reads hooks at session start.
+
+Then run `doctor` and look at the `rules.` rows and `Rules file` (#95).
+
+## 121. ad's rules check still blocks after I removed my last rule
+
+**Symptom:** you have no rules left, but `doctor` shows `rules.switch … no rule is left, but ad's rules check still fails closed`, and a check that fails still blocks the call.
+
+**Cause:** putting the entry back to the values it had before (its `onFailure` and `timeout`, and dropping Read) lowers enforcement, so ad does it only in a run that has your review from your own terminal. When the last rule went, that step didn't finish: Claude Code was writing the settings file, the file couldn't be read or written, or the rules file couldn't be trusted. Or the change was seen first by a run without your review (`repair`, `setup`), which only ever raises the check.
+
+**Fix:** run `review` in your own terminal (`npx -y agent-daemon-memory review` or `ad review`). The next review puts the entry back; nothing else in your settings changes. Claude Code uses it from your next session.
+
+## 122. The agent says ad stopped a change to its own files
+
+**Symptom:** the agent reports `ad's self-protection stops this call: …`, or Claude Code asks with that reason, although you have no rule about it.
+
+**Cause:** whatever your rules, ad stops or asks about calls that would change ad itself: its commands that change what is remembered or enforced run from the agent's shell (or through a wrapper, another terminal or a nested agent), writes to ad's state under `~/.agent-daemon`, edits that would remove ad's hook from a host's settings, the variables ad's hooks rely on, the Windows folder, startup files and programs built at run time. Pause and allow-once never apply to it.
+
+**Fix:** if you want the change, make it yourself in your own terminal: run the ad command there, or edit the file there. Don't ask the agent to work around it. It is a filter for the ways an agent would usually do this, not a sandbox ([rules](memory/rules.md#self-protection)).
+
+## 123. Asked for a code
+
+**Symptom:** a command prints what will change, then `— type <code>:`, and waits.
+
+**Cause:** the command lowers enforcement: `rules rm`, `rules pause`, `rules allow-once`, `safety off`, `config review auto`, `ad init` rewriting its rules check while rules exist, or `uninstall` removing or lowering the rules check while rules exist. After the usual "your own terminal" check, ad prints a 4-letter code to the terminal itself and reads it back from there, never from stdin, so a script that runs the command blind can't answer. If you typed the dialog code earlier in the same run, you aren't asked again.
+
+**Fix:** type the code you see. Without a terminal (a pipe, a script, an agent's shell) the command changes nothing; run it yourself in a terminal. A script that drives a terminal or reads the screen isn't stopped by this.
+
+## 130. A command is asked about or stopped by "the starter safety policy"
+
+**Symptom:** Claude Code asks before a command and the line under it says `starter safety policy (rule N): asks before …`, or the agent reports `The user's starter safety policy stops this command here`.
+
+**Cause:** you turned on the starter safety policy (`safety on`). It asks before a recursive delete of your home folder, a root or the project folder, a force push to the default branch, reading `.env`, `.env.local` or `.env.*.local`, and `--no-verify` on git commit or push. Claude Code in bypass or don't-ask mode, and Codex, can't ask, so the call is stopped with the reason.
+
+**Fix:**
+- Meant it: answer the prompt, or let one stopped call through with the `rules allow-once N <id>` line the message shows, in your own terminal.
+- A look-alike that shouldn't be asked about (a subfolder, a feature branch, `.env.example`): report it with the command; the policy is a fixed list and a fix ships in a release.
+- Don't want it: `safety off` in your own terminal (it asks you to type a code); `safety status` shows each family.
+
+## 131. `safety on` or `off` says "Nothing changed"
+
+**Symptom:** `the starter safety policy is turned on by the user, in their own terminal. Nothing changed.`
+
+**Cause:** it ran from an agent's shell or a script. Only your own terminal turns the policy on or off, so an agent can't switch it off to get past it.
+
+**Fix:** run it yourself in a terminal. `safety status` works anywhere.
+
+## 132. `safety on`: "there is no guard copy yet" or "the guard copy … is older"
+
+**Symptom:** `safety on` stops with `Update it first: … repair`.
+
+**Cause:** the check before each tool call runs from a copy of the package under `~/.agent-daemon/memory/dist/`. A copy from before the policy existed would read the new rules as unknown, so `on` waits for a current copy.
+
+**Fix:** run `repair` with the same command (`npx -y agent-daemon-memory repair`), then `safety on` again.
+
+## 150. `doctor` prints a "Readiness" section, and a line in it fails
+
+**Symptom:** after the checks, `npx agent-daemon-memory doctor` prints `Readiness` with a block per host. A line starts with `✗` and ends with `→` and a command.
+
+**Cause:** the section says whether memory works end to end on that host: installed, hooks wired (Codex: trusted in `/hooks`), how a failing rules check behaves, what recall sends, whether capture is review-first, the learning and rule counts, and what else loads next to it. A `✗` is a gap; the command after `→` is the one thing that fixes it. Lines for something your installed version doesn't have are left out, and the section never changes `doctor`'s exit code.
+
+**Fix:** run the command the line ends with. For `hooks … not trusted yet in Codex`, open Codex and run `/hooks`. For `marker … gone`, run the repair command it shows. `doctor --json` gives the same lines as rows with `"section": "readiness"` (home folder shown as `~`), which is what to attach to a bug report.
+
+## 151. `view` wrote a page, but a learning or rule looks cut short or says "withheld"
+
+**Symptom:** a row in `view.html` reads `[withheld: …]`, `https[:]//…`, or ends early.
+
+**Cause:** the page is a safe copy. A note that reads like an instruction to an agent, or that held a secret, is withheld whole; web addresses are shown as words so nothing in the page is a link; long texts are cut at 600 characters; your home folder shows as `~`. The page never changes anything: each row names the command to run in your terminal.
+
+**Fix:** nothing to fix. To read the full note, run `learnings show <number>` (or `learnings edit <number>` in your own terminal). The page is rewritten each time you run `view`, so run it again after a change.
+
 ---
 
 For harness problems, the [`harness-troubleshoot`](../skills/daemon/harness-troubleshoot/SKILL.md) skill walks through login → hooks → sandbox → the engine's own log. See also [harness.md](harness.md) and, for the terminal UI, [tui.md](tui.md).
+
+## 140. `learnings edit` says "the editor returned at once"
+
+**Symptom:** `learnings edit <number>` prints `Nothing changed: The editor returned at once without waiting`.
+
+**Cause:** your editor opened the file in a window that was already running and returned to the terminal straight away (VS Code without `--wait`, or Windows 11's Notepad opening a tab in a running Notepad), so ad saw the words unchanged.
+
+**Fix:** set an editor that waits: `EDITOR="code --wait"`, or pass the words directly with `learnings edit <number> --text "<new words>"`.
+
+## 141. `learnings export`, `import`, `edit` or `list --all-projects` says it "needs your own terminal"
+
+**Symptom:** the command prints `Nothing written`, `Nothing imported`, `Nothing changed` or `Nothing shown` with "needs your own terminal".
+
+**Cause:** these read every project's learnings, write them to a file, or change them, so they run only in a terminal you typed into, not in an agent's shell or a script (the same check as `review`).
+
+**Fix:** run it yourself in a terminal. In an editor's terminal, follow the dialog it shows. `learnings list` and `show` for this project work anywhere.
+
+## 142. A forget says "capture file still holds its words"
+
+**Symptom:** after `forget <number>` the receipt lists one or more files that still hold the learning's words.
+
+**Cause:** the file is tracked by git (ad never rewrites a tracked file), or it is a journal a session is reading at that moment.
+
+**Fix:** for a tracked file, remove the line yourself and commit. For a journal in use, run `forget` again later; the journal is cleaned then.
 
 ## Still stuck?
 

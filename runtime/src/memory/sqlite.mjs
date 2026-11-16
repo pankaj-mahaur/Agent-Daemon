@@ -16,6 +16,8 @@
 // no native binding required to ship the design.
 
 import fs from "node:fs/promises";
+import { ensureL5Tables } from "./l5-tables.mjs";
+import { ensureRulesTables } from "./rules-tables.mjs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -447,6 +449,10 @@ export async function open(opts = {}) {
       migrateProjectIds(raw);
       syncProjectKeys(raw);
       migrateTrustCore(raw);
+      // L5: events and memory_settings, idempotent, no version bump (l5-tables.mjs).
+      ensureL5Tables(raw);
+      // L7: the rules table and its triggers, idempotent, no version bump (rules-tables.mjs).
+      ensureRulesTables(raw);
       break;
     } catch (e) {
       try {

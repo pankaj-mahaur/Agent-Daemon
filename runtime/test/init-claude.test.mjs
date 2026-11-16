@@ -11,7 +11,8 @@ const CLI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "sr
 async function runInit(cwd, home) {
   return await new Promise(resolve => {
     const child = spawn(process.execPath, [CLI, "init", "--cwd", cwd, "--profile", "minimal", "--skills-mode", "manual"], {
-      env: { ...process.env, HOME: home, USERPROFILE: home },
+      // AD_TOOL_SHELL off: the gate's reason here is "no terminal" whatever shell runs the suite.
+      env: { ...process.env, HOME: home, USERPROFILE: home, AD_TOOL_SHELL: "" },
       stdio: ["ignore", "pipe", "pipe"]
     });
     let stdout = "";
@@ -53,6 +54,11 @@ test("ad init creates, refreshes, and preserves project CLAUDE.md content", asyn
     assert.match(manual, /Update the session log/);
     assert.match(manual, /Multi-agent orchestration/i);
 
+    // L7 (D10, S2): without a terminal ad init writes no hook entry; doctor still lists the
+    // hook rows once Claude Code has a settings file.
+    assert.match(result.stdout, /hooks unchanged \(no terminal\)/);
+    await fs.mkdir(path.join(root, ".claude"), { recursive: true });
+    await fs.writeFile(path.join(root, ".claude", "settings.json"), "{}\n", "utf8");
     const diagnosis = await runDoctor(project, root);
     assert.notEqual(diagnosis.code, 0, "new templates should require bootstrap");
     assert.match(diagnosis.stdout, /Project CLAUDE\.md instructions/);

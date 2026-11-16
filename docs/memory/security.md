@@ -44,6 +44,41 @@ steering it, and where the limits are. The threat model behind it is in
 - **Feedback.** It changes how notes rank in the project that gave it, never in
   another.
 
+## Starter safety policy (off by default)
+
+`npx agent-daemon-memory safety on` (or `ad safety on`), in your own terminal,
+asks before four kinds of catastrophic commands, in every project:
+
+- a recursive delete of your home folder, a drive or filesystem root, or the
+  project folder (`rm -rf ~`, `rm -rf /`, `Remove-Item -Recurse -Force C:\`,
+  `rd /s /q %USERPROFILE%`), with `~`, `$HOME`, `%USERPROFILE%` and
+  `$env:USERPROFILE` expanded;
+- a force push (`--force`, `-f`, `--force-with-lease`, `+main`) to the default
+  branch (`origin/HEAD`, or `main` and `master` when that isn't known); a
+  feature branch is not asked about;
+- reading `.env`, `.env.local` or `.env.*.local` with a shell command or Claude
+  Code's Read tool (`.env.example`, `.env.sample` and `.env.template` are fine);
+- `--no-verify` on `git commit` or `git push` (also `commit -n` and a
+  `core.hooksPath` override).
+
+Claude Code asks you; in bypass or don't-ask mode, and in Codex, which can't ask,
+the call is stopped with the reason. These are four rules in your rules list:
+`rules allow-once` lets one stopped call through, and `rules pause --all` pauses
+them with your other rules. A project's own pause doesn't turn them off, and
+nothing in a repository can: the policy is yours. `safety off` asks you to type a
+code. `safety status` shows each family and other guards that check the same
+commands (dcg, claude-code-safety-net), so you can keep one.
+
+It is a gate against accidents, not a sandbox: a command hidden in a script the
+agent writes, in a variable, behind `eval` or `xargs`, or run through an MCP tool
+isn't seen; neither are reads that don't name the file (`grep -r KEY .`, `tar`,
+`git add -A`). While the `.env` family is on, ad's hook entry in Claude Code also
+covers the Read tool; `safety status` says when it does.
+
+Setup's last step and `review` (after the rule step) ask once: "Ask before four
+kinds of catastrophic commands? (y/N)". A no is kept and never asked again; only
+your own terminal is asked, never an agent's shell.
+
 ## Secrets
 
 Common secret shapes are replaced with `[redacted:<kind>]` before the capture

@@ -1,0 +1,31 @@
+{
+  "relevant": ["tm-01", "tm-02", "tm-03", "tm-05", "tm-07", "tm-10", "tm-11", "tm-12", "tm-13"],
+  "irrelevant": ["tm-04", "tm-06", "tm-08", "tm-14", "tm-15", "tm-16", "tm-17", "tm-18", "tm-19"],
+  "neutral": ["tm-09", "tm-20", "tm-21", "tm-22", "tm-23", "tm-24"],
+  "reasons": {
+    "tm-01": "How TileCache measures its size cap, the subject of the eviction/cap commits.",
+    "tm-02": "Unit test command for the tiles package being changed.",
+    "tm-03": "How to run TileDaoMigrationTest (migration 13 -> 14 in the commits).",
+    "tm-04": "Stale: tiles moved out of cacheDir, superseded by tm-05.",
+    "tm-05": "Current tile storage location; explains why the app does its own eviction.",
+    "tm-06": "Stale: manual setForeground() superseded by tm-07 after the work-runtime 2.10 bump.",
+    "tm-07": "TileDownloadWorker behaviour after the work-runtime bump in the commits.",
+    "tm-08": "Stale: ktlint replaced by Spotless + ktfmt, see tm-09.",
+    "tm-09": "Current formatter; project-wide, not specific to this work.",
+    "tm-10": "Branch adds schema 14; schema JSON and Migration must land together.",
+    "tm-11": "Cache cap needs disk stats off the main thread; low word overlap.",
+    "tm-12": "Constraint for the tile download worker; low word overlap.",
+    "tm-13": "How TileDownloadWorker receives its dependencies.",
+    "tm-14": "Map style assets, other area; shares 'map' only.",
+    "tm-15": "Avatar image cache, other area; shares 'cache' only.",
+    "tm-16": "GPX export, other area.",
+    "tm-17": "Billing testing, other area.",
+    "tm-18": "Step counter permission, other area.",
+    "tm-19": "Compose previews for hike summary, other area.",
+    "tm-20": "Commit convention; project-wide.",
+    "tm-21": "Release steps; project-wide even though build.gradle.kts and CHANGELOG.md were touched.",
+    "tm-22": "Dependency version convention; project-wide, the bump is already done.",
+    "tm-23": "Setup; project-wide.",
+    "tm-24": "detekt policy; project-wide."
+  }
+}

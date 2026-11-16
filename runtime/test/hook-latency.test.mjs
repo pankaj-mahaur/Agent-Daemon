@@ -19,6 +19,7 @@
 // Inside the parallel suite the limit is doubled: other test files load the
 // machine in bursts the alternation can't fully cancel.
 
+import { waitForRecallJobs } from "../testkit/recall-jobs.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -82,11 +83,16 @@ function fixture() {
   return { home, root, project, env };
 }
 
-const payloads = (project) => ({
-  "tool.before": { session_id: "s", cwd: project, hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command: "git status --short" }, permission_mode: "default" },
-  "prompt.submit": { session_id: "s", cwd: project, hook_event_name: "UserPromptSubmit", prompt: "can you look at why the build output is missing the css files" },
-  "session.start": { session_id: "s", cwd: project, hook_event_name: "SessionStart", source: "startup" },
-});
+// L5 P3: prompt.submit also with a correction (the capture library writes to the store)
+// and with a large paste (the screen and the extractor run over 60 KB).
+const PASTE = `here is the log, look at it:\n${Array.from({ length: 900 }, (_, i) => `2026-11-08T10:${String(i % 60).padStart(2, "0")}:00Z worker-${i % 7} processed batch ${i} in ${(i * 37) % 997} ms (queue ${i % 13})`).join("\n")}\nwhy is batch 512 slow?`;
+const payloads = (project) => [
+  ["", "tool.before", { session_id: "s", cwd: project, hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command: "git status --short" }, permission_mode: "default" }],
+  ["", "prompt.submit", { session_id: "s", cwd: project, hook_event_name: "UserPromptSubmit", prompt: "can you look at why the build output is missing the css files" }],
+  [" (correction)", "prompt.submit", { session_id: "s", cwd: project, hook_event_name: "UserPromptSubmit", prompt: "no, actually we use pnpm in this repo, never npm" }],
+  [" (large paste)", "prompt.submit", { session_id: "s", cwd: project, hook_event_name: "UserPromptSubmit", prompt: PASTE }],
+  ["", "session.start", { session_id: "s", cwd: project, hook_event_name: "SessionStart", source: "startup" }],
+];
 
 /**
  * The hook's own work (p50 over its floor) within its allowance.
@@ -107,14 +113,41 @@ test("hook latency (Claude Code, exec form): p50 within the budget's ratio to no
     (await open({ dbPath: path.join(fx.root, "episodic.db"), noMigrate: false }))?.close();
     const floor = [process.execPath, ["-e", "0"], "", fx.env];
     const failed = [];
-    for (const [event, payload] of Object.entries(payloads(fx.project))) {
+    for (const [label, event, payload] of payloads(fx.project)) {
       const m = measure([process.execPath, [HOOK_PATH, event], JSON.stringify(payload), fx.env], floor);
-      const res = check(event, m, m.floor, "claude");
+      const res = check(event, m, m.floor, `claude${label}`);
       t.diagnostic(res.line);
       if (!res.ok) failed.push(res.line);
     }
     assert.deepEqual(failed, []);
   } finally {
+    // L6: session start starts the repo-context job, whose git may still hold the project folder.
+    await waitForRecallJobs(fx.root);
+    fs.rmSync(fx.home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  }
+});
+
+test("hook latency through the stable launcher (L3): the same budgets, the extra module load included", { timeout: 600_000 }, async (t) => {
+  const fx = fixture();
+  try {
+    (await open({ dbPath: path.join(fx.root, "episodic.db"), noMigrate: false }))?.close();
+    // The launcher folder as install writes it, with this checkout registered as the clone dist.
+    const { installLauncher, makeContext } = await import("../src/memory-install/install.mjs");
+    const runtime = path.resolve(path.dirname(HOOK_PATH), "..");
+    installLauncher(makeContext({ env: fx.env, home: fx.home, root: fx.root, packageRoot: runtime, viaLauncher: false, out: () => {} }));
+    const launcher = path.join(fx.root, "memory", "launch", "run.mjs");
+    const floor = [process.execPath, ["-e", "0"], "", fx.env];
+    const failed = [];
+    for (const [label, event, payload] of payloads(fx.project)) {
+      const m = measure([process.execPath, [launcher, "hook", event, "--host", "claude-code"], JSON.stringify(payload), fx.env], floor);
+      const res = check(event, m, m.floor, `launcher${label}`);
+      t.diagnostic(res.line);
+      if (!res.ok) failed.push(res.line);
+    }
+    assert.deepEqual(failed, []);
+  } finally {
+    // L6: session start starts the repo-context job, whose git may still hold the project folder.
+    await waitForRecallJobs(fx.root);
     fs.rmSync(fx.home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   }
 });
@@ -130,14 +163,16 @@ test("hook latency (Codex on Windows, through pwsh): p50 within the budget's rat
     const node = [process.execPath, ["-e", "0"], "", fx.env];
     const nodeFloor = measure(node, node).floor;
     const failed = [];
-    for (const [event, payload] of Object.entries(payloads(fx.project))) {
+    for (const [label, event, payload] of payloads(fx.project)) {
       const hook = ["pwsh", ["-NoProfile", "-Command", `& ${q(process.execPath)} ${q(HOOK_PATH)} ${event} --host ad`], JSON.stringify({ ...payload, turn_id: "t" }), fx.env];
-      const res = check(event, measure(hook, floor), nodeFloor, "codex");
+      const res = check(event, measure(hook, floor), nodeFloor, `codex${label}`);
       t.diagnostic(res.line);
       if (!res.ok) failed.push(res.line);
     }
     assert.deepEqual(failed, []);
   } finally {
+    // L6: session start starts the repo-context job, whose git may still hold the project folder.
+    await waitForRecallJobs(fx.root);
     fs.rmSync(fx.home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   }
 });

@@ -249,7 +249,23 @@ async function snapshotDb(plan, dbFile, { roots, ci, count }) {
       }
     }
   }
+  dropUnshared(db);
   return db;
+}
+
+// A provisional note (in use in its project only, unreviewed) and a hidden one (on its way
+// out) never leave this machine (L5 decision 16), nor the rows that point at them.
+function dropUnshared(db) {
+  const has = (t) => Boolean(db.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(t));
+  if (!has("learnings")) return;
+  const gone = "SELECT id FROM learnings WHERE status IN ('provisional', 'hidden')";
+  for (const [t, col] of [["feedback", "learning_id"], ["injections", "learning_id"], ["correction_events", "learning_id"], ["correction_events", "matched_learning_id"]]) {
+    if (has(t) && cols(db, t).includes(col)) db.exec(`DELETE FROM "${t}" WHERE "${col}" IN (${gone})`);
+  }
+  db.exec("DELETE FROM learnings WHERE status IN ('provisional', 'hidden')");
+  for (const col of ["supersedes", "superseded_by"]) {
+    if (cols(db, "learnings").includes(col)) db.exec(`UPDATE learnings SET "${col}" = NULL WHERE "${col}" IS NOT NULL AND "${col}" NOT IN (SELECT id FROM learnings)`);
+  }
 }
 
 // A fact goes once per selected project it belongs to (export_project = that id); a global fact
@@ -492,6 +508,8 @@ export function exportSummary({ out, bytes, manifest }) {
     `  projects: ${projects} · global memory: ${manifest.scope.globalMemory ? "included" : "not included (add --include global-memory)"}`,
     `  settings, account list (${n} account${n === 1 ? "" : "s"}: sign in again after import)`,
     "  not included: secrets, the engine's own folders, logs, locks, other projects (see ad state inspect)",
+    // L8 (design decision 8): rules stay on this computer at launch (tables.mjs: export "exclude").
+    "  rules stay on this computer: after the import, propose them again in review",
     ...(manifest.warnings.some((w) => w.code === "redacted") ? [`  ${manifest.warnings.find((w) => w.code === "redacted").count} item(s) that looked like keys were replaced with [redacted] in the export (your own copy is unchanged)`] : []),
     `  ${EXPORT_TEXTS.PLAINTEXT}`,
   ].join("\n");

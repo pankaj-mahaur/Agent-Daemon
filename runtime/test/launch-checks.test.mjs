@@ -71,3 +71,12 @@ test("no network in the memory package: its built dist/ reaches no socket, no ht
   fs.writeFileSync(path.join(dist, "planted.mjs"), "export const x = () => fetch('https://example.invalid');\n");
   assert.deepEqual(networkHits(dist).map((f) => path.basename(f)), ["planted.mjs"]);
 });
+
+test("no network in the Claude Code plugin: its server/ reaches no socket, no http, no fetch", async () => {
+  const { build, NAME } = await import("../scripts/build-host-packages.mjs");
+  const out = path.join(TMP, "hosts");
+  const { built } = build({ out, targets: ["claude-code"] });
+  const server = path.join(built["claude-code"], "plugins", NAME, "server");
+  assert.ok(filesUnder(server, /\.mjs$/).length > 5, "the plugin was built");
+  assert.deepEqual(networkHits(server).map((f) => path.relative(server, f)), []);
+});

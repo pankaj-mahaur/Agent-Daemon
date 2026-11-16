@@ -12,11 +12,78 @@
 //
 // openDatabase(file, { prefer }) picks AD_SQLITE_DRIVER when set, else `prefer`,
 // else better-sqlite3 when it can be loaded, else node:sqlite. → null when neither loads.
+//
+// better-sqlite3 loads only from inside the tree this file runs from, or from the
+// node_modules folder that tree was installed into (a hoisted dependency: npx, a global
+// install, pnpm's store) — MCP launch plan L7, D10. Hooks, the jobs they start and the MCP
+// server run outside the host's sandbox, and the lookup walks up past the tree into folders
+// the agent can write (~/.claude/node_modules, a plugin cache's parents, ~/node_modules).
+// One found there is never loaded: node:sqlite.
+
+import fs from "node:fs";
+import path from "node:path";
+import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 
 export const DRIVERS = Object.freeze(["better-sqlite3", "node:sqlite"]);
+
+// <tree>/src/memory/driver.mjs (the runtime, an npm copy, the plugin's server/).
+const HERE = fileURLToPath(import.meta.url);
+const TREE = path.resolve(path.dirname(HERE), "..", "..");
+
+const isDir = (p) => {
+  try {
+    return fs.statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+};
+
+// What loading better-sqlite3 loads by name, each looked up from the one before: its addon
+// loader and that loader's helper (CommonJS lookups that walk up the same way).
+const CHAIN = ["better-sqlite3", "bindings", "file-uri-to-path"];
+
+/**
+ * Where an import of better-sqlite3 from here would load it, when every package of CHAIN
+ * resolves to a node_modules folder inside the tree (lexically: a package manager's link in
+ * the tree counts) or to the node_modules folder that holds the tree itself; null when
+ * better-sqlite3 isn't found, or any of them is found anywhere else. A later package not
+ * found at all fails the load by itself.
+ */
+export function betterSqliteInTree({ tree = TREE, from = HERE, exists = isDir, paths } = {}) {
+  const under = (child, parent) => {
+    const rel = path.relative(parent, child);
+    return Boolean(rel) && !rel.startsWith("..") && !path.isAbsolute(rel);
+  };
+  const ok = (dir) => under(dir, tree) || (path.basename(dir) === "node_modules" && under(tree, dir));
+  let found = null;
+  let at = from;
+  for (const [i, name] of CHAIN.entries()) {
+    let dirs;
+    try {
+      dirs = (i === 0 ? paths : null) ?? createRequire(at).resolve.paths(name) ?? [];
+    } catch {
+      return null;
+    }
+    // better-sqlite3 is imported (folders only); the rest are require()d, which also loads a
+    // plain file (`bindings.js`, …): any such match counts, so one planted above is refused.
+    const here = i === 0 ? (d) => exists(path.join(d, name)) : (d) => ["", ".js", ".json", ".node"].some((x) => fs.existsSync(path.join(d, name + x)));
+    const dir = dirs.find(here);
+    if (!dir) {
+      if (i === 0) return null;
+      break;
+    }
+    if (!ok(dir)) return null;
+    if (i === 0) found = path.join(dir, name);
+    at = path.join(dir, name, "package.json");
+  }
+  return found;
+}
+
 const BUSY_TIMEOUT_MS = 5000;
 
 async function loadBetterSqlite3() {
+  if (!betterSqliteInTree()) return null;
   try {
     const mod = await import("better-sqlite3");
     return mod.default || mod;

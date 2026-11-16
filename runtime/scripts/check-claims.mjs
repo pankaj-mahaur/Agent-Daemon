@@ -12,6 +12,8 @@
 //   host         a host name not in the support matrix's tested-live rows, anywhere
 //   reviewed     "reviewed" next to lessons/notes without "agent" or "skills" in the sentence
 //   cross        "never" + "another project" except the one approved sentence (it has its own test)
+//   guard        a guard sold as protection ("protects you from", "keeps you safe", "prevents any/all"):
+//                the rules and the starter safety policy ask before; they are not a sandbox (D3, L7b)
 //
 // node runtime/scripts/check-claims.mjs [files…]   (default: the public copy) → exit 1 on a finding.
 
@@ -26,6 +28,7 @@ const OTHER_HOSTS = ["Claude Code", "Cursor", "Windsurf", "VS Code", "Copilot", 
 const BANNED = /(^|[^\w])(#1|best|state[ -]of[ -]the[ -]art|SOTA|revolutionary)(?=$|[^\w])/i;
 const NUMBER = /\d+(?:\.\d+)?\s?%|\b\d+(?:\.\d+)?\s?[x×](?=\s|$|[.,;:)])/;
 const BASELINE = /no memory|own memory|rules file/i;
+const GUARD = /\bprotect(?:s|ed|ing)? you(?:rself)? (?:from|against)\b|\bkeeps? you safe\b|\bprevents? (?:any|all|every)\b|\bguarantees? (?:that )?(?:no|nothing)\b/i;
 
 export function readMatrix(file = path.join(ROOT, "docs", "support-matrix.md")) {
   const rows = fs.readFileSync(file, "utf8").split(/\r?\n/).filter((l) => /^\|[^-|][^|]*\|[^|]*\|[^|]*\|/.test(l) && !/^\|\s*Host\s*\|/.test(l));
@@ -56,6 +59,7 @@ export function checkClaims(text, { testedLive = [], hosts = [], file = "(text)"
       for (const h of known) if (new RegExp(`(^|[^\\w])${h.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=$|[^\\w])`).test(s)) hit(`host:${h}`);
       if (/\breviewed\b/i.test(s) && /\b(lessons?|notes?)\b/i.test(s) && !/\bagent|skills?\b/i.test(s)) hit("reviewed");
       if (/\bnever\b/i.test(s) && /another project/i.test(s) && !s.includes(APPROVED_CROSS)) hit("cross");
+      if (GUARD.test(s)) hit("guard");
     }
   });
   return out;

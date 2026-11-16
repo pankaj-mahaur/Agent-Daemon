@@ -1,0 +1,25 @@
+{
+  "name": "relaybox",
+  "stack": "Go 1.23 gRPC microservice (webhook/notification delivery) + PostgreSQL via pgx + Kafka consumer, protos managed with buf",
+  "branch": "feat/delivery-retry-backoff",
+  "recent_paths": [
+    "internal/delivery/retry.go",
+    "internal/delivery/retry_test.go",
+    "internal/delivery/worker.go",
+    "internal/store/attempts.go",
+    "internal/store/attempts_test.go",
+    "proto/relaybox/v1/delivery.proto",
+    "gen/relaybox/v1/delivery.pb.go",
+    "migrations/0019_delivery_attempts_next_attempt.sql",
+    "config/config.go",
+    "cmd/relaybox/main.go"
+  ],
+  "recent_commits": [
+    "delivery: exponential backoff with full jitter",
+    "store: persist attempt count and next_attempt_at",
+    "proto: add RetryPolicy to DeliveryRequest",
+    "worker: dead-letter only after max attempts",
+    "test: fake clock for retry schedule"
+  ],
+  "session_cwd": "/home/dev/src/relaybox"
+}
