@@ -144,6 +144,7 @@ import { spawn as spawnProc } from "node:child_process";
 import { mkdirSync as mkdirP, utimesSync as setTimes, writeFileSync as writeF } from "node:fs";
 import { jobLocked } from "../src/harness/schedule.mjs";
 import { acquireLock as takeLock } from "../src/lock.mjs";
+import { identityOf as osIdentityOf } from "../src/process-identity.mjs";
 
 const lockDirFor = (home) => join(home, ".agent-daemon", "schedule-locks");
 const aged = (file) => { const t = new Date(Date.now() - 600_000); setTimes(file, t, t); };
@@ -156,7 +157,10 @@ test("P0.3b: a job lock whose pid was reused doesn't block the job", async () =>
     mkdirP(lockDirFor(home), { recursive: true });
     // A lease that names a live pid which started long after the lease was written: reused.
     writeF(join(lockDirFor(home), "schedule-j1.lock"), JSON.stringify({ pid: other.pid, startedAt: Date.now() - 3_600_000, threadId: "schedule-j1", token: "t", kind: "schedule" }));
-    assert.equal(jobLocked("j1", home), false);
+    // The real OS lookup, without its 3 s budget: Get-Process through a cold Windows
+    // PowerShell on CI took longer, the lookup came back "unknown" and the fresh lease
+    // held. This test is about telling a reused pid, not how fast PowerShell starts.
+    assert.equal(jobLocked("j1", home, { identityOf: (pid) => osIdentityOf(pid, { timeoutMs: 120_000 }) }), false);
   } finally {
     other.kill();
     rmSync(home, { recursive: true, force: true });

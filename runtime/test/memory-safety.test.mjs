@@ -61,7 +61,10 @@ function drive(requests, { args = [], cwd = HOME, env = serverEnv() } = {}) {
     const wanted = new Set(requests.map((r) => r.id));
     const out = {};
     let buf = "";
-    const timer = setTimeout(() => { child.kill(); reject(new Error(`timeout; got ${Object.keys(out)}`)); }, 15000);
+    let err = "";
+    child.stderr.on("data", (c) => { err += c; });
+    // Correctness, not speed: a cold server on a busy Windows runner took over 15 s here.
+    const timer = setTimeout(() => { child.kill(); reject(new Error(`timeout; got ${Object.keys(out)}; stderr: ${err.slice(-2000)}`)); }, 60_000);
     child.stdout.on("data", (c) => {
       buf += c;
       let i;
@@ -300,8 +303,14 @@ test("the scan handles 20,000 clean rows in under 2 s", async () => {
   const ins = h.raw.prepare("INSERT INTO learnings (project_slug, category, text, confidence, status, content_hash) VALUES (?, 'pattern', ?, 0.6, 'active', ?)");
   h.raw.transaction(() => { for (let i = 0; i < 20000; i++) ins.run(slugA, `ordinary lesson number ${i} about tests and builds`, `bulk-${i}`); })();
   const t0 = Date.now();
-  runSafetyScan(h);
-  assert.ok(Date.now() - t0 < 2000 * (process.env.CI ? 3 : 1), `${Date.now() - t0} ms`);
+  try {
+    runSafetyScan(h);
+    assert.ok(Date.now() - t0 < 2000 * (process.env.CI ? 3 : 1), `${Date.now() - t0} ms`);
+  } finally {
+    // The tests after this one start the memory server, whose start-up upkeep and search
+    // would otherwise walk these 20,000 rows too.
+    h.raw.prepare("DELETE FROM learnings WHERE content_hash LIKE 'bulk-%'").run();
+  }
 });
 
 test("two folders sharing one memory key: a note neither can be told apart by is served to neither", async () => {

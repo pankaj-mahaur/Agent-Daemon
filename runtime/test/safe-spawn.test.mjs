@@ -27,6 +27,8 @@ import { spawnAgent } from "../src/orchestration/spawn.mjs";
 import { createSecretStore, dpapiBackend } from "../src/auth/secrets.mjs";
 
 const isWin = process.platform === "win32";
+// A cold Windows PowerShell start on CI can outlast the CLI's 15 s (see auth-secrets.test.mjs).
+const PS_COLD_START_MS = 120_000;
 const W = path.win32;
 
 // A fake file system for the resolver: { "<abs path>": "<content>" }.
@@ -472,7 +474,7 @@ if (path.dirname(process.execPath).toLowerCase() === ${JSON.stringify(repo.toLow
       const res2 = await spawnAgent({ engine: "claude", worktree: false, teamId: "t1", role: "dev", agentName: "p2", task: "x", cwd: repo, timeoutMs: 60_000 });
       assert.equal(res2.ok, true, res2.error);
       // The DPAPI store hands secret values to powershell.exe on stdin.
-      const store = createSecretStore(dpapiBackend(path.join(r.root, "secrets")));
+      const store = createSecretStore(dpapiBackend(path.join(r.root, "secrets"), { timeoutMs: PS_COLD_START_MS }));
       store.set("probe", "not-a-real-secret-value");
       assert.equal(store.get("probe"), "not-a-real-secret-value");
     });
