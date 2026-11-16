@@ -218,6 +218,14 @@ function runHook(raw, { root, home }) {
   for (const k of ["CLAUDE_PROJECT_DIR", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ATTENDED", "AD_WORKER", "AD_MEMORY_DB"]) delete e[k];
   return spawnSync(process.execPath, [HOOK, "tool.before"], { input: raw, env: e, encoding: "utf8", timeout: 60_000 });
 }
+/** The hook's JSON answer; a parse failure shows what the child printed (CI on another OS). */
+function answer(r, label) {
+  try {
+    return JSON.parse(r.stdout);
+  } catch (e) {
+    assert.fail(`${label}: ${e.message}; status ${r.status}, signal ${r.signal}, error ${r.error?.message ?? "none"}\nstdout: ${JSON.stringify(r.stdout)}\nstderr: ${r.stderr}`);
+  }
+}
 
 test("spawned: decisions per host and permission_mode through bin/hook.mjs (L7 Done-when 3)", () => {
   const g = setup();
@@ -226,18 +234,19 @@ test("spawned: decisions per host and permission_mode through bin/hook.mjs (L7 D
   for (const [mode, expect] of Object.entries(want)) {
     const fx = JSON.parse(fs.readFileSync(path.join(dir, `mode-${mode}-none.json`), "utf8"));
     const p = fx.hooks.find((x) => x.payload?.hook_event_name === "PreToolUse").payload;
-    const r = runHook(JSON.stringify({ ...p, cwd: g.project, tool_input: { ...p.tool_input, command: `rm -rf ${g.project}` } }), { root: g.root, home: g.home }); // (rm -rf $HOME is self-protection's: a deny)
+    const r = runHook(JSON.stringify({ ...p, cwd: g.project, tool_input: { ...p.tool_input, command: `rm -rf "${g.project}"` } }), { root: g.root, home: g.home }); // (rm -rf $HOME is self-protection's: a deny)
+    // Quoted: unquoted, Bash reads a Windows path's backslashes as escapes (D:\a\b is D:ab).
     assert.equal(r.status, 0, r.stderr);
-    const out = JSON.parse(r.stdout);
+    const out = answer(r, mode);
     assert.equal(out.hookSpecificOutput.permissionDecision, expect, mode);
     assert.match(out.systemMessage, /starter safety policy/);
   }
   const unread = runHook(JSON.stringify({ ...bash("rm -rf ~", g.project), permission_mode: "someNewMode" }), { root: g.root, home: g.home });
-  assert.equal(JSON.parse(unread.stdout).hookSpecificOutput.permissionDecision, "deny", "a mode it can't read denies");
+  assert.equal(answer(unread, "someNewMode").hookSpecificOutput.permissionDecision, "deny", "a mode it can't read denies");
   const codex = runHook(JSON.stringify({ ...bash("git commit --no-verify -m x", g.project), turn_id: "t" }), { root: g.root, home: g.home });
-  assert.equal(JSON.parse(codex.stdout).hookSpecificOutput.permissionDecision, "deny", "Codex");
+  assert.equal(answer(codex, "Codex").hookSpecificOutput.permissionDecision, "deny", "Codex");
   const none = runHook(JSON.stringify(bash("rm -rf ./build", g.project)), { root: g.root, home: g.home });
-  assert.equal(none.stdout.trim() === "" || none.stdout.trim() === "{}", true, "a look-alike prints no decision");
+  assert.equal(none.stdout.trim() === "" || none.stdout.trim() === "{}", true, `a look-alike prints no decision: ${none.stdout}${none.stderr}`);
 });
 
 test("git-branch: current and default branches from files, worktrees included; unknown → main and master", async () => {
@@ -269,4 +278,13 @@ test("allow-once sees what the policy matched (matchedParts)", async () => {
   const call = { tool: "Bash", input: { command: "ls && rm -rf ~" }, os: "linux", cwd: "/w", policy: { homes: ["/home/u"], project_root: [], default_branches: ["main"], current_branch: "x" } };
   assert.deepEqual(matchedParts({ type: "policy", family: "recursive-delete" }, call), ["rm -rf ~"]);
   assert.deepEqual(matchedParts({ type: "policy", family: "env-read" }, { ...call, tool: "Read", input: { file_path: "/w/.env" } }), ["/w/.env"]);
+});
+
+test("a Windows project path in a Bash command: quoted or with forward slashes it is the project; unquoted, Bash reads the backslashes as escapes", async () => {
+  const { matchPolicy } = await import("../src/rules/policy.mjs");
+  const proj = "D:\\a\\app\\work\\app";
+  const call = (command) => ({ tool: "Bash", input: { command }, os: "windows", cwd: proj, project_root: proj, policy: { homes: ["D:\\a\\home"], project_root: proj } });
+  assert.equal(matchPolicy("recursive-delete", call(`rm -rf "${proj}"`)).match, true);
+  assert.equal(matchPolicy("recursive-delete", call(`rm -rf ${proj.replaceAll("\\", "/")}`)).match, true);
+  assert.equal(matchPolicy("recursive-delete", call(`rm -rf ${proj}`)).match, false, "Bash runs rm -rf D:aappworkapp, a relative path");
 });
