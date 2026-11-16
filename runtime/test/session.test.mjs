@@ -460,12 +460,25 @@ test("release: ad leaves the thread and waits until the engine has unloaded it",
     assert.deepEqual(st.lastParams["thread/unsubscribe"], { threadId: id });
     // A thread engine doesn't have loaded is free already.
     assert.equal(await session.release("not-loaded"), true);
-    // No thread/closed in time: false, so the caller can fall back (restart ad's engine).
-    await session.submit("fail-turn").done;
-    assert.equal(await session.release(session.state.thread.id, { timeoutMs: 1 }), false);
     // ad resumes it afterwards as usual.
     assert.equal(await session.resume(id), id);
   });
+});
+
+// Its own engine, where another connection still watches every thread, so none ever
+// unloads: the wait can only time out. (A 1 ms timeout racing the fake's 10 ms unload
+// lost on the Windows runner, whose timers fire in ~15 ms steps.)
+test("release: no thread/closed in time → false, so the caller can fall back; ad resumes it afterwards", async () => {
+  await withSession(
+    none,
+    async ({ session }) => {
+      await session.submit("fail-turn").done;
+      const id = session.state.thread.id;
+      assert.equal(await session.release(id, { timeoutMs: 50 }), false);
+      assert.equal(await session.resume(id), id);
+    },
+    { engineOpts: { env: { FAKE_OTHER_SUBSCRIBER: "1" } } },
+  );
 });
 
 test("newThread during a running turn interrupts it and settles its waiters as abandoned", async () => {
