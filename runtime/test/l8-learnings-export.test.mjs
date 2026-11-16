@@ -26,6 +26,12 @@ const L = await import("../src/memory/learnings-file.mjs");
 const { recordEvent, tombstoneHash } = await import("../src/memory/l5-tables.mjs");
 const { testReviewToken } = await import("../testkit/memory-trust.mjs");
 
+// No test may reach a real terminal or editor: on Windows a console handle (CONIN$) opens
+// even under CI and a read on it waits forever. Each call injects these (a test that needs
+// a terminal passes its own): no controlling terminal for the typed code, no TTY for the
+// editor, and an empty answer to any prompt.
+const NO_TERMINAL = Object.freeze({ tty: null, isTTY: () => false, ask: async () => "" });
+
 const opened = [];
 after(() => {
   for (const h of opened) {
@@ -64,7 +70,7 @@ function note(h, text, { status = "pending", slug = SLUG, pid = PID, appliedTo =
 const accept = (h, id) => svc.acceptLearning(h, testReviewToken(), id, { now: new Date("2026-11-11T09:00:00Z") });
 async function cli(h, verb, argv, extra = {}) {
   const lines = [];
-  const code = await learningsMain(verb, argv, { out: (l) => lines.push(l), handle: h, cwd: CWD, keys: KEYS, command: (v) => `ad ${v}`, token: TOKEN, root: path.join(ROOT, ".agent-daemon"), home: ROOT, now: NOW, ...extra });
+  const code = await learningsMain(verb, argv, { ...NO_TERMINAL, out: (l) => lines.push(l), handle: h, cwd: CWD, keys: KEYS, command: (v) => `ad ${v}`, token: TOKEN, root: path.join(ROOT, ".agent-daemon"), home: ROOT, now: NOW, ...extra });
   return { code, text: lines.join("\n") };
 }
 
